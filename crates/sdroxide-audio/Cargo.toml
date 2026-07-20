@@ -1,0 +1,10 @@
+[package]
+name = "sdroxide-audio"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+cpal = "0.18.1"
+rtrb.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

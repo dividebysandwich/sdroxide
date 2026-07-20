@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SoapySDR
+        run: sudo apt-get update && sudo apt-get install -y libsoapysdr-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --exclude sdroxide-web
+      - run: cargo test --workspace --exclude sdroxide-web
+
+  # Guards the hard boundary: UI/types/proto must never pull in native-only
+  # crates (SoapySDR C library cannot compile to WASM).
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p sdroxide-types -p sdroxide-proto -p sdroxide-ui -p sdroxide-web --target wasm32-unknown-unknown

@@ -1,0 +1,71 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+default-members = [".", "crates/sdroxide-types", "crates/sdroxide-proto", "crates/sdroxide-dsp", "crates/sdroxide-radio", "crates/sdroxide-config"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# The native binary links mfsk-core (GPL-3.0-or-later) for FT8/FT4, so the
+# built binary is GPL-3.0-or-later. The GPL dependency is confined to the
+# sdroxide-digi crate; the wasm remote client links none of it.
+license = "GPL-3.0-or-later"
+
+# DSP is unusably slow unoptimized; keep deps and the sample-rate-hot crates
+# fast in dev builds while the rest stays quick to compile.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.sdroxide-dsp]
+opt-level = 2
+
+[profile.dev.package.sdroxide-radio]
+opt-level = 2
+
+[workspace.dependencies]
+sdroxide-types = { path = "crates/sdroxide-types" }
+sdroxide-proto = { path = "crates/sdroxide-proto" }
+sdroxide-dsp = { path = "crates/sdroxide-dsp" }
+sdroxide-radio = { path = "crates/sdroxide-radio" }
+sdroxide-audio = { path = "crates/sdroxide-audio" }
+sdroxide-server = { path = "crates/sdroxide-server" }
+sdroxide-config = { path = "crates/sdroxide-config" }
+sdroxide-ui = { path = "crates/sdroxide-ui" }
+
+serde = { version = "1", features = ["derive"] }
+num-complex = "0.4"
+rustfft = "6"
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+postcard = { version = "1", features = ["use-std"] }
+crossbeam-channel = "0.5"
+rtrb = "0.3"
+
+[package]
+name = "sdroxide"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sdroxide-types.workspace = true
+sdroxide-proto.workspace = true
+sdroxide-dsp.workspace = true
+sdroxide-radio.workspace = true
+sdroxide-config.workspace = true
+sdroxide-audio.workspace = true
+sdroxide-server.workspace = true
+sdroxide-ui = { workspace = true, features = ["remote"] }
+eframe = { version = "0.35.0", default-features = false, features = ["default_fonts", "wgpu", "wayland", "x11", "persistence"] }
+anyhow.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+num-complex.workspace = true
+
+[features]
+# Bundle the trunk-built web client into the binary (run `trunk build
+# --release` in crates/sdroxide-web first).
+embed-web = ["sdroxide-server/embed-web"]

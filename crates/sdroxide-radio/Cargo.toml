@@ -1,0 +1,17 @@
+[package]
+name = "sdroxide-radio"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sdroxide-types.workspace = true
+sdroxide-dsp.workspace = true
+num-complex.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+soapysdr = "0.5.1"
+triple_buffer = "9.0.0"
+crossbeam-channel.workspace = true
+rtrb.workspace = true
+sdroxide-config = { version = "0.1.0", path = "../sdroxide-config" }
+sdroxide-digi = { version = "0.1.0", path = "../sdroxide-digi" }

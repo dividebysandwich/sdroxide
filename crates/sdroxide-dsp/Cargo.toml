@@ -1,0 +1,10 @@
+[package]
+name = "sdroxide-dsp"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sdroxide-types.workspace = true
+num-complex.workspace = true
+rustfft.workspace = true
+rubato = "4.0.0"

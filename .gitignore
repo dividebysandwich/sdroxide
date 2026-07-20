@@ -1,0 +1,3 @@
+/target
+crates/sdroxide-web/dist
+crates/sdroxide-web/dist/index.html

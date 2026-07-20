@@ -1,0 +1,14 @@
+[package]
+name = "sdroxide-digi"
+version.workspace = true
+edition.workspace = true
+# GPL because it links mfsk-core (GPL-3.0-or-later). Isolated here so the
+# permissive crates and the wasm client link no GPL code.
+license = "GPL-3.0-or-later"
+
+[dependencies]
+sdroxide-types.workspace = true
+sdroxide-dsp.workspace = true
+mfsk-core = { version = "0.7.4", default-features = false, features = ["std", "ft8", "ft4", "parallel", "fft-rustfft"] }
+crossbeam-channel.workspace = true
+tracing.workspace = true
