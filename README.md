@@ -7,6 +7,9 @@ binary, as a **server that streams the same UI to a web browser** over
 WebSocket. It includes an integrated, persistent **logbook** and full
 **FT8/FT4** digital-mode operation.
 
+<img width="1683" height="933" alt="image" src="https://github.com/user-attachments/assets/8e708021-573e-42e0-b0a5-9ac9c294f874" />
+
+
 One binary, three ways to run it:
 
 - **Native** — a local desktop transceiver against your SDR hardware.
@@ -41,6 +44,8 @@ One binary, three ways to run it:
   `~/.config/sdroxide/`.
 
 ## FT8 / FT4
+
+<img width="1683" height="933" alt="image" src="https://github.com/user-attachments/assets/02a4b70d-7590-4a71-aacb-56814132b691" />
 
 Selecting FT8 or FT4 switches the panadapter to a zoomed sub-band waterfall with
 a decode list and an auto-sequencing QSO panel:
