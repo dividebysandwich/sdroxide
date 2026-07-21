@@ -11,8 +11,10 @@ use sdroxide_radio::{Complex32, ControlUpdate, IqSource, Result};
 use sdroxide_types::{CatConfig, Mode, SoundFormat};
 
 pub struct AudioCatSource {
-    // RX audio from the rig (mono for demod, interleaved L/R for IQ).
-    _in_stream: sdroxide_audio::AudioInput,
+    // RX audio from the rig (mono for demod, interleaved L/R for IQ). `None`
+    // when the capture device could not be opened — the app still runs so the
+    // user can fix the device in Settings; RX is just silent until then.
+    _in_stream: Option<sdroxide_audio::AudioInput>,
     in_consumer: rtrb::Consumer<f32>,
     in_rate: f64,
     format: SoundFormat,
@@ -40,11 +42,24 @@ impl AudioCatSource {
         let (init_freq, _init_mode) = sdroxide_cat::query_once(&cfg).unwrap_or((None, None));
         let center = init_freq.unwrap_or(14_074_000.0);
 
-        let (in_stream, in_consumer) = match cfg.format {
-            SoundFormat::Iq => sdroxide_audio::start_input_stereo(audio_in, 48_000)?,
-            SoundFormat::DemodAudio => sdroxide_audio::start_input(audio_in, 48_000)?,
+        // RX capture is best-effort: a missing/unsupported device leaves RX
+        // silent but keeps the app (and its Settings dialog) alive.
+        let opened = match cfg.format {
+            SoundFormat::Iq => sdroxide_audio::start_input_stereo(audio_in, 48_000),
+            SoundFormat::DemodAudio => sdroxide_audio::start_input(audio_in, 48_000),
         };
-        let in_rate = in_stream.sample_rate;
+        let (in_stream, in_consumer, in_rate) = match opened {
+            Ok((s, c)) => {
+                let rate = s.sample_rate;
+                (Some(s), c, rate)
+            }
+            Err(e) => {
+                tracing::warn!("radio RX audio device unavailable ({e}); RX silent");
+                // A dummy, always-empty ring keeps `read` returning silence.
+                let (_p, c) = rtrb::RingBuffer::<f32>::new(1);
+                (None, c, 48_000.0)
+            }
+        };
 
         // TX playback is best-effort: a missing device just means no TX audio.
         let out = match sdroxide_audio::start_output(audio_out, 48_000) {
