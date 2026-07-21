@@ -1,6 +1,7 @@
 //! Waterfall colormap LUTs: 256×1 RGBA8.
 
-pub const NAMES: [&str; 3] = ["Classic", "Viridis", "Gray"];
+pub const NAMES: [&str; 8] =
+    ["Classic", "Viridis", "Gray", "Icom", "Neon", "Synthwave", "Matrix", "Tron"];
 
 /// Piecewise-linear gradient through (position, RGB) anchor points.
 /// Anchors must start at 0.0 and end at 1.0.
@@ -43,6 +44,61 @@ pub fn lut(index: usize) -> [u8; 256 * 4] {
             (0.75, [94, 201, 98]),
             (1.00, [253, 231, 37]),
         ]),
+        // Icom SDR waterfall: floor black, rising through blue → cyan → green →
+        // yellow → orange, peaking at red (no white blow-out at the top).
+        3 => gradient(&[
+            (0.00, [0, 0, 0]),
+            (0.12, [0, 0, 92]),
+            (0.30, [0, 40, 210]),
+            (0.46, [0, 170, 220]),
+            (0.58, [0, 210, 180]),
+            (0.70, [40, 210, 40]),
+            (0.83, [235, 235, 30]),
+            (0.93, [242, 130, 20]),
+            (1.00, [230, 20, 20]),
+        ]),
+        // Neon — cyberpunk magenta-and-cyan glow: black → violet → magenta →
+        // hot pink → neon cyan → white.
+        4 => gradient(&[
+            (0.00, [0, 0, 0]),
+            (0.18, [24, 0, 48]),
+            (0.38, [96, 0, 140]),
+            (0.56, [210, 0, 190]),
+            (0.72, [255, 44, 130]),
+            (0.86, [70, 220, 255]),
+            (1.00, [235, 255, 255]),
+        ]),
+        // Synthwave — retro-future sunset: deep indigo → purple → magenta →
+        // coral → orange → hot yellow.
+        5 => gradient(&[
+            (0.00, [8, 0, 20]),
+            (0.22, [58, 0, 92]),
+            (0.42, [150, 12, 130]),
+            (0.60, [240, 40, 110]),
+            (0.75, [255, 96, 74]),
+            (0.88, [255, 158, 44]),
+            (1.00, [255, 232, 120]),
+        ]),
+        // Matrix — green phosphor rain: black → dim green → green → bright
+        // green → pale green.
+        6 => gradient(&[
+            (0.00, [0, 0, 0]),
+            (0.30, [0, 36, 8]),
+            (0.55, [0, 150, 40]),
+            (0.78, [46, 240, 88]),
+            (1.00, [200, 255, 205]),
+        ]),
+        // Tron — electric grid: black → deep blue → cyan → white, spiking to an
+        // amber peak.
+        7 => gradient(&[
+            (0.00, [0, 0, 0]),
+            (0.28, [0, 18, 58]),
+            (0.52, [0, 168, 232]),
+            (0.72, [120, 238, 255]),
+            (0.86, [244, 252, 255]),
+            (1.00, [255, 150, 26]),
+        ]),
+        // Gray (index 2) and any out-of-range fallback.
         _ => gradient(&[(0.0, [0, 0, 0]), (1.0, [255, 255, 255])]),
     }
 }
