@@ -15,3 +15,4 @@ crossbeam-channel.workspace = true
 rtrb.workspace = true
 sdroxide-config = { version = "0.1.0", path = "../sdroxide-config" }
 sdroxide-digi = { version = "0.1.0", path = "../sdroxide-digi" }
+sdroxide-skimmer = { version = "0.1.0", path = "../sdroxide-skimmer" }

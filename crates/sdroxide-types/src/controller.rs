@@ -1,6 +1,6 @@
 use crate::{
     Command, Decode, DeviceCaps, DigiStatus, MemoryChannel, Meters, QsoRecord, RadioState,
-    SpectrumFrame,
+    SkimmerSpot, SpectrumFrame,
 };
 
 /// Events flowing engine → UI.
@@ -19,6 +19,8 @@ pub enum RadioEvent {
     Ft8Status(DigiStatus),
     /// A completed QSO, appended to the session log.
     Ft8QsoLogged(QsoRecord),
+    /// Latest set of skimmer spots (CW etc.).
+    SkimmerSpots(Vec<SkimmerSpot>),
 }
 
 /// The seam that lets the same UI run against an in-process radio engine

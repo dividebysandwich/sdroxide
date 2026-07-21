@@ -3,8 +3,8 @@ use std::time::Duration;
 use eframe::egui::{self, Color32, ComboBox, DragValue, RichText, Slider};
 use sdroxide_types::{
     AgcMode, Band, Command, Decode, DeviceCaps, DigiStatus, Direction, MemoryChannel, Meters,
-    Mode, QsoRecord, RadioController, RadioEvent, RadioState, RxId, SpectrumConfig, SpectrumFrame,
-    Vfo,
+    Mode, QsoRecord, RadioController, RadioEvent, RadioState, RxId, SkimmerSpot, SpectrumConfig,
+    SpectrumFrame, Vfo,
 };
 
 use crate::view::ViewState;
@@ -32,6 +32,8 @@ pub struct SdroxideApp {
     show_memories: bool,
     show_settings: bool,
     mem_name: String,
+    // Skimmer (CW etc.) spots, newest merge-by-id.
+    skimmer_spots: Vec<SkimmerSpot>,
     // FT8/FT4 digital-mode state.
     digi_decodes: Vec<Decode>,
     digi_status: Option<DigiStatus>,
@@ -167,6 +169,7 @@ impl SdroxideApp {
             show_memories: false,
             show_settings: false,
             mem_name: String::new(),
+            skimmer_spots: Vec::new(),
             digi_decodes: Vec::new(),
             digi_status: None,
             qso_log: load_qso_log(cc.storage),
@@ -296,7 +299,7 @@ impl SdroxideApp {
                 if self.caps.as_ref().is_some_and(|c| c.is_transmit_capable()) {
                     self.tx_module(ui, cmds);
                 }
-                self.display_module(ui);
+                self.display_module(ui, cmds);
                 self.windows_module(ui);
             },
         );
@@ -575,8 +578,8 @@ impl SdroxideApp {
         }
     }
 
-    fn display_module(&mut self, ui: &mut egui::Ui) {
-        crate::chrome::module(ui, "Display", 486.0, |ui| {
+    fn display_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        crate::chrome::module(ui, "Display", 556.0, |ui| {
             if crate::chrome::chip(ui, false, "FIT")
                 .on_hover_text("Auto-set floor/ceiling for best waterfall contrast")
                 .clicked()
@@ -594,6 +597,19 @@ impl SdroxideApp {
                 .clicked()
             {
                 self.view.spectrum_collapsed = !self.view.spectrum_collapsed;
+            }
+            let skim = self.state.skimmer_enabled;
+            if crate::chrome::chip_accent(
+                ui,
+                skim,
+                "CW SKIM",
+                crate::theme::GREEN,
+                crate::theme::INK_ON_CYAN,
+            )
+            .on_hover_text("Decode all CW signals in a ~192 kHz window and mark them on the waterfall")
+            .clicked()
+            {
+                cmds.push(Command::SetSkimmerEnabled(!skim));
             }
             ui.label("floor");
             ui.add(
@@ -1772,6 +1788,12 @@ impl eframe::App for SdroxideApp {
                     r.id = self.next_log_id();
                     self.qso_log.push(r);
                     persist_qso_log(&self.qso_log);
+                }
+                RadioEvent::SkimmerSpots(s) => {
+                    // The engine sends the full current set each update; the
+                    // stable `id` per spot lets the overlay keep each box (and
+                    // its scroll) in place across updates.
+                    self.skimmer_spots = s;
                 }
             }
         }

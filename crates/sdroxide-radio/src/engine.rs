@@ -13,6 +13,7 @@ use tracing::{info, warn};
 
 use sdroxide_config::BandStacks;
 use sdroxide_digi::{DigiAction, DigiController};
+use sdroxide_skimmer::{SkimmerAction, SkimmerController};
 use sdroxide_dsp::{
     Agc, DcBlock, Ddc, Demodulator, Duc, Modulator, MonoResampler, NoiseBlanker,
     SpectrumAnalyzer, channel_target, make_demod, make_modulator,
@@ -349,7 +350,16 @@ struct Engine {
     /// High-resolution spectrum over the VFO channel (digital modes only):
     /// fed the decimated channel IQ so an FFT gives ~3 Hz/bin resolution.
     channel_analyzer: Option<SpectrumAnalyzer>,
+    /// CW skimmer: a dedicated wideband decimator off the raw IQ plus a
+    /// worker-thread decoder, present only while the skimmer is enabled.
+    skim_ddc: Option<Ddc>,
+    skimmer: Option<SkimmerController>,
+    skim_buf: Vec<Complex32>,
 }
+
+/// Target width of the CW skimmer window (Hz); the Ddc snaps to the nearest
+/// integer decimation of the device rate.
+const SKIM_TARGET_HZ: f64 = 192_000.0;
 
 fn engine_thread(
     source: Box<dyn IqSource>,
@@ -421,12 +431,17 @@ fn engine_thread(
         digi_config,
         digi_tx: false,
         channel_analyzer: None,
+        skim_ddc: None,
+        skimmer: None,
+        skim_buf: Vec::new(),
     };
     if let Some(mic) = &engine.mic {
         engine.mic_resampler = MonoResampler::new(mic.rate, 48_000.0);
     }
     // If we start up already in a digital mode, spin up the controller.
     engine.sync_digi_mode();
+    engine.state.skimmer_enabled = std::env::var("SKIM").as_deref() == Ok("1"); // TEMP test toggle
+    engine.sync_skimmer();
     engine.update_tuning();
 
     let mut buf = vec![Complex32::default(); 16_384];
@@ -451,6 +466,7 @@ fn engine_thread(
         // Drive the FT8/FT4 slot machine (runs in both RX and TX). Returns
         // owned actions to avoid borrowing `engine.digi` and `engine` at once.
         engine.poll_digi();
+        engine.poll_skimmer();
 
         if engine.tx_active {
             // Blocking TX write paces this loop at ~10 ms per block.
@@ -539,6 +555,15 @@ impl Engine {
         // Feed the high-resolution channel spectrum from the DDC output.
         if let (Some(ca), Some(main)) = (self.channel_analyzer.as_mut(), self.main.as_ref()) {
             ca.process(main.channel_iq());
+        }
+        // Feed the CW skimmer from a dedicated wideband decimation of the raw IQ.
+        // `Ddc::process` appends, so clear the scratch buffer each block.
+        if let Some(ddc) = self.skim_ddc.as_mut() {
+            self.skim_buf.clear();
+            ddc.process(iq, &mut self.skim_buf);
+            if let Some(sk) = self.skimmer.as_ref() {
+                sk.on_rx_iq(&self.skim_buf);
+            }
         }
     }
 
@@ -853,8 +878,49 @@ impl Engine {
                     self.sync_tx_state();
                 }
             }
+
+            // Skimmers.
+            SetSkimmerEnabled(on) => {
+                self.state.skimmer_enabled = on;
+                self.sync_skimmer();
+            }
         }
         let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+    }
+
+    /// Construct or tear down the wideband CW skimmer to match
+    /// `skimmer_enabled`. The skim window is a dedicated decimation of the raw
+    /// IQ centered on the device center (offset 0), so tuning the VFO within the
+    /// span doesn't disturb the streaming decoders.
+    fn sync_skimmer(&mut self) {
+        match (self.state.skimmer_enabled, self.skimmer.is_some()) {
+            (true, false) => {
+                let ddc = Ddc::new(self.state.sample_rate, SKIM_TARGET_HZ);
+                let rate = ddc.out_rate();
+                self.skimmer = Some(SkimmerController::new(rate, self.state.center_hz));
+                self.skim_ddc = Some(ddc);
+                info!(rate, "CW skimmer started");
+            }
+            (false, true) => {
+                self.skimmer = None;
+                self.skim_ddc = None;
+                self.skim_buf.clear();
+                info!("CW skimmer stopped");
+            }
+            _ => {}
+        }
+    }
+
+    /// Drain skimmer spots and forward them as events.
+    fn poll_skimmer(&mut self) {
+        let Some(sk) = self.skimmer.as_ref() else { return };
+        for action in sk.poll() {
+            match action {
+                SkimmerAction::Spots(spots) => {
+                    let _ = self.event_tx.send(RadioEvent::SkimmerSpots(spots));
+                }
+            }
+        }
     }
 
     fn emit_digi_status(&self) {
@@ -1153,7 +1219,14 @@ impl Engine {
 
     fn retune(&mut self, center_hz: f64) {
         match self.source.set_center_hz(center_hz) {
-            Ok(()) => self.state.center_hz = center_hz,
+            Ok(()) => {
+                self.state.center_hz = center_hz;
+                // The skim window follows the hardware center; re-label spots
+                // and clear tracks so nothing straddles the old/new axis.
+                if let Some(sk) = self.skimmer.as_ref() {
+                    sk.set_center(center_hz);
+                }
+            }
             Err(e) => {
                 let _ = self
                     .event_tx

@@ -228,6 +228,7 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             RadioEvent::Ft8Decodes(d) => Some(ServerMsg::Ft8Decodes(d)),
             RadioEvent::Ft8Status(s) => Some(ServerMsg::Ft8Status(s)),
             RadioEvent::Ft8QsoLogged(r) => Some(ServerMsg::Ft8QsoLogged(r)),
+            RadioEvent::SkimmerSpots(s) => Some(ServerMsg::SkimmerSpots(s)),
         }
     };
     if let Some(msg) = msg {

@@ -3791,6 +3791,7 @@ dependencies = [
  "sdroxide-config",
  "sdroxide-digi",
  "sdroxide-dsp",
+ "sdroxide-skimmer",
  "sdroxide-types",
  "soapysdr",
  "thiserror 2.0.19",
@@ -3818,6 +3819,18 @@ dependencies = [
  "tower-http",
  "tracing",
  "triple_buffer",
+]
+
+[[package]]
+name = "sdroxide-skimmer"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "num-complex",
+ "rustfft",
+ "sdroxide-dsp",
+ "sdroxide-types",
+ "tracing",
 ]
 
 [[package]]

@@ -1,0 +1,15 @@
+[package]
+name = "sdroxide-skimmer"
+version.workspace = true
+edition.workspace = true
+
+# Native-only: wideband multi-signal decoders (CW today). Not linked by the
+# wasm client — skimming runs server-side in the engine, like FT8/FT4.
+
+[dependencies]
+sdroxide-types.workspace = true
+sdroxide-dsp.workspace = true
+num-complex.workspace = true
+rustfft.workspace = true
+crossbeam-channel.workspace = true
+tracing.workspace = true

@@ -111,6 +111,8 @@ pub struct RadioState {
     pub band: Band,
     /// Impulse noise blanker on the raw IQ stream.
     pub noise_blanker: bool,
+    /// CW skimmer running (decodes many CW signals across a wide window).
+    pub skimmer_enabled: bool,
 
     /// SoapySDR RX gain elements: (name, dB).
     pub gains: Vec<(String, f64)>,
@@ -144,6 +146,7 @@ impl Default for RadioState {
             },
             band: Band::M20,
             noise_blanker: false,
+            skimmer_enabled: false,
             gains: Vec::new(),
             tx_gains: Vec::new(),
             antenna_rx: String::new(),

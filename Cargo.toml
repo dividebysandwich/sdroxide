@@ -22,6 +22,11 @@ opt-level = 2
 [profile.dev.package.sdroxide-radio]
 opt-level = 2
 
+# The CW skimmer's STFT + per-bin scan run every audio block; unoptimized they
+# stutter the audio, so keep them fast in dev too.
+[profile.dev.package.sdroxide-skimmer]
+opt-level = 2
+
 [workspace.dependencies]
 sdroxide-types = { path = "crates/sdroxide-types" }
 sdroxide-proto = { path = "crates/sdroxide-proto" }

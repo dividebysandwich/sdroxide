@@ -10,14 +10,16 @@ use serde::{Deserialize, Serialize};
 
 use sdroxide_types::{
     Command, Decode, DeviceCaps, DigiStatus, MemoryChannel, Meters, QsoRecord, RadioState,
-    SpectrumFrame,
+    SkimmerSpot, SpectrumFrame,
 };
 
 /// Bump on any incompatible change to the message enums (this includes the
 /// payload structs from `sdroxide-types` that ride the wire, e.g. `QsoRecord`).
 /// v3: `QsoRecord` gained `id` + `comment` fields.
-pub const PROTO_VERSION: u16 = 3;
-const VERSION_BYTE: u8 = 0x03;
+/// v4: added `ServerMsg::SkimmerSpots` + `Command::SetSkimmerEnabled` + a
+/// `RadioState.skimmer_enabled` field.
+pub const PROTO_VERSION: u16 = 4;
+const VERSION_BYTE: u8 = 0x04;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {
@@ -78,6 +80,8 @@ pub enum ServerMsg {
     Ft8Decodes(Vec<Decode>),
     Ft8Status(DigiStatus),
     Ft8QsoLogged(QsoRecord),
+    // Skimmers (CW etc.).
+    SkimmerSpots(Vec<SkimmerSpot>),
 }
 
 pub fn encode<T: Serialize>(msg: &T) -> Result<Vec<u8>, ProtoError> {

@@ -62,4 +62,8 @@ pub enum Command {
     DigiStopQso,
     /// Abort any in-progress transmission immediately.
     DigiAbortTx,
+
+    // Skimmers
+    /// Turn the (CW) skimmer on/off.
+    SetSkimmerEnabled(bool),
 }
