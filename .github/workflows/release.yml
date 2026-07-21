@@ -46,23 +46,28 @@ jobs:
           if-no-files-found: error
 
   build:
-    name: ${{ matrix.label }}
+    name: ${{ matrix.label }} (${{ matrix.variant }})
     needs: web
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        # Build every platform twice: `soapy` (dynamically links SoapySDR) and
+        # `cat` (--no-default-features: no SoapySDR, runs without libSoapySDR
+        # installed; drive a CAT rig over serial + a sound card instead).
+        variant: [soapy, cat]
+        label: [linux-x86_64, linux-aarch64, windows-x86_64, macos-aarch64, macos-x86_64]
         include:
-          - os: ubuntu-latest
-            label: linux-x86_64
-          - os: ubuntu-24.04-arm
-            label: linux-aarch64
-          - os: windows-latest
-            label: windows-x86_64
-          - os: macos-latest
-            label: macos-aarch64
-          - os: macos-15-intel
-            label: macos-x86_64
+          - label: linux-x86_64
+            os: ubuntu-latest
+          - label: linux-aarch64
+            os: ubuntu-24.04-arm
+          - label: windows-x86_64
+            os: windows-latest
+          - label: macos-aarch64
+            os: macos-latest
+          - label: macos-x86_64
+            os: macos-15-intel
     defaults:
       run:
         shell: bash
@@ -77,35 +82,42 @@ jobs:
             RELEASE_VERSION="dev-${GITHUB_SHA::7}"
           fi
           CARGO_VERSION=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n1)
+          # CAT-only artifacts get a "-cat" suffix so they sit alongside the
+          # SoapySDR ones.
+          if [[ "${{ matrix.variant }}" == "cat" ]]; then SUFFIX="-cat"; else SUFFIX=""; fi
           {
             echo "RELEASE_VERSION=$RELEASE_VERSION"
             echo "CARGO_VERSION=$CARGO_VERSION"
-            echo "PKG=sdroxide-$RELEASE_VERSION-${{ matrix.label }}"
+            echo "PKG=sdroxide-$RELEASE_VERSION-${{ matrix.label }}$SUFFIX"
           } >> "$GITHUB_ENV"
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libsoapysdr-dev libasound2-dev pkg-config
+          # ALSA + pkg-config are needed by both variants; SoapySDR only by `soapy`.
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+          if [[ "${{ matrix.variant }}" == "soapy" ]]; then
+            sudo apt-get install -y --no-install-recommends libsoapysdr-dev
+          fi
 
       # Extract the PothosSDR bundle (no install needed); soapysdr-sys finds
       # SoapySDR.dll via PATH. Same approach as rust-soapysdr's own CI.
       - name: Install SoapySDR (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.variant == 'soapy'
         run: |
           curl -L https://downloads.myriadrf.org/builds/PothosSDR/PothosSDR-2021.07.25-vc16-x64.exe -o pothossdr.exe
           7z x -opothos -y pothossdr.exe > /dev/null
           echo "${{ github.workspace }}/pothos/bin" >> "$GITHUB_PATH"
 
       - name: Install SoapySDR (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.variant == 'soapy'
         run: brew install pkg-config soapysdr
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.label }}
+          key: ${{ matrix.label }}-${{ matrix.variant }}
 
       # The embed-web feature bakes these files into the binary via rust-embed.
       - name: Fetch web client
@@ -115,7 +127,13 @@ jobs:
           path: crates/sdroxide-web/dist
 
       - name: Build
-        run: cargo build --release --locked -p sdroxide --features embed-web
+        run: |
+          # `cat` drops the default `soapy` feature; both embed the web client.
+          if [[ "${{ matrix.variant }}" == "cat" ]]; then
+            cargo build --release --locked -p sdroxide --no-default-features --features embed-web
+          else
+            cargo build --release --locked -p sdroxide --features embed-web
+          fi
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
@@ -123,7 +141,22 @@ jobs:
           strip target/release/sdroxide
           mkdir -p out stage/sdroxide
           cp target/release/sdroxide LICENSE stage/sdroxide/
-          cat > stage/sdroxide/README.txt <<'EOF'
+          if [[ "${{ matrix.variant }}" == "cat" ]]; then
+            cat > stage/sdroxide/README.txt <<'EOF'
+          sdroxide — SDR transceiver (https://github.com/dividebysandwich/sdroxide)
+
+          CAT-only build (no SoapySDR). Runtime requirement:
+            libasound2 (or libasound2t64)   — ALSA
+
+          Drives a CAT-controlled radio over a serial port + sound card;
+          configure it under Settings -> Audio/CAT. It cannot use SoapySDR
+          devices — download the standard (non "-cat") build for those.
+
+          Run ./sdroxide for the GUI, ./sdroxide --server to serve the web UI
+          on http://localhost:4950, or ./sdroxide --help for all options.
+          EOF
+          else
+            cat > stage/sdroxide/README.txt <<'EOF'
           sdroxide — SDR transceiver (https://github.com/dividebysandwich/sdroxide)
 
           Runtime requirements (Debian/Ubuntu package names):
@@ -132,9 +165,15 @@ jobs:
           Run ./sdroxide for the GUI, ./sdroxide --server to serve the web UI
           on http://localhost:4950, or ./sdroxide --help for all options.
           EOF
+          fi
           tar czf "out/$PKG.tar.gz" -C stage sdroxide
           cargo install cargo-deb --locked
-          cargo deb --no-build -p sdroxide -o "out/$PKG.deb"
+          # `--variant cat` clears the SoapySDR recommendation for the CAT deb.
+          if [[ "${{ matrix.variant }}" == "cat" ]]; then
+            cargo deb --no-build -p sdroxide --variant cat -o "out/$PKG.deb"
+          else
+            cargo deb --no-build -p sdroxide -o "out/$PKG.deb"
+          fi
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -142,7 +181,20 @@ jobs:
           mkdir -p out stage/sdroxide
           cp target/release/sdroxide.exe stage/sdroxide/
           cp LICENSE stage/sdroxide/LICENSE.txt
-          cat > stage/sdroxide/README.txt <<'EOF'
+          if [[ "${{ matrix.variant }}" == "cat" ]]; then
+            cat > stage/sdroxide/README.txt <<'EOF'
+          sdroxide — SDR transceiver (https://github.com/dividebysandwich/sdroxide)
+
+          CAT-only build (no SoapySDR / PothosSDR needed). Drives a
+          CAT-controlled radio over a serial port + sound card; configure it
+          under Settings -> Audio/CAT. It cannot use SoapySDR devices —
+          download the standard (non "-cat") build for those.
+
+          Run sdroxide.exe for the GUI, sdroxide.exe --server to serve the web
+          UI on http://localhost:4950, or sdroxide.exe --help for all options.
+          EOF
+          else
+            cat > stage/sdroxide/README.txt <<'EOF'
           sdroxide — SDR transceiver (https://github.com/dividebysandwich/sdroxide)
 
           Requires PothosSDR (provides SoapySDR and the device drivers):
@@ -152,19 +204,37 @@ jobs:
           Run sdroxide.exe for the GUI, sdroxide.exe --server to serve the web
           UI on http://localhost:4950, or sdroxide.exe --help for all options.
           EOF
+          fi
           7z a "out/$PKG.zip" ./stage/sdroxide > /dev/null
-          dotnet tool install --global wix --version 5.0.2
-          wix build packaging/windows/main.wxs -arch x64 \
-            -d Version="$CARGO_VERSION" -d BinDir="target/release" \
-            -o "out/$PKG.msi"
+          # The MSI (fixed product identity) is only built for the SoapySDR
+          # variant; CAT users take the portable .zip.
+          if [[ "${{ matrix.variant }}" == "soapy" ]]; then
+            dotnet tool install --global wix --version 5.0.2
+            wix build packaging/windows/main.wxs -arch x64 \
+              -d Version="$CARGO_VERSION" -d BinDir="target/release" \
+              -o "out/$PKG.msi"
+          fi
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: |
-          mkdir -p out stage-dmg stage/sdroxide
-          # Portable tarball
+          mkdir -p out stage/sdroxide
+          # Portable tarball (both variants)
           cp target/release/sdroxide LICENSE stage/sdroxide/
-          cat > stage/sdroxide/README.txt <<'EOF'
+          if [[ "${{ matrix.variant }}" == "cat" ]]; then
+            cat > stage/sdroxide/README.txt <<'EOF'
+          sdroxide — SDR transceiver (https://github.com/dividebysandwich/sdroxide)
+
+          CAT-only build (no SoapySDR needed). Drives a CAT-controlled radio
+          over a serial port + sound card; configure it under Settings ->
+          Audio/CAT. It cannot use SoapySDR devices — download the standard
+          (non "-cat") build for those.
+
+          Run ./sdroxide for the GUI, ./sdroxide --server to serve the web UI
+          on http://localhost:4950, or ./sdroxide --help for all options.
+          EOF
+          else
+            cat > stage/sdroxide/README.txt <<'EOF'
           sdroxide — SDR transceiver (https://github.com/dividebysandwich/sdroxide)
 
           Requires SoapySDR plus the driver for your radio, e.g.:
@@ -173,21 +243,26 @@ jobs:
           Run ./sdroxide for the GUI, ./sdroxide --server to serve the web UI
           on http://localhost:4950, or ./sdroxide --help for all options.
           EOF
+          fi
           tar czf "out/$PKG.tar.gz" -C stage sdroxide
-          # .app bundle + DMG
-          APP=stage-dmg/sdroxide.app
-          mkdir -p "$APP/Contents/MacOS"
-          sed "s/@VERSION@/$CARGO_VERSION/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
-          cp target/release/sdroxide "$APP/Contents/MacOS/sdroxide"
-          codesign --force -s - "$APP/Contents/MacOS/sdroxide"
-          codesign --force -s - "$APP"
-          cp LICENSE stage-dmg/
-          ln -s /Applications stage-dmg/Applications
-          hdiutil create -volname sdroxide -srcfolder stage-dmg -ov -format UDZO "out/$PKG.dmg"
+          # The .app/.dmg (fixed bundle identity) is only built for the SoapySDR
+          # variant; CAT users take the portable tarball.
+          if [[ "${{ matrix.variant }}" == "soapy" ]]; then
+            mkdir -p stage-dmg
+            APP=stage-dmg/sdroxide.app
+            mkdir -p "$APP/Contents/MacOS"
+            sed "s/@VERSION@/$CARGO_VERSION/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
+            cp target/release/sdroxide "$APP/Contents/MacOS/sdroxide"
+            codesign --force -s - "$APP/Contents/MacOS/sdroxide"
+            codesign --force -s - "$APP"
+            cp LICENSE stage-dmg/
+            ln -s /Applications stage-dmg/Applications
+            hdiutil create -volname sdroxide -srcfolder stage-dmg -ov -format UDZO "out/$PKG.dmg"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: pkg-${{ matrix.label }}
+          name: pkg-${{ matrix.label }}-${{ matrix.variant }}
           path: out/*
           if-no-files-found: error
 
@@ -215,10 +290,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<'EOF'
-          ### Requirements
+          ### Which build to download
 
-          All builds dynamically link **SoapySDR** — install it together with
-          the driver module for your radio:
+          Two builds are provided for every platform:
+
+          - **Standard** (no suffix) — dynamically links **SoapySDR**; use this
+            for SoapySDR-supported SDRs (HackRF, RTL-SDR, etc.).
+          - **CAT** (`-cat` suffix) — built without SoapySDR, so it needs no
+            libSoapySDR/PothosSDR at all. Use it for a CAT-controlled radio
+            (Icom/Yaesu/Xiegu) reached over a serial port + USB sound card,
+            configured under **Settings → Audio/CAT**. It cannot drive SoapySDR
+            devices.
+
+          ### Requirements (Standard builds)
+
+          Install **SoapySDR** together with the driver module for your radio:
 
           - **Windows**: install [PothosSDR](https://downloads.myriadrf.org/builds/PothosSDR/)
             and select "Add PothosSDR to the system PATH" during setup.
@@ -229,6 +315,10 @@ jobs:
             `soapyrtlsdr` or `soapyhackrf`. The app is unsigned: right-click →
             Open on first launch, or clear quarantine with
             `xattr -dr com.apple.quarantine sdroxide.app`.
+
+          The **CAT** builds need only audio support (ALSA `libasound2` on
+          Linux; built in on Windows/macOS) — no SoapySDR. They ship as portable
+          archives (Linux also as `sdroxide-cat_*.deb`); no installer.
 
           Every binary embeds the web client: run `sdroxide --server` and open
           `http://<host>:4950` in a browser. `sdroxide-web-*.zip` contains the

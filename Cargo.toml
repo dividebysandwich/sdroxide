@@ -103,3 +103,9 @@ assets = [
     ["packaging/linux/sdroxide.desktop", "usr/share/applications/", "644"],
     ["README.md", "usr/share/doc/sdroxide/README.md", "644"],
 ]
+
+# CAT-only .deb: no SoapySDR link, so drop the SoapySDR recommendation (apt
+# installs Recommends by default). Built with `cargo deb --variant cat`.
+[package.metadata.deb.variants.cat]
+name = "sdroxide-cat"
+recommends = ""
