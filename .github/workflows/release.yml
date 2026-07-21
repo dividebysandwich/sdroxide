@@ -12,6 +12,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # audiopus_sys bundles a libopus whose CMakeLists predates CMake 3.5; the
+  # CMake 4.x on the macOS/Windows runners refuses to configure it without
+  # this override (CMake 3.x ignores the variable).
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
   # Build the wasm web client once; every native build embeds the same dist.
