@@ -142,9 +142,6 @@ pub fn run_remote(url: &str) -> Result<()> {
         raw: Vec::new(),
     };
 
-    let ctrl = sdroxide_ui::RemoteController::connect(url, Some(Box::new(bridge)))
-        .map_err(|e| anyhow::anyhow!("connect {url}: {e}"))?;
-
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport: eframe::egui::ViewportBuilder::default()
@@ -153,10 +150,24 @@ pub fn run_remote(url: &str) -> Result<()> {
             .with_title(format!("sdroxide — remote {url}")),
         ..Default::default()
     };
+    // Connect inside the creator so the socket can wake the UI (repaint) the
+    // moment a message arrives, instead of waiting for the next poll.
+    let url = url.to_string();
     eframe::run_native(
         "sdroxide-remote",
         options,
-        Box::new(move |cc| Ok(Box::new(sdroxide_ui::SdroxideApp::new(cc, Box::new(ctrl))))),
+        Box::new(move |cc| {
+            let ctx = cc.egui_ctx.clone();
+            // A deadline hint, not an immediate repaint: audio packets arrive
+            // far faster than the display needs to redraw, and egui takes the
+            // soonest of all requested deadlines anyway — this escapes the
+            // idle poll quickly without outpacing the app's frame scheduler.
+            let ctrl = sdroxide_ui::RemoteController::connect(&url, Some(Box::new(bridge)), move || {
+                ctx.request_repaint_after(std::time::Duration::from_millis(33))
+            })
+            .map_err(|e| format!("connect {url}: {e}"))?;
+            Ok(Box::new(sdroxide_ui::SdroxideApp::new(cc, Box::new(ctrl))))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("eframe: {e}"))
 }

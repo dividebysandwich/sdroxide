@@ -330,9 +330,10 @@ pub fn init(rs: &RenderState) {
     });
 }
 
-/// Per-paint callback carrying the latest frame and view mapping.
+/// Per-paint callback carrying the latest frame and view mapping. The frame is
+/// shared via `Arc` so per-repaint handoff never deep-clones the bins.
 pub struct WaterfallCallback {
-    pub frame: Option<SpectrumFrame>,
+    pub frame: Option<std::sync::Arc<SpectrumFrame>>,
     /// Viewport in texture-u coordinates.
     pub u_lo: f32,
     pub u_hi: f32,

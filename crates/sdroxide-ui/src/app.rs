@@ -19,6 +19,12 @@ const CFG_DEBOUNCE_S: f64 = 0.25;
 /// stops keying, instead of vanishing.
 const SKIMMER_FADE_SECS: f64 = 5.0;
 
+/// Repaint-poll cadence when no spectrum stream is flowing (startup, connection
+/// lost, stalled stream) — the app truly idles between these wakes.
+const IDLE_POLL_MS: u64 = 250;
+/// The stream counts as stalled after this long without a new frame (seconds).
+const STREAM_STALE_S: f64 = 1.0;
+
 /// Stable per-callsign id for the FT8 overlay boxes (keeps a station's box in
 /// place across slots).
 fn hash_call(s: &str) -> u64 {
@@ -32,7 +38,9 @@ pub struct SdroxideApp {
     ctrl: Box<dyn RadioController>,
     caps: Option<DeviceCaps>,
     state: RadioState,
-    frame: Option<SpectrumFrame>,
+    /// Latest spectrum frame, shared with the GPU waterfall callback — the Arc
+    /// makes the per-repaint handoff a refcount bump instead of a bins clone.
+    frame: Option<std::sync::Arc<SpectrumFrame>>,
     meters: Option<Meters>,
     memories: Vec<MemoryChannel>,
     view: ViewState,
@@ -41,6 +49,10 @@ pub struct SdroxideApp {
     sent_cfg: Option<SpectrumConfig>,
     desired_cfg: Option<SpectrumConfig>,
     desired_at: f64,
+    /// egui time of the last received spectrum frame, for stall detection.
+    last_spectrum_at: f64,
+    /// Cached spectrum polylines (recomputed only when frame/view/rect change).
+    trace_cache: spectrum_view::TraceCache,
     seen_first_state: bool,
     show_memories: bool,
     show_settings: bool,
@@ -181,6 +193,8 @@ impl SdroxideApp {
             sent_cfg: None,
             desired_cfg: None,
             desired_at: 0.0,
+            last_spectrum_at: 0.0,
+            trace_cache: spectrum_view::TraceCache::default(),
             seen_first_state: false,
             show_memories: false,
             show_settings: false,
@@ -1843,7 +1857,10 @@ impl eframe::App for SdroxideApp {
                     self.state = s;
                     self.recenter_if_tuned_away(prev_vfo);
                 }
-                RadioEvent::Spectrum(f) => self.frame = Some(f),
+                RadioEvent::Spectrum(f) => {
+                    self.frame = Some(std::sync::Arc::new(f));
+                    self.last_spectrum_at = now;
+                }
                 RadioEvent::Meters(m) => self.meters = Some(m),
                 RadioEvent::Memories(m) => self.memories = m,
                 RadioEvent::ConnectionLost(e) => self.error = Some(e),
@@ -1943,6 +1960,7 @@ impl eframe::App for SdroxideApp {
                     &mut self.state,
                     frame.as_ref(),
                     &mut self.peaks,
+                    &mut self.trace_cache,
                     Some(audio_hz),
                     &ft8_spots,
                     &ft8_alpha,
@@ -2001,6 +2019,7 @@ impl eframe::App for SdroxideApp {
                 &mut self.state,
                 frame.as_ref(),
                 &mut self.peaks,
+                &mut self.trace_cache,
                 &cw_spots,
                 &cw_alpha,
                 &mut cmds,
@@ -2031,8 +2050,28 @@ impl eframe::App for SdroxideApp {
             self.ctrl.send(c);
         }
 
-        // Spectrum frames arrive at up to 30 fps; poll comfortably faster.
-        ctx.request_repaint_after(Duration::from_millis(16));
+        // Data-driven repaint: redraw immediately when data is already waiting
+        // (arrived while this frame was being built — checked after the drain,
+        // so this can't busy-loop), otherwise wake at the next expected
+        // spectrum frame, or idle-poll when nothing is streaming. User input
+        // wakes eframe by itself, so interactivity is unaffected.
+        if self.ctrl.wants_repaint_soon() {
+            ctx.request_repaint();
+        } else {
+            let fps = self
+                .sent_cfg
+                .or(self.desired_cfg)
+                .map(|c| c.fps)
+                .unwrap_or(SpectrumConfig::default().fps)
+                .max(1) as u64;
+            let streaming = self.frame.is_some()
+                && self.error.is_none()
+                && now - self.last_spectrum_at < STREAM_STALE_S;
+            // Floor division keeps the poll period <= the stream period, so no
+            // frame is ever skipped (the spectrum buffer is latest-wins).
+            let wait_ms = if streaming { 1000 / fps } else { IDLE_POLL_MS };
+            ctx.request_repaint_after(Duration::from_millis(wait_ms));
+        }
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

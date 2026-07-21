@@ -29,9 +29,17 @@ pub struct RemoteController {
 }
 
 impl RemoteController {
-    pub fn connect(url: &str, audio: Option<Box<dyn AudioBridge>>) -> Result<Self, String> {
-        let (sender, receiver) = ewebsock::connect(url, ewebsock::Options::default())
-            .map_err(|e| e.to_string())?;
+    /// `wake` is called from the socket thread whenever an event arrives —
+    /// pass `ctx.request_repaint` so the UI wakes immediately instead of
+    /// waiting for its next scheduled poll.
+    pub fn connect(
+        url: &str,
+        audio: Option<Box<dyn AudioBridge>>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<Self, String> {
+        let (sender, receiver) =
+            ewebsock::connect_with_wakeup(url, ewebsock::Options::default(), wake)
+                .map_err(|e| e.to_string())?;
         Ok(RemoteController {
             sender,
             receiver,

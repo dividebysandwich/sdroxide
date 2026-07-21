@@ -53,14 +53,23 @@ mod web {
             let host = location.host().unwrap_or_else(|_| "localhost:4950".into());
             let url = format!("{ws_proto}://{host}/ws");
 
-            let ctrl = RemoteController::connect(&url, Some(Box::new(WebAudioBridge)))
-                .expect("websocket connect");
-
             eframe::WebRunner::new()
                 .start(
                     canvas,
                     eframe::WebOptions::default(),
-                    Box::new(move |cc| Ok(Box::new(SdroxideApp::new(cc, Box::new(ctrl))))),
+                    // Connect inside the creator so the socket can wake the UI
+                    // (repaint) the moment a message arrives.
+                    Box::new(move |cc| {
+                        let ctx = cc.egui_ctx.clone();
+                        // Deadline hint, not an immediate repaint — see the
+                        // native remote client for rationale.
+                        let ctrl =
+                            RemoteController::connect(&url, Some(Box::new(WebAudioBridge)), move || {
+                                ctx.request_repaint_after(std::time::Duration::from_millis(33))
+                            })
+                            .map_err(|e| format!("websocket connect: {e}"))?;
+                        Ok(Box::new(SdroxideApp::new(cc, Box::new(ctrl))))
+                    }),
                 )
                 .await
                 .expect("eframe start");

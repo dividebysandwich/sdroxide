@@ -2,6 +2,8 @@
 //! drag-pan, wheel-zoom (around the cursor), click-to-tune (shift-click
 //! tunes VFO B), and draggable passband filter edges.
 
+use std::sync::Arc;
+
 use eframe::egui::{
     self, Align2, Color32, CursorIcon, FontId, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui,
     pos2, vec2,
@@ -204,13 +206,25 @@ pub struct PeakHold {
     bins: Vec<f32>,
     center: f64,
     span: f64,
+    /// Sequence of the frame last folded in, so decay runs once per *new*
+    /// frame rather than once per repaint (repaint rate must not change the
+    /// decay speed).
+    last_seq: Option<u32>,
+    /// Bumped whenever `bins` change outside the seq progression (mapping
+    /// change, clear) — part of the trace-cache key.
+    generation: u32,
 }
 
-/// dB-scale u8 units per frame (~3.5 dB/s at 30 fps over a 100 dB range).
+/// dB-scale u8 units per new spectrum frame (~3.5 dB/s at 30 fps over a
+/// 100 dB range).
 const PEAK_DECAY: f32 = 0.3;
 
 impl PeakHold {
     fn update(&mut self, f: &SpectrumFrame) {
+        if self.last_seq == Some(f.seq) {
+            return; // same frame redrawn — nothing new to fold in
+        }
+        self.last_seq = Some(f.seq);
         let mapping_changed = self.bins.len() != f.bins.len()
             || (self.center - f.center_hz).abs() > f.span_hz * 1e-6
             || (self.span - f.span_hz).abs() > f.span_hz * 1e-6;
@@ -218,11 +232,71 @@ impl PeakHold {
             self.center = f.center_hz;
             self.span = f.span_hz;
             self.bins = f.bins.iter().map(|&b| b as f32).collect();
+            self.generation = self.generation.wrapping_add(1);
             return;
         }
         for (p, &b) in self.bins.iter_mut().zip(&f.bins) {
             *p = (b as f32).max(*p - PEAK_DECAY);
         }
+    }
+
+    fn clear(&mut self) {
+        self.bins.clear();
+        self.last_seq = None;
+        self.generation = self.generation.wrapping_add(1);
+    }
+}
+
+/// Screen-space spectrum polylines, recomputed only when the underlying frame,
+/// viewport, or rect actually change — pure repaints reuse the cached points.
+#[derive(Default)]
+pub struct TraceCache {
+    live: TraceEntry,
+    hold: TraceEntry,
+}
+
+#[derive(Default)]
+struct TraceEntry {
+    key: Option<TraceKey>,
+    points: Vec<Pos2>,
+}
+
+/// Everything the per-pixel trace math depends on. Float fields are compared
+/// as exact bits — any change must invalidate. (`db_floor`/`db_ceil` need no
+/// entry: they reach the trace via the engine's u8 mapping, i.e. a new seq.)
+#[derive(Clone, Copy, PartialEq)]
+struct TraceKey {
+    seq: u32,
+    generation: u32,
+    view_lo: u64,
+    view_hi: u64,
+    rect: [u32; 4],
+}
+
+fn trace_key(f: &SpectrumFrame, generation: u32, view: &ViewState, rect: &Rect) -> TraceKey {
+    TraceKey {
+        seq: f.seq,
+        generation,
+        view_lo: view.view_lo_hz.to_bits(),
+        view_hi: view.view_hi_hz.to_bits(),
+        rect: [
+            rect.left().to_bits(),
+            rect.top().to_bits(),
+            rect.right().to_bits(),
+            rect.bottom().to_bits(),
+        ],
+    }
+}
+
+impl TraceEntry {
+    /// Recompute the polyline only when `key` changed; hand back a copy for
+    /// `Shape::line` (a memcpy — far cheaper than the per-pixel f64 math).
+    fn points_for(&mut self, key: TraceKey, compute: impl FnOnce() -> Vec<Pos2>) -> Vec<Pos2> {
+        if self.key != Some(key) {
+            self.points = compute();
+            self.key = Some(key);
+        }
+        self.points.clone()
     }
 }
 
@@ -230,13 +304,14 @@ pub fn show(
     ui: &mut Ui,
     view: &mut ViewState,
     state: &mut RadioState,
-    frame: Option<&SpectrumFrame>,
+    frame: Option<&Arc<SpectrumFrame>>,
     peaks: &mut PeakHold,
+    trace: &mut TraceCache,
     skimmer: &[SkimmerSpot],
     alpha: &[f32],
     cmds: &mut Vec<Command>,
 ) {
-    show_ext(ui, view, state, frame, peaks, None, skimmer, alpha, cmds);
+    show_ext(ui, view, state, frame, peaks, trace, None, skimmer, alpha, cmds);
 }
 
 /// `show` with an optional digital-mode audio marker. When `digi_audio_hz`
@@ -249,8 +324,9 @@ pub fn show_ext(
     ui: &mut Ui,
     view: &mut ViewState,
     state: &mut RadioState,
-    frame: Option<&SpectrumFrame>,
+    frame: Option<&Arc<SpectrumFrame>>,
     peaks: &mut PeakHold,
+    trace: &mut TraceCache,
     digi_audio_hz: Option<f32>,
     skimmer: &[SkimmerSpot],
     alpha: &[f32],
@@ -472,18 +548,20 @@ pub fn show_ext(
         draw_grid(&painter, view, &spec_rect);
         if view.peak_hold {
             peaks.update(f);
-            draw_trace(
-                &painter,
-                view,
-                f,
-                &peaks.bins,
-                &spec_rect,
-                Color32::from_rgba_unmultiplied(255, 220, 90, 170),
-            );
+            let key = trace_key(f, peaks.generation, view, &spec_rect);
+            let pts = trace
+                .hold
+                .points_for(key, || compute_trace(view, f, Some(&peaks.bins), &spec_rect));
+            painter.add(Shape::line(
+                pts,
+                Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 220, 90, 170)),
+            ));
         } else {
-            peaks.bins.clear();
+            peaks.clear();
         }
-        draw_spectrum_line(&painter, view, f, &spec_rect);
+        let key = trace_key(f, 0, view, &spec_rect);
+        let pts = trace.live.points_for(key, || compute_trace(view, f, None, &spec_rect));
+        painter.add(Shape::line(pts, Stroke::new(1.0, Color32::from_rgb(120, 220, 255))));
     }
     draw_scale(&painter, view, &scale_rect);
 
@@ -512,7 +590,8 @@ pub fn show_ext(
     ui.painter().add(crate::egui_wgpu::Callback::new_paint_callback(
         wf_rect,
         WaterfallCallback {
-            frame: Some(f.clone()),
+            // Arc::clone, not a bins deep-clone — keep it explicit.
+            frame: Some(Arc::clone(f)),
             u_lo,
             u_hi,
             rows_visible: wf_rect.height(),
@@ -648,28 +727,18 @@ pub fn show_ext(
     crate::chrome::corner_brackets(&painter, rect, crate::theme::PINK);
 }
 
-fn draw_spectrum_line(
-    painter: &egui::Painter,
+/// Per-pixel polyline of the frame's bins (or of `values` when given, e.g.
+/// the peak-hold bins) mapped through the current viewport. This is the
+/// expensive path the [`TraceCache`] avoids on unchanged repaints.
+fn compute_trace(
     view: &ViewState,
     f: &SpectrumFrame,
+    values: Option<&[f32]>,
     rect: &Rect,
-) {
-    let values: Vec<f32> = f.bins.iter().map(|&b| b as f32).collect();
-    draw_trace(painter, view, f, &values, rect, Color32::from_rgb(120, 220, 255));
-}
-
-/// Polyline of `values` (u8-scale) mapped through the current viewport.
-fn draw_trace(
-    painter: &egui::Painter,
-    view: &ViewState,
-    f: &SpectrumFrame,
-    values: &[f32],
-    rect: &Rect,
-    color: Color32,
-) {
-    let n = values.len();
+) -> Vec<Pos2> {
+    let n = values.map(|v| v.len()).unwrap_or(f.bins.len());
     if n == 0 {
-        return;
+        return Vec::new();
     }
     let base = f.center_hz - f.span_hz / 2.0;
     let w = rect.width().max(1.0) as usize;
@@ -679,13 +748,18 @@ fn draw_trace(
         let hz = view.x_to_freq(x, rect);
         let bin_f = (hz - base) / f.span_hz * n as f64;
         let v = if (0.0..n as f64).contains(&bin_f) {
-            values[bin_f as usize] / 255.0
+            let i = bin_f as usize;
+            let raw = match values {
+                Some(v) => v[i],
+                None => f.bins[i] as f32,
+            };
+            raw / 255.0
         } else {
             0.0
         };
         points.push(Pos2::new(x, rect.bottom() - v * rect.height()));
     }
-    painter.add(Shape::line(points, Stroke::new(1.0, color)));
+    points
 }
 
 fn draw_grid(painter: &egui::Painter, view: &ViewState, rect: &Rect) {

@@ -111,7 +111,9 @@ pub fn show(
                 let c = project(la, lo);
                 p.circle_filled(c, dot_r + 4.0, Color32::from_rgba_unmultiplied(120, 240, 255, 70));
                 p.circle_filled(c, 3.2, Color32::WHITE);
-                ui.ctx().request_repaint();
+                // ~30 fps is plenty for the comet; an unconditional repaint
+                // would drive the whole app at vsync rate during TX.
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
             }
         }
     }
