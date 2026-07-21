@@ -19,6 +19,13 @@ const CFG_DEBOUNCE_S: f64 = 0.25;
 /// stops keying, instead of vanishing.
 const SKIMMER_FADE_SECS: f64 = 5.0;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsTab {
+    Device,
+    Audio,
+    Cat,
+}
+
 /// Repaint-poll cadence when no spectrum stream is flowing (startup, connection
 /// lost, stalled stream) — the app truly idles between these wakes.
 const IDLE_POLL_MS: u64 = 250;
@@ -57,6 +64,11 @@ pub struct SdroxideApp {
     /// opens (cpal enumeration is too slow for per-frame).
     audio_devices: Option<AudioDevices>,
     audio_devices_queried: bool,
+    /// Settings dialog: current tab, plus the radio-backend config + serial
+    /// ports loaded once on open (edited live, persisted on change).
+    settings_tab: SettingsTab,
+    radio_cfg: Option<sdroxide_types::RadioConfig>,
+    serial_ports: Vec<String>,
     seen_first_state: bool,
     show_memories: bool,
     show_settings: bool,
@@ -201,6 +213,9 @@ impl SdroxideApp {
             trace_cache: spectrum_view::TraceCache::default(),
             audio_devices: None,
             audio_devices_queried: false,
+            settings_tab: SettingsTab::Device,
+            radio_cfg: None,
+            serial_ports: Vec::new(),
             seen_first_state: false,
             show_memories: false,
             show_settings: false,
@@ -1750,18 +1765,24 @@ impl SdroxideApp {
     }
 
     fn settings_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
-        // Query the device list once per dialog-open; a pick invalidates it so
-        // the selection refreshes on the next frame.
+        // Query slow lists (cpal devices, serial ports, radio config) once per
+        // dialog-open; a pick invalidates so the selection refreshes.
         if !self.show_settings {
             self.audio_devices = None;
             self.audio_devices_queried = false;
+            return;
         } else if !self.audio_devices_queried {
             self.audio_devices = self.ctrl.audio_devices();
+            self.radio_cfg = self.ctrl.radio_config();
+            self.serial_ports = self.ctrl.serial_ports();
             self.audio_devices_queried = true;
         }
-        // Collected inside the window closure, applied after it (the closure
-        // holds `&self.caps`, so it can't call `&mut self.ctrl` itself).
+
+        // Edits collected here and applied after the window closure, which
+        // borrows `&self` and so can't touch `&mut self.ctrl`.
         let mut audio_pick: Option<(bool, Option<String>)> = None;
+        let mut radio_edit = self.radio_cfg.clone();
+        let mut tab = self.settings_tab;
 
         let mut open = self.show_settings;
         let resp = egui::Window::new("Settings")
@@ -1769,139 +1790,303 @@ impl SdroxideApp {
             .frame(crate::chrome::window_frame())
             .resizable(false)
             .show(ctx, |ui| {
-                let Some(caps) = &self.caps else {
-                    ui.label("no device");
-                    return;
-                };
-                ui.label(RichText::new(&caps.label).size(14.0).strong().color(crate::theme::CYAN));
-                ui.add_space(6.0);
-                ui.label(RichText::new("RX gains").strong());
-                egui::Grid::new("gains").num_columns(2).show(ui, |ui| {
-                    for g in caps.gains.iter().filter(|g| g.direction == Direction::Rx) {
-                        ui.label(&g.name);
-                        let mut db = self
-                            .state
-                            .gains
-                            .iter()
-                            .find(|(n, _)| *n == g.name)
-                            .map(|(_, d)| *d)
-                            .unwrap_or(g.min_db);
-                        let step = if g.step_db > 0.0 { g.step_db } else { 1.0 };
-                        if crate::chrome::slider(
-                            ui,
-                            Slider::new(&mut db, g.min_db..=g.max_db).step_by(step).suffix(" dB"),
-                        )
-                        .changed()
-                        {
-                            cmds.push(Command::SetGain {
-                                dir: Direction::Rx,
-                                element: g.name.clone(),
-                                db,
-                            });
+                ui.horizontal(|ui| {
+                    for (t, label) in [
+                        (SettingsTab::Device, "Device"),
+                        (SettingsTab::Audio, "Audio"),
+                        (SettingsTab::Cat, "Audio/CAT"),
+                    ] {
+                        if crate::chrome::chip(ui, tab == t, label).clicked() {
+                            tab = t;
                         }
-                        ui.end_row();
                     }
                 });
-                if caps.is_transmit_capable() {
-                    ui.separator();
-                    ui.label(RichText::new("TX gains").strong().color(Color32::from_rgb(240, 90, 60)));
-                    egui::Grid::new("tx-gains").num_columns(2).show(ui, |ui| {
-                        for g in caps.gains.iter().filter(|g| g.direction == Direction::Tx) {
-                            ui.label(&g.name);
-                            let mut db = self
-                                .state
-                                .tx_gains
-                                .iter()
-                                .find(|(n, _)| *n == g.name)
-                                .map(|(_, d)| *d)
-                                .unwrap_or(g.min_db);
-                            let step = if g.step_db > 0.0 { g.step_db } else { 1.0 };
-                            if crate::chrome::slider(
-                                ui,
-                                Slider::new(&mut db, g.min_db..=g.max_db).step_by(step).suffix(" dB"),
-                            )
-                            .changed()
-                            {
-                                cmds.push(Command::SetGain {
-                                    dir: Direction::Tx,
-                                    element: g.name.clone(),
-                                    db,
-                                });
-                            }
-                            ui.end_row();
-                        }
-                    });
-                }
-                if caps.antennas_rx.len() > 1 {
-                    ui.separator();
-                    ComboBox::from_id_salt("ant-rx")
-                        .selected_text(self.state.antenna_rx.clone())
-                        .show_ui(ui, |ui| {
-                            for a in &caps.antennas_rx {
-                                if ui
-                                    .selectable_label(self.state.antenna_rx == *a, a)
-                                    .clicked()
-                                {
-                                    cmds.push(Command::SetAntenna {
-                                        dir: Direction::Rx,
-                                        name: a.clone(),
-                                    });
-                                }
-                            }
-                        });
-                }
-                // Sound-device selection (native clients only; the browser
-                // owns audio routing in the web client).
-                if let Some(devs) = &self.audio_devices {
-                    ui.separator();
-                    ui.label(RichText::new("Audio").strong());
-                    egui::Grid::new("audio-devs").num_columns(2).show(ui, |ui| {
-                        let combo = |ui: &mut egui::Ui,
-                                     id: &str,
-                                     names: &[String],
-                                     selected: &Option<String>,
-                                     output: bool,
-                                     pick: &mut Option<(bool, Option<String>)>| {
-                            let shown = selected.clone().unwrap_or_else(|| "System default".into());
-                            ComboBox::from_id_salt(id)
-                                .width(280.0)
-                                .selected_text(shown)
-                                .show_ui(ui, |ui| {
-                                    if ui
-                                        .selectable_label(selected.is_none(), "System default")
-                                        .clicked()
-                                    {
-                                        *pick = Some((output, None));
-                                    }
-                                    for n in names {
-                                        if ui
-                                            .selectable_label(selected.as_deref() == Some(n), n)
-                                            .clicked()
-                                        {
-                                            *pick = Some((output, Some(n.clone())));
-                                        }
-                                    }
-                                });
-                        };
-                        ui.label("Output");
-                        combo(ui, "audio-out", &devs.outputs, &devs.selected_output, true, &mut audio_pick);
-                        ui.end_row();
-                        ui.label("Input");
-                        combo(ui, "audio-in", &devs.inputs, &devs.selected_input, false, &mut audio_pick);
-                        ui.end_row();
-                    });
+                ui.separator();
+                match tab {
+                    SettingsTab::Device => self.settings_device_tab(ui, cmds),
+                    SettingsTab::Audio => {
+                        self.settings_audio_tab(ui, &mut audio_pick, &mut radio_edit)
+                    }
+                    SettingsTab::Cat => settings_cat_tab(ui, &self.serial_ports, &mut radio_edit),
                 }
             });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
         }
         self.show_settings = open;
+        self.settings_tab = tab;
         if let Some((output, name)) = audio_pick {
             self.ctrl.set_audio_device(output, name);
-            // Re-query next frame so the dropdowns show the new selection.
             self.audio_devices_queried = false;
         }
+        if radio_edit != self.radio_cfg {
+            if let Some(cfg) = &radio_edit {
+                self.ctrl.set_radio_config(cfg.clone());
+            }
+            self.radio_cfg = radio_edit;
+        }
     }
+
+    /// Device tab: SoapySDR-style RX/TX gains + antenna (empty for a CAT rig).
+    fn settings_device_tab(&self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let Some(caps) = &self.caps else {
+            ui.label("no device");
+            return;
+        };
+        ui.label(RichText::new(&caps.label).size(14.0).strong().color(crate::theme::CYAN));
+        ui.add_space(6.0);
+        if caps.gains.iter().all(|g| g.direction != Direction::Rx) {
+            ui.label(RichText::new("This rig has no software-adjustable gains.").weak());
+        }
+        ui.label(RichText::new("RX gains").strong());
+        egui::Grid::new("gains").num_columns(2).show(ui, |ui| {
+            for g in caps.gains.iter().filter(|g| g.direction == Direction::Rx) {
+                ui.label(&g.name);
+                let mut db = self
+                    .state
+                    .gains
+                    .iter()
+                    .find(|(n, _)| *n == g.name)
+                    .map(|(_, d)| *d)
+                    .unwrap_or(g.min_db);
+                let step = if g.step_db > 0.0 { g.step_db } else { 1.0 };
+                if crate::chrome::slider(
+                    ui,
+                    Slider::new(&mut db, g.min_db..=g.max_db).step_by(step).suffix(" dB"),
+                )
+                .changed()
+                {
+                    cmds.push(Command::SetGain { dir: Direction::Rx, element: g.name.clone(), db });
+                }
+                ui.end_row();
+            }
+        });
+        if caps.gains.iter().any(|g| g.direction == Direction::Tx) {
+            ui.separator();
+            ui.label(RichText::new("TX gains").strong().color(Color32::from_rgb(240, 90, 60)));
+            egui::Grid::new("tx-gains").num_columns(2).show(ui, |ui| {
+                for g in caps.gains.iter().filter(|g| g.direction == Direction::Tx) {
+                    ui.label(&g.name);
+                    let mut db = self
+                        .state
+                        .tx_gains
+                        .iter()
+                        .find(|(n, _)| *n == g.name)
+                        .map(|(_, d)| *d)
+                        .unwrap_or(g.min_db);
+                    let step = if g.step_db > 0.0 { g.step_db } else { 1.0 };
+                    if crate::chrome::slider(
+                        ui,
+                        Slider::new(&mut db, g.min_db..=g.max_db).step_by(step).suffix(" dB"),
+                    )
+                    .changed()
+                    {
+                        cmds.push(Command::SetGain {
+                            dir: Direction::Tx,
+                            element: g.name.clone(),
+                            db,
+                        });
+                    }
+                    ui.end_row();
+                }
+            });
+        }
+        if caps.antennas_rx.len() > 1 {
+            ui.separator();
+            ComboBox::from_id_salt("ant-rx")
+                .selected_text(self.state.antenna_rx.clone())
+                .show_ui(ui, |ui| {
+                    for a in &caps.antennas_rx {
+                        if ui.selectable_label(self.state.antenna_rx == *a, a).clicked() {
+                            cmds.push(Command::SetAntenna { dir: Direction::Rx, name: a.clone() });
+                        }
+                    }
+                });
+        }
+    }
+
+    /// Audio tab: your own speakers/mic (live) + the radio's sound card (used
+    /// for the CAT backend; restart to apply).
+    fn settings_audio_tab(
+        &self,
+        ui: &mut egui::Ui,
+        audio_pick: &mut Option<(bool, Option<String>)>,
+        radio_edit: &mut Option<sdroxide_types::RadioConfig>,
+    ) {
+        let Some(devs) = &self.audio_devices else {
+            ui.label("Audio device selection is only available in the native app.");
+            return;
+        };
+        ui.label(RichText::new("Your audio (speakers / microphone)").strong());
+        egui::Grid::new("user-audio").num_columns(2).show(ui, |ui| {
+            ui.label("Output");
+            device_combo(ui, "u-out", &devs.outputs, &devs.selected_output, |n| {
+                *audio_pick = Some((true, n))
+            });
+            ui.end_row();
+            ui.label("Input");
+            device_combo(ui, "u-in", &devs.inputs, &devs.selected_input, |n| {
+                *audio_pick = Some((false, n))
+            });
+            ui.end_row();
+        });
+        if let Some(cfg) = radio_edit.as_mut() {
+            ui.separator();
+            ui.label(RichText::new("Radio audio (CAT rig sound card)").strong());
+            ui.label(RichText::new("Restart to apply.").weak());
+            egui::Grid::new("radio-audio").num_columns(2).show(ui, |ui| {
+                let (cur_in, cur_out) = (cfg.radio_audio_in.clone(), cfg.radio_audio_out.clone());
+                ui.label("From radio (RX)");
+                device_combo(ui, "r-in", &devs.inputs, &cur_in, |n| cfg.radio_audio_in = n);
+                ui.end_row();
+                ui.label("To radio (TX)");
+                device_combo(ui, "r-out", &devs.outputs, &cur_out, |n| cfg.radio_audio_out = n);
+                ui.end_row();
+            });
+        }
+    }
+}
+
+/// A device dropdown ("System default" + names); calls `pick(Some(name)|None)`.
+fn device_combo(
+    ui: &mut egui::Ui,
+    id: &str,
+    names: &[String],
+    selected: &Option<String>,
+    mut pick: impl FnMut(Option<String>),
+) {
+    let shown = selected.clone().unwrap_or_else(|| "System default".into());
+    ComboBox::from_id_salt(id).width(300.0).selected_text(shown).show_ui(ui, |ui| {
+        if ui.selectable_label(selected.is_none(), "System default").clicked() {
+            pick(None);
+        }
+        for n in names {
+            if ui.selectable_label(selected.as_deref() == Some(n), n).clicked() {
+                pick(Some(n.clone()));
+            }
+        }
+    });
+}
+
+/// A dropdown over an enum's `ALL`, using its `label()`.
+fn enum_combo<T: PartialEq + Copy>(
+    ui: &mut egui::Ui,
+    id: &str,
+    cur: &mut T,
+    all: &[T],
+    label: impl Fn(T) -> &'static str,
+) {
+    ComboBox::from_id_salt(id).selected_text(label(*cur)).show_ui(ui, |ui| {
+        for &opt in all {
+            if ui.selectable_label(*cur == opt, label(opt)).clicked() {
+                *cur = opt;
+            }
+        }
+    });
+}
+
+/// Audio/CAT tab: backend selection + all CAT serial + PTT parameters.
+fn settings_cat_tab(
+    ui: &mut egui::Ui,
+    serial_ports: &[String],
+    radio_edit: &mut Option<sdroxide_types::RadioConfig>,
+) {
+    use sdroxide_types::{Backend, CatFamily, LineState, ModePolicy, Parity, PttMethod, SoundFormat, StopBits};
+    let Some(cfg) = radio_edit.as_mut() else {
+        ui.label("Radio configuration is only available in the native app.");
+        return;
+    };
+    egui::Grid::new("cat-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+        ui.label("Backend");
+        enum_combo(ui, "backend", &mut cfg.backend, &Backend::ALL, Backend::label);
+        ui.end_row();
+
+        ui.label("Sound format");
+        enum_combo(ui, "sfmt", &mut cfg.cat.format, &SoundFormat::ALL, SoundFormat::label);
+        ui.end_row();
+
+        if matches!(cfg.cat.format, SoundFormat::DemodAudio) {
+            ui.label("Panadapter BW");
+            ui.add(DragValue::new(&mut cfg.cat.audio_bw_hz).speed(100.0).range(1000.0..=24000.0).suffix(" Hz"));
+            ui.end_row();
+        }
+
+        ui.label("Serial port");
+        let shown = if cfg.cat.serial.path.is_empty() { "— select —".to_string() } else { cfg.cat.serial.path.clone() };
+        ComboBox::from_id_salt("serport").width(260.0).selected_text(shown).show_ui(ui, |ui| {
+            for p in serial_ports {
+                if ui.selectable_label(&cfg.cat.serial.path == p, p).clicked() {
+                    cfg.cat.serial.path = p.clone();
+                }
+            }
+        });
+        ui.end_row();
+
+        ui.label("CAT family");
+        enum_combo(ui, "fam", &mut cfg.cat.family, &CatFamily::ALL, CatFamily::label);
+        ui.end_row();
+
+        ui.label("Baud");
+        ComboBox::from_id_salt("baud").selected_text(cfg.cat.serial.baud.to_string()).show_ui(ui, |ui| {
+            for b in [4800u32, 9600, 19200, 38400, 57600, 115200] {
+                if ui.selectable_label(cfg.cat.serial.baud == b, b.to_string()).clicked() {
+                    cfg.cat.serial.baud = b;
+                }
+            }
+        });
+        ui.end_row();
+
+        ui.label("Data bits");
+        ComboBox::from_id_salt("databits").selected_text(cfg.cat.serial.data_bits.to_string()).show_ui(ui, |ui| {
+            for d in [7u8, 8] {
+                if ui.selectable_label(cfg.cat.serial.data_bits == d, d.to_string()).clicked() {
+                    cfg.cat.serial.data_bits = d;
+                }
+            }
+        });
+        ui.end_row();
+
+        ui.label("Parity");
+        enum_combo(ui, "parity", &mut cfg.cat.serial.parity, &Parity::ALL, Parity::label);
+        ui.end_row();
+
+        ui.label("Stop bits");
+        enum_combo(ui, "stop", &mut cfg.cat.serial.stop_bits, &StopBits::ALL, StopBits::label);
+        ui.end_row();
+
+        ui.label("Force RTS");
+        enum_combo(ui, "rts", &mut cfg.cat.serial.force_rts, &LineState::ALL, LineState::label);
+        ui.end_row();
+        ui.label("Force DTR");
+        enum_combo(ui, "dtr", &mut cfg.cat.serial.force_dtr, &LineState::ALL, LineState::label);
+        ui.end_row();
+
+        ui.label("PTT method");
+        enum_combo(ui, "ptt", &mut cfg.cat.ptt, &PttMethod::ALL, PttMethod::label);
+        ui.end_row();
+
+        ui.label("Mode set");
+        enum_combo(ui, "modepol", &mut cfg.cat.mode_policy, &ModePolicy::ALL, ModePolicy::label);
+        ui.end_row();
+
+        ui.label("Poll rate");
+        ui.add(DragValue::new(&mut cfg.cat.poll_hz).speed(0.5).range(0.5..=20.0).suffix(" Hz"));
+        ui.end_row();
+
+        if matches!(cfg.cat.family, CatFamily::Icom | CatFamily::Xiegu) {
+            ui.label("Radio ID (hex)");
+            let mut hex = format!("{:02X}", cfg.cat.icom_radio_id);
+            let resp = ui.add(egui::TextEdit::singleline(&mut hex).desired_width(48.0));
+            if resp.changed() {
+                if let Ok(v) = u8::from_str_radix(hex.trim().trim_start_matches("0x"), 16) {
+                    cfg.cat.icom_radio_id = v;
+                }
+            }
+            ui.end_row();
+        }
+    });
+    ui.add_space(6.0);
+    ui.label(RichText::new("Backend / serial / audio changes take effect on restart.").weak());
 }
 
 impl eframe::App for SdroxideApp {

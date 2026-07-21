@@ -4,7 +4,7 @@
 
 use sdroxide_radio::crossbeam_channel::{Receiver, Sender};
 use sdroxide_radio::{AudioParams, AudioSwap, EngineHandles, MicParams, triple_buffer};
-use sdroxide_types::{AudioDevices, Command, RadioController, RadioEvent, SpectrumFrame};
+use sdroxide_types::{AudioDevices, Command, RadioConfig, RadioController, RadioEvent, SpectrumFrame};
 use tracing::warn;
 
 pub struct LocalController {
@@ -117,5 +117,20 @@ impl RadioController for LocalController {
             self.in_name = name;
         }
         self.persist_selection();
+    }
+
+    fn serial_ports(&self) -> Vec<String> {
+        sdroxide_cat::available_ports()
+    }
+
+    fn radio_config(&self) -> Option<RadioConfig> {
+        Some(sdroxide_config::load_radio_config())
+    }
+
+    fn set_radio_config(&mut self, cfg: RadioConfig) {
+        // Persisted now; the source/engine adopt it on the next launch.
+        if let Err(e) = sdroxide_config::save_radio_config(&cfg) {
+            warn!("saving radio config: {e}");
+        }
     }
 }

@@ -136,6 +136,15 @@ pub fn save_memories(memories: &[sdroxide_types::MemoryChannel]) -> Result<(), C
     save_json("memories.json", &memories)
 }
 
+/// Radio backend config (SoapySDR vs CAT rig; serial + sound-card settings).
+pub fn load_radio_config() -> sdroxide_types::RadioConfig {
+    load_json("radio.json")
+}
+
+pub fn save_radio_config(cfg: &sdroxide_types::RadioConfig) -> Result<(), ConfigError> {
+    save_json("radio.json", cfg)
+}
+
 /// FT8/FT4 operator config (own call, grid, message templates).
 pub fn load_digi_config() -> sdroxide_types::DigiConfig {
     load_json("digi.json")

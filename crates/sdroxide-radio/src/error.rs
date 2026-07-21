@@ -1,5 +1,6 @@
 #[derive(Debug, thiserror::Error)]
 pub enum RadioError {
+    #[cfg(feature = "soapy")]
     #[error("SoapySDR: {0}")]
     Soapy(#[from] soapysdr::Error),
     #[error("I/O: {0}")]

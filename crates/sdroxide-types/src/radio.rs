@@ -1,0 +1,241 @@
+//! Persisted radio-backend configuration (`radio.json`): choose between a
+//! SoapySDR device and a CAT-controlled rig whose audio arrives over a USB
+//! sound card. Serde-only — no I/O, safe in the wasm client (the settings UI
+//! is shared, even though the CAT machinery is native-only).
+
+use serde::{Deserialize, Serialize};
+
+/// Which radio backend to drive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Backend {
+    /// SoapySDR if a device is present, else fall back to CAT.
+    #[default]
+    Auto,
+    Soapy,
+    Cat,
+}
+
+impl Backend {
+    pub const ALL: [Backend; 3] = [Backend::Auto, Backend::Soapy, Backend::Cat];
+    pub fn label(self) -> &'static str {
+        match self {
+            Backend::Auto => "Auto (SoapySDR, else CAT)",
+            Backend::Soapy => "SoapySDR",
+            Backend::Cat => "CAT rig",
+        }
+    }
+}
+
+/// CAT protocol family. Only `Xiegu` is hardware-verified so far.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CatFamily {
+    #[default]
+    Xiegu,
+    Icom,
+    Yaesu,
+}
+
+impl CatFamily {
+    pub const ALL: [CatFamily; 3] = [CatFamily::Xiegu, CatFamily::Icom, CatFamily::Yaesu];
+    pub fn label(self) -> &'static str {
+        match self {
+            CatFamily::Xiegu => "Xiegu",
+            CatFamily::Icom => "Icom",
+            CatFamily::Yaesu => "Yaesu",
+        }
+    }
+}
+
+/// How the radio's audio is carried over the sound card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SoundFormat {
+    /// Stereo L=I, R=Q complex baseband → normal wideband engine path.
+    Iq,
+    /// Mono already-demodulated audio → audio-band panadapter (engine bypass).
+    #[default]
+    DemodAudio,
+}
+
+impl SoundFormat {
+    pub const ALL: [SoundFormat; 2] = [SoundFormat::DemodAudio, SoundFormat::Iq];
+    pub fn label(self) -> &'static str {
+        match self {
+            SoundFormat::Iq => "IQ (stereo)",
+            SoundFormat::DemodAudio => "Demod audio",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Parity {
+    #[default]
+    None,
+    Even,
+    Odd,
+}
+
+impl Parity {
+    pub const ALL: [Parity; 3] = [Parity::None, Parity::Even, Parity::Odd];
+    pub fn label(self) -> &'static str {
+        match self {
+            Parity::None => "None",
+            Parity::Even => "Even",
+            Parity::Odd => "Odd",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum StopBits {
+    #[default]
+    One,
+    Two,
+}
+
+impl StopBits {
+    pub const ALL: [StopBits; 2] = [StopBits::One, StopBits::Two];
+    pub fn label(self) -> &'static str {
+        match self {
+            StopBits::One => "1",
+            StopBits::Two => "2",
+        }
+    }
+}
+
+/// A serial control line forced to a fixed level while the port is open (some
+/// rigs need DTR/RTS held high to enable CAT). `None` = leave as-is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LineState {
+    #[default]
+    None,
+    High,
+    Low,
+}
+
+impl LineState {
+    pub const ALL: [LineState; 3] = [LineState::None, LineState::High, LineState::Low];
+    pub fn label(self) -> &'static str {
+        match self {
+            LineState::None => "None",
+            LineState::High => "High",
+            LineState::Low => "Low",
+        }
+    }
+}
+
+/// How to key the transmitter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PttMethod {
+    /// Rig keys itself from TX audio; software just routes audio.
+    Vox,
+    Dtr,
+    Rts,
+    /// A CAT command keys the rig.
+    #[default]
+    Cat,
+}
+
+impl PttMethod {
+    pub const ALL: [PttMethod; 4] = [PttMethod::Cat, PttMethod::Dtr, PttMethod::Rts, PttMethod::Vox];
+    pub fn label(self) -> &'static str {
+        match self {
+            PttMethod::Vox => "VOX",
+            PttMethod::Dtr => "DTR",
+            PttMethod::Rts => "RTS",
+            PttMethod::Cat => "CAT",
+        }
+    }
+}
+
+/// Which mode to command the rig into (independent of the app's own filtering).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ModePolicy {
+    /// Don't touch the rig's mode; the operator sets it on the radio.
+    #[default]
+    SetByRadio,
+    /// Force the rig to USB (typical for a fixed digital/audio setup).
+    Usb,
+    /// Force the rig to its DATA/PKT (USB-D) mode.
+    DataPkt,
+}
+
+impl ModePolicy {
+    pub const ALL: [ModePolicy; 3] = [ModePolicy::SetByRadio, ModePolicy::Usb, ModePolicy::DataPkt];
+    pub fn label(self) -> &'static str {
+        match self {
+            ModePolicy::SetByRadio => "Set by radio",
+            ModePolicy::Usb => "Upper sideband",
+            ModePolicy::DataPkt => "Data/Pkt",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SerialConfig {
+    /// Serial device path (Linux/mac `/dev/tty…`, Windows `COMx`).
+    pub path: String,
+    pub baud: u32,
+    pub data_bits: u8,
+    pub parity: Parity,
+    pub stop_bits: StopBits,
+    pub force_rts: LineState,
+    pub force_dtr: LineState,
+}
+
+impl Default for SerialConfig {
+    fn default() -> Self {
+        SerialConfig {
+            path: String::new(),
+            baud: 19200,
+            data_bits: 8,
+            parity: Parity::None,
+            stop_bits: StopBits::One,
+            force_rts: LineState::None,
+            force_dtr: LineState::None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CatConfig {
+    pub family: CatFamily,
+    pub serial: SerialConfig,
+    pub ptt: PttMethod,
+    /// How often to poll the rig for its dial/mode (Hz).
+    pub poll_hz: f32,
+    pub mode_policy: ModePolicy,
+    /// Icom CI-V transceiver address (hex byte), e.g. 0x70 for many rigs.
+    pub icom_radio_id: u8,
+    pub format: SoundFormat,
+    /// Displayed panadapter bandwidth for demod-audio mode (Hz).
+    pub audio_bw_hz: f64,
+}
+
+impl Default for CatConfig {
+    fn default() -> Self {
+        CatConfig {
+            family: CatFamily::default(),
+            serial: SerialConfig::default(),
+            ptt: PttMethod::default(),
+            poll_hz: 5.0,
+            mode_policy: ModePolicy::default(),
+            icom_radio_id: 0x70,
+            format: SoundFormat::default(),
+            audio_bw_hz: 4000.0,
+        }
+    }
+}
+
+/// Persisted backend configuration (`radio.json`).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RadioConfig {
+    pub backend: Backend,
+    /// Sound-card device (cpal name) carrying the radio's RX audio → PC.
+    pub radio_audio_in: Option<String>,
+    /// Sound-card device (cpal name) carrying the TX audio PC → radio.
+    pub radio_audio_out: Option<String>,
+    pub cat: CatConfig,
+}

@@ -23,7 +23,7 @@ use sdroxide_types::{
     Mode, RadioEvent, RadioState, RxId, RxState, SpectrumConfig, SpectrumFrame, TxMeters, Vfo,
 };
 
-use crate::{Complex32, IqSource};
+use crate::{Complex32, ControlUpdate, IqSource};
 
 /// Number of bins in emitted display frames (matches the waterfall texture width).
 pub const DISPLAY_BINS: usize = 2048;
@@ -366,6 +366,19 @@ struct Engine {
     skim_ddc: Option<Ddc>,
     skimmer: Option<SkimmerController>,
     skim_buf: Vec<Complex32>,
+    /// Demod-audio (CAT-rig) mode: the source delivers already-demodulated real
+    /// audio, so the DDC/demod/skimmer path is bypassed for a narrow
+    /// audio-band panadapter mapped to RF.
+    audio_mode: bool,
+    /// Sound-card sample rate feeding `analyzer` in audio mode.
+    radio_fs: f64,
+    /// Displayed RF window width in audio mode (Hz).
+    audio_bw: f64,
+    /// Scratch real-audio buffers for audio mode.
+    audio_re: Vec<f32>,
+    audio_play: Vec<f32>,
+    /// Resamples the radio's audio to the speaker rate in audio mode.
+    audio_resampler: Option<MonoResampler>,
 }
 
 /// Target width of the CW skimmer window (Hz); the Ddc snaps to the nearest
@@ -381,6 +394,10 @@ fn engine_thread(
     event_tx: Sender<RadioEvent>,
     mut spec_in: triple_buffer::Input<SpectrumFrame>,
 ) {
+    let audio_mode = caps.audio_mode;
+    let radio_fs = source.sample_rate();
+    let audio_bw = source.display_bandwidth().unwrap_or(radio_fs / 2.0);
+
     let mut state = RadioState::default();
     state.center_hz = source.center_hz();
     state.sample_rate = source.sample_rate();
@@ -395,17 +412,27 @@ fn engine_thread(
             *rx = RxState::with_mode(mode);
         }
     }
+    if audio_mode {
+        state.skimmer_enabled = false; // wideband-only feature
+    }
 
     let cfg = SpectrumConfig::default();
-    let analyzer = SpectrumAnalyzer::new(cfg.fft_size as usize, state.sample_rate, cfg.avg_tc);
+    // In audio mode the analyzer FFTs the real audio at the card rate.
+    let analyzer = SpectrumAnalyzer::new(cfg.fft_size as usize, radio_fs, cfg.avg_tc);
 
-    let (main, mixer, audio_out_rate) = match engine_cfg.audio {
+    // In audio mode there is no RxChain (the source is already audio); the
+    // speaker path is a plain resampler → mixer instead.
+    let (main, mixer, audio_out_rate, audio_resampler) = match engine_cfg.audio {
+        Some(audio) if audio_mode => {
+            let rs = MonoResampler::new(radio_fs, audio.out_rate);
+            (None, Some(StereoMixer::new(audio.producer)), audio.out_rate, rs)
+        }
         Some(audio) => {
             let chain = RxChain::new(state.sample_rate, &state.rx[0], audio.out_rate);
             info!(channel_rate = chain.ddc.out_rate(), out_rate = audio.out_rate, "audio chain up");
-            (Some(chain), Some(StereoMixer::new(audio.producer)), audio.out_rate)
+            (Some(chain), Some(StereoMixer::new(audio.producer)), audio.out_rate, None)
         }
-        None => (None, None, 48_000.0),
+        None => (None, None, 48_000.0, None),
     };
 
     let memories = sdroxide_config::load_memories();
@@ -446,13 +473,21 @@ fn engine_thread(
         skim_ddc: None,
         skimmer: None,
         skim_buf: Vec::new(),
+        audio_mode,
+        radio_fs,
+        audio_bw,
+        audio_re: Vec::new(),
+        audio_play: Vec::new(),
+        audio_resampler,
     };
     if let Some(mic) = &engine.mic {
         engine.mic_resampler = MonoResampler::new(mic.rate, 48_000.0);
     }
     // If we start up already in a digital mode, spin up the controller.
     engine.sync_digi_mode();
-    engine.sync_skimmer(); // starts if skimmer_enabled (default on)
+    if !audio_mode {
+        engine.sync_skimmer(); // starts if skimmer_enabled (default on)
+    }
     engine.update_tuning();
 
     let mut buf = vec![Complex32::default(); 16_384];
@@ -482,6 +517,13 @@ fn engine_thread(
             }
         }
 
+        // Out-of-band control changes from a CAT rig (dial/mode moved on the
+        // radio itself). No-op for SoapySDR/siggen/file.
+        let updates = engine.source.poll_control();
+        for u in updates {
+            engine.apply_control(u);
+        }
+
         // Drive the FT8/FT4 slot machine (runs in both RX and TX). Returns
         // owned actions to avoid borrowing `engine.digi` and `engine` at once.
         engine.poll_digi();
@@ -494,7 +536,7 @@ fn engine_thread(
                 return;
             }
             // Full-duplex hardware keeps receiving during TX.
-            if engine.caps.full_duplex {
+            if engine.caps.full_duplex && !engine.audio_mode {
                 if let Ok(n @ 1..) = engine.source.read(&mut buf) {
                     engine.run_audio(&buf[..n]);
                 }
@@ -502,6 +544,7 @@ fn engine_thread(
         } else {
             match engine.source.read(&mut buf) {
                 Ok(0) => continue, // timeout
+                Ok(n) if engine.audio_mode => engine.run_audio_mode(&buf[..n]),
                 Ok(n) => {
                     if engine.state.noise_blanker {
                         engine.nb.process(&mut buf[..n]);
@@ -586,6 +629,79 @@ impl Engine {
         }
     }
 
+    /// Demod-audio (CAT rig) RX: the source hands us already-demodulated real
+    /// audio (packed in the I component). No DDC/demod — FFT it for the narrow
+    /// panadapter, play it to the speakers, and feed the digital decoders.
+    fn run_audio_mode(&mut self, iq: &[Complex32]) {
+        self.audio_re.clear();
+        self.audio_re.extend(iq.iter().map(|c| c.re));
+
+        // Panadapter (packed-real FFT — see make_spectrum_frame).
+        self.analyzer.process(iq);
+
+        // FT8/FT4 run directly on the radio audio.
+        if let Some(digi) = self.digi.as_mut() {
+            digi.on_rx_audio(&self.audio_re);
+        }
+
+        // Speaker path: resample radio_fs → out_rate, apply volume/mute.
+        let rx0 = &self.state.rx[0];
+        let vol = if rx0.muted { 0.0 } else { rx0.volume };
+        self.audio_play.clear();
+        match self.audio_resampler.as_mut() {
+            Some(rs) => rs.push(&self.audio_re, &mut self.audio_play),
+            None => self.audio_play.extend_from_slice(&self.audio_re),
+        }
+        if vol != 1.0 {
+            for s in self.audio_play.iter_mut() {
+                *s *= vol;
+            }
+        }
+        if let Some(mixer) = self.mixer.as_mut() {
+            mixer.push(&self.audio_play, None);
+        }
+    }
+
+    /// A change the CAT rig reported (operator moved the dial/mode on the
+    /// radio). Reflect it in state WITHOUT re-commanding the rig — that would
+    /// feed back through the serial poll.
+    fn apply_control(&mut self, update: ControlUpdate) {
+        match update {
+            ControlUpdate::Freq(hz) => {
+                match self.state.active_vfo {
+                    Vfo::A => self.state.vfo_a_hz = hz,
+                    Vfo::B => self.state.vfo_b_hz = hz,
+                }
+                self.state.band = Band::containing(hz);
+                self.update_display_center();
+                let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+            }
+            ControlUpdate::Mode(m) => {
+                if self.state.rx[0].mode != m {
+                    let r = &mut self.state.rx[0];
+                    r.mode = m;
+                    (r.filter_lo, r.filter_hi) = m.default_filter();
+                    self.update_display_center(); // sideband flip changes the window
+                    self.sync_digi_mode();
+                    let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+                }
+            }
+        }
+    }
+
+    /// In audio mode, keep `state.center_hz`/`sample_rate` describing the
+    /// displayed RF window (dial ± bw/2, width = bw) so the panadapter axis and
+    /// zoom clamp match the audio-band spectrum.
+    fn update_display_center(&mut self) {
+        if !self.audio_mode {
+            return;
+        }
+        let dial = self.state.active_freq_hz();
+        let lsb = self.state.rx[0].mode.is_lower_sideband();
+        self.state.center_hz = if lsb { dial - self.audio_bw / 2.0 } else { dial + self.audio_bw / 2.0 };
+        self.state.sample_rate = self.audio_bw;
+    }
+
     /// Tick the FT8/FT4 controller and apply its actions (emit events, key/
     /// unkey PTT). Owned actions avoid a `&mut self.digi` / `&mut self` clash.
     fn poll_digi(&mut self) {
@@ -633,21 +749,28 @@ impl Engine {
         let mode = self.state.rx[0].mode;
         let want = mode.is_digital();
         let have = self.digi.is_some();
+        // Audio mode feeds the decoder the rig's audio directly (run_audio_mode);
+        // there's no RxChain tap or high-res channel analyzer.
+        let tap_rate = if self.audio_mode {
+            self.radio_fs
+        } else {
+            self.main.as_ref().map(|c| c.audio_rate()).unwrap_or(48_000.0)
+        };
         if want && !have {
-            let tap_rate = self.main.as_ref().map(|c| c.audio_rate()).unwrap_or(48_000.0);
             self.digi = Some(DigiController::new(mode, self.digi_config.clone(), tap_rate));
             if let Some(c) = self.main.as_mut() {
                 c.tap_enabled = true;
             }
-            // High-resolution channel spectrum: 16k-point FFT over the ~50 kHz
-            // channel ≈ 3 Hz/bin, enough to resolve 6.25 Hz FT8 tones.
-            let ch_rate = self.main.as_ref().map(|c| c.channel_rate()).unwrap_or(48_000.0);
-            self.channel_analyzer = Some(SpectrumAnalyzer::new(16_384, ch_rate, 0.10));
-            info!(?mode, ch_rate, "FT8/FT4 engine started");
+            if !self.audio_mode {
+                // High-resolution channel spectrum: 16k-point FFT over the
+                // ~50 kHz channel ≈ 3 Hz/bin, enough to resolve 6.25 Hz FT8 tones.
+                let ch_rate = self.main.as_ref().map(|c| c.channel_rate()).unwrap_or(48_000.0);
+                self.channel_analyzer = Some(SpectrumAnalyzer::new(16_384, ch_rate, 0.10));
+            }
+            info!(?mode, tap_rate, "FT8/FT4 engine started");
         } else if want && have {
             // Mode changed between Ft8/Ft4: rebuild for the new one.
             if self.digi.as_ref().map(|d| d.mode()) != Some(mode) {
-                let tap_rate = self.main.as_ref().map(|c| c.audio_rate()).unwrap_or(48_000.0);
                 self.digi = Some(DigiController::new(mode, self.digi_config.clone(), tap_rate));
             }
         } else if !want && have {
@@ -674,6 +797,25 @@ impl Engine {
     /// high-resolution channel analyzer (VFO-centered), zoomed to the FT8
     /// audio passband; otherwise from the full-rate device analyzer.
     fn make_spectrum_frame(&mut self) -> SpectrumFrame {
+        if self.audio_mode {
+            // The real audio's FFT is symmetric; the dial is audio-DC. USB maps
+            // audio f → dial+f (show the positive half); LSB → dial-f (negative
+            // half). Both give the correct RF window over `audio_bw`.
+            let dial = self.state.active_freq_hz();
+            let vp = if self.state.rx[0].mode.is_lower_sideband() {
+                (dial - self.audio_bw, dial)
+            } else {
+                (dial, dial + self.audio_bw)
+            };
+            return self.analyzer.make_frame(
+                dial,
+                self.radio_fs,
+                self.cfg.db_floor,
+                self.cfg.db_ceil,
+                DISPLAY_BINS,
+                Some(vp),
+            );
+        }
         if let Some(ca) = self.channel_analyzer.as_mut() {
             let vfo = self.state.rx_freq_hz();
             let ch_rate = self.main.as_ref().map(|c| c.channel_rate()).unwrap_or(48_000.0);
@@ -964,6 +1106,12 @@ impl Engine {
         if let Some(c) = self.chain_mut(rx) {
             c.build_for_mode(&snapshot);
         }
+        // A CAT rig: command its mode (subject to the mode policy) and, since
+        // the sideband flips which half of the audio band is RF, re-center.
+        if self.audio_mode && rx == RxId::Main {
+            let _ = self.source.set_control_mode(mode);
+            self.update_display_center();
+        }
         // The main receiver's mode drives the digital-mode engine; entering
         // or leaving Ft8/Ft4 starts/stops it (and aborts any in-flight QSO).
         if rx == RxId::Main {
@@ -1090,6 +1238,13 @@ impl Engine {
     }
 
     fn update_tuning(&mut self) {
+        if self.audio_mode {
+            // The rig's dial IS the VFO — command it over CAT (no DDC offset).
+            let dial = self.state.active_freq_hz();
+            let _ = self.source.set_center_hz(dial);
+            self.update_display_center();
+            return;
+        }
         let main_offset = self.state.rx_freq_hz() - self.state.center_hz;
         let inactive = match self.state.active_vfo {
             Vfo::A => self.state.vfo_b_hz,
@@ -1130,9 +1285,14 @@ impl Engine {
                     &mut self.state,
                 );
             }
-            match self.source.tx_begin(txf, self.state.sample_rate) {
+            // In audio mode `tx_begin` just asserts CAT PTT; there is no
+            // modulator/DUC (the rig modulates the audio we feed its sound card).
+            let begin_rate = if self.audio_mode { self.radio_fs } else { self.state.sample_rate };
+            match self.source.tx_begin(txf, begin_rate) {
                 Ok(tx_rate) => {
-                    self.tx = Some(TxChain::new(self.state.rx[0].mode, tx_rate));
+                    if !self.audio_mode {
+                        self.tx = Some(TxChain::new(self.state.rx[0].mode, tx_rate));
+                    }
                     self.tx_center_hz = txf;
                     self.tx_active = true;
                 }
@@ -1152,6 +1312,10 @@ impl Engine {
 
     /// One ~10 ms transmit block: mic → modulator → drive → DUC → device.
     fn tx_block(&mut self) -> crate::Result<()> {
+        // A CAT rig modulates itself; we just route TX audio to its sound card.
+        if self.audio_mode {
+            return self.tx_block_audio();
+        }
         // Digital-mode burst: the FT8/FT4 controller supplies the audio; the
         // real mic is drained and discarded so it can't leak into the burst.
         if self.digi_tx {
@@ -1270,8 +1434,64 @@ impl Engine {
         Ok(())
     }
 
+    /// One ~10 ms TX block for a CAT rig: gather 48 kHz mono audio (mic voice or
+    /// an FT8/FT4 burst) and hand it to the rig's sound card — the radio does
+    /// its own modulation. PTT is asserted separately by `sync_tx_state`.
+    fn tx_block_audio(&mut self) -> crate::Result<()> {
+        let mut audio = [0.0f32; TX_AUDIO_BLOCK];
+        let mut burst_done = false;
+
+        if self.digi_tx {
+            if let Some(mic) = self.mic.as_mut() {
+                while mic.consumer.pop().is_ok() {} // discard mic during a burst
+            }
+            burst_done = self.digi.as_mut().map(|d| d.fill_tx_block(&mut audio)).unwrap_or(true);
+        } else if !self.state.tx.tune {
+            // Voice: mic → 48 kHz FIFO → this block, with mic gain.
+            if let Some(mic) = self.mic.as_mut() {
+                let mut raw = Vec::with_capacity(mic.consumer.slots());
+                while let Ok(s) = mic.consumer.pop() {
+                    raw.push(s);
+                }
+                match &mut self.mic_resampler {
+                    Some(r) => r.push(&raw, &mut self.mic_fifo),
+                    None => self.mic_fifo.extend_from_slice(&raw),
+                }
+                if self.mic_fifo.len() > 4_800 {
+                    let cut = self.mic_fifo.len() - 4_800;
+                    self.mic_fifo.drain(..cut);
+                }
+            }
+            let take = self.mic_fifo.len().min(TX_AUDIO_BLOCK);
+            audio[..take].copy_from_slice(&self.mic_fifo[..take]);
+            self.mic_fifo.drain(..take);
+            let gain = self.state.tx.mic_gain * 2.0;
+            for a in &mut audio {
+                *a = (*a * gain).clamp(-1.0, 1.0);
+            }
+        }
+        // TUNE leaves the audio silent — PTT alone keys the rig's carrier.
+
+        self.source.tx_write_audio(&audio)?;
+
+        if burst_done {
+            self.digi_tx = false;
+            self.state.tx.ptt = false;
+            self.sync_tx_state();
+            if let Some(d) = self.digi.as_mut() {
+                d.on_burst_done();
+            }
+            let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+            self.emit_digi_status();
+        }
+        Ok(())
+    }
+
     /// Retune hardware center if the active VFO left the usable span.
     fn keep_vfo_in_span(&mut self) {
+        if self.audio_mode {
+            return; // the dial is the VFO; update_tuning drives CAT directly
+        }
         let span = self.state.sample_rate;
         let usable = span * 0.45; // keep VFO out of the outer 5% roll-off
         let vfo = self.state.active_freq_hz();

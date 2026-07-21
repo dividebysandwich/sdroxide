@@ -27,6 +27,11 @@ pub struct DeviceCaps {
     pub tx_channels: usize,
     /// Whether RX keeps running during TX. Conservative default: false.
     pub full_duplex: bool,
+    /// The source delivers already-demodulated real audio (a CAT rig on a
+    /// sound card), so the engine bypasses the DDC/demod chain and shows a
+    /// narrow audio-band panadapter. Sound-card *IQ* leaves this `false` and
+    /// runs the normal wideband path.
+    pub audio_mode: bool,
 
     /// Tunable ranges in Hz: (min, max).
     pub freq_ranges_rx: Vec<(f64, f64)>,

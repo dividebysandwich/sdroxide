@@ -3,17 +3,19 @@
 //! NATIVE ONLY — this crate links the SoapySDR C library and must never be a
 //! dependency of any wasm-targeted crate.
 
+#[cfg(feature = "soapy")]
 mod device;
 pub mod engine;
 mod error;
 mod source;
 
+#[cfg(feature = "soapy")]
 pub use device::{DeviceInfo, SoapyDevice, SoapyRxSource, enumerate_devices};
 pub use engine::{
     AudioParams, AudioSwap, EngineConfig, EngineHandles, MicParams, start as start_engine,
 };
 pub use error::RadioError;
-pub use source::{FileSource, IqSource, SigGenSource};
+pub use source::{ControlUpdate, FileSource, IqSource, SigGenSource};
 
 // Re-exported so frontends can name handle types without direct deps.
 pub use crossbeam_channel;

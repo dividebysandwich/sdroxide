@@ -3,13 +3,18 @@ name = "sdroxide-radio"
 version.workspace = true
 edition.workspace = true
 
+[features]
+# SoapySDR is optional so a CAT-only build needs no libSoapySDR installed.
+default = ["soapy"]
+soapy = ["dep:soapysdr"]
+
 [dependencies]
 sdroxide-types.workspace = true
 sdroxide-dsp.workspace = true
 num-complex.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-soapysdr = "0.5.1"
+soapysdr = { version = "0.5.1", optional = true }
 triple_buffer = "9.0.0"
 crossbeam-channel.workspace = true
 rtrb.workspace = true

@@ -13,6 +13,7 @@ mod worldmask;
 mod memory;
 mod meters;
 mod mode;
+mod radio;
 mod skimmer;
 mod spectrum;
 mod state;
@@ -32,6 +33,10 @@ pub use geo::{
 pub use memory::{BandStackEntry, MemoryChannel};
 pub use meters::{Meters, TxMeters};
 pub use mode::{AgcMode, Mode};
+pub use radio::{
+    Backend, CatConfig, CatFamily, LineState, ModePolicy, Parity, PttMethod, RadioConfig,
+    SerialConfig, SoundFormat, StopBits,
+};
 pub use skimmer::{SkimmerKind, SkimmerSpot};
 pub use spectrum::{SpectrumConfig, SpectrumFrame};
 pub use state::{OffsetState, RadioState, RxId, RxState, SQUELCH_OPEN_DB, TxState, Vfo};

@@ -20,7 +20,9 @@ tracing.workspace = true
 triple_buffer = "9.0.0"
 
 [dev-dependencies]
-sdroxide-radio = { path = "../sdroxide-radio" }
+# The server only uses the engine, not SoapySDR device handling — leave
+# `soapy` for the top-level binary to decide.
+sdroxide-radio = { path = "../sdroxide-radio", default-features = false }
 tokio-tungstenite = "0.30.0"
 
 [features]

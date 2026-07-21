@@ -64,4 +64,22 @@ pub trait RadioController {
     fn set_audio_device(&mut self, output: bool, name: Option<String>) {
         let _ = (output, name);
     }
+
+    /// Serial ports available for CAT control (native local client only).
+    fn serial_ports(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// The persisted radio-backend config (SoapySDR vs CAT), or `None` when the
+    /// client can't own it (the browser remote client).
+    fn radio_config(&self) -> Option<crate::RadioConfig> {
+        None
+    }
+
+    /// Persist an updated radio-backend config. Most fields only take effect on
+    /// restart (the source/engine is rebuilt at startup). No-op where
+    /// unsupported.
+    fn set_radio_config(&mut self, cfg: crate::RadioConfig) {
+        let _ = cfg;
+    }
 }

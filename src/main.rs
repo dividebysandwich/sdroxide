@@ -1,3 +1,4 @@
+mod audio_cat_source;
 mod console;
 mod gui_main;
 mod local_controller;
@@ -6,8 +7,10 @@ mod server_main;
 use anyhow::{Context, bail};
 use clap::Parser;
 use sdroxide_config::Settings;
-use sdroxide_radio::{FileSource, IqSource, SigGenSource, SoapyDevice, enumerate_devices};
-use sdroxide_types::DeviceCaps;
+use sdroxide_radio::{FileSource, IqSource, SigGenSource};
+#[cfg(feature = "soapy")]
+use sdroxide_radio::{SoapyDevice, enumerate_devices};
+use sdroxide_types::{Backend, DeviceCaps, RadioConfig};
 
 /// sdroxide — SDR transceiver client.
 ///
@@ -271,10 +274,12 @@ fn ft8_cq_test(
     outcome
 }
 
+#[cfg(feature = "soapy")]
 fn device_filter(cli: &Cli, settings: &Settings) -> String {
     cli.device.clone().unwrap_or_else(|| settings.device_args.clone())
 }
 
+#[cfg(feature = "soapy")]
 fn probe(cli: &Cli, settings: &Settings) -> anyhow::Result<()> {
     let filter = device_filter(cli, settings);
     let devices = enumerate_devices(&filter).context("SoapySDR enumeration failed")?;
@@ -292,6 +297,12 @@ fn probe(cli: &Cli, settings: &Settings) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(not(feature = "soapy"))]
+fn probe(_cli: &Cli, _settings: &Settings) -> anyhow::Result<()> {
+    bail!("this build has no SoapySDR support (built with --no-default-features)")
+}
+
+#[cfg(feature = "soapy")]
 fn print_caps(caps: &sdroxide_types::DeviceCaps) {
     let fmt_mhz = |hz: f64| format!("{:.3} MHz", hz / 1e6);
     println!("  driver        : {}", caps.driver);
@@ -359,18 +370,74 @@ fn open_source(cli: &Cli, settings: &Settings) -> anyhow::Result<(Box<dyn IqSour
         ));
     }
 
-    let filter = device_filter(cli, settings);
-    let devices = enumerate_devices(&filter).context("SoapySDR enumeration failed")?;
-    let Some(info) = devices.first() else {
-        bail!(
-            "no SoapySDR devices found (filter: {:?}) — try --siggen for a hardware-free demo",
-            filter
-        );
+    // Resolve the backend from radio.json. `Auto` prefers a SoapySDR device
+    // and falls back to CAT when none is present (or the binary has no soapy).
+    let radio = sdroxide_config::load_radio_config();
+    let use_cat = match radio.backend {
+        Backend::Cat => true,
+        Backend::Soapy => false,
+        #[cfg(feature = "soapy")]
+        Backend::Auto => {
+            let filter = device_filter(cli, settings);
+            enumerate_devices(&filter).map(|d| d.is_empty()).unwrap_or(true)
+        }
+        #[cfg(not(feature = "soapy"))]
+        Backend::Auto => true,
     };
-    let dev = SoapyDevice::open(&info.args)
-        .with_context(|| format!("opening device {}", info.label))?;
-    let caps = dev.caps().clone();
-    Ok((Box::new(dev.rx_source(rate, cli.freq, cli.gain)?), caps))
+
+    if use_cat {
+        return open_cat_source(&radio);
+    }
+
+    #[cfg(feature = "soapy")]
+    {
+        let filter = device_filter(cli, settings);
+        let devices = enumerate_devices(&filter).context("SoapySDR enumeration failed")?;
+        let Some(info) = devices.first() else {
+            bail!(
+                "no SoapySDR devices found (filter: {:?}) — try --siggen, or set a CAT backend in radio.json",
+                filter
+            );
+        };
+        let dev = SoapyDevice::open(&info.args)
+            .with_context(|| format!("opening device {}", info.label))?;
+        let caps = dev.caps().clone();
+        Ok((Box::new(dev.rx_source(rate, cli.freq, cli.gain)?), caps))
+    }
+    #[cfg(not(feature = "soapy"))]
+    {
+        let _ = rate;
+        bail!("SoapySDR backend selected but this build has no SoapySDR support")
+    }
+}
+
+/// Build the CAT + sound-card source and its capabilities from radio.json.
+fn open_cat_source(radio: &RadioConfig) -> anyhow::Result<(Box<dyn IqSource>, DeviceCaps)> {
+    let src = audio_cat_source::AudioCatSource::open(
+        radio.cat.clone(),
+        radio.radio_audio_in.as_deref(),
+        radio.radio_audio_out.as_deref(),
+    )
+    .context("opening CAT rig")?;
+    let caps = cat_caps(radio);
+    Ok((Box::new(src), caps))
+}
+
+/// Capabilities for a CAT rig. TX-capable unless PTT is VOX-only-with-no-audio;
+/// we advertise TX so the UI shows PTT and the safety rails apply. Frequency
+/// range covers HF+6m (the rig enforces its own limits over CAT).
+fn cat_caps(radio: &RadioConfig) -> DeviceCaps {
+    let demod = matches!(radio.cat.format, sdroxide_types::SoundFormat::DemodAudio);
+    DeviceCaps {
+        driver: "cat".into(),
+        label: format!("{} (CAT)", radio.cat.family.label()),
+        rx_channels: 1,
+        tx_channels: 1,
+        audio_mode: demod,
+        freq_ranges_rx: vec![(100_000.0, 148_000_000.0)],
+        freq_ranges_tx: vec![(1_800_000.0, 54_000_000.0)],
+        ..DeviceCaps::default()
+    }
 }
 
 /// Capabilities for non-hardware sources (RX-only, unlimited tuning).

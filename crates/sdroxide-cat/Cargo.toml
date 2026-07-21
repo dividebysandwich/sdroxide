@@ -1,0 +1,13 @@
+[package]
+name = "sdroxide-cat"
+version.workspace = true
+edition.workspace = true
+
+# Native-only serial CAT control (Icom CI-V / Yaesu / Xiegu). Must never be a
+# dependency of any wasm-targeted crate.
+[dependencies]
+sdroxide-types.workspace = true
+serialport = "4.7"
+crossbeam-channel.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

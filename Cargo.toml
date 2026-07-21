@@ -36,6 +36,7 @@ sdroxide-audio = { path = "crates/sdroxide-audio" }
 sdroxide-server = { path = "crates/sdroxide-server" }
 sdroxide-config = { path = "crates/sdroxide-config" }
 sdroxide-ui = { path = "crates/sdroxide-ui" }
+sdroxide-cat = { path = "crates/sdroxide-cat" }
 
 serde = { version = "1", features = ["derive"] }
 num-complex = "0.4"
@@ -60,10 +61,11 @@ description = "PowerSDR/Thetis-style SDR transceiver with a native GUI, a browse
 sdroxide-types.workspace = true
 sdroxide-proto.workspace = true
 sdroxide-dsp.workspace = true
-sdroxide-radio.workspace = true
+sdroxide-radio = { path = "crates/sdroxide-radio", default-features = false }
 sdroxide-config.workspace = true
 sdroxide-audio.workspace = true
 sdroxide-server.workspace = true
+sdroxide-cat.workspace = true
 sdroxide-ui = { workspace = true, features = ["remote"] }
 eframe = { version = "0.35.0", default-features = false, features = ["default_fonts", "wgpu", "wayland", "x11", "persistence"] }
 anyhow.workspace = true
@@ -73,6 +75,10 @@ tracing-subscriber.workspace = true
 num-complex.workspace = true
 
 [features]
+default = ["soapy"]
+# SoapySDR device support. Turn off (`--no-default-features`) for a CAT-only
+# binary that builds and runs without libSoapySDR installed.
+soapy = ["sdroxide-radio/soapy"]
 # Bundle the trunk-built web client into the binary (run `trunk build
 # --release` in crates/sdroxide-web first).
 embed-web = ["sdroxide-server/embed-web"]

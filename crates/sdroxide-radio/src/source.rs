@@ -4,6 +4,15 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::{Complex32, Result};
+use sdroxide_types::Mode;
+
+/// A change a CAT-controlled rig reported out-of-band (the operator turned the
+/// dial or changed the mode on the radio itself).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ControlUpdate {
+    Freq(f64),
+    Mode(Mode),
+}
 
 /// Anything that produces a stream of complex baseband samples: a live
 /// SoapySDR RX stream, a recorded IQ file, or a signal generator.
@@ -57,6 +66,29 @@ pub trait IqSource: Send {
     }
     fn current_tx_gains(&self) -> Vec<(String, f64)> {
         Vec::new()
+    }
+
+    // CAT-controlled rigs — meaningful only for the sound-card/CAT source.
+
+    /// Panadapter width (Hz) for a demod-audio source — the engine shows this
+    /// slice of the audio band mapped to RF. `None` for normal IQ sources.
+    fn display_bandwidth(&self) -> Option<f64> {
+        None
+    }
+
+    /// Drain any out-of-band changes the rig reported (dial/mode moved on the
+    /// radio). Default: none.
+    fn poll_control(&mut self) -> Vec<ControlUpdate> {
+        Vec::new()
+    }
+    /// Command the rig's operating mode (CAT). Default: no-op.
+    fn set_control_mode(&mut self, _mode: Mode) -> Result<()> {
+        Ok(())
+    }
+    /// Write real TX audio to the rig's sound card (used instead of `tx_write`
+    /// in demod-audio mode, where the rig does its own modulation).
+    fn tx_write_audio(&mut self, _audio: &[f32]) -> Result<()> {
+        Err(crate::RadioError::Msg("device has no audio TX path".into()))
     }
 }
 

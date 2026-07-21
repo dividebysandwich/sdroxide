@@ -146,6 +146,65 @@ pub fn start_input(
     Ok((AudioInput { _stream: stream, sample_rate: rate as f64 }, consumer))
 }
 
+/// Like [`start_input`] but keeps the first TWO channels interleaved (L, R) —
+/// used to read complex I/Q from a radio's stereo sound card. A mono device
+/// degrades to duplicated samples.
+pub fn start_input_stereo(
+    device_name: Option<&str>,
+    preferred_rate: u32,
+) -> Result<(AudioInput, rtrb::Consumer<f32>), AudioError> {
+    let host = cpal::default_host();
+    let device = pick_device(&host, device_name, false)?;
+
+    let mut chosen: Option<cpal::StreamConfig> = None;
+    if let Ok(configs) = device.supported_input_configs() {
+        for range in configs {
+            if range.sample_format() != cpal::SampleFormat::F32 {
+                continue;
+            }
+            let rate = preferred_rate.clamp(range.min_sample_rate(), range.max_sample_rate());
+            let cfg = cpal::StreamConfig {
+                channels: range.channels(),
+                sample_rate: rate,
+                buffer_size: cpal::BufferSize::Default,
+            };
+            // Prefer a config with >=2 channels at the exact rate.
+            let good = rate == preferred_rate && range.channels() >= 2;
+            match &chosen {
+                None => chosen = Some(cfg),
+                Some(_) if good => {
+                    chosen = Some(cfg);
+                    break;
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    let config = chosen.ok_or(AudioError::NoConfig)?;
+    let channels = config.channels as usize;
+    let rate = config.sample_rate;
+
+    let (mut producer, consumer) = rtrb::RingBuffer::<f32>::new(rate as usize * 2);
+    let stream = device
+        .build_input_stream(
+            config.clone(),
+            move |data: &[f32], _| {
+                for frame in data.chunks(channels) {
+                    let l = frame[0];
+                    let r = *frame.get(1).unwrap_or(&l);
+                    let _ = producer.push(l);
+                    let _ = producer.push(r);
+                }
+            },
+            |e| warn!("iq input stream error: {e}"),
+            None,
+        )
+        .map_err(|e| AudioError::Build(e.to_string()))?;
+    stream.play().map_err(|e| AudioError::Build(e.to_string()))?;
+    info!(rate, channels, "radio IQ input running");
+    Ok((AudioInput { _stream: stream, sample_rate: rate as f64 }, consumer))
+}
+
 /// Open an output device by name (`None` = system default), preferring
 /// `preferred_rate` (48 kHz), f32, ≤2 channels. Returns the running stream and
 /// the producer to feed with **interleaved stereo** (L, R) frames. Ring
