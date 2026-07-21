@@ -217,10 +217,16 @@ fn apply_line(port: &mut dyn serialport::SerialPort, forced: LineState, rts: boo
 fn serial_thread(cfg: CatConfig, cmd_rx: Receiver<CatCmd>, event_tx: Sender<CatUpdate>) {
     let mut protocol = make_protocol(&cfg);
     let poll_period = Duration::from_secs_f32((1.0 / cfg.poll_hz.max(0.2)).min(5.0));
-    // What mode to actually command the rig into for a given app mode.
-    let mode_cmd = |_app_mode: Mode| -> Option<Mode> {
+    // What mode to command the rig into for a given app mode. Every mode the
+    // operator picks in the mode grid (USB/LSB/CW/AM/FM/DIGU/DIGL) mirrors
+    // straight to the rig. The policy only decides how the FT8/FT4 *engine*
+    // modes key the radio (leave it, force USB, or force DATA).
+    let mode_cmd = |app_mode: Mode| -> Option<Mode> {
+        if !matches!(app_mode, Mode::Ft8 | Mode::Ft4) {
+            return Some(app_mode);
+        }
         match cfg.mode_policy {
-            ModePolicy::SetByRadio => None,
+            ModePolicy::SetByRadio => None, // leave the rig's mode as the operator set it
             ModePolicy::Usb => Some(Mode::Usb),
             ModePolicy::DataPkt => Some(Mode::Digu),
         }
@@ -259,10 +265,8 @@ fn serial_thread(cfg: CatConfig, cmd_rx: Receiver<CatCmd>, event_tx: Sender<CatU
             }
             _ => {}
         }
-        // Apply the mode policy once on connect.
-        if let Some(m) = mode_cmd(Mode::Usb) {
-            let _ = port.write_all(&protocol.set_mode(m));
-        }
+        // Don't force a mode on connect — adopt the rig's current mode (read via
+        // `query_once`/poll); the app commands mode only when the operator picks one.
 
         let mut rx = Vec::with_capacity(256);
         let mut read_buf = [0u8; 256];
