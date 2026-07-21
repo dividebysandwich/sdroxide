@@ -1991,7 +1991,7 @@ fn settings_cat_tab(
     serial_ports: &[String],
     radio_edit: &mut Option<sdroxide_types::RadioConfig>,
 ) {
-    use sdroxide_types::{Backend, CatFamily, LineState, ModePolicy, Parity, PttMethod, SoundFormat, StopBits};
+    use sdroxide_types::{Backend, CatFamily, DigiMode, LineState, ModeControl, Parity, PttMethod, SoundFormat, StopBits};
     let Some(cfg) = radio_edit.as_mut() else {
         ui.label("Radio configuration is only available in the native app.");
         return;
@@ -2065,8 +2065,12 @@ fn settings_cat_tab(
         enum_combo(ui, "ptt", &mut cfg.cat.ptt, &PttMethod::ALL, PttMethod::label);
         ui.end_row();
 
-        ui.label("Mode set");
-        enum_combo(ui, "modepol", &mut cfg.cat.mode_policy, &ModePolicy::ALL, ModePolicy::label);
+        ui.label("Mode control");
+        enum_combo(ui, "modectl", &mut cfg.cat.mode_control, &ModeControl::ALL, ModeControl::label);
+        ui.end_row();
+
+        ui.label("Digimode mode");
+        enum_combo(ui, "digimode", &mut cfg.cat.digi_mode, &DigiMode::ALL, DigiMode::label);
         ui.end_row();
 
         ui.label("Poll rate");

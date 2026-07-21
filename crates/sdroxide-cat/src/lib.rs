@@ -13,7 +13,8 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use sdroxide_types::{
-    CatConfig, CatFamily, LineState, ModePolicy, Mode, Parity, PttMethod, SerialConfig, StopBits,
+    CatConfig, CatFamily, DigiMode, LineState, Mode, ModeControl, Parity, PttMethod, SerialConfig,
+    StopBits,
 };
 use tracing::{info, warn};
 
@@ -217,18 +218,20 @@ fn apply_line(port: &mut dyn serialport::SerialPort, forced: LineState, rts: boo
 fn serial_thread(cfg: CatConfig, cmd_rx: Receiver<CatCmd>, event_tx: Sender<CatUpdate>) {
     let mut protocol = make_protocol(&cfg);
     let poll_period = Duration::from_secs_f32((1.0 / cfg.poll_hz.max(0.2)).min(5.0));
-    // What mode to command the rig into for a given app mode. Every mode the
-    // operator picks in the mode grid (USB/LSB/CW/AM/FM/DIGU/DIGL) mirrors
-    // straight to the rig. The policy only decides how the FT8/FT4 *engine*
-    // modes key the radio (leave it, force USB, or force DATA).
+    // What mode to command the rig into for a given app mode. FT8/FT4 use the
+    // separate `digi_mode` setting; every other mode obeys `mode_control`
+    // (CAT = mirror the selected mode to the rig; Radio = don't touch it).
     let mode_cmd = |app_mode: Mode| -> Option<Mode> {
-        if !matches!(app_mode, Mode::Ft8 | Mode::Ft4) {
-            return Some(app_mode);
+        if matches!(app_mode, Mode::Ft8 | Mode::Ft4) {
+            return match cfg.digi_mode {
+                DigiMode::Radio => None,
+                DigiMode::Usb => Some(Mode::Usb),
+                DigiMode::Data => Some(Mode::Digu),
+            };
         }
-        match cfg.mode_policy {
-            ModePolicy::SetByRadio => None, // leave the rig's mode as the operator set it
-            ModePolicy::Usb => Some(Mode::Usb),
-            ModePolicy::DataPkt => Some(Mode::Digu),
+        match cfg.mode_control {
+            ModeControl::Cat => Some(app_mode),
+            ModeControl::Radio => None,
         }
     };
 

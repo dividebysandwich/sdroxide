@@ -34,8 +34,8 @@ pub use memory::{BandStackEntry, MemoryChannel};
 pub use meters::{Meters, TxMeters};
 pub use mode::{AgcMode, Mode};
 pub use radio::{
-    Backend, CatConfig, CatFamily, LineState, ModePolicy, Parity, PttMethod, RadioConfig,
-    SerialConfig, SoundFormat, StopBits,
+    Backend, CatConfig, CatFamily, DigiMode, LineState, ModeControl, Parity, PttMethod,
+    RadioConfig, SerialConfig, SoundFormat, StopBits,
 };
 pub use skimmer::{SkimmerKind, SkimmerSpot};
 pub use spectrum::{SpectrumConfig, SpectrumFrame};

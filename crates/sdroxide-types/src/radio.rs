@@ -147,25 +147,45 @@ impl PttMethod {
     }
 }
 
-/// Which mode to command the rig into (independent of the app's own filtering).
+/// Who drives the rig's mode for ordinary modes (USB/LSB/CW/AM/FM/DIGU/DIGL).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum ModePolicy {
-    /// Don't touch the rig's mode; the operator sets it on the radio.
+pub enum ModeControl {
+    /// The app commands the rig's mode over CAT to match the selected mode.
     #[default]
-    SetByRadio,
-    /// Force the rig to USB (typical for a fixed digital/audio setup).
-    Usb,
-    /// Force the rig to its DATA/PKT (USB-D) mode.
-    DataPkt,
+    Cat,
+    /// The operator sets the mode on the radio; the app just follows it.
+    Radio,
 }
 
-impl ModePolicy {
-    pub const ALL: [ModePolicy; 3] = [ModePolicy::SetByRadio, ModePolicy::Usb, ModePolicy::DataPkt];
+impl ModeControl {
+    pub const ALL: [ModeControl; 2] = [ModeControl::Cat, ModeControl::Radio];
     pub fn label(self) -> &'static str {
         match self {
-            ModePolicy::SetByRadio => "Set by radio",
-            ModePolicy::Usb => "Upper sideband",
-            ModePolicy::DataPkt => "Data/Pkt",
+            ModeControl::Cat => "CAT",
+            ModeControl::Radio => "Radio controlled",
+        }
+    }
+}
+
+/// What mode the rig should be in for the FT8/FT4 digital engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum DigiMode {
+    /// Force the rig to USB.
+    #[default]
+    Usb,
+    /// Force the rig to its DATA/PKT (USB-D) mode.
+    Data,
+    /// Leave the rig's mode as the operator set it.
+    Radio,
+}
+
+impl DigiMode {
+    pub const ALL: [DigiMode; 3] = [DigiMode::Usb, DigiMode::Data, DigiMode::Radio];
+    pub fn label(self) -> &'static str {
+        match self {
+            DigiMode::Usb => "USB",
+            DigiMode::Data => "DIGI",
+            DigiMode::Radio => "Radio controlled",
         }
     }
 }
@@ -205,7 +225,10 @@ pub struct CatConfig {
     pub ptt: PttMethod,
     /// How often to poll the rig for its dial/mode (Hz).
     pub poll_hz: f32,
-    pub mode_policy: ModePolicy,
+    /// Who controls the rig's mode for ordinary modes.
+    pub mode_control: ModeControl,
+    /// What mode the rig uses for the FT8/FT4 engine.
+    pub digi_mode: DigiMode,
     /// Icom CI-V transceiver address (hex byte), e.g. 0x70 for many rigs.
     pub icom_radio_id: u8,
     pub format: SoundFormat,
@@ -220,7 +243,8 @@ impl Default for CatConfig {
             serial: SerialConfig::default(),
             ptt: PttMethod::default(),
             poll_hz: 5.0,
-            mode_policy: ModePolicy::default(),
+            mode_control: ModeControl::default(),
+            digi_mode: DigiMode::default(),
             icom_radio_id: 0x70,
             format: SoundFormat::default(),
             audio_bw_hz: 4000.0,
