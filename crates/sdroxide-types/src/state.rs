@@ -146,7 +146,7 @@ impl Default for RadioState {
             },
             band: Band::M20,
             noise_blanker: false,
-            skimmer_enabled: false,
+            skimmer_enabled: true,
             gains: Vec::new(),
             tx_gains: Vec::new(),
             antenna_rx: String::new(),

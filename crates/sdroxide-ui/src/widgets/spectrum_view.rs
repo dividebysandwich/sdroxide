@@ -18,7 +18,7 @@ const CLICK_TUNE_STEP: f64 = 10.0;
 const EDGE_GRAB_PX: f32 = 6.0;
 
 // --- skimmer spot boxes ---------------------------------------------------
-const SPOT_BOX_W: f32 = 122.0;
+const SPOT_BOX_W: f32 = 210.0;
 const SPOT_BOX_H: f32 = 15.0;
 /// Vertical gap between staggered lanes.
 const SPOT_LANE_GAP: f32 = 3.0;
@@ -26,21 +26,36 @@ const SPOT_LANE_GAP: f32 = 3.0;
 const SPOT_TOP_MARGIN: f32 = 4.0;
 /// Minimum horizontal gap between two boxes sharing a lane.
 const SPOT_H_GAP: f32 = 6.0;
+/// Horizontal leader length from the signal to the box's left edge.
+const SPOT_LEADER: f32 = 16.0;
 /// Cap on stacked lanes; spots that would need a deeper lane are dropped.
 const SPOT_MAX_LANES: usize = 6;
-/// Marquee scroll speed for overflowing messages.
-const SPOT_SCROLL_PX_S: f32 = 26.0;
 
-/// A laid-out skimmer box: its screen rect and the index of the spot it shows.
+/// A laid-out skimmer box: its screen rect, the x of the signal it belongs to
+/// (the box sits to its right, joined by a leader), and the spot's index.
 struct SpotBox {
     rect: Rect,
+    sig_x: f32,
     idx: usize,
 }
 
-/// Lay skimmer spots out into staggered lanes over the waterfall. Visible
-/// spots are sorted by x and greedily packed into the lowest lane whose last
-/// box clears this one, so nearby signals stack vertically instead of
-/// overlapping. Frequencies out of view (or past the lane cap) are omitted.
+/// Border/leader colour for a spot: cyan when hovered, dim-cyan once a
+/// callsign is known, grey otherwise.
+fn spot_color(spot: &SkimmerSpot, hovered: bool) -> Color32 {
+    if hovered {
+        crate::theme::CYAN
+    } else if spot.callsign.is_some() {
+        crate::theme::CYAN_DIM
+    } else {
+        Color32::from_gray(78)
+    }
+}
+
+/// Lay skimmer spots out into staggered lanes over the waterfall. Each box sits
+/// to the right of its signal (offset by a leader). Visible spots are sorted by
+/// x and greedily packed into the lowest lane whose footprint — from the signal
+/// x through the box's right edge — clears the previous box, so nearby signals
+/// stack vertically instead of overlapping. Off-view / past-cap spots are omitted.
 fn layout_spots(view: &ViewState, rect: &Rect, wf_rect: &Rect, spots: &[SkimmerSpot]) -> Vec<SpotBox> {
     let mut vis: Vec<(f32, usize)> = spots
         .iter()
@@ -53,12 +68,13 @@ fn layout_spots(view: &ViewState, rect: &Rect, wf_rect: &Rect, spots: &[SkimmerS
     let mut lane_right: Vec<f32> = Vec::new();
     let mut out = Vec::with_capacity(vis.len());
     for (xc, idx) in vis {
-        let left = xc - SPOT_BOX_W * 0.5;
-        let right = xc + SPOT_BOX_W * 0.5;
-        // Lowest lane whose previous box's right edge clears this box's left.
+        let box_left = xc + SPOT_LEADER;
+        // Footprint spans the signal tick through the box's right edge, so a
+        // later box's tick can't land on top of an earlier box in the lane.
+        let foot_right = box_left + SPOT_BOX_W + SPOT_H_GAP;
         let mut lane = lane_right.len();
         for (k, &r) in lane_right.iter().enumerate() {
-            if left >= r {
+            if xc >= r {
                 lane = k;
                 break;
             }
@@ -69,29 +85,24 @@ fn layout_spots(view: &ViewState, rect: &Rect, wf_rect: &Rect, spots: &[SkimmerS
         if lane == lane_right.len() {
             lane_right.push(0.0);
         }
-        lane_right[lane] = right + SPOT_H_GAP;
+        lane_right[lane] = foot_right;
         let top = wf_rect.top() + SPOT_TOP_MARGIN + lane as f32 * (SPOT_BOX_H + SPOT_LANE_GAP);
-        out.push(SpotBox { rect: Rect::from_min_size(pos2(left, top), vec2(SPOT_BOX_W, SPOT_BOX_H)), idx });
+        out.push(SpotBox {
+            rect: Rect::from_min_size(pos2(box_left, top), vec2(SPOT_BOX_W, SPOT_BOX_H)),
+            sig_x: xc,
+            idx,
+        });
     }
     out
 }
 
 /// Draw one skimmer box: cut-in background, callsign (green, when decoded),
 /// and the rolling message marquee-scrolled and clipped to the box.
-fn draw_spot_box(p: &egui::Painter, b: &SpotBox, spot: &SkimmerSpot, hovered: bool, time: f64) {
+fn draw_spot_box(p: &egui::Painter, b: &SpotBox, spot: &SkimmerSpot, hovered: bool) {
     let rect = b.rect;
     p.rect_filled(rect, 2.0, Color32::from_rgba_unmultiplied(5, 11, 18, 225));
-    let border = if hovered {
-        crate::theme::CYAN
-    } else if spot.callsign.is_some() {
-        crate::theme::CYAN_DIM
-    } else {
-        Color32::from_gray(78)
-    };
+    let border = spot_color(spot, hovered);
     p.rect_stroke(rect, 2.0, Stroke::new(if hovered { 1.5 } else { 1.0 }, border), StrokeKind::Inside);
-    // Frequency tick under the box centre.
-    let cx = rect.center().x;
-    p.vline(cx, egui::Rangef::new(rect.bottom(), rect.bottom() + 3.0), Stroke::new(1.0, border));
 
     let pad = 4.0;
     let cy = rect.center().y;
@@ -102,8 +113,10 @@ fn draw_spot_box(p: &egui::Painter, b: &SpotBox, spot: &SkimmerSpot, hovered: bo
         x += g.size().x + 6.0;
     }
 
-    // Message area: whatever width is left of the box, clipped so a long
-    // message scrolls instead of spilling out.
+    // Message area: whatever width is left of the box. The message is anchored
+    // to the right edge and clipped on the left, so the newest decoded text is
+    // always shown (older text slides off the left as it arrives) — steadier to
+    // read than a marquee.
     let msg_rect = Rect::from_min_max(pos2(x, rect.top()), pos2(rect.right() - pad, rect.bottom()));
     if msg_rect.width() < 6.0 {
         return;
@@ -112,16 +125,14 @@ fn draw_spot_box(p: &egui::Painter, b: &SpotBox, spot: &SkimmerSpot, hovered: bo
     let col = crate::theme::TEXT;
     let g = p.layout_no_wrap(text.to_string(), FontId::monospace(10.0), col);
     let ty = cy - g.size().y * 0.5;
-    let mp = p.with_clip_rect(msg_rect);
-    if g.size().x <= msg_rect.width() {
-        mp.galley(pos2(msg_rect.left(), ty), g, col);
+    // Left-align while it fits; once it overflows, pin the tail to the right.
+    let gx = if g.size().x <= msg_rect.width() {
+        msg_rect.left()
     } else {
-        // Marquee: scroll left and wrap with a gap for a seamless loop.
-        let period = g.size().x + 28.0;
-        let off = (time as f32 * SPOT_SCROLL_PX_S).rem_euclid(period);
-        mp.galley(pos2(msg_rect.left() - off, ty), g.clone(), col);
-        mp.galley(pos2(msg_rect.left() - off + period, ty), g, col);
-    }
+        msg_rect.right() - g.size().x
+    };
+    let mp = p.with_clip_rect(msg_rect);
+    mp.galley(pos2(gx, ty), g, col);
 }
 
 /// Decaying peak-hold trace, reset whenever the frame mapping changes.
@@ -213,7 +224,6 @@ pub fn show_ext(
     // Skimmer boxes are laid out up front so the click hit-test (below) and the
     // draw pass (bottom) agree on their rects.
     let spot_boxes = layout_spots(view, &rect, &wf_rect, skimmer);
-    let time = ui.input(|i| i.time);
 
     // --- interactions -----------------------------------------------------
     // Model: grabbing a filter edge (left button, spectrum strip) always
@@ -522,14 +532,30 @@ pub fn show_ext(
     }
 
     // Skimmer spot boxes over the waterfall (staggered lanes, on top of the
-    // markers so they stay readable and clickable).
+    // markers so they stay readable and clickable). Each box sits to the right
+    // of its signal: a faint vertical line marks the signal's centre and a
+    // horizontal leader joins it to the box.
     let hover_pos = resp.hover_pos();
     for b in &spot_boxes {
+        let spot = &skimmer[b.idx];
         let hovered = hover_pos.is_some_and(|p| b.rect.contains(p));
         if hovered {
             ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
         }
-        draw_spot_box(&painter, b, &skimmer[b.idx], hovered, time);
+        let border = spot_color(spot, hovered);
+        let cy = b.rect.center().y;
+        // Vertical indicator over the signal centre (faint, full waterfall).
+        let vcol = Color32::from_rgba_unmultiplied(
+            border.r(),
+            border.g(),
+            border.b(),
+            if hovered { 170 } else { 90 },
+        );
+        painter.vline(b.sig_x, wf_rect.y_range(), Stroke::new(1.0, vcol));
+        // Horizontal leader from the signal to the box, with a junction node.
+        painter.line_segment([pos2(b.sig_x, cy), pos2(b.rect.left(), cy)], Stroke::new(1.0, border));
+        painter.circle_filled(pos2(b.sig_x, cy), 1.8, border);
+        draw_spot_box(&painter, b, spot, hovered);
     }
 
     // Chrome: pink cut-corner border + corner accents around the panadapter.

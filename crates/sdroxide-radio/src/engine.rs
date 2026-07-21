@@ -440,6 +440,7 @@ fn engine_thread(
     }
     // If we start up already in a digital mode, spin up the controller.
     engine.sync_digi_mode();
+    engine.sync_skimmer(); // starts if skimmer_enabled (default on)
     engine.update_tuning();
 
     let mut buf = vec![Complex32::default(); 16_384];

@@ -66,6 +66,12 @@ struct Track {
     hits: u32,
     /// Smoothed power envelope at the track's bin.
     env: f32,
+    /// Time-smoothed power at [bin-1, bin, bin+1], accumulated over keyed-on
+    /// frames. Quadratic interpolation over these three resolves the carrier to
+    /// a fraction of a bin, so the spot marker lands on the signal instead of
+    /// snapping to the 49 Hz grid. Smoothing is essential: a single frame of a
+    /// keying CW signal is spiky and would bias the estimate.
+    pk: [f32; 3],
 }
 
 pub struct CwSkimmer {
@@ -217,6 +223,8 @@ impl CwSkimmer {
                 let id = self.next_id;
                 self.next_id += 1;
                 let k = self.bin_index(off);
+                let km = self.bin_index(off - 1);
+                let kp = self.bin_index(off + 1);
                 self.tracks.push(Track {
                     id,
                     bin: off,
@@ -229,6 +237,7 @@ impl CwSkimmer {
                     snr_db: 0,
                     hits: 0,
                     env: self.power[k],
+                    pk: [self.power[km], self.power[k], self.power[kp]],
                 });
             }
         }
@@ -256,6 +265,12 @@ impl CwSkimmer {
                 t.hits = t.hits.saturating_add(1);
                 t.last_on_ms = now;
                 t.snr_db = (10.0 * (t.env / floor).log10()).round().clamp(-30.0, 60.0) as i16;
+                // Accumulate the smoothed 3-bin peak shape while keyed.
+                let km = ((t.bin - 1).rem_euclid(n as i64)) as usize;
+                let kp = ((t.bin + 1).rem_euclid(n as i64)) as usize;
+                t.pk[0] = 0.9 * t.pk[0] + 0.1 * self.power[km];
+                t.pk[1] = 0.9 * t.pk[1] + 0.1 * self.power[k];
+                t.pk[2] = 0.9 * t.pk[2] + 0.1 * self.power[kp];
             }
             if on == t.key_on {
                 t.dur_ms += dt;
@@ -308,6 +323,15 @@ impl CwSkimmer {
                 if !(8..=45).contains(&wpm) {
                     return None;
                 }
+                // Quadratic peak interpolation over the smoothed 3-bin shape
+                // gives a sub-bin carrier offset in [-0.5, 0.5].
+                let [a, b, c] = t.pk;
+                let denom = a - 2.0 * b + c;
+                let delta = if denom < 0.0 {
+                    (0.5 * (a - c) / denom).clamp(-0.5, 0.5)
+                } else {
+                    0.0
+                };
                 let callsign = find_callsign(text);
                 let meaty = text
                     .chars()
@@ -319,7 +343,7 @@ impl CwSkimmer {
                 Some(SkimmerSpot {
                     id: t.id,
                     kind: SkimmerKind::Cw,
-                    freq_hz: self.skim_center_hz + t.bin as f64 * bin_hz,
+                    freq_hz: self.skim_center_hz + (t.bin as f64 + delta as f64) * bin_hz,
                     callsign,
                     text: text.to_string(),
                     snr_db: t.snr_db,
@@ -457,5 +481,38 @@ mod tests {
         );
         assert!(s.text.contains("W1AW"), "text: {:?}", s.text);
         assert_eq!(s.callsign.as_deref(), Some("W1AW"));
+    }
+
+    /// End-to-end frequency accuracy through the *real* engine path: device-rate
+    /// IQ → skim DDC → CwSkimmer. Catches any bin/decimation mismatch that would
+    /// mistune the spot marker against the waterfall.
+    #[test]
+    fn frequency_is_accurate_through_the_ddc() {
+        let dev_rate = 2_000_000.0;
+        let center = 14_025_000.0;
+        for off in [2_000.0f64, -3_500.0, 7_000.0] {
+            let iq_dev = synth("CQ DE W1AW", off, 24.0, dev_rate);
+            let mut ddc = sdroxide_dsp::Ddc::new(dev_rate, 192_000.0);
+            let skim_rate = ddc.out_rate();
+            let mut sk = CwSkimmer::new(skim_rate, center);
+            let mut buf = Vec::new();
+            for chunk in iq_dev.chunks(16_384) {
+                buf.clear();
+                ddc.process(chunk, &mut buf);
+                sk.process(&buf);
+            }
+            let spots = sk.spots();
+            assert!(!spots.is_empty(), "off {off}: no spots");
+            let want = center + off;
+            let s = spots
+                .iter()
+                .min_by(|a, b| {
+                    (a.freq_hz - want).abs().partial_cmp(&(b.freq_hz - want).abs()).unwrap()
+                })
+                .unwrap();
+            let err = s.freq_hz - want;
+            eprintln!("off {off:+}: got {} want {} err {err:+.1} Hz", s.freq_hz, want);
+            assert!(err.abs() < 20.0, "off {off}: freq error {err:+.1} Hz");
+        }
     }
 }

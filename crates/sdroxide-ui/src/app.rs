@@ -579,7 +579,7 @@ impl SdroxideApp {
     }
 
     fn display_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
-        crate::chrome::module(ui, "Display", 556.0, |ui| {
+        crate::chrome::module(ui, "Display", 226.0, |ui| {
             if crate::chrome::chip(ui, false, "FIT")
                 .on_hover_text("Auto-set floor/ceiling for best waterfall contrast")
                 .clicked()
@@ -592,25 +592,22 @@ impl SdroxideApp {
             {
                 self.view.peak_hold = !self.view.peak_hold;
             }
-            if crate::chrome::chip(ui, self.view.spectrum_collapsed, "SPEC")
-                .on_hover_text("Collapse the spectrum line (waterfall only)")
+            // Lit when the spectrum line is visible (not collapsed).
+            if crate::chrome::chip(ui, !self.view.spectrum_collapsed, "SPEC")
+                .on_hover_text("Show/hide the spectrum line above the waterfall")
                 .clicked()
             {
                 self.view.spectrum_collapsed = !self.view.spectrum_collapsed;
             }
             let skim = self.state.skimmer_enabled;
-            if crate::chrome::chip_accent(
-                ui,
-                skim,
-                "CW SKIM",
-                crate::theme::GREEN,
-                crate::theme::INK_ON_CYAN,
-            )
-            .on_hover_text("Decode all CW signals in a ~192 kHz window and mark them on the waterfall")
-            .clicked()
+            if crate::chrome::chip(ui, skim, "SKIM")
+                .on_hover_text("Decode all CW signals in a ~192 kHz window and mark them on the waterfall")
+                .clicked()
             {
                 cmds.push(Command::SetSkimmerEnabled(!skim));
             }
+        });
+        crate::chrome::module(ui, "FFT", 344.0, |ui| {
             ui.label("floor");
             ui.add(
                 DragValue::new(&mut self.view.db_floor).speed(1.0).range(-160.0..=-40.0).suffix(" dB"),
