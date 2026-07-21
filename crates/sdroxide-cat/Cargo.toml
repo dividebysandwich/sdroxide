@@ -7,7 +7,11 @@ edition.workspace = true
 # dependency of any wasm-targeted crate.
 [dependencies]
 sdroxide-types.workspace = true
-serialport = "4.7"
+# `default-features = false` drops the `libudev` feature so we don't link
+# libudev-sys (no libudev-dev needed to build). Port enumeration falls back to
+# scanning /sys/class/tty, which still lists /dev/ttyACM* — we only need the
+# path, not USB vendor/product metadata.
+serialport = { version = "4.7", default-features = false }
 crossbeam-channel.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

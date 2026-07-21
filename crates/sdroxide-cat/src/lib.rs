@@ -25,11 +25,25 @@ pub enum CatUpdate {
     Mode(Mode),
 }
 
-/// Enumerate serial ports for the settings UI.
+/// Enumerate serial ports for the settings UI. USB-style ports (ttyACM/ttyUSB,
+/// where CAT rigs like the X6100 appear) are listed first; the many legacy
+/// `/dev/ttyS*` entries — which the non-libudev sysfs scan can't filter to
+/// only present ones — sort to the end.
 pub fn available_ports() -> Vec<String> {
-    serialport::available_ports()
+    let mut ports: Vec<String> = serialport::available_ports()
         .map(|ports| ports.into_iter().map(|p| p.port_name).collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let rank = |p: &str| -> u8 {
+        if p.contains("ttyACM") || p.contains("ttyUSB") {
+            0
+        } else if p.contains("ttyS") {
+            2
+        } else {
+            1
+        }
+    };
+    ports.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.cmp(b)));
+    ports
 }
 
 /// Per-family framing. `parse` consumes complete frames from a rolling buffer.
