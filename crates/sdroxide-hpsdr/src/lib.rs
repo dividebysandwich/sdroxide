@@ -11,6 +11,7 @@
 
 mod discovery;
 mod net;
+mod protocol1;
 mod protocol2;
 
 use std::time::Duration;

@@ -275,9 +275,21 @@ impl Default for HpsdrConfig {
 }
 
 impl HpsdrConfig {
-    /// Supported DDC sample rates (Hz).
+    /// Supported DDC sample rates (Hz) for Protocol 2 boards.
     pub const SAMPLE_RATES: [f64; 6] =
         [48_000.0, 96_000.0, 192_000.0, 384_000.0, 768_000.0, 1_536_000.0];
+
+    /// Protocol 1 (Metis) boards top out at 384 kHz.
+    pub const P1_SAMPLE_RATES: [f64; 4] = [48_000.0, 96_000.0, 192_000.0, 384_000.0];
+
+    /// The sample rates valid for a given protocol (1 or 2).
+    pub fn rates_for(protocol: u8) -> &'static [f64] {
+        if protocol == 1 {
+            &Self::P1_SAMPLE_RATES
+        } else {
+            &Self::SAMPLE_RATES
+        }
+    }
 
     /// Resolve the IP to connect to: manual override, else the persisted pick.
     /// `None` means "discover and use the first responder".
@@ -310,15 +322,16 @@ impl HpsdrDevice {
         if self.in_use {
             s.push_str("  [in use]");
         }
-        if self.protocol != 2 {
-            s.push_str("  [Protocol 1 — not yet supported]");
+        if !self.supported() {
+            s.push_str("  [unsupported protocol]");
         }
         s
     }
 
-    /// Whether this device can be driven by the current implementation.
+    /// Whether this device can be driven by the current implementation
+    /// (Protocol 1 and Protocol 2 are both supported).
     pub fn supported(&self) -> bool {
-        self.protocol == 2
+        matches!(self.protocol, 1 | 2)
     }
 }
 

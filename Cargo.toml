@@ -4,7 +4,7 @@ members = ["crates/*"]
 default-members = [".", "crates/sdroxide-types", "crates/sdroxide-proto", "crates/sdroxide-dsp", "crates/sdroxide-radio", "crates/sdroxide-config"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 # The native binary links mfsk-core (GPL-3.0-or-later) for FT8/FT4, so the
 # built binary is GPL-3.0-or-later. The GPL dependency is confined to the

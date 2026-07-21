@@ -18,6 +18,6 @@ soapysdr = { version = "0.5.1", optional = true }
 triple_buffer = "9.0.0"
 crossbeam-channel.workspace = true
 rtrb.workspace = true
-sdroxide-config = { version = "0.1.0", path = "../sdroxide-config" }
-sdroxide-digi = { version = "0.1.0", path = "../sdroxide-digi" }
-sdroxide-skimmer = { version = "0.1.0", path = "../sdroxide-skimmer" }
+sdroxide-config = { version = "0.2.0", path = "../sdroxide-config" }
+sdroxide-digi = { version = "0.2.0", path = "../sdroxide-digi" }
+sdroxide-skimmer = { version = "0.2.0", path = "../sdroxide-skimmer" }

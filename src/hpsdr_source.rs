@@ -40,6 +40,10 @@ impl HpsdrSource {
     pub fn board(&self) -> &str {
         &self.handle.board
     }
+
+    pub fn protocol(&self) -> u8 {
+        self.handle.protocol
+    }
 }
 
 impl IqSource for HpsdrSource {

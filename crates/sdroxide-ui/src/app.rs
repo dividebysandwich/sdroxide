@@ -2170,9 +2170,15 @@ fn settings_hpsdr_tab(
         ui.end_row();
 
         ui.label("Sample rate");
+        // Show only rates valid for the selected device's protocol (P1 ≤ 384 kHz).
+        let proto = devices
+            .iter()
+            .find(|d| Some(d.ip.as_str()) == cfg.hpsdr.selected_ip.as_deref())
+            .map(|d| d.protocol)
+            .unwrap_or(2);
         let shown = format!("{} kHz", (cfg.hpsdr.sample_rate_hz / 1000.0) as u32);
         ComboBox::from_id_salt("hpsdr_rate").selected_text(shown).show_ui(ui, |ui| {
-            for &r in &HpsdrConfig::SAMPLE_RATES {
+            for &r in HpsdrConfig::rates_for(proto) {
                 let sel = (cfg.hpsdr.sample_rate_hz - r).abs() < 1.0;
                 if ui.selectable_label(sel, format!("{} kHz", (r / 1000.0) as u32)).clicked() {
                     cfg.hpsdr.sample_rate_hz = r;

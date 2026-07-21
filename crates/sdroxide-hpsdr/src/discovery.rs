@@ -202,7 +202,7 @@ mod tests {
         assert_eq!(d.protocol, 1);
         assert_eq!(d.board, "Hermes-Lite 2");
         assert!(d.in_use);
-        assert!(!d.supported()); // P1 not drivable yet
+        assert!(d.supported()); // Protocol 1 is now driven
     }
 
     #[test]

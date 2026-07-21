@@ -451,22 +451,23 @@ fn open_hpsdr_source(
 
     let src = hpsdr_source::HpsdrSource::open(ip, radio.hpsdr.sample_rate_hz, center_hz)
         .context("opening HPSDR device")?;
-    let caps = hpsdr_caps(src.board(), src.sample_rate_hz());
+    let caps = hpsdr_caps(src.board(), src.sample_rate_hz(), src.protocol());
     Ok((Box::new(src), caps))
 }
 
 /// Capabilities for an HPSDR board: wideband IQ (not `audio_mode`), TX-capable,
-/// half-duplex, HF+6m coverage. The board enforces its own limits.
-fn hpsdr_caps(board: &str, sample_rate: f64) -> DeviceCaps {
+/// half-duplex, HF+6m coverage. The board enforces its own limits. Protocol 1
+/// boards top out at 384 kHz.
+fn hpsdr_caps(board: &str, sample_rate: f64, protocol: u8) -> DeviceCaps {
     DeviceCaps {
         driver: "hpsdr".into(),
-        label: format!("{board} (HPSDR, {:.3} Msps)", sample_rate / 1e6),
+        label: format!("{board} (HPSDR P{protocol}, {:.3} Msps)", sample_rate / 1e6),
         rx_channels: 1,
         tx_channels: 1,
         audio_mode: false,
         freq_ranges_rx: vec![(0.0, 61_440_000.0)],
         freq_ranges_tx: vec![(1_800_000.0, 54_000_000.0)],
-        sample_rates: sdroxide_types::HpsdrConfig::SAMPLE_RATES.to_vec(),
+        sample_rates: sdroxide_types::HpsdrConfig::rates_for(protocol).to_vec(),
         ..DeviceCaps::default()
     }
 }

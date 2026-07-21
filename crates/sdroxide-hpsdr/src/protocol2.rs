@@ -6,6 +6,14 @@
 //! verified field-by-field against the TAPR Protocol 2 documentation before
 //! trusting on-air behavior; see the notes on individual builders.
 
+use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::time::Instant;
+
+use crossbeam_channel::Receiver;
+use rtrb::{Consumer, Producer};
+
+use crate::net::{Ctrl, ThreadCtx, WATCHDOG};
+
 /// UDP ports. Host→radio use these as the *destination* port; radio→host DDC IQ
 /// arrives with a *source* port of [`port::DDC_IQ_BASE`]` + ddc_index`.
 pub mod port {
@@ -182,6 +190,176 @@ pub fn decode_ddc_iq(pkt: &[u8], out: &mut Vec<f32>) -> Option<usize> {
         out.push(q);
     }
     Some(pairs)
+}
+
+// ---------------------------------------------------------------------------
+// Protocol 2 network thread
+// ---------------------------------------------------------------------------
+
+/// Fixed FPGA drive level while keyed. The engine already scales the I/Q by the
+/// operator's drive fraction in software, so the FPGA runs at full scale and the
+/// I/Q amplitude sets the power (the TX safety rails still apply upstream).
+const TX_DRIVE: u8 = 255;
+
+#[derive(Default)]
+struct Seq {
+    general: u32,
+    high_priority: u32,
+    ddc: u32,
+    duc: u32,
+    tx_iq: u32,
+}
+
+fn next_seq(v: &mut u32) -> u32 {
+    let n = *v;
+    *v = v.wrapping_add(1);
+    n
+}
+
+/// Run the Protocol 2 network loop until told to shut down.
+pub(crate) fn run(ctx: ThreadCtx) {
+    let mut t = P2Thread {
+        socket: ctx.socket,
+        radio: ctx.radio,
+        rate_khz: (ctx.rate_hz / 1000.0) as u16,
+        rx: ctx.rx,
+        tx: ctx.tx,
+        ctrl: ctx.ctrl,
+        seq: Seq::default(),
+        rx_freq: 7_100_000.0,
+        tx_freq: 7_100_000.0,
+        ptt: false,
+    };
+    t.run();
+}
+
+struct P2Thread {
+    socket: UdpSocket,
+    radio: IpAddr,
+    rate_khz: u16,
+    rx: Producer<f32>,
+    tx: Consumer<f32>,
+    ctrl: Receiver<Ctrl>,
+    seq: Seq,
+    rx_freq: f64,
+    tx_freq: f64,
+    ptt: bool,
+}
+
+impl P2Thread {
+    fn dest(&self, p: u16) -> SocketAddr {
+        SocketAddr::new(self.radio, p)
+    }
+
+    fn send_high_priority(&mut self) {
+        let seq = next_seq(&mut self.seq.high_priority);
+        let rx = phase_word(self.rx_freq, CLOCK_HZ);
+        let tx = phase_word(self.tx_freq, CLOCK_HZ);
+        let drive = if self.ptt { TX_DRIVE } else { 0 };
+        let pkt = high_priority_packet(seq, rx, tx, self.ptt, drive);
+        let _ = self.socket.send_to(&pkt, self.dest(port::HIGH_PRIORITY));
+    }
+
+    fn send_ddc_command(&mut self) {
+        let seq = next_seq(&mut self.seq.ddc);
+        let pkt = ddc_command_packet(seq, self.rate_khz);
+        let _ = self.socket.send_to(&pkt, self.dest(port::DDC_COMMAND));
+    }
+
+    fn send_duc_command(&mut self) {
+        let seq = next_seq(&mut self.seq.duc);
+        let pkt = duc_command_packet(seq);
+        let _ = self.socket.send_to(&pkt, self.dest(port::DUC_COMMAND));
+    }
+
+    fn send_general(&mut self, run: bool) {
+        let seq = next_seq(&mut self.seq.general);
+        let pkt = general_packet(seq, run);
+        let _ = self.socket.send_to(&pkt, self.dest(port::GENERAL));
+    }
+
+    fn run(&mut self) {
+        self.send_ddc_command();
+        self.send_duc_command();
+        self.send_high_priority();
+        self.send_general(true);
+
+        let mut last_watchdog = Instant::now();
+        let mut rx_scratch: Vec<f32> = Vec::with_capacity(512);
+        let mut tx_scratch: Vec<f32> = Vec::with_capacity(DUC_SAMPLES_PER_PKT * 2);
+        let mut buf = [0u8; 2048];
+
+        loop {
+            let mut freq_changed = false;
+            while let Ok(msg) = self.ctrl.try_recv() {
+                match msg {
+                    Ctrl::RxFreq(hz) => {
+                        self.rx_freq = hz;
+                        freq_changed = true;
+                    }
+                    Ctrl::TxOn(hz) => {
+                        self.tx_freq = hz;
+                        self.ptt = true;
+                        self.send_duc_command();
+                        freq_changed = true;
+                    }
+                    Ctrl::TxOff => {
+                        self.ptt = false;
+                        freq_changed = true;
+                    }
+                    Ctrl::Shutdown => {
+                        self.send_general(false);
+                        return;
+                    }
+                }
+            }
+            if freq_changed {
+                self.send_high_priority();
+            }
+
+            match self.socket.recv_from(&mut buf) {
+                Ok((n, src)) => {
+                    let p = src.port();
+                    if (port::DDC_IQ_BASE..port::DDC_IQ_BASE + 8).contains(&p) {
+                        rx_scratch.clear();
+                        if decode_ddc_iq(&buf[..n], &mut rx_scratch).is_some() {
+                            for &s in &rx_scratch {
+                                let _ = self.rx.push(s);
+                            }
+                        }
+                    }
+                }
+                Err(ref e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut => {}
+                Err(e) => {
+                    tracing::warn!("HPSDR P2 recv error: {e}; stopping");
+                    self.send_general(false);
+                    return;
+                }
+            }
+
+            if self.ptt {
+                while let Ok(v) = self.tx.pop() {
+                    tx_scratch.push(v);
+                    if tx_scratch.len() >= DUC_SAMPLES_PER_PKT * 2 {
+                        let seq = next_seq(&mut self.seq.tx_iq);
+                        let pkt = duc_iq_packet(seq, &tx_scratch);
+                        let _ = self.socket.send_to(&pkt, self.dest(port::DUC_IQ));
+                        tx_scratch.clear();
+                    }
+                }
+            } else if !tx_scratch.is_empty() {
+                tx_scratch.clear();
+            }
+
+            if last_watchdog.elapsed() >= WATCHDOG {
+                self.send_high_priority();
+                self.send_general(true);
+                last_watchdog = Instant::now();
+            }
+        }
+    }
 }
 
 #[cfg(test)]
