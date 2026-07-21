@@ -1797,6 +1797,10 @@ impl eframe::App for SdroxideApp {
                 }
             }
         }
+        // When the skimmer is off the engine stops emitting; drop stale boxes.
+        if !self.state.skimmer_enabled && !self.skimmer_spots.is_empty() {
+            self.skimmer_spots.clear();
+        }
 
         let mut cmds = Vec::new();
         self.keyboard_shortcuts(&ctx, &mut cmds);
@@ -1848,6 +1852,7 @@ impl eframe::App for SdroxideApp {
                     frame.as_ref(),
                     &mut self.peaks,
                     Some(audio_hz),
+                    &self.skimmer_spots,
                     &mut cmds,
                 );
             });
@@ -1902,6 +1907,7 @@ impl eframe::App for SdroxideApp {
                 &mut self.state,
                 frame.as_ref(),
                 &mut self.peaks,
+                &self.skimmer_spots,
                 &mut cmds,
             );
             self.frame = frame;

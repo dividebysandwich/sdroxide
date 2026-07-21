@@ -3,9 +3,10 @@
 //! tunes VFO B), and draggable passband filter edges.
 
 use eframe::egui::{
-    self, Align2, Color32, CursorIcon, FontId, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2,
+    self, Align2, Color32, CursorIcon, FontId, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui,
+    pos2, vec2,
 };
-use sdroxide_types::{Command, RadioState, RxId, SpectrumFrame, Vfo};
+use sdroxide_types::{Command, Mode, RadioState, RxId, SkimmerSpot, SpectrumFrame, Vfo};
 
 use crate::view::ViewState;
 use crate::waterfall_gpu::WaterfallCallback;
@@ -15,6 +16,113 @@ const SCALE_H: f32 = 18.0;
 const CLICK_TUNE_STEP: f64 = 10.0;
 /// Pixel distance for grabbing a filter edge.
 const EDGE_GRAB_PX: f32 = 6.0;
+
+// --- skimmer spot boxes ---------------------------------------------------
+const SPOT_BOX_W: f32 = 122.0;
+const SPOT_BOX_H: f32 = 15.0;
+/// Vertical gap between staggered lanes.
+const SPOT_LANE_GAP: f32 = 3.0;
+/// Gap from the top of the waterfall to the first lane.
+const SPOT_TOP_MARGIN: f32 = 4.0;
+/// Minimum horizontal gap between two boxes sharing a lane.
+const SPOT_H_GAP: f32 = 6.0;
+/// Cap on stacked lanes; spots that would need a deeper lane are dropped.
+const SPOT_MAX_LANES: usize = 6;
+/// Marquee scroll speed for overflowing messages.
+const SPOT_SCROLL_PX_S: f32 = 26.0;
+
+/// A laid-out skimmer box: its screen rect and the index of the spot it shows.
+struct SpotBox {
+    rect: Rect,
+    idx: usize,
+}
+
+/// Lay skimmer spots out into staggered lanes over the waterfall. Visible
+/// spots are sorted by x and greedily packed into the lowest lane whose last
+/// box clears this one, so nearby signals stack vertically instead of
+/// overlapping. Frequencies out of view (or past the lane cap) are omitted.
+fn layout_spots(view: &ViewState, rect: &Rect, wf_rect: &Rect, spots: &[SkimmerSpot]) -> Vec<SpotBox> {
+    let mut vis: Vec<(f32, usize)> = spots
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| (view.view_lo_hz..=view.view_hi_hz).contains(&s.freq_hz))
+        .map(|(i, s)| (view.freq_to_x(s.freq_hz, rect), i))
+        .collect();
+    vis.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    let mut lane_right: Vec<f32> = Vec::new();
+    let mut out = Vec::with_capacity(vis.len());
+    for (xc, idx) in vis {
+        let left = xc - SPOT_BOX_W * 0.5;
+        let right = xc + SPOT_BOX_W * 0.5;
+        // Lowest lane whose previous box's right edge clears this box's left.
+        let mut lane = lane_right.len();
+        for (k, &r) in lane_right.iter().enumerate() {
+            if left >= r {
+                lane = k;
+                break;
+            }
+        }
+        if lane >= SPOT_MAX_LANES {
+            continue; // too crowded here — drop the box
+        }
+        if lane == lane_right.len() {
+            lane_right.push(0.0);
+        }
+        lane_right[lane] = right + SPOT_H_GAP;
+        let top = wf_rect.top() + SPOT_TOP_MARGIN + lane as f32 * (SPOT_BOX_H + SPOT_LANE_GAP);
+        out.push(SpotBox { rect: Rect::from_min_size(pos2(left, top), vec2(SPOT_BOX_W, SPOT_BOX_H)), idx });
+    }
+    out
+}
+
+/// Draw one skimmer box: cut-in background, callsign (green, when decoded),
+/// and the rolling message marquee-scrolled and clipped to the box.
+fn draw_spot_box(p: &egui::Painter, b: &SpotBox, spot: &SkimmerSpot, hovered: bool, time: f64) {
+    let rect = b.rect;
+    p.rect_filled(rect, 2.0, Color32::from_rgba_unmultiplied(5, 11, 18, 225));
+    let border = if hovered {
+        crate::theme::CYAN
+    } else if spot.callsign.is_some() {
+        crate::theme::CYAN_DIM
+    } else {
+        Color32::from_gray(78)
+    };
+    p.rect_stroke(rect, 2.0, Stroke::new(if hovered { 1.5 } else { 1.0 }, border), StrokeKind::Inside);
+    // Frequency tick under the box centre.
+    let cx = rect.center().x;
+    p.vline(cx, egui::Rangef::new(rect.bottom(), rect.bottom() + 3.0), Stroke::new(1.0, border));
+
+    let pad = 4.0;
+    let cy = rect.center().y;
+    let mut x = rect.left() + pad;
+    if let Some(call) = &spot.callsign {
+        let g = p.layout_no_wrap(call.clone(), FontId::monospace(10.5), crate::theme::GREEN);
+        p.galley(pos2(x, cy - g.size().y * 0.5), g.clone(), crate::theme::GREEN);
+        x += g.size().x + 6.0;
+    }
+
+    // Message area: whatever width is left of the box, clipped so a long
+    // message scrolls instead of spilling out.
+    let msg_rect = Rect::from_min_max(pos2(x, rect.top()), pos2(rect.right() - pad, rect.bottom()));
+    if msg_rect.width() < 6.0 {
+        return;
+    }
+    let text = if spot.text.is_empty() { "…" } else { spot.text.as_str() };
+    let col = crate::theme::TEXT;
+    let g = p.layout_no_wrap(text.to_string(), FontId::monospace(10.0), col);
+    let ty = cy - g.size().y * 0.5;
+    let mp = p.with_clip_rect(msg_rect);
+    if g.size().x <= msg_rect.width() {
+        mp.galley(pos2(msg_rect.left(), ty), g, col);
+    } else {
+        // Marquee: scroll left and wrap with a gap for a seamless loop.
+        let period = g.size().x + 28.0;
+        let off = (time as f32 * SPOT_SCROLL_PX_S).rem_euclid(period);
+        mp.galley(pos2(msg_rect.left() - off, ty), g.clone(), col);
+        mp.galley(pos2(msg_rect.left() - off + period, ty), g, col);
+    }
+}
 
 /// Decaying peak-hold trace, reset whenever the frame mapping changes.
 #[derive(Default)]
@@ -50,9 +158,10 @@ pub fn show(
     state: &mut RadioState,
     frame: Option<&SpectrumFrame>,
     peaks: &mut PeakHold,
+    skimmer: &[SkimmerSpot],
     cmds: &mut Vec<Command>,
 ) {
-    show_ext(ui, view, state, frame, peaks, None, cmds);
+    show_ext(ui, view, state, frame, peaks, None, skimmer, cmds);
 }
 
 /// `show` with an optional digital-mode audio marker. When `digi_audio_hz`
@@ -65,6 +174,7 @@ pub fn show_ext(
     frame: Option<&SpectrumFrame>,
     peaks: &mut PeakHold,
     digi_audio_hz: Option<f32>,
+    skimmer: &[SkimmerSpot],
     cmds: &mut Vec<Command>,
 ) {
     let rect = ui.available_rect_before_wrap();
@@ -99,6 +209,11 @@ pub fn show_ext(
     let scale_rect =
         Rect::from_min_size(pos2(rect.left(), spec_rect.bottom()), vec2(rect.width(), SCALE_H));
     let wf_rect = Rect::from_min_max(pos2(rect.left(), scale_rect.bottom()), rect.max);
+
+    // Skimmer boxes are laid out up front so the click hit-test (below) and the
+    // draw pass (bottom) agree on their rects.
+    let spot_boxes = layout_spots(view, &rect, &wf_rect, skimmer);
+    let time = ui.input(|i| i.time);
 
     // --- interactions -----------------------------------------------------
     // Model: grabbing a filter edge (left button, spectrum strip) always
@@ -237,12 +352,18 @@ pub fn show_ext(
         }
         if resp.clicked() {
             if let Some(pos) = resp.interact_pointer_pos() {
-                let clicked = view.x_to_freq(pos.x, &rect);
-                if digi_audio_hz.is_some() {
+                if let Some(sb) = spot_boxes.iter().find(|b| b.rect.contains(pos)) {
+                    // Clicking a skimmer box tunes there and switches to CW,
+                    // regardless of the current mode.
+                    let hz = skimmer[sb.idx].freq_hz;
+                    cmds.push(Command::SetVfo { vfo: state.active_vfo, hz });
+                    cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+                } else if digi_audio_hz.is_some() {
                     // Digital mode: set the audio TX offset, not the VFO.
-                    let audio = (clicked - state.rx_freq_hz()) as f32;
+                    let audio = (view.x_to_freq(pos.x, &rect) - state.rx_freq_hz()) as f32;
                     cmds.push(Command::SetDigiAudioFreq(audio.clamp(200.0, 3500.0)));
                 } else {
+                    let clicked = view.x_to_freq(pos.x, &rect);
                     let hz = (clicked / CLICK_TUNE_STEP).round() * CLICK_TUNE_STEP;
                     let shift = ui.input(|i| i.modifiers.shift);
                     let vfo = if shift { Vfo::B } else { state.active_vfo };
@@ -398,6 +519,17 @@ pub fn show_ext(
             wf_rect.y_range(),
             Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 170, 40, 110)),
         );
+    }
+
+    // Skimmer spot boxes over the waterfall (staggered lanes, on top of the
+    // markers so they stay readable and clickable).
+    let hover_pos = resp.hover_pos();
+    for b in &spot_boxes {
+        let hovered = hover_pos.is_some_and(|p| b.rect.contains(p));
+        if hovered {
+            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        }
+        draw_spot_box(&painter, b, &skimmer[b.idx], hovered, time);
     }
 
     // Chrome: pink cut-corner border + corner accents around the panadapter.

@@ -440,8 +440,6 @@ fn engine_thread(
     }
     // If we start up already in a digital mode, spin up the controller.
     engine.sync_digi_mode();
-    engine.state.skimmer_enabled = std::env::var("SKIM").as_deref() == Ok("1"); // TEMP test toggle
-    engine.sync_skimmer();
     engine.update_tuning();
 
     let mut buf = vec![Complex32::default(); 16_384];
