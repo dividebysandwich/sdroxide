@@ -3,8 +3,8 @@ use std::time::Duration;
 use eframe::egui::{self, Color32, ComboBox, DragValue, RichText, Slider};
 use sdroxide_types::{
     AgcMode, Band, Command, Decode, DeviceCaps, DigiStatus, Direction, MemoryChannel, Meters,
-    Mode, QsoRecord, RadioController, RadioEvent, RadioState, RxId, SkimmerSpot, SpectrumConfig,
-    SpectrumFrame, Vfo,
+    Mode, QsoRecord, RadioController, RadioEvent, RadioState, RxId, SkimmerKind, SkimmerSpot,
+    SpectrumConfig, SpectrumFrame, Vfo,
 };
 
 use crate::view::ViewState;
@@ -14,6 +14,19 @@ use crate::{colormap, waterfall_gpu};
 /// Viewport/FFT config updates are sent once the view has been stable this
 /// long (seconds of egui time — `std::time::Instant` panics on wasm).
 const CFG_DEBOUNCE_S: f64 = 0.25;
+
+/// A skimmer box fades to nothing over this many seconds after its signal
+/// stops keying, instead of vanishing.
+const SKIMMER_FADE_SECS: f64 = 5.0;
+
+/// Stable per-callsign id for the FT8 overlay boxes (keeps a station's box in
+/// place across slots).
+fn hash_call(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
+}
 
 pub struct SdroxideApp {
     ctrl: Box<dyn RadioController>,
@@ -34,6 +47,9 @@ pub struct SdroxideApp {
     mem_name: String,
     // Skimmer (CW etc.) spots, newest merge-by-id.
     skimmer_spots: Vec<SkimmerSpot>,
+    /// Per-spot last-active timestamp (egui seconds), so a box fades out over
+    /// `SKIMMER_FADE_SECS` once its signal stops keying instead of vanishing.
+    skimmer_active_at: std::collections::HashMap<u64, f64>,
     // FT8/FT4 digital-mode state.
     digi_decodes: Vec<Decode>,
     digi_status: Option<DigiStatus>,
@@ -170,6 +186,7 @@ impl SdroxideApp {
             show_settings: false,
             mem_name: String::new(),
             skimmer_spots: Vec::new(),
+            skimmer_active_at: std::collections::HashMap::new(),
             digi_decodes: Vec::new(),
             digi_status: None,
             qso_log: load_qso_log(cc.storage),
@@ -310,6 +327,64 @@ impl SdroxideApp {
         crate::chrome::module_bare(ui, 250.0, |ui| {
             smeter::show(ui, self.meters.as_ref());
         });
+    }
+
+    /// The CW-skimmer overlay: the current spots plus a parallel per-spot
+    /// opacity that fades a box out over `SKIMMER_FADE_SECS` once it stops
+    /// keying. Fully-faded spots are dropped so they free their lane.
+    fn cw_overlay(&self, now: f64) -> (Vec<SkimmerSpot>, Vec<f32>) {
+        let mut spots = Vec::new();
+        let mut alpha = Vec::new();
+        for s in &self.skimmer_spots {
+            let a = if s.active {
+                1.0
+            } else {
+                let last = self.skimmer_active_at.get(&s.id).copied().unwrap_or(now);
+                (1.0 - (now - last) / SKIMMER_FADE_SECS).clamp(0.0, 1.0) as f32
+            };
+            if a <= 0.02 {
+                continue;
+            }
+            spots.push(s.clone());
+            alpha.push(a);
+        }
+        (spots, alpha)
+    }
+
+    /// Reuse the skimmer overlay to mark FT8/FT4 stations: one box per decoded
+    /// callsign at its audio frequency (`dial + audio_hz`). The newest slot is
+    /// solid; the previous slot is dimmed. Clicking a box sets the audio offset.
+    fn ft8_overlay(&self) -> (Vec<SkimmerSpot>, Vec<f32>) {
+        let mut spots = Vec::new();
+        let mut alpha = Vec::new();
+        let Some(latest) = self.digi_decodes.first().map(|d| d.slot_utc) else {
+            return (spots, alpha);
+        };
+        let dial = self.state.rx_freq_hz();
+        let mut seen = std::collections::HashSet::new();
+        for d in &self.digi_decodes {
+            // Decodes are newest-first; show only the last couple of slots.
+            if latest - d.slot_utc > 30 {
+                break;
+            }
+            let Some(call) = &d.from else { continue };
+            if !seen.insert(call.clone()) {
+                continue; // keep the most recent decode per callsign
+            }
+            let newest = d.slot_utc == latest;
+            spots.push(SkimmerSpot {
+                id: hash_call(call),
+                kind: SkimmerKind::Cw,
+                freq_hz: dial + d.audio_hz as f64,
+                callsign: Some(call.clone()),
+                text: d.message.clone(),
+                snr_db: d.snr_db,
+                wpm: 0,
+                active: newest,
+            });
+            alpha.push(if newest { 1.0 } else { 0.5 });
+        }
+        (spots, alpha)
     }
 
     /// One button opening a floating popup with the band + mode + filter
@@ -1753,6 +1828,7 @@ impl SdroxideApp {
 impl eframe::App for SdroxideApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        let now = ctx.input(|i| i.time);
         while let Some(ev) = self.ctrl.poll_event() {
             match ev {
                 RadioEvent::Capabilities(c) => {
@@ -1796,6 +1872,17 @@ impl eframe::App for SdroxideApp {
                     // The engine sends the full current set each update; the
                     // stable `id` per spot lets the overlay keep each box (and
                     // its scroll) in place across updates.
+                    for spot in &s {
+                        // Remember when each spot last keyed, and seed newly
+                        // seen ones to now, so alpha starts solid and fades.
+                        let e = self.skimmer_active_at.entry(spot.id).or_insert(now);
+                        if spot.active {
+                            *e = now;
+                        }
+                    }
+                    // Forget timings for spots the engine has dropped.
+                    let live: std::collections::HashSet<u64> = s.iter().map(|x| x.id).collect();
+                    self.skimmer_active_at.retain(|id, _| live.contains(id));
                     self.skimmer_spots = s;
                 }
             }
@@ -1835,6 +1922,8 @@ impl eframe::App for SdroxideApp {
             self.view.view_lo_hz = dial - 200.0;
             self.view.view_hi_hz = dial + 3500.0;
             let audio_hz = self.digi_status.as_ref().map(|s| s.audio_hz).unwrap_or(1500.0);
+            // FT8 station callsign boxes (built before the &mut self borrows).
+            let (ft8_spots, ft8_alpha) = self.ft8_overlay();
 
             let frame = self.frame.take();
             // Manual vertical split with a draggable divider: the operating
@@ -1855,7 +1944,8 @@ impl eframe::App for SdroxideApp {
                     frame.as_ref(),
                     &mut self.peaks,
                     Some(audio_hz),
-                    &self.skimmer_spots,
+                    &ft8_spots,
+                    &ft8_alpha,
                     &mut cmds,
                 );
             });
@@ -1903,6 +1993,7 @@ impl eframe::App for SdroxideApp {
                 self.view.view_lo_hz = lo;
                 self.view.view_hi_hz = hi;
             }
+            let (cw_spots, cw_alpha) = self.cw_overlay(now);
             let frame = self.frame.take();
             spectrum_view::show(
                 ui,
@@ -1910,7 +2001,8 @@ impl eframe::App for SdroxideApp {
                 &mut self.state,
                 frame.as_ref(),
                 &mut self.peaks,
-                &self.skimmer_spots,
+                &cw_spots,
+                &cw_alpha,
                 &mut cmds,
             );
             self.frame = frame;

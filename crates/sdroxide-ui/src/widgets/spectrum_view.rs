@@ -23,6 +23,8 @@ const SPOT_BOX_H: f32 = 19.0;
 /// Font size for the box's callsign / message text.
 const SPOT_CALL_PT: f32 = 13.0;
 const SPOT_MSG_PT: f32 = 12.5;
+/// Horizontal padding inside a box.
+const SPOT_PAD: f32 = 5.0;
 /// Vertical gap between staggered lanes.
 const SPOT_LANE_GAP: f32 = 3.0;
 /// Gap from the top of the waterfall to the first lane.
@@ -54,12 +56,33 @@ fn spot_color(spot: &SkimmerSpot, hovered: bool) -> Color32 {
     }
 }
 
+/// The on-screen width a box needs to hold just its callsign (used by the
+/// fit-to-text FT8 boxes, which show the callsign only).
+fn spot_content_width(p: &egui::Painter, spot: &SkimmerSpot) -> f32 {
+    let mut w = 2.0 * SPOT_PAD;
+    if let Some(call) = &spot.callsign {
+        w += p.layout_no_wrap(call.clone(), FontId::monospace(SPOT_CALL_PT), Color32::WHITE).size().x;
+    }
+    w.clamp(30.0, 240.0)
+}
+
 /// Lay skimmer spots out into staggered lanes over the waterfall. Each box sits
 /// to the right of its signal (offset by a leader). Visible spots are sorted by
 /// x and greedily packed into the lowest lane whose footprint — from the signal
 /// x through the box's right edge — clears the previous box, so nearby signals
 /// stack vertically instead of overlapping. Off-view / past-cap spots are omitted.
-fn layout_spots(view: &ViewState, rect: &Rect, wf_rect: &Rect, spots: &[SkimmerSpot]) -> Vec<SpotBox> {
+///
+/// When `fit` is set, each box is sized to its text (used for FT8 station boxes,
+/// whose message is a complete fixed string); otherwise a fixed width is used
+/// (the CW skimmer, whose message is a live-growing tail).
+fn layout_spots(
+    p: &egui::Painter,
+    view: &ViewState,
+    rect: &Rect,
+    wf_rect: &Rect,
+    spots: &[SkimmerSpot],
+    fit: bool,
+) -> Vec<SpotBox> {
     let mut vis: Vec<(f32, usize)> = spots
         .iter()
         .enumerate()
@@ -71,10 +94,11 @@ fn layout_spots(view: &ViewState, rect: &Rect, wf_rect: &Rect, spots: &[SkimmerS
     let mut lane_right: Vec<f32> = Vec::new();
     let mut out = Vec::with_capacity(vis.len());
     for (xc, idx) in vis {
+        let box_w = if fit { spot_content_width(p, &spots[idx]) } else { SPOT_BOX_W };
         let box_left = xc + SPOT_LEADER;
         // Footprint spans the signal tick through the box's right edge, so a
         // later box's tick can't land on top of an earlier box in the lane.
-        let foot_right = box_left + SPOT_BOX_W + SPOT_H_GAP;
+        let foot_right = box_left + box_w + SPOT_H_GAP;
         let mut lane = lane_right.len();
         for (k, &r) in lane_right.iter().enumerate() {
             if xc >= r {
@@ -91,7 +115,7 @@ fn layout_spots(view: &ViewState, rect: &Rect, wf_rect: &Rect, spots: &[SkimmerS
         lane_right[lane] = foot_right;
         let top = wf_rect.top() + SPOT_TOP_MARGIN + lane as f32 * (SPOT_BOX_H + SPOT_LANE_GAP);
         out.push(SpotBox {
-            rect: Rect::from_min_size(pos2(box_left, top), vec2(SPOT_BOX_W, SPOT_BOX_H)),
+            rect: Rect::from_min_size(pos2(box_left, top), vec2(box_w, SPOT_BOX_H)),
             sig_x: xc,
             idx,
         });
@@ -99,20 +123,56 @@ fn layout_spots(view: &ViewState, rect: &Rect, wf_rect: &Rect, spots: &[SkimmerS
     out
 }
 
-/// Draw one skimmer box: cut-in background, callsign (green, when decoded),
-/// and the rolling message marquee-scrolled and clipped to the box.
-fn draw_spot_box(p: &egui::Painter, b: &SpotBox, spot: &SkimmerSpot, hovered: bool) {
-    let rect = b.rect;
-    p.rect_filled(rect, 2.0, Color32::from_rgba_unmultiplied(5, 11, 18, 225));
-    let border = spot_color(spot, hovered);
-    p.rect_stroke(rect, 2.0, Stroke::new(if hovered { 1.5 } else { 1.0 }, border), StrokeKind::Inside);
+/// Scale a colour's alpha by `a` (for fading spots out).
+fn fade(c: Color32, a: f32) -> Color32 {
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * a).round() as u8)
+}
 
-    let pad = 5.0;
+/// Draw one skimmer box at opacity `alpha` (1 = solid, 0 = gone). In
+/// `callsign_only` mode (FT8/FT4) just the callsign is shown — green when the
+/// station is calling CQ, white otherwise; otherwise the CW layout is used
+/// (green callsign + rolling message).
+fn draw_spot_box(
+    p: &egui::Painter,
+    b: &SpotBox,
+    spot: &SkimmerSpot,
+    hovered: bool,
+    alpha: f32,
+    callsign_only: bool,
+) {
+    let rect = b.rect;
+    p.rect_filled(rect, 2.0, fade(Color32::from_rgba_unmultiplied(5, 11, 18, 225), alpha));
+    let border = spot_color(spot, hovered);
+    p.rect_stroke(
+        rect,
+        2.0,
+        Stroke::new(if hovered { 1.5 } else { 1.0 }, fade(border, alpha)),
+        StrokeKind::Inside,
+    );
+
+    let pad = SPOT_PAD;
     let cy = rect.center().y;
+
+    if callsign_only {
+        if let Some(call) = &spot.callsign {
+            // FT8 message text starts with "CQ" for callers; colour those green.
+            let base = if spot.text.starts_with("CQ") {
+                crate::theme::GREEN
+            } else {
+                Color32::WHITE
+            };
+            let cc = fade(base, alpha);
+            let g = p.layout_no_wrap(call.clone(), FontId::monospace(SPOT_CALL_PT), cc);
+            p.galley(pos2(rect.left() + pad, cy - g.size().y * 0.5), g, cc);
+        }
+        return;
+    }
+
     let mut x = rect.left() + pad;
     if let Some(call) = &spot.callsign {
-        let g = p.layout_no_wrap(call.clone(), FontId::monospace(SPOT_CALL_PT), crate::theme::GREEN);
-        p.galley(pos2(x, cy - g.size().y * 0.5), g.clone(), crate::theme::GREEN);
+        let cc = fade(crate::theme::GREEN, alpha);
+        let g = p.layout_no_wrap(call.clone(), FontId::monospace(SPOT_CALL_PT), cc);
+        p.galley(pos2(x, cy - g.size().y * 0.5), g.clone(), cc);
         x += g.size().x + 6.0;
     }
 
@@ -125,7 +185,7 @@ fn draw_spot_box(p: &egui::Painter, b: &SpotBox, spot: &SkimmerSpot, hovered: bo
         return;
     }
     let text = if spot.text.is_empty() { "…" } else { spot.text.as_str() };
-    let col = crate::theme::TEXT;
+    let col = fade(crate::theme::TEXT, alpha);
     let g = p.layout_no_wrap(text.to_string(), FontId::monospace(SPOT_MSG_PT), col);
     let ty = cy - g.size().y * 0.5;
     // Left-align while it fits; once it overflows, pin the tail to the right.
@@ -173,14 +233,18 @@ pub fn show(
     frame: Option<&SpectrumFrame>,
     peaks: &mut PeakHold,
     skimmer: &[SkimmerSpot],
+    alpha: &[f32],
     cmds: &mut Vec<Command>,
 ) {
-    show_ext(ui, view, state, frame, peaks, None, skimmer, cmds);
+    show_ext(ui, view, state, frame, peaks, None, skimmer, alpha, cmds);
 }
 
 /// `show` with an optional digital-mode audio marker. When `digi_audio_hz`
 /// is `Some`, left-click sets the FT8/FT4 audio TX frequency instead of the
 /// VFO, and a marker is drawn at `dial + audio_hz`.
+///
+/// `skimmer` are the overlay boxes (CW skimmer spots, or FT8 station callsigns
+/// in digital mode) and `alpha` is a parallel per-box opacity for fade-out.
 pub fn show_ext(
     ui: &mut Ui,
     view: &mut ViewState,
@@ -189,6 +253,7 @@ pub fn show_ext(
     peaks: &mut PeakHold,
     digi_audio_hz: Option<f32>,
     skimmer: &[SkimmerSpot],
+    alpha: &[f32],
     cmds: &mut Vec<Command>,
 ) {
     let rect = ui.available_rect_before_wrap();
@@ -225,8 +290,9 @@ pub fn show_ext(
     let wf_rect = Rect::from_min_max(pos2(rect.left(), scale_rect.bottom()), rect.max);
 
     // Skimmer boxes are laid out up front so the click hit-test (below) and the
-    // draw pass (bottom) agree on their rects.
-    let spot_boxes = layout_spots(view, &rect, &wf_rect, skimmer);
+    // draw pass (bottom) agree on their rects. FT8 (digital) boxes fit their
+    // text; CW skimmer boxes use a fixed width for their live-growing tail.
+    let spot_boxes = layout_spots(&painter, view, &rect, &wf_rect, skimmer, digi_audio_hz.is_some());
 
     // --- interactions -----------------------------------------------------
     // Model: grabbing a filter edge (left button, spectrum strip) always
@@ -366,11 +432,20 @@ pub fn show_ext(
         if resp.clicked() {
             if let Some(pos) = resp.interact_pointer_pos() {
                 if let Some(sb) = spot_boxes.iter().find(|b| b.rect.contains(pos)) {
-                    // Clicking a skimmer box tunes there and switches to CW,
-                    // regardless of the current mode.
-                    let hz = skimmer[sb.idx].freq_hz;
-                    cmds.push(Command::SetVfo { vfo: state.active_vfo, hz });
-                    cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+                    let spot_hz = skimmer[sb.idx].freq_hz;
+                    if digi_audio_hz.is_some() {
+                        // FT8 station box: set the audio TX offset to it.
+                        let audio = (spot_hz - state.rx_freq_hz()) as f32;
+                        cmds.push(Command::SetDigiAudioFreq(audio.clamp(200.0, 3500.0)));
+                    } else {
+                        // CW skimmer box: put the dial a sidetone-pitch below the
+                        // signal so it lands inside the CW filter, and switch to
+                        // CW. (CW is USB-side; the passband is centred on ~700 Hz.)
+                        let (lo, hi) = Mode::Cw.default_filter();
+                        let pitch = ((lo + hi) * 0.5) as f64;
+                        cmds.push(Command::SetVfo { vfo: state.active_vfo, hz: spot_hz - pitch });
+                        cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+                    }
                 } else if digi_audio_hz.is_some() {
                     // Digital mode: set the audio TX offset, not the VFO.
                     let audio = (view.x_to_freq(pos.x, &rect) - state.rx_freq_hz()) as f32;
@@ -541,6 +616,7 @@ pub fn show_ext(
     let hover_pos = resp.hover_pos();
     for b in &spot_boxes {
         let spot = &skimmer[b.idx];
+        let a = alpha.get(b.idx).copied().unwrap_or(1.0).clamp(0.0, 1.0);
         let hovered = hover_pos.is_some_and(|p| b.rect.contains(p));
         if hovered {
             ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
@@ -548,17 +624,18 @@ pub fn show_ext(
         let border = spot_color(spot, hovered);
         let cy = b.rect.center().y;
         // Vertical indicator over the signal centre (faint, full waterfall).
-        let vcol = Color32::from_rgba_unmultiplied(
-            border.r(),
-            border.g(),
-            border.b(),
-            if hovered { 170 } else { 90 },
+        let vcol = fade(
+            Color32::from_rgba_unmultiplied(border.r(), border.g(), border.b(), if hovered { 170 } else { 90 }),
+            a,
         );
         painter.vline(b.sig_x, wf_rect.y_range(), Stroke::new(1.0, vcol));
         // Horizontal leader from the signal to the box, with a junction node.
-        painter.line_segment([pos2(b.sig_x, cy), pos2(b.rect.left(), cy)], Stroke::new(1.0, border));
-        painter.circle_filled(pos2(b.sig_x, cy), 1.8, border);
-        draw_spot_box(&painter, b, spot, hovered);
+        painter.line_segment(
+            [pos2(b.sig_x, cy), pos2(b.rect.left(), cy)],
+            Stroke::new(1.0, fade(border, a)),
+        );
+        painter.circle_filled(pos2(b.sig_x, cy), 1.8, fade(border, a));
+        draw_spot_box(&painter, b, spot, hovered, a, digi_audio_hz.is_some());
     }
 
     // Chrome: pink cut-corner border + corner accents around the panadapter.
