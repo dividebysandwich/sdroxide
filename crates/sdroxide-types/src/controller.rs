@@ -74,6 +74,13 @@ pub trait RadioController {
         Vec::new()
     }
 
+    /// Scan the LAN for OpenHPSDR devices (native local client only). Blocking —
+    /// the settings UI calls this on demand (a "Discover" button), not per frame.
+    /// Default empty: the browser/remote client can't scan the server's network.
+    fn discover_hpsdr(&self) -> Vec<crate::HpsdrDevice> {
+        Vec::new()
+    }
+
     /// The persisted radio-backend config (SoapySDR vs CAT), or `None` when the
     /// client can't own it (the browser remote client).
     fn radio_config(&self) -> Option<crate::RadioConfig> {

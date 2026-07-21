@@ -1,0 +1,15 @@
+[package]
+name = "sdroxide-hpsdr"
+version.workspace = true
+edition.workspace = true
+
+# Native-only OpenHPSDR (ethernet SDR) support, Protocol 2. Pure-Rust UDP — no
+# system library. Must never be a dependency of any wasm-targeted crate.
+[dependencies]
+sdroxide-types.workspace = true
+crossbeam-channel.workspace = true
+rtrb.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# Enumerate local IPv4 interfaces so discovery can broadcast per-interface.
+network-interface = "2.0"

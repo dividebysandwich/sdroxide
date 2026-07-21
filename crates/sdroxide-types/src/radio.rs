@@ -13,15 +13,18 @@ pub enum Backend {
     Auto,
     Soapy,
     Cat,
+    /// OpenHPSDR ethernet SDR (Protocol 2), discovered/reached over the LAN.
+    Hpsdr,
 }
 
 impl Backend {
-    pub const ALL: [Backend; 3] = [Backend::Auto, Backend::Soapy, Backend::Cat];
+    pub const ALL: [Backend; 4] = [Backend::Auto, Backend::Soapy, Backend::Cat, Backend::Hpsdr];
     pub fn label(self) -> &'static str {
         match self {
             Backend::Auto => "Auto (SoapySDR, else CAT)",
             Backend::Soapy => "SoapySDR",
             Backend::Cat => "CAT rig",
+            Backend::Hpsdr => "HPSDR (network)",
         }
     }
 }
@@ -252,6 +255,73 @@ impl Default for CatConfig {
     }
 }
 
+/// OpenHPSDR (ethernet SDR) backend configuration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HpsdrConfig {
+    /// Explicit target IP (e.g. "192.168.1.50"). When set, connect directly and
+    /// skip discovery/selection.
+    pub manual_ip: Option<String>,
+    /// IP of the device picked from a discovery scan (persisted selection).
+    pub selected_ip: Option<String>,
+    /// DDC sample rate in Hz (48k, 96k, 192k, 384k, 768k, 1536k).
+    pub sample_rate_hz: f64,
+}
+
+impl Default for HpsdrConfig {
+    fn default() -> Self {
+        HpsdrConfig { manual_ip: None, selected_ip: None, sample_rate_hz: 1_536_000.0 }
+    }
+}
+
+impl HpsdrConfig {
+    /// Supported DDC sample rates (Hz).
+    pub const SAMPLE_RATES: [f64; 6] =
+        [48_000.0, 96_000.0, 192_000.0, 384_000.0, 768_000.0, 1_536_000.0];
+
+    /// Resolve the IP to connect to: manual override, else the persisted pick.
+    /// `None` means "discover and use the first responder".
+    pub fn target_ip(&self) -> Option<&str> {
+        self.manual_ip
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .or(self.selected_ip.as_deref())
+    }
+}
+
+/// One HPSDR device found by a discovery scan. Wasm-safe so it can cross the
+/// `RadioController` trait to the settings UI.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HpsdrDevice {
+    pub ip: String,
+    pub mac: String,
+    /// Board name, e.g. "Hermes", "Saturn", "Hermes-Lite 2".
+    pub board: String,
+    /// OpenHPSDR protocol the board speaks (1 or 2).
+    pub protocol: u8,
+    /// Whether the board reports it is already in use by another host.
+    pub in_use: bool,
+}
+
+impl HpsdrDevice {
+    /// One-line label for the selection UI.
+    pub fn label(&self) -> String {
+        let mut s = format!("{}  {}  (P{})", self.board, self.ip, self.protocol);
+        if self.in_use {
+            s.push_str("  [in use]");
+        }
+        if self.protocol != 2 {
+            s.push_str("  [Protocol 1 — not yet supported]");
+        }
+        s
+    }
+
+    /// Whether this device can be driven by the current implementation.
+    pub fn supported(&self) -> bool {
+        self.protocol == 2
+    }
+}
+
 /// Persisted backend configuration (`radio.json`).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -262,4 +332,5 @@ pub struct RadioConfig {
     /// Sound-card device (cpal name) carrying the TX audio PC → radio.
     pub radio_audio_out: Option<String>,
     pub cat: CatConfig,
+    pub hpsdr: HpsdrConfig,
 }

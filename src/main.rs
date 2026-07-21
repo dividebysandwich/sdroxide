@@ -1,6 +1,7 @@
 mod audio_cat_source;
 mod console;
 mod gui_main;
+mod hpsdr_source;
 mod local_controller;
 mod server_main;
 
@@ -372,21 +373,27 @@ fn open_source(cli: &Cli, settings: &Settings) -> anyhow::Result<(Box<dyn IqSour
 
     // Resolve the backend from radio.json. `Auto` prefers a SoapySDR device
     // and falls back to CAT when none is present (or the binary has no soapy).
+    // Cat and Hpsdr are explicit; Soapy (and Auto-with-a-device) fall through to
+    // the SoapySDR branch below.
     let radio = sdroxide_config::load_radio_config();
-    let use_cat = match radio.backend {
-        Backend::Cat => true,
-        Backend::Soapy => false,
-        #[cfg(feature = "soapy")]
+    match radio.backend {
+        Backend::Cat => return open_cat_source(&radio),
+        Backend::Hpsdr => return open_hpsdr_source(&radio, cli.freq),
+        Backend::Soapy => {}
         Backend::Auto => {
-            let filter = device_filter(cli, settings);
-            enumerate_devices(&filter).map(|d| d.is_empty()).unwrap_or(true)
+            #[cfg(feature = "soapy")]
+            {
+                let filter = device_filter(cli, settings);
+                if enumerate_devices(&filter).map(|d| d.is_empty()).unwrap_or(true) {
+                    return open_cat_source(&radio);
+                }
+                // A SoapySDR device is present — fall through to open it.
+            }
+            #[cfg(not(feature = "soapy"))]
+            {
+                return open_cat_source(&radio);
+            }
         }
-        #[cfg(not(feature = "soapy"))]
-        Backend::Auto => true,
-    };
-
-    if use_cat {
-        return open_cat_source(&radio);
     }
 
     #[cfg(feature = "soapy")]
@@ -421,6 +428,47 @@ fn open_cat_source(radio: &RadioConfig) -> anyhow::Result<(Box<dyn IqSource>, De
     .context("opening CAT rig")?;
     let caps = cat_caps(radio);
     Ok((Box::new(src), caps))
+}
+
+/// Build the HPSDR (ethernet SDR, Protocol 2) source from radio.json. The target
+/// IP is the manual override, else the persisted selection, else the first
+/// Protocol-2 device found by a discovery scan.
+fn open_hpsdr_source(
+    radio: &RadioConfig,
+    center_hz: f64,
+) -> anyhow::Result<(Box<dyn IqSource>, DeviceCaps)> {
+    let ip: std::net::Ipv4Addr = if let Some(s) = radio.hpsdr.target_ip() {
+        s.trim().parse().with_context(|| format!("invalid HPSDR IP address {s:?}"))?
+    } else {
+        let found = sdroxide_hpsdr::discover_default();
+        let dev = found.iter().find(|d| d.supported()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "no HPSDR (Protocol 2) device found on the network — enter a target IP in Settings"
+            )
+        })?;
+        dev.ip.parse().with_context(|| format!("discovered HPSDR IP {:?}", dev.ip))?
+    };
+
+    let src = hpsdr_source::HpsdrSource::open(ip, radio.hpsdr.sample_rate_hz, center_hz)
+        .context("opening HPSDR device")?;
+    let caps = hpsdr_caps(src.board(), src.sample_rate_hz());
+    Ok((Box::new(src), caps))
+}
+
+/// Capabilities for an HPSDR board: wideband IQ (not `audio_mode`), TX-capable,
+/// half-duplex, HF+6m coverage. The board enforces its own limits.
+fn hpsdr_caps(board: &str, sample_rate: f64) -> DeviceCaps {
+    DeviceCaps {
+        driver: "hpsdr".into(),
+        label: format!("{board} (HPSDR, {:.3} Msps)", sample_rate / 1e6),
+        rx_channels: 1,
+        tx_channels: 1,
+        audio_mode: false,
+        freq_ranges_rx: vec![(0.0, 61_440_000.0)],
+        freq_ranges_tx: vec![(1_800_000.0, 54_000_000.0)],
+        sample_rates: sdroxide_types::HpsdrConfig::SAMPLE_RATES.to_vec(),
+        ..DeviceCaps::default()
+    }
 }
 
 /// Capabilities for a CAT rig. TX-capable unless PTT is VOX-only-with-no-audio;

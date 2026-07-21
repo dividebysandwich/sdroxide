@@ -24,6 +24,7 @@ enum SettingsTab {
     Device,
     Audio,
     Cat,
+    Hpsdr,
 }
 
 /// Repaint-poll cadence when no spectrum stream is flowing (startup, connection
@@ -72,6 +73,8 @@ pub struct SdroxideApp {
     settings_tab: SettingsTab,
     radio_cfg: Option<sdroxide_types::RadioConfig>,
     serial_ports: Vec<String>,
+    /// HPSDR devices found by the last "Discover" scan in the settings dialog.
+    hpsdr_devices: Vec<sdroxide_types::HpsdrDevice>,
     seen_first_state: bool,
     show_memories: bool,
     show_settings: bool,
@@ -220,6 +223,7 @@ impl SdroxideApp {
             settings_tab: SettingsTab::Device,
             radio_cfg: None,
             serial_ports: Vec::new(),
+            hpsdr_devices: Vec::new(),
             seen_first_state: false,
             show_memories: false,
             show_settings: false,
@@ -1785,6 +1789,7 @@ impl SdroxideApp {
         // Edits collected here and applied after the window closure, which
         // borrows `&self` and so can't touch `&mut self.ctrl`.
         let mut audio_pick: Option<(bool, Option<String>)> = None;
+        let mut hpsdr_discover = false;
         let mut radio_edit = self.radio_cfg.clone();
         let mut tab = self.settings_tab;
 
@@ -1799,6 +1804,7 @@ impl SdroxideApp {
                         (SettingsTab::Device, "Device"),
                         (SettingsTab::Audio, "Audio"),
                         (SettingsTab::Cat, "Audio/CAT"),
+                        (SettingsTab::Hpsdr, "HPSDR"),
                     ] {
                         if crate::chrome::chip(ui, tab == t, label).clicked() {
                             tab = t;
@@ -1812,6 +1818,12 @@ impl SdroxideApp {
                         self.settings_audio_tab(ui, &mut audio_pick, &mut radio_edit)
                     }
                     SettingsTab::Cat => settings_cat_tab(ui, &self.serial_ports, &mut radio_edit),
+                    SettingsTab::Hpsdr => settings_hpsdr_tab(
+                        ui,
+                        &self.hpsdr_devices,
+                        &mut radio_edit,
+                        &mut hpsdr_discover,
+                    ),
                 }
             });
         if let Some(r) = &resp {
@@ -1822,6 +1834,11 @@ impl SdroxideApp {
         if let Some((output, name)) = audio_pick {
             self.ctrl.set_audio_device(output, name);
             self.audio_devices_queried = false;
+        }
+        if hpsdr_discover {
+            // Blocking LAN scan (~1.5 s); done after the window closure so it can
+            // take `&self.ctrl`. Results feed the device dropdown next frame.
+            self.hpsdr_devices = self.ctrl.discover_hpsdr();
         }
         if radio_edit != self.radio_cfg {
             if let Some(cfg) = &radio_edit {
@@ -2095,6 +2112,82 @@ fn settings_cat_tab(
     });
     ui.add_space(6.0);
     ui.label(RichText::new("Backend / serial / audio changes take effect on restart.").weak());
+}
+
+/// HPSDR tab: backend selection + network device discovery / manual IP / rate.
+fn settings_hpsdr_tab(
+    ui: &mut egui::Ui,
+    devices: &[sdroxide_types::HpsdrDevice],
+    radio_edit: &mut Option<sdroxide_types::RadioConfig>,
+    discover: &mut bool,
+) {
+    use sdroxide_types::{Backend, HpsdrConfig};
+    let Some(cfg) = radio_edit.as_mut() else {
+        ui.label("Radio configuration is only available in the native app.");
+        return;
+    };
+    egui::Grid::new("hpsdr-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+        ui.label("Backend");
+        enum_combo(ui, "hpsdr_backend", &mut cfg.backend, &Backend::ALL, Backend::label);
+        ui.end_row();
+
+        ui.label("Devices");
+        ui.horizontal(|ui| {
+            if ui.button("Discover").clicked() {
+                *discover = true;
+            }
+            let shown = cfg.hpsdr.selected_ip.clone().unwrap_or_else(|| "— none —".into());
+            ComboBox::from_id_salt("hpsdr_dev").width(320.0).selected_text(shown).show_ui(ui, |ui| {
+                if devices.is_empty() {
+                    ui.label(RichText::new("no devices — press Discover").weak());
+                }
+                for d in devices {
+                    // Only Protocol 2 devices are selectable; P1 (e.g. HL2) is shown but greyed.
+                    if d.supported() {
+                        let sel = cfg.hpsdr.selected_ip.as_deref() == Some(d.ip.as_str());
+                        if ui.selectable_label(sel, d.label()).clicked() {
+                            cfg.hpsdr.selected_ip = Some(d.ip.clone());
+                        }
+                    } else {
+                        ui.label(RichText::new(d.label()).weak());
+                    }
+                }
+            });
+        });
+        ui.end_row();
+
+        ui.label("Manual IP");
+        let mut ip = cfg.hpsdr.manual_ip.clone().unwrap_or_default();
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut ip)
+                .desired_width(160.0)
+                .hint_text("optional, e.g. 192.168.1.50"),
+        );
+        if resp.changed() {
+            let t = ip.trim();
+            cfg.hpsdr.manual_ip = if t.is_empty() { None } else { Some(t.to_string()) };
+        }
+        ui.end_row();
+
+        ui.label("Sample rate");
+        let shown = format!("{} kHz", (cfg.hpsdr.sample_rate_hz / 1000.0) as u32);
+        ComboBox::from_id_salt("hpsdr_rate").selected_text(shown).show_ui(ui, |ui| {
+            for &r in &HpsdrConfig::SAMPLE_RATES {
+                let sel = (cfg.hpsdr.sample_rate_hz - r).abs() < 1.0;
+                if ui.selectable_label(sel, format!("{} kHz", (r / 1000.0) as u32)).clicked() {
+                    cfg.hpsdr.sample_rate_hz = r;
+                }
+            }
+        });
+        ui.end_row();
+    });
+    ui.add_space(6.0);
+    ui.label(
+        RichText::new(
+            "A manual IP overrides discovery. Backend / device / sample-rate changes take effect on restart.",
+        )
+        .weak(),
+    );
 }
 
 impl eframe::App for SdroxideApp {

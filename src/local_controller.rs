@@ -123,6 +123,10 @@ impl RadioController for LocalController {
         sdroxide_cat::available_ports()
     }
 
+    fn discover_hpsdr(&self) -> Vec<sdroxide_types::HpsdrDevice> {
+        sdroxide_hpsdr::discover_default()
+    }
+
     fn radio_config(&self) -> Option<RadioConfig> {
         Some(sdroxide_config::load_radio_config())
     }
