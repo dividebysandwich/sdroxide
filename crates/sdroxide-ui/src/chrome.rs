@@ -15,7 +15,7 @@ const CHIP_CUT: f32 = 5.0;
 /// Fixed module height. Must exceed the tallest content (caption + a combo
 /// or slider row + margins) so every module ends up exactly this tall — then
 /// they line up regardless of the row's cross-axis alignment.
-const MODULE_H: f32 = 58.0;
+pub const MODULE_H: f32 = 58.0;
 
 /// A panel with a pink border and cut corners (top-right + bottom-left),
 /// sitting on the darker page background.
@@ -33,7 +33,12 @@ pub fn angled_frame<R>(ui: &mut Ui, accent: Color32, add: impl FnOnce(&mut Ui) -
         .fill(theme::PANEL)
         .inner_margin(egui::Margin::symmetric(margin, 8))
         .show(ui, |ui| {
-            ui.set_max_width((avail - 2.0 * margin as f32).max(120.0));
+            // Pin to the panel width (both min and max) so wrapping happens at
+            // the visible edge AND the frame — and its cut-corner border — spans
+            // the full width even when the last row of content is short.
+            let w = (avail - 2.0 * margin as f32).max(120.0);
+            ui.set_min_width(w);
+            ui.set_max_width(w);
             add(ui)
         });
     paint_cut_border(ui.painter(), inner.response.rect, accent, theme::BG_DEEP);
@@ -108,6 +113,9 @@ pub fn module<R>(ui: &mut Ui, caption: &str, width: f32, add: impl FnOnce(&mut U
                 .inner_margin(egui::Margin { left: 8, right: 8, top: 4, bottom: 6 })
                 .show(ui, |ui| {
                     ui.set_width(width - 16.0);
+                    // Fill the full module height so every box — captioned or
+                    // bare — ends up exactly MODULE_H tall.
+                    ui.set_min_height(MODULE_H - 10.0);
                     ui.spacing_mut().item_spacing.y = 3.0;
                     ui.label(
                         RichText::new(caption.to_uppercase())
@@ -121,6 +129,34 @@ pub fn module<R>(ui: &mut Ui, caption: &str, width: f32, add: impl FnOnce(&mut U
                     // top-aligning everything keeps them all on one baseline.
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                         ui.set_min_height(24.0);
+                        add(ui)
+                    })
+                    .inner
+                })
+                .inner
+        },
+    )
+    .inner
+}
+
+/// Like [`module`] but with no caption — the content fills the full box height
+/// (vertically centred). Used for the frequency readout and S-meter, where the
+/// label would only waste space.
+pub fn module_bare<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, MODULE_H),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.set_width(width);
+            egui::Frame::new()
+                .fill(theme::FILL)
+                .stroke(Stroke::new(1.0, theme::LINE_LIT))
+                .inner_margin(egui::Margin { left: 8, right: 8, top: 4, bottom: 6 })
+                .show(ui, |ui| {
+                    ui.set_width(width - 16.0);
+                    ui.set_min_height(MODULE_H - 10.0);
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.set_min_height(MODULE_H - 10.0);
                         add(ui)
                     })
                     .inner

@@ -18,8 +18,11 @@ const CLICK_TUNE_STEP: f64 = 10.0;
 const EDGE_GRAB_PX: f32 = 6.0;
 
 // --- skimmer spot boxes ---------------------------------------------------
-const SPOT_BOX_W: f32 = 210.0;
-const SPOT_BOX_H: f32 = 15.0;
+const SPOT_BOX_W: f32 = 236.0;
+const SPOT_BOX_H: f32 = 19.0;
+/// Font size for the box's callsign / message text.
+const SPOT_CALL_PT: f32 = 13.0;
+const SPOT_MSG_PT: f32 = 12.5;
 /// Vertical gap between staggered lanes.
 const SPOT_LANE_GAP: f32 = 3.0;
 /// Gap from the top of the waterfall to the first lane.
@@ -104,11 +107,11 @@ fn draw_spot_box(p: &egui::Painter, b: &SpotBox, spot: &SkimmerSpot, hovered: bo
     let border = spot_color(spot, hovered);
     p.rect_stroke(rect, 2.0, Stroke::new(if hovered { 1.5 } else { 1.0 }, border), StrokeKind::Inside);
 
-    let pad = 4.0;
+    let pad = 5.0;
     let cy = rect.center().y;
     let mut x = rect.left() + pad;
     if let Some(call) = &spot.callsign {
-        let g = p.layout_no_wrap(call.clone(), FontId::monospace(10.5), crate::theme::GREEN);
+        let g = p.layout_no_wrap(call.clone(), FontId::monospace(SPOT_CALL_PT), crate::theme::GREEN);
         p.galley(pos2(x, cy - g.size().y * 0.5), g.clone(), crate::theme::GREEN);
         x += g.size().x + 6.0;
     }
@@ -123,7 +126,7 @@ fn draw_spot_box(p: &egui::Painter, b: &SpotBox, spot: &SkimmerSpot, hovered: bo
     }
     let text = if spot.text.is_empty() { "…" } else { spot.text.as_str() };
     let col = crate::theme::TEXT;
-    let g = p.layout_no_wrap(text.to_string(), FontId::monospace(10.0), col);
+    let g = p.layout_no_wrap(text.to_string(), FontId::monospace(SPOT_MSG_PT), col);
     let ty = cy - g.size().y * 0.5;
     // Left-align while it fits; once it overflows, pin the tail to the right.
     let gx = if g.size().x <= msg_rect.width() {

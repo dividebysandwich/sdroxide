@@ -254,12 +254,36 @@ impl SdroxideApp {
     }
 
     fn top_bar(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
-        // The frequency readout is the anchor — always on the first line.
-        ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+        // All controls are captioned (or bare) modules that reflow when the
+        // window is narrow. The frequency box is always first, the S-meter
+        // second; the rest follow and wrap to further rows.
+        ui.with_layout(
+            egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true),
+            |ui| {
+                self.freq_module(ui, cmds);
+                self.smeter_module(ui);
+                self.band_mode_module(ui, cmds);
+                self.vfo_module(ui, cmds);
+                self.rit_module(ui, cmds);
+                self.rx_module(ui, cmds);
+                self.filter_module(ui, cmds);
+                if self.caps.as_ref().is_some_and(|c| c.is_transmit_capable()) {
+                    self.tx_module(ui, cmds);
+                }
+                self.display_module(ui, cmds);
+                self.windows_module(ui);
+            },
+        );
+    }
+
+    /// The VFO frequency controls (A/B select + big readout + the inactive
+    /// VFO's frequency) in a label-less box, always the first module.
+    fn freq_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        crate::chrome::module_bare(ui, 452.0, |ui| {
             let active = self.state.active_vfo;
             for (v, label) in [(Vfo::A, "A"), (Vfo::B, "B")] {
-                if crate::chrome::chip(ui, active == v, RichText::new(label).size(15.0)).clicked()
-                {
+                if crate::chrome::chip(ui, active == v, RichText::new(label).size(15.0)).clicked() {
                     cmds.push(Command::SelectVfo(v));
                 }
             }
@@ -278,31 +302,14 @@ impl SdroxideApp {
                     .size(12.0)
                     .color(Color32::from_gray(120)),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                smeter::show(ui, self.meters.as_ref());
-            });
         });
+    }
 
-        // Everything else lives in captioned modules that reflow when the
-        // window is narrow.
-        ui.add_space(4.0);
-        ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-        // Top-aligned wrapping so modules line up at their top edge.
-        ui.with_layout(
-            egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true),
-            |ui| {
-                self.band_mode_module(ui, cmds);
-                self.vfo_module(ui, cmds);
-                self.rit_module(ui, cmds);
-                self.rx_module(ui, cmds);
-                self.filter_module(ui, cmds);
-                if self.caps.as_ref().is_some_and(|c| c.is_transmit_capable()) {
-                    self.tx_module(ui, cmds);
-                }
-                self.display_module(ui, cmds);
-                self.windows_module(ui);
-            },
-        );
+    /// The S-meter in a label-less box, always pinned top-right.
+    fn smeter_module(&mut self, ui: &mut egui::Ui) {
+        crate::chrome::module_bare(ui, 250.0, |ui| {
+            smeter::show(ui, self.meters.as_ref());
+        });
     }
 
     /// One button opening a floating popup with the band + mode + filter
@@ -654,9 +661,6 @@ impl SdroxideApp {
                 .clicked()
             {
                 self.show_settings = !self.show_settings;
-            }
-            if let Some(caps) = &self.caps {
-                ui.label(RichText::new(&caps.label).size(11.0).color(Color32::from_gray(130)));
             }
         });
     }
@@ -1661,6 +1665,8 @@ impl SdroxideApp {
                     ui.label("no device");
                     return;
                 };
+                ui.label(RichText::new(&caps.label).size(14.0).strong().color(crate::theme::CYAN));
+                ui.add_space(6.0);
                 ui.label(RichText::new("RX gains").strong());
                 egui::Grid::new("gains").num_columns(2).show(ui, |ui| {
                     for g in caps.gains.iter().filter(|g| g.direction == Direction::Rx) {
