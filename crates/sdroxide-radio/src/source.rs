@@ -90,6 +90,14 @@ pub trait IqSource: Send {
     fn tx_write_audio(&mut self, _audio: &[f32]) -> Result<()> {
         Err(crate::RadioError::Msg("device has no audio TX path".into()))
     }
+
+    /// A user-facing warning captured while opening the source (e.g. the radio
+    /// audio device was unavailable, or a mono card was selected for IQ), or
+    /// `None` when the source came up cleanly. Surfaced in the UI so a silent
+    /// failure doesn't just read as "waiting for spectrum". Default: none.
+    fn open_status(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Paces reads so a non-hardware source delivers samples in real time.

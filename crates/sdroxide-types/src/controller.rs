@@ -13,6 +13,10 @@ pub enum RadioEvent {
     Meters(Meters),
     Memories(Vec<MemoryChannel>),
     ConnectionLost(String),
+    /// A non-fatal, persistent status/warning for the operator (e.g. the radio
+    /// audio input was unavailable or a mono card was selected for IQ). `None`
+    /// clears it. Native-local only — not forwarded to remote clients.
+    Notice(Option<String>),
     /// FT8/FT4 decodes from one receive slot.
     Ft8Decodes(Vec<Decode>),
     /// FT8/FT4 engine status change.

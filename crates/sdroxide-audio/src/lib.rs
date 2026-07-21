@@ -1,6 +1,7 @@
 //! Native audio I/O: a cpal output stream pulling mono samples from a
 //! lock-free ring buffer. The DSP engine owns the producer side.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -188,35 +189,200 @@ impl AudioOutput {
 pub struct AudioInput {
     _stream: cpal::Stream,
     pub sample_rate: f64,
+    /// Channels the capture stream actually runs with (1 = mono; IQ needs ≥2).
+    pub channels: u16,
 }
 
-/// Dedupe (ALSA lists one entry per sub-PCM with identical descriptions —
-/// unpickable by name anyway) and drop pseudo-devices that aren't endpoints.
-fn clean_names(raw: impl Iterator<Item = String>) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    raw.filter(|n| {
-        !(n.starts_with("Rate Converter Plugin")
-            || n.starts_with("Plugin ")
-            || n.starts_with("Discard all samples"))
-    })
-    .filter(|n| seen.insert(n.clone()))
-    .collect()
+/// Extract the ALSA card id ("Device_1") from a cpal driver/pcm id like
+/// "sysdefault:CARD=Device_1" or "hw:CARD=Device,DEV=0". `None` for virtual
+/// devices ("default", "pipewire", …) and non-ALSA platforms.
+fn alsa_card_id(pcm_id: &str) -> Option<String> {
+    let rest = pcm_id.split("CARD=").nth(1)?;
+    let end = rest.find([',', ':']).unwrap_or(rest.len());
+    let id = rest[..end].trim();
+    (!id.is_empty()).then(|| id.to_string())
+}
+
+/// Trim the "at usb-…, full speed" tail off an ALSA longname, leaving the
+/// readable "manufacturer model" part.
+fn prettify_longname(long: &str) -> String {
+    long.split(" at ").next().unwrap_or(long).trim().to_string()
+}
+
+fn is_pseudo(name: &str) -> bool {
+    name.starts_with("Rate Converter Plugin")
+        || name.starts_with("Plugin ")
+        || name.starts_with("Discard all samples")
+}
+
+/// One ALSA card's identity for building readable, unique device names.
+#[derive(Clone)]
+struct AlsaCard {
+    /// Numeric card index ("5") — used to read /proc/asound/card5/*.
+    index: String,
+    /// Stable card id ("Device", "Device_1") — distinguishes identical models.
+    id: String,
+    /// Manufacturer text from the longname, e.g. "C-Media Electronics Inc.".
+    vendor: String,
+    /// USB "vid:pid", e.g. "0d8c:0012" — differentiates same-named dongles.
+    usbid: String,
+}
+
+/// Linux: map every ALSA card *index* ("5") and *id* ("Device") to its identity,
+/// so a pcm id using either form ("hw:CARD=5" / "sysdefault:CARD=Device")
+/// resolves to the same card. Empty off-Linux.
+fn alsa_cards() -> HashMap<String, AlsaCard> {
+    #[allow(unused_mut)]
+    let mut map = HashMap::new();
+    #[cfg(target_os = "linux")]
+    if let Ok(text) = std::fs::read_to_string("/proc/asound/cards") {
+        // Records are two lines:
+        //   " 5 [Device         ]: USB-Audio - USB Audio Device"
+        //   "                      C-Media Electronics Inc. USB Audio Device at usb-..., full speed"
+        let lines: Vec<&str> = text.lines().collect();
+        let mut i = 0;
+        while i < lines.len() {
+            let head = lines[i];
+            if let (Some(lb), Some(rb)) = (head.find('['), head.find(']')) {
+                if lb < rb {
+                    let index = head[..lb].trim().to_string();
+                    let id = head[lb + 1..rb].trim().to_string();
+                    // Header tail after "]: <driver> - <shortname>".
+                    let shortname = head[rb + 1..].split(" - ").nth(1).unwrap_or("").trim();
+                    let pretty = prettify_longname(lines.get(i + 1).map(|s| s.trim()).unwrap_or(""));
+                    // Vendor = longname with the model (shortname) trimmed off.
+                    let vendor = pretty
+                        .strip_suffix(shortname)
+                        .unwrap_or(&pretty)
+                        .trim()
+                        .to_string();
+                    let usbid = std::fs::read_to_string(format!("/proc/asound/card{index}/usbid"))
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_default();
+                    if !id.is_empty() {
+                        let card = AlsaCard { index: index.clone(), id: id.clone(), vendor, usbid };
+                        if !index.is_empty() {
+                            map.insert(index, card.clone());
+                        }
+                        map.insert(id, card);
+                    }
+                    i += 2;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+    }
+    map
+}
+
+/// The ALSA card id token ("Device_1" / "5") a cpal device opens through.
+fn device_card_id(device: &cpal::Device) -> Option<String> {
+    alsa_card_id(device.description().ok()?.driver()?)
+}
+
+/// Linux: the true maximum hardware capture channel count for a card, read from
+/// `/proc/asound/cardN/stream0`. This sees past ALSA's plug/dmix layer, which
+/// upmixes a mono microphone to a fake stereo config — so it's the only
+/// reliable way to tell that a "stereo" capture is really mono (no good for
+/// I/Q). `None` off-Linux or when the file is absent.
+fn hw_capture_channels(index: &str) -> Option<u16> {
+    #[cfg(target_os = "linux")]
+    {
+        let text = std::fs::read_to_string(format!("/proc/asound/card{index}/stream0")).ok()?;
+        let mut in_capture = false;
+        let mut max = 0u16;
+        for line in text.lines() {
+            let t = line.trim();
+            match t {
+                "Capture:" => in_capture = true,
+                "Playback:" => in_capture = false,
+                _ if in_capture => {
+                    if let Some(rest) = t.strip_prefix("Channels:") {
+                        if let Ok(n) = rest.trim().parse::<u16>() {
+                            max = max.max(n);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        return (max > 0).then_some(max);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = index;
+        None
+    }
+}
+
+/// User-facing name for one device, or `None` to exclude it (pseudo-plugins,
+/// raw usb-stream nodes). ALSA cards get "vendor model [card-id · vid:pid]" so
+/// two identically-named dongles (e.g. a pair of C-Media adapters) stay
+/// distinct while separate sub-devices (HDMI 0 vs HDMI 2) are kept apart by the
+/// base name. Virtual devices ("default", "pipewire", …) keep their name.
+fn device_display(device: &cpal::Device, cards: &HashMap<String, AlsaCard>) -> Option<String> {
+    let desc = device.description().ok()?;
+    let pcm = desc.driver().unwrap_or("");
+    if pcm.starts_with("usbstream:") {
+        return None; // raw USB stream node, not a normal capture/playback PCM
+    }
+    let base = desc.name().to_string();
+    if base.is_empty() || is_pseudo(&base) {
+        return None;
+    }
+    match alsa_card_id(pcm) {
+        Some(raw) => {
+            let card = cards.get(&raw);
+            let vendor = card.map(|c| c.vendor.as_str()).unwrap_or("");
+            let id = card.map(|c| c.id.as_str()).unwrap_or(raw.as_str());
+            let usbid = card.map(|c| c.usbid.as_str()).unwrap_or("");
+            let mut name = String::new();
+            if !vendor.is_empty() && !base.contains(vendor) {
+                name.push_str(vendor);
+                name.push(' ');
+            }
+            name.push_str(&base);
+            name.push_str(" [");
+            name.push_str(id);
+            if !usbid.is_empty() {
+                name.push_str(" · ");
+                name.push_str(usbid);
+            }
+            name.push(']');
+            Some(name)
+        }
+        None => Some(base), // virtual/default device
+    }
+}
+
+/// Enumerate devices for one direction as (device, unique display name),
+/// deduping identical display names (several sub-PCMs / index-vs-id forms of one
+/// card collapse to a single entry).
+fn enumerate_named(host: &cpal::Host, output: bool) -> Vec<(cpal::Device, String)> {
+    let cards = alsa_cards();
+    let devs = if output { host.output_devices().ok() } else { host.input_devices().ok() };
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    if let Some(devs) = devs {
+        for d in devs {
+            let Some(name) = device_display(&d, &cards) else { continue };
+            if seen.insert(name.clone()) {
+                out.push((d, name));
+            }
+        }
+    }
+    out
 }
 
 /// Names of the available output devices (for a device-selection UI).
 pub fn output_device_names() -> Vec<String> {
-    let host = cpal::default_host();
-    host.output_devices()
-        .map(|devs| clean_names(devs.filter_map(|d| d.description().ok().map(|n| n.to_string()))))
-        .unwrap_or_default()
+    enumerate_named(&cpal::default_host(), true).into_iter().map(|(_, n)| n).collect()
 }
 
 /// Names of the available input devices (for a device-selection UI).
 pub fn input_device_names() -> Vec<String> {
-    let host = cpal::default_host();
-    host.input_devices()
-        .map(|devs| clean_names(devs.filter_map(|d| d.description().ok().map(|n| n.to_string()))))
-        .unwrap_or_default()
+    enumerate_named(&cpal::default_host(), false).into_iter().map(|(_, n)| n).collect()
 }
 
 /// True if the device reports at least one sample configuration we can use.
@@ -234,30 +400,49 @@ fn has_usable_config(device: &cpal::Device, output: bool) -> bool {
     }
 }
 
-/// Find a device by its enumerated name; falls back to the default device
-/// (with a warning) when the name is gone — e.g. the device was unplugged.
-/// ALSA lists several sub-PCMs under one description, and some report no usable
-/// config, so among same-named devices prefer one that actually has one.
+/// Find a device by its enumerated (enriched) name; falls back to the default
+/// device (with a warning) when the name is gone — e.g. the device was
+/// unplugged. Matches the enriched display name first, then the plain cpal name
+/// for configs saved before names carried the manufacturer/card id. Among
+/// matches, prefers one that actually reports a usable config.
 fn pick_device(
     host: &cpal::Host,
     name: Option<&str>,
     output: bool,
 ) -> Result<cpal::Device, AudioError> {
     if let Some(want) = name {
-        let matching: Vec<cpal::Device> =
+        let cards = alsa_cards();
+        let all: Vec<cpal::Device> =
             if output { host.output_devices().ok() } else { host.input_devices().ok() }
-                .map(|devs| {
-                    devs.filter(|d| {
-                        d.description().map(|n| n.to_string() == want).unwrap_or(false)
-                    })
-                    .collect()
-                })
+                .map(|d| d.collect())
                 .unwrap_or_default();
-        if let Some(i) = matching.iter().position(|d| has_usable_config(d, output)) {
-            return Ok(matching.into_iter().nth(i).unwrap());
+        // 1) enriched-name match (all sub-PCMs of the card); 2) legacy plain
+        // cpal-name match for configs saved before names carried the vendor/id.
+        let mut idxs: Vec<usize> = all
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| device_display(d, &cards).as_deref() == Some(want))
+            .map(|(i, _)| i)
+            .collect();
+        if idxs.is_empty() {
+            idxs = all
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| {
+                    // Skip excluded nodes (usbstream/pseudo) even in legacy mode.
+                    device_display(d, &cards).is_some()
+                        && d.description().ok().map(|x| x.name() == want).unwrap_or(false)
+                })
+                .map(|(i, _)| i)
+                .collect();
         }
-        if let Some(d) = matching.into_iter().next() {
-            return Ok(d);
+        if !idxs.is_empty() {
+            let best = idxs
+                .iter()
+                .copied()
+                .find(|&i| has_usable_config(&all[i], output))
+                .unwrap_or(idxs[0]);
+            return Ok(all.into_iter().nth(best).unwrap());
         }
         warn!("audio device {want:?} not found; using default");
     }
@@ -281,6 +466,7 @@ pub fn start_input(
         .and_then(|configs| choose_config(configs, preferred_rate, 1))
         .ok_or(AudioError::NoConfig)?;
     let rate = config.sample_rate;
+    let channels = config.channels;
 
     let (producer, consumer) = rtrb::RingBuffer::<f32>::new(rate as usize);
     let stream = spawn_input(&device, &config, fmt, false, producer)?;
@@ -291,7 +477,7 @@ pub fn start_input(
         device = device.description().map(|d| d.to_string()).unwrap_or_default(),
         "mic input running"
     );
-    Ok((AudioInput { _stream: stream, sample_rate: rate as f64 }, consumer))
+    Ok((AudioInput { _stream: stream, sample_rate: rate as f64, channels }, consumer))
 }
 
 /// Like [`start_input`] but keeps the first TWO channels interleaved (L, R) —
@@ -310,12 +496,19 @@ pub fn start_input_stereo(
         .and_then(|configs| choose_config(configs, preferred_rate, 2))
         .ok_or(AudioError::NoConfig)?;
     let rate = config.sample_rate;
-    let channels = config.channels;
+    // Report the TRUE hardware channel count, not cpal's — the ALSA plug layer
+    // upmixes a mono mic to a fake 2-channel config, which would otherwise slip
+    // past the caller's mono-for-IQ guard. Fall back to cpal's count when the
+    // hardware count is unknown (non-Linux, or a virtual device).
+    let hw_channels = alsa_cards()
+        .get(&device_card_id(&device).unwrap_or_default())
+        .and_then(|c| hw_capture_channels(&c.index));
+    let channels = hw_channels.unwrap_or(config.channels);
 
     let (producer, consumer) = rtrb::RingBuffer::<f32>::new(rate as usize * 2);
     let stream = spawn_input(&device, &config, fmt, true, producer)?;
-    info!(rate, channels, format = ?fmt, "radio IQ input running");
-    Ok((AudioInput { _stream: stream, sample_rate: rate as f64 }, consumer))
+    info!(rate, stream_channels = config.channels, hw_channels = channels, format = ?fmt, "radio IQ input running");
+    Ok((AudioInput { _stream: stream, sample_rate: rate as f64, channels }, consumer))
 }
 
 /// Open an output device by name (`None` = system default), preferring

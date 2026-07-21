@@ -28,6 +28,9 @@ pub struct AudioCatSource {
     cat: sdroxide_cat::CatHandle,
     center: f64,
     label: String,
+    /// Warning captured at open time (RX device unavailable / mono-for-IQ),
+    /// surfaced to the UI. `None` when RX came up cleanly.
+    status: Option<String>,
 }
 
 impl AudioCatSource {
@@ -48,16 +51,38 @@ impl AudioCatSource {
             SoundFormat::Iq => sdroxide_audio::start_input_stereo(audio_in, 48_000),
             SoundFormat::DemodAudio => sdroxide_audio::start_input(audio_in, 48_000),
         };
-        let (in_stream, in_consumer, in_rate) = match opened {
+        let dev_label = audio_in.unwrap_or("system default");
+        // A dummy, always-empty ring keeps `read` returning silence when RX is
+        // unavailable or guarded off.
+        let silent = || {
+            let (_p, c) = rtrb::RingBuffer::<f32>::new(1);
+            c
+        };
+        let (in_stream, in_consumer, in_rate, status) = match opened {
+            // Mono guard: I/Q needs two channels (I on left, Q on right); a
+            // mono capture device physically can't carry it. Refuse rather than
+            // silently duplicating one channel into a degenerate spectrum.
+            Ok((s, _)) if matches!(cfg.format, SoundFormat::Iq) && s.channels < 2 => {
+                let msg = format!(
+                    "Radio IQ input “{dev_label}” is mono — IQ needs a stereo (2-channel) \
+                     input. Pick a stereo line-input device, or switch the sound format to \
+                     Demod audio."
+                );
+                tracing::warn!("{msg}");
+                (None, silent(), s.sample_rate, Some(msg))
+            }
             Ok((s, c)) => {
                 let rate = s.sample_rate;
-                (Some(s), c, rate)
+                (Some(s), c, rate, None)
             }
             Err(e) => {
-                tracing::warn!("radio RX audio device unavailable ({e}); RX silent");
-                // A dummy, always-empty ring keeps `read` returning silence.
-                let (_p, c) = rtrb::RingBuffer::<f32>::new(1);
-                (None, c, 48_000.0)
+                let msg = format!(
+                    "Radio input “{dev_label}” is unavailable ({e}) — no receive audio. \
+                     The device may be in use by another program, unplugged, or held by \
+                     the system audio server."
+                );
+                tracing::warn!("{msg}");
+                (None, silent(), 48_000.0, Some(msg))
             }
         };
 
@@ -89,6 +114,7 @@ impl AudioCatSource {
             cat,
             center,
             label,
+            status,
         })
     }
 }
@@ -143,6 +169,10 @@ impl IqSource for AudioCatSource {
 
     fn describe(&self) -> String {
         self.label.clone()
+    }
+
+    fn open_status(&self) -> Option<String> {
+        self.status.clone()
     }
 
     fn display_bandwidth(&self) -> Option<f64> {

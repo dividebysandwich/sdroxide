@@ -443,6 +443,12 @@ fn engine_thread(
     let _ = event_tx.send(RadioEvent::Capabilities(caps.clone()));
     let _ = event_tx.send(RadioEvent::State(state.clone()));
     let _ = event_tx.send(RadioEvent::Memories(memories.clone()));
+    // Surface any warning captured while opening the source (e.g. radio audio
+    // device unavailable / mono card chosen for IQ) so the UI can show it
+    // instead of an unexplained "waiting for spectrum".
+    if let Some(msg) = source.open_status() {
+        let _ = event_tx.send(RadioEvent::Notice(Some(msg)));
+    }
 
     let mut engine = Engine {
         source,

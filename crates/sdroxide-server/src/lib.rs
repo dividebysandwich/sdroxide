@@ -225,6 +225,9 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             RadioEvent::Meters(m) => Some(ServerMsg::Meters(m)),
             RadioEvent::Spectrum(_) => None, // spectrum travels via the watch lane
             RadioEvent::ConnectionLost(e) => Some(ServerMsg::Error(e)),
+            // A local radio-audio-device notice is meaningless to a remote
+            // client (its audio lives on the server host), so don't forward it.
+            RadioEvent::Notice(_) => None,
             RadioEvent::Ft8Decodes(d) => Some(ServerMsg::Ft8Decodes(d)),
             RadioEvent::Ft8Status(s) => Some(ServerMsg::Ft8Status(s)),
             RadioEvent::Ft8QsoLogged(r) => Some(ServerMsg::Ft8QsoLogged(r)),

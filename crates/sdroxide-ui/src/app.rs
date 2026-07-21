@@ -53,6 +53,9 @@ pub struct SdroxideApp {
     view: ViewState,
     peaks: spectrum_view::PeakHold,
     error: Option<String>,
+    /// Persistent, non-fatal operator notice (e.g. radio audio input
+    /// unavailable / mono card selected for IQ). Shown as a warning banner.
+    radio_notice: Option<String>,
     sent_cfg: Option<SpectrumConfig>,
     desired_cfg: Option<SpectrumConfig>,
     desired_at: f64,
@@ -206,6 +209,7 @@ impl SdroxideApp {
             view,
             peaks: spectrum_view::PeakHold::default(),
             error: None,
+            radio_notice: None,
             sent_cfg: None,
             desired_cfg: None,
             desired_at: 0.0,
@@ -2118,6 +2122,7 @@ impl eframe::App for SdroxideApp {
                 RadioEvent::Meters(m) => self.meters = Some(m),
                 RadioEvent::Memories(m) => self.memories = m,
                 RadioEvent::ConnectionLost(e) => self.error = Some(e),
+                RadioEvent::Notice(n) => self.radio_notice = n,
                 RadioEvent::Ft8Decodes(d) => {
                     // Prepend newest-slot decodes; keep a rolling window.
                     for dec in d.into_iter().rev() {
@@ -2177,6 +2182,32 @@ impl eframe::App for SdroxideApp {
                     self.top_bar(ui, &mut cmds);
                 });
             });
+        // A persistent radio-audio warning (input unavailable / mono-for-IQ)
+        // rides above the panadapter with a dismiss button, so a silent RX
+        // failure is explained rather than reading as "waiting for spectrum".
+        if let Some(notice) = self.radio_notice.clone() {
+            egui::Frame::new()
+                .fill(Color32::from_rgb(60, 45, 10))
+                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(210, 160, 40)))
+                .inner_margin(egui::Margin::symmetric(8, 5))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new("⚠")
+                                .size(15.0)
+                                .color(Color32::from_rgb(255, 190, 70)),
+                        );
+                        ui.label(
+                            RichText::new(notice).size(13.0).color(Color32::from_rgb(240, 220, 180)),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Dismiss").clicked() {
+                                self.radio_notice = None;
+                            }
+                        });
+                    });
+                });
+        }
         // Remaining space: the panadapter (+ FT8/FT4 operating panel).
         if let Some(err) = self.error.clone() {
             ui.centered_and_justified(|ui| {
