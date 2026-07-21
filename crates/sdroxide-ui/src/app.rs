@@ -365,10 +365,15 @@ impl SdroxideApp {
         });
     }
 
-    /// The S-meter in a label-less box, always pinned top-right.
+    /// The S-meter in a label-less box, always pinned top-right. Clicking it
+    /// toggles between the bar and analog-needle styles.
     fn smeter_module(&mut self, ui: &mut egui::Ui) {
         crate::chrome::module_bare(ui, 250.0, |ui| {
-            smeter::show(ui, self.meters.as_ref());
+            let resp = smeter::show(ui, self.meters.as_ref(), self.view.smeter_analog)
+                .on_hover_text("Click to switch bar / analog meter");
+            if resp.clicked() {
+                self.view.smeter_analog = !self.view.smeter_analog;
+            }
         });
     }
 
