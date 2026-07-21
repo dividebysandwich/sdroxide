@@ -48,6 +48,8 @@ rtrb = "0.3"
 name = "sdroxide"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+description = "PowerSDR/Thetis-style SDR transceiver with a native GUI, a browser-served web UI, and FT8/FT4 digital modes"
 
 [dependencies]
 sdroxide-types.workspace = true
@@ -69,3 +71,24 @@ num-complex.workspace = true
 # Bundle the trunk-built web client into the binary (run `trunk build
 # --release` in crates/sdroxide-web first).
 embed-web = ["sdroxide-server/embed-web"]
+
+# `cargo deb` packaging (used by the release workflow with --no-build after a
+# `--features embed-web` release build).
+[package.metadata.deb]
+maintainer = "Josef Jahn <josef.jahn@gmail.com>"
+copyright = "2026, Josef Jahn"
+extended-description = """\
+PowerSDR/Thetis-style software-defined-radio transceiver client built on \
+SoapySDR with an egui GUI. Runs as a native desktop application or as a \
+server that streams the same UI to a web browser. Includes FT8/FT4 digital \
+modes and an integrated logbook."""
+section = "hamradio"
+priority = "optional"
+license-file = ["LICENSE", "0"]
+recommends = "soapysdr-module-all"
+features = ["embed-web"]
+assets = [
+    ["target/release/sdroxide", "usr/bin/", "755"],
+    ["packaging/linux/sdroxide.desktop", "usr/share/applications/", "644"],
+    ["README.md", "usr/share/doc/sdroxide/README.md", "644"],
+]

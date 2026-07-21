@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=sdroxide
+Comment=Software-defined-radio transceiver
+Exec=sdroxide
+Terminal=false
+Categories=AudioVideo;Audio;HamRadio;
+Keywords=SDR;radio;transceiver;FT8;FT4;ham;amateur;

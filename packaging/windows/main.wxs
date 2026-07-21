@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Built by the release workflow:
+     wix build packaging/windows/main.wxs -arch x64 \
+         -d Version=<cargo version> -d BinDir=target/release -o <out>.msi
+
+     Note: sdroxide dynamically links SoapySDR.dll; users must install
+     PothosSDR (https://downloads.myriadrf.org/builds/PothosSDR/) and put it
+     on PATH, which also provides the device driver modules. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <Package Name="sdroxide"
+             Manufacturer="Josef Jahn"
+             Version="$(var.Version)"
+             UpgradeCode="25EB3168-CB22-48C3-B5C1-1DE8FCFBEA34"
+             Language="1033"
+             Compressed="yes"
+             Scope="perMachine">
+
+        <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+        <MediaTemplate EmbedCab="yes" />
+
+        <StandardDirectory Id="ProgramFiles64Folder">
+            <Directory Id="INSTALLFOLDER" Name="sdroxide">
+                <Component Id="MainExe" Guid="AE3DD3A4-EB4B-4921-BF67-60089CA6230E">
+                    <File Id="SdroxideExe" Source="$(var.BinDir)/sdroxide.exe" KeyPath="yes" />
+                </Component>
+                <Component Id="LicenseFile" Guid="8D0E1A6B-4C2F-4B7A-9E3D-51A9C7F0B2D4">
+                    <File Id="LicenseTxt" Source="LICENSE" Name="LICENSE.txt" KeyPath="yes" />
+                </Component>
+                <Component Id="PathEnv" Guid="603FD0CB-F87B-47EF-98D0-28669884B706">
+                    <RegistryValue Root="HKLM" Key="Software\sdroxide" Name="PathEnv" Type="integer" Value="1" KeyPath="yes" />
+                    <Environment Id="PathEntry" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
+                </Component>
+            </Directory>
+        </StandardDirectory>
+
+        <StandardDirectory Id="ProgramMenuFolder">
+            <Component Id="StartMenuShortcut" Guid="E7E821FD-FCFF-4A51-9CEE-22EB5BA5E8C8">
+                <Shortcut Id="AppShortcut"
+                          Name="sdroxide"
+                          Description="Software-defined-radio transceiver"
+                          Target="[INSTALLFOLDER]sdroxide.exe"
+                          WorkingDirectory="INSTALLFOLDER" />
+                <RegistryValue Root="HKCU" Key="Software\sdroxide" Name="Shortcut" Type="integer" Value="1" KeyPath="yes" />
+            </Component>
+        </StandardDirectory>
+
+        <Feature Id="Main">
+            <ComponentRef Id="MainExe" />
+            <ComponentRef Id="LicenseFile" />
+            <ComponentRef Id="PathEnv" />
+            <ComponentRef Id="StartMenuShortcut" />
+        </Feature>
+    </Package>
+</Wix>

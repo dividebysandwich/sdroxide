@@ -1,0 +1,237 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  # Manual runs build all artifacts (downloadable from the run page) without
+  # creating a release — useful for testing the pipeline.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Build the wasm web client once; every native build embeds the same dist.
+  web:
+    name: web client (wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: web-dist
+      - name: Install trunk
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xzf - -C "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build web client
+        working-directory: crates/sdroxide-web
+        run: trunk build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: crates/sdroxide-web/dist
+          if-no-files-found: error
+
+  build:
+    name: ${{ matrix.label }}
+    needs: web
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x86_64
+          - os: ubuntu-24.04-arm
+            label: linux-aarch64
+          - os: windows-latest
+            label: windows-x86_64
+          - os: macos-latest
+            label: macos-aarch64
+          - os: macos-15-intel
+            label: macos-x86_64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            RELEASE_VERSION="$GITHUB_REF_NAME"
+          else
+            RELEASE_VERSION="dev-${GITHUB_SHA::7}"
+          fi
+          CARGO_VERSION=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n1)
+          {
+            echo "RELEASE_VERSION=$RELEASE_VERSION"
+            echo "CARGO_VERSION=$CARGO_VERSION"
+            echo "PKG=sdroxide-$RELEASE_VERSION-${{ matrix.label }}"
+          } >> "$GITHUB_ENV"
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsoapysdr-dev libasound2-dev pkg-config
+
+      # Extract the PothosSDR bundle (no install needed); soapysdr-sys finds
+      # SoapySDR.dll via PATH. Same approach as rust-soapysdr's own CI.
+      - name: Install SoapySDR (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          curl -L https://downloads.myriadrf.org/builds/PothosSDR/PothosSDR-2021.07.25-vc16-x64.exe -o pothossdr.exe
+          7z x -opothos -y pothossdr.exe > /dev/null
+          echo "${{ github.workspace }}/pothos/bin" >> "$GITHUB_PATH"
+
+      - name: Install SoapySDR (macOS)
+        if: runner.os == 'macOS'
+        run: brew install pkg-config soapysdr
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.label }}
+
+      # The embed-web feature bakes these files into the binary via rust-embed.
+      - name: Fetch web client
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: crates/sdroxide-web/dist
+
+      - name: Build
+        run: cargo build --release --locked -p sdroxide --features embed-web
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          strip target/release/sdroxide
+          mkdir -p out stage/sdroxide
+          cp target/release/sdroxide LICENSE stage/sdroxide/
+          cat > stage/sdroxide/README.txt <<'EOF'
+          sdroxide — SDR transceiver (https://github.com/dividebysandwich/sdroxide)
+
+          Runtime requirements (Debian/Ubuntu package names):
+            libsoapysdr0.8  soapysdr-module-all  libasound2 (or libasound2t64)
+
+          Run ./sdroxide for the GUI, ./sdroxide --server to serve the web UI
+          on http://localhost:4950, or ./sdroxide --help for all options.
+          EOF
+          tar czf "out/$PKG.tar.gz" -C stage sdroxide
+          cargo install cargo-deb --locked
+          cargo deb --no-build -p sdroxide -o "out/$PKG.deb"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p out stage/sdroxide
+          cp target/release/sdroxide.exe stage/sdroxide/
+          cp LICENSE stage/sdroxide/LICENSE.txt
+          cat > stage/sdroxide/README.txt <<'EOF'
+          sdroxide — SDR transceiver (https://github.com/dividebysandwich/sdroxide)
+
+          Requires PothosSDR (provides SoapySDR and the device drivers):
+            https://downloads.myriadrf.org/builds/PothosSDR/
+          During its installation choose "Add PothosSDR to the system PATH".
+
+          Run sdroxide.exe for the GUI, sdroxide.exe --server to serve the web
+          UI on http://localhost:4950, or sdroxide.exe --help for all options.
+          EOF
+          7z a "out/$PKG.zip" ./stage/sdroxide > /dev/null
+          dotnet tool install --global wix --version 5.0.2
+          wix build packaging/windows/main.wxs -arch x64 \
+            -d Version="$CARGO_VERSION" -d BinDir="target/release" \
+            -o "out/$PKG.msi"
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p out stage-dmg stage/sdroxide
+          # Portable tarball
+          cp target/release/sdroxide LICENSE stage/sdroxide/
+          cat > stage/sdroxide/README.txt <<'EOF'
+          sdroxide — SDR transceiver (https://github.com/dividebysandwich/sdroxide)
+
+          Requires SoapySDR plus the driver for your radio, e.g.:
+            brew install soapysdr soapyrtlsdr
+
+          Run ./sdroxide for the GUI, ./sdroxide --server to serve the web UI
+          on http://localhost:4950, or ./sdroxide --help for all options.
+          EOF
+          tar czf "out/$PKG.tar.gz" -C stage sdroxide
+          # .app bundle + DMG
+          APP=stage-dmg/sdroxide.app
+          mkdir -p "$APP/Contents/MacOS"
+          sed "s/@VERSION@/$CARGO_VERSION/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
+          cp target/release/sdroxide "$APP/Contents/MacOS/sdroxide"
+          codesign --force -s - "$APP/Contents/MacOS/sdroxide"
+          codesign --force -s - "$APP"
+          cp LICENSE stage-dmg/
+          ln -s /Applications stage-dmg/Applications
+          hdiutil create -volname sdroxide -srcfolder stage-dmg -ov -format UDZO "out/$PKG.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.label }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    name: create release
+    needs: [web, build]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web-dist
+      - name: Zip standalone web client
+        run: |
+          cd web-dist
+          zip -r "../dist/sdroxide-web-$GITHUB_REF_NAME.zip" .
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          ### Requirements
+
+          All builds dynamically link **SoapySDR** — install it together with
+          the driver module for your radio:
+
+          - **Windows**: install [PothosSDR](https://downloads.myriadrf.org/builds/PothosSDR/)
+            and select "Add PothosSDR to the system PATH" during setup.
+          - **Linux**: the `.deb` declares its dependencies and recommends
+            `soapysdr-module-all`. For the portable tarball install
+            `libsoapysdr0.8`, `soapysdr-module-all`, and ALSA (`libasound2`).
+          - **macOS**: `brew install soapysdr` plus a driver such as
+            `soapyrtlsdr` or `soapyhackrf`. The app is unsigned: right-click →
+            Open on first launch, or clear quarantine with
+            `xattr -dr com.apple.quarantine sdroxide.app`.
+
+          Every binary embeds the web client: run `sdroxide --server` and open
+          `http://<host>:4950` in a browser. `sdroxide-web-*.zip` contains the
+          standalone web assets for use with `--web-root`.
+          EOF
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --title "sdroxide $GITHUB_REF_NAME" --notes-file notes.md --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber dist/*
