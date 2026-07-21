@@ -14,19 +14,21 @@ pub fn run(
     settings: &Settings,
     initial_mode: Option<Mode>,
 ) -> Result<()> {
-    // The cpal streams must outlive the GUI; keep the handles on this stack frame.
-    let (_audio_out, audio_params) = match sdroxide_audio::start_output(48_000) {
-        Ok((out, producer)) => {
-            let rate = out.sample_rate;
-            (Some(out), Some(AudioParams { producer, out_rate: rate }))
-        }
-        Err(e) => {
-            warn!("no audio output ({e}); running silent");
-            (None, None)
-        }
-    };
-    let (_mic_in, mic_params) = if caps.is_transmit_capable() {
-        match sdroxide_audio::start_input(48_000) {
+    // The cpal streams must outlive the engine's ring endpoints; their handles
+    // move into the LocalController so the UI can swap devices at runtime.
+    let (audio_out, audio_params) =
+        match sdroxide_audio::start_output(settings.audio_output.as_deref(), 48_000) {
+            Ok((out, producer)) => {
+                let rate = out.sample_rate;
+                (Some(out), Some(AudioParams { producer, out_rate: rate }))
+            }
+            Err(e) => {
+                warn!("no audio output ({e}); running silent");
+                (None, None)
+            }
+        };
+    let (mic_in, mic_params) = if caps.is_transmit_capable() {
+        match sdroxide_audio::start_input(settings.audio_input.as_deref(), 48_000) {
             Ok((input, consumer)) => {
                 let rate = input.sample_rate;
                 (Some(input), Some(MicParams { consumer, rate }))
@@ -49,7 +51,13 @@ pub fn run(
     };
     let mut handles = start_engine(source, caps, cfg);
     let engine_thread = handles.thread.take();
-    let ctrl = LocalController::new(handles);
+    let ctrl = LocalController::new(
+        handles,
+        audio_out,
+        mic_in,
+        settings.audio_output.clone(),
+        settings.audio_input.clone(),
+    );
 
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
@@ -66,9 +74,6 @@ pub fn run(
     )
     .map_err(|e| anyhow::anyhow!("eframe: {e}"));
 
-    if let Some(out) = &_audio_out {
-        tracing::info!(underruns = out.underruns(), "audio session ended");
-    }
     // The controller (and its command sender) died with the app above; the
     // engine notices and exits. Wait for it so the SoapySDR device closes
     // before process teardown.
@@ -88,6 +93,35 @@ pub fn run_remote(url: &str) -> Result<()> {
         mic: Option<sdroxide_radio::rtrb::Consumer<f32>>,
         mic_resampler: Option<sdroxide_dsp::MonoResampler>,
         raw: Vec<f32>,
+        /// Selected device names; `None` = system default.
+        out_name: Option<String>,
+        in_name: Option<String>,
+    }
+
+    impl CpalBridge {
+        fn open_output(&mut self) {
+            self._out = None;
+            self.out = None;
+            match sdroxide_audio::start_output(self.out_name.as_deref(), 48_000) {
+                Ok((o, p)) => {
+                    self._out = Some(o);
+                    self.out = Some(p);
+                }
+                Err(e) => warn!("no audio output ({e}); running silent"),
+            }
+        }
+        fn open_input(&mut self) {
+            self._mic = None;
+            self.mic = None;
+            match sdroxide_audio::start_input(self.in_name.as_deref(), 48_000) {
+                Ok((i, c)) => {
+                    self.mic_resampler = sdroxide_dsp::MonoResampler::new(i.sample_rate, 48_000.0);
+                    self._mic = Some(i);
+                    self.mic = Some(c);
+                }
+                Err(e) => warn!("no microphone ({e}); TX carries silence"),
+            }
+        }
     }
 
     impl sdroxide_ui::AudioBridge for CpalBridge {
@@ -114,33 +148,45 @@ pub fn run_remote(url: &str) -> Result<()> {
                 None => out_vec.extend_from_slice(&self.raw),
             }
         }
+        fn devices(&self) -> Option<sdroxide_types::AudioDevices> {
+            Some(sdroxide_types::AudioDevices {
+                outputs: sdroxide_audio::output_device_names(),
+                inputs: sdroxide_audio::input_device_names(),
+                selected_output: self.out_name.clone(),
+                selected_input: self.in_name.clone(),
+            })
+        }
+        fn set_device(&mut self, output: bool, name: Option<String>) {
+            if output {
+                self.out_name = name;
+                self.open_output();
+            } else {
+                self.in_name = name;
+                self.open_input();
+            }
+            // Same persisted selection as the local app (same machine).
+            let mut s = sdroxide_config::Settings::load();
+            s.audio_output = self.out_name.clone();
+            s.audio_input = self.in_name.clone();
+            if let Err(e) = s.save() {
+                warn!("saving audio device selection: {e}");
+            }
+        }
     }
 
-    let (out_stream, out_producer) = match sdroxide_audio::start_output(48_000) {
-        Ok((o, p)) => (Some(o), Some(p)),
-        Err(e) => {
-            warn!("no audio output ({e}); running silent");
-            (None, None)
-        }
-    };
-    let (mic_stream, mic_consumer, mic_rate) = match sdroxide_audio::start_input(48_000) {
-        Ok((i, c)) => {
-            let rate = i.sample_rate;
-            (Some(i), Some(c), rate)
-        }
-        Err(e) => {
-            warn!("no microphone ({e}); TX carries silence");
-            (None, None, 48_000.0)
-        }
-    };
-    let bridge = CpalBridge {
-        _out: out_stream,
-        out: out_producer,
-        _mic: mic_stream,
-        mic: mic_consumer,
-        mic_resampler: sdroxide_dsp::MonoResampler::new(mic_rate, 48_000.0),
+    let settings = Settings::load();
+    let mut bridge = CpalBridge {
+        _out: None,
+        out: None,
+        _mic: None,
+        mic: None,
+        mic_resampler: None,
         raw: Vec::new(),
+        out_name: settings.audio_output.clone(),
+        in_name: settings.audio_input.clone(),
     };
+    bridge.open_output();
+    bridge.open_input();
 
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,

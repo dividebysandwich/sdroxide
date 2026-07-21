@@ -37,6 +37,10 @@ pub struct Settings {
     pub server_port: u16,
     /// Refuse to transmit outside amateur bands.
     pub tx_ham_only: bool,
+    /// Preferred audio output device name; `None` = system default.
+    pub audio_output: Option<String>,
+    /// Preferred audio input (microphone) device name; `None` = system default.
+    pub audio_input: Option<String>,
 }
 
 impl Default for Settings {
@@ -50,6 +54,8 @@ impl Default for Settings {
             server_bind: "0.0.0.0".into(),
             server_port: 4950,
             tx_ham_only: true,
+            audio_output: None,
+            audio_input: None,
         }
     }
 }

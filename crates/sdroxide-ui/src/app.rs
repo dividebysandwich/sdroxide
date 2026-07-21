@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use eframe::egui::{self, Color32, ComboBox, DragValue, RichText, Slider};
 use sdroxide_types::{
-    AgcMode, Band, Command, Decode, DeviceCaps, DigiStatus, Direction, MemoryChannel, Meters,
-    Mode, QsoRecord, RadioController, RadioEvent, RadioState, RxId, SkimmerKind, SkimmerSpot,
-    SpectrumConfig, SpectrumFrame, Vfo,
+    AgcMode, AudioDevices, Band, Command, Decode, DeviceCaps, DigiStatus, Direction,
+    MemoryChannel, Meters, Mode, QsoRecord, RadioController, RadioEvent, RadioState, RxId,
+    SkimmerKind, SkimmerSpot, SpectrumConfig, SpectrumFrame, Vfo,
 };
 
 use crate::view::ViewState;
@@ -53,6 +53,10 @@ pub struct SdroxideApp {
     last_spectrum_at: f64,
     /// Cached spectrum polylines (recomputed only when frame/view/rect change).
     trace_cache: spectrum_view::TraceCache,
+    /// Switchable sound devices, queried once each time the settings dialog
+    /// opens (cpal enumeration is too slow for per-frame).
+    audio_devices: Option<AudioDevices>,
+    audio_devices_queried: bool,
     seen_first_state: bool,
     show_memories: bool,
     show_settings: bool,
@@ -195,6 +199,8 @@ impl SdroxideApp {
             desired_at: 0.0,
             last_spectrum_at: 0.0,
             trace_cache: spectrum_view::TraceCache::default(),
+            audio_devices: None,
+            audio_devices_queried: false,
             seen_first_state: false,
             show_memories: false,
             show_settings: false,
@@ -745,8 +751,8 @@ impl SdroxideApp {
             {
                 self.show_memories = !self.show_memories;
             }
-            if crate::chrome::chip(ui, self.show_settings, "⚙ DEVICE")
-                .on_hover_text("Device settings")
+            if crate::chrome::chip(ui, self.show_settings, "⚙ SETTINGS")
+                .on_hover_text("Settings — device gains, antennas, audio devices")
                 .clicked()
             {
                 self.show_settings = !self.show_settings;
@@ -1744,8 +1750,21 @@ impl SdroxideApp {
     }
 
     fn settings_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
+        // Query the device list once per dialog-open; a pick invalidates it so
+        // the selection refreshes on the next frame.
+        if !self.show_settings {
+            self.audio_devices = None;
+            self.audio_devices_queried = false;
+        } else if !self.audio_devices_queried {
+            self.audio_devices = self.ctrl.audio_devices();
+            self.audio_devices_queried = true;
+        }
+        // Collected inside the window closure, applied after it (the closure
+        // holds `&self.caps`, so it can't call `&mut self.ctrl` itself).
+        let mut audio_pick: Option<(bool, Option<String>)> = None;
+
         let mut open = self.show_settings;
-        let resp = egui::Window::new("Device")
+        let resp = egui::Window::new("Settings")
             .open(&mut open)
             .frame(crate::chrome::window_frame())
             .resizable(false)
@@ -1831,11 +1850,57 @@ impl SdroxideApp {
                             }
                         });
                 }
+                // Sound-device selection (native clients only; the browser
+                // owns audio routing in the web client).
+                if let Some(devs) = &self.audio_devices {
+                    ui.separator();
+                    ui.label(RichText::new("Audio").strong());
+                    egui::Grid::new("audio-devs").num_columns(2).show(ui, |ui| {
+                        let combo = |ui: &mut egui::Ui,
+                                     id: &str,
+                                     names: &[String],
+                                     selected: &Option<String>,
+                                     output: bool,
+                                     pick: &mut Option<(bool, Option<String>)>| {
+                            let shown = selected.clone().unwrap_or_else(|| "System default".into());
+                            ComboBox::from_id_salt(id)
+                                .width(280.0)
+                                .selected_text(shown)
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_label(selected.is_none(), "System default")
+                                        .clicked()
+                                    {
+                                        *pick = Some((output, None));
+                                    }
+                                    for n in names {
+                                        if ui
+                                            .selectable_label(selected.as_deref() == Some(n), n)
+                                            .clicked()
+                                        {
+                                            *pick = Some((output, Some(n.clone())));
+                                        }
+                                    }
+                                });
+                        };
+                        ui.label("Output");
+                        combo(ui, "audio-out", &devs.outputs, &devs.selected_output, true, &mut audio_pick);
+                        ui.end_row();
+                        ui.label("Input");
+                        combo(ui, "audio-in", &devs.inputs, &devs.selected_input, false, &mut audio_pick);
+                        ui.end_row();
+                    });
+                }
             });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
         }
         self.show_settings = open;
+        if let Some((output, name)) = audio_pick {
+            self.ctrl.set_audio_device(output, name);
+            // Re-query next frame so the dropdowns show the new selection.
+            self.audio_devices_queried = false;
+        }
     }
 }
 

@@ -32,9 +32,19 @@ pub struct EngineHandles {
     pub cmd_tx: Sender<Command>,
     pub event_rx: Receiver<RadioEvent>,
     pub spectrum_out: triple_buffer::Output<SpectrumFrame>,
+    /// Runtime audio-device swaps (the frontend rebuilds the cpal streams and
+    /// hands the engine the new ring endpoints).
+    pub audio_swap_tx: Sender<AudioSwap>,
     /// Join before process exit so device teardown (SoapySDR/libusb) can't
     /// race the C libraries' own exit handlers.
     pub thread: Option<std::thread::JoinHandle<()>>,
+}
+
+/// A live audio-device change from the frontend. `None` payloads mean "no
+/// device" (run silent / TX carries silence).
+pub enum AudioSwap {
+    Output(Option<AudioParams>),
+    Input(Option<MicParams>),
 }
 
 /// Audio sink the engine feeds with interleaved stereo frames.
@@ -78,6 +88,7 @@ impl Default for EngineConfig {
 pub fn start(source: Box<dyn IqSource>, caps: DeviceCaps, cfg: EngineConfig) -> EngineHandles {
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
     let (event_tx, event_rx) = crossbeam_channel::unbounded();
+    let (audio_swap_tx, audio_swap_rx) = crossbeam_channel::unbounded();
     let empty = SpectrumFrame {
         seq: 0,
         center_hz: 0.0,
@@ -90,10 +101,10 @@ pub fn start(source: Box<dyn IqSource>, caps: DeviceCaps, cfg: EngineConfig) -> 
 
     let thread = std::thread::Builder::new()
         .name("sdroxide-dsp".into())
-        .spawn(move || engine_thread(source, caps, cfg, cmd_rx, event_tx, spec_in))
+        .spawn(move || engine_thread(source, caps, cfg, cmd_rx, audio_swap_rx, event_tx, spec_in))
         .expect("spawn dsp thread");
 
-    EngineHandles { cmd_tx, event_rx, spectrum_out, thread: Some(thread) }
+    EngineHandles { cmd_tx, event_rx, spectrum_out, audio_swap_tx, thread: Some(thread) }
 }
 
 /// One receiver: DDC → demod → AGC → volume → resample to the device rate.
@@ -366,6 +377,7 @@ fn engine_thread(
     caps: DeviceCaps,
     engine_cfg: EngineConfig,
     cmd_rx: Receiver<Command>,
+    audio_swap_rx: Receiver<AudioSwap>,
     event_tx: Sender<RadioEvent>,
     mut spec_in: triple_buffer::Input<SpectrumFrame>,
 ) {
@@ -459,6 +471,14 @@ fn engine_thread(
                     info!("all controllers gone; engine stopping");
                     return;
                 }
+            }
+        }
+
+        // Frontend audio-device swaps (rebuilt cpal streams' ring endpoints).
+        while let Ok(swap) = audio_swap_rx.try_recv() {
+            match swap {
+                AudioSwap::Output(a) => engine.set_audio_output(a),
+                AudioSwap::Input(m) => engine.set_audio_input(m),
             }
         }
 
@@ -1025,6 +1045,50 @@ impl Engine {
 
     /// Point the main-RX DDC at the active VFO (+RIT) and the sub-RX DDC at
     /// the inactive VFO.
+    /// Swap the audio output sink at runtime (frontend changed sound devices).
+    /// Rebuilds the RX chains for the new device rate; the digi tap and DDC
+    /// offsets are re-armed on the fresh chains.
+    fn set_audio_output(&mut self, audio: Option<AudioParams>) {
+        match audio {
+            Some(a) => {
+                self.main =
+                    Some(RxChain::new(self.state.sample_rate, &self.state.rx[0], a.out_rate));
+                self.mixer = Some(StereoMixer::new(a.producer));
+                self.audio_out_rate = a.out_rate;
+                self.sub = self.state.sub_rx_enabled.then(|| {
+                    RxChain::new(self.state.sample_rate, &self.state.rx[1], a.out_rate)
+                });
+                if self.digi.is_some() {
+                    if let Some(c) = self.main.as_mut() {
+                        c.tap_enabled = true;
+                    }
+                }
+                info!(out_rate = a.out_rate, "audio output swapped");
+            }
+            None => {
+                self.main = None;
+                self.sub = None;
+                self.mixer = None;
+                info!("audio output removed; running silent");
+            }
+        }
+        self.update_tuning();
+    }
+
+    /// Swap the microphone feed at runtime.
+    fn set_audio_input(&mut self, mic: Option<MicParams>) {
+        self.mic_resampler = match &mic {
+            Some(m) => MonoResampler::new(m.rate, 48_000.0),
+            None => None,
+        };
+        self.mic_fifo.clear();
+        match &mic {
+            Some(m) => info!(rate = m.rate, "mic input swapped"),
+            None => info!("mic input removed; TX carries silence"),
+        }
+        self.mic = mic;
+    }
+
     fn update_tuning(&mut self) {
         let main_offset = self.state.rx_freq_hz() - self.state.center_hz;
         let inactive = match self.state.active_vfo {

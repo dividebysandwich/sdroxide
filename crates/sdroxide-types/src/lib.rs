@@ -20,7 +20,7 @@ mod state;
 pub use band::Band;
 pub use caps::{DeviceCaps, Direction, GainElement};
 pub use command::Command;
-pub use controller::{RadioController, RadioEvent};
+pub use controller::{AudioDevices, RadioController, RadioEvent};
 pub use digi::{
     Decode, DigiConfig, DigiStatus, QsoRecord, QsoStep, TranscriptLine, adif_band, fmt_report,
     qso_log_to_adif, qso_log_to_text, utc_ymd_hms, ymd_hms_to_unix,

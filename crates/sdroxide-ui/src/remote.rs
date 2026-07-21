@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use sdroxide_proto::{AudioCaps, AudioCodec, ClientMsg, PROTO_VERSION, ServerMsg, decode, encode};
-use sdroxide_types::{Command, RadioController, RadioEvent};
+use sdroxide_types::{AudioDevices, Command, RadioController, RadioEvent};
 
 /// Platform audio glue: playback of received PCM and microphone capture.
 /// The wasm client backs this with an AudioWorklet bridge.
@@ -15,6 +15,16 @@ pub trait AudioBridge {
     fn play(&mut self, pcm: &[f32]);
     /// Append captured mic samples (mono 48 kHz) to `out`.
     fn pull_mic(&mut self, out: &mut Vec<f32>);
+    /// Switchable sound devices, when the platform has any (native cpal
+    /// bridge). The browser bridge keeps the default `None` — the browser
+    /// owns device routing there.
+    fn devices(&self) -> Option<AudioDevices> {
+        None
+    }
+    /// Switch the output (`output = true`) or input device; `None` = default.
+    fn set_device(&mut self, output: bool, name: Option<String>) {
+        let _ = (output, name);
+    }
 }
 
 pub struct RemoteController {
@@ -156,5 +166,15 @@ impl RadioController for RemoteController {
 
     fn wants_repaint_soon(&self) -> bool {
         !self.pending.is_empty()
+    }
+
+    fn audio_devices(&self) -> Option<AudioDevices> {
+        self.audio.as_ref().and_then(|a| a.devices())
+    }
+
+    fn set_audio_device(&mut self, output: bool, name: Option<String>) {
+        if let Some(a) = self.audio.as_mut() {
+            a.set_device(output, name);
+        }
     }
 }

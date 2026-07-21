@@ -9,7 +9,9 @@ mod error;
 mod source;
 
 pub use device::{DeviceInfo, SoapyDevice, SoapyRxSource, enumerate_devices};
-pub use engine::{AudioParams, EngineConfig, EngineHandles, MicParams, start as start_engine};
+pub use engine::{
+    AudioParams, AudioSwap, EngineConfig, EngineHandles, MicParams, start as start_engine,
+};
 pub use error::RadioError;
 pub use source::{FileSource, IqSource, SigGenSource};
 
