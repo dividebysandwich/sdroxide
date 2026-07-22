@@ -14,8 +14,8 @@ or connects to a remote sdroxide server.
 
 1. [Feature overview](#1-feature-overview)
 2. [Basic operation](#2-basic-operation)
-3. [FT8 and FT4](#3-ft8-and-ft4)
-4. [CW Skimmer](#4-cw-skimmer)
+3. [Digital modes (FT8, FT4, PSK31, RTTY)](#3-digital-modes)
+4. [Skimmers (CW, PSK, RTTY)](#4-skimmers)
 5. [Radio and audio setup](#5-radio-and-audio-setup)
 6. [Remote operation](#6-remote-operation)
 7. [Web operation](#7-web-operation)
@@ -36,7 +36,8 @@ or connects to a remote sdroxide server.
 - **Dual VFO (A/B)** with split operation, VFO swap/copy, and a sub-receiver on
   the inactive VFO.
 - **All the common modes:** LSB, USB, CW, AM, SAM, NFM, WFM, DIGU, DIGL, DSB, a
-  spectrum-only mode (SPEC), plus **FT8** and **FT4**.
+  spectrum-only mode (SPEC), the automatic digital modes **FT8** and **FT4**, and
+  the keyboard modes **PSK31** and **RTTY**.
 - **Receive controls:** AGC (Off/Slow/Med/Fast), volume, mute, squelch, an
   impulse noise blanker, RIT, and a draggable filter passband.
 - **Transmit** (on TX-capable rigs): PTT, TUNE, drive and tune-drive levels,
@@ -45,10 +46,11 @@ or connects to a remote sdroxide server.
 - **FT8 / FT4** with a live decode list, automatic QSO sequencing, a world map,
   a transcript, and automatic logging.
 - **Integrated logbook** for digital and manual QSOs, with ADIF and text export.
-- **Wideband CW skimmer** that decodes many CW signals at once and labels them
-  on the waterfall.
-- **Two radio backends:** SoapySDR devices (wideband IQ) or a CAT-controlled
-  radio with audio over a USB sound card (demodulated audio or stereo IQ).
+- **Wideband skimmers** — a CW skimmer plus PSK31 and RTTY skimmers that decode
+  many signals at once and label them on the waterfall.
+- **Four radio backends:** SoapySDR devices, OpenHPSDR (Hermes/Metis) Ethernet
+  SDRs, a TCI server (ExpertSDR3/Thetis), or a CAT-controlled radio with audio
+  over a USB sound card (demodulated audio or stereo IQ).
 - **Memory channels** and per-band memory of your last frequency/mode/filter.
 - **Remote and web operation:** run headless as a server and control it from a
   browser or from a second sdroxide instance over the network.
@@ -122,7 +124,7 @@ popup with three rows:
 - **BAND:** `160M 80M 60M 40M 30M 20M 17M 15M 12M 10M 6M 2M GEN`. Each band
   remembers your last frequency, mode, and filter.
 - **MODE:** `LSB USB CW AM SAM NFM WFM DIGU DIGL DSB SPEC`.
-- **DIGITAL:** `FT8 FT4` (see [FT8 and FT4](#3-ft8-and-ft4)).
+- **DIGITAL:** `FT8 FT4 PSK RTTY` (see [Digital modes](#3-digital-modes)).
 
 ![The band and mode selector popup](images/04-band-mode-popup.png)
 
@@ -167,14 +169,19 @@ passband. The grips work on both the spectrum and the waterfall.
 - **PEAK** — show a decaying peak-hold trace over the spectrum.
 - **SPEC** — show or hide the spectrum line above the waterfall (lit when the
   spectrum is shown).
-- **SKIM** — the CW skimmer (see [CW Skimmer](#4-cw-skimmer)).
+- **SKIM** — the CW / PSK / RTTY skimmers (see [Skimmers](#4-skimmers)).
 
 **FFT module:**
 
 - **floor** / **ceil** — the waterfall's dB range.
 - **FFT** size — `2048`, `4096`, `8192`, `16384`, or `32768`.
-- **Colour scheme** — `Classic`, `Viridis`, `Gray`, `Icom`, `Neon`,
-  `Synthwave`, `Matrix`, or `Tron`.
+
+The **waterfall colour scheme** and the **spectrum background gradient** are set
+on the **UI** tab of the Settings window (see
+[radio and audio setup](#5-radio-and-audio-setup)). The colour scheme is one of
+`Classic`, `Viridis`, `Gray`, `Icom`, `Neon`, `Synthwave`, `Matrix`, or `Tron`;
+the gradient fills the spectrum area from a top colour down to a bottom colour
+(default dark red → black) and can be turned off.
 
 You can also resize the split between the spectrum line and the waterfall by
 dragging the frequency-scale strip between them.
@@ -212,10 +219,12 @@ press **Store** to save the current frequency and mode. Each saved row has a
 
 ---
 
-## 3. FT8 and FT4
+## 3. Digital modes
 
-sdroxide decodes and transmits FT8 and FT4 with automatic QSO sequencing and
-logging.
+sdroxide has two families of digital mode. **FT8** and **FT4** are automatic,
+timeslot-based modes with QSO sequencing, a world map, and automatic logging
+(3.1–3.5). **PSK31** and **RTTY** are live keyboard modes: you tune onto a
+signal, read the decoded text, and type a reply that transmits as you go (3.6).
 
 ### 3.1 Entering the mode
 
@@ -295,51 +304,103 @@ manual entries. You can:
 
 The log is stored in `qso_log.json`.
 
+### 3.6 PSK31 and RTTY
+
+Choose **PSK** or **RTTY** from the DIGITAL row of the Band/Mode popup. As with
+FT8/FT4 the panadapter switches to a zoomed sub-band waterfall, but the lower
+panel is a live **messaging area** instead of a QSO sequencer.
+
+![The PSK/RTTY messaging panel](images/07-ft8-panel.png)
+
+**Receiving:**
+
+- Decoded text streams into the receive window as signals are copied.
+- Tune exactly onto a signal with the **−/+** buttons (±10 Hz) — or click its
+  skimmer label (see [Skimmers](#4-skimmers)). In RTTY, two amber
+  lines on the waterfall mark the expected mark/space tones to tune between.
+
+**Transmitting (type-ahead):**
+
+- Type your reply in the transmit box and press **TX** to key up. Text is sent as
+  you type; characters that have already gone out turn **green**, so you can
+  watch the transmission catch up when you pause.
+- **CALL CQ** loads a CQ macro and starts sending it; **CLEAR** empties the
+  buffer and stops; pressing **TX** again unkeys.
+
+**Settings (PSK/RTTY setup dialog):**
+
+- **PSK** is BPSK31 — differential BPSK with the standard varicode alphabet.
+- **RTTY** defaults to 45.45 baud, 170 Hz shift, Baudot (ITA2). **Shift**
+  (170 / 425 / 850 Hz) and **Baud** (45 / 50 / 75) are selectable.
+- Your callsign and grid (shared with the FT8/FT4 setup) fill the CQ macro.
+
+**Skimmers:** the PSK and RTTY skimmers (see [Skimmers](#4-skimmers)) label
+signals across each band's PSK/RTTY calling sub-bands. Clicking a label from any
+mode switches to PSK or RTTY, tunes onto the signal, and opens this panel.
+
 ---
 
-## 4. CW Skimmer
+## 4. Skimmers
 
-The CW skimmer decodes many CW signals at once across a wide (~192 kHz) window
-and labels each one on the waterfall.
+The skimmers decode many signals at once across a wide (~192 kHz) window and
+label each one on the waterfall. There are three: **CW**, **PSK31**, and
+**RTTY**.
 
-![The CW skimmer labelling signals on the waterfall](images/10-skimmer.png)
+![The skimmer labelling signals on the waterfall](images/10-skimmer.png)
 
-- Toggle it with the **SKIM** button in the Display module. On a SoapySDR (IQ)
-  source it is **on by default**.
+- Toggle them with the **SKIM** button in the Display module. On a SoapySDR (IQ)
+  source the skimmer is **on by default**.
 - Each decoded signal appears as a box next to its trace on the waterfall,
-  showing the callsign (once resolved) and a rolling tail of decoded text. Boxes
-  fade out a few seconds after a signal stops.
-- **Click a skimmer box** to tune the dial to that signal and switch to CW.
+  showing the callsign (once resolved, for CW) and a rolling tail of decoded
+  text. Boxes fade out a few seconds after a signal stops.
+- **Click a skimmer box** to tune to that signal and switch to its mode — CW for
+  a CW spot, PSK or RTTY for a digimode spot (which also opens the messaging
+  panel, [3.6](#36-psk31-and-rtty)).
 
-> **Note:** the skimmer is a wideband feature and works only with true IQ/SDR
-> sources. It is unavailable when a CAT radio is feeding demodulated audio (see
-> [radio and audio setup](#5-radio-and-audio-setup)), because that mode has only
-> a narrow audio slice rather than a wide IQ span.
+**Band-aware gating.** To avoid noise and false decodes, each skimmer only runs
+where its mode is used: the CW skimmer in CW sub-bands, and the PSK and RTTY
+skimmers in each band's PSK/RTTY calling sub-bands — with the FT8, FT4, and WSPR
+watering-holes excluded so their signals aren't mistaken for PSK or RTTY. The
+skimmer-decoded text is a coarse best-effort copy; switch to the mode (click a
+box) for a clean decode.
+
+> **Note:** the skimmers are a wideband feature and work only with true IQ/SDR
+> sources (SoapySDR, HPSDR, TCI). They are unavailable when a CAT radio is
+> feeding demodulated audio (see [radio and audio setup](#5-radio-and-audio-setup)),
+> because that mode has only a narrow audio slice rather than a wide IQ span.
 
 ---
 
 ## 5. Radio and audio setup
 
 Open the **SETTINGS** button (System module). The Settings window has three
-tabs: **Device**, **Audio**, and **Audio/CAT**.
+tabs: **Radio**, **Audio**, and **UI**.
 
 ![The Settings window](images/11-settings.png)
 
 ### 5.1 Choosing a backend
 
-On the **Audio/CAT** tab, **Backend** selects how sdroxide talks to your radio:
+On the **Radio** tab, **Radio interface** selects how sdroxide talks to your
+radio:
 
-- **Auto (SoapySDR, else CAT)** — use a SoapySDR device if one is found,
-  otherwise fall back to the CAT radio configuration. This is the default.
-- **SoapySDR** — always use a SoapySDR device.
-- **CAT rig** — always use a CAT-controlled radio with audio over a sound card.
+- **SoapySDR** — a SoapySDR device (wideband IQ). The default. See
+  [5.2](#52-soapysdr-devices).
+- **HPSDR (network)** — an OpenHPSDR (Hermes/Metis) Ethernet SDR on the LAN. See
+  [5.4](#54-openhpsdr-network-radios).
+- **CAT / Audio** — a CAT-controlled radio with audio over a USB sound card. See
+  [5.3](#53-cat-radios-serial-control--usb-audio).
+- **TCI (network)** — a TCI server such as ExpertSDR3 or Thetis. See
+  [5.5](#55-tci-expertsdr3--thetis).
 
-> Backend, serial, sound-format, and radio-audio-device changes take effect on
-> the next start. Restart sdroxide after changing them.
+The controls shown below the selector change to match the chosen interface.
+
+> Radio-interface, serial, sound-format, and radio-audio-device changes take
+> effect on the next start. Restart sdroxide after changing them.
 
 ### 5.2 SoapySDR devices
 
-For a SoapySDR device, the **Device** tab shows the controls the device exposes:
+With the **SoapySDR** interface, the **Radio** tab shows the controls the device
+exposes:
 
 - **RX gains** — one slider per gain element (dB, with the device's own limits).
 - **TX gains** — transmit gain sliders, if the device has them.
@@ -352,10 +413,11 @@ the command line with `--device`.
 
 ### 5.3 CAT radios (serial control + USB audio)
 
-A CAT radio is configured entirely on the **Audio/CAT** tab. The audio arrives
-over a USB sound card, separately from your computer's speakers and microphone.
+A CAT radio is configured on the **Radio** tab (with the sound card chosen on
+the **Audio** tab, [5.6](#56-radio-audio-devices)). The audio arrives over a USB
+sound card, separately from your computer's speakers and microphone.
 
-![The Audio/CAT tab](images/12-audio-cat.png)
+![The CAT / Audio settings](images/12-audio-cat.png)
 
 **Sound format** — how the radio's audio is interpreted:
 
@@ -384,7 +446,39 @@ over a USB sound card, separately from your computer's speakers and microphone.
 - **Poll rate** — how often (Hz) sdroxide reads the rig's frequency and mode.
 - **Radio ID (hex)** — the CI-V address, for Icom and Xiegu radios.
 
-### 5.4 Radio audio devices
+### 5.4 OpenHPSDR (network radios)
+
+With the **HPSDR (network)** interface, sdroxide reaches an OpenHPSDR
+(Hermes/Metis-family) Ethernet SDR over the LAN — no sound card or serial port
+involved. On the **Radio** tab:
+
+- **Discover** — scan the local network for HPSDR devices and pick one from the
+  list. Protocol 2 devices are selectable; Protocol 1-only devices (such as the
+  Hermes Lite 2) are listed greyed-out.
+- **Manual IP** — connect directly to a known address (for example
+  `192.168.1.50`), skipping discovery.
+- **Sample rate** — the DDC receive rate: 48, 96, 192, 384, 768, or 1536 kHz.
+  Wider rates give a wider panadapter span at more CPU/network cost.
+
+Receive is wideband IQ, so the full panadapter and the skimmers work.
+
+### 5.5 TCI (ExpertSDR3 / Thetis)
+
+With the **TCI (network)** interface, sdroxide connects to a TCI server — such as
+Expert Electronics **ExpertSDR3** or **Thetis** — over a WebSocket, receiving a
+wideband IQ stream and transmitting audio back. On the **Radio** tab:
+
+- **Server address** — the TCI `host:port`. The default `127.0.0.1:50001` is
+  ExpertSDR3's TCI listener on the same machine; enable *TCI* in the SDR software
+  first.
+- **IQ sample rate** — the receive IQ stream rate: 48, 96, or 192 kHz.
+- **Test connection** — verify sdroxide can reach the server and report what it
+  found, without leaving the dialog.
+
+Receive is wideband IQ (full panadapter and skimmers); transmit sends audio to
+the TCI server, which modulates it.
+
+### 5.6 Radio audio devices
 
 On the **Audio** tab, the *Radio audio* section selects the sound card the CAT
 radio uses:
@@ -402,7 +496,7 @@ example `C-Media Electronics Inc. USB Audio Device, USB Audio [Device · 0d8c:00
 > for IQ, sdroxide refuses it and shows a warning banner. Use a stereo line-input
 > interface for IQ, or choose **Demod audio**.
 
-### 5.5 Your own audio devices
+### 5.7 Your own audio devices
 
 The *Your audio* section of the **Audio** tab selects the speakers and
 microphone sdroxide uses for you (separate from the radio-audio devices):
@@ -413,7 +507,7 @@ microphone sdroxide uses for you (separate from the radio-audio devices):
 Each defaults to **System default**. These can be changed live. The equivalents
 in `config.toml` are `audio_output` and `audio_input`.
 
-### 5.6 Linux / PipeWire note for dedicated radio sound cards
+### 5.8 Linux / PipeWire note for dedicated radio sound cards
 
 On a PipeWire system, the desktop audio server can hold a USB radio codec's
 capture device open, which intermittently blocks sdroxide from opening it (the
@@ -422,6 +516,19 @@ sound card dedicated to the radio, the reliable fix is to tell WirePlumber to
 stop managing that card, leaving it for sdroxide. Create a drop-in such as
 `~/.config/wireplumber/wireplumber.conf.d/51-radio.conf` that disables the
 card, then restart WirePlumber. See [troubleshooting](#10-troubleshooting).
+
+### 5.9 UI preferences
+
+The **UI** tab holds display preferences (stored in `config.toml` under `[ui]`):
+
+- **Screen update rate** — the GUI/spectrum frame rate (30, 60, or 90 fps).
+- **Waterfall scroll speed** and **Spectrum update speed** — how fast the
+  waterfall scrolls and how quickly the spectrum line reacts (slower = more
+  averaged/smoother).
+- **Waterfall palette** — the waterfall colour scheme (see [2.8](#28-the-display-and-fft-controls)).
+- **Spectrum background** — a vertical gradient behind the spectrum line, with a
+  top and bottom colour (default dark red → black); untick **Gradient** for a
+  plain background.
 
 ---
 
@@ -521,7 +628,7 @@ authentication if it is reachable from an untrusted network.
 | `--freq <HZ>` | Center frequency in Hz (default 14,200,000). |
 | `--rate <HZ>` | Sample rate in Hz (default: from config). |
 | `--gain <DB>` | Overall RX gain in dB (default: hardware AGC or a moderate value). |
-| `--mode <MODE>` | Initial mode (USB, LSB, CW, AM, SAM, NFM, WFM, DIGU, DIGL, DSB, SPEC). |
+| `--mode <MODE>` | Initial mode (USB, LSB, CW, AM, SAM, NFM, WFM, DIGU, DIGL, DSB, SPEC, FT8, FT4, PSK, RTTY). |
 | `--server` | Run as a server (web client + WebSocket streaming backend). |
 | `--connect <HOST[:PORT]>` | Connect as a native remote client to a running server. |
 | `--port <PORT>` | Server port (default: from config, 4950). |
@@ -636,7 +743,9 @@ Shortcuts are ignored while typing in a text field.
 | DIGU / DIGL | Data over USB / LSB (general digital). |
 | DSB | Double sideband. |
 | SPEC | Spectrum only (no demodulation). |
-| FT8 / FT4 | Digital modes with decoding, QSO sequencing, and logging. |
+| FT8 / FT4 | Automatic digital modes with decoding, QSO sequencing, and logging. |
+| PSK | PSK31 keyboard mode (BPSK31 / varicode). |
+| RTTY | RTTY keyboard mode (Baudot; selectable shift and baud). |
 
 ### Bands
 
@@ -648,4 +757,4 @@ disabled in the selector.
 
 `Classic` (PowerSDR-style), `Viridis`, `Gray`, `Icom` (Icom-style palette,
 peaking at red with no white blow-out), `Neon`, `Synthwave`, `Matrix`, and
-`Tron`.
+`Tron`. Chosen on the **UI** tab of the Settings window ([5.9](#59-ui-preferences)).

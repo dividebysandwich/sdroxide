@@ -1,8 +1,8 @@
 # sdroxide
 
-A PowerSDR/Thetis-style software-defined-radio transceiver client in Rust,
-built on **SoapySDR** with an [egui](https://github.com/emilk/egui) GUI and a
-cyberpunk theme. It runs as a **native desktop application** and, from the same
+A PowerSDR/Thetis-style software-defined-radio transceiver client in Rust, with
+pluggable radio backends (**SoapySDR**, **OpenHPSDR**, **TCI**, and **CAT**), an
+[egui](https://github.com/emilk/egui) GUI, and a cyberpunk theme. It runs as a **native desktop application** and, from the same
 binary, as a **server that streams the same UI to a web browser** over
 WebSocket. It includes an integrated, persistent **logbook** and full
 **FT8/FT4** digital-mode operation.
@@ -29,7 +29,7 @@ One binary, three ways to run it:
   that labels allocations (ham bands, broadcast, CB, AM); it shows coarse bands
   when zoomed out and CW/digital/SSB sub-segments when zoomed into a ham band.
 - **Modes** — SSB (USB/LSB), CW, AM, SAM, NFM, WFM, DSB, DIGU/DIGL, a
-  spectrum-only mode, and **FT8/FT4**.
+  spectrum-only mode, **FT8/FT4**, and the keyboard modes **PSK31** and **RTTY**.
 - **Receiver** — hang AGC, draggable passband filter edges (on the spectrum and
   the waterfall), noise blanker, squelch, a second sub-receiver, RIT/XIT, VFO
   A/B with split, per-band band stacks, and memory channels.
@@ -60,6 +60,25 @@ a decode list and an auto-sequencing QSO panel:
 - All decoding and encoding run server-side in the native engine, so native and
   browser clients behave identically.
 
+## PSK31 and RTTY
+
+Selecting **PSK** or **RTTY** opens a live keyboard-mode ragchew panel next to a
+zoomed sub-band waterfall — tune onto a signal, watch it decode, and type a
+reply that transmits as you type:
+
+- **Receive** streams decoded text into a scrolling window. Fine-tune with the
+  **−/+** buttons (±10 Hz) onto the carrier; RTTY draws mark/space tuning lines
+  on the waterfall.
+- **Transmit** as you type: characters already sent turn **green** so you can
+  watch the transmission catch up to your typing. **TX** keys/unkeys, **CALL CQ**
+  loads and sends a CQ macro, **CLEAR** empties the buffer.
+- **PSK** is BPSK31 (differential BPSK, varicode). **RTTY** defaults to 45.45
+  baud / 170 Hz shift / Baudot; shift (170/425/850 Hz) and baud (45/50/75) are
+  selectable in the PSK/RTTY setup dialog.
+- The **PSK and RTTY skimmers** decode signals across each band's PSK/RTTY
+  calling sub-bands and label them on the waterfall; click a label to switch to
+  that mode, tune onto it, and open the panel.
+
 ## Logbook
 
 Open the **LOG** button (available in any mode) for a persistent logbook that
@@ -73,6 +92,26 @@ holds both FT8/FT4 and manually entered QSOs:
   software) or plain **TXT**.
 - The log is stored at `~/.config/sdroxide/qso_log.json` (native) or in browser
   storage (remote).
+
+## Radio backends
+
+sdroxide can drive four kinds of radio, selected on the **Audio/CAT** tab of the
+Settings window (backend, serial, and audio changes take effect on restart):
+
+- **SoapySDR** — any [SoapySDR](https://github.com/pothosware/SoapySDR) device
+  (wideband IQ). See below.
+- **OpenHPSDR** — Hermes/Metis-family Ethernet SDRs on the LAN (Protocol 2).
+  Press **Discover** to scan for devices, or enter the IP manually; pick a DDC
+  sample rate (48 kHz–1536 kHz).
+- **CAT / Audio** — a CAT-controlled rig (Icom/CI-V, Yaesu, Xiegu) with audio
+  over a USB sound card, as either demodulated mono audio or stereo IQ.
+- **TCI** — a TCI (Transceiver Control Interface) server such as ExpertSDR3 or
+  Thetis over WebSocket (default `127.0.0.1:50001`): wideband IQ receive plus
+  audio transmit.
+
+The wideband-IQ backends (SoapySDR, HPSDR, TCI) drive the full panadapter, the
+CW/PSK/RTTY skimmers, and internal demodulation; a CAT rig feeding demodulated
+audio shows only a narrow audio-band slice.
 
 ## SoapySDR connectivity
 
@@ -138,7 +177,7 @@ sdroxide --connect 192.168.1.10:4950
 | `--freq <HZ>` | Center frequency in Hz (default `14200000`). |
 | `--rate <HZ>` | Sample rate in Hz (default: from config). |
 | `--gain <DB>` | Overall RX gain in dB (default: hardware AGC / moderate). |
-| `--mode <MODE>` | Initial mode: `USB LSB CW AM SAM NFM WFM DIGU DIGL DSB SPEC FT8 FT4`. |
+| `--mode <MODE>` | Initial mode: `USB LSB CW AM SAM NFM WFM DIGU DIGL DSB SPEC FT8 FT4 PSK RTTY`. |
 | `--server` | Run as a server: HTTP web client + WebSocket streaming backend. |
 | `--connect <HOST[:PORT]>` | Connect as a native remote client to a running server. |
 | `--port <PORT>` | Server port (default: from config, `4950`). |
