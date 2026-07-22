@@ -31,6 +31,51 @@ pub struct WfTuning {
     pub rows_per_sec: f32,
     /// Wall-clock UTC seconds, for the minute-boundary time labels.
     pub now_unix: f64,
+    /// EMA coefficient for the spectrum *line* only (1.0 = no smoothing). The
+    /// waterfall uses the raw un-averaged frames, so the line's update speed is
+    /// decoupled from the waterfall detail.
+    pub spectrum_alpha: f32,
+}
+
+/// Exponentially-smoothed spectrum for the trace line, folded once per new
+/// frame. Kept separate from the (un-averaged) frame the waterfall consumes so
+/// the "spectrum update speed" setting never blurs the waterfall.
+#[derive(Default)]
+pub struct SpectrumSmooth {
+    bins: Vec<f32>,
+    center: f64,
+    span: f64,
+    last_seq: Option<u32>,
+    generation: u32,
+    alpha: f32,
+}
+
+impl SpectrumSmooth {
+    fn update(&mut self, f: &SpectrumFrame, alpha: f32) {
+        if (self.alpha - alpha).abs() > 1e-6 {
+            self.alpha = alpha;
+            self.generation = self.generation.wrapping_add(1);
+        }
+        if self.last_seq == Some(f.seq) {
+            return; // same frame redrawn
+        }
+        self.last_seq = Some(f.seq);
+        let mapping_changed = self.bins.len() != f.bins.len()
+            || (self.center - f.center_hz).abs() > f.span_hz * 1e-6
+            || (self.span - f.span_hz).abs() > f.span_hz * 1e-6;
+        if mapping_changed || alpha >= 0.999 {
+            self.center = f.center_hz;
+            self.span = f.span_hz;
+            self.bins = f.bins.iter().map(|&b| b as f32).collect();
+            if mapping_changed {
+                self.generation = self.generation.wrapping_add(1);
+            }
+            return;
+        }
+        for (s, &b) in self.bins.iter_mut().zip(&f.bins) {
+            *s += alpha * (b as f32 - *s);
+        }
+    }
 }
 
 // --- skimmer spot boxes ---------------------------------------------------
@@ -320,13 +365,14 @@ pub fn show(
     state: &mut RadioState,
     frame: Option<&Arc<SpectrumFrame>>,
     peaks: &mut PeakHold,
+    smooth: &mut SpectrumSmooth,
     trace: &mut TraceCache,
     skimmer: &[SkimmerSpot],
     alpha: &[f32],
     wf: WfTuning,
     cmds: &mut Vec<Command>,
 ) {
-    show_ext(ui, view, state, frame, peaks, trace, None, skimmer, alpha, wf, cmds);
+    show_ext(ui, view, state, frame, peaks, smooth, trace, None, skimmer, alpha, wf, cmds);
 }
 
 /// `show` with an optional digital-mode audio marker. When `digi_audio_hz`
@@ -341,6 +387,7 @@ pub fn show_ext(
     state: &mut RadioState,
     frame: Option<&Arc<SpectrumFrame>>,
     peaks: &mut PeakHold,
+    smooth: &mut SpectrumSmooth,
     trace: &mut TraceCache,
     digi_audio_hz: Option<f32>,
     skimmer: &[SkimmerSpot],
@@ -575,8 +622,12 @@ pub fn show_ext(
         } else {
             peaks.clear();
         }
-        let key = trace_key(f, 0, view, &spec_rect);
-        let pts = trace.live.points_for(key, || compute_trace(view, f, None, &spec_rect));
+        // Live trace: UI-smoothed (per the spectrum-speed setting) so the line's
+        // reaction speed is independent of the un-averaged waterfall detail.
+        smooth.update(f, wf.spectrum_alpha);
+        let key = trace_key(f, smooth.generation, view, &spec_rect);
+        let pts =
+            trace.live.points_for(key, || compute_trace(view, f, Some(&smooth.bins), &spec_rect));
         painter.add(Shape::line(pts, Stroke::new(1.0, Color32::from_rgb(120, 220, 255))));
     }
     draw_scale(&painter, view, &scale_rect);

@@ -54,6 +54,8 @@ pub struct SdroxideApp {
     memories: Vec<MemoryChannel>,
     view: ViewState,
     peaks: spectrum_view::PeakHold,
+    /// UI-side smoothing for the spectrum *line* (waterfall stays un-averaged).
+    spec_smooth: spectrum_view::SpectrumSmooth,
     error: Option<String>,
     /// Persistent, non-fatal operator notice (e.g. radio audio input
     /// unavailable / mono card selected for IQ). Shown as a warning banner.
@@ -225,6 +227,7 @@ impl SdroxideApp {
             memories: Vec::new(),
             view,
             peaks: spectrum_view::PeakHold::default(),
+            spec_smooth: spectrum_view::SpectrumSmooth::default(),
             error: None,
             radio_notice: None,
             sent_cfg: None,
@@ -298,10 +301,12 @@ impl SdroxideApp {
             db_floor: self.view.db_floor,
             db_ceil: self.view.db_ceil,
             viewport,
-            // Frame rate + spectrum averaging come from the UI settings; they
-            // also drive the repaint cadence (see the end of `ui`).
+            // Frame rate comes from the UI settings and also drives the repaint
+            // cadence (see the end of `ui`). Engine averaging is disabled so the
+            // waterfall gets full detail; the spectrum *line* is smoothed UI-side
+            // per the spectrum-speed setting (decoupled from the waterfall).
             fps: self.ui_settings.fps().min(255) as u8,
-            avg_tc: self.ui_settings.spectrum_avg_tc(),
+            avg_tc: 0.0,
         }
     }
 
@@ -325,7 +330,13 @@ impl SdroxideApp {
         } else {
             0
         };
-        spectrum_view::WfTuning { rows_to_write, rows_per_sec, now_unix: now }
+        // Spectrum-line smoothing: convert the time constant to a per-frame EMA
+        // coefficient using the frame rate, so the reaction time is the same at
+        // any fps (0 tc = no smoothing = raw frames).
+        let tc = self.ui_settings.spectrum_avg_tc();
+        let fps = self.ui_settings.fps().max(1) as f32;
+        let spectrum_alpha = if tc <= 0.0 { 1.0 } else { 1.0 - (-(1.0 / fps) / tc).exp() };
+        spectrum_view::WfTuning { rows_to_write, rows_per_sec, now_unix: now, spectrum_alpha }
     }
 
     /// Hysteresis: is the config the engine already has still fine for the
@@ -2629,6 +2640,7 @@ impl eframe::App for SdroxideApp {
                     &mut self.state,
                     frame.as_ref(),
                     &mut self.peaks,
+                    &mut self.spec_smooth,
                     &mut self.trace_cache,
                     Some(audio_hz),
                     &ft8_spots,
@@ -2690,6 +2702,7 @@ impl eframe::App for SdroxideApp {
                 &mut self.state,
                 frame.as_ref(),
                 &mut self.peaks,
+                &mut self.spec_smooth,
                 &mut self.trace_cache,
                 &cw_spots,
                 &cw_alpha,

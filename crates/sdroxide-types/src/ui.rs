@@ -71,8 +71,8 @@ impl UiSettings {
     pub fn spectrum_avg_tc(self) -> f32 {
         match self.spectrum_speed {
             Speed::Fast => 0.0,
-            Speed::Medium => 0.2,
-            Speed::Slow => 0.6,
+            Speed::Medium => 0.1,
+            Speed::Slow => 0.2,
         }
     }
 }
