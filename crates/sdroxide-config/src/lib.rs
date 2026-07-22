@@ -82,6 +82,22 @@ pub fn config_dir() -> Result<PathBuf, ConfigError> {
         .ok_or(ConfigError::NoConfigDir)
 }
 
+/// Directory for received SSTV images (`~/.config/sdroxide/sstv_rx`), created
+/// on demand.
+pub fn sstv_rx_dir() -> Result<PathBuf, ConfigError> {
+    let dir = config_dir()?.join("sstv_rx");
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// Directory for the operator's transmit-image slots
+/// (`~/.config/sdroxide/sstv_tx`), created on demand.
+pub fn sstv_tx_dir() -> Result<PathBuf, ConfigError> {
+    let dir = config_dir()?.join("sstv_tx");
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 impl Settings {
     /// Load settings; missing file or unreadable content falls back to
     /// defaults (with a warning), so startup never fails on config.

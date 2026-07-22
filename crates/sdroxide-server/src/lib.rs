@@ -232,6 +232,13 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             RadioEvent::Ft8Status(s) => Some(ServerMsg::Ft8Status(s)),
             RadioEvent::Ft8QsoLogged(r) => Some(ServerMsg::Ft8QsoLogged(r)),
             RadioEvent::SkimmerSpots(s) => Some(ServerMsg::SkimmerSpots(s)),
+            RadioEvent::SstvLine { image_id, y, rgb } => {
+                Some(ServerMsg::SstvLine { image_id, y, rgb })
+            }
+            RadioEvent::SstvImage { image_id, mode, w, h, png } => {
+                Some(ServerMsg::SstvImage { image_id, mode, w, h, png })
+            }
+            RadioEvent::SstvStatus(s) => Some(ServerMsg::SstvStatus(s)),
         }
     };
     if let Some(msg) = msg {

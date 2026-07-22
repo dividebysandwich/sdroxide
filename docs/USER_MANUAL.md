@@ -36,8 +36,8 @@ or connects to a remote sdroxide server.
 - **Dual VFO (A/B)** with split operation, VFO swap/copy, and a sub-receiver on
   the inactive VFO.
 - **All the common modes:** LSB, USB, CW, AM, SAM, NFM, WFM, DIGU, DIGL, DSB, a
-  spectrum-only mode (SPEC), the automatic digital modes **FT8** and **FT4**, and
-  the keyboard modes **PSK31** and **RTTY**.
+  spectrum-only mode (SPEC), the automatic digital modes **FT8** and **FT4**, the
+  keyboard modes **PSK31** and **RTTY**, and image **SSTV**.
 - **Receive controls:** AGC (Off/Slow/Med/Fast), volume, mute, squelch, an
   impulse noise blanker, RIT, and a draggable filter passband.
 - **Transmit** (on TX-capable rigs): PTT, TUNE, drive and tune-drive levels,
@@ -124,7 +124,7 @@ popup with three rows:
 - **BAND:** `160M 80M 60M 40M 30M 20M 17M 15M 12M 10M 6M 2M GEN`. Each band
   remembers your last frequency, mode, and filter.
 - **MODE:** `LSB USB CW AM SAM NFM WFM DIGU DIGL DSB SPEC`.
-- **DIGITAL:** `FT8 FT4 PSK RTTY` (see [Digital modes](#3-digital-modes)).
+- **DIGITAL:** `FT8 FT4 PSK RTTY SSTV` (see [Digital modes](#3-digital-modes)).
 
 ![The band and mode selector popup](images/04-band-mode-popup.png)
 
@@ -221,10 +221,12 @@ press **Store** to save the current frequency and mode. Each saved row has a
 
 ## 3. Digital modes
 
-sdroxide has two families of digital mode. **FT8** and **FT4** are automatic,
+sdroxide has three families of digital mode. **FT8** and **FT4** are automatic,
 timeslot-based modes with QSO sequencing, a world map, and automatic logging
 (3.1–3.5). **PSK31** and **RTTY** are live keyboard modes: you tune onto a
 signal, read the decoded text, and type a reply that transmits as you go (3.6).
+**SSTV** is an image mode: received pictures build up in a gallery and you
+transmit composed images (3.7).
 
 ### 3.1 Entering the mode
 
@@ -337,6 +339,43 @@ panel is a live **messaging area** instead of a QSO sequencer.
 **Skimmers:** the PSK and RTTY skimmers (see [Skimmers](#4-skimmers)) label
 signals across each band's PSK/RTTY calling sub-bands. Clicking a label from any
 mode switches to PSK or RTTY, tunes onto the signal, and opens this panel.
+
+### 3.7 SSTV
+
+Choose **SSTV** from the DIGITAL row to send and receive pictures. The panel has
+a received-image gallery on the left and a transmit compositor on the right, with
+a row of mode buttons across the top: **Scottie 1**, **Scottie 2**, **Scottie
+DX**, **Martin 1**, **Martin 2**, **Robot 72**, and **Robot 36**.
+
+Band buttons tune to that band's common SSTV calling frequency (for example
+14.230 MHz on 20 m, 7.171 on 40 m, 3.730 on 80 m), staying in SSTV.
+
+**Receiving:**
+
+- Incoming pictures decode scanline-by-scanline and appear in the **RECEIVED**
+  gallery (newest first); an image in progress paints live at the top.
+- The mode is identified from the picture's VIS header — no need to pick it — and
+  that mode is also pre-selected for your next transmission.
+- Received images are saved as PNG under `~/.config/sdroxide/sstv_rx/` and reload
+  into the gallery next time.
+
+**Transmitting:**
+
+- The **TRANSMIT** side has five image slots. **Click** a slot to select it;
+  **double-click** a slot (or click an empty one) to pick an image file, which is
+  automatically cropped and scaled to the current mode's dimensions and stored
+  under `~/.config/sdroxide/sstv_tx/`.
+- Type a **message** below the slots. Each line is drawn over the image in a
+  different font, bold with a black outline for readability. A **live preview**
+  shows exactly what will be transmitted, including a small red→black header
+  strip with "SDRoxide" and the version in the top corner.
+- Press **TX** to transmit the composed image; **ABORT TX** stops a transmission
+  in progress.
+
+> **Note:** SSTV decode/encode runs in the server engine, so the panel works the
+> same in the native app and the browser client. RX quality depends on signal
+> conditions — clean signals decode well; weak or drifting signals may slant or
+> show noise (ongoing refinement).
 
 ---
 
@@ -628,7 +667,7 @@ authentication if it is reachable from an untrusted network.
 | `--freq <HZ>` | Center frequency in Hz (default 14,200,000). |
 | `--rate <HZ>` | Sample rate in Hz (default: from config). |
 | `--gain <DB>` | Overall RX gain in dB (default: hardware AGC or a moderate value). |
-| `--mode <MODE>` | Initial mode (USB, LSB, CW, AM, SAM, NFM, WFM, DIGU, DIGL, DSB, SPEC, FT8, FT4, PSK, RTTY). |
+| `--mode <MODE>` | Initial mode (USB, LSB, CW, AM, SAM, NFM, WFM, DIGU, DIGL, DSB, SPEC, FT8, FT4, PSK, RTTY, SSTV). |
 | `--server` | Run as a server (web client + WebSocket streaming backend). |
 | `--connect <HOST[:PORT]>` | Connect as a native remote client to a running server. |
 | `--port <PORT>` | Server port (default: from config, 4950). |
@@ -746,6 +785,7 @@ Shortcuts are ignored while typing in a text field.
 | FT8 / FT4 | Automatic digital modes with decoding, QSO sequencing, and logging. |
 | PSK | PSK31 keyboard mode (BPSK31 / varicode). |
 | RTTY | RTTY keyboard mode (Baudot; selectable shift and baud). |
+| SSTV | Slow-scan TV image mode (Scottie, Martin, Robot). |
 
 ### Bands
 

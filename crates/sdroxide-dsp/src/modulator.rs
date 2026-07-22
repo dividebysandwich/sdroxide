@@ -20,8 +20,9 @@ pub fn make_modulator(mode: Mode, rate: f64) -> Option<Box<dyn Modulator>> {
     match mode {
         // FT8/FT4 modulate as USB: the synthesized 12 kHz audio (resampled to
         // 48 k, injected as "mic") is USB-modulated exactly like a real radio.
+        // PSK/RTTY and SSTV ride the same USB path.
         Mode::Lsb | Mode::Usb | Mode::Digu | Mode::Digl | Mode::Ft8 | Mode::Ft4
-        | Mode::Psk | Mode::Rtty => Some(Box::new(SsbMod::new(rate, lo, hi))),
+        | Mode::Psk | Mode::Rtty | Mode::Sstv => Some(Box::new(SsbMod::new(rate, lo, hi))),
         Mode::Am | Mode::Sam | Mode::Dsb => Some(Box::new(AmMod::new(rate))),
         Mode::Nfm => Some(Box::new(FmMod::new(rate))),
         Mode::Cw | Mode::Wfm | Mode::Spec => None,

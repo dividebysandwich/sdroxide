@@ -1,6 +1,6 @@
 use crate::{
     Command, Decode, DeviceCaps, DigiStatus, MemoryChannel, Meters, QsoRecord, RadioState,
-    SkimmerSpot, SpectrumFrame,
+    SkimmerSpot, SpectrumFrame, SstvMode, SstvStatus,
 };
 
 /// Events flowing engine → UI.
@@ -25,6 +25,13 @@ pub enum RadioEvent {
     Ft8QsoLogged(QsoRecord),
     /// Latest set of skimmer spots (CW etc.).
     SkimmerSpots(Vec<SkimmerSpot>),
+    /// SSTV: one freshly decoded scanline `rgb` (3·width bytes) at row `y` of the
+    /// image identified by `image_id`. Paints progressively.
+    SstvLine { image_id: u32, y: u16, rgb: Vec<u8> },
+    /// SSTV: a completed image (PNG bytes) plus its identity and size.
+    SstvImage { image_id: u32, mode: SstvMode, w: u16, h: u16, png: Vec<u8> },
+    /// SSTV: engine status change (tx/rx active, detected mode, progress).
+    SstvStatus(SstvStatus),
 }
 
 /// Snapshot of the frontend's switchable sound devices (native clients).

@@ -22,10 +22,12 @@ pub enum Mode {
     Psk,
     /// RTTY keyboard mode — USB underneath, streaming FSK/Baudot decode/encode.
     Rtty,
+    /// SSTV image mode — USB underneath, image decode/encode by the digi engine.
+    Sstv,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 15] = [
+    pub const ALL: [Mode; 16] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -41,21 +43,28 @@ impl Mode {
         Mode::Ft4,
         Mode::Psk,
         Mode::Rtty,
+        Mode::Sstv,
     ];
 
     /// The digital modes handled by a dedicated decode engine over USB
-    /// (slotted FT8/FT4 plus the continuous keyboard modes PSK/RTTY).
-    pub const DIGITAL: [Mode; 4] = [Mode::Ft8, Mode::Ft4, Mode::Psk, Mode::Rtty];
+    /// (slotted FT8/FT4, the continuous keyboard modes PSK/RTTY, and SSTV).
+    pub const DIGITAL: [Mode; 5] = [Mode::Ft8, Mode::Ft4, Mode::Psk, Mode::Rtty, Mode::Sstv];
 
     /// True for modes that use a dedicated decode/QSO layer over USB.
     pub fn is_digital(self) -> bool {
-        matches!(self, Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty)
+        matches!(self, Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty | Mode::Sstv)
     }
 
     /// True for the continuous keyboard text modes (PSK31 / RTTY), as opposed
     /// to the slotted FT8/FT4 modes. Drives which decode engine + panel is used.
     pub fn is_text_modem(self) -> bool {
         matches!(self, Mode::Psk | Mode::Rtty)
+    }
+
+    /// True for the SSTV image mode. Forks the digi panel to the image UI and
+    /// skips the FT8/text-modem overlays.
+    pub fn is_sstv(self) -> bool {
+        matches!(self, Mode::Sstv)
     }
 
     pub fn label(self) -> &'static str {
@@ -75,6 +84,7 @@ impl Mode {
             Mode::Ft4 => "FT4",
             Mode::Psk => "PSK",
             Mode::Rtty => "RTTY",
+            Mode::Sstv => "SSTV",
         }
     }
 
@@ -95,7 +105,8 @@ impl Mode {
             Mode::Spec => (-5000.0, 5000.0),
             // FT8/FT4 occupy the whole USB audio passband (tones 0..~3500 Hz).
             // PSK/RTTY do the same (the modem filters narrowly around audio_hz).
-            Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty => (100.0, 3300.0),
+            // SSTV occupies the full USB audio passband (tones ~1100..2300 Hz).
+            Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty | Mode::Sstv => (100.0, 3300.0),
         }
     }
 
@@ -142,7 +153,9 @@ impl Mode {
             Mode::Nfm => &[("8k", -4000.0, 4000.0), ("16k", -8000.0, 8000.0)],
             Mode::Dsb => &[("5k", -2500.0, 2500.0), ("6k", -3000.0, 3000.0)],
             // Digital modes have a fixed wide passband; no presets.
-            Mode::Wfm | Mode::Spec | Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty => &[],
+            Mode::Wfm | Mode::Spec | Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty | Mode::Sstv => {
+                &[]
+            }
         }
     }
 }

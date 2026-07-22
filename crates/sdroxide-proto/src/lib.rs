@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use sdroxide_types::{
     Command, Decode, DeviceCaps, DigiStatus, MemoryChannel, Meters, QsoRecord, RadioState,
-    SkimmerSpot, SpectrumFrame,
+    SkimmerSpot, SpectrumFrame, SstvMode, SstvStatus,
 };
 
 /// Bump on any incompatible change to the message enums (this includes the
@@ -18,8 +18,10 @@ use sdroxide_types::{
 /// v3: `QsoRecord` gained `id` + `comment` fields.
 /// v4: added `ServerMsg::SkimmerSpots` + `Command::SetSkimmerEnabled` + a
 /// `RadioState.skimmer_enabled` field.
-pub const PROTO_VERSION: u16 = 4;
-const VERSION_BYTE: u8 = 0x04;
+/// v5: added SSTV — `Mode::Sstv`, `ServerMsg::Sstv*`, and
+/// `Command::SstvTx`/`SstvSetMode`.
+pub const PROTO_VERSION: u16 = 5;
+const VERSION_BYTE: u8 = 0x05;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {
@@ -82,6 +84,10 @@ pub enum ServerMsg {
     Ft8QsoLogged(QsoRecord),
     // Skimmers (CW etc.).
     SkimmerSpots(Vec<SkimmerSpot>),
+    // SSTV image mode.
+    SstvLine { image_id: u32, y: u16, rgb: Vec<u8> },
+    SstvImage { image_id: u32, mode: SstvMode, w: u16, h: u16, png: Vec<u8> },
+    SstvStatus(SstvStatus),
 }
 
 pub fn encode<T: Serialize>(msg: &T) -> Result<Vec<u8>, ProtoError> {
@@ -120,6 +126,28 @@ mod tests {
         let bytes = encode(&m).unwrap();
         let back: ServerMsg = decode(&bytes).unwrap();
         assert_eq!(back, m);
+
+        // SSTV image/status messages round-trip (binary pixel payloads).
+        let sstv = [
+            ServerMsg::SstvLine { image_id: 3, y: 7, rgb: vec![1, 2, 3, 4, 5, 6] },
+            ServerMsg::SstvImage {
+                image_id: 3,
+                mode: SstvMode::Martin1,
+                w: 320,
+                h: 256,
+                png: vec![0x89, 0x50, 0x4e, 0x47],
+            },
+            ServerMsg::SstvStatus(SstvStatus {
+                tx_mode: SstvMode::Robot36,
+                detected: Some(SstvMode::Scottie2),
+                ..SstvStatus::default()
+            }),
+        ];
+        for m in &sstv {
+            let bytes = encode(m).unwrap();
+            let back: ServerMsg = decode(&bytes).unwrap();
+            assert_eq!(&back, m);
+        }
     }
 
     #[test]

@@ -16,6 +16,7 @@ mod psk;
 mod rtty;
 mod resample;
 mod spectrum;
+mod sstv;
 mod window;
 
 pub use agc::Agc;
@@ -31,6 +32,7 @@ pub use psk::{BpskCore, PskRx, PskTx, VaricodeRx};
 pub use rtty::{BaudotRx, RttyRx, RttyTx};
 pub use resample::{ComplexResampler, MonoResampler};
 pub use spectrum::SpectrumAnalyzer;
+pub use sstv::{SstvEvent, SstvRx, SstvTx};
 pub use window::blackman_harris;
 
 pub type Complex32 = num_complex::Complex<f32>;

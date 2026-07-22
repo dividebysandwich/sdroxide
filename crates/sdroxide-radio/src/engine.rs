@@ -12,7 +12,7 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use tracing::{info, warn};
 
 use sdroxide_config::BandStacks;
-use sdroxide_digi::{DigiAction, DigiController, DigiEngine, TextModemController};
+use sdroxide_digi::{DigiAction, DigiController, DigiEngine, SstvController, TextModemController};
 use sdroxide_skimmer::{SkimmerAction, SkimmerController};
 use sdroxide_dsp::{
     Agc, DcBlock, Ddc, Demodulator, Duc, Modulator, MonoResampler, NoiseBlanker,
@@ -757,6 +757,22 @@ impl Engine {
                     self.sync_tx_state();
                     let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
                 }
+                DigiAction::SstvLine { image_id, y, rgb } => {
+                    let _ = self.event_tx.send(RadioEvent::SstvLine { image_id, y, rgb });
+                }
+                DigiAction::SstvImage { image_id, mode, w, h, rgb } => {
+                    // Encode once: PNG for both the persistent store and the wire.
+                    let png = encode_png(&rgb, w, h);
+                    if let Some(png) = png.clone() {
+                        save_sstv_rx(&png);
+                        let _ = self
+                            .event_tx
+                            .send(RadioEvent::SstvImage { image_id, mode, w, h, png });
+                    }
+                }
+                DigiAction::SstvStatus(s) => {
+                    let _ = self.event_tx.send(RadioEvent::SstvStatus(s));
+                }
             }
         }
     }
@@ -764,7 +780,9 @@ impl Engine {
     /// Build the digital-mode engine for `mode`: the continuous keyboard
     /// controller for PSK/RTTY, else the slotted FT8/FT4 controller.
     fn make_digi(&self, mode: Mode, tap_rate: f64) -> Box<dyn DigiEngine> {
-        if mode.is_text_modem() {
+        if mode.is_sstv() {
+            Box::new(SstvController::new(self.digi_config.clone(), tap_rate))
+        } else if mode.is_text_modem() {
             Box::new(TextModemController::new(mode, self.digi_config.clone(), tap_rate))
         } else {
             Box::new(DigiController::new(mode, self.digi_config.clone(), tap_rate))
@@ -1082,6 +1100,22 @@ impl Engine {
                         self.digi_tx = false;
                         self.sync_tx_state();
                     }
+                }
+            }
+            SstvSetMode(mode) => {
+                if let Some(d) = self.digi.as_mut() {
+                    d.set_sstv_mode(mode);
+                }
+            }
+            SstvTx { mode, png } => {
+                // Decode the UI-composed PNG to RGB and queue it; the controller
+                // keys TX on the next poll.
+                if let Some((rgb, w, h)) = decode_png_rgb(&png) {
+                    if let Some(d) = self.digi.as_mut() {
+                        d.set_sstv_image(mode, rgb, w, h);
+                    }
+                } else {
+                    warn!("SSTV TX: could not decode composed image");
                 }
             }
 
@@ -1573,5 +1607,39 @@ impl Engine {
                     .send(RadioEvent::ConnectionLost(format!("retune failed: {e}")));
             }
         }
+    }
+}
+
+/// Encode an interleaved-RGB image (`w*h*3` bytes) to PNG.
+fn encode_png(rgb: &[u8], w: u16, h: u16) -> Option<Vec<u8>> {
+    let img = image::RgbImage::from_raw(w as u32, h as u32, rgb.to_vec())?;
+    let mut buf = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(img).write_to(&mut buf, image::ImageFormat::Png).ok()?;
+    Some(buf.into_inner())
+}
+
+/// Decode PNG bytes to interleaved RGB plus dimensions.
+fn decode_png_rgb(png: &[u8]) -> Option<(Vec<u8>, u16, u16)> {
+    let img = image::load_from_memory(png).ok()?.to_rgb8();
+    let (w, h) = (img.width() as u16, img.height() as u16);
+    Some((img.into_raw(), w, h))
+}
+
+/// Persist a received SSTV image (PNG) under the config `sstv_rx` directory.
+fn save_sstv_rx(png: &[u8]) {
+    let dir = match sdroxide_config::sstv_rx_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("sstv_rx dir: {e}");
+            return;
+        }
+    };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = dir.join(format!("sstv-{ts}.png"));
+    if let Err(e) = std::fs::write(&path, png) {
+        warn!("saving SSTV image {}: {e}", path.display());
     }
 }

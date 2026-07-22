@@ -10,9 +10,11 @@ pub mod modem;
 pub mod params;
 pub mod qso;
 pub mod scheduler;
+pub mod sstv_controller;
 pub mod text_modem;
 
 pub use controller::{DigiAction, DigiController};
+pub use sstv_controller::SstvController;
 pub use modem::Ft8Modem;
 pub use params::{DECODE_RATE, DigiParams};
 pub use qso::QsoMachine;
@@ -21,7 +23,7 @@ pub use text_modem::TextModemController;
 
 use std::time::SystemTime;
 
-use sdroxide_types::{DigiConfig, DigiStatus, Mode};
+use sdroxide_types::{DigiConfig, DigiStatus, Mode, SstvMode};
 
 /// The engine-facing digital-mode seam, implemented by the slotted FT8/FT4
 /// [`DigiController`] and the continuous-keyboard [`TextModemController`]. The
@@ -51,4 +53,8 @@ pub trait DigiEngine: Send {
     fn set_tx_text(&mut self, _text: String) {}
     /// Continuous keyboard modes: enter/leave transmit.
     fn set_tx_active(&mut self, _on: bool) {}
+    /// SSTV: select the mode used for the next transmission.
+    fn set_sstv_mode(&mut self, _mode: SstvMode) {}
+    /// SSTV: queue a composed image (interleaved RGB) and start transmitting.
+    fn set_sstv_image(&mut self, _mode: SstvMode, _rgb: Vec<u8>, _w: u16, _h: u16) {}
 }

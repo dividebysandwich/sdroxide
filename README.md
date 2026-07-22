@@ -29,7 +29,8 @@ One binary, three ways to run it:
   that labels allocations (ham bands, broadcast, CB, AM); it shows coarse bands
   when zoomed out and CW/digital/SSB sub-segments when zoomed into a ham band.
 - **Modes** — SSB (USB/LSB), CW, AM, SAM, NFM, WFM, DSB, DIGU/DIGL, a
-  spectrum-only mode, **FT8/FT4**, and the keyboard modes **PSK31** and **RTTY**.
+  spectrum-only mode, **FT8/FT4**, the keyboard modes **PSK31** and **RTTY**, and
+  image **SSTV** (Scottie, Martin, Robot).
 - **Receiver** — hang AGC, draggable passband filter edges (on the spectrum and
   the waterfall), noise blanker, squelch, a second sub-receiver, RIT/XIT, VFO
   A/B with split, per-band band stacks, and memory channels.
@@ -78,6 +79,23 @@ reply that transmits as you type:
 - The **PSK and RTTY skimmers** decode signals across each band's PSK/RTTY
   calling sub-bands and label them on the waterfall; click a label to switch to
   that mode, tune onto it, and open the panel.
+
+## SSTV
+
+Selecting **SSTV** opens an image panel with a received-image gallery on the
+left and a transmit compositor on the right:
+
+- **Receive** decodes incoming pictures scanline-by-scanline into the gallery;
+  the VIS header sets the mode automatically (and pre-selects it for your next
+  transmit). Received images are saved under `~/.config/sdroxide/sstv_rx/`.
+- **Transmit** from a strip of five image slots — click to select, double-click
+  (or click an empty slot) to pick a file, which is auto-cropped/scaled to the
+  mode's size. A multi-line message is overlaid on the image, **each line in a
+  different font**, bold with a black outline; a live preview shows exactly what
+  will be sent. Every transmitted image carries a small red→black header strip
+  with "SDRoxide" and the version. **TX** sends; **ABORT TX** stops.
+- **Modes:** Scottie 1 / 2 / DX, Martin 1 / 2, Robot 72, Robot 36. Band buttons
+  tune to that band's SSTV calling frequency (e.g. 20 m = 14.230 MHz).
 
 ## Logbook
 
@@ -177,7 +195,7 @@ sdroxide --connect 192.168.1.10:4950
 | `--freq <HZ>` | Center frequency in Hz (default `14200000`). |
 | `--rate <HZ>` | Sample rate in Hz (default: from config). |
 | `--gain <DB>` | Overall RX gain in dB (default: hardware AGC / moderate). |
-| `--mode <MODE>` | Initial mode: `USB LSB CW AM SAM NFM WFM DIGU DIGL DSB SPEC FT8 FT4 PSK RTTY`. |
+| `--mode <MODE>` | Initial mode: `USB LSB CW AM SAM NFM WFM DIGU DIGL DSB SPEC FT8 FT4 PSK RTTY SSTV`. |
 | `--server` | Run as a server: HTTP web client + WebSocket streaming backend. |
 | `--connect <HOST[:PORT]>` | Connect as a native remote client to a running server. |
 | `--port <PORT>` | Server port (default: from config, `4950`). |

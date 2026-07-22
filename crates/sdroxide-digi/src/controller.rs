@@ -11,7 +11,9 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::SystemTime;
 
 use sdroxide_dsp::MonoResampler;
-use sdroxide_types::{Decode, DigiConfig, DigiStatus, Mode, QsoRecord, adif_band};
+use sdroxide_types::{
+    Decode, DigiConfig, DigiStatus, Mode, QsoRecord, SstvMode, SstvStatus, adif_band,
+};
 
 use crate::modem::Ft8Modem;
 use crate::params::{DECODE_RATE, DigiParams};
@@ -31,6 +33,12 @@ pub enum DigiAction {
     KeyTx,
     /// Stop transmitting.
     UnkeyTx,
+    /// SSTV: a freshly decoded scanline (`rgb` is `3 * width` bytes) at row `y`.
+    SstvLine { image_id: u32, y: u16, rgb: Vec<u8> },
+    /// SSTV: a completed image (raw RGB) — the engine encodes/persists it.
+    SstvImage { image_id: u32, mode: SstvMode, w: u16, h: u16, rgb: Vec<u8> },
+    /// SSTV: engine status change (tx/rx active, detected mode, progress).
+    SstvStatus(SstvStatus),
 }
 
 struct DecodeJob {

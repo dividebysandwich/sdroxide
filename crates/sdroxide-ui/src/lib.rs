@@ -9,6 +9,7 @@ mod colormap;
 mod download;
 #[cfg(feature = "remote")]
 mod remote;
+mod sstv;
 pub mod theme;
 mod view;
 mod waterfall_gpu;

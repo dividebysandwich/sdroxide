@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{AgcMode, Band, DigiConfig, Direction, Mode, RxId, SpectrumConfig, Vfo};
+use crate::{AgcMode, Band, DigiConfig, Direction, Mode, RxId, SpectrumConfig, SstvMode, Vfo};
 
 /// The single control vocabulary. The GUI, the WebSocket protocol, and the
 /// future TCI server all speak `Command`; the DSP engine is its only consumer.
@@ -67,6 +67,11 @@ pub enum Command {
     DigiTxText(String),
     /// Continuous keyboard modes: enter (true) or leave (false) transmit.
     DigiTxActive(bool),
+    /// SSTV: select the transmit mode (also used to size the TX image).
+    SstvSetMode(SstvMode),
+    /// SSTV: transmit a composed image (PNG bytes) in the given mode. Keying
+    /// starts immediately; `DigiAbortTx` stops it.
+    SstvTx { mode: SstvMode, png: Vec<u8> },
 
     // Skimmers
     /// Turn the (CW) skimmer on/off.

@@ -17,6 +17,7 @@ mod mode;
 mod radio;
 mod skimmer;
 mod spectrum;
+mod sstv;
 mod state;
 mod ui;
 
@@ -45,5 +46,6 @@ pub use radio::{
 };
 pub use skimmer::{SkimmerKind, SkimmerSpot};
 pub use spectrum::{SpectrumConfig, SpectrumFrame};
+pub use sstv::{SstvMode, SstvStatus};
 pub use state::{OffsetState, RadioState, RxId, RxState, SQUELCH_OPEN_DB, TxState, Vfo};
 pub use ui::{Speed, UiSettings};

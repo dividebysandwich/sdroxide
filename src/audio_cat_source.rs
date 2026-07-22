@@ -215,9 +215,23 @@ impl IqSource for AudioCatSource {
             Some(rs) => rs.push(audio, &mut self.tx_scratch),
             None => self.tx_scratch.extend_from_slice(audio),
         }
+        // Block until the card drains room, applying backpressure so the engine's
+        // TX loop is paced to real time. Without this a long continuous burst
+        // (e.g. a 110 s SSTV image) is generated at CPU speed and mostly dropped
+        // on a full ring, so the radio only transmits the first buffer-full.
         for &s in &self.tx_scratch {
-            let _ = producer.push(s);
-            let _ = producer.push(s);
+            for _ in 0..2 {
+                let mut v = s;
+                let mut tries = 0u32;
+                while let Err(rtrb::PushError::Full(x)) = producer.push(v) {
+                    v = x;
+                    tries += 1;
+                    if tries > 200 {
+                        break; // output device stalled — drop rather than hang TX
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
         }
         Ok(())
     }

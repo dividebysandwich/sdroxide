@@ -102,6 +102,13 @@ impl RemoteController {
             ServerMsg::Ft8Status(s) => self.pending.push_back(RadioEvent::Ft8Status(s)),
             ServerMsg::Ft8QsoLogged(r) => self.pending.push_back(RadioEvent::Ft8QsoLogged(r)),
             ServerMsg::SkimmerSpots(s) => self.pending.push_back(RadioEvent::SkimmerSpots(s)),
+            ServerMsg::SstvLine { image_id, y, rgb } => {
+                self.pending.push_back(RadioEvent::SstvLine { image_id, y, rgb })
+            }
+            ServerMsg::SstvImage { image_id, mode, w, h, png } => {
+                self.pending.push_back(RadioEvent::SstvImage { image_id, mode, w, h, png })
+            }
+            ServerMsg::SstvStatus(s) => self.pending.push_back(RadioEvent::SstvStatus(s)),
         }
     }
 
