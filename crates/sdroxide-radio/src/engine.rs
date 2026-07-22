@@ -688,6 +688,16 @@ impl Engine {
                     let r = &mut self.state.rx[0];
                     r.mode = m;
                     (r.filter_lo, r.filter_hi) = m.default_filter();
+                    let snapshot = *r;
+                    // Rebuild the demodulator for the new mode. Sideband is
+                    // carried entirely in the sign of the filter edges, so
+                    // without this the internal demod (e.g. TCI wideband-IQ RX)
+                    // keeps the old sideband while state/UI already show the new
+                    // mode — the LSB-shows-but-demodulates-USB desync. Don't
+                    // re-command the rig: this update came *from* it.
+                    if let Some(c) = self.chain_mut(RxId::Main) {
+                        c.build_for_mode(&snapshot);
+                    }
                     self.update_display_center(); // sideband flip changes the window
                     self.sync_digi_mode();
                     let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));

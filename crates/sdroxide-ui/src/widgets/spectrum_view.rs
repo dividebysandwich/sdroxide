@@ -35,6 +35,11 @@ pub struct WfTuning {
     /// waterfall uses the raw un-averaged frames, so the line's update speed is
     /// decoupled from the waterfall detail.
     pub spectrum_alpha: f32,
+    /// Waterfall colour-palette index (from `UiSettings`).
+    pub palette: usize,
+    /// Optional vertical gradient `(top, bottom)` filling the spectrum area,
+    /// `None` when disabled in the UI settings.
+    pub gradient: Option<(Color32, Color32)>,
 }
 
 /// Exponentially-smoothed spectrum for the trace line, folded once per new
@@ -627,6 +632,20 @@ pub fn show_ext(
     let px1 = view.freq_to_x(vfo_hz + state.rx[0].filter_hi as f64, &rect);
 
     if spec_h > 1.0 {
+        // Optional vertical background gradient behind the grid and trace.
+        if let Some((top, bottom)) = wf.gradient {
+            let mut mesh = egui::epaint::Mesh::default();
+            let uv = egui::epaint::WHITE_UV;
+            mesh.vertices.push(egui::epaint::Vertex { pos: spec_rect.left_top(), uv, color: top });
+            mesh.vertices
+                .push(egui::epaint::Vertex { pos: spec_rect.right_top(), uv, color: top });
+            mesh.vertices
+                .push(egui::epaint::Vertex { pos: spec_rect.right_bottom(), uv, color: bottom });
+            mesh.vertices
+                .push(egui::epaint::Vertex { pos: spec_rect.left_bottom(), uv, color: bottom });
+            mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+            painter.add(Shape::mesh(mesh));
+        }
         draw_grid(&painter, view, &spec_rect);
         if view.peak_hold {
             peaks.update(f);
@@ -681,7 +700,7 @@ pub fn show_ext(
             u_lo,
             u_hi,
             rows_visible: wf_rect.height(),
-            lut: view.colormap,
+            lut: wf.palette,
             rows_to_write: wf.rows_to_write,
         },
     ));

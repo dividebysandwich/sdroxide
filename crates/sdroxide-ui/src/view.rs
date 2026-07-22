@@ -8,7 +8,6 @@ pub struct ViewState {
     /// Visible frequency window; 0/0 means "fit the full device span".
     pub view_lo_hz: f64,
     pub view_hi_hz: f64,
-    pub colormap: usize,
     pub db_floor: f32,
     pub db_ceil: f32,
     pub fft_size: u32,
@@ -32,7 +31,6 @@ impl Default for ViewState {
         ViewState {
             view_lo_hz: 0.0,
             view_hi_hz: 0.0,
-            colormap: 0,
             db_floor: -120.0,
             db_ceil: -20.0,
             fft_size: 4096,

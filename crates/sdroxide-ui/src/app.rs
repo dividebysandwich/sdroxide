@@ -340,7 +340,20 @@ impl SdroxideApp {
         let tc = self.ui_settings.spectrum_avg_tc();
         let fps = self.ui_settings.fps().max(1) as f32;
         let spectrum_alpha = if tc <= 0.0 { 1.0 } else { 1.0 - (-(1.0 / fps) / tc).exp() };
-        spectrum_view::WfTuning { rows_to_write, rows_per_sec, now_unix: now, spectrum_alpha }
+        let s = &self.ui_settings;
+        let gradient = s.spectrum_gradient.then(|| {
+            let [tr, tg, tb] = s.gradient_top;
+            let [br, bg, bb] = s.gradient_bottom;
+            (Color32::from_rgb(tr, tg, tb), Color32::from_rgb(br, bg, bb))
+        });
+        spectrum_view::WfTuning {
+            rows_to_write,
+            rows_per_sec,
+            now_unix: now,
+            spectrum_alpha,
+            palette: s.waterfall_palette,
+            gradient,
+        }
     }
 
     /// Hysteresis: is the config the engine already has still fine for the
@@ -808,14 +821,6 @@ impl SdroxideApp {
                 .show_ui(ui, |ui| {
                     for n in [2048u32, 4096, 8192, 16384, 32768] {
                         ui.selectable_value(&mut self.view.fft_size, n, format!("{n}"));
-                    }
-                });
-            ComboBox::from_id_salt("colormap")
-                .selected_text(colormap::NAMES[self.view.colormap.min(colormap::NAMES.len() - 1)])
-                .width(88.0)
-                .show_ui(ui, |ui| {
-                    for (i, name) in colormap::NAMES.iter().enumerate() {
-                        ui.selectable_value(&mut self.view.colormap, i, *name);
                     }
                 });
         });
@@ -2407,12 +2412,36 @@ fn settings_ui_tab(ui: &mut egui::Ui, cfg: &mut sdroxide_types::UiSettings) {
         ui.label("Spectrum update speed");
         enum_combo(ui, "ui-spec", &mut cfg.spectrum_speed, &Speed::ALL, Speed::label);
         ui.end_row();
+
+        ui.label("Waterfall palette");
+        ComboBox::from_id_salt("ui-palette")
+            .selected_text(colormap::NAMES[cfg.waterfall_palette.min(colormap::NAMES.len() - 1)])
+            .show_ui(ui, |ui| {
+                for (i, name) in colormap::NAMES.iter().enumerate() {
+                    ui.selectable_value(&mut cfg.waterfall_palette, i, *name);
+                }
+            });
+        ui.end_row();
+
+        ui.label("Spectrum background");
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut cfg.spectrum_gradient, "Gradient");
+            ui.add_enabled_ui(cfg.spectrum_gradient, |ui| {
+                ui.label("top");
+                ui.color_edit_button_srgb(&mut cfg.gradient_top);
+                ui.label("bottom");
+                ui.color_edit_button_srgb(&mut cfg.gradient_bottom);
+            });
+        });
+        ui.end_row();
     });
     ui.add_space(8.0);
     ui.label(
         RichText::new(
             "Higher frame rates look smoother but cost more CPU/GPU. Spectrum speed \
-             sets how quickly the trace reacts (slower = smoother/more averaged).",
+             sets how quickly the trace reacts (slower = smoother/more averaged). The \
+             background gradient fills the spectrum area from the top colour down to \
+             the bottom colour.",
         )
         .weak(),
     );

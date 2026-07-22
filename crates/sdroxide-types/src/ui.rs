@@ -34,6 +34,14 @@ pub struct UiSettings {
     pub waterfall_speed: Speed,
     /// How fast the spectrum line reacts (averaging; slower = smoother).
     pub spectrum_speed: Speed,
+    /// Waterfall colour palette, as an index into the client's palette list.
+    pub waterfall_palette: usize,
+    /// Fill the spectrum area with a vertical top→bottom colour gradient.
+    pub spectrum_gradient: bool,
+    /// Gradient colour at the top of the spectrum area (sRGB, 0–255).
+    pub gradient_top: [u8; 3],
+    /// Gradient colour at the bottom of the spectrum area (sRGB, 0–255).
+    pub gradient_bottom: [u8; 3],
 }
 
 impl Default for UiSettings {
@@ -42,6 +50,10 @@ impl Default for UiSettings {
             frame_rate_fps: 60,
             waterfall_speed: Speed::Medium,
             spectrum_speed: Speed::Medium,
+            waterfall_palette: 0,
+            spectrum_gradient: true,
+            gradient_top: [64, 0, 0], // dark red
+            gradient_bottom: [0, 0, 0], // black
         }
     }
 }
