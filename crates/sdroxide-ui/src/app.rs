@@ -19,12 +19,11 @@ const CFG_DEBOUNCE_S: f64 = 0.25;
 /// stops keying, instead of vanishing.
 const SKIMMER_FADE_SECS: f64 = 5.0;
 
+/// Settings dialog tabs: the radio interface + its settings, and audio devices.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsTab {
-    Device,
+    Radio,
     Audio,
-    Cat,
-    Hpsdr,
 }
 
 /// Repaint-poll cadence when no spectrum stream is flowing (startup, connection
@@ -68,6 +67,8 @@ pub struct SdroxideApp {
     /// opens (cpal enumeration is too slow for per-frame).
     audio_devices: Option<AudioDevices>,
     audio_devices_queried: bool,
+    /// Whether this build can drive SoapySDR (offered as an interface option).
+    soapy_supported: bool,
     /// Settings dialog: current tab, plus the radio-backend config + serial
     /// ports loaded once on open (edited live, persisted on change).
     settings_tab: SettingsTab,
@@ -202,6 +203,7 @@ impl SdroxideApp {
             .storage
             .and_then(|s| eframe::get_value(s, "view"))
             .unwrap_or_default();
+        let soapy_supported = ctrl.soapy_supported();
         SdroxideApp {
             ctrl,
             caps: None,
@@ -220,7 +222,8 @@ impl SdroxideApp {
             trace_cache: spectrum_view::TraceCache::default(),
             audio_devices: None,
             audio_devices_queried: false,
-            settings_tab: SettingsTab::Device,
+            soapy_supported,
+            settings_tab: SettingsTab::Radio,
             radio_cfg: None,
             serial_ports: Vec::new(),
             hpsdr_devices: Vec::new(),
@@ -1796,40 +1799,34 @@ impl SdroxideApp {
         let mut audio_pick: Option<(bool, Option<String>)> = None;
         let mut hpsdr_discover = false;
         let mut radio_edit = self.radio_cfg.clone();
-        let mut tab = self.settings_tab;
 
+        // The concrete interface types the user chooses between. SoapySDR only
+        // appears when compiled in; there is no auto-detect (an unavailable
+        // interface falls back to a null source so the user can reconfigure).
+        let mut iface_opts: Vec<sdroxide_types::Backend> = Vec::new();
+        if self.soapy_supported {
+            iface_opts.push(sdroxide_types::Backend::Soapy);
+        }
+        iface_opts.push(sdroxide_types::Backend::Hpsdr);
+        iface_opts.push(sdroxide_types::Backend::Cat);
+
+        let mut tab = self.settings_tab;
         let mut open = self.show_settings;
         let resp = egui::Window::new("Settings")
             .open(&mut open)
             .frame(crate::chrome::window_frame())
             .resizable(false)
+            .vscroll(true)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    for (t, label) in [
-                        (SettingsTab::Device, "Device"),
-                        (SettingsTab::Audio, "Audio"),
-                        (SettingsTab::Cat, "Audio/CAT"),
-                        (SettingsTab::Hpsdr, "HPSDR"),
-                    ] {
-                        if crate::chrome::chip(ui, tab == t, label).clicked() {
-                            tab = t;
-                        }
-                    }
-                });
-                ui.separator();
-                match tab {
-                    SettingsTab::Device => self.settings_device_tab(ui, cmds),
-                    SettingsTab::Audio => {
-                        self.settings_audio_tab(ui, &mut audio_pick, &mut radio_edit)
-                    }
-                    SettingsTab::Cat => settings_cat_tab(ui, &self.serial_ports, &mut radio_edit),
-                    SettingsTab::Hpsdr => settings_hpsdr_tab(
-                        ui,
-                        &self.hpsdr_devices,
-                        &mut radio_edit,
-                        &mut hpsdr_discover,
-                    ),
-                }
+                self.settings_body(
+                    ui,
+                    cmds,
+                    &iface_opts,
+                    &mut radio_edit,
+                    &mut audio_pick,
+                    &mut hpsdr_discover,
+                    &mut tab,
+                );
             });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
@@ -1853,7 +1850,132 @@ impl SdroxideApp {
         }
     }
 
-    /// Device tab: SoapySDR-style RX/TX gains + antenna (empty for a CAT rig).
+    /// The Settings body: a Radio tab (one interface selector drives the
+    /// interface-specific section) and an Audio tab (device selection).
+    fn settings_body(
+        &self,
+        ui: &mut egui::Ui,
+        cmds: &mut Vec<Command>,
+        iface_opts: &[sdroxide_types::Backend],
+        radio_edit: &mut Option<sdroxide_types::RadioConfig>,
+        audio_pick: &mut Option<(bool, Option<String>)>,
+        hpsdr_discover: &mut bool,
+        tab: &mut SettingsTab,
+    ) {
+        use sdroxide_types::Backend;
+
+        ui.horizontal(|ui| {
+            for (t, label) in [(SettingsTab::Radio, "Radio"), (SettingsTab::Audio, "Audio")] {
+                if crate::chrome::chip(ui, *tab == t, label).clicked() {
+                    *tab = t;
+                }
+            }
+        });
+        ui.separator();
+
+        let backend = radio_edit.as_ref().map(|c| c.backend);
+
+        match tab {
+            SettingsTab::Radio => {
+                let Some(cfg) = radio_edit.as_mut() else {
+                    ui.label("Radio configuration is only available in the native app.");
+                    return;
+                };
+                // The single "which radio interface" selector.
+                egui::Grid::new("iface-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                    ui.label(RichText::new("Radio interface").strong());
+                    enum_combo(ui, "iface", &mut cfg.backend, iface_opts, Backend::label);
+                    ui.end_row();
+                });
+                ui.separator();
+
+                match cfg.backend {
+                    Backend::Soapy => {
+                        self.settings_device_tab(ui, cmds);
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Choose the SoapySDR device with --device or device_args in \
+                                 config.toml.",
+                            )
+                            .weak(),
+                        );
+                    }
+                    Backend::Hpsdr => {
+                        settings_hpsdr_tab(ui, &self.hpsdr_devices, radio_edit, hpsdr_discover)
+                    }
+                    Backend::Cat => settings_cat_tab(ui, &self.serial_ports, radio_edit),
+                    // Legacy configs may still carry the removed auto-detect
+                    // backend; prompt the user to pick a concrete interface.
+                    Backend::Auto => {
+                        ui.label(
+                            RichText::new(
+                                "Pick a radio interface above (this configuration used the \
+                                 removed auto-detect mode).",
+                            )
+                            .weak(),
+                        );
+                    }
+                }
+            }
+            SettingsTab::Audio => {
+                self.settings_user_audio(ui, audio_pick);
+                // The radio's own sound card is only used by the CAT / Audio interface.
+                if backend == Some(Backend::Cat) {
+                    if let (Some(devs), Some(cfg)) =
+                        (self.audio_devices.as_ref(), radio_edit.as_mut())
+                    {
+                        ui.separator();
+                        ui.label(RichText::new("Radio audio (sound card)").strong());
+                        ui.label(RichText::new("Restart to apply.").weak());
+                        egui::Grid::new("radio-audio").num_columns(2).spacing([12.0, 6.0]).show(
+                            ui,
+                            |ui| {
+                                let (ci, co) =
+                                    (cfg.radio_audio_in.clone(), cfg.radio_audio_out.clone());
+                                ui.label("From radio (RX)");
+                                device_combo(ui, "r-in", &devs.inputs, &ci, |n| {
+                                    cfg.radio_audio_in = n
+                                });
+                                ui.end_row();
+                                ui.label("To radio (TX)");
+                                device_combo(ui, "r-out", &devs.outputs, &co, |n| {
+                                    cfg.radio_audio_out = n
+                                });
+                                ui.end_row();
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The user's own speakers / microphone (applied live).
+    fn settings_user_audio(
+        &self,
+        ui: &mut egui::Ui,
+        audio_pick: &mut Option<(bool, Option<String>)>,
+    ) {
+        let Some(devs) = &self.audio_devices else {
+            return;
+        };
+        ui.label(RichText::new("Your audio (speakers / microphone)").strong());
+        egui::Grid::new("user-audio").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+            ui.label("Output");
+            device_combo(ui, "u-out", &devs.outputs, &devs.selected_output, |n| {
+                *audio_pick = Some((true, n))
+            });
+            ui.end_row();
+            ui.label("Input");
+            device_combo(ui, "u-in", &devs.inputs, &devs.selected_input, |n| {
+                *audio_pick = Some((false, n))
+            });
+            ui.end_row();
+        });
+    }
+
+    /// SoapySDR RX/TX gains + antenna (empty for a CAT rig).
     fn settings_device_tab(&self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let Some(caps) = &self.caps else {
             ui.label("no device");
@@ -1931,46 +2053,6 @@ impl SdroxideApp {
         }
     }
 
-    /// Audio tab: your own speakers/mic (live) + the radio's sound card (used
-    /// for the CAT backend; restart to apply).
-    fn settings_audio_tab(
-        &self,
-        ui: &mut egui::Ui,
-        audio_pick: &mut Option<(bool, Option<String>)>,
-        radio_edit: &mut Option<sdroxide_types::RadioConfig>,
-    ) {
-        let Some(devs) = &self.audio_devices else {
-            ui.label("Audio device selection is only available in the native app.");
-            return;
-        };
-        ui.label(RichText::new("Your audio (speakers / microphone)").strong());
-        egui::Grid::new("user-audio").num_columns(2).show(ui, |ui| {
-            ui.label("Output");
-            device_combo(ui, "u-out", &devs.outputs, &devs.selected_output, |n| {
-                *audio_pick = Some((true, n))
-            });
-            ui.end_row();
-            ui.label("Input");
-            device_combo(ui, "u-in", &devs.inputs, &devs.selected_input, |n| {
-                *audio_pick = Some((false, n))
-            });
-            ui.end_row();
-        });
-        if let Some(cfg) = radio_edit.as_mut() {
-            ui.separator();
-            ui.label(RichText::new("Radio audio (CAT rig sound card)").strong());
-            ui.label(RichText::new("Restart to apply.").weak());
-            egui::Grid::new("radio-audio").num_columns(2).show(ui, |ui| {
-                let (cur_in, cur_out) = (cfg.radio_audio_in.clone(), cfg.radio_audio_out.clone());
-                ui.label("From radio (RX)");
-                device_combo(ui, "r-in", &devs.inputs, &cur_in, |n| cfg.radio_audio_in = n);
-                ui.end_row();
-                ui.label("To radio (TX)");
-                device_combo(ui, "r-out", &devs.outputs, &cur_out, |n| cfg.radio_audio_out = n);
-                ui.end_row();
-            });
-        }
-    }
 }
 
 /// A device dropdown ("System default" + names); calls `pick(Some(name)|None)`.
@@ -2011,22 +2093,19 @@ fn enum_combo<T: PartialEq + Copy>(
     });
 }
 
-/// Audio/CAT tab: backend selection + all CAT serial + PTT parameters.
+/// CAT / Audio interface: serial + PTT parameters (the interface itself is
+/// chosen by the selector in `settings_body`).
 fn settings_cat_tab(
     ui: &mut egui::Ui,
     serial_ports: &[String],
     radio_edit: &mut Option<sdroxide_types::RadioConfig>,
 ) {
-    use sdroxide_types::{Backend, CatFamily, DigiMode, LineState, ModeControl, Parity, PttMethod, SoundFormat, StopBits};
+    use sdroxide_types::{CatFamily, DigiMode, LineState, ModeControl, Parity, PttMethod, SoundFormat, StopBits};
     let Some(cfg) = radio_edit.as_mut() else {
         ui.label("Radio configuration is only available in the native app.");
         return;
     };
     egui::Grid::new("cat-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-        ui.label("Backend");
-        enum_combo(ui, "backend", &mut cfg.backend, &Backend::ALL, Backend::label);
-        ui.end_row();
-
         ui.label("Sound format");
         enum_combo(ui, "sfmt", &mut cfg.cat.format, &SoundFormat::ALL, SoundFormat::label);
         ui.end_row();
@@ -2116,26 +2195,23 @@ fn settings_cat_tab(
         }
     });
     ui.add_space(6.0);
-    ui.label(RichText::new("Backend / serial / audio changes take effect on restart.").weak());
+    ui.label(RichText::new("Serial / audio changes take effect on restart.").weak());
 }
 
-/// HPSDR tab: backend selection + network device discovery / manual IP / rate.
+/// HPSDR interface: network device discovery / manual IP / sample rate (the
+/// interface itself is chosen by the selector in `settings_body`).
 fn settings_hpsdr_tab(
     ui: &mut egui::Ui,
     devices: &[sdroxide_types::HpsdrDevice],
     radio_edit: &mut Option<sdroxide_types::RadioConfig>,
     discover: &mut bool,
 ) {
-    use sdroxide_types::{Backend, HpsdrConfig};
+    use sdroxide_types::HpsdrConfig;
     let Some(cfg) = radio_edit.as_mut() else {
         ui.label("Radio configuration is only available in the native app.");
         return;
     };
     egui::Grid::new("hpsdr-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-        ui.label("Backend");
-        enum_combo(ui, "hpsdr_backend", &mut cfg.backend, &Backend::ALL, Backend::label);
-        ui.end_row();
-
         ui.label("Devices");
         ui.horizontal(|ui| {
             if ui.button("Discover").clicked() {

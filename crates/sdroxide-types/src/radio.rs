@@ -8,9 +8,10 @@ use serde::{Deserialize, Serialize};
 /// Which radio backend to drive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Backend {
-    /// SoapySDR if a device is present, else fall back to CAT.
-    #[default]
+    /// Legacy "SoapySDR if present, else CAT" auto-detect. No longer offered in
+    /// the UI, but kept so older `radio.json` files still deserialize.
     Auto,
+    #[default]
     Soapy,
     Cat,
     /// OpenHPSDR ethernet SDR (Protocol 2), discovered/reached over the LAN.
@@ -21,9 +22,9 @@ impl Backend {
     pub const ALL: [Backend; 4] = [Backend::Auto, Backend::Soapy, Backend::Cat, Backend::Hpsdr];
     pub fn label(self) -> &'static str {
         match self {
-            Backend::Auto => "Auto (SoapySDR, else CAT)",
+            Backend::Auto => "Auto-detect (SoapySDR / CAT)",
             Backend::Soapy => "SoapySDR",
-            Backend::Cat => "CAT rig",
+            Backend::Cat => "CAT / Audio",
             Backend::Hpsdr => "HPSDR (network)",
         }
     }

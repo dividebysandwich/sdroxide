@@ -3,6 +3,7 @@ mod console;
 mod gui_main;
 mod hpsdr_source;
 mod local_controller;
+mod null_source;
 mod server_main;
 
 use anyhow::{Context, bail};
@@ -371,51 +372,75 @@ fn open_source(cli: &Cli, settings: &Settings) -> anyhow::Result<(Box<dyn IqSour
         ));
     }
 
-    // Resolve the backend from radio.json. `Auto` prefers a SoapySDR device
-    // and falls back to CAT when none is present (or the binary has no soapy).
-    // Cat and Hpsdr are explicit; Soapy (and Auto-with-a-device) fall through to
-    // the SoapySDR branch below.
+    // Try the configured radio interface. If it can't be opened (no SoapySDR
+    // device, HPSDR unreachable, CAT port missing, …) fall back to a null source
+    // so the GUI — and the Settings dialog — still come up and the user can pick
+    // a working interface and restart, instead of the program refusing to launch.
     let radio = sdroxide_config::load_radio_config();
+    match open_configured_source(&radio, cli, settings) {
+        Ok(pair) => Ok(pair),
+        Err(e) => {
+            tracing::warn!("radio interface unavailable: {e:#}");
+            let msg =
+                format!("{e}. Open Settings to choose a radio interface, then restart.");
+            Ok((Box::new(null_source::NullSource::new(cli.freq, msg)), synthetic_caps("No radio")))
+        }
+    }
+}
+
+/// Open the interface selected in `radio.json`. `Auto` prefers a SoapySDR device
+/// and falls back to CAT when none is present (or the binary has no soapy).
+fn open_configured_source(
+    radio: &RadioConfig,
+    cli: &Cli,
+    settings: &Settings,
+) -> anyhow::Result<(Box<dyn IqSource>, DeviceCaps)> {
     match radio.backend {
-        Backend::Cat => return open_cat_source(&radio),
-        Backend::Hpsdr => return open_hpsdr_source(&radio, cli.freq),
-        Backend::Soapy => {}
+        Backend::Cat => open_cat_source(radio),
+        Backend::Hpsdr => open_hpsdr_source(radio, cli.freq),
+        Backend::Soapy => open_soapy_source(cli, settings),
         Backend::Auto => {
             #[cfg(feature = "soapy")]
             {
                 let filter = device_filter(cli, settings);
                 if enumerate_devices(&filter).map(|d| d.is_empty()).unwrap_or(true) {
-                    return open_cat_source(&radio);
+                    open_cat_source(radio)
+                } else {
+                    open_soapy_source(cli, settings)
                 }
-                // A SoapySDR device is present — fall through to open it.
             }
             #[cfg(not(feature = "soapy"))]
             {
-                return open_cat_source(&radio);
+                open_cat_source(radio)
             }
         }
     }
+}
 
-    #[cfg(feature = "soapy")]
-    {
-        let filter = device_filter(cli, settings);
-        let devices = enumerate_devices(&filter).context("SoapySDR enumeration failed")?;
-        let Some(info) = devices.first() else {
-            bail!(
-                "no SoapySDR devices found (filter: {:?}) — try --siggen, or set a CAT backend in radio.json",
-                filter
-            );
-        };
-        let dev = SoapyDevice::open(&info.args)
-            .with_context(|| format!("opening device {}", info.label))?;
-        let caps = dev.caps().clone();
-        Ok((Box::new(dev.rx_source(rate, cli.freq, cli.gain)?), caps))
-    }
-    #[cfg(not(feature = "soapy"))]
-    {
-        let _ = rate;
-        bail!("SoapySDR backend selected but this build has no SoapySDR support")
-    }
+/// Open the first available SoapySDR device (feature-gated).
+#[cfg(feature = "soapy")]
+fn open_soapy_source(
+    cli: &Cli,
+    settings: &Settings,
+) -> anyhow::Result<(Box<dyn IqSource>, DeviceCaps)> {
+    let rate = cli.rate.unwrap_or(settings.sample_rate);
+    let filter = device_filter(cli, settings);
+    let devices = enumerate_devices(&filter).context("SoapySDR enumeration failed")?;
+    let Some(info) = devices.first() else {
+        bail!("no SoapySDR devices found (filter: {:?})", filter);
+    };
+    let dev =
+        SoapyDevice::open(&info.args).with_context(|| format!("opening device {}", info.label))?;
+    let caps = dev.caps().clone();
+    Ok((Box::new(dev.rx_source(rate, cli.freq, cli.gain)?), caps))
+}
+
+#[cfg(not(feature = "soapy"))]
+fn open_soapy_source(
+    _cli: &Cli,
+    _settings: &Settings,
+) -> anyhow::Result<(Box<dyn IqSource>, DeviceCaps)> {
+    bail!("SoapySDR support is not compiled into this build")
 }
 
 /// Build the CAT + sound-card source and its capabilities from radio.json.

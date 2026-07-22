@@ -119,6 +119,10 @@ impl RadioController for LocalController {
         self.persist_selection();
     }
 
+    fn soapy_supported(&self) -> bool {
+        cfg!(feature = "soapy")
+    }
+
     fn serial_ports(&self) -> Vec<String> {
         sdroxide_cat::available_ports()
     }

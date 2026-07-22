@@ -69,6 +69,13 @@ pub trait RadioController {
         let _ = (output, name);
     }
 
+    /// Whether this build can drive SoapySDR devices (compiled with the `soapy`
+    /// feature). The settings UI offers the SoapySDR interface only when true.
+    /// Default false (remote clients don't own the server's hardware).
+    fn soapy_supported(&self) -> bool {
+        false
+    }
+
     /// Serial ports available for CAT control (native local client only).
     fn serial_ports(&self) -> Vec<String> {
         Vec::new()
