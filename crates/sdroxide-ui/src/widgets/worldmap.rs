@@ -2,26 +2,40 @@
 //! continents as glowing dots and marks the home + DX locations with a
 //! great-circle path between them, cyberpunk style.
 
-use eframe::egui::{Color32, Pos2, Sense, Ui, pos2, vec2};
+use eframe::egui::{Color32, Pos2, Rect, Sense, Ui, pos2, vec2};
 use sdroxide_types::{great_circle_points, land_cell, land_mask_dims};
 
 use crate::theme;
+
+/// Below this height the map is not worth drawing — the caller should omit it
+/// entirely so the QSO controls keep the space.
+pub const MIN_HEIGHT: f32 = 72.0;
 
 /// Draw the map filling the available width (2:1 aspect). `home`/`dx`/`preview`
 /// are (lat, lon) in degrees. `preview` is a faint marker for a decode the
 /// user clicked but hasn't answered yet (distinct colour from the active DX).
 /// When `tx_active`, an animated pulse travels the home→dx path to show we are
-/// transmitting toward the contact.
+/// transmitting toward the contact. `max_h` caps the height: on short windows
+/// the map shrinks (keeping its 2:1 aspect, centered) rather than pushing the
+/// QSO controls off-screen.
 pub fn show(
     ui: &mut Ui,
     home: Option<(f64, f64)>,
     dx: Option<(f64, f64)>,
     preview: Option<(f64, f64)>,
     tx_active: bool,
+    max_h: f32,
 ) {
-    let w = ui.available_width();
-    let h = (w * 0.5).clamp(90.0, 300.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+    let avail_w = ui.available_width();
+    // Natural size is 2:1 by width; fit it within the caller's vertical budget,
+    // preserving aspect so it just gets smaller and centered (never squished).
+    let h = (avail_w * 0.5).clamp(90.0, 300.0).min(max_h);
+    if h < MIN_HEIGHT {
+        return;
+    }
+    let w = (h * 2.0).min(avail_w);
+    let (row, _) = ui.allocate_exact_size(vec2(avail_w, h), Sense::hover());
+    let rect = Rect::from_center_size(row.center(), vec2(w, h));
     if !ui.is_rect_visible(rect) {
         return;
     }

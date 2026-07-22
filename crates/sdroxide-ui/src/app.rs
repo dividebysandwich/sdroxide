@@ -905,6 +905,8 @@ impl SdroxideApp {
         // Call of the currently previewed decode (cloned so the scroll closure
         // doesn't hold a borrow of `self` we need to write back afterwards).
         let preview_call = self.digi_preview.as_ref().map(|(c, _)| c.clone());
+        // Own grid, for the per-decode great-circle distance column.
+        let my_grid = self.digi_status.as_ref().map(|s| s.config.my_grid.clone()).unwrap_or_default();
         // Staged preview change: `None` = no click this frame; `Some(v)` =
         // replace the preview with `v` (`Some(None)` clears it).
         let mut new_preview: Option<Option<(String, (f64, f64))>> = None;
@@ -913,6 +915,12 @@ impl SdroxideApp {
                 let cq = d.is_cq;
                 let who = d.from.clone().unwrap_or_else(|| "?".into());
                 let grid = d.grid.clone().unwrap_or_default();
+                // Rough great-circle distance from my grid to the decode's grid.
+                let dist_km = (!my_grid.is_empty())
+                    .then(|| {
+                        d.grid.as_deref().and_then(|g| sdroxide_types::grid_distance_km(&my_grid, g))
+                    })
+                    .flatten();
                 let is_preview =
                     d.from.is_some() && preview_call.as_deref() == d.from.as_deref();
                 let mut reply = false;
@@ -997,6 +1005,22 @@ impl SdroxideApp {
                                         .monospace()
                                         .size(12.0)
                                         .color(crate::theme::CYAN_DIM),
+                                ),
+                            );
+                            // Distance (km, great-circle from my grid).
+                            cell(
+                                ui,
+                                58.0,
+                                true,
+                                egui::Label::new(
+                                    RichText::new(
+                                        dist_km
+                                            .map(|km| format!("{km:.0} km"))
+                                            .unwrap_or_default(),
+                                    )
+                                    .monospace()
+                                    .size(11.0)
+                                    .color(crate::theme::YELLOW),
                                 ),
                             );
                             // Message fills the remaining width; REPLY pinned right.
@@ -1140,7 +1164,18 @@ impl SdroxideApp {
         );
 
         ui.add_space(5.0);
-        // World map.
+        // World map — drawn only if there is vertical room left for the
+        // essentials below it. The action buttons and the QSO conversation must
+        // always stay visible and usable, so on short windows the map shrinks
+        // (see `worldmap::show`) and then disappears entirely.
+        let btn_h = 44.0;
+        let gap = 8.0;
+        // Space the map must leave below itself: post-map gap + station card +
+        // pre-transcript gap + a usable transcript + pre-button gap + buttons.
+        const CARD_RESERVE: f32 = 66.0;
+        const TRANSCRIPT_MIN: f32 = 56.0;
+        let map_budget =
+            ui.available_height() - (6.0 + CARD_RESERVE + 5.0 + TRANSCRIPT_MIN + gap + btn_h);
         let my_grid = status.as_ref().map(|s| s.config.my_grid.clone()).unwrap_or_default();
         let home_ll = sdroxide_types::grid_to_latlon(&my_grid);
         let dx_grid = status.as_ref().and_then(|s| s.dx_grid.clone());
@@ -1148,9 +1183,10 @@ impl SdroxideApp {
         // A clicked (but not yet answered) decode shows as a faint preview.
         let preview_ll = self.digi_preview.as_ref().map(|(_, ll)| *ll);
         let tx_active = status.as_ref().map(|s| s.transmitting).unwrap_or(false);
-        crate::widgets::worldmap::show(ui, home_ll, dx_ll, preview_ll, tx_active);
-
-        ui.add_space(6.0);
+        if map_budget >= crate::widgets::worldmap::MIN_HEIGHT {
+            crate::widgets::worldmap::show(ui, home_ll, dx_ll, preview_ll, tx_active, map_budget);
+            ui.add_space(6.0);
+        }
         // Station card.
         crate::chrome::red_panel(ui, |ui| {
             match status.as_ref() {
@@ -1228,9 +1264,11 @@ impl SdroxideApp {
         // between the station card and the action buttons (reserve the button
         // row height first, give the rest to the transcript).
         ui.add_space(5.0);
-        let btn_h = 44.0;
-        let gap = 8.0;
-        let trans_h = (ui.available_height() - btn_h - gap).max(48.0);
+        // Reserve the button row (+gap) at the bottom so the action buttons stay
+        // visible no matter how short the window is; the transcript takes the
+        // rest. Floor at 0 (not a fixed minimum) so a very short window shrinks
+        // the conversation rather than pushing the buttons off-screen.
+        let trans_h = (ui.available_height() - btn_h - gap).max(0.0);
         ui.allocate_ui(egui::vec2(ui.available_width(), trans_h), |ui| {
             let inner = egui::Frame::new()
                 .fill(crate::theme::ROW_BG)
