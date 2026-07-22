@@ -252,7 +252,7 @@ impl DigiEngine for SstvController {
 
     fn set_sstv_image(&mut self, mode: SstvMode, rgb: Vec<u8>, w: u16, h: u16) {
         self.tx_mode = mode;
-        self.tx = Some(SstvTx::new(mode, &rgb, w, h, OUT_RATE));
+        self.tx = Some(SstvTx::new(mode, &rgb, w, h, OUT_RATE, self.cfg.sstv_tx_ppm));
         self.status_dirty = true;
     }
 }

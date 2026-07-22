@@ -813,6 +813,9 @@ impl Engine {
                 self.channel_analyzer = Some(SpectrumAnalyzer::new(16_384, ch_rate, 0.10));
             }
             info!(?mode, tap_rate, "digital-mode engine started");
+            // Emit the operator config so a client that hasn't seen a digital
+            // mode yet (e.g. straight into SSTV) can seed its editable copy.
+            self.emit_digi_status();
         } else if want && have {
             // Mode changed between digital modes: rebuild for the new one.
             if self.digi.as_ref().map(|d| d.mode()) != Some(mode) {

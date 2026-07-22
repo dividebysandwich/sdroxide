@@ -193,17 +193,23 @@ pub struct SstvTx {
 
 impl SstvTx {
     /// Build a transmitter for `mode` from interleaved RGB (`rgb.len() == w*h*3`)
-    /// at output sample `rate`.
-    pub fn new(mode: SstvMode, rgb: &[u8], w: u16, h: u16, rate: f64) -> Self {
+    /// at output sample `rate`, with an optional transmit clock trim `ppm`
+    /// (parts-per-million; stretches/compresses the image time-scale to null out
+    /// slant against a receiver whose clock differs — tone frequencies are
+    /// unaffected).
+    pub fn new(mode: SstvMode, rgb: &[u8], w: u16, h: u16, rate: f64, ppm: f32) -> Self {
         let mut plan: Vec<(f64, u32)> = Vec::new();
         // Cumulative-exact sample clock: derive each element's integer sample
         // count from the running fractional time, so per-element rounding never
         // accumulates into image slant (e.g. Scottie 1's 0.432 ms pixel is
         // 20.736 samples at 48 kHz — rounding each to 21 would drift +1.3%).
+        // The timing rate carries the ppm trim; the phase accumulator (in
+        // `next_block`) uses the true `rate`, so the tone frequencies stay exact.
+        let timing_rate = rate * (1.0 + ppm as f64 / 1_000_000.0);
         let mut emitted: i64 = 0;
         let mut t_exact: f64 = 0.0;
         let mut push = |plan: &mut Vec<(f64, u32)>, hz: f64, dur: f64| {
-            t_exact += dur * rate;
+            t_exact += dur * timing_rate;
             let target = t_exact.round() as i64;
             let n = (target - emitted).max(0);
             emitted = target;
@@ -307,6 +313,11 @@ impl SstvTx {
     /// True once every planned sample has been emitted.
     pub fn done(&self) -> bool {
         self.idx >= self.plan.len() && self.left == 0
+    }
+
+    /// Total number of audio samples this transmission will emit.
+    pub fn total_samples(&self) -> u64 {
+        self.total
     }
 
     /// Transmission progress, 0.0..=1.0.
@@ -833,7 +844,7 @@ mod tests {
                 rgb[i + 2] = v;
             }
         }
-        let mut tx = SstvTx::new(mode, &rgb, w, h, rate);
+        let mut tx = SstvTx::new(mode, &rgb, w, h, rate, 0.0);
         let mut rx = SstvRx::new(rate);
         let mut events = Vec::new();
         let mut block = vec![0.0f32; 4096];
@@ -872,6 +883,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn tx_ppm_scales_duration() {
+        let rate = 48_000.0;
+        let mode = SstvMode::Martin1;
+        let (w, h) = mode.dimensions();
+        let rgb = vec![128u8; w as usize * h as usize * 3];
+        let base = SstvTx::new(mode, &rgb, w, h, rate, 0.0).total_samples() as f64;
+        // +10 000 ppm = +1% longer transmission.
+        let trimmed = SstvTx::new(mode, &rgb, w, h, rate, 10_000.0).total_samples() as f64;
+        assert!((trimmed / base - 1.01).abs() < 0.0005, "ratio {}", trimmed / base);
+    }
+
     /// Free-run: feed the RX the picture audio *after* the VIS header (as if we
     /// tuned in mid-transmission). With the mode pre-selected it should lock onto
     /// the sync cadence and decode.
@@ -888,7 +911,7 @@ mod tests {
             }
         }
         // Render the whole transmission to a buffer.
-        let mut tx = SstvTx::new(mode, &rgb, w, h, rate);
+        let mut tx = SstvTx::new(mode, &rgb, w, h, rate, 0.0);
         let mut audio = Vec::new();
         let mut block = vec![0.0f32; 4096];
         let mut guard = 0;

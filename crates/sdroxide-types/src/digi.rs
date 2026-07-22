@@ -151,6 +151,10 @@ pub struct DigiConfig {
     pub rtty_baud: f32,
     /// RTTY frequency shift in Hz (170 / 425 / 850).
     pub rtty_shift_hz: f32,
+    /// SSTV transmit clock trim in parts-per-million. Stretches (+) or compresses
+    /// (−) the image time-scale to null out slant against a receiver whose sound-
+    /// card clock differs from this station's. 0 = no correction.
+    pub sstv_tx_ppm: f32,
 }
 
 impl Default for DigiConfig {
@@ -168,6 +172,7 @@ impl Default for DigiConfig {
             msg_73: "{DX} {MYCALL} 73".into(),
             rtty_baud: 45.45,
             rtty_shift_hz: 170.0,
+            sstv_tx_ppm: 0.0,
         }
     }
 }

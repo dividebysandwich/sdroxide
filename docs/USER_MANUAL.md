@@ -379,6 +379,11 @@ Band buttons tune to that band's common SSTV calling frequency (for example
   strip with "SDRoxide" and the version in the top corner.
 - Press **TX** to transmit the composed image; **ABORT TX** stops a transmission
   in progress.
+- **TX slant** trims the transmit clock (in ppm) to remove slant seen on a
+  receiver whose sound-card clock differs slightly from yours — nudge it until a
+  test picture decodes straight on the far end; **0** resets it. It applies to
+  the next transmission and is persisted. (Received pictures are auto-deslanted
+  by sdroxide, so this is only for the transmit direction.)
 
 > **Note:** SSTV decode/encode runs in the server engine, so the panel works the
 > same in the native app and the browser client. RX quality depends on signal

@@ -3485,6 +3485,30 @@ impl SdroxideApp {
                 ui.label(RichText::new("listening…").size(10.0).weak());
             }
         });
+        // ── TX slant / clock calibration ──
+        // Trims the transmit time-scale (ppm) to null out slant against a
+        // receiver whose sound-card clock differs from this station's. Applies to
+        // the next transmission. Disabled until the operator config is seeded so
+        // it can't overwrite the rest of the config with defaults.
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("TX slant").size(10.0).weak())
+                .on_hover_text("Transmit clock trim (ppm) to remove slant on the far-end decoder");
+            ui.add_enabled_ui(self.digi_cfg_seeded, |ui| {
+                let resp = ui.add(
+                    egui::Slider::new(&mut self.digi_cfg_edit.sstv_tx_ppm, -5000.0..=5000.0)
+                        .suffix(" ppm")
+                        .fixed_decimals(0),
+                );
+                let commit = resp.drag_stopped() || (resp.changed() && !resp.dragged());
+                if commit {
+                    cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+                }
+                if ui.small_button("0").on_hover_text("Reset to 0 ppm").clicked() {
+                    self.digi_cfg_edit.sstv_tx_ppm = 0.0;
+                    cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+                }
+            });
+        });
         ui.separator();
 
         let avail = ui.available_size();
