@@ -525,6 +525,10 @@ fn tci_caps(address: &str, iq_rate: f64) -> DeviceCaps {
         freq_ranges_rx: vec![(0.0, 160_000_000.0)],
         freq_ranges_tx: vec![(1_800_000.0, 54_000_000.0)],
         sample_rates: sdroxide_types::TciConfig::IQ_RATES.to_vec(),
+        // No RX gains: the SunSDR2DX ATT/Preamp is not reachable over TCI
+        // (verified against ExpertSDR3 — no command spelling drives it, and
+        // toggling it in the GUI emits nothing on the wire). TCI gain control
+        // is deferred until a controllable path is found.
         ..DeviceCaps::default()
     }
 }
