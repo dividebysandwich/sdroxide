@@ -3296,6 +3296,9 @@ struct SstvRecv {
 /// slots, the overlay message, the current mode, and cached textures.
 struct SstvUi {
     tx_mode: SstvMode,
+    /// Auto mode: RX auto-detects the mode; TX defaults to Martin 1 until a mode
+    /// is heard or the operator picks one.
+    auto: bool,
     message: String,
     slots: Vec<Option<SstvSlot>>,
     selected_slot: usize,
@@ -3319,7 +3322,8 @@ struct SstvUi {
 impl Default for SstvUi {
     fn default() -> Self {
         SstvUi {
-            tx_mode: SstvMode::default(),
+            tx_mode: SstvMode::Martin1,
+            auto: true,
             message: String::new(),
             slots: (0..5).map(|_| None).collect(),
             selected_slot: 0,
@@ -3431,15 +3435,29 @@ impl SdroxideApp {
         let st = self.sstv.status;
         let tx_active = st.tx_active;
 
-        // ── Top: mode buttons ──
+        // ── Top: Auto + mode buttons ──
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("SSTV").size(12.0).strong().color(crate::theme::CYAN));
+            // Auto: RX auto-detects the mode; TX uses Martin 1 (or the last
+            // detected mode) until the operator picks one.
+            let auto_label = if self.sstv.auto {
+                format!("Auto ({})", self.sstv.tx_mode.label())
+            } else {
+                "Auto".to_string()
+            };
+            if crate::chrome::chip(ui, self.sstv.auto, &auto_label).clicked() {
+                self.sstv.auto = true;
+                self.sstv.tx_mode = SstvMode::Martin1;
+                self.sstv.preview_dirty = true;
+                cmds.push(Command::SstvSetMode(None));
+            }
             for m in SstvMode::ALL {
-                let active = self.sstv.tx_mode == m;
+                let active = !self.sstv.auto && self.sstv.tx_mode == m;
                 if crate::chrome::chip(ui, active, m.label()).clicked() {
+                    self.sstv.auto = false;
                     self.sstv.tx_mode = m;
                     self.sstv.preview_dirty = true;
-                    cmds.push(Command::SstvSetMode(m));
+                    cmds.push(Command::SstvSetMode(Some(m)));
                 }
             }
         });

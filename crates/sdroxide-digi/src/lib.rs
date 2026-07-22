@@ -53,8 +53,8 @@ pub trait DigiEngine: Send {
     fn set_tx_text(&mut self, _text: String) {}
     /// Continuous keyboard modes: enter/leave transmit.
     fn set_tx_active(&mut self, _on: bool) {}
-    /// SSTV: select the mode used for the next transmission.
-    fn set_sstv_mode(&mut self, _mode: SstvMode) {}
+    /// SSTV: select the mode (`None` = auto-detect on RX, Martin 1 on TX).
+    fn set_sstv_mode(&mut self, _mode: Option<SstvMode>) {}
     /// SSTV: queue a composed image (interleaved RGB) and start transmitting.
     fn set_sstv_image(&mut self, _mode: SstvMode, _rgb: Vec<u8>, _w: u16, _h: u16) {}
 }

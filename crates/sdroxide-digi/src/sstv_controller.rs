@@ -33,6 +33,8 @@ pub struct SstvController {
     // TX
     tx: Option<SstvTx>,
     tx_mode: SstvMode,
+    /// Auto mode: RX auto-detects; TX defaults to Martin 1 until a mode is heard.
+    auto: bool,
     keyed: bool,
 
     // Actions queued for the next `poll`.
@@ -44,8 +46,8 @@ pub struct SstvController {
 impl SstvController {
     pub fn new(cfg: DigiConfig, tap_rate: f64) -> Self {
         let mut rx = SstvRx::new(tap_rate);
-        // Free-run decode uses the operator-selected mode until a VIS is heard.
-        rx.set_expected(Some(SstvMode::default()));
+        // Default to Auto: the RX auto-detects the mode; TX defaults to Martin 1.
+        rx.set_expected(None);
         SstvController {
             cfg,
             dial_hz: 0.0,
@@ -59,7 +61,8 @@ impl SstvController {
             detected: None,
             image_id: 0,
             tx: None,
-            tx_mode: SstvMode::default(),
+            tx_mode: SstvMode::Martin1,
+            auto: true,
             keyed: false,
             queued: Vec::new(),
             status_dirty: true,
@@ -125,9 +128,12 @@ impl DigiEngine for SstvController {
                     self.rx_image = vec![0u8; w as usize * h as usize * 3];
                     self.rx_active = true;
                     self.detected = Some(mode);
-                    // RX mode determines the next transmit mode (and free-run mode).
+                    // RX mode determines the next transmit mode. In Auto, keep the
+                    // RX auto-detecting; otherwise pin free-run to this mode.
                     self.tx_mode = mode;
-                    self.rx.set_expected(Some(mode));
+                    if !self.auto {
+                        self.rx.set_expected(Some(mode));
+                    }
                     self.status_dirty = true;
                 }
                 SstvEvent::Line { y, rgb } => {
@@ -228,9 +234,19 @@ impl DigiEngine for SstvController {
         self.digi_status()
     }
 
-    fn set_sstv_mode(&mut self, mode: SstvMode) {
-        self.tx_mode = mode;
-        self.rx.set_expected(Some(mode));
+    fn set_sstv_mode(&mut self, mode: Option<SstvMode>) {
+        match mode {
+            Some(m) => {
+                self.auto = false;
+                self.tx_mode = m;
+                self.rx.set_expected(Some(m));
+            }
+            None => {
+                self.auto = true;
+                self.tx_mode = SstvMode::Martin1;
+                self.rx.set_expected(None);
+            }
+        }
         self.status_dirty = true;
     }
 

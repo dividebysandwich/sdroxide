@@ -196,10 +196,19 @@ impl SstvTx {
     /// at output sample `rate`.
     pub fn new(mode: SstvMode, rgb: &[u8], w: u16, h: u16, rate: f64) -> Self {
         let mut plan: Vec<(f64, u32)> = Vec::new();
-        let push_tone = |plan: &mut Vec<(f64, u32)>, hz: f64, dur: f64| {
-            let n = (dur * rate).round() as u32;
+        // Cumulative-exact sample clock: derive each element's integer sample
+        // count from the running fractional time, so per-element rounding never
+        // accumulates into image slant (e.g. Scottie 1's 0.432 ms pixel is
+        // 20.736 samples at 48 kHz — rounding each to 21 would drift +1.3%).
+        let mut emitted: i64 = 0;
+        let mut t_exact: f64 = 0.0;
+        let mut push = |plan: &mut Vec<(f64, u32)>, hz: f64, dur: f64| {
+            t_exact += dur * rate;
+            let target = t_exact.round() as i64;
+            let n = (target - emitted).max(0);
+            emitted = target;
             if n > 0 {
-                plan.push((hz, n));
+                plan.push((hz, n as u32));
             }
         };
         let px_at = |x: usize, y: usize| -> (u8, u8, u8) {
@@ -208,31 +217,30 @@ impl SstvTx {
         };
 
         // VIS calibration header.
-        push_tone(&mut plan, VIS_LEADER_HZ, 0.300);
-        push_tone(&mut plan, SYNC_HZ, 0.010);
-        push_tone(&mut plan, VIS_LEADER_HZ, 0.300);
-        push_tone(&mut plan, SYNC_HZ, 0.030); // start bit
+        push(&mut plan, VIS_LEADER_HZ, 0.300);
+        push(&mut plan, SYNC_HZ, 0.010);
+        push(&mut plan, VIS_LEADER_HZ, 0.300);
+        push(&mut plan, SYNC_HZ, 0.030); // start bit
         let code = mode.vis_code();
         let mut parity = 0u8;
         for bit in 0..7 {
             let one = (code >> bit) & 1 == 1;
             parity ^= one as u8;
-            push_tone(&mut plan, if one { VIS_BIT1_HZ } else { VIS_BIT0_HZ }, 0.030);
+            push(&mut plan, if one { VIS_BIT1_HZ } else { VIS_BIT0_HZ }, 0.030);
         }
-        push_tone(&mut plan, if parity == 1 { VIS_BIT1_HZ } else { VIS_BIT0_HZ }, 0.030);
-        push_tone(&mut plan, SYNC_HZ, 0.030); // stop bit
+        push(&mut plan, if parity == 1 { VIS_BIT1_HZ } else { VIS_BIT0_HZ }, 0.030);
+        push(&mut plan, SYNC_HZ, 0.030); // stop bit
 
         // Scottie sends a 9 ms starting sync before the very first line.
         if matches!(mode, SstvMode::Scottie1 | SstvMode::Scottie2 | SstvMode::ScottieDx) {
-            push_tone(&mut plan, SYNC_HZ, 0.009);
+            push(&mut plan, SYNC_HZ, 0.009);
         }
 
         for y in 0..h as usize {
             for seg in line_segments(mode, w, y as u16) {
                 match seg {
-                    Seg::Tone { hz, dur } => push_tone(&mut plan, hz, dur),
+                    Seg::Tone { hz, dur } => push(&mut plan, hz, dur),
                     Seg::Scan { chan, width, px } => {
-                        let n = (px * rate).round().max(1.0) as u32;
                         for x in 0..width as usize {
                             // Map the (possibly subsampled) scan x to a source column.
                             let sx = if width == w { x } else { (x * 2).min(w as usize - 1) };
@@ -245,7 +253,8 @@ impl SstvTx {
                                 Chan::Cr => rgb_to_yuv(r, g, b).1,
                                 Chan::Cb => rgb_to_yuv(r, g, b).2,
                             };
-                            plan.push((value_to_hz(v), n));
+                            // Cumulative-exact per-pixel timing (no drift/slant).
+                            push(&mut plan, value_to_hz(v), px);
                         }
                     }
                 }
@@ -364,12 +373,13 @@ pub struct SstvRx {
     last_cr: Vec<u8>,
     last_cb: Vec<u8>,
 
-    // Free-run (decode without VIS) using the operator-selected mode: lock onto a
-    // regular 1200 Hz sync cadence matching that mode's line period.
+    // Free-run (decode without VIS): lock onto a regular 1200 Hz sync cadence.
+    // `expected` = a specific operator-selected mode, or `None` for auto (match
+    // the cadence + sync length against every mode).
     expected: Option<SstvMode>,
     sync_run: u32,
-    sync_hist: Vec<u64>,
-    cadence: u32,
+    // Recent sync pulses as (centre sample, pulse length in samples).
+    sync_hist: Vec<(u64, u32)>,
 }
 
 struct VisState {
@@ -416,11 +426,11 @@ impl SstvRx {
             expected: None,
             sync_run: 0,
             sync_hist: Vec::new(),
-            cadence: 0,
         }
     }
 
-    /// Set the operator-selected mode used for free-run (no-VIS) decoding.
+    /// Set the mode used for free-run (no-VIS) decoding, or `None` for auto
+    /// (detect the mode from the sync cadence).
     pub fn set_expected(&mut self, mode: Option<SstvMode>) {
         self.expected = mode;
     }
@@ -583,11 +593,26 @@ impl SstvRx {
             .sum()
     }
 
-    /// Free-run lock: when three 1200 Hz sync pulses arrive spaced at the
-    /// selected mode's line period, start decoding in that mode (no VIS needed —
-    /// handles tuning into a picture already in progress).
+    /// Count how many recent sync gaps are an integer multiple of `mode`'s line
+    /// period (within tolerance) — i.e. how well the cadence fits that mode.
+    fn cadence_hits(&self, mode: SstvMode) -> u32 {
+        let period = self.line_period_samples(mode);
+        let mut hits = 0;
+        for w in self.sync_hist.windows(2) {
+            let gap = w[1].0 as f64 - w[0].0 as f64;
+            let k = (gap / period).round();
+            if k >= 1.0 && (gap - k * period).abs() < period * 0.04 {
+                hits += 1;
+            }
+        }
+        hits
+    }
+
+    /// Free-run lock: when 1200 Hz sync pulses arrive at a regular line cadence,
+    /// start decoding (no VIS needed — handles tuning into a picture already in
+    /// progress). With a fixed `expected` mode it locks to that; in auto it picks
+    /// the mode whose line period *and* sync length best fit the cadence.
     fn try_freerun(&mut self, out: &mut Vec<SstvEvent>) {
-        let Some(mode) = self.expected else { return };
         let is_sync = self.inst_hz > 1050.0 && self.inst_hz < 1350.0;
         if is_sync {
             self.sync_run += 1;
@@ -595,31 +620,42 @@ impl SstvRx {
         }
         let run = self.sync_run;
         self.sync_run = 0;
-
-        let (w, _) = mode.dimensions();
-        let (soff, sdur) = self.sync_span(mode, w, 0);
-        // Accept only pulses of plausible sync length (rejects image excursions).
-        if (run as f64) < sdur * 0.5 || (run as f64) > sdur * 2.5 {
+        // Plausible sync length across all modes (~4.9 ms Martin .. 9 ms Scottie).
+        if (run as f64) < 0.003 * self.rate || (run as f64) > 0.014 * self.rate {
             return;
         }
         let center = self.sample_idx.saturating_sub((run / 2) as u64);
-        let period = self.line_period_samples(mode);
-        if let Some(&last) = self.sync_hist.last() {
-            let gap = center as f64 - last as f64;
-            let k = (gap / period).round();
-            if k >= 1.0 && (gap - k * period).abs() < period * 0.06 {
-                self.cadence += 1;
-            } else {
-                self.cadence = 0;
-            }
-        }
-        self.sync_hist.push(center);
-        if self.sync_hist.len() > 8 {
+        self.sync_hist.push((center, run));
+        if self.sync_hist.len() > 10 {
             self.sync_hist.remove(0);
         }
-        if self.cadence >= 2 {
+
+        // Pick the mode to lock: the fixed one, or the best auto match.
+        let locked = match self.expected {
+            Some(m) => (self.cadence_hits(m) >= 2).then_some(m),
+            None => {
+                let mut best: Option<SstvMode> = None;
+                let mut best_err = f64::INFINITY;
+                for &m in &SstvMode::ALL {
+                    if self.cadence_hits(m) < 2 {
+                        continue;
+                    }
+                    let (_, sdur) = self.sync_span(m, m.dimensions().0, 0);
+                    let dur_err = (run as f64 - sdur).abs() / sdur;
+                    if dur_err > 0.4 {
+                        continue; // sync length must also match (Scottie vs Martin)
+                    }
+                    if dur_err < best_err {
+                        best_err = dur_err;
+                        best = Some(m);
+                    }
+                }
+                best
+            }
+        };
+        if let Some(mode) = locked {
+            let (soff, sdur) = self.sync_span(mode, mode.dimensions().0, 0);
             let line_start = (center as f64 - (soff + sdur * 0.5)).max(0.0) as u64;
-            self.cadence = 0;
             self.sync_hist.clear();
             self.begin_image(mode, line_start, out);
         }
@@ -636,7 +672,6 @@ impl SstvRx {
         // Reset free-run tracking so it re-locks cleanly for the next picture.
         self.sync_run = 0;
         self.sync_hist.clear();
-        self.cadence = 0;
         out.push(SstvEvent::ModeDetected(mode));
     }
 
@@ -863,9 +898,10 @@ mod tests {
             guard += 1;
         }
         // Skip past the VIS (~1.1 s) so only image data is fed → forces free-run.
+        // Use auto (`None`): the RX must identify the mode from the sync cadence.
         let skip = (rate * 1.1) as usize;
         let mut rx = SstvRx::new(rate);
-        rx.set_expected(Some(mode));
+        rx.set_expected(None);
         let mut events = Vec::new();
         let mut detected = None;
         let mut lines = 0;

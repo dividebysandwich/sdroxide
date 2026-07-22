@@ -344,18 +344,26 @@ mode switches to PSK or RTTY, tunes onto the signal, and opens this panel.
 
 Choose **SSTV** from the DIGITAL row to send and receive pictures. The panel has
 a received-image gallery on the left and a transmit compositor on the right, with
-a row of mode buttons across the top: **Scottie 1**, **Scottie 2**, **Scottie
-DX**, **Martin 1**, **Martin 2**, **Robot 72**, and **Robot 36**.
+a row of mode buttons across the top: **Auto**, **Scottie 1**, **Scottie 2**,
+**Scottie DX**, **Martin 1**, **Martin 2**, **Robot 72**, and **Robot 36**.
+
+**Auto** (the default) auto-detects the mode on receive — from the VIS header, or,
+if you tune in mid-picture, from the sync cadence — and transmits in **Martin 1**
+until a mode has been detected. Selecting a specific mode instead pins both the
+receive decoder and the transmit compositor to that mode.
 
 Band buttons tune to that band's common SSTV calling frequency (for example
 14.230 MHz on 20 m, 7.171 on 40 m, 3.730 on 80 m), staying in SSTV.
 
 **Receiving:**
 
-- Incoming pictures decode scanline-by-scanline and appear in the **RECEIVED**
-  gallery (newest first); an image in progress paints live at the top.
-- The mode is identified from the picture's VIS header — no need to pick it — and
-  that mode is also pre-selected for your next transmission.
+- Incoming pictures decode scanline-by-scanline and appear in the **LIVE** view
+  as they arrive, then land in the **RECEIVED** gallery (newest first).
+- The **Signal** meter shows the receive audio level so you can confirm audio is
+  reaching the decoder and set your input gain.
+- In **Auto**, the mode is identified from the VIS header (or the sync cadence if
+  you tuned in mid-picture) and pre-selected for your next transmission — no need
+  to pick it.
 - Received images are saved as PNG under `~/.config/sdroxide/sstv_rx/` and reload
   into the gallery next time.
 

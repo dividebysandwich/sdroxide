@@ -67,8 +67,9 @@ pub enum Command {
     DigiTxText(String),
     /// Continuous keyboard modes: enter (true) or leave (false) transmit.
     DigiTxActive(bool),
-    /// SSTV: select the transmit mode (also used to size the TX image).
-    SstvSetMode(SstvMode),
+    /// SSTV: select the mode (also sizes the TX image). `None` = Auto — the RX
+    /// auto-detects the mode and TX defaults to Martin 1.
+    SstvSetMode(Option<SstvMode>),
     /// SSTV: transmit a composed image (PNG bytes) in the given mode. Keying
     /// starts immediately; `DigiAbortTx` stops it.
     SstvTx { mode: SstvMode, png: Vec<u8> },
