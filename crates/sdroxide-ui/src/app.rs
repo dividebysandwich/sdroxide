@@ -506,19 +506,37 @@ impl SdroxideApp {
                 .show(|ui| {
                     ui.set_max_width(430.0);
                     ui.label(RichText::new("BAND").color(crate::theme::CYAN_DIM).size(9.5).strong());
+                    let digital = mode.is_digital();
                     ui.horizontal_wrapped(|ui| {
                         for b in Band::ALL {
-                            let enabled = self.caps.as_ref().is_none_or(|c| {
+                            // In a digital mode, a band button tunes to that
+                            // band's FT8/FT4 dial frequency (SetVfo keeps the
+                            // mode); otherwise it's a normal band change. Bands
+                            // with no standard digital frequency are disabled.
+                            let digi_hz =
+                                if digital { digi_freq_for_band(mode, b) } else { None };
+                            let cap_ok = self.caps.as_ref().is_none_or(|c| {
                                 b.edges().is_none_or(|(lo, hi)| c.can_rx_hz(lo) || c.can_rx_hz(hi))
                             });
+                            let enabled = cap_ok && (!digital || digi_hz.is_some());
+                            let active = match digi_hz {
+                                Some(hz) => (self.state.active_freq_hz() - hz).abs() < 500.0,
+                                None => !digital && self.state.band == b,
+                            };
                             let clicked = ui
                                 .add_enabled_ui(enabled, |ui| {
-                                    crate::chrome::chip(ui, self.state.band == b, b.label())
+                                    crate::chrome::chip(ui, active, b.label())
                                 })
                                 .inner
                                 .clicked();
                             if clicked {
-                                cmds.push(Command::SetBand(b));
+                                match digi_hz {
+                                    Some(hz) => cmds.push(Command::SetVfo {
+                                        vfo: self.state.active_vfo,
+                                        hz,
+                                    }),
+                                    None => cmds.push(Command::SetBand(b)),
+                                }
                             }
                         }
                     });
@@ -541,30 +559,6 @@ impl SdroxideApp {
                             }
                         }
                     });
-
-                    // In a digital mode, offer the standard FT8/FT4 dial
-                    // frequencies (sets dial + USB via the mode).
-                    if mode.is_digital() {
-                        ui.add_space(6.0);
-                        ui.label(
-                            RichText::new(format!("{} FREQUENCIES", mode.label()))
-                                .color(crate::theme::CYAN_DIM)
-                                .size(9.5)
-                                .strong(),
-                        );
-                        let freqs = digi_dial_freqs(mode);
-                        ui.horizontal_wrapped(|ui| {
-                            for &(label, hz) in freqs {
-                                let active = (self.state.active_freq_hz() - hz).abs() < 500.0;
-                                if crate::chrome::chip(ui, active, label).clicked() {
-                                    cmds.push(Command::SetVfo {
-                                        vfo: self.state.active_vfo,
-                                        hz,
-                                    });
-                                }
-                            }
-                        });
-                    }
                 });
         });
     }
@@ -2869,6 +2863,13 @@ fn time_str(unix: i64) -> String {
 }
 
 /// Standard FT8/FT4 dial frequencies per HF/6 m band.
+/// The standard FT8/FT4 dial frequency for `band`, if one exists for `mode`
+/// (matched by which band's edges the frequency falls within).
+fn digi_freq_for_band(mode: Mode, band: Band) -> Option<f64> {
+    let (lo, hi) = band.edges()?;
+    digi_dial_freqs(mode).iter().find(|&&(_, hz)| (lo..=hi).contains(&hz)).map(|&(_, hz)| hz)
+}
+
 fn digi_dial_freqs(mode: Mode) -> &'static [(&'static str, f64)] {
     match mode {
         Mode::Ft4 => &[
