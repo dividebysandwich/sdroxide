@@ -24,6 +24,7 @@ const SKIMMER_FADE_SECS: f64 = 5.0;
 /// display/UI preferences.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsTab {
+    General,
     Radio,
     Audio,
     Ui,
@@ -2089,6 +2090,8 @@ impl SdroxideApp {
         let mut tci_test = false;
         let mut radio_edit = self.radio_cfg.clone();
         let mut ui_edit = self.ui_settings;
+        let mut digi_edit = self.digi_cfg_edit.clone();
+        let digi_seeded = self.digi_cfg_seeded;
 
         // The concrete interface types the user chooses between. SoapySDR only
         // appears when compiled in; there is no auto-detect (an unavailable
@@ -2118,6 +2121,8 @@ impl SdroxideApp {
                     &mut hpsdr_discover,
                     &mut tci_test,
                     &mut ui_edit,
+                    &mut digi_edit,
+                    digi_seeded,
                     &mut tab,
                 );
             });
@@ -2154,6 +2159,13 @@ impl SdroxideApp {
             self.ui_settings = ui_edit;
             persist_ui_settings(&self.ui_settings);
         }
+        // Callsign/grid from the General tab — same store as the FT8/SSTV setup
+        // dialog. Only apply once seeded so we can't overwrite the engine's saved
+        // config with defaults.
+        if digi_seeded && digi_edit != self.digi_cfg_edit {
+            self.digi_cfg_edit = digi_edit;
+            cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+        }
     }
 
     /// The Settings body: a Radio tab (one interface selector drives the
@@ -2168,12 +2180,15 @@ impl SdroxideApp {
         hpsdr_discover: &mut bool,
         tci_test: &mut bool,
         ui_edit: &mut sdroxide_types::UiSettings,
+        digi_edit: &mut sdroxide_types::DigiConfig,
+        digi_seeded: bool,
         tab: &mut SettingsTab,
     ) {
         use sdroxide_types::Backend;
 
         ui.horizontal(|ui| {
             for (t, label) in [
+                (SettingsTab::General, "General"),
                 (SettingsTab::Radio, "Radio"),
                 (SettingsTab::Audio, "Audio"),
                 (SettingsTab::Ui, "UI"),
@@ -2188,6 +2203,41 @@ impl SdroxideApp {
         let backend = radio_edit.as_ref().map(|c| c.backend);
 
         match tab {
+            SettingsTab::General => {
+                ui.label(RichText::new("Station").size(14.0).strong().color(crate::theme::CYAN));
+                ui.add_space(6.0);
+                if !digi_seeded {
+                    ui.label(
+                        RichText::new(
+                            "Enter a digital mode (FT8 / SSTV / …) once to load the saved values.",
+                        )
+                        .weak(),
+                    );
+                }
+                ui.add_enabled_ui(digi_seeded, |ui| {
+                    egui::Grid::new("general-grid").num_columns(2).spacing([12.0, 8.0]).show(
+                        ui,
+                        |ui| {
+                            ui.label("Callsign");
+                            if ui.text_edit_singleline(&mut digi_edit.my_call).changed() {
+                                digi_edit.my_call = digi_edit.my_call.to_uppercase();
+                            }
+                            ui.end_row();
+                            ui.label("Grid square");
+                            ui.text_edit_singleline(&mut digi_edit.my_grid);
+                            ui.end_row();
+                        },
+                    );
+                });
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(
+                        "Your callsign and grid, shared across FT8/FT4, SSTV image headers, and \
+                         the logbook. Also editable from the FT8 / SSTV setup dialog.",
+                    )
+                    .weak(),
+                );
+            }
             SettingsTab::Radio => {
                 let Some(cfg) = radio_edit.as_mut() else {
                     ui.label("Radio configuration is only available in the native app.");
@@ -3296,6 +3346,8 @@ struct SstvRecv {
 /// slots, the overlay message, the current mode, and cached textures.
 struct SstvUi {
     tx_mode: SstvMode,
+    /// Operator callsign for the transmit-image header (mirrors the digi config).
+    callsign: String,
     /// Auto mode: RX auto-detects the mode; TX defaults to Martin 1 until a mode
     /// is heard or the operator picks one.
     auto: bool,
@@ -3325,6 +3377,7 @@ impl Default for SstvUi {
     fn default() -> Self {
         SstvUi {
             tx_mode: SstvMode::Martin1,
+            callsign: String::new(),
             auto: true,
             message: String::new(),
             slots: (0..5).map(|_| None).collect(),
@@ -3386,8 +3439,14 @@ impl SstvUi {
         self.preview_dirty = false;
         match self.slots.get(self.selected_slot).and_then(|s| s.as_ref()) {
             Some(slot) => {
-                let (rgb, w, h) =
-                    crate::sstv::compose(self.tx_mode, &slot.src_rgb, slot.sw, slot.sh, &self.message);
+                let (rgb, w, h) = crate::sstv::compose(
+                    self.tx_mode,
+                    &slot.src_rgb,
+                    slot.sw,
+                    slot.sh,
+                    &self.message,
+                    &self.callsign,
+                );
                 let ci = crate::sstv::color_image(&rgb, w, h);
                 self.preview_tex =
                     Some(ctx.load_texture("sstv_preview", ci, egui::TextureOptions::NEAREST));
@@ -3399,8 +3458,14 @@ impl SstvUi {
     /// The composed PNG for the current selection, for transmit.
     fn compose_png(&self) -> Option<Vec<u8>> {
         let slot = self.slots.get(self.selected_slot).and_then(|s| s.as_ref())?;
-        let (rgb, w, h) =
-            crate::sstv::compose(self.tx_mode, &slot.src_rgb, slot.sw, slot.sh, &self.message);
+        let (rgb, w, h) = crate::sstv::compose(
+            self.tx_mode,
+            &slot.src_rgb,
+            slot.sw,
+            slot.sh,
+            &self.message,
+            &self.callsign,
+        );
         crate::sstv::encode_png(&rgb, w, h)
     }
 
@@ -3428,6 +3493,11 @@ impl SdroxideApp {
             if let Some(target) = self.sstv.pick_target.take() {
                 self.sstv.set_slot(target, &bytes, &ctx);
             }
+        }
+        // Keep the header callsign in sync with the operator config.
+        if self.sstv.callsign != self.digi_cfg_edit.my_call {
+            self.sstv.callsign = self.digi_cfg_edit.my_call.clone();
+            self.sstv.preview_dirty = true;
         }
         self.sstv.ensure_preview(&ctx);
         ctx.request_repaint_after(Duration::from_millis(120));
@@ -3629,13 +3699,12 @@ impl SdroxideApp {
                     });
                     ui.add_space(6.0);
 
-                    // Reserve the message box + buttons; the preview fills the rest.
+                    // Preview gets a capped share of the height; the message box
+                    // grows to fill whatever's left above the buttons.
                     let btn_h = 42.0;
-                    let msg_h = 48.0;
                     let gap = 6.0;
                     ui.label(RichText::new("Preview (what is transmitted)").size(9.5).weak());
-                    let preview_h =
-                        (ui.available_height() - btn_h - msg_h - 3.0 * gap - 18.0).clamp(60.0, 280.0);
+                    let preview_h = (ui.available_height() * 0.45).clamp(80.0, 260.0);
                     egui::Frame::new()
                         .fill(Color32::from_gray(6))
                         .stroke(egui::Stroke::new(1.0, crate::theme::LINE_LIT))
@@ -3659,7 +3728,8 @@ impl SdroxideApp {
                         });
                     ui.add_space(gap);
 
-                    // Overlay message.
+                    // Overlay message — fills the remaining height above the buttons.
+                    let msg_h = (ui.available_height() - btn_h - gap).max(48.0);
                     let resp = ui.add_sized(
                         egui::vec2(inner_w, msg_h),
                         egui::TextEdit::multiline(&mut self.sstv.message)

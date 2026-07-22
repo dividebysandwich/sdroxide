@@ -376,7 +376,8 @@ Band buttons tune to that band's common SSTV calling frequency (for example
 - Type a **message** below the slots. Each line is drawn over the image in a
   different font, bold with a black outline for readability. A **live preview**
   shows exactly what will be transmitted, including a small red→black header
-  strip with "SDRoxide" and the version in the top corner.
+  strip with your **callsign** on the left and "SDRoxide" + version on the right.
+  (Set your callsign on the **General** settings tab, or the FT8 setup dialog.)
 - Press **TX** to transmit the composed image; **ABORT TX** stops a transmission
   in progress.
 - **TX slant** trims the transmit clock (in ppm) to remove slant seen on a
@@ -425,8 +426,10 @@ box) for a clean decode.
 
 ## 5. Radio and audio setup
 
-Open the **SETTINGS** button (System module). The Settings window has three
-tabs: **Radio**, **Audio**, and **UI**.
+Open the **SETTINGS** button (System module). The Settings window has four
+tabs: **General**, **Radio**, **Audio**, and **UI**. The **General** tab holds
+your **callsign** and **grid square** — the same values used by FT8/FT4, the SSTV
+image header, and the logbook (and also editable from the FT8/SSTV setup dialog).
 
 ![The Settings window](images/11-settings.png)
 

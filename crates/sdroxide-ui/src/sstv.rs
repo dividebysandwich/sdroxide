@@ -69,10 +69,17 @@ pub fn crop_scale(src_rgb: &[u8], sw: u16, sh: u16, w: u16, h: u16) -> Vec<u8> {
 
 /// Build the final transmit image: crop/scale the source to the mode size, add
 /// the header strip, then the message overlay. Returns `(rgb, w, h)`.
-pub fn compose(mode: SstvMode, src_rgb: &[u8], sw: u16, sh: u16, message: &str) -> (Vec<u8>, u16, u16) {
+pub fn compose(
+    mode: SstvMode,
+    src_rgb: &[u8],
+    sw: u16,
+    sh: u16,
+    message: &str,
+    callsign: &str,
+) -> (Vec<u8>, u16, u16) {
     let (w, h) = mode.dimensions();
     let mut img = crop_scale(src_rgb, sw, sh, w, h);
-    draw_header(&mut img, w as usize, h as usize);
+    draw_header(&mut img, w as usize, h as usize, callsign);
     draw_message(&mut img, w as usize, h as usize, message);
     (img, w, h)
 }
@@ -104,8 +111,9 @@ fn blend(img: &mut [u8], w: usize, h: usize, x: i32, y: i32, r: u8, g: u8, b: u8
     img[i + 2] = mix(img[i + 2], b);
 }
 
-/// The red→black vertical gradient strip with "SDRoxide <version>".
-fn draw_header(img: &mut [u8], w: usize, h: usize) {
+/// The red→black gradient strip: operator callsign on the left, program name +
+/// version on the right ("SDRoxide vX.Y.Z").
+fn draw_header(img: &mut [u8], w: usize, h: usize, callsign: &str) {
     let strip = HEADER_H.min(h);
     for y in 0..strip {
         // Red at the top fading to black at the bottom of the strip.
@@ -115,14 +123,18 @@ fn draw_header(img: &mut [u8], w: usize, h: usize) {
             put(img, w, h, x as i32, y as i32, r, 0, 0);
         }
     }
-    let font = fonts().into_iter().next();
-    if let Some(font) = font {
+    if let Some(font) = fonts().into_iter().next() {
         let scale = PxScale::from(11.0);
         let baseline = (strip as f32 * 0.72).round();
-        draw_text(img, w, h, 4.0, baseline, "SDRoxide", &font, scale, (255, 255, 255), 1.0);
-        let ver = format!("v{}", env!("CARGO_PKG_VERSION"));
-        let tw = text_width(&ver, &font, scale);
-        draw_text(img, w, h, w as f32 - tw - 4.0, baseline, &ver, &font, scale, (230, 230, 230), 1.0);
+        // Left: operator callsign (uppercased).
+        let call = callsign.trim().to_uppercase();
+        if !call.is_empty() {
+            draw_text(img, w, h, 4.0, baseline, &call, &font, scale, (255, 255, 255), 1.0);
+        }
+        // Right: program name + version.
+        let brand = format!("SDRoxide v{}", env!("CARGO_PKG_VERSION"));
+        let tw = text_width(&brand, &font, scale);
+        draw_text(img, w, h, w as f32 - tw - 4.0, baseline, &brand, &font, scale, (235, 235, 235), 1.0);
     }
 }
 

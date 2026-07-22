@@ -104,6 +104,29 @@ pub struct DigiStatus {
     pub tx_sent: usize,
 }
 
+impl DigiStatus {
+    /// An idle status carrying just the operator config — emitted at engine
+    /// startup so a client can seed its config editor before any digital mode is
+    /// entered.
+    pub fn idle(config: DigiConfig) -> Self {
+        DigiStatus {
+            mode: Mode::Usb,
+            step: QsoStep::Idle,
+            dx_call: None,
+            dx_grid: None,
+            tx_next: false,
+            tx_pending_msg: None,
+            audio_hz: 1500.0,
+            tx_even: config.tx_even,
+            transmitting: false,
+            transcript: Vec::new(),
+            config,
+            text_rx: String::new(),
+            tx_sent: 0,
+        }
+    }
+}
+
 /// A completed QSO, for the persistent logbook (digital or manual entry).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]

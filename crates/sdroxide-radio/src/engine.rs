@@ -490,6 +490,11 @@ fn engine_thread(
     if let Some(mic) = &engine.mic {
         engine.mic_resampler = MonoResampler::new(mic.rate, 48_000.0);
     }
+    // Seed clients with the operator config (callsign/grid/templates) up front,
+    // so the settings editors are populated even before any digital mode.
+    let _ = engine
+        .event_tx
+        .send(RadioEvent::Ft8Status(sdroxide_types::DigiStatus::idle(engine.digi_config.clone())));
     // If we start up already in a digital mode, spin up the controller.
     engine.sync_digi_mode();
     if !audio_mode {

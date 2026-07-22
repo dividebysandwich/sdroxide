@@ -250,9 +250,11 @@ impl QsoMachine {
         let dx = self.dx.as_ref();
         let dx_call = dx.map(|d| d.call.as_str()).unwrap_or("");
         let mc = &self.cfg.my_call;
-        let mg = &self.cfg.my_grid;
+        // FT8/FT4 use the 4-character Maidenhead locator; a 6-char grid like
+        // "JN78ve" is truncated to "JN78" for the transmitted message.
+        let mg: String = self.cfg.my_grid.chars().take(4).collect();
         let rpt_sent = dx.and_then(|d| d.rpt_sent);
-        let fill = |tmpl: &str, rpt: Option<i16>| DigiConfig::fill(tmpl, mc, mg, dx_call, rpt);
+        let fill = |tmpl: &str, rpt: Option<i16>| DigiConfig::fill(tmpl, mc, &mg, dx_call, rpt);
         match self.step {
             QsoStep::CallingCq => Some(fill(&self.cfg.msg_cq, None)),
             QsoStep::TxGrid => Some(fill(&self.cfg.msg_grid, None)),
@@ -319,6 +321,15 @@ mod tests {
             grid: None,
             is_cq: msg.starts_with("CQ"),
         }
+    }
+
+    #[test]
+    fn grid_truncated_to_four_for_ft8() {
+        // A 6-character locator is cut to the 4-char Maidenhead grid in messages.
+        let cfg = DigiConfig { my_call: "AB1CD".into(), my_grid: "JN78ve".into(), ..cfg() };
+        let mut q = QsoMachine::new(Mode::Ft8, cfg);
+        q.start_qso("W9XYZ".into(), Some("EM48".into()), -10, 100);
+        assert_eq!(q.plan_tx().as_deref(), Some("W9XYZ AB1CD JN78"));
     }
 
     #[test]
