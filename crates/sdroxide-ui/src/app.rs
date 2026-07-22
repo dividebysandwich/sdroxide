@@ -3308,6 +3308,8 @@ struct SstvUi {
     rx_tex: Option<egui::TextureHandle>,
     rx_id: u32,
     status: SstvStatus,
+    /// Received-gallery index currently shown enlarged in an overlay window.
+    enlarged: Option<usize>,
     /// Last VIS/free-run-detected mode we auto-applied to `tx_mode`, so a steady
     /// detection doesn't keep overriding the operator's manual mode choice.
     last_detected: Option<SstvMode>,
@@ -3332,6 +3334,7 @@ impl Default for SstvUi {
             rx_tex: None,
             rx_id: 0,
             status: SstvStatus::default(),
+            enlarged: None,
             last_detected: None,
             preview_tex: None,
             preview_dirty: true,
@@ -3419,9 +3422,7 @@ impl SdroxideApp {
     fn sstv_panel(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let ctx = ui.ctx().clone();
         self.sstv_load_disk_once(&ctx);
-        // Drain any completed file-pick. Only consume `pick_target` once the
-        // bytes have actually arrived — otherwise the pending target is cleared
-        // on the next frame, before the dialog returns, and the slot never fills.
+        // Drain a completed file-pick (only consume the target once bytes arrive).
         let picked = self.sstv.inbox.lock().ok().and_then(|mut g| g.take());
         if let Some(bytes) = picked {
             if let Some(target) = self.sstv.pick_target.take() {
@@ -3429,17 +3430,14 @@ impl SdroxideApp {
             }
         }
         self.sstv.ensure_preview(&ctx);
-        // Keep the live meter and in-progress image ticking even without input.
         ctx.request_repaint_after(Duration::from_millis(120));
 
         let st = self.sstv.status;
         let tx_active = st.tx_active;
 
-        // ── Top: Auto + mode buttons ──
+        // ── Row 1: Auto + mode chips ──
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("SSTV").size(12.0).strong().color(crate::theme::CYAN));
-            // Auto: RX auto-detects the mode; TX uses Martin 1 (or the last
-            // detected mode) until the operator picks one.
             let auto_label = if self.sstv.auto {
                 format!("Auto ({})", self.sstv.tx_mode.label())
             } else {
@@ -3461,7 +3459,9 @@ impl SdroxideApp {
                 }
             }
         });
-        // ── Signal level + activity ──
+        ui.add_space(5.0);
+
+        // ── Row 2: signal meter + activity, and the TX-slant trim ──
         ui.horizontal(|ui| {
             ui.label(RichText::new("Signal").size(10.0).weak());
             sstv_level_bar(ui, st.signal);
@@ -3484,23 +3484,19 @@ impl SdroxideApp {
             } else {
                 ui.label(RichText::new("listening…").size(10.0).weak());
             }
-        });
-        // ── TX slant / clock calibration ──
-        // Trims the transmit time-scale (ppm) to null out slant against a
-        // receiver whose sound-card clock differs from this station's. Applies to
-        // the next transmission. Disabled until the operator config is seeded so
-        // it can't overwrite the rest of the config with defaults.
-        ui.horizontal(|ui| {
+
+            ui.add_space(18.0);
+            ui.separator();
             ui.label(RichText::new("TX slant").size(10.0).weak())
                 .on_hover_text("Transmit clock trim (ppm) to remove slant on the far-end decoder");
             ui.add_enabled_ui(self.digi_cfg_seeded, |ui| {
+                ui.spacing_mut().slider_width = 130.0;
                 let resp = ui.add(
                     egui::Slider::new(&mut self.digi_cfg_edit.sstv_tx_ppm, -5000.0..=5000.0)
                         .suffix(" ppm")
                         .fixed_decimals(0),
                 );
-                let commit = resp.drag_stopped() || (resp.changed() && !resp.dragged());
-                if commit {
+                if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
                     cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
                 }
                 if ui.small_button("0").on_hover_text("Reset to 0 ppm").clicked() {
@@ -3509,156 +3505,234 @@ impl SdroxideApp {
                 }
             });
         });
-        ui.separator();
+        ui.add_space(6.0);
 
+        // ── Body: LIVE + received gallery + transmit, three columns ──
         let avail = ui.available_size();
+        let body_h = avail.y;
+        let tx_w = 440.0_f32.min((avail.x * 0.42).max(300.0));
+        let live_w = 340.0_f32.min((avail.x * 0.24).max(200.0));
+        let gallery_w = (avail.x - live_w - tx_w - 16.0).clamp(180.0, avail.x * 0.52);
+
         ui.horizontal_top(|ui| {
-            // ── Left: live incoming view + received gallery ──
-            let lw = (avail.x * 0.34).clamp(140.0, 340.0);
-            ui.allocate_ui(egui::vec2(lw, avail.y), |ui| {
-                ui.vertical(|ui| {
-                    let iw = lw - 12.0;
-                    ui.label(RichText::new("LIVE").size(10.0).weak());
+            // A received thumbnail was clicked → enlarge it (applied after the row).
+            let mut enlarge: Option<usize> = None;
+            // LIVE: the picture currently decoding, shown large.
+            sstv_section(ui, "LIVE", egui::vec2(live_w, body_h), |ui| {
+                ui.centered_and_justified(|ui| {
                     if let Some(tex) = &self.sstv.rx_tex {
-                        ui.add(egui::Image::new(tex).fit_to_exact_size(egui::vec2(iw, iw * 0.8)));
-                    } else {
-                        let (rect, _) =
-                            ui.allocate_exact_size(egui::vec2(iw, iw * 0.55), egui::Sense::hover());
-                        ui.painter().rect_filled(rect, 2.0, Color32::from_gray(12));
-                        let msg =
-                            if st.signal > 0.0008 { "waiting for VIS…" } else { "no / low audio" };
-                        ui.painter().text(
-                            rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            msg,
-                            egui::FontId::proportional(12.0),
-                            Color32::from_gray(120),
+                        ui.add(
+                            egui::Image::new(tex).max_height(body_h - 34.0).max_width(live_w - 16.0),
                         );
+                    } else {
+                        let msg = if st.signal > 0.0008 {
+                            "waiting for a signal…"
+                        } else {
+                            "no / low audio"
+                        };
+                        ui.label(RichText::new(msg).size(11.0).weak());
                     }
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("RECEIVED").size(10.0).weak());
-                    egui::ScrollArea::vertical()
-                        .id_salt("sstv-gallery")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            for r in &self.sstv.received {
-                                ui.add(egui::Image::new(&r.tex).max_width(iw));
-                                if let Some(m) = r.mode {
-                                    ui.label(RichText::new(m.label()).size(9.0).weak());
-                                }
-                                ui.add_space(3.0);
-                            }
-                        });
                 });
             });
-            ui.separator();
+            ui.add_space(8.0);
 
-            // ── Right: transmit area (reserved heights so nothing clips) ──
-            ui.vertical(|ui| {
-                let rw = ui.available_width();
-                ui.label(RichText::new("TRANSMIT").size(10.0).weak());
-
-                // Five source slots.
-                let slot_h = 60.0;
-                ui.allocate_ui(egui::vec2(rw, slot_h), |ui| {
-                    egui::ScrollArea::horizontal().id_salt("sstv-slots").show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            for i in 0..self.sstv.slots.len() {
-                                let sel = self.sstv.selected_slot == i;
-                                let size = egui::vec2(72.0, 56.0);
-                                let resp = if let Some(slot) = &self.sstv.slots[i] {
-                                    ui.add(
-                                        egui::Image::new(&slot.tex)
-                                            .fit_to_exact_size(size)
+            // RECEIVED: multi-column gallery of decoded pictures.
+            sstv_section(ui, "RECEIVED", egui::vec2(gallery_w, body_h), |ui| {
+                if self.sstv.received.is_empty() {
+                    ui.label(RichText::new("Decoded pictures collect here.").size(11.0).weak());
+                    return;
+                }
+                let thumb = egui::vec2(112.0, 90.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("sstv-gallery")
+                    .max_height(body_h - 24.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
+                            for (i, r) in self.sstv.received.iter().enumerate() {
+                                let resp = ui
+                                    .add(
+                                        egui::Image::new(&r.tex)
+                                            .fit_to_exact_size(thumb)
+                                            .corner_radius(2.0)
                                             .sense(egui::Sense::click()),
                                     )
-                                } else {
-                                    let (rect, resp) =
-                                        ui.allocate_exact_size(size, egui::Sense::click());
-                                    ui.painter().rect_stroke(
-                                        rect,
-                                        2.0,
-                                        egui::Stroke::new(1.0, Color32::from_gray(70)),
-                                        egui::StrokeKind::Inside,
-                                    );
-                                    ui.painter().text(
-                                        rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        "+",
-                                        egui::FontId::proportional(22.0),
-                                        Color32::from_gray(110),
-                                    );
-                                    resp
-                                };
-                                if sel {
-                                    ui.painter().rect_stroke(
-                                        resp.rect,
-                                        2.0,
-                                        egui::Stroke::new(2.0, crate::theme::CYAN),
-                                        egui::StrokeKind::Outside,
-                                    );
-                                }
-                                let empty = self.sstv.slots[i].is_none();
-                                if resp.double_clicked() || (resp.clicked() && empty) {
-                                    self.sstv.pick_target = Some(i);
-                                    pick_image(self.sstv.inbox.clone());
-                                } else if resp.clicked() {
-                                    self.sstv.selected_slot = i;
-                                    self.sstv.preview_dirty = true;
+                                    .on_hover_text("Click to enlarge");
+                                if resp.clicked() {
+                                    enlarge = Some(i);
                                 }
                             }
                         });
                     });
-                });
+            });
+            if let Some(i) = enlarge {
+                self.sstv.enlarged = Some(i);
+            }
 
-                // Reserve the message box + buttons; the preview takes the rest.
-                let btn_h = 28.0;
-                let msg_h = 44.0;
-                let gap = 6.0;
-                let preview_h = (ui.available_height() - btn_h - msg_h - 2.0 * gap).max(48.0);
-                ui.allocate_ui(egui::vec2(rw, preview_h), |ui| {
-                    if let Some(tex) = &self.sstv.preview_tex {
-                        ui.add(egui::Image::new(tex).max_height(preview_h).max_width(rw));
-                    } else {
-                        ui.label(
-                            RichText::new("Pick an image slot to build the transmit preview.")
-                                .size(11.0)
-                                .weak(),
-                        );
-                    }
-                });
+            ui.add_space(8.0);
 
-                let resp = ui.add_sized(
-                    egui::vec2(rw, msg_h),
-                    egui::TextEdit::multiline(&mut self.sstv.message)
-                        .hint_text("Message — one font per line, drawn on the image"),
-                );
-                if resp.changed() {
-                    self.sstv.preview_dirty = true;
-                }
+            // RIGHT: fixed-width transmit compositor.
+            ui.allocate_ui(egui::vec2(tx_w, body_h), |ui| {
+                sstv_section(ui, "TRANSMIT", egui::vec2(tx_w, body_h), |ui| {
+                    let inner_w = tx_w - 16.0;
 
-                ui.horizontal(|ui| {
-                    let can_tx = self.sstv.slots.get(self.sstv.selected_slot).map(|s| s.is_some())
-                        == Some(true)
-                        && !tx_active;
-                    let tx = ui.add_enabled(
-                        can_tx,
-                        egui::Button::new(RichText::new("  TX  ").strong().color(Color32::WHITE))
-                            .fill(crate::theme::PINK),
-                    );
-                    if tx.clicked() {
-                        if let Some(png) = self.sstv.compose_png() {
-                            cmds.push(Command::SstvTx { mode: self.sstv.tx_mode, png });
+                    // Five source slots.
+                    ui.label(RichText::new("Image slots").size(9.5).weak());
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 5.0;
+                        for i in 0..self.sstv.slots.len() {
+                            let sel = self.sstv.selected_slot == i;
+                            let size = egui::vec2(70.0, 54.0);
+                            let resp = if let Some(slot) = &self.sstv.slots[i] {
+                                ui.add(
+                                    egui::Image::new(&slot.tex)
+                                        .fit_to_exact_size(size)
+                                        .corner_radius(2.0)
+                                        .sense(egui::Sense::click()),
+                                )
+                            } else {
+                                let (rect, resp) =
+                                    ui.allocate_exact_size(size, egui::Sense::click());
+                                ui.painter().rect_stroke(
+                                    rect,
+                                    2.0,
+                                    egui::Stroke::new(1.0, Color32::from_gray(70)),
+                                    egui::StrokeKind::Inside,
+                                );
+                                ui.painter().text(
+                                    rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    "+",
+                                    egui::FontId::proportional(22.0),
+                                    Color32::from_gray(110),
+                                );
+                                resp
+                            };
+                            if sel {
+                                ui.painter().rect_stroke(
+                                    resp.rect,
+                                    2.0,
+                                    egui::Stroke::new(2.0, crate::theme::CYAN),
+                                    egui::StrokeKind::Outside,
+                                );
+                            }
+                            let empty = self.sstv.slots[i].is_none();
+                            if resp.double_clicked() || (resp.clicked() && empty) {
+                                self.sstv.pick_target = Some(i);
+                                pick_image(self.sstv.inbox.clone());
+                            } else if resp.clicked() {
+                                self.sstv.selected_slot = i;
+                                self.sstv.preview_dirty = true;
+                            }
                         }
+                    });
+                    ui.add_space(6.0);
+
+                    // Reserve the message box + buttons; the preview fills the rest.
+                    let btn_h = 42.0;
+                    let msg_h = 48.0;
+                    let gap = 6.0;
+                    ui.label(RichText::new("Preview (what is transmitted)").size(9.5).weak());
+                    let preview_h =
+                        (ui.available_height() - btn_h - msg_h - 3.0 * gap - 18.0).clamp(60.0, 280.0);
+                    egui::Frame::new()
+                        .fill(Color32::from_gray(6))
+                        .stroke(egui::Stroke::new(1.0, crate::theme::LINE_LIT))
+                        .inner_margin(2.0)
+                        .show(ui, |ui| {
+                            ui.set_min_size(egui::vec2(inner_w, preview_h));
+                            ui.set_max_size(egui::vec2(inner_w, preview_h));
+                            ui.centered_and_justified(|ui| {
+                                if let Some(tex) = &self.sstv.preview_tex {
+                                    ui.add(
+                                        egui::Image::new(tex)
+                                            .max_height(preview_h - 4.0)
+                                            .max_width(inner_w - 4.0),
+                                    );
+                                } else {
+                                    ui.label(
+                                        RichText::new("Pick an image slot →").size(11.0).weak(),
+                                    );
+                                }
+                            });
+                        });
+                    ui.add_space(gap);
+
+                    // Overlay message.
+                    let resp = ui.add_sized(
+                        egui::vec2(inner_w, msg_h),
+                        egui::TextEdit::multiline(&mut self.sstv.message)
+                            .hint_text("Message — one font per line, drawn on the image"),
+                    );
+                    if resp.changed() {
+                        self.sstv.preview_dirty = true;
                     }
-                    let abort =
-                        ui.add_enabled(tx_active, egui::Button::new(RichText::new(" ABORT TX ")));
-                    if abort.clicked() {
-                        cmds.push(Command::DigiAbortTx);
-                    }
+                    ui.add_space(gap);
+
+                    // Large cut-corner TX / ABORT buttons.
+                    ui.horizontal(|ui| {
+                        let can_tx = self.sstv.slots.get(self.sstv.selected_slot).map(|s| s.is_some())
+                            == Some(true)
+                            && !tx_active;
+                        let tx = ui
+                            .add_enabled_ui(can_tx, |ui| {
+                                crate::chrome::chip_accent(
+                                    ui,
+                                    can_tx,
+                                    RichText::new("   TX   ").size(16.0).strong(),
+                                    crate::theme::PINK,
+                                    Color32::WHITE,
+                                )
+                            })
+                            .inner;
+                        if tx.clicked() {
+                            if let Some(png) = self.sstv.compose_png() {
+                                cmds.push(Command::SstvTx { mode: self.sstv.tx_mode, png });
+                            }
+                        }
+                        ui.add_space(8.0);
+                        let abort = ui
+                            .add_enabled_ui(tx_active, |ui| {
+                                crate::chrome::chip(
+                                    ui,
+                                    false,
+                                    RichText::new(" ABORT TX ").size(15.0).strong(),
+                                )
+                            })
+                            .inner;
+                        if abort.clicked() {
+                            cmds.push(Command::DigiAbortTx);
+                        }
+                    });
                 });
             });
         });
+
+        // Enlarged view of a clicked received image (overlay window).
+        if let Some(idx) = self.sstv.enlarged {
+            let mut open = true;
+            if let Some(r) = self.sstv.received.get(idx) {
+                egui::Window::new("Received image")
+                    .open(&mut open)
+                    .collapsible(false)
+                    .resizable(true)
+                    .default_size([660.0, 528.0])
+                    .frame(crate::chrome::window_frame())
+                    .show(&ctx, |ui| {
+                        // Scale up to fill the window width (preserving aspect).
+                        let native = r.tex.size_vec2();
+                        let avail_w = ui.available_width().min(1000.0);
+                        let scale = (avail_w / native.x.max(1.0)).clamp(1.0, 4.0);
+                        ui.add(egui::Image::new(&r.tex).fit_to_exact_size(native * scale));
+                    });
+            } else {
+                open = false;
+            }
+            if !open {
+                self.sstv.enlarged = None;
+            }
+        }
     }
 
     /// On first entry, load any persisted transmit slots and received gallery
@@ -3775,6 +3849,34 @@ fn sstv_load_gallery() -> Vec<(Vec<u8>, u16, u16)> {
 #[cfg(target_arch = "wasm32")]
 fn sstv_load_gallery() -> Vec<(Vec<u8>, u16, u16)> {
     Vec::new()
+}
+
+/// A titled, bordered section box of a fixed size, for the SSTV panel's LIVE /
+/// RECEIVED / TRANSMIT areas.
+fn sstv_section<R>(
+    ui: &mut egui::Ui,
+    title: &str,
+    size: egui::Vec2,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    // Force a top-down layout: `allocate_ui` would otherwise inherit the parent's
+    // horizontal layout (we're inside a `horizontal_top`), laying the section's
+    // contents out side by side instead of stacked.
+    ui.allocate_ui_with_layout(size, egui::Layout::top_down(egui::Align::Min), |ui| {
+        egui::Frame::new()
+            .fill(crate::theme::ROW_BG)
+            .stroke(egui::Stroke::new(1.0, crate::theme::LINE_LIT))
+            .inner_margin(egui::Margin { left: 8, right: 8, top: 5, bottom: 7 })
+            .show(ui, |ui| {
+                ui.set_min_size(egui::vec2(size.x - 16.0, size.y - 12.0));
+                ui.set_max_width(size.x - 16.0);
+                ui.label(RichText::new(title).size(9.5).strong().color(crate::theme::CYAN_DIM));
+                ui.add_space(3.0);
+                add(ui)
+            })
+            .inner
+    })
+    .inner
 }
 
 /// A small horizontal signal-activity meter (level ~0..1), so the operator can

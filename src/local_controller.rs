@@ -60,7 +60,7 @@ impl RadioController for LocalController {
             return Some(ev);
         }
         if self.spectrum.update() {
-            let f = self.spectrum.peek_output_buffer();
+            let f = self.spectrum.output_buffer();
             if !f.bins.is_empty() {
                 return Some(RadioEvent::Spectrum(f.clone()));
             }
