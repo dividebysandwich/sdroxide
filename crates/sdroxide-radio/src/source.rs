@@ -91,6 +91,10 @@ pub trait IqSource: Send {
         Err(crate::RadioError::Msg("device has no audio TX path".into()))
     }
 
+    /// Block until queued TX audio has been played out, so PTT can be released
+    /// without cutting off the tail of a burst. Default: nothing is buffered.
+    fn tx_drain(&mut self) {}
+
     /// A user-facing warning captured while opening the source (e.g. the radio
     /// audio device was unavailable, or a mono card was selected for IQ), or
     /// `None` when the source came up cleanly. Surfaced in the UI so a silent

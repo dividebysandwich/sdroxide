@@ -235,4 +235,19 @@ impl IqSource for AudioCatSource {
         }
         Ok(())
     }
+
+    fn tx_drain(&mut self) {
+        // The output ring holds ~1 s; wait for it to play out before PTT is
+        // released so the tail of a burst (critical for FT8 decode) isn't cut.
+        if let Some((_, producer)) = self.out.as_ref() {
+            let cap = producer.buffer().capacity();
+            for _ in 0..1000 {
+                let buffered = cap.saturating_sub(producer.slots());
+                if buffered <= cap / 40 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+    }
 }

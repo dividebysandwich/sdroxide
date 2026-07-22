@@ -689,7 +689,23 @@ impl Engine {
                 let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
             }
             ControlUpdate::Mode(m) => {
-                if self.state.rx[0].mode != m {
+                let cur = self.state.rx[0].mode;
+                let same_class = rig_mode_class(cur) == rig_mode_class(m);
+                if cur.is_digital() {
+                    // Digital modes (FT8/FT4/PSK/RTTY/SSTV) are app-driven and
+                    // always ride on USB. Never leave the digital mode because of
+                    // a rig report; if the rig drifted onto another sideband (e.g.
+                    // per-band mode memory switching to LSB on 40/80 m), command
+                    // it straight back. Re-commanding USB just echoes USB, which
+                    // is same-class and ignored, so this settles (no feedback).
+                    if !same_class {
+                        let _ = self.source.set_control_mode(cur);
+                    }
+                    return;
+                }
+                // Non-digital: follow the operator's rig, but only when the
+                // underlying rig class actually changed (ignore USB↔DIGU echoes).
+                if !same_class {
                     let r = &mut self.state.rx[0];
                     r.mode = m;
                     (r.filter_lo, r.filter_hi) = m.default_filter();
@@ -698,8 +714,7 @@ impl Engine {
                     // carried entirely in the sign of the filter edges, so
                     // without this the internal demod (e.g. TCI wideband-IQ RX)
                     // keeps the old sideband while state/UI already show the new
-                    // mode — the LSB-shows-but-demodulates-USB desync. Don't
-                    // re-command the rig: this update came *from* it.
+                    // mode — the LSB-shows-but-demodulates-USB desync.
                     if let Some(c) = self.chain_mut(RxId::Main) {
                         c.build_for_mode(&snapshot);
                     }
@@ -1520,7 +1535,9 @@ impl Engine {
         }
 
         if done {
-            // Burst finished: unkey and let the QSO machine advance.
+            // Burst finished: drain any queued audio, then unkey and let the QSO
+            // machine advance.
+            self.source.tx_drain();
             self.digi_tx = false;
             self.state.tx.ptt = false;
             self.sync_tx_state();
@@ -1574,6 +1591,9 @@ impl Engine {
         self.source.tx_write_audio(&audio)?;
 
         if burst_done {
+            // Let the ~1 s of queued audio play out before dropping PTT, so the
+            // rig transmits the whole burst (FT8 needs every symbol).
+            self.source.tx_drain();
             self.digi_tx = false;
             self.state.tx.ptt = false;
             self.sync_tx_state();
@@ -1615,6 +1635,20 @@ impl Engine {
                     .send(RadioEvent::ConnectionLost(format!("retune failed: {e}")));
             }
         }
+    }
+}
+
+/// The underlying rig mode class a `Mode` commands over CAT/TCI (USB/LSB/CW/
+/// AM/FM). Digital/data modes ride on a sideband, so a rig reporting that plain
+/// sideband must not be mistaken for the operator leaving the digital mode.
+fn rig_mode_class(m: Mode) -> u8 {
+    match m {
+        Mode::Lsb | Mode::Digl => 0,
+        Mode::Usb | Mode::Digu | Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty | Mode::Sstv
+        | Mode::Spec => 1,
+        Mode::Am | Mode::Sam | Mode::Dsb => 2,
+        Mode::Cw => 3,
+        Mode::Nfm | Mode::Wfm => 5,
     }
 }
 
