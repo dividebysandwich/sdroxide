@@ -116,6 +116,42 @@ pub fn is_auto_digi(hz: f64) -> bool {
         || WSPR_DIALS.iter().any(|&f| (f - 100.0..=f + 400.0).contains(&hz))
 }
 
+/// The narrow sub-bands where PSK31 activity clusters (IARU Region 1). The PSK
+/// skimmer runs only here, not across the whole digi segment.
+const PSK_RANGES: &[(f64, f64)] = &[
+    (1_838_000.0, 1_840_000.0), // 160m
+    (3_580_000.0, 3_583_000.0), // 80m
+    (7_038_000.0, 7_042_000.0), // 40m
+    (10_139_000.0, 10_142_000.0), // 30m
+    (14_070_000.0, 14_073_000.0), // 20m (below FT8 @ 14.074)
+    (18_097_000.0, 18_100_000.0), // 17m (below FT8 @ 18.100)
+    (21_070_000.0, 21_073_000.0), // 15m
+    (24_920_000.0, 24_923_000.0), // 12m
+    (28_118_000.0, 28_122_000.0), // 10m
+];
+
+/// The sub-bands where RTTY activity clusters (IARU Region 1).
+const RTTY_RANGES: &[(f64, f64)] = &[
+    (3_580_000.0, 3_600_000.0), // 80m
+    (7_040_000.0, 7_050_000.0), // 40m
+    (10_140_000.0, 10_150_000.0), // 30m
+    (14_083_000.0, 14_099_000.0), // 20m (above FT4 @ 14.080)
+    (18_101_000.0, 18_109_000.0), // 17m
+    (21_080_000.0, 21_120_000.0), // 15m
+    (24_921_000.0, 24_930_000.0), // 12m
+    (28_083_000.0, 28_120_000.0), // 10m
+];
+
+/// True in a PSK31 calling sub-band (and clear of the automatic modes).
+pub fn is_psk_segment(hz: f64) -> bool {
+    !is_auto_digi(hz) && PSK_RANGES.iter().any(|&(lo, hi)| (lo..=hi).contains(&hz))
+}
+
+/// True in an RTTY sub-band (and clear of the automatic modes).
+pub fn is_rtty_segment(hz: f64) -> bool {
+    !is_auto_digi(hz) && RTTY_RANGES.iter().any(|&(lo, hi)| (lo..=hi).contains(&hz))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,6 +167,20 @@ mod tests {
         // Outside any HF ham segment.
         assert_eq!(segment_kind_at(15_000_000.0), None);
         assert!(!is_cw_segment(15_000_000.0));
+    }
+
+    #[test]
+    fn psk_rtty_subbands() {
+        // 20m PSK area, clear of FT8 (14.074).
+        assert!(is_psk_segment(14_072_000.0));
+        assert!(!is_psk_segment(14_074_000.0)); // FT8
+        assert!(!is_psk_segment(14_090_000.0)); // RTTY area, not PSK
+        assert!(!is_psk_segment(14_200_000.0)); // phone
+        // 20m RTTY area, clear of FT4 (14.080) and WSPR (14.0956).
+        assert!(is_rtty_segment(14_090_000.0));
+        assert!(!is_rtty_segment(14_081_000.0)); // FT4
+        assert!(!is_rtty_segment(14_095_600.0)); // WSPR
+        assert!(!is_rtty_segment(14_072_000.0)); // PSK area, not RTTY
     }
 
     #[test]

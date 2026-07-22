@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use rustfft::{Fft, FftPlanner};
 use sdroxide_dsp::{BaudotRx, BpskCore, Complex32 as C32};
-use sdroxide_types::{SkimmerKind, SkimmerSpot, is_auto_digi, is_digi_segment};
+use sdroxide_types::{SkimmerKind, SkimmerSpot, is_psk_segment, is_rtty_segment};
 
 use crate::callsign::find_callsign;
 
@@ -279,7 +279,13 @@ impl DigiSkimmer {
             }
             if self.smooth_power[k] > floor * SMOOTH_ON {
                 let abs_hz = self.skim_center_hz + off as f64 * bin_hz;
-                if is_digi_segment(abs_hz) && !is_auto_digi(abs_hz) {
+                // Restrict each skimmer to its mode's well-known calling sub-bands
+                // (PSK31 / RTTY areas per band) — not the whole digi segment.
+                let in_band = match self.kind {
+                    SkimmerKind::Rtty => is_rtty_segment(abs_hz),
+                    _ => is_psk_segment(abs_hz),
+                };
+                if in_band {
                     cands.push((self.smooth_power[k], off));
                 }
             }

@@ -1114,7 +1114,8 @@ impl Engine {
             match action {
                 SkimmerAction::Spots(mut spots) => {
                     // CW spots are gated to CW segments here; PSK/RTTY spots are
-                    // already gated to digi segments inside the digi skimmer.
+                    // already gated to their per-band calling sub-bands inside the
+                    // digi skimmer.
                     spots.retain(|s| match s.kind {
                         sdroxide_types::SkimmerKind::Cw => {
                             sdroxide_types::is_cw_segment(s.freq_hz)
