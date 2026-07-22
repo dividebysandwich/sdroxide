@@ -269,9 +269,128 @@ impl PskTx {
 
 // ─────────────────────────────── receive ───────────────────────────────
 
-/// Streaming BPSK31 receiver. Feed audio with [`PskRx::process`]; it returns any
-/// newly decoded text. Down-converts at `carrier_hz`, so retune by
-/// [`PskRx::set_carrier`] when the operator moves the tuning line.
+/// Varicode bit-stream decoder: accumulates bits and yields a character on each
+/// `00` separator. Shared by the audio [`PskRx`] and the wideband skimmer.
+pub struct VaricodeRx {
+    rx_word: String,
+    map: HashMap<&'static str, char>,
+}
+
+impl VaricodeRx {
+    pub fn new() -> Self {
+        VaricodeRx { rx_word: String::new(), map: revmap() }
+    }
+
+    /// Feed one differential bit; returns the decoded character at a `00`
+    /// boundary (or `None` while a code is still accumulating).
+    pub fn push_bit(&mut self, bit: u8) -> Option<char> {
+        self.rx_word.push(if bit == 1 { '1' } else { '0' });
+        if self.rx_word.ends_with("00") {
+            let code = &self.rx_word[..self.rx_word.len() - 2];
+            let c = if code.is_empty() { None } else { self.map.get(code).copied() };
+            self.rx_word.clear();
+            c
+        } else {
+            if self.rx_word.len() > 20 {
+                self.rx_word.clear(); // no terminator in a plausible length — resync
+            }
+            None
+        }
+    }
+}
+
+impl Default for VaricodeRx {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Streaming BPSK31 symbol decoder over *complex baseband* at `sps` samples per
+/// symbol: a Costas loop removes any residual carrier offset, a Gardner loop
+/// recovers symbol timing, differential detection yields bits, and Varicode
+/// yields text. Shared by the audio [`PskRx`] (well-oversampled) and the
+/// skimmer (a coarse ~6 sps filterbank tap, where the Costas loop is essential).
+pub struct BpskCore {
+    sps: f32,
+    ph: f32,
+    freq: f32,
+    alpha: f32,
+    beta: f32,
+    acc: f32,
+    hist: VecDeque<Complex32>,
+    prev_sym: Complex32,
+    vrx: VaricodeRx,
+    mag: f32,
+}
+
+impl BpskCore {
+    pub fn new(sps: f32) -> Self {
+        // Costas loop gains for a modest tracking bandwidth (~1% of symbol rate).
+        let bw = 0.008f32;
+        let mut hist = VecDeque::new();
+        hist.extend(std::iter::repeat(Complex32::new(0.0, 0.0)).take(sps as usize + 2));
+        BpskCore {
+            sps,
+            ph: 0.0,
+            freq: 0.0,
+            alpha: 2.0 * bw,
+            beta: bw * bw,
+            acc: 0.0,
+            hist,
+            prev_sym: Complex32::new(1.0, 0.0),
+            vrx: VaricodeRx::new(),
+            mag: 0.0,
+        }
+    }
+
+    pub fn magnitude(&self) -> f32 {
+        self.mag
+    }
+
+    /// Feed one complex baseband sample; push any decoded characters to `out`.
+    pub fn push(&mut self, z: Complex32, out: &mut String) {
+        // Costas loop: derotate by the tracked phase, then a decision-directed
+        // BPSK error nudges phase/frequency to null any residual carrier offset.
+        let rot = Complex32::new(self.ph.cos(), -self.ph.sin());
+        let y = z * rot;
+        let e = (if y.re >= 0.0 { y.im } else { -y.im }).clamp(-1.0, 1.0);
+        self.freq = (self.freq + self.beta * e).clamp(-0.4, 0.4);
+        self.ph += self.freq + self.alpha * e;
+        if self.ph > std::f32::consts::PI {
+            self.ph -= std::f32::consts::TAU;
+        } else if self.ph < -std::f32::consts::PI {
+            self.ph += std::f32::consts::TAU;
+        }
+
+        self.hist.push_back(y);
+        if self.hist.len() > self.sps as usize + 2 {
+            self.hist.pop_front();
+        }
+        self.acc += 1.0;
+        if self.acc >= self.sps {
+            self.acc -= self.sps;
+            let curr = y;
+            // Gardner timing (sample at symbol center + half-symbol prior).
+            let midi = self.hist.len().saturating_sub(self.sps as usize / 2 + 1);
+            let mid = *self.hist.get(midi).unwrap_or(&curr);
+            let et = (mid.conj() * (curr - self.prev_sym)).re;
+            self.acc += (-0.02 * et).clamp(-1.0, 1.0);
+            // Differential BPSK detection (immune to the Costas ± ambiguity).
+            let d = curr * self.prev_sym.conj();
+            let bit = if d.re >= 0.0 { 1u8 } else { 0 };
+            self.mag += 0.05 * (curr.norm() - self.mag);
+            self.prev_sym = curr;
+            if let Some(c) = self.vrx.push_bit(bit) {
+                out.push(c);
+            }
+        }
+    }
+}
+
+/// Streaming BPSK31 receiver over *real audio*. Feed audio with
+/// [`PskRx::process`]; it returns any newly decoded text. Down-converts at
+/// `carrier_hz`, so retune by [`PskRx::set_carrier`] when the operator moves the
+/// tuning line.
 pub struct PskRx {
     rate: f64,
     carrier: f64,
@@ -280,12 +399,7 @@ pub struct PskRx {
     lpf: ComplexFir,
     decim: usize,
     dcount: usize,
-    hist: VecDeque<Complex32>,
-    acc: f32,
-    prev_sym: Complex32,
-    rx_word: String,
-    map: HashMap<&'static str, char>,
-    mag: f32,
+    core: BpskCore,
 }
 
 impl PskRx {
@@ -294,7 +408,7 @@ impl PskRx {
         // Complex low-pass ~±80 Hz around the carrier (PSK31 is ~±16 Hz wide;
         // extra margin tolerates mistuning).
         let taps = bandpass_taps(129, -80.0, 80.0, rate);
-        let mut rx = PskRx {
+        PskRx {
             rate,
             carrier: carrier_hz,
             ph: 0.0,
@@ -302,15 +416,8 @@ impl PskRx {
             lpf: ComplexFir::new(taps),
             decim,
             dcount: 0,
-            hist: VecDeque::with_capacity(SPS + 4),
-            acc: 0.0,
-            prev_sym: Complex32::new(1.0, 0.0),
-            rx_word: String::new(),
-            map: revmap(),
-            mag: 0.0,
-        };
-        rx.hist.extend(std::iter::repeat(Complex32::new(0.0, 0.0)).take(SPS + 2));
-        rx
+            core: BpskCore::new(SPS as f32),
+        }
     }
 
     pub fn set_carrier(&mut self, carrier_hz: f64) {
@@ -319,18 +426,15 @@ impl PskRx {
         self.lpf.reset();
     }
 
-    /// Rough tuning/quality magnitude (average symbol amplitude); useful as a
-    /// signal indicator on the tuning line.
+    /// Rough tuning/quality magnitude (average symbol amplitude).
     pub fn magnitude(&self) -> f32 {
-        self.mag
+        self.core.magnitude()
     }
 
     /// Feed a block of real audio (at the constructor's `rate`); returns any
     /// newly decoded characters.
     pub fn process(&mut self, audio: &[f32]) -> String {
         let mut out = String::new();
-        let mut bb = Vec::with_capacity(audio.len());
-        // Down-convert to complex baseband.
         let mut mixed = Vec::with_capacity(audio.len());
         for &a in audio {
             let z = Complex32::new(a * self.ph.cos(), -a * self.ph.sin());
@@ -340,51 +444,17 @@ impl PskRx {
             }
             mixed.push(z);
         }
+        let mut bb = Vec::with_capacity(audio.len());
         self.lpf.process(&mixed, &mut bb);
         for z in bb {
-            // Decimate to ~SPS samples/symbol.
             self.dcount += 1;
             if self.dcount < self.decim {
                 continue;
             }
             self.dcount = 0;
-            self.hist.push_back(z);
-            if self.hist.len() > SPS + 2 {
-                self.hist.pop_front();
-            }
-            self.acc += 1.0;
-            if self.acc >= SPS as f32 {
-                self.acc -= SPS as f32;
-                let curr = z;
-                // Gardner timing: sample at symbol center and half-symbol prior.
-                let mid = *self.hist.get(self.hist.len().saturating_sub(SPS / 2 + 1)).unwrap_or(&curr);
-                let e = (mid.conj() * (curr - self.prev_sym)).re;
-                self.acc += (-0.02 * e).clamp(-2.0, 2.0);
-                // Differential BPSK detection.
-                let d = curr * self.prev_sym.conj();
-                let bit = if d.re >= 0.0 { 1u8 } else { 0 };
-                self.mag += 0.05 * (curr.norm() - self.mag);
-                self.prev_sym = curr;
-                self.push_bit(bit, &mut out);
-            }
+            self.core.push(z, &mut out);
         }
         out
-    }
-
-    fn push_bit(&mut self, bit: u8, out: &mut String) {
-        self.rx_word.push(if bit == 1 { '1' } else { '0' });
-        if self.rx_word.ends_with("00") {
-            let code = &self.rx_word[..self.rx_word.len() - 2];
-            if !code.is_empty() {
-                if let Some(&c) = self.map.get(code) {
-                    out.push(c);
-                }
-            }
-            self.rx_word.clear();
-        } else if self.rx_word.len() > 20 {
-            // No valid terminator in a plausible length — resync.
-            self.rx_word.clear();
-        }
     }
 }
 
@@ -417,11 +487,13 @@ mod tests {
 
         let msg = "CQ CQ DE AB1CD K";
         tx.push_text(msg);
-        // Render until the whole message has been sent, plus trailing idle.
-        while !tx.drained() {
+        // Bounded on sent-char progress (never on block/symbol alignment).
+        let mut guard = 0;
+        while tx.sent_chars() < tx.total_chars() && guard < 4000 {
             let mut b = [0.0f32; 2000];
             tx.next_block(&mut b);
             audio.extend_from_slice(&b);
+            guard += 1;
         }
         let mut tail = [0.0f32; 4000];
         tx.next_block(&mut tail);

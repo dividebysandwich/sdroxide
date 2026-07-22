@@ -91,6 +91,31 @@ pub fn is_digi_segment(hz: f64) -> bool {
     segment_kind_at(hz) == Some(SegmentKind::Digi)
 }
 
+/// FT8 dial frequencies (Hz); each mode occupies ~3 kHz of USB audio above it.
+const FT8_DIALS: &[f64] = &[
+    1_840_000.0, 3_573_000.0, 7_074_000.0, 10_136_000.0, 14_074_000.0, 18_100_000.0,
+    21_074_000.0, 24_915_000.0, 28_074_000.0,
+];
+/// FT4 dial frequencies (Hz).
+const FT4_DIALS: &[f64] = &[
+    3_575_000.0, 7_047_500.0, 10_140_000.0, 14_080_000.0, 18_104_000.0, 21_140_000.0,
+    24_919_000.0, 28_180_000.0,
+];
+/// WSPR dial frequencies (Hz); a ~200 Hz slice above each.
+const WSPR_DIALS: &[f64] = &[
+    1_836_600.0, 3_568_600.0, 7_038_600.0, 10_138_700.0, 14_095_600.0, 18_104_600.0,
+    21_094_600.0, 24_924_600.0, 28_124_600.0,
+];
+
+/// True where the *automatic* digital modes (FT8/FT4/WSPR) live. The PSK/RTTY
+/// skimmers skip these sub-slices of the digi segment — their DSP would only
+/// produce garbage from FT8/FT4/WSPR signals.
+pub fn is_auto_digi(hz: f64) -> bool {
+    FT8_DIALS.iter().any(|&f| (f - 100.0..=f + 3100.0).contains(&hz))
+        || FT4_DIALS.iter().any(|&f| (f - 100.0..=f + 3100.0).contains(&hz))
+        || WSPR_DIALS.iter().any(|&f| (f - 100.0..=f + 400.0).contains(&hz))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

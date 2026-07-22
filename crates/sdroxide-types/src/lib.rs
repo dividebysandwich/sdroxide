@@ -21,7 +21,9 @@ mod state;
 mod ui;
 
 pub use band::Band;
-pub use band_segments::{Segment, SegmentKind, is_cw_segment, is_digi_segment, segment_kind_at};
+pub use band_segments::{
+    Segment, SegmentKind, is_auto_digi, is_cw_segment, is_digi_segment, segment_kind_at,
+};
 pub use caps::{DeviceCaps, Direction, GainElement};
 pub use command::Command;
 pub use controller::{AudioDevices, RadioController, RadioEvent};

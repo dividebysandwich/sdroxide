@@ -8,7 +8,7 @@ use eframe::egui::{
     self, Align2, Color32, CursorIcon, FontId, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui,
     pos2, vec2,
 };
-use sdroxide_types::{Command, Mode, RadioState, RxId, SkimmerSpot, SpectrumFrame, Vfo};
+use sdroxide_types::{Command, Mode, RadioState, RxId, SkimmerKind, SkimmerSpot, SpectrumFrame, Vfo};
 
 use crate::view::ViewState;
 use crate::waterfall_gpu::WaterfallCallback;
@@ -574,19 +574,35 @@ pub fn show_ext(
         if resp.clicked() {
             if let Some(pos) = resp.interact_pointer_pos() {
                 if let Some(sb) = spot_boxes.iter().find(|b| b.rect.contains(pos)) {
-                    let spot_hz = skimmer[sb.idx].freq_hz;
+                    let spot = &skimmer[sb.idx];
+                    let spot_hz = spot.freq_hz;
                     if digi_audio_hz.is_some() {
                         // FT8 station box: set the audio TX offset to it.
                         let audio = (spot_hz - state.rx_freq_hz()) as f32;
                         cmds.push(Command::SetDigiAudioFreq(audio.clamp(200.0, 3500.0)));
                     } else {
-                        // CW skimmer box: put the dial a sidetone-pitch below the
-                        // signal so it lands inside the CW filter, and switch to
-                        // CW. (CW is USB-side; the passband is centred on ~700 Hz.)
-                        let (lo, hi) = Mode::Cw.default_filter();
-                        let pitch = ((lo + hi) * 0.5) as f64;
-                        cmds.push(Command::SetVfo { vfo: state.active_vfo, hz: spot_hz - pitch });
-                        cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+                        // Skimmer spot: switch to the spot's mode and tune onto it.
+                        match spot.kind {
+                            SkimmerKind::Cw => {
+                                // Dial a sidetone-pitch below so it lands in the
+                                // CW filter (CW is USB-side, ~700 Hz passband).
+                                let (lo, hi) = Mode::Cw.default_filter();
+                                let pitch = ((lo + hi) * 0.5) as f64;
+                                cmds.push(Command::SetVfo { vfo: state.active_vfo, hz: spot_hz - pitch });
+                                cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+                            }
+                            SkimmerKind::Psk | SkimmerKind::Rtty => {
+                                // Put the signal at a fixed audio offset and open
+                                // the PSK/RTTY panel there for a clean decode.
+                                const AF: f64 = 1500.0;
+                                cmds.push(Command::SetVfo {
+                                    vfo: state.active_vfo,
+                                    hz: spot_hz - AF,
+                                });
+                                cmds.push(Command::SetMode { rx: RxId::Main, mode: spot.kind.mode() });
+                                cmds.push(Command::SetDigiAudioFreq(AF as f32));
+                            }
+                        }
                     }
                 } else if digi_audio_hz.is_some() {
                     // Digital mode: set the audio TX offset, not the VFO.

@@ -1113,9 +1113,14 @@ impl Engine {
         for action in sk.poll() {
             match action {
                 SkimmerAction::Spots(mut spots) => {
-                    // The CW skimmer scans the whole window; only report spots
-                    // that fall in a CW band segment (ignore digi/phone areas).
-                    spots.retain(|s| sdroxide_types::is_cw_segment(s.freq_hz));
+                    // CW spots are gated to CW segments here; PSK/RTTY spots are
+                    // already gated to digi segments inside the digi skimmer.
+                    spots.retain(|s| match s.kind {
+                        sdroxide_types::SkimmerKind::Cw => {
+                            sdroxide_types::is_cw_segment(s.freq_hz)
+                        }
+                        _ => true,
+                    });
                     let _ = self.event_tx.send(RadioEvent::SkimmerSpots(spots));
                 }
             }

@@ -49,6 +49,46 @@ fn figure_code(c: char) -> Option<u8> {
     (0u8..32).find(|&v| figure_char(v) == Some(c))
 }
 
+/// Baudot value → character with LTRS/FIGS shift state. Shared by the audio
+/// [`RttyRx`] and the wideband skimmer (both frame characters themselves and
+/// hand the 5-bit value here).
+#[derive(Default)]
+pub struct BaudotRx {
+    figs: bool,
+}
+
+impl BaudotRx {
+    pub fn new() -> Self {
+        BaudotRx { figs: false }
+    }
+
+    /// Decode a 5-bit Baudot value; returns the character, or `None` for shift
+    /// codes and ignored controls.
+    pub fn decode(&mut self, value: u8) -> Option<char> {
+        match value {
+            LTRS => {
+                self.figs = false;
+                None
+            }
+            FIGS => {
+                self.figs = true;
+                None
+            }
+            BAUDOT_SPACE => Some(' '),
+            BAUDOT_LF => Some('\n'),
+            BAUDOT_CR => None, // ignore CR; LF drives newlines
+            0 => None,
+            v => {
+                if self.figs {
+                    figure_char(v)
+                } else {
+                    letter_char(v)
+                }
+            }
+        }
+    }
+}
+
 // ─────────────────────────────── transmit ───────────────────────────────
 
 struct TxBit {
@@ -210,7 +250,7 @@ pub struct RttyRx {
     nbits: u8,
     value: u8,
     last_mark: bool,
-    figs: bool,
+    baudot: BaudotRx,
     mag: f32,
 }
 
@@ -232,7 +272,7 @@ impl RttyRx {
             nbits: 0,
             value: 0,
             last_mark: true,
-            figs: false,
+            baudot: BaudotRx::new(),
             mag: 0.0,
         }
     }
@@ -304,19 +344,8 @@ impl RttyRx {
     }
 
     fn decode(&mut self, value: u8, out: &mut String) {
-        match value {
-            LTRS => self.figs = false,
-            FIGS => self.figs = true,
-            BAUDOT_SPACE => out.push(' '),
-            BAUDOT_LF => out.push('\n'),
-            BAUDOT_CR => {} // ignore CR; LF drives newlines
-            0 => {}
-            v => {
-                let c = if self.figs { figure_char(v) } else { letter_char(v) };
-                if let Some(c) = c {
-                    out.push(c);
-                }
-            }
+        if let Some(c) = self.baudot.decode(value) {
+            out.push(c);
         }
     }
 }
@@ -351,10 +380,12 @@ mod tests {
 
         let msg = "CQ CQ DE AB1CD K";
         tx.push_text(msg);
-        while !tx.drained() {
+        let mut guard = 0;
+        while tx.sent_chars() < tx.total_chars() && guard < 4000 {
             let mut b = [0.0f32; 2000];
             tx.next_block(&mut b);
             audio.extend_from_slice(&b);
+            guard += 1;
         }
         let mut tail = [0.0f32; 2000];
         tx.next_block(&mut tail);

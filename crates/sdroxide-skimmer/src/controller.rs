@@ -7,9 +7,10 @@ use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use sdroxide_dsp::Complex32 as C32;
-use sdroxide_types::SkimmerSpot;
+use sdroxide_types::{SkimmerKind, SkimmerSpot};
 
 use crate::cw::CwSkimmer;
+use crate::digi::DigiSkimmer;
 
 /// Actions drained from the skimmer each engine tick.
 pub enum SkimmerAction {
@@ -35,26 +36,40 @@ impl SkimmerController {
         // Emit a fresh spot snapshot roughly 4×/second.
         let emit_every = (skim_rate * 0.25) as usize;
         let worker = std::thread::Builder::new()
-            .name("sdroxide-cw-skimmer".into())
+            .name("sdroxide-skimmer".into())
             .spawn(move || {
-                let mut sk = CwSkimmer::new(skim_rate, skim_center_hz);
+                // One shared worker runs the CW skimmer plus the continuous
+                // PSK/RTTY skimmers; each gates its own spots to its band
+                // segments, so their spot sets never overlap.
+                let mut cw = CwSkimmer::new(skim_rate, skim_center_hz);
+                let mut psk = DigiSkimmer::new(SkimmerKind::Psk, skim_rate, skim_center_hz);
+                let mut rtty = DigiSkimmer::new(SkimmerKind::Rtty, skim_rate, skim_center_hz);
                 let mut since = 0usize;
                 for job in job_rx {
                     match job {
                         Job::Iq(iq) => {
                             since += iq.len();
-                            sk.process(&iq);
+                            cw.process(&iq);
+                            psk.process(&iq);
+                            rtty.process(&iq);
                             if since >= emit_every {
                                 since = 0;
-                                let _ = res_tx.send(sk.spots());
+                                let mut spots = cw.spots();
+                                spots.extend(psk.spots());
+                                spots.extend(rtty.spots());
+                                let _ = res_tx.send(spots);
                             }
                         }
-                        Job::Center(hz) => sk.set_center(hz),
+                        Job::Center(hz) => {
+                            cw.set_center(hz);
+                            psk.set_center(hz);
+                            rtty.set_center(hz);
+                        }
                         Job::Stop => break,
                     }
                 }
             })
-            .expect("spawn cw-skimmer worker");
+            .expect("spawn skimmer worker");
         SkimmerController { job_tx, res_rx, worker: Some(worker) }
     }
 

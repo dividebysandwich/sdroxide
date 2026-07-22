@@ -5,11 +5,32 @@
 
 use serde::{Deserialize, Serialize};
 
-/// What kind of skimmer produced a spot. Only CW today; the wire event, UI
-/// overlay, and engine seam are generic over this.
+/// What kind of skimmer produced a spot. The wire event, UI overlay, and
+/// engine seam are generic over this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkimmerKind {
     Cw,
+    Psk,
+    Rtty,
+}
+
+impl SkimmerKind {
+    /// The operating mode a spot of this kind tunes to on click.
+    pub fn mode(self) -> crate::Mode {
+        match self {
+            SkimmerKind::Cw => crate::Mode::Cw,
+            SkimmerKind::Psk => crate::Mode::Psk,
+            SkimmerKind::Rtty => crate::Mode::Rtty,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SkimmerKind::Cw => "CW",
+            SkimmerKind::Psk => "PSK",
+            SkimmerKind::Rtty => "RTTY",
+        }
+    }
 }
 
 /// One decoded signal from a skimmer: a station heard at a frequency, with a
