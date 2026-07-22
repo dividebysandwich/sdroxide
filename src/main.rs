@@ -5,6 +5,7 @@ mod hpsdr_source;
 mod local_controller;
 mod null_source;
 mod server_main;
+mod tci_source;
 
 use anyhow::{Context, bail};
 use clap::Parser;
@@ -398,6 +399,7 @@ fn open_configured_source(
     match radio.backend {
         Backend::Cat => open_cat_source(radio),
         Backend::Hpsdr => open_hpsdr_source(radio, cli.freq),
+        Backend::Tci => open_tci_source(radio, cli.freq),
         Backend::Soapy => open_soapy_source(cli, settings),
         Backend::Auto => {
             #[cfg(feature = "soapy")]
@@ -493,6 +495,36 @@ fn hpsdr_caps(board: &str, sample_rate: f64, protocol: u8) -> DeviceCaps {
         freq_ranges_rx: vec![(0.0, 61_440_000.0)],
         freq_ranges_tx: vec![(1_800_000.0, 54_000_000.0)],
         sample_rates: sdroxide_types::HpsdrConfig::rates_for(protocol).to_vec(),
+        ..DeviceCaps::default()
+    }
+}
+
+/// Build the TCI (WebSocket) source from radio.json: wideband IQ receive +
+/// audio transmit.
+fn open_tci_source(
+    radio: &RadioConfig,
+    center_hz: f64,
+) -> anyhow::Result<(Box<dyn IqSource>, DeviceCaps)> {
+    let src =
+        tci_source::TciSource::open(&radio.tci.address, radio.tci.iq_sample_rate_hz, center_hz)
+            .context("connecting to TCI server")?;
+    let caps = tci_caps(&radio.tci.address, src.sample_rate_hz());
+    Ok((Box::new(src), caps))
+}
+
+/// Capabilities for a TCI rig: wideband IQ RX (not `audio_mode`), TX via raw
+/// audio (`tx_audio`) which the rig modulates. The rig enforces its own limits.
+fn tci_caps(address: &str, iq_rate: f64) -> DeviceCaps {
+    DeviceCaps {
+        driver: "tci".into(),
+        label: format!("TCI {address} ({:.0} kHz IQ)", iq_rate / 1000.0),
+        rx_channels: 1,
+        tx_channels: 1,
+        audio_mode: false,
+        tx_audio: true,
+        freq_ranges_rx: vec![(0.0, 160_000_000.0)],
+        freq_ranges_tx: vec![(1_800_000.0, 54_000_000.0)],
+        sample_rates: sdroxide_types::TciConfig::IQ_RATES.to_vec(),
         ..DeviceCaps::default()
     }
 }

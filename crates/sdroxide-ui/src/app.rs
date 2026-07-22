@@ -76,6 +76,8 @@ pub struct SdroxideApp {
     serial_ports: Vec<String>,
     /// HPSDR devices found by the last "Discover" scan in the settings dialog.
     hpsdr_devices: Vec<sdroxide_types::HpsdrDevice>,
+    /// Result of the last TCI "Test connection" (Ok summary / Err message).
+    tci_test_result: Option<Result<String, String>>,
     seen_first_state: bool,
     show_memories: bool,
     show_settings: bool,
@@ -227,6 +229,7 @@ impl SdroxideApp {
             radio_cfg: None,
             serial_ports: Vec::new(),
             hpsdr_devices: Vec::new(),
+            tci_test_result: None,
             seen_first_state: false,
             show_memories: false,
             show_settings: false,
@@ -1798,6 +1801,7 @@ impl SdroxideApp {
         // borrows `&self` and so can't touch `&mut self.ctrl`.
         let mut audio_pick: Option<(bool, Option<String>)> = None;
         let mut hpsdr_discover = false;
+        let mut tci_test = false;
         let mut radio_edit = self.radio_cfg.clone();
 
         // The concrete interface types the user chooses between. SoapySDR only
@@ -1809,6 +1813,7 @@ impl SdroxideApp {
         }
         iface_opts.push(sdroxide_types::Backend::Hpsdr);
         iface_opts.push(sdroxide_types::Backend::Cat);
+        iface_opts.push(sdroxide_types::Backend::Tci);
 
         let mut tab = self.settings_tab;
         let mut open = self.show_settings;
@@ -1825,6 +1830,7 @@ impl SdroxideApp {
                     &mut radio_edit,
                     &mut audio_pick,
                     &mut hpsdr_discover,
+                    &mut tci_test,
                     &mut tab,
                 );
             });
@@ -1841,6 +1847,13 @@ impl SdroxideApp {
             // Blocking LAN scan (~1.5 s); done after the window closure so it can
             // take `&self.ctrl`. Results feed the device dropdown next frame.
             self.hpsdr_devices = self.ctrl.discover_hpsdr();
+        }
+        if tci_test {
+            // Blocking connect (~up to 3 s); after the closure so it can take
+            // `&self.ctrl`. The result is shown in the TCI section next frame.
+            if let Some(cfg) = &radio_edit {
+                self.tci_test_result = Some(self.ctrl.test_tci(&cfg.tci.address));
+            }
         }
         if radio_edit != self.radio_cfg {
             if let Some(cfg) = &radio_edit {
@@ -1860,6 +1873,7 @@ impl SdroxideApp {
         radio_edit: &mut Option<sdroxide_types::RadioConfig>,
         audio_pick: &mut Option<(bool, Option<String>)>,
         hpsdr_discover: &mut bool,
+        tci_test: &mut bool,
         tab: &mut SettingsTab,
     ) {
         use sdroxide_types::Backend;
@@ -1905,6 +1919,9 @@ impl SdroxideApp {
                         settings_hpsdr_tab(ui, &self.hpsdr_devices, radio_edit, hpsdr_discover)
                     }
                     Backend::Cat => settings_cat_tab(ui, &self.serial_ports, radio_edit),
+                    Backend::Tci => {
+                        settings_tci_tab(ui, radio_edit, tci_test, &self.tci_test_result)
+                    }
                     // Legacy configs may still carry the removed auto-detect
                     // backend; prompt the user to pick a concrete interface.
                     Backend::Auto => {
@@ -2272,6 +2289,65 @@ fn settings_hpsdr_tab(
     ui.label(
         RichText::new(
             "A manual IP overrides discovery. Backend / device / sample-rate changes take effect on restart.",
+        )
+        .weak(),
+    );
+}
+
+/// TCI interface: WebSocket server address, IQ sample rate, and a
+/// Test-connection button (the interface is chosen by the selector in
+/// `settings_body`).
+fn settings_tci_tab(
+    ui: &mut egui::Ui,
+    radio_edit: &mut Option<sdroxide_types::RadioConfig>,
+    tci_test: &mut bool,
+    test_result: &Option<Result<String, String>>,
+) {
+    use sdroxide_types::TciConfig;
+    let Some(cfg) = radio_edit.as_mut() else {
+        ui.label("Radio configuration is only available in the native app.");
+        return;
+    };
+    egui::Grid::new("tci-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+        ui.label("Server address");
+        ui.add(
+            egui::TextEdit::singleline(&mut cfg.tci.address)
+                .desired_width(220.0)
+                .hint_text("host:port, e.g. 127.0.0.1:50001"),
+        );
+        ui.end_row();
+
+        ui.label("IQ sample rate");
+        let shown = format!("{} kHz", (cfg.tci.iq_sample_rate_hz / 1000.0) as u32);
+        ComboBox::from_id_salt("tci_rate").selected_text(shown).show_ui(ui, |ui| {
+            for &r in &TciConfig::IQ_RATES {
+                let sel = (cfg.tci.iq_sample_rate_hz - r).abs() < 1.0;
+                if ui.selectable_label(sel, format!("{} kHz", (r / 1000.0) as u32)).clicked() {
+                    cfg.tci.iq_sample_rate_hz = r;
+                }
+            }
+        });
+        ui.end_row();
+
+        ui.label("");
+        if ui.button("Test connection").clicked() {
+            *tci_test = true;
+        }
+        ui.end_row();
+    });
+    match test_result {
+        Some(Ok(s)) => {
+            ui.label(RichText::new(format!("Connected: {s}")).color(Color32::from_rgb(90, 200, 110)));
+        }
+        Some(Err(e)) => {
+            ui.label(RichText::new(format!("Failed: {e}")).color(Color32::from_rgb(230, 90, 80)));
+        }
+        None => {}
+    }
+    ui.add_space(6.0);
+    ui.label(
+        RichText::new(
+            "Wideband IQ receive, audio transmit. Address / rate changes take effect on restart.",
         )
         .weak(),
     );

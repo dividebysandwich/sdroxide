@@ -88,6 +88,13 @@ pub trait RadioController {
         Vec::new()
     }
 
+    /// Test a TCI server connection at `address` (`host:port`). Blocking — the
+    /// settings UI calls this on demand (a "Test connection" button). Returns a
+    /// success summary or an error message. Default: unsupported (remote client).
+    fn test_tci(&self, _address: &str) -> Result<String, String> {
+        Err("not supported on this client".into())
+    }
+
     /// The persisted radio-backend config (SoapySDR vs CAT), or `None` when the
     /// client can't own it (the browser remote client).
     fn radio_config(&self) -> Option<crate::RadioConfig> {

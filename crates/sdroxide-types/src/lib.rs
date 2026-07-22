@@ -35,7 +35,7 @@ pub use meters::{Meters, TxMeters};
 pub use mode::{AgcMode, Mode};
 pub use radio::{
     Backend, CatConfig, CatFamily, DigiMode, HpsdrConfig, HpsdrDevice, LineState, ModeControl,
-    Parity, PttMethod, RadioConfig, SerialConfig, SoundFormat, StopBits,
+    Parity, PttMethod, RadioConfig, SerialConfig, SoundFormat, StopBits, TciConfig,
 };
 pub use skimmer::{SkimmerKind, SkimmerSpot};
 pub use spectrum::{SpectrumConfig, SpectrumFrame};

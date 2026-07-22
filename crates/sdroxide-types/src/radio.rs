@@ -16,16 +16,20 @@ pub enum Backend {
     Cat,
     /// OpenHPSDR ethernet SDR (Protocol 2), discovered/reached over the LAN.
     Hpsdr,
+    /// TCI (Transceiver Control Interface) over WebSocket — ExpertSDR3, Thetis, …
+    Tci,
 }
 
 impl Backend {
-    pub const ALL: [Backend; 4] = [Backend::Auto, Backend::Soapy, Backend::Cat, Backend::Hpsdr];
+    pub const ALL: [Backend; 5] =
+        [Backend::Auto, Backend::Soapy, Backend::Cat, Backend::Hpsdr, Backend::Tci];
     pub fn label(self) -> &'static str {
         match self {
             Backend::Auto => "Auto-detect (SoapySDR / CAT)",
             Backend::Soapy => "SoapySDR",
             Backend::Cat => "CAT / Audio",
             Backend::Hpsdr => "HPSDR (network)",
+            Backend::Tci => "TCI (network)",
         }
     }
 }
@@ -336,6 +340,28 @@ impl HpsdrDevice {
     }
 }
 
+/// TCI (Transceiver Control Interface, WebSocket) backend configuration.
+/// Receive is wideband IQ (sdroxide demodulates); transmit is audio.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TciConfig {
+    /// TCI server `host:port` (default `127.0.0.1:50001`, the ExpertSDR3 port).
+    pub address: String,
+    /// IQ stream sample rate in Hz (48k / 96k / 192k).
+    pub iq_sample_rate_hz: f64,
+}
+
+impl Default for TciConfig {
+    fn default() -> Self {
+        TciConfig { address: "127.0.0.1:50001".into(), iq_sample_rate_hz: 192_000.0 }
+    }
+}
+
+impl TciConfig {
+    /// IQ sample rates offered in the UI.
+    pub const IQ_RATES: [f64; 3] = [48_000.0, 96_000.0, 192_000.0];
+}
+
 /// Persisted backend configuration (`radio.json`).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -347,4 +373,5 @@ pub struct RadioConfig {
     pub radio_audio_out: Option<String>,
     pub cat: CatConfig,
     pub hpsdr: HpsdrConfig,
+    pub tci: TciConfig,
 }

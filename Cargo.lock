@@ -3765,6 +3765,7 @@ dependencies = [
  "sdroxide-proto",
  "sdroxide-radio",
  "sdroxide-server",
+ "sdroxide-tci",
  "sdroxide-types",
  "sdroxide-ui",
  "tracing",
@@ -3898,6 +3899,18 @@ dependencies = [
  "sdroxide-dsp",
  "sdroxide-types",
  "tracing",
+]
+
+[[package]]
+name = "sdroxide-tci"
+version = "0.2.0"
+dependencies = [
+ "crossbeam-channel",
+ "rtrb",
+ "sdroxide-types",
+ "thiserror 2.0.19",
+ "tracing",
+ "tungstenite 0.30.0",
 ]
 
 [[package]]

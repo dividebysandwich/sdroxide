@@ -1,0 +1,16 @@
+[package]
+name = "sdroxide-tci"
+version.workspace = true
+edition.workspace = true
+
+# Native-only TCI (Transceiver Control Interface) client over WebSocket —
+# ExpertSDR3 / SunSDR, Thetis, … Pure Rust, no system library. Must never be a
+# dependency of any wasm-targeted crate.
+[dependencies]
+sdroxide-types.workspace = true
+crossbeam-channel.workspace = true
+rtrb.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# Blocking WebSocket client (ws:// only — `handshake` for the client, no TLS).
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }

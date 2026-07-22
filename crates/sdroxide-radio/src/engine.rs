@@ -1296,7 +1296,9 @@ impl Engine {
             let begin_rate = if self.audio_mode { self.radio_fs } else { self.state.sample_rate };
             match self.source.tx_begin(txf, begin_rate) {
                 Ok(tx_rate) => {
-                    if !self.audio_mode {
+                    // No modulator/DUC when the device transmits raw audio (a CAT
+                    // rig, or a TCI rig with wideband-IQ RX + audio TX).
+                    if !self.audio_mode && !self.caps.tx_audio {
                         self.tx = Some(TxChain::new(self.state.rx[0].mode, tx_rate));
                     }
                     self.tx_center_hz = txf;
@@ -1318,8 +1320,9 @@ impl Engine {
 
     /// One ~10 ms transmit block: mic → modulator → drive → DUC → device.
     fn tx_block(&mut self) -> crate::Result<()> {
-        // A CAT rig modulates itself; we just route TX audio to its sound card.
-        if self.audio_mode {
+        // A CAT/TCI rig modulates itself; we just route raw 48 kHz TX audio to
+        // it (`tx_write_audio`) instead of building modulated IQ.
+        if self.audio_mode || self.caps.tx_audio {
             return self.tx_block_audio();
         }
         // Digital-mode burst: the FT8/FT4 controller supplies the audio; the

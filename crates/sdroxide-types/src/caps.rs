@@ -32,6 +32,10 @@ pub struct DeviceCaps {
     /// narrow audio-band panadapter. Sound-card *IQ* leaves this `false` and
     /// runs the normal wideband path.
     pub audio_mode: bool,
+    /// Transmit by sending raw 48 kHz audio (`IqSource::tx_write_audio`) — the
+    /// device modulates it — instead of modulated IQ, even when RX is wideband
+    /// IQ (`audio_mode = false`). Used by the TCI backend (IQ RX, audio TX).
+    pub tx_audio: bool,
 
     /// Tunable ranges in Hz: (min, max).
     pub freq_ranges_rx: Vec<(f64, f64)>,

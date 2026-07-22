@@ -380,6 +380,7 @@ fn probe_caps(dev: &soapysdr::Device) -> Result<DeviceCaps> {
         tx_channels,
         full_duplex,
         audio_mode: false,
+        tx_audio: false,
         freq_ranges_rx,
         freq_ranges_tx,
         sample_rates,
