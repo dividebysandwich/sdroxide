@@ -359,6 +359,10 @@ struct Engine {
     digi_config: DigiConfig,
     /// True while the current TX burst is driven by the digi engine.
     digi_tx: bool,
+    /// Wall-clock pacer for audio-mode digi TX: (burst start, samples fed at
+    /// 48 kHz). Ensures the burst plays at real time even if the sound card
+    /// drains its ring faster than real time (otherwise FT8/FT4 finish early).
+    tx_pace: Option<(std::time::Instant, u64)>,
     /// High-resolution spectrum over the VFO channel (digital modes only):
     /// fed the decimated channel IQ so an FFT gives ~3 Hz/bin resolution.
     channel_analyzer: Option<SpectrumAnalyzer>,
@@ -476,6 +480,7 @@ fn engine_thread(
         digi: None,
         digi_config,
         digi_tx: false,
+        tx_pace: None,
         channel_analyzer: None,
         skim_ddc: None,
         skimmer: None,
@@ -1590,10 +1595,25 @@ impl Engine {
 
         self.source.tx_write_audio(&audio)?;
 
+        // Wall-clock pace the digi burst: a sound card whose ring drains faster
+        // than real time would otherwise let `fill_tx_block` race to the end of
+        // the burst and drop PTT early (FT8 → ~5 s instead of 12.6 s). Hold each
+        // block until real time has caught up to the samples fed so far.
+        if self.digi_tx {
+            let (start, fed) = self.tx_pace.get_or_insert_with(|| (std::time::Instant::now(), 0));
+            *fed += TX_AUDIO_BLOCK as u64;
+            let target = std::time::Duration::from_secs_f64(*fed as f64 / 48_000.0);
+            let elapsed = start.elapsed();
+            if target > elapsed {
+                std::thread::sleep(target - elapsed);
+            }
+        }
+
         if burst_done {
-            // Let the ~1 s of queued audio play out before dropping PTT, so the
-            // rig transmits the whole burst (FT8 needs every symbol).
+            // Let any queued audio play out before dropping PTT, so the rig
+            // transmits the whole burst (FT8 needs every symbol).
             self.source.tx_drain();
+            self.tx_pace = None;
             self.digi_tx = false;
             self.state.tx.ptt = false;
             self.sync_tx_state();
