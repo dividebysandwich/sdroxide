@@ -19,11 +19,13 @@ const CFG_DEBOUNCE_S: f64 = 0.25;
 /// stops keying, instead of vanishing.
 const SKIMMER_FADE_SECS: f64 = 5.0;
 
-/// Settings dialog tabs: the radio interface + its settings, and audio devices.
+/// Settings dialog tabs: the radio interface + its settings, audio devices, and
+/// display/UI preferences.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsTab {
     Radio,
     Audio,
+    Ui,
 }
 
 /// Repaint-poll cadence when no spectrum stream is flowing (startup, connection
@@ -61,6 +63,11 @@ pub struct SdroxideApp {
     desired_at: f64,
     /// egui time of the last received spectrum frame, for stall detection.
     last_spectrum_at: f64,
+    /// Waterfall time-scroll state: wall-clock (UTC secs) of the last tick and
+    /// the carried fractional row, so the scroll rate is exact and independent
+    /// of the frame rate (keeps the waterfall and time gridlines in lockstep).
+    wf_last_now: f64,
+    wf_row_accum: f32,
     /// Cached spectrum polylines (recomputed only when frame/view/rect change).
     trace_cache: spectrum_view::TraceCache,
     /// Switchable sound devices, queried once each time the settings dialog
@@ -72,6 +79,9 @@ pub struct SdroxideApp {
     /// Settings dialog: current tab, plus the radio-backend config + serial
     /// ports loaded once on open (edited live, persisted on change).
     settings_tab: SettingsTab,
+    /// Display preferences (frame rate, waterfall + spectrum speed), loaded from
+    /// config at startup, edited in the UI tab, persisted on change.
+    ui_settings: sdroxide_types::UiSettings,
     radio_cfg: Option<sdroxide_types::RadioConfig>,
     serial_ports: Vec<String>,
     /// HPSDR devices found by the last "Discover" scan in the settings dialog.
@@ -221,11 +231,14 @@ impl SdroxideApp {
             desired_cfg: None,
             desired_at: 0.0,
             last_spectrum_at: 0.0,
+            wf_last_now: 0.0,
+            wf_row_accum: 0.0,
             trace_cache: spectrum_view::TraceCache::default(),
             audio_devices: None,
             audio_devices_queried: false,
             soapy_supported,
             settings_tab: SettingsTab::Radio,
+            ui_settings: load_ui_settings(cc.storage),
             radio_cfg: None,
             serial_ports: Vec::new(),
             hpsdr_devices: Vec::new(),
@@ -285,8 +298,34 @@ impl SdroxideApp {
             db_floor: self.view.db_floor,
             db_ceil: self.view.db_ceil,
             viewport,
-            ..SpectrumConfig::default()
+            // Frame rate + spectrum averaging come from the UI settings; they
+            // also drive the repaint cadence (see the end of `ui`).
+            fps: self.ui_settings.fps().min(255) as u8,
+            avg_tc: self.ui_settings.spectrum_avg_tc(),
         }
+    }
+
+    /// Advance the waterfall time-scroll one frame: convert the wall-clock
+    /// elapsed since the last tick into a whole number of rows to append (at the
+    /// configured rows/second), carrying the fraction. Returns the tuning the
+    /// widget needs; the same rows/second also spaces the time gridlines, so the
+    /// line and the waterfall move together. `has_frame` gates scrolling so a
+    /// stalled stream doesn't keep duplicating rows.
+    fn wf_tick(&mut self, has_frame: bool) -> spectrum_view::WfTuning {
+        let now = now_unix_f64();
+        let rows_per_sec = self.ui_settings.waterfall_rows_per_sec();
+        // Clamp dt so a hitch/tab-away can't dump a huge run of rows at once.
+        let dt = if self.wf_last_now > 0.0 { (now - self.wf_last_now).clamp(0.0, 0.3) } else { 0.0 };
+        self.wf_last_now = now;
+        let rows_to_write = if has_frame {
+            self.wf_row_accum += dt as f32 * rows_per_sec;
+            let n = self.wf_row_accum.floor();
+            self.wf_row_accum -= n;
+            (n as u32).min(32)
+        } else {
+            0
+        };
+        spectrum_view::WfTuning { rows_to_write, rows_per_sec, now_unix: now }
     }
 
     /// Hysteresis: is the config the engine already has still fine for the
@@ -297,6 +336,8 @@ impl SdroxideApp {
         if sent.fft_size != ideal.fft_size
             || sent.db_floor != ideal.db_floor
             || sent.db_ceil != ideal.db_ceil
+            || sent.fps != ideal.fps
+            || sent.avg_tc != ideal.avg_tc
         {
             return false;
         }
@@ -1841,6 +1882,7 @@ impl SdroxideApp {
         let mut hpsdr_discover = false;
         let mut tci_test = false;
         let mut radio_edit = self.radio_cfg.clone();
+        let mut ui_edit = self.ui_settings;
 
         // The concrete interface types the user chooses between. SoapySDR only
         // appears when compiled in; there is no auto-detect (an unavailable
@@ -1869,6 +1911,7 @@ impl SdroxideApp {
                     &mut audio_pick,
                     &mut hpsdr_discover,
                     &mut tci_test,
+                    &mut ui_edit,
                     &mut tab,
                 );
             });
@@ -1899,6 +1942,12 @@ impl SdroxideApp {
             }
             self.radio_cfg = radio_edit;
         }
+        if ui_edit != self.ui_settings {
+            // Live: fps + averaging flow to the engine via the spectrum-config
+            // diff next frame; waterfall speed is read each frame. Persist too.
+            self.ui_settings = ui_edit;
+            persist_ui_settings(&self.ui_settings);
+        }
     }
 
     /// The Settings body: a Radio tab (one interface selector drives the
@@ -1912,12 +1961,17 @@ impl SdroxideApp {
         audio_pick: &mut Option<(bool, Option<String>)>,
         hpsdr_discover: &mut bool,
         tci_test: &mut bool,
+        ui_edit: &mut sdroxide_types::UiSettings,
         tab: &mut SettingsTab,
     ) {
         use sdroxide_types::Backend;
 
         ui.horizontal(|ui| {
-            for (t, label) in [(SettingsTab::Radio, "Radio"), (SettingsTab::Audio, "Audio")] {
+            for (t, label) in [
+                (SettingsTab::Radio, "Radio"),
+                (SettingsTab::Audio, "Audio"),
+                (SettingsTab::Ui, "UI"),
+            ] {
                 if crate::chrome::chip(ui, *tab == t, label).clicked() {
                     *tab = t;
                 }
@@ -2003,6 +2057,7 @@ impl SdroxideApp {
                     }
                 }
             }
+            SettingsTab::Ui => settings_ui_tab(ui, ui_edit),
         }
     }
 
@@ -2132,6 +2187,40 @@ fn device_combo(
 }
 
 /// A dropdown over an enum's `ALL`, using its `label()`.
+/// UI / display preferences: frame rate, waterfall scroll speed, spectrum speed.
+fn settings_ui_tab(ui: &mut egui::Ui, cfg: &mut sdroxide_types::UiSettings) {
+    use sdroxide_types::{Speed, UiSettings};
+    ui.label(RichText::new("Display").size(14.0).strong().color(crate::theme::CYAN));
+    ui.add_space(6.0);
+    egui::Grid::new("ui-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+        ui.label("Screen update rate");
+        ComboBox::from_id_salt("ui-fps")
+            .selected_text(format!("{} fps", cfg.frame_rate_fps))
+            .show_ui(ui, |ui| {
+                for f in UiSettings::FPS_OPTIONS {
+                    ui.selectable_value(&mut cfg.frame_rate_fps, f, format!("{f} fps"));
+                }
+            });
+        ui.end_row();
+
+        ui.label("Waterfall scroll speed");
+        enum_combo(ui, "ui-wf", &mut cfg.waterfall_speed, &Speed::ALL, Speed::label);
+        ui.end_row();
+
+        ui.label("Spectrum update speed");
+        enum_combo(ui, "ui-spec", &mut cfg.spectrum_speed, &Speed::ALL, Speed::label);
+        ui.end_row();
+    });
+    ui.add_space(8.0);
+    ui.label(
+        RichText::new(
+            "Higher frame rates look smoother but cost more CPU/GPU. Spectrum speed \
+             sets how quickly the trace reacts (slower = smoother/more averaged).",
+        )
+        .weak(),
+    );
+}
+
 fn enum_combo<T: PartialEq + Copy>(
     ui: &mut egui::Ui,
     id: &str,
@@ -2532,6 +2621,7 @@ impl eframe::App for SdroxideApp {
                 (total * self.view.digi_panel_fraction).clamp(160.0, (total - 140.0).max(160.0));
             let wf_h = (total - panel_h - handle_h).max(80.0);
 
+            let wf_tuning = self.wf_tick(frame.is_some());
             ui.allocate_ui(egui::vec2(width, wf_h), |ui| {
                 spectrum_view::show_ext(
                     ui,
@@ -2543,6 +2633,7 @@ impl eframe::App for SdroxideApp {
                     Some(audio_hz),
                     &ft8_spots,
                     &ft8_alpha,
+                    wf_tuning,
                     &mut cmds,
                 );
             });
@@ -2592,6 +2683,7 @@ impl eframe::App for SdroxideApp {
             }
             let (cw_spots, cw_alpha) = self.cw_overlay(now);
             let frame = self.frame.take();
+            let wf_tuning = self.wf_tick(frame.is_some());
             spectrum_view::show(
                 ui,
                 &mut self.view,
@@ -2601,6 +2693,7 @@ impl eframe::App for SdroxideApp {
                 &mut self.trace_cache,
                 &cw_spots,
                 &cw_alpha,
+                wf_tuning,
                 &mut cmds,
             );
             self.frame = frame;
@@ -2658,6 +2751,8 @@ impl eframe::App for SdroxideApp {
         // On wasm this is the logbook's persistence; on native it's a harmless
         // backup (the authoritative copy is written to the config dir on change).
         eframe::set_value(storage, "qso_log", &self.qso_log);
+        // Same split: authoritative on native is config.toml (written on change).
+        eframe::set_value(storage, "ui_settings", &self.ui_settings);
     }
 }
 
@@ -2682,6 +2777,27 @@ fn persist_qso_log(_log: &[QsoRecord]) {
     // Written by eframe's periodic `save()` into localStorage.
 }
 
+// ── UI/display preferences (native: config.toml [ui]; wasm: eframe storage) ──
+#[cfg(not(target_arch = "wasm32"))]
+fn load_ui_settings(_storage: Option<&dyn eframe::Storage>) -> sdroxide_types::UiSettings {
+    sdroxide_config::load_ui_settings()
+}
+#[cfg(target_arch = "wasm32")]
+fn load_ui_settings(storage: Option<&dyn eframe::Storage>) -> sdroxide_types::UiSettings {
+    storage.and_then(|s| eframe::get_value(s, "ui_settings")).unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn persist_ui_settings(ui: &sdroxide_types::UiSettings) {
+    if let Err(e) = sdroxide_config::save_ui_settings(ui) {
+        eprintln!("failed to save UI settings: {e}");
+    }
+}
+#[cfg(target_arch = "wasm32")]
+fn persist_ui_settings(_ui: &sdroxide_types::UiSettings) {
+    // Written by eframe's periodic `save()` into localStorage.
+}
+
 /// Current Unix time (UTC seconds). `SystemTime` panics on wasm, so use JS.
 fn now_unix() -> i64 {
     #[cfg(not(target_arch = "wasm32"))]
@@ -2694,6 +2810,21 @@ fn now_unix() -> i64 {
     #[cfg(target_arch = "wasm32")]
     {
         (js_sys::Date::now() / 1000.0) as i64
+    }
+}
+
+/// Current Unix time as fractional UTC seconds (for waterfall time gridlines).
+fn now_unix_f64() -> f64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::now() / 1000.0
     }
 }
 

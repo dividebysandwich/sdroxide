@@ -41,6 +41,8 @@ pub struct Settings {
     pub audio_output: Option<String>,
     /// Preferred audio input (microphone) device name; `None` = system default.
     pub audio_input: Option<String>,
+    /// UI / display preferences (frame rate, waterfall + spectrum speed).
+    pub ui: sdroxide_types::UiSettings,
 }
 
 impl Default for Settings {
@@ -56,8 +58,22 @@ impl Default for Settings {
             tx_ham_only: true,
             audio_output: None,
             audio_input: None,
+            ui: sdroxide_types::UiSettings::default(),
         }
     }
+}
+
+/// Load just the UI/display preferences (frame rate, waterfall + spectrum speed).
+pub fn load_ui_settings() -> sdroxide_types::UiSettings {
+    Settings::load().ui
+}
+
+/// Persist the UI/display preferences, preserving every other setting
+/// (read-modify-write so a concurrent edit elsewhere isn't clobbered).
+pub fn save_ui_settings(ui: &sdroxide_types::UiSettings) -> Result<(), ConfigError> {
+    let mut s = Settings::load();
+    s.ui = *ui;
+    s.save()
 }
 
 pub fn config_dir() -> Result<PathBuf, ConfigError> {

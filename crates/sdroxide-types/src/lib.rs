@@ -17,6 +17,7 @@ mod radio;
 mod skimmer;
 mod spectrum;
 mod state;
+mod ui;
 
 pub use band::Band;
 pub use caps::{DeviceCaps, Direction, GainElement};
@@ -40,3 +41,4 @@ pub use radio::{
 pub use skimmer::{SkimmerKind, SkimmerSpot};
 pub use spectrum::{SpectrumConfig, SpectrumFrame};
 pub use state::{OffsetState, RadioState, RxId, RxState, SQUELCH_OPEN_DB, TxState, Vfo};
+pub use ui::{Speed, UiSettings};

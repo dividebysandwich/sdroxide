@@ -19,6 +19,20 @@ const CLICK_TUNE_STEP: f64 = 10.0;
 /// Pixel distance for grabbing a filter edge.
 const EDGE_GRAB_PX: f32 = 6.0;
 
+/// Per-frame display tuning from the app. Both the waterfall advance and the
+/// time gridlines are driven by the same wall-clock so they scroll in lockstep
+/// (the app converts elapsed time × `rows_per_sec` into `rows_to_write`).
+#[derive(Clone, Copy)]
+pub struct WfTuning {
+    /// Waterfall rows to append this frame (from elapsed wall-clock time).
+    pub rows_to_write: u32,
+    /// Scroll rate in rows/second — used both to advance the waterfall and to
+    /// space the 60-second gridlines, so the line tracks the waterfall exactly.
+    pub rows_per_sec: f32,
+    /// Wall-clock UTC seconds, for the minute-boundary time labels.
+    pub now_unix: f64,
+}
+
 // --- skimmer spot boxes ---------------------------------------------------
 const SPOT_BOX_W: f32 = 236.0;
 const SPOT_BOX_H: f32 = 19.0;
@@ -309,9 +323,10 @@ pub fn show(
     trace: &mut TraceCache,
     skimmer: &[SkimmerSpot],
     alpha: &[f32],
+    wf: WfTuning,
     cmds: &mut Vec<Command>,
 ) {
-    show_ext(ui, view, state, frame, peaks, trace, None, skimmer, alpha, cmds);
+    show_ext(ui, view, state, frame, peaks, trace, None, skimmer, alpha, wf, cmds);
 }
 
 /// `show` with an optional digital-mode audio marker. When `digi_audio_hz`
@@ -330,6 +345,7 @@ pub fn show_ext(
     digi_audio_hz: Option<f32>,
     skimmer: &[SkimmerSpot],
     alpha: &[f32],
+    wf: WfTuning,
     cmds: &mut Vec<Command>,
 ) {
     let rect = ui.available_rect_before_wrap();
@@ -596,6 +612,7 @@ pub fn show_ext(
             u_hi,
             rows_visible: wf_rect.height(),
             lut: view.colormap,
+            rows_to_write: wf.rows_to_write,
         },
     ));
 
@@ -717,6 +734,64 @@ pub fn show_ext(
         draw_spot_box(&painter, b, spot, hovered, a, digi_audio_hz.is_some());
     }
 
+    // --- 60-second time gridlines on the waterfall ------------------------
+    // The newest row (top of the waterfall) is "now"; rows below are older at
+    // `rows_per_sec` rows/second (≈ 1 row per pixel). Draw a faint gray line at
+    // each whole UTC minute that falls in the visible window, labelled HH:MM.
+    let rows_per_sec = wf.rows_per_sec as f64;
+    if rows_per_sec > 0.01 && wf_rect.height() > 4.0 {
+        let secs_per_px = 1.0 / rows_per_sec;
+        let visible_secs = wf_rect.height() as f64 * secs_per_px;
+        let now = wf.now_unix;
+        let oldest = now - visible_secs;
+        let grid = Color32::from_rgba_unmultiplied(200, 205, 215, 60);
+        let mut t = (oldest / 60.0).ceil() * 60.0; // first minute boundary ≥ oldest
+        while t <= now {
+            let y = wf_rect.top() + ((now - t) * rows_per_sec) as f32;
+            if (wf_rect.top()..=wf_rect.bottom()).contains(&y) {
+                painter.hline(wf_rect.x_range(), y, Stroke::new(1.0, grid));
+                let tod = (t as i64).rem_euclid(86_400);
+                let text = format!("{:02}:{:02}", tod / 3600, (tod % 3600) / 60);
+                label_box(&painter, pos2(wf_rect.left() + 2.0, y + 1.0), &text, Color32::from_gray(215), wf_rect);
+            }
+            t += 60.0;
+        }
+    }
+
+    // --- cursor readouts (hover) ------------------------------------------
+    // A hovered filter edge shows its offset from the VFO; otherwise hovering
+    // the spectrum/waterfall shows a faint crosshair + the frequency a click
+    // would tune to. Suppressed while dragging (pan/edge/resize).
+    if let Some(p) = hover_pos {
+        if let Some(e) = hover_edge {
+            // Item 7: filter edge offset from the VFO.
+            let off = if e == 0 { state.rx[0].filter_lo } else { state.rx[0].filter_hi };
+            let edge_x = if e == 0 { px0 } else { px1 };
+            let ytop = if spec_h > 1.0 { spec_rect.top() } else { wf_rect.top() };
+            label_box(
+                &painter,
+                pos2(edge_x + 7.0, ytop + 3.0),
+                &format!("{:+} Hz", off.round() as i64),
+                Color32::from_rgb(255, 190, 120),
+                rect,
+            );
+        } else if (spec_rect.contains(p) || wf_rect.contains(p))
+            && edge.is_none()
+            && !resizing
+            && !resp.dragged()
+            && !spot_boxes.iter().any(|b| b.rect.contains(p))
+        {
+            // Item 6: crosshair + click-tune frequency readout.
+            let line = Color32::from_rgba_unmultiplied(185, 205, 225, 70);
+            if spec_h > 1.0 {
+                painter.vline(p.x, spec_rect.y_range(), Stroke::new(1.0, line));
+            }
+            painter.vline(p.x, wf_rect.y_range(), Stroke::new(1.0, line));
+            let text = click_tune_label(view, state, &rect, p.x, digi_audio_hz);
+            label_box(&painter, pos2(p.x + 8.0, p.y - 9.0), &text, Color32::WHITE, rect);
+        }
+    }
+
     // Chrome: pink cut-corner border + corner accents around the panadapter.
     crate::chrome::paint_cut_border(
         &painter,
@@ -725,6 +800,37 @@ pub fn show_ext(
         crate::theme::BG_DEEP,
     );
     crate::chrome::corner_brackets(&painter, rect, crate::theme::PINK);
+}
+
+/// Draw `text` in a small semi-transparent black box, clamped inside `bounds`.
+fn label_box(p: &egui::Painter, top_left: Pos2, text: &str, fg: Color32, bounds: Rect) {
+    let galley = p.layout_no_wrap(text.to_string(), FontId::monospace(11.0), fg);
+    let pad = vec2(4.0, 2.0);
+    let size = galley.size() + pad * 2.0;
+    let x = (top_left.x).min(bounds.right() - size.x).max(bounds.left());
+    let y = (top_left.y).clamp(bounds.top(), bounds.bottom() - size.y);
+    let bg = Rect::from_min_size(pos2(x, y), size);
+    p.rect_filled(bg, 2.0, Color32::from_rgba_unmultiplied(0, 0, 0, 180));
+    p.galley(pos2(x + pad.x, y + pad.y), galley, fg);
+}
+
+/// The value a left-click at screen `x` would set: the audio TX offset in a
+/// digital mode, else the (10 Hz-rounded) dial frequency.
+fn click_tune_label(
+    view: &ViewState,
+    state: &RadioState,
+    rect: &Rect,
+    x: f32,
+    digi_audio_hz: Option<f32>,
+) -> String {
+    let hz = view.x_to_freq(x, rect);
+    if digi_audio_hz.is_some() {
+        let audio = (hz - state.rx_freq_hz()).clamp(200.0, 3500.0);
+        format!("{audio:.0} Hz")
+    } else {
+        let tuned = (hz / CLICK_TUNE_STEP).round() * CLICK_TUNE_STEP;
+        format!("{:.5} MHz", tuned / 1e6)
+    }
 }
 
 /// Per-pixel polyline of the frame's bins (or of `values` when given, e.g.

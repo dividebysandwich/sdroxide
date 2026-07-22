@@ -40,7 +40,6 @@ pub struct WaterfallResources {
     lut_tex: wgpu::Texture,
     uniforms: wgpu::Buffer,
     write_row: u32,
-    last_seq: u32,
     current_lut: Option<usize>,
     last_center: f64,
     last_span: f64,
@@ -322,7 +321,6 @@ pub fn init(rs: &RenderState) {
         lut_tex,
         uniforms,
         write_row: 0,
-        last_seq: 0,
         current_lut: None,
         last_center: 0.0,
         last_span: 0.0,
@@ -340,6 +338,10 @@ pub struct WaterfallCallback {
     /// Widget height in display rows.
     pub rows_visible: f32,
     pub lut: usize,
+    /// Waterfall rows to append this frame. The app derives this from elapsed
+    /// wall-clock time × the scroll rate, so the waterfall and the time
+    /// gridlines advance together regardless of the actual frame cadence.
+    pub rows_to_write: u32,
 }
 
 impl CallbackTrait for WaterfallCallback {
@@ -448,8 +450,11 @@ impl CallbackTrait for WaterfallCallback {
             // the queue (applied before the encoder's remap pass in this submit),
             // so it would be overwritten. The next frame resumes normally — one
             // skipped row per zoom is imperceptible.
-            if !remapped && frame.seq != r.last_seq && !frame.bins.is_empty() {
-                r.last_seq = frame.seq;
+            // Time-driven scroll: append `rows_to_write` rows of the latest
+            // frame (the app computes the count from elapsed wall-clock × the
+            // scroll rate, so the axis is stable and matches the gridlines).
+            let n = self.rows_to_write.min(32);
+            if !remapped && n > 0 && !frame.bins.is_empty() {
                 // Resample to texture width if bin count ever differs.
                 let row: Vec<u8> = if frame.bins.len() == TEX_W as usize {
                     frame.bins.clone()
@@ -458,22 +463,24 @@ impl CallbackTrait for WaterfallCallback {
                         .map(|i| frame.bins[i * frame.bins.len() / TEX_W as usize])
                         .collect()
                 };
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &r.hist[r.active],
-                        mip_level: 0,
-                        origin: wgpu::Origin3d { x: 0, y: r.write_row, z: 0 },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &row,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(TEX_W),
-                        rows_per_image: None,
-                    },
-                    wgpu::Extent3d { width: TEX_W, height: 1, depth_or_array_layers: 1 },
-                );
-                r.write_row = (r.write_row + 1) % TEX_H;
+                for _ in 0..n {
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &r.hist[r.active],
+                            mip_level: 0,
+                            origin: wgpu::Origin3d { x: 0, y: r.write_row, z: 0 },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        &row,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(TEX_W),
+                            rows_per_image: None,
+                        },
+                        wgpu::Extent3d { width: TEX_W, height: 1, depth_or_array_layers: 1 },
+                    );
+                    r.write_row = (r.write_row + 1) % TEX_H;
+                }
             }
         }
 
