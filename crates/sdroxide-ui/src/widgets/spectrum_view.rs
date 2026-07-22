@@ -372,7 +372,7 @@ pub fn show(
     wf: WfTuning,
     cmds: &mut Vec<Command>,
 ) {
-    show_ext(ui, view, state, frame, peaks, smooth, trace, None, skimmer, alpha, wf, cmds);
+    show_ext(ui, view, state, frame, peaks, smooth, trace, None, &[], skimmer, alpha, wf, cmds);
 }
 
 /// `show` with an optional digital-mode audio marker. When `digi_audio_hz`
@@ -390,6 +390,9 @@ pub fn show_ext(
     smooth: &mut SpectrumSmooth,
     trace: &mut TraceCache,
     digi_audio_hz: Option<f32>,
+    // Extra audio-offset tuning lines (Hz relative to the dial), e.g. the RTTY
+    // mark/space pair. Drawn as thin amber lines to aid exact tuning.
+    markers: &[f32],
     skimmer: &[SkimmerSpot],
     alpha: &[f32],
     wf: WfTuning,
@@ -733,6 +736,20 @@ pub fn show_ext(
                 x,
                 wf_rect.y_range(),
                 Stroke::new(1.5, Color32::from_rgba_unmultiplied(0, 208, 244, 160)),
+            );
+        }
+    }
+    // Extra tuning lines (RTTY mark/space): thin amber, to aid exact tuning.
+    for &a in markers {
+        let hz = state.rx_freq_hz() + a as f64;
+        if in_view(hz) {
+            let x = view.freq_to_x(hz, &rect);
+            let c = Color32::from_rgb(255, 190, 90);
+            painter.vline(x, spec_rect.y_range(), Stroke::new(1.0, c));
+            painter.vline(
+                x,
+                wf_rect.y_range(),
+                Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 190, 90, 150)),
             );
         }
     }

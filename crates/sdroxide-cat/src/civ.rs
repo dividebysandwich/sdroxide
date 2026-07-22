@@ -43,7 +43,7 @@ pub fn decode_freq(bytes: &[u8]) -> Option<f64> {
 pub fn mode_to_civ(m: Mode) -> u8 {
     match m {
         Mode::Lsb | Mode::Digl => 0x00,
-        Mode::Usb | Mode::Digu | Mode::Ft8 | Mode::Ft4 => 0x01,
+        Mode::Usb | Mode::Digu | Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty => 0x01,
         Mode::Am | Mode::Sam | Mode::Dsb => 0x02,
         Mode::Cw => 0x03,
         Mode::Nfm | Mode::Wfm => 0x05,

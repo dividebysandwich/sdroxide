@@ -95,6 +95,13 @@ pub struct DigiStatus {
     pub transcript: Vec<TranscriptLine>,
     /// Current engine config (so a fresh client can populate its editor).
     pub config: DigiConfig,
+    /// Continuous keyboard modes (PSK/RTTY): the rolling decoded RX text.
+    #[serde(default)]
+    pub text_rx: String,
+    /// Continuous keyboard modes: how many characters of the operator's
+    /// outgoing buffer have been transmitted (drives the green "sent" cursor).
+    #[serde(default)]
+    pub tx_sent: usize,
 }
 
 /// A completed QSO, for the persistent logbook (digital or manual entry).
@@ -122,8 +129,10 @@ pub struct QsoRecord {
 }
 
 /// Operator configuration for digital-mode operation. Persisted engine-side,
-/// echoed to clients in [`DigiStatus`].
+/// echoed to clients in [`DigiStatus`]. `#[serde(default)]` so an older
+/// `digi.json` without the newer fields still loads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DigiConfig {
     pub my_call: String,
     pub my_grid: String,
@@ -138,6 +147,10 @@ pub struct DigiConfig {
     pub msg_rreport: String,
     pub msg_rr73: String,
     pub msg_73: String,
+    /// RTTY baud rate (45.45 / 50 / 75).
+    pub rtty_baud: f32,
+    /// RTTY frequency shift in Hz (170 / 425 / 850).
+    pub rtty_shift_hz: f32,
 }
 
 impl Default for DigiConfig {
@@ -153,6 +166,8 @@ impl Default for DigiConfig {
             msg_rreport: "{DX} {MYCALL} R{REPORT}".into(),
             msg_rr73: "{DX} {MYCALL} RR73".into(),
             msg_73: "{DX} {MYCALL} 73".into(),
+            rtty_baud: 45.45,
+            rtty_shift_hz: 170.0,
         }
     }
 }

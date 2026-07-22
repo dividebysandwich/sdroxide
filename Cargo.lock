@@ -3751,7 +3751,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "sdroxide"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3774,7 +3774,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-audio"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cpal",
  "rtrb",
@@ -3784,7 +3784,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-cat"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crossbeam-channel",
  "sdroxide-types",
@@ -3795,7 +3795,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-config"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "directories",
  "sdroxide-types",
@@ -3808,7 +3808,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-digi"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crossbeam-channel",
  "mfsk-core",
@@ -3819,7 +3819,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-dsp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "num-complex",
  "rubato",
@@ -3829,7 +3829,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-hpsdr"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crossbeam-channel",
  "network-interface",
@@ -3841,7 +3841,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-proto"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "postcard",
  "sdroxide-types",
@@ -3851,7 +3851,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-radio"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
@@ -3869,7 +3869,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-server"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "crossbeam-channel",
@@ -3891,7 +3891,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-skimmer"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
@@ -3903,7 +3903,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-tci"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crossbeam-channel",
  "rtrb",
@@ -3915,14 +3915,14 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-types"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "sdroxide-ui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "eframe",
  "ewebsock",
@@ -3938,7 +3938,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-web"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "console_error_panic_hook",
  "eframe",

@@ -4,6 +4,7 @@
 //! it compiles for `wasm32-unknown-unknown`.
 
 mod band;
+mod band_segments;
 mod caps;
 mod command;
 mod controller;
@@ -20,6 +21,7 @@ mod state;
 mod ui;
 
 pub use band::Band;
+pub use band_segments::{Segment, SegmentKind, is_cw_segment, is_digi_segment, segment_kind_at};
 pub use caps::{DeviceCaps, Direction, GainElement};
 pub use command::Command;
 pub use controller::{AudioDevices, RadioController, RadioEvent};

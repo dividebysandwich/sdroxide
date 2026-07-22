@@ -62,6 +62,11 @@ pub enum Command {
     DigiStopQso,
     /// Abort any in-progress transmission immediately.
     DigiAbortTx,
+    /// Continuous keyboard modes (PSK/RTTY): set the full outgoing text buffer.
+    /// The engine keeps already-sent characters and streams the rest.
+    DigiTxText(String),
+    /// Continuous keyboard modes: enter (true) or leave (false) transmit.
+    DigiTxActive(bool),
 
     // Skimmers
     /// Turn the (CW) skimmer on/off.

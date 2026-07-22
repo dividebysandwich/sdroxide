@@ -12,7 +12,7 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use tracing::{info, warn};
 
 use sdroxide_config::BandStacks;
-use sdroxide_digi::{DigiAction, DigiController};
+use sdroxide_digi::{DigiAction, DigiController, DigiEngine, TextModemController};
 use sdroxide_skimmer::{SkimmerAction, SkimmerController};
 use sdroxide_dsp::{
     Agc, DcBlock, Ddc, Demodulator, Duc, Modulator, MonoResampler, NoiseBlanker,
@@ -353,8 +353,9 @@ struct Engine {
     tx_center_hz: f64,
     tx_ham_only: bool,
     nb: NoiseBlanker,
-    /// FT8/FT4 controller, present only while a digital mode is active.
-    digi: Option<DigiController>,
+    /// Digital-mode engine (slotted FT8/FT4 or continuous PSK/RTTY), present
+    /// only while a digital mode is active.
+    digi: Option<Box<dyn DigiEngine>>,
     digi_config: DigiConfig,
     /// True while the current TX burst is driven by the digi engine.
     digi_tx: bool,
@@ -750,6 +751,16 @@ impl Engine {
         }
     }
 
+    /// Build the digital-mode engine for `mode`: the continuous keyboard
+    /// controller for PSK/RTTY, else the slotted FT8/FT4 controller.
+    fn make_digi(&self, mode: Mode, tap_rate: f64) -> Box<dyn DigiEngine> {
+        if mode.is_text_modem() {
+            Box::new(TextModemController::new(mode, self.digi_config.clone(), tap_rate))
+        } else {
+            Box::new(DigiController::new(mode, self.digi_config.clone(), tap_rate))
+        }
+    }
+
     /// Construct or tear down the digi controller to match the current mode.
     fn sync_digi_mode(&mut self) {
         let mode = self.state.rx[0].mode;
@@ -763,7 +774,7 @@ impl Engine {
             self.main.as_ref().map(|c| c.audio_rate()).unwrap_or(48_000.0)
         };
         if want && !have {
-            self.digi = Some(DigiController::new(mode, self.digi_config.clone(), tap_rate));
+            self.digi = Some(self.make_digi(mode, tap_rate));
             if let Some(c) = self.main.as_mut() {
                 c.tap_enabled = true;
             }
@@ -773,11 +784,11 @@ impl Engine {
                 let ch_rate = self.main.as_ref().map(|c| c.channel_rate()).unwrap_or(48_000.0);
                 self.channel_analyzer = Some(SpectrumAnalyzer::new(16_384, ch_rate, 0.10));
             }
-            info!(?mode, tap_rate, "FT8/FT4 engine started");
+            info!(?mode, tap_rate, "digital-mode engine started");
         } else if want && have {
-            // Mode changed between Ft8/Ft4: rebuild for the new one.
+            // Mode changed between digital modes: rebuild for the new one.
             if self.digi.as_ref().map(|d| d.mode()) != Some(mode) {
-                self.digi = Some(DigiController::new(mode, self.digi_config.clone(), tap_rate));
+                self.digi = Some(self.make_digi(mode, tap_rate));
             }
         } else if !want && have {
             if let Some(d) = self.digi.as_mut() {
@@ -1045,6 +1056,24 @@ impl Engine {
                     self.sync_tx_state();
                 }
             }
+            DigiTxText(text) => {
+                if let Some(d) = self.digi.as_mut() {
+                    d.set_tx_text(text);
+                }
+            }
+            DigiTxActive(on) => {
+                if let Some(d) = self.digi.as_mut() {
+                    d.set_tx_active(on);
+                }
+                // Leaving TX: if nothing is queued, drop PTT promptly.
+                if !on && (self.digi_tx || self.state.tx.ptt) {
+                    if self.digi.as_ref().map(|d| d.tx_burst_active()) != Some(true) {
+                        self.state.tx.ptt = false;
+                        self.digi_tx = false;
+                        self.sync_tx_state();
+                    }
+                }
+            }
 
             // Skimmers.
             SetSkimmerEnabled(on) => {
@@ -1083,7 +1112,10 @@ impl Engine {
         let Some(sk) = self.skimmer.as_ref() else { return };
         for action in sk.poll() {
             match action {
-                SkimmerAction::Spots(spots) => {
+                SkimmerAction::Spots(mut spots) => {
+                    // The CW skimmer scans the whole window; only report spots
+                    // that fall in a CW band segment (ignore digi/phone areas).
+                    spots.retain(|s| sdroxide_types::is_cw_segment(s.freq_hz));
                     let _ = self.event_tx.send(RadioEvent::SkimmerSpots(spots));
                 }
             }

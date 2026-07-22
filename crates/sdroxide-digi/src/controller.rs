@@ -323,6 +323,54 @@ impl DigiController {
     }
 }
 
+impl crate::DigiEngine for DigiController {
+    fn mode(&self) -> Mode {
+        DigiController::mode(self)
+    }
+    fn on_rx_audio(&mut self, tap: &[f32]) {
+        DigiController::on_rx_audio(self, tap)
+    }
+    fn poll(&mut self, now: SystemTime, dial_hz: f64) -> Vec<DigiAction> {
+        DigiController::poll(self, now, dial_hz)
+    }
+    fn tx_burst_active(&self) -> bool {
+        DigiController::tx_burst_active(self)
+    }
+    fn fill_tx_block(&mut self, out: &mut [f32]) -> bool {
+        DigiController::fill_tx_block(self, out)
+    }
+    fn on_burst_done(&mut self) {
+        DigiController::on_burst_done(self)
+    }
+    fn abort(&mut self) {
+        DigiController::abort(self)
+    }
+    fn abort_tx(&mut self) {
+        DigiController::abort_tx(self)
+    }
+    fn set_config(&mut self, cfg: DigiConfig) {
+        DigiController::set_config(self, cfg)
+    }
+    fn set_audio_hz(&mut self, hz: f32) {
+        DigiController::set_audio_hz(self, hz)
+    }
+    fn audio_hz(&self) -> f32 {
+        DigiController::audio_hz(self)
+    }
+    fn status(&self) -> DigiStatus {
+        DigiController::status(self)
+    }
+    fn call_cq(&mut self) {
+        DigiController::call_cq(self)
+    }
+    fn start_qso(&mut self, from: String, grid: Option<String>, snr: i16, audio_hz: f32) {
+        DigiController::start_qso(self, from, grid, snr, audio_hz)
+    }
+    fn stop_qso(&mut self) {
+        DigiController::stop_qso(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

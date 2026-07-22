@@ -142,7 +142,7 @@ fn pump(
 
         // Spectrum: latest wins.
         if spectrum_out.update() {
-            let f = spectrum_out.peek_output_buffer();
+            let f = spectrum_out.output_buffer();
             if !f.bins.is_empty() {
                 let _ = spectrum_watch.send_replace(Some(f.clone()));
             }

@@ -102,6 +102,9 @@ pub struct SdroxideApp {
     // FT8/FT4 digital-mode state.
     digi_decodes: Vec<Decode>,
     digi_status: Option<DigiStatus>,
+    /// PSK/RTTY outgoing text buffer (UI-owned; streamed to the engine, which
+    /// reports back how many characters have been sent so we colour them green).
+    text_tx: String,
     qso_log: Vec<QsoRecord>,
     show_digi_settings: bool,
     /// UI-owned editable copy of the operator config, so typing isn't fought
@@ -254,6 +257,7 @@ impl SdroxideApp {
             skimmer_active_at: std::collections::HashMap::new(),
             digi_decodes: Vec::new(),
             digi_status: None,
+            text_tx: String::new(),
             qso_log: load_qso_log(cc.storage),
             show_digi_settings: false,
             digi_cfg_edit: sdroxide_types::DigiConfig::default(),
@@ -783,7 +787,7 @@ impl SdroxideApp {
             }
             let skim = self.state.skimmer_enabled;
             if crate::chrome::chip(ui, skim, "SKIM")
-                .on_hover_text("Decode all CW signals in a ~192 kHz window and mark them on the waterfall")
+                .on_hover_text("Decode CW signals in the CW band segments and mark them on the waterfall")
                 .clicked()
             {
                 cmds.push(Command::SetSkimmerEnabled(!skim));
@@ -1404,10 +1408,169 @@ impl SdroxideApp {
         });
     }
 
-    /// Own-call / grid / message-template editor.
+    /// PSK/RTTY keyboard-mode panel: the decoded RX stream on top, then a
+    /// streaming TX input (already-sent characters shown green) and controls.
+    fn text_modem_panel(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let status = self.digi_status.clone();
+        let mode = self.state.rx[0].mode;
+        let audio_hz = status.as_ref().map(|s| s.audio_hz).unwrap_or(1500.0);
+        let sent = status.as_ref().map(|s| s.tx_sent).unwrap_or(0);
+        let tx_on = status.as_ref().map(|s| s.tx_next).unwrap_or(false);
+        let transmitting = status.as_ref().map(|s| s.transmitting).unwrap_or(false);
+        let rx_text = status.as_ref().map(|s| s.text_rx.clone()).unwrap_or_default();
+        let my_call = status.as_ref().map(|s| s.config.my_call.clone()).unwrap_or_default();
+
+        // Header: mode + tuning readout / nudges, SETUP + TX indicator.
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(mode.label()).size(11.0).strong().color(crate::theme::CYAN));
+            ui.label(
+                RichText::new(format!("{audio_hz:.0} Hz")).size(11.0).color(Color32::from_gray(150)),
+            );
+            if crate::chrome::chip(ui, false, "−").on_hover_text("Tune down 10 Hz").clicked() {
+                cmds.push(Command::SetDigiAudioFreq((audio_hz - 10.0).clamp(200.0, 3500.0)));
+            }
+            if crate::chrome::chip(ui, false, "+").on_hover_text("Tune up 10 Hz").clicked() {
+                cmds.push(Command::SetDigiAudioFreq((audio_hz + 10.0).clamp(200.0, 3500.0)));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if crate::chrome::chip(ui, self.show_digi_settings, "⚙ SETUP").clicked() {
+                    self.show_digi_settings = !self.show_digi_settings;
+                }
+                if transmitting {
+                    ui.label(RichText::new("● TX").size(11.0).strong().color(crate::theme::PINK));
+                }
+            });
+        });
+        ui.add_space(4.0);
+
+        // Reserve the input + button rows at the bottom; RX stream gets the rest.
+        let btn_h = 34.0;
+        let input_h = 64.0;
+        let gap = 6.0;
+        let rx_h = (ui.available_height() - btn_h - input_h - 2.0 * gap).max(40.0);
+
+        ui.allocate_ui(egui::vec2(ui.available_width(), rx_h), |ui| {
+            egui::Frame::new()
+                .fill(crate::theme::ROW_BG)
+                .stroke(egui::Stroke::new(1.0, crate::theme::RED_DEEP))
+                .inner_margin(egui::Margin { left: 8, right: 7, top: 6, bottom: 6 })
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.set_min_height(ui.available_height());
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).stick_to_bottom(true).show(
+                        ui,
+                        |ui| {
+                            if rx_text.is_empty() {
+                                ui.label(
+                                    RichText::new("— listening —")
+                                        .monospace()
+                                        .size(12.0)
+                                        .color(Color32::from_gray(90)),
+                                );
+                            } else {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(&rx_text)
+                                            .monospace()
+                                            .size(12.5)
+                                            .color(crate::theme::GREEN),
+                                    )
+                                    .wrap(),
+                                );
+                            }
+                        },
+                    );
+                });
+        });
+        ui.add_space(gap);
+
+        // TX input: already-sent characters are coloured green via a layouter.
+        let prev = self.text_tx.clone();
+        let sent = sent.min(prev.chars().count());
+        let prefix: String = prev.chars().take(sent).collect();
+        let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
+            let text = buf.as_str();
+            let sent_byte =
+                text.char_indices().nth(sent).map(|(i, _)| i).unwrap_or(text.len());
+            let mut job = egui::text::LayoutJob::default();
+            job.wrap.max_width = wrap;
+            let mono = egui::FontId::monospace(13.0);
+            if sent_byte > 0 {
+                job.append(
+                    &text[..sent_byte],
+                    0.0,
+                    egui::TextFormat { font_id: mono.clone(), color: crate::theme::GREEN, ..Default::default() },
+                );
+            }
+            if sent_byte < text.len() {
+                job.append(
+                    &text[sent_byte..],
+                    0.0,
+                    egui::TextFormat { font_id: mono.clone(), color: crate::theme::TEXT_STRONG, ..Default::default() },
+                );
+            }
+            ui.fonts_mut(|f| f.layout_job(job))
+        };
+        let resp = ui.add_sized(
+            egui::vec2(ui.available_width(), input_h),
+            egui::TextEdit::multiline(&mut self.text_tx)
+                .layouter(&mut layouter)
+                .hint_text("Type here to transmit…"),
+        );
+        if resp.changed() {
+            // Protect the already-transmitted prefix from edits.
+            if !self.text_tx.starts_with(&prefix) {
+                self.text_tx = prev;
+            }
+            cmds.push(Command::DigiTxText(self.text_tx.clone()));
+        }
+        ui.add_space(gap);
+
+        // Controls.
+        ui.horizontal(|ui| {
+            let label = if tx_on { "  TX ON  " } else { "   TX   " };
+            if crate::chrome::chip_accent(
+                ui,
+                tx_on,
+                RichText::new(label).size(14.0).strong(),
+                crate::theme::PINK,
+                Color32::WHITE,
+            )
+            .clicked()
+            {
+                cmds.push(Command::DigiTxActive(!tx_on));
+            }
+            if crate::chrome::chip_accent(
+                ui,
+                false,
+                RichText::new(" CALL CQ ").size(13.0).strong(),
+                crate::theme::GREEN,
+                crate::theme::INK_ON_CYAN,
+            )
+            .clicked()
+            {
+                // Own the CQ text so the green sent-progress shows locally.
+                let call = if my_call.is_empty() { "NOCALL".to_string() } else { my_call.clone() };
+                let cq = format!("CQ CQ CQ DE {call} {call} {call} PSE K\n");
+                cmds.push(Command::DigiAbortTx);
+                self.text_tx = cq.clone();
+                cmds.push(Command::DigiTxText(cq));
+                cmds.push(Command::DigiTxActive(true));
+            }
+            if crate::chrome::chip(ui, false, " CLEAR ").clicked() {
+                self.text_tx.clear();
+                cmds.push(Command::DigiAbortTx);
+                cmds.push(Command::DigiTxText(String::new()));
+            }
+        });
+    }
+
+    /// Own-call / grid / message-template editor (and RTTY parameters).
     fn digi_settings_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
         let mut open = self.show_digi_settings;
-        let resp = egui::Window::new("FT8 / FT4 Setup")
+        let is_rtty = self.state.rx[0].mode == Mode::Rtty;
+        let title = if self.state.rx[0].mode.is_text_modem() { "PSK / RTTY Setup" } else { "FT8 / FT4 Setup" };
+        let resp = egui::Window::new(title)
             .open(&mut open)
             .frame(crate::chrome::window_frame())
             .resizable(false)
@@ -1459,6 +1622,35 @@ impl SdroxideApp {
                         ui.end_row();
                     }
                 });
+                if is_rtty {
+                    ui.separator();
+                    ui.label(RichText::new("RTTY").size(10.5).strong().color(crate::theme::CYAN_DIM));
+                    egui::Grid::new("rtty-cfg").num_columns(2).show(ui, |ui| {
+                        ui.label("Shift (Hz)");
+                        ui.horizontal(|ui| {
+                            for s in [170.0f32, 425.0, 850.0] {
+                                let sel = (cfg.rtty_shift_hz - s).abs() < 0.5;
+                                if ui.selectable_label(sel, format!("{s:.0}")).clicked() {
+                                    cfg.rtty_shift_hz = s;
+                                    changed = true;
+                                }
+                            }
+                        });
+                        ui.end_row();
+                        ui.label("Baud");
+                        ui.horizontal(|ui| {
+                            for b in [45.45f32, 50.0, 75.0] {
+                                let sel = (cfg.rtty_baud - b).abs() < 0.5;
+                                let lbl = if (b - 45.45).abs() < 0.5 { "45".to_string() } else { format!("{b:.0}") };
+                                if ui.selectable_label(sel, lbl).clicked() {
+                                    cfg.rtty_baud = b;
+                                    changed = true;
+                                }
+                            }
+                        });
+                        ui.end_row();
+                    });
+                }
                 if changed {
                     cmds.push(Command::SetDigiConfig(cfg.clone()));
                 }
@@ -2612,8 +2804,18 @@ impl eframe::App for SdroxideApp {
             self.view.view_lo_hz = dial - 200.0;
             self.view.view_hi_hz = dial + 3500.0;
             let audio_hz = self.digi_status.as_ref().map(|s| s.audio_hz).unwrap_or(1500.0);
+            let mode = self.state.rx[0].mode;
+            let is_text = mode.is_text_modem();
+            // RTTY shows mark/space tuning lines; PSK just the centre marker.
+            let markers: Vec<f32> = if mode == Mode::Rtty {
+                let sh = self.digi_status.as_ref().map(|s| s.config.rtty_shift_hz).unwrap_or(170.0);
+                vec![audio_hz - sh / 2.0, audio_hz + sh / 2.0]
+            } else {
+                Vec::new()
+            };
             // FT8 station callsign boxes (built before the &mut self borrows).
-            let (ft8_spots, ft8_alpha) = self.ft8_overlay();
+            let (ft8_spots, ft8_alpha) =
+                if is_text { (Vec::new(), Vec::new()) } else { self.ft8_overlay() };
 
             let frame = self.frame.take();
             // Manual vertical split with a draggable divider: the operating
@@ -2637,6 +2839,7 @@ impl eframe::App for SdroxideApp {
                     &mut self.spec_smooth,
                     &mut self.trace_cache,
                     Some(audio_hz),
+                    &markers,
                     &ft8_spots,
                     &ft8_alpha,
                     wf_tuning,
@@ -2675,7 +2878,11 @@ impl eframe::App for SdroxideApp {
                     .inner_margin(egui::Margin { left: 0, right: 0, top: 6, bottom: 0 })
                     .show(ui, |ui| {
                         crate::chrome::angled_frame(ui, crate::theme::PINK, |ui| {
-                            self.digi_panel(ui, &mut cmds);
+                            if is_text {
+                                self.text_modem_panel(ui, &mut cmds);
+                            } else {
+                                self.digi_panel(ui, &mut cmds);
+                            }
                         });
                     });
             });
@@ -2872,6 +3079,28 @@ fn digi_freq_for_band(mode: Mode, band: Band) -> Option<f64> {
 
 fn digi_dial_freqs(mode: Mode) -> &'static [(&'static str, f64)] {
     match mode {
+        // PSK31 activity centres (USB dial; signals sit ~1 kHz above).
+        Mode::Psk => &[
+            ("80m", 3_580_000.0),
+            ("40m", 7_040_000.0),
+            ("30m", 10_142_000.0),
+            ("20m", 14_070_000.0),
+            ("17m", 18_097_000.0),
+            ("15m", 21_070_000.0),
+            ("12m", 24_920_000.0),
+            ("10m", 28_120_000.0),
+        ],
+        // RTTY sub-band starts (USB dial).
+        Mode::Rtty => &[
+            ("80m", 3_580_000.0),
+            ("40m", 7_040_000.0),
+            ("30m", 10_140_000.0),
+            ("20m", 14_080_000.0),
+            ("17m", 18_100_000.0),
+            ("15m", 21_080_000.0),
+            ("12m", 24_920_000.0),
+            ("10m", 28_080_000.0),
+        ],
         Mode::Ft4 => &[
             ("80m", 3_575_000.0),
             ("40m", 7_047_500.0),

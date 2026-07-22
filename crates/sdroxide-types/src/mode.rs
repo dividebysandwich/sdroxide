@@ -18,10 +18,14 @@ pub enum Mode {
     Ft8,
     /// FT4 digital mode — USB underneath, decoded/encoded by the digi engine.
     Ft4,
+    /// PSK31 keyboard mode — USB underneath, streaming BPSK31 decode/encode.
+    Psk,
+    /// RTTY keyboard mode — USB underneath, streaming FSK/Baudot decode/encode.
+    Rtty,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 13] = [
+    pub const ALL: [Mode; 15] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -35,14 +39,23 @@ impl Mode {
         Mode::Spec,
         Mode::Ft8,
         Mode::Ft4,
+        Mode::Psk,
+        Mode::Rtty,
     ];
 
-    /// The digital modes handled by the FT8/FT4 engine (USB carrier + decode).
-    pub const DIGITAL: [Mode; 2] = [Mode::Ft8, Mode::Ft4];
+    /// The digital modes handled by a dedicated decode engine over USB
+    /// (slotted FT8/FT4 plus the continuous keyboard modes PSK/RTTY).
+    pub const DIGITAL: [Mode; 4] = [Mode::Ft8, Mode::Ft4, Mode::Psk, Mode::Rtty];
 
-    /// True for FT8/FT4, which use a dedicated decode/QSO layer over USB.
+    /// True for modes that use a dedicated decode/QSO layer over USB.
     pub fn is_digital(self) -> bool {
-        matches!(self, Mode::Ft8 | Mode::Ft4)
+        matches!(self, Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty)
+    }
+
+    /// True for the continuous keyboard text modes (PSK31 / RTTY), as opposed
+    /// to the slotted FT8/FT4 modes. Drives which decode engine + panel is used.
+    pub fn is_text_modem(self) -> bool {
+        matches!(self, Mode::Psk | Mode::Rtty)
     }
 
     pub fn label(self) -> &'static str {
@@ -60,6 +73,8 @@ impl Mode {
             Mode::Spec => "SPEC",
             Mode::Ft8 => "FT8",
             Mode::Ft4 => "FT4",
+            Mode::Psk => "PSK",
+            Mode::Rtty => "RTTY",
         }
     }
 
@@ -79,7 +94,8 @@ impl Mode {
             Mode::Dsb => (-2850.0, 2850.0),
             Mode::Spec => (-5000.0, 5000.0),
             // FT8/FT4 occupy the whole USB audio passband (tones 0..~3500 Hz).
-            Mode::Ft8 | Mode::Ft4 => (100.0, 3300.0),
+            // PSK/RTTY do the same (the modem filters narrowly around audio_hz).
+            Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty => (100.0, 3300.0),
         }
     }
 
@@ -126,7 +142,7 @@ impl Mode {
             Mode::Nfm => &[("8k", -4000.0, 4000.0), ("16k", -8000.0, 8000.0)],
             Mode::Dsb => &[("5k", -2500.0, 2500.0), ("6k", -3000.0, 3000.0)],
             // Digital modes have a fixed wide passband; no presets.
-            Mode::Wfm | Mode::Spec | Mode::Ft8 | Mode::Ft4 => &[],
+            Mode::Wfm | Mode::Spec | Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty => &[],
         }
     }
 }

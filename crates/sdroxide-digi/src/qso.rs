@@ -289,6 +289,9 @@ impl QsoMachine {
             transmitting,
             transcript: self.transcript.clone(),
             config: self.cfg.clone(),
+            // FT8/FT4 don't use the continuous keyboard-text fields.
+            text_rx: String::new(),
+            tx_sent: 0,
         }
     }
 }
