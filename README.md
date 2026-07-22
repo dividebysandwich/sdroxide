@@ -9,6 +9,7 @@ WebSocket. It includes an integrated, persistent **logbook** and full
 
 <img width="1683" height="933" alt="image" src="https://github.com/user-attachments/assets/8e708021-573e-42e0-b0a5-9ac9c294f874" />
 
+> ## [User Manual](docs/USER_MANUAL.md)
 
 One binary, three ways to run it:
 

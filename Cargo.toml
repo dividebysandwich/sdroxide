@@ -89,18 +89,20 @@ embed-web = ["sdroxide-server/embed-web"]
 
 # `cargo deb` packaging (used by the release workflow with --no-build after a
 # `--features embed-web` release build).
+# Base .deb = the standard (non-SoapySDR) build: drives CAT/OpenHPSDR/TCI and
+# needs no libSoapySDR, so no SoapySDR recommendation. Package name `sdroxide`.
 [package.metadata.deb]
 maintainer = "Josef Jahn <josef.jahn@gmail.com>"
 copyright = "2026, Josef Jahn"
 extended-description = """\
-PowerSDR/Thetis-style software-defined-radio transceiver client built on \
-SoapySDR with an egui GUI. Runs as a native desktop application or as a \
-server that streams the same UI to a web browser. Includes FT8/FT4 digital \
-modes and an integrated logbook."""
+PowerSDR/Thetis-style software-defined-radio transceiver client with an egui \
+GUI. Runs as a native desktop application or as a server that streams the same \
+UI to a web browser. Drives CAT-controlled radios, OpenHPSDR, and TCI; includes \
+FT8/FT4 digital modes and an integrated logbook. For SoapySDR device support \
+(HackRF, RTL-SDR, etc.) install the sdroxide-soapysdr package instead."""
 section = "hamradio"
 priority = "optional"
 license-file = ["LICENSE", "0"]
-recommends = "soapysdr-module-all"
 features = ["embed-web"]
 assets = [
     ["target/release/sdroxide", "usr/bin/", "755"],
@@ -108,8 +110,13 @@ assets = [
     ["README.md", "usr/share/doc/sdroxide/README.md", "644"],
 ]
 
-# CAT-only .deb: no SoapySDR link, so drop the SoapySDR recommendation (apt
-# installs Recommends by default). Built with `cargo deb --variant cat`.
-[package.metadata.deb.variants.cat]
-name = "sdroxide-cat"
-recommends = ""
+# SoapySDR .deb: links libSoapySDR, so recommend the driver modules (apt
+# installs Recommends by default). Built with `cargo deb --variant soapysdr`.
+[package.metadata.deb.variants.soapysdr]
+name = "sdroxide-soapysdr"
+recommends = "soapysdr-module-all"
+extended-description = """\
+PowerSDR/Thetis-style software-defined-radio transceiver client built on \
+SoapySDR with an egui GUI. Runs as a native desktop application or as a \
+server that streams the same UI to a web browser. Includes FT8/FT4 digital \
+modes and an integrated logbook."""
