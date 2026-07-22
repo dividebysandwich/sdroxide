@@ -24,6 +24,10 @@ impl HpsdrSource {
         handle.set_rx_freq(center_hz);
         let label =
             format!("HPSDR {} @ {ip} ({:.3} Msps)", handle.board, handle.sample_rate_hz / 1e6);
+        tracing::info!(
+            "HPSDR source ready: {label}, Protocol {}, center {center_hz:.0} Hz",
+            handle.protocol
+        );
         Ok(HpsdrSource {
             center: center_hz,
             rx_scratch: Vec::new(),

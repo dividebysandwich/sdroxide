@@ -7,12 +7,12 @@
 //! trusting on-air behavior; see the notes on individual builders.
 
 use std::net::{IpAddr, SocketAddr, UdpSocket};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
 use rtrb::{Consumer, Producer};
 
-use crate::net::{Ctrl, ThreadCtx, WATCHDOG};
+use crate::net::{hex_head, Ctrl, RxStats, ThreadCtx, WATCHDOG};
 
 /// UDP ports. Host→radio use these as the *destination* port; radio→host DDC IQ
 /// arrives with a *source* port of [`port::DDC_IQ_BASE`]` + ddc_index`.
@@ -257,18 +257,31 @@ impl P2Thread {
         let tx = phase_word(self.tx_freq, CLOCK_HZ);
         let drive = if self.ptt { TX_DRIVE } else { 0 };
         let pkt = high_priority_packet(seq, rx, tx, self.ptt, drive);
+        tracing::trace!(
+            "HPSDR P2: high-priority seq {seq}: RX phase 0x{rx:08X} ({:.0} Hz), \
+             TX phase 0x{tx:08X} ({:.0} Hz), MOX {}, drive {drive}",
+            self.rx_freq,
+            self.tx_freq,
+            self.ptt
+        );
         let _ = self.socket.send_to(&pkt, self.dest(port::HIGH_PRIORITY));
     }
 
     fn send_ddc_command(&mut self) {
         let seq = next_seq(&mut self.seq.ddc);
         let pkt = ddc_command_packet(seq, self.rate_khz);
+        tracing::debug!(
+            "HPSDR P2: DDC command seq {seq}: DDC0 enabled, {} kHz, 24-bit, ADC0 -> port {}",
+            self.rate_khz,
+            port::DDC_COMMAND
+        );
         let _ = self.socket.send_to(&pkt, self.dest(port::DDC_COMMAND));
     }
 
     fn send_duc_command(&mut self) {
         let seq = next_seq(&mut self.seq.duc);
         let pkt = duc_command_packet(seq);
+        tracing::debug!("HPSDR P2: DUC command seq {seq} -> port {}", port::DUC_COMMAND);
         let _ = self.socket.send_to(&pkt, self.dest(port::DUC_COMMAND));
     }
 
@@ -279,15 +292,35 @@ impl P2Thread {
     }
 
     fn run(&mut self) {
+        tracing::info!(
+            "HPSDR P2: stream starting to {} at {} kHz; sending DDC/DUC/high-priority config \
+             then run command (ports {}/{}/{}/{})",
+            self.radio,
+            self.rate_khz,
+            port::DDC_COMMAND,
+            port::DUC_COMMAND,
+            port::HIGH_PRIORITY,
+            port::GENERAL,
+        );
         self.send_ddc_command();
         self.send_duc_command();
         self.send_high_priority();
         self.send_general(true);
+        tracing::debug!(
+            "HPSDR P2: run command sent; awaiting DDC I/Q on source port {}..{}",
+            port::DDC_IQ_BASE,
+            port::DDC_IQ_BASE + 7
+        );
 
         let mut last_watchdog = Instant::now();
         let mut rx_scratch: Vec<f32> = Vec::with_capacity(512);
         let mut tx_scratch: Vec<f32> = Vec::with_capacity(DUC_SAMPLES_PER_PKT * 2);
         let mut buf = [0u8; 2048];
+        let mut stats = RxStats::new(2);
+        let mut logged_first_rx = false;
+        let mut logged_first_tx = false;
+        let mut warned_no_rx = false;
+        let started = Instant::now();
 
         loop {
             let mut freq_changed = false;
@@ -296,18 +329,22 @@ impl P2Thread {
                     Ctrl::RxFreq(hz) => {
                         self.rx_freq = hz;
                         freq_changed = true;
+                        tracing::debug!("HPSDR P2: RX NCO -> {hz:.0} Hz");
                     }
                     Ctrl::TxOn(hz) => {
                         self.tx_freq = hz;
                         self.ptt = true;
                         self.send_duc_command();
                         freq_changed = true;
+                        tracing::info!("HPSDR P2: MOX on, TX NCO {hz:.0} Hz");
                     }
                     Ctrl::TxOff => {
                         self.ptt = false;
                         freq_changed = true;
+                        tracing::info!("HPSDR P2: MOX off");
                     }
                     Ctrl::Shutdown => {
+                        tracing::info!("HPSDR P2: shutdown requested; stopping stream");
                         self.send_general(false);
                         return;
                     }
@@ -322,11 +359,37 @@ impl P2Thread {
                     let p = src.port();
                     if (port::DDC_IQ_BASE..port::DDC_IQ_BASE + 8).contains(&p) {
                         rx_scratch.clear();
-                        if decode_ddc_iq(&buf[..n], &mut rx_scratch).is_some() {
+                        if let Some(pairs) = decode_ddc_iq(&buf[..n], &mut rx_scratch) {
+                            stats.on_iq(pairs);
+                            if !logged_first_rx {
+                                logged_first_rx = true;
+                                let declared = if n >= 16 {
+                                    u16::from_be_bytes([buf[14], buf[15]])
+                                } else {
+                                    0
+                                };
+                                tracing::info!(
+                                    "HPSDR P2: first DDC I/Q from src port {p} — {n} bytes, \
+                                     header declares {declared} samples, decoded {pairs} pairs \
+                                     [{}]",
+                                    hex_head(&buf[..n], 16)
+                                );
+                            }
                             for &s in &rx_scratch {
                                 let _ = self.rx.push(s);
                             }
+                        } else {
+                            stats.on_other();
+                            tracing::trace!(
+                                "HPSDR P2: undecodable DDC datagram from port {p} ({n} bytes)"
+                            );
                         }
+                    } else {
+                        stats.on_other();
+                        tracing::trace!(
+                            "HPSDR P2: {n}-byte datagram from unexpected src port {p} [{}]",
+                            hex_head(&buf[..n], 8)
+                        );
                     }
                 }
                 Err(ref e)
@@ -339,18 +402,41 @@ impl P2Thread {
                 }
             }
 
+            // Flag a radio that accepted the run command but never streams I/Q.
+            if !logged_first_rx && !warned_no_rx && started.elapsed() >= Duration::from_secs(3) {
+                warned_no_rx = true;
+                tracing::warn!(
+                    "HPSDR P2: no DDC I/Q datagrams after 3 s. Expected them on source port \
+                     {}..{}. Check that these UDP ports are not blocked by a firewall, that the \
+                     radio is idle, and that the DDC-command offsets match this board.",
+                    port::DDC_IQ_BASE,
+                    port::DDC_IQ_BASE + 7
+                );
+            }
+            stats.tick();
+
             if self.ptt {
                 while let Ok(v) = self.tx.pop() {
                     tx_scratch.push(v);
                     if tx_scratch.len() >= DUC_SAMPLES_PER_PKT * 2 {
                         let seq = next_seq(&mut self.seq.tx_iq);
                         let pkt = duc_iq_packet(seq, &tx_scratch);
+                        if !logged_first_tx {
+                            logged_first_tx = true;
+                            tracing::info!(
+                                "HPSDR P2: first DUC I/Q datagram sent — seq {seq}, {} samples \
+                                 -> port {}",
+                                DUC_SAMPLES_PER_PKT,
+                                port::DUC_IQ
+                            );
+                        }
                         let _ = self.socket.send_to(&pkt, self.dest(port::DUC_IQ));
                         tx_scratch.clear();
                     }
                 }
             } else if !tx_scratch.is_empty() {
                 tx_scratch.clear();
+                logged_first_tx = false;
             }
 
             if last_watchdog.elapsed() >= WATCHDOG {

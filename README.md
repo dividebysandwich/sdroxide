@@ -118,9 +118,11 @@ Settings window (backend, serial, and audio changes take effect on restart):
 
 - **SoapySDR** — any [SoapySDR](https://github.com/pothosware/SoapySDR) device
   (wideband IQ). See below.
-- **OpenHPSDR** — Hermes/Metis-family Ethernet SDRs on the LAN (Protocol 2).
-  Press **Discover** to scan for devices, or enter the IP manually; pick a DDC
-  sample rate (48 kHz–1536 kHz).
+- **OpenHPSDR** — Hermes/Metis-family Ethernet SDRs on the LAN (Protocol 1 and
+  2). Press **Discover** to scan for devices, or enter the IP manually; pick a
+  DDC sample rate (48 kHz–1536 kHz). Not yet hardware-verified — testers can run
+  `RUST_LOG=sdroxide_hpsdr=debug sdroxide` for connection/RX diagnostics (see the
+  user manual, §5.4).
 - **CAT / Audio** — a CAT-controlled rig (Icom/CI-V, Yaesu, Xiegu) with audio
   over a USB sound card, as either demodulated mono audio or stereo IQ.
 - **TCI** — a TCI (Transceiver Control Interface) server such as ExpertSDR3 or

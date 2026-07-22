@@ -133,6 +133,11 @@ fn discover_impl(dests: &[SocketAddr], timeout: Duration) -> Vec<HpsdrDevice> {
 
     let p1 = p1_request();
     let p2 = p2_request();
+    tracing::debug!(
+        "HPSDR discovery: sending P1 + P2 requests to {} target(s): {:?}",
+        dests.len(),
+        dests
+    );
     for d in dests {
         let _ = socket.send_to(&p1, d);
         let _ = socket.send_to(&p2, d);
@@ -144,16 +149,34 @@ fn discover_impl(dests: &[SocketAddr], timeout: Duration) -> Vec<HpsdrDevice> {
     while Instant::now() < deadline {
         match socket.recv_from(&mut buf) {
             Ok((n, src)) => {
-                if let Some(mut dev) = parse_response(&buf[..n]) {
-                    dev.ip = src.ip().to_string();
-                    // De-dup by IP; prefer the Protocol 2 answer if a board
-                    // replies to both requests.
-                    if let Some(existing) = found.iter_mut().find(|d| d.ip == dev.ip) {
-                        if dev.protocol > existing.protocol {
-                            *existing = dev;
+                match parse_response(&buf[..n]) {
+                    Some(mut dev) => {
+                        dev.ip = src.ip().to_string();
+                        tracing::debug!(
+                            "HPSDR discovery: reply from {} ({n} bytes): board \"{}\", \
+                             Protocol {}, MAC {}, {} [{}]",
+                            src,
+                            dev.board,
+                            dev.protocol,
+                            dev.mac,
+                            if dev.in_use { "in use" } else { "idle" },
+                            crate::net::hex_head(&buf[..n], 16),
+                        );
+                        // De-dup by IP; prefer the Protocol 2 answer if a board
+                        // replies to both requests.
+                        if let Some(existing) = found.iter_mut().find(|d| d.ip == dev.ip) {
+                            if dev.protocol > existing.protocol {
+                                *existing = dev;
+                            }
+                        } else {
+                            found.push(dev);
                         }
-                    } else {
-                        found.push(dev);
+                    }
+                    None => {
+                        tracing::trace!(
+                            "HPSDR discovery: ignored {n}-byte datagram from {src} [{}]",
+                            crate::net::hex_head(&buf[..n], 16),
+                        );
                     }
                 }
             }
@@ -170,6 +193,22 @@ fn discover_impl(dests: &[SocketAddr], timeout: Duration) -> Vec<HpsdrDevice> {
         }
     }
     found.sort_by(|a, b| a.ip.cmp(&b.ip));
+    tracing::info!(
+        "HPSDR discovery: {} device(s) found{}",
+        found.len(),
+        if found.is_empty() {
+            String::new()
+        } else {
+            format!(
+                ": {}",
+                found
+                    .iter()
+                    .map(|d| format!("{} (P{}, {})", d.ip, d.protocol, d.board))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    );
     found
 }
 

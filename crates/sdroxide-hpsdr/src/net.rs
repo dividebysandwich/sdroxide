@@ -4,7 +4,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
 use rtrb::{Consumer, Producer, RingBuffer};
@@ -18,6 +18,87 @@ pub const TX_RATE_HZ: u32 = 48_000;
 /// Resend keep-alive/high-priority state at least this often so the radio's
 /// watchdog does not stop the stream.
 pub(crate) const WATCHDOG: Duration = Duration::from_millis(50);
+/// How often a protocol thread emits an RX throughput line (`RUST_LOG=…=debug`).
+pub(crate) const STATS_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Format the first `n` bytes of a datagram as spaced uppercase hex, for the
+/// diagnostic logs that let a remote tester compare on-wire bytes against the
+/// OpenHPSDR spec (the wire offsets in this crate are not hardware-verified).
+pub(crate) fn hex_head(bytes: &[u8], n: usize) -> String {
+    bytes
+        .iter()
+        .take(n)
+        .map(|b| format!("{b:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Periodic RX throughput/health accounting for a protocol thread. Counts
+/// decoded I/Q datagrams and unrecognized datagrams, emitting one `debug` line
+/// per [`STATS_INTERVAL`] so a tester can see whether I/Q is actually flowing —
+/// and at what rate — without a per-packet log flood. A wrong sample rate or a
+/// bad decode offset shows up immediately as an implausible ksps figure.
+pub(crate) struct RxStats {
+    proto: u8,
+    since: Instant,
+    win_datagrams: u64,
+    win_samples: u64,
+    win_other: u64,
+    total_datagrams: u64,
+    total_samples: u64,
+}
+
+impl RxStats {
+    pub(crate) fn new(proto: u8) -> Self {
+        RxStats {
+            proto,
+            since: Instant::now(),
+            win_datagrams: 0,
+            win_samples: 0,
+            win_other: 0,
+            total_datagrams: 0,
+            total_samples: 0,
+        }
+    }
+
+    /// Record a decoded I/Q datagram carrying `pairs` complex samples.
+    pub(crate) fn on_iq(&mut self, pairs: usize) {
+        self.win_datagrams += 1;
+        self.total_datagrams += 1;
+        self.win_samples += pairs as u64;
+        self.total_samples += pairs as u64;
+    }
+
+    /// Record a datagram that was not a recognized I/Q frame.
+    pub(crate) fn on_other(&mut self) {
+        self.win_other += 1;
+    }
+
+    /// Emit a throughput line if the reporting interval has elapsed.
+    pub(crate) fn tick(&mut self) {
+        let dt = self.since.elapsed();
+        if dt < STATS_INTERVAL {
+            return;
+        }
+        let ksps = self.win_samples as f64 / dt.as_secs_f64() / 1000.0;
+        tracing::debug!(
+            "HPSDR P{} RX: {} datagrams, {} samples ({:.1} ksps) over {:.2}s; \
+             {} unrecognized; totals {} datagrams / {} samples",
+            self.proto,
+            self.win_datagrams,
+            self.win_samples,
+            ksps,
+            dt.as_secs_f64(),
+            self.win_other,
+            self.total_datagrams,
+            self.total_samples,
+        );
+        self.since = Instant::now();
+        self.win_datagrams = 0;
+        self.win_samples = 0;
+        self.win_other = 0;
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum HpsdrError {
@@ -68,24 +149,55 @@ impl HpsdrHandle {
     /// `sample_rate_hz`, and starting the stream. A manual IP that does not
     /// answer the probe is still tried as Protocol 2.
     pub fn open(ip: Ipv4Addr, sample_rate_hz: f64) -> Result<HpsdrHandle, HpsdrError> {
+        tracing::info!("HPSDR: opening {ip}, requested RX rate {sample_rate_hz:.0} Hz");
         let (board, protocol) = match discovery::probe(ip, Duration::from_millis(800)) {
-            Some(dev) => (dev.board, dev.protocol),
-            None => ("HPSDR".to_string(), 2),
+            Some(dev) => {
+                tracing::info!(
+                    "HPSDR: {ip} answered probe: board \"{}\", Protocol {}, MAC {}, {}",
+                    dev.board,
+                    dev.protocol,
+                    dev.mac,
+                    if dev.in_use { "IN USE" } else { "idle" }
+                );
+                (dev.board, dev.protocol)
+            }
+            None => {
+                tracing::warn!(
+                    "HPSDR: {ip} did not answer the discovery probe; assuming Protocol 2. \
+                     If this board is a Hermes-Lite 2 or other Protocol 1 device, RX will not \
+                     start — check the IP and that no other program holds the radio."
+                );
+                ("HPSDR".to_string(), 2)
+            }
         };
 
         let rate = clamp_rate(sample_rate_hz, protocol);
+        if (rate - sample_rate_hz).abs() > 1.0 {
+            tracing::info!(
+                "HPSDR: requested {sample_rate_hz:.0} Hz rounded to nearest Protocol {protocol} \
+                 rate {rate:.0} Hz"
+            );
+        }
         // Protocol 1 sends TX I/Q inside the RX frame stream at the DDC rate;
         // Protocol 2 has a dedicated 48 kHz DUC.
         let tx_rate = if protocol == 1 { rate } else { TX_RATE_HZ as f64 };
 
         let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
         socket.set_read_timeout(Some(Duration::from_millis(2)))?;
+        tracing::debug!(
+            "HPSDR: bound local UDP socket {}",
+            socket.local_addr().map(|a| a.to_string()).unwrap_or_else(|_| "?".into())
+        );
 
         // RX ring ~0.5 s at the RX rate; TX ring ~0.5 s at the TX rate.
         let rx_cap = ((rate * 2.0 * 0.5) as usize).next_power_of_two().max(1 << 16);
         let (rx_prod, rx_cons) = RingBuffer::<f32>::new(rx_cap);
         let tx_cap = ((tx_rate * 2.0 * 0.5) as usize).next_power_of_two().max(1 << 15);
         let (tx_prod, tx_cons) = RingBuffer::<f32>::new(tx_cap);
+        tracing::debug!(
+            "HPSDR: RX ring {rx_cap} floats (~0.5 s @ {rate:.0} Hz), TX ring {tx_cap} floats \
+             (~0.5 s @ {tx_rate:.0} Hz)"
+        );
 
         let (ctrl_tx, ctrl_rx) = crossbeam_channel::unbounded();
         let ctx = ThreadCtx {
@@ -96,6 +208,10 @@ impl HpsdrHandle {
             tx: tx_cons,
             ctrl: ctrl_rx,
         };
+        tracing::info!(
+            "HPSDR: starting Protocol {protocol} network thread to {ip} \
+             (board \"{board}\", RX {rate:.0} Hz, TX {tx_rate:.0} Hz)"
+        );
         let join = std::thread::Builder::new()
             .name("sdroxide-hpsdr".into())
             .spawn(move || match protocol {
@@ -118,18 +234,21 @@ impl HpsdrHandle {
 
     /// Retune the RX NCO.
     pub fn set_rx_freq(&self, hz: f64) {
+        tracing::debug!("HPSDR: set RX freq {hz:.0} Hz");
         let _ = self.ctrl.send(Ctrl::RxFreq(hz));
     }
 
     /// Begin transmitting at `tx_freq_hz`; returns the TX I/Q rate to feed
     /// [`Self::tx_write`].
     pub fn tx_begin(&self, tx_freq_hz: f64) -> f64 {
+        tracing::info!("HPSDR: TX begin at {tx_freq_hz:.0} Hz ({:.0} Hz I/Q)", self.tx_rate_hz);
         let _ = self.ctrl.send(Ctrl::TxOn(tx_freq_hz));
         self.tx_rate_hz
     }
 
     /// Stop transmitting.
     pub fn tx_end(&self) {
+        tracing::info!("HPSDR: TX end");
         let _ = self.ctrl.send(Ctrl::TxOff);
     }
 

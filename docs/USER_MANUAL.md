@@ -517,6 +517,24 @@ involved. On the **Radio** tab:
 
 Receive is wideband IQ, so the full panadapter and the skimmers work.
 
+> **Help wanted — the HPSDR backend is not yet hardware-verified.** The wire
+> offsets were written against the OpenHPSDR protocol docs and the rustyHPSDR
+> reference, but have not been confirmed on real hardware. If you own an HPSDR
+> board, you can help by running with diagnostic logging and reporting what you
+> see:
+>
+> ```sh
+> RUST_LOG=sdroxide_hpsdr=debug sdroxide
+> ```
+>
+> Use `sdroxide_hpsdr=trace` for per-packet detail. The log shows discovery
+> replies (board, protocol, MAC, raw bytes), the protocol and sample rate chosen,
+> the first RX datagram's structure, and a periodic *RX throughput* line
+> (datagrams/samples/ksps). A plausible ksps close to the selected sample rate
+> means the receive decode is working; `no … I/Q datagrams after 3 s` or an
+> implausible rate points at a firewall or a wrong offset. Please attach that
+> output to a bug report.
+
 ### 5.5 TCI (ExpertSDR3 / Thetis)
 
 With the **TCI (network)** interface, sdroxide connects to a TCI server — such as

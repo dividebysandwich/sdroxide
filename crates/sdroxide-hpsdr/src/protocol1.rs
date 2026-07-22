@@ -19,9 +19,9 @@
 //! protocol docs; verify against hardware before trusting on-air behavior.
 
 use std::net::SocketAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use crate::net::{Ctrl, ThreadCtx, WATCHDOG};
+use crate::net::{hex_head, Ctrl, RxStats, ThreadCtx, WATCHDOG};
 use crate::protocol2::be24_to_f32;
 
 const PORT: u16 = 1024;
@@ -171,6 +171,11 @@ pub(crate) fn run(ctx: ThreadCtx) {
     let mut tx_freq: u32 = 7_100_000;
     let mut ptt = false;
 
+    tracing::info!(
+        "HPSDR P1: stream starting to {dest} at {rate_hz:.0} Hz (speed code {speed}); \
+         priming registers then sending run command"
+    );
+
     // Prime the config/frequency registers (a couple of full rotations), then
     // start the EP6 I/Q stream — the order rustyHPSDR uses so the radio begins
     // with the correct sample rate and NCO already loaded.
@@ -179,23 +184,36 @@ pub(crate) fn run(ctx: ThreadCtx) {
         let _ = socket.send_to(&d, dest);
     }
     let _ = socket.send_to(&start_command(true), dest);
+    tracing::debug!("HPSDR P1: sent 6 priming EP2 datagrams + run command; awaiting EP6 stream");
 
     let mut buf = [0u8; 2048];
     let mut rx_scratch: Vec<f32> = Vec::with_capacity(FLOATS_PER_DATAGRAM);
     let mut tx_scratch: Vec<f32> = Vec::with_capacity(FLOATS_PER_DATAGRAM);
     let mut last_send = Instant::now();
+    let mut stats = RxStats::new(1);
+    let mut logged_first_rx = false;
+    let mut warned_no_rx = false;
+    let started = Instant::now();
 
     loop {
         // 1) Control messages.
         while let Ok(msg) = ctrl.try_recv() {
             match msg {
-                Ctrl::RxFreq(hz) => rx_freq = hz.max(0.0) as u32,
+                Ctrl::RxFreq(hz) => {
+                    rx_freq = hz.max(0.0) as u32;
+                    tracing::debug!("HPSDR P1: RX NCO -> {rx_freq} Hz");
+                }
                 Ctrl::TxOn(hz) => {
                     tx_freq = hz.max(0.0) as u32;
                     ptt = true;
+                    tracing::info!("HPSDR P1: MOX on, TX NCO {tx_freq} Hz");
                 }
-                Ctrl::TxOff => ptt = false,
+                Ctrl::TxOff => {
+                    ptt = false;
+                    tracing::info!("HPSDR P1: MOX off");
+                }
                 Ctrl::Shutdown => {
+                    tracing::info!("HPSDR P1: shutdown requested; stopping stream");
                     let _ = socket.send_to(&start_command(false), dest);
                     return;
                 }
@@ -209,8 +227,31 @@ pub(crate) fn run(ctx: ThreadCtx) {
                 rx_scratch.clear();
                 if decode_ep6(&buf[..n], &mut rx_scratch) {
                     got_ep6 = true;
+                    let pairs = rx_scratch.len() / 2;
+                    stats.on_iq(pairs);
+                    if !logged_first_rx {
+                        logged_first_rx = true;
+                        tracing::info!(
+                            "HPSDR P1: first EP6 datagram received — {n} bytes, {pairs} I/Q \
+                             samples [{}]",
+                            hex_head(&buf[..n], 8)
+                        );
+                    }
                     for &s in &rx_scratch {
                         let _ = rx.push(s);
+                    }
+                } else {
+                    stats.on_other();
+                    if n >= 4 && buf[0] == 0xEF && buf[1] == 0xFE {
+                        tracing::trace!(
+                            "HPSDR P1: non-EP6 datagram (sync ok, endpoint 0x{:02X}, {n} bytes)",
+                            buf[3]
+                        );
+                    } else {
+                        tracing::trace!(
+                            "HPSDR P1: unrecognized {n}-byte datagram [{}]",
+                            hex_head(&buf[..n], 8)
+                        );
                     }
                 }
             }
@@ -223,6 +264,18 @@ pub(crate) fn run(ctx: ThreadCtx) {
                 return;
             }
         }
+
+        // Flag a radio that accepted the run command but never streams I/Q — the
+        // usual symptom of a wrong sample-rate/endpoint offset or a firewall.
+        if !logged_first_rx && !warned_no_rx && started.elapsed() >= Duration::from_secs(3) {
+            warned_no_rx = true;
+            tracing::warn!(
+                "HPSDR P1: no EP6 I/Q datagrams after 3 s. Check that UDP port {PORT} is not \
+                 blocked, that the radio is idle (not held by another program), and that the \
+                 board actually speaks Protocol 1."
+            );
+        }
+        stats.tick();
 
         // 3) Send one EP2 per received EP6 (paces TX to the sample rate); also on
         //    a keep-alive tick so C&C keeps flowing when idle.
