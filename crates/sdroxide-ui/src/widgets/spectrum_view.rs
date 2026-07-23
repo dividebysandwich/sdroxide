@@ -846,6 +846,39 @@ pub fn show_ext(
         );
     }
 
+    // --- RIT / XIT incremental-tuning offsets -----------------------------
+    // When enabled, show the receive (RIT) and transmit (XIT) offsets from the
+    // dial as labelled brackets, with a dashed dial reference (RIT — the red RX
+    // marker/passband already sits at dial+RIT) and a TX marker line (XIT).
+    if state.rit.enabled || state.xit.enabled {
+        let top_y = if spec_h > 1.0 { spec_rect.top() } else { wf_rect.top() } + 4.0;
+        let rit_col = Color32::from_rgb(120, 200, 255);
+        let xit_col = Color32::from_rgb(120, 230, 140);
+        let mut row = 0.0;
+        if state.rit.enabled {
+            let dial = state.active_freq_hz();
+            if in_view(dial) {
+                marker_line(&painter, &spec_rect, &wf_rect, spec_h, view.freq_to_x(dial, &rect),
+                    Color32::from_gray(150), true);
+            }
+            offset_bracket(&painter, rect, view.freq_to_x(dial, &rect),
+                view.freq_to_x(state.rx_freq_hz(), &rect), top_y + row * 16.0, rit_col,
+                &format!("RIT {:+} Hz", state.rit.hz));
+            row += 1.0;
+        }
+        if state.xit.enabled {
+            let tx = state.tx_freq_hz();
+            let base = tx - state.xit.effective_hz();
+            if in_view(tx) {
+                marker_line(&painter, &spec_rect, &wf_rect, spec_h, view.freq_to_x(tx, &rect),
+                    xit_col, false);
+            }
+            offset_bracket(&painter, rect, view.freq_to_x(base, &rect),
+                view.freq_to_x(tx, &rect), top_y + row * 16.0, xit_col,
+                &format!("XIT {:+} Hz", state.xit.hz));
+        }
+    }
+
     // Skimmer spot boxes over the waterfall (staggered lanes, on top of the
     // markers so they stay readable and clickable). Each box sits to the right
     // of its signal: a faint vertical line marks the signal's centre and a
@@ -1070,6 +1103,37 @@ fn format_bandwidth(hz: f64) -> String {
     } else {
         format!("{:.0} Hz", hz)
     }
+}
+
+/// A vertical marker line across the spectrum + waterfall strips (dashed for a
+/// reference, solid for a marker); the waterfall copy is faded so it doesn't
+/// obscure the trace.
+fn marker_line(p: &egui::Painter, spec: &Rect, wf: &Rect, spec_h: f32, x: f32, color: Color32, dashed: bool) {
+    let wf_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 150);
+    let draw = |a: Pos2, b: Pos2, c: Color32| {
+        if dashed {
+            p.extend(Shape::dashed_line(&[a, b], Stroke::new(1.0, c), 3.0, 3.0));
+        } else {
+            p.line_segment([a, b], Stroke::new(1.0, c));
+        }
+    };
+    if spec_h > 1.0 {
+        draw(pos2(x, spec.top()), pos2(x, spec.bottom()), color);
+    }
+    draw(pos2(x, wf.top()), pos2(x, wf.bottom()), wf_color);
+}
+
+/// A labelled offset bracket: a horizontal line with end ticks between two x
+/// positions, plus the label just past its right end.
+fn offset_bracket(p: &egui::Painter, bounds: Rect, xf: f32, xt: f32, y: f32, color: Color32, label: &str) {
+    let xf = xf.clamp(bounds.left(), bounds.right());
+    let xt = xt.clamp(bounds.left(), bounds.right());
+    let (lo, hi) = (xf.min(xt), xf.max(xt));
+    let s = Stroke::new(1.5, color);
+    p.line_segment([pos2(lo, y), pos2(hi, y)], s);
+    p.line_segment([pos2(xf, y - 3.0), pos2(xf, y + 3.0)], s);
+    p.line_segment([pos2(xt, y - 3.0), pos2(xt, y + 3.0)], s);
+    label_box(p, pos2(hi + 4.0, y - 6.0), label, color, bounds);
 }
 
 /// Draw `text` in a small semi-transparent black box, clamped inside `bounds`.

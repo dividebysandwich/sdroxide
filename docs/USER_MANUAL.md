@@ -168,6 +168,14 @@ The **RIT / XIT** module offsets receive (RIT) and, on TX-capable rigs, transmit
 (XIT) without moving the dial. Toggle **RIT** (or **XIT**) on, then set the
 offset in the adjacent field (±9999 Hz in 5 Hz steps).
 
+When either is enabled, the offset is drawn on the panadapter: RIT shows a dashed
+grey **dial reference** line (the receive marker and passband already sit at
+dial + RIT) with a blue labelled bracket back to the dial, and XIT shows a green
+**TX marker** line with a green labelled bracket from the transmit base to
+dial + XIT — so you can see at a glance how far RX and TX are shifted.
+
+![RIT/XIT visualization](images/rit_xit.jpg)
+
 ### 2.7 Receiver controls
 
 - **AGC** — a drop-down: `Off`, `Slow`, `Med`, `Fast`.
