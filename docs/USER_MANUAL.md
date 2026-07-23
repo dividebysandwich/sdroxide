@@ -107,8 +107,10 @@ The smaller grey number below the readout is the *inactive* VFO's frequency.
 - **Right-drag** pans the view only, without changing tuning.
 - **Shift+drag** measures bandwidth: a horizontal ruler with dotted vertical
   markers appears between where you pressed and the current pointer, showing the
-  frequency span (e.g. a signal's width) as you drag. It works on both the
-  spectrum and the waterfall; release the button to clear it.
+  **start and end frequencies** at the markers and the **frequency span** (e.g. a
+  signal's width) below. It works on both the spectrum and the waterfall. When you
+  release the button the measurement lingers and fades out over about five
+  seconds, so you can read it after letting go.
 - **Scroll the wheel** to zoom in and out around the cursor.
 - Press **F** to reset the view to the full receiver span.
 
