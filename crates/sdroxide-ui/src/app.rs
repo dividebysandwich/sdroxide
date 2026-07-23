@@ -1593,8 +1593,9 @@ impl SdroxideApp {
     /// `panel_h` is the real bounded height (the surrounding frame reports an
     /// unbounded `available_height`, so we can't use it for the split).
     fn text_modem_panel(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, panel_h: f32) {
-        // Panel content bottom, from the entry cursor (frame margins accounted).
-        let content_bottom = ui.cursor().top() + panel_h - 26.0;
+        // Panel content bottom, from the entry cursor (frame margins accounted);
+        // the larger margin leaves clear padding below the button row.
+        let content_bottom = ui.cursor().top() + panel_h - 40.0;
         let status = self.digi_status.clone();
         let mode = self.state.rx[0].mode;
         let audio_hz = status.as_ref().map(|s| s.audio_hz).unwrap_or(1500.0);
@@ -1632,7 +1633,7 @@ impl SdroxideApp {
         // Sized against the real panel bottom (not the unbounded available_height)
         // so the fixed controls are never pushed off a short panel.
         let btn_h = 32.0;
-        let input_h = 46.0; // ~2 text rows (see desired_rows below)
+        let input_h = 56.0; // fixed-height, internally-scrolling TX box
         let gap = 5.0;
         let rx_h = (content_bottom - ui.cursor().top() - btn_h - input_h - 2.0 * gap).max(24.0);
 
@@ -1698,15 +1699,36 @@ impl SdroxideApp {
             }
             ui.fonts_mut(|f| f.layout_job(job))
         };
-        let resp = ui.add_sized(
-            egui::vec2(ui.available_width(), input_h),
-            egui::TextEdit::multiline(&mut self.text_tx)
-                .layouter(&mut layouter)
-                // A multiline defaults to 4 rows; pin it to 2 so its height
-                // matches the reserved `input_h` and the buttons stay on-panel.
-                .desired_rows(2)
-                .hint_text("Type here to transmit…"),
-        );
+        // Fixed-height box: the multiline TextEdit grows with content, so wrap it
+        // in a bounded ScrollArea (stick-to-bottom) instead of letting it push the
+        // buttons off the panel.
+        let resp = ui
+            .allocate_ui(egui::vec2(ui.available_width(), input_h), |ui| {
+                egui::Frame::new()
+                    .fill(crate::theme::ROW_BG)
+                    .stroke(egui::Stroke::new(1.0, crate::theme::RED_DEEP))
+                    .inner_margin(egui::Margin::symmetric(6, 4))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.set_min_height(ui.available_height());
+                        egui::ScrollArea::vertical()
+                            .id_salt("text-tx")
+                            .auto_shrink([false, false])
+                            .stick_to_bottom(true)
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut self.text_tx)
+                                        .layouter(&mut layouter)
+                                        .frame(egui::Frame::NONE)
+                                        .desired_width(f32::INFINITY)
+                                        .hint_text("Type here to transmit…"),
+                                )
+                            })
+                            .inner
+                    })
+                    .inner
+            })
+            .inner;
         if resp.changed() {
             // Protect the already-transmitted prefix from edits.
             if !self.text_tx.starts_with(&prefix) {
