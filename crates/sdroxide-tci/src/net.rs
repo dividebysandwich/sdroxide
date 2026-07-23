@@ -141,6 +141,7 @@ impl TciHandle {
             center: 0.0,
             if_hz: 0.0,
             rx_if: 0.0,
+            if_cmd_at: None,
             mode: String::new(),
             ptt: false,
             tx_pkts: 0,
@@ -253,6 +254,11 @@ struct NetThread {
     if_hz: f64,
     /// The receive IF offset, restored when leaving TX.
     rx_if: f64,
+    /// When we last commanded the rig frequency (dds/if). The rig echoes each
+    /// change with WS latency; during a rapid waterfall drag those delayed echoes
+    /// reflect stale positions, so we ignore `vfo:` reports for a short while after
+    /// our own commands rather than mistaking them for operator dial moves.
+    if_cmd_at: Option<Instant>,
     mode: String,
     ptt: bool,
     /// TX-audio packets sent this key-down (for diagnostics).
@@ -275,6 +281,7 @@ impl NetThread {
                         send_text(&mut self.ws, p::dds(RX, hz));
                         send_text(&mut self.ws, p::if_offset(RX, CH, self.rx_if));
                         self.if_hz = self.rx_if;
+                        self.if_cmd_at = Some(Instant::now());
                         dirty = true;
                     }
                     Ctrl::SetIf(hz) => {
@@ -285,6 +292,7 @@ impl NetThread {
                         if !self.ptt && (hz - self.if_hz).abs() > 0.5 {
                             self.if_hz = hz;
                             send_text(&mut self.ws, p::if_offset(RX, CH, hz));
+                            self.if_cmd_at = Some(Instant::now());
                             dirty = true;
                         }
                     }
@@ -301,6 +309,7 @@ impl NetThread {
                             send_text(&mut self.ws, p::if_offset(RX, CH, off));
                         }
                         self.if_hz = off;
+                        self.if_cmd_at = Some(Instant::now());
                         if !self.mode.is_empty() {
                             send_text(&mut self.ws, p::modulation(RX, &self.mode));
                         }
@@ -321,6 +330,7 @@ impl NetThread {
                             send_text(&mut self.ws, p::if_offset(RX, CH, self.rx_if));
                         }
                         self.if_hz = self.rx_if;
+                        self.if_cmd_at = Some(Instant::now());
                         self.ptt = false;
                         dirty = true;
                         tracing::debug!("TCI TX off");
@@ -431,8 +441,13 @@ impl NetThread {
                     let f: Vec<&str> = args.split(',').collect();
                     if f.len() == 3 && f[0] == "0" && f[1] == "0" {
                         if let Ok(hz) = f[2].trim().parse::<f64>() {
+                            // Ignore echoes right after our own dds/if commands —
+                            // during a fast drag they arrive late and reflect stale
+                            // positions, so following them fights the drag.
+                            let ours =
+                                self.if_cmd_at.is_some_and(|t| t.elapsed() < Duration::from_millis(300));
                             let expected = self.center + self.if_hz;
-                            if (hz - expected).abs() > 1.0 {
+                            if !ours && (hz - expected).abs() > 1.0 {
                                 // Operator turned the rig dial: adopt it as our
                                 // centre (VFO == centre, IF back to zero).
                                 self.center = hz;
