@@ -116,6 +116,16 @@ The smaller grey number below the readout is the *inactive* VFO's frequency.
 
 ![Tuning on the panadapter, showing the VFO marker and filter passband](images/03-panadapter-tuning.png)
 
+**Band-plan strip.** A colour-coded strip along the bottom of the waterfall
+labels the allocations. Zoomed out it shows coarse bands (ham, broadcast, CB,
+AM); zoomed into a ham band it splits into the CW / digital / SSB / beacon
+sub-segments. When you zoom in close (a span of ~100 kHz or less), the digital
+sub-band is broken out into the individual popular modes — **FT8, FT4, JS8,
+WSPR, QRSS, PSK, RTTY, SSTV** — each in its own colour. Because several of these
+overlap in frequency (for example WSPR and QRSS sit inside the RTTY sub-band),
+overlapping modes are drawn as **separate stacked rows** above the main strip so
+each stays readable.
+
 ### 2.4 Bands and modes
 
 Click the **Band / Mode** chip (which reads, for example, `20M · USB`) to open a
@@ -418,10 +428,12 @@ label each one on the waterfall. There are three: **CW**, **PSK31**, and
 
 **Band-aware gating.** To avoid noise and false decodes, each skimmer only runs
 where its mode is used: the CW skimmer in CW sub-bands, and the PSK and RTTY
-skimmers in each band's PSK/RTTY calling sub-bands — with the FT8, FT4, and WSPR
-watering-holes excluded so their signals aren't mistaken for PSK or RTTY. The
-skimmer-decoded text is a coarse best-effort copy; switch to the mode (click a
-box) for a clean decode.
+skimmers in each band's PSK/RTTY calling sub-bands — with the FT8, FT4, WSPR, and
+QRSS watering-holes excluded so their signals aren't mistaken for PSK or RTTY
+(the WSPR window and the slow-CW/QRSS beacons just below it sit inside the RTTY
+sub-band on several bands, so they're carved out explicitly). The skimmer-decoded
+text is a coarse best-effort copy; switch to the mode (click a box) for a clean
+decode.
 
 > **Note:** the skimmers are a wideband feature and work only with true IQ/SDR
 > sources (SoapySDR, HPSDR, TCI). They are unavailable when a CAT radio is

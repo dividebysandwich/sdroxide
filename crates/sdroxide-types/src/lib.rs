@@ -23,8 +23,9 @@ mod ui;
 
 pub use band::Band;
 pub use band_segments::{
-    Segment, SegmentKind, is_auto_digi, is_cw_segment, is_digi_segment, is_psk_segment,
-    is_rtty_segment, segment_kind_at,
+    FT4_DIALS, FT8_DIALS, JS8_DIALS, PSK_RANGES, RTTY_RANGES, SSTV_CALLING, Segment, SegmentKind,
+    WSPR_DIALS, is_auto_digi, is_cw_segment, is_digi_segment, is_psk_segment, is_rtty_segment,
+    segment_kind_at,
 };
 pub use caps::{DeviceCaps, Direction, GainElement};
 pub use command::Command;

@@ -92,33 +92,47 @@ pub fn is_digi_segment(hz: f64) -> bool {
 }
 
 /// FT8 dial frequencies (Hz); each mode occupies ~3 kHz of USB audio above it.
-const FT8_DIALS: &[f64] = &[
+pub const FT8_DIALS: &[f64] = &[
     1_840_000.0, 3_573_000.0, 7_074_000.0, 10_136_000.0, 14_074_000.0, 18_100_000.0,
     21_074_000.0, 24_915_000.0, 28_074_000.0,
 ];
 /// FT4 dial frequencies (Hz).
-const FT4_DIALS: &[f64] = &[
+pub const FT4_DIALS: &[f64] = &[
     3_575_000.0, 7_047_500.0, 10_140_000.0, 14_080_000.0, 18_104_000.0, 21_140_000.0,
     24_919_000.0, 28_180_000.0,
 ];
-/// WSPR dial frequencies (Hz); a ~200 Hz slice above each.
-const WSPR_DIALS: &[f64] = &[
+/// JS8Call dial frequencies (Hz); occupies ~3 kHz of USB audio above each.
+pub const JS8_DIALS: &[f64] = &[
+    1_842_000.0, 3_578_000.0, 7_078_000.0, 10_130_000.0, 14_078_000.0, 18_104_000.0,
+    21_078_000.0, 24_922_000.0, 28_078_000.0,
+];
+/// WSPR dial frequencies (Hz). The 200 Hz WSPR window sits ~1400–1600 Hz above
+/// each dial; slow-CW (QRSS/MEPT) beacons cluster just below it (~1000–1400 Hz).
+pub const WSPR_DIALS: &[f64] = &[
     1_836_600.0, 3_568_600.0, 7_038_600.0, 10_138_700.0, 14_095_600.0, 18_104_600.0,
     21_094_600.0, 24_924_600.0, 28_124_600.0,
 ];
+/// Analog-SSTV calling frequencies (Hz); a picture occupies ~2.7 kHz above each.
+pub const SSTV_CALLING: &[f64] = &[
+    3_730_000.0, 7_171_000.0, 14_230_000.0, 21_340_000.0, 28_680_000.0,
+];
 
-/// True where the *automatic* digital modes (FT8/FT4/WSPR) live. The PSK/RTTY
-/// skimmers skip these sub-slices of the digi segment — their DSP would only
-/// produce garbage from FT8/FT4/WSPR signals.
+/// True where the *automatic* / beacon digital modes live and the PSK/RTTY
+/// skimmers must not run — their DSP would only produce garbage from these
+/// signals. Covers FT8 and FT4 (dial → +3 kHz), plus the WSPR window and the
+/// QRSS/MEPT beacons just below it (~1000–1700 Hz above the WSPR dial).
 pub fn is_auto_digi(hz: f64) -> bool {
     FT8_DIALS.iter().any(|&f| (f - 100.0..=f + 3100.0).contains(&hz))
         || FT4_DIALS.iter().any(|&f| (f - 100.0..=f + 3100.0).contains(&hz))
-        || WSPR_DIALS.iter().any(|&f| (f - 100.0..=f + 400.0).contains(&hz))
+        || WSPR_DIALS.iter().any(|&f| {
+            // Dial reference, plus the QRSS + WSPR beacon window above it.
+            (f - 100.0..=f + 400.0).contains(&hz) || (f + 1000.0..=f + 1700.0).contains(&hz)
+        })
 }
 
 /// The narrow sub-bands where PSK31 activity clusters (IARU Region 1). The PSK
 /// skimmer runs only here, not across the whole digi segment.
-const PSK_RANGES: &[(f64, f64)] = &[
+pub const PSK_RANGES: &[(f64, f64)] = &[
     (1_838_000.0, 1_840_000.0), // 160m
     (3_580_000.0, 3_583_000.0), // 80m
     (7_038_000.0, 7_042_000.0), // 40m
@@ -131,7 +145,7 @@ const PSK_RANGES: &[(f64, f64)] = &[
 ];
 
 /// The sub-bands where RTTY activity clusters (IARU Region 1).
-const RTTY_RANGES: &[(f64, f64)] = &[
+pub const RTTY_RANGES: &[(f64, f64)] = &[
     (3_580_000.0, 3_600_000.0), // 80m
     (7_040_000.0, 7_050_000.0), // 40m
     (10_140_000.0, 10_150_000.0), // 30m
@@ -176,11 +190,23 @@ mod tests {
         assert!(!is_psk_segment(14_074_000.0)); // FT8
         assert!(!is_psk_segment(14_090_000.0)); // RTTY area, not PSK
         assert!(!is_psk_segment(14_200_000.0)); // phone
-        // 20m RTTY area, clear of FT4 (14.080) and WSPR (14.0956).
+        // 20m RTTY area, clear of FT4 (14.080) and WSPR/QRSS (around 14.097).
         assert!(is_rtty_segment(14_090_000.0));
         assert!(!is_rtty_segment(14_081_000.0)); // FT4
-        assert!(!is_rtty_segment(14_095_600.0)); // WSPR
+        assert!(!is_rtty_segment(14_095_600.0)); // WSPR dial
+        assert!(!is_rtty_segment(14_097_000.0)); // WSPR signal window (dial + 1400)
+        assert!(!is_rtty_segment(14_096_800.0)); // QRSS / WSPR window (dial + 1200)
         assert!(!is_rtty_segment(14_072_000.0)); // PSK area, not RTTY
+    }
+
+    #[test]
+    fn wspr_and_qrss_excluded() {
+        // The WSPR window (dial + 1400–1600) and the QRSS beacons just below it
+        // are excluded from PSK/RTTY skimming on every band.
+        for &dial in WSPR_DIALS {
+            assert!(is_auto_digi(dial + 1500.0), "WSPR window at {dial}");
+            assert!(is_auto_digi(dial + 1200.0), "QRSS window at {dial}");
+        }
     }
 
     #[test]
