@@ -20,8 +20,8 @@ use sdroxide_types::{
 /// `RadioState.skimmer_enabled` field.
 /// v5: added SSTV — `Mode::Sstv`, `ServerMsg::Sstv*`, and
 /// `Command::SstvTx`/`SstvSetMode`.
-/// v6: added audio noise reduction — `Command::SetNoiseReduction` and a
-/// `RxState.noise_reduction` field.
+/// v6: added audio noise reduction + auto-notch — `Command::SetNoiseReduction`,
+/// `Command::SetAutoNotch`, and `RxState.noise_reduction` / `RxState.auto_notch`.
 pub const PROTO_VERSION: u16 = 6;
 const VERSION_BYTE: u8 = 0x06;
 

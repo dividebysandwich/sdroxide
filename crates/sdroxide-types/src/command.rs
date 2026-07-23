@@ -31,6 +31,8 @@ pub enum Command {
     SetNoiseBlanker(bool),
     /// Spectral audio noise-reduction intensity for a receiver.
     SetNoiseReduction { rx: RxId, level: NrLevel },
+    /// Adaptive auto-notch (constant-tone canceller) for a receiver.
+    SetAutoNotch { rx: RxId, on: bool },
     SetSubRx(bool),
     SetRit { enabled: bool, hz: i32 },
     SetXit { enabled: bool, hz: i32 },

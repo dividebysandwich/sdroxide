@@ -39,8 +39,9 @@ or connects to a remote sdroxide server.
   spectrum-only mode (SPEC), the automatic digital modes **FT8** and **FT4**, the
   keyboard modes **PSK31** and **RTTY**, and image **SSTV**.
 - **Receive controls:** AGC (Off/Slow/Med/Fast), volume, mute, squelch, an
-  impulse noise blanker, spectral noise reduction (Off/Low/Med/High), RIT, and a
-  draggable filter passband.
+  impulse noise blanker, an adaptive auto-notch (constant-tone canceller),
+  spectral noise reduction (Off/Low/Med/High), RIT, and a draggable filter
+  passband.
 - **Transmit** (on TX-capable rigs): PTT, TUNE, drive and tune-drive levels,
   mic gain, XIT, and a transmit meter (power / SWR / ALC). A ham-band-only
   transmit lockout is on by default.
@@ -175,6 +176,11 @@ offset in the adjacent field (±9999 Hz in 5 Hz steps).
 - **SQL** (Filter/Noise module) — squelch; below the open threshold it reads
   `off`.
 - **NB** — impulse noise blanker on the raw signal (keyboard shortcut **N**).
+- **ANC** — automatic notch: an adaptive filter that cancels **constant tone
+  elements** — heterodynes, carriers, and tuner-uppers — while leaving voice and
+  noise. Toggle it on when a steady whistle is spoiling a voice signal. (Like NR,
+  it affects only what you hear, not the digital decoders; leave it off for CW
+  and data modes, whose signals *are* tones.)
 - **NR** — spectral noise reduction on the audio. Click it to cycle **Off → Low
   → Med → High**. It pulls voice out of static and hiss by suppressing the
   stationary noise floor while letting the changing, speech-like parts of the

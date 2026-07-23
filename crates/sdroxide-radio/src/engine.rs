@@ -15,8 +15,8 @@ use sdroxide_config::BandStacks;
 use sdroxide_digi::{DigiAction, DigiController, DigiEngine, SstvController, TextModemController};
 use sdroxide_skimmer::{SkimmerAction, SkimmerController};
 use sdroxide_dsp::{
-    Agc, DcBlock, Ddc, Demodulator, Duc, Modulator, MonoResampler, NoiseBlanker, SpectralNr,
-    SpectrumAnalyzer, channel_target, make_demod, make_modulator,
+    Agc, AutoNotch, DcBlock, Ddc, Demodulator, Duc, Modulator, MonoResampler, NoiseBlanker,
+    SpectralNr, SpectrumAnalyzer, channel_target, make_demod, make_modulator,
 };
 use sdroxide_types::{
     Band, BandStackEntry, Command, DeviceCaps, DigiConfig, Direction, MemoryChannel, Meters,
@@ -124,6 +124,9 @@ struct RxChain {
     /// for the digital-mode decoder (independent of mute/volume/squelch).
     tap_enabled: bool,
     tap_out: Vec<f32>,
+    /// Adaptive auto-notch (constant-tone canceller) on the listener audio.
+    notch: AutoNotch,
+    notch_on: bool,
     /// Spectral noise reduction on the listener audio (after the digital tap).
     nr: SpectralNr,
     nr_level: NrLevel,
@@ -146,6 +149,8 @@ impl RxChain {
             sq_gain: 1.0,
             tap_enabled: false,
             tap_out: Vec::new(),
+            notch: AutoNotch::new(),
+            notch_on: false,
             nr: SpectralNr::new(),
             nr_level: NrLevel::Off,
             channel_buf: Vec::new(),
@@ -222,7 +227,17 @@ impl RxChain {
             self.tap_out.extend_from_slice(&self.audio_buf);
         }
 
-        // Spectral noise reduction on the listener audio only.
+        // Auto-notch first (remove constant tones), then spectral NR (remove the
+        // residual noise floor) — both on the listener audio only.
+        if self.notch_on != rx.auto_notch {
+            if rx.auto_notch {
+                self.notch.reset();
+            }
+            self.notch_on = rx.auto_notch;
+        }
+        if self.notch_on {
+            self.notch.process(&mut self.audio_buf);
+        }
         if self.nr_level != rx.noise_reduction {
             if !self.nr_level.is_on() && rx.noise_reduction.is_on() {
                 self.nr.reset(); // fresh start when switching on
@@ -372,8 +387,10 @@ struct Engine {
     tx_center_hz: f64,
     tx_ham_only: bool,
     nb: NoiseBlanker,
-    /// Spectral NR for the CAT/demod-audio path (the IQ path uses per-`RxChain`
-    /// NR instead).
+    /// Auto-notch + spectral NR for the CAT/demod-audio path (the IQ path uses
+    /// per-`RxChain` instances instead).
+    audio_notch: AutoNotch,
+    audio_notch_on: bool,
     audio_nr: SpectralNr,
     audio_nr_level: NrLevel,
     /// Digital-mode engine (slotted FT8/FT4 or continuous PSK/RTTY), present
@@ -500,6 +517,8 @@ fn engine_thread(
         tx_center_hz: 0.0,
         tx_ham_only: engine_cfg.tx_ham_only,
         nb: NoiseBlanker::new(),
+        audio_notch: AutoNotch::new(),
+        audio_notch_on: false,
         audio_nr: SpectralNr::new(),
         audio_nr_level: NrLevel::Off,
         digi: None,
@@ -687,7 +706,17 @@ impl Engine {
             digi.on_rx_audio(&self.audio_re);
         }
 
-        // Spectral noise reduction on the listener audio.
+        // Auto-notch (constant tones) then spectral noise reduction.
+        let notch_on = self.state.rx[0].auto_notch;
+        if self.audio_notch_on != notch_on {
+            if notch_on {
+                self.audio_notch.reset();
+            }
+            self.audio_notch_on = notch_on;
+        }
+        if self.audio_notch_on {
+            self.audio_notch.process(&mut self.audio_re);
+        }
         let nr_level = self.state.rx[0].noise_reduction;
         if self.audio_nr_level != nr_level {
             if !self.audio_nr_level.is_on() && nr_level.is_on() {
@@ -1018,6 +1047,7 @@ impl Engine {
             SetSquelch { rx, db } => self.state.rx[rx.index()].squelch_db = db,
             SetNoiseBlanker(on) => self.state.noise_blanker = on,
             SetNoiseReduction { rx, level } => self.state.rx[rx.index()].noise_reduction = level,
+            SetAutoNotch { rx, on } => self.state.rx[rx.index()].auto_notch = on,
             SetSubRx(on) => {
                 self.state.sub_rx_enabled = on;
                 if on && self.sub.is_none() && self.main.is_some() {

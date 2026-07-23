@@ -57,6 +57,8 @@ pub struct RxState {
     pub squelch_db: f32,
     /// Spectral noise-reduction intensity on the demodulated audio.
     pub noise_reduction: NrLevel,
+    /// Adaptive auto-notch (ANC): cancel constant tone elements in the audio.
+    pub auto_notch: bool,
 }
 
 impl RxState {
@@ -72,6 +74,7 @@ impl RxState {
             muted: false,
             squelch_db: SQUELCH_OPEN_DB,
             noise_reduction: NrLevel::Off,
+            auto_notch: false,
         }
     }
 }

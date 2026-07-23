@@ -721,11 +721,11 @@ impl SdroxideApp {
     }
 
     /// Combined Receiver + Filter/Noise box: AGC / volume / mute on top, with the
-    /// squelch + noise-blanker + noise-reduction controls stacked underneath.
-    /// Bare and tall, like the VFO/RIT box — replaces the separate Receiver and
-    /// Filter boxes.
+    /// squelch + noise-blanker + auto-notch + noise-reduction controls stacked
+    /// underneath. Bare and tall, like the VFO/RIT box — replaces the separate
+    /// Receiver and Filter boxes.
     fn rx_filter_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
-        crate::chrome::module_bare_h(ui, 328.0, crate::chrome::MODULE_TALL_H, |ui| {
+        crate::chrome::module_bare_h(ui, 356.0, crate::chrome::MODULE_TALL_H, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
                 // Receiver: volume, AGC, mute.
@@ -783,6 +783,15 @@ impl SdroxideApp {
                         .clicked()
                     {
                         cmds.push(Command::SetNoiseBlanker(!nb));
+                    }
+                    // Auto-notch — cancels constant tones (heterodynes / carriers).
+                    let anc = self.state.rx[0].auto_notch;
+                    if crate::chrome::chip(ui, anc, "ANC")
+                        .on_hover_text("Auto-notch: cancel constant tone elements (heterodynes)")
+                        .clicked()
+                    {
+                        self.state.rx[0].auto_notch = !anc; // optimistic echo
+                        cmds.push(Command::SetAutoNotch { rx: RxId::Main, on: !anc });
                     }
                     // Spectral noise reduction — cycles Off → Low → Med → High.
                     let nr = self.state.rx[0].noise_reduction;
