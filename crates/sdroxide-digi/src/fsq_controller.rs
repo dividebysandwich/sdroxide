@@ -34,6 +34,7 @@ pub struct FsqController {
     rx_text: String,
     /// Bytes of `rx_text` already scanned for directed-message parsing.
     rx_parsed: usize,
+    sq: crate::squelch::Squelch,
     /// FSQ image receiver (runs alongside the text decoder on the same tap).
     img_rx: FsqImageRx,
     /// Completed image actions awaiting the next `poll`.
@@ -70,6 +71,7 @@ impl FsqController {
             rx_rs: MonoResampler::new(tap_rate, MODEM_RATE),
             rx_text: String::new(),
             rx_parsed: 0,
+            sq: crate::squelch::Squelch::new(),
             img_rx: FsqImageRx::new(MODEM_RATE, audio_hz as f64),
             pending: Vec::new(),
             tx: FsqTx::new(MODEM_RATE, audio_hz as f64, baud),
@@ -237,7 +239,9 @@ impl DigiEngine for FsqController {
             return;
         }
         let decoded = self.rx.process(&self.scratch8);
-        if !decoded.is_empty() {
+        // Squelch pure noise so the stream + heard list aren't polluted.
+        let open = self.sq.open(self.rx.magnitude(), self.cfg.digi_squelch);
+        if !decoded.is_empty() && open {
             self.rx_text.push_str(&decoded);
             if self.rx_text.len() > RX_TEXT_CAP {
                 let cut = self.rx_text.len() - RX_TEXT_CAP;

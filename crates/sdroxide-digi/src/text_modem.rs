@@ -40,6 +40,14 @@ impl RxModem {
             RxModem::Thor(r) => r.process(audio),
         }
     }
+    fn magnitude(&self) -> f32 {
+        match self {
+            RxModem::Psk(r) => r.magnitude(),
+            RxModem::Rtty(r) => r.magnitude(),
+            RxModem::Olivia(r) => r.magnitude(),
+            RxModem::Thor(r) => r.magnitude(),
+        }
+    }
 }
 
 enum TxModem {
@@ -110,6 +118,7 @@ pub struct TextModemController {
     rx: RxModem,
     rx_rs: Option<MonoResampler>,
     rx_text: String,
+    sq: crate::squelch::Squelch,
 
     // TX
     tx: TxModem,
@@ -162,6 +171,7 @@ impl TextModemController {
             rx,
             rx_rs: MonoResampler::new(tap_rate, MODEM_RATE),
             rx_text: String::new(),
+            sq: crate::squelch::Squelch::new(),
             tx,
             tx_rs: MonoResampler::new(MODEM_RATE, OUT_RATE),
             tx48: VecDeque::new(),
@@ -234,7 +244,10 @@ impl DigiEngine for TextModemController {
             None => self.scratch8.extend_from_slice(tap),
         }
         let decoded = self.rx.process(&self.scratch8);
-        if !decoded.is_empty() {
+        // Squelch: drop decoded text while the signal sits at the noise floor so
+        // pure noise doesn't fill the window. `digi_squelch` is the sensitivity.
+        let open = self.sq.open(self.rx.magnitude(), self.cfg.digi_squelch);
+        if !decoded.is_empty() && open {
             self.rx_text.push_str(&decoded);
             if self.rx_text.len() > RX_TEXT_CAP {
                 let cut = self.rx_text.len() - RX_TEXT_CAP;

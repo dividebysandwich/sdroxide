@@ -11,6 +11,7 @@ pub mod modem;
 pub mod params;
 pub mod qso;
 pub mod scheduler;
+pub mod squelch;
 pub mod sstv_controller;
 pub mod text_modem;
 

@@ -1573,6 +1573,21 @@ impl SdroxideApp {
         });
     }
 
+    /// A compact decode-squelch (sensitivity) slider for the keyboard panels:
+    /// higher = require a stronger signal, so pure noise stops decoding.
+    fn digi_squelch_slider(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let mut sq = self.digi_cfg_edit.digi_squelch;
+        ui.spacing_mut().slider_width = 84.0;
+        let resp = ui
+            .add(egui::Slider::new(&mut sq, 0.0..=1.0).show_value(false))
+            .on_hover_text("Decode squelch — raise to stop decoding noise");
+        ui.label(RichText::new("SQL").size(10.0).color(crate::theme::CYAN_DIM));
+        if resp.changed() && self.digi_cfg_seeded {
+            self.digi_cfg_edit.digi_squelch = sq;
+            cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+        }
+    }
+
     /// PSK/RTTY keyboard-mode panel: the decoded RX stream on top, then a
     /// streaming TX input (already-sent characters shown green) and controls.
     /// `panel_h` is the real bounded height (the surrounding frame reports an
@@ -1608,6 +1623,7 @@ impl SdroxideApp {
                 if transmitting {
                     ui.label(RichText::new("● TX").size(11.0).strong().color(crate::theme::PINK));
                 }
+                self.digi_squelch_slider(ui, cmds);
             });
         });
         ui.add_space(4.0);
@@ -1784,6 +1800,7 @@ impl SdroxideApp {
                 if crate::chrome::chip(ui, self.fsq_show_contacts, "CONTACTS").clicked() {
                     self.fsq_show_contacts = !self.fsq_show_contacts;
                 }
+                self.digi_squelch_slider(ui, cmds);
             });
         });
         ui.add_space(4.0);

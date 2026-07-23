@@ -364,6 +364,10 @@ panel is a live **messaging area** instead of a QSO sequencer.
 - Tune exactly onto a signal with the **−/+** buttons (±10 Hz) — or click its
   skimmer label (see [Skimmers](#4-skimmers)). In RTTY, two amber
   lines on the waterfall mark the expected mark/space tones to tune between.
+- The **SQL** slider in the panel header is a decode squelch: raise it until the
+  window stops filling with garbage when no signal is present, lower it (to the
+  left) to copy weaker signals. It applies to every keyboard mode
+  (PSK/RTTY/Olivia/THOR/FSQ).
 
 **Transmitting (type-ahead):**
 

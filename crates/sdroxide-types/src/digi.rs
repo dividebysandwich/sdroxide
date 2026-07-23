@@ -253,6 +253,9 @@ pub struct DigiConfig {
     /// FSQ station callsign for directed (FSQCALL) messaging. Falls back to
     /// `my_call` when empty.
     pub fsq_call: String,
+    /// Keyboard-mode decode squelch (0 = open/decode everything, 1 = only strong
+    /// signals). Suppresses decoding of pure noise when no signal is present.
+    pub digi_squelch: f32,
     /// SSTV transmit clock trim in parts-per-million. Stretches (+) or compresses
     /// (−) the image time-scale to null out slant against a receiver whose sound-
     /// card clock differs from this station's. 0 = no correction.
@@ -279,6 +282,7 @@ impl Default for DigiConfig {
             thor_mode: ThorMode::Thor16,
             fsq_baud: 4.5,
             fsq_call: String::new(),
+            digi_squelch: 0.35,
             sstv_tx_ppm: 0.0,
         }
     }
