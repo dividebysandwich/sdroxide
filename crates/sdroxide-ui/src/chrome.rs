@@ -12,10 +12,15 @@ use crate::theme;
 const FRAME_CUT: f32 = 10.0;
 /// Corner cut size for chip buttons.
 const CHIP_CUT: f32 = 5.0;
-/// Fixed module height. Must exceed the tallest content (caption + a combo
-/// or slider row + margins) so every module ends up exactly this tall — then
-/// they line up regardless of the row's cross-axis alignment.
-pub const MODULE_H: f32 = 58.0;
+/// Fixed module height for the captioned control boxes. Must exceed the tallest
+/// content (caption + a combo or slider row + margins) so every module ends up
+/// exactly this tall — then they line up regardless of the row's cross-axis
+/// alignment.
+pub const MODULE_H: f32 = 50.0;
+/// Taller box height for the prominent, caption-less boxes (frequency readout,
+/// S-meter, VFO/band-mode stack) — ~25% taller than a control box's original
+/// height, so two shortened control rows sit alongside one of these.
+pub const MODULE_TALL_H: f32 = 72.0;
 
 /// A panel with a pink border and cut corners (top-right + bottom-left),
 /// sitting on the darker page background.
@@ -100,23 +105,34 @@ pub fn paint_cut_border(p: &Painter, rect: Rect, color: Color32, mask: Color32) 
 /// whole module to the next row cleanly (a plain `Frame` instead shrinks
 /// into whatever sliver is left, which is the wrong behavior here).
 pub fn module<R>(ui: &mut Ui, caption: &str, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    module_h(ui, caption, width, MODULE_H, add)
+}
+
+/// Like [`module`] but with an explicit box `height` (e.g. [`MODULE_TALL_H`]).
+pub fn module_h<R>(
+    ui: &mut Ui,
+    caption: &str,
+    width: f32,
+    height: f32,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
     // Fixed height too: a bare (w, 0) allocation lets the top-down layout
     // over-reserve vertical space, leaving big gaps between wrapped rows.
     ui.allocate_ui_with_layout(
-        egui::vec2(width, MODULE_H),
+        egui::vec2(width, height),
         egui::Layout::top_down(egui::Align::Min),
         |ui| {
             ui.set_width(width);
             egui::Frame::new()
                 .fill(theme::FILL)
                 .stroke(Stroke::new(1.0, theme::LINE_LIT))
-                .inner_margin(egui::Margin { left: 8, right: 8, top: 4, bottom: 6 })
+                .inner_margin(egui::Margin { left: 8, right: 8, top: 4, bottom: 3 })
                 .show(ui, |ui| {
                     ui.set_width(width - 16.0);
                     // Fill the full module height so every box — captioned or
-                    // bare — ends up exactly MODULE_H tall.
-                    ui.set_min_height(MODULE_H - 10.0);
-                    ui.spacing_mut().item_spacing.y = 3.0;
+                    // bare — ends up exactly `height` tall.
+                    ui.set_min_height(height - 7.0);
+                    ui.spacing_mut().item_spacing.y = 2.0;
                     ui.label(
                         RichText::new(caption.to_uppercase())
                             .color(theme::CYAN_DIM)
@@ -143,20 +159,30 @@ pub fn module<R>(ui: &mut Ui, caption: &str, width: f32, add: impl FnOnce(&mut U
 /// (vertically centred). Used for the frequency readout and S-meter, where the
 /// label would only waste space.
 pub fn module_bare<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    module_bare_h(ui, width, MODULE_H, add)
+}
+
+/// Like [`module_bare`] but with an explicit box `height`.
+pub fn module_bare_h<R>(
+    ui: &mut Ui,
+    width: f32,
+    height: f32,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
     ui.allocate_ui_with_layout(
-        egui::vec2(width, MODULE_H),
+        egui::vec2(width, height),
         egui::Layout::top_down(egui::Align::Min),
         |ui| {
             ui.set_width(width);
             egui::Frame::new()
                 .fill(theme::FILL)
                 .stroke(Stroke::new(1.0, theme::LINE_LIT))
-                .inner_margin(egui::Margin { left: 8, right: 8, top: 4, bottom: 6 })
+                .inner_margin(egui::Margin { left: 8, right: 8, top: 4, bottom: 5 })
                 .show(ui, |ui| {
                     ui.set_width(width - 16.0);
-                    ui.set_min_height(MODULE_H - 10.0);
+                    ui.set_min_height(height - 9.0);
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.set_min_height(MODULE_H - 10.0);
+                        ui.set_min_height(height - 9.0);
                         add(ui)
                     })
                     .inner

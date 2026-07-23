@@ -403,11 +403,8 @@ impl SdroxideApp {
             |ui| {
                 self.freq_module(ui, cmds);
                 self.smeter_module(ui);
-                self.band_mode_module(ui, cmds);
-                self.vfo_module(ui, cmds);
-                self.rit_module(ui, cmds);
-                self.rx_module(ui, cmds);
-                self.filter_module(ui, cmds);
+                self.vfo_rit_module(ui, cmds);
+                self.rx_filter_module(ui, cmds);
                 if self.caps.as_ref().is_some_and(|c| c.is_transmit_capable()) {
                     self.tx_module(ui, cmds);
                 }
@@ -420,18 +417,29 @@ impl SdroxideApp {
     /// The VFO frequency controls (A/B select + big readout + the inactive
     /// VFO's frequency) in a label-less box, always the first module.
     fn freq_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
-        crate::chrome::module_bare(ui, 452.0, |ui| {
+        crate::chrome::module_bare_h(ui, 510.0, crate::chrome::MODULE_TALL_H, |ui| {
             let active = self.state.active_vfo;
-            for (v, label) in [(Vfo::A, "A"), (Vfo::B, "B")] {
-                if crate::chrome::chip(ui, active == v, RichText::new(label).size(15.0)).clicked() {
-                    cmds.push(Command::SelectVfo(v));
-                }
-            }
+            // Left column: VFO A/B selector on top, band/mode selector below.
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
+                ui.horizontal(|ui| {
+                    for (v, label) in [(Vfo::A, "A"), (Vfo::B, "B")] {
+                        if crate::chrome::chip(ui, active == v, RichText::new(label).size(15.0))
+                            .clicked()
+                        {
+                            cmds.push(Command::SelectVfo(v));
+                        }
+                    }
+                });
+                self.band_mode_button(ui, cmds);
+            });
+            // Big frequency readout.
             if let Some(hz) =
                 freq_display::show(ui, egui::Id::new("main-freq"), self.state.active_freq_hz())
             {
                 cmds.push(Command::SetVfo { vfo: active, hz });
             }
+            // Inactive VFO's frequency.
             let inactive_hz = match active {
                 Vfo::A => self.state.vfo_b_hz,
                 Vfo::B => self.state.vfo_a_hz,
@@ -448,7 +456,7 @@ impl SdroxideApp {
     /// The S-meter in a label-less box, always pinned top-right. Clicking it
     /// toggles between the bar and analog-needle styles.
     fn smeter_module(&mut self, ui: &mut egui::Ui) {
-        crate::chrome::module_bare(ui, 250.0, |ui| {
+        crate::chrome::module_bare_h(ui, 250.0, crate::chrome::MODULE_TALL_H, |ui| {
             let resp = smeter::show(ui, self.meters.as_ref(), self.view.smeter_analog)
                 .on_hover_text("Click to switch bar / analog meter");
             if resp.clicked() {
@@ -515,15 +523,76 @@ impl SdroxideApp {
         (spots, alpha)
     }
 
-    /// One button opening a floating popup with the band + mode + filter
-    /// preset button rows.
-    fn band_mode_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
-        crate::chrome::module(ui, "Band / Mode", 128.0, |ui| {
-            let mode = self.state.rx[0].mode;
-            let summary = format!("{} · {}", self.state.band.label(), mode.label());
-            let btn = crate::chrome::chip(ui, false, RichText::new(summary).size(14.0));
+    /// Combined VFO + RIT/XIT box: the VFO A/B utility chips on top, with the
+    /// RIT/XIT tuning-offset controls stacked underneath. Bare and tall — this
+    /// replaces the separate VFO and RIT/XIT boxes.
+    fn vfo_rit_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let tx_capable = self.caps.as_ref().is_some_and(|c| c.is_transmit_capable());
+        crate::chrome::module_bare_h(ui, 270.0, crate::chrome::MODULE_TALL_H, |ui| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
+                // VFO utility chips.
+                ui.horizontal(|ui| {
+                    if crate::chrome::chip(ui, false, "A↔B").on_hover_text("Swap VFOs").clicked() {
+                        cmds.push(Command::SwapVfos);
+                    }
+                    if crate::chrome::chip(ui, false, "A→B").on_hover_text("Copy A to B").clicked() {
+                        cmds.push(Command::CopyAtoB);
+                    }
+                    if crate::chrome::chip(ui, self.state.split, "SPLIT").clicked() {
+                        cmds.push(Command::SetSplit(!self.state.split));
+                    }
+                    if crate::chrome::chip(ui, self.state.sub_rx_enabled, "SUB")
+                        .on_hover_text("Sub receiver on the inactive VFO (right ear)")
+                        .clicked()
+                    {
+                        cmds.push(Command::SetSubRx(!self.state.sub_rx_enabled));
+                    }
+                });
+                // RIT / XIT tuning offsets.
+                ui.horizontal(|ui| {
+                    let rit = self.state.rit;
+                    if crate::chrome::chip(ui, rit.enabled, "RIT").clicked() {
+                        cmds.push(Command::SetRit { enabled: !rit.enabled, hz: rit.hz });
+                    }
+                    let mut rit_hz = rit.hz;
+                    if ui
+                        .add(DragValue::new(&mut rit_hz).speed(5).range(-9999..=9999).suffix(" Hz"))
+                        .changed()
+                    {
+                        cmds.push(Command::SetRit { enabled: rit.enabled, hz: rit_hz });
+                    }
+                    if tx_capable {
+                        let xit = self.state.xit;
+                        if crate::chrome::chip(ui, xit.enabled, "XIT").clicked() {
+                            cmds.push(Command::SetXit { enabled: !xit.enabled, hz: xit.hz });
+                        }
+                        let mut xit_hz = xit.hz;
+                        if ui
+                            .add(
+                                DragValue::new(&mut xit_hz)
+                                    .speed(5)
+                                    .range(-9999..=9999)
+                                    .suffix(" Hz"),
+                            )
+                            .changed()
+                        {
+                            cmds.push(Command::SetXit { enabled: xit.enabled, hz: xit_hz });
+                        }
+                    }
+                });
+            });
+        });
+    }
 
-            egui::Popup::from_toggle_button_response(&btn)
+    /// The band/mode selector button plus the floating popup with the band +
+    /// mode + digital button rows.
+    fn band_mode_button(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let mode = self.state.rx[0].mode;
+        let summary = format!("{} · {}", self.state.band.label(), mode.label());
+        let btn = crate::chrome::chip(ui, false, RichText::new(summary).size(14.0));
+
+        egui::Popup::from_toggle_button_response(&btn)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| {
                     ui.set_max_width(430.0);
@@ -582,119 +651,74 @@ impl SdroxideApp {
                         }
                     });
                 });
-        });
     }
 
-    fn vfo_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
-        crate::chrome::module(ui, "VFO", 244.0, |ui| {
-            if crate::chrome::chip(ui, false, "A↔B").on_hover_text("Swap VFOs").clicked() {
-                cmds.push(Command::SwapVfos);
-            }
-            if crate::chrome::chip(ui, false, "A→B").on_hover_text("Copy A to B").clicked() {
-                cmds.push(Command::CopyAtoB);
-            }
-            if crate::chrome::chip(ui, self.state.split, "SPLIT").clicked() {
-                cmds.push(Command::SetSplit(!self.state.split));
-            }
-            if crate::chrome::chip(ui, self.state.sub_rx_enabled, "SUB")
-                .on_hover_text("Sub receiver on the inactive VFO (right ear)")
-                .clicked()
-            {
-                cmds.push(Command::SetSubRx(!self.state.sub_rx_enabled));
-            }
-        });
-    }
+    /// Combined Receiver + Filter/Noise box: AGC / volume / mute on top, with the
+    /// squelch + noise-blanker controls stacked underneath. Bare and tall, like
+    /// the VFO/RIT box — this replaces the separate Receiver and Filter boxes.
+    fn rx_filter_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        crate::chrome::module_bare_h(ui, 300.0, crate::chrome::MODULE_TALL_H, |ui| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
+                // Receiver: AGC, volume, mute.
+                ui.horizontal(|ui| {
+                    let agc = self.state.rx[0].agc;
+                    ComboBox::from_id_salt("agc")
+                        .selected_text(format!("AGC {}", agc.label()))
+                        .width(88.0)
+                        .show_ui(ui, |ui| {
+                            for a in AgcMode::ALL {
+                                if ui.selectable_label(agc == a, a.label()).clicked() {
+                                    cmds.push(Command::SetAgc { rx: RxId::Main, agc: a });
+                                }
+                            }
+                        });
 
-    fn rit_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
-        let tx_capable = self.caps.as_ref().is_some_and(|c| c.is_transmit_capable());
-        let width = if tx_capable { 340.0 } else { 176.0 };
-        crate::chrome::module(ui, "RIT / XIT", width, |ui| {
-            let rit = self.state.rit;
-            if crate::chrome::chip(ui, rit.enabled, "RIT").clicked() {
-                cmds.push(Command::SetRit { enabled: !rit.enabled, hz: rit.hz });
-            }
-            let mut rit_hz = rit.hz;
-            if ui
-                .add(DragValue::new(&mut rit_hz).speed(5).range(-9999..=9999).suffix(" Hz"))
-                .changed()
-            {
-                cmds.push(Command::SetRit { enabled: rit.enabled, hz: rit_hz });
-            }
-            if tx_capable {
-                let xit = self.state.xit;
-                if crate::chrome::chip(ui, xit.enabled, "XIT").clicked() {
-                    cmds.push(Command::SetXit { enabled: !xit.enabled, hz: xit.hz });
-                }
-                let mut xit_hz = xit.hz;
-                if ui
-                    .add(DragValue::new(&mut xit_hz).speed(5).range(-9999..=9999).suffix(" Hz"))
-                    .changed()
-                {
-                    cmds.push(Command::SetXit { enabled: xit.enabled, hz: xit_hz });
-                }
-            }
-        });
-    }
-
-    fn rx_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
-        crate::chrome::module(ui, "Receiver", 300.0, |ui| {
-            let agc = self.state.rx[0].agc;
-            ComboBox::from_id_salt("agc")
-                .selected_text(format!("AGC {}", agc.label()))
-                .width(88.0)
-                .show_ui(ui, |ui| {
-                    for a in AgcMode::ALL {
-                        if ui.selectable_label(agc == a, a.label()).clicked() {
-                            cmds.push(Command::SetAgc { rx: RxId::Main, agc: a });
-                        }
+                    let mut vol = self.state.rx[0].volume;
+                    ui.label("Vol");
+                    if crate::chrome::slider(ui, Slider::new(&mut vol, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        self.state.rx[0].volume = vol; // optimistic echo
+                        cmds.push(Command::SetVolume { rx: RxId::Main, v: vol });
+                    }
+                    let muted = self.state.rx[0].muted;
+                    if crate::chrome::chip_accent(ui, muted, "MUTE", crate::theme::PINK, Color32::WHITE)
+                        .clicked()
+                    {
+                        cmds.push(Command::SetMute { rx: RxId::Main, muted: !muted });
                     }
                 });
-
-            let mut vol = self.state.rx[0].volume;
-            ui.label("Vol");
-            if crate::chrome::slider(ui, Slider::new(&mut vol, 0.0..=1.0).show_value(false))
-                .changed()
-            {
-                self.state.rx[0].volume = vol; // optimistic echo
-                cmds.push(Command::SetVolume { rx: RxId::Main, v: vol });
-            }
-            let muted = self.state.rx[0].muted;
-            if crate::chrome::chip_accent(ui, muted, "MUTE", crate::theme::PINK, Color32::WHITE)
-                .clicked()
-            {
-                cmds.push(Command::SetMute { rx: RxId::Main, muted: !muted });
-            }
-        });
-    }
-
-    fn filter_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
-        crate::chrome::module(ui, "Filter / Noise", 178.0, |ui| {
-            let mut sql = self.state.rx[0].squelch_db;
-            ui.label("SQL");
-            if crate::chrome::slider(
-                ui,
-                Slider::new(&mut sql, sdroxide_types::SQUELCH_OPEN_DB..=-30.0)
-                    .show_value(true)
-                    .custom_formatter(|v, _| {
-                        if v <= (sdroxide_types::SQUELCH_OPEN_DB + 1.0) as f64 {
-                            "off".into()
-                        } else {
-                            format!("{v:.0}")
-                        }
-                    }),
-            )
-            .changed()
-            {
-                self.state.rx[0].squelch_db = sql; // optimistic echo
-                cmds.push(Command::SetSquelch { rx: RxId::Main, db: sql });
-            }
-            let nb = self.state.noise_blanker;
-            if crate::chrome::chip(ui, nb, "NB")
-                .on_hover_text("Impulse noise blanker")
-                .clicked()
-            {
-                cmds.push(Command::SetNoiseBlanker(!nb));
-            }
+                // Filter / Noise: squelch, noise blanker.
+                ui.horizontal(|ui| {
+                    let mut sql = self.state.rx[0].squelch_db;
+                    ui.label("SQL");
+                    if crate::chrome::slider(
+                        ui,
+                        Slider::new(&mut sql, sdroxide_types::SQUELCH_OPEN_DB..=-30.0)
+                            .show_value(true)
+                            .custom_formatter(|v, _| {
+                                if v <= (sdroxide_types::SQUELCH_OPEN_DB + 1.0) as f64 {
+                                    "off".into()
+                                } else {
+                                    format!("{v:.0}")
+                                }
+                            }),
+                    )
+                    .changed()
+                    {
+                        self.state.rx[0].squelch_db = sql; // optimistic echo
+                        cmds.push(Command::SetSquelch { rx: RxId::Main, db: sql });
+                    }
+                    let nb = self.state.noise_blanker;
+                    if crate::chrome::chip(ui, nb, "NB")
+                        .on_hover_text("Impulse noise blanker")
+                        .clicked()
+                    {
+                        cmds.push(Command::SetNoiseBlanker(!nb));
+                    }
+                });
+            });
         });
     }
 
@@ -832,7 +856,7 @@ impl SdroxideApp {
     }
 
     fn windows_module(&mut self, ui: &mut egui::Ui) {
-        crate::chrome::module(ui, "System", 300.0, |ui| {
+        crate::chrome::module(ui, "System", 220.0, |ui| {
             if crate::chrome::chip(ui, self.show_logbook, "LOG")
                 .on_hover_text("Logbook — all QSOs (digital + manual)")
                 .clicked()
