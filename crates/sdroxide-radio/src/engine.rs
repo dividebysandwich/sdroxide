@@ -1033,13 +1033,16 @@ impl Engine {
 
     /// TX monitor frame: the operator's own transmitted signal. Wideband IQ
     /// backends show the upconverted TX at its RF position in the full span;
-    /// audio-mode (CAT) and digital modes show a narrow transmit-sideband scope
-    /// built from the TX baseband/audio.
+    /// audio-mode (CAT), audio-TX (TCI) and digital modes show a narrow
+    /// transmit-sideband scope built from the TX baseband/audio.
     fn make_tx_frame(&mut self) -> SpectrumFrame {
         let dial = self.tx_center_hz;
         let lsb = self.state.rx[0].mode.is_lower_sideband();
         let (floor, ceil) = (self.cfg.db_floor, self.cfg.db_ceil);
-        if self.audio_mode || self.channel_analyzer.is_some() {
+        // A `tx_audio` rig (TCI) modulates our raw audio and returns no TX IQ, so
+        // voice/tune there also drive `tx_analyzer` (packed-real audio) — not the
+        // wideband IQ analyzer — even though it isn't `audio_mode` or digital.
+        if self.audio_mode || self.caps.tx_audio || self.channel_analyzer.is_some() {
             let bw = if self.audio_mode { self.audio_bw } else { 3500.0 };
             let vp = if lsb { (dial - bw, dial) } else { (dial, dial + bw) };
             return self.tx_analyzer.make_frame(
