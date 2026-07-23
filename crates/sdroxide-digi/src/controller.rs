@@ -64,6 +64,10 @@ pub struct DigiController {
     /// we key at most once per slot.
     tx_even: bool,
     tx_fired_slot: i64,
+    /// Slot (Unix start time) we last decoded each station in, so a reply always
+    /// lands in the slot *opposite* to when the DX actually transmitted — even if
+    /// stations run out of the usual even/odd sequence. Pruned to recent slots.
+    last_heard: std::collections::HashMap<String, i64>,
     // Decode worker.
     job_tx: Sender<DecodeJob>,
     res_rx: Receiver<(i64, Vec<Decode>)>,
@@ -117,6 +121,7 @@ impl DigiController {
             audio_hz: 1500.0,
             tx_even,
             tx_fired_slot: i64::MIN,
+            last_heard: std::collections::HashMap::new(),
             job_tx,
             res_rx,
             _worker: worker,
@@ -153,12 +158,17 @@ impl DigiController {
 
     pub fn start_qso(&mut self, from: String, grid: Option<String>, snr: i16, audio_hz: f32) {
         self.set_audio_hz(audio_hz);
-        let now_t = SystemTime::now();
-        let now = SlotScheduler::unix_now(now_t) as i64;
-        // We answer in the slot right after the DX transmitted. Their decode
-        // completes early in that following slot, so its parity — the parity
-        // of "now" — is exactly the period we should transmit in.
-        self.tx_even = self.scheduler.is_even(self.scheduler.slot_index(now_t));
+        let now = SlotScheduler::unix_now(SystemTime::now()) as i64;
+        // Reply in the slot *opposite* to when the DX actually transmitted, using
+        // the slot we last heard them in — so a late reply never lands in their
+        // slot. Fall back to "the slot before now" only if we've no record of
+        // them (which reproduces the old parity == parity(now) behaviour).
+        let dx_slot = self
+            .last_heard
+            .get(&from)
+            .copied()
+            .unwrap_or(now - self.params.slot_s as i64);
+        self.tx_even = !self.scheduler.is_even(self.scheduler.slot_index_unix(dx_slot as f64));
         self.qso.start_qso(from, grid, snr, now);
         self.status_dirty = true;
     }
@@ -261,9 +271,27 @@ impl DigiController {
             match self.res_rx.try_recv() {
                 Ok((slot_utc, decodes)) => {
                     if !decodes.is_empty() {
+                        // Remember which slot we heard each station in (reply
+                        // timing), pruning to the last ~8 slots to stay bounded.
+                        for d in &decodes {
+                            if let Some(from) = d.from.as_deref().filter(|s| !s.is_empty()) {
+                                self.last_heard.insert(from.to_string(), slot_utc);
+                            }
+                        }
+                        let cutoff = slot_utc - (8.0 * self.params.slot_s) as i64;
+                        self.last_heard.retain(|_, &mut t| t >= cutoff);
                         // Advance the QSO from anything addressed to us.
                         if self.qso.on_rx(&decodes, slot_utc) {
                             self.status_dirty = true;
+                        }
+                        // Keep our transmit slot opposite to the DX's most recent
+                        // transmission, so replies stay out of their slot even if
+                        // they shift the even/odd sequence mid-QSO.
+                        if let Some(dx) = self.qso.dx_call().map(str::to_string) {
+                            if let Some(&slot) = self.last_heard.get(&dx) {
+                                let idx = self.scheduler.slot_index_unix(slot as f64);
+                                self.tx_even = !self.scheduler.is_even(idx);
+                            }
                         }
                         actions.push(DigiAction::Decodes(decodes));
                     }
@@ -296,7 +324,16 @@ impl DigiController {
             && self.scheduler.is_even(idx) == self.tx_even
         {
             let into = self.scheduler.secs_into_slot(now);
-            if into >= self.params.tx_offset_s && into < self.params.tx_offset_s + 1.5 {
+            // Start any time from the nominal offset up to the last moment our
+            // burst would end as the DX's next slot begins (`slot_s - burst_s +
+            // tx_offset`). So a reply pressed well after our slot has begun still
+            // goes out *this* slot instead of waiting a full cycle: our transmit
+            // finishes exactly as the DX starts theirs — we don't run into their
+            // slot, and we still hear their next transmission in full. The far
+            // end loses at most `tx_offset` of our burst tail, which its FEC
+            // easily rides out. (Being our opposite slot, this is never the DX's.)
+            let latest = self.params.slot_s - self.params.burst_s + self.params.tx_offset_s;
+            if into >= self.params.tx_offset_s && into <= latest {
                 if let Some(msg) = self.qso.plan_tx() {
                     if let Some(samples) = self.synth_burst_48k(&msg) {
                         self.burst = Some(BurstPlayer { samples, pos: 0 });
@@ -431,6 +468,46 @@ mod tests {
         let now = UNIX_EPOCH + Duration::from_secs_f64(1_609_459_201.0);
         let actions = c.poll(now, 14_074_000.0);
         assert!(!actions.iter().any(|a| matches!(a, DigiAction::KeyTx)));
+        assert!(!c.tx_burst_active());
+    }
+
+    // 1_609_459_200 / 15 = 107_297_280, an even slot index.
+    const EVEN_SLOT_UNIX: f64 = 1_609_459_200.0;
+
+    #[test]
+    fn reply_targets_slot_opposite_the_dx() {
+        let mut c = DigiController::new(Mode::Ft8, cfg(), 12_000.0);
+        // We heard the DX in an even slot → we must reply in odd slots.
+        c.last_heard.insert("W9XYZ".into(), EVEN_SLOT_UNIX as i64);
+        c.start_qso("W9XYZ".into(), Some("EM48".into()), -10, 1500.0);
+        assert!(!c.tx_even, "reply slot should be odd (opposite the even DX slot)");
+
+        // Keying in our (odd) slot works even 2.5 s in — well past where the
+        // whole burst still fits (~2.36 s for FT8), and past the old ~2.06 s
+        // window. The point is it fires *this* slot, not a full cycle later.
+        let our_odd = UNIX_EPOCH + Duration::from_secs_f64(EVEN_SLOT_UNIX + 15.0 + 2.5);
+        let actions = c.poll(our_odd, 14_074_000.0);
+        assert!(
+            actions.iter().any(|a| matches!(a, DigiAction::KeyTx)),
+            "should key late in our opposite slot, got {actions:?}"
+        );
+    }
+
+    #[test]
+    fn reply_never_keys_in_the_dx_slot() {
+        // Simulate pressing reply late — during a slot with the *same* parity as
+        // the DX (the old code would then transmit right on top of them).
+        let mut c = DigiController::new(Mode::Ft8, cfg(), 12_000.0);
+        c.last_heard.insert("W9XYZ".into(), EVEN_SLOT_UNIX as i64);
+        c.start_qso("W9XYZ".into(), Some("EM48".into()), -10, 1500.0);
+
+        // A later even slot (the DX's parity): must NOT key here.
+        let dx_slot = UNIX_EPOCH + Duration::from_secs_f64(EVEN_SLOT_UNIX + 30.0 + 1.0);
+        let actions = c.poll(dx_slot, 14_074_000.0);
+        assert!(
+            !actions.iter().any(|a| matches!(a, DigiAction::KeyTx)),
+            "keyed in the DX's own slot: {actions:?}"
+        );
         assert!(!c.tx_burst_active());
     }
 }

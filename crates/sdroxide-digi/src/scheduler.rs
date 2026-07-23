@@ -29,6 +29,11 @@ impl SlotScheduler {
         (Self::unix_now(now) / self.period_s).floor() as i64
     }
 
+    /// Index of the slot containing Unix time `unix` (floor(unix / period)).
+    pub fn slot_index_unix(&self, unix: f64) -> i64 {
+        (unix / self.period_s).floor() as i64
+    }
+
     /// Unix seconds at the start of slot `idx`.
     pub fn slot_start_unix(&self, idx: i64) -> f64 {
         idx as f64 * self.period_s

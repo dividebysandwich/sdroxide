@@ -91,6 +91,11 @@ impl QsoMachine {
         self.step
     }
 
+    /// The callsign of the station we're currently working, if any.
+    pub fn dx_call(&self) -> Option<&str> {
+        self.dx.as_ref().map(|d| d.call.as_str())
+    }
+
     /// Start calling CQ.
     pub fn call_cq(&mut self) {
         self.dx = None;
