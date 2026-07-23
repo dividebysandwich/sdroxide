@@ -373,6 +373,28 @@ const TX_AUDIO_BLOCK: usize = 480;
 /// Sample rate of the TX baseband/audio fed to the TX-monitor analyzer.
 const TX_MONITOR_RATE: f64 = 48_000.0;
 
+/// Wall-clock pace one produced TX block to real time so the downstream buffer
+/// (sound card, HPSDR/TCI network ring) stays near-empty instead of filling to
+/// its full 0.5–1 s depth. Every backend's `tx_write` already blocks on
+/// backpressure, but only *once the ring is full* — that is the latency. This
+/// caps the feed AT real time (never slower: `checked_sub` yields no sleep when
+/// we're already behind), so it can only *reduce* buffering, never starve a
+/// consumer that was keeping up. A few-block head-start leaves a small cushion
+/// against jitter/clock drift before pacing engages.
+fn pace_tx_block(tx_pace: &mut Option<(Instant, u64)>) {
+    /// ~30 ms of slack fed out before pacing kicks in, so the hardware/network
+    /// consumer has a buffer and never underruns on scheduling jitter or a
+    /// consumer clock slightly faster than nominal 48 kHz.
+    const CUSHION: u64 = 3 * TX_AUDIO_BLOCK as u64;
+    let (start, fed) = tx_pace.get_or_insert_with(|| (Instant::now(), 0));
+    *fed += TX_AUDIO_BLOCK as u64;
+    let paced = fed.saturating_sub(CUSHION);
+    let target = Duration::from_secs_f64(paced as f64 / TX_MONITOR_RATE);
+    if let Some(d) = target.checked_sub(start.elapsed()) {
+        std::thread::sleep(d);
+    }
+}
+
 impl TxChain {
     fn new(mode: Mode, tx_rate: f64) -> Self {
         TxChain {
@@ -1794,6 +1816,9 @@ impl Engine {
             // The upconverted IQ feeds the wideband display at its RF position.
             self.analyzer.process(&tx.tx_buf);
         }
+        // Keep the device/network TX ring near-empty (HPSDR ≈ 0.5 s, SoapySDR
+        // varies) rather than letting a fast loop fill it and delay the signal.
+        pace_tx_block(&mut self.tx_pace);
         Ok(())
     }
 
@@ -1835,11 +1860,15 @@ impl Engine {
             self.source.tx_write(&tx.tx_buf)?;
             self.analyzer.process(&tx.tx_buf); // wideband RF display
         }
+        // Pace the burst to real time so it isn't raced into the device ring
+        // (which would drop PTT early — the tail matters for FT8 decode).
+        pace_tx_block(&mut self.tx_pace);
 
         if done {
             // Burst finished: drain any queued audio, then unkey and let the QSO
             // machine advance.
             self.source.tx_drain();
+            self.tx_pace = None;
             self.digi_tx = false;
             self.state.tx.ptt = false;
             self.sync_tx_state();
@@ -1925,19 +1954,11 @@ impl Engine {
         // Wall-clock pace the audio feed to real time. Without this the loop
         // spins far faster than 48 kHz and floods the downstream buffer: an FT8
         // burst raced to the end and dropped PTT early (~5 s instead of 12.6 s),
-        // and a TCI voice over piled up >1 s of latency in the rig's TX ring while
-        // starving the mic FIFO (choppy audio). A network audio-TX rig (`tx_audio`,
-        // e.g. TCI) has no local sound card to pace it, so it always needs this;
-        // a CAT sound card paces itself and only the digi burst needs holding.
-        if self.digi_tx || self.caps.tx_audio {
-            let (start, fed) = self.tx_pace.get_or_insert_with(|| (std::time::Instant::now(), 0));
-            *fed += TX_AUDIO_BLOCK as u64;
-            let target = std::time::Duration::from_secs_f64(*fed as f64 / 48_000.0);
-            let elapsed = start.elapsed();
-            if target > elapsed {
-                std::thread::sleep(target - elapsed);
-            }
-        }
+        // a TCI voice over piled up >1 s of latency in the rig's TX ring while
+        // starving the mic FIFO (choppy audio), and a CAT rig buffered its ~1 s
+        // output ring before the sound card's own backpressure engaged (voice
+        // delayed by ~1 s). Pacing keeps every backend's ring near-empty.
+        pace_tx_block(&mut self.tx_pace);
 
         if burst_done {
             // Let any queued audio play out before dropping PTT, so the rig
