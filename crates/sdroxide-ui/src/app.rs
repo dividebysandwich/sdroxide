@@ -3450,6 +3450,7 @@ struct SstvSlot {
 }
 
 /// A received-image gallery entry.
+#[allow(dead_code)] // not used on wasm
 struct SstvRecv {
     mode: Option<SstvMode>,
     tex: egui::TextureHandle,

@@ -1,6 +1,7 @@
 //! The panadapter: spectrum line + frequency scale + GPU waterfall, with
 //! drag-pan, wheel-zoom (around the cursor), click-to-tune (shift-click
-//! tunes VFO B), and draggable passband filter edges.
+//! tunes VFO B), draggable passband filter edges, and a shift+drag bandwidth
+//! measurement ruler.
 
 use std::sync::Arc;
 
@@ -474,27 +475,61 @@ pub fn show_ext(
     let mut resizing: bool = ui.data(|d| d.get_temp(resize_id)).unwrap_or(false);
     let hover_resize = resp.hover_pos().map(|p| scale_rect.contains(p)).unwrap_or(false);
 
+    // Shift+drag bandwidth measurement: remembers the frequency where the drag
+    // started; `None` when not measuring.
+    let measure_id = ui.id().with("bw-measure");
+    let mut measuring: Option<f64> = ui.data(|d| d.get_temp(measure_id)).unwrap_or(None);
+    // After releasing, the frozen span lingers and fades out over `BW_FADE_SECS`:
+    // (start_hz, end_hz, release_time_secs).
+    let fade_id = ui.id().with("bw-fade");
+    let mut bw_fade: Option<(f64, f64, f64)> = ui.data(|d| d.get_temp(fade_id)).unwrap_or(None);
+
     if resp.drag_started_by(egui::PointerButton::Primary) {
         // Decide from the PRESS position, not the current pointer position —
         // by the time the drag threshold trips, the pointer may already have
         // left the grab zone.
         let origin = ui.input(|i| i.pointer.press_origin());
-        edge = origin.and_then(edge_at);
-        resizing = edge.is_none() && origin.map(|p| scale_rect.contains(p)).unwrap_or(false);
+        if ui.input(|i| i.modifiers.shift) {
+            // Shift+drag measures bandwidth — overrides edge grab / resize / pan,
+            // and cancels any lingering fade from a previous measurement.
+            measuring = origin.map(|p| view.x_to_freq(p.x, &rect));
+            edge = None;
+            resizing = false;
+            bw_fade = None;
+        } else {
+            edge = origin.and_then(edge_at);
+            resizing = edge.is_none() && origin.map(|p| scale_rect.contains(p)).unwrap_or(false);
+            measuring = None;
+        }
         ui.data_mut(|d| {
             d.insert_temp(edge_id, edge);
             d.insert_temp(resize_id, resizing);
+            d.insert_temp(measure_id, measuring);
+            d.insert_temp(fade_id, bw_fade);
         });
     }
     if resp.drag_stopped() {
+        // If we were measuring, freeze the span and start its fade-out.
+        if let Some(start_hz) = measuring {
+            let end_hz = resp
+                .interact_pointer_pos()
+                .map(|p| view.x_to_freq(p.x, &rect))
+                .unwrap_or(start_hz);
+            bw_fade = Some((start_hz, end_hz, ui.input(|i| i.time)));
+        }
         edge = None;
         resizing = false;
+        measuring = None;
         ui.data_mut(|d| {
             d.insert_temp(edge_id, edge);
             d.insert_temp(resize_id, resizing);
+            d.insert_temp(measure_id, measuring);
+            d.insert_temp(fade_id, bw_fade);
         });
     }
-    if hover_edge.is_some() || edge.is_some() {
+    if measuring.is_some() || (resp.hovered() && ui.input(|i| i.modifiers.shift)) {
+        ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
+    } else if hover_edge.is_some() || edge.is_some() {
         ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
     } else if hover_resize || resizing {
         ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
@@ -518,7 +553,10 @@ pub fn show_ext(
         ui.data_mut(|d| d.insert_temp(sec_id, sec_pan));
     }
 
-    if resizing && resp.dragged_by(egui::PointerButton::Primary) {
+    if measuring.is_some() && resp.dragged_by(egui::PointerButton::Primary) {
+        // Bandwidth measurement — no tuning or panning; drawn in the overlay
+        // pass at the end.
+    } else if resizing && resp.dragged_by(egui::PointerButton::Primary) {
         // Spectrum/waterfall resize — set the spectrum height from the pointer.
         if let Some(p) = resp.interact_pointer_pos() {
             let usable = (rect.height() - SCALE_H).max(1.0);
@@ -895,6 +933,25 @@ pub fn show_ext(
         }
     }
 
+    // --- bandwidth measurement (shift+drag) + fade-out --------------------
+    // Drawn on top of everything so the markers/label stay readable.
+    if let (Some(start_hz), Some(p)) = (measuring, resp.interact_pointer_pos()) {
+        // Active drag: full opacity, tracking the pointer.
+        let end_hz = view.x_to_freq(p.x, &rect);
+        draw_bw_measure(&painter, view, &rect, start_hz, end_hz, 1.0);
+    } else if let Some((start_hz, end_hz, t0)) = bw_fade {
+        // After release: fade the frozen span out over BW_FADE_SECS, anchored to
+        // its frequencies (so it tracks the view if you pan meanwhile).
+        let elapsed = ui.input(|i| i.time) - t0;
+        if elapsed < BW_FADE_SECS {
+            let alpha = (1.0 - elapsed / BW_FADE_SECS) as f32;
+            draw_bw_measure(&painter, view, &rect, start_hz, end_hz, alpha);
+            ui.ctx().request_repaint(); // keep animating the fade to completion
+        } else {
+            ui.data_mut(|d| d.insert_temp(fade_id, None::<(f64, f64, f64)>));
+        }
+    }
+
     // Chrome: pink cut-corner border + corner accents around the panadapter.
     crate::chrome::paint_cut_border(
         &painter,
@@ -903,6 +960,84 @@ pub fn show_ext(
         crate::theme::BG_DEEP,
     );
     crate::chrome::corner_brackets(&painter, rect, crate::theme::PINK);
+}
+
+/// How long the released bandwidth measurement lingers while fading out.
+const BW_FADE_SECS: f64 = 5.0;
+
+/// Draw the shift+drag bandwidth-measurement overlay: dotted vertical markers at
+/// the start and end frequencies, a horizontal span line with end ticks, and the
+/// measured bandwidth as a centred label. `alpha` fades the whole thing out.
+fn draw_bw_measure(
+    p: &egui::Painter,
+    view: &ViewState,
+    rect: &Rect,
+    start_hz: f64,
+    end_hz: f64,
+    alpha: f32,
+) {
+    let a = alpha.clamp(0.0, 1.0);
+    let base = crate::theme::YELLOW;
+    let color = Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), (255.0 * a) as u8);
+    let stroke = Stroke::new(1.5, color);
+
+    let x0 = view.freq_to_x(start_hz, rect).clamp(rect.left(), rect.right());
+    let x1 = view.freq_to_x(end_hz, rect).clamp(rect.left(), rect.right());
+    let bw = (end_hz - start_hz).abs();
+
+    // Dotted vertical markers spanning the whole panadapter (spectrum + scale +
+    // waterfall), so the tool works whether or not the spectrum line is shown.
+    for x in [x0, x1] {
+        p.extend(Shape::dashed_line(
+            &[pos2(x, rect.top() + 1.0), pos2(x, rect.bottom() - 1.0)],
+            stroke,
+            2.5,
+            3.5,
+        ));
+    }
+    // Horizontal span line with end ticks.
+    let (lo, hi) = (x0.min(x1), x0.max(x1));
+    let yl = rect.top() + 26.0;
+    p.line_segment([pos2(lo, yl), pos2(hi, yl)], stroke);
+    for x in [x0, x1] {
+        p.line_segment([pos2(x, yl - 4.0), pos2(x, yl + 4.0)], stroke);
+    }
+    // Start / end frequency labels at their markers; bandwidth centred below.
+    faded_label(p, rect, x0, rect.top() + 4.0, &fmt_mhz(start_hz), color, a);
+    faded_label(p, rect, x1, rect.top() + 4.0, &fmt_mhz(end_hz), color, a);
+    faded_label(p, rect, (lo + hi) * 0.5, yl + 6.0, &format_bandwidth(bw), color, a);
+}
+
+/// A frequency in Hz as `xx.xxxxx MHz`.
+fn fmt_mhz(hz: f64) -> String {
+    format!("{:.5} MHz", hz / 1e6)
+}
+
+/// Draw `text` in a small box centred on `cx`, top at `y`, clamped to `rect`,
+/// with a background whose opacity scales with `a` (for the fade-out).
+fn faded_label(p: &egui::Painter, rect: &Rect, cx: f32, y: f32, text: &str, color: Color32, a: f32) {
+    let galley = p.layout_no_wrap(text.to_string(), FontId::monospace(10.5), color);
+    let pad = vec2(4.0, 2.0);
+    let size = galley.size() + pad * 2.0;
+    let bx = (cx - size.x * 0.5).clamp(rect.left(), rect.right() - size.x);
+    let by = y.clamp(rect.top(), rect.bottom() - size.y);
+    p.rect_filled(
+        Rect::from_min_size(pos2(bx, by), size),
+        2.0,
+        Color32::from_rgba_unmultiplied(0, 0, 0, (180.0 * a) as u8),
+    );
+    p.galley(pos2(bx + pad.x, by + pad.y), galley, color);
+}
+
+/// Format a bandwidth (Hz) as a compact human string.
+fn format_bandwidth(hz: f64) -> String {
+    if hz >= 10_000.0 {
+        format!("{:.1} kHz", hz / 1000.0)
+    } else if hz >= 1_000.0 {
+        format!("{:.2} kHz", hz / 1000.0)
+    } else {
+        format!("{:.0} Hz", hz)
+    }
 }
 
 /// Draw `text` in a small semi-transparent black box, clamped inside `bounds`.
