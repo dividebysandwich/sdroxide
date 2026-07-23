@@ -370,6 +370,8 @@ struct TxChain {
 
 /// 10 ms of TX audio per iteration.
 const TX_AUDIO_BLOCK: usize = 480;
+/// Sample rate of the TX baseband/audio fed to the TX-monitor analyzer.
+const TX_MONITOR_RATE: f64 = 48_000.0;
 
 impl TxChain {
     fn new(mode: Mode, tx_rate: f64) -> Self {
@@ -405,6 +407,12 @@ struct Engine {
     tx_active: bool,
     tx_center_hz: f64,
     tx_ham_only: bool,
+    /// TX monitor: FFTs the transmitted 48 kHz baseband (the modulator output,
+    /// or the outgoing audio for a CAT rig) so the operator sees their own signal
+    /// on the panadapter while transmitting.
+    tx_analyzer: SpectrumAnalyzer,
+    /// Scratch for packing real TX audio into complex samples for `tx_analyzer`.
+    tx_mon_buf: Vec<Complex32>,
     nb: NoiseBlanker,
     /// Auto-notch + spectral NR for the CAT/demod-audio path (the IQ path uses
     /// per-`RxChain` instances instead).
@@ -538,6 +546,8 @@ fn engine_thread(
         tx_active: false,
         tx_center_hz: 0.0,
         tx_ham_only: engine_cfg.tx_ham_only,
+        tx_analyzer: SpectrumAnalyzer::new(cfg.fft_size as usize, TX_MONITOR_RATE, cfg.avg_tc),
+        tx_mon_buf: Vec::new(),
         nb: NoiseBlanker::new(),
         audio_notch: AutoNotch::new(),
         audio_notch_on: false,
@@ -971,6 +981,9 @@ impl Engine {
     /// high-resolution channel analyzer (VFO-centered), zoomed to the FT8
     /// audio passband; otherwise from the full-rate device analyzer.
     fn make_spectrum_frame(&mut self) -> SpectrumFrame {
+        if self.tx_active {
+            return self.make_tx_frame();
+        }
         if self.audio_mode {
             // The real audio's FFT is symmetric; the dial is audio-DC. USB maps
             // audio f → dial+f (show the positive half); LSB → dial-f (negative
@@ -1004,14 +1017,44 @@ impl Engine {
                 viewport,
             );
         }
-        let center = if self.tx_active { self.tx_center_hz } else { self.state.center_hz };
         self.analyzer.make_frame(
-            center,
+            self.state.center_hz,
             self.state.sample_rate,
             self.cfg.db_floor,
             self.cfg.db_ceil,
             DISPLAY_BINS,
-            if self.tx_active { None } else { self.cfg.viewport },
+            self.cfg.viewport,
+        )
+    }
+
+    /// TX monitor frame: the operator's own transmitted signal. Wideband IQ
+    /// backends show the upconverted TX at its RF position in the full span;
+    /// audio-mode (CAT) and digital modes show a narrow transmit-sideband scope
+    /// built from the TX baseband/audio.
+    fn make_tx_frame(&mut self) -> SpectrumFrame {
+        let dial = self.tx_center_hz;
+        let lsb = self.state.rx[0].mode.is_lower_sideband();
+        let (floor, ceil) = (self.cfg.db_floor, self.cfg.db_ceil);
+        if self.audio_mode || self.channel_analyzer.is_some() {
+            let bw = if self.audio_mode { self.audio_bw } else { 3500.0 };
+            let vp = if lsb { (dial - bw, dial) } else { (dial, dial + bw) };
+            return self.tx_analyzer.make_frame(
+                dial,
+                TX_MONITOR_RATE,
+                floor,
+                ceil,
+                DISPLAY_BINS,
+                Some(vp),
+            );
+        }
+        // Wideband IQ: the upconverted TX sits at `tx_center_hz` in the full span.
+        self.analyzer.make_frame(
+            self.tx_center_hz,
+            self.state.sample_rate,
+            floor,
+            ceil,
+            DISPLAY_BINS,
+            None,
         )
     }
 
@@ -1169,8 +1212,14 @@ impl Engine {
                         self.state.sample_rate,
                         self.cfg.avg_tc,
                     );
+                    self.tx_analyzer = SpectrumAnalyzer::new(
+                        self.cfg.fft_size as usize,
+                        TX_MONITOR_RATE,
+                        self.cfg.avg_tc,
+                    );
                 } else {
                     self.analyzer.set_avg_tc(self.cfg.avg_tc, self.state.sample_rate);
+                    self.tx_analyzer.set_avg_tc(self.cfg.avg_tc, TX_MONITOR_RATE);
                 }
             }
 
@@ -1629,6 +1678,8 @@ impl Engine {
                     }
                     self.tx_center_hz = txf;
                     self.tx_active = true;
+                    // Start the TX monitor clean (no residue from a prior burst).
+                    self.tx_analyzer.reset();
                 }
                 Err(e) => deny(&format!("tx_begin failed: {e}"), &mut self.state),
             }
@@ -1708,11 +1759,16 @@ impl Engine {
         let peak = tx.mod_buf.iter().fold(0.0f32, |a, z| a.max(z.norm()));
         tx.alc_peak = peak.max(tx.alc_peak * 0.85);
 
+        // TX monitor: the 48 kHz analytic modulator output is exactly the signal
+        // going on the air (one sideband, at the audio offset from the dial) —
+        // used for the narrow digital-mode scope.
+        self.tx_analyzer.process(&tx.mod_buf);
+
         tx.tx_buf.clear();
         tx.duc.process(&tx.mod_buf, &mut tx.tx_buf);
         if !tx.tx_buf.is_empty() {
             self.source.tx_write(&tx.tx_buf)?;
-            // Show the operator their own TX spectrum.
+            // The upconverted IQ feeds the wideband display at its RF position.
             self.analyzer.process(&tx.tx_buf);
         }
         Ok(())
@@ -1748,11 +1804,13 @@ impl Engine {
         let peak = tx.mod_buf.iter().fold(0.0f32, |a, z| a.max(z.norm()));
         tx.alc_peak = peak.max(tx.alc_peak * 0.85);
 
+        self.tx_analyzer.process(&tx.mod_buf); // TX monitor (narrow digital scope)
+
         tx.tx_buf.clear();
         tx.duc.process(&tx.mod_buf, &mut tx.tx_buf);
         if !tx.tx_buf.is_empty() {
             self.source.tx_write(&tx.tx_buf)?;
-            self.analyzer.process(&tx.tx_buf);
+            self.analyzer.process(&tx.tx_buf); // wideband RF display
         }
 
         if done {
@@ -1808,6 +1866,13 @@ impl Engine {
             }
         }
         // TUNE leaves the audio silent — PTT alone keys the rig's carrier.
+
+        // TX monitor: the rig modulates its own audio, so approximate the on-air
+        // spectrum by FFTing the outgoing audio (packed real; the display shows
+        // just the transmit sideband).
+        self.tx_mon_buf.clear();
+        self.tx_mon_buf.extend(audio.iter().map(|&a| Complex32::new(a, 0.0)));
+        self.tx_analyzer.process(&self.tx_mon_buf);
 
         self.source.tx_write_audio(&audio)?;
 

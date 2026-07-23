@@ -45,7 +45,10 @@ or connects to a remote sdroxide server.
   passband.
 - **Transmit** (on TX-capable rigs): PTT, TUNE, drive and tune-drive levels,
   mic gain, XIT, and a transmit meter (power / SWR / ALC). A ham-band-only
-  transmit lockout is on by default.
+  transmit lockout is on by default. While transmitting, the panadapter shows a
+  **monitor of your own signal**: wideband IQ rigs display it at its on-air
+  frequency in the full span; CAT rigs and digital modes show a narrow
+  transmit-sideband scope (an approximation built from the outgoing audio).
 - **FT8 / FT4** with a live decode list, automatic QSO sequencing, a world map,
   a transcript, and automatic logging.
 - **Integrated logbook** for digital and manual QSOs, with ADIF and text export.
