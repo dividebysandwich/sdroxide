@@ -1635,7 +1635,9 @@ impl SdroxideApp {
         let btn_h = 32.0;
         let input_h = 56.0; // fixed-height, internally-scrolling TX box
         let gap = 5.0;
-        let rx_h = (content_bottom - ui.cursor().top() - btn_h - input_h - 2.0 * gap).max(24.0);
+        let bottom_pad = 12.0; // clear space below the button row
+        let rx_h = (content_bottom - ui.cursor().top() - btn_h - input_h - 2.0 * gap - bottom_pad)
+            .max(24.0);
 
         ui.allocate_ui(egui::vec2(ui.available_width(), rx_h), |ui| {
             egui::Frame::new()
@@ -1645,7 +1647,14 @@ impl SdroxideApp {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.set_min_height(ui.available_height());
-                    egui::ScrollArea::vertical().auto_shrink([false, false]).stick_to_bottom(true).show(
+                    // Cap the scroll height explicitly (bounded `available_height`
+                    // isn't reliable inside the auto-sizing frame) so long RX text
+                    // scrolls instead of growing the panel.
+                    egui::ScrollArea::vertical()
+                        .max_height((rx_h - 12.0).max(20.0))
+                        .auto_shrink([false, false])
+                        .stick_to_bottom(true)
+                        .show(
                         ui,
                         |ui| {
                             if rx_text.is_empty() {
@@ -1713,6 +1722,9 @@ impl SdroxideApp {
                         ui.set_min_height(ui.available_height());
                         egui::ScrollArea::vertical()
                             .id_salt("text-tx")
+                            // Cap the height so the multiline scrolls internally
+                            // instead of growing and pushing the buttons off-panel.
+                            .max_height((input_h - 8.0).max(20.0))
                             .auto_shrink([false, false])
                             .stick_to_bottom(true)
                             .show(ui, |ui| {
@@ -1775,6 +1787,8 @@ impl SdroxideApp {
                 cmds.push(Command::DigiTxText(String::new()));
             }
         });
+        // Visible padding below the buttons so they aren't flush with the edge.
+        ui.add_space(bottom_pad);
     }
 
     /// FSQ panel: the decoded stream + the directed (FSQCALL) layer — a heard
@@ -3536,7 +3550,7 @@ impl eframe::App for SdroxideApp {
             let width = ui.available_width();
             let handle_h = 7.0;
             let panel_h =
-                (total * self.view.digi_panel_fraction).clamp(160.0, (total - 140.0).max(160.0));
+                (total * self.view.digi_panel_fraction).clamp(190.0, (total - 140.0).max(190.0));
             let wf_h = (total - panel_h - handle_h).max(80.0);
 
             let wf_tuning = self.wf_tick(frame.is_some());
