@@ -1575,7 +1575,11 @@ impl SdroxideApp {
 
     /// PSK/RTTY keyboard-mode panel: the decoded RX stream on top, then a
     /// streaming TX input (already-sent characters shown green) and controls.
-    fn text_modem_panel(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+    /// `panel_h` is the real bounded height (the surrounding frame reports an
+    /// unbounded `available_height`, so we can't use it for the split).
+    fn text_modem_panel(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, panel_h: f32) {
+        // Panel content bottom, from the entry cursor (frame margins accounted).
+        let content_bottom = ui.cursor().top() + panel_h - 26.0;
         let status = self.digi_status.clone();
         let mode = self.state.rx[0].mode;
         let audio_hz = status.as_ref().map(|s| s.audio_hz).unwrap_or(1500.0);
@@ -1609,12 +1613,12 @@ impl SdroxideApp {
         ui.add_space(4.0);
 
         // Reserve the input + button rows at the bottom; RX stream gets the rest.
-        // The RX floor must stay small so the fixed controls are never pushed off
-        // the bottom of a short panel.
-        let btn_h = 38.0;
-        let input_h = 46.0;
-        let gap = 6.0;
-        let rx_h = (ui.available_height() - btn_h - input_h - 2.0 * gap).max(24.0);
+        // Sized against the real panel bottom (not the unbounded available_height)
+        // so the fixed controls are never pushed off a short panel.
+        let btn_h = 32.0;
+        let input_h = 46.0; // ~2 text rows (see desired_rows below)
+        let gap = 5.0;
+        let rx_h = (content_bottom - ui.cursor().top() - btn_h - input_h - 2.0 * gap).max(24.0);
 
         ui.allocate_ui(egui::vec2(ui.available_width(), rx_h), |ui| {
             egui::Frame::new()
@@ -1682,6 +1686,9 @@ impl SdroxideApp {
             egui::vec2(ui.available_width(), input_h),
             egui::TextEdit::multiline(&mut self.text_tx)
                 .layouter(&mut layouter)
+                // A multiline defaults to 4 rows; pin it to 2 so its height
+                // matches the reserved `input_h` and the buttons stay on-panel.
+                .desired_rows(2)
                 .hint_text("Type here to transmit…"),
         );
         if resp.changed() {
@@ -1734,7 +1741,10 @@ impl SdroxideApp {
 
     /// FSQ panel: the decoded stream + the directed (FSQCALL) layer — a heard
     /// list, a directed compose row (To: + message), and a contacts book.
-    fn fsq_panel(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+    /// `panel_h` is the real bounded height (the frame reports an unbounded
+    /// `available_height`).
+    fn fsq_panel(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, panel_h: f32) {
+        let content_bottom = ui.cursor().top() + panel_h - 26.0;
         let status = self.digi_status.clone();
         let audio_hz = status.as_ref().map(|s| s.audio_hz).unwrap_or(1500.0);
         let transmitting = status.as_ref().map(|s| s.transmitting).unwrap_or(false);
@@ -1780,7 +1790,7 @@ impl SdroxideApp {
         // Everything below fits inside the (bounded) panel height. The left
         // column scrolls as a unit; the right column pins its compose controls to
         // the bottom so they're never clipped on a short panel.
-        let avail_h = ui.available_height().max(80.0);
+        let avail_h = (content_bottom - ui.cursor().top()).max(80.0);
         ui.horizontal_top(|ui| {
             // ── Left: heard list + image (scrolls within the panel height) ──
             ui.vertical(|ui| {
@@ -1820,7 +1830,8 @@ impl SdroxideApp {
 
             // ── Right: RX stream (fills) + compose controls (pinned bottom) ──
             ui.vertical(|ui| {
-                let controls_h = 82.0;
+                // Two control rows (To:/message/SEND, then CQ/? /CLEAR) + gaps.
+                let controls_h = 74.0;
                 let rx_h = (avail_h - controls_h).max(24.0);
                 ui.allocate_ui(egui::vec2(ui.available_width(), rx_h), |ui| {
                     egui::Frame::new()
@@ -1860,22 +1871,14 @@ impl SdroxideApp {
                 } else {
                     self.fsq_target.clone()
                 };
+                // Row 1: To: target + message input + SEND.
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(format!("To: {tgt}")).monospace().color(crate::theme::CYAN_DIM),
+                        RichText::new(format!("{tgt}:")).monospace().color(crate::theme::CYAN_DIM),
                     );
-                    if !self.fsq_target.is_empty() && crate::chrome::chip(ui, false, "? heard").clicked() {
-                        let call = if my_call.is_empty() { "NOCALL" } else { &my_call };
-                        let full = format!("{call}:{}?\n", self.fsq_target);
-                        cmds.push(Command::DigiAbortTx);
-                        cmds.push(Command::DigiTxText(full));
-                        cmds.push(Command::DigiTxActive(true));
-                    }
-                });
-                ui.horizontal(|ui| {
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut self.text_tx)
-                            .desired_width((ui.available_width() - 64.0).max(60.0))
+                            .desired_width((ui.available_width() - 62.0).max(60.0))
                             .hint_text("Message…"),
                     );
                     let send = crate::chrome::chip_accent(
@@ -1901,9 +1904,19 @@ impl SdroxideApp {
                         self.text_tx.clear();
                     }
                 });
+                // Row 2: CQ / ? heard / CLEAR.
                 ui.horizontal(|ui| {
                     if crate::chrome::chip(ui, false, " CALL CQ ").clicked() {
                         cmds.push(Command::DigiCallCq);
+                    }
+                    if !self.fsq_target.is_empty()
+                        && crate::chrome::chip(ui, false, " ? heard ").clicked()
+                    {
+                        let call = if my_call.is_empty() { "NOCALL" } else { &my_call };
+                        let full = format!("{call}:{}?\n", self.fsq_target);
+                        cmds.push(Command::DigiAbortTx);
+                        cmds.push(Command::DigiTxText(full));
+                        cmds.push(Command::DigiTxActive(true));
                     }
                     if crate::chrome::chip(ui, false, " CLEAR ").clicked() {
                         self.text_tx.clear();
@@ -3540,9 +3553,9 @@ impl eframe::App for SdroxideApp {
                             if mode.is_sstv() {
                                 self.sstv_panel(ui, &mut cmds);
                             } else if mode.is_fsq() {
-                                self.fsq_panel(ui, &mut cmds);
+                                self.fsq_panel(ui, &mut cmds, panel_h);
                             } else if is_text {
-                                self.text_modem_panel(ui, &mut cmds);
+                                self.text_modem_panel(ui, &mut cmds, panel_h);
                             } else {
                                 self.digi_panel(ui, &mut cmds);
                             }
