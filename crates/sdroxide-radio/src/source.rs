@@ -74,6 +74,11 @@ pub trait IqSource: Send {
     fn set_tx_drive(&mut self, _frac: f64) {}
     /// Set the TUNE drive as a `0..1` fraction (see [`Self::set_tx_drive`]).
     fn set_tune_drive(&mut self, _frac: f64) {}
+    /// Offset (Hz) of the operator's VFO from the IQ centre, so a rig that keeps
+    /// its own VFO within a wideband IQ stream (TCI) can track the dial while we
+    /// tune with a software DDC. No-op for sources whose VFO already equals the
+    /// centre or that don't expose a per-VFO offset.
+    fn set_if_offset(&mut self, _hz: f64) {}
 
     // CAT-controlled rigs — meaningful only for the sound-card/CAT source.
 

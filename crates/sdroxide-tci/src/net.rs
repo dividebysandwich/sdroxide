@@ -36,6 +36,9 @@ pub enum TciUpdate {
 /// Control messages to the WebSocket thread.
 enum Ctrl {
     SetCenter(f64),
+    /// Offset (Hz) of the operator's VFO from the IQ centre — keeps the rig's own
+    /// VFO on our dial.
+    SetIf(f64),
     SetMode(Mode),
     TxOn(f64),
     TxOff,
@@ -136,6 +139,8 @@ impl TciHandle {
             ctrl: ctrl_rx,
             updates: upd_tx,
             center: 0.0,
+            if_hz: 0.0,
+            rx_if: 0.0,
             mode: String::new(),
             ptt: false,
             tx_pkts: 0,
@@ -159,6 +164,10 @@ impl TciHandle {
     /// Retune: set the DDC center (the IQ stream centers here).
     pub fn set_center(&self, hz: f64) {
         let _ = self.ctrl.send(Ctrl::SetCenter(hz));
+    }
+    /// Keep the rig's VFO `hz` above the IQ centre (our software DDC offset).
+    pub fn set_if_offset(&self, hz: f64) {
+        let _ = self.ctrl.send(Ctrl::SetIf(hz));
     }
     pub fn set_mode(&self, mode: Mode) {
         let _ = self.ctrl.send(Ctrl::SetMode(mode));
@@ -240,6 +249,10 @@ struct NetThread {
     ctrl: Receiver<Ctrl>,
     updates: Sender<TciUpdate>,
     center: f64,
+    /// Current rig IF offset (rig VFO = center + if_hz).
+    if_hz: f64,
+    /// The receive IF offset, restored when leaving TX.
+    rx_if: f64,
     mode: String,
     ptt: bool,
     /// TX-audio packets sent this key-down (for diagnostics).
@@ -256,12 +269,24 @@ impl NetThread {
             while let Ok(msg) = self.ctrl.try_recv() {
                 match msg {
                     Ctrl::SetCenter(hz) => {
-                        // Zero the IF offset so the rig VFO == our center (dds),
-                        // keeping the IQ centered and the echoes loop-free.
+                        // Move the IQ centre. The IF offset (VFO within the band)
+                        // is re-asserted separately by `SetIf`.
                         self.center = hz;
                         send_text(&mut self.ws, p::dds(RX, hz));
-                        send_text(&mut self.ws, p::if_offset(RX, CH, 0.0));
+                        send_text(&mut self.ws, p::if_offset(RX, CH, self.rx_if));
+                        self.if_hz = self.rx_if;
                         dirty = true;
+                    }
+                    Ctrl::SetIf(hz) => {
+                        // Our software DDC tunes the VFO within the IQ band; mirror
+                        // it onto the rig's own VFO so its display tracks the dial
+                        // and returning from TX doesn't snap back to the centre.
+                        self.rx_if = hz;
+                        if !self.ptt && (hz - self.if_hz).abs() > 0.5 {
+                            self.if_hz = hz;
+                            send_text(&mut self.ws, p::if_offset(RX, CH, hz));
+                            dirty = true;
+                        }
                     }
                     Ctrl::SetMode(m) => {
                         self.mode = p::mode_to_tci(m).to_string();
@@ -272,7 +297,10 @@ impl NetThread {
                         // Place the rig VFO at the TX frequency via the IF offset
                         // (keeps dds/IQ centered), then key with the TCI source.
                         let off = tx_freq - self.center;
-                        send_text(&mut self.ws, p::if_offset(RX, CH, off));
+                        if (off - self.if_hz).abs() > 0.5 {
+                            send_text(&mut self.ws, p::if_offset(RX, CH, off));
+                        }
+                        self.if_hz = off;
                         if !self.mode.is_empty() {
                             send_text(&mut self.ws, p::modulation(RX, &self.mode));
                         }
@@ -287,8 +315,12 @@ impl NetThread {
                     Ctrl::TxOff => {
                         send_text(&mut self.ws, p::trx(RX, false, false));
                         send_text(&mut self.ws, p::audio_stop(RX));
-                        // Restore the RX center (the IF offset moved for TX).
-                        send_text(&mut self.ws, p::if_offset(RX, CH, 0.0));
+                        // Restore the receive IF offset (the VFO within the IQ) —
+                        // NOT zero — so the rig VFO stays on the operator's dial.
+                        if (self.rx_if - self.if_hz).abs() > 0.5 {
+                            send_text(&mut self.ws, p::if_offset(RX, CH, self.rx_if));
+                        }
+                        self.if_hz = self.rx_if;
                         self.ptt = false;
                         dirty = true;
                         tracing::debug!("TCI TX off");
@@ -392,12 +424,20 @@ impl NetThread {
         for (cmd, args) in p::parse_status(text) {
             match cmd.as_str() {
                 "vfo" => {
-                    // vfo:<rx>,<ch>,<hz>
+                    // vfo:<rx>,<ch>,<hz>. The rig VFO we expect (from our own dds +
+                    // if commands) is `center + if_hz`; echoes matching it are our
+                    // own and must be ignored, or a TX IF move would loop back as a
+                    // dial change. Only a genuine operator dial move differs.
                     let f: Vec<&str> = args.split(',').collect();
                     if f.len() == 3 && f[0] == "0" && f[1] == "0" {
                         if let Ok(hz) = f[2].trim().parse::<f64>() {
-                            if (hz - self.center).abs() > 1.0 {
+                            let expected = self.center + self.if_hz;
+                            if (hz - expected).abs() > 1.0 {
+                                // Operator turned the rig dial: adopt it as our
+                                // centre (VFO == centre, IF back to zero).
                                 self.center = hz;
+                                self.if_hz = 0.0;
+                                self.rx_if = 0.0;
                                 let _ = self.updates.send(TciUpdate::Freq(hz));
                             }
                         }

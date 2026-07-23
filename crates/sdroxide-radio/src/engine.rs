@@ -1650,6 +1650,9 @@ impl Engine {
         if let Some(c) = self.sub.as_mut() {
             c.set_offset_hz(sub_offset);
         }
+        // Keep a wideband-IQ rig's own VFO on our dial (TCI); no-op elsewhere. This
+        // way returning from TX doesn't snap the rig back to the IQ centre.
+        self.source.set_if_offset(main_offset);
     }
 
     /// Reconcile the TX hardware state with `ptt || tune`, enforcing the

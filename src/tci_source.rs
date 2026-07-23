@@ -14,6 +14,8 @@ pub struct TciSource {
     center: f64,
     scratch: Vec<f32>,
     label: String,
+    /// Last VFO-within-band offset pushed to the rig (dedup).
+    if_offset: f64,
 }
 
 impl TciSource {
@@ -22,7 +24,7 @@ impl TciSource {
         handle.set_center(center_hz);
         let label =
             format!("TCI {} @ {address} ({:.0} kHz IQ)", handle.device, iq_rate_hz / 1000.0);
-        Ok(TciSource { center: center_hz, scratch: Vec::new(), label, handle })
+        Ok(TciSource { center: center_hz, scratch: Vec::new(), label, handle, if_offset: 0.0 })
     }
 
     pub fn sample_rate_hz(&self) -> f64 {
@@ -102,5 +104,12 @@ impl IqSource for TciSource {
 
     fn set_tune_drive(&mut self, frac: f64) {
         self.handle.set_tune_drive(frac);
+    }
+
+    fn set_if_offset(&mut self, hz: f64) {
+        if (hz - self.if_offset).abs() > 0.5 {
+            self.if_offset = hz;
+            self.handle.set_if_offset(hz);
+        }
     }
 }
