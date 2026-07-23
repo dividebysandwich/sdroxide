@@ -24,10 +24,19 @@ const FFT_SIZE: usize = 4096;
 /// and ~16/bit for RTTY — enough for clean symbol timing on the bin filterbank.
 const HOP: usize = 256;
 const WARMUP: u32 = 80;
-/// Detection threshold on the *smoothed* spectrum, above the broadband floor
-/// (~7 dB of sustained energy). Smoothing already rejects noise spikes, so a
-/// carrier need only stand steadily above the floor.
+/// Detection threshold on the *smoothed* spectrum, above the (per-region) mean
+/// noise floor (~7 dB of sustained energy). Smoothing already rejects noise
+/// spikes, so a carrier need only stand steadily above the floor.
 const SMOOTH_ON: f32 = 5.0;
+/// Bins per region for the median noise-floor estimate (~3 kHz at 47 Hz/bin).
+/// A per-region floor tracks the *local* noise level, so a locally noisy patch
+/// of the band no longer lets noise or faint non-digimode signals cross a floor
+/// set by the quieter rest of the window; the median is a noise bin (signals are
+/// sparse and narrow) so a carrier can't inflate its own floor either.
+const REGION_BINS: usize = 64;
+/// |FFT|² of Gaussian noise is exponential (median = `ln 2`·mean); scale the
+/// region median up to the mean the threshold is calibrated against.
+const MEDIAN_TO_MEAN: f32 = 1.4427;
 /// Envelope key-off ratio, for a track's activity/SNR metering.
 const OFF_RATIO: f32 = 4.0;
 /// Fraction of a carrier's own power a tone `shift` away must reach to count as
@@ -138,10 +147,10 @@ pub struct DigiSkimmer {
     /// carrier and an alternating RTTY mark/space pair both read as steady
     /// energy (the raw RTTY tones each drop out at the baud rate).
     smooth_power: Vec<f32>,
-    /// Scratch for the per-frame percentile floor estimate.
+    /// Scratch for the per-region median floor estimate (one region's power).
     pscratch: Vec<f32>,
-    /// Smoothed broadband noise floor (a low percentile of the spectrum).
-    floor_level: f32,
+    /// Per-bin noise floor (each region's median, scaled to a mean), smoothed.
+    floor: Vec<f32>,
     cands: Vec<(f32, i64)>,
     centers: Vec<i64>,
     frame_ms: f32,
@@ -181,7 +190,7 @@ impl DigiSkimmer {
             power: vec![0.0; FFT_SIZE],
             smooth_power: vec![0.0; FFT_SIZE],
             pscratch: vec![0.0; FFT_SIZE],
-            floor_level: 0.0,
+            floor: vec![0.0; FFT_SIZE],
             cands: Vec::with_capacity(512),
             centers: Vec::with_capacity(128),
             frame_ms: (HOP as f64 / skim_rate * 1000.0) as f32,
@@ -204,7 +213,9 @@ impl DigiSkimmer {
             self.inbuf.clear();
             self.read_pos = 0;
             self.frames = 0;
-            self.floor_level = 0.0;
+            for p in self.floor.iter_mut() {
+                *p = 0.0;
+            }
             for p in self.smooth_power.iter_mut() {
                 *p = 0.0;
             }
@@ -242,23 +253,30 @@ impl DigiSkimmer {
         for k in 0..n {
             self.power[k] = self.scratch[k].norm_sqr();
         }
-        // Robust broadband noise floor: a low percentile of this frame's
-        // spectrum, smoothed. A continuous carrier occupies a tiny fraction of
-        // bins, so — unlike a per-bin temporal average — it can't capture the
-        // floor and hide itself (the failure mode for always-on PSK/RTTY).
-        self.pscratch.copy_from_slice(&self.power);
-        let pidx = n * 4 / 10; // 40th percentile
-        self.pscratch
-            .select_nth_unstable_by(pidx, |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let floor_est = self.pscratch[pidx];
-        if self.floor_level <= 0.0 {
-            self.floor_level = floor_est;
+        // Robust *per-region* noise floor: the median of each ~64-bin region
+        // (scaled to a mean), smoothed over time. A continuous carrier occupies a
+        // tiny fraction of bins so it can't move its region's median and hide
+        // itself; and because the floor is local, a noisy patch of the band no
+        // longer inherits a too-low floor from the quieter rest of the window
+        // (which let noise / faint non-digimode signals decode).
+        let seed = self.frames == 0;
+        let smooth = if self.frames < WARMUP { 0.3 } else { 0.1 };
+        for base in (0..n).step_by(REGION_BINS) {
+            let end = (base + REGION_BINS).min(n);
+            let region = &mut self.pscratch[..end - base];
+            region.copy_from_slice(&self.power[base..end]);
+            let mid = region.len() / 2;
+            region.select_nth_unstable_by(mid, |a, b| {
+                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let est = region[mid] * MEDIAN_TO_MEAN;
+            for f in &mut self.floor[base..end] {
+                *f = if seed { est } else { *f + smooth * (est - *f) };
+            }
         }
-        self.floor_level = 0.9 * self.floor_level + 0.1 * floor_est;
         if self.frames < WARMUP {
             return;
         }
-        let floor = self.floor_level.max(1e-12);
         // Smooth per-bin power over ~a character time so RTTY's alternating
         // mark/space and PSK's continuous carrier both read as steady energy.
         for k in 0..n {
@@ -277,7 +295,7 @@ impl DigiSkimmer {
             if off.abs() < DC_GUARD {
                 continue;
             }
-            if self.smooth_power[k] > floor * SMOOTH_ON {
+            if self.smooth_power[k] > self.floor[k] * SMOOTH_ON {
                 let abs_hz = self.skim_center_hz + off as f64 * bin_hz;
                 // Restrict each skimmer to its mode's well-known calling sub-bands
                 // (PSK31 / RTTY areas per band) — not the whole digi segment.
@@ -357,6 +375,7 @@ impl DigiSkimmer {
         let now = self.now_ms;
         for t in self.tracks.iter_mut() {
             let k = t.bin.rem_euclid(n as i64) as usize;
+            let floor = self.floor[k].max(1e-12);
             t.env = 0.9 * t.env + 0.1 * self.power[k];
             if t.env > floor * OFF_RATIO {
                 t.last_on_ms = now;
@@ -418,10 +437,12 @@ impl DigiSkimmer {
     #[cfg(test)]
     fn debug_dump(&self) {
         let mx = self.smooth_power.iter().cloned().fold(0.0f32, f32::max);
+        let floor_avg =
+            self.floor.iter().sum::<f32>() / self.floor.len().max(1) as f32;
         eprintln!(
-            "floor={:.2e} maxsmooth/floor={:.1} tracks={} confirm={:?}",
-            self.floor_level,
-            mx / self.floor_level.max(1e-12),
+            "floor(avg)={:.2e} maxsmooth/floor={:.1} tracks={} confirm={:?}",
+            floor_avg,
+            mx / floor_avg.max(1e-12),
             self.tracks.len(),
             self.confirm
         );
@@ -522,6 +543,47 @@ mod tests {
         // Coarse filterbank decode is best-effort text; clean copy happens in the
         // PSK panel after the operator clicks the spot to tune onto it.
         assert!(!s.text.is_empty(), "spot has no text");
+    }
+
+    #[test]
+    fn floor_tracks_the_local_noise_level() {
+        // Regression for "decodes noise / faint signals": the per-region floor
+        // must follow the *local* noise level, so a noisy patch of the band gets
+        // its own high floor instead of inheriting a too-low one from the quiet
+        // rest of the window. Build band-limited noise that's loud only in
+        // +30..+50 kHz and quiet elsewhere, and confirm the floor reflects it.
+        let rate = 192_000.0;
+        let center = 14_070_000.0;
+        let bin_hz = rate / FFT_SIZE as f64;
+
+        let mut seed = 0x1357_9bdfu32;
+        let mut rng = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5
+        };
+        // Construct one block's spectrum (low white noise everywhere, elevated in
+        // the sub-band), IFFT to a band-limited-noise time block, then tile it.
+        let mut spec = vec![C32::default(); FFT_SIZE];
+        for (k, s) in spec.iter_mut().enumerate() {
+            let off = if k <= FFT_SIZE / 2 { k as i64 } else { k as i64 - FFT_SIZE as i64 };
+            let hz = off as f64 * bin_hz;
+            let amp = if (30_000.0..50_000.0).contains(&hz) { 0.30 } else { 0.02 };
+            *s = C32::new(amp * rng(), amp * rng());
+        }
+        rustfft::FftPlanner::<f32>::new().plan_fft_inverse(FFT_SIZE).process(&mut spec);
+        let block = spec;
+        let mut sk = DigiSkimmer::new(SkimmerKind::Psk, rate, center);
+        for _ in 0..80 {
+            sk.process(&block);
+        }
+        let loud = (40_000.0 / bin_hz) as usize; // +40 kHz (loud sub-band)
+        let quiet = FFT_SIZE - (40_000.0 / bin_hz) as usize; // -40 kHz (quiet)
+        assert!(
+            sk.floor[loud] > 5.0 * sk.floor[quiet],
+            "floor not local: loud {:.2e} vs quiet {:.2e}",
+            sk.floor[loud],
+            sk.floor[quiet]
+        );
     }
 
     fn bin_tol(rate: f64) -> f64 {
