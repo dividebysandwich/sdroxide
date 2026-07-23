@@ -39,6 +39,9 @@ enum Ctrl {
     SetMode(Mode),
     TxOn(f64),
     TxOff,
+    /// TX drive / tune-drive as a 0..1 fraction.
+    SetDrive(f64),
+    SetTuneDrive(f64),
     Shutdown,
 }
 
@@ -115,6 +118,9 @@ impl TciHandle {
         send_text(&mut ws, p::iq_samplerate(iq_rate));
         send_text(&mut ws, p::rx_enable(RX, true));
         send_text(&mut ws, p::iq_start(RX));
+        // The TX-audio path rides the (separate) audio stream; set its sample
+        // rate up front. The stream itself is started only while transmitting.
+        send_text(&mut ws, p::audio_samplerate(TX_RATE_HZ));
         let _ = ws.flush();
 
         let rx_cap = ((iq_rate_hz * 2.0 * 0.5) as usize).next_power_of_two().max(1 << 16);
@@ -132,6 +138,7 @@ impl TciHandle {
             center: 0.0,
             mode: String::new(),
             ptt: false,
+            tx_pkts: 0,
         };
         let join = std::thread::Builder::new()
             .name("sdroxide-tci".into())
@@ -163,6 +170,15 @@ impl TciHandle {
     }
     pub fn tx_end(&self) {
         let _ = self.ctrl.send(Ctrl::TxOff);
+    }
+
+    /// Set TX drive (`0..1`) — mapped to the rig's `drive:` percentage.
+    pub fn set_drive(&self, frac: f64) {
+        let _ = self.ctrl.send(Ctrl::SetDrive(frac));
+    }
+    /// Set TUNE drive (`0..1`) — mapped to the rig's `tune_drive:` percentage.
+    pub fn set_tune_drive(&self, frac: f64) {
+        let _ = self.ctrl.send(Ctrl::SetTuneDrive(frac));
     }
 
     /// Push mono 48 kHz TX audio, with bounded back-pressure.
@@ -226,6 +242,8 @@ struct NetThread {
     center: f64,
     mode: String,
     ptt: bool,
+    /// TX-audio packets sent this key-down (for diagnostics).
+    tx_pkts: u64,
 }
 
 impl NetThread {
@@ -258,15 +276,32 @@ impl NetThread {
                         if !self.mode.is_empty() {
                             send_text(&mut self.ws, p::modulation(RX, &self.mode));
                         }
+                        // Start the audio stream so the rig accepts our TxAudio,
+                        // then key with the TCI audio source.
+                        send_text(&mut self.ws, p::audio_start(RX));
                         send_text(&mut self.ws, p::trx(RX, true, true));
                         self.ptt = true;
                         dirty = true;
+                        tracing::debug!(tx_freq, off, mode = %self.mode, "TCI TX on");
                     }
                     Ctrl::TxOff => {
                         send_text(&mut self.ws, p::trx(RX, false, false));
+                        send_text(&mut self.ws, p::audio_stop(RX));
                         // Restore the RX center (the IF offset moved for TX).
                         send_text(&mut self.ws, p::if_offset(RX, CH, 0.0));
                         self.ptt = false;
+                        dirty = true;
+                        tracing::debug!("TCI TX off");
+                    }
+                    Ctrl::SetDrive(frac) => {
+                        let pct = (frac.clamp(0.0, 1.0) * 100.0).round() as u32;
+                        send_text(&mut self.ws, p::drive(RX, pct));
+                        dirty = true;
+                        tracing::debug!(pct, "TCI drive");
+                    }
+                    Ctrl::SetTuneDrive(frac) => {
+                        let pct = (frac.clamp(0.0, 1.0) * 100.0).round() as u32;
+                        send_text(&mut self.ws, p::tune_drive(RX, pct));
                         dirty = true;
                     }
                     Ctrl::Shutdown => {
@@ -323,10 +358,26 @@ impl NetThread {
                             Err(_) => break,
                         }
                     }
+                    let peak = mono.iter().fold(0.0f32, |a, &v| a.max(v.abs()));
                     let pkt = p::build_tx_audio(TX_RATE_HZ, RX, &mono);
-                    let _ = self.ws.write(Message::Binary(pkt.into()));
+                    match self.ws.write(Message::Binary(pkt.into())) {
+                        Ok(()) => {
+                            self.tx_pkts += 1;
+                            if self.tx_pkts == 1 || self.tx_pkts % 50 == 0 {
+                                tracing::debug!(
+                                    pkts = self.tx_pkts,
+                                    samples = take,
+                                    peak,
+                                    "TCI TX audio sent"
+                                );
+                            }
+                        }
+                        Err(e) => tracing::warn!("TCI TX audio write failed: {e}"),
+                    }
                     dirty = true;
                 }
+            } else {
+                self.tx_pkts = 0;
             }
 
             if dirty {

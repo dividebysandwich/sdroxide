@@ -136,9 +136,26 @@ pub fn iq_start(rx: u32) -> String {
 pub fn iq_stop(rx: u32) -> String {
     format!("iq_stop:{rx};")
 }
-#[allow(dead_code)] // reserved: demod-audio RX stream (we use wideband IQ)
+/// Enable the audio stream for `rx`. The TX-audio path rides this stream (it is
+/// separate from the wideband IQ stream), so it must be started before keying
+/// with the TCI audio source or the rig ignores the `TxAudio` packets.
 pub fn audio_start(rx: u32) -> String {
     format!("audio_start:{rx};")
+}
+pub fn audio_stop(rx: u32) -> String {
+    format!("audio_stop:{rx};")
+}
+/// Sample rate for the audio stream (both RX audio and the TX audio we send).
+pub fn audio_samplerate(hz: u32) -> String {
+    format!("audio_samplerate:{hz};")
+}
+/// TX drive / output power, 0..100 %.
+pub fn drive(rx: u32, percent: u32) -> String {
+    format!("drive:{rx},{};", percent.min(100))
+}
+/// TUNE drive / output power, 0..100 %.
+pub fn tune_drive(rx: u32, percent: u32) -> String {
+    format!("tune_drive:{rx},{};", percent.min(100))
 }
 pub fn rx_enable(rx: u32, on: bool) -> String {
     format!("rx_enable:{rx},{on};")
@@ -216,6 +233,12 @@ mod tests {
         assert_eq!(trx(0, false, true), "trx:0,false;");
         assert_eq!(iq_samplerate(192000), "iq_samplerate:192000;");
         assert_eq!(iq_start(0), "iq_start:0;");
+        assert_eq!(audio_samplerate(48_000), "audio_samplerate:48000;");
+        assert_eq!(audio_start(0), "audio_start:0;");
+        assert_eq!(audio_stop(0), "audio_stop:0;");
+        assert_eq!(drive(0, 40), "drive:0,40;");
+        assert_eq!(drive(0, 250), "drive:0,100;"); // clamped to 100 %
+        assert_eq!(tune_drive(0, 10), "tune_drive:0,10;");
     }
 
     #[test]

@@ -413,6 +413,9 @@ struct Engine {
     tx_analyzer: SpectrumAnalyzer,
     /// Scratch for packing real TX audio into complex samples for `tx_analyzer`.
     tx_mon_buf: Vec<Complex32>,
+    /// Phase accumulator for the TUNE tone on audio-modulated rigs (CAT/TCI),
+    /// which need an audio carrier to key up.
+    tune_phase: f32,
     nb: NoiseBlanker,
     /// Auto-notch + spectral NR for the CAT/demod-audio path (the IQ path uses
     /// per-`RxChain` instances instead).
@@ -548,6 +551,7 @@ fn engine_thread(
         tx_ham_only: engine_cfg.tx_ham_only,
         tx_analyzer: SpectrumAnalyzer::new(cfg.fft_size as usize, TX_MONITOR_RATE, cfg.avg_tc),
         tx_mon_buf: Vec::new(),
+        tune_phase: 0.0,
         nb: NoiseBlanker::new(),
         audio_notch: AutoNotch::new(),
         audio_notch_on: false,
@@ -1149,8 +1153,16 @@ impl Engine {
                 self.state.tx.tune = on;
                 self.sync_tx_state();
             }
-            SetTxDrive(v) => self.state.tx.drive = v.clamp(0.0, 1.0),
-            SetTuneDrive(v) => self.state.tx.tune_drive = v.clamp(0.0, 1.0),
+            SetTxDrive(v) => {
+                self.state.tx.drive = v.clamp(0.0, 1.0);
+                // CAT/TCI rigs command output power directly; IQ sources ignore
+                // this and scale the modulated samples instead.
+                self.source.set_tx_drive(self.state.tx.drive as f64);
+            }
+            SetTuneDrive(v) => {
+                self.state.tx.tune_drive = v.clamp(0.0, 1.0);
+                self.source.set_tune_drive(self.state.tx.tune_drive as f64);
+            }
             SetMicGain(v) => self.state.tx.mic_gain = v.clamp(0.0, 1.0),
             SetGain { dir, element, db } => match dir {
                 Direction::Rx => {
@@ -1841,7 +1853,20 @@ impl Engine {
                 while mic.consumer.pop().is_ok() {} // discard mic during a burst
             }
             burst_done = self.digi.as_mut().map(|d| d.fill_tx_block(&mut audio)).unwrap_or(true);
-        } else if !self.state.tx.tune {
+        } else if self.state.tx.tune {
+            // An audio-modulated rig (CAT/TCI) needs a tone to produce a carrier;
+            // silence would key up with no output. The tune-drive level sets the
+            // tone amplitude (and, on TCI, the rig's tune power via `tune_drive:`).
+            let amp = self.state.tx.tune_drive.clamp(0.05, 1.0);
+            let inc = std::f32::consts::TAU * 1000.0 / TX_MONITOR_RATE as f32;
+            for a in &mut audio {
+                *a = self.tune_phase.cos() * amp;
+                self.tune_phase += inc;
+                if self.tune_phase > std::f32::consts::TAU {
+                    self.tune_phase -= std::f32::consts::TAU;
+                }
+            }
+        } else {
             // Voice: mic → 48 kHz FIFO → this block, with mic gain.
             if let Some(mic) = self.mic.as_mut() {
                 let mut raw = Vec::with_capacity(mic.consumer.slots());
@@ -1865,7 +1890,6 @@ impl Engine {
                 *a = (*a * gain).clamp(-1.0, 1.0);
             }
         }
-        // TUNE leaves the audio silent — PTT alone keys the rig's carrier.
 
         // TX monitor: the rig modulates its own audio, so approximate the on-air
         // spectrum by FFTing the outgoing audio (packed real; the display shows

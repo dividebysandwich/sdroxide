@@ -95,4 +95,12 @@ impl IqSource for TciSource {
         self.handle.tx_end();
         Ok(())
     }
+
+    fn set_tx_drive(&mut self, frac: f64) {
+        self.handle.set_drive(frac);
+    }
+
+    fn set_tune_drive(&mut self, frac: f64) {
+        self.handle.set_tune_drive(frac);
+    }
 }

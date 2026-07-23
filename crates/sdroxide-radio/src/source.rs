@@ -67,6 +67,13 @@ pub trait IqSource: Send {
     fn current_tx_gains(&self) -> Vec<(String, f64)> {
         Vec::new()
     }
+    /// Set the TX drive as a `0..1` fraction on rigs that modulate their own
+    /// audio (CAT/TCI), which command output power directly rather than scaling
+    /// the transmitted samples. No-op for IQ sources (they apply drive in the
+    /// modulator chain instead).
+    fn set_tx_drive(&mut self, _frac: f64) {}
+    /// Set the TUNE drive as a `0..1` fraction (see [`Self::set_tx_drive`]).
+    fn set_tune_drive(&mut self, _frac: f64) {}
 
     // CAT-controlled rigs — meaningful only for the sound-card/CAT source.
 
