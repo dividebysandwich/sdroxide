@@ -1693,8 +1693,12 @@ impl Engine {
                     }
                     self.tx_center_hz = txf;
                     self.tx_active = true;
-                    // Start the TX monitor clean (no residue from a prior burst).
+                    // Start the TX monitor + the real-time pacer clean (no residue
+                    // from a prior burst/over) and drop any stale mic audio so the
+                    // feed can't start already behind.
                     self.tx_analyzer.reset();
+                    self.tx_pace = None;
+                    self.mic_fifo.clear();
                 }
                 Err(e) => deny(&format!("tx_begin failed: {e}"), &mut self.state),
             }
@@ -1704,6 +1708,7 @@ impl Engine {
             }
             self.tx = None;
             self.tx_active = false;
+            self.tx_pace = None;
             // Drop the transmit residue so the first receive frames aren't a
             // blend of TX samples and fresh RX.
             self.analyzer.reset();
@@ -1885,6 +1890,17 @@ impl Engine {
                     self.mic_fifo.drain(..cut);
                 }
             }
+            // On a real-time-paced network rig (TCI), build a small cushion before
+            // the first block so the mic's bursty delivery can't underrun the
+            // steady 48 kHz feed into choppy silence. `tx_pace` is unset until the
+            // first block goes out, marking the pre-roll.
+            if self.caps.tx_audio
+                && self.tx_pace.is_none()
+                && self.mic_fifo.len() < TX_AUDIO_BLOCK * 2
+            {
+                std::thread::sleep(Duration::from_millis(2));
+                return Ok(());
+            }
             let take = self.mic_fifo.len().min(TX_AUDIO_BLOCK);
             audio[..take].copy_from_slice(&self.mic_fifo[..take]);
             self.mic_fifo.drain(..take);
@@ -1903,11 +1919,14 @@ impl Engine {
 
         self.source.tx_write_audio(&audio)?;
 
-        // Wall-clock pace the digi burst: a sound card whose ring drains faster
-        // than real time would otherwise let `fill_tx_block` race to the end of
-        // the burst and drop PTT early (FT8 → ~5 s instead of 12.6 s). Hold each
-        // block until real time has caught up to the samples fed so far.
-        if self.digi_tx {
+        // Wall-clock pace the audio feed to real time. Without this the loop
+        // spins far faster than 48 kHz and floods the downstream buffer: an FT8
+        // burst raced to the end and dropped PTT early (~5 s instead of 12.6 s),
+        // and a TCI voice over piled up >1 s of latency in the rig's TX ring while
+        // starving the mic FIFO (choppy audio). A network audio-TX rig (`tx_audio`,
+        // e.g. TCI) has no local sound card to pace it, so it always needs this;
+        // a CAT sound card paces itself and only the digi burst needs holding.
+        if self.digi_tx || self.caps.tx_audio {
             let (start, fed) = self.tx_pace.get_or_insert_with(|| (std::time::Instant::now(), 0));
             *fed += TX_AUDIO_BLOCK as u64;
             let target = std::time::Duration::from_secs_f64(*fed as f64 / 48_000.0);
