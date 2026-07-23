@@ -417,38 +417,99 @@ impl SdroxideApp {
     /// The VFO frequency controls (A/B select + big readout + the inactive
     /// VFO's frequency) in a label-less box, always the first module.
     fn freq_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
-        crate::chrome::module_bare_h(ui, 510.0, crate::chrome::MODULE_TALL_H, |ui| {
+        // The 10-digit readout is fixed width, so measure it (via the same fonts
+        // freq_display uses) and size the box to hug its contents — that keeps the
+        // right column against the box edge (no empty space) and lets the readout
+        // be centred vertically by exact geometry rather than a fragile layout hint.
+        let font40 = egui::FontId::monospace(40.0);
+        let digit = ui
+            .painter()
+            .layout_no_wrap("0".to_owned(), font40.clone(), Color32::WHITE)
+            .size();
+        let dot_w = ui
+            .painter()
+            .layout_no_wrap(".".to_owned(), font40, Color32::WHITE)
+            .size()
+            .x;
+        let hz_w = ui
+            .painter()
+            .layout_no_wrap(" Hz".to_owned(), egui::FontId::proportional(12.0), Color32::WHITE)
+            .size()
+            .x;
+        // 10 digits + 3 group separators + " Hz", with freq_display's 1px spacing.
+        let readout_w = 10.0 * digit.x + 3.0 * dot_w + hz_w + 13.0;
+        let readout_h = digit.y;
+
+        let ab_w = 68.0;
+        let right_w = 96.0;
+        let box_w = 8.0 + ab_w + 10.0 + readout_w + 12.0 + right_w + 8.0;
+
+        crate::chrome::module_bare_h(ui, box_w, crate::chrome::MODULE_TALL_H, |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0; // control every gap explicitly
             let active = self.state.active_vfo;
-            // Left column: VFO A/B selector on top, band/mode selector below.
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
-                ui.horizontal(|ui| {
+            let full_h = ui.available_height();
+
+            // VFO A/B selector, vertically centred in the full box height.
+            let mut sel = None;
+            ui.allocate_ui_with_layout(
+                egui::vec2(ab_w, full_h),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
                     for (v, label) in [(Vfo::A, "A"), (Vfo::B, "B")] {
                         if crate::chrome::chip(ui, active == v, RichText::new(label).size(15.0))
                             .clicked()
                         {
-                            cmds.push(Command::SelectVfo(v));
+                            sel = Some(v);
                         }
                     }
-                });
-                self.band_mode_button(ui, cmds);
-            });
-            // Big frequency readout.
-            if let Some(hz) =
-                freq_display::show(ui, egui::Id::new("main-freq"), self.state.active_freq_hz())
-            {
+                },
+            );
+            if let Some(v) = sel {
+                cmds.push(Command::SelectVfo(v));
+            }
+            ui.add_space(10.0);
+
+            // Big frequency readout, centred vertically by measured height.
+            let mut new_hz = None;
+            ui.allocate_ui_with_layout(
+                egui::vec2(readout_w, full_h),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.add_space(((full_h - readout_h) / 2.0).max(0.0));
+                    new_hz = freq_display::show(
+                        ui,
+                        egui::Id::new("main-freq"),
+                        self.state.active_freq_hz(),
+                    );
+                },
+            );
+            if let Some(hz) = new_hz {
                 cmds.push(Command::SetVfo { vfo: active, hz });
             }
-            // Inactive VFO's frequency.
+            ui.add_space(12.0);
+
+            // Right column: inactive VFO frequency anchored top-right, band/mode
+            // selector anchored bottom-right, hard against the box edge.
             let inactive_hz = match active {
                 Vfo::A => self.state.vfo_b_hz,
                 Vfo::B => self.state.vfo_a_hz,
             };
-            ui.label(
-                RichText::new(format!("{:.6} MHz", inactive_hz / 1e6))
-                    .monospace()
-                    .size(12.0)
-                    .color(Color32::from_gray(120)),
+            ui.allocate_ui_with_layout(
+                egui::vec2(right_w, full_h),
+                egui::Layout::top_down(egui::Align::Max),
+                |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    ui.label(
+                        RichText::new(format!("{:.6} MHz", inactive_hz / 1e6))
+                            .monospace()
+                            .size(12.0)
+                            .color(Color32::from_gray(120)),
+                    );
+                    let pad = (ui.available_height() - 24.0).max(0.0);
+                    ui.add_space(pad);
+                    self.band_mode_button(ui, cmds);
+                },
             );
         });
     }
@@ -528,8 +589,10 @@ impl SdroxideApp {
     /// replaces the separate VFO and RIT/XIT boxes.
     fn vfo_rit_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let tx_capable = self.caps.as_ref().is_some_and(|c| c.is_transmit_capable());
+        // Fixed field width, wide enough for a signed 4-digit offset plus " Hz".
+        let hz_field = egui::vec2(74.0, 22.0);
         crate::chrome::module_bare_h(ui, 270.0, crate::chrome::MODULE_TALL_H, |ui| {
-            ui.vertical(|ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
                 // VFO utility chips.
                 ui.horizontal(|ui| {
@@ -557,7 +620,10 @@ impl SdroxideApp {
                     }
                     let mut rit_hz = rit.hz;
                     if ui
-                        .add(DragValue::new(&mut rit_hz).speed(5).range(-9999..=9999).suffix(" Hz"))
+                        .add_sized(
+                            hz_field,
+                            DragValue::new(&mut rit_hz).speed(5).range(-9999..=9999).suffix(" Hz"),
+                        )
                         .changed()
                     {
                         cmds.push(Command::SetRit { enabled: rit.enabled, hz: rit_hz });
@@ -569,7 +635,8 @@ impl SdroxideApp {
                         }
                         let mut xit_hz = xit.hz;
                         if ui
-                            .add(
+                            .add_sized(
+                                hz_field,
                                 DragValue::new(&mut xit_hz)
                                     .speed(5)
                                     .range(-9999..=9999)
@@ -658,10 +725,18 @@ impl SdroxideApp {
     /// the VFO/RIT box — this replaces the separate Receiver and Filter boxes.
     fn rx_filter_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         crate::chrome::module_bare_h(ui, 300.0, crate::chrome::MODULE_TALL_H, |ui| {
-            ui.vertical(|ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
-                // Receiver: AGC, volume, mute.
+                // Receiver: volume, AGC, mute.
                 ui.horizontal(|ui| {
+                    let mut vol = self.state.rx[0].volume;
+                    ui.label("Vol");
+                    if crate::chrome::slider(ui, Slider::new(&mut vol, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        self.state.rx[0].volume = vol; // optimistic echo
+                        cmds.push(Command::SetVolume { rx: RxId::Main, v: vol });
+                    }
                     let agc = self.state.rx[0].agc;
                     ComboBox::from_id_salt("agc")
                         .selected_text(format!("AGC {}", agc.label()))
@@ -673,15 +748,6 @@ impl SdroxideApp {
                                 }
                             }
                         });
-
-                    let mut vol = self.state.rx[0].volume;
-                    ui.label("Vol");
-                    if crate::chrome::slider(ui, Slider::new(&mut vol, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        self.state.rx[0].volume = vol; // optimistic echo
-                        cmds.push(Command::SetVolume { rx: RxId::Main, v: vol });
-                    }
                     let muted = self.state.rx[0].muted;
                     if crate::chrome::chip_accent(ui, muted, "MUTE", crate::theme::PINK, Color32::WHITE)
                         .clicked()
@@ -807,7 +873,7 @@ impl SdroxideApp {
     }
 
     fn display_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
-        crate::chrome::module(ui, "Display", 226.0, |ui| {
+        crate::chrome::module(ui, "Display", 284.0, |ui| {
             if crate::chrome::chip(ui, false, "FIT")
                 .on_hover_text("Auto-set floor/ceiling for best waterfall contrast")
                 .clicked()
@@ -834,23 +900,46 @@ impl SdroxideApp {
             {
                 cmds.push(Command::SetSkimmerEnabled(!skim));
             }
-        });
-        crate::chrome::module(ui, "FFT", 344.0, |ui| {
-            ui.label("floor");
-            ui.add(
-                DragValue::new(&mut self.view.db_floor).speed(1.0).range(-160.0..=-40.0).suffix(" dB"),
-            );
-            ui.label("ceil");
-            ui.add(
-                DragValue::new(&mut self.view.db_ceil).speed(1.0).range(-100.0..=20.0).suffix(" dB"),
-            );
-            ComboBox::from_id_salt("fft")
-                .selected_text(format!("FFT {}", self.view.fft_size))
-                .width(88.0)
-                .show_ui(ui, |ui| {
-                    for n in [2048u32, 4096, 8192, 16384, 32768] {
-                        ui.selectable_value(&mut self.view.fft_size, n, format!("{n}"));
-                    }
+            // Floor/ceiling + FFT size live in a popup off this button.
+            let fft_btn = crate::chrome::chip(ui, false, "FFT")
+                .on_hover_text("Spectrum floor / ceiling and FFT size");
+            egui::Popup::from_toggle_button_response(&fft_btn)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                    ui.label(
+                        RichText::new("SPECTRUM").color(crate::theme::CYAN_DIM).size(9.5).strong(),
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label("floor");
+                        ui.add(
+                            DragValue::new(&mut self.view.db_floor)
+                                .speed(1.0)
+                                .range(-160.0..=-40.0)
+                                .suffix(" dB"),
+                        );
+                        ui.label("ceil");
+                        ui.add(
+                            DragValue::new(&mut self.view.db_ceil)
+                                .speed(1.0)
+                                .range(-100.0..=20.0)
+                                .suffix(" dB"),
+                        );
+                    });
+                    // Chips rather than a ComboBox: the combo opens a second popup
+                    // layer, and clicking it counts as "outside" and closes this one.
+                    ui.label(
+                        RichText::new("FFT SIZE").color(crate::theme::CYAN_DIM).size(9.5).strong(),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        for n in [2048u32, 4096, 8192, 16384, 32768] {
+                            if crate::chrome::chip(ui, self.view.fft_size == n, format!("{n}"))
+                                .clicked()
+                            {
+                                self.view.fft_size = n;
+                            }
+                        }
+                    });
                 });
         });
     }

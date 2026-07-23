@@ -3,7 +3,7 @@
 
 use eframe::egui::{self, Color32, Label, RichText, Sense, Ui};
 
-const DIGIT_SIZE: f32 = 34.0;
+const DIGIT_SIZE: f32 = 40.0;
 /// Smooth-scroll points per tuning step.
 const SCROLL_STEP: f32 = 30.0;
 
