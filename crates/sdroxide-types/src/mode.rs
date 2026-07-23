@@ -266,12 +266,15 @@ impl NrLevel {
     /// Spectral-NR tuning: `(noise over-estimation factor, minimum gain floor)`.
     /// A larger over-estimate removes more of the noise; a lower floor lets weak
     /// bins be attenuated further — more aggressive, at more risk of artefacts.
+    /// The over-factors are modest because the MCRA estimator is unbiased (it
+    /// tracks the noise mean, not an under-estimated minimum), so ~1.0 already
+    /// removes stationary noise; higher values are pure over-subtraction.
     pub fn params(self) -> (f32, f32) {
         match self {
             NrLevel::Off => (1.0, 1.0),
-            NrLevel::Low => (1.1, 0.30),
-            NrLevel::Medium => (1.7, 0.15),
-            NrLevel::High => (2.6, 0.06),
+            NrLevel::Low => (1.0, 0.30),
+            NrLevel::Medium => (1.4, 0.14),
+            NrLevel::High => (2.0, 0.07),
         }
     }
 }
