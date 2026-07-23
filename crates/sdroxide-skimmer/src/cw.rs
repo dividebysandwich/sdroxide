@@ -27,6 +27,13 @@ const WARMUP: u32 = 40;
 const ON_RATIO: f32 = 10.0;
 /// Key-off threshold (per-track hysteresis; ~6 dB).
 const OFF_RATIO: f32 = 4.0;
+/// Bins per region for the median noise-floor estimate (~3 kHz at 47 Hz/bin).
+/// The median of a region is a noise bin as long as CW signals stay sparse in
+/// it, so a signal — however strong or persistent — can't inflate the floor.
+const REGION_BINS: usize = 64;
+/// |FFT|² of Gaussian noise is exponential, whose median is `ln 2`·mean; scale
+/// the region median back up to estimate the mean noise the thresholds expect.
+const MEDIAN_TO_MEAN: f32 = 1.4427;
 /// A peak must be the strongest bin within ±this window to count — enforces a
 /// minimum signal spacing and rejects a strong signal's own leakage sidelobes.
 const PEAK_SPACING: usize = 8; // ~±390 Hz at 49 Hz/bin
@@ -85,7 +92,10 @@ pub struct CwSkimmer {
     read_pos: usize,
     scratch: Vec<C32>,
     power: Vec<f32>,
+    /// Per-bin noise floor (the region median scaled to a mean), time-smoothed.
     noise: Vec<f32>,
+    /// Reused scratch for the per-region median (one region's power values).
+    med_scratch: Vec<f32>,
     /// Reused per-frame scratch (avoids re-allocating every frame).
     cands: Vec<(f32, i64)>,
     centers: Vec<i64>,
@@ -119,6 +129,7 @@ impl CwSkimmer {
             scratch: vec![C32::default(); FFT_SIZE],
             power: vec![0.0; FFT_SIZE],
             noise: vec![0.0; FFT_SIZE],
+            med_scratch: Vec::with_capacity(REGION_BINS),
             cands: Vec::with_capacity(512),
             centers: Vec::with_capacity(256),
             frame_ms: (HOP as f64 / skim_rate * 1000.0) as f32,
@@ -168,20 +179,37 @@ impl CwSkimmer {
             self.power[k] = self.scratch[k].norm_sqr();
         }
 
-        if self.frames < WARMUP {
-            // Prime the per-bin floor quickly, no detection yet.
-            for k in 0..n {
-                self.noise[k] = 0.9 * self.noise[k] + 0.1 * self.power[k];
+        // Per-bin noise floor from a per-region median. The old approach was a
+        // single floor-gated EMA updated whenever `power <= floor * ON_RATIO` — a
+        // positive-feedback trap: once a strong, near-continuous signal's floor
+        // crept above `signal / ON_RATIO` (primed high while it was keying, or
+        // riding a high ambient noise floor), the signal stopped exceeding the
+        // key-on threshold and was folded straight back into its own floor, so it
+        // never decoded — the "strong signal in high noise won't decode while
+        // weaker ones do" failure.
+        //
+        // Fix: estimate the floor from the MEDIAN of each ~64-bin region rather
+        // than per-bin history. CW signals are narrow and sparse, so the median
+        // of a region is always a noise bin — a signal, however strong or
+        // persistent, cannot pull the median up and trap the floor. Scale the
+        // median to a mean (thresholds expect the mean) and smooth over time.
+        let smooth = if self.frames < WARMUP { 0.3 } else { 0.05 };
+        let mut med = std::mem::take(&mut self.med_scratch);
+        for base in (0..n).step_by(REGION_BINS) {
+            med.clear();
+            med.extend_from_slice(&self.power[base..(base + REGION_BINS).min(n)]);
+            let mid = med.len() / 2;
+            med.select_nth_unstable_by(mid, |a, b| {
+                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let est = med[mid] * MEDIAN_TO_MEAN;
+            for k in base..(base + REGION_BINS).min(n) {
+                self.noise[k] += smooth * (est - self.noise[k]);
             }
-            return;
         }
-
-        // Slowly update each bin's noise floor from frames where it's quiet
-        // (below the key-on threshold), so signals don't inflate their own floor.
-        for k in 0..n {
-            if self.power[k] <= self.noise[k] * ON_RATIO {
-                self.noise[k] = 0.98 * self.noise[k] + 0.02 * self.power[k];
-            }
+        self.med_scratch = med;
+        if self.frames < WARMUP {
+            return; // priming only — no detection yet
         }
 
         // Signal centers via non-max suppression: collect above-threshold bins,
@@ -387,8 +415,9 @@ impl CwSkimmer {
 mod tests {
     use super::*;
 
-    /// Build ~`secs` of skim IQ: a keyed CW tone at `off_hz` plus light noise.
-    fn synth(text: &str, off_hz: f64, wpm: f32, rate: f64) -> Vec<C32> {
+    /// Build skim IQ: a keyed CW tone at `off_hz` plus noise of amplitude
+    /// `noise` per component (0.02 = light; a large value = a high noise floor).
+    fn synth(text: &str, off_hz: f64, wpm: f32, rate: f64, noise: f32) -> Vec<C32> {
         let dit = 1200.0 / wpm; // ms
         // Reuse the morse test-encoder shape inline: elements → key envelope.
         let mut key: Vec<bool> = Vec::new(); // per-ms key state
@@ -439,7 +468,7 @@ mod tests {
             for _ in 0..take {
                 phase += dphi;
                 let amp = if on { 1.0 } else { 0.0 };
-                let n = 0.02;
+                let n = noise;
                 iq.push(C32::new(
                     amp * phase.cos() as f32 + n * rng(),
                     amp * phase.sin() as f32 + n * rng(),
@@ -454,7 +483,7 @@ mod tests {
         let rate = 192_000.0;
         let center = 14_020_000.0;
         let off = 5_000.0;
-        let iq = synth("CQ DE W1AW", off, 20.0, rate);
+        let iq = synth("CQ DE W1AW", off, 20.0, rate, 0.02);
 
         let mut sk = CwSkimmer::new(rate, center);
         for chunk in iq.chunks(8192) {
@@ -483,6 +512,28 @@ mod tests {
         assert_eq!(s.callsign.as_deref(), Some("W1AW"));
     }
 
+    #[test]
+    fn decodes_a_strong_signal_in_a_high_noise_floor() {
+        // Regression for the noise-floor trap: a prominent, near-continuously
+        // keyed CW signal riding a HIGH noise floor used to stop decoding (the
+        // old floor-gated EMA folded it into its own floor), while weaker signals
+        // kept working. The region-median floor can't be inflated by the signal.
+        let rate = 192_000.0;
+        let center = 7_020_000.0;
+        let off = -4_000.0;
+        // A high broadband noise floor (15× the light-noise case) with a strong
+        // but not overwhelming carrier.
+        let iq = synth("CQ TEST DE W1AW W1AW", off, 22.0, rate, 0.3);
+
+        let mut sk = CwSkimmer::new(rate, center);
+        for chunk in iq.chunks(8192) {
+            sk.process(chunk);
+        }
+        let spots = sk.spots();
+        let hit = spots.iter().find(|s| s.text.contains("W1AW"));
+        assert!(hit.is_some(), "strong signal in high noise did not decode: {spots:?}");
+    }
+
     /// End-to-end frequency accuracy through the *real* engine path: device-rate
     /// IQ → skim DDC → CwSkimmer. Catches any bin/decimation mismatch that would
     /// mistune the spot marker against the waterfall.
@@ -491,7 +542,7 @@ mod tests {
         let dev_rate = 2_000_000.0;
         let center = 14_025_000.0;
         for off in [2_000.0f64, -3_500.0, 7_000.0] {
-            let iq_dev = synth("CQ DE W1AW", off, 24.0, dev_rate);
+            let iq_dev = synth("CQ DE W1AW", off, 24.0, dev_rate, 0.02);
             let mut ddc = sdroxide_dsp::Ddc::new(dev_rate, 192_000.0);
             let skim_rate = ddc.out_rate();
             let mut sk = CwSkimmer::new(skim_rate, center);
