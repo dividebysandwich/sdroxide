@@ -2225,6 +2225,7 @@ impl SdroxideApp {
         let mut audio_pick: Option<(bool, Option<String>)> = None;
         let mut hpsdr_discover = false;
         let mut tci_test = false;
+        let mut apply_iface = false;
         let mut radio_edit = self.radio_cfg.clone();
         let mut ui_edit = self.ui_settings;
         let mut digi_edit = self.digi_cfg_edit.clone();
@@ -2257,6 +2258,7 @@ impl SdroxideApp {
                     &mut audio_pick,
                     &mut hpsdr_discover,
                     &mut tci_test,
+                    &mut apply_iface,
                     &mut ui_edit,
                     &mut digi_edit,
                     digi_seeded,
@@ -2283,6 +2285,13 @@ impl SdroxideApp {
             if let Some(cfg) = &radio_edit {
                 self.tci_test_result = Some(self.ctrl.test_tci(&cfg.tci.address));
             }
+        }
+        if apply_iface {
+            // Persist the latest edits, then rebuild the live source (no restart).
+            if let Some(cfg) = &radio_edit {
+                self.ctrl.set_radio_config(cfg.clone());
+            }
+            self.ctrl.reopen_source();
         }
         if radio_edit != self.radio_cfg {
             if let Some(cfg) = &radio_edit {
@@ -2316,6 +2325,7 @@ impl SdroxideApp {
         audio_pick: &mut Option<(bool, Option<String>)>,
         hpsdr_discover: &mut bool,
         tci_test: &mut bool,
+        apply_iface: &mut bool,
         ui_edit: &mut sdroxide_types::UiSettings,
         digi_edit: &mut sdroxide_types::DigiConfig,
         digi_seeded: bool,
@@ -2419,6 +2429,19 @@ impl SdroxideApp {
                         );
                     }
                 }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("Apply / reconnect")
+                        .on_hover_text("Switch to this interface now — no restart needed")
+                        .clicked()
+                    {
+                        *apply_iface = true;
+                    }
+                    ui.label(
+                        RichText::new("Switches the live radio without restarting.").weak(),
+                    );
+                });
             }
             SettingsTab::Audio => {
                 self.settings_user_audio(ui, audio_pick);
@@ -2429,7 +2452,6 @@ impl SdroxideApp {
                     {
                         ui.separator();
                         ui.label(RichText::new("Radio audio (sound card)").strong());
-                        ui.label(RichText::new("Restart to apply.").weak());
                         egui::Grid::new("radio-audio").num_columns(2).spacing([12.0, 6.0]).show(
                             ui,
                             |ui| {
@@ -2447,6 +2469,19 @@ impl SdroxideApp {
                                 ui.end_row();
                             },
                         );
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button("Apply / reconnect")
+                                .on_hover_text("Reopen the CAT rig with these sound cards — no restart")
+                                .clicked()
+                            {
+                                *apply_iface = true;
+                            }
+                            ui.label(
+                                RichText::new("Reconnects the radio without restarting.").weak(),
+                            );
+                        });
                     }
                 }
             }
@@ -2756,7 +2791,7 @@ fn settings_cat_tab(
         }
     });
     ui.add_space(6.0);
-    ui.label(RichText::new("Serial / audio changes take effect on restart.").weak());
+    ui.label(RichText::new("Press \"Apply / reconnect\" to switch without a restart.").weak());
 }
 
 /// HPSDR interface: network device discovery / manual IP / sample rate (the
@@ -2832,7 +2867,7 @@ fn settings_hpsdr_tab(
     ui.add_space(6.0);
     ui.label(
         RichText::new(
-            "A manual IP overrides discovery. Backend / device / sample-rate changes take effect on restart.",
+            "A manual IP overrides discovery. Press \"Apply / reconnect\" to switch without a restart.",
         )
         .weak(),
     );
@@ -2891,7 +2926,7 @@ fn settings_tci_tab(
     ui.add_space(6.0);
     ui.label(
         RichText::new(
-            "Wideband IQ receive, audio transmit. Address / rate changes take effect on restart.",
+            "Wideband IQ receive, audio transmit. Press \"Apply / reconnect\" to switch without a restart.",
         )
         .weak(),
     );

@@ -499,8 +499,12 @@ radio:
 
 The controls shown below the selector change to match the chosen interface.
 
-> Radio-interface, serial, sound-format, and radio-audio-device changes take
-> effect on the next start. Restart sdroxide after changing them.
+> After changing the radio interface, serial port, sound format, or
+> radio-audio device, press **Apply / reconnect** at the bottom of the Radio
+> tab (or under the CAT radio-audio settings). sdroxide rebuilds the radio
+> live — no restart. If the new interface can't be opened, the previous one
+> keeps running and an error is shown; your tuning resets to the new radio's
+> default frequency, as it would on a fresh start.
 
 ### 5.2 SoapySDR devices
 
@@ -837,8 +841,10 @@ adapters. Re-select the intended device in the **Audio** tab if the names
 changed after an update.
 
 **A setting did not take effect.**
-Backend, serial, sound-format, and radio-audio-device changes apply on restart.
-Restart sdroxide.
+Backend, serial, sound-format, and radio-audio-device changes apply when you
+press **Apply / reconnect** (Radio tab, or under the CAT radio-audio settings).
+Audio output/input device changes apply immediately. If a change still seems
+stuck, press Apply / reconnect again.
 
 ---
 

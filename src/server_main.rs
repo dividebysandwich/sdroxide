@@ -31,6 +31,7 @@ pub fn run(
             cal_offset_db: settings.cal_offset_db as f32,
             initial_mode,
             tx_ham_only: settings.tx_ham_only,
+            reopen: None,
         },
     );
 

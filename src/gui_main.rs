@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use sdroxide_config::Settings;
-use sdroxide_radio::{AudioParams, EngineConfig, IqSource, MicParams, start_engine};
+use sdroxide_radio::{AudioParams, EngineConfig, IqSource, MicParams, ReopenFn, start_engine};
 use sdroxide_types::{DeviceCaps, Mode};
 use tracing::warn;
 
@@ -13,6 +13,7 @@ pub fn run(
     caps: DeviceCaps,
     settings: &Settings,
     initial_mode: Option<Mode>,
+    reopen: Option<ReopenFn>,
 ) -> Result<()> {
     // The cpal streams must outlive the engine's ring endpoints; their handles
     // move into the LocalController so the UI can swap devices at runtime.
@@ -48,6 +49,7 @@ pub fn run(
         cal_offset_db: settings.cal_offset_db as f32,
         initial_mode,
         tx_ham_only: settings.tx_ham_only,
+        reopen,
     };
     let mut handles = start_engine(source, caps, cfg);
     let engine_thread = handles.thread.take();

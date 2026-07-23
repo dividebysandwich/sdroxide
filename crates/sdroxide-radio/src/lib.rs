@@ -12,7 +12,8 @@ mod source;
 #[cfg(feature = "soapy")]
 pub use device::{DeviceInfo, SoapyDevice, SoapyRxSource, enumerate_devices};
 pub use engine::{
-    AudioParams, AudioSwap, EngineConfig, EngineHandles, MicParams, start as start_engine,
+    AudioParams, EngineConfig, EngineHandles, EngineSwap, MicParams, ReopenFn,
+    start as start_engine,
 };
 pub use error::RadioError;
 pub use source::{ControlUpdate, FileSource, IqSource, SigGenSource};

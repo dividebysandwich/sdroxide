@@ -33,20 +33,33 @@ pub struct EngineHandles {
     pub cmd_tx: Sender<Command>,
     pub event_rx: Receiver<RadioEvent>,
     pub spectrum_out: triple_buffer::Output<SpectrumFrame>,
-    /// Runtime audio-device swaps (the frontend rebuilds the cpal streams and
-    /// hands the engine the new ring endpoints).
-    pub audio_swap_tx: Sender<AudioSwap>,
+    /// Runtime device swaps: audio-device changes (rebuilt cpal ring endpoints)
+    /// and radio-interface changes (rebuild the IQ source from the persisted
+    /// config, no restart).
+    pub swap_tx: Sender<EngineSwap>,
     /// Join before process exit so device teardown (SoapySDR/libusb) can't
     /// race the C libraries' own exit handlers.
     pub thread: Option<std::thread::JoinHandle<()>>,
 }
 
-/// A live audio-device change from the frontend. `None` payloads mean "no
-/// device" (run silent / TX carries silence).
-pub enum AudioSwap {
+/// A live device change from the frontend. Audio `None` payloads mean "no
+/// device" (run silent / TX carries silence); `ReopenSource` asks the engine
+/// to rebuild the IQ front-end from the (freshly persisted) radio config.
+pub enum EngineSwap {
     Output(Option<AudioParams>),
     Input(Option<MicParams>),
+    /// Rebuild the radio source at runtime (backend / CAT audio / HPSDR-TCI
+    /// address changed). The engine calls its [`ReopenFn`] factory.
+    ReopenSource,
 }
+
+/// Factory that (re)opens the configured IQ source at runtime, given the
+/// current dial frequency as the requested center. Lives in the binary (only it
+/// knows how to build each backend); the engine calls it on [`EngineSwap::ReopenSource`].
+/// Returns an error (leaving the current source running) when the new interface
+/// can't be opened.
+pub type ReopenFn =
+    Box<dyn FnMut(f64) -> Result<(Box<dyn IqSource>, DeviceCaps), String> + Send>;
 
 /// Audio sink the engine feeds with interleaved stereo frames.
 pub struct AudioParams {
@@ -70,6 +83,9 @@ pub struct EngineConfig {
     pub initial_mode: Option<Mode>,
     /// Refuse to key up outside amateur bands.
     pub tx_ham_only: bool,
+    /// Rebuilds the IQ source at runtime when the operator switches interfaces.
+    /// `None` disables runtime interface switching (a restart is then required).
+    pub reopen: Option<ReopenFn>,
 }
 
 impl Default for EngineConfig {
@@ -80,6 +96,7 @@ impl Default for EngineConfig {
             cal_offset_db: 0.0,
             initial_mode: None,
             tx_ham_only: true,
+            reopen: None,
         }
     }
 }
@@ -89,7 +106,7 @@ impl Default for EngineConfig {
 pub fn start(source: Box<dyn IqSource>, caps: DeviceCaps, cfg: EngineConfig) -> EngineHandles {
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
     let (event_tx, event_rx) = crossbeam_channel::unbounded();
-    let (audio_swap_tx, audio_swap_rx) = crossbeam_channel::unbounded();
+    let (swap_tx, swap_rx) = crossbeam_channel::unbounded();
     let empty = SpectrumFrame {
         seq: 0,
         center_hz: 0.0,
@@ -102,10 +119,10 @@ pub fn start(source: Box<dyn IqSource>, caps: DeviceCaps, cfg: EngineConfig) -> 
 
     let thread = std::thread::Builder::new()
         .name("sdroxide-dsp".into())
-        .spawn(move || engine_thread(source, caps, cfg, cmd_rx, audio_swap_rx, event_tx, spec_in))
+        .spawn(move || engine_thread(source, caps, cfg, cmd_rx, swap_rx, event_tx, spec_in))
         .expect("spawn dsp thread");
 
-    EngineHandles { cmd_tx, event_rx, spectrum_out, audio_swap_tx, thread: Some(thread) }
+    EngineHandles { cmd_tx, event_rx, spectrum_out, swap_tx, thread: Some(thread) }
 }
 
 /// One receiver: DDC → demod → AGC → volume → resample to the device rate.
@@ -424,6 +441,9 @@ struct Engine {
     audio_play: Vec<f32>,
     /// Resamples the radio's audio to the speaker rate in audio mode.
     audio_resampler: Option<MonoResampler>,
+    /// Rebuilds the IQ source when the operator switches radio interface at
+    /// runtime (see [`EngineSwap::ReopenSource`]).
+    reopen: Option<ReopenFn>,
 }
 
 /// Target width of the CW skimmer window (Hz); the Ddc snaps to the nearest
@@ -435,7 +455,7 @@ fn engine_thread(
     caps: DeviceCaps,
     engine_cfg: EngineConfig,
     cmd_rx: Receiver<Command>,
-    audio_swap_rx: Receiver<AudioSwap>,
+    swap_rx: Receiver<EngineSwap>,
     event_tx: Sender<RadioEvent>,
     mut spec_in: triple_buffer::Input<SpectrumFrame>,
 ) {
@@ -535,6 +555,7 @@ fn engine_thread(
         audio_re: Vec::new(),
         audio_play: Vec::new(),
         audio_resampler,
+        reopen: engine_cfg.reopen,
     };
     if let Some(mic) = &engine.mic {
         engine.mic_resampler = MonoResampler::new(mic.rate, 48_000.0);
@@ -570,11 +591,13 @@ fn engine_thread(
             }
         }
 
-        // Frontend audio-device swaps (rebuilt cpal streams' ring endpoints).
-        while let Ok(swap) = audio_swap_rx.try_recv() {
+        // Frontend device swaps: audio (rebuilt cpal ring endpoints) and radio
+        // interface (rebuild the IQ source from the persisted config).
+        while let Ok(swap) = swap_rx.try_recv() {
             match swap {
-                AudioSwap::Output(a) => engine.set_audio_output(a),
-                AudioSwap::Input(m) => engine.set_audio_input(m),
+                EngineSwap::Output(a) => engine.set_audio_output(a),
+                EngineSwap::Input(m) => engine.set_audio_input(m),
+                EngineSwap::ReopenSource => engine.reopen_source(),
             }
         }
 
@@ -1422,6 +1445,103 @@ impl Engine {
             None => info!("mic input removed; TX carries silence"),
         }
         self.mic = mic;
+    }
+
+    /// Rebuild the IQ front-end at runtime (backend / CAT audio / HPSDR-TCI
+    /// address changed). Opens the new source first via the [`ReopenFn`] factory
+    /// and only swaps on success, so a bad config leaves the current interface
+    /// running with an on-screen error instead of going dark.
+    fn reopen_source(&mut self) {
+        let center = self.state.active_freq_hz();
+        let Some(reopen) = self.reopen.as_mut() else {
+            warn!("runtime interface switching unavailable in this build");
+            return;
+        };
+        match reopen(center) {
+            Ok((source, caps)) => self.adopt_source(source, caps),
+            Err(e) => {
+                warn!("interface change failed: {e}");
+                let _ = self
+                    .event_tx
+                    .send(RadioEvent::Notice(Some(format!("Interface change failed: {e}"))));
+            }
+        }
+    }
+
+    /// Replace the live IQ source and rebuild every rate-dependent stage,
+    /// re-initialising tuning exactly as at a cold start on the new front-end.
+    /// The operator's speaker/mic (mixer + mic feed) are untouched — only the
+    /// radio interface swaps.
+    fn adopt_source(&mut self, source: Box<dyn IqSource>, caps: DeviceCaps) {
+        // Never carry a keyed transmit across the swap.
+        if self.tx_active {
+            let _ = self.source.tx_end();
+        }
+        self.source = source;
+        self.caps = caps;
+        self.audio_mode = self.caps.audio_mode;
+        self.radio_fs = self.source.sample_rate();
+        self.audio_bw = self.source.display_bandwidth().unwrap_or(self.radio_fs / 2.0);
+
+        // Fresh tuning from the new front-end (matches a cold start on it).
+        let mut state = RadioState::default();
+        state.center_hz = self.source.center_hz();
+        state.sample_rate = self.source.sample_rate();
+        state.vfo_a_hz = self.source.center_hz();
+        state.vfo_b_hz = self.source.center_hz();
+        state.band = Band::containing(state.vfo_a_hz);
+        state.gains = self.source.current_gains();
+        state.tx_gains = self.source.current_tx_gains();
+        state.antenna_rx = self.source.current_antenna();
+        if self.audio_mode {
+            state.skimmer_enabled = false; // wideband-only feature
+        }
+        self.state = state;
+
+        // Rebuild the device analyzer for the new rate.
+        self.analyzer = SpectrumAnalyzer::new(self.cfg.fft_size as usize, self.radio_fs, self.cfg.avg_tc);
+
+        // Drop rate-dependent / stateful DSP so it rebuilds for the new source.
+        self.tx = None;
+        self.tx_active = false;
+        self.tx_pace = None;
+        self.digi = None;
+        self.digi_tx = false;
+        self.sub = None;
+        self.channel_analyzer = None;
+        self.skimmer = None;
+        self.skim_ddc = None;
+        self.skim_buf.clear();
+        self.audio_re.clear();
+        self.audio_play.clear();
+
+        // Rebuild the RX / speaker path around the (unchanged) mixer.
+        if self.mixer.is_some() {
+            if self.audio_mode {
+                self.main = None;
+                self.audio_resampler = MonoResampler::new(self.radio_fs, self.audio_out_rate);
+            } else {
+                self.main =
+                    Some(RxChain::new(self.state.sample_rate, &self.state.rx[0], self.audio_out_rate));
+                self.audio_resampler = None;
+            }
+        } else {
+            self.main = None;
+            self.audio_resampler = None;
+        }
+
+        info!(source = %self.source.describe(), audio_mode = self.audio_mode, "radio source swapped at runtime");
+        let _ = self.event_tx.send(RadioEvent::Capabilities(self.caps.clone()));
+        let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+        // Surface any open warning (radio audio unavailable, …) or clear a stale one.
+        let _ = self.event_tx.send(RadioEvent::Notice(self.source.open_status()));
+
+        // Re-establish mode-dependent chains for the fresh state.
+        self.sync_digi_mode();
+        if !self.audio_mode {
+            self.sync_skimmer();
+        }
+        self.update_tuning();
     }
 
     fn update_tuning(&mut self) {

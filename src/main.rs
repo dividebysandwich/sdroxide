@@ -19,7 +19,7 @@ use sdroxide_types::{Backend, DeviceCaps, RadioConfig};
 ///
 /// M1 scope: `--probe` prints device capabilities, `--console` shows a live
 /// terminal waterfall. The GUI arrives in milestone M2, server mode in M6.
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(version, about)]
 struct Cli {
     /// SoapySDR device args, e.g. "driver=hackrf" (default: config, then first device)
@@ -158,7 +158,23 @@ fn main() -> anyhow::Result<()> {
     }
 
     let (source, caps) = open_source(&cli, &settings)?;
-    gui_main::run(source, caps, &settings, cli.mode)
+    // Factory the engine calls to rebuild the interface at runtime (Settings →
+    // Radio → Apply), so switching backend / CAT audio / HPSDR-TCI address never
+    // needs a restart. Re-reads the persisted radio config + settings each call
+    // and opens at the current dial. Fallible so a bad new config leaves the
+    // current interface running.
+    let reopen_cli = cli.clone();
+    let reopen: sdroxide_radio::ReopenFn = Box::new(move |center: f64| {
+        let mut c = reopen_cli.clone();
+        c.freq = center;
+        let settings = Settings::load();
+        if c.siggen || c.file.is_some() {
+            return open_source(&c, &settings).map_err(|e| format!("{e:#}"));
+        }
+        let radio = sdroxide_config::load_radio_config();
+        open_configured_source(&radio, &c, &settings).map_err(|e| format!("{e:#}"))
+    });
+    gui_main::run(source, caps, &settings, cli.mode, Some(reopen))
 }
 
 /// Headless tune-carrier smoke test. Relies on the engine safety rails:
@@ -376,14 +392,16 @@ fn open_source(cli: &Cli, settings: &Settings) -> anyhow::Result<(Box<dyn IqSour
     // Try the configured radio interface. If it can't be opened (no SoapySDR
     // device, HPSDR unreachable, CAT port missing, …) fall back to a null source
     // so the GUI — and the Settings dialog — still come up and the user can pick
-    // a working interface and restart, instead of the program refusing to launch.
+    // a working interface (Settings → Radio → Apply, no restart), instead of the
+    // program refusing to launch.
     let radio = sdroxide_config::load_radio_config();
     match open_configured_source(&radio, cli, settings) {
         Ok(pair) => Ok(pair),
         Err(e) => {
             tracing::warn!("radio interface unavailable: {e:#}");
-            let msg =
-                format!("{e}. Open Settings to choose a radio interface, then restart.");
+            let msg = format!(
+                "{e}. Open Settings → Radio to choose an interface, then press Apply / reconnect."
+            );
             Ok((Box::new(null_source::NullSource::new(cli.freq, msg)), synthetic_caps("No radio")))
         }
     }

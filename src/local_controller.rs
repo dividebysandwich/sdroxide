@@ -3,7 +3,7 @@
 //! (the engine only ever holds the ring endpoints).
 
 use sdroxide_radio::crossbeam_channel::{Receiver, Sender};
-use sdroxide_radio::{AudioParams, AudioSwap, EngineHandles, MicParams, triple_buffer};
+use sdroxide_radio::{AudioParams, EngineHandles, EngineSwap, MicParams, triple_buffer};
 use sdroxide_types::{AudioDevices, Command, RadioConfig, RadioController, RadioEvent, SpectrumFrame};
 use tracing::warn;
 
@@ -11,7 +11,7 @@ pub struct LocalController {
     cmd_tx: Sender<Command>,
     event_rx: Receiver<RadioEvent>,
     spectrum: triple_buffer::Output<SpectrumFrame>,
-    audio_swap_tx: Sender<AudioSwap>,
+    swap_tx: Sender<EngineSwap>,
     /// Live cpal streams (they must outlive their ring endpoints in the engine).
     audio_out: Option<sdroxide_audio::AudioOutput>,
     mic_in: Option<sdroxide_audio::AudioInput>,
@@ -32,7 +32,7 @@ impl LocalController {
             cmd_tx: handles.cmd_tx,
             event_rx: handles.event_rx,
             spectrum: handles.spectrum_out,
-            audio_swap_tx: handles.audio_swap_tx,
+            swap_tx: handles.swap_tx,
             audio_out,
             mic_in,
             out_name,
@@ -90,12 +90,12 @@ impl RadioController for LocalController {
                     let out_rate = out.sample_rate;
                     self.audio_out = Some(out);
                     let _ = self
-                        .audio_swap_tx
-                        .send(AudioSwap::Output(Some(AudioParams { producer, out_rate })));
+                        .swap_tx
+                        .send(EngineSwap::Output(Some(AudioParams { producer, out_rate })));
                 }
                 Err(e) => {
                     warn!("audio output {name:?}: {e}; running silent");
-                    let _ = self.audio_swap_tx.send(AudioSwap::Output(None));
+                    let _ = self.swap_tx.send(EngineSwap::Output(None));
                 }
             }
             self.out_name = name;
@@ -106,12 +106,12 @@ impl RadioController for LocalController {
                     let rate = input.sample_rate;
                     self.mic_in = Some(input);
                     let _ = self
-                        .audio_swap_tx
-                        .send(AudioSwap::Input(Some(MicParams { consumer, rate })));
+                        .swap_tx
+                        .send(EngineSwap::Input(Some(MicParams { consumer, rate })));
                 }
                 Err(e) => {
                     warn!("audio input {name:?}: {e}; TX carries silence");
-                    let _ = self.audio_swap_tx.send(AudioSwap::Input(None));
+                    let _ = self.swap_tx.send(EngineSwap::Input(None));
                 }
             }
             self.in_name = name;
@@ -140,9 +140,14 @@ impl RadioController for LocalController {
     }
 
     fn set_radio_config(&mut self, cfg: RadioConfig) {
-        // Persisted now; the source/engine adopt it on the next launch.
+        // Persist now; `reopen_source` applies it to the running engine.
         if let Err(e) = sdroxide_config::save_radio_config(&cfg) {
             warn!("saving radio config: {e}");
         }
+    }
+
+    fn reopen_source(&mut self) {
+        // The engine rebuilds the source from the freshly persisted radio config.
+        let _ = self.swap_tx.send(EngineSwap::ReopenSource);
     }
 }

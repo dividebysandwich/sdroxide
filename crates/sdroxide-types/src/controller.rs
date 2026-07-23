@@ -108,10 +108,16 @@ pub trait RadioController {
         None
     }
 
-    /// Persist an updated radio-backend config. Most fields only take effect on
-    /// restart (the source/engine is rebuilt at startup). No-op where
-    /// unsupported.
+    /// Persist an updated radio-backend config. This only stores it; call
+    /// [`RadioController::reopen_source`] to apply it to the live engine. No-op
+    /// where unsupported.
     fn set_radio_config(&mut self, cfg: crate::RadioConfig) {
         let _ = cfg;
     }
+
+    /// Rebuild the IQ source from the persisted radio config at runtime, so a
+    /// backend / CAT-audio / HPSDR-TCI-address change takes effect without a
+    /// restart. Call after [`RadioController::set_radio_config`]. No-op on the
+    /// remote client (the server owns its hardware).
+    fn reopen_source(&mut self) {}
 }

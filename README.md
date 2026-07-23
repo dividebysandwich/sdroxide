@@ -114,8 +114,9 @@ holds both FT8/FT4 and manually entered QSOs:
 
 ## Radio backends
 
-sdroxide can drive four kinds of radio, selected on the **Audio/CAT** tab of the
-Settings window (backend, serial, and audio changes take effect on restart):
+sdroxide can drive four kinds of radio, selected on the **Radio** tab of the
+Settings window. Backend, serial, and radio-audio changes apply live when you
+press **Apply / reconnect**:
 
 - **SoapySDR** — any [SoapySDR](https://github.com/pothosware/SoapySDR) device
   (wideband IQ). See below.
