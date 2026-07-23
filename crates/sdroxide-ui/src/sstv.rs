@@ -1,7 +1,8 @@
 //! SSTV image compositing for transmit: crop/scale a source picture to the
 //! selected mode's dimensions, stamp a red→black header strip with the program
-//! name + version, and overlay the operator's multi-line message (each line in
-//! a different bundled font, bold with a black outline for readability).
+//! name + version, and overlay the operator's multi-line message (one bundled
+//! font, bold with a black outline for readability, with the first line drawn at
+//! double size).
 //!
 //! Pure-Rust (`image` + `ab_glyph`) so it runs identically in the native app and
 //! the wasm browser client — the composed buffer is both the live preview and,
@@ -14,15 +15,11 @@ use sdroxide_types::SstvMode;
 /// Height of the header strip, in pixels.
 const HEADER_H: usize = 16;
 
-/// The per-line fonts, cycled by message-line index. All are already bundled
-/// (OFL) for the UI's own text.
-fn fonts() -> Vec<FontRef<'static>> {
-    const RAW: [&[u8]; 3] = [
-        include_bytes!("../assets/fonts/ChakraPetch-SemiBold.ttf"),
-        include_bytes!("../assets/fonts/ShareTechMono-Regular.ttf"),
-        include_bytes!("../assets/fonts/ChakraPetch-Regular.ttf"),
-    ];
-    RAW.iter().filter_map(|b| FontRef::try_from_slice(b).ok()).collect()
+/// The single font used for the header and the message overlay
+/// (ChakraPetch-SemiBold, already bundled OFL for the UI's own text).
+fn message_font() -> Option<FontRef<'static>> {
+    const RAW: &[u8] = include_bytes!("../assets/fonts/ChakraPetch-SemiBold.ttf");
+    FontRef::try_from_slice(RAW).ok()
 }
 
 /// Decode arbitrary image file bytes (PNG/JPEG) to interleaved RGB + size.
@@ -123,7 +120,7 @@ fn draw_header(img: &mut [u8], w: usize, h: usize, callsign: &str) {
             put(img, w, h, x as i32, y as i32, r, 0, 0);
         }
     }
-    if let Some(font) = fonts().into_iter().next() {
+    if let Some(font) = message_font() {
         let scale = PxScale::from(11.0);
         let baseline = (strip as f32 * 0.72).round();
         // Left: operator callsign (uppercased).
@@ -138,37 +135,39 @@ fn draw_header(img: &mut [u8], w: usize, h: usize, callsign: &str) {
     }
 }
 
-/// Overlay the message: each line in a cycled font, white with a black outline,
-/// starting just below the header.
+/// Overlay the message in a single font, white with a black outline, starting
+/// just below the header. The first line is drawn at double the size of the
+/// rest (a title line), with its outline thickened to match.
 fn draw_message(img: &mut [u8], w: usize, h: usize, message: &str) {
-    let fonts = fonts();
-    if fonts.is_empty() {
+    let Some(font) = message_font() else {
         return;
-    }
-    let scale = PxScale::from(20.0);
-    let line_h = 24.0;
-    let mut baseline = HEADER_H as f32 + line_h;
+    };
+    let base_px = 30.0_f32;
+    let mut baseline = HEADER_H as f32;
     for (i, line) in message.lines().enumerate() {
+        // First line twice as large; the line height and outline scale with it.
+        let px = if i == 0 { base_px * 1.5 } else { base_px };
+        let line_h = px * 1.2;
+        baseline += line_h;
         if line.trim().is_empty() {
-            baseline += line_h;
             continue;
         }
-        let font = &fonts[i % fonts.len()];
+        let scale = PxScale::from(px);
+        let outline = px / base_px * 1.5;
         // Black outline: draw the glyphs offset in eight directions.
         for (ox, oy) in [
-            (-1.5, 0.0),
-            (1.5, 0.0),
-            (0.0, -1.5),
-            (0.0, 1.5),
-            (-1.5, -1.5),
-            (1.5, -1.5),
-            (-1.5, 1.5),
-            (1.5, 1.5),
+            (-outline, 0.0),
+            (outline, 0.0),
+            (0.0, -outline),
+            (0.0, outline),
+            (-outline, -outline),
+            (outline, -outline),
+            (-outline, outline),
+            (outline, outline),
         ] {
-            draw_text(img, w, h, 6.0 + ox, baseline + oy, line, font, scale, (0, 0, 0), 1.0);
+            draw_text(img, w, h, 6.0 + ox, baseline + oy, line, &font, scale, (0, 0, 0), 1.0);
         }
-        draw_text(img, w, h, 6.0, baseline, line, font, scale, (255, 255, 255), 1.0);
-        baseline += line_h;
+        draw_text(img, w, h, 6.0, baseline, line, &font, scale, (255, 255, 255), 1.0);
         if baseline as usize >= h {
             break;
         }

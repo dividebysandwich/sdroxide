@@ -369,15 +369,21 @@ Band buttons tune to that band's common SSTV calling frequency (for example
 
 **Transmitting:**
 
-- The **TRANSMIT** side has five image slots. **Click** a slot to select it;
-  **double-click** a slot (or click an empty one) to pick an image file, which is
+- The **TRANSMIT** side has five image slots that work like **tabs**. **Click** a
+  slot to make it the active tab (highlighted with a cyan border and its number);
+  the message box below then edits *that slot's* message. Use the **Load image…**
+  button (or **double-click** a slot) to pick an image file, which is
   automatically cropped and scaled to the current mode's dimensions and stored
   under `~/.config/sdroxide/sstv_tx/`.
-- Type a **message** below the slots. Each line is drawn over the image in a
-  different font, bold with a black outline for readability. A **live preview**
-  shows exactly what will be transmitted, including a small red→black header
-  strip with your **callsign** on the left and "SDRoxide" + version on the right.
-  (Set your callsign on the **General** settings tab, or the FT8 setup dialog.)
+- Type a **message** for the active slot. Each slot keeps its own message —
+  switching slots swaps the text — and the messages are saved to
+  `~/.config/sdroxide/sstv_messages.json`, so they persist across restarts. The
+  lines are drawn over the image in bold with a black outline for readability;
+  the **first line is rendered at double size** as a title. A **live preview**
+  shows exactly what will be transmitted,
+  including a small red→black header strip with your **callsign** on the left and
+  "SDRoxide" + version on the right. (Set your callsign on the **General**
+  settings tab, or the FT8 setup dialog.)
 - Press **TX** to transmit the composed image; **ABORT TX** stops a transmission
   in progress.
 - **TX slant** trims the transmit clock (in ppm) to remove slant seen on a
@@ -736,6 +742,9 @@ sdroxide stores its settings under the per-user config directory:
 | `memories.json` | JSON | Saved memory channels. |
 | `bandstacks.json` | JSON | Per-band memory of your last frequency/mode/filter (up to three per band). |
 | `qso_log.json` | JSON | The logbook (digital and manual QSOs). |
+| `sstv_messages.json` | JSON | The overlay message stored for each of the five SSTV transmit slots. |
+| `sstv_tx/` | dir | The five SSTV transmit-image slots (`slot0.png`…`slot4.png`). |
+| `sstv_rx/` | dir | Received SSTV pictures, kept for the gallery. |
 
 Every file has sensible defaults, so a missing or partial file always loads. You
 normally edit these through the GUI rather than by hand.

@@ -195,6 +195,17 @@ pub fn save_qso_log(log: &[sdroxide_types::QsoRecord]) -> Result<(), ConfigError
     save_json("qso_log.json", &log)
 }
 
+/// SSTV per-slot transmit overlay messages (one entry per image slot). The
+/// image pixels live as PNGs under [`sstv_tx_dir`]; this stores just the text
+/// that is composited over each slot's picture.
+pub fn load_sstv_messages() -> Vec<String> {
+    load_json("sstv_messages.json")
+}
+
+pub fn save_sstv_messages(messages: &[String]) -> Result<(), ConfigError> {
+    save_json("sstv_messages.json", &messages)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
