@@ -7,6 +7,7 @@
 mod device;
 pub mod engine;
 mod error;
+mod recorder;
 mod source;
 
 #[cfg(feature = "soapy")]

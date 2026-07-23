@@ -26,6 +26,7 @@ use sdroxide_types::{
     Vfo,
 };
 
+use crate::recorder::Recorder;
 use crate::{Complex32, ControlUpdate, IqSource};
 
 /// Number of bins in emitted display frames (matches the waterfall texture width).
@@ -302,6 +303,8 @@ struct StereoMixer {
     main_q: Vec<f32>,
     sub_q: Vec<f32>,
     dropped: u64,
+    /// When recording, a mono downmix of each output sample is pushed here.
+    rec_tap: Option<rtrb::Producer<f32>>,
 }
 
 /// Bound on per-channel queueing (≈¼ s at 48 kHz) so a stalled side can't
@@ -310,7 +313,7 @@ const MIXER_CAP: usize = 12_000;
 
 impl StereoMixer {
     fn new(out: rtrb::Producer<f32>) -> Self {
-        StereoMixer { out, main_q: Vec::new(), sub_q: Vec::new(), dropped: 0 }
+        StereoMixer { out, main_q: Vec::new(), sub_q: Vec::new(), dropped: 0, rec_tap: None }
     }
 
     fn push(&mut self, main: &[f32], sub: Option<&[f32]>) {
@@ -328,6 +331,15 @@ impl StereoMixer {
 
         let n = if dual { self.main_q.len().min(self.sub_q.len()) } else { self.main_q.len() };
         if n > 0 {
+            // Recording tap: mono downmix of the finished samples, independent of
+            // whether the speaker ring has room (records even during underruns).
+            if let Some(rec) = self.rec_tap.as_mut() {
+                for i in 0..n {
+                    let l = self.main_q[i];
+                    let r = if dual { self.sub_q[i] } else { l };
+                    let _ = rec.push(0.5 * (l + r)); // drop if the recorder stalls
+                }
+            }
             if self.out.slots() >= n * 2 {
                 for i in 0..n {
                     let l = self.main_q[i];
@@ -400,6 +412,25 @@ fn pace_tx_block(tx_pace: &mut Option<(Instant, u64)>) {
     }
 }
 
+/// Convert Unix seconds to a UTC civil date-time `(year, month, day, hour, min,
+/// sec)`. Howard Hinnant's `civil_from_days` algorithm — exact, no leap-second
+/// or timezone handling (UTC), and no external crate.
+fn utc_civil(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let (h, mi, s) = ((rem / 3600) as u32, ((rem % 3600) / 60) as u32, (rem % 60) as u32);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as i64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    (if month <= 2 { year + 1 } else { year }, month, day, h, mi, s)
+}
+
 impl TxChain {
     fn new(mode: Mode, tx_rate: f64) -> Self {
         TxChain {
@@ -424,6 +455,8 @@ struct Engine {
     sub: Option<RxChain>,
     mixer: Option<StereoMixer>,
     audio_out_rate: f64,
+    /// Active MP3 recording of the receiver audio, if any.
+    recorder: Option<Recorder>,
     cal_offset_db: f32,
     stacks: BandStacks,
     memories: Vec<MemoryChannel>,
@@ -566,6 +599,7 @@ fn engine_thread(
         sub: None,
         mixer,
         audio_out_rate,
+        recorder: None,
         cal_offset_db: engine_cfg.cal_offset_db,
         stacks,
         memories,
@@ -711,6 +745,16 @@ fn engine_thread(
             if let Some(m) = meters {
                 let _ = engine.event_tx.send(RadioEvent::Meters(m));
             }
+        }
+    }
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        // Finalize any in-progress recording so the MP3 file is closed cleanly
+        // when the engine thread exits (all controllers gone / fatal error).
+        if let Some(rec) = self.recorder.take() {
+            rec.stop();
         }
     }
 }
@@ -1159,6 +1203,13 @@ impl Engine {
             SetNoiseBlanker(on) => self.state.noise_blanker = on,
             SetNoiseReduction { rx, level } => self.state.rx[rx.index()].noise_reduction = level,
             SetAutoNotch { rx, on } => self.state.rx[rx.index()].auto_notch = on,
+            SetRecording(on) => {
+                if on {
+                    self.start_recording();
+                } else {
+                    self.stop_recording();
+                }
+            }
             SetSubRx(on) => {
                 self.state.sub_rx_enabled = on;
                 if on && self.sub.is_none() && self.main.is_some() {
@@ -1368,6 +1419,72 @@ impl Engine {
         let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
     }
 
+    /// Begin recording the receiver audio to a new MP3 file. The filename
+    /// encodes the UTC date/time, dial frequency and mode; the file lands in the
+    /// user's music directory (or the config dir as a fallback). No-op if already
+    /// recording; reports a [`RadioEvent::Notice`] if it can't start.
+    fn start_recording(&mut self) {
+        if self.recorder.is_some() {
+            return;
+        }
+        if self.mixer.is_none() {
+            let _ = self
+                .event_tx
+                .send(RadioEvent::Notice(Some("No audio output to record".into())));
+            return;
+        }
+        let dir = match sdroxide_config::recordings_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                let _ = self
+                    .event_tx
+                    .send(RadioEvent::Notice(Some(format!("Recording: no directory ({e})"))));
+                return;
+            }
+        };
+        let name = self.recording_filename();
+        let path = dir.join(&name);
+        match Recorder::start(path, self.audio_out_rate) {
+            Ok((rec, prod)) => {
+                self.mixer.as_mut().expect("checked above").rec_tap = Some(prod);
+                self.recorder = Some(rec);
+                self.state.recording = true;
+                self.state.recording_file = Some(name);
+            }
+            Err(e) => {
+                let _ = self
+                    .event_tx
+                    .send(RadioEvent::Notice(Some(format!("Recording failed: {e}"))));
+            }
+        }
+    }
+
+    /// Stop and finalize any active recording.
+    fn stop_recording(&mut self) {
+        if let Some(mixer) = self.mixer.as_mut() {
+            mixer.rec_tap = None; // stop feeding before the worker drains + closes
+        }
+        if let Some(rec) = self.recorder.take() {
+            rec.stop();
+        }
+        self.state.recording = false;
+        self.state.recording_file = None;
+    }
+
+    /// `sdroxide_<UTC date>_<UTC time>_<freq>_<mode>.mp3`, filesystem-safe.
+    fn recording_filename(&self) -> String {
+        let secs = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let (y, mo, d, h, mi, s) = utc_civil(secs);
+        let mhz = self.state.active_freq_hz() / 1_000_000.0;
+        let mode = self.state.rx[0].mode.label().replace(['/', ' '], "");
+        format!(
+            "sdroxide_{y:04}-{mo:02}-{d:02}_{h:02}-{mi:02}-{s:02}Z_{mhz:.6}MHz_{mode}.mp3"
+        )
+    }
+
     /// Construct or tear down the wideband CW skimmer to match
     /// `skimmer_enabled`. The skim window is a dedicated decimation of the raw
     /// IQ centered on the device center (offset 0), so tuning the VFO within the
@@ -1525,6 +1642,10 @@ impl Engine {
     /// Rebuilds the RX chains for the new device rate; the digi tap and DDC
     /// offsets are re-armed on the fresh chains.
     fn set_audio_output(&mut self, audio: Option<AudioParams>) {
+        // The recorder feeds off the mixer we're about to replace; finalize it
+        // rather than leave a half-written file with a dangling feed.
+        let was_recording = self.recorder.is_some();
+        self.stop_recording();
         match audio {
             Some(a) => {
                 self.main =
@@ -1549,6 +1670,10 @@ impl Engine {
             }
         }
         self.update_tuning();
+        if was_recording {
+            // Reflect the auto-stop to clients (this path doesn't run `apply`).
+            let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+        }
     }
 
     /// Swap the microphone feed at runtime.

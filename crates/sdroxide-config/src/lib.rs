@@ -98,6 +98,20 @@ pub fn sstv_tx_dir() -> Result<PathBuf, ConfigError> {
     Ok(dir)
 }
 
+/// Directory for audio recordings, created on demand: the user's music/audio
+/// directory (`<Music>/sdroxide`), or the config directory
+/// (`~/.config/sdroxide/recordings`) when the platform exposes no music folder.
+pub fn recordings_dir() -> Result<PathBuf, ConfigError> {
+    let dir = match directories::UserDirs::new()
+        .and_then(|u| u.audio_dir().map(std::path::Path::to_path_buf))
+    {
+        Some(music) => music.join("sdroxide"),
+        None => config_dir()?.join("recordings"),
+    };
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 impl Settings {
     /// Load settings; missing file or unreadable content falls back to
     /// defaults (with a warning), so startup never fails on config.

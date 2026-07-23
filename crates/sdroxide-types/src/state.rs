@@ -126,6 +126,14 @@ pub struct RadioState {
     pub tx_gains: Vec<(String, f64)>,
     pub antenna_rx: String,
     pub antenna_tx: String,
+
+    /// Whether the receiver audio is being recorded to an MP3 file.
+    #[serde(default)]
+    pub recording: bool,
+    /// Filename of the active recording (basename only), for display. `None`
+    /// when not recording.
+    #[serde(default)]
+    pub recording_file: Option<String>,
 }
 
 impl Default for RadioState {
@@ -157,6 +165,8 @@ impl Default for RadioState {
             tx_gains: Vec::new(),
             antenna_rx: String::new(),
             antenna_tx: String::new(),
+            recording: false,
+            recording_file: None,
         }
     }
 }

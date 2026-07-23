@@ -36,6 +36,10 @@ pub enum Command {
     SetSubRx(bool),
     SetRit { enabled: bool, hz: i32 },
     SetXit { enabled: bool, hz: i32 },
+    /// Start (`true`) or stop (`false`) recording the receiver audio to an MP3
+    /// file. The engine names the file (date/time/frequency/mode) and stores it
+    /// in the user's music directory (or the config dir as a fallback).
+    SetRecording(bool),
 
     // Transmit
     SetPtt(bool),

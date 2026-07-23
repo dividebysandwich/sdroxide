@@ -24,3 +24,4 @@ sdroxide-skimmer = { version = "0.4.0", path = "../sdroxide-skimmer" }
 # SSTV: encode received images to PNG for the config store, decode composed
 # TX images (PNG) back to RGB. Minimal formats to keep the build lean.
 image = { version = "0.25", default-features = false, features = ["png"] }
+shine-rs = "0.1.3"

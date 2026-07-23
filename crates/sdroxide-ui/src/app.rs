@@ -773,6 +773,22 @@ impl SdroxideApp {
                     {
                         cmds.push(Command::SetMute { rx: RxId::Main, muted: !muted });
                     }
+                    // Record receiver audio to an MP3 file (toggling).
+                    let recording = self.state.recording;
+                    let rec = crate::chrome::chip_accent(
+                        ui,
+                        recording,
+                        "REC",
+                        crate::theme::PINK,
+                        Color32::WHITE,
+                    )
+                    .on_hover_text(match &self.state.recording_file {
+                        Some(f) => format!("Recording to {f} — click to stop"),
+                        None => "Record receiver audio to MP3".to_string(),
+                    });
+                    if rec.clicked() {
+                        cmds.push(Command::SetRecording(!recording));
+                    }
                 });
                 // Filter / Noise: squelch, noise blanker.
                 ui.horizontal(|ui| {

@@ -26,8 +26,10 @@ use sdroxide_types::{
 /// submode fields (Olivia tones/bw, THOR submode, FSQ speed/call), `DigiStatus`
 /// FSQ heard-list + directed-message fields, and a mode-agnostic digi image path
 /// (`Command::DigiImageTx` / `RadioEvent::DigiImage` for the FSQ image sub-mode).
-pub const PROTO_VERSION: u16 = 7;
-const VERSION_BYTE: u8 = 0x07;
+/// v8: added the audio recorder — `Command::SetRecording` and
+/// `RadioState.recording` / `RadioState.recording_file`.
+pub const PROTO_VERSION: u16 = 8;
+const VERSION_BYTE: u8 = 0x08;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

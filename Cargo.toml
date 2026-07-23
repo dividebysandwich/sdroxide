@@ -31,7 +31,6 @@ opt-level = 2
 sdroxide-types = { path = "crates/sdroxide-types" }
 sdroxide-proto = { path = "crates/sdroxide-proto" }
 sdroxide-dsp = { path = "crates/sdroxide-dsp" }
-sdroxide-radio = { path = "crates/sdroxide-radio" }
 sdroxide-audio = { path = "crates/sdroxide-audio" }
 sdroxide-server = { path = "crates/sdroxide-server" }
 sdroxide-config = { path = "crates/sdroxide-config" }
