@@ -372,6 +372,11 @@ struct TxChain {
 const TX_AUDIO_BLOCK: usize = 480;
 /// Sample rate of the TX baseband/audio fed to the TX-monitor analyzer.
 const TX_MONITOR_RATE: f64 = 48_000.0;
+/// The TX monitor's baseband/IQ runs near digital full scale (~0 dBFS), far
+/// hotter than any received signal, so on the shared floor/ceil it would clamp
+/// the waterfall to maximum. Dim it so the strongest TX lands this many dB below
+/// the display ceiling — i.e. about as bright as a strong received signal.
+const TX_MON_HEADROOM_DB: f32 = -30.0;
 
 /// Wall-clock pace one produced TX block to real time so the downstream buffer
 /// (sound card, HPSDR/TCI network ring) stays near-empty instead of filling to
@@ -1061,30 +1066,32 @@ impl Engine {
         let dial = self.tx_center_hz;
         let lsb = self.state.rx[0].mode.is_lower_sideband();
         let (floor, ceil) = (self.cfg.db_floor, self.cfg.db_ceil);
+        // Attenuate the monitor for display by mapping through a window shifted
+        // up by `off` dB (equivalent to attenuating the signal), so full-scale TX
+        // lands `TX_MON_HEADROOM_DB` below the ceiling instead of clamping to max.
+        // Tracks `ceil` so it stays correct after the user retunes the range (FIT).
+        let off = TX_MON_HEADROOM_DB - ceil;
+        let (mf, mc) = (floor + off, ceil + off);
         // A `tx_audio` rig (TCI) modulates our raw audio and returns no TX IQ, so
         // voice/tune there also drive `tx_analyzer` (packed-real audio) — not the
         // wideband IQ analyzer — even though it isn't `audio_mode` or digital.
-        if self.audio_mode || self.caps.tx_audio || self.channel_analyzer.is_some() {
+        let mut frame = if self.audio_mode
+            || self.caps.tx_audio
+            || self.channel_analyzer.is_some()
+        {
             let bw = if self.audio_mode { self.audio_bw } else { 3500.0 };
             let vp = if lsb { (dial - bw, dial) } else { (dial, dial + bw) };
-            return self.tx_analyzer.make_frame(
-                dial,
-                TX_MONITOR_RATE,
-                floor,
-                ceil,
-                DISPLAY_BINS,
-                Some(vp),
-            );
-        }
-        // Wideband IQ: the upconverted TX sits at `tx_center_hz` in the full span.
-        self.analyzer.make_frame(
-            self.tx_center_hz,
-            self.state.sample_rate,
-            floor,
-            ceil,
-            DISPLAY_BINS,
-            None,
-        )
+            self.tx_analyzer.make_frame(dial, TX_MONITOR_RATE, mf, mc, DISPLAY_BINS, Some(vp))
+        } else {
+            // Wideband IQ: the upconverted TX sits at `tx_center_hz` in the full span.
+            self.analyzer
+                .make_frame(self.tx_center_hz, self.state.sample_rate, mf, mc, DISPLAY_BINS, None)
+        };
+        // Report the real range so the panadapter's dB axis is unchanged; the
+        // bins are already dimmed by the shifted window above.
+        frame.db_floor = floor;
+        frame.db_ceil = ceil;
+        frame
     }
 
     fn apply(&mut self, cmd: Command) {
