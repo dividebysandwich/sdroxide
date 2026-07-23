@@ -721,10 +721,11 @@ impl SdroxideApp {
     }
 
     /// Combined Receiver + Filter/Noise box: AGC / volume / mute on top, with the
-    /// squelch + noise-blanker controls stacked underneath. Bare and tall, like
-    /// the VFO/RIT box — this replaces the separate Receiver and Filter boxes.
+    /// squelch + noise-blanker + noise-reduction controls stacked underneath.
+    /// Bare and tall, like the VFO/RIT box — replaces the separate Receiver and
+    /// Filter boxes.
     fn rx_filter_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
-        crate::chrome::module_bare_h(ui, 300.0, crate::chrome::MODULE_TALL_H, |ui| {
+        crate::chrome::module_bare_h(ui, 328.0, crate::chrome::MODULE_TALL_H, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
                 // Receiver: volume, AGC, mute.
@@ -782,6 +783,20 @@ impl SdroxideApp {
                         .clicked()
                     {
                         cmds.push(Command::SetNoiseBlanker(!nb));
+                    }
+                    // Spectral noise reduction — cycles Off → Low → Med → High.
+                    let nr = self.state.rx[0].noise_reduction;
+                    let nr_label =
+                        if nr.is_on() { format!("NR {}", nr.label()) } else { "NR".to_string() };
+                    if crate::chrome::chip(ui, nr.is_on(), nr_label)
+                        .on_hover_text(
+                            "Spectral noise reduction (voice) — click to cycle Off / Low / Med / High",
+                        )
+                        .clicked()
+                    {
+                        let next = nr.next();
+                        self.state.rx[0].noise_reduction = next; // optimistic echo
+                        cmds.push(Command::SetNoiseReduction { rx: RxId::Main, level: next });
                     }
                 });
             });

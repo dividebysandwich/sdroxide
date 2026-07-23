@@ -39,7 +39,8 @@ or connects to a remote sdroxide server.
   spectrum-only mode (SPEC), the automatic digital modes **FT8** and **FT4**, the
   keyboard modes **PSK31** and **RTTY**, and image **SSTV**.
 - **Receive controls:** AGC (Off/Slow/Med/Fast), volume, mute, squelch, an
-  impulse noise blanker, RIT, and a draggable filter passband.
+  impulse noise blanker, spectral noise reduction (Off/Low/Med/High), RIT, and a
+  draggable filter passband.
 - **Transmit** (on TX-capable rigs): PTT, TUNE, drive and tune-drive levels,
   mic gain, XIT, and a transmit meter (power / SWR / ALC). A ham-band-only
   transmit lockout is on by default.
@@ -174,6 +175,14 @@ offset in the adjacent field (±9999 Hz in 5 Hz steps).
 - **SQL** (Filter/Noise module) — squelch; below the open threshold it reads
   `off`.
 - **NB** — impulse noise blanker on the raw signal (keyboard shortcut **N**).
+- **NR** — spectral noise reduction on the audio. Click it to cycle **Off → Low
+  → Med → High**. It pulls voice out of static and hiss by suppressing the
+  stationary noise floor while letting the changing, speech-like parts of the
+  signal through — quieter to listen to and easier to copy, with less fatigue.
+  Higher settings remove more noise but can add faint warble on weak signals, so
+  pick the lowest level that cleans the audio. (NR affects only what you hear;
+  the FT8/FT4/PSK/RTTY decoders still receive the untouched signal, and a steady
+  unmodulated carrier — a heterodyne — is treated as noise and suppressed.)
 
 **The receive filter** is set by dragging the passband edges directly on the
 panadapter: two vertical grip lines mark the filter's low and high edges (they

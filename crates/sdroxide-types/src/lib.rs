@@ -40,7 +40,7 @@ pub use geo::{
 };
 pub use memory::{BandStackEntry, MemoryChannel};
 pub use meters::{Meters, TxMeters};
-pub use mode::{AgcMode, Mode};
+pub use mode::{AgcMode, Mode, NrLevel};
 pub use radio::{
     Backend, CatConfig, CatFamily, DigiMode, HpsdrConfig, HpsdrDevice, LineState, ModeControl,
     Parity, PttMethod, RadioConfig, SerialConfig, SoundFormat, StopBits, TciConfig,

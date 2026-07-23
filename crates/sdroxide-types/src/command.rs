@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{AgcMode, Band, DigiConfig, Direction, Mode, RxId, SpectrumConfig, SstvMode, Vfo};
+use crate::{
+    AgcMode, Band, DigiConfig, Direction, Mode, NrLevel, RxId, SpectrumConfig, SstvMode, Vfo,
+};
 
 /// The single control vocabulary. The GUI, the WebSocket protocol, and the
 /// future TCI server all speak `Command`; the DSP engine is its only consumer.
@@ -27,6 +29,8 @@ pub enum Command {
     /// Squelch threshold in dBFS ([`crate::SQUELCH_OPEN_DB`] = open).
     SetSquelch { rx: RxId, db: f32 },
     SetNoiseBlanker(bool),
+    /// Spectral audio noise-reduction intensity for a receiver.
+    SetNoiseReduction { rx: RxId, level: NrLevel },
     SetSubRx(bool),
     SetRit { enabled: bool, hz: i32 },
     SetXit { enabled: bool, hz: i32 },

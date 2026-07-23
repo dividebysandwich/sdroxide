@@ -171,6 +171,56 @@ impl std::str::FromStr for Mode {
     }
 }
 
+/// Audio noise-reduction intensity — spectral NR applied to the demodulated
+/// audio to pull voice out of static/white noise. Cycled Off → Low → Med → High.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum NrLevel {
+    #[default]
+    Off,
+    Low,
+    Medium,
+    High,
+}
+
+impl NrLevel {
+    pub const ALL: [NrLevel; 4] = [NrLevel::Off, NrLevel::Low, NrLevel::Medium, NrLevel::High];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            NrLevel::Off => "Off",
+            NrLevel::Low => "Low",
+            NrLevel::Medium => "Med",
+            NrLevel::High => "High",
+        }
+    }
+
+    pub fn is_on(self) -> bool {
+        !matches!(self, NrLevel::Off)
+    }
+
+    /// Cycle to the next intensity (High wraps back to Off).
+    pub fn next(self) -> NrLevel {
+        match self {
+            NrLevel::Off => NrLevel::Low,
+            NrLevel::Low => NrLevel::Medium,
+            NrLevel::Medium => NrLevel::High,
+            NrLevel::High => NrLevel::Off,
+        }
+    }
+
+    /// Spectral-NR tuning: `(noise over-estimation factor, minimum gain floor)`.
+    /// A larger over-estimate removes more of the noise; a lower floor lets weak
+    /// bins be attenuated further — more aggressive, at more risk of artefacts.
+    pub fn params(self) -> (f32, f32) {
+        match self {
+            NrLevel::Off => (1.0, 1.0),
+            NrLevel::Low => (1.1, 0.30),
+            NrLevel::Medium => (1.7, 0.15),
+            NrLevel::High => (2.6, 0.06),
+        }
+    }
+}
+
 /// AGC behavior for a receiver channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AgcMode {

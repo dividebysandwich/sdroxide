@@ -15,12 +15,13 @@ use sdroxide_config::BandStacks;
 use sdroxide_digi::{DigiAction, DigiController, DigiEngine, SstvController, TextModemController};
 use sdroxide_skimmer::{SkimmerAction, SkimmerController};
 use sdroxide_dsp::{
-    Agc, DcBlock, Ddc, Demodulator, Duc, Modulator, MonoResampler, NoiseBlanker,
+    Agc, DcBlock, Ddc, Demodulator, Duc, Modulator, MonoResampler, NoiseBlanker, SpectralNr,
     SpectrumAnalyzer, channel_target, make_demod, make_modulator,
 };
 use sdroxide_types::{
     Band, BandStackEntry, Command, DeviceCaps, DigiConfig, Direction, MemoryChannel, Meters,
-    Mode, RadioEvent, RadioState, RxId, RxState, SpectrumConfig, SpectrumFrame, TxMeters, Vfo,
+    Mode, NrLevel, RadioEvent, RadioState, RxId, RxState, SpectrumConfig, SpectrumFrame, TxMeters,
+    Vfo,
 };
 
 use crate::{Complex32, ControlUpdate, IqSource};
@@ -123,6 +124,9 @@ struct RxChain {
     /// for the digital-mode decoder (independent of mute/volume/squelch).
     tap_enabled: bool,
     tap_out: Vec<f32>,
+    /// Spectral noise reduction on the listener audio (after the digital tap).
+    nr: SpectralNr,
+    nr_level: NrLevel,
     channel_buf: Vec<Complex32>,
     audio_buf: Vec<f32>,
     out_buf: Vec<f32>,
@@ -142,6 +146,8 @@ impl RxChain {
             sq_gain: 1.0,
             tap_enabled: false,
             tap_out: Vec::new(),
+            nr: SpectralNr::new(),
+            nr_level: NrLevel::Off,
             channel_buf: Vec::new(),
             audio_buf: Vec::new(),
             out_buf: Vec::new(),
@@ -209,11 +215,24 @@ impl RxChain {
         demod.process(&self.channel_buf, &mut self.audio_buf);
         self.agc.process(&mut self.audio_buf);
 
-        // Tap the clean, post-AGC audio before volume/mute/squelch so the
-        // FT8/FT4 decoder isn't starved by the operator's listening choices.
+        // Tap the clean, post-AGC audio before volume/mute/squelch AND before
+        // noise reduction so the FT8/FT4 decoder always sees the raw signal.
         if self.tap_enabled {
             self.tap_out.clear();
             self.tap_out.extend_from_slice(&self.audio_buf);
+        }
+
+        // Spectral noise reduction on the listener audio only.
+        if self.nr_level != rx.noise_reduction {
+            if !self.nr_level.is_on() && rx.noise_reduction.is_on() {
+                self.nr.reset(); // fresh start when switching on
+            }
+            self.nr_level = rx.noise_reduction;
+            let (over, floor) = rx.noise_reduction.params();
+            self.nr.set_params(over, floor);
+        }
+        if self.nr_level.is_on() {
+            self.nr.process(&mut self.audio_buf);
         }
 
         // Squelch: gate on post-filter (pre-AGC) power, smoothed ~10 ms so
@@ -353,6 +372,10 @@ struct Engine {
     tx_center_hz: f64,
     tx_ham_only: bool,
     nb: NoiseBlanker,
+    /// Spectral NR for the CAT/demod-audio path (the IQ path uses per-`RxChain`
+    /// NR instead).
+    audio_nr: SpectralNr,
+    audio_nr_level: NrLevel,
     /// Digital-mode engine (slotted FT8/FT4 or continuous PSK/RTTY), present
     /// only while a digital mode is active.
     digi: Option<Box<dyn DigiEngine>>,
@@ -477,6 +500,8 @@ fn engine_thread(
         tx_center_hz: 0.0,
         tx_ham_only: engine_cfg.tx_ham_only,
         nb: NoiseBlanker::new(),
+        audio_nr: SpectralNr::new(),
+        audio_nr_level: NrLevel::Off,
         digi: None,
         digi_config,
         digi_tx: false,
@@ -656,9 +681,24 @@ impl Engine {
         // Panadapter (packed-real FFT — see make_spectrum_frame).
         self.analyzer.process(iq);
 
-        // FT8/FT4 run directly on the radio audio.
+        // FT8/FT4 run directly on the radio audio (before NR, so the decoder
+        // always sees the raw signal).
         if let Some(digi) = self.digi.as_mut() {
             digi.on_rx_audio(&self.audio_re);
+        }
+
+        // Spectral noise reduction on the listener audio.
+        let nr_level = self.state.rx[0].noise_reduction;
+        if self.audio_nr_level != nr_level {
+            if !self.audio_nr_level.is_on() && nr_level.is_on() {
+                self.audio_nr.reset();
+            }
+            self.audio_nr_level = nr_level;
+            let (over, floor) = nr_level.params();
+            self.audio_nr.set_params(over, floor);
+        }
+        if self.audio_nr_level.is_on() {
+            self.audio_nr.process(&mut self.audio_re);
         }
 
         // Speaker path: resample radio_fs → out_rate, apply volume/mute.
@@ -977,6 +1017,7 @@ impl Engine {
             SetMute { rx, muted } => self.state.rx[rx.index()].muted = muted,
             SetSquelch { rx, db } => self.state.rx[rx.index()].squelch_db = db,
             SetNoiseBlanker(on) => self.state.noise_blanker = on,
+            SetNoiseReduction { rx, level } => self.state.rx[rx.index()].noise_reduction = level,
             SetSubRx(on) => {
                 self.state.sub_rx_enabled = on;
                 if on && self.sub.is_none() && self.main.is_some() {

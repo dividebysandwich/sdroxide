@@ -20,8 +20,10 @@ use sdroxide_types::{
 /// `RadioState.skimmer_enabled` field.
 /// v5: added SSTV — `Mode::Sstv`, `ServerMsg::Sstv*`, and
 /// `Command::SstvTx`/`SstvSetMode`.
-pub const PROTO_VERSION: u16 = 5;
-const VERSION_BYTE: u8 = 0x05;
+/// v6: added audio noise reduction — `Command::SetNoiseReduction` and a
+/// `RxState.noise_reduction` field.
+pub const PROTO_VERSION: u16 = 6;
+const VERSION_BYTE: u8 = 0x06;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

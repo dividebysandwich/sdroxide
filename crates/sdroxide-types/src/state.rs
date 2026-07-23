@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{AgcMode, Band, Mode};
+use crate::{AgcMode, Band, Mode, NrLevel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Vfo {
@@ -55,6 +55,8 @@ pub struct RxState {
     /// Audio gates closed below this post-filter power (dBFS).
     /// [`SQUELCH_OPEN_DB`] = always open.
     pub squelch_db: f32,
+    /// Spectral noise-reduction intensity on the demodulated audio.
+    pub noise_reduction: NrLevel,
 }
 
 impl RxState {
@@ -69,6 +71,7 @@ impl RxState {
             volume: 0.5,
             muted: false,
             squelch_db: SQUELCH_OPEN_DB,
+            noise_reduction: NrLevel::Off,
         }
     }
 }
