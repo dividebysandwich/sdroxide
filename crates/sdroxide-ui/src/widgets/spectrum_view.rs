@@ -1002,9 +1002,41 @@ fn draw_bw_measure(
     for x in [x0, x1] {
         p.line_segment([pos2(x, yl - 4.0), pos2(x, yl + 4.0)], stroke);
     }
-    // Start / end frequency labels at their markers; bandwidth centred below.
-    faded_label(p, rect, x0, rect.top() + 4.0, &fmt_mhz(start_hz), color, a);
-    faded_label(p, rect, x1, rect.top() + 4.0, &fmt_mhz(end_hz), color, a);
+    // Start / end frequency labels at their markers. When the markers are close
+    // the two labels would overlap, so push them symmetrically apart (keeping the
+    // pair on-screen) so both stay readable.
+    let s_text = fmt_mhz(start_hz);
+    let e_text = fmt_mhz(end_hz);
+    let sw = p.layout_no_wrap(s_text.clone(), FontId::monospace(10.5), color).size().x + 8.0;
+    let ew = p.layout_no_wrap(e_text.clone(), FontId::monospace(10.5), color).size().x + 8.0;
+    // Order the two labels left→right by marker x.
+    let ((lx, lw, lt), (rx, rw, rt)) = if x0 <= x1 {
+        ((x0, sw, &s_text), (x1, ew, &e_text))
+    } else {
+        ((x1, ew, &e_text), (x0, sw, &s_text))
+    };
+    let (mut cl, mut cr) = (lx, rx);
+    let needed = (lw + rw) * 0.5 + 4.0; // min centre distance for a 4px gap
+    if cr - cl < needed {
+        let mid = (lx + rx) * 0.5;
+        cl = mid - needed * 0.5;
+        cr = mid + needed * 0.5;
+    }
+    // Shift the pair as a unit to keep both on-screen without re-overlapping.
+    let over_l = rect.left() - (cl - lw * 0.5);
+    if over_l > 0.0 {
+        cl += over_l;
+        cr += over_l;
+    }
+    let over_r = (cr + rw * 0.5) - rect.right();
+    if over_r > 0.0 {
+        cl -= over_r;
+        cr -= over_r;
+    }
+    let fy = rect.top() + 4.0;
+    faded_label(p, rect, cl, fy, lt, color, a);
+    faded_label(p, rect, cr, fy, rt, color, a);
+    // Bandwidth centred below the span line.
     faded_label(p, rect, (lo + hi) * 0.5, yl + 6.0, &format_bandwidth(bw), color, a);
 }
 

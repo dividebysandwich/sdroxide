@@ -100,6 +100,8 @@ The smaller grey number below the readout is the *inactive* VFO's frequency.
 
 **On the panadapter:**
 
+- **Scroll the wheel** to zoom in and out around the cursor.
+- Press **F** to reset the view to the full receiver span.
 - **Left-click** tunes the active VFO to the clicked frequency. **Shift+click**
   tunes VFO B instead.
 - **Left-drag** grabs the spectrum and slides it (the tuning moves with the
@@ -111,8 +113,9 @@ The smaller grey number below the readout is the *inactive* VFO's frequency.
   signal's width) below. It works on both the spectrum and the waterfall. When you
   release the button the measurement lingers and fades out over about five
   seconds, so you can read it after letting go.
-- **Scroll the wheel** to zoom in and out around the cursor.
-- Press **F** to reset the view to the full receiver span.
+
+![Bandwidth measurement tool](images/bw-measurement.jpg)
+
 
 **Keyboard tuning** (ignored while typing in a text field):
 
