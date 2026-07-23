@@ -24,7 +24,14 @@ fn mode_digit(m: Mode) -> char {
         Mode::Nfm | Mode::Wfm => '4',
         Mode::Am | Mode::Sam | Mode::Dsb => '5',
         Mode::Digl => '8',
-        Mode::Digu | Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty => 'C',
+        Mode::Digu
+        | Mode::Ft8
+        | Mode::Ft4
+        | Mode::Psk
+        | Mode::Rtty
+        | Mode::Olivia
+        | Mode::Thor
+        | Mode::Fsq => 'C',
         Mode::Usb | Mode::Spec | Mode::Sstv => '2',
     }
 }

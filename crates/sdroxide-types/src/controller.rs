@@ -32,6 +32,8 @@ pub enum RadioEvent {
     SstvImage { image_id: u32, mode: SstvMode, w: u16, h: u16, png: Vec<u8> },
     /// SSTV: engine status change (tx/rx active, detected mode, progress).
     SstvStatus(SstvStatus),
+    /// FSQ image: a completed received picture (PNG bytes).
+    DigiImage { png: Vec<u8> },
 }
 
 /// Snapshot of the frontend's switchable sound devices (native clients).

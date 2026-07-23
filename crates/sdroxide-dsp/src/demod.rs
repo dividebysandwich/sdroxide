@@ -36,9 +36,11 @@ pub fn channel_target(mode: Mode) -> f64 {
 pub fn make_demod(mode: Mode, channel_rate: f64) -> Option<Box<dyn Demodulator>> {
     let (lo, hi) = mode.default_filter();
     match mode {
-        // FT8/FT4, PSK/RTTY, and SSTV demodulate as USB; the digi engine taps this audio.
+        // FT8/FT4, the keyboard modes, and SSTV demodulate as USB; the digi
+        // engine taps this audio.
         Mode::Lsb | Mode::Usb | Mode::Cw | Mode::Digu | Mode::Digl | Mode::Dsb
-        | Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty | Mode::Sstv => {
+        | Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty | Mode::Sstv
+        | Mode::Olivia | Mode::Thor | Mode::Fsq => {
             Some(Box::new(SsbDemod::new(channel_rate, lo, hi)))
         }
         Mode::Am => Some(Box::new(AmDemod::new(channel_rate, lo, hi))),

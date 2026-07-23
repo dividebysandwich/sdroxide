@@ -79,6 +79,8 @@ pub enum Command {
     /// SSTV: transmit a composed image (PNG bytes) in the given mode. Keying
     /// starts immediately; `DigiAbortTx` stops it.
     SstvTx { mode: SstvMode, png: Vec<u8> },
+    /// FSQ image: transmit a picture (PNG bytes; the engine grayscales/scales it).
+    DigiImageTx { png: Vec<u8> },
 
     // Skimmers
     /// Turn the (CW) skimmer on/off.

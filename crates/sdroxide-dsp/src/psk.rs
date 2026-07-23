@@ -25,7 +25,8 @@ const DEC_RATE: f64 = BAUD * SPS as f64; // 500 Hz
 
 /// Varicode for a printable ASCII byte, or `""` if unmapped. Bits are sent
 /// most-significant first; a `00` separator is appended between characters.
-fn varicode(b: u8) -> &'static str {
+/// Shared with the THOR modem, which streams the same varicode through its FEC.
+pub(crate) fn varicode(b: u8) -> &'static str {
     match b {
         b' ' => "1",
         b'!' => "111111111",
@@ -284,6 +285,11 @@ impl VaricodeRx {
     /// Feed one differential bit; returns the decoded character at a `00`
     /// boundary (or `None` while a code is still accumulating).
     pub fn push_bit(&mut self, bit: u8) -> Option<char> {
+        // A Varicode always starts with '1'; drop leading/idle zeros so a stray
+        // pre-character '0' can't corrupt the next code (e.g. after idle).
+        if self.rx_word.is_empty() && bit == 0 {
+            return None;
+        }
         self.rx_word.push(if bit == 1 { '1' } else { '0' });
         if self.rx_word.ends_with("00") {
             let code = &self.rx_word[..self.rx_word.len() - 2];

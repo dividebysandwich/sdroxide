@@ -104,6 +104,8 @@ impl SstvController {
             config: self.cfg.clone(),
             text_rx: String::new(),
             tx_sent: 0,
+            fsq_heard: Vec::new(),
+            fsq_messages: Vec::new(),
         }
     }
 }

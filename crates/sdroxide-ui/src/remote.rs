@@ -109,6 +109,7 @@ impl RemoteController {
                 self.pending.push_back(RadioEvent::SstvImage { image_id, mode, w, h, png })
             }
             ServerMsg::SstvStatus(s) => self.pending.push_back(RadioEvent::SstvStatus(s)),
+            ServerMsg::DigiImage { png } => self.pending.push_back(RadioEvent::DigiImage { png }),
         }
     }
 

@@ -39,6 +39,8 @@ pub enum DigiAction {
     SstvImage { image_id: u32, mode: SstvMode, w: u16, h: u16, rgb: Vec<u8> },
     /// SSTV: engine status change (tx/rx active, detected mode, progress).
     SstvStatus(SstvStatus),
+    /// FSQ image: a completed grayscale-as-RGB image — the engine encodes it.
+    DigiImage { w: u16, h: u16, rgb: Vec<u8> },
 }
 
 struct DecodeJob {

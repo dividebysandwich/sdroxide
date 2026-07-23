@@ -30,8 +30,9 @@ One binary, three ways to run it:
   that labels allocations (ham bands, broadcast, CB, AM); it shows coarse bands
   when zoomed out and CW/digital/SSB sub-segments when zoomed into a ham band.
 - **Modes** — SSB (USB/LSB), CW, AM, SAM, NFM, WFM, DSB, DIGU/DIGL, a
-  spectrum-only mode, **FT8/FT4**, the keyboard modes **PSK31** and **RTTY**, and
-  image **SSTV** (Scottie, Martin, Robot).
+  spectrum-only mode, **FT8/FT4**, the keyboard modes **PSK31**, **RTTY**,
+  **Olivia**, **THOR** and **FSQ** (with directed messaging + images), and image
+  **SSTV** (Scottie, Martin, Robot).
 - **Receiver** — hang AGC, draggable passband filter edges (on the spectrum and
   the waterfall), noise blanker, squelch, a second sub-receiver, RIT/XIT, VFO
   A/B with split, per-band band stacks, and memory channels.
@@ -80,6 +81,24 @@ reply that transmits as you type:
 - The **PSK and RTTY skimmers** decode signals across each band's PSK/RTTY
   calling sub-bands and label them on the waterfall; click a label to switch to
   that mode, tune onto it, and open the panel.
+
+## Olivia, THOR and FSQ
+
+Three more keyboard modes share the same ragchew panel and setup dialog as
+PSK/RTTY; the submode is chosen on each mode's setup page:
+
+- **Olivia** — a very robust MFSK chat mode with Walsh/Hadamard coding. Pick the
+  tone count (2–64) and bandwidth (125–2000 Hz); 32/1000 and 16/500 are common.
+- **THOR** — DominoEX-family 18-tone incremental-FSK with convolutional FEC.
+  Pick a submode (THOR4 … THOR32; THOR16 is the usual default).
+- **FSQ** — 33-tone incremental-FSK (speeds FSQ-2/3/4.5/6) with a dedicated panel
+  for the **directed (FSQCALL)** layer: a **heard list**, a persistent **contacts**
+  book, directed `CALL:message` sends, ALLCALL broadcast, an automatic reply to
+  the `?` heard-list query, and **image** transmit/receive (pick a picture to send;
+  received pictures land in the gallery).
+
+These modems are native-Rust and self-contained (no external decoder); on-air
+interoperability with fldigi is being validated and refined.
 
 ## SSTV
 

@@ -54,7 +54,8 @@ struct Cli {
     #[arg(long)]
     gain: Option<f64>,
 
-    /// Initial mode (USB, LSB, CW, AM, SAM, NFM, WFM, DIGU, DIGL, DSB, SPEC, FT8, FT4, PSK, RTTY, SSTV)
+    /// Initial mode (USB, LSB, CW, AM, SAM, NFM, WFM, DIGU, DIGL, DSB, SPEC, FT8,
+    /// FT4, PSK, RTTY, SSTV, OLIVIA, THOR, FSQ)
     #[arg(long)]
     mode: Option<sdroxide_types::Mode>,
 

@@ -186,6 +186,15 @@ pub fn save_digi_config(cfg: &sdroxide_types::DigiConfig) -> Result<(), ConfigEr
     save_json("digi.json", cfg)
 }
 
+/// FSQ contacts (address book for directed FSQCALL messaging).
+pub fn load_contacts() -> Vec<sdroxide_types::FsqContact> {
+    load_json("contacts.json")
+}
+
+pub fn save_contacts(contacts: &[sdroxide_types::FsqContact]) -> Result<(), ConfigError> {
+    save_json("contacts.json", &contacts)
+}
+
 /// Persistent logbook (digital + manual QSO entries).
 pub fn load_qso_log() -> Vec<sdroxide_types::QsoRecord> {
     load_json("qso_log.json")

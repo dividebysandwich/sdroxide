@@ -24,10 +24,16 @@ pub enum Mode {
     Rtty,
     /// SSTV image mode — USB underneath, image decode/encode by the digi engine.
     Sstv,
+    /// Olivia MFSK keyboard mode — USB underneath, tones/bandwidth chosen in setup.
+    Olivia,
+    /// THOR (DominoEX-family MFSK+FEC) keyboard mode — submode chosen in setup.
+    Thor,
+    /// FSQ (Fast Simple QSO) IFK keyboard mode — undirected/directed/image.
+    Fsq,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 16] = [
+    pub const ALL: [Mode; 19] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -44,21 +50,53 @@ impl Mode {
         Mode::Psk,
         Mode::Rtty,
         Mode::Sstv,
+        Mode::Olivia,
+        Mode::Thor,
+        Mode::Fsq,
     ];
 
     /// The digital modes handled by a dedicated decode engine over USB
-    /// (slotted FT8/FT4, the continuous keyboard modes PSK/RTTY, and SSTV).
-    pub const DIGITAL: [Mode; 5] = [Mode::Ft8, Mode::Ft4, Mode::Psk, Mode::Rtty, Mode::Sstv];
+    /// (slotted FT8/FT4, the continuous keyboard modes, and SSTV).
+    pub const DIGITAL: [Mode; 8] = [
+        Mode::Ft8,
+        Mode::Ft4,
+        Mode::Psk,
+        Mode::Rtty,
+        Mode::Olivia,
+        Mode::Thor,
+        Mode::Fsq,
+        Mode::Sstv,
+    ];
 
     /// True for modes that use a dedicated decode/QSO layer over USB.
     pub fn is_digital(self) -> bool {
-        matches!(self, Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty | Mode::Sstv)
+        matches!(
+            self,
+            Mode::Ft8
+                | Mode::Ft4
+                | Mode::Psk
+                | Mode::Rtty
+                | Mode::Sstv
+                | Mode::Olivia
+                | Mode::Thor
+                | Mode::Fsq
+        )
     }
 
-    /// True for the continuous keyboard text modes (PSK31 / RTTY), as opposed
-    /// to the slotted FT8/FT4 modes. Drives which decode engine + panel is used.
+    /// True for the continuous keyboard text modes (PSK31 / RTTY / Olivia / Thor
+    /// / FSQ), as opposed to the slotted FT8/FT4 modes. Drives which decode
+    /// engine + panel is used.
     pub fn is_text_modem(self) -> bool {
-        matches!(self, Mode::Psk | Mode::Rtty)
+        matches!(
+            self,
+            Mode::Psk | Mode::Rtty | Mode::Olivia | Mode::Thor | Mode::Fsq
+        )
+    }
+
+    /// True for the FSQ mode (adds a directed-message / contacts / image layer
+    /// on top of the plain keyboard-modem panel).
+    pub fn is_fsq(self) -> bool {
+        matches!(self, Mode::Fsq)
     }
 
     /// True for the SSTV image mode. Forks the digi panel to the image UI and
@@ -85,6 +123,9 @@ impl Mode {
             Mode::Psk => "PSK",
             Mode::Rtty => "RTTY",
             Mode::Sstv => "SSTV",
+            Mode::Olivia => "OLIVIA",
+            Mode::Thor => "THOR",
+            Mode::Fsq => "FSQ",
         }
     }
 
@@ -104,9 +145,16 @@ impl Mode {
             Mode::Dsb => (-2850.0, 2850.0),
             Mode::Spec => (-5000.0, 5000.0),
             // FT8/FT4 occupy the whole USB audio passband (tones 0..~3500 Hz).
-            // PSK/RTTY do the same (the modem filters narrowly around audio_hz).
-            // SSTV occupies the full USB audio passband (tones ~1100..2300 Hz).
-            Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty | Mode::Sstv => (100.0, 3300.0),
+            // PSK/RTTY/Olivia/Thor/FSQ do the same (the modem filters narrowly
+            // around audio_hz). SSTV occupies the full USB audio passband.
+            Mode::Ft8
+            | Mode::Ft4
+            | Mode::Psk
+            | Mode::Rtty
+            | Mode::Sstv
+            | Mode::Olivia
+            | Mode::Thor
+            | Mode::Fsq => (100.0, 3300.0),
         }
     }
 
@@ -153,9 +201,16 @@ impl Mode {
             Mode::Nfm => &[("8k", -4000.0, 4000.0), ("16k", -8000.0, 8000.0)],
             Mode::Dsb => &[("5k", -2500.0, 2500.0), ("6k", -3000.0, 3000.0)],
             // Digital modes have a fixed wide passband; no presets.
-            Mode::Wfm | Mode::Spec | Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty | Mode::Sstv => {
-                &[]
-            }
+            Mode::Wfm
+            | Mode::Spec
+            | Mode::Ft8
+            | Mode::Ft4
+            | Mode::Psk
+            | Mode::Rtty
+            | Mode::Sstv
+            | Mode::Olivia
+            | Mode::Thor
+            | Mode::Fsq => &[],
         }
     }
 }

@@ -12,7 +12,9 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use tracing::{info, warn};
 
 use sdroxide_config::BandStacks;
-use sdroxide_digi::{DigiAction, DigiController, DigiEngine, SstvController, TextModemController};
+use sdroxide_digi::{
+    DigiAction, DigiController, DigiEngine, FsqController, SstvController, TextModemController,
+};
 use sdroxide_skimmer::{SkimmerAction, SkimmerController};
 use sdroxide_dsp::{
     Agc, AutoNotch, DcBlock, Ddc, Demodulator, Duc, Modulator, MonoResampler, NoiseBlanker,
@@ -890,6 +892,11 @@ impl Engine {
                 DigiAction::SstvStatus(s) => {
                     let _ = self.event_tx.send(RadioEvent::SstvStatus(s));
                 }
+                DigiAction::DigiImage { w, h, rgb } => {
+                    if let Some(png) = encode_png(&rgb, w, h) {
+                        let _ = self.event_tx.send(RadioEvent::DigiImage { png });
+                    }
+                }
             }
         }
     }
@@ -899,6 +906,8 @@ impl Engine {
     fn make_digi(&self, mode: Mode, tap_rate: f64) -> Box<dyn DigiEngine> {
         if mode.is_sstv() {
             Box::new(SstvController::new(self.digi_config.clone(), tap_rate))
+        } else if mode.is_fsq() {
+            Box::new(FsqController::new(self.digi_config.clone(), tap_rate))
         } else if mode.is_text_modem() {
             Box::new(TextModemController::new(mode, self.digi_config.clone(), tap_rate))
         } else {
@@ -1238,6 +1247,22 @@ impl Engine {
                     }
                 } else {
                     warn!("SSTV TX: could not decode composed image");
+                }
+            }
+            DigiImageTx { png } => {
+                // FSQ image: decode + grayscale, then queue it for the controller.
+                if let Some((rgb, w, h)) = decode_png_rgb(&png) {
+                    let gray: Vec<u8> = rgb
+                        .chunks_exact(3)
+                        .map(|p| {
+                            (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32) as u8
+                        })
+                        .collect();
+                    if let Some(d) = self.digi.as_mut() {
+                        d.set_image(gray, w, h);
+                    }
+                } else {
+                    warn!("FSQ image TX: could not decode image");
                 }
             }
 
@@ -1856,7 +1881,7 @@ fn rig_mode_class(m: Mode) -> u8 {
     match m {
         Mode::Lsb | Mode::Digl => 0,
         Mode::Usb | Mode::Digu | Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty | Mode::Sstv
-        | Mode::Spec => 1,
+        | Mode::Olivia | Mode::Thor | Mode::Fsq | Mode::Spec => 1,
         Mode::Am | Mode::Sam | Mode::Dsb => 2,
         Mode::Cw => 3,
         Mode::Nfm | Mode::Wfm => 5,

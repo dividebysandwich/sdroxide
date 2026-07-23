@@ -6,6 +6,7 @@
 //! server-side).
 
 pub mod controller;
+pub mod fsq_controller;
 pub mod modem;
 pub mod params;
 pub mod qso;
@@ -14,6 +15,7 @@ pub mod sstv_controller;
 pub mod text_modem;
 
 pub use controller::{DigiAction, DigiController};
+pub use fsq_controller::FsqController;
 pub use sstv_controller::SstvController;
 pub use modem::Ft8Modem;
 pub use params::{DECODE_RATE, DigiParams};
@@ -57,4 +59,6 @@ pub trait DigiEngine: Send {
     fn set_sstv_mode(&mut self, _mode: Option<SstvMode>) {}
     /// SSTV: queue a composed image (interleaved RGB) and start transmitting.
     fn set_sstv_image(&mut self, _mode: SstvMode, _rgb: Vec<u8>, _w: u16, _h: u16) {}
+    /// FSQ image: queue a grayscale image (`w*h` bytes) and start transmitting.
+    fn set_image(&mut self, _gray: Vec<u8>, _w: u16, _h: u16) {}
 }

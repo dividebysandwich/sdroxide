@@ -236,7 +236,7 @@ fn serial_thread(cfg: CatConfig, cmd_rx: Receiver<CatCmd>, event_tx: Sender<CatU
     // separate `digi_mode` setting; every other mode obeys `mode_control`
     // (CAT = mirror the selected mode to the rig; Radio = don't touch it).
     let mode_cmd = |app_mode: Mode| -> Option<Mode> {
-        if matches!(app_mode, Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty) {
+        if app_mode.is_digital() && !app_mode.is_sstv() {
             return match cfg.digi_mode {
                 DigiMode::Radio => None,
                 DigiMode::Usb => Some(Mode::Usb),

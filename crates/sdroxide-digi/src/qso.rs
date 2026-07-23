@@ -294,6 +294,8 @@ impl QsoMachine {
             // FT8/FT4 don't use the continuous keyboard-text fields.
             text_rx: String::new(),
             tx_sent: 0,
+            fsq_heard: Vec::new(),
+            fsq_messages: Vec::new(),
         }
     }
 }

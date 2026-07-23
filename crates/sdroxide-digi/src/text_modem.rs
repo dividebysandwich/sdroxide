@@ -10,7 +10,9 @@
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
-use sdroxide_dsp::{MonoResampler, PskRx, PskTx, RttyRx, RttyTx};
+use sdroxide_dsp::{
+    MonoResampler, OliviaRx, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ThorRx, ThorTx,
+};
 use sdroxide_types::{DigiConfig, DigiStatus, Mode, QsoStep, TranscriptLine};
 
 use crate::DigiEngine;
@@ -25,6 +27,8 @@ const RX_TEXT_CAP: usize = 8000;
 enum RxModem {
     Psk(PskRx),
     Rtty(RttyRx),
+    Olivia(OliviaRx),
+    Thor(ThorRx),
 }
 
 impl RxModem {
@@ -32,6 +36,8 @@ impl RxModem {
         match self {
             RxModem::Psk(r) => r.process(audio),
             RxModem::Rtty(r) => r.process(audio),
+            RxModem::Olivia(r) => r.process(audio),
+            RxModem::Thor(r) => r.process(audio),
         }
     }
 }
@@ -39,6 +45,8 @@ impl RxModem {
 enum TxModem {
     Psk(PskTx),
     Rtty(RttyTx),
+    Olivia(OliviaTx),
+    Thor(ThorTx),
 }
 
 impl TxModem {
@@ -46,6 +54,8 @@ impl TxModem {
         match self {
             TxModem::Psk(m) => m.push_text(t),
             TxModem::Rtty(m) => m.push_text(t),
+            TxModem::Olivia(m) => m.push_text(t),
+            TxModem::Thor(m) => m.push_text(t),
         }
     }
     fn next_block(&mut self, out: &mut [f32]) {
@@ -56,24 +66,36 @@ impl TxModem {
             TxModem::Rtty(m) => {
                 m.next_block(out);
             }
+            TxModem::Olivia(m) => {
+                m.next_block(out);
+            }
+            TxModem::Thor(m) => {
+                m.next_block(out);
+            }
         }
     }
     fn sent_chars(&self) -> usize {
         match self {
             TxModem::Psk(m) => m.sent_chars(),
             TxModem::Rtty(m) => m.sent_chars(),
+            TxModem::Olivia(m) => m.sent_chars(),
+            TxModem::Thor(m) => m.sent_chars(),
         }
     }
     fn total_chars(&self) -> usize {
         match self {
             TxModem::Psk(m) => m.total_chars(),
             TxModem::Rtty(m) => m.total_chars(),
+            TxModem::Olivia(m) => m.total_chars(),
+            TxModem::Thor(m) => m.total_chars(),
         }
     }
     fn clear(&mut self) {
         match self {
             TxModem::Psk(m) => m.clear(),
             TxModem::Rtty(m) => m.clear(),
+            TxModem::Olivia(m) => m.clear(),
+            TxModem::Thor(m) => m.clear(),
         }
     }
 }
@@ -106,14 +128,30 @@ pub struct TextModemController {
 
 impl TextModemController {
     pub fn new(mode: Mode, cfg: DigiConfig, tap_rate: f64) -> Self {
-        let audio_hz = 1000.0f32;
+        // MFSK modes want a higher default centre so their wider tone banks fit
+        // inside the audio passband; the narrow PSK/RTTY carriers sit at 1000 Hz.
+        let audio_hz = if matches!(mode, Mode::Olivia | Mode::Thor | Mode::Fsq) {
+            1500.0f32
+        } else {
+            1000.0f32
+        };
         let (baud, shift) = (cfg.rtty_baud as f64, cfg.rtty_shift_hz as f64);
+        let (o_tones, o_bw) = (cfg.olivia_tones as usize, cfg.olivia_bw_hz as f64);
+        let t_baud = cfg.thor_mode.baud() as f64;
         let rx = match mode {
             Mode::Rtty => RxModem::Rtty(RttyRx::new(MODEM_RATE, audio_hz as f64, baud, shift)),
+            Mode::Olivia => {
+                RxModem::Olivia(OliviaRx::new(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
+            }
+            Mode::Thor => RxModem::Thor(ThorRx::new(MODEM_RATE, audio_hz as f64, t_baud)),
             _ => RxModem::Psk(PskRx::new(MODEM_RATE, audio_hz as f64)),
         };
         let tx = match mode {
             Mode::Rtty => TxModem::Rtty(RttyTx::new(MODEM_RATE, audio_hz as f64, baud, shift)),
+            Mode::Olivia => {
+                TxModem::Olivia(OliviaTx::new(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
+            }
+            Mode::Thor => TxModem::Thor(ThorTx::new(MODEM_RATE, audio_hz as f64, t_baud)),
             _ => TxModem::Psk(PskTx::new(MODEM_RATE, audio_hz as f64)),
         };
         TextModemController {
@@ -141,13 +179,19 @@ impl TextModemController {
     fn retune_modems(&mut self) {
         let hz = self.audio_hz as f64;
         let (baud, shift) = (self.cfg.rtty_baud as f64, self.cfg.rtty_shift_hz as f64);
+        let (o_tones, o_bw) = (self.cfg.olivia_tones as usize, self.cfg.olivia_bw_hz as f64);
+        let t_baud = self.cfg.thor_mode.baud() as f64;
         match &mut self.rx {
             RxModem::Psk(r) => r.set_carrier(hz),
             RxModem::Rtty(r) => r.set_tuning(hz, baud, shift),
+            RxModem::Olivia(r) => r.set_params(hz, o_tones, o_bw),
+            RxModem::Thor(r) => r.set_params(hz, t_baud),
         }
         match &mut self.tx {
             TxModem::Psk(m) => m.set_carrier(hz, MODEM_RATE),
             TxModem::Rtty(m) => m.set_tuning(hz, shift),
+            TxModem::Olivia(m) => m.set_params(hz, o_tones, o_bw),
+            TxModem::Thor(m) => m.set_params(hz, t_baud),
         }
     }
 
@@ -172,6 +216,8 @@ impl TextModemController {
             config: self.cfg.clone(),
             text_rx: self.rx_text.clone(),
             tx_sent: self.tx.sent_chars(),
+            fsq_heard: Vec::new(),
+            fsq_messages: Vec::new(),
         }
     }
 }
@@ -264,7 +310,11 @@ impl DigiEngine for TextModemController {
     }
 
     fn set_config(&mut self, cfg: DigiConfig) {
-        let retune = cfg.rtty_baud != self.cfg.rtty_baud || cfg.rtty_shift_hz != self.cfg.rtty_shift_hz;
+        let retune = cfg.rtty_baud != self.cfg.rtty_baud
+            || cfg.rtty_shift_hz != self.cfg.rtty_shift_hz
+            || cfg.olivia_tones != self.cfg.olivia_tones
+            || cfg.olivia_bw_hz != self.cfg.olivia_bw_hz
+            || cfg.thor_mode != self.cfg.thor_mode;
         self.cfg = cfg;
         if retune {
             self.retune_modems();

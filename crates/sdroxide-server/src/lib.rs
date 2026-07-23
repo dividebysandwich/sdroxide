@@ -239,6 +239,7 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
                 Some(ServerMsg::SstvImage { image_id, mode, w, h, png })
             }
             RadioEvent::SstvStatus(s) => Some(ServerMsg::SstvStatus(s)),
+            RadioEvent::DigiImage { png } => Some(ServerMsg::DigiImage { png }),
         }
     };
     if let Some(msg) = msg {

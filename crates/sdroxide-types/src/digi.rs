@@ -102,6 +102,25 @@ pub struct DigiStatus {
     /// outgoing buffer have been transmitted (drives the green "sent" cursor).
     #[serde(default)]
     pub tx_sent: usize,
+    /// FSQ directed layer: callsigns recently heard, most-recent first.
+    #[serde(default)]
+    pub fsq_heard: Vec<String>,
+    /// FSQ directed layer: parsed directed/allcall messages (rolling, capped).
+    #[serde(default)]
+    pub fsq_messages: Vec<FsqMsg>,
+}
+
+/// One parsed FSQ directed (or ALLCALL) message.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FsqMsg {
+    /// Sender callsign (empty if it couldn't be parsed).
+    pub from: String,
+    /// Addressee: a callsign, `allcall`, or empty for undirected.
+    pub to: String,
+    /// The message body (after the `:` trigger).
+    pub text: String,
+    /// True when the message is addressed to this station (or ALLCALL).
+    pub to_me: bool,
 }
 
 impl DigiStatus {
@@ -123,6 +142,8 @@ impl DigiStatus {
             config,
             text_rx: String::new(),
             tx_sent: 0,
+            fsq_heard: Vec::new(),
+            fsq_messages: Vec::new(),
         }
     }
 }
@@ -152,6 +173,53 @@ pub struct QsoRecord {
 }
 
 /// Operator configuration for digital-mode operation. Persisted engine-side,
+/// THOR (DominoEX-family) submode: sets the symbol rate. All use 18 tones with
+/// incremental frequency keying (IFK+) and convolutional FEC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ThorMode {
+    Thor4,
+    Thor8,
+    Thor11,
+    #[default]
+    Thor16,
+    Thor22,
+    Thor32,
+}
+
+impl ThorMode {
+    pub const ALL: [ThorMode; 6] = [
+        ThorMode::Thor4,
+        ThorMode::Thor8,
+        ThorMode::Thor11,
+        ThorMode::Thor16,
+        ThorMode::Thor22,
+        ThorMode::Thor32,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ThorMode::Thor4 => "THOR4",
+            ThorMode::Thor8 => "THOR8",
+            ThorMode::Thor11 => "THOR11",
+            ThorMode::Thor16 => "THOR16",
+            ThorMode::Thor22 => "THOR22",
+            ThorMode::Thor32 => "THOR32",
+        }
+    }
+
+    /// Nominal symbol rate (baud). The modem derives the tone spacing from this.
+    pub fn baud(self) -> f32 {
+        match self {
+            ThorMode::Thor4 => 3.90625,
+            ThorMode::Thor8 => 7.8125,
+            ThorMode::Thor11 => 10.766,
+            ThorMode::Thor16 => 15.625,
+            ThorMode::Thor22 => 21.53,
+            ThorMode::Thor32 => 31.25,
+        }
+    }
+}
+
 /// echoed to clients in [`DigiStatus`]. `#[serde(default)]` so an older
 /// `digi.json` without the newer fields still loads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -174,6 +242,17 @@ pub struct DigiConfig {
     pub rtty_baud: f32,
     /// RTTY frequency shift in Hz (170 / 425 / 850).
     pub rtty_shift_hz: f32,
+    /// Olivia tone count (2 / 4 / 8 / 16 / 32 / 64).
+    pub olivia_tones: u8,
+    /// Olivia bandwidth in Hz (125 / 250 / 500 / 1000 / 2000).
+    pub olivia_bw_hz: f32,
+    /// THOR submode (symbol rate).
+    pub thor_mode: ThorMode,
+    /// FSQ speed / baud (2 / 3 / 4.5 / 6).
+    pub fsq_baud: f32,
+    /// FSQ station callsign for directed (FSQCALL) messaging. Falls back to
+    /// `my_call` when empty.
+    pub fsq_call: String,
     /// SSTV transmit clock trim in parts-per-million. Stretches (+) or compresses
     /// (−) the image time-scale to null out slant against a receiver whose sound-
     /// card clock differs from this station's. 0 = no correction.
@@ -195,6 +274,11 @@ impl Default for DigiConfig {
             msg_73: "{DX} {MYCALL} 73".into(),
             rtty_baud: 45.45,
             rtty_shift_hz: 170.0,
+            olivia_tones: 32,
+            olivia_bw_hz: 1000.0,
+            thor_mode: ThorMode::Thor16,
+            fsq_baud: 4.5,
+            fsq_call: String::new(),
             sstv_tx_ppm: 0.0,
         }
     }

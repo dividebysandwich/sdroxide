@@ -7,6 +7,7 @@ mod band;
 mod band_segments;
 mod caps;
 mod command;
+mod contacts;
 mod controller;
 mod digi;
 mod geo;
@@ -28,11 +29,12 @@ pub use band_segments::{
     segment_kind_at,
 };
 pub use caps::{DeviceCaps, Direction, GainElement};
+pub use contacts::FsqContact;
 pub use command::Command;
 pub use controller::{AudioDevices, RadioController, RadioEvent};
 pub use digi::{
-    Decode, DigiConfig, DigiStatus, QsoRecord, QsoStep, TranscriptLine, adif_band, fmt_report,
-    qso_log_to_adif, qso_log_to_text, utc_ymd_hms, ymd_hms_to_unix,
+    Decode, DigiConfig, DigiStatus, FsqMsg, QsoRecord, QsoStep, ThorMode, TranscriptLine,
+    adif_band, fmt_report, qso_log_to_adif, qso_log_to_text, utc_ymd_hms, ymd_hms_to_unix,
 };
 pub use geo::{
     distance_km, grid_bearing, grid_distance_km, grid_to_latlon, great_circle_points, is_land,

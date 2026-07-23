@@ -14,7 +14,7 @@ or connects to a remote sdroxide server.
 
 1. [Feature overview](#1-feature-overview)
 2. [Basic operation](#2-basic-operation)
-3. [Digital modes (FT8, FT4, PSK31, RTTY)](#3-digital-modes)
+3. [Digital modes (FT8, FT4, PSK31, RTTY, Olivia, THOR, FSQ, SSTV)](#3-digital-modes)
 4. [Skimmers (CW, PSK, RTTY)](#4-skimmers)
 5. [Radio and audio setup](#5-radio-and-audio-setup)
 6. [Remote operation](#6-remote-operation)
@@ -37,7 +37,8 @@ or connects to a remote sdroxide server.
   the inactive VFO.
 - **All the common modes:** LSB, USB, CW, AM, SAM, NFM, WFM, DIGU, DIGL, DSB, a
   spectrum-only mode (SPEC), the automatic digital modes **FT8** and **FT4**, the
-  keyboard modes **PSK31** and **RTTY**, and image **SSTV**.
+  keyboard modes **PSK31**, **RTTY**, **Olivia**, **THOR** and **FSQ**, and image
+  **SSTV**.
 - **Receive controls:** AGC (Off/Slow/Med/Fast), volume, mute, squelch, an
   impulse noise blanker, an adaptive auto-notch (constant-tone canceller),
   spectral noise reduction (Off/Low/Med/High), RIT, and a draggable filter
@@ -145,7 +146,8 @@ popup with three rows:
 - **BAND:** `160M 80M 60M 40M 30M 20M 17M 15M 12M 10M 6M 2M GEN`. Each band
   remembers your last frequency, mode, and filter.
 - **MODE:** `LSB USB CW AM SAM NFM WFM DIGU DIGL DSB SPEC`.
-- **DIGITAL:** `FT8 FT4 PSK RTTY SSTV` (see [Digital modes](#3-digital-modes)).
+- **DIGITAL:** `FT8 FT4 PSK RTTY OLIVIA THOR FSQ SSTV` (see
+  [Digital modes](#3-digital-modes)).
 
 ![The band and mode selector popup](images/04-band-mode-popup.png)
 
@@ -382,7 +384,44 @@ panel is a live **messaging area** instead of a QSO sequencer.
 signals across each band's PSK/RTTY calling sub-bands. Clicking a label from any
 mode switches to PSK or RTTY, tunes onto the signal, and opens this panel.
 
-### 3.7 SSTV
+### 3.7 Olivia, THOR and FSQ
+
+Three more keyboard modes are on the DIGITAL row. **Olivia** and **THOR** reuse
+the same messaging panel as PSK/RTTY; each mode's submode is chosen on its setup
+page (**⚙ SETUP**):
+
+- **Olivia** — a slow, extremely robust MFSK mode with Walsh/Hadamard block
+  coding. Choose the **tone count** (2, 4, 8, 16, 32, 64) and **bandwidth**
+  (125–2000 Hz). The symbol rate is bandwidth ÷ tones; **32/1000** and **16/500**
+  are the common combinations. Both stations must use the same tones/bandwidth.
+- **THOR** — a DominoEX-family 18-tone mode using incremental frequency keying
+  (IFK+) with convolutional forward error correction. Choose a submode
+  (**THOR4 … THOR32**); THOR16 is the usual default. The tone bank edges are drawn
+  on the waterfall.
+
+**FSQ** (Fast Simple QSO) has its own panel for the directed **FSQCALL** layer.
+It is a 33-tone incremental-FSK mode; choose the **speed** (FSQ-2/3/4.5/6) and an
+**FSQ call** on the setup page (defaults to your callsign):
+
+- **Heard list** (left) — every station whose transmission is decoded is listed,
+  most-recent first. Click a callsign to make it the directed target.
+- **Compose** (right) — the **To:** line shows the current target (or ALLCALL).
+  Type a message and press **SEND** (or Enter); sdroxide prefixes your call and
+  transmits one burst (`YOURCALL:TARGET message`). **? heard** asks the selected
+  station to send its heard list; incoming `?` queries addressed to you are
+  answered automatically. **CALL CQ** sends a broadcast CQ.
+- **Contacts** — the **CONTACTS** button opens an address book (persisted in
+  `contacts.json`). Add callsigns, give them names, click **TO** to target one, or
+  **DEL** to remove.
+- **Images** — **Send image…** picks a picture, which is scaled to grayscale and
+  transmitted as an analog tone scan; received pictures appear in the image
+  gallery below.
+
+These three modems are native-Rust and self-contained. On-air interoperability
+with fldigi is being validated; the first release targets clean-to-moderate
+signals.
+
+### 3.8 SSTV
 
 Choose **SSTV** from the DIGITAL row to send and receive pictures. The panel has
 a received-image gallery on the left and a transmit compositor on the right, with

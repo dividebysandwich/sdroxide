@@ -171,7 +171,14 @@ pub fn mode_to_tci(mode: Mode) -> &'static str {
         Mode::Sam => "sam",
         Mode::Nfm => "nfm",
         Mode::Wfm => "wfm",
-        Mode::Digu | Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty => "digu",
+        Mode::Digu
+        | Mode::Ft8
+        | Mode::Ft4
+        | Mode::Psk
+        | Mode::Rtty
+        | Mode::Olivia
+        | Mode::Thor
+        | Mode::Fsq => "digu",
         Mode::Digl => "digl",
         Mode::Dsb => "dsb",
         Mode::Spec => "usb",

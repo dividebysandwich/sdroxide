@@ -22,8 +22,12 @@ use sdroxide_types::{
 /// `Command::SstvTx`/`SstvSetMode`.
 /// v6: added audio noise reduction + auto-notch — `Command::SetNoiseReduction`,
 /// `Command::SetAutoNotch`, and `RxState.noise_reduction` / `RxState.auto_notch`.
-pub const PROTO_VERSION: u16 = 6;
-const VERSION_BYTE: u8 = 0x06;
+/// v7: added keyboard modes Olivia/Thor/FSQ — new `Mode` variants, `DigiConfig`
+/// submode fields (Olivia tones/bw, THOR submode, FSQ speed/call), `DigiStatus`
+/// FSQ heard-list + directed-message fields, and a mode-agnostic digi image path
+/// (`Command::DigiImageTx` / `RadioEvent::DigiImage` for the FSQ image sub-mode).
+pub const PROTO_VERSION: u16 = 7;
+const VERSION_BYTE: u8 = 0x07;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {
@@ -90,6 +94,8 @@ pub enum ServerMsg {
     SstvLine { image_id: u32, y: u16, rgb: Vec<u8> },
     SstvImage { image_id: u32, mode: SstvMode, w: u16, h: u16, png: Vec<u8> },
     SstvStatus(SstvStatus),
+    /// FSQ image: a completed received picture (PNG bytes).
+    DigiImage { png: Vec<u8> },
 }
 
 pub fn encode<T: Serialize>(msg: &T) -> Result<Vec<u8>, ProtoError> {
