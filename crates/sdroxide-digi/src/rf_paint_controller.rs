@@ -153,7 +153,13 @@ impl DigiEngine for RfPaintController {
 
     /// Queue a grayscale bitmap (`w*h` bytes, row 0 = top) as a painting burst.
     fn set_image(&mut self, gray: Vec<u8>, w: u16, h: u16) {
-        self.tx = Some(SpectrumPaintTx::new(&gray, w as usize, h as usize, OUT_RATE));
+        self.tx = Some(SpectrumPaintTx::new(
+            &gray,
+            w as usize,
+            h as usize,
+            OUT_RATE,
+            self.cfg.rf_paint_speed,
+        ));
         self.status_dirty = true;
     }
 }

@@ -269,6 +269,10 @@ pub struct DigiConfig {
     /// (−) the image time-scale to null out slant against a receiver whose sound-
     /// card clock differs from this station's. 0 = no correction.
     pub sstv_tx_ppm: f32,
+    /// RF Paint scan speed as a fraction of the base rate (1.0 = base/fastest,
+    /// 0.25 = default = quarter speed / 4× slower). Lower scans the text/image
+    /// more slowly, giving the receiver's waterfall more lines to render it.
+    pub rf_paint_speed: f32,
 }
 
 impl Default for DigiConfig {
@@ -293,6 +297,7 @@ impl Default for DigiConfig {
             fsq_call: String::new(),
             digi_squelch: 0.35,
             sstv_tx_ppm: 0.0,
+            rf_paint_speed: 0.25,
         }
     }
 }

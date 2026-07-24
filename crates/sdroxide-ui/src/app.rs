@@ -5206,9 +5206,30 @@ impl SdroxideApp {
         let progress =
             status.as_ref().map(|s| (s.tx_sent as f32 / 1000.0).clamp(0.0, 1.0)).unwrap_or(0.0);
 
-        // Header + transmit indicator.
+        // Header: title, transmit-speed slider, and the transmit indicator.
         ui.horizontal(|ui| {
             ui.label(RichText::new("RF PAINT").size(11.0).strong().color(crate::theme::CYAN));
+            ui.add_space(12.0);
+            ui.label(RichText::new("Scan speed").size(10.5).color(crate::theme::CYAN_DIM));
+            let mut speed = self.digi_cfg_edit.rf_paint_speed;
+            ui.spacing_mut().slider_width = 150.0;
+            let resp = ui
+                .add(
+                    egui::Slider::new(&mut speed, 0.0625..=1.0)
+                        .logarithmic(true)
+                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
+                        .custom_parser(|s| {
+                            s.trim().trim_end_matches('%').parse::<f64>().ok().map(|p| p / 100.0)
+                        }),
+                )
+                .on_hover_text(
+                    "How fast the text/image is scanned onto the waterfall. Lower is slower and \
+                     more legible; 100% = base rate, 25% (centre) is the default.",
+                );
+            if resp.changed() {
+                self.digi_cfg_edit.rf_paint_speed = speed;
+                cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if transmitting {
                     if crate::chrome::chip(ui, false, "Abort").clicked() {
