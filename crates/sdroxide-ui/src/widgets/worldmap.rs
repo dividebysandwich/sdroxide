@@ -6,7 +6,7 @@
 //! rather than being shifted) and smoothly auto-zooms to frame home plus every
 //! decoded station, re-fitting whenever new stations appear.
 
-use eframe::egui::{Color32, Pos2, Rect, Sense, Ui, pos2, vec2};
+use eframe::egui::{Color32, Pos2, Sense, Ui, pos2, vec2};
 use sdroxide_types::{great_circle_points, land_cell, land_mask_dims};
 
 use crate::theme;
@@ -104,20 +104,22 @@ pub fn show(
     home: Option<(f64, f64)>,
     dx: Option<(f64, f64)>,
     preview: Option<(f64, f64)>,
+    hover: Option<(f64, f64)>,
     stations: &[(f64, f64, f32)],
     tx_active: bool,
     max_h: f32,
 ) {
     let avail_w = ui.available_width();
-    // Natural size is 2:1 by width; fit it within the caller's vertical budget,
-    // preserving aspect so it just gets smaller and centered (never squished).
-    let h = (avail_w * 0.5).clamp(90.0, 300.0).min(max_h);
-    if h < MIN_HEIGHT {
+    if avail_w < MIN_HEIGHT {
         return;
     }
-    let w = (h * 2.0).min(avail_w);
-    let (row, _) = ui.allocate_exact_size(vec2(avail_w, h), Sense::hover());
-    let rect = Rect::from_center_size(row.center(), vec2(w, h));
+    // Fill the caller's width and its (user-draggable) height budget. The map is
+    // no longer aspect-locked to 2:1, so it can be dragged taller than half its
+    // width; the projection adapts (`lat_span = lon_span * aspect`). Capped at a
+    // 1:1 aspect so it never becomes taller than wide.
+    let h = max_h.min(avail_w).max(MIN_HEIGHT);
+    let w = avail_w;
+    let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -238,6 +240,12 @@ pub fn show(
         let c = project(lat, lon);
         p.circle_filled(c, dot_r + 3.5, Color32::from_rgba_unmultiplied(255, 42, 85, 70));
         p.circle_filled(c, 3.0, theme::PINK);
+    }
+    // Bright yellow dot for the decode row hovered in the table (drawn on top).
+    if let Some((lat, lon)) = hover {
+        let c = project(lat, lon);
+        p.circle_filled(c, dot_r + 4.0, Color32::from_rgba_unmultiplied(255, 238, 0, 80));
+        p.circle_filled(c, 3.2, theme::YELLOW);
     }
 
     // Animated pulse travelling home → dx while we transmit toward the contact.

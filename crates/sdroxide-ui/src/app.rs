@@ -147,6 +147,9 @@ pub struct SdroxideApp {
     /// Per decoded grid: (freshest slot_utc, frame-time last seen). Drives the
     /// world-map dots' 2-minute fade-out; entries older than the fade expire.
     digi_station_seen: std::collections::HashMap<String, (i64, f64)>,
+    /// Location of the decode row hovered this frame, shown on the map as a
+    /// bright yellow dot. Frame-scoped (set by the decode list, read by the map).
+    digi_hover_ll: Option<(f64, f64)>,
     /// Decode-list ordering within each turn, and whether to show CQ only.
     digi_sort: DecodeSort,
     /// Sort direction: `true` = descending (strongest / farthest first).
@@ -310,6 +313,7 @@ impl SdroxideApp {
             digi_preview: None,
             map_view: Default::default(),
             digi_station_seen: std::collections::HashMap::new(),
+            digi_hover_ll: None,
             digi_sort: DecodeSort::None,
             digi_sort_desc: true,
             digi_cq_only: false,
@@ -1127,19 +1131,44 @@ impl SdroxideApp {
     /// right. Sits below the (zoomed) waterfall in digital modes.
     fn digi_panel(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let avail = ui.available_size();
+        let handle_w = 7.0;
+        // Decode list takes a user-draggable fraction of the width; the QSO area
+        // gets the rest (each keeps a usable minimum).
+        let left_w = (avail.x * self.view.digi_split_fraction)
+            .clamp(180.0, (avail.x - handle_w - 220.0).max(180.0));
         ui.horizontal_top(|ui| {
-            // Decode list takes the left ~52%; the QSO area gets the rest.
-            // Force a top-down layout: `allocate_ui` would otherwise inherit
-            // the parent `horizontal_top` (left-to-right) and lay the rows out
+            // Force a top-down layout: `allocate_ui` would otherwise inherit the
+            // parent `horizontal_top` (left-to-right) and lay the rows out
             // sideways, overflowing and shoving the QSO column off-screen.
             ui.allocate_ui_with_layout(
-                egui::vec2(avail.x * 0.52, avail.y),
+                egui::vec2(left_w, avail.y),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     self.decode_list(ui, cmds);
                 },
             );
-            ui.separator();
+            // Draggable vertical divider between the decode table and the QSO area.
+            let (hrect, hresp) =
+                ui.allocate_exact_size(egui::vec2(handle_w, avail.y), egui::Sense::click_and_drag());
+            if hresp.hovered() || hresp.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+            if hresp.dragged() {
+                let d = hresp.drag_delta().x / avail.x.max(1.0);
+                self.view.digi_split_fraction = (self.view.digi_split_fraction + d).clamp(0.28, 0.72);
+            }
+            {
+                let p = ui.painter_at(hrect);
+                let hot = hresp.hovered() || hresp.dragged();
+                let col = if hot { crate::theme::CYAN } else { Color32::from_gray(70) };
+                let (cx, cy) = (hrect.center().x, hrect.center().y);
+                for dy in [-16.0f32, 0.0, 16.0] {
+                    p.line_segment(
+                        [egui::pos2(cx, cy + dy - 6.0), egui::pos2(cx, cy + dy + 6.0)],
+                        egui::Stroke::new(2.0, col),
+                    );
+                }
+            }
             ui.vertical(|ui| {
                 self.qso_area(ui, cmds);
             });
@@ -1196,6 +1225,8 @@ impl SdroxideApp {
         // Staged preview change: `None` = no click this frame; `Some(v)` =
         // replace the preview with `v` (`Some(None)` clears it).
         let mut new_preview: Option<Option<(String, (f64, f64))>> = None;
+        // Location of the row hovered this frame → yellow dot on the map.
+        let mut hover_ll: Option<(f64, f64)> = None;
         let cq_only = self.digi_cq_only;
         let sort = self.digi_sort;
         let desc = self.digi_sort_desc;
@@ -1428,6 +1459,9 @@ impl SdroxideApp {
                         egui::StrokeKind::Inside,
                     );
                 }
+                if row.hovered() {
+                    hover_ll = d.grid.as_deref().and_then(sdroxide_types::grid_to_latlon);
+                }
                 if reply {
                     if let Some(from) = &d.from {
                         cmds.push(Command::DigiStartQso {
@@ -1451,6 +1485,7 @@ impl SdroxideApp {
                 gi = end;
             }
         });
+        self.digi_hover_ll = hover_ll;
         if let Some(sel) = new_preview {
             self.digi_preview = sel;
         }
@@ -1513,18 +1548,26 @@ impl SdroxideApp {
         );
 
         ui.add_space(5.0);
-        // World map — drawn only if there is vertical room left for the
-        // essentials below it. The action buttons and the QSO conversation must
-        // always stay visible and usable, so on short windows the map shrinks
-        // (see `worldmap::show`) and then disappears entirely.
+        // World map — its height is a user-draggable fraction of the QSO area,
+        // clamped so the station card + a usable transcript + the action buttons
+        // stay visible. On very short windows it shrinks and then disappears.
         let btn_h = 44.0;
         let gap = 8.0;
-        // Space the map must leave below itself: post-map gap + station card +
-        // pre-transcript gap + a usable transcript + pre-button gap + buttons.
-        const CARD_RESERVE: f32 = 66.0;
-        const TRANSCRIPT_MIN: f32 = 56.0;
-        let map_budget =
-            ui.available_height() - (6.0 + CARD_RESERVE + 5.0 + TRANSCRIPT_MIN + gap + btn_h);
+        let map_handle_h = 7.0;
+        const CARD_RESERVE: f32 = 60.0;
+        let full_h = ui.available_height();
+        let avail_w = ui.available_width();
+        // The map height is a user-draggable fraction of a range: from MIN_HEIGHT
+        // up to whatever still leaves the station card + action buttons room below
+        // (the transcript can shrink to nothing). `digi_map_fraction` slides
+        // linearly across this range, so the divider tracks the cursor 1:1 and the
+        // map genuinely grows/shrinks. Height is capped at the width (aspect ≤ 1).
+        let map_lo = crate::widgets::worldmap::MIN_HEIGHT;
+        let map_hi = (full_h - (map_handle_h + CARD_RESERVE + 5.0 + gap + btn_h))
+            .min(avail_w)
+            .max(map_lo);
+        let map_budget = map_lo + (map_hi - map_lo) * self.view.digi_map_fraction;
+        let hover_ll = self.digi_hover_ll;
         let my_grid = status.as_ref().map(|s| s.config.my_grid.clone()).unwrap_or_default();
         let home_ll = sdroxide_types::grid_to_latlon(&my_grid);
         let dx_grid = status.as_ref().and_then(|s| s.dx_grid.clone());
@@ -1566,11 +1609,34 @@ impl SdroxideApp {
                 home_ll,
                 dx_ll,
                 preview_ll,
+                hover_ll,
                 &stations,
                 tx_active,
                 map_budget,
             );
-            ui.add_space(6.0);
+            // Draggable border between the map and the QSO form below it.
+            let (hrect, hresp) = ui
+                .allocate_exact_size(egui::vec2(ui.available_width(), map_handle_h), egui::Sense::click_and_drag());
+            if hresp.hovered() || hresp.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+            }
+            if hresp.dragged() {
+                // 1:1 with the cursor: a drag of `dy` px moves the map edge `dy` px.
+                let df = hresp.drag_delta().y / (map_hi - map_lo).max(1.0);
+                self.view.digi_map_fraction = (self.view.digi_map_fraction + df).clamp(0.0, 1.0);
+            }
+            {
+                let p = ui.painter_at(hrect);
+                let hot = hresp.hovered() || hresp.dragged();
+                let col = if hot { crate::theme::CYAN } else { Color32::from_gray(70) };
+                let (cx, cy) = (hrect.center().x, hrect.center().y);
+                for dx in [-16.0f32, 0.0, 16.0] {
+                    p.line_segment(
+                        [egui::pos2(cx + dx - 6.0, cy), egui::pos2(cx + dx + 6.0, cy)],
+                        egui::Stroke::new(2.0, col),
+                    );
+                }
+            }
         }
         // Station card.
         crate::chrome::red_panel(ui, |ui| {

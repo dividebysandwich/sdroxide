@@ -21,6 +21,12 @@ pub struct ViewState {
     /// Fraction of the FT8/FT4 layout height used by the operating panel (the
     /// decode list + QSO area); the rest is the waterfall. User-draggable.
     pub digi_panel_fraction: f32,
+    /// Fraction of the FT8/FT4 panel width used by the decode table; the rest is
+    /// the map/QSO area. User-draggable.
+    pub digi_split_fraction: f32,
+    /// Fraction of the QSO area's height given to the world map; the rest is the
+    /// station card + transcript + buttons. User-draggable.
+    pub digi_map_fraction: f32,
     /// Render the S-meter as an analog needle instrument instead of the bar.
     /// Toggled by clicking the meter.
     pub smeter_analog: bool,
@@ -38,6 +44,8 @@ impl Default for ViewState {
             peak_hold: false,
             spectrum_collapsed: false,
             digi_panel_fraction: 0.46,
+            digi_split_fraction: 0.52,
+            digi_map_fraction: 0.6,
             smeter_analog: false,
         }
     }
