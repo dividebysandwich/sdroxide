@@ -10,6 +10,7 @@ pub mod fsq_controller;
 pub mod modem;
 pub mod params;
 pub mod qso;
+pub mod rf_paint_controller;
 pub mod scheduler;
 pub mod squelch;
 pub mod sstv_controller;
@@ -17,6 +18,7 @@ pub mod text_modem;
 
 pub use controller::{DigiAction, DigiController};
 pub use fsq_controller::FsqController;
+pub use rf_paint_controller::RfPaintController;
 pub use sstv_controller::SstvController;
 pub use modem::Ft8Modem;
 pub use params::{DECODE_RATE, DigiParams};

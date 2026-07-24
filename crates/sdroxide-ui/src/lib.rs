@@ -10,6 +10,7 @@ mod download;
 mod help;
 #[cfg(feature = "remote")]
 mod remote;
+mod rf_paint;
 mod sstv;
 pub mod theme;
 mod view;

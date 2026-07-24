@@ -23,6 +23,7 @@ mod psk;
 mod rtty;
 mod resample;
 mod spectrum;
+mod spectrum_paint;
 mod sstv;
 mod thor;
 mod window;
@@ -45,6 +46,10 @@ pub use psk::{BpskCore, PskRx, PskTx, VaricodeRx};
 pub use rtty::{BaudotRx, RttyRx, RttyTx};
 pub use resample::{ComplexResampler, MonoResampler};
 pub use spectrum::SpectrumAnalyzer;
+pub use spectrum_paint::{
+    BAND_HI_HZ as RF_PAINT_BAND_HI, BAND_LO_HZ as RF_PAINT_BAND_LO, CENTER_HZ as RF_PAINT_CENTER,
+    SpectrumPaintTx,
+};
 pub use sstv::{SstvEvent, SstvRx, SstvTx};
 pub use thor::{ThorRx, ThorTx};
 pub use window::blackman_harris;

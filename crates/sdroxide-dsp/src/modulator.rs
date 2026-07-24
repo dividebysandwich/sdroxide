@@ -23,7 +23,7 @@ pub fn make_modulator(mode: Mode, rate: f64) -> Option<Box<dyn Modulator>> {
         // PSK/RTTY, Olivia/Thor/FSQ, and SSTV ride the same USB path.
         Mode::Lsb | Mode::Usb | Mode::Digu | Mode::Digl | Mode::Ft8 | Mode::Ft4
         | Mode::Psk | Mode::Rtty | Mode::Sstv
-        | Mode::Olivia | Mode::Thor | Mode::Fsq => Some(Box::new(SsbMod::new(rate, lo, hi))),
+        | Mode::Olivia | Mode::Thor | Mode::Fsq | Mode::RfPaint => Some(Box::new(SsbMod::new(rate, lo, hi))),
         Mode::Am | Mode::Sam | Mode::Dsb => Some(Box::new(AmMod::new(rate))),
         Mode::Nfm => Some(Box::new(FmMod::new(rate))),
         Mode::Cw | Mode::Wfm | Mode::Spec => None,

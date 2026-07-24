@@ -30,10 +30,13 @@ pub enum Mode {
     Thor,
     /// FSQ (Fast Simple QSO) IFK keyboard mode — undirected/directed/image.
     Fsq,
+    /// RF Paint (Spectrum Painting) — USB underneath; paints text/images
+    /// directly onto the receiver's waterfall. Transmit-only (no decode).
+    RfPaint,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 19] = [
+    pub const ALL: [Mode; 20] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -53,11 +56,12 @@ impl Mode {
         Mode::Olivia,
         Mode::Thor,
         Mode::Fsq,
+        Mode::RfPaint,
     ];
 
-    /// The digital modes handled by a dedicated decode engine over USB
-    /// (slotted FT8/FT4, the continuous keyboard modes, and SSTV).
-    pub const DIGITAL: [Mode; 8] = [
+    /// The digital modes handled by a dedicated decode/encode engine over USB
+    /// (slotted FT8/FT4, the continuous keyboard modes, SSTV, and RF Paint).
+    pub const DIGITAL: [Mode; 9] = [
         Mode::Ft8,
         Mode::Ft4,
         Mode::Psk,
@@ -66,6 +70,7 @@ impl Mode {
         Mode::Thor,
         Mode::Fsq,
         Mode::Sstv,
+        Mode::RfPaint,
     ];
 
     /// True for modes that use a dedicated decode/QSO layer over USB.
@@ -80,6 +85,7 @@ impl Mode {
                 | Mode::Olivia
                 | Mode::Thor
                 | Mode::Fsq
+                | Mode::RfPaint
         )
     }
 
@@ -105,6 +111,12 @@ impl Mode {
         matches!(self, Mode::Sstv)
     }
 
+    /// True for the RF Paint (Spectrum Painting) mode. Forks the digi panel to
+    /// the text/image painting UI and uses its own transmit-only controller.
+    pub fn is_rf_paint(self) -> bool {
+        matches!(self, Mode::RfPaint)
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Mode::Lsb => "LSB",
@@ -126,6 +138,7 @@ impl Mode {
             Mode::Olivia => "OLIVIA",
             Mode::Thor => "THOR",
             Mode::Fsq => "FSQ",
+            Mode::RfPaint => "RFPAINT",
         }
     }
 
@@ -154,7 +167,8 @@ impl Mode {
             | Mode::Sstv
             | Mode::Olivia
             | Mode::Thor
-            | Mode::Fsq => (100.0, 3300.0),
+            | Mode::Fsq
+            | Mode::RfPaint => (100.0, 3300.0),
         }
     }
 
@@ -210,7 +224,8 @@ impl Mode {
             | Mode::Sstv
             | Mode::Olivia
             | Mode::Thor
-            | Mode::Fsq => &[],
+            | Mode::Fsq
+            | Mode::RfPaint => &[],
         }
     }
 }

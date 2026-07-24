@@ -13,7 +13,8 @@ use tracing::{info, warn};
 
 use sdroxide_config::BandStacks;
 use sdroxide_digi::{
-    DigiAction, DigiController, DigiEngine, FsqController, SstvController, TextModemController,
+    DigiAction, DigiController, DigiEngine, FsqController, RfPaintController, SstvController,
+    TextModemController,
 };
 use sdroxide_skimmer::{SkimmerAction, SkimmerController};
 use sdroxide_dsp::{
@@ -1001,6 +1002,8 @@ impl Engine {
     fn make_digi(&self, mode: Mode, tap_rate: f64) -> Box<dyn DigiEngine> {
         if mode.is_sstv() {
             Box::new(SstvController::new(self.digi_config.clone(), tap_rate))
+        } else if mode.is_rf_paint() {
+            Box::new(RfPaintController::new(self.digi_config.clone(), tap_rate))
         } else if mode.is_fsq() {
             Box::new(FsqController::new(self.digi_config.clone(), tap_rate))
         } else if mode.is_text_modem() {
@@ -2158,7 +2161,7 @@ fn rig_mode_class(m: Mode) -> u8 {
     match m {
         Mode::Lsb | Mode::Digl => 0,
         Mode::Usb | Mode::Digu | Mode::Ft8 | Mode::Ft4 | Mode::Psk | Mode::Rtty | Mode::Sstv
-        | Mode::Olivia | Mode::Thor | Mode::Fsq | Mode::Spec => 1,
+        | Mode::Olivia | Mode::Thor | Mode::Fsq | Mode::RfPaint | Mode::Spec => 1,
         Mode::Am | Mode::Sam | Mode::Dsb => 2,
         Mode::Cw => 3,
         Mode::Nfm | Mode::Wfm => 5,
