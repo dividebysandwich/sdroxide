@@ -59,7 +59,9 @@ fn tx_label(tx: &sdroxide_types::TxMeters) -> String {
     match (tx.fwd_w, tx.swr) {
         (Some(w), Some(s)) => format!("{w:.1} W {s:.1}:1"),
         (Some(w), None) => format!("{w:.1} W"),
-        _ => format!("ALC {:.0}%", tx.alc.clamp(0.0, 1.0) * 100.0),
+        // SWR without a power sensor (CAT/TCI rigs that only report SWR).
+        (None, Some(s)) => format!("SWR {s:.1}:1"),
+        (None, None) => format!("ALC {:.0}%", tx.alc.clamp(0.0, 1.0) * 100.0),
     }
 }
 

@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use sdroxide_radio::{Complex32, ControlUpdate, IqSource, Result};
 use sdroxide_tci::{TciHandle, TciUpdate};
+use sdroxide_types::TxTelemetry;
 
 pub struct TciSource {
     handle: TciHandle,
@@ -16,6 +17,9 @@ pub struct TciSource {
     label: String,
     /// Last VFO-within-band offset pushed to the rig (dedup).
     if_offset: f64,
+    /// Latest SWR the rig reported while keyed, latched for the engine's meter
+    /// poll. Cleared on unkey.
+    last_telem: Option<TxTelemetry>,
 }
 
 impl TciSource {
@@ -24,7 +28,14 @@ impl TciSource {
         handle.set_center(center_hz);
         let label =
             format!("TCI {} @ {address} ({:.0} kHz IQ)", handle.device, iq_rate_hz / 1000.0);
-        Ok(TciSource { center: center_hz, scratch: Vec::new(), label, handle, if_offset: 0.0 })
+        Ok(TciSource {
+            center: center_hz,
+            scratch: Vec::new(),
+            label,
+            handle,
+            if_offset: 0.0,
+            last_telem: None,
+        })
     }
 
     pub fn sample_rate_hz(&self) -> f64 {
@@ -95,7 +106,15 @@ impl IqSource for TciSource {
 
     fn tx_end(&mut self) -> Result<()> {
         self.handle.tx_end();
+        self.last_telem = None; // drop the stale SWR reading on unkey
         Ok(())
+    }
+
+    fn tx_telemetry(&mut self) -> Option<TxTelemetry> {
+        if let Some(t) = self.handle.poll_telemetry() {
+            self.last_telem = Some(t);
+        }
+        self.last_telem
     }
 
     fn set_tx_drive(&mut self, frac: f64) {

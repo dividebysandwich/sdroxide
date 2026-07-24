@@ -735,11 +735,14 @@ fn engine_thread(
             next_meters = now + Duration::from_millis(100);
             let meters = if engine.tx_active {
                 let alc = engine.tx.as_ref().map(|t| t.alc_peak).unwrap_or(0.0);
+                // CAT/TCI rigs report real forward power / SWR; HackRF and other
+                // IQ sources have no such sensor and leave both `None` (the meter
+                // then falls back to showing drive-side ALC).
+                let tele = engine.source.tx_telemetry().unwrap_or_default();
                 Some(Meters {
                     s_dbm: -127.0,
                     adc_peak_dbfs: 0.0,
-                    // No power/SWR sensors on HackRF; expose drive-side ALC.
-                    tx: Some(TxMeters { fwd_w: None, swr: None, alc }),
+                    tx: Some(TxMeters { fwd_w: tele.fwd_w, swr: tele.swr, alc }),
                 })
             } else {
                 engine.main.as_ref().and_then(|c| c.power_dbfs()).map(|p| Meters {
@@ -1851,6 +1854,15 @@ impl Engine {
                     &mut self.state,
                 );
             }
+            // Assert the app's current mode and power levels to the rig before
+            // keying, so a CAT/TCI rig transmits in the right modulation at the
+            // right drive even when the operator hasn't touched those controls
+            // this session — otherwise the rig keeps its own (e.g. 0 % drive → no
+            // output, or a stale/empty modulation). No-ops for IQ sources, which
+            // apply mode and drive in the modulator chain instead.
+            let _ = self.source.set_control_mode(self.state.rx[0].mode);
+            self.source.set_tx_drive(self.state.tx.drive as f64);
+            self.source.set_tune_drive(self.state.tx.tune_drive as f64);
             // In audio mode `tx_begin` just asserts CAT PTT; there is no
             // modulator/DUC (the rig modulates the audio we feed its sound card).
             let begin_rate = if self.audio_mode { self.radio_fs } else { self.state.sample_rate };

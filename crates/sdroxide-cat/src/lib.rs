@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use sdroxide_types::{
     CatConfig, CatFamily, DigiMode, LineState, Mode, ModeControl, Parity, PttMethod, SerialConfig,
-    StopBits,
+    StopBits, TxTelemetry,
 };
 use tracing::{info, warn};
 
@@ -23,6 +23,8 @@ use tracing::{info, warn};
 pub enum CatUpdate {
     Freq(f64),
     Mode(Mode),
+    /// TX SWR reading (routed to the telemetry channel, not the control channel).
+    Swr(f32),
 }
 
 /// Enumerate serial ports for the settings UI. USB-style ports (ttyACM/ttyUSB,
@@ -54,6 +56,11 @@ trait Protocol: Send {
     fn ptt(&self, on: bool) -> Vec<u8>;
     /// Frames that request the rig's current freq + mode.
     fn poll_requests(&self) -> Vec<Vec<u8>>;
+    /// Frames requesting TX telemetry (SWR / power), polled only while keyed.
+    /// Empty for families with no such read.
+    fn tx_telemetry_requests(&self) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
     fn parse(&mut self, buf: &mut Vec<u8>) -> Vec<CatUpdate>;
 }
 
@@ -75,6 +82,9 @@ impl Protocol for Civ {
     fn poll_requests(&self) -> Vec<Vec<u8>> {
         vec![civ::read_freq_frame(self.radio), civ::read_mode_frame(self.radio)]
     }
+    fn tx_telemetry_requests(&self) -> Vec<Vec<u8>> {
+        vec![civ::read_swr_frame(self.radio)]
+    }
     fn parse(&mut self, buf: &mut Vec<u8>) -> Vec<CatUpdate> {
         let mut out = Vec::new();
         for reply in civ::parse_frames(buf) {
@@ -93,6 +103,12 @@ impl Protocol for Civ {
                         if let Some(m) = civ::civ_to_mode(b) {
                             out.push(CatUpdate::Mode(m));
                         }
+                    }
+                }
+                // Meter read (0x15): we only request the SWR sub-meter (0x12).
+                0x15 => {
+                    if let Some(swr) = civ::parse_swr_reply(&reply.data) {
+                        out.push(CatUpdate::Swr(swr));
                     }
                 }
                 _ => {}
@@ -120,6 +136,7 @@ enum CatCmd {
 pub struct CatHandle {
     cmd_tx: Sender<CatCmd>,
     event_rx: Receiver<CatUpdate>,
+    telem_rx: Receiver<TxTelemetry>,
 }
 
 impl CatHandle {
@@ -135,6 +152,12 @@ impl CatHandle {
     /// Non-blocking drain of rig-reported freq/mode changes.
     pub fn poll(&self) -> Vec<CatUpdate> {
         self.event_rx.try_iter().collect()
+    }
+    /// Latest TX telemetry (SWR) the rig reported, or `None` if nothing new
+    /// arrived since the last call. A default (all-`None`) value is pushed when
+    /// PTT drops, so the reading clears on unkey.
+    pub fn poll_telemetry(&self) -> Option<TxTelemetry> {
+        self.telem_rx.try_iter().last()
     }
 }
 
@@ -167,6 +190,7 @@ pub fn query_once(cfg: &CatConfig) -> Option<(Option<f64>, Option<Mode>)> {
                     match u {
                         CatUpdate::Freq(hz) => freq = Some(hz),
                         CatUpdate::Mode(m) => mode = Some(m),
+                        CatUpdate::Swr(_) => {} // not requested during startup query
                     }
                 }
             }
@@ -179,11 +203,12 @@ pub fn query_once(cfg: &CatConfig) -> Option<(Option<f64>, Option<Mode>)> {
 pub fn spawn(cfg: CatConfig) -> CatHandle {
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
     let (event_tx, event_rx) = crossbeam_channel::unbounded();
+    let (telem_tx, telem_rx) = crossbeam_channel::unbounded();
     std::thread::Builder::new()
         .name("sdroxide-cat".into())
-        .spawn(move || serial_thread(cfg, cmd_rx, event_tx))
+        .spawn(move || serial_thread(cfg, cmd_rx, event_tx, telem_tx))
         .expect("spawn cat thread");
-    CatHandle { cmd_tx, event_rx }
+    CatHandle { cmd_tx, event_rx, telem_rx }
 }
 
 fn map_parity(p: Parity) -> serialport::Parity {
@@ -229,7 +254,12 @@ fn apply_line(port: &mut dyn serialport::SerialPort, forced: LineState, rts: boo
     let _ = if rts { port.write_request_to_send(level) } else { port.write_data_terminal_ready(level) };
 }
 
-fn serial_thread(cfg: CatConfig, cmd_rx: Receiver<CatCmd>, event_tx: Sender<CatUpdate>) {
+fn serial_thread(
+    cfg: CatConfig,
+    cmd_rx: Receiver<CatCmd>,
+    event_tx: Sender<CatUpdate>,
+    telem_tx: Sender<TxTelemetry>,
+) {
     let mut protocol = make_protocol(&cfg);
     let poll_period = Duration::from_secs_f32((1.0 / cfg.poll_hz.max(0.2)).min(5.0));
     // What mode to command the rig into for a given app mode. FT8/FT4 use the
@@ -288,6 +318,9 @@ fn serial_thread(cfg: CatConfig, cmd_rx: Receiver<CatCmd>, event_tx: Sender<CatU
         let mut rx = Vec::with_capacity(256);
         let mut read_buf = [0u8; 256];
         let mut next_poll = Instant::now();
+        // TX telemetry (SWR) is polled faster than freq/mode, but only while keyed.
+        let mut next_telem = Instant::now();
+        let mut ptt = false;
         let mut pending_freq: Option<f64> = None;
         let mut last_sent_freq: Option<f64> = None;
         let mut freq_deadline = Instant::now();
@@ -316,6 +349,13 @@ fn serial_thread(cfg: CatConfig, cmd_rx: Receiver<CatCmd>, event_tx: Sender<CatU
                         };
                         if failed {
                             break 'io true;
+                        }
+                        ptt = on;
+                        if on {
+                            next_telem = Instant::now(); // start polling SWR at once
+                        } else {
+                            // Clear the reading so the meter drops SWR on unkey.
+                            let _ = telem_tx.send(TxTelemetry::default());
                         }
                     }
                     Ok(CatCmd::Stop) => return,
@@ -348,12 +388,28 @@ fn serial_thread(cfg: CatConfig, cmd_rx: Receiver<CatCmd>, event_tx: Sender<CatU
                 }
             }
 
+            // While keyed, poll TX telemetry (SWR) at ~5 Hz.
+            if ptt && Instant::now() >= next_telem {
+                next_telem = Instant::now() + Duration::from_millis(200);
+                for req in protocol.tx_telemetry_requests() {
+                    if port.write_all(&req).is_err() {
+                        break 'io true;
+                    }
+                }
+            }
+
             // Read whatever arrived; parse and emit updates.
             match port.read(&mut read_buf) {
                 Ok(0) => {}
                 Ok(n) => {
                     rx.extend_from_slice(&read_buf[..n]);
                     for u in protocol.parse(&mut rx) {
+                        // SWR is telemetry, not a control change: route it to the
+                        // telemetry channel and skip the freq/mode dedup below.
+                        if let CatUpdate::Swr(v) = u {
+                            let _ = telem_tx.send(TxTelemetry { fwd_w: None, swr: Some(v) });
+                            continue;
+                        }
                         // Forward only genuine changes (poll repeats otherwise).
                         let changed = match u {
                             CatUpdate::Freq(hz) => {
@@ -370,6 +426,7 @@ fn serial_thread(cfg: CatConfig, cmd_rx: Receiver<CatCmd>, event_tx: Sender<CatU
                                 }
                                 c
                             }
+                            CatUpdate::Swr(_) => false, // handled above
                         };
                         if changed {
                             let _ = event_tx.send(u);

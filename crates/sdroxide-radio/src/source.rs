@@ -74,6 +74,13 @@ pub trait IqSource: Send {
     fn set_tx_drive(&mut self, _frac: f64) {}
     /// Set the TUNE drive as a `0..1` fraction (see [`Self::set_tx_drive`]).
     fn set_tune_drive(&mut self, _frac: f64) {}
+    /// Latest forward-power / SWR the rig reported, polled by the engine while
+    /// transmitting. `None` when the source has no such sensor or hasn't
+    /// produced a reading yet; individual fields inside may also be `None`.
+    /// Default: none.
+    fn tx_telemetry(&mut self) -> Option<sdroxide_types::TxTelemetry> {
+        None
+    }
     /// Offset (Hz) of the operator's VFO from the IQ centre, so a rig that keeps
     /// its own VFO within a wideband IQ stream (TCI) can track the dial while we
     /// tune with a software DDC. No-op for sources whose VFO already equals the

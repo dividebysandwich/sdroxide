@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
 use rtrb::{Consumer, Producer, RingBuffer};
-use sdroxide_types::Mode;
+use sdroxide_types::{Mode, TxTelemetry};
 use tungstenite::{Message, WebSocket};
 
 use crate::protocol as p;
@@ -54,6 +54,7 @@ pub struct TciHandle {
     rx: Consumer<f32>,
     tx: Producer<f32>,
     updates: Receiver<TciUpdate>,
+    telem_rx: Receiver<TxTelemetry>,
     join: Option<JoinHandle<()>>,
     pub device: String,
     pub sample_rate_hz: f64,
@@ -124,6 +125,9 @@ impl TciHandle {
         // The TX-audio path rides the (separate) audio stream; set its sample
         // rate up front. The stream itself is started only while transmitting.
         send_text(&mut ws, p::audio_samplerate(TX_RATE_HZ));
+        // Subscribe to TX telemetry so the rig broadcasts `tx_sensors:` (forward
+        // power + SWR) while transmitting — off by default in ExpertSDR2/TCI.
+        send_text(&mut ws, p::tx_sensors_enable(true));
         let _ = ws.flush();
 
         let rx_cap = ((iq_rate_hz * 2.0 * 0.5) as usize).next_power_of_two().max(1 << 16);
@@ -131,6 +135,7 @@ impl TciHandle {
         let (tx_prod, tx_cons) = RingBuffer::<f32>::new(1 << 15);
         let (ctrl_tx, ctrl_rx) = crossbeam_channel::unbounded();
         let (upd_tx, upd_rx) = crossbeam_channel::unbounded();
+        let (telem_tx, telem_rx) = crossbeam_channel::unbounded();
 
         let thread = NetThread {
             ws,
@@ -138,6 +143,7 @@ impl TciHandle {
             tx: tx_cons,
             ctrl: ctrl_rx,
             updates: upd_tx,
+            telem: telem_tx,
             center: 0.0,
             if_hz: 0.0,
             rx_if: 0.0,
@@ -145,6 +151,8 @@ impl TciHandle {
             mode: String::new(),
             ptt: false,
             tx_pkts: 0,
+            tx_fwd_w: None,
+            tx_swr: None,
         };
         let join = std::thread::Builder::new()
             .name("sdroxide-tci".into())
@@ -156,6 +164,7 @@ impl TciHandle {
             rx: rx_cons,
             tx: tx_prod,
             updates: upd_rx,
+            telem_rx,
             join: Some(join),
             device,
             sample_rate_hz: iq_rate_hz,
@@ -232,6 +241,13 @@ impl TciHandle {
     pub fn poll_updates(&self) -> Vec<TciUpdate> {
         self.updates.try_iter().collect()
     }
+
+    /// Latest TX telemetry (SWR) the rig reported, or `None` if nothing new
+    /// arrived since the last call. A default (all-`None`) value is pushed when
+    /// TX stops, so the reading clears on unkey.
+    pub fn poll_telemetry(&self) -> Option<TxTelemetry> {
+        self.telem_rx.try_iter().last()
+    }
 }
 
 impl Drop for TciHandle {
@@ -249,6 +265,8 @@ struct NetThread {
     tx: Consumer<f32>,
     ctrl: Receiver<Ctrl>,
     updates: Sender<TciUpdate>,
+    /// TX telemetry (SWR) parsed from rig status text.
+    telem: Sender<TxTelemetry>,
     center: f64,
     /// Current rig IF offset (rig VFO = center + if_hz).
     if_hz: f64,
@@ -263,6 +281,11 @@ struct NetThread {
     ptt: bool,
     /// TX-audio packets sent this key-down (for diagnostics).
     tx_pkts: u64,
+    /// Latest TX telemetry, aggregated across `tx_sensors`/`tx_swr`/`tx_power`
+    /// (each may arrive separately), emitted as a combined snapshot. Reset per
+    /// key-down.
+    tx_fwd_w: Option<f32>,
+    tx_swr: Option<f32>,
 }
 
 impl NetThread {
@@ -318,6 +341,9 @@ impl NetThread {
                         send_text(&mut self.ws, p::audio_start(RX));
                         send_text(&mut self.ws, p::trx(RX, true, true));
                         self.ptt = true;
+                        // Start this key-down with no stale telemetry.
+                        self.tx_fwd_w = None;
+                        self.tx_swr = None;
                         dirty = true;
                         tracing::debug!(tx_freq, off, mode = %self.mode, "TCI TX on");
                     }
@@ -332,6 +358,10 @@ impl NetThread {
                         self.if_hz = self.rx_if;
                         self.if_cmd_at = Some(Instant::now());
                         self.ptt = false;
+                        // Clear telemetry so the meter drops the reading on unkey.
+                        self.tx_fwd_w = None;
+                        self.tx_swr = None;
+                        let _ = self.telem.send(TxTelemetry::default());
                         dirty = true;
                         tracing::debug!("TCI TX off");
                     }
@@ -472,8 +502,71 @@ impl NetThread {
                         }
                     }
                 }
+                "tx_sensors" => {
+                    // tx_sensors:<trx>,<mic_db>,<fwd_pwr_w>,<rev_pwr_w>,<swr>.
+                    // Broadcast at ~4-10 Hz during TX once tx_sensors_enable is on.
+                    let f: Vec<&str> = args.split(',').collect();
+                    if f.first() == Some(&"0") && f.len() >= 5 {
+                        tracing::debug!(args = %args, "TCI tx_sensors");
+                        self.tx_fwd_w = parse_watts(f[2]);
+                        self.tx_swr = parse_swr(f[4]);
+                        self.emit_tx_telem();
+                    }
+                }
+                // Some builds send SWR / forward power as separate messages, in
+                // addition to or instead of the `tx_sensors` fields.
+                "tx_swr" => {
+                    if let Some(v) = parse_swr(args.rsplit(',').next().unwrap_or("")) {
+                        self.tx_swr = Some(v);
+                        self.emit_tx_telem();
+                    }
+                }
+                "tx_power" | "tx_forward_power" => {
+                    if let Some(v) = parse_watts(args.rsplit(',').next().unwrap_or("")) {
+                        self.tx_fwd_w = Some(v);
+                        self.emit_tx_telem();
+                    }
+                }
                 _ => {}
             }
         }
+    }
+
+    /// Emit the current aggregated TX telemetry snapshot.
+    fn emit_tx_telem(&self) {
+        let _ = self.telem.send(TxTelemetry { fwd_w: self.tx_fwd_w, swr: self.tx_swr });
+    }
+}
+
+/// Parse a forward/reverse power field (watts): finite and non-negative.
+fn parse_watts(s: &str) -> Option<f32> {
+    s.trim().parse::<f32>().ok().filter(|w| w.is_finite() && *w >= 0.0)
+}
+
+/// Parse an SWR field (ratio): finite and physically valid (>= 1.0).
+fn parse_swr(s: &str) -> Option<f32> {
+    s.trim().parse::<f32>().ok().filter(|v| v.is_finite() && (1.0..=100.0).contains(v))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tx_sensors_fields_parse() {
+        // tx_sensors:<trx>,<mic_db>,<fwd_pwr>,<rev_pwr>,<swr>
+        let f: Vec<&str> = "0,-12.0,4.8,0.2,1.4".split(',').collect();
+        assert_eq!(parse_watts(f[2]), Some(4.8)); // forward power (W)
+        assert_eq!(parse_swr(f[4]), Some(1.4)); // SWR ratio
+    }
+
+    #[test]
+    fn rejects_out_of_range_and_garbage() {
+        assert_eq!(parse_swr("0.5"), None); // SWR < 1.0 is unphysical
+        assert_eq!(parse_swr("nan"), None);
+        assert_eq!(parse_swr("  1.8 "), Some(1.8)); // tolerates whitespace
+        assert_eq!(parse_watts("-1.0"), None); // negative power rejected
+        assert_eq!(parse_watts("x"), None);
+        assert_eq!(parse_watts("0"), Some(0.0)); // zero forward power is valid
     }
 }

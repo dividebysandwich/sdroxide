@@ -8,7 +8,7 @@
 use sdroxide_dsp::MonoResampler;
 use sdroxide_radio::rtrb;
 use sdroxide_radio::{Complex32, ControlUpdate, IqSource, Result};
-use sdroxide_types::{CatConfig, Mode, SoundFormat};
+use sdroxide_types::{CatConfig, Mode, SoundFormat, TxTelemetry};
 
 pub struct AudioCatSource {
     // RX audio from the rig (mono for demod, interleaved L/R for IQ). `None`
@@ -31,6 +31,10 @@ pub struct AudioCatSource {
     /// Warning captured at open time (RX device unavailable / mono-for-IQ),
     /// surfaced to the UI. `None` when RX came up cleanly.
     status: Option<String>,
+    /// Latest SWR the rig reported while keyed (via CI-V meter reads), held so
+    /// the engine's 100 ms meter poll sees the most recent value between the
+    /// rig's ~5 Hz updates. Cleared on unkey.
+    last_telem: Option<TxTelemetry>,
 }
 
 impl AudioCatSource {
@@ -115,6 +119,7 @@ impl AudioCatSource {
             center,
             label,
             status,
+            last_telem: None,
         })
     }
 }
@@ -183,9 +188,11 @@ impl IqSource for AudioCatSource {
         self.cat
             .poll()
             .into_iter()
-            .map(|u| match u {
-                sdroxide_cat::CatUpdate::Freq(hz) => ControlUpdate::Freq(hz),
-                sdroxide_cat::CatUpdate::Mode(m) => ControlUpdate::Mode(m),
+            .filter_map(|u| match u {
+                sdroxide_cat::CatUpdate::Freq(hz) => Some(ControlUpdate::Freq(hz)),
+                sdroxide_cat::CatUpdate::Mode(m) => Some(ControlUpdate::Mode(m)),
+                // SWR arrives on the separate telemetry channel, not here.
+                sdroxide_cat::CatUpdate::Swr(_) => None,
             })
             .collect()
     }
@@ -202,7 +209,17 @@ impl IqSource for AudioCatSource {
 
     fn tx_end(&mut self) -> Result<()> {
         self.cat.set_ptt(false);
+        self.last_telem = None; // drop the stale SWR reading on unkey
         Ok(())
+    }
+
+    fn tx_telemetry(&mut self) -> Option<TxTelemetry> {
+        // The CI-V thread polls SWR at ~5 Hz; latch its latest reading so the
+        // engine's 100 ms meter tick always has a value to show.
+        if let Some(t) = self.cat.poll_telemetry() {
+            self.last_telem = Some(t);
+        }
+        self.last_telem
     }
 
     fn tx_write_audio(&mut self, audio: &[f32]) -> Result<()> {

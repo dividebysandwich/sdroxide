@@ -157,6 +157,12 @@ pub fn drive(rx: u32, percent: u32) -> String {
 pub fn tune_drive(rx: u32, percent: u32) -> String {
     format!("tune_drive:{rx},{};", percent.min(100))
 }
+/// Enable/disable periodic TX telemetry (forward/reverse power + SWR) broadcast
+/// during transmit. ExpertSDR2/TCI only pushes `tx_sensors:` (and `tx_swr:` /
+/// `tx_power:`) once this is turned on; without it no TX metering arrives.
+pub fn tx_sensors_enable(on: bool) -> String {
+    format!("tx_sensors_enable:{on};")
+}
 pub fn rx_enable(rx: u32, on: bool) -> String {
     format!("rx_enable:{rx},{on};")
 }
@@ -239,6 +245,8 @@ mod tests {
         assert_eq!(drive(0, 40), "drive:0,40;");
         assert_eq!(drive(0, 250), "drive:0,100;"); // clamped to 100 %
         assert_eq!(tune_drive(0, 10), "tune_drive:0,10;");
+        assert_eq!(tx_sensors_enable(true), "tx_sensors_enable:true;");
+        assert_eq!(tx_sensors_enable(false), "tx_sensors_enable:false;");
     }
 
     #[test]

@@ -98,6 +98,53 @@ pub fn read_mode_frame(radio: u8) -> Vec<u8> {
 pub fn ptt_frame(radio: u8, on: bool) -> Vec<u8> {
     frame(radio, 0x1C, &[0x00, on as u8])
 }
+/// Read the SWR meter (Icom cmd `0x15` sub `0x12`). Only meaningful while
+/// transmitting; the rig answers with a 0..255 reading (see [`swr_from_reading`]).
+pub fn read_swr_frame(radio: u8) -> Vec<u8> {
+    frame(radio, 0x15, &[0x12])
+}
+
+/// Decode Icom's 2-byte BCD meter reading (`0000..0255`) to a plain integer.
+/// `data` is the payload after the meter sub-command byte.
+fn decode_meter(data: &[u8]) -> Option<u32> {
+    let bcd = |b: u8| -> Option<u32> {
+        let (hi, lo) = ((b >> 4) as u32, (b & 0x0f) as u32);
+        (hi <= 9 && lo <= 9).then_some(hi * 10 + lo)
+    };
+    let (a, b) = (data.first()?, data.get(1)?);
+    Some(bcd(*a)? * 100 + bcd(*b)?)
+}
+
+/// Map an Icom SWR-meter reading (`0..255`) to an SWR ratio via piecewise-linear
+/// interpolation over the standard calibration breakpoints (matching Hamlib's
+/// Icom SWR curve: 0→1.0, 48→1.5, 80→2.0, 120→3.0), extended past 3:1 for the
+/// rare high-SWR case. Clamped to the table ends.
+fn swr_from_reading(reading: u32) -> f32 {
+    const CAL: &[(f32, f32)] =
+        &[(0.0, 1.0), (48.0, 1.5), (80.0, 2.0), (120.0, 3.0), (160.0, 5.0), (255.0, 10.0)];
+    let r = reading as f32;
+    if r <= CAL[0].0 {
+        return CAL[0].1;
+    }
+    for w in CAL.windows(2) {
+        let (x0, y0) = w[0];
+        let (x1, y1) = w[1];
+        if r <= x1 {
+            return y0 + (y1 - y0) * (r - x0) / (x1 - x0);
+        }
+    }
+    CAL[CAL.len() - 1].1
+}
+
+/// Parse an SWR-meter reply payload (Icom cmd `0x15`): the sub-command byte
+/// followed by the BCD reading. Returns the SWR ratio, or `None` if the reply
+/// isn't the SWR meter (`0x12`) or is malformed.
+pub fn parse_swr_reply(data: &[u8]) -> Option<f32> {
+    if data.first() != Some(&0x12) {
+        return None;
+    }
+    Some(swr_from_reading(decode_meter(&data[1..])?))
+}
 
 /// A parsed reply from the rig (payload after `<cmd>`, addresses stripped).
 #[derive(Debug, Clone, PartialEq)]
@@ -181,6 +228,23 @@ mod tests {
             frames.iter().filter(|f| f.cmd == 0x03 && f.data.len() >= 5).filter_map(|f| decode_freq(&f.data)).collect();
         assert_eq!(freqs, vec![7_055_000.0]);
         assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn swr_meter_decodes_and_scales() {
+        // Reply payload = sub-command 0x12 followed by the 2-byte BCD reading.
+        // Calibration breakpoints map exactly: 0→1.0, 48→1.5, 80→2.0, 120→3.0.
+        let swr = |reading_bcd: [u8; 2]| parse_swr_reply(&[0x12, reading_bcd[0], reading_bcd[1]]);
+        assert_eq!(swr([0x00, 0x00]), Some(1.0)); // reading 0
+        assert_eq!(swr([0x00, 0x48]), Some(1.5)); // reading 48
+        assert_eq!(swr([0x00, 0x80]), Some(2.0)); // reading 80
+        assert_eq!(swr([0x01, 0x20]), Some(3.0)); // reading 120
+        // Midpoint of the 0..48 segment interpolates linearly to 1.25.
+        assert_eq!(swr([0x00, 0x24]), Some(1.25)); // reading 24
+        // A malformed reading (bad BCD nibble) yields None, not a bogus SWR.
+        assert_eq!(swr([0x00, 0x0f]), None);
+        // The wrong meter sub-command is ignored (we only read SWR / 0x12).
+        assert_eq!(parse_swr_reply(&[0x11, 0x00, 0x50]), None);
     }
 
     #[test]

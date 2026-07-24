@@ -41,7 +41,7 @@ pub use geo::{
     land_cell, land_mask_dims,
 };
 pub use memory::{BandStackEntry, MemoryChannel};
-pub use meters::{Meters, TxMeters};
+pub use meters::{Meters, TxMeters, TxTelemetry};
 pub use mode::{AgcMode, Mode, NrLevel};
 pub use radio::{
     Backend, CatConfig, CatFamily, DigiMode, HpsdrConfig, HpsdrDevice, LineState, ModeControl,
