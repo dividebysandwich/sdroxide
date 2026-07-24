@@ -133,7 +133,7 @@ impl Default for Help {
     fn default() -> Self {
         let doc = Doc::parse(MANUAL_MD);
         let active = doc.nav.first().map(|n| n.slug.clone()).unwrap_or_default();
-        Help { open: true, doc, textures: HashMap::new(), scroll_to: None, scroll_frames: 0, active }
+        Help { open: false, doc, textures: HashMap::new(), scroll_to: None, scroll_frames: 0, active }
     }
 }
 
