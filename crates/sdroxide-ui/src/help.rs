@@ -180,7 +180,16 @@ impl Help {
             .min_width(560.0)
             .min_height(360.0)
             .show(ctx, |ui| {
-                let full_h = ui.available_height();
+                // egui's resizable window never shrinks and grows every frame to
+                // `max(desired_size, last_content_size)` (see egui resize.rs). We
+                // allocate each column to exactly the available width/height, and
+                // egui rounds every widget rect to the pixel grid independently, so
+                // the summed columns can land a hair larger than the window — which
+                // the ratchet then locks in and repeats until the window fills the
+                // screen. A few pixels of slack keeps the content strictly inside
+                // the window so its size stays put.
+                const SLACK: f32 = 2.0;
+                let full_h = (ui.available_height() - SLACK).max(0.0);
                 let mut actions = Actions::default();
                 let mut nav_click: Option<String> = None;
 
@@ -237,7 +246,9 @@ impl Help {
                     }
 
                     // --- Right: rendered manual (own scroll area) ---
-                    let content_w = ui.available_width();
+                    // Slack (see above) so the two panes never quite reach the
+                    // window edge, which would ratchet the window wider each frame.
+                    let content_w = (ui.available_width() - SLACK).max(0.0);
                     ui.allocate_ui_with_layout(
                         vec2(content_w, full_h),
                         Layout::top_down(Align::Min),
