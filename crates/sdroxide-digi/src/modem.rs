@@ -123,10 +123,15 @@ fn parse_message(text: &str) -> (Option<String>, Option<String>, Option<String>,
 }
 
 fn is_grid(t: &str) -> bool {
+    // "RR73" is a sign-off, not a locator, though it is syntactically a valid
+    // grid (and would plot at ~83°N/175°E). Never treat it as a position.
+    if t == "RR73" {
+        return false;
+    }
     let b = t.as_bytes();
     b.len() == 4
-        && b[0].is_ascii_uppercase()
-        && b[1].is_ascii_uppercase()
+        && (b'A'..=b'R').contains(&b[0].to_ascii_uppercase()) // Maidenhead fields A..R
+        && (b'A'..=b'R').contains(&b[1].to_ascii_uppercase())
         && b[2].is_ascii_digit()
         && b[3].is_ascii_digit()
 }
@@ -157,6 +162,14 @@ mod tests {
         assert_eq!(to.as_deref(), Some("AB1CD"));
         assert_eq!(from.as_deref(), Some("W9XYZ"));
         assert_eq!(grid.as_deref(), Some("EM48"));
+
+        // "RR73" is a sign-off, not a locator — it must not be read as a grid.
+        let (_, from, grid, _) = parse_message("AB1CD W9XYZ RR73");
+        assert_eq!(from.as_deref(), Some("W9XYZ"));
+        assert_eq!(grid, None, "RR73 must not parse as a grid position");
+        // Invalid Maidenhead fields (S..Z) aren't grids either.
+        assert!(!is_grid("ZZ99"));
+        assert!(is_grid("FN42"));
     }
 
     #[test]

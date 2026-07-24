@@ -130,6 +130,11 @@ pub struct SdroxideApp {
     /// The last decode the user clicked (not REPLY): its call and map
     /// location, shown as a faint preview marker distinct from the active DX.
     digi_preview: Option<(String, (f64, f64))>,
+    /// Animated centre/zoom of the FT8 world map (eased toward the fit target).
+    map_view: crate::widgets::worldmap::MapView,
+    /// Per decoded grid: (freshest slot_utc, frame-time last seen). Drives the
+    /// world-map dots' 2-minute fade-out; entries older than the fade expire.
+    digi_station_seen: std::collections::HashMap<String, (i64, f64)>,
     /// Voice-mode view span saved on entering FT8/FT4 (which locks the view to
     /// the narrow sub-band), restored on leaving so the panadapter isn't left
     /// stuck zoomed in.
@@ -286,6 +291,8 @@ impl SdroxideApp {
             fsq_img_inbox: std::sync::Arc::new(std::sync::Mutex::new(None)),
             digi_cfg_seeded: false,
             digi_preview: None,
+            map_view: Default::default(),
+            digi_station_seen: std::collections::HashMap::new(),
             pre_digi_view: None,
             show_logbook: false,
             log_edit: None,
@@ -1414,20 +1421,43 @@ impl SdroxideApp {
         // A clicked (but not yet answered) decode shows as a faint preview.
         let preview_ll = self.digi_preview.as_ref().map(|(_, ll)| *ll);
         let tx_active = status.as_ref().map(|s| s.transmitting).unwrap_or(false);
-        // Every decoded station with a known grid, as background white dots.
-        // Dedup by grid so repeated decodes from one station don't stack.
-        let stations: Vec<(f64, f64)> = {
-            let mut seen = std::collections::HashSet::new();
-            self.digi_decodes
-                .iter()
-                .filter_map(|d| d.grid.as_deref())
-                .filter(|g| seen.insert(g.to_string()))
-                .filter_map(sdroxide_types::grid_to_latlon)
-                .collect()
-        };
+        // White station dots fade over 2 minutes since a station was last
+        // decoded, then expire (dropped from the map and from the zoom fit).
+        // Ages use egui frame time (monotonic, works native + wasm); each grid
+        // remembers the frame it was last freshly decoded in.
+        const STATION_FADE_S: f64 = 120.0;
+        let now_t = ui.input(|i| i.time);
+        let fresh: Vec<(String, i64)> = self
+            .digi_decodes
+            .iter()
+            .filter_map(|d| d.grid.as_deref().map(|g| (g.to_string(), d.slot_utc)))
+            .collect();
+        for (grid, slot) in fresh {
+            let e = self.digi_station_seen.entry(grid).or_insert((i64::MIN, now_t));
+            if slot > e.0 {
+                *e = (slot, now_t); // refreshed → dot returns to full brightness
+            }
+        }
+        self.digi_station_seen.retain(|_, &mut (_, seen)| now_t - seen < STATION_FADE_S);
+        let stations: Vec<(f64, f64, f32)> = self
+            .digi_station_seen
+            .iter()
+            .filter_map(|(grid, &(_, seen))| {
+                let (lat, lon) = sdroxide_types::grid_to_latlon(grid)?;
+                let alpha = (1.0 - (now_t - seen) / STATION_FADE_S).clamp(0.0, 1.0) as f32;
+                Some((lat, lon, alpha))
+            })
+            .collect();
         if map_budget >= crate::widgets::worldmap::MIN_HEIGHT {
             crate::widgets::worldmap::show(
-                ui, home_ll, dx_ll, preview_ll, &stations, tx_active, map_budget,
+                ui,
+                &mut self.map_view,
+                home_ll,
+                dx_ll,
+                preview_ll,
+                &stations,
+                tx_active,
+                map_budget,
             );
             ui.add_space(6.0);
         }
