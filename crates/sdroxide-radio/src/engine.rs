@@ -268,6 +268,11 @@ impl RxChain {
         }
         if self.nr_level.is_on() {
             self.nr.process(&mut self.audio_buf);
+            // Suppression lowers the level; boost it back up per NR strength.
+            let g = self.nr_level.makeup_gain();
+            for s in &mut self.audio_buf {
+                *s = (*s * g).clamp(-1.0, 1.0);
+            }
         }
 
         // Squelch: gate on post-filter (pre-AGC) power, smoothed ~10 ms so
@@ -838,6 +843,11 @@ impl Engine {
         }
         if self.audio_nr_level.is_on() {
             self.audio_nr.process(&mut self.audio_re);
+            // Suppression lowers the level; boost it back up per NR strength.
+            let g = self.audio_nr_level.makeup_gain();
+            for s in &mut self.audio_re {
+                *s = (*s * g).clamp(-1.0, 1.0);
+            }
         }
 
         // Speaker path: resample radio_fs → out_rate, apply volume/mute.

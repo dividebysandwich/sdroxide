@@ -277,6 +277,18 @@ impl NrLevel {
             NrLevel::High => (2.0, 0.07),
         }
     }
+
+    /// Make-up gain applied to the listener audio after noise reduction:
+    /// suppression lowers the overall level (more so at higher settings), so a
+    /// progressively larger boost keeps the perceived loudness roughly constant.
+    pub fn makeup_gain(self) -> f32 {
+        match self {
+            NrLevel::Off => 1.0,
+            NrLevel::Low => 1.3,
+            NrLevel::Medium => 1.7,
+            NrLevel::High => 2.1,
+        }
+    }
 }
 
 /// AGC behavior for a receiver channel.
