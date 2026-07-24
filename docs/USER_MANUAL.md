@@ -361,7 +361,7 @@ Choose **PSK** or **RTTY** from the DIGITAL row of the Band/Mode popup. As with
 FT8/FT4 the panadapter switches to a zoomed sub-band waterfall, but the lower
 panel is a live **messaging area** instead of a QSO sequencer.
 
-![The PSK/RTTY messaging panel](images/07-ft8-panel.png)
+![The PSK/RTTY messaging panel](images/rtty.jpg)
 
 **Receiving:**
 
