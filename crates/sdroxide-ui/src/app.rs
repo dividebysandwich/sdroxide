@@ -107,6 +107,9 @@ pub struct SdroxideApp {
     seen_first_state: bool,
     show_memories: bool,
     show_settings: bool,
+    /// When the band/mode and FFT popups opened (egui time), for their auto-fade.
+    mode_popup_since: Option<f64>,
+    fft_popup_since: Option<f64>,
     mem_name: String,
     // Skimmer (CW etc.) spots, newest merge-by-id.
     skimmer_spots: Vec<SkimmerSpot>,
@@ -293,6 +296,8 @@ impl SdroxideApp {
             seen_first_state: false,
             show_memories: false,
             show_settings: false,
+            mode_popup_since: None,
+            fft_popup_since: None,
             mem_name: String::new(),
             skimmer_spots: Vec::new(),
             skimmer_active_at: std::collections::HashMap::new(),
@@ -708,9 +713,15 @@ impl SdroxideApp {
         let summary = format!("{} · {}", self.state.band.label(), mode.label());
         let btn = crate::chrome::chip(ui, false, RichText::new(summary).size(14.0));
 
-        egui::Popup::from_toggle_button_response(&btn)
+        let popup_id = egui::Popup::default_response_id(&btn);
+        let now = ui.input(|i| i.time);
+        let alpha =
+            crate::chrome::popup_fade_alpha(ui.ctx(), popup_id, now, &mut self.mode_popup_since);
+        let resp = egui::Popup::from_toggle_button_response(&btn)
+                .frame(crate::chrome::window_frame_alpha(alpha))
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| {
+                    ui.set_opacity(alpha);
                     ui.set_max_width(430.0);
                     ui.label(RichText::new("BAND").color(crate::theme::CYAN_DIM).size(9.5).strong());
                     let digital = mode.is_digital();
@@ -767,6 +778,12 @@ impl SdroxideApp {
                         }
                     });
                 });
+        if let Some(r) = &resp {
+            crate::chrome::paint_popup_cut_border(ui.ctx(), &r.response, alpha);
+            if r.response.contains_pointer() {
+                self.mode_popup_since = Some(now); // keep it up while the pointer is on it
+            }
+        }
     }
 
     /// Combined Receiver + Filter/Noise box: AGC / volume / mute on top, with the
@@ -992,9 +1009,15 @@ impl SdroxideApp {
             // Floor/ceiling + FFT size live in a popup off this button.
             let fft_btn = crate::chrome::chip(ui, false, "FFT")
                 .on_hover_text("Spectrum floor / ceiling and FFT size");
-            egui::Popup::from_toggle_button_response(&fft_btn)
+            let fft_id = egui::Popup::default_response_id(&fft_btn);
+            let now = ui.input(|i| i.time);
+            let alpha =
+                crate::chrome::popup_fade_alpha(ui.ctx(), fft_id, now, &mut self.fft_popup_since);
+            let fft_resp = egui::Popup::from_toggle_button_response(&fft_btn)
+                .frame(crate::chrome::window_frame_alpha(alpha))
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| {
+                    ui.set_opacity(alpha);
                     ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                     ui.label(
                         RichText::new("SPECTRUM").color(crate::theme::CYAN_DIM).size(9.5).strong(),
@@ -1030,6 +1053,12 @@ impl SdroxideApp {
                         }
                     });
                 });
+            if let Some(r) = &fft_resp {
+                crate::chrome::paint_popup_cut_border(ui.ctx(), &r.response, alpha);
+                if r.response.contains_pointer() {
+                    self.fft_popup_since = Some(now);
+                }
+            }
         });
     }
 

@@ -68,6 +68,58 @@ pub fn paint_window_border(ctx: &egui::Context, resp: &Response) {
     paint_cut_border(&p, resp.rect, theme::PINK, theme::PANEL);
 }
 
+/// Multiply a colour's alpha by `a` (for fading chrome in/out).
+fn fade(c: Color32, a: f32) -> Color32 {
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * a.clamp(0.0, 1.0)) as u8)
+}
+
+/// A floating-window frame (flat panel, square corners) with its fill faded to
+/// `alpha` — pair with [`paint_popup_cut_border`] for a fading popup.
+pub fn window_frame_alpha(alpha: f32) -> egui::Frame {
+    let mut f = window_frame();
+    f.fill = fade(f.fill, alpha);
+    f
+}
+
+/// Paint the pink top-right/bottom-left cut border of a popup, faded to `alpha`.
+pub fn paint_popup_cut_border(ctx: &egui::Context, resp: &Response, alpha: f32) {
+    let p = ctx.layer_painter(resp.layer_id);
+    paint_cut_border(&p, resp.rect, fade(theme::PINK, alpha), fade(theme::PANEL, alpha));
+}
+
+/// Fade timing for an auto-dismissing popup: full opacity for `HOLD` seconds
+/// after it opens, then a linear fade over `FADE` seconds, then it closes.
+/// `since` (caller-owned, one per popup) remembers when it opened. Returns the
+/// current opacity; apply it to the frame ([`window_frame_alpha`]), the content
+/// (`ui.set_opacity`), and the border ([`paint_popup_cut_border`]).
+pub fn popup_fade_alpha(
+    ctx: &egui::Context,
+    popup_id: egui::Id,
+    now: f64,
+    since: &mut Option<f64>,
+) -> f32 {
+    const HOLD: f64 = 5.0;
+    const FADE: f64 = 3.0;
+    if !egui::Popup::is_id_open(ctx, popup_id) {
+        *since = None;
+        return 1.0;
+    }
+    let t0 = *since.get_or_insert(now);
+    let elapsed = now - t0;
+    if elapsed >= HOLD + FADE {
+        egui::Popup::close_id(ctx, popup_id);
+        *since = None;
+        0.0
+    } else if elapsed > HOLD {
+        ctx.request_repaint(); // animate the fade
+        (1.0 - (elapsed - HOLD) / FADE) as f32
+    } else {
+        // Wake up exactly when the fade should begin.
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64((HOLD - elapsed).max(0.001)));
+        1.0
+    }
+}
+
 /// Cut-corner border: masks the two corners with `mask` (the surrounding
 /// background) and strokes the six-sided outline.
 pub fn paint_cut_border(p: &Painter, rect: Rect, color: Color32, mask: Color32) {
@@ -240,7 +292,7 @@ pub fn slider(ui: &mut Ui, slider: egui::Slider<'_>) -> Response {
     .inner
 }
 
-/// Angled chip: a selectable button with a cut bottom-right corner.
+/// Angled chip: a selectable button with cut top-left and bottom-right corners.
 /// Selected chips fill cyan with dark ink, like the reference nav pills.
 pub fn chip(ui: &mut Ui, selected: bool, text: impl Into<RichText>) -> Response {
     chip_impl(ui, selected, text.into(), None)
@@ -277,12 +329,14 @@ fn chip_impl(
         let v = ui.style().interact_selectable(&resp, selected);
         let cut = CHIP_CUT.min(size.y * 0.35);
         let (l, r, t, b) = (rect.left(), rect.right(), rect.top(), rect.bottom());
+        // Cut corners on the top-left and bottom-right (matching diagonal).
         let outline = vec![
-            pos2(l, t),
+            pos2(l + cut, t),
             pos2(r, t),
             pos2(r, b - cut),
             pos2(r - cut, b),
             pos2(l, b),
+            pos2(l, t + cut),
         ];
 
         let (fill, stroke, ink) = if selected {
