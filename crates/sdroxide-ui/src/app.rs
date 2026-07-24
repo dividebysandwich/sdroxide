@@ -45,6 +45,18 @@ fn hash_call(s: &str) -> u64 {
     h.finish()
 }
 
+/// How the FT8/FT4 decode list orders the stations within each turn.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum DecodeSort {
+    /// As received (no reordering).
+    #[default]
+    None,
+    /// Strongest signal first.
+    Signal,
+    /// Farthest (DX) first.
+    Distance,
+}
+
 pub struct SdroxideApp {
     ctrl: Box<dyn RadioController>,
     caps: Option<DeviceCaps>,
@@ -135,6 +147,11 @@ pub struct SdroxideApp {
     /// Per decoded grid: (freshest slot_utc, frame-time last seen). Drives the
     /// world-map dots' 2-minute fade-out; entries older than the fade expire.
     digi_station_seen: std::collections::HashMap<String, (i64, f64)>,
+    /// Decode-list ordering within each turn, and whether to show CQ only.
+    digi_sort: DecodeSort,
+    /// Sort direction: `true` = descending (strongest / farthest first).
+    digi_sort_desc: bool,
+    digi_cq_only: bool,
     /// Voice-mode view span saved on entering FT8/FT4 (which locks the view to
     /// the narrow sub-band), restored on leaving so the panadapter isn't left
     /// stuck zoomed in.
@@ -293,6 +310,9 @@ impl SdroxideApp {
             digi_preview: None,
             map_view: Default::default(),
             digi_station_seen: std::collections::HashMap::new(),
+            digi_sort: DecodeSort::None,
+            digi_sort_desc: true,
+            digi_cq_only: false,
             pre_digi_view: None,
             show_logbook: false,
             log_edit: None,
@@ -1139,6 +1159,34 @@ impl SdroxideApp {
                 );
             });
         });
+        // Per-turn ordering + a CQ-only filter for the decode list.
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.label(RichText::new("Sort").size(9.5).color(crate::theme::CYAN_DIM));
+            for (m, base) in
+                [(DecodeSort::None, "None"), (DecodeSort::Signal, "SNR"), (DecodeSort::Distance, "Dist")]
+            {
+                let active = self.digi_sort == m;
+                // Active mode shows its direction; re-pressing it flips direction.
+                let lbl = if active && m != DecodeSort::None {
+                    format!("{base} {}", if self.digi_sort_desc { "↓" } else { "↑" })
+                } else {
+                    base.to_string()
+                };
+                if crate::chrome::chip(ui, active, lbl).clicked() {
+                    if active && m != DecodeSort::None {
+                        self.digi_sort_desc = !self.digi_sort_desc;
+                    } else {
+                        self.digi_sort = m;
+                        self.digi_sort_desc = true; // default: strongest / farthest first
+                    }
+                }
+            }
+            ui.add_space(8.0);
+            if crate::chrome::chip(ui, self.digi_cq_only, "CQ only").clicked() {
+                self.digi_cq_only = !self.digi_cq_only;
+            }
+        });
         ui.add_space(2.0);
         // Call of the currently previewed decode (cloned so the scroll closure
         // doesn't hold a borrow of `self` we need to write back afterwards).
@@ -1148,19 +1196,80 @@ impl SdroxideApp {
         // Staged preview change: `None` = no click this frame; `Some(v)` =
         // replace the preview with `v` (`Some(None)` clears it).
         let mut new_preview: Option<Option<(String, (f64, f64))>> = None;
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            for (i, d) in self.digi_decodes.iter().enumerate() {
-                let cq = d.is_cq;
-                let who = d.from.clone().unwrap_or_else(|| "?".into());
-                let grid = d.grid.clone().unwrap_or_default();
-                // Rough great-circle distance from my grid to the decode's grid.
-                let dist_km = (!my_grid.is_empty())
+        let cq_only = self.digi_cq_only;
+        let sort = self.digi_sort;
+        let desc = self.digi_sort_desc;
+        // Turn parity needs the mode's slot length (FT8 15 s, FT4 7.5 s).
+        let period = if self.state.rx[0].mode == Mode::Ft4 { 7.5 } else { 15.0 };
+        // Filter (CQ-only) and precompute distance for sorting/display. Entries
+        // stay newest-turn-first; same-slot decodes are contiguous in the list.
+        let mut items: Vec<(usize, &Decode, Option<f64>)> = self
+            .digi_decodes
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| !cq_only || d.is_cq)
+            .map(|(i, d)| {
+                let dist = (!my_grid.is_empty())
                     .then(|| {
                         d.grid.as_deref().and_then(|g| sdroxide_types::grid_distance_km(&my_grid, g))
                     })
                     .flatten();
-                let is_preview =
-                    d.from.is_some() && preview_call.as_deref() == d.from.as_deref();
+                (i, d, dist)
+            })
+            .collect();
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let mut gi = 0;
+            while gi < items.len() {
+                // A turn is one slot: group the contiguous same-slot decodes.
+                let slot = items[gi].1.slot_utc;
+                let mut end = gi;
+                while end < items.len() && items[end].1.slot_utc == slot {
+                    end += 1;
+                }
+                match sort {
+                    DecodeSort::None => {}
+                    DecodeSort::Signal => items[gi..end].sort_by(|a, b| {
+                        let o = a.1.snr_db.cmp(&b.1.snr_db);
+                        if desc { o.reverse() } else { o }
+                    }),
+                    DecodeSort::Distance => items[gi..end].sort_by(|a, b| {
+                        // Decodes without a grid always sort last (push them to the
+                        // far end of whichever direction is active).
+                        let sentinel = if desc { f64::NEG_INFINITY } else { f64::INFINITY };
+                        let ka = a.2.unwrap_or(sentinel);
+                        let kb = b.2.unwrap_or(sentinel);
+                        let o = ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal);
+                        if desc { o.reverse() } else { o }
+                    }),
+                }
+                // Turn separator: even/odd parity + UTC timestamp.
+                let even = ((slot as f64 / period).round() as i64).rem_euclid(2) == 0;
+                let s = slot.rem_euclid(86_400);
+                let tstr = format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60);
+                ui.add_space(3.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 5.0;
+                    let (ptxt, pcol) = if even {
+                        ("EVEN", crate::theme::CYAN)
+                    } else {
+                        ("ODD", crate::theme::YELLOW)
+                    };
+                    ui.label(RichText::new(ptxt).size(9.0).strong().color(pcol));
+                    ui.label(
+                        RichText::new(format!("{tstr} UTC"))
+                            .size(9.5)
+                            .monospace()
+                            .color(Color32::from_gray(130)),
+                    );
+                });
+                ui.separator();
+                for k in gi..end {
+                    let (i, d, dist_km) = items[k];
+                    let cq = d.is_cq;
+                    let who = d.from.clone().unwrap_or_else(|| "?".into());
+                    let grid = d.grid.clone().unwrap_or_default();
+                    let is_preview =
+                        d.from.is_some() && preview_call.as_deref() == d.from.as_deref();
                 let mut reply = false;
                 // Left edge of the REPLY button, so the row-body click area can
                 // exclude it (otherwise the full-row interaction below sits on
@@ -1337,7 +1446,9 @@ impl SdroxideApp {
                     let ll = d.grid.as_deref().and_then(sdroxide_types::grid_to_latlon);
                     new_preview = Some(ll.map(|ll| (who.clone(), ll)));
                 }
-                ui.add_space(3.0);
+                    ui.add_space(3.0);
+                }
+                gi = end;
             }
         });
         if let Some(sel) = new_preview {
