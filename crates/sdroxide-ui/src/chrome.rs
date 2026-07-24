@@ -245,6 +245,39 @@ pub fn module_bare_h<R>(
     .inner
 }
 
+/// Like [`module_bare_h`] but with zero inner margin and no border, so the
+/// content fills the box edge-to-edge. Used by the S-meter, which paints its
+/// own instrument face over the whole rect (an opaque fill would otherwise hide
+/// a frame border) and draws the box border itself on top.
+pub fn module_bare_flush_h<R>(
+    ui: &mut Ui,
+    width: f32,
+    height: f32,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, height),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.set_width(width);
+            egui::Frame::new()
+                .fill(theme::FILL)
+                .inner_margin(egui::Margin::ZERO)
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    ui.set_min_height(height);
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                        ui.set_min_height(height);
+                        add(ui)
+                    })
+                    .inner
+                })
+                .inner
+        },
+    )
+    .inner
+}
+
 /// Small L-shaped corner accents (page decoration, reference-style).
 pub fn corner_brackets(p: &Painter, rect: Rect, color: Color32) {
     let len = 16.0;
