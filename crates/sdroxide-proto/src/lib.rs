@@ -28,8 +28,10 @@ use sdroxide_types::{
 /// (`Command::DigiImageTx` / `RadioEvent::DigiImage` for the FSQ image sub-mode).
 /// v8: added the audio recorder — `Command::SetRecording` and
 /// `RadioState.recording` / `RadioState.recording_file`.
-pub const PROTO_VERSION: u16 = 8;
-const VERSION_BYTE: u8 = 0x08;
+/// v9: FT8/FT4 QSO handling — `QsoStep::WaitCq` / `Confirming` and
+/// `Command::DigiStartQso.wait_for_cq`.
+pub const PROTO_VERSION: u16 = 9;
+const VERSION_BYTE: u8 = 0x09;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

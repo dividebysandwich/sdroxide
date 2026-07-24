@@ -34,6 +34,9 @@ pub struct Decode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QsoStep {
     Idle,
+    /// We picked a non-CQ station and are holding until they call CQ (or call
+    /// us) before we start transmitting, so we don't jump into their exchange.
+    WaitCq,
     /// We are calling CQ, waiting for an answer.
     CallingCq,
     /// (Answerer) we replied to a CQ with our grid, awaiting their report.
@@ -46,6 +49,10 @@ pub enum QsoStep {
     TxRr73,
     /// We are sending 73.
     Tx73,
+    /// The exchange is complete and logged, but we keep the contact live for a
+    /// few minutes and re-send our final message if the DX repeats theirs (i.e.
+    /// they didn't receive our 73 / RR73).
+    Confirming,
     /// QSO finished (logged).
     Done,
 }
@@ -54,12 +61,14 @@ impl QsoStep {
     pub fn label(self) -> &'static str {
         match self {
             QsoStep::Idle => "Idle",
+            QsoStep::WaitCq => "Wait CQ",
             QsoStep::CallingCq => "Calling CQ",
             QsoStep::TxGrid => "Tx Grid",
             QsoStep::TxReport => "Tx Report",
             QsoStep::TxRReport => "Tx R+Report",
             QsoStep::TxRr73 => "Tx RR73",
             QsoStep::Tx73 => "Tx 73",
+            QsoStep::Confirming => "Confirming",
             QsoStep::Done => "Done",
         }
     }

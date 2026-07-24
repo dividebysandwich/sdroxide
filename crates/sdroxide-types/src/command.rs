@@ -66,8 +66,18 @@ pub enum Command {
     SetDigiAudioFreq(f32),
     /// Start calling CQ.
     DigiCallCq,
-    /// Begin a QSO with a decoded station.
-    DigiStartQso { from: String, grid: Option<String>, snr: i16, audio_hz: f32 },
+    /// Begin a QSO with a decoded station. `wait_for_cq` holds transmission
+    /// until the station calls CQ (or calls us) — set when replying to a decode
+    /// that is neither a CQ nor addressed to us, so we don't jump into an
+    /// exchange already in progress.
+    DigiStartQso {
+        from: String,
+        grid: Option<String>,
+        snr: i16,
+        audio_hz: f32,
+        #[serde(default)]
+        wait_for_cq: bool,
+    },
     /// Gracefully stop the QSO sequence (finish the current burst, then idle).
     DigiStopQso,
     /// Abort any in-progress transmission immediately.

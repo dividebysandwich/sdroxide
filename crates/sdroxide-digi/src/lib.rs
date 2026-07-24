@@ -50,7 +50,15 @@ pub trait DigiEngine: Send {
 
     // Actions that only some modes use; default to no-ops.
     fn call_cq(&mut self) {}
-    fn start_qso(&mut self, _from: String, _grid: Option<String>, _snr: i16, _audio_hz: f32) {}
+    fn start_qso(
+        &mut self,
+        _from: String,
+        _grid: Option<String>,
+        _snr: i16,
+        _audio_hz: f32,
+        _wait_for_cq: bool,
+    ) {
+    }
     fn stop_qso(&mut self) {}
     /// Continuous keyboard modes: replace the outgoing text buffer.
     fn set_tx_text(&mut self, _text: String) {}

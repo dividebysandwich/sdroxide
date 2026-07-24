@@ -28,6 +28,8 @@ pub const INK_ON_CYAN: Color32 = Color32::from_rgb(0x02, 0x10, 0x19);
 // Red-accent chrome (cyberpunk box borders / list rows).
 pub const RED_DEEP: Color32 = Color32::from_rgb(0x6e, 0x18, 0x2c);
 pub const CQ_BG: Color32 = Color32::from_rgb(0x24, 0x0c, 0x15);
+/// Background for a decode addressed to our own station (warm gold, stands out).
+pub const TOME_BG: Color32 = Color32::from_rgb(0x2c, 0x24, 0x06);
 pub const ROW_BG: Color32 = Color32::from_rgb(0x0a, 0x10, 0x1b);
 pub const ROW_HOVER: Color32 = Color32::from_rgb(0x14, 0x1e, 0x2e);
 

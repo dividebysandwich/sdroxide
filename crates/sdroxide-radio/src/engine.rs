@@ -1349,9 +1349,9 @@ impl Engine {
                     d.call_cq();
                 }
             }
-            DigiStartQso { from, grid, snr, audio_hz } => {
+            DigiStartQso { from, grid, snr, audio_hz, wait_for_cq } => {
                 if let Some(d) = self.digi.as_mut() {
-                    d.start_qso(from, grid, snr, audio_hz);
+                    d.start_qso(from, grid, snr, audio_hz, wait_for_cq);
                 }
             }
             DigiStopQso => {

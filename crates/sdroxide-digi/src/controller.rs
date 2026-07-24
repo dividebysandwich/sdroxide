@@ -156,7 +156,14 @@ impl DigiController {
         self.status_dirty = true;
     }
 
-    pub fn start_qso(&mut self, from: String, grid: Option<String>, snr: i16, audio_hz: f32) {
+    pub fn start_qso(
+        &mut self,
+        from: String,
+        grid: Option<String>,
+        snr: i16,
+        audio_hz: f32,
+        wait_for_cq: bool,
+    ) {
         self.set_audio_hz(audio_hz);
         let now = SlotScheduler::unix_now(SystemTime::now()) as i64;
         // Reply in the slot *opposite* to when the DX actually transmitted, using
@@ -169,7 +176,7 @@ impl DigiController {
             .copied()
             .unwrap_or(now - self.params.slot_s as i64);
         self.tx_even = !self.scheduler.is_even(self.scheduler.slot_index_unix(dx_slot as f64));
-        self.qso.start_qso(from, grid, snr, now);
+        self.qso.start_qso(from, grid, snr, wait_for_cq, now);
         self.status_dirty = true;
     }
 
@@ -265,6 +272,11 @@ impl DigiController {
     pub fn poll(&mut self, now: SystemTime, dial_hz: f64) -> Vec<DigiAction> {
         self.dial_hz = dial_hz;
         let mut actions = Vec::new();
+
+        // 0. Advance QSO timeouts (WaitCq give-up, Confirming retire).
+        if self.qso.tick(SlotScheduler::unix_now(now) as i64) {
+            self.status_dirty = true;
+        }
 
         // 1. Drain finished decodes from the worker.
         loop {
@@ -410,8 +422,15 @@ impl crate::DigiEngine for DigiController {
     fn call_cq(&mut self) {
         DigiController::call_cq(self)
     }
-    fn start_qso(&mut self, from: String, grid: Option<String>, snr: i16, audio_hz: f32) {
-        DigiController::start_qso(self, from, grid, snr, audio_hz)
+    fn start_qso(
+        &mut self,
+        from: String,
+        grid: Option<String>,
+        snr: i16,
+        audio_hz: f32,
+        wait_for_cq: bool,
+    ) {
+        DigiController::start_qso(self, from, grid, snr, audio_hz, wait_for_cq)
     }
     fn stop_qso(&mut self) {
         DigiController::stop_qso(self)
@@ -479,7 +498,7 @@ mod tests {
         let mut c = DigiController::new(Mode::Ft8, cfg(), 12_000.0);
         // We heard the DX in an even slot → we must reply in odd slots.
         c.last_heard.insert("W9XYZ".into(), EVEN_SLOT_UNIX as i64);
-        c.start_qso("W9XYZ".into(), Some("EM48".into()), -10, 1500.0);
+        c.start_qso("W9XYZ".into(), Some("EM48".into()), -10, 1500.0, false);
         assert!(!c.tx_even, "reply slot should be odd (opposite the even DX slot)");
 
         // Keying in our (odd) slot works even 2.5 s in — well past where the
@@ -499,7 +518,7 @@ mod tests {
         // the DX (the old code would then transmit right on top of them).
         let mut c = DigiController::new(Mode::Ft8, cfg(), 12_000.0);
         c.last_heard.insert("W9XYZ".into(), EVEN_SLOT_UNIX as i64);
-        c.start_qso("W9XYZ".into(), Some("EM48".into()), -10, 1500.0);
+        c.start_qso("W9XYZ".into(), Some("EM48".into()), -10, 1500.0, false);
 
         // A later even slot (the DX's parity): must NOT key here.
         let dx_slot = UNIX_EPOCH + Duration::from_secs_f64(EVEN_SLOT_UNIX + 30.0 + 1.0);

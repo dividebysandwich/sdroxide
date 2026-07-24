@@ -1251,6 +1251,8 @@ impl SdroxideApp {
         let preview_call = self.digi_preview.as_ref().map(|(c, _)| c.clone());
         // Own grid, for the per-decode great-circle distance column.
         let my_grid = self.digi_status.as_ref().map(|s| s.config.my_grid.clone()).unwrap_or_default();
+        // Own callsign, to spotlight decodes addressed to us.
+        let my_call = self.digi_status.as_ref().map(|s| s.config.my_call.clone()).unwrap_or_default();
         // Staged preview change: `None` = no click this frame; `Some(v)` =
         // replace the preview with `v` (`Some(None)` clears it).
         let mut new_preview: Option<Option<(String, (f64, f64))>> = None;
@@ -1326,6 +1328,8 @@ impl SdroxideApp {
                 for k in gi..end {
                     let (i, d, dist_km) = items[k];
                     let cq = d.is_cq;
+                    // Decodes addressed to our own station stand out most.
+                    let to_me = !my_call.is_empty() && d.to.as_deref() == Some(my_call.as_str());
                     let who = d.from.clone().unwrap_or_else(|| "?".into());
                     let grid = d.grid.clone().unwrap_or_default();
                     let is_preview =
@@ -1337,7 +1341,13 @@ impl SdroxideApp {
                 let mut reply_left: Option<f32> = None;
 
                 let inner = egui::Frame::new()
-                    .fill(if cq { crate::theme::CQ_BG } else { crate::theme::ROW_BG })
+                    .fill(if to_me {
+                        crate::theme::TOME_BG
+                    } else if cq {
+                        crate::theme::CQ_BG
+                    } else {
+                        crate::theme::ROW_BG
+                    })
                     .inner_margin(egui::Margin { left: 11, right: 6, top: 6, bottom: 6 })
                     .show(ui, |ui| {
                         // Fixed-width columns so every field lines up down the
@@ -1394,7 +1404,9 @@ impl SdroxideApp {
                                 98.0,
                                 false,
                                 egui::Label::new(
-                                    RichText::new(&who).size(15.0).strong().color(if cq {
+                                    RichText::new(&who).size(15.0).strong().color(if to_me {
+                                        crate::theme::YELLOW
+                                    } else if cq {
                                         crate::theme::GREEN
                                     } else {
                                         crate::theme::TEXT_STRONG
@@ -1436,7 +1448,13 @@ impl SdroxideApp {
                                     ui,
                                     false,
                                     RichText::new("REPLY").size(12.0).strong(),
-                                    if cq { crate::theme::GREEN } else { crate::theme::CYAN },
+                                    if to_me {
+                                        crate::theme::YELLOW
+                                    } else if cq {
+                                        crate::theme::GREEN
+                                    } else {
+                                        crate::theme::CYAN
+                                    },
                                     crate::theme::INK_ON_CYAN,
                                 );
                                 reply = resp.clicked();
@@ -1460,11 +1478,19 @@ impl SdroxideApp {
                     });
 
                 let r = inner.response.rect;
-                // Red (CQ) / cyan left-accent bar.
+                // Left-accent bar: gold (to us) / red (CQ) / cyan (other). Wider
+                // for a to-us decode so it really pops.
+                let (accent, aw) = if to_me {
+                    (crate::theme::YELLOW, 4.0)
+                } else if cq {
+                    (crate::theme::PINK, 2.5)
+                } else {
+                    (crate::theme::CYAN_DIM, 2.5)
+                };
                 ui.painter().rect_filled(
-                    egui::Rect::from_min_max(r.left_top(), egui::pos2(r.left() + 2.5, r.bottom())),
+                    egui::Rect::from_min_max(r.left_top(), egui::pos2(r.left() + aw, r.bottom())),
                     0.0,
-                    if cq { crate::theme::PINK } else { crate::theme::CYAN_DIM },
+                    accent,
                 );
                 // Row-body click (everything left of the REPLY button) tunes
                 // the audio freq. Excluding the button's rect keeps this
@@ -1480,6 +1506,14 @@ impl SdroxideApp {
                         egui::Stroke::new(1.0, crate::theme::YELLOW),
                         egui::StrokeKind::Inside,
                     );
+                } else if to_me {
+                    // A message to our own station: a gold box so it can't be missed.
+                    ui.painter().rect_stroke(
+                        r,
+                        0.0,
+                        egui::Stroke::new(1.4, crate::theme::YELLOW),
+                        egui::StrokeKind::Inside,
+                    );
                 } else if row.hovered() {
                     ui.painter().rect_stroke(
                         r,
@@ -1493,11 +1527,14 @@ impl SdroxideApp {
                 }
                 if reply {
                     if let Some(from) = &d.from {
+                        // If they're neither calling CQ nor calling us, hold until
+                        // they call CQ rather than barging into their exchange.
                         cmds.push(Command::DigiStartQso {
                             from: from.clone(),
                             grid: d.grid.clone(),
                             snr: d.snr_db,
                             audio_hz: d.audio_hz,
+                            wait_for_cq: !cq && !to_me,
                         });
                     }
                     // Starting a QSO promotes the station to the active DX
@@ -1526,7 +1563,14 @@ impl SdroxideApp {
         let status = self.digi_status.clone();
         let in_qso = status
             .as_ref()
-            .map(|s| !matches!(s.step, sdroxide_types::QsoStep::Idle | sdroxide_types::QsoStep::Done))
+            .map(|s| {
+                !matches!(
+                    s.step,
+                    sdroxide_types::QsoStep::Idle
+                        | sdroxide_types::QsoStep::Confirming
+                        | sdroxide_types::QsoStep::Done
+                )
+            })
             .unwrap_or(false);
 
         // Header: QSO left, session log + downloads centered, SETUP right.
