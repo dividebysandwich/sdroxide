@@ -26,13 +26,13 @@ const MANUAL_MD: &str = include_str!("../../../docs/USER_MANUAL.md");
 fn embedded_image(path: &str) -> Option<&'static [u8]> {
     let name = path.rsplit('/').next().unwrap_or(path);
     Some(match name {
-        "01-main-window.png" => &include_bytes!("../../../docs/images/01-main-window.png")[..],
-        "02-top-bar.png" => &include_bytes!("../../../docs/images/02-top-bar.png")[..],
+        "01-main-window.jpg" => &include_bytes!("../../../docs/images/01-main-window.jpg")[..],
+        "02-top-bar.jpg" => &include_bytes!("../../../docs/images/02-top-bar.jpg")[..],
         "03-panadapter-tuning.png" => {
             &include_bytes!("../../../docs/images/03-panadapter-tuning.png")[..]
         }
-        "04-band-mode-popup.png" => {
-            &include_bytes!("../../../docs/images/04-band-mode-popup.png")[..]
+        "04-band-mode-popup.jpg" => {
+            &include_bytes!("../../../docs/images/04-band-mode-popup.jpg")[..]
         }
         "05-colormaps.png" => &include_bytes!("../../../docs/images/05-colormaps.png")[..],
         "06-memories.png" => &include_bytes!("../../../docs/images/06-memories.png")[..],
@@ -40,13 +40,28 @@ fn embedded_image(path: &str) -> Option<&'static [u8]> {
         "08-ft8-setup.png" => &include_bytes!("../../../docs/images/08-ft8-setup.png")[..],
         "09-logbook.png" => &include_bytes!("../../../docs/images/09-logbook.png")[..],
         "10-skimmer.png" => &include_bytes!("../../../docs/images/10-skimmer.png")[..],
-        "11-settings.png" => &include_bytes!("../../../docs/images/11-settings.png")[..],
-        "12-audio-cat.png" => &include_bytes!("../../../docs/images/12-audio-cat.png")[..],
         "13-web-client.png" => &include_bytes!("../../../docs/images/13-web-client.png")[..],
         "bw_measurement.jpg" | "bw-measurement.jpg" => {
             &include_bytes!("../../../docs/images/bw_measurement.jpg")[..]
         }
         "rit_xit.jpg" => &include_bytes!("../../../docs/images/rit_xit.jpg")[..],
+        "rfpaint.jpg" => &include_bytes!("../../../docs/images/rfpaint.jpg")[..],
+        "sstv.jpg" => &include_bytes!("../../../docs/images/sstv.jpg")[..],
+        "settings-general.jpg" => &include_bytes!("../../../docs/images/settings-general.jpg")[..],
+        "settings-radio-soapysdr.jpg" => {
+            &include_bytes!("../../../docs/images/settings-radio-soapysdr.jpg")[..]
+        }
+        "settings-radio-cat.jpg" => {
+            &include_bytes!("../../../docs/images/settings-radio-cat.jpg")[..]
+        }
+        "settings-radio-hpsdr.jpg" => {
+            &include_bytes!("../../../docs/images/settings-radio-hpsdr.jpg")[..]
+        }
+        "settings-radio-tci.jpg" => {
+            &include_bytes!("../../../docs/images/settings-radio-tci.jpg")[..]
+        }
+        "settings-audio.jpg" => &include_bytes!("../../../docs/images/settings-audio.jpg")[..],
+        "settings-ui.jpg" => &include_bytes!("../../../docs/images/settings-ui.jpg")[..],
         _ => return None,
     })
 }

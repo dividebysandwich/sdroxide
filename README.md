@@ -31,8 +31,9 @@ One binary, three ways to run it:
   when zoomed out and CW/digital/SSB sub-segments when zoomed into a ham band.
 - **Modes** — SSB (USB/LSB), CW, AM, SAM, NFM, WFM, DSB, DIGU/DIGL, a
   spectrum-only mode, **FT8/FT4**, the keyboard modes **PSK31**, **RTTY**,
-  **Olivia**, **THOR** and **FSQ** (with directed messaging + images), and image
-  **SSTV** (Scottie, Martin, Robot).
+  **Olivia**, **THOR** and **FSQ** (with directed messaging + images), image
+  **SSTV** (Scottie, Martin, Robot), and transmit-only **RF Paint** (spectrum
+  painting of text and images onto the waterfall).
 - **Receiver** — hang AGC, draggable passband filter edges (on the spectrum and
   the waterfall), noise blanker, squelch, a second sub-receiver, RIT/XIT, VFO
   A/B with split, per-band band stacks, and memory channels.
@@ -116,6 +117,27 @@ left and a transmit compositor on the right:
   with "SDRoxide" and the version. **TX** sends; **ABORT TX** stops.
 - **Modes:** Scottie 1 / 2 / DX, Martin 1 / 2, Robot 72, Robot 36. Band buttons
   tune to that band's SSTV calling frequency (e.g. 20 m = 14.230 MHz).
+
+## RF Paint
+
+Selecting **RFPAINT** opens a transmit-only **spectrum-painting** panel that draws
+text and pictures **directly onto a receiver's waterfall** — there is no decoder,
+the picture *is* the signal, so anyone watching their panadapter on your frequency
+simply sees what you paint. It transmits on USB inside a 3 kHz audio band, so it
+fits a normal SSB channel:
+
+- **Text paint** — type a line and it is rendered as upright letters that scroll
+  up the far station's waterfall (constant font size — a longer message just makes
+  a wider banner / longer transmission).
+- **Image paint** — load a PNG/JPEG, reduced to a contrast-stretched grayscale
+  bitmap and painted onto the waterfall.
+- Each area has a **live preview waterfall** showing exactly how it will look on
+  the receiving end, plus a **TRANSMIT** button, a transmit-progress bar, and
+  **Abort**.
+- A **scan-speed** control (≈6%–100%, default 25%) trades transmission time for
+  legibility — slower gives the receiver's waterfall more scan lines to render
+  the picture. Transmit goes through the normal path, so the ham-band lockout and
+  transmit safety still apply.
 
 ## Logbook
 
@@ -218,7 +240,7 @@ sdroxide --connect 192.168.1.10:4950
 | `--freq <HZ>` | Center frequency in Hz (default `14200000`). |
 | `--rate <HZ>` | Sample rate in Hz (default: from config). |
 | `--gain <DB>` | Overall RX gain in dB (default: hardware AGC / moderate). |
-| `--mode <MODE>` | Initial mode: `USB LSB CW AM SAM NFM WFM DIGU DIGL DSB SPEC FT8 FT4 PSK RTTY SSTV`. |
+| `--mode <MODE>` | Initial mode: `USB LSB CW AM SAM NFM WFM DIGU DIGL DSB SPEC FT8 FT4 PSK RTTY OLIVIA THOR FSQ SSTV RFPAINT`. |
 | `--server` | Run as a server: HTTP web client + WebSocket streaming backend. |
 | `--connect <HOST[:PORT]>` | Connect as a native remote client to a running server. |
 | `--port <PORT>` | Server port (default: from config, `4950`). |

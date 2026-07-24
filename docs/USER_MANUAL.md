@@ -14,7 +14,7 @@ or connects to a remote sdroxide server.
 
 1. [Feature overview](#1-feature-overview)
 2. [Basic operation](#2-basic-operation)
-3. [Digital modes (FT8, FT4, PSK31, RTTY, Olivia, THOR, FSQ, SSTV)](#3-digital-modes)
+3. [Digital modes (FT8, FT4, PSK31, RTTY, Olivia, THOR, FSQ, SSTV, RF Paint)](#3-digital-modes)
 4. [Skimmers (CW, PSK, RTTY)](#4-skimmers)
 5. [Radio and audio setup](#5-radio-and-audio-setup)
 6. [Remote operation](#6-remote-operation)
@@ -28,7 +28,7 @@ or connects to a remote sdroxide server.
 
 ## 1. Feature overview
 
-![The main window: panadapter, waterfall, and the top control bar](images/01-main-window.png)
+![The main window: panadapter, waterfall, and the top control bar](images/01-main-window.jpg)
 
 - **Panadapter and waterfall** with click/drag tuning, scroll-to-zoom, a
   draggable filter passband, a colour-coded band-plan strip, and eight
@@ -37,8 +37,8 @@ or connects to a remote sdroxide server.
   the inactive VFO.
 - **All the common modes:** LSB, USB, CW, AM, SAM, NFM, WFM, DIGU, DIGL, DSB, a
   spectrum-only mode (SPEC), the automatic digital modes **FT8** and **FT4**, the
-  keyboard modes **PSK31**, **RTTY**, **Olivia**, **THOR** and **FSQ**, and image
-  **SSTV**.
+  keyboard modes **PSK31**, **RTTY**, **Olivia**, **THOR** and **FSQ**, image
+  **SSTV**, and the transmit-only **RF Paint** (spectrum-painting) mode.
 - **Receive controls:** AGC (Off/Slow/Med/Fast), volume, mute, squelch, an
   impulse noise blanker, an adaptive auto-notch (constant-tone canceller),
   spectral noise reduction (Off/Low/Med/High), RIT, and a draggable filter
@@ -88,7 +88,7 @@ onto more rows as the window narrows, and the **panadapter** (spectrum plus
 waterfall) filling the rest of the window. In FT8/FT4 the lower part of the
 window is shared with the digital operating panel.
 
-![The top control bar modules](images/02-top-bar.png)
+![The top control bar modules](images/02-top-bar.jpg)
 
 The control-bar modules, left to right, are: Frequency, S-meter, Band/Mode,
 VFO, RIT/XIT, Receiver, Filter/Noise, Transmit (TX-capable rigs only), Display,
@@ -120,7 +120,7 @@ The smaller grey number below the readout is the *inactive* VFO's frequency.
   release the button the measurement lingers and fades out over about five
   seconds, so you can read it after letting go.
 
-![Bandwidth measurement tool](images/bw-measurement.jpg)
+![Bandwidth measurement tool](images/bw_measurement.jpg)
 
 
 **Keyboard tuning** (ignored while typing in a text field):
@@ -149,10 +149,10 @@ popup with three rows:
 - **BAND:** `160M 80M 60M 40M 30M 20M 17M 15M 12M 10M 6M 2M GEN`. Each band
   remembers your last frequency, mode, and filter.
 - **MODE:** `LSB USB CW AM SAM NFM WFM DIGU DIGL DSB SPEC`.
-- **DIGITAL:** `FT8 FT4 PSK RTTY OLIVIA THOR FSQ SSTV` (see
+- **DIGITAL:** `FT8 FT4 PSK RTTY OLIVIA THOR FSQ SSTV RFPAINT` (see
   [Digital modes](#3-digital-modes)).
 
-![The band and mode selector popup](images/04-band-mode-popup.png)
+![The band and mode selector popup](images/04-band-mode-popup.jpg)
 
 See the [appendix](#11-appendix) for what each mode is.
 
@@ -268,12 +268,14 @@ press **Store** to save the current frequency and mode. Each saved row has a
 
 ## 3. Digital modes
 
-sdroxide has three families of digital mode. **FT8** and **FT4** are automatic,
+sdroxide has several families of digital mode. **FT8** and **FT4** are automatic,
 timeslot-based modes with QSO sequencing, a world map, and automatic logging
-(3.1–3.5). **PSK31** and **RTTY** are live keyboard modes: you tune onto a
-signal, read the decoded text, and type a reply that transmits as you go (3.6).
-**SSTV** is an image mode: received pictures build up in a gallery and you
-transmit composed images (3.7).
+(3.1–3.5). **PSK31**, **RTTY**, **Olivia**, **THOR** and **FSQ** are live keyboard
+modes: you tune onto a signal, read the decoded text, and type a reply that
+transmits as you go (3.6–3.7). **SSTV** is an image mode: received pictures build
+up in a gallery and you transmit composed images (3.8). **RF Paint** is a
+transmit-only novelty mode that draws text and pictures directly onto the far
+station's waterfall (3.9).
 
 ### 3.1 Entering the mode
 
@@ -435,6 +437,8 @@ a received-image gallery on the left and a transmit compositor on the right, wit
 a row of mode buttons across the top: **Auto**, **Scottie 1**, **Scottie 2**,
 **Scottie DX**, **Martin 1**, **Martin 2**, **Robot 72**, and **Robot 36**.
 
+![The SSTV panel: received-image gallery and the transmit compositor](images/sstv.jpg)
+
 **Auto** (the default) auto-detects the mode on receive — from the VIS header, or,
 if you tune in mid-picture, from the sync cadence — and transmits in **Martin 1**
 until a mode has been detected. Selecting a specific mode instead pins both the
@@ -485,6 +489,44 @@ Band buttons tune to that band's common SSTV calling frequency (for example
 > conditions — clean signals decode well; weak or drifting signals may slant or
 > show noise (ongoing refinement).
 
+### 3.9 RF Paint (spectrum painting)
+
+Choose **RFPAINT** from the DIGITAL row for **RF Paint** — a transmit-only mode
+that draws text and pictures **directly onto a receiver's waterfall**. There is no
+decoder and no message format: the picture *is* the signal. Anyone watching their
+panadapter on your frequency simply *sees* what you paint, so it is a fun way to
+put a callsign, a grid, or a small graphic on the band.
+
+![The RF Paint panel: text-paint and image-paint areas with live preview waterfalls](images/rfpaint.jpg)
+
+RF Paint transmits on **USB** and fills a 3 kHz audio band (about 300–3300 Hz),
+so it sits inside a normal SSB channel. It has no calling frequency — use it on a
+clear frequency where you are allowed to transmit, and tell the other station
+where to look. The panel has two side-by-side areas:
+
+- **TEXT PAINT** — type a line of text and it is rendered as upright letters that
+  scroll up the far station's waterfall. The font size is fixed, so a longer
+  message simply makes a wider banner (a longer transmission) rather than smaller
+  letters. A live **preview waterfall** shows exactly how the text will look on
+  the receiving end. Press **TRANSMIT** to send it.
+- **IMAGE PAINT** — **Load image…** picks a picture (PNG or JPEG), which is
+  reduced to a grayscale, contrast-stretched bitmap and shown in the image box.
+  Its own **preview waterfall** shows how it will paint. Press **TRANSMIT** to
+  send it.
+
+**Scan speed** (the slider in the panel header) sets how fast the text or image is
+scanned onto the waterfall, from 100% (the base rate — fastest, shortest
+transmission) down to about 6%; **25%** (the default) is a good compromise. Slower
+is more legible, because the receiver's waterfall gets more scan lines to draw the
+picture — but it takes longer to send. A transmission runs from a few seconds to
+a couple of minutes depending on the length and the scan-speed setting.
+
+While painting, a **progress bar** and a **TX %** readout track the transmission,
+and **Abort** stops it immediately. RF Paint goes through the normal transmit path,
+so the ham-band lockout and the usual transmit safety still apply. Because it is
+transmit-only, RF Paint receives nothing — you read other stations' paintings on
+your own waterfall like any other signal.
+
 ---
 
 ## 4. Skimmers
@@ -527,7 +569,7 @@ tabs: **General**, **Radio**, **Audio**, and **UI**. The **General** tab holds
 your **callsign** and **grid square** — the same values used by FT8/FT4, the SSTV
 image header, and the logbook (and also editable from the FT8/SSTV setup dialog).
 
-![The Settings window](images/11-settings.png)
+![The Settings window, General tab, with callsign and grid square](images/settings-general.jpg)
 
 ### 5.1 Choosing a backend
 
@@ -561,6 +603,8 @@ exposes:
 - **TX gains** — transmit gain sliders, if the device has them.
 - **Antenna** — a drop-down when the device has more than one RX antenna.
 
+![The Radio tab with the SoapySDR interface selected](images/settings-radio-soapysdr.jpg)
+
 The device to open and the sample rate come from `config.toml`
 (`device_args`, `sample_rate`). For example, `device_args = "driver=hackrf"`;
 an empty value uses the first device found. You can also override the device on
@@ -572,7 +616,7 @@ A CAT radio is configured on the **Radio** tab (with the sound card chosen on
 the **Audio** tab, [5.6](#56-radio-audio-devices)). The audio arrives over a USB
 sound card, separately from your computer's speakers and microphone.
 
-![The CAT / Audio settings](images/12-audio-cat.png)
+![The Radio tab with the CAT / Audio interface selected](images/settings-radio-cat.jpg)
 
 **Sound format** — how the radio's audio is interpreted:
 
@@ -615,6 +659,8 @@ involved. On the **Radio** tab:
 - **Sample rate** — the DDC receive rate: 48, 96, 192, 384, 768, or 1536 kHz.
   Wider rates give a wider panadapter span at more CPU/network cost.
 
+![The Radio tab with the HPSDR (network) interface selected](images/settings-radio-hpsdr.jpg)
+
 Receive is wideband IQ, so the full panadapter and the skimmers work.
 
 > **Help wanted — the HPSDR backend is not yet hardware-verified.** The wire
@@ -648,6 +694,8 @@ wideband IQ stream and transmitting audio back. On the **Radio** tab:
 - **Test connection** — verify sdroxide can reach the server and report what it
   found, without leaving the dialog.
 
+![The Radio tab with the TCI (network) interface selected](images/settings-radio-tci.jpg)
+
 Receive is wideband IQ (full panadapter and skimmers); transmit sends audio to
 the TCI server, which modulates it.
 
@@ -659,6 +707,8 @@ radio uses:
 - **From radio (RX)** — the capture device carrying the radio's receive audio.
 - **To radio (TX)** — the playback device carrying your transmit audio to the
   radio.
+
+![The Audio tab: radio-audio devices and your own speaker/microphone](images/settings-audio.jpg)
 
 Device names include the manufacturer, model, ALSA card id, and USB id — for
 example `C-Media Electronics Inc. USB Audio Device, USB Audio [Device · 0d8c:0012]`
@@ -691,6 +741,8 @@ stop managing that card, leaving it for sdroxide. Create a drop-in such as
 card, then restart WirePlumber. See [troubleshooting](#10-troubleshooting).
 
 ### 5.9 UI preferences
+
+![The UI tab: frame rate, scroll/spectrum speed, palette, and spectrum background](images/settings-ui.jpg)
 
 The **UI** tab holds display preferences (stored in `config.toml` under `[ui]`):
 
@@ -801,7 +853,7 @@ authentication if it is reachable from an untrusted network.
 | `--freq <HZ>` | Center frequency in Hz (default 14,200,000). |
 | `--rate <HZ>` | Sample rate in Hz (default: from config). |
 | `--gain <DB>` | Overall RX gain in dB (default: hardware AGC or a moderate value). |
-| `--mode <MODE>` | Initial mode (USB, LSB, CW, AM, SAM, NFM, WFM, DIGU, DIGL, DSB, SPEC, FT8, FT4, PSK, RTTY, SSTV). |
+| `--mode <MODE>` | Initial mode (USB, LSB, CW, AM, SAM, NFM, WFM, DIGU, DIGL, DSB, SPEC, FT8, FT4, PSK, RTTY, OLIVIA, THOR, FSQ, SSTV, RFPAINT). |
 | `--server` | Run as a server (web client + WebSocket streaming backend). |
 | `--connect <HOST[:PORT]>` | Connect as a native remote client to a running server. |
 | `--port <PORT>` | Server port (default: from config, 4950). |
@@ -924,7 +976,11 @@ Shortcuts are ignored while typing in a text field.
 | FT8 / FT4 | Automatic digital modes with decoding, QSO sequencing, and logging. |
 | PSK | PSK31 keyboard mode (BPSK31 / varicode). |
 | RTTY | RTTY keyboard mode (Baudot; selectable shift and baud). |
+| OLIVIA | Robust MFSK keyboard mode (selectable tones/bandwidth). |
+| THOR | DominoEX-family IFK keyboard mode with FEC (THOR4…THOR32). |
+| FSQ | Fast Simple QSO — 33-tone IFK with directed (FSQCALL) messaging and images. |
 | SSTV | Slow-scan TV image mode (Scottie, Martin, Robot). |
+| RFPAINT | RF Paint — transmit-only spectrum painting of text and images onto the waterfall. |
 
 ### Bands
 
