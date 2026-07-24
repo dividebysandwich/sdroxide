@@ -27,6 +27,12 @@ pub struct ViewState {
     /// Fraction of the QSO area's height given to the world map; the rest is the
     /// station card + transcript + buttons. User-draggable.
     pub digi_map_fraction: f32,
+    /// Fraction of the SSTV panel width given to the TRANSMIT (send) column; the
+    /// rest is the receive side (LIVE + RECEIVED). User-draggable.
+    pub sstv_tx_fraction: f32,
+    /// Fraction of the SSTV receive side given to the RECEIVED gallery; the rest
+    /// is the LIVE image. User-draggable.
+    pub sstv_gallery_fraction: f32,
     /// Render the S-meter as an analog needle instrument instead of the bar.
     /// Toggled by clicking the meter.
     pub smeter_analog: bool,
@@ -46,6 +52,8 @@ impl Default for ViewState {
             digi_panel_fraction: 0.46,
             digi_split_fraction: 0.52,
             digi_map_fraction: 0.6,
+            sstv_tx_fraction: 0.38,
+            sstv_gallery_fraction: 0.4,
             smeter_analog: false,
         }
     }

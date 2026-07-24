@@ -4509,10 +4509,17 @@ impl SdroxideApp {
         // control rows used to leave empty at the top.
         let avail = ui.available_size();
         let full_h = avail.y;
-        let tx_w = 460.0_f32.min((avail.x * 0.40).max(320.0));
-        let left_w = (avail.x - tx_w - 8.0).max(300.0);
-        let gallery_w = 264.0_f32.min(left_w * 0.42);
-        let live_w = (left_w - gallery_w - 8.0).max(160.0);
+        let handle_w = 7.0;
+        // TRANSMIT (send) column takes a user-draggable fraction of the width; the
+        // receive side (LIVE + RECEIVED) gets the rest. Each keeps a usable minimum.
+        let tx_w = (avail.x * self.view.sstv_tx_fraction)
+            .clamp(300.0, (avail.x - handle_w - 300.0).max(300.0));
+        let left_w = (avail.x - tx_w - handle_w).max(300.0);
+        // LIVE takes the rest of the receive side; the RECEIVED gallery width is a
+        // user-draggable fraction of it (min one thumbnail column).
+        let gallery_w = (left_w * self.view.sstv_gallery_fraction)
+            .clamp(150.0, (left_w - handle_w - 160.0).max(150.0));
+        let live_w = (left_w - gallery_w - handle_w).max(160.0);
 
         ui.horizontal_top(|ui| {
             // A received thumbnail was clicked → enlarge it (applied after the row).
@@ -4643,7 +4650,32 @@ impl SdroxideApp {
                                 }
                             });
                         });
-                        ui.add_space(8.0);
+                        // Draggable vertical divider between LIVE and RECEIVED.
+                        let (hrect, hresp) = ui.allocate_exact_size(
+                            egui::vec2(handle_w, row_h),
+                            egui::Sense::click_and_drag(),
+                        );
+                        if hresp.hovered() || hresp.dragged() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                        }
+                        if hresp.dragged() {
+                            // Dragging right shrinks the gallery (grows LIVE).
+                            let d = hresp.drag_delta().x / left_w.max(1.0);
+                            self.view.sstv_gallery_fraction =
+                                (self.view.sstv_gallery_fraction - d).clamp(0.2, 0.6);
+                        }
+                        {
+                            let p = ui.painter_at(hrect);
+                            let hot = hresp.hovered() || hresp.dragged();
+                            let col = if hot { crate::theme::CYAN } else { Color32::from_gray(70) };
+                            let (cx, cy) = (hrect.center().x, hrect.center().y);
+                            for dy in [-16.0f32, 0.0, 16.0] {
+                                p.line_segment(
+                                    [egui::pos2(cx, cy + dy - 6.0), egui::pos2(cx, cy + dy + 6.0)],
+                                    egui::Stroke::new(2.0, col),
+                                );
+                            }
+                        }
 
                         // RECEIVED: narrow multi-column gallery of decoded pictures.
                         sstv_section(ui, "RECEIVED", egui::vec2(gallery_w, row_h), |ui| {
@@ -4683,9 +4715,32 @@ impl SdroxideApp {
                 },
             );
 
-            ui.add_space(8.0);
+            // Draggable vertical divider between the receive side and the
+            // TRANSMIT (send) column — mirrors the FT8 decode/QSO splitter.
+            let (hrect, hresp) =
+                ui.allocate_exact_size(egui::vec2(handle_w, full_h), egui::Sense::click_and_drag());
+            if hresp.hovered() || hresp.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+            if hresp.dragged() {
+                // Dragging right shrinks the TX column (grows the receive side).
+                let d = hresp.drag_delta().x / avail.x.max(1.0);
+                self.view.sstv_tx_fraction = (self.view.sstv_tx_fraction - d).clamp(0.22, 0.6);
+            }
+            {
+                let p = ui.painter_at(hrect);
+                let hot = hresp.hovered() || hresp.dragged();
+                let col = if hot { crate::theme::CYAN } else { Color32::from_gray(70) };
+                let (cx, cy) = (hrect.center().x, hrect.center().y);
+                for dy in [-16.0f32, 0.0, 16.0] {
+                    p.line_segment(
+                        [egui::pos2(cx, cy + dy - 6.0), egui::pos2(cx, cy + dy + 6.0)],
+                        egui::Stroke::new(2.0, col),
+                    );
+                }
+            }
 
-            // ── RIGHT: fixed-width transmit compositor, full height ──
+            // ── RIGHT: transmit compositor, full height ──
             ui.allocate_ui(egui::vec2(tx_w, full_h), |ui| {
                 sstv_section(ui, "TRANSMIT", egui::vec2(tx_w, full_h), |ui| {
                     let inner_w = tx_w - 16.0;
