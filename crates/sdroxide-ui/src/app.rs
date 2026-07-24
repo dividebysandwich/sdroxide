@@ -737,15 +737,28 @@ impl SdroxideApp {
                             // band's FT8/FT4 dial frequency (SetVfo keeps the
                             // mode); otherwise it's a normal band change. Bands
                             // with no standard digital frequency are disabled.
-                            let digi_hz =
-                                if digital { digi_freq_for_band(mode, b) } else { None };
+                            // RF Paint has no calling frequency, so its band
+                            // buttons jump to the band's default frequency while
+                            // staying in RF Paint — every band the radio can
+                            // reach is available.
+                            let digi_hz = if mode.is_rf_paint() {
+                                Some(b.default_entry().0)
+                            } else if digital {
+                                digi_freq_for_band(mode, b)
+                            } else {
+                                None
+                            };
                             let cap_ok = self.caps.as_ref().is_none_or(|c| {
                                 b.edges().is_none_or(|(lo, hi)| c.can_rx_hz(lo) || c.can_rx_hz(hi))
                             });
                             let enabled = cap_ok && (!digital || digi_hz.is_some());
-                            let active = match digi_hz {
-                                Some(hz) => (self.state.active_freq_hz() - hz).abs() < 500.0,
-                                None => !digital && self.state.band == b,
+                            let active = if mode.is_rf_paint() {
+                                self.state.band == b
+                            } else {
+                                match digi_hz {
+                                    Some(hz) => (self.state.active_freq_hz() - hz).abs() < 500.0,
+                                    None => !digital && self.state.band == b,
+                                }
                             };
                             let clicked = ui
                                 .add_enabled_ui(enabled, |ui| {
