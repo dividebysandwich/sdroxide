@@ -1414,8 +1414,21 @@ impl SdroxideApp {
         // A clicked (but not yet answered) decode shows as a faint preview.
         let preview_ll = self.digi_preview.as_ref().map(|(_, ll)| *ll);
         let tx_active = status.as_ref().map(|s| s.transmitting).unwrap_or(false);
+        // Every decoded station with a known grid, as background white dots.
+        // Dedup by grid so repeated decodes from one station don't stack.
+        let stations: Vec<(f64, f64)> = {
+            let mut seen = std::collections::HashSet::new();
+            self.digi_decodes
+                .iter()
+                .filter_map(|d| d.grid.as_deref())
+                .filter(|g| seen.insert(g.to_string()))
+                .filter_map(sdroxide_types::grid_to_latlon)
+                .collect()
+        };
         if map_budget >= crate::widgets::worldmap::MIN_HEIGHT {
-            crate::widgets::worldmap::show(ui, home_ll, dx_ll, preview_ll, tx_active, map_budget);
+            crate::widgets::worldmap::show(
+                ui, home_ll, dx_ll, preview_ll, &stations, tx_active, map_budget,
+            );
             ui.add_space(6.0);
         }
         // Station card.

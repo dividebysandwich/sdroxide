@@ -12,17 +12,20 @@ use crate::theme;
 pub const MIN_HEIGHT: f32 = 72.0;
 
 /// Draw the map filling the available width (2:1 aspect). `home`/`dx`/`preview`
-/// are (lat, lon) in degrees. `preview` is a faint marker for a decode the
-/// user clicked but hasn't answered yet (distinct colour from the active DX).
-/// When `tx_active`, an animated pulse travels the home→dx path to show we are
-/// transmitting toward the contact. `max_h` caps the height: on short windows
-/// the map shrinks (keeping its 2:1 aspect, centered) rather than pushing the
-/// QSO controls off-screen.
+/// are (lat, lon) in degrees. `stations` are the (lat, lon) of every decoded
+/// station with a known grid, drawn as plain white dots under the coloured
+/// markers. `preview` is a faint marker for a decode the user clicked but hasn't
+/// answered yet (distinct colour from the active DX). When `tx_active`, an
+/// animated pulse travels the home→dx path to show we are transmitting toward
+/// the contact. `max_h` caps the height: on short windows the map shrinks
+/// (keeping its 2:1 aspect, centered) rather than pushing the QSO controls
+/// off-screen.
 pub fn show(
     ui: &mut Ui,
     home: Option<(f64, f64)>,
     dx: Option<(f64, f64)>,
     preview: Option<(f64, f64)>,
+    stations: &[(f64, f64)],
     tx_active: bool,
     max_h: f32,
 ) {
@@ -69,6 +72,15 @@ pub fn show(
         let y = rect.top() + ((90.0 - lat) / 180.0) as f32 * rect.height();
         pos2(x, y)
     };
+
+    // Every decoded station with a known grid, as small white dots. The active
+    // DX (pink), the clicked preview (amber) and home (green) are painted over
+    // these below, so a selected/answered station keeps its own colour.
+    for &(lat, lon) in stations {
+        let c = project(lat, lon);
+        p.circle_filled(c, 2.6, Color32::from_rgba_unmultiplied(255, 255, 255, 55));
+        p.circle_filled(c, 1.7, Color32::WHITE);
+    }
 
     // Great-circle path as a dotted cyan trail (dots avoid antimeridian wrap).
     if let (Some(hll), Some(dll)) = (home, dx) {
