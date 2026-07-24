@@ -165,6 +165,8 @@ pub struct SdroxideApp {
     /// Logbook overlay open state, and the in-progress new/edit entry (if any).
     show_logbook: bool,
     log_edit: Option<LogEditForm>,
+    /// F1 help: the embedded user manual with a navigation outline.
+    help: crate::help::Help,
 }
 
 /// Editable text fields for a manual logbook entry (new or edit). Kept as
@@ -325,6 +327,7 @@ impl SdroxideApp {
             pre_digi_view: None,
             show_logbook: false,
             log_edit: None,
+            help: crate::help::Help::default(),
         }
     }
 
@@ -1063,7 +1066,7 @@ impl SdroxideApp {
     }
 
     fn windows_module(&mut self, ui: &mut egui::Ui) {
-        crate::chrome::module(ui, "System", 220.0, |ui| {
+        crate::chrome::module(ui, "System", 285.0, |ui| {
             if crate::chrome::chip(ui, self.show_logbook, "LOG")
                 .on_hover_text("Logbook — all QSOs (digital + manual)")
                 .clicked()
@@ -1081,6 +1084,12 @@ impl SdroxideApp {
                 .clicked()
             {
                 self.show_settings = !self.show_settings;
+            }
+            if crate::chrome::chip(ui, self.help.open, "? HELP")
+                .on_hover_text("User manual (F1)")
+                .clicked()
+            {
+                self.help.open = !self.help.open;
             }
         });
     }
@@ -3774,6 +3783,11 @@ impl eframe::App for SdroxideApp {
         }
 
         let mut cmds = Vec::new();
+        // F1 toggles the manual — handled here (not in `keyboard_shortcuts`) so
+        // it works even while a text field has focus.
+        if ctx.input(|i| i.key_pressed(egui::Key::F1)) {
+            self.help.open = !self.help.open;
+        }
         self.keyboard_shortcuts(&ctx, &mut cmds);
 
         egui::Panel::top(egui::Id::new("topbar"))
@@ -3959,6 +3973,7 @@ impl eframe::App for SdroxideApp {
         self.settings_window(&ctx, &mut cmds);
         self.digi_settings_window(&ctx, &mut cmds);
         self.logbook_window(&ctx);
+        self.help.ui(&ctx);
 
         // Debounced spectrum-config updates with pan hysteresis.
         let now = ctx.input(|i| i.time);

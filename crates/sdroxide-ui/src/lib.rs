@@ -7,6 +7,7 @@ mod app;
 pub mod chrome;
 mod colormap;
 mod download;
+mod help;
 #[cfg(feature = "remote")]
 mod remote;
 mod sstv;
