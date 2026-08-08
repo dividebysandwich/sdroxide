@@ -177,7 +177,7 @@ fn wfm_demod_recovers_tone_without_dc() {
 #[test]
 fn ssb_modulator_places_single_sideband() {
     let rate = 48_000.0;
-    let mut m = make_modulator(Mode::Usb, rate).unwrap();
+    let mut m = make_modulator(Mode::Usb, rate, Mode::Usb.default_filter()).unwrap();
     let audio: Vec<f32> = (0..48_000)
         .map(|i| (std::f64::consts::TAU * 1_000.0 * i as f64 / rate).sin() as f32)
         .collect();
@@ -190,7 +190,7 @@ fn ssb_modulator_places_single_sideband() {
     let f = mean_freq(tail, rate);
     assert!((f - 1_000.0).abs() < 5.0, "USB tone at {f} Hz");
 
-    let mut m = make_modulator(Mode::Lsb, rate).unwrap();
+    let mut m = make_modulator(Mode::Lsb, rate, Mode::Lsb.default_filter()).unwrap();
     let mut out = Vec::new();
     for chunk in audio.chunks(1024) {
         m.process(chunk, &mut out);
@@ -203,7 +203,7 @@ fn ssb_modulator_places_single_sideband() {
 #[test]
 fn ssb_tx_rx_loopback() {
     let rate = 48_000.0;
-    let mut m = make_modulator(Mode::Usb, rate).unwrap();
+    let mut m = make_modulator(Mode::Usb, rate, Mode::Usb.default_filter()).unwrap();
     let mut d = make_demod(Mode::Usb, rate).unwrap();
     let audio: Vec<f32> = (0..48_000)
         .map(|i| 0.5 * (std::f64::consts::TAU * 1_500.0 * i as f64 / rate).sin() as f32)

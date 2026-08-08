@@ -66,7 +66,8 @@ fn send(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut tx = RifpController::new(cfg, RATE);
     tx.set_rifp_image(img.into_raw(), w, h);
-    let mut modulator = make_modulator(Mode::Rifp, RATE).ok_or("no RIFP modulator")?;
+    let mut modulator =
+        make_modulator(Mode::Rifp, RATE, Mode::Rifp.default_filter()).ok_or("no RIFP modulator")?;
 
     let mut out: Vec<u8> = Vec::new();
     let mut symbols = [0.0f32; BLOCK];

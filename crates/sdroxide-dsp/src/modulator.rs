@@ -10,13 +10,24 @@ const TX_TAPS: usize = 331;
 pub trait Modulator: Send {
     /// Consume audio, append complex baseband samples (same rate).
     fn process(&mut self, audio: &[f32], out: &mut Vec<Complex32>);
+
+    /// Retune the transmit passband. No-op for modulators with a fixed
+    /// bandwidth (AM, FM, CW, RIFP).
+    fn set_filter(&mut self, _lo_hz: f32, _hi_hz: f32) {}
 }
 
 /// Modulator for a mode. `None` = the mode has no audio-driven transmit (SPEC,
 /// WFM broadcast, and CW) — the engine transmits a plain carrier for those when
 /// keyed.
-pub fn make_modulator(mode: Mode, rate: f64) -> Option<Box<dyn Modulator>> {
-    let (lo, hi) = mode.default_filter();
+///
+/// `passband` is the SSB filter's band-pass edges for plain voice (USB/LSB),
+/// so transmit bandwidth follows the operator's receive filter. Other modes
+/// ignore it and use their own fixed passband.
+pub fn make_modulator(mode: Mode, rate: f64, passband: (f32, f32)) -> Option<Box<dyn Modulator>> {
+    let (lo, hi) = match mode {
+        Mode::Lsb | Mode::Usb => passband,
+        _ => mode.default_filter(),
+    };
     match mode {
         // FT8/FT4 modulate as USB: the synthesized 12 kHz audio (resampled to
         // 48 k, injected as "mic") is USB-modulated exactly like a real radio.
@@ -57,6 +68,7 @@ pub fn make_modulator(mode: Mode, rate: f64) -> Option<Box<dyn Modulator>> {
 pub struct SsbMod {
     fir: ComplexFir,
     complex_in: Vec<Complex32>,
+    rate: f64,
 }
 
 impl SsbMod {
@@ -64,6 +76,7 @@ impl SsbMod {
         SsbMod {
             fir: ComplexFir::new(bandpass_taps(TX_TAPS, lo as f64, hi as f64, rate)),
             complex_in: Vec::new(),
+            rate,
         }
     }
 }
@@ -78,6 +91,10 @@ impl Modulator for SsbMod {
         for z in &mut out[before..] {
             *z *= 2.0;
         }
+    }
+
+    fn set_filter(&mut self, lo_hz: f32, hi_hz: f32) {
+        self.fir.set_taps(bandpass_taps(TX_TAPS, lo_hz as f64, hi_hz as f64, self.rate));
     }
 }
 

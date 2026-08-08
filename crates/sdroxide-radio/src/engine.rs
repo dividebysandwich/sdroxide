@@ -946,9 +946,9 @@ fn utc_civil(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
 }
 
 impl TxChain {
-    fn new(mode: Mode, tx_rate: f64) -> Self {
+    fn new(mode: Mode, tx_rate: f64, passband: (f32, f32)) -> Self {
         TxChain {
-            modulator: make_modulator(mode, 48_000.0),
+            modulator: make_modulator(mode, 48_000.0, passband),
             dc: DcBlock::new(100.0, 48_000.0),
             duc: Duc::new(48_000.0, tx_rate),
             tx_rate,
@@ -2799,6 +2799,20 @@ impl Engine {
                 (r.filter_lo, r.filter_hi) = (lo, hi);
                 if let Some(d) = self.chain_mut(rx).and_then(|c| c.demod.as_mut()) {
                     d.set_filter(lo, hi);
+                }
+                // The main receiver's filter is also the transmit passband.
+                // Retune it live, mid-over, rather than at the next PTT. An
+                // inverting transponder flips the sideband, which mirrors the
+                // filter edges the same way `tx_begin` does.
+                if rx == RxId::Main {
+                    let inverting = self
+                        .sat_lock
+                        .as_ref()
+                        .is_some_and(|l| l.cfg.uplink.is_some_and(|u| u.inverting));
+                    let (lo, hi) = if inverting { (-hi, -lo) } else { (lo, hi) };
+                    if let Some(m) = self.tx.as_mut().and_then(|tx| tx.modulator.as_mut()) {
+                        m.set_filter(lo, hi);
+                    }
                 }
             }
             SetAgc { rx, agc } => {
@@ -5673,7 +5687,8 @@ impl Engine {
                         // Across an inverting transponder the sideband flips:
                         // transmit LSB to come out of the downlink as the USB
                         // it is being listened to on.
-                        let mut mode = self.state.rx[0].mode;
+                        let rx0 = &self.state.rx[0];
+                        let mut mode = rx0.mode;
                         let inverting = self
                             .sat_lock
                             .as_ref()
@@ -5685,7 +5700,15 @@ impl Engine {
                                 m => m,
                             };
                         }
-                        self.tx = Some(TxChain::new(mode, tx_rate));
+                        // A flipped sideband also mirrors the filter edges:
+                        // USB's positive Hz-from-carrier range becomes LSB's
+                        // negative one (and back), keeping the same width.
+                        let passband = if inverting {
+                            (-rx0.filter_hi, -rx0.filter_lo)
+                        } else {
+                            (rx0.filter_lo, rx0.filter_hi)
+                        };
+                        self.tx = Some(TxChain::new(mode, tx_rate, passband));
                     }
                     self.tx_center_hz = txf;
                     // Seed the TX-side Doppler NCO before the first block goes

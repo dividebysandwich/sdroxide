@@ -972,7 +972,8 @@ mod tests {
         let mut tx = RifpController::new(cfg.clone(), OUT_RATE);
         tx.set_rifp_image(rgb.clone(), w, h);
         let mut modulator =
-            sdroxide_dsp::make_modulator(Mode::Rifp, OUT_RATE).expect("RIFP modulator");
+            sdroxide_dsp::make_modulator(Mode::Rifp, OUT_RATE, Mode::Rifp.default_filter())
+                .expect("RIFP modulator");
         let mut demod = sdroxide_dsp::make_demod(Mode::Rifp, OUT_RATE).expect("RIFP demodulator");
         let mut rx = RifpController::new(cfg, OUT_RATE);
 
