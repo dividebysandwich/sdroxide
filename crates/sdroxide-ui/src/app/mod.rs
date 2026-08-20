@@ -313,6 +313,10 @@ pub struct SdroxideApp {
     /// reports back how many characters have been sent so we colour them green).
     text_tx: String,
     qso_log: Vec<QsoRecord>,
+    /// Cached newest-first ordering and day grouping of [`Self::qso_log`], so
+    /// the logbook list does not re-sort and re-group the whole log on every
+    /// frame it is open. See `logbook::LogView`.
+    log_view: crate::app::logbook::LogView,
     /// QSOs worked since this run started, which is what the FT8 panel's
     /// "Session" readout counts. Deliberately not derived from the logbook: the
     /// log is persisted and grows for ever, so counting it would report every
@@ -898,6 +902,7 @@ impl SdroxideApp {
             digi_status: None,
             text_tx: String::new(),
             qso_log: load_qso_log(storage),
+            log_view: Default::default(),
             session_qsos: 0,
             show_digi_settings: false,
             digi_cfg_edit: sdroxide_types::DigiConfig::default(),
