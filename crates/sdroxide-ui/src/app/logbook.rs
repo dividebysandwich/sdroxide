@@ -6,7 +6,7 @@
 //! asks them what would be new on every row of every slot.
 
 use eframe::egui::{self, Color32, RichText};
-use sdroxide_types::{LookupProvider, QsoRecord};
+use sdroxide_types::{LookupProvider, QsoRecord, UploadTarget};
 
 use crate::theme::ThemedScroll;
 use crate::time::now_unix;
@@ -139,6 +139,54 @@ impl LogEditForm {
     }
 }
 
+/// The height, in points, of every item in the logbook list: a QSO row and a day
+/// header alike.
+///
+/// One height for both kinds is what makes the list virtualisable with
+/// `ScrollArea::show_rows`, which works out which items the viewport covers from
+/// this number alone, without laying any of them out. The alternative,
+/// `show_viewport` with prefix-summed per-item offsets, would keep the header at
+/// its natural smaller height, and was rejected: its correctness depends on
+/// predicting egui's layout to the pixel for every item, and a few points of
+/// drift per item, over the tens of thousands this exists to cope with, is a
+/// scroll bar that lies about where it is.
+///
+/// The cost is that a day header now occupies the same vertical slot as a row,
+/// so there is a little more space around the date than there used to be.
+///
+/// ⚠️ It is a FUNCTION and not a constant, and that is the whole point. The
+/// fixed parts are the frame's 5-point top and bottom margins, its 22-point
+/// content box, and the 2-point gap after it. The part that is not fixed is the
+/// item spacing egui inserts between them, which `theme::apply_metrics` sets to
+/// 5 on desktop and 7 on touch and RE-APPLIES whenever the window crosses a
+/// breakpoint. A hardcoded 34 was written here first and
+/// `row_height_matches_the_live_style` failed it immediately, which is exactly
+/// what that test is for: with a constant, resizing the window across the touch
+/// breakpoint would have silently desynchronised the scroll bar from the list.
+pub(in crate::app) fn row_height(ui: &egui::Ui) -> f32 {
+    // The row's own 22-point minimum, unless the style's interaction size is
+    // larger, which it is on a touch tier: 34 against 18. Then the frame's
+    // 5-point top and bottom margins, the 2-point gap after it, and the item
+    // spacing egui inserts, which is 5 on desktop and 7 on touch.
+    22.0f32.max(ui.spacing().interact_size.y) + 12.0 + ui.spacing().item_spacing.y
+}
+
+/// One entry in the flat display list the logbook scrolls through.
+#[derive(Clone, Copy)]
+pub(in crate::app) enum LogItem {
+    /// Index into [`LogView::groups`].
+    Header(usize),
+    /// Index into [`LogView::order`].
+    Qso(usize),
+}
+
+/// What the operator pressed on a QSO row.
+enum RowAction {
+    Edit(u64),
+    Delete(u64),
+    Upload(u64),
+}
+
 /// One day's worth of QSOs in [`LogView::order`], as a half-open range plus the
 /// three values the session header prints.
 pub(in crate::app) struct LogGroup {
@@ -163,6 +211,9 @@ pub(in crate::app) struct LogGroup {
 pub(in crate::app) struct LogView {
     pub order: Vec<usize>,
     pub groups: Vec<LogGroup>,
+    /// Headers and rows flattened into one list, which is what the virtualised
+    /// scroll area indexes: it asks for items 900 to 920, not for a group.
+    pub items: Vec<LogItem>,
     /// What the cache was built from. See [`Self::refresh`].
     signature: Option<(usize, u64)>,
 }
@@ -223,6 +274,13 @@ impl LogView {
                 end: j,
             });
             i = j;
+        }
+
+        self.items.clear();
+        self.items.reserve(self.order.len() + self.groups.len());
+        for (gi, g) in self.groups.iter().enumerate() {
+            self.items.push(LogItem::Header(gi));
+            self.items.extend((g.start..g.end).map(LogItem::Qso));
         }
     }
 }
@@ -376,9 +434,20 @@ impl SdroxideApp {
                     self.log_entry_form(ui);
                 }
                 ui.separator();
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show_themed(ui, |ui| {
-                    self.log_list(ui);
-                });
+                // Virtualised: show_rows lays out only the items the viewport
+                // covers, so a 22,000 QSO log costs the same per frame as a
+                // twenty QSO one. It needs the item count up front, which is
+                // why the view is refreshed before the scroll area rather than
+                // inside it.
+                self.log_view.refresh(&self.qso_log);
+                let n_items = self.log_view.items.len();
+                let rh = row_height(ui);
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows_themed(
+                    ui,
+                    rh,
+                    n_items,
+                    |ui, rows| self.log_list(ui, rows),
+                );
             });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
@@ -587,8 +656,230 @@ impl SdroxideApp {
         }
     }
 
+    /// Draw one day's session header into the slot the list has allocated.
+    ///
+    /// Split out of `log_list` when the list was virtualised: only visible items
+    /// are drawn now, so each kind of item has to be drawable on its own.
+    fn log_day_header(ui: &mut egui::Ui, g: &LogGroup, count: usize) {
+        let newest = g.newest;
+        let oldest = g.oldest;
+        // Session header.
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&g.day).size(12.0).strong().color(crate::theme::CYAN()));
+            ui.label(
+                RichText::new(format!(
+                    "{}–{} UTC · {} QSO",
+                    time_str(oldest),
+                    time_str(newest),
+                    count
+                ))
+                .size(10.5)
+                .color(crate::theme::gray(130)),
+            );
+        });
+        ui.add_space(2.0);
+    }
+
+    /// Draw one QSO row, returning whatever the operator pressed on it.
+    ///
+    /// Returns rather than mutating, because the caller holds `&self.qso_log`
+    /// while drawing and cannot also take the mutable borrow the actions need.
+    fn log_qso_row(
+        ui: &mut egui::Ui,
+        r: &QsoRecord,
+        up_targets: &[UploadTarget],
+    ) -> Option<RowAction> {
+        let mut to_edit: Option<u64> = None;
+        let mut to_delete: Option<u64> = None;
+        let mut to_upload: Option<u64> = None;
+        let inner = egui::Frame::new()
+            .fill(crate::theme::ROW_BG())
+            .inner_margin(egui::Margin { left: 10, right: 6, top: 5, bottom: 5 })
+            .show(ui, |ui| {
+                ui.set_min_height(22.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let col = |ui: &mut egui::Ui, w: f32, lbl: egui::Label| {
+                        let (rect, _) = ui
+                            .allocate_exact_size(egui::vec2(w, 20.0), egui::Sense::hover());
+                        let mut c = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(rect)
+                                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                        );
+                        c.add(lbl);
+                    };
+                    let gray = crate::theme::gray(150);
+                    col(
+                        ui,
+                        40.0,
+                        egui::Label::new(
+                            RichText::new(time_str(r.start_utc))
+                                .monospace()
+                                .size(12.0)
+                                .color(gray),
+                        ),
+                    );
+                    col(
+                        ui,
+                        92.0,
+                        egui::Label::new(
+                            RichText::new(&r.call)
+                                .size(14.0)
+                                .strong()
+                                .color(crate::theme::TEXT_STRONG()),
+                        )
+                        .truncate(),
+                    );
+                    col(
+                        ui,
+                        42.0,
+                        egui::Label::new(
+                            RichText::new(&r.band).monospace().size(11.5).color(gray),
+                        ),
+                    );
+                    col(
+                        ui,
+                        48.0,
+                        egui::Label::new(
+                            RichText::new(&r.mode).monospace().size(11.5).color(gray),
+                        ),
+                    );
+                    let rst = format!(
+                        "{}/{}",
+                        r.rst_sent.map(|v| v.to_string()).unwrap_or_else(|| "–".into()),
+                        r.rst_rcvd.map(|v| v.to_string()).unwrap_or_else(|| "–".into()),
+                    );
+                    col(
+                        ui,
+                        72.0,
+                        egui::Label::new(
+                            RichText::new(rst).monospace().size(11.5).color(gray),
+                        ),
+                    );
+                    col(
+                        ui,
+                        48.0,
+                        egui::Label::new(
+                            RichText::new(r.grid.as_deref().unwrap_or(""))
+                                .monospace()
+                                .size(11.5)
+                                .color(crate::theme::CYAN_DIM()),
+                        ),
+                    );
+                    // QSL / confirmation status: green ✓ when confirmed,
+                    // dim ↑ when uploaded-but-unconfirmed, else blank.
+                    let (qsl_txt, qsl_col) = if r.is_confirmed() {
+                        ("✓", crate::theme::GREEN())
+                    } else if r.lotw_sent || r.eqsl_sent || r.qrz_sent || r.clublog_sent {
+                        ("↑", crate::theme::gray(140))
+                    } else {
+                        ("", gray)
+                    };
+                    let mut qsl_tip = String::new();
+                    for (on, name) in [
+                        (r.lotw_rcvd, "LoTW ✓"),
+                        (r.eqsl_rcvd, "eQSL ✓"),
+                        (r.qsl_rcvd, "card ✓"),
+                        (r.lotw_sent, "LoTW ↑"),
+                        (r.eqsl_sent, "eQSL ↑"),
+                        (r.qrz_sent, "QRZ ↑"),
+                        (r.clublog_sent, "Club Log ↑"),
+                    ] {
+                        if on {
+                            if !qsl_tip.is_empty() {
+                                qsl_tip.push_str(", ");
+                            }
+                            qsl_tip.push_str(name);
+                        }
+                    }
+                    {
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(16.0, 20.0),
+                            egui::Sense::hover(),
+                        );
+                        let mut c = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(rect)
+                                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                        );
+                        let resp = c.add(egui::Label::new(
+                            RichText::new(qsl_txt).size(13.0).strong().color(qsl_col),
+                        ));
+                        if !qsl_tip.is_empty() {
+                            resp.on_hover_text(qsl_tip);
+                        }
+                    }
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if crate::chrome::chip_accent(
+                                ui,
+                                false,
+                                RichText::new("DEL").size(11.0),
+                                crate::theme::PINK(),
+                                Color32::WHITE,
+                            )
+                            .on_hover_text("Delete this entry")
+                            .clicked()
+                            {
+                                to_delete = Some(r.id);
+                            }
+                            if crate::chrome::chip(
+                                ui,
+                                false,
+                                RichText::new("EDIT").size(11.0),
+                            )
+                            .clicked()
+                            {
+                                to_edit = Some(r.id);
+                            }
+                            if !up_targets.is_empty()
+                                && crate::chrome::chip(
+                                    ui,
+                                    false,
+                                    RichText::new("UP").size(11.0),
+                                )
+                                .on_hover_text("Upload this QSO to configured logs")
+                                .clicked()
+                            {
+                                to_upload = Some(r.id);
+                            }
+                            if !r.comment.is_empty() {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(&r.comment)
+                                            .size(11.5)
+                                            .color(crate::theme::gray(120)),
+                                    )
+                                    .truncate(),
+                                );
+                            }
+                        },
+                    );
+                });
+            });
+        let rr = inner.response.rect;
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                rr.left_top(),
+                egui::pos2(rr.left() + 2.0, rr.bottom()),
+            ),
+            0.0,
+            crate::theme::CYAN_DIM(),
+        );
+        ui.add_space(2.0);
+        if let Some(id) = to_delete {
+            Some(RowAction::Delete(id))
+        } else if let Some(id) = to_edit {
+            Some(RowAction::Edit(id))
+        } else {
+            to_upload.map(RowAction::Upload)
+        }
+    }
     /// The QSO list, grouped into daily sessions (newest first).
-    fn log_list(&mut self, ui: &mut egui::Ui) {
+    fn log_list(&mut self, ui: &mut egui::Ui, rows: std::ops::Range<usize>) {
         if self.qso_log.is_empty() {
             ui.add_space(8.0);
             ui.label(
@@ -597,221 +888,50 @@ impl SdroxideApp {
             );
             return;
         }
-        self.log_view.refresh(&self.qso_log);
+        // Already refreshed by the caller, which needed the item count to size
+        // the scroll area. Taken out of `self` so drawing can borrow the log.
         let view = std::mem::take(&mut self.log_view);
 
-        let mut to_edit: Option<u64> = None;
-        let mut to_delete: Option<u64> = None;
-        let mut to_upload: Option<u64> = None;
-        // Which targets have credentials, so the per-QSO upload button is only
-        // offered when it can do something.
+        // Only the visible slice is drawn. See ROW_H for why every item is
+        // given the same height.
         let up_targets = configured_upload_targets(&self.net_cfg_edit);
-
-        for g in &view.groups {
-            let group = &view.order[g.start..g.end];
-            let newest = g.newest;
-            let oldest = g.oldest;
-            // Session header.
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(&g.day).size(12.0).strong().color(crate::theme::CYAN()));
-                ui.label(
-                    RichText::new(format!(
-                        "{}–{} UTC · {} QSO",
-                        time_str(oldest),
-                        time_str(newest),
-                        group.len()
-                    ))
-                    .size(10.5)
-                    .color(crate::theme::gray(130)),
-                );
-            });
-            ui.add_space(2.0);
-            for &idx in group {
-                let r = &self.qso_log[idx];
-                let inner = egui::Frame::new()
-                    .fill(crate::theme::ROW_BG())
-                    .inner_margin(egui::Margin { left: 10, right: 6, top: 5, bottom: 5 })
-                    .show(ui, |ui| {
-                        ui.set_min_height(22.0);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 8.0;
-                            let col = |ui: &mut egui::Ui, w: f32, lbl: egui::Label| {
-                                let (rect, _) = ui
-                                    .allocate_exact_size(egui::vec2(w, 20.0), egui::Sense::hover());
-                                let mut c = ui.new_child(
-                                    egui::UiBuilder::new()
-                                        .max_rect(rect)
-                                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                                );
-                                c.add(lbl);
-                            };
-                            let gray = crate::theme::gray(150);
-                            col(
-                                ui,
-                                40.0,
-                                egui::Label::new(
-                                    RichText::new(time_str(r.start_utc))
-                                        .monospace()
-                                        .size(12.0)
-                                        .color(gray),
-                                ),
-                            );
-                            col(
-                                ui,
-                                92.0,
-                                egui::Label::new(
-                                    RichText::new(&r.call)
-                                        .size(14.0)
-                                        .strong()
-                                        .color(crate::theme::TEXT_STRONG()),
-                                )
-                                .truncate(),
-                            );
-                            col(
-                                ui,
-                                42.0,
-                                egui::Label::new(
-                                    RichText::new(&r.band).monospace().size(11.5).color(gray),
-                                ),
-                            );
-                            col(
-                                ui,
-                                48.0,
-                                egui::Label::new(
-                                    RichText::new(&r.mode).monospace().size(11.5).color(gray),
-                                ),
-                            );
-                            let rst = format!(
-                                "{}/{}",
-                                r.rst_sent.map(|v| v.to_string()).unwrap_or_else(|| "–".into()),
-                                r.rst_rcvd.map(|v| v.to_string()).unwrap_or_else(|| "–".into()),
-                            );
-                            col(
-                                ui,
-                                72.0,
-                                egui::Label::new(
-                                    RichText::new(rst).monospace().size(11.5).color(gray),
-                                ),
-                            );
-                            col(
-                                ui,
-                                48.0,
-                                egui::Label::new(
-                                    RichText::new(r.grid.as_deref().unwrap_or(""))
-                                        .monospace()
-                                        .size(11.5)
-                                        .color(crate::theme::CYAN_DIM()),
-                                ),
-                            );
-                            // QSL / confirmation status: green ✓ when confirmed,
-                            // dim ↑ when uploaded-but-unconfirmed, else blank.
-                            let (qsl_txt, qsl_col) = if r.is_confirmed() {
-                                ("✓", crate::theme::GREEN())
-                            } else if r.lotw_sent || r.eqsl_sent || r.qrz_sent || r.clublog_sent {
-                                ("↑", crate::theme::gray(140))
-                            } else {
-                                ("", gray)
-                            };
-                            let mut qsl_tip = String::new();
-                            for (on, name) in [
-                                (r.lotw_rcvd, "LoTW ✓"),
-                                (r.eqsl_rcvd, "eQSL ✓"),
-                                (r.qsl_rcvd, "card ✓"),
-                                (r.lotw_sent, "LoTW ↑"),
-                                (r.eqsl_sent, "eQSL ↑"),
-                                (r.qrz_sent, "QRZ ↑"),
-                                (r.clublog_sent, "Club Log ↑"),
-                            ] {
-                                if on {
-                                    if !qsl_tip.is_empty() {
-                                        qsl_tip.push_str(", ");
-                                    }
-                                    qsl_tip.push_str(name);
-                                }
-                            }
-                            {
-                                let (rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(16.0, 20.0),
-                                    egui::Sense::hover(),
-                                );
-                                let mut c = ui.new_child(
-                                    egui::UiBuilder::new()
-                                        .max_rect(rect)
-                                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                                );
-                                let resp = c.add(egui::Label::new(
-                                    RichText::new(qsl_txt).size(13.0).strong().color(qsl_col),
-                                ));
-                                if !qsl_tip.is_empty() {
-                                    resp.on_hover_text(qsl_tip);
-                                }
-                            }
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if crate::chrome::chip_accent(
-                                        ui,
-                                        false,
-                                        RichText::new("DEL").size(11.0),
-                                        crate::theme::PINK(),
-                                        Color32::WHITE,
-                                    )
-                                    .on_hover_text("Delete this entry")
-                                    .clicked()
-                                    {
-                                        to_delete = Some(r.id);
-                                    }
-                                    if crate::chrome::chip(
-                                        ui,
-                                        false,
-                                        RichText::new("EDIT").size(11.0),
-                                    )
-                                    .clicked()
-                                    {
-                                        to_edit = Some(r.id);
-                                    }
-                                    if !up_targets.is_empty()
-                                        && crate::chrome::chip(
-                                            ui,
-                                            false,
-                                            RichText::new("UP").size(11.0),
-                                        )
-                                        .on_hover_text("Upload this QSO to configured logs")
-                                        .clicked()
-                                    {
-                                        to_upload = Some(r.id);
-                                    }
-                                    if !r.comment.is_empty() {
-                                        ui.add(
-                                            egui::Label::new(
-                                                RichText::new(&r.comment)
-                                                    .size(11.5)
-                                                    .color(crate::theme::gray(120)),
-                                            )
-                                            .truncate(),
-                                        );
-                                    }
-                                },
-                            );
-                        });
-                    });
-                let rr = inner.response.rect;
-                ui.painter().rect_filled(
-                    egui::Rect::from_min_max(
-                        rr.left_top(),
-                        egui::pos2(rr.left() + 2.0, rr.bottom()),
-                    ),
-                    0.0,
-                    crate::theme::CYAN_DIM(),
-                );
-                ui.add_space(2.0);
+        let mut action: Option<RowAction> = None;
+        for &item in &view.items[rows.clone()] {
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), row_height(ui)),
+                egui::Sense::hover(),
+            );
+            let mut c = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(rect)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            match item {
+                LogItem::Header(gi) => {
+                    let g = &view.groups[gi];
+                    Self::log_day_header(&mut c, g, g.end - g.start);
+                }
+                LogItem::Qso(oi) => {
+                    if let Some(a) =
+                        Self::log_qso_row(&mut c, &self.qso_log[view.order[oi]], &up_targets)
+                    {
+                        action = Some(a);
+                    }
+                }
             }
         }
 
         // Put the cache back. It was taken out for the duration of the loop
         // because drawing needs &self.qso_log while the view borrows from self.
         self.log_view = view;
+
+        let (mut to_edit, mut to_delete, mut to_upload) = (None, None, None);
+        match action {
+            Some(RowAction::Edit(id)) => to_edit = Some(id),
+            Some(RowAction::Delete(id)) => to_delete = Some(id),
+            Some(RowAction::Upload(id)) => to_upload = Some(id),
+            None => {}
+        }
 
         if let Some(id) = to_delete {
             self.qso_log.retain(|q| q.id != id);
@@ -823,7 +943,7 @@ impl SdroxideApp {
         } else if let Some(id) = to_upload {
             if let Some(r) = self.qso_log.iter().find(|q| q.id == id) {
                 let adif = sdroxide_types::qso_log_to_adif(std::slice::from_ref(r));
-                self.pending_uploads.push((id, adif, up_targets));
+                self.pending_uploads.push((id, adif, up_targets.clone()));
             }
         }
     }
@@ -906,6 +1026,69 @@ mod tests {
         v.refresh(&log);
         assert_ne!(v.groups[0].day, "sentinel", "an edited time did not invalidate");
         assert_eq!(v.groups[0].day, "2024-02-01");
+    }
+
+    #[test]
+    fn log_view_flattens_groups_and_rows_into_one_item_list() {
+        // The virtualised scroll area indexes this list, not the groups, so it
+        // has to be a header followed by exactly that group's rows, in order.
+        let log = vec![qso(1, DAY0), qso(2, DAY0 + 3_600), qso(3, DAY0 + 86_400)];
+        let mut v = LogView::default();
+        v.refresh(&log);
+
+        assert_eq!(v.items.len(), log.len() + v.groups.len(), "one item per QSO plus one per day");
+        let shape: Vec<&str> = v
+            .items
+            .iter()
+            .map(|i| match i {
+                LogItem::Header(_) => "H",
+                LogItem::Qso(_) => "Q",
+            })
+            .collect();
+        // Newest day (one QSO) first, then the older day's two.
+        assert_eq!(shape, ["H", "Q", "H", "Q", "Q"]);
+    }
+
+    /// Lay a QSO row out headlessly and measure it, in both layout tiers.
+    ///
+    /// `ScrollArea::show_rows` works out which items the viewport covers from
+    /// the row height alone, so if a row is not really that tall the scroll bar
+    /// and the content drift apart, worsening the further down the list you go.
+    ///
+    /// Both tiers are checked because `theme::apply_metrics` gives them
+    /// different `item_spacing.y`, and re-runs whenever the window crosses the
+    /// breakpoint. A constant written here passed by arithmetic and failed this
+    /// test at once: the row is 34 points plus that spacing, not 34.
+    #[test]
+    fn row_height_matches_the_live_style() {
+        for tier in [crate::layout::Tier::Desktop, crate::layout::Tier::Phone] {
+            let ctx = egui::Context::default();
+            crate::theme::apply_metrics(&ctx, tier);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 400.0));
+            let r = QsoRecord {
+                id: 1,
+                start_utc: DAY0,
+                call: "G4MQL".into(),
+                band: "20m".into(),
+                mode: "FT8".into(),
+                ..Default::default()
+            };
+            let (mut measured, mut claimed) = (0.0f32, 0.0f32);
+            let _ = ctx.run_ui(
+                egui::RawInput { screen_rect: Some(screen), ..Default::default() },
+                |ui| {
+                    claimed = row_height(ui);
+                    let before = ui.cursor().top();
+                    SdroxideApp::log_qso_row(ui, &r, &[]);
+                    measured = ui.cursor().top() - before;
+                },
+            );
+            assert!(
+                (measured - claimed).abs() < 0.5,
+                "{tier:?}: a QSO row measured {measured} points but row_height said {claimed}; \
+                 the virtualised list would drift"
+            );
+        }
     }
 
     #[test]

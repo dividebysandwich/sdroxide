@@ -1374,6 +1374,20 @@ pub trait ThemedScroll {
         ui: &mut egui::Ui,
         add_contents: impl FnOnce(&mut egui::Ui) -> R,
     ) -> egui::containers::scroll_area::ScrollAreaOutput<R>;
+
+    /// `ScrollArea::show_rows` with the same theming.
+    ///
+    /// For a list long enough that laying every row out per frame is the cost:
+    /// egui works out which rows the viewport covers from `row_height` alone and
+    /// calls the closure with just those. Every row must therefore actually be
+    /// `row_height` tall, or the scroll bar and the content disagree.
+    fn show_rows_themed<R>(
+        self,
+        ui: &mut egui::Ui,
+        row_height: f32,
+        total_rows: usize,
+        add_contents: impl FnOnce(&mut egui::Ui, std::ops::Range<usize>) -> R,
+    ) -> egui::containers::scroll_area::ScrollAreaOutput<R>;
 }
 
 impl ThemedScroll for egui::ScrollArea {
@@ -1388,6 +1402,25 @@ impl ThemedScroll for egui::ScrollArea {
         let out = self.show(ui, |ui| {
             *ui.visuals_mut() = normal.clone();
             add_contents(ui)
+        });
+
+        *ui.visuals_mut() = normal;
+        out
+    }
+
+    fn show_rows_themed<R>(
+        self,
+        ui: &mut egui::Ui,
+        row_height: f32,
+        total_rows: usize,
+        add_contents: impl FnOnce(&mut egui::Ui, std::ops::Range<usize>) -> R,
+    ) -> egui::containers::scroll_area::ScrollAreaOutput<R> {
+        let normal = ui.visuals().clone();
+        scroll_palette(ui.visuals_mut());
+
+        let out = self.show_rows(ui, row_height, total_rows, |ui, rows| {
+            *ui.visuals_mut() = normal.clone();
+            add_contents(ui, rows)
         });
 
         *ui.visuals_mut() = normal;
