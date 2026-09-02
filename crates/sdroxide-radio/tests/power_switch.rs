@@ -89,13 +89,7 @@ fn wide_caps() -> DeviceCaps {
         rx_channels: 1,
         sample_rates: vec![WIDE_RATE],
         freq_ranges_rx: vec![(0.0, 60_000_000.0)],
-        gains: vec![GainElement {
-            name: "LNA".into(),
-            direction: Direction::Rx,
-            min_db: -6.0,
-            max_db: 40.0,
-            step_db: 1.0,
-        }],
+        gains: vec![GainElement::db("LNA", Direction::Rx, -6.0, 40.0, 1.0)],
         ..DeviceCaps::default()
     }
 }

@@ -84,76 +84,15 @@ pub fn bw_khz_for(cfg_bw_khz: u32, effective_hz: f64, dual: bool) -> ffi::BwType
     if dual { khz.min(SdrPlayConfig::DUAL_MAX_BW_KHZ as ffi::BwType) } else { khz }
 }
 
-/// Highest usable LNA state for a model on a band. The counts come from the
-/// API headers where they are defined (`RSPIA_NUM_LNA_STATES` and friends)
-/// and from the API specification's gain tables for the RSP1 and RSPdx band
-/// edges. A state past this is rejected by the service, so the driver clamps
-/// and reports what it kept.
+/// Highest usable LNA state for a model on a band, from the one table in
+/// [`SdrPlayModel::max_lna_state_on`].
 ///
-/// `hiz` says the Hi-Z input is routed (RSP2 / RSPduo tuner 1), which has
-/// fewer front-end states of its own.
+/// A thin forward and deliberately so: the settings UI is wasm-safe and cannot
+/// link this crate, so the table has to live where both can reach it. What is
+/// left here is the clamp's own vocabulary — a state past this is rejected by
+/// the service, so the driver clamps and reports what it kept.
 pub fn max_lna_state(model: SdrPlayModel, freq_hz: f64, hiz: bool, hdr: bool) -> u8 {
-    let f = freq_hz;
-    match model {
-        SdrPlayModel::Rsp1 => {
-            if f >= 1_000e6 {
-                2 // 3 states in L-band
-            } else {
-                3 // 4 states everywhere else
-            }
-        }
-        SdrPlayModel::Rsp1a | SdrPlayModel::Rsp1b => {
-            if f < 60e6 {
-                6 // RSPIA_NUM_LNA_STATES_AM = 7
-            } else if f >= 1_000e6 {
-                8 // RSPIA_NUM_LNA_STATES_LBAND = 9
-            } else {
-                9 // RSPIA_NUM_LNA_STATES = 10
-            }
-        }
-        SdrPlayModel::Rsp2 => {
-            if hiz {
-                4 // RSPII_NUM_LNA_STATES_AMPORT = 5
-            } else if f >= 420e6 {
-                5 // RSPII_NUM_LNA_STATES_420MHZ = 6
-            } else {
-                8 // RSPII_NUM_LNA_STATES = 9
-            }
-        }
-        SdrPlayModel::RspDuo => {
-            if hiz {
-                4 // RSPDUO_NUM_LNA_STATES_AMPORT = 5
-            } else if f < 60e6 {
-                6 // RSPDUO_NUM_LNA_STATES_AM = 7
-            } else if f >= 1_000e6 {
-                8 // RSPDUO_NUM_LNA_STATES_LBAND = 9
-            } else {
-                9 // RSPDUO_NUM_LNA_STATES = 10
-            }
-        }
-        SdrPlayModel::RspDx | SdrPlayModel::RspDxR2 => {
-            if hdr && f < 2e6 {
-                21 // RSPDX_NUM_LNA_STATES_DX = 22
-            } else if f < 12e6 {
-                18 // RSPDX_NUM_LNA_STATES_AMPORT2_0_12 = 19
-            } else if f < 50e6 {
-                19 // RSPDX_NUM_LNA_STATES_AMPORT2_12_50 = 20
-            } else if f < 60e6 {
-                24 // RSPDX_NUM_LNA_STATES_AMPORT2_50_60 = 25
-            } else if f < 250e6 {
-                26 // RSPDX_NUM_LNA_STATES_VHF_BAND3 = 27
-            } else if f < 420e6 {
-                27 // RSPDX_NUM_LNA_STATES = 28
-            } else if f < 1_000e6 {
-                20 // RSPDX_NUM_LNA_STATES_420MHZ = 21
-            } else {
-                18 // RSPDX_NUM_LNA_STATES_LBAND = 19
-            }
-        }
-        // The API guarantees nothing about a model these bindings do not
-        // know; every RSP has at least the RSP1's four states.
-        SdrPlayModel::Unknown => 3,
-    }
+    model.max_lna_state_on(freq_hz, hiz, hdr)
 }
 
 /// RSP2 antenna routing for a name from [`SdrPlayModel::antennas`]:
@@ -187,13 +126,10 @@ pub fn rspduo_tuner1_amport(name: &str) -> Option<i32> {
     }
 }
 
-/// Whether an antenna choice routes a Hi-Z input, for the LNA clamp.
+/// Whether an antenna choice routes a Hi-Z input, for the LNA clamp — from
+/// [`SdrPlayModel::antenna_is_hiz`], for the same reason as above.
 pub fn antenna_is_hiz(model: SdrPlayModel, antenna: &str) -> bool {
-    match model {
-        SdrPlayModel::Rsp2 => antenna == "Hi-Z",
-        SdrPlayModel::RspDuo => antenna == "Hi-Z port",
-        _ => false,
-    }
+    model.antenna_is_hiz(antenna)
 }
 
 #[cfg(test)]

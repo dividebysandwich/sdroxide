@@ -3874,6 +3874,14 @@ fn engine_thread(
     let mut next_drm = Instant::now();
     let mut next_session = Instant::now() + SESSION_SAVE_INTERVAL;
 
+    // The band-dependent gain ranges, once, before anything is published: the
+    // ones the device was opened with are the model's widest, and the band the
+    // session came up on is very likely not that band. Kept out of the loop
+    // below — unlike the antenna refresh beside it, building this allocates,
+    // and the three things that can move it (retune, port, HDR) each ask for
+    // it where they happen.
+    engine.refresh_rx_gains();
+
     // The commands waiting at the top of a tick, kept between iterations so the
     // batch costs no allocation. See [`collapse_superseded`].
     let mut batch: Vec<Command> = Vec::new();
@@ -7383,6 +7391,9 @@ impl Engine {
                     }
                     self.state.gains = self.source.current_gains();
                     self.remember_gain(dir, element, db);
+                    // An RSPdx's HDR switch rides a gain element and changes
+                    // which LNA table is in force.
+                    self.refresh_rx_gains();
                 }
                 Direction::Tx => {
                     if let Err(e) = self.source.set_tx_gain_element(&element, db) {
@@ -7422,6 +7433,9 @@ impl Engine {
                         self.state.antenna_rx = self.source.current_antenna();
                         self.want_antenna.0 = Some(name.clone());
                         self.band_antenna.entry(self.state.band).or_default().0 = Some(name);
+                        // A Hi-Z port has fewer front-end states than the 50 Ω
+                        // one beside it.
+                        self.refresh_rx_gains();
                     }
                     Direction::Tx => {
                         if let Err(e) = self.source.set_tx_antenna(&name) {
@@ -11545,7 +11559,13 @@ impl Engine {
     ///   manufacturer calibrated that against a signal generator, and it is
     ///   already in dBm, so the dBFS→dBm offset must *not* go on top of it.
     /// * An IQ front end — the receive chain measures its own passband, in
-    ///   dBFS, which `cal_offset_db` turns into dBm for this hardware.
+    ///   dBFS, which `cal_offset_db` turns into dBm for this hardware. A front
+    ///   end that reports its own gain ([`IqSource::rx_gain_db`]) has that
+    ///   taken off first: dBFS is a level at the converter, and the level at
+    ///   the antenna is that level minus whatever the front end put in front
+    ///   of it. Without the subtraction the reading follows the gain — every
+    ///   step of an attenuator, and on hardware with its own AGC the loop's
+    ///   whole range, lands on the meter as if the band had done it.
     /// * A rig on a sound card whose family has no meter read: all that is left
     ///   is the level of the audio it sends, after its own AGC and squelch.
     ///   Not the same quantity, but it moves with the signal, and a meter that
@@ -11564,7 +11584,8 @@ impl Engine {
             return Some(self.audio_level_dbfs() + self.cal_offset_db);
         }
         if let Some(p) = self.main.as_ref().and_then(|c| c.power_dbfs()) {
-            return Some(p + self.cal_offset_db);
+            let gain = self.source.rx_gain_db().unwrap_or(0.0);
+            return Some(p - gain + self.cal_offset_db);
         }
         self.audio_mode.then(|| self.audio_level_dbfs() + self.cal_offset_db)
     }
@@ -12415,6 +12436,32 @@ impl Engine {
         self.restore_antennas();
         self.follow_band_antenna(self.state.band);
         let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+    }
+
+    /// Re-publish the RX gain ranges when what they depend on has moved.
+    ///
+    /// The same shape as [`Engine::refresh_antennas`], and there for a
+    /// neighbouring reason: an RSP's RF gain is a step into a table whose
+    /// length belongs to the *band*, so a range published once when the device
+    /// opened is wrong for most of the spectrum. Called after a retune, a port
+    /// change and a gain command — the three things that can move it — rather
+    /// than from the loop, because building the answer allocates and the loop
+    /// runs per block.
+    ///
+    /// Also re-reads the values. The driver clamps a state the new band does
+    /// not have and reports the one it kept, and a slider left sitting above
+    /// that would be showing a setting the hardware never took.
+    fn refresh_rx_gains(&mut self) {
+        let Some(gains) = self.source.learned_rx_gains() else { return };
+        if gains != self.caps.gains {
+            self.caps.gains = gains;
+            let _ = self.event_tx.send(RadioEvent::Capabilities(self.caps.clone()));
+        }
+        let now = self.source.current_gains();
+        if now != self.state.gains {
+            self.state.gains = now;
+            let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+        }
     }
 
     /// Note down a gain stage the operator has set, so it can be put back on
@@ -15030,6 +15077,9 @@ impl Engine {
             Ok(()) => {
                 self.state.center_hz = center_hz;
                 self.note_center_change(center_hz);
+                // The LNA table an RSP offers belongs to the band, and the band
+                // has just moved.
+                self.refresh_rx_gains();
                 // Re-place the skim window inside the span that has just moved;
                 // one that really moves re-labels its spots and clears its
                 // tracks, so none straddles the old and new axis.

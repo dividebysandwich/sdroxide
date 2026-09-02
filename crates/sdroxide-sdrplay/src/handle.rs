@@ -71,6 +71,12 @@ pub(crate) enum Ctrl {
     Ppm(f64),
     /// The RSPdx's high-dynamic-range path, likewise device-wide.
     Hdr(bool),
+    /// The HDR path's analog filter, as an `sdrplay_api_RspDx_HdrModeBwT`
+    /// code. Device-wide for the same reason as the switch above.
+    HdrBw(i32),
+    /// Whether the IF gain reduction may go below the API's normal 20 dB
+    /// floor. Per tuner, like the reduction it bounds.
+    ExtendedIfGr(TunerIdx, bool),
     Shutdown,
 }
 
@@ -83,6 +89,7 @@ pub(crate) struct TunerPending {
     pub lna: Option<u8>,
     pub agc: Option<i32>,
     pub agc_setpoint: Option<i32>,
+    pub extended_if_gr: Option<bool>,
     pub bias_tee: Option<bool>,
     pub rf_notch: Option<bool>,
     pub dab_notch: Option<bool>,
@@ -104,6 +111,7 @@ pub(crate) struct Pending {
     pub detach: [bool; TUNERS],
     pub ppm: Option<f64>,
     pub hdr: Option<bool>,
+    pub hdr_bw: Option<i32>,
     pub shutdown: bool,
 }
 
@@ -133,6 +141,8 @@ impl Pending {
             Ctrl::Antenna(t, v) if ok(t) => self.t[t].antenna = Some(v),
             Ctrl::Ppm(v) => self.ppm = Some(v),
             Ctrl::Hdr(v) => self.hdr = Some(v),
+            Ctrl::HdrBw(v) => self.hdr_bw = Some(v),
+            Ctrl::ExtendedIfGr(t, v) if ok(t) => self.t[t].extended_if_gr = Some(v),
             Ctrl::Shutdown => self.shutdown = true,
             _ => {}
         }
@@ -144,6 +154,7 @@ impl Pending {
             && !self.detach.iter().any(|d| *d)
             && self.ppm.is_none()
             && self.hdr.is_none()
+            && self.hdr_bw.is_none()
             && !self.shutdown
     }
 }
@@ -162,7 +173,31 @@ pub(crate) struct TunerShared {
     pub ev_gr_db: AtomicI64,
     pub ev_lna_gr_db: AtomicI64,
     /// System gain from the same event, in milli-dB.
+    ///
+    /// The event announces a gain the samples in flight were *not* taken with:
+    /// the service raises it when it programs the tuner, and the USB pipe
+    /// behind it is still full of blocks from before. Subtracting this from a
+    /// measurement straight away puts a step in the S-meter the antenna never
+    /// saw, in the wrong direction, for as long as the pipe takes to drain. So
+    /// this is only the announcement; [`Self::rx_curr_gain_milli_db`] is the
+    /// one to measure against.
     pub ev_curr_gain_milli_db: AtomicI64,
+    /// The system gain the samples now arriving were actually taken with, in
+    /// milli-dB, `i64::MIN` for "not yet". This is the one to measure against.
+    ///
+    /// Promoted from the announcement above by `settle_gain` in the stream
+    /// callback, on the block the service flags with `grChanged` or, where it
+    /// never flags one, once the announcement has stood long enough that the
+    /// pipe cannot still be holding samples from before it. Both paths matter
+    /// and the reasoning for each is on that function.
+    pub rx_curr_gain_milli_db: AtomicI64,
+    /// The announcement `settle_gain` is currently waiting on, and the moment
+    /// it arrived (ms since the session epoch). Separate from the two above
+    /// because the wait is per *announcement*: a loop still hunting replaces
+    /// this every few milliseconds and only the value it settles on ever ages
+    /// into place.
+    pub pending_gain_milli_db: AtomicI64,
+    pub pending_gain_since_ms: AtomicU64,
     /// The LNA state actually programmed, after any per-band clamp.
     pub lna_state: AtomicU8,
     /// Set while the engine reading this tuner is transmitting and therefore
@@ -181,6 +216,9 @@ impl TunerShared {
             ev_gr_db: AtomicI64::new(i64::MIN),
             ev_lna_gr_db: AtomicI64::new(i64::MIN),
             ev_curr_gain_milli_db: AtomicI64::new(i64::MIN),
+            rx_curr_gain_milli_db: AtomicI64::new(i64::MIN),
+            pending_gain_milli_db: AtomicI64::new(i64::MIN),
+            pending_gain_since_ms: AtomicU64::new(0),
             lna_state: AtomicU8::new(0),
             rx_paused: AtomicBool::new(false),
         }
@@ -711,6 +749,28 @@ impl SdrPlayHandle {
         self.shared().lna_state.load(Ordering::Relaxed)
     }
 
+    /// Absolute system gain — LNA plus mixer plus IF, everything between the
+    /// antenna socket and the converter — in dB, as the hardware reports it
+    /// for the samples now arriving. `None` until the first block taken with a
+    /// known gain has been delivered.
+    ///
+    /// This is the number that turns a level in dBFS into a level at the
+    /// antenna, and the only one that does: an RSP's front end has two knobs
+    /// and neither is in dB (the LNA is a step index whose value depends on
+    /// the band, the IF is a *reduction*), so nothing derivable from the
+    /// control settings on this side is the whole gain. The API works it out
+    /// and publishes it as `gainParams.currGain`, which is what this is.
+    ///
+    /// It moves on its own whenever the AGC is running, which is precisely
+    /// when it matters: without it an S-meter reads the loop's activity
+    /// instead of the signal.
+    pub fn system_gain_db(&self) -> Option<f64> {
+        match self.shared().rx_curr_gain_milli_db.load(Ordering::Relaxed) {
+            i64::MIN => None,
+            v => Some(v as f64 / 1000.0),
+        }
+    }
+
     /// Read interleaved complex samples. Returns how many `f32` were taken.
     ///
     /// With both tuners combined the ring holds quadruples rather than pairs,
@@ -854,6 +914,22 @@ impl SdrPlayHandle {
     /// second tuner anyway.
     pub fn set_hdr(&self, on: bool) {
         self.send(Ctrl::Hdr(on));
+    }
+
+    /// The HDR path's analog filter. Only does anything with the path itself
+    /// switched on, and only at the centres that filter is built for — see
+    /// [`sdroxide_types::SdrPlayHdrBw::works_at`], which is what the source
+    /// warns the operator from.
+    pub fn set_hdr_bw(&self, code: i32) {
+        self.send(Ctrl::HdrBw(code));
+    }
+
+    /// Open the last 20 dB of IF gain, below the API's normal floor.
+    pub fn set_extended_if_gr(&self, on: bool) {
+        self.send(Ctrl::ExtendedIfGr(self.tuner, on));
+        if self.dual_tuner() {
+            self.send(Ctrl::ExtendedIfGr(1 - self.tuner, on));
+        }
     }
 
     pub fn set_antenna(&self, name: &str) {
@@ -1030,6 +1106,35 @@ mod tests {
         assert_eq!(h.effective_if_gr_db(), None);
         h.shared().ev_gr_db.store(42, Ordering::Relaxed);
         assert_eq!(h.effective_if_gr_db(), Some(42));
+        h.released = true;
+    }
+
+    /// The announcement alone must not move the meter: an event is the service
+    /// saying it has programmed a gain, not that the samples in the pipe were
+    /// taken with it.
+    #[test]
+    fn system_gain_follows_the_samples_not_the_announcement() {
+        let (_p, cons) = RingBuffer::<f32>::new(16);
+        let mut h = test_handle(cons);
+        assert_eq!(h.system_gain_db(), None);
+        h.shared().ev_curr_gain_milli_db.store(43_500, Ordering::Relaxed);
+        assert_eq!(h.system_gain_db(), None, "an announced gain is not a delivered one");
+        h.shared().rx_curr_gain_milli_db.store(43_500, Ordering::Relaxed);
+        assert_eq!(h.system_gain_db(), Some(43.5));
+        h.released = true;
+    }
+
+    /// A split RSPduo's two radios each read their own front end. The gain is
+    /// per tuner for the same reason the IF reduction is: they are two
+    /// receivers, and one operator's attenuator is not the other's.
+    #[test]
+    fn system_gain_is_per_tuner() {
+        let (_p, cons) = RingBuffer::<f32>::new(16);
+        let mut h = test_handle_with(cons, DuoMode::Split, 1);
+        h.dev.shared.t[0].rx_curr_gain_milli_db.store(20_000, Ordering::Relaxed);
+        assert_eq!(h.system_gain_db(), None, "tuner 1 read tuner 0's gain");
+        h.dev.shared.t[1].rx_curr_gain_milli_db.store(31_000, Ordering::Relaxed);
+        assert_eq!(h.system_gain_db(), Some(31.0));
         h.released = true;
     }
 

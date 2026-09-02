@@ -6,7 +6,31 @@ pub enum Direction {
     Tx,
 }
 
+/// What the numbers on a gain element actually are, which is what decides how
+/// a control may label them.
+///
+/// Nearly every front end's stages are in decibels and this is not a question
+/// worth asking. An RSP's front end is the exception the type exists for: its
+/// RF gain is an *index into a table*, and which table depends on the band —
+/// step 7 is 24 dB of reduction at 0–12 MHz and 25 dB at 420–1000 MHz. A
+/// slider that appended "dB" to that index reported a number three times too
+/// small and in the wrong unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum GainUnit {
+    /// Decibels, and safe to label as such.
+    #[default]
+    Db,
+    /// A step index, whose dB value the hardware alone knows. Show the number
+    /// bare: an unlabelled index reads as an index, where one labelled dB is a
+    /// wrong measurement.
+    Step,
+}
+
 /// One adjustable gain stage exposed by the device.
+///
+/// The `*_db` names are historical: they are the range and the increment of
+/// whatever [`Self::unit`] says this element is counted in, decibels or
+/// otherwise. Renaming them would touch every backend for no gain.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GainElement {
     pub name: String,
@@ -14,6 +38,47 @@ pub struct GainElement {
     pub min_db: f64,
     pub max_db: f64,
     pub step_db: f64,
+    /// Decibels unless the front end says otherwise — see [`GainUnit`].
+    pub unit: GainUnit,
+}
+
+impl GainElement {
+    /// A stage counted in decibels, which is all but one of them.
+    pub fn db(
+        name: impl Into<String>,
+        direction: Direction,
+        min: f64,
+        max: f64,
+        step: f64,
+    ) -> Self {
+        GainElement {
+            name: name.into(),
+            direction,
+            min_db: min,
+            max_db: max,
+            step_db: step,
+            unit: GainUnit::Db,
+        }
+    }
+
+    /// A stage counted in steps of a table the hardware owns.
+    pub fn steps(
+        name: impl Into<String>,
+        direction: Direction,
+        min: f64,
+        max: f64,
+        step: f64,
+    ) -> Self {
+        GainElement { unit: GainUnit::Step, ..GainElement::db(name, direction, min, max, step) }
+    }
+
+    /// The suffix a control should put after the number, if any.
+    pub fn suffix(&self) -> &'static str {
+        match self.unit {
+            GainUnit::Db => " dB",
+            GainUnit::Step => "",
+        }
+    }
 }
 
 /// What a driver setting holds, which is what decides the control drawn for it.
@@ -381,5 +446,28 @@ mod tests {
         assert!(!caps.may_tx_hz(145_000_000.0), "outside the transmit range and inside the RX one");
         // Edges are inclusive, both ends.
         assert!(caps.may_tx_hz(1_800_000.0) && caps.may_tx_hz(54_000_000.0));
+    }
+
+    /// The default matters more than it looks: every backend but one builds
+    /// its stages with [`GainElement::db`], and a stage that arrived without
+    /// an opinion must be labelled decibels rather than left bare.
+    #[test]
+    fn a_stage_is_decibels_unless_it_says_otherwise() {
+        assert_eq!(GainUnit::default(), GainUnit::Db);
+        let g = GainElement::db("LNA", Direction::Rx, 0.0, 40.0, 1.0);
+        assert_eq!(g.unit, GainUnit::Db);
+        assert_eq!(g.suffix(), " dB");
+    }
+
+    /// A step index carries no unit, because the one it would be given is
+    /// wrong: an RSP's state 7 is 24 dB at 0–12 MHz and 25 dB at 420 MHz, so
+    /// "7 dB" is neither the number nor the unit.
+    #[test]
+    fn a_step_index_is_never_labelled_decibels() {
+        let g = GainElement::steps("LNA", Direction::Rx, -18.0, 0.0, 1.0);
+        assert_eq!(g.unit, GainUnit::Step);
+        assert_eq!(g.suffix(), "");
+        // The range still describes the same element, just not in dB.
+        assert_eq!((g.min_db, g.max_db, g.step_db), (-18.0, 0.0, 1.0));
     }
 }

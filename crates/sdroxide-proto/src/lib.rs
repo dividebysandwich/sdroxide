@@ -1169,7 +1169,23 @@ use sdroxide_types::{
 /// reads every field after `hpsdr` out of step; and the enum's new variant is
 /// appended, so no surviving discriminant moved but a v129 peer handed one
 /// fails to decode the message carrying it.
-pub const PROTO_VERSION: u16 = 130;
+///
+/// v131: the SDRplay gain controls say what they are and what they may reach.
+/// [`sdroxide_types::GainElement`] gains a `unit`, because decibels are wrong
+/// for one of them: an RSP's RF gain is a step into a band-dependent table and
+/// a control that appended dB to it reported a number three times too small.
+/// The struct rides `DeviceCaps` inside `ServerMsg::Capabilities`, which an RSP
+/// now re-sends on every retune — the ladder's length belongs to the band — so
+/// a v130 peer would read the tail of each one out of step rather than merely
+/// missing a field.
+///
+/// With it, [`sdroxide_types::SdrPlayConfig`] gains `hdr_bw` (which filter the
+/// RSPdx's HDR path runs, previously left at the API's default because nothing
+/// ever wrote it) and `extended_if_gr` (whether the IF gain reduction may go
+/// below the API's 20 dB floor). Both sit at that block's tail, and
+/// `RadioConfig` rides `ServerMsg::RadioConfig` and `Command::SetRadioConfig`
+/// whole, so a v130 peer handed one reads the tail of each of those out of step.
+pub const PROTO_VERSION: u16 = 131;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

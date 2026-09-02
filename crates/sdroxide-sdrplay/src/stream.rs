@@ -59,6 +59,14 @@ const SCALE: f32 = 1.0 / 32768.0;
 /// acknowledgements) runs anyway.
 const CTRL_TIMEOUT: Duration = Duration::from_millis(100);
 
+/// How long an announced gain must stand before it is believed without the
+/// service having flagged the block that carries it — see [`settle_gain`].
+///
+/// Comfortably longer than the pipe it is covering for (a few milliseconds of
+/// USB and service buffering at any rate this backend offers) and far shorter
+/// than an operator can see on a meter.
+const GAIN_SETTLE: Duration = Duration::from_millis(25);
+
 /// The tuner's own range: 1 kHz to 2 GHz on every model.
 const MIN_RF_HZ: f64 = 1_000.0;
 const MAX_RF_HZ: f64 = 2_000_000_000.0;
@@ -225,6 +233,9 @@ struct LiveTuner {
     lna_wanted: u8,
     /// What is actually programmed after the per-band clamp.
     lna_programmed: u8,
+    /// The IF gain-reduction floor in force — the API's normal 20 dB, or 0
+    /// where the operator has opened the last of the range.
+    min_gr: ffi::MinGr,
     antenna: String,
 }
 
@@ -350,6 +361,10 @@ fn run(
                 center_hz: center,
                 lna_wanted: if is_main { lna_wanted } else { aux_lna_wanted },
                 lna_programmed: if is_main { lna_programmed } else { aux_lna_programmed },
+                // Both tuners share the operator's choice: they are one board,
+                // and a diversity pair gained differently is a pair the filter
+                // cannot line up.
+                min_gr: if cfg.extended_if_gr { ffi::EXTENDED_MIN_GR } else { ffi::NORMAL_MIN_GR },
                 antenna: if is_main { cfg.antenna.clone() } else { String::new() },
             }
         }),
@@ -373,16 +388,21 @@ fn run(
             ch.tuner_params.lo_mode = ffi::LO_AUTO;
             ch.tuner_params.rf_freq.rf_hz = center;
             ch.tuner_params.gain.g_rdb = if i == main {
-                cfg.if_gr_db.clamp(SdrPlayConfig::IF_GR_MIN, SdrPlayConfig::IF_GR_MAX)
+                cfg.if_gr_db.clamp(cfg.if_gr_min(), SdrPlayConfig::IF_GR_MAX)
             } else {
-                cfg.duo.if_gr_db.clamp(SdrPlayConfig::IF_GR_MIN, SdrPlayConfig::IF_GR_MAX)
+                cfg.duo.if_gr_db.clamp(cfg.if_gr_min(), SdrPlayConfig::IF_GR_MAX)
             };
             ch.tuner_params.gain.lna_state = live.t[i].lna_programmed;
-            ch.tuner_params.gain.min_gr = ffi::NORMAL_MIN_GR;
+            ch.tuner_params.gain.min_gr =
+                if cfg.extended_if_gr { ffi::EXTENDED_MIN_GR } else { ffi::NORMAL_MIN_GR };
             ch.ctrl_params.decimation.enable = (plan.decim > 1) as u8;
             ch.ctrl_params.decimation.decimation_factor = plan.decim;
             ch.ctrl_params.agc.enable = cfg.agc.code() as ffi::AgcControl;
-            ch.ctrl_params.agc.set_point_dbfs = cfg.agc_setpoint_dbfs.clamp(-72, -20);
+            // Clamped to what this *rate* allows, not to the widest range any
+            // rate allows: the API refuses a set point the converter cannot
+            // reach, and this backend offers 10 MSPS where the floor is -48.
+            let sp = cfg.agc_setpoint_range();
+            ch.ctrl_params.agc.set_point_dbfs = cfg.agc_setpoint_dbfs.clamp(*sp.start(), *sp.end());
             if model == SdrPlayModel::RspDuo {
                 ch.rsp_duo_tuner_params.rf_notch_enable = cfg.rf_notch as u8;
                 ch.rsp_duo_tuner_params.rf_dab_notch_enable = cfg.dab_notch as u8;
@@ -659,6 +679,10 @@ fn apply(
         dp.rsp_dx_params.hdr_enable = on as u8;
         ext1 |= ffi::UPDATE_RSPDX_HDR_ENABLE;
     }
+    // The HDR filter rides its own update reason, and belongs to the tuner
+    // block rather than the device one — so it is applied per tuner below,
+    // through `hdr_bw_pending`.
+    let hdr_bw_pending = p.hdr_bw.filter(|_| model.has_hdr());
 
     for t in tuners.live() {
         let ch = unsafe { &mut *tuners.ch[t].expect("live tuner has a block") };
@@ -671,10 +695,21 @@ fn apply(
             ch.tuner_params.rf_freq.rf_hz = lv.center_hz;
             reason |= ffi::UPDATE_TUNER_FRF;
         }
+        // The floor first: a reduction sent in the same pass must be clamped
+        // to the floor this pass installs, not to the one before it.
+        if let Some(on) = pt.extended_if_gr {
+            lv.min_gr = if on { ffi::EXTENDED_MIN_GR } else { ffi::NORMAL_MIN_GR };
+            ch.tuner_params.gain.min_gr = lv.min_gr;
+            // Its own reason: the limits move, not the value.
+            reason |= ffi::UPDATE_TUNER_GR_LIMITS;
+        }
         if let Some(gr) = pt.if_gr {
-            ch.tuner_params.gain.g_rdb =
-                gr.clamp(SdrPlayConfig::IF_GR_MIN, SdrPlayConfig::IF_GR_MAX);
+            ch.tuner_params.gain.g_rdb = gr.clamp(lv.min_gr, SdrPlayConfig::IF_GR_MAX);
             reason |= ffi::UPDATE_TUNER_GR;
+        }
+        if let Some(bw) = hdr_bw_pending {
+            ch.rsp_dx_tuner_params.hdr_bw = bw;
+            ext1 |= ffi::UPDATE_RSPDX_HDR_BW;
         }
         if let Some(lna) = pt.lna {
             lv.lna_wanted = lna.min(model.max_lna_state());
@@ -828,6 +863,66 @@ unsafe extern "C" fn stream_b_cb(
     unsafe { deliver(1, xi, xq, params, num_samples, reset, cb_context) }
 }
 
+/// Promote the gain the GainChange event announced to the gain the arriving
+/// samples were actually taken with.
+///
+/// The event and the samples are two streams that do not run together: the
+/// service announces a gain as it programs the tuner, while the blocks behind
+/// it in the USB pipe are still the old gain's. Adopting the announcement
+/// straight away puts a step in the S-meter the antenna never saw, for as long
+/// as the pipe takes to drain.
+///
+/// `grChanged` on a block is the service saying "from here on", and the AGC
+/// reference note tells anyone measuring the ADC to wait for it. It is right
+/// as far as it goes, and on this hardware it does not go far enough:
+/// **measured on an RSPdx against a −73 dBm carrier, the flag is set for
+/// host-commanded gain updates and never for the hardware AGC's own.** Fifteen
+/// seconds of a settling 50 Hz loop produced six GainChange events — 33.4 dB
+/// climbing to 51.4 — and one flagged block, so a reader that waited for the
+/// flag sat 18 dB stale and stayed there. That is the case this exists for:
+/// the AGC is on by default, and it moves the gain whether or not anybody
+/// touched a control.
+///
+/// So the flag is taken as one of two ways in. The other is age: an
+/// announcement that has stood unchanged for [`GAIN_SETTLE`] is adopted
+/// anyway, on the grounds that the pipe cannot still be holding samples from
+/// before it. What that costs is a wrong reading for the settle window on any
+/// step the service does flag late — and what it buys is a gain that tracks
+/// the loop at all. The two errors are not the same size: a commanded LNA step
+/// is tens of dB and gets the flag, while the AGC's own increments are a few dB
+/// and get the timeout.
+///
+/// # Safety
+///
+/// `params` is the service's, valid for the duration of the callback, and may
+/// be null.
+unsafe fn settle_gain(ctx: &CbCtx, tuner: usize, params: *mut ffi::StreamCbParamsT) {
+    let t = &ctx.shared.t[tuner];
+    let announced = t.ev_curr_gain_milli_db.load(Ordering::Relaxed);
+    if announced == i64::MIN {
+        return;
+    }
+    let live = t.rx_curr_gain_milli_db.load(Ordering::Relaxed);
+    if live == announced {
+        return;
+    }
+    // How long this announcement has stood. Restarted whenever a different one
+    // arrives, so a loop that is still hunting keeps resetting it and only the
+    // value it settles on ages into place.
+    let now_ms = ctx.epoch.elapsed().as_millis() as u64;
+    if t.pending_gain_milli_db.swap(announced, Ordering::Relaxed) != announced {
+        t.pending_gain_since_ms.store(now_ms, Ordering::Relaxed);
+    }
+    let flagged = !params.is_null() && unsafe { (*params).gr_changed } != 0;
+    let stood = now_ms.saturating_sub(t.pending_gain_since_ms.load(Ordering::Relaxed));
+    // The unset arm is the first reading rather than a change: a session that
+    // has not moved its gain yet would otherwise wait out the settle window
+    // before the meter said anything at all.
+    if flagged || live == i64::MIN || stood >= GAIN_SETTLE.as_millis() as u64 {
+        t.rx_curr_gain_milli_db.store(announced, Ordering::Relaxed);
+    }
+}
+
 /// One block of samples, from whichever tuner. Foreign thread — see the module
 /// doc; nothing here may unwind, and nothing here may touch the parameter
 /// block.
@@ -854,6 +949,11 @@ unsafe fn deliver(
         if reset != 0 {
             tracing::debug!("SDRplay stream reset (retune or rate change settled)");
         }
+        // Pair the announced system gain with the samples it was taken with,
+        // before anything below can return early: a tuner nobody is reading
+        // still has a gain, and a block of zero samples still carries the flag
+        // that says the new one has arrived.
+        unsafe { settle_gain(ctx, tuner, params) };
         let n = num_samples as usize;
         if n == 0 || xi.is_null() || xq.is_null() {
             return;

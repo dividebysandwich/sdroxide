@@ -206,6 +206,22 @@ pub trait IqSource: Send {
     fn learned_antennas(&self) -> Option<&'static [&'static str]> {
         None
     }
+    /// The RX gain stages the front end has **right now**, when their ranges
+    /// are not a fact about the hardware alone. `None` — the default — leaves
+    /// `DeviceCaps::gains` exactly as it was built.
+    ///
+    /// One backend needs this. An RSP's RF gain is a step into a table whose
+    /// length is a property of the *band*: an RSPdx has 28 states at 250–420
+    /// MHz and 19 below 12 MHz, so a range published once at open is wrong for
+    /// most of the spectrum, and a slider built from it spends its top third
+    /// moving nothing and snapping back as the driver clamps.
+    ///
+    /// Asked only where the answer can have changed — after a retune, a port
+    /// change or a gain command — rather than on every pass of the engine
+    /// loop, because building it allocates.
+    fn learned_rx_gains(&self) -> Option<Vec<sdroxide_types::GainElement>> {
+        None
+    }
     /// Switch the *radio* off, or back on again, over its control link.
     ///
     /// The radio's own power switch, not sdroxide's: an Icom answers `18 00` /
@@ -368,6 +384,29 @@ pub trait IqSource: Send {
     /// us IQ need none of this — the engine measures the passband itself.
     /// Default: none.
     fn rx_signal_dbm(&mut self) -> Option<f32> {
+        None
+    }
+    /// Absolute gain, in dB, between the antenna socket and the converter that
+    /// produced these samples. `None` when the front end cannot say.
+    ///
+    /// The engine measures the passband in dBFS, which is a level *at the
+    /// converter*; the level at the antenna is that minus whatever the front
+    /// end put in front of it. Where a source knows that number the engine
+    /// takes it off, and what is left is a reading that stays put when the
+    /// gain moves — which is the whole point, because on a front end with an
+    /// AGC the gain moves continuously and an S-meter that follows it is
+    /// measuring the loop rather than the band.
+    ///
+    /// Default: `None`, which leaves the reading on the old footing — dBFS
+    /// plus the operator's fixed calibration offset. That is the right answer
+    /// for a front end whose gain nothing reports, and for one whose gain
+    /// never moves.
+    ///
+    /// Must describe the samples being delivered *now*, not a gain that has
+    /// been commanded and not yet taken effect: a front end that answers with
+    /// the new value while the old samples are still in flight puts a step in
+    /// the meter that the antenna never saw.
+    fn rx_gain_db(&self) -> Option<f32> {
         None
     }
     /// Offset (Hz) of the operator's VFO from the IQ centre, so a rig that keeps
@@ -1250,6 +1289,12 @@ impl IqSource for ConvertedSource {
     fn learned_antennas(&self) -> Option<&'static [&'static str]> {
         self.inner.learned_antennas()
     }
+    /// The front end's own stages. A converter shifts the frequency the *radio*
+    /// shows, but the tuner behind it is still on the converted one, so its
+    /// band-dependent ranges are the inner source's to report.
+    fn learned_rx_gains(&self) -> Option<Vec<sdroxide_types::GainElement>> {
+        self.inner.learned_rx_gains()
+    }
     fn set_rig_power(&mut self, on: bool) -> Result<()> {
         self.inner.set_rig_power(on)
     }
@@ -1344,6 +1389,14 @@ impl IqSource for ConvertedSource {
 
     fn rx_signal_dbm(&mut self) -> Option<f32> {
         self.inner.rx_signal_dbm()
+    }
+
+    /// The front end's own gain, which is what it was: a converter ahead of it
+    /// shifts the frequency and not the level. Its conversion gain or loss is
+    /// the operator's to put in the calibration offset, being a property of
+    /// their box rather than anything the radio can read.
+    fn rx_gain_db(&self) -> Option<f32> {
+        self.inner.rx_gain_db()
     }
 
     /// Relative (VFO minus IQ centre), so untouched.

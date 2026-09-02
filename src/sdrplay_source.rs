@@ -21,7 +21,8 @@ use sdroxide_dsp::Diversity;
 use sdroxide_radio::{Complex32, IqSource, Result, lo_offset_for};
 use sdroxide_sdrplay::{DuoMode, SdrPlayDevice, SdrPlayHandle};
 use sdroxide_types::{
-    DiversityMode, SdrPlayAgc, SdrPlayConfig, SdrPlayDuo, SdrPlayDuoTuner, SdrPlayModel,
+    Direction, DiversityMode, GainElement, SdrPlayAgc, SdrPlayConfig, SdrPlayDuo, SdrPlayDuoTuner,
+    SdrPlayHdrBw, SdrPlayModel,
 };
 
 use crate::device_registry::{DeviceKey, SharedDevice, registry};
@@ -51,6 +52,14 @@ pub struct SdrPlaySource {
     if_gr_db: i32,
     agc: SdrPlayAgc,
     bias_tee: bool,
+    /// The RSPdx's high-dynamic-range path, tracked because it selects a
+    /// different LNA table below 2 MHz — see [`Self::rx_gain_elements`].
+    hdr: bool,
+    /// The HDR path's analog filter, tracked so the open-status note can say
+    /// which centres it is actually implemented at.
+    hdr_bw: SdrPlayHdrBw,
+    /// Whether the IF gain reduction may go below the API's 20 dB floor.
+    extended_if_gr: bool,
     antenna: String,
     /// The ports this model (and, on the RSPduo, this tuner) offers — what
     /// the capabilities advertise. Empty hides the selector.
@@ -106,9 +115,14 @@ impl SdrPlaySource {
         let diversity = dual.then(|| {
             Diversity::new(div_mode(cfg.duo.mode), usize::from(cfg.duo.taps), cfg.duo.rate)
         });
+        // The *effective* offset, not the computed one: HDR withdraws it (see
+        // `lo_offset_hz`), and a log line reporting the offset that would have
+        // applied is a log line that disagrees with the hardware.
+        let effective_offset = if cfg.hdr && handle.model().has_hdr() { 0.0 } else { lo_offset };
         tracing::info!(
             "SDRplay source ready: {label}, center {center_hz:.0} Hz, \
-             LO offset {lo_offset:.0} Hz (0 = LO on the VFO)"
+             LO offset {effective_offset:.0} Hz (0 = LO on the VFO){}",
+            if effective_offset == 0.0 && lo_offset != 0.0 { " — withdrawn for HDR" } else { "" }
         );
         if diversity.is_some() {
             tracing::info!(
@@ -134,6 +148,9 @@ impl SdrPlaySource {
             if_gr_db: cfg.if_gr_db,
             agc: cfg.agc,
             bias_tee: cfg.bias_tee,
+            hdr: cfg.hdr,
+            hdr_bw: cfg.hdr_bw,
+            extended_if_gr: cfg.extended_if_gr,
             antenna,
             antennas,
             div_cfg: cfg.duo.clone(),
@@ -166,6 +183,46 @@ impl SdrPlaySource {
     /// source being one of them.
     pub fn split_tuner(&self) -> bool {
         self.handle.split_tuner()
+    }
+
+    /// The two real gain stages, as they stand on the band this source is
+    /// tuned to.
+    ///
+    /// Both are carried *negated* — `IF` is −(gain reduction dB), `LNA` is
+    /// −(state) — so that on a slider more is louder, like every other
+    /// backend. The LNA is listed first because the first element is the main
+    /// window's Gain slider, and the LNA is the only gain the operator always
+    /// owns: with the hardware AGC on (the default) the service holds the IF
+    /// gain, and a slider the AGC snaps back is worse than none. It is also
+    /// the control that actually clears an overloaded front end, which the IF
+    /// gain never can.
+    ///
+    /// The LNA's range follows the *band*, not the model: an RSPdx has 28
+    /// states at 250–420 MHz and 19 below 12 MHz, and offering the longer
+    /// ladder on HF gives the operator a third of a slider that moves nothing
+    /// and snaps back as the driver clamps. It is also a `Step` element rather
+    /// than a dB one, because a state index is not a measurement: state 7 is
+    /// 24 dB of reduction here and 25 dB at 420 MHz, and a control that
+    /// appended "dB" to the 7 would be wrong by both the number and the unit.
+    pub fn rx_gain_elements(&self) -> Vec<GainElement> {
+        let hiz = self.model().antenna_is_hiz(&self.antenna);
+        let max_lna = self.model().max_lna_state_on(self.center, hiz, self.hdr);
+        vec![
+            GainElement::steps(
+                SdrPlayConfig::LNA_ELEMENT,
+                Direction::Rx,
+                -(f64::from(max_lna)),
+                0.0,
+                1.0,
+            ),
+            GainElement::db(
+                SdrPlayConfig::IF_GAIN_ELEMENT,
+                Direction::Rx,
+                -f64::from(SdrPlayConfig::IF_GR_MAX),
+                -f64::from(SdrPlayConfig::IF_GR_MIN),
+                1.0,
+            ),
+        ]
     }
 
     /// Push this radio's own settings at its tuner.
@@ -251,8 +308,20 @@ impl IqSource for SdrPlaySource {
         Ok(())
     }
 
+    /// Zero, on the HDR path.
+    ///
+    /// The offset exists to park the LO clear of the zero-IF DC spike, and the
+    /// engine tunes the hardware to `VFO + this`. HDR cannot pay that: its
+    /// analog filter is built at a fixed handful of centres, so an offset puts
+    /// the hardware beside every one of them — and for the highest, 1.9 MHz,
+    /// beside *and above* the 2 MHz ceiling the path has at all. Left in, HDR
+    /// is a switch that can never do anything.
+    ///
+    /// The same withdrawal the low-IF path gets a few lines up, for the
+    /// neighbouring reason: where the tuned frequency is not ours to choose,
+    /// the offset is not ours to add.
     fn lo_offset_hz(&self) -> f64 {
-        self.lo_offset
+        if self.hdr && self.model().has_hdr() { 0.0 } else { self.lo_offset }
     }
 
     /// One block from the receiver — and, with both tuners running, the second
@@ -315,7 +384,12 @@ impl IqSource for SdrPlaySource {
         match name {
             SdrPlayConfig::IF_GAIN_ELEMENT => {
                 let gr = (-db).round() as i32;
-                self.if_gr_db = gr.clamp(SdrPlayConfig::IF_GR_MIN, SdrPlayConfig::IF_GR_MAX);
+                let min = if self.extended_if_gr {
+                    SdrPlayConfig::IF_GR_MIN_EXTENDED
+                } else {
+                    SdrPlayConfig::IF_GR_MIN
+                };
+                self.if_gr_db = gr.clamp(min, SdrPlayConfig::IF_GR_MAX);
                 self.handle.set_if_gr_db(self.if_gr_db);
             }
             SdrPlayConfig::LNA_ELEMENT => {
@@ -343,7 +417,31 @@ impl IqSource for SdrPlaySource {
                 self.handle.set_dab_notch(db >= 0.5);
             }
             SdrPlayConfig::HDR_ELEMENT => {
-                self.handle.set_hdr(db >= 0.5);
+                self.hdr = db >= 0.5;
+                self.handle.set_hdr(self.hdr);
+                // Switching HDR moves the LO offset by half a megahertz (see
+                // `lo_offset_hz`). Nothing has to be done about that here: the
+                // engine compares its centre against `vfo + lo_offset_hz()` on
+                // every pass and retunes when they part company, so the dial
+                // stays where the operator left it and the hardware follows.
+            }
+            SdrPlayConfig::HDR_BW_ELEMENT => {
+                self.hdr_bw = SdrPlayHdrBw::from_code(db);
+                self.handle.set_hdr_bw(self.hdr_bw.code());
+            }
+            SdrPlayConfig::EXTENDED_IF_GR_ELEMENT => {
+                self.extended_if_gr = db >= 0.5;
+                self.handle.set_extended_if_gr(self.extended_if_gr);
+                // The floor just moved under a reduction that may be below it.
+                let min = if self.extended_if_gr {
+                    SdrPlayConfig::IF_GR_MIN_EXTENDED
+                } else {
+                    SdrPlayConfig::IF_GR_MIN
+                };
+                if self.if_gr_db < min {
+                    self.if_gr_db = min;
+                    self.handle.set_if_gr_db(min);
+                }
             }
             // The second tuner and its filter. Everything here is live: a null
             // is found by adjusting and listening, so a control that needed a
@@ -421,6 +519,36 @@ impl IqSource for SdrPlaySource {
         ]
     }
 
+    /// What the API says is between the antenna socket and the converter, so
+    /// the engine's dBFS measurement can be referred back to the aerial.
+    ///
+    /// Worth having on this backend more than on most: the RSP's own AGC is on
+    /// by default and owns the IF gain, so the gain here moves whether the
+    /// operator touches anything or not. Without this the S-meter would report
+    /// the loop working — a signal appearing would raise the reading, the AGC
+    /// would take the gain back down, and the reading would sink to where it
+    /// started while the signal was still there.
+    ///
+    /// `None` until the first block arrives carrying a settled gain, which is
+    /// the first block of the session: the engine then falls back to raw dBFS
+    /// for the fraction of a second before the receiver has delivered
+    /// anything, which is the same thing it shows for every other front end.
+    ///
+    /// The pair's second aerial is deliberately not in this: the two branches
+    /// are combined by an adaptive filter with a gain of its own, so no single
+    /// front-end figure describes what comes out. The main tuner's is the
+    /// honest half, and it is the one the operator's own controls move.
+    fn rx_gain_db(&self) -> Option<f32> {
+        self.handle.system_gain_db().map(|db| db as f32)
+    }
+
+    /// The LNA ladder as this band has it — see [`Self::rx_gain_elements`].
+    /// The engine asks after a retune, a port change and the HDR switch, which
+    /// are the three things that can change the answer.
+    fn learned_rx_gains(&self) -> Option<Vec<GainElement>> {
+        Some(self.rx_gain_elements())
+    }
+
     fn set_antenna(&mut self, name: &str) -> Result<()> {
         self.antenna = name.to_string();
         self.handle.set_antenna(name);
@@ -465,6 +593,19 @@ impl IqSource for SdrPlaySource {
                  enable AGC"
                     .to_string(),
             );
+        }
+        // HDR is not a mode that follows the dial: the path has a fixed analog
+        // filter, built only at a short list of centres. Tuned anywhere else
+        // the switch is accepted and does nothing, which reads as HDR being
+        // broken rather than as the dial being in the wrong place — so say
+        // where it does work rather than only that it does not.
+        if self.hdr && self.model().has_hdr() && !self.hdr_bw.works_at(self.center) {
+            notes.push(format!(
+                "HDR is on but does nothing at {:.3} MHz: the {} path is only built at {}.",
+                self.center / 1e6,
+                self.hdr_bw.label(),
+                self.hdr_bw.centres_label(),
+            ));
         }
         // A setting that quietly did nothing is worse than one that is
         // refused: only an RSPduo has a second tuner, and only the API's

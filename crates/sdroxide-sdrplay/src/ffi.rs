@@ -72,6 +72,9 @@ pub const UPDATE_RSP2_AM_PORT: Reason = 0x0000_0100;
 pub const UPDATE_RSP2_ANTENNA: Reason = 0x0000_0200;
 pub const UPDATE_RSP2_RF_NOTCH: Reason = 0x0000_0400;
 pub const UPDATE_TUNER_GR: Reason = 0x0000_8000;
+/// `sdrplay_api_Update_Tuner_GrLimits` — the *limits* moved, not the value.
+/// What `gain.minGr` is sent with.
+pub const UPDATE_TUNER_GR_LIMITS: Reason = 0x0001_0000;
 pub const UPDATE_TUNER_FRF: Reason = 0x0002_0000;
 pub const UPDATE_TUNER_BW_TYPE: Reason = 0x0004_0000;
 pub const UPDATE_TUNER_IF_TYPE: Reason = 0x0008_0000;
@@ -92,6 +95,7 @@ pub const UPDATE_RSPDX_BIAS_T: ReasonExt1 = 0x0000_0002;
 pub const UPDATE_RSPDX_ANTENNA: ReasonExt1 = 0x0000_0004;
 pub const UPDATE_RSPDX_RF_NOTCH: ReasonExt1 = 0x0000_0008;
 pub const UPDATE_RSPDX_DAB_NOTCH: ReasonExt1 = 0x0000_0010;
+pub const UPDATE_RSPDX_HDR_BW: ReasonExt1 = 0x0000_0020;
 
 /// `sdrplay_api_Bw_MHzT` — the value *is* the bandwidth in kHz.
 pub type BwType = i32;
@@ -101,15 +105,29 @@ pub type IfType = i32;
 pub const IF_ZERO: IfType = 0;
 /// The low IF the API's own downconverter works from. Mandatory with both of
 /// an RSPduo's tuners running, where the ADC is fixed at 6 MHz.
+/// The 450 kHz low IF. What the tuner uses where a zero IF is impractical,
+/// and — per SDRuno's HDR documentation — what the RSPdx's HDR path expects.
+pub const IF_0_450: IfType = 450;
 pub const IF_1_620: IfType = 1620;
 /// The same for an 8 MHz ADC clock.
 pub const IF_2_048: IfType = 2048;
 /// `sdrplay_api_LoModeT`.
 pub type LoMode = i32;
 pub const LO_AUTO: LoMode = 1;
+/// The fixed LO settings. The API picks one under `LO_AUTO`; the HDR path's
+/// short list of usable centres looks like the product of a particular choice,
+/// so they are nameable here.
+pub const LO_120MHZ: LoMode = 2;
+pub const LO_144MHZ: LoMode = 3;
+pub const LO_168MHZ: LoMode = 4;
 /// `sdrplay_api_MinGainReductionT`.
 pub type MinGr = i32;
 pub const NORMAL_MIN_GR: MinGr = 20;
+/// The extended floor, which lets `gRdB` go to 0 instead of stopping at 20 —
+/// the last 20 dB of IF gain the hardware has. The API's own default is
+/// `NORMAL_MIN_GR`; this is opt-in because it also moves the AGC set-point
+/// ceiling (see the set-point clamp in `device`).
+pub const EXTENDED_MIN_GR: MinGr = 0;
 /// `sdrplay_api_AgcControlT`.
 pub type AgcControl = i32;
 pub const AGC_DISABLE: AgcControl = 0;
@@ -369,8 +387,17 @@ pub struct RspDuoTunerParamsT {
 /// `sdrplay_api_RspDxTunerParamsT`.
 #[repr(C)]
 pub struct RspDxTunerParamsT {
-    pub hdr_bw: i32,
+    pub hdr_bw: HdrBw,
 }
+
+/// `sdrplay_api_RspDx_HdrModeBwT` — the analog filter in front of the HDR
+/// path, which is a *different* control from the tuner's own `bwType`.
+pub type HdrBw = i32;
+pub const HDR_BW_0_200: HdrBw = 0;
+pub const HDR_BW_0_500: HdrBw = 1;
+pub const HDR_BW_1_200: HdrBw = 2;
+/// The API's default, and what an RSPdx runs with when nobody sets one.
+pub const HDR_BW_1_700: HdrBw = 3;
 
 /// `sdrplay_api_RxChannelParamsT`.
 #[repr(C)]

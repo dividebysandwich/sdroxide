@@ -6131,7 +6131,7 @@ pub(in crate::app) fn settings_sdrplay_tab(
     can_probe: bool,
     cmds: &mut Vec<Command>,
 ) {
-    use sdroxide_types::{SdrPlayAgc, SdrPlayConfig, SdrPlayDuoTuner, SdrPlayModel};
+    use sdroxide_types::{SdrPlayAgc, SdrPlayConfig, SdrPlayDuoTuner, SdrPlayHdrBw, SdrPlayModel};
     let Some(cfg) = radio_edit.as_mut() else {
         ui.label("Waiting for the configuration of the machine the radio is attached to.");
         return;
@@ -6211,8 +6211,14 @@ pub(in crate::app) fn settings_sdrplay_tab(
     }
 
     // Same story as the ports: an RSPdx guessed to be an RSP1B would lose two
-    // thirds of its LNA range. The open device publishes the real one. Hoisted
-    // out of the grid because the second tuner's ladder is the same ladder.
+    // thirds of its LNA range. The open device publishes the real one — and
+    // publishes it *per band*, re-sent on every retune, so this follows the
+    // dial rather than offering a ladder the current band does not have.
+    // Hoisted out of the grid because the second tuner's ladder is the same
+    // ladder.
+    //
+    // The fallback is the model's widest, which is all that can be said about
+    // a receiver that is not open: there is no band yet to narrow it to.
     let max_lna = open
         .and_then(|c| c.gains.iter().find(|g| g.name == SdrPlayConfig::LNA_ELEMENT))
         .map(|g| (-g.min_db).round().clamp(0.0, 255.0) as u8)
@@ -6348,11 +6354,20 @@ pub(in crate::app) fn settings_sdrplay_tab(
         if cfg.sdrplay.agc != SdrPlayAgc::Off {
             ui.label("AGC set point").on_hover_text(
                 "Signal level the loop holds the ADC at. Lower leaves more \
-                 headroom for signals off-channel.",
+                 headroom for signals off-channel. How low it may go depends on \
+                 the sample rate — above 8.064 Msps the converter has less \
+                 headroom to give, and above 9.216 Msps less still.",
             );
+            // The range the *rate* allows, not the widest any rate allows: the
+            // converter trades headroom for speed, and the API refuses a set
+            // point below what the rate can reach. At 10 Msps the floor is
+            // -48, and this backend offers 10 Msps.
+            let sp = cfg.sdrplay.agc_setpoint_range();
+            let (sp_lo, sp_hi) = (*sp.start(), *sp.end());
+            cfg.sdrplay.agc_setpoint_dbfs = cfg.sdrplay.agc_setpoint_dbfs.clamp(sp_lo, sp_hi);
             if crate::chrome::slider(
                 ui,
-                Slider::new(&mut cfg.sdrplay.agc_setpoint_dbfs, -72..=-20).suffix(" dBFS"),
+                Slider::new(&mut cfg.sdrplay.agc_setpoint_dbfs, sp_lo..=sp_hi).suffix(" dBFS"),
             )
             .changed()
             {
@@ -6366,18 +6381,19 @@ pub(in crate::app) fn settings_sdrplay_tab(
         }
 
         ui.label("IF gain reduction").on_hover_text(
-            "The RSP's native gain unit: 20 dB is maximum gain, 59 dB minimum. \
+            "The RSP's native gain unit: 20 dB is maximum gain (0 with the extended \
+             range below), 59 dB minimum. \
              Applies immediately. Ignored while the AGC is running — the loop \
              owns this value then, and the S-meter shows what it settled on.",
         );
+        // Read before the borrow below: the floor is a property of the whole
+        // config, and the slider takes one field of it mutably.
+        let if_gr_min = cfg.sdrplay.if_gr_min();
         ui.add_enabled_ui(cfg.sdrplay.agc == SdrPlayAgc::Off, |ui| {
             if crate::chrome::slider(
                 ui,
-                Slider::new(
-                    &mut cfg.sdrplay.if_gr_db,
-                    SdrPlayConfig::IF_GR_MIN..=SdrPlayConfig::IF_GR_MAX,
-                )
-                .suffix(" dB"),
+                Slider::new(&mut cfg.sdrplay.if_gr_db, if_gr_min..=SdrPlayConfig::IF_GR_MAX)
+                    .suffix(" dB"),
             )
             .changed()
             {
@@ -6388,6 +6404,31 @@ pub(in crate::app) fn settings_sdrplay_tab(
                 });
             }
         });
+        ui.end_row();
+
+        ui.label("Extended IF range").on_hover_text(
+            "Lets the IF gain reduction go below 20 dB, down to 0 — the last 20 dB \
+             of gain the receiver has. Off is the API's own default and the right \
+             one for ordinary listening, because the bottom of the range is where \
+             an RSP is easiest to overload. Worth having on for weak signals with \
+             the LNA already at 0. It also lets the AGC set point go up to 0 dBFS. \
+             Applies immediately.",
+        );
+        {
+            let mut on = cfg.sdrplay.extended_if_gr;
+            if ui.checkbox(&mut on, "Allow IF gain reduction below 20 dB").changed() {
+                cfg.sdrplay.extended_if_gr = on;
+                // The floor moves under the value, so put it back in range
+                // before the slider above redraws with the new bound.
+                let min = cfg.sdrplay.if_gr_min();
+                cfg.sdrplay.if_gr_db = cfg.sdrplay.if_gr_db.max(min);
+                cmds.push(Command::SetGain {
+                    dir: Direction::Rx,
+                    element: SdrPlayConfig::EXTENDED_IF_GR_ELEMENT.to_string(),
+                    db: if on { 1.0 } else { 0.0 },
+                });
+            }
+        }
         ui.end_row();
 
         ui.label("LNA state").on_hover_text(
@@ -6532,8 +6573,10 @@ pub(in crate::app) fn settings_sdrplay_tab(
             if ui
                 .checkbox(&mut on, "Enable below 2 MHz")
                 .on_hover_text(
-                    "The RSPdx's high-dynamic-range path for LF/MF. Not yet \
-                     verified against hardware. Applies immediately.",
+                    "The RSPdx's high-dynamic-range path for LF/MF. It is not a mode \
+                     that follows the dial: the path has a fixed analog filter, built \
+                     only at the centres listed under the filter below. Tuned anywhere \
+                     else it does nothing. Applies immediately.",
                 )
                 .changed()
             {
@@ -6545,6 +6588,30 @@ pub(in crate::app) fn settings_sdrplay_tab(
                 });
             }
             ui.end_row();
+
+            // Only with the path switched on: the filter is a property of a
+            // mode that is otherwise off, and an control that does nothing is
+            // worse than one that is not there.
+            if cfg.sdrplay.hdr {
+                ui.label("HDR filter").on_hover_text(format!(
+                    "The analog filter in front of the HDR path — a different control \
+                     from the receiver's own bandwidth. Each setting is built at a \
+                     fixed set of centres and does nothing elsewhere; this one works \
+                     at {}. Applies immediately.",
+                    cfg.sdrplay.hdr_bw.centres_label(),
+                ));
+                let mut bw = cfg.sdrplay.hdr_bw;
+                enum_combo(ui, "sdrplay_hdr_bw", &mut bw, &SdrPlayHdrBw::ALL, SdrPlayHdrBw::label);
+                if bw != cfg.sdrplay.hdr_bw {
+                    cfg.sdrplay.hdr_bw = bw;
+                    cmds.push(Command::SetGain {
+                        dir: Direction::Rx,
+                        element: SdrPlayConfig::HDR_BW_ELEMENT.to_string(),
+                        db: f64::from(bw.code()),
+                    });
+                }
+                ui.end_row();
+            }
         }
 
         if model.has_bias_tee() {

@@ -103,13 +103,7 @@ impl IqSource for Rig {
 }
 
 fn caps() -> DeviceCaps {
-    let el = |name: &str, dir, max_db| GainElement {
-        name: name.into(),
-        direction: dir,
-        min_db: 0.0,
-        max_db,
-        step_db: 1.0,
-    };
+    let el = |name: &str, dir, max_db| GainElement::db(name, dir, 0.0, max_db, 1.0);
     DeviceCaps {
         driver: "bench".into(),
         label: "bench rig".into(),

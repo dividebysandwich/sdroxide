@@ -826,13 +826,11 @@ fn probe_caps(dev: &soapysdr::Device) -> Result<DeviceCaps> {
         }
         for name in dev.list_gains(dir, 0).unwrap_or_default() {
             if let Ok(r) = dev.gain_element_range(dir, 0, name.as_str()) {
-                gains.push(GainElement {
-                    name,
-                    direction: typed,
-                    min_db: r.minimum,
-                    max_db: r.maximum,
-                    step_db: r.step,
-                });
+                // SoapySDR's gain ranges are decibels by contract, whatever
+                // the driver behind them counts in — including the SDRplay
+                // module, which presents its LNA ladder as an "RFGR" range in
+                // dB rather than as the step index the native backend uses.
+                gains.push(GainElement::db(name, typed, r.minimum, r.maximum, r.step));
             }
         }
     }

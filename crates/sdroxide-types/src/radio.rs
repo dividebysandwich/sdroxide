@@ -5215,11 +5215,13 @@ impl SdrPlayModel {
         }
     }
 
-    /// Highest LNA state the model has in *any* band — the settings slider's
-    /// range. State 0 is maximum gain; each step up switches more attenuation
-    /// in front of the tuner. Some bands have fewer states than this; the
-    /// driver clamps per band and reports what it settled on, the same way the
-    /// RTL-SDR backend snaps its tuner gain.
+    /// Highest LNA state the model has in *any* band.
+    ///
+    /// A ceiling, not an offer: on an RSPdx it is 27, and only the 250–420 MHz
+    /// band has all of those — below 12 MHz there are 19. Use it where the
+    /// band is not known (a device that is not open yet); anywhere the dial is
+    /// known, [`Self::max_lna_state_on`] is the honest answer and is what the
+    /// sliders are built from.
     pub fn max_lna_state(self) -> u8 {
         match self {
             SdrPlayModel::Rsp1 => 3,
@@ -5229,6 +5231,102 @@ impl SdrPlayModel {
             SdrPlayModel::RspDx | SdrPlayModel::RspDxR2 => 27,
             // An unknown model still has the API-guaranteed minimum.
             SdrPlayModel::Unknown => 3,
+        }
+    }
+
+    /// Highest LNA state this model has **on this band**, which is the number
+    /// a control should offer.
+    ///
+    /// State 0 is maximum gain; each step up switches more attenuation in
+    /// front of the tuner. How many steps exist is a property of the band, not
+    /// of the box: the counts here are the API headers' `*_NUM_LNA_STATES_*`
+    /// defines, and the band edges are the rows of the gain tables in the API
+    /// specification (v3.15, pp. 38–39). A state past this is refused by the
+    /// service with `OutOfRange`, so the driver clamps to it — and a slider
+    /// built from [`Self::max_lna_state`] instead spends its top third moving
+    /// nothing and snapping back.
+    ///
+    /// `hiz` says the Hi-Z input is routed (RSP2 and RSPduo tuner 1 only),
+    /// which has fewer front-end states of its own. `hdr` is the RSPdx's
+    /// high-dynamic-range path, which has its own table below 2 MHz.
+    ///
+    /// Lives here rather than beside the driver so the settings UI — which is
+    /// wasm-safe and cannot link the backend — builds its slider from the same
+    /// table the clamp uses. Two copies of this drifting apart is exactly the
+    /// bug it prevents.
+    pub fn max_lna_state_on(self, freq_hz: f64, hiz: bool, hdr: bool) -> u8 {
+        let f = freq_hz;
+        match self {
+            SdrPlayModel::Rsp1 => {
+                if f >= 1_000e6 {
+                    2 // 3 states in L-band
+                } else {
+                    3 // 4 states everywhere else
+                }
+            }
+            SdrPlayModel::Rsp1a | SdrPlayModel::Rsp1b => {
+                if f < 60e6 {
+                    6 // RSPIA_NUM_LNA_STATES_AM = 7
+                } else if f >= 1_000e6 {
+                    8 // RSPIA_NUM_LNA_STATES_LBAND = 9
+                } else {
+                    9 // RSPIA_NUM_LNA_STATES = 10
+                }
+            }
+            SdrPlayModel::Rsp2 => {
+                if hiz {
+                    4 // RSPII_NUM_LNA_STATES_AMPORT = 5
+                } else if f >= 420e6 {
+                    5 // RSPII_NUM_LNA_STATES_420MHZ = 6
+                } else {
+                    8 // RSPII_NUM_LNA_STATES = 9
+                }
+            }
+            SdrPlayModel::RspDuo => {
+                if hiz {
+                    4 // RSPDUO_NUM_LNA_STATES_AMPORT = 5
+                } else if f < 60e6 {
+                    6 // RSPDUO_NUM_LNA_STATES_AM = 7
+                } else if f >= 1_000e6 {
+                    8 // RSPDUO_NUM_LNA_STATES_LBAND = 9
+                } else {
+                    9 // RSPDUO_NUM_LNA_STATES = 10
+                }
+            }
+            SdrPlayModel::RspDx | SdrPlayModel::RspDxR2 => {
+                if hdr && f < 2e6 {
+                    21 // RSPDX_NUM_LNA_STATES_DX = 22
+                } else if f < 12e6 {
+                    18 // RSPDX_NUM_LNA_STATES_AMPORT2_0_12 = 19
+                } else if f < 50e6 {
+                    19 // RSPDX_NUM_LNA_STATES_AMPORT2_12_50 = 20
+                } else if f < 60e6 {
+                    24 // RSPDX_NUM_LNA_STATES_AMPORT2_50_60 = 25
+                } else if f < 250e6 {
+                    26 // RSPDX_NUM_LNA_STATES_VHF_BAND3 = 27
+                } else if f < 420e6 {
+                    27 // RSPDX_NUM_LNA_STATES = 28
+                } else if f < 1_000e6 {
+                    20 // RSPDX_NUM_LNA_STATES_420MHZ = 21
+                } else {
+                    18 // RSPDX_NUM_LNA_STATES_LBAND = 19
+                }
+            }
+            // The API guarantees nothing about a model these bindings do not
+            // know; every RSP has at least the RSP1's four states.
+            SdrPlayModel::Unknown => 3,
+        }
+    }
+
+    /// Whether an antenna choice routes a Hi-Z input, for the LNA clamp.
+    ///
+    /// Beside the table above because it is an argument to it, and the UI
+    /// needs both for the same reason.
+    pub fn antenna_is_hiz(self, antenna: &str) -> bool {
+        match self {
+            SdrPlayModel::Rsp2 => antenna == "Hi-Z",
+            SdrPlayModel::RspDuo => antenna == "Hi-Z port",
+            _ => false,
         }
     }
 
@@ -5513,6 +5611,22 @@ pub struct SdrPlayConfig {
     pub duo_tuner: SdrPlayDuoTuner,
     /// RSPdx only: HDR mode below 2 MHz.
     pub hdr: bool,
+    /// RSPdx only: the HDR path's analog filter. Only meaningful with
+    /// [`Self::hdr`], and only at the centre frequencies that filter is
+    /// implemented at — see [`SdrPlayHdrBw::works_at`]. Appended last, like
+    /// every config field before it.
+    #[serde(default)]
+    pub hdr_bw: SdrPlayHdrBw,
+    /// Let the IF gain reduction go below 20 dB, down to 0 — the last 20 dB of
+    /// gain the hardware has.
+    ///
+    /// Off by default, which is the API's own default (`NORMAL_MIN_GR`) and
+    /// the right one for ordinary listening: the bottom of the range is where
+    /// an RSP is easiest to overload. Worth having on for weak-signal work
+    /// with the LNA already at 0, where the AGC note calls IF gain free to
+    /// use. Turning it on also lifts the AGC set-point ceiling to 0 dBFS.
+    #[serde(default)]
+    pub extended_if_gr: bool,
     /// RSPduo only: run the other tuner too — combined with this one, or as a
     /// radio of its own. Read from `radio.json` under either name: the block
     /// was called `diversity` when combining was all it could do.
@@ -5537,8 +5651,102 @@ impl Default for SdrPlayConfig {
             antenna: String::new(),
             duo_tuner: SdrPlayDuoTuner::Tuner1,
             hdr: false,
+            hdr_bw: SdrPlayHdrBw::default(),
+            extended_if_gr: false,
             duo: SdrPlayDuo::default(),
         }
+    }
+}
+
+/// The RSPdx's HDR-path analog filter, and the only frequencies each of its
+/// settings actually works at.
+///
+/// HDR is not a mode that follows the dial. The path has a fixed analog filter
+/// and the hardware only implements it centred on a short list of frequencies:
+/// tuned anywhere else the switch is accepted and does nothing useful, which
+/// reads as HDR being broken rather than as the dial being in the wrong place.
+/// The lists are from the API specification's RSPdx section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SdrPlayHdrBw {
+    Khz200,
+    Khz500,
+    Mhz1_2,
+    /// The API's own default, and what an RSPdx runs with when nobody sets one.
+    #[default]
+    Mhz1_7,
+}
+
+impl SdrPlayHdrBw {
+    pub const ALL: [SdrPlayHdrBw; 4] =
+        [SdrPlayHdrBw::Khz200, SdrPlayHdrBw::Khz500, SdrPlayHdrBw::Mhz1_2, SdrPlayHdrBw::Mhz1_7];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SdrPlayHdrBw::Khz200 => "200 kHz",
+            SdrPlayHdrBw::Khz500 => "500 kHz",
+            SdrPlayHdrBw::Mhz1_2 => "1.2 MHz",
+            SdrPlayHdrBw::Mhz1_7 => "1.7 MHz",
+        }
+    }
+
+    /// Back from a [`Self::code`] carried on the pseudo-element. Anything
+    /// unrecognised lands on the API's own default rather than on a filter the
+    /// operator did not pick.
+    pub fn from_code(v: f64) -> SdrPlayHdrBw {
+        match v.round() as i32 {
+            0 => SdrPlayHdrBw::Khz200,
+            1 => SdrPlayHdrBw::Khz500,
+            2 => SdrPlayHdrBw::Mhz1_2,
+            _ => SdrPlayHdrBw::Mhz1_7,
+        }
+    }
+
+    /// The API's `sdrplay_api_RspDx_HdrModeBwT` code.
+    pub fn code(self) -> i32 {
+        match self {
+            SdrPlayHdrBw::Khz200 => 0,
+            SdrPlayHdrBw::Khz500 => 1,
+            SdrPlayHdrBw::Mhz1_2 => 2,
+            SdrPlayHdrBw::Mhz1_7 => 3,
+        }
+    }
+
+    /// The centre frequencies, in Hz, this filter is actually implemented at.
+    ///
+    /// Two lists, not four: the narrow filters share the 500 kHz set and the
+    /// wide ones share the 2 MHz set.
+    pub fn centres_hz(self) -> &'static [f64] {
+        match self {
+            SdrPlayHdrBw::Khz200 | SdrPlayHdrBw::Khz500 => {
+                &[135_000.0, 175_000.0, 220_000.0, 250_000.0, 340_000.0, 475_000.0]
+            }
+            SdrPlayHdrBw::Mhz1_2 | SdrPlayHdrBw::Mhz1_7 => {
+                &[516_000.0, 875_000.0, 1_125_000.0, 1_900_000.0]
+            }
+        }
+    }
+
+    /// Whether HDR does anything at this centre. A hertz of slack either way,
+    /// because a dial arrives here through a converter offset and a ppm trim
+    /// and need not land on an exact integer.
+    pub fn works_at(self, centre_hz: f64) -> bool {
+        self.centres_hz().iter().any(|c| (c - centre_hz).abs() < 1.0)
+    }
+
+    /// The list an operator can be pointed at when their dial is not on one.
+    pub fn centres_label(self) -> String {
+        let parts: Vec<String> = self
+            .centres_hz()
+            .iter()
+            .map(|hz| {
+                if *hz < 1e6 {
+                    format!("{:.0} kHz", hz / 1e3)
+                } else {
+                    format!("{:.3} MHz", hz / 1e6)
+                }
+            })
+            .collect();
+        parts.join(", ")
     }
 }
 
@@ -5564,6 +5772,10 @@ impl SdrPlayConfig {
     pub const RF_NOTCH_ELEMENT: &'static str = "RFNOTCH";
     pub const DAB_NOTCH_ELEMENT: &'static str = "DABNOTCH";
     pub const HDR_ELEMENT: &'static str = "HDR";
+    /// The HDR path's analog filter, as a [`SdrPlayHdrBw::code`].
+    pub const HDR_BW_ELEMENT: &'static str = "HDRBW";
+    /// Whether the IF gain reduction may go below the API's 20 dB floor.
+    pub const EXTENDED_IF_GR_ELEMENT: &'static str = "EXTGR";
     /// The RSPduo's second tuner and the diversity filter, through the same
     /// door — the filter's names being the shared ones ([`DIV_MODE_ELEMENT`]
     /// and friends). The two gains are carried negated, like the main
@@ -5580,6 +5792,37 @@ impl SdrPlayConfig {
     /// `MAX_BB_GR`).
     pub const IF_GR_MIN: i32 = 20;
     pub const IF_GR_MAX: i32 = 59;
+    /// The floor with [`Self::extended_if_gr`] on (`EXTENDED_MIN_GR`).
+    pub const IF_GR_MIN_EXTENDED: i32 = 0;
+
+    /// The lowest IF gain reduction this configuration may ask for.
+    pub fn if_gr_min(&self) -> i32 {
+        if self.extended_if_gr { Self::IF_GR_MIN_EXTENDED } else { Self::IF_GR_MIN }
+    }
+
+    /// The AGC set-point range, in dBFS, that the API will accept at a given
+    /// sample rate.
+    ///
+    /// Not one range: the converter's headroom shrinks as it trades resolution
+    /// for speed, and the API refuses a set point below what the rate can
+    /// reach. The thresholds are the specification's — under 8.064 MSPS the
+    /// full −72 dB is available, to 9.216 it is −60, and above that −48. The
+    /// ceiling is −20 unless the extended gain floor is in use, which lifts it
+    /// to 0.
+    ///
+    /// This backend offers 10 MSPS, so the narrow end is reachable in normal
+    /// use rather than being a theoretical edge.
+    pub fn agc_setpoint_range(&self) -> std::ops::RangeInclusive<i32> {
+        let floor = if self.sample_rate_hz < 8_064_000.0 {
+            -72
+        } else if self.sample_rate_hz < 9_216_000.0 {
+            -60
+        } else {
+            -48
+        };
+        let ceiling = if self.extended_if_gr { 0 } else { -20 };
+        floor..=ceiling
+    }
 
     /// Sample rates offered in the UI. Below 2 Msps the ADC still runs at
     /// 2 Msps and the API decimates; above 6.048 Msps the ADC trades
@@ -7628,6 +7871,108 @@ mod tests {
         assert!(SdrPlayModel::Rsp1b.has_dab_notch());
         assert!(!SdrPlayModel::Rsp1b.has_hdr());
         assert!(SdrPlayModel::RspDx.has_hdr());
+    }
+
+    /// The RSPdx's ladder, band by band, against the gain tables in the API
+    /// specification (v3.15 p. 39). The model-wide ceiling is 27 and only
+    /// 250–420 MHz has all of it — everywhere else a slider built from the
+    /// ceiling offers states the service refuses.
+    #[test]
+    fn the_rspdx_ladder_follows_the_band() {
+        let dx = SdrPlayModel::RspDx;
+        let at = |hz: f64| dx.max_lna_state_on(hz, false, false);
+        assert_eq!(at(7.295e6), 18, "0-12 MHz has 19 states");
+        assert_eq!(at(14.1e6), 19, "12-50 MHz has 20");
+        assert_eq!(at(52e6), 24, "50-60 MHz has 25");
+        assert_eq!(at(145e6), 26, "60-250 MHz has 27");
+        assert_eq!(at(300e6), 27, "250-420 MHz is the only band with all 28");
+        assert_eq!(at(435e6), 20, "420-1000 MHz has 21");
+        assert_eq!(at(1296e6), 18, "L-band has 19");
+        // The HDR path has a table of its own, and only below 2 MHz.
+        assert_eq!(dx.max_lna_state_on(1e6, false, true), 21);
+        assert_eq!(dx.max_lna_state_on(3e6, false, true), 18, "HDR is a sub-2 MHz path");
+        // The ceiling is a ceiling: no band exceeds it, and one reaches it.
+        for mhz in [0.5, 7.0, 14.0, 52.0, 145.0, 300.0, 435.0, 1296.0] {
+            assert!(at(mhz * 1e6) <= dx.max_lna_state());
+        }
+    }
+
+    /// HDR is not a mode that follows the dial: each filter is built at a
+    /// fixed set of centres and does nothing elsewhere. The lists are from the
+    /// API specification's RSPdx section, and the two narrow filters share one
+    /// while the two wide ones share the other.
+    #[test]
+    fn the_hdr_path_only_works_at_its_own_centres() {
+        use SdrPlayHdrBw::*;
+        // 500 kHz set.
+        assert!(Khz500.works_at(135_000.0));
+        assert!(Khz500.works_at(475_000.0));
+        assert!(Khz200.works_at(220_000.0), "the narrow filters share a set");
+        // 2 MHz set.
+        assert!(Mhz1_7.works_at(516_000.0));
+        assert!(Mhz1_7.works_at(1_900_000.0));
+        assert!(Mhz1_2.works_at(875_000.0), "the wide filters share a set");
+        // The sets are not interchangeable.
+        assert!(!Khz500.works_at(516_000.0));
+        assert!(!Mhz1_7.works_at(135_000.0));
+        // And nothing else works at all — including the LF/MF frequencies an
+        // operator would most reasonably expect to.
+        for hz in [0.0, 153_000.0, 198_000.0, 600_000.0, 1_000_000.0, 1_395_000.0] {
+            assert!(!Mhz1_7.works_at(hz), "{hz} Hz is not an HDR centre");
+        }
+        // A hertz of slack, because a dial arrives through a ppm trim.
+        assert!(Mhz1_7.works_at(1_900_000.4));
+        assert!(!Mhz1_7.works_at(1_900_002.0));
+    }
+
+    /// The AGC set point's floor is a property of the sample rate: the
+    /// converter trades headroom for speed, and this backend offers rates on
+    /// both sides of each threshold.
+    #[test]
+    fn the_agc_set_point_range_follows_the_rate() {
+        let at = |hz: f64| {
+            let c = SdrPlayConfig { sample_rate_hz: hz, ..SdrPlayConfig::default() };
+            let r = c.agc_setpoint_range();
+            (*r.start(), *r.end())
+        };
+        assert_eq!(at(2_000_000.0), (-72, -20));
+        assert_eq!(at(8_000_000.0), (-72, -20), "8 Msps is still under the 8.064 threshold");
+        assert_eq!(at(8_064_000.0), (-60, -20));
+        assert_eq!(at(9_216_000.0), (-48, -20), "above 9.216 the floor is -48");
+        assert_eq!(at(10_000_000.0), (-48, -20), "a rate this backend actually offers");
+        // The extended gain floor lifts the ceiling to 0.
+        let ext = SdrPlayConfig {
+            sample_rate_hz: 2_000_000.0,
+            extended_if_gr: true,
+            ..SdrPlayConfig::default()
+        };
+        assert_eq!(*ext.agc_setpoint_range().end(), 0);
+    }
+
+    /// The IF gain floor is the API's 20 dB unless the operator opens the last
+    /// of the range.
+    #[test]
+    fn the_extended_range_opens_the_last_twenty_db() {
+        let normal = SdrPlayConfig::default();
+        assert_eq!(normal.if_gr_min(), SdrPlayConfig::IF_GR_MIN);
+        assert_eq!(normal.if_gr_min(), 20);
+        let ext = SdrPlayConfig { extended_if_gr: true, ..SdrPlayConfig::default() };
+        assert_eq!(ext.if_gr_min(), 0);
+    }
+
+    /// A Hi-Z input has fewer front-end states than the 50 Ω socket beside it,
+    /// and only two models have one at all.
+    #[test]
+    fn a_hi_z_port_has_its_own_ladder() {
+        let duo = SdrPlayModel::RspDuo;
+        assert!(duo.antenna_is_hiz("Hi-Z port"));
+        assert!(!duo.antenna_is_hiz("50 Ohm port"));
+        assert_eq!(duo.max_lna_state_on(7e6, true, false), 4);
+        assert_eq!(duo.max_lna_state_on(7e6, false, false), 6);
+        assert!(SdrPlayModel::Rsp2.antenna_is_hiz("Hi-Z"));
+        // Every other model routes no Hi-Z, whatever the port is called.
+        assert!(!SdrPlayModel::RspDx.antenna_is_hiz("Antenna C"));
+        assert!(!SdrPlayModel::Rsp1b.antenna_is_hiz("Hi-Z"));
         // Antenna lists: single-port models hide the selector entirely.
         assert!(SdrPlayModel::Rsp1b.antennas(SdrPlayDuoTuner::Tuner1).is_empty());
         assert_eq!(SdrPlayModel::Rsp2.antennas(SdrPlayDuoTuner::Tuner1).len(), 3);

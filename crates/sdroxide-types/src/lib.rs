@@ -103,7 +103,7 @@ pub use band_segments::{
 pub use bandplan::{BandPlan, BandPlanError, RegionPlan, band_plan, set_band_plan};
 pub use broadcast::{BroadcastStation, BroadcastStations};
 pub use callsign::{CallsignInfo, LoginTarget, LoginTestResult, UploadResult, UploadTarget};
-pub use caps::{DeviceCaps, DeviceSetting, Direction, GainElement, SettingKind};
+pub use caps::{DeviceCaps, DeviceSetting, Direction, GainElement, GainUnit, SettingKind};
 pub use chirp::{chirp_csv_to_memories, memories_to_chirp_csv};
 pub use command::Command;
 pub use contacts::FsqContact;
@@ -189,10 +189,11 @@ pub use radio::{
     PlutoConfig, PlutoDevice, PlutoDuplex, PlutoPtt, PttMethod, QMX_IQ_OFFSET_HZ, QMX_IQ_RATE_HZ,
     RadioConfig, RtlSdrAgc, RtlSdrConfig, RtlSdrDevice, RtlSdrHfMode, RtlTcpConfig, Rx888Config,
     Rx888Device, RxSite, SdrPlayAgc, SdrPlayConfig, SdrPlayDevice, SdrPlayDuo, SdrPlayDuoRole,
-    SdrPlayDuoTuner, SdrPlayModel, SerialConfig, SmartSdrConfig, SmartSdrDevice, SoapyConfig,
-    SoapyDeviceInfo, SoundFormat, SpyServerConfig, SpyServerFormat, StopBits, TciConfig,
-    Transverter, cat_iq_offset_max_hz, converter_preset_name, diversity_cost_note, elad_cat_baud,
-    format_freq_ranges, hackrf_serial_matches, hpsdr_alex_oc, hpsdr_n2adr_oc, parse_freq_ranges,
+    SdrPlayDuoTuner, SdrPlayHdrBw, SdrPlayModel, SerialConfig, SmartSdrConfig, SmartSdrDevice,
+    SoapyConfig, SoapyDeviceInfo, SoundFormat, SpyServerConfig, SpyServerFormat, StopBits,
+    TciConfig, Transverter, cat_iq_offset_max_hz, converter_preset_name, diversity_cost_note,
+    elad_cat_baud, format_freq_ranges, hackrf_serial_matches, hpsdr_alex_oc, hpsdr_n2adr_oc,
+    parse_freq_ranges,
 };
 pub use rds::{
     RdsClock, RdsData, RdsGroupLog, RdsStandard, RdsStats, RtPlus, af_code_hz, pi_callsign,

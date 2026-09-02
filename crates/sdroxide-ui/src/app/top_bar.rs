@@ -25,8 +25,8 @@ use eframe::egui::{self, Color32, ComboBox, DragValue, RichText, Slider};
 use sdroxide_types::{
     AgcMode, BURST_MS_RANGE, Band, Command, CwSkimmerDecoder, DCS_CODES, DIV_FREEZE_ELEMENT,
     DIV_MODE_ELEMENT, DIV_RATE_ELEMENT, DIV_RESET_ELEMENT, DeviceCaps, Direction, DiversityMode,
-    GainElement, MAX_OFFSET_HZ, Mode, NrEngine, NrLevel, NrStrength, RadioState, RxId, Shift,
-    SkimmerKind, SpectrumDetail, Speed, SubTone, ToneMode, Vfo,
+    GainElement, GainUnit, MAX_OFFSET_HZ, Mode, NrEngine, NrLevel, NrStrength, RadioState, RxId,
+    Shift, SkimmerKind, SpectrumDetail, Speed, SubTone, ToneMode, Vfo,
 };
 
 use crate::widgets::{freq_display, smeter};
@@ -2420,6 +2420,18 @@ impl SdroxideApp {
                              smears spurious signals across the band; too little and it goes deaf.",
                     g.name
                 );
+                // A stage counted in steps rather than decibels — an RSP's RF
+                // gain, where the number is an index into a table the hardware
+                // owns and its dB value depends on the band. Say so, because
+                // the bare number on the rail otherwise reads as decibels for
+                // want of anything saying it is not.
+                if g.unit == GainUnit::Step {
+                    hint.push_str(
+                        "\n\nCounted in steps, not decibels: 0 is maximum gain and each \
+                         step switches more attenuation in. How many dB a step is depends \
+                         on the band — Settings → Device has the exact figure.",
+                    );
+                }
                 if rx_gains.len() > 1 {
                     hint.push_str(&format!(
                         "\n\nThis rig has {} RX gain stages — the rest are in \
@@ -2447,7 +2459,12 @@ impl SdroxideApp {
                         }
                         crate::chrome::slider(
                             ui,
-                            Slider::new(&mut db, g.min_db..=g.max_db).step_by(step).suffix(" dB"),
+                            Slider::new(&mut db, g.min_db..=g.max_db)
+                                .step_by(step)
+                                // Whatever this element is actually counted in.
+                                // Labelling a step index "dB" reported a number
+                                // three times too small, in a unit it was not.
+                                .suffix(g.suffix()),
                         )
                     })
                     .inner
