@@ -1092,6 +1092,18 @@ pub struct AudioCursor {
     /// the pitch being listened at, and clicking a signal means "put that one
     /// here", not "move my pitch to the far side of the passband".
     pub click_sets_offset: bool,
+    /// Draw the receiver's tuning line on the cursor rather than on the dial.
+    ///
+    /// The dial in CW sits a sidetone pitch below the signal, so the tuning
+    /// line lands at the *edge* of a passband the engine has already centred
+    /// on the pitch — the line, the shading and the signal all disagree about
+    /// where the receiver is pointed. With this set the line moves onto the
+    /// cursor, where the passband is already centred and the signal already
+    /// is, and the three finally say the same thing.
+    ///
+    /// Display only: the dial is unchanged and everything that tunes, stores
+    /// or checks a band edge still uses it.
+    pub line_on_cursor: bool,
 }
 
 /// The panadapter: spectrum trace, frequency scale and waterfall, with the
@@ -2141,8 +2153,11 @@ pub fn show_ext(
         }
     }
 
-    if in_view(vfo_hz) {
-        let x = view.freq_to_x(vfo_hz, &rect);
+    // Where the receiver is actually pointed, which in CW read as the signal
+    // is a sidetone pitch up from the dial — see [`AudioCursor::line_on_cursor`].
+    let line_hz = vfo_hz + cursor.filter(|c| c.line_on_cursor).map_or(0.0, |c| f64::from(c.hz));
+    if in_view(line_hz) {
+        let x = view.freq_to_x(line_hz, &rect);
         painter.vline(x, spec_marks.y_range(), Stroke::new(1.0, Color32::from_rgb(255, 60, 60)));
         painter.vline(
             x,

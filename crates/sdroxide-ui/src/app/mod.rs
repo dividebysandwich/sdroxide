@@ -1817,6 +1817,18 @@ impl SdroxideApp {
     /// sidetone-pitch (700 Hz, usually) below the signal being copied and
     /// keyed; RTTY reads a tone pair — a couple of kilohertz — below its mark.
     /// See [`Mode::on_air_hz`](sdroxide_types::Mode::on_air_hz).
+    /// The CW tone being copied, in Hz — the cursor the CW panel moves and the
+    /// pitch the engine keeps the passband centred on.
+    ///
+    /// The controller's figure where there is one, because the operator moves
+    /// it by clicking the waterfall; the stored default only stands in before
+    /// the CW engine has reported. Same rule as the engine's own
+    /// `cw_pitch_hz`, and the two have to agree or the readout and the
+    /// passband would disagree about where the signal is.
+    pub(in crate::app) fn cw_pitch_hz(&self) -> f32 {
+        self.digi_status.as_ref().map_or(self.digi_cfg_edit.cw_pitch_hz, |s| s.audio_hz)
+    }
+
     pub(in crate::app) fn on_air_freq_hz(&self) -> f64 {
         let audio_hz = self.digi_status.as_ref().map_or(0.0, |s| s.audio_hz);
         self.state.rx[0].mode.on_air_hz(self.state.rx_freq_hz(), audio_hz)
