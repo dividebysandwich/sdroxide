@@ -538,6 +538,25 @@ pub struct UiSettings {
     /// Decode-list filter: only stations that would put something new in the
     /// log (new entity, new band-slot, new grid, or a callsign never worked).
     pub decode_new_only: bool,
+    /// In CW, read the frequency of the *signal* rather than of the dial —
+    /// the QRG, in the Q-code an operator would use to ask for it.
+    ///
+    /// A CW dial sits a sidetone pitch below what is being copied, so the
+    /// number in the readout is not the number either operator would quote —
+    /// it is that number minus the pitch, and the arithmetic is left to the
+    /// person. With this on, the main readout shows what
+    /// [`crate::Mode::on_air_hz`] answers, and the tuning line on the
+    /// panadapter moves to sit on the signal, where the passband is already
+    /// centred (the engine keeps the filter on the pitch).
+    ///
+    /// A display preference, not a change of tuning: the dial is still the
+    /// dial, and everything that tunes, stores or checks a band edge goes on
+    /// using it. Off by default, which is what every other radio does.
+    ///
+    /// CW only for now. RTTY and WEFAX sit off their dials too
+    /// ([`crate::Mode::tunes_off_dial`]) and could join it, but each wants
+    /// checking against real signals first.
+    pub cw_qrg: bool,
 }
 
 /// Default for [`UiSettings::spot_colors`] — every kind on its stock tint.
@@ -596,6 +615,10 @@ where
 impl Default for UiSettings {
     fn default() -> Self {
         UiSettings {
+            // Off: the dial is what every other radio shows, and an operator
+            // who has not asked for the change should not find their readout
+            // reading differently from the rig beside it.
+            cw_qrg: false,
             frame_rate_fps: 60,
             waterfall_speed: Speed::Medium,
             spectrum_speed: Speed::Medium,

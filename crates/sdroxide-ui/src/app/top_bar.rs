@@ -1685,7 +1685,7 @@ impl SdroxideApp {
     /// alone: split has always left this readout on the dial, and this is not
     /// the place to change that.
     fn readout(&self) -> (f64, Option<Color32>, f64) {
-        readout_for(&self.state, self.tab_tx_on())
+        readout_for(&self.state, self.tab_tx_on(), self.ui_settings.cw_qrg, self.cw_pitch_hz())
     }
 
     /// The band/mode chip's label, e.g. `20m · USB`.
@@ -5291,11 +5291,27 @@ fn vfo_chip_labels(tx_capable: bool) -> Vec<&'static str> {
 
 /// [`SdroxideApp::readout`]'s arithmetic, over the state alone — so what the
 /// readout says on the air can be tested without an app around it.
-fn readout_for(state: &RadioState, tx_on: bool) -> (f64, Option<Color32>, f64) {
+fn readout_for(
+    state: &RadioState,
+    tx_on: bool,
+    cw_qrg: bool,
+    cw_pitch_hz: f32,
+) -> (f64, Option<Color32>, f64) {
     let dial = state.active_freq_hz();
+    // The transmit case first: while a repeater shift is putting RF somewhere
+    // else, where it is going matters more than anything below.
     if tx_on && state.repeater.shift != Shift::Simplex {
         let offset = state.tx_freq_hz() - dial;
         return (dial + offset, Some(crate::theme::ALERT()), offset);
+    }
+    // CW read as the signal rather than as the dial, when asked for. A CW dial
+    // sits a sidetone pitch below what is being copied, so this is the number
+    // both operators would quote — the same one `Mode::on_air_hz` answers and
+    // the CW panel already shows. The offset rides back with it, so a wheel
+    // turn or a typed frequency still moves the dial by what the operator
+    // changed rather than jumping it by the pitch.
+    if cw_qrg && state.rx[0].mode == Mode::Cw {
+        return (dial + f64::from(cw_pitch_hz), None, f64::from(cw_pitch_hz));
     }
     (dial, None, 0.0)
 }
@@ -6949,18 +6965,22 @@ mod tests {
 
         // Simplex: the dial, whether or not anything is keyed.
         for tx in [false, true] {
-            assert_eq!(readout_for(&state, tx), (145_712_500.0, None, 0.0), "simplex, tx={tx}");
+            assert_eq!(
+                readout_for(&state, tx, false, 700.0),
+                (145_712_500.0, None, 0.0),
+                "simplex, tx={tx}"
+            );
         }
 
         state.repeater.shift = Shift::Minus;
         state.repeater.offset_hz = 600_000;
         // Shifted but listening: still the output, because that is what is
         // being listened to.
-        assert_eq!(readout_for(&state, false), (145_712_500.0, None, 0.0));
+        assert_eq!(readout_for(&state, false, false, 700.0), (145_712_500.0, None, 0.0));
         // Keyed: the input, in the alert red, and the offset comes back so a
         // turn of the dial on those digits still moves the VFO by what was
         // turned rather than jumping it by the shift.
-        let (shown, ink, offset) = readout_for(&state, true);
+        let (shown, ink, offset) = readout_for(&state, true, false, 700.0);
         assert_eq!(shown, 145_112_500.0);
         assert_eq!(offset, -600_000.0);
         assert_eq!(ink, Some(crate::theme::ALERT()));
@@ -6969,7 +6989,58 @@ mod tests {
         // A shift stacked on XIT reads as the frequency that actually goes
         // out, not as the repeater's share of it.
         state.xit = sdroxide_types::OffsetState { enabled: true, hz: 250 };
-        assert_eq!(readout_for(&state, true).0, 145_112_750.0);
+        assert_eq!(readout_for(&state, true, false, 700.0).0, 145_112_750.0);
+    }
+
+    /// A CW dial sits a sidetone pitch below the signal, so an operator reading
+    /// the dial is doing arithmetic to get the number they would put in the log
+    /// or quote on the air. Asked for it, the readout does the arithmetic —
+    /// and hands back the offset, so tuning those digits still moves the dial
+    /// by what was turned rather than jumping it by the pitch.
+    #[test]
+    fn cw_can_read_the_signal_rather_than_the_dial() {
+        let mut state = RadioState::default();
+        state.vfo_a_hz = 14_050_000.0;
+        state.vfo_b_hz = 14_050_000.0;
+        state.rx[0].mode = Mode::Cw;
+
+        // Off: the dial, as every other radio shows it.
+        assert_eq!(readout_for(&state, false, false, 700.0), (14_050_000.0, None, 0.0));
+
+        // On: the signal, which is the pitch above it.
+        let (shown, ink, offset) = readout_for(&state, true, true, 700.0);
+        assert_eq!(shown, 14_050_700.0);
+        assert_eq!(offset, 700.0);
+        assert_eq!(ink, None, "reading the signal is not an alert condition");
+        assert_eq!(shown - offset, state.active_freq_hz(), "an edit maps back to the dial");
+
+        // It follows the pitch the operator is actually copying at, not a
+        // fixed 700 — the CW panel moves that with its ± buttons and with a
+        // click on the waterfall.
+        assert_eq!(readout_for(&state, false, true, 450.0).0, 14_050_450.0);
+
+        // And it agrees with what the CW panel and the log already show.
+        assert_eq!(shown, Mode::Cw.on_air_hz(state.active_freq_hz(), 700.0));
+
+        // Only CW: the setting says nothing about any other mode.
+        state.rx[0].mode = Mode::Usb;
+        assert_eq!(readout_for(&state, false, true, 700.0), (14_050_000.0, None, 0.0));
+    }
+
+    /// The transmitter wins. A repeater shift has RF going somewhere else and
+    /// that matters more than which end of the sidetone is being read.
+    #[test]
+    fn a_repeater_shift_outranks_the_cw_readout() {
+        let mut state = RadioState::default();
+        state.vfo_a_hz = 145_712_500.0;
+        state.vfo_b_hz = 145_712_500.0;
+        state.rx[0].mode = Mode::Cw;
+        state.repeater.shift = Shift::Minus;
+        state.repeater.offset_hz = 600_000;
+
+        let (shown, ink, _) = readout_for(&state, true, true, 700.0);
+        assert_eq!(shown, 145_112_500.0, "the transmit frequency, not the dial plus a pitch");
+        assert_eq!(ink, Some(crate::theme::ALERT()));
     }
 
     /// Open the band/mode menu on a `screen`-sized viewport and measure the

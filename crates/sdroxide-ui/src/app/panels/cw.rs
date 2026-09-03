@@ -57,6 +57,36 @@ impl SdroxideApp {
                 cmds.push(Command::SetDigiAudioFreq((pitch + 10.0).clamp(200.0, 3000.0)));
             }
             crate::app::panels::on_air_readout(ui, on_air);
+
+            // Whether the *main* readout says that number too, instead of the
+            // dial a sidetone below it. Kept here rather than in the settings
+            // window because it belongs with the pitch it is derived from: the
+            // two are read together and adjusted together.
+            // QRG: the Q-code for "your frequency is", which is exactly the
+            // number this puts in the readout — and exactly the question a CW
+            // dial cannot answer on its own. Named for the thing rather than
+            // for the switch: an operator reads the label to find out what the
+            // number will mean, not to learn that something has been turned on.
+            let qrg = self.ui_settings.cw_qrg;
+            if crate::chrome::chip(ui, qrg, "QRG")
+                .on_hover_text(if qrg {
+                    "QRG: the main readout and the tuning line are on the frequency being \
+                     worked. Click for the dial instead, a sidetone pitch below it — what \
+                     most radios show."
+                } else {
+                    "Put the main readout and the tuning line on the signal rather than on \
+                     the dial, so the frequency shown is the one both operators would quote \
+                     and the tuning line sits in the middle of the passband. Tuning is \
+                     unchanged; only the numbers move.\n\nClicking a signal lands it on \
+                     the cursor only as closely as the click step allows — Controls → \
+                     click-to-tune rounding, 10 Hz by default. A coarse step leaves the \
+                     signal off the pitch by up to half of it, and the readout will say so."
+                })
+                .clicked()
+            {
+                self.ui_settings.cw_qrg = !qrg;
+                crate::app::persist::persist_ui_settings(&self.ui_settings);
+            }
             ui.add_space(8.0);
 
             // Copy state. A CW decoder that is not locked is not "quiet", it is

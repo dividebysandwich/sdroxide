@@ -597,6 +597,10 @@ impl eframe::App for SdroxideApp {
                         Some(spectrum_view::AudioCursor {
                             hz: audio_hz,
                             click_sets_offset: !mode.holds_standard_tones(),
+                            // CW only for now: RTTY and WEFAX sit off their
+                            // dials too and could follow, but each wants
+                            // checking against real signals first.
+                            line_on_cursor: false,
                         }),
                         if matches!(mode, Mode::Ft8 | Mode::Ft2) {
                             self.digi_status
@@ -769,9 +773,12 @@ impl eframe::App for SdroxideApp {
             };
             let width = ui.available_width();
             let cw_pitch = cw_mode.then(|| spectrum_view::AudioCursor {
-                hz: self.digi_status.as_ref().map_or(700.0, |s| s.audio_hz),
+                hz: self.cw_pitch_hz(),
                 // A click tunes the dial so the signal lands on the cursor.
                 click_sets_offset: false,
+                // With the readout reading the signal, the tuning line follows
+                // it there — see `UiSettings::cw_qrg`.
+                line_on_cursor: self.ui_settings.cw_qrg,
             });
             if show_wf {
                 ui.allocate_ui(egui::vec2(width, wf_h), |ui| {
