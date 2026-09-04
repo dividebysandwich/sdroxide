@@ -84,6 +84,46 @@ pub(crate) fn split_addr(address: &str) -> Result<(String, u16), String> {
     }
 }
 
+/// Open the TCP socket a TCI session rides on, saying what a refusal means.
+///
+/// TCI is served by the SDR *program* — ExpertSDR3, Thetis — and not by the
+/// radio's own firmware. That distinction costs people evenings, because a
+/// standalone set is a radio and a computer in one box and looks like it ought
+/// to answer on its own: an MB1 runs ExpertSDR3 on the computer inside it, and
+/// until somebody starts it the radio is on the network with nothing listening
+/// on the TCI port at all (issue #300). "Connection refused" alone reads as a
+/// broken radio or a wrong address, so the likeliest cause goes in the message.
+///
+/// Only for the two failures that mean it. A refusal is an answer — something is
+/// at that address and nothing is serving TCI there — and a timeout is the
+/// absence of one, which is a different problem with a different fix.
+pub(crate) fn connect_socket(
+    sockaddr: &std::net::SocketAddr,
+    host: &str,
+    port: u16,
+    timeout: Duration,
+) -> Result<TcpStream, String> {
+    TcpStream::connect_timeout(sockaddr, timeout).map_err(|e| {
+        let why = match e.kind() {
+            std::io::ErrorKind::ConnectionRefused => Some(
+                "nothing is serving TCI on that port. TCI comes from the SDR program — \
+                 ExpertSDR3, Thetis — and not from the radio itself, so it has to be running \
+                 with TCI switched on in its settings. On a standalone set such as an MB1 \
+                 that is the copy running inside the radio",
+            ),
+            std::io::ErrorKind::TimedOut => Some(
+                "no answer at that address. Check the host, and that a firewall is not in \
+                 the way",
+            ),
+            _ => None,
+        };
+        match why {
+            Some(w) => format!("connect {host}:{port}: {e} — {w}"),
+            None => format!("connect {host}:{port}: {e}"),
+        }
+    })
+}
+
 /// Test a TCI server: connect, read the status burst until `ready;` (or
 /// `timeout`), and return a one-line summary (device / protocol / IQ rates) or
 /// an error message.
@@ -94,8 +134,7 @@ pub fn test_connection(address: &str, timeout: Duration) -> Result<String, Strin
         .map_err(|e| format!("resolve {host}:{port}: {e}"))?
         .next()
         .ok_or_else(|| format!("no address for {host}:{port}"))?;
-    let stream = TcpStream::connect_timeout(&sockaddr, timeout.min(Duration::from_secs(3)))
-        .map_err(|e| format!("connect {host}:{port}: {e}"))?;
+    let stream = connect_socket(&sockaddr, &host, port, timeout.min(Duration::from_secs(3)))?;
 
     let url = format!("ws://{host}:{port}/");
     let deadline = Instant::now() + timeout;
@@ -144,5 +183,31 @@ pub fn test_connection(address: &str, timeout: Duration) -> Result<String, Strin
                     || e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(e) => return Err(format!("read error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A refused TCI port is the commonest way to meet this client, and on its
+    /// own it reads as a broken radio: TCI is served by the SDR program and not
+    /// by the transceiver, so a standalone set with nothing started inside it
+    /// refuses every connection while looking perfectly healthy (issue #300).
+    /// The message has to say so.
+    #[test]
+    fn a_refused_port_says_which_program_is_missing() {
+        // A port that was real a moment ago, so the connection is refused
+        // rather than dropped on the floor by a firewall.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        drop(listener);
+
+        let e = connect_socket(&addr, "127.0.0.1", addr.port(), Duration::from_secs(1))
+            .expect_err("nothing is listening there");
+        assert!(e.contains("ExpertSDR3"), "{e}");
+        assert!(e.contains("MB1"), "{e}");
+        // And still the plain fact of it, which is what a log is read for.
+        assert!(e.contains(&format!("connect 127.0.0.1:{}", addr.port())), "{e}");
     }
 }

@@ -7418,6 +7418,15 @@ HF, 6 m and 2 m, so a rig with a VHF section (a SunSDR2 PRO or DX, an MB1) keys
 up on 2 m without a stated TX range; the amateur-band gate keeps you inside your
 region's allocation, and the rig declines anything it cannot do.
 
+> **The SDR software has to be running.** TCI is served by ExpertSDR3 or Thetis,
+> not by the radio's own firmware, so sdroxide connects to that program rather
+> than to the transceiver. On a **standalone set — an MB1, a Colibri, any SunSDR
+> with a computer inside it — that program runs on the computer inside the
+> radio**, and it has to be started there with *TCI* switched on before anything
+> can attach. This is not a limitation of sdroxide and no other TCI client avoids
+> it: the same is true of the TS-480 CAT emulation those radios offer, which
+> ExpertSDR3 also provides. A refused connection says as much in the message.
+
 > This is sdroxide acting as a TCI *client*. For the other direction — sdroxide
 > acting as the rig so WSJT-X and friends can drive it — see
 > [§ 5.8.2 Built-in TCI server](#682-built-in-tci-server).

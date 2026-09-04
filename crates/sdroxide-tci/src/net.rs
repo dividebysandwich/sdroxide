@@ -144,8 +144,8 @@ impl TciDevice {
             .map_err(|e| TciError::Msg(format!("resolve {host}:{port}: {e}")))?
             .next()
             .ok_or_else(|| TciError::Msg(format!("no address for {host}:{port}")))?;
-        let stream = TcpStream::connect_timeout(&sockaddr, Duration::from_secs(3))
-            .map_err(|e| TciError::Msg(format!("connect {host}:{port}: {e}")))?;
+        let stream = crate::connect_socket(&sockaddr, &host, port, Duration::from_secs(3))
+            .map_err(TciError::Msg)?;
         // The upgrade's whole budget in one read — the rig can take tens of
         // milliseconds to answer while it is busy with its own DSP, and on
         // Windows a read that expires mid-upgrade cannot be resumed from (see
