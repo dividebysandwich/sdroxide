@@ -418,6 +418,18 @@ fn serve(sock: TcpStream, state: Arc<Mutex<DeviceState>>, stop: Arc<AtomicBool>,
                     }
                     continue;
                 }
+                // `rf_port_select` is the AD9361's one front-end write that
+                // cannot be taken while a buffer is running on the part: the
+                // driver answers `-EINVAL` and the mux stays where it was.
+                // Modelled because a fake that took it would bless a client
+                // whose ANT button does nothing on real hardware (issue #314).
+                if key.ends_with("/rf_port_select") && state.lock().expect("lock").rx_buffer_open {
+                    let _ = writer.write_all(b"-22\n");
+                    if writer.flush().is_err() {
+                        break;
+                    }
+                    continue;
+                }
                 let rate = key.ends_with("/sampling_frequency");
                 // The AD9361 clock-chain rule: a rate at or below the printed
                 // floor cannot be realised, however confidently the device
@@ -965,6 +977,38 @@ fn selecting_the_port_already_selected_writes_nothing() {
     wait_for("the port change", || {
         !fake.state.lock().unwrap().writes_of("ad9361-phy/INPUT/voltage0/rf_port_select").is_empty()
     });
+}
+
+/// The AD9361 refuses `rf_port_select` while a buffer is running on it, so the
+/// switch has to stand receive down for the length of the write. Without that
+/// the operator's ANT click was a rejected write and a socket that never moved
+/// (issue #314).
+#[test]
+fn switching_the_antenna_stands_receive_down_for_the_write() {
+    let fake = Fake::start();
+    let mut handle =
+        PlutoHandle::open(&fake.address(), &config(), 435_000_000.0).expect("open the fake Pluto");
+    wait_for("the receive buffer", || fake.state.lock().unwrap().rx_buffer_open);
+    let opens_before = fake.state.lock().expect("lock").rx_buffer_opens;
+
+    handle.set_rx_port("B_BALANCED");
+    wait_for("the port change", || {
+        fake.state.lock().unwrap().get("ad9361-phy/INPUT/voltage0/rf_port_select")
+            == Some("B_BALANCED")
+    });
+    // And receive comes back on its own: a switch that left the buffer closed
+    // would be a radio that went deaf when its antenna was chosen.
+    wait_for("receive to resume", || fake.state.lock().unwrap().rx_buffer_open);
+    let g = fake.state.lock().expect("lock");
+    assert!(g.rx_buffer_opens > opens_before, "the buffer was never closed for the write");
+    drop(g);
+
+    // The transmit port is the same register set and the same rule.
+    handle.set_tx_port("B");
+    wait_for("the transmit port change", || {
+        fake.state.lock().unwrap().get("ad9361-phy/OUTPUT/voltage0/rf_port_select") == Some("B")
+    });
+    wait_for("receive to resume", || fake.state.lock().unwrap().rx_buffer_open);
 }
 
 #[test]

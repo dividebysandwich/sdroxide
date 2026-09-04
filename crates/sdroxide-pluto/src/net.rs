@@ -971,10 +971,12 @@ impl PlutoRx {
     /// Select the receive port, if it is not the one already selected.
     ///
     /// The no-op guard is not an optimisation. `rf_port_select` is refused
-    /// (`-EINVAL`) while the receive buffer is running, and the engine re-asserts
-    /// the antenna on every retune — so a radio with exactly one wired port
-    /// logged a rejected write each time the operator touched the dial, for a
-    /// change that was never a change.
+    /// (`-EINVAL`) while the receive buffer is running, so the write is
+    /// bracketed by a stand-down (`with_rx_stood_down`) that costs a gap in the
+    /// audio — and the engine re-asserts the antenna on every retune. Without
+    /// the guard, a radio with exactly one wired port would break its own
+    /// receiver each time the operator touched the dial, for a change that was
+    /// never a change.
     pub fn set_rx_port(&mut self, port: &str) {
         if self.rx_port == port {
             return;
@@ -1331,8 +1333,12 @@ fn control_thread(
                     phy.set_rx_gain(&mut conn, chain, &agc_mode[c], rx_gain_db[c])
                 })
             }
-            Ctrl::RxPort { chain, port } => phy.set_rx_port(&mut conn, chain, &port),
-            Ctrl::TxPort(p) => phy.set_tx_port(&mut conn, &p),
+            // Both port writes go through the receive stand-down: the AD9361
+            // refuses `rf_port_select` outright while a buffer is running.
+            Ctrl::RxPort { chain, port } => {
+                with_rx_stood_down(&shared, |c| phy.set_rx_port(c, chain, &port), &mut conn)
+            }
+            Ctrl::TxPort(p) => with_rx_stood_down(&shared, |c| phy.set_tx_port(c, &p), &mut conn),
             Ctrl::TxGain(db) => phy.set_tx_gain(&mut conn, db),
             Ctrl::Ppm(v) => {
                 ppm = v;
@@ -1383,6 +1389,42 @@ fn control_thread(
     }
     conn.exit();
     tracing::debug!("PlutoSDR: control thread finished");
+}
+
+/// Run `f` with the receive buffer closed, then put receive back as it was.
+///
+/// `rf_port_select` is the one front-end write the AD9361 will not take while a
+/// buffer is open on it: the driver answers `-EINVAL`, and the port stays where
+/// it was. So an operator clicking ANT on a working receiver used to get a
+/// rejected write per click and a socket that never moved (issue #314). Closing
+/// the buffer for the length of the write is what makes the switch happen.
+///
+/// The previous state is restored rather than assumed, because there are two
+/// reasons receive may already be down — an over in progress, or a link that
+/// carries one direction at a time — and re-enabling it out from under either
+/// would put the receiver back on the air mid-transmission. On a link that
+/// never stood receive down (full duplex) this still closes the buffer, because
+/// the chip's objection is to the buffer and not to the link.
+///
+/// The gap costs a buffer's worth of audio, which is the price of the switch
+/// actually taking effect; the wait is bounded for the same reason `key_up`'s
+/// is, so a receive thread that has died cannot wedge the control thread.
+fn with_rx_stood_down(
+    shared: &Shared,
+    f: impl FnOnce(&mut Connection) -> Result<()>,
+    conn: &mut Connection,
+) -> Result<()> {
+    let was = shared.rx_enabled.load(Ordering::Relaxed);
+    if was {
+        shared.rx_enabled.store(false, Ordering::Relaxed);
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while shared.rx_active.load(Ordering::Relaxed) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    let out = f(conn);
+    shared.rx_enabled.store(was, Ordering::Relaxed);
+    out
 }
 
 /// Tell every attached stream but `origin` that the shared LO moved to `hz`
