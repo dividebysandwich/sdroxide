@@ -9,20 +9,24 @@ pub enum Direction {
 /// What the numbers on a gain element actually are, which is what decides how
 /// a control may label them.
 ///
-/// Nearly every front end's stages are in decibels and this is not a question
-/// worth asking. An RSP's front end is the exception the type exists for: its
-/// RF gain is an *index into a table*, and which table depends on the band —
-/// step 7 is 24 dB of reduction at 0–12 MHz and 25 dB at 420–1000 MHz. A
-/// slider that appended "dB" to that index reported a number three times too
-/// small and in the wrong unit.
+/// Most front ends' stages are in decibels and this is not a question worth
+/// asking. A handful count in steps of a ladder the hardware owns instead: an
+/// RSP's LNA state — the one the type was made for, and the worst of them,
+/// because *which* ladder depends on the band (step 7 is 24 dB of reduction at
+/// 0–12 MHz and 25 dB at 420–1000 MHz) — an Airspy's or a HydraSDR's place on
+/// its gain curve, a Fobos's LNA and VGA registers, a SpyServer's index into
+/// the far end's table, and a KiwiSDR's own 0–90 scale. A slider that appended
+/// "dB" to any of those reported a number in a unit it was not; for the RSP it
+/// was also about three times too small.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum GainUnit {
     /// Decibels, and safe to label as such.
     #[default]
     Db,
-    /// A step index, whose dB value the hardware alone knows. Show the number
-    /// bare: an unlabelled index reads as an index, where one labelled dB is a
-    /// wrong measurement.
+    /// A step along a ladder the hardware owns, whose worth in dB is the
+    /// hardware's business — and on some front ends the band's as well. Show
+    /// the number bare: an unlabelled index reads as an index, where one
+    /// labelled dB is a wrong measurement.
     Step,
 }
 
@@ -61,7 +65,7 @@ impl GainElement {
         }
     }
 
-    /// A stage counted in steps of a table the hardware owns.
+    /// A stage counted in steps of a ladder the hardware owns.
     pub fn steps(
         name: impl Into<String>,
         direction: Direction,
@@ -448,9 +452,9 @@ mod tests {
         assert!(caps.may_tx_hz(1_800_000.0) && caps.may_tx_hz(54_000_000.0));
     }
 
-    /// The default matters more than it looks: every backend but one builds
-    /// its stages with [`GainElement::db`], and a stage that arrived without
-    /// an opinion must be labelled decibels rather than left bare.
+    /// The default matters more than it looks: most backends build their
+    /// stages with [`GainElement::db`], and a stage that arrived without an
+    /// opinion must be labelled decibels rather than left bare.
     #[test]
     fn a_stage_is_decibels_unless_it_says_otherwise() {
         assert_eq!(GainUnit::default(), GainUnit::Db);
@@ -461,7 +465,11 @@ mod tests {
 
     /// A step index carries no unit, because the one it would be given is
     /// wrong: an RSP's state 7 is 24 dB at 0–12 MHz and 25 dB at 420 MHz, so
-    /// "7 dB" is neither the number nor the unit.
+    /// "7 dB" is neither the number nor the unit. The same goes for an
+    /// Airspy's place on its gain curve, a Fobos's two registers, a
+    /// SpyServer's index into the far end's table and a KiwiSDR's 0–90 scale,
+    /// which run the other way up — the type says nothing about direction,
+    /// only that the numbers are not decibels.
     #[test]
     fn a_step_index_is_never_labelled_decibels() {
         let g = GainElement::steps("LNA", Direction::Rx, -18.0, 0.0, 1.0);
@@ -469,5 +477,10 @@ mod tests {
         assert_eq!(g.suffix(), "");
         // The range still describes the same element, just not in dB.
         assert_eq!((g.min_db, g.max_db, g.step_db), (-18.0, 0.0, 1.0));
+        // And a ladder that counts upwards is the same kind of thing: the
+        // RSP's is carried negated so that right is louder, an Airspy's needs
+        // no such help, and neither is measured in anything.
+        let up = GainElement::steps("GAIN", Direction::Rx, 0.0, 21.0, 1.0);
+        assert_eq!(up.suffix(), "");
     }
 }

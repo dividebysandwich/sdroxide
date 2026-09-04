@@ -2420,16 +2420,18 @@ impl SdroxideApp {
                              smears spurious signals across the band; too little and it goes deaf.",
                     g.name
                 );
-                // A stage counted in steps rather than decibels — an RSP's RF
-                // gain, where the number is an index into a table the hardware
-                // owns and its dB value depends on the band. Say so, because
+                // A stage counted in steps rather than decibels — an RSP's
+                // LNA state, an Airspy's place on its gain curve, a
+                // SpyServer's index into the far end's table. Say so, because
                 // the bare number on the rail otherwise reads as decibels for
-                // want of anything saying it is not.
+                // want of anything saying it is not. Deliberately without a
+                // direction of travel: every one of these is carried so that
+                // right is more gain, but what 0 means differs between them.
                 if g.unit == GainUnit::Step {
                     hint.push_str(
-                        "\n\nCounted in steps, not decibels: 0 is maximum gain and each \
-                         step switches more attenuation in. How many dB a step is depends \
-                         on the band — Settings → Device has the exact figure.",
+                        "\n\nCounted in steps, not decibels: what one step is worth is \
+                         the receiver's own business, and on an SDRplay it depends on the \
+                         band as well. Right is still more gain.",
                     );
                 }
                 if rx_gains.len() > 1 {

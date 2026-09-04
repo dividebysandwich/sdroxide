@@ -1924,7 +1924,10 @@ fn airspy_caps(src: &airspy_source::AirspySource) -> DeviceCaps {
         audio_mode: false,
         freq_ranges_rx: vec![AirspyConfig::FREQ_RANGE],
         sample_rates: src.available_rates().to_vec(),
-        gains: vec![GainElement::db(
+        // A place on the gain curve, not a level: 22 steps that set the LNA,
+        // mixer and VGA together by a table in the firmware, and no dB figure
+        // this side could put on one of them.
+        gains: vec![GainElement::steps(
             AirspyConfig::GAIN_ELEMENT,
             Direction::Rx,
             0.0,
@@ -1974,7 +1977,9 @@ fn hydrasdr_caps(src: &hydrasdr_source::HydraSdrSource) -> DeviceCaps {
         audio_mode: false,
         freq_ranges_rx: vec![HydraSdrConfig::FREQ_RANGE],
         sample_rates: src.available_rates().to_vec(),
-        gains: vec![GainElement::db(
+        // The Airspy's gain curve, in a fork of it: a step along a table the
+        // firmware owns. See `airspy_caps`.
+        gains: vec![GainElement::steps(
             HydraSdrConfig::GAIN_ELEMENT,
             Direction::Rx,
             0.0,
@@ -2058,15 +2063,19 @@ fn fobos_caps(src: &fobos_source::FobosSource, port: FobosPort) -> DeviceCaps {
         freq_ranges_rx: vec![freq_range],
         sample_rates: rates,
         gains: if port == FobosPort::Rf {
+            // Both are register settings — 0..3 and 0..31 — that the SDK
+            // takes as they stand and puts no decibels on. The backend's own
+            // settings tab has always shown them bare; this is what stops the
+            // main window's Gain slider calling them dB.
             vec![
-                GainElement::db(
+                GainElement::steps(
                     FobosConfig::LNA_GAIN_ELEMENT,
                     Direction::Rx,
                     0.0,
                     f64::from(FobosConfig::LNA_GAIN_MAX),
                     1.0,
                 ),
-                GainElement::db(
+                GainElement::steps(
                     FobosConfig::VGA_GAIN_ELEMENT,
                     Direction::Rx,
                     0.0,
@@ -2491,12 +2500,11 @@ fn spyserver_caps(src: &spyserver_source::SpyServerSource, driver: &str) -> Devi
         Vec::new()
     } else {
         vec![
-            // An index into the far end's gain table, carried in a field named
-            // for decibels because `GainElement` has no other — the same thing
-            // the SDRplay backend's LNA state already does. What an index means
-            // depends on the receiver and on the band, so no dB mapping is
-            // invented; the settings tab says so instead.
-            sdroxide_types::GainElement::db(
+            // An index into the far end's gain table — the same thing the
+            // SDRplay backend's LNA state is. What an index means depends on
+            // the receiver and on the band, so no dB mapping is invented and
+            // the element says it is counted in steps.
+            sdroxide_types::GainElement::steps(
                 sdroxide_types::SpyServerConfig::GAIN_ELEMENT,
                 sdroxide_types::Direction::Rx,
                 0.0,
@@ -2564,17 +2572,20 @@ fn kiwisdr_caps(src: &kiwisdr_source::KiwiSdrSource) -> DeviceCaps {
         freq_ranges_rx: vec![(lo, hi)],
         sample_rates: vec![src.sample_rate()],
         gains: vec![
-            sdroxide_types::GainElement::db(
+            // A switch riding a gain element, so its two values are 0 and 1
+            // — which are not decibels either.
+            sdroxide_types::GainElement::steps(
                 sdroxide_types::KiwiConfig::AGC_ELEMENT,
                 sdroxide_types::Direction::Rx,
                 0.0,
                 1.0,
                 1.0,
             ),
-            // The receiver's own scale, carried in a field named for
-            // decibels because `GainElement` has no other - the same thing
-            // the SpyServer's gain index and the SDRplay's LNA state do.
-            sdroxide_types::GainElement::db(
+            // The receiver's own scale, in a field named for decibels because
+            // `GainElement` has no other - the same thing the SpyServer's gain
+            // index and the SDRplay's LNA state are, and counted in steps for
+            // the same reason.
+            sdroxide_types::GainElement::steps(
                 sdroxide_types::KiwiConfig::MAN_GAIN_ELEMENT,
                 sdroxide_types::Direction::Rx,
                 0.0,
