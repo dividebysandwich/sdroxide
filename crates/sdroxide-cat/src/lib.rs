@@ -2052,10 +2052,13 @@ fn apply_line(port: &mut dyn Link, forced: LineState, rts: bool) {
 /// it is the app that modulates the picture, through the same sound card and
 /// into the same input, so a rig left in plain USB transmits it off the
 /// microphone (issue #313). It used to be excluded here because `digi_mode`
-/// names only the *upper* pair — and SSTV is the one mode whose sideband
-/// follows the band, LSB on 160/80/40 m — which is what `dial_hz` answers.
-/// Without a dial the sideband cannot be worked out, so the upper pair is
-/// assumed, as it was for every mode before this took a frequency at all.
+/// names only the *upper* pair — and SSTV is one of the two modes whose
+/// sideband follows the band, LSB on 160/80/40 m — which is what `dial_hz`
+/// answers. RADE is the other, and for the same reason: it is digital voice
+/// worked alongside phone, and an over sent on the wrong sideband arrives
+/// inverted and decodes for nobody (issue #317). Without a dial the sideband
+/// cannot be worked out, so the upper pair is assumed, as it was for every
+/// mode before this took a frequency at all.
 fn commanded_mode(cfg: &CatConfig, app_mode: Mode, dial_hz: Option<f64>) -> Option<Mode> {
     let rides_digi_sideband = (app_mode.is_digital() && !app_mode.is_carrier_centered())
         || (app_mode == Mode::Cw && cfg.cw_keying == CwKeying::Audio);
@@ -3403,7 +3406,8 @@ mod tests {
     fn ft8_ignores_the_cw_keying_setting() {
         for k in CwKeying::ALL {
             let cfg = CatConfig { cw_keying: k, digi_mode: DigiMode::Data, ..CatConfig::default() };
-            // On 40 m as much as on 20 m: only SSTV's sideband follows the band.
+            // On 40 m as much as on 20 m: only the phone modes' sideband
+            // follows the band, and FT8 is not one of them.
             assert_eq!(
                 commanded_mode(&cfg, Mode::Ft8, Some(7_074_000.0)),
                 Some(Mode::Digu),
@@ -3479,6 +3483,35 @@ mod tests {
         assert_eq!(civ::set_mode_frames(0x94, Mode::Digu, Some(0x06))[1][6], 0x01);
         assert_eq!(civ::set_mode_frames(0x94, Mode::Digl, Some(0x06))[1][6], 0x01);
         assert_eq!(civ::mode_to_civ(Mode::Digl), civ::mode_to_civ(Mode::Lsb));
+    }
+
+    /// Issue #317: RADE is digital voice worked in the phone segments, so it
+    /// keeps phone practice the way SSTV does — LSB on 160, 80 and 40 m, USB on
+    /// 60 m, 30 m and everything above. It reaches the rig through the same
+    /// sound card as every other digital mode, so the choice is still
+    /// `digi_mode`'s; what the band decides is only which pair.
+    ///
+    /// An over sent on the wrong sideband is not merely hard to copy: the
+    /// autoencoder's carriers arrive mirrored and the far end decodes nothing
+    /// at all.
+    #[test]
+    fn rade_rides_the_digi_sideband_on_the_band_it_is_used_on() {
+        let cfg = |digi| CatConfig { digi_mode: digi, ..CatConfig::default() };
+        // The FreeDV calling frequencies on the bands worked upper sideband —
+        // 60 m among them, low band or not.
+        for at in [5_357_000.0, 10_130_000.0, 14_236_000.0, 21_313_000.0, 28_330_000.0] {
+            let at = Some(at);
+            assert_eq!(commanded_mode(&cfg(DigiMode::Data), Mode::Rade, at), Some(Mode::Digu));
+            assert_eq!(commanded_mode(&cfg(DigiMode::Usb), Mode::Rade, at), Some(Mode::Usb));
+            assert_eq!(commanded_mode(&cfg(DigiMode::Radio), Mode::Rade, at), None);
+        }
+        // And the three bands where phone is worked the other way up.
+        for at in [1_890_000.0, 3_625_000.0, 7_177_000.0] {
+            let at = Some(at);
+            assert_eq!(commanded_mode(&cfg(DigiMode::Data), Mode::Rade, at), Some(Mode::Digl));
+            assert_eq!(commanded_mode(&cfg(DigiMode::Usb), Mode::Rade, at), Some(Mode::Lsb));
+            assert_eq!(commanded_mode(&cfg(DigiMode::Radio), Mode::Rade, at), None);
+        }
     }
 
     /// `PC` is watts, and the families' documented floor is 5 W — a rig cannot

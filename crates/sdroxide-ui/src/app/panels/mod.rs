@@ -341,7 +341,9 @@ fn digi_dial_freqs(mode: Mode) -> &'static [(&'static str, f64)] {
             ("12m", 24_923_000.0),
             ("10m", 28_184_000.0),
         ],
-        // FreeDV calling frequencies (USB dial).
+        // FreeDV calling frequencies. Dial, on whichever sideband the band is
+        // worked: 80 m and 40 m are LSB, everything above USB — the switch is
+        // sdroxide's to make, not the operator's (`Mode::sideband_follows_band`).
         Mode::Rade => &[
             ("80m", 3_625_000.0),
             ("40m", 7_177_000.0),

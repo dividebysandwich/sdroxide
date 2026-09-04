@@ -449,6 +449,12 @@ impl eframe::App for SdroxideApp {
                 (dial - half, dial + half)
             } else if mode.is_rf_paint() {
                 (dial + 150.0, dial + 3450.0)
+            } else if mode.is_lower_sideband_at(dial) {
+                // Mirrored, because the mode is: SSTV and RADE keep phone
+                // practice and ride the lower sideband on 160/80/40 m, so their
+                // sub-band is *below* the dial there. Framed above it, the
+                // opening view of the mode is the empty side of the signal.
+                (dial - 3500.0, dial + 200.0)
             } else {
                 (dial - 200.0, dial + 3500.0)
             };
@@ -475,7 +481,14 @@ impl eframe::App for SdroxideApp {
                 self.view.view_hi_hz = sub_hi;
             }
             self.digi_view_fit = Some((mode, dial, center));
-            let audio_hz = self.digi_status.as_ref().map(|s| s.audio_hz).unwrap_or(1500.0);
+            // Which side of the dial the mode's audio band is on. Every tone
+            // offset below is a distance from the dial and every marker is drawn
+            // at dial + offset, so on the bands where the mode rides the lower
+            // sideband (SSTV and RADE on 160/80/40 m) they all belong below it.
+            // Display only: the controllers go on reporting an offset as a
+            // width from the dial, whichever side they are being worked on.
+            let side = if mode.is_lower_sideband_at(dial) { -1.0 } else { 1.0 };
+            let audio_hz = side * self.digi_status.as_ref().map(|s| s.audio_hz).unwrap_or(1500.0);
             let is_text = mode.is_text_modem();
             // RTTY shows mark/space tuning lines; Olivia the tone-bank edges;
             // PSK just the centre marker.
@@ -514,7 +527,7 @@ impl eframe::App for SdroxideApp {
             } else if mode == Mode::Rade {
                 // The RADE V1 OFDM carriers, so the operator can see whether the
                 // signal is sitting inside the modem's window.
-                vec![1062.0, 1876.0]
+                vec![side * 1062.0, side * 1876.0]
             } else {
                 Vec::new()
             };

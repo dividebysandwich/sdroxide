@@ -103,6 +103,13 @@ impl RigState {
 /// air: upper sideband with data in the audio. See [`from_hamlib_mode`] for why
 /// that matters. RIFP is the exception — its CPFSK profile keys the carrier —
 /// so it reports `PKTFM`.
+///
+/// From the mode alone, so it cannot see the two whose sideband follows the
+/// band (`Mode::sideband_follows_band`): SSTV and RADE on 160/80/40 m really
+/// are on the lower sideband and are still reported here as `PKTUSB`. What the
+/// radio does is unaffected — the sideband is decided in the engine and at the
+/// rig's own control layer — and the no-op rule in `set_mode` compares against
+/// whatever this says, so a client echoing the mode back still changes nothing.
 pub fn to_hamlib_mode(m: Mode) -> &'static str {
     match m {
         Mode::Lsb => "LSB",

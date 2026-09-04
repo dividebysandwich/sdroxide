@@ -142,9 +142,10 @@ impl SdroxideApp {
 
         ui.label(
             RichText::new(
-                "RADE V1 occupies roughly 1060–1880 Hz of the USB passband. Put the \
-                 signal inside the shaded band on the waterfall; the modem finds it from \
-                 there.",
+                "RADE V1 occupies roughly 1060–1880 Hz of the passband — upper sideband, \
+                 or lower on 160, 80 and 40 m, where RADE keeps phone practice and \
+                 sdroxide switches for you. Put the signal inside the shaded band on the \
+                 waterfall; the modem finds it from there.",
             )
             .size(10.5)
             .color(crate::theme::gray(125)),

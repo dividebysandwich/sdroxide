@@ -6712,12 +6712,12 @@ only.
   `Sound card (MCW)`; it overrides **Mode control** for those, because the
   sideband a digital mode needs is not a matter of taste.
 
-  SSTV is the one mode whose sideband follows the band — it is a phone emission
-  and keeps phone practice, LSB on 160/80/40 m and USB above — so there `DIGI`
-  means the rig's DATA position on *that* sideband (LSB-D / DATA-LSB below 40 m,
-  USB-D above). **SSTV-FM** is not part of this: it modulates an FM carrier, so
-  the rig is put in FM (with the data input selected where the family has one)
-  whatever this is set to.
+  SSTV and **RADE** are the two modes whose sideband follows the band — both are
+  phone emissions and keep phone practice, LSB on 160, 80 and 40 m and USB on
+  60 m, 30 m and above — so there `DIGI` means the rig's DATA position on *that*
+  sideband (LSB-D / DATA-LSB on the low bands, USB-D above them). **SSTV-FM** is
+  not part of this: it modulates an FM carrier, so the rig is put in FM (with the
+  data input selected where the family has one) whatever this is set to.
 - **CW keying** — where CW you send comes from, `Rig keyer (CAT)` or
   `Sound card (MCW)`. See below.
 - **Poll rate** — how often (Hz) sdroxide reads the rig's frequency, mode and
@@ -13231,7 +13231,8 @@ Set **Digimode mode** to `DIGI`. On an Icom, also check **Radio model**: USB and
 USB-D are the same mode byte over CI-V and what separates them is a second
 command, whose sub-command number differs by model — an `Other` Icom is not sent
 it at all, because the wrong number writes somewhere else entirely. With both
-set, the rig goes to USB-D (LSB-D where SSTV rides the lower sideband) and takes
+set, the rig goes to USB-D (LSB-D where SSTV or RADE rides the lower sideband)
+and takes
 the over from its data input. A rig with no DATA position wants `USB` here
 instead, plus its SSB modulation source set to the USB input at the radio —
 `MENU → SET → Connectors → MOD Input` on an IC-7300.
@@ -14311,6 +14312,7 @@ using. Bind them under **Speech** on the Controls tab:
 | SSTV-FM | The same picture on an FM carrier, the way slow-scan is sent on VHF and UHF. |
 | RIFP | Radio Image Framing Protocol (draft-dulaunoy-rifp-00): packetised images over continuous-phase FSK. Centred on the dial, ~25 kHz wide — 70 cm, 2 m/6 m all-modes, or 10 m FM. |
 | RFPAINT | RF Paint — transmit-only spectrum painting of text and images onto the waterfall. |
+| RADE | FreeDV RADE V1 — digital voice: a neural codec (Radio Autoencoder) over an OFDM waveform about 900 Hz wide, decoded speech in place of what the receiver hears. On a sideband, and which one follows the band the way phone does — LSB on 160, 80 and 40 m, USB on 60 m, 30 m and above. |
 | PACKET / PACKET-HF | AX.25 packet radio: 1200 baud Bell 202 or 9600 baud G3RUH on VHF/UHF FM, 300 baud AFSK on HF sideband. Carries Winlink sessions and offers the modem as a KISS TNC. See [11](#11-winlink-radio-email). |
 | APRS | Automatic Packet Reporting System — 1200 baud AX.25 on the region's shared channel, with a live map of every station heard, its own symbol per station, and messages you can send and answer. See [3.12](#312-aprs). |
 | ADS-B | Aircraft surveillance on 1090 MHz: a target list and a radar picture with history dots, speed vectors and data blocks. Receive only, and needs a receiver streaming at least 2 Msps. See [3.13](#313-ads-b-aircraft-on-1090-mhz). |

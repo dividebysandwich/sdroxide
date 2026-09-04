@@ -1041,7 +1041,7 @@ impl IqSource for IcomNetSource {
     }
 
     /// From the dial this backend already tracks — see [`Self::set_control_mode`].
-    fn resolves_sstv_sideband(&self) -> bool {
+    fn resolves_band_sideband(&self) -> bool {
         true
     }
 
@@ -1054,13 +1054,13 @@ impl IqSource for IcomNetSource {
         // so the rig's USB report matches what was commanded.
         let mode = match mode {
             Mode::Cw if matches!(self.cw_keying, CwKeying::Audio) => Mode::Usb,
-            // Analog SSTV's is the one sideband that follows the band, and the
-            // engine leaves it to us (see `IqSource::resolves_sstv_sideband`)
+            // Analog SSTV's sideband follows the band, and RADE's does too, and
+            // the engine leaves that to us (see `IqSource::resolves_band_sideband`)
             // because `mode_to_civ` is a table with no dial in it. DATA on both
-            // sidebands: the picture is modulated here and arrives at the
-            // radio's data input, which is what `Mode::Sstv` already asks this
-            // family for on the bands where it rides USB.
-            Mode::Sstv if Mode::Sstv.is_lower_sideband_at(self.dial.vfo) => Mode::Digl,
+            // sidebands: the picture — or the over — is modulated here and
+            // arrives at the radio's data input, which is what these modes
+            // already ask this family for on the bands where they ride USB.
+            m if m.sideband_follows_band() && m.is_lower_sideband_at(self.dial.vfo) => Mode::Digl,
             m => m,
         };
         self.mode_cmd = Some((civ::mode_to_civ(mode), Instant::now()));

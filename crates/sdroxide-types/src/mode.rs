@@ -36,8 +36,10 @@ pub enum Mode {
     /// RF Paint (Spectrum Painting) — USB underneath; paints text/images
     /// directly onto the receiver's waterfall. Transmit-only (no decode).
     RfPaint,
-    /// FreeDV RADE V1 (Radio Autoencoder) digital voice — USB underneath, a
-    /// neural codec over an OFDM waveform occupying ~1000–1900 Hz of audio.
+    /// FreeDV RADE V1 (Radio Autoencoder) digital voice — a neural codec over
+    /// an OFDM waveform occupying ~1000–1900 Hz of audio. A sideband
+    /// underneath, and which one follows the band the way phone does: see
+    /// [`Mode::sideband_follows_band`].
     Rade,
     /// Hellschreiber — USB underneath, a facsimile mode that paints a 7×14 dot
     /// matrix per character straight onto the channel. No sync, no framing, no
@@ -245,13 +247,19 @@ pub enum Mode {
     Ais,
 }
 
-/// The bands on which analog SSTV rides the lower sideband, as (low, high) Hz.
+/// The bands on which a mode that keeps phone practice rides the lower
+/// sideband, as (low, high) Hz — see [`Mode::sideband_follows_band`].
 ///
 /// Written as frequency ranges rather than [`crate::Band`] values on purpose:
 /// the edges differ by region (80 m runs to 4.0 MHz in Region 2, 40 m to 7.3),
 /// and the widest edges are the right answer here — a station tuned to 3.845
 /// from Europe is still on 80 m as far as which sideband to use is concerned.
-const SSTV_LSB_BANDS: [(f64, f64); 3] =
+///
+/// 160, 80 and 40 m and nothing else. 60 m is deliberately absent though it is
+/// a low band: the 5 MHz channels are worked upper sideband the world over,
+/// which is what the licence says in most of it. Everything from 30 m up is
+/// USB by the same convention.
+const PHONE_LSB_BANDS: [(f64, f64); 3] =
     [(1_800_000.0, 2_000_000.0), (3_500_000.0, 4_000_000.0), (7_000_000.0, 7_300_000.0)];
 
 impl Mode {
@@ -785,30 +793,43 @@ impl Mode {
 
     /// True for modes that place the displayed carrier below the passband.
     ///
-    /// Answers for the mode alone, so it cannot see SSTV's band-dependent
-    /// sideband — prefer [`Self::is_lower_sideband_at`] wherever a dial
-    /// frequency is at hand.
+    /// Answers for the mode alone, so it cannot see a band-dependent sideband
+    /// ([`Self::sideband_follows_band`]) — prefer [`Self::is_lower_sideband_at`]
+    /// wherever a dial frequency is at hand.
     pub fn is_lower_sideband(self) -> bool {
         matches!(self, Mode::Lsb | Mode::Digl)
+    }
+
+    /// True for the modes whose sideband is a property of the *band* rather
+    /// than of the mode, so it cannot be answered without a dial.
+    ///
+    /// Both are phone emissions and keep phone practice rather than the other
+    /// digital modes' fixed USB: analog SSTV, and FreeDV RADE, which carries
+    /// speech and is worked on the phone segments alongside it. On 160, 80 and
+    /// 40 m both ride the lower sideband — a picture or an over sent on USB
+    /// there arrives at everybody else's receiver inverted, and an inverted
+    /// RADE signal does not decode at all — and USB on every band above.
+    ///
+    /// `Mode::Sstv` by name rather than [`Self::is_sstv`]: sideband is a
+    /// question about a sideband emission, and [`Mode::SstvFm`] is not one.
+    pub fn sideband_follows_band(self) -> bool {
+        matches!(self, Mode::Sstv | Mode::Rade)
     }
 
     /// True for modes that place the displayed carrier below the passband at
     /// `dial_hz`.
     ///
-    /// Sideband is a fixed property of every mode but one. Analog SSTV is a
-    /// phone emission and follows phone practice: LSB on 160, 80 and 40 m —
-    /// where a picture sent on USB comes out of everybody else's receiver
-    /// inverted — and USB on every band above.
+    /// Sideband is a fixed property of every mode but the two
+    /// [`Self::sideband_follows_band`] names, which take theirs from the band
+    /// they are being worked on.
     pub fn is_lower_sideband_at(self, dial_hz: f64) -> bool {
-        // `Mode::Sstv` by name rather than [`Self::is_sstv`]: sideband is a
-        // question about a sideband emission, and [`Mode::SstvFm`] is not one.
         self.is_lower_sideband()
-            || (matches!(self, Mode::Sstv)
-                && SSTV_LSB_BANDS.iter().any(|&(lo, hi)| dial_hz >= lo && dial_hz <= hi))
+            || (self.sideband_follows_band()
+                && PHONE_LSB_BANDS.iter().any(|&(lo, hi)| dial_hz >= lo && dial_hz <= hi))
     }
 
     /// [`Self::default_filter`] at a dial frequency: the same passband, mirrored
-    /// onto the lower sideband where the mode rides one there (SSTV on
+    /// onto the lower sideband where the mode rides one there (SSTV and RADE on
     /// 160/80/40 m). Sideband is carried entirely in the sign of the edges, so
     /// this is what actually puts the demodulator on the right side.
     pub fn default_filter_at(self, dial_hz: f64) -> (f32, f32) {
@@ -1821,38 +1842,45 @@ mod tests {
         assert_eq!(ft4.slot_s, 2.0 * ft2.slot_s);
     }
 
-    /// SSTV follows phone practice: the low bands are LSB, everything above is
-    /// USB, and no other mode's sideband moves with the dial.
+    /// SSTV and RADE follow phone practice: the low bands are LSB, everything
+    /// above is USB, and no other mode's sideband moves with the dial.
     #[test]
-    fn sstv_takes_the_low_bands_lower_sideband() {
-        for dial in [1_890_000.0, 3_730_000.0, 3_845_000.0, 7_165_000.0, 7_171_000.0] {
-            assert!(Mode::Sstv.is_lower_sideband_at(dial), "SSTV at {dial} should be LSB");
-            let (lo, hi) = Mode::Sstv.default_filter_at(dial);
-            assert!(
-                lo < 0.0 && hi <= 0.0,
-                "SSTV at {dial}: passband {lo}..{hi} is not below the dial"
-            );
-            // Mirrored, not redesigned: the same picture bandwidth either way.
-            let (ulo, uhi) = Mode::Sstv.default_filter();
-            assert_eq!((hi - lo), (uhi - ulo));
-        }
-        for dial in [14_230_000.0, 21_340_000.0, 28_680_000.0, 144_500_000.0] {
-            assert!(!Mode::Sstv.is_lower_sideband_at(dial), "SSTV at {dial} should be USB");
-            assert_eq!(Mode::Sstv.default_filter_at(dial), Mode::Sstv.default_filter());
+    fn the_phone_modes_take_the_low_bands_lower_sideband() {
+        for mode in [Mode::Sstv, Mode::Rade] {
+            for dial in [1_890_000.0, 3_730_000.0, 3_845_000.0, 7_165_000.0, 7_177_000.0] {
+                assert!(mode.is_lower_sideband_at(dial), "{mode:?} at {dial} should be LSB");
+                let (lo, hi) = mode.default_filter_at(dial);
+                assert!(
+                    lo < 0.0 && hi <= 0.0,
+                    "{mode:?} at {dial}: passband {lo}..{hi} is not below the dial"
+                );
+                // Mirrored, not redesigned: the same occupied bandwidth either
+                // way — a picture's, or the autoencoder's carrier set.
+                let (ulo, uhi) = mode.default_filter();
+                assert_eq!((hi - lo), (uhi - ulo));
+            }
+            // 60 m is a low band worked upper sideband, and 30 m is the first
+            // of the ones nothing argues about.
+            for dial in [5_357_000.0, 10_130_000.0, 14_236_000.0, 21_340_000.0, 144_500_000.0] {
+                assert!(!mode.is_lower_sideband_at(dial), "{mode:?} at {dial} should be USB");
+                assert_eq!(mode.default_filter_at(dial), mode.default_filter());
+            }
         }
     }
 
-    /// The band-aware answer differs from the mode-only one for SSTV alone —
-    /// 40 m does not turn FT8 or PSK31 upside down. [`Mode::SstvFm`] is not in
+    /// The band-aware answer differs from the mode-only one for those two alone
+    /// — 40 m does not turn FT8 or PSK31 upside down. [`Mode::SstvFm`] is not in
     /// it either: an FM carrier has no sideband to be on the wrong side of.
     #[test]
-    fn only_sstv_changes_sideband_with_the_band() {
+    fn only_the_phone_modes_change_sideband_with_the_band() {
         for mode in Mode::ALL {
             for dial in [1_890_000.0, 3_730_000.0, 7_171_000.0, 14_230_000.0, 145_500_000.0] {
                 let differs = mode.is_lower_sideband_at(dial) != mode.is_lower_sideband();
-                let want = mode == Mode::Sstv && dial < 10_000_000.0;
+                let want = mode.sideband_follows_band() && dial < 10_000_000.0;
                 assert_eq!(differs, want, "{mode:?} at {dial}");
             }
         }
+        assert!(Mode::Sstv.sideband_follows_band() && Mode::Rade.sideband_follows_band());
+        assert!(!Mode::SstvFm.sideband_follows_band());
     }
 }

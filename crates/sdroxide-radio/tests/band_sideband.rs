@@ -1,10 +1,10 @@
-//! Which sideband SSTV rides, and that it follows the band.
+//! Which sideband SSTV and RADE ride, and that it follows the band.
 //!
-//! Analog SSTV is a phone emission and follows phone practice rather than the
-//! digital modes' fixed USB: LSB on 160, 80 and 40 m, USB on 20 m and up. The
-//! sideband lives entirely in the sign of the filter edges, so what these hold
-//! is that the passband mirrors — on entering the mode, and on tuning across
-//! the boundary while already in it.
+//! Both are phone emissions and follow phone practice rather than the digital
+//! modes' fixed USB: LSB on 160, 80 and 40 m, USB on 60 m, 30 m and up (issues
+//! #313 and #317). The sideband lives entirely in the sign of the filter edges,
+//! so what these hold is that the passband mirrors — on entering the mode, and
+//! on tuning across the boundary while already in it.
 
 use std::time::Duration;
 
@@ -18,6 +18,12 @@ const SSTV_20M: f64 = 14_230_000.0;
 const SSTV_40M: f64 = 7_171_000.0;
 /// The Region 1 80 m SSTV calling frequency.
 const SSTV_80M: f64 = 3_730_000.0;
+/// The FreeDV calling frequency on 40 m — LSB, like the phone band it sits in.
+const RADE_40M: f64 = 7_177_000.0;
+/// The FreeDV calling frequency on 20 m.
+const RADE_20M: f64 = 14_236_000.0;
+/// A 60 m channel: a low band, and worked upper sideband all the same.
+const CH_60M: f64 = 5_357_000.0;
 
 struct MockSource {
     center: f64,
@@ -94,6 +100,10 @@ fn sstv() -> Command {
     Command::SetMode { rx: RxId::Main, mode: Mode::Sstv }
 }
 
+fn rade() -> Command {
+    Command::SetMode { rx: RxId::Main, mode: Mode::Rade }
+}
+
 #[test]
 fn sstv_on_20m_is_upper_sideband() {
     let (lo, hi) = filter_after(&[tune(SSTV_20M), sstv()]);
@@ -120,6 +130,46 @@ fn tuning_across_the_boundary_flips_the_sideband() {
     assert!(lo < 0.0 && hi <= 0.0, "tuning down to 40 m should have gone LSB, got {lo}..{hi} Hz");
 
     let (lo, hi) = filter_after(&[tune(SSTV_40M), sstv(), tune(SSTV_20M)]);
+    assert!(lo >= 0.0 && hi > 0.0, "tuning up to 20 m should have gone USB, got {lo}..{hi} Hz");
+}
+
+/// RADE is digital voice worked in the phone segments, so it keeps phone
+/// practice too: an over sent on the wrong sideband arrives inverted and
+/// decodes for nobody (issue #317).
+#[test]
+fn rade_on_the_low_bands_is_lower_sideband() {
+    for dial in [1_890_000.0, 3_625_000.0, RADE_40M] {
+        let (lo, hi) = filter_after(&[tune(dial), rade()]);
+        assert!(
+            lo < 0.0 && hi <= 0.0,
+            "RADE at {:.3} MHz should be LSB, got {lo}..{hi} Hz",
+            dial / 1e6
+        );
+    }
+}
+
+/// 60 m is a low band and is worked upper sideband anyway; 30 m and everything
+/// above is USB by the same convention.
+#[test]
+fn rade_above_40m_and_on_60m_is_upper_sideband() {
+    for dial in [CH_60M, 10_130_000.0, RADE_20M, 144_200_000.0] {
+        let (lo, hi) = filter_after(&[tune(dial), rade()]);
+        assert!(
+            lo >= 0.0 && hi > 0.0,
+            "RADE at {:.3} MHz should be USB, got {lo}..{hi} Hz",
+            dial / 1e6
+        );
+    }
+}
+
+/// The same boundary crossing SSTV is held to, in the mode that carries speech:
+/// entered on 20 m and the band changed underneath it.
+#[test]
+fn rade_flips_when_the_dial_crosses_the_boundary() {
+    let (lo, hi) = filter_after(&[tune(RADE_20M), rade(), tune(RADE_40M)]);
+    assert!(lo < 0.0 && hi <= 0.0, "tuning down to 40 m should have gone LSB, got {lo}..{hi} Hz");
+
+    let (lo, hi) = filter_after(&[tune(RADE_40M), rade(), tune(RADE_20M)]);
     assert!(lo >= 0.0 && hi > 0.0, "tuning up to 20 m should have gone USB, got {lo}..{hi} Hz");
 }
 
@@ -157,7 +207,7 @@ fn sstv_on_fm_keeps_its_channel_across_the_sideband_boundary() {
 // ── What the rig is told, and by whom ────────────────────────────────────────
 
 /// A front end that is the rig too, and records every mode commanded to it.
-/// `resolves` is [`IqSource::resolves_sstv_sideband`] — the whole question these
+/// `resolves` is [`IqSource::resolves_band_sideband`] — the whole question these
 /// last tests ask.
 struct ModeRecordingRig {
     center: f64,
@@ -188,7 +238,7 @@ impl IqSource for ModeRecordingRig {
     fn commands_rx_mode(&self) -> bool {
         true
     }
-    fn resolves_sstv_sideband(&self) -> bool {
+    fn resolves_band_sideband(&self) -> bool {
         self.resolves
     }
     fn set_control_mode(&mut self, mode: Mode) -> Result<()> {
@@ -197,8 +247,8 @@ impl IqSource for ModeRecordingRig {
     }
 }
 
-/// Enter SSTV at `dial` and return every mode the radio was commanded.
-fn modes_commanded_for_sstv(resolves: bool, dial: f64) -> Vec<Mode> {
+/// Enter `mode` at `dial` and return every mode the radio was commanded.
+fn modes_commanded_for(mode: Mode, resolves: bool, dial: f64) -> Vec<Mode> {
     let modes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut h = start_engine(
         Box::new(ModeRecordingRig { center: dial, resolves, modes: std::sync::Arc::clone(&modes) }),
@@ -211,7 +261,7 @@ fn modes_commanded_for_sstv(resolves: bool, dial: f64) -> Vec<Mode> {
     h.cmd_tx.send(tune(dial)).unwrap();
     std::thread::sleep(Duration::from_millis(150));
     modes.lock().unwrap().clear();
-    h.cmd_tx.send(sstv()).unwrap();
+    h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode }).unwrap();
     std::thread::sleep(Duration::from_millis(300));
 
     let out = modes.lock().unwrap().clone();
@@ -223,28 +273,36 @@ fn modes_commanded_for_sstv(resolves: bool, dial: f64) -> Vec<Mode> {
 }
 
 /// A radio whose control layer is a mode table with no dial in it is still sent
-/// plain LSB on the bands where SSTV rides the lower sideband: the engine is the
-/// only place that can work that out for it.
+/// plain LSB on the bands where the mode rides the lower sideband: the engine is
+/// the only place that can work that out for it.
 #[test]
 fn a_rig_that_cannot_work_the_sideband_out_is_sent_lsb() {
-    let seen = modes_commanded_for_sstv(false, SSTV_40M);
-    assert!(seen.contains(&Mode::Lsb), "40 m SSTV should reach the rig as LSB: {seen:?}");
-    let seen = modes_commanded_for_sstv(false, SSTV_20M);
-    assert!(seen.contains(&Mode::Sstv), "20 m SSTV should reach the rig as SSTV: {seen:?}");
+    for (mode, low, high) in [(Mode::Sstv, SSTV_40M, SSTV_20M), (Mode::Rade, RADE_40M, RADE_20M)] {
+        let seen = modes_commanded_for(mode, false, low);
+        assert!(seen.contains(&Mode::Lsb), "40 m {mode:?} should reach the rig as LSB: {seen:?}");
+        let seen = modes_commanded_for(mode, false, high);
+        assert!(seen.contains(&mode), "20 m {mode:?} should reach the rig as {mode:?}: {seen:?}");
+    }
 }
 
-/// A CAT rig gets SSTV by name on *both* sidebands (issue #313). Translating it
-/// to plain LSB first is what spent the operator's `digi_mode` choice and put
+/// A CAT rig gets the mode by name on *both* sidebands (issue #313). Translating
+/// it to plain LSB first is what spent the operator's `digi_mode` choice and put
 /// the picture on the microphone input: the mode policy at the other end takes
 /// the dial and answers DIGL there.
 #[test]
-fn a_cat_rig_is_sent_sstv_by_name_on_either_sideband() {
-    for dial in [SSTV_20M, SSTV_40M, SSTV_80M] {
-        let seen = modes_commanded_for_sstv(true, dial);
-        assert!(
-            seen.contains(&Mode::Sstv) && !seen.contains(&Mode::Lsb),
-            "at {:.3} MHz the rig should have been told SSTV, not a bare sideband: {seen:?}",
-            dial / 1e6
-        );
+fn a_cat_rig_is_sent_the_mode_by_name_on_either_sideband() {
+    for (mode, dials) in [
+        (Mode::Sstv, [SSTV_20M, SSTV_40M, SSTV_80M]),
+        (Mode::Rade, [RADE_20M, RADE_40M, 3_625_000.0]),
+    ] {
+        for dial in dials {
+            let seen = modes_commanded_for(mode, true, dial);
+            assert!(
+                seen.contains(&mode) && !seen.contains(&Mode::Lsb),
+                "at {:.3} MHz the rig should have been told {mode:?}, not a bare sideband: \
+                 {seen:?}",
+                dial / 1e6
+            );
+        }
     }
 }

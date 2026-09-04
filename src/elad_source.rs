@@ -691,9 +691,9 @@ impl IqSource for EladSource {
 
     /// Only over the CAT link, which puts the mode through `digi_mode` and the
     /// dial (see `commanded_mode`). The gateway writes a mode frame straight to
-    /// the radio from a table with no frequency in it, so there SSTV still has
-    /// to arrive already translated to the sideband it rides.
-    fn resolves_sstv_sideband(&self) -> bool {
+    /// the radio from a table with no frequency in it, so there SSTV and RADE
+    /// still have to arrive already translated to the sideband they ride.
+    fn resolves_band_sideband(&self) -> bool {
         matches!(self.control, Control::Serial(_))
     }
 

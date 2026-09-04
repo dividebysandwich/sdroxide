@@ -947,8 +947,9 @@ impl IqSource for AudioCatSource {
     }
 
     /// The CAT link does: the mode goes through `digi_mode` there, on whichever
-    /// sideband the dial says analog SSTV is riding — see `commanded_mode`.
-    fn resolves_sstv_sideband(&self) -> bool {
+    /// sideband the dial says analog SSTV or RADE is riding — see
+    /// `commanded_mode`.
+    fn resolves_band_sideband(&self) -> bool {
         true
     }
 

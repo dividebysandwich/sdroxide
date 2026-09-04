@@ -200,6 +200,35 @@ fn ssb_modulator_places_single_sideband() {
     assert!((f + 1_000.0).abs() < 5.0, "LSB tone at {f} Hz");
 }
 
+/// The two modes whose sideband follows the band take theirs from the passband
+/// they are handed, not from their own table — otherwise a 40 m RADE over goes
+/// out on the upper sideband and arrives at the far end mirrored, which the
+/// autoencoder does not decode at all (issue #317).
+#[test]
+fn a_band_dependent_sideband_reaches_the_modulator() {
+    let rate = 48_000.0;
+    let audio: Vec<f32> = (0..48_000)
+        .map(|i| (std::f64::consts::TAU * 1_500.0 * i as f64 / rate).sin() as f32)
+        .collect();
+    let tone = |mode: Mode, dial: f64| {
+        let mut m = make_modulator(mode, rate, mode.default_filter_at(dial)).unwrap();
+        let mut out = Vec::new();
+        for chunk in audio.chunks(1024) {
+            m.process(chunk, &mut out);
+        }
+        mean_freq(&out[out.len() / 2..], rate)
+    };
+    for mode in [Mode::Rade, Mode::Sstv] {
+        let f = tone(mode, 14_236_000.0);
+        assert!((f - 1_500.0).abs() < 10.0, "{mode:?} on 20 m modulated at {f} Hz");
+        let f = tone(mode, 7_177_000.0);
+        assert!((f + 1_500.0).abs() < 10.0, "{mode:?} on 40 m modulated at {f} Hz");
+    }
+    // And a mode whose sideband is its own stays upper wherever it is worked.
+    let f = tone(Mode::Ft8, 7_074_000.0);
+    assert!((f - 1_500.0).abs() < 10.0, "FT8 on 40 m modulated at {f} Hz");
+}
+
 #[test]
 fn ssb_tx_rx_loopback() {
     let rate = 48_000.0;
