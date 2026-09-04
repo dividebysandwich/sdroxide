@@ -156,8 +156,28 @@ impl WindowPan {
 
     /// The window the view may be zoomed and panned inside: the full-band lane
     /// where there is one, else the I/Q passband.
+    ///
+    /// Widened to take the passband in whenever the lane does not already
+    /// cover it. A lane is a picture of where the receiver was when its last
+    /// frame was analysed, and a retune moves the passband before the next one
+    /// arrives — an RX-888 crossing from HF to VHF is still publishing its
+    /// 0-32.4 MHz strip for a sweep or two after the dial has gone to 106 MHz.
+    /// Bounded by that stale lane, the view is dragged off the dial to the top
+    /// of HF, and [`follow_view_into_the_band`] reads the result as a request
+    /// to tune there: the jump lands just under half the ADC clock and has to
+    /// be made again (issue #298). Whatever the front end is streaming is
+    /// always worth looking at, so it is always inside the bounds.
     fn view_bounds(&self, dev_center: f64, dev_span: f64) -> (f64, f64) {
-        self.outer.unwrap_or((dev_center, dev_span))
+        let Some((wide_center, wide_span)) = self.outer else { return (dev_center, dev_span) };
+        let (wide_lo, wide_hi) = (wide_center - wide_span / 2.0, wide_center + wide_span / 2.0);
+        let (dev_lo, dev_hi) = (dev_center - dev_span / 2.0, dev_center + dev_span / 2.0);
+        // Untouched in the ordinary case, to the last bit: a lane that holds
+        // the passband is the answer it always was.
+        if wide_lo <= dev_lo && wide_hi >= dev_hi {
+            return (wide_center, wide_span);
+        }
+        let (lo, hi) = (wide_lo.min(dev_lo), wide_hi.max(dev_hi));
+        ((lo + hi) / 2.0, hi - lo)
     }
 }
 
@@ -3784,6 +3804,53 @@ mod tests {
         let mut cmds = Vec::new();
         follow_view_into_the_band(&view, &state, DEV_C, DEV_SPAN, pan, &mut cmds);
         assert_eq!(cmds, vec![Command::SetVfo { vfo: Vfo::A, hz: 15_000_000.0 }]);
+    }
+
+    /// A jump the full-band lane has not caught up with yet must not be undone
+    /// by it — issue #298, where 6 MHz to 106 MHz on an RX-888 landed just
+    /// under half the ADC clock and had to be made a second time.
+    ///
+    /// The lane is built from samples, so it goes on describing HF for a sweep
+    /// or two after the receiver has crossed into VHF. Measured on the
+    /// hardware: `dev_center=106000000` with the view clamped to
+    /// `30375000..32400000`, the top of the stale strip, and the next line of
+    /// the log `dev_center=31387500` — the middle of that view, asked for by
+    /// `follow_view_into_the_band` and tuned to.
+    #[test]
+    fn a_stale_full_band_lane_never_drags_the_view_off_a_new_dial() {
+        // An RX-888 at 64.8 Msps: 2.025 MHz of I/Q, and a strip of the whole
+        // of HF still centred where the receiver was a moment ago.
+        const DEV_SPAN: f64 = 2_025_000.0;
+        const DEV_C: f64 = 106_000_000.0;
+        let (lo, hi) = (DEV_C - DEV_SPAN / 2.0, DEV_C + DEV_SPAN / 2.0);
+        let pan = WindowPan::default().with_outer(Some((16_200_000.0, 32_400_000.0)), DEV_SPAN);
+        let state = RadioState { vfo_a_hz: DEV_C, active_vfo: Vfo::A, ..RadioState::default() };
+        // Where the app puts the view when a tune leaves the window behind: on
+        // the new dial, as wide as the passband.
+        let mut view = ViewState { view_lo_hz: lo, view_hi_hz: hi, ..Default::default() };
+
+        let (c, span) = pan.view_bounds(DEV_C, DEV_SPAN);
+        view.clamp_to(c, span);
+        assert_eq!(
+            (view.view_lo_hz, view.view_hi_hz),
+            (lo, hi),
+            "the stale HF strip pulled the view back to {:.3} MHz",
+            (view.view_lo_hz + view.view_hi_hz) / 2e6
+        );
+
+        let mut cmds = Vec::new();
+        follow_view_into_the_band(&view, &state, DEV_C, DEV_SPAN, pan, &mut cmds);
+        assert!(cmds.is_empty(), "the receiver was tuned back off the jump: {cmds:?}");
+
+        // The lane is still reachable while it is on screen — the bounds took
+        // the passband in, they did not throw the strip away.
+        assert_eq!(pan.view_bounds(DEV_C, DEV_SPAN), (53_506_250.0, 107_012_500.0));
+
+        // And once the lane has caught up it is the whole answer again, to the
+        // last bit: nothing about an ordinary front end changes.
+        let vhf = (DEV_C, 8_040_000.0);
+        let caught_up = WindowPan::default().with_outer(Some(vhf), DEV_SPAN);
+        assert_eq!(caught_up.view_bounds(DEV_C, DEV_SPAN), vhf);
     }
 
     /// Still zoomed out: panning about the band view must not retune anything.
