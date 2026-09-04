@@ -6434,12 +6434,22 @@ pub(in crate::app) fn settings_sdrplay_tab(
         ui.label("LNA state").on_hover_text(
             "Front-end attenuation in steps: 0 is maximum gain, each step up \
              switches more attenuation in. Some bands have fewer steps — the \
-             driver clamps and keeps your choice for when you tune back. \
-             Applies immediately.",
+             driver clamps and keeps your choice for when you tune back, and \
+             the rail here ends at what the band the radio is on will take. A \
+             higher choice made on another band is kept and still shown beside \
+             it. Applies immediately.",
         );
-        if crate::chrome::slider(ui, Slider::new(&mut cfg.sdrplay.lna_state, 0..=max_lna))
-            .on_hover_text("0 = max gain")
-            .changed()
+        // Clamped on edit only. The rail is this band's, but the value is a
+        // stored preference that outlives the band: clamping it on sight would
+        // have merely opening this tab on 40 m quietly trim a setting chosen
+        // for 2 m — against the promise in the hover text right above.
+        if crate::chrome::slider(
+            ui,
+            Slider::new(&mut cfg.sdrplay.lna_state, 0..=max_lna)
+                .clamping(egui::SliderClamping::Edits),
+        )
+        .on_hover_text("0 = max gain")
+        .changed()
         {
             cmds.push(Command::SetGain {
                 dir: Direction::Rx,
@@ -6740,9 +6750,16 @@ pub(in crate::app) fn settings_sdrplay_tab(
                          a distorted copy of the interference — which cannot be subtracted \
                          from an undistorted one. Applies immediately.",
                     );
-                    if crate::chrome::slider(ui, Slider::new(&mut div.lna_state, 0..=max_lna))
-                        .on_hover_text("0 = max gain")
-                        .changed()
+                    // Clamped on edit only, for the same reason as the first
+                    // tuner's above: the rail is this band's, the value is a
+                    // preference that outlives it.
+                    if crate::chrome::slider(
+                        ui,
+                        Slider::new(&mut div.lna_state, 0..=max_lna)
+                            .clamping(egui::SliderClamping::Edits),
+                    )
+                    .on_hover_text("0 = max gain")
+                    .changed()
                     {
                         push_gain(cmds, SdrPlayConfig::AUX_LNA_ELEMENT, -(div.lna_state as f64));
                     }
