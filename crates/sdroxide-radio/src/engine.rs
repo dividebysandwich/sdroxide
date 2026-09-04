@@ -309,10 +309,11 @@ const TAP_TARGET_RMS: f32 = 0.08;
 /// How long the tap's level estimate takes to follow the band.
 ///
 /// Long against a transmission and short against an evening. An FT8 slot is
-/// fifteen seconds, so four is slow enough that the gain is a constant across
-/// any one of them — which is the whole point, see [`RxChain::tap_gain_for`] —
-/// and quick enough that a band opening does not leave the decoder deaf.
-const TAP_LEVEL_TC_S: f32 = 4.0;
+/// fifteen seconds, so six is slow enough that the gain is very nearly a
+/// constant across any one of them — which is the whole point, see
+/// [`tap_gain_for`] — and quick enough that a band that has really changed is
+/// followed inside half a minute.
+const TAP_LEVEL_TC_S: f32 = 6.0;
 
 /// Bounds on the tap gain: 60 dB of lift and 40 dB of cut, which spans
 /// everything between a bare demodulator on a dead band and a front end handing
@@ -722,7 +723,12 @@ fn tap_gain_for(level_db: &mut f32, gain: &mut f32, audio: &[f32], rate: f64) ->
         return *gain;
     }
     let ms: f32 = audio.iter().map(|s| s * s).sum::<f32>() / audio.len() as f32;
-    let ms = if ms.is_finite() { ms } else { 0.0 };
+    // A block the chain could not compute says nothing about the band's level,
+    // so the estimate keeps the one it had rather than being dragged to a floor
+    // by it — the same rule the AGC's envelope follows (issue #305).
+    if !ms.is_finite() {
+        return *gain;
+    }
     let block_db = 10.0 * (ms + 1e-20).log10();
     // One pole per block, at the block's own length: a source that hands over
     // ten milliseconds at a time and one that hands over a hundred must reach

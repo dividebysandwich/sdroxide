@@ -491,6 +491,8 @@ const QUAD_DEAD_RATIO: f32 = 1e-4;
 /// wrong is the sums.
 #[derive(Default)]
 struct QuadratureWatch {
+    i: f64,
+    q: f64,
     ii: f64,
     qq: f64,
     iq: f64,
@@ -516,15 +518,20 @@ impl QuadratureWatch {
     /// that verdict is not the one already announced.
     fn observe(&mut self, iq: &[Complex32]) -> Option<QuadVerdict> {
         for c in iq {
-            self.ii += f64::from(c.re) * f64::from(c.re);
-            self.qq += f64::from(c.im) * f64::from(c.im);
-            self.iq += f64::from(c.re) * f64::from(c.im);
+            let (i, q) = (f64::from(c.re), f64::from(c.im));
+            self.i += i;
+            self.q += q;
+            self.ii += i * i;
+            self.qq += q * q;
+            self.iq += i * q;
         }
         self.n += iq.len();
         if self.n < QUAD_WINDOW_PAIRS {
             return None;
         }
         let verdict = self.verdict();
+        self.i = 0.0;
+        self.q = 0.0;
         self.ii = 0.0;
         self.qq = 0.0;
         self.iq = 0.0;
@@ -538,8 +545,22 @@ impl QuadratureWatch {
 
     /// The completed window's verdict, or `None` when both channels are silent
     /// and there is nothing to compare.
+    ///
+    /// Measured about each channel's own mean rather than about zero, which is
+    /// not a nicety: a sound card's DC offset is common to both channels, so on
+    /// a quiet band the raw correlation between them is the *offset* correlating
+    /// with itself and reads as a perfect 1.0 — a healthy front end accused of
+    /// carrying one signal twice. The same subtraction stops an offset on one
+    /// channel alone standing in for a signal on it.
     fn verdict(&self) -> Option<QuadVerdict> {
-        let (ii, qq) = (self.ii, self.qq);
+        let n = self.n as f64;
+        if n <= 1.0 {
+            return None;
+        }
+        let (mi, mq) = (self.i / n, self.q / n);
+        let ii = (self.ii / n - mi * mi).max(0.0);
+        let qq = (self.qq / n - mq * mq).max(0.0);
+        let iq = self.iq / n - mi * mq;
         let loud = ii.max(qq);
         if loud <= 0.0 || !loud.is_finite() {
             return None;
@@ -550,7 +571,7 @@ impl QuadratureWatch {
         if (ii.min(qq) / loud) < f64::from(QUAD_DEAD_RATIO) {
             return Some(QuadVerdict::OneChannelDead);
         }
-        let coherence = (self.iq.abs() / (ii * qq).sqrt()) as f32;
+        let coherence = (iq.abs() / (ii * qq).sqrt()) as f32;
         Some(if coherence >= QUAD_COHERENT {
             QuadVerdict::SameOnBoth
         } else {
@@ -1594,6 +1615,20 @@ mod tests {
             .map(|c| Complex32::new(c.re, 0.0))
             .collect();
         assert_eq!(w.observe(&one_sided), Some(QuadVerdict::OneChannelDead));
+    }
+
+    /// A sound card's DC offset is common to both channels, so before the means
+    /// were taken out it correlated with itself and read as a perfect 1.0 —
+    /// a healthy front end told it was carrying one signal twice, on any band
+    /// quiet enough for the offset to be the largest thing there.
+    #[test]
+    fn a_dc_offset_is_not_a_signal_on_both_wires() {
+        let mut w = QuadratureWatch::default();
+        let offset: Vec<Complex32> = quad_window(1500.0, 48_000.0, QUAD_WINDOW_PAIRS)
+            .into_iter()
+            .map(|c| Complex32::new(0.02 * c.re + 0.5, 0.02 * c.im + 0.5))
+            .collect();
+        assert_eq!(w.observe(&offset), Some(QuadVerdict::Quadrature));
     }
 
     /// Silence on both wires is a radio that is not sending. It must neither be

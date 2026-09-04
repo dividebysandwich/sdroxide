@@ -1166,8 +1166,11 @@ fn existing_pan(deferred: &[Line], owner: Option<u32>) -> Option<String> {
         if id.is_empty() {
             return None;
         }
-        // A status that only says `removed=1` is the radio reporting a
-        // panadapter going away, not one to take up.
+        // A radio reports an object going away by saying so on the object
+        // itself, and one on its way out is not one to take up. Belt and
+        // braces: a radio that words it differently simply never trips this,
+        // and the worst that follows is a `display pan set` to an id that has
+        // gone, which the create below is the fallback for.
         if kvs.get("removed").is_some_and(|v| v != "0") {
             return None;
         }
