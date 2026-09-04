@@ -80,17 +80,25 @@ fn caps() -> DeviceCaps {
         freq_ranges_rx: vec![(0.0, 2_000_000_000.0)],
         // Deliberately the model-wide ceiling, as a real backend publishes it
         // before the engine has asked: the point is that it gets corrected.
-        gains: vec![GainElement::steps("LNA", Direction::Rx, -27.0, 0.0, 1.0)],
+        //
+        // The transmit stage is here to be left alone. Nothing on this mock
+        // transmits; it stands in for the front end that both answers
+        // `learned_rx_gains` and has a transmitter, which is a combination the
+        // trait allows and no backend has yet.
+        gains: vec![
+            GainElement::steps("LNA", Direction::Rx, -27.0, 0.0, 1.0),
+            GainElement::db("DRIVE", Direction::Tx, 0.0, 47.0, 1.0),
+        ],
         ..DeviceCaps::default()
     }
 }
 
-/// Run an engine, tune it where `tune_to` says, and return the last gain range
-/// it published for the LNA — with whether that last word arrived as a
+/// Run an engine, tune it where `tune_to` says, and return the last set of
+/// gain stages it published — with whether that last word arrived as a
 /// *revision* ([`RadioEvent::CapabilitiesUpdated`]) rather than as a whole new
 /// front end. The distinction is the client's: a new front end makes it throw
 /// away everything it holds about the old one.
-fn lna_range_after(tune_to: Option<f64>) -> (GainElement, bool) {
+fn gains_after(tune_to: Option<f64>) -> (Vec<GainElement>, bool) {
     let center = Arc::new(AtomicU64::new(HF.to_bits()));
     let mut h = start_engine(
         Box::new(Rig { center: Arc::clone(&center) }),
@@ -99,7 +107,7 @@ fn lna_range_after(tune_to: Option<f64>) -> (GainElement, bool) {
     );
     let thread = h.thread.take();
 
-    let mut last: Option<(GainElement, bool)> = None;
+    let mut last: Option<(Vec<GainElement>, bool)> = None;
     let mut sent = tune_to.is_none();
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
@@ -109,8 +117,8 @@ fn lna_range_after(tune_to: Option<f64>) -> (GainElement, bool) {
                 RadioEvent::CapabilitiesUpdated(c) => (c, true),
                 _ => continue,
             };
-            if let Some(g) = caps.gains.iter().find(|g| g.name == "LNA") {
-                last = Some((g.clone(), update));
+            if caps.gains.iter().any(|g| g.name == "LNA") {
+                last = Some((caps.gains.clone(), update));
             }
         }
         if !sent {
@@ -130,11 +138,17 @@ fn lna_range_after(tune_to: Option<f64>) -> (GainElement, bool) {
     last.expect("the engine must publish an LNA range")
 }
 
+/// The LNA stage out of a published set.
+fn lna(gains: &[GainElement]) -> &GainElement {
+    gains.iter().find(|g| g.name == "LNA").expect("the LNA stage")
+}
+
 /// On the band the session came up on, the published range is that band's —
 /// not the wider one the device was opened with.
 #[test]
 fn the_opening_range_is_narrowed_to_the_band_it_came_up_on() {
-    let (g, _) = lna_range_after(None);
+    let (gains, _) = gains_after(None);
+    let g = lna(&gains);
     assert_eq!(g.min_db, -18.0, "HF has 19 states, not the model's 28");
     assert_eq!(g.unit, GainUnit::Step, "a state index is not decibels");
 }
@@ -146,7 +160,20 @@ fn the_opening_range_is_narrowed_to_the_band_it_came_up_on() {
 /// announcer, and would do all three every time the dial crossed a band edge.
 #[test]
 fn the_range_follows_a_retune() {
-    let (g, update) = lna_range_after(Some(VHF));
-    assert_eq!(g.min_db, -27.0, "250-420 MHz has all 28 states");
+    let (gains, update) = gains_after(Some(VHF));
+    assert_eq!(lna(&gains).min_db, -27.0, "250-420 MHz has all 28 states");
     assert!(update, "a band's ladder is a revision of this radio, not a different radio");
+}
+
+/// And it revises the *receive* stages only. `learned_rx_gains` answers for
+/// those; a transmitter's stages are not its to answer for, and a front end
+/// that had both would otherwise lose its drive control the first time the
+/// dial crossed a band edge.
+#[test]
+fn a_retune_leaves_the_transmit_stages_alone() {
+    let (gains, _) = gains_after(Some(VHF));
+    let tx: Vec<&GainElement> = gains.iter().filter(|g| g.direction == Direction::Tx).collect();
+    assert_eq!(tx.len(), 1, "the transmit stage went missing when the receive ladder moved");
+    assert_eq!(tx[0].name, "DRIVE");
+    assert_eq!((tx[0].min_db, tx[0].max_db), (0.0, 47.0));
 }

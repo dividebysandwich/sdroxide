@@ -12452,7 +12452,14 @@ impl Engine {
     /// not have and reports the one it kept, and a slider left sitting above
     /// that would be showing a setting the hardware never took.
     fn refresh_rx_gains(&mut self) {
-        let Some(gains) = self.source.learned_rx_gains() else { return };
+        let Some(mut gains) = self.source.learned_rx_gains() else { return };
+        // Receive stages only, as the name says: what the source hands back
+        // replaces those and nothing else. A wholesale assignment would take a
+        // transmitter's gain stages off the panel the first time its
+        // receiver's ladder moved — which no source here would do today, the
+        // one that answers being receive-only, and which is exactly the sort
+        // of thing that goes unnoticed until the second one arrives.
+        gains.extend(self.caps.gains.iter().filter(|g| g.direction == Direction::Tx).cloned());
         if gains != self.caps.gains {
             self.caps.gains = gains;
             let _ = self.event_tx.send(RadioEvent::CapabilitiesUpdated(self.caps.clone()));

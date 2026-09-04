@@ -210,6 +210,10 @@ pub trait IqSource: Send {
     /// are not a fact about the hardware alone. `None` — the default — leaves
     /// `DeviceCaps::gains` exactly as it was built.
     ///
+    /// Receive stages only, and the whole of them: what comes back replaces
+    /// every `Direction::Rx` element in the capabilities, in this order, and
+    /// leaves the transmit ones where they are.
+    ///
     /// One backend needs this. An RSP's RF gain is a step into a table whose
     /// length is a property of the *band*: an RSPdx has 28 states at 250–420
     /// MHz and 19 below 12 MHz, so a range published once at open is wrong for
