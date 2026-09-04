@@ -1209,7 +1209,13 @@ use sdroxide_types::{
 /// bits and not seven (issue #265). A `u8` on the wire where a `u16` is
 /// expected does not simply carry the wrong channels — postcard varints them,
 /// so a v134 peer reads the following fields out of step.
-pub const PROTO_VERSION: u16 = 135;
+/// v136: [`sdroxide_types::RadioConfig`] gains `rx_audio_gain_db`, a fixed trim
+/// on the receive audio for a rig whose own codec is quiet — the AF rail's top
+/// is unity and could only turn such a radio down (issue #315). It sits among
+/// that struct's sound-card fields, near its head, and `RadioConfig` rides
+/// `ServerMsg::RadioConfig` and `Command::SetRadioConfig` whole, so a v135 peer
+/// handed one reads almost every field after it out of step.
+pub const PROTO_VERSION: u16 = 136;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

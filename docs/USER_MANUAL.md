@@ -5859,6 +5859,19 @@ startup nor the window waits that out: the radio comes up, and the microphone
 joins it when its open finishes. If the open fails, transmit carries silence and
 the log says which device refused.
 
+**Receive audio gain** — a fixed trim, in decibels, on everything this radio
+sends to the speakers, on top of the volume control. Leave it at 0 dB unless the
+radio is quiet at full volume: the volume rail's top is the audio *as it
+arrives*, so it can turn a radio down but never up, and some transceivers' USB
+sound output sits well below full scale — a Yaesu on CAT is the usual case. Go up
+6 dB at a time. Too much clips: the audio is limited at full scale rather than
+allowed to wrap round, so overdoing it sounds harsh rather than loud.
+
+It belongs to the radio and not to the station, because what it corrects is that
+radio's interface; in `radio.json` it is `rx_audio_gain_db`. Recordings are taken
+ahead of it and are not affected, which is the same rule the volume control
+follows.
+
 **Radio audio (sound card)** — a third section appears below those two, but
 *only when the radio interface is CAT / Audio* ([6.2.2](#622-cat-radios-serial-control--usb-audio)):
 every other backend carries its audio in-band and needs no sound card, which is
@@ -12956,6 +12969,7 @@ to its default, and a partial file is normal rather than a special case.
   "freq_ranges_tx": [],        //   e.g. [[144000000.0, 146000000.0]]
   "radio_audio_in": null,      // sound-card names, for the CAT interface only
   "radio_audio_out": null,
+  "rx_audio_gain_db": 0.0,     // fixed trim on this radio's receive audio, dB
   "pluto": { "address": "192.168.2.1", "sample_rate_hz": 2500000.0 }
 }
 ```

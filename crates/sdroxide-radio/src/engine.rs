@@ -1368,6 +1368,15 @@ struct StereoMixer {
     /// recording tap arrives as separate arguments that it must not touch —
     /// what the transmitter hears of the band is not the operator's archive.
     tx_muted: bool,
+    /// Linear form of [`sdroxide_types::RadioConfig::rx_audio_gain_db`] — the
+    /// operator's fixed trim for a rig whose audio arrives quiet. 1.0 is off.
+    ///
+    /// Here for the same two reasons as `duck`, and for a third: this is the
+    /// only stage above unity in the whole receive path, so it is the only one
+    /// that can put a sample past full scale — and the clamp that catches that
+    /// has to be where the ring is filled, after ducking and the AF rail have
+    /// had their say.
+    trim: f32,
 }
 
 /// Bound on per-channel queueing (≈¼ s at 48 kHz) so a stalled side can't
@@ -1391,12 +1400,25 @@ impl StereoMixer {
             rec_split: false,
             duck: 1.0,
             tx_muted: false,
+            trim: 1.0,
         }
     }
 
     /// Set the speaker-path attenuation. See [`StereoMixer::duck`].
     fn set_duck(&mut self, gain: f32) {
         self.duck = gain.clamp(0.0, 1.0);
+    }
+
+    /// Set the operator's fixed receive-audio trim, in dB. See
+    /// [`StereoMixer::trim`].
+    ///
+    /// Bounded rather than taken at face value: this is the one gain in the
+    /// path that can make a radio louder, and a `radio.json` with a mistyped
+    /// figure in it should not be able to put 60 dB into somebody's headphones.
+    /// The ceiling is what an ordinary transceiver's USB codec is short by,
+    /// with room to spare.
+    fn set_trim_db(&mut self, db: f32) {
+        self.trim = if db.is_finite() { 10f32.powf(db.clamp(-20.0, 30.0) / 20.0) } else { 1.0 };
     }
 
     /// `left`/`right` are the speaker path (post AF-volume/mute); `rec_left`/
@@ -1478,10 +1500,14 @@ impl StereoMixer {
 
         if n > 0 {
             if self.out.slots() >= n * 2 {
-                let duck = if self.tx_muted { 0.0 } else { self.duck };
+                let g = if self.tx_muted { 0.0 } else { self.duck * self.trim };
                 for i in 0..n {
-                    let l = self.main_q[i] * duck;
-                    let r = if dual { self.sub_q[i] * duck } else { l };
+                    // Clamped because `trim` may be above unity, and a sample
+                    // past full scale does not merely distort: the conversion
+                    // to a device's own sample format is free to wrap it, and a
+                    // wrap is a click at the loudest the card can go.
+                    let l = (self.main_q[i] * g).clamp(-1.0, 1.0);
+                    let r = if dual { (self.sub_q[i] * g).clamp(-1.0, 1.0) } else { l };
                     let _ = self.out.push(l);
                     let _ = self.out.push(r);
                 }
@@ -2315,6 +2341,12 @@ struct Engine {
     /// back to the store. Empty on the overwhelming majority of stations, which
     /// is what makes [`Self::refresh_drive_trim`] free there.
     drive_trim: Vec<sdroxide_types::BandDriveTrim>,
+    /// The operator's fixed receive-audio trim, in dB — the other part of
+    /// `radio.json` the engine keeps a copy of, and for the same reason as
+    /// `drive_trim`: the mixer that applies it is rebuilt whenever the sound
+    /// card changes, and a rebuilt mixer has to be told again.
+    /// See [`sdroxide_types::RadioConfig::rx_audio_gain_db`].
+    rx_af_gain_db: f32,
     tx_center_hz: f64,
     tx_ham_only: bool,
     /// SWR guard: trip threshold, and the latch it sets.
@@ -3742,6 +3774,7 @@ fn engine_thread(
         tx_freq_told: None,
         drive_trim_db: 0.0,
         drive_trim: radio_cfg.tx_drive_trim.clone(),
+        rx_af_gain_db: radio_cfg.rx_audio_gain_db,
         tx_center_hz: 0.0,
         tx_ham_only: engine_cfg.tx_ham_only,
         swr_guard: engine_cfg.swr_guard,
@@ -4042,6 +4075,10 @@ fn engine_thread(
     // the device rather than to the receiver chain — a dongle's AGC mode, its
     // ppm correction, its bias tee.
     engine.emit_radio_config();
+    // The mixer above was built before `radio.json` was read, so the trim it
+    // holds has to be handed over once here — everything after this arrives
+    // through `SetRadioConfig`.
+    engine.refresh_af_trim();
     // The source opened with its LO on the requested frequency, which is also
     // where the VFO now sits — on zero-IF hardware that is the one place the VFO
     // must not be, so let the span check park the LO clear of it before the
@@ -8930,6 +8967,11 @@ impl Engine {
                 self.drive_trim = cfg.tx_drive_trim.clone();
                 let tx_hz = self.tx_freq_told.unwrap_or_else(|| self.state.tx_freq_hz());
                 self.refresh_drive_trim(tx_hz);
+                // The receive trim is the other half of that: live rather than
+                // at the next reopen, because an operator setting it is
+                // listening to the radio while they drag the control.
+                self.rx_af_gain_db = cfg.rx_audio_gain_db;
+                self.refresh_af_trim();
                 // Announced from the store rather than echoed from `cfg`, so
                 // what every client shows is what was actually written — a
                 // failed save leaves them on the configuration the radio is
@@ -13198,6 +13240,9 @@ impl Engine {
                 let mut mixer = StereoMixer::new(a.producer);
                 // A swap mid-announcement must not come back at full volume.
                 mixer.set_duck(self.speech_duck);
+                // Nor may it come back without the operator's trim: a rig whose
+                // codec is quiet is quiet on every sound card.
+                mixer.set_trim_db(self.rx_af_gain_db);
                 self.mixer = Some(mixer);
                 self.audio_out_rate = a.out_rate;
                 self.sub = self
@@ -13987,6 +14032,18 @@ impl Engine {
             self.drive_trim_db,
             self.source.commands_tx_power(),
         )
+    }
+
+    /// Push the operator's receive-audio trim into the live mixer.
+    ///
+    /// Silent when there is no mixer: a radio started with no audio sink still
+    /// holds the figure, and the mixer that is eventually built for it is seeded
+    /// from the same field.
+    fn refresh_af_trim(&mut self) {
+        let db = self.rx_af_gain_db;
+        if let Some(mixer) = self.mixer.as_mut() {
+            mixer.set_trim_db(db);
+        }
     }
 
     /// Work out this band's drive calibration afresh — after a retune, and
@@ -15938,6 +15995,48 @@ mod recording_tap_tests {
         mixer.rx_rec_enabled = false;
         mixer.push_tx(&[0.75]);
         assert_eq!(drained(&mut rec), vec![0.0, 0.75]);
+    }
+
+    /// The operator's receive-audio trim is the one gain in the path that can
+    /// make a radio *louder*, which a rig with a quiet USB codec needs (issue
+    /// #315) — and it must reach the speakers without reaching the recording,
+    /// which is the whole point of the recorder's tap arriving separately.
+    ///
+    /// The limit is not decoration either: past full scale the conversion to a
+    /// card's own sample format is free to wrap, and a wrap is a click at the
+    /// loudest the card can go.
+    #[test]
+    fn the_receive_trim_lifts_the_speakers_and_not_the_recording() {
+        let (out, mut speaker) = rtrb::RingBuffer::<f32>::new(64);
+        let (tap, mut rec) = rtrb::RingBuffer::<f32>::new(64);
+        let mut mixer = StereoMixer::new(out);
+        mixer.rec_tap = Some(tap);
+        mixer.rec_mono = true;
+
+        // Exactly double, which +6 dB is only nearly.
+        mixer.set_trim_db(20.0 * 2f32.log10());
+        mixer.push(&[0.25], None, &[0.25], None);
+        // One receiver, so the speaker path is the same sample in both ears.
+        let heard = drained(&mut speaker);
+        assert_eq!(heard.len(), 2, "{heard:?}");
+        assert!(heard.iter().all(|s| (s - 0.5).abs() < 1e-3), "{heard:?}");
+        assert_eq!(drained(&mut rec), vec![0.25], "the trim must not reach the archive");
+
+        // Loud enough to leave the rails, and held at them.
+        mixer.set_trim_db(30.0);
+        mixer.push(&[0.5, -0.5], None, &[0.5, -0.5], None);
+        let heard = drained(&mut speaker);
+        assert_eq!(heard, vec![1.0, 1.0, -1.0, -1.0]);
+        assert_eq!(drained(&mut rec), vec![0.5, -0.5]);
+
+        // A figure nobody should be able to reach, however `radio.json` was
+        // edited — and the default is off.
+        mixer.set_trim_db(200.0);
+        let capped = mixer.trim;
+        mixer.set_trim_db(30.0);
+        assert_eq!(capped, mixer.trim);
+        mixer.set_trim_db(0.0);
+        assert_eq!(mixer.trim, 1.0);
     }
 
     /// The mono recording is one channel however many receivers are running —

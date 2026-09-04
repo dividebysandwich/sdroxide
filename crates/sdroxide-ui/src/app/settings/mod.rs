@@ -1790,6 +1790,9 @@ impl SdroxideApp {
                 ui.separator();
                 ui.add_space(6.0);
                 self.settings_user_audio(ui, io.audio_pick);
+                if let Some(cfg) = io.radio_edit.as_mut() {
+                    crate::app::settings::general::settings_rx_audio_gain(ui, cfg);
+                }
                 // The radio's own sound card is only used by the CAT / Audio
                 // interface; every other backend carries its audio in-band.
                 //

@@ -6968,6 +6968,23 @@ pub struct RadioConfig {
     pub radio_audio_in: Option<String>,
     /// Sound-card device (cpal name) carrying the TX audio PC → radio.
     pub radio_audio_out: Option<String>,
+    /// A fixed gain, in dB, on everything this radio sends to the speakers.
+    ///
+    /// The AF volume rail's top is unity: it can turn a radio down and never
+    /// up. That is right for a front end whose audio this program made, and
+    /// wrong for one that arrives already made — a transceiver's USB codec puts
+    /// out what the rig's own AF stage decided, and several of them (Yaesu's
+    /// among them) are quiet enough that full volume here *and* in the operating
+    /// system is still not loud (issue #315). This is the trim that makes up the
+    /// difference, and it belongs to the radio because what it corrects is that
+    /// radio's interface rather than how loudly anyone wants to listen.
+    ///
+    /// `0.0` — the default, and what every `radio.json` written before this
+    /// existed loads as — leaves the path exactly as it was. Applied at the one
+    /// funnel every receive path goes through, so it reaches a demodulated
+    /// front end as well; the recorder's tap is deliberately not in that funnel,
+    /// which keeps an archived recording independent of it.
+    pub rx_audio_gain_db: f32,
     /// External frequency converter in the antenna line: the hardware is tuned
     /// this far from the operator's dial, in Hz. So `+125_000_000` is a Ham It
     /// Up HF upconverter and the dial reads the real on-air frequency, and a

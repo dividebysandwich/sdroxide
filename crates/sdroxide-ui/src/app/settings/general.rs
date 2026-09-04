@@ -127,6 +127,52 @@ pub(in crate::app) fn remote_access_settings(ui: &mut egui::Ui, access: &mut Rem
     );
 }
 
+/// The fixed trim on this radio's receive audio.
+///
+/// Lives beside the sound-card pickers because that is what it is for: the AF
+/// rail on the strip tops out at unity, which can turn a radio down and never
+/// up, and a transceiver whose USB codec puts out a quiet signal is then quiet
+/// at full volume in sdroxide *and* in the operating system (issue #315). It is
+/// per radio, because what it corrects is that radio's interface rather than
+/// how loudly anyone wants to listen.
+///
+/// Edited straight into `radio_edit`, which the settings window sends and saves
+/// on any change — so it takes effect while the operator is listening, with no
+/// Apply and no reopen.
+pub(in crate::app) fn settings_rx_audio_gain(
+    ui: &mut egui::Ui,
+    cfg: &mut sdroxide_types::RadioConfig,
+) {
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Receive audio gain").strong());
+        ui.add(
+            egui::DragValue::new(&mut cfg.rx_audio_gain_db)
+                .speed(0.5)
+                .range(-20.0..=30.0)
+                .fixed_decimals(1)
+                .suffix(" dB"),
+        );
+        if cfg.rx_audio_gain_db != 0.0 && ui.button("0 dB").clicked() {
+            cfg.rx_audio_gain_db = 0.0;
+        }
+    });
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new(
+            "Extra gain on everything this radio sends to the speakers, on top of the volume \
+             control. Leave it at 0 dB unless the radio is quiet at full volume: the volume \
+             rail's top is the audio as it arrives, so it can turn a radio down but never up, \
+             and some transceivers' USB sound output sits well below full scale.\n\n\
+             Go up 6 dB at a time. Too much clips — the audio is limited at full scale rather \
+             than allowed to wrap round, so overdoing it sounds harsh rather than loud. \
+             Recordings are taken ahead of this and are not affected.",
+        )
+        .size(10.5)
+        .color(crate::theme::gray(140)),
+    );
+}
+
 impl SdroxideApp {
     /// The band-plan file: where it is, whether the station is on it, and the
     /// button that re-reads it.
