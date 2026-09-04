@@ -48,6 +48,11 @@ const RX2_CHAN: (bool, &str) = (false, "voltage1");
 const TX_CHAN: (bool, &str) = (true, "voltage0");
 
 /// The control channel for receive chain `chain` (0 or 1).
+/// `-EOPNOTSUPP`, which is what the AD9361 driver answers to a write of a
+/// register the part currently owns — the receive gain of a chain that is not
+/// in manual gain control.
+const EOPNOTSUPP: i64 = -95;
+
 fn rx_chan(chain: u8) -> (bool, &'static str) {
     if chain == 0 { RX_CHAN } else { RX2_CHAN }
 }
@@ -474,6 +479,14 @@ impl Phy {
     ///
     /// Skipping is not the same as losing the value: the caller keeps it and
     /// replays it on the way back into manual (see `control_thread`).
+    ///
+    /// `mode` is what the *caller* believes the chain is in, and belief can be
+    /// wrong: the AD9361 keeps a mode per chain, another program can move one,
+    /// and a 2R2T firmware boots the second chain wherever its device tree left
+    /// it rather than where the first one was put. So a write the driver
+    /// refuses with `-EOPNOTSUPP` is answered by asserting the mode and trying
+    /// once more, instead of leaving the operator with a slider that logs an
+    /// errno and does nothing (issue #311).
     pub fn set_rx_gain(&self, conn: &mut Connection, chain: u8, mode: &str, db: f64) -> Result<()> {
         if mode != Phy::MANUAL_AGC {
             tracing::debug!(
@@ -487,6 +500,20 @@ impl Phy {
             return Ok(());
         }
         let db = db.clamp(self.limits.rx_gain_db.0, self.limits.rx_gain_db.1);
+        match self.write_rx_gain(conn, chain, db) {
+            Err(e) if e.remote_code() == Some(EOPNOTSUPP) => {
+                tracing::debug!(
+                    "PlutoSDR: receive chain {chain} would not take a gain, so it is not in \
+                     {mode} after all — putting it there and trying again"
+                );
+                self.set_agc_mode(conn, chain, mode)?;
+                self.write_rx_gain(conn, chain, db)
+            }
+            other => other,
+        }
+    }
+
+    fn write_rx_gain(&self, conn: &mut Connection, chain: u8, db: f64) -> Result<()> {
         conn.write_attr(&self.phy_id, Some(rx_chan(chain)), "hardwaregain", &format!("{db:.6}"))
     }
 

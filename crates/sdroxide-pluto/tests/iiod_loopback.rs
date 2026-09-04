@@ -102,6 +102,27 @@ const CONTEXT_XML: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 /// HamGeek Pluto+ field report showed, and it used to be refused outright.
 fn pluto_plus_xml() -> String {
     let xml = CONTEXT_XML
+        // A 2R2T firmware exposes the second chain's *controls* as well as its
+        // samples: its own gain register, gain-control mode and port select,
+        // hanging off the phy's `voltage1` input channel. Without them there is
+        // nothing to reproduce issue #311 against — the client holds every
+        // write for want of a channel to send it to.
+        .replace(
+            r#"    <channel id="voltage0" type="output">
+      <attribute name="rf_port_select" filename="out_voltage0_rf_port_select" />"#,
+            r#"    <channel id="voltage1" type="input">
+      <attribute name="rf_port_select" filename="in_voltage1_rf_port_select" />
+      <attribute name="rf_port_select_available" filename="in_voltage1_rf_port_select_available" />
+      <attribute name="hardwaregain" filename="in_voltage1_hardwaregain" />
+      <attribute name="hardwaregain_available" filename="in_voltage1_hardwaregain_available" />
+      <attribute name="gain_control_mode" filename="in_voltage1_gain_control_mode" />
+      <attribute name="gain_control_mode_available" filename="in_voltage1_gain_control_mode_available" />
+      <attribute name="rf_bandwidth" filename="in_voltage1_rf_bandwidth" />
+      <attribute name="sampling_frequency" filename="in_voltage1_sampling_frequency" />
+    </channel>
+    <channel id="voltage0" type="output">
+      <attribute name="rf_port_select" filename="out_voltage0_rf_port_select" />"#,
+        )
         .replace(
             r#"<scan-element index="1" format="le:s12/16&gt;&gt;0" />
     </channel>"#,
@@ -127,6 +148,7 @@ fn pluto_plus_xml() -> String {
     </channel>"#,
         );
     assert_eq!(xml.matches("voltage3").count(), 2, "the 2R2T surgery must have taken");
+    assert!(xml.contains("in_voltage1_hardwaregain"), "the second chain's controls must be there");
     xml
 }
 
@@ -275,6 +297,16 @@ fn default_attr(key: &str) -> &'static str {
         "ad9361-phy/INPUT/voltage0/gain_control_mode_available" => {
             "manual fast_attack slow_attack hybrid"
         }
+        // The second chain, on a 2R2T firmware. Its gain-control mode boots
+        // where the driver's device tree left it and *not* where chain 0's was
+        // just put — which is the whole of issue #311.
+        "ad9361-phy/INPUT/voltage1/hardwaregain_available" => "[0 1 71]",
+        "ad9361-phy/INPUT/voltage1/gain_control_mode_available" => {
+            "manual fast_attack slow_attack hybrid"
+        }
+        "ad9361-phy/INPUT/voltage1/gain_control_mode" => "slow_attack",
+        "ad9361-phy/INPUT/voltage1/rf_port_select_available" => "A_BALANCED B_BALANCED",
+        "ad9361-phy/INPUT/voltage1/rf_port_select" => "A_BALANCED",
         "ad9361-phy/INPUT/voltage0/rf_port_select_available" => "A_BALANCED B_BALANCED",
         "ad9361-phy/OUTPUT/voltage0/rf_port_select_available" => "A B",
         "ad9361-phy/INPUT/voltage0/rf_port_select" => "A_BALANCED",
@@ -368,7 +400,12 @@ fn serve(sock: TcpStream, state: Arc<Mutex<DeviceState>>, stop: Arc<AtomicBool>,
                 // The receive gain register belongs to the AD9361 unless the
                 // gain-control mode is manual; writing it in an attack mode is
                 // `-EOPNOTSUPP`, not a silently ignored write.
-                if key == "ad9361-phy/INPUT/voltage0/hardwaregain"
+                //
+                // Per *chain*, as the part is: a 2R2T board has a register set
+                // and a gain-control mode for each, and putting the first one
+                // in manual says nothing about the second (issue #311).
+                if key.starts_with("ad9361-phy/INPUT/voltage")
+                    && key.ends_with("/hardwaregain")
                     && state
                         .lock()
                         .expect("lock")
@@ -1536,4 +1573,79 @@ fn a_stock_pluto_refuses_a_second_chain() {
     assert!(err.contains("1 chain"), "{err}");
     assert!(err.contains("2R2T"), "the refusal should say what would provide one: {err}");
     rig.release();
+}
+
+/// Issue #311: the gain on a 2R2T board's *second* receiver was refused.
+///
+/// The control thread tracks a gain-control mode per chain and seeds both from
+/// the radio's configuration, but only chain 0 was ever put there — so on a
+/// board whose firmware boots chain 1 in an attack mode, sdroxide believed it
+/// was in manual, sent the gain, and the driver answered `-EOPNOTSUPP` (-95).
+/// The slider moved and nothing happened.
+///
+/// The `voltage1` control channel this needs is what a real 2R2T firmware
+/// exposes and what the fixture now carries; a stock Pluto has none, and there
+/// the write is held rather than sent.
+#[test]
+fn the_second_receivers_gain_reaches_the_second_receiver() {
+    use sdroxide_pluto::PlutoRig;
+
+    let fake = Fake::start_pluto_plus();
+    let cfg = PlutoConfig { agc: PlutoAgc::Manual, rx_gain_db: 40.0, ..config() };
+    let rig = PlutoRig::open(&fake.address(), &cfg, 435_000_000.0).expect("open");
+
+    // Both chains are put where the configuration says before either is used:
+    // the second one's registers boot wherever the driver left them, which is
+    // not where chain 0's config just went.
+    wait_for("chain 1's gain-control mode", || {
+        fake.state.lock().expect("lock").get("ad9361-phy/INPUT/voltage1/gain_control_mode")
+            == Some("manual")
+    });
+
+    let mut r1 = rig.rx(1).expect("attach chain 1");
+    r1.set_rx_gain_db(9.0);
+    wait_for("chain 1's gain", || {
+        fake.state
+            .lock()
+            .expect("lock")
+            .get("ad9361-phy/INPUT/voltage1/hardwaregain")
+            .is_some_and(|v| v.starts_with('9'))
+    });
+
+    // And chain 0 is untouched by it: two receivers, two gain registers.
+    let g = fake.state.lock().expect("lock");
+    assert!(
+        g.get("ad9361-phy/INPUT/voltage0/hardwaregain").unwrap().starts_with("40"),
+        "chain 0's gain moved with chain 1's: {:?}",
+        g.get("ad9361-phy/INPUT/voltage0/hardwaregain")
+    );
+}
+
+/// And if the two ever disagree anyway — another program moved the mode, or a
+/// firmware boots a chain somewhere sdroxide did not put it — a refused gain
+/// write is recovered from rather than merely logged.
+#[test]
+fn a_chain_found_in_the_wrong_mode_is_put_right_and_the_gain_retried() {
+    use sdroxide_pluto::PlutoRig;
+
+    let fake = Fake::start_pluto_plus();
+    let cfg = PlutoConfig { agc: PlutoAgc::Manual, rx_gain_db: 40.0, ..config() };
+    let rig = PlutoRig::open(&fake.address(), &cfg, 435_000_000.0).expect("open");
+    let mut r1 = rig.rx(1).expect("attach chain 1");
+    wait_for("chain 1's opening gain", || {
+        fake.state.lock().expect("lock").get("ad9361-phy/INPUT/voltage1/hardwaregain").is_some()
+    });
+
+    // Somebody else puts the chain into an attack mode behind sdroxide's back.
+    fake.state.lock().expect("lock").attrs.push((
+        "ad9361-phy/INPUT/voltage1/gain_control_mode".to_string(),
+        "slow_attack".to_string(),
+    ));
+
+    r1.set_rx_gain_db(11.0);
+    wait_for("the gain to land after the mode was put back", || {
+        let g = fake.state.lock().expect("lock");
+        g.get("ad9361-phy/INPUT/voltage1/gain_control_mode") == Some("manual")
+            && g.get("ad9361-phy/INPUT/voltage1/hardwaregain").is_some_and(|v| v.starts_with("11"))
+    });
 }

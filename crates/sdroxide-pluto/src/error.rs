@@ -51,6 +51,17 @@ pub enum Error {
 }
 
 impl Error {
+    /// The `-errno` the server answered with, where the failure was one of
+    /// those. Lets a caller recognise a specific refusal — the AD9361's
+    /// `-EOPNOTSUPP` on a gain register the part currently owns, say — without
+    /// matching on the sentence built for the operator.
+    pub fn remote_code(&self) -> Option<i64> {
+        match self {
+            Error::Remote { code, .. } => Some(*code),
+            _ => None,
+        }
+    }
+
     /// Translate a failure to connect into an instruction.
     ///
     /// These three cases are nearly the whole support burden of this backend.

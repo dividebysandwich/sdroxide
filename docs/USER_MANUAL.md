@@ -7623,6 +7623,13 @@ configured in exactly the same way as one on your desk.
   refuses the write outright, which is why the slider greys out. A value you set
   in manual is remembered and reapplied the next time you switch back, so
   changing AGC mode does not lose it.
+
+  Both of those are **per chain** on a two-channel board: the AD9361 keeps a
+  gain register and a gain-control mode for each, so RX2 has its own of both and
+  its AGC mode is set alongside RX1's when the radio opens. If a chain is ever
+  found somewhere else — another program moved it, or a firmware boots one in an
+  attack mode — the gain write is not simply lost: the mode is put back where
+  you asked for it and the gain sent again.
 - **TX gain** — negative, because the AD9361 states transmit level as
   *attenuation*: `0 dB` is full output and `−89.75 dB` is as close to off as the
   part gets. Applied as you move it. On connect the transmitter is set to its

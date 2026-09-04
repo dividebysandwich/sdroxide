@@ -418,6 +418,30 @@ impl PlutoRig {
         let bandwidth = phy.set_bandwidth(&mut control, want_bw)?;
         phy.set_agc_mode(&mut control, 0, cfg.agc.iio_name())?;
         phy.set_rx_gain(&mut control, 0, cfg.agc.iio_name(), cfg.rx_gain_db)?;
+        // The second chain, on a firmware that has control registers for one.
+        //
+        // Not housekeeping: the AD9361 keeps a gain-control mode *per chain*,
+        // and chain 1's boots wherever the driver's device tree left it —
+        // an attack mode on the boards this was reported from. The control
+        // thread tracks a mode per chain and seeds both from this config, so
+        // unless the hardware is actually put there, the second receiver's
+        // first gain write goes out believing it is in manual and the driver
+        // answers `-EOPNOTSUPP`: the slider moves and nothing happens
+        // (issue #311).
+        //
+        // Refusals are not fatal here the way chain 0's are. A board that
+        // streams two chains but will not take these has a working first
+        // receiver, and saying so beats declining to open at all.
+        if phy.rx2_control {
+            for step in [
+                phy.set_agc_mode(&mut control, 1, cfg.agc.iio_name()),
+                phy.set_rx_gain(&mut control, 1, cfg.agc.iio_name(), cfg.rx_gain_db),
+            ] {
+                if let Err(e) = step {
+                    tracing::warn!("PlutoSDR: configuring the second receive chain: {e}");
+                }
+            }
+        }
         if !cfg.rx_port.trim().is_empty() {
             phy.set_rx_port(&mut control, 0, cfg.rx_port.trim())?;
         }
