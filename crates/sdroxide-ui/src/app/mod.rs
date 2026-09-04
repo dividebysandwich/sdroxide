@@ -1076,6 +1076,7 @@ impl SdroxideApp {
         );
         crate::theme::set_spot_colors(&ui_settings.spot_colors);
         crate::theme::set_bandplan_colors(&ui_settings.bandplan_colors);
+        crate::theme::set_map_cities(ui_settings.map_cities);
         crate::theme::apply(egui_ctx);
         // What this renderer will carry. Gathered here because it is the one
         // place that holds the render state and the controller at once, and

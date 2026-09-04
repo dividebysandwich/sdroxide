@@ -404,11 +404,16 @@ pub(crate) fn draw_base(
             p.circle_filled(at(i % cols, i / cols), dot_r, alpha(ink, weight * a));
         }
     }
-    draw_cities(p, rect, clat, clon, lon_span, lat_span, dot_r, map);
+    if theme::map_cities() {
+        draw_cities(p, rect, clat, clon, lon_span, lat_span, dot_r, map);
+    }
     dot_r
 }
 
-/// The cities that fit, biggest first.
+/// The cities that fit, biggest first. Drawn only when the operator has left
+/// them on ([`sdroxide_types::UiSettings::map_cities`]) — on a small panel map
+/// a field of named grey dots is most of what is on it, and the contacts are
+/// what somebody is trying to read (issue #312).
 ///
 /// [`crate::basemap::cities`] is sorted by population, so "which cities show"
 /// needs no threshold: walk the list, draw what falls inside the view, and stop
@@ -717,6 +722,73 @@ pub fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #312: the cities can be turned off, and turning them off takes the
+    /// *names* with them — those are what get written across the dot somebody
+    /// is trying to read on a panel map.
+    ///
+    /// Counted off the painter rather than eyeballed: `draw_base` puts land,
+    /// rivers and borders down as circles and the city names as text, so the
+    /// text count is the cities' labels and nothing else, and the circle count
+    /// falling proves the dots went too.
+    ///
+    /// The setting is a process-wide atomic, so this is the only test here that
+    /// may paint a basemap; another one doing so in parallel would read
+    /// whichever value this had reached. It is put back on the way out.
+    #[test]
+    fn cities_can_be_turned_off_and_take_their_names_with_them() {
+        use eframe::egui;
+
+        fn count_shape(s: &egui::Shape, circles: &mut usize, texts: &mut usize) {
+            match s {
+                egui::Shape::Circle(_) => *circles += 1,
+                egui::Shape::Text(_) => *texts += 1,
+                egui::Shape::Vec(v) => {
+                    for x in v {
+                        count_shape(x, circles, texts);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Western Europe at a width that holds a great many cities, on a panel
+        // big enough for the labels to be drawn at all.
+        fn draw_counted() -> (usize, usize) {
+            let ctx = egui::Context::default();
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let rect =
+                    egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 320.0));
+                let p = ui.painter_at(rect);
+                draw_base(&p, rect, 50.0, 5.0, 40.0, 20.0, theme::map());
+            });
+            let (mut circles, mut texts) = (0usize, 0usize);
+            for prim in &out.shapes {
+                count_shape(&prim.shape, &mut circles, &mut texts);
+            }
+            // A frame's font atlas has to be taken or dropping the output
+            // panics; nothing here draws it.
+            out.textures_delta.clear();
+            (circles, texts)
+        }
+
+        theme::set_map_cities(true);
+        let (with_circles, with_texts) = draw_counted();
+        assert!(with_texts > 0, "no city names were drawn to begin with");
+
+        theme::set_map_cities(false);
+        let (without_circles, without_texts) = draw_counted();
+        assert_eq!(without_texts, 0, "{without_texts} names survived the setting");
+        assert!(
+            without_circles < with_circles,
+            "the dots stayed too: {without_circles} against {with_circles}"
+        );
+
+        // Left as it is found: on by default, which is what every build before
+        // this one drew.
+        theme::set_map_cities(true);
+        assert!(theme::map_cities());
+    }
 
     /// Aspect of a typical map: half as tall as it is wide.
     const ASPECT: f64 = 0.5;

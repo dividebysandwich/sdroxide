@@ -184,6 +184,20 @@ pub(in crate::app) fn settings_ui_tab(
         );
         enum_combo(ui, "ui-menu-font", &mut cfg.menu_font_size, &FontSize::ALL, FontSize::label);
         ui.end_row();
+
+        ui.label("Cities on maps").on_hover_text(
+            "Draw the world's cities — a dot per place, with its name beside it \
+             where there is room — on the flat maps: FT8/WSPR, APRS, ADS-B and \
+             AIS.\n\n\
+             They are most of what says *where* a dot is on a map of the whole \
+             world, and they are also the busiest thing on it. Turn them off if \
+             the names are getting in the way of the stations you are reading. \
+             The 3D globe is unaffected — its cities are night-side lights \
+             rather than markers, and nothing there is written across a \
+             contact.",
+        );
+        crate::chrome::checkbox(ui, &mut cfg.map_cities, "show cities and their names");
+        ui.end_row();
     });
 
     // Native only: the check is about *this binary* being out of date, and

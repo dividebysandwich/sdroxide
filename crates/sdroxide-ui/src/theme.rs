@@ -11,7 +11,7 @@
 //! see the same look.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Stroke, TextStyle,
@@ -1163,6 +1163,30 @@ pub fn bandplan_color(kind: BandplanKind) -> (u8, u8, u8) {
     }
     let [_, r, g, b] = packed.to_be_bytes();
     (r, g, b)
+}
+
+/// Whether the flat maps draw the world's cities — see
+/// [`sdroxide_types::UiSettings::map_cities`].
+///
+/// An atomic for the same reason the spot tints above are one: the four maps
+/// that draw a basemap (the FT8/WSPR world map, APRS, ADS-B and AIS) all reach
+/// it through one shared painter, and threading a display preference through
+/// four `show` signatures to reach it would put the setting everywhere except
+/// where it is read.
+static MAP_CITIES: AtomicBool = AtomicBool::new(true);
+
+/// Select whether the flat maps carry cities. Re-stored each frame, like the
+/// font sizes, so the checkbox takes effect on the frame it is clicked in.
+pub fn set_map_cities(on: bool) {
+    MAP_CITIES.store(on, Ordering::Relaxed);
+}
+
+/// Whether to draw cities on a flat map. Defaults to true — the setting has to
+/// be turned *off*, and a window that never applied any settings shows the map
+/// every build before issue #312 drew.
+#[inline]
+pub fn map_cities() -> bool {
+    MAP_CITIES.load(Ordering::Relaxed)
 }
 
 /// Put the current [`ui_scale`] into `ctx` as its zoom factor.

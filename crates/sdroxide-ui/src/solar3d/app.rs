@@ -58,6 +58,7 @@ impl SolarApp {
             ui.waterfall_font_size,
             ui.menu_font_size,
         );
+        crate::theme::set_map_cities(ui.map_cities);
         crate::theme::apply(&cc.egui_ctx);
         if let Some(rs) = cc.wgpu_render_state.as_ref() {
             super::gpu::init(rs);

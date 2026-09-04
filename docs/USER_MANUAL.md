@@ -10019,6 +10019,18 @@ spoken announcements below them under `[speech]`:
   points to lay out in, so a small window may drop to the tablet control strip
   ([9.5](#95-phones-and-tablets)) — force **Layout: Desktop** above if you would
   rather keep the full strip.
+- **Cities on maps** — draw the world's cities on the flat maps: FT8/WSPR
+  ([3.2](#32-ft8-ft4-and-ft2)), APRS, ADS-B and AIS. A dot per place, sized by
+  population, with its name beside it where there is room.
+
+  On by default, because on a map of the whole world the cities are most of what
+  says *where* a dot is — a coastline alone leaves you counting inlets. They are
+  also the busiest thing on that map, and the panel maps are small: an operator
+  watching where their contacts are coming from is reading a handful of coloured
+  dots against a field of grey ones with names attached. Turn this off and the
+  land, the rivers, the borders and your stations stay; the cities and their
+  names go. The 3D globe is unaffected — its cities are night-side lights rather
+  than markers, and nothing there is written across a contact.
 - **Check for updates at startup** — asks sdroxide.com once per start whether a
   newer release has been published, and if so says which in a dismissable banner
   above the waterfall (the same amber strip the radio warnings use), with a link

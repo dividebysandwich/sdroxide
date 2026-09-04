@@ -557,6 +557,22 @@ pub struct UiSettings {
     /// ([`crate::Mode::tunes_off_dial`]) and could join it, but each wants
     /// checking against real signals first.
     pub cw_qrg: bool,
+    /// Draw the world's cities on the flat maps — the dot per place and the
+    /// name beside it.
+    ///
+    /// On by default: on a map of the whole world the cities are most of what
+    /// says *where* a dot is, and a coastline alone is a poor substitute. But
+    /// they are also the busiest thing on that map, and the panel maps are
+    /// small — an operator watching where their FT8 contacts are coming from is
+    /// reading a handful of coloured dots against a field of grey ones with
+    /// names attached to them, which is the complaint this answers (issue
+    /// #312).
+    ///
+    /// This screen's preference, like the theme and the spot tints: the
+    /// decodes are the station's, what the map they are drawn on carries is the
+    /// operator's. The 3D globe is untouched — its cities are night-side lights
+    /// rather than markers, and nothing is written across a contact there.
+    pub map_cities: bool,
 }
 
 /// Default for [`UiSettings::spot_colors`] — every kind on its stock tint.
@@ -648,6 +664,7 @@ impl Default for UiSettings {
             decode_single_list: false,
             decode_cq_only: false,
             decode_new_only: false,
+            map_cities: true,
         }
     }
 }

@@ -173,6 +173,9 @@ impl eframe::App for SdroxideApp {
         // to take on the frame it is chosen in or the picker feels dead.
         crate::theme::set_spot_colors(&self.ui_settings.spot_colors);
         crate::theme::set_bandplan_colors(&self.ui_settings.bandplan_colors);
+        // …and whether the maps carry cities, which the four of them read
+        // through one shared painter.
+        crate::theme::set_map_cities(self.ui_settings.map_cities);
         // The interface scale is egui's zoom factor, which egui also lets the
         // operator drive with ctrl+plus / ctrl+minus, so it is written only
         // when the setting itself moves — see `theme::apply_zoom`. It reads
