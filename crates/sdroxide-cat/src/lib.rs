@@ -1884,13 +1884,14 @@ fn apply_line(port: &mut dyn Link, forced: LineState, rts: bool) {
     if rts { port.set_rts(level) } else { port.set_dtr(level) }
 }
 
-/// What mode to command the rig into for a given app mode. FT8/FT4 use the
-/// separate `digi_mode` setting; every other mode obeys `mode_control`
-/// (CAT = mirror the selected mode to the rig; Radio = don't touch it).
+/// What mode to command the rig into for a given app mode. Everything sdroxide
+/// modulates through the rig's sound card uses the separate `digi_mode`
+/// setting; every other mode obeys `mode_control` (CAT = mirror the selected
+/// mode to the rig; Radio = don't touch it).
 ///
-/// `digi_mode` is a choice between two *sidebands* — plain USB or the rig's
-/// DATA-U position — so it only makes sense for a mode that rides a
-/// sideband. The carrier-centred modes (RIFP, VHF packet) frequency-modulate
+/// `digi_mode` is a choice between two spellings of a *sideband* — the plain
+/// one or the rig's DATA position — so it only makes sense for a mode that
+/// rides a sideband. The carrier-centred modes (RIFP, VHF packet) frequency-modulate
 /// the carrier instead: sending them as USB puts the rig in the wrong
 /// modulation entirely, and nothing downstream would say so. Those fall
 /// through to `mode_control`, where each protocol's own map answers DATA-FM.
@@ -1900,15 +1901,24 @@ fn apply_line(port: &mut dyn Link, forced: LineState, rts: bool) {
 /// sound card, so the keyed sidetone (MCW) only reaches the air from USB or
 /// DATA-U. Commanding CW there was the issue #119 dead key — a Xiegu G90
 /// switched out of U-D made no power at all.
-fn commanded_mode(cfg: &CatConfig, app_mode: Mode) -> Option<Mode> {
-    let rides_digi_sideband =
-        (app_mode.is_digital() && !app_mode.is_sstv() && !app_mode.is_carrier_centered())
-            || (app_mode == Mode::Cw && cfg.cw_keying == CwKeying::Audio);
+///
+/// Analog SSTV rides it as well, on whichever sideband it is being used on:
+/// it is the app that modulates the picture, through the same sound card and
+/// into the same input, so a rig left in plain USB transmits it off the
+/// microphone (issue #313). It used to be excluded here because `digi_mode`
+/// names only the *upper* pair — and SSTV is the one mode whose sideband
+/// follows the band, LSB on 160/80/40 m — which is what `dial_hz` answers.
+/// Without a dial the sideband cannot be worked out, so the upper pair is
+/// assumed, as it was for every mode before this took a frequency at all.
+fn commanded_mode(cfg: &CatConfig, app_mode: Mode, dial_hz: Option<f64>) -> Option<Mode> {
+    let rides_digi_sideband = (app_mode.is_digital() && !app_mode.is_carrier_centered())
+        || (app_mode == Mode::Cw && cfg.cw_keying == CwKeying::Audio);
     if rides_digi_sideband {
+        let lower = dial_hz.is_some_and(|hz| app_mode.is_lower_sideband_at(hz));
         return match cfg.digi_mode {
             DigiMode::Radio => None,
-            DigiMode::Usb => Some(Mode::Usb),
-            DigiMode::Data => Some(Mode::Digu),
+            DigiMode::Usb => Some(if lower { Mode::Lsb } else { Mode::Usb }),
+            DigiMode::Data => Some(if lower { Mode::Digl } else { Mode::Digu }),
         };
     }
     match cfg.mode_control {
@@ -1950,8 +1960,11 @@ fn serial_thread(
     let mut last_alc: Option<f32> = None;
     let mut last_po: Option<f32> = None;
     let mut last_fwd: Option<f32> = None;
-    // See `commanded_mode` for the app-mode → rig-mode policy.
-    let mode_cmd = |app_mode: Mode| -> Option<Mode> { commanded_mode(&cfg, app_mode) };
+    // See `commanded_mode` for the app-mode → rig-mode policy. The dial comes
+    // in because one mode's sideband follows the band — see there.
+    let mode_cmd = |app_mode: Mode, dial: Option<f64>| -> Option<Mode> {
+        commanded_mode(&cfg, app_mode, dial)
+    };
 
     loop {
         // (Re)open the port, retrying on failure.
@@ -2141,6 +2154,13 @@ fn serial_thread(
         // be told from the refusals its unimplemented sub-commands answer with.
         let mut ptt_written: Option<Instant> = None;
         let mut pending_freq: Option<f64> = None;
+        // Where the rig is tuned, as best this end knows: what the operator has
+        // just asked for, else what the radio last reported. Only the mode
+        // policy reads it, and only for the one mode whose sideband follows the
+        // band (see `commanded_mode`) — a stale answer there costs a mode
+        // command that the rig's own report then corrects, which is the same
+        // settling the sideband logic upstairs already relies on.
+        let mut dial_hz: Option<f64> = None;
         let mut last_sent_freq: Option<f64> = None;
         let mut freq_deadline = Instant::now();
         // Output power, coalesced and rate-limited exactly as the frequency is:
@@ -2197,9 +2217,12 @@ fn serial_thread(
             // Drain commands.
             loop {
                 match cmd_rx.try_recv() {
-                    Ok(CatCmd::Freq(hz)) => pending_freq = Some(hz), // coalesce
+                    Ok(CatCmd::Freq(hz)) => {
+                        pending_freq = Some(hz); // coalesce
+                        dial_hz = Some(hz);
+                    }
                     Ok(CatCmd::Mode(m)) => {
-                        if let Some(mm) = mode_cmd(m) {
+                        if let Some(mm) = mode_cmd(m, dial_hz) {
                             let f = protocol.set_mode(mm);
                             if mode_memory.needs(&f) {
                                 if write_frame(
@@ -2854,6 +2877,10 @@ fn serial_thread(
                 // Forward only genuine changes (poll repeats otherwise).
                 let changed = match u {
                     CatUpdate::Freq(hz) => {
+                        // Where the radio says it is, which is where it is —
+                        // including the dial the opening poll finds it on,
+                        // before this end has commanded anything.
+                        dial_hz = Some(hz);
                         let c = emit_freq.map(|f| (f - hz).abs() >= 1.0).unwrap_or(true);
                         if c {
                             emit_freq = Some(hz);
@@ -3059,7 +3086,9 @@ mod tests {
         assert!(m.needs(&p.set_mode(Mode::Usb)));
         // Asserting the same mode again — every subsequent key-down — does not.
         assert!(!m.needs(&p.set_mode(Mode::Usb)));
-        // DIGU is USB on the wire for this family, so it is not a change either.
+        // DIGU shares USB's mode byte on this family but not its DATA switch,
+        // so it is a change and has to go out (issue #313).
+        assert!(m.needs(&p.set_mode(Mode::Digu)));
         assert!(!m.needs(&p.set_mode(Mode::Digu)));
         // A mode that really is different is written.
         assert!(m.needs(&p.set_mode(Mode::Cw)));
@@ -3130,9 +3159,10 @@ mod tests {
             digi_mode: digi,
             ..CatConfig::default()
         };
-        assert_eq!(commanded_mode(&cfg(DigiMode::Radio), Mode::Cw), None);
-        assert_eq!(commanded_mode(&cfg(DigiMode::Usb), Mode::Cw), Some(Mode::Usb));
-        assert_eq!(commanded_mode(&cfg(DigiMode::Data), Mode::Cw), Some(Mode::Digu));
+        let m40 = Some(7_040_000.0);
+        assert_eq!(commanded_mode(&cfg(DigiMode::Radio), Mode::Cw, m40), None);
+        assert_eq!(commanded_mode(&cfg(DigiMode::Usb), Mode::Cw, m40), Some(Mode::Usb));
+        assert_eq!(commanded_mode(&cfg(DigiMode::Data), Mode::Cw, m40), Some(Mode::Digu));
     }
 
     /// The rig's own keyer can only send with the rig *in* CW, so that route
@@ -3142,8 +3172,8 @@ mod tests {
     fn cw_keyed_by_the_rig_is_still_commanded_as_cw() {
         let cfg =
             |mc| CatConfig { cw_keying: CwKeying::Cat, mode_control: mc, ..CatConfig::default() };
-        assert_eq!(commanded_mode(&cfg(ModeControl::Cat), Mode::Cw), Some(Mode::Cw));
-        assert_eq!(commanded_mode(&cfg(ModeControl::Radio), Mode::Cw), None);
+        assert_eq!(commanded_mode(&cfg(ModeControl::Cat), Mode::Cw, None), Some(Mode::Cw));
+        assert_eq!(commanded_mode(&cfg(ModeControl::Radio), Mode::Cw, None), None);
     }
 
     /// DIGU picked at the panel is a rig mode, not a decode layer: it obeys
@@ -3151,7 +3181,7 @@ mod tests {
     #[test]
     fn an_on_screen_digu_still_obeys_mode_control_not_digi_mode() {
         let cfg = CatConfig { digi_mode: DigiMode::Radio, ..CatConfig::default() };
-        assert_eq!(commanded_mode(&cfg, Mode::Digu), Some(Mode::Digu));
+        assert_eq!(commanded_mode(&cfg, Mode::Digu, Some(7_040_000.0)), Some(Mode::Digu));
     }
 
     /// The digital modes' sideband choice is not disturbed by how CW is keyed.
@@ -3159,7 +3189,12 @@ mod tests {
     fn ft8_ignores_the_cw_keying_setting() {
         for k in CwKeying::ALL {
             let cfg = CatConfig { cw_keying: k, digi_mode: DigiMode::Data, ..CatConfig::default() };
-            assert_eq!(commanded_mode(&cfg, Mode::Ft8), Some(Mode::Digu), "{k:?}");
+            // On 40 m as much as on 20 m: only SSTV's sideband follows the band.
+            assert_eq!(
+                commanded_mode(&cfg, Mode::Ft8, Some(7_074_000.0)),
+                Some(Mode::Digu),
+                "{k:?}"
+            );
         }
     }
 
@@ -3169,15 +3204,13 @@ mod tests {
     /// This is the whole of the "2 m SSTV in FM" complaint: SSTV commanded USB
     /// on every band, and there was no way to ask for FM at all (issue #192).
     /// [`Mode::SstvFm`] is a mode of its own for exactly this reason — every
-    /// family's map has to answer differently for it, and none of them has a
-    /// dial frequency to work the answer out from.
+    /// family's map has to answer differently for it.
     #[test]
     fn sstv_on_fm_is_commanded_as_fm_and_not_on_the_digi_sideband() {
         for digi in [DigiMode::Radio, DigiMode::Usb, DigiMode::Data] {
             let cfg = CatConfig { digi_mode: digi, ..CatConfig::default() };
-            assert_eq!(commanded_mode(&cfg, Mode::SstvFm), Some(Mode::SstvFm), "{digi:?}");
-            // Its HF twin is the one that rides a sideband, and still does.
-            assert_eq!(commanded_mode(&cfg, Mode::Sstv), Some(Mode::Sstv), "{digi:?}");
+            let at = Some(145_500_000.0);
+            assert_eq!(commanded_mode(&cfg, Mode::SstvFm, at), Some(Mode::SstvFm), "{digi:?}");
         }
         // And what each family actually writes for it is FM: an Icom's own
         // mode byte, and the data-over-FM spelling everywhere the family has
@@ -3188,7 +3221,50 @@ mod tests {
         // other mode — an operator who has said not to touch the rig's mode is
         // not overruled by the picture they chose.
         let hands_off = CatConfig { mode_control: ModeControl::Radio, ..CatConfig::default() };
-        assert_eq!(commanded_mode(&hands_off, Mode::SstvFm), None);
+        assert_eq!(commanded_mode(&hands_off, Mode::SstvFm, None), None);
+    }
+
+    /// Issue #313: the picture goes out of the same sound card every other
+    /// digital mode uses, so analog SSTV obeys `digi_mode` like all of them —
+    /// and on the sideband it is actually being used on, which for this one
+    /// mode follows the band.
+    ///
+    /// It used to be left out of that mapping and commanded as `Mode::Sstv`,
+    /// which every family but Icom writes as plain phone USB: the over then
+    /// left the rig through the microphone input with its speech processing in
+    /// the path, or on a radio whose SSB modulation source is the microphone,
+    /// with no audio at all.
+    #[test]
+    fn sstv_rides_the_digi_sideband_on_the_band_it_is_used_on() {
+        let cfg = |digi| CatConfig { digi_mode: digi, ..CatConfig::default() };
+        // 20 m and up: the upper sideband, like every other digital mode.
+        for at in [14_230_000.0, 21_340_000.0, 28_680_000.0] {
+            let at = Some(at);
+            assert_eq!(commanded_mode(&cfg(DigiMode::Data), Mode::Sstv, at), Some(Mode::Digu));
+            assert_eq!(commanded_mode(&cfg(DigiMode::Usb), Mode::Sstv, at), Some(Mode::Usb));
+            assert_eq!(commanded_mode(&cfg(DigiMode::Radio), Mode::Sstv, at), None);
+        }
+        // 160/80/40 m: SSTV is a phone emission and follows phone practice
+        // there, so the same choice is between the *lower* pair.
+        for at in [1_890_000.0, 3_730_000.0, 7_171_000.0] {
+            let at = Some(at);
+            assert_eq!(commanded_mode(&cfg(DigiMode::Data), Mode::Sstv, at), Some(Mode::Digl));
+            assert_eq!(commanded_mode(&cfg(DigiMode::Usb), Mode::Sstv, at), Some(Mode::Lsb));
+            assert_eq!(commanded_mode(&cfg(DigiMode::Radio), Mode::Sstv, at), None);
+        }
+        // `Mode control` does not get a say, exactly as it does not for FT8:
+        // an operator who set the digital modes' sideband meant it.
+        let hands_off = CatConfig {
+            mode_control: ModeControl::Radio,
+            digi_mode: DigiMode::Data,
+            ..cfg(DigiMode::Data)
+        };
+        assert_eq!(commanded_mode(&hands_off, Mode::Sstv, Some(7_171_000.0)), Some(Mode::Digl));
+        // And what an Icom writes for the DATA pair really is its DATA switch —
+        // the mode byte alone is the plain sideband on that family.
+        assert_eq!(civ::set_mode_frames(0x94, Mode::Digu, Some(0x06))[1][6], 0x01);
+        assert_eq!(civ::set_mode_frames(0x94, Mode::Digl, Some(0x06))[1][6], 0x01);
+        assert_eq!(civ::mode_to_civ(Mode::Digl), civ::mode_to_civ(Mode::Lsb));
     }
 
     /// `PC` is watts, and the families' documented floor is 5 W — a rig cannot

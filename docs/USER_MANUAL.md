@@ -3605,6 +3605,16 @@ commanded into the matching sideband. Nothing to set, and nothing to undo when
 you go back up — a picture sent on the wrong sideband arrives at everyone else
 inverted.
 
+**Plain sideband or the rig's data mode:** the picture is modulated here and
+reaches the radio through its sound card, exactly as FT8 does, so SSTV obeys the
+**Digimode mode** setting ([6.2](#62-radio-choosing-and-configuring-the-rig))
+like every other digital mode. Leave it on `DIGI` and a rig with a DATA
+position is put in USB-D above 40 m and LSB-D at and below it, which is what
+takes the transmit audio from the USB/data input rather than the microphone. On
+`USB` the rig is put in the plain sideband instead — the right answer for a
+radio whose SSB modulation source is already set to USB, or one with no data
+mode at all.
+
 **On VHF and UHF, use SSTV-FM instead.** Above 30 MHz a picture is normally sent
 on an FM carrier rather than a sideband, so the DIGITAL row has a second entry —
 **SSTV-FM** — beside SSTV. Everything about the picture is the same: the same
@@ -6597,8 +6607,20 @@ only.
 - **PTT method** — `CAT`, `DTR`, `RTS`, or `VOX` (how transmit is keyed).
 - **Mode control** — `CAT` (sdroxide sets the radio's mode to match) or
   `Radio controlled` (you set the mode on the radio and sdroxide follows).
-- **Digimode mode** — what to switch the rig to for FT8/FT4/FT2: `USB`, `DIGI`, or
-  `Radio controlled`.
+- **Digimode mode** — what to switch the rig to for a mode sdroxide modulates
+  through its sound card: `USB` (the plain sideband), `DIGI` (the rig's DATA /
+  PKT position, so the over is taken from the data input with the microphone
+  path's speech processing out of it), or `Radio controlled` (leave the rig's
+  mode alone). It covers every digital mode, SSTV included, and CW sent as
+  `Sound card (MCW)`; it overrides **Mode control** for those, because the
+  sideband a digital mode needs is not a matter of taste.
+
+  SSTV is the one mode whose sideband follows the band — it is a phone emission
+  and keeps phone practice, LSB on 160/80/40 m and USB above — so there `DIGI`
+  means the rig's DATA position on *that* sideband (LSB-D / DATA-LSB below 40 m,
+  USB-D above). **SSTV-FM** is not part of this: it modulates an FM carrier, so
+  the rig is put in FM (with the data input selected where the family has one)
+  whatever this is set to.
 - **CW keying** — where CW you send comes from, `Rig keyer (CAT)` or
   `Sound card (MCW)`. See below.
 - **Poll rate** — how often (Hz) sdroxide reads the rig's frequency, mode and
@@ -13063,11 +13085,23 @@ Turning the guard off clears a standing trip as well, which is the answer while
 you are tuning a manual ATU.
 
 **The CAT radio does not change mode.**
-On the **Radio** tab, set **Mode control** to **CAT**. For FT8/FT4/FT2, set
-**Digimode mode** to **USB** or **DIGI** as your rig expects. Check the serial
-port, baud, and (for Icom/Xiegu) the **Radio ID**. Check **CAT family** as well:
-Kenwood, Yaesu, Elecraft and QRP Labs look alike on the wire and none of them
-obeys the others' commands.
+On the **Radio** tab, set **Mode control** to **CAT**. For the modes sdroxide
+modulates through the rig's sound card — FT8, FT4, PSK, RTTY, SSTV and the rest
+— set **Digimode mode** to **USB** or **DIGI** as your rig expects; that setting
+governs them instead of **Mode control**. Check the serial port, baud, and (for
+Icom/Xiegu) the **Radio ID**. Check **CAT family** as well: Kenwood, Yaesu,
+Elecraft and QRP Labs look alike on the wire and none of them obeys the others'
+commands.
+
+**The rig goes to USB rather than USB-D, so nothing comes out of the USB audio.**
+Set **Digimode mode** to `DIGI`. On an Icom, also check **Radio model**: USB and
+USB-D are the same mode byte over CI-V and what separates them is a second
+command, whose sub-command number differs by model — an `Other` Icom is not sent
+it at all, because the wrong number writes somewhere else entirely. With both
+set, the rig goes to USB-D (LSB-D where SSTV rides the lower sideband) and takes
+the over from its data input. A rig with no DATA position wants `USB` here
+instead, plus its SSB modulation source set to the USB input at the radio —
+`MENU → SET → Connectors → MOD Input` on an IC-7300.
 
 **The CAT radio follows my dial but ignores frequency changes from sdroxide.**
 Take the radio out of memory mode: most rigs answer a frequency *read* from a

@@ -709,6 +709,20 @@ pub trait IqSource: Send {
     fn cw_audio_keyed(&self) -> bool {
         false
     }
+    /// True when this radio's control layer works out for itself which sideband
+    /// analog SSTV rides — the one mode whose sideband follows the band, LSB on
+    /// 160/80/40 m and USB above.
+    ///
+    /// The engine translates it into plain LSB before handing it over (see
+    /// `Engine::control_mode`), because a family's mode map is a table with no
+    /// dial in it. A CAT rig is the exception: there the mode goes through
+    /// `digi_mode`, the operator's choice between the plain sideband and the
+    /// rig's DATA position, and that choice has to survive on both sidebands —
+    /// a translation to plain LSB spends it (issue #313). Such a radio answers
+    /// true and is sent [`Mode::Sstv`] itself, dial and all.
+    fn resolves_sstv_sideband(&self) -> bool {
+        false
+    }
     /// Hand `text` to the radio's own keyer, at most `cw_text_keying()` worth,
     /// and not again until the last lot has been sent.
     ///
@@ -1455,6 +1469,12 @@ impl IqSource for ConvertedSource {
 
     fn commands_rx_mode(&self) -> bool {
         self.inner.commands_rx_mode()
+    }
+
+    /// A question about the radio's control layer, which a frequency
+    /// translation in front of it does not change.
+    fn resolves_sstv_sideband(&self) -> bool {
+        self.inner.resolves_sstv_sideband()
     }
 
     fn mutes_rx_audio_on_tx(&self) -> bool {

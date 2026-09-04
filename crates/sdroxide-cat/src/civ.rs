@@ -156,7 +156,17 @@ pub fn set_mode_frames(radio: u8, m: Mode, data_sub: Option<u8>) -> Vec<Vec<u8>>
         // packet to a listener and is unreadable to a modem. Kenwood's map has
         // always answered DATA-FM here (`mode_digit`); this is Icom agreeing
         // with it.
-        let on = m.is_digital();
+        //
+        // `Digu`/`Digl` are in it because on this family they *are* nothing but
+        // the switch: CI-V has one mode byte for USB and USB-D, so a rig asked
+        // for DIGU and sent `06 01` alone lands in plain USB with the switch
+        // explicitly cleared. That is what `Digital mode: DIGI` maps every
+        // digital mode's sideband onto, so on an Icom the setting did nothing
+        // at all — FT8, PSK, SSTV and the rest went out of the microphone
+        // input (issue #313). Every other family spells the data position into
+        // the mode itself (`MD2;DA1;`, `MD0C;`, `MD6;DT0;`) and has always
+        // been right here.
+        let on = m.is_digital() || matches!(m, Mode::Digu | Mode::Digl);
         out.push(frame(radio, 0x1A, &[sub, on as u8, 0x01]));
     }
     out

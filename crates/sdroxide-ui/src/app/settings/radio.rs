@@ -463,7 +463,19 @@ pub(in crate::app) fn settings_cat_tab(
         enum_combo(ui, "modectl", &mut cfg.cat.mode_control, &ModeControl::ALL, ModeControl::label);
         ui.end_row();
 
-        ui.label("Digimode mode");
+        ui.label("Digimode mode").on_hover_text(
+            "What to put the radio in for a mode sdroxide modulates through its sound \
+             card. \"DIGI\" selects the rig's DATA/PKT position, which takes the \
+             transmit audio from the USB or ACC input with the microphone path's \
+             speech processing out of it; \"USB\" leaves it on the plain sideband, for \
+             a radio already set to modulate SSB from its data input or one with no \
+             DATA position at all.\n\n\
+             It covers every digital mode — FT8, FT4, PSK, RTTY, SSTV and the rest — \
+             and CW sent as \"Sound card\", and it overrides Mode control for them. \
+             SSTV is the one whose sideband follows the band, so there it means the \
+             DATA position on that sideband: USB-D above 40 m, LSB-D at and below it. \
+             SSTV-FM is not part of it — an FM carrier has no sideband to choose.",
+        );
         enum_combo(ui, "digimode", &mut cfg.cat.digi_mode, &DigiMode::ALL, DigiMode::label);
         ui.end_row();
 

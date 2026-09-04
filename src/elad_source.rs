@@ -685,6 +685,14 @@ impl IqSource for EladSource {
         Ok(())
     }
 
+    /// Only over the CAT link, which puts the mode through `digi_mode` and the
+    /// dial (see `commanded_mode`). The gateway writes a mode frame straight to
+    /// the radio from a table with no frequency in it, so there SSTV still has
+    /// to arrive already translated to the sideband it rides.
+    fn resolves_sstv_sideband(&self) -> bool {
+        matches!(self.control, Control::Serial(_))
+    }
+
     /// The rig's own receive filter.
     ///
     /// Sent even though sdroxide demodulates the wideband stream itself and has

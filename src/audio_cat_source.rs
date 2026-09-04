@@ -940,6 +940,12 @@ impl IqSource for AudioCatSource {
         Ok(())
     }
 
+    /// The CAT link does: the mode goes through `digi_mode` there, on whichever
+    /// sideband the dial says analog SSTV is riding — see `commanded_mode`.
+    fn resolves_sstv_sideband(&self) -> bool {
+        true
+    }
+
     /// Put the receiver on one of the rig's antenna sockets — an ELAD FDM-DUO's
     /// `AN`, and nothing else in this family: every other rig here publishes an
     /// empty port list, so nothing ever asks.

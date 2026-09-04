@@ -5575,7 +5575,8 @@ impl Engine {
                 // that back has done exactly as it was told.
                 let cw_mcw = cur == Mode::Cw && self.source.cw_audio_keyed();
                 let same_class =
-                    expected_rig_class(self.control_mode(), cw_mcw) == rig_mode_class(m);
+                    expected_rig_class(self.control_mode(), cw_mcw, self.state.rx_freq_hz())
+                        == rig_mode_class(m);
                 if cur.is_digital() || cw_mcw {
                     // Digital modes (FT8/FT4/PSK/RTTY/SSTV) — and CW-as-MCW —
                     // are app-driven and ride the sideband the app chose. Never
@@ -6418,13 +6419,22 @@ impl Engine {
     /// Analog SSTV is a phone emission and follows phone practice rather than
     /// the digital modes' fixed USB, so on 160/80/40 m the rig has to be put in
     /// LSB. There is no lower-sideband spelling of `Mode::Sstv` to send — every
-    /// CAT family's map turns it into plain USB — so the translation happens
-    /// here, at the one place that knows both the mode and where we are tuned.
-    /// A rig then echoing LSB back is answered by the same translation in
-    /// [`Self::apply_control_update`], so nothing drags it off again.
+    /// family's mode map is a table with no dial in it — so the translation
+    /// happens here, at the one place that knows both the mode and where we are
+    /// tuned. A rig then echoing LSB back is answered by the same translation
+    /// in [`Self::apply_control_update`], so nothing drags it off again.
+    ///
+    /// Not for a radio that answers [`IqSource::resolves_sstv_sideband`]. A CAT
+    /// rig's mode goes through `digi_mode` — plain sideband or the rig's DATA
+    /// position — and translating to LSB first spends that choice, which put
+    /// the picture on the microphone input (issue #313). That layer has the
+    /// dial and works the sideband out itself.
     fn control_mode(&self) -> Mode {
         let mode = self.state.rx[0].mode;
-        if mode.is_sstv() && mode.is_lower_sideband_at(self.state.rx_freq_hz()) {
+        if mode.is_sstv()
+            && mode.is_lower_sideband_at(self.state.rx_freq_hz())
+            && !self.source.resolves_sstv_sideband()
+        {
             Mode::Lsb
         } else {
             mode
@@ -15585,8 +15595,15 @@ fn rig_mode_class(m: Mode) -> u8 {
 /// The rig-mode class an echo should be compared against: CW keyed as audio
 /// (MCW) is commanded to the rig as the digital modes' sideband, so the class
 /// expected back is the sideband's, not CW's.
-fn expected_rig_class(commanded: Mode, cw_mcw: bool) -> u8 {
-    rig_mode_class(if cw_mcw { Mode::Digu } else { commanded })
+///
+/// At `dial_hz` because analog SSTV's is the one sideband that follows the
+/// band, and on a radio that resolves that itself ([`IqSource::
+/// resolves_sstv_sideband`]) the mode arrives here still called SSTV. Reading
+/// it off the mode alone would expect USB back on 40 m for ever, and answer
+/// every one of the rig's LSB reports by commanding the mode again.
+fn expected_rig_class(commanded: Mode, cw_mcw: bool, dial_hz: f64) -> u8 {
+    let m = if cw_mcw { Mode::Digu } else { commanded };
+    if m.is_lower_sideband_at(dial_hz) { rig_mode_class(Mode::Lsb) } else { rig_mode_class(m) }
 }
 
 /// Encode an interleaved-RGB image (`w*h*3` bytes) to PNG.
@@ -15773,7 +15790,7 @@ mod rig_mode_class_tests {
     /// as told — not the operator leaving CW — and must be same-class.
     #[test]
     fn a_rig_on_the_sideband_is_where_cw_as_mcw_left_it() {
-        let expected = expected_rig_class(Mode::Cw, true);
+        let expected = expected_rig_class(Mode::Cw, true, 7_030_000.0);
         assert_eq!(expected, rig_mode_class(Mode::Usb));
         assert_eq!(expected, rig_mode_class(Mode::Digu));
         assert_ne!(expected, rig_mode_class(Mode::Cw));
@@ -15786,7 +15803,26 @@ mod rig_mode_class_tests {
     /// echo is compared against CW, exactly as before.
     #[test]
     fn cw_from_the_rig_keyer_still_expects_cw_back() {
-        assert_eq!(expected_rig_class(Mode::Cw, false), rig_mode_class(Mode::Cw));
+        assert_eq!(expected_rig_class(Mode::Cw, false, 7_030_000.0), rig_mode_class(Mode::Cw));
+    }
+
+    /// Analog SSTV reaches a radio that works its own sideband out still called
+    /// SSTV (issue #313), so what is expected back has to come from the dial:
+    /// on 40 m the rig will report LSB, and reading the mode alone would call
+    /// that a class change for ever and re-command the mode on every report.
+    #[test]
+    fn sstvs_expected_class_follows_the_band() {
+        assert_eq!(expected_rig_class(Mode::Sstv, false, 14_230_000.0), rig_mode_class(Mode::Usb));
+        for dial in [1_890_000.0, 3_730_000.0, 7_171_000.0] {
+            assert_eq!(
+                expected_rig_class(Mode::Sstv, false, dial),
+                rig_mode_class(Mode::Lsb),
+                "at {:.3} MHz",
+                dial / 1e6
+            );
+        }
+        // The FM twin has no sideband to follow the band with.
+        assert_eq!(expected_rig_class(Mode::SstvFm, false, 7_171_000.0), rig_mode_class(Mode::Nfm));
     }
 }
 
