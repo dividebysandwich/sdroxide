@@ -384,7 +384,9 @@ fn a_control_link_that_comes_up_late_takes_the_dial_back() {
     let mut announced = false;
     while !announced && Instant::now() < deadline {
         while let Ok(ev) = h.event_rx.try_recv() {
-            if let RadioEvent::Capabilities(c) = ev {
+            // A revision of this front end, not a different one: the radio was
+            // always there, it has only now answered on its control port.
+            if let RadioEvent::CapabilitiesUpdated(c) = ev {
                 announced |= c.center_is_dial;
             }
         }

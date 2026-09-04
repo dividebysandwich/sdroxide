@@ -1109,6 +1109,14 @@ impl SdroxideApp {
                     self.speech.announcer.reseed();
                     self.speech.announcer.reset_decodes();
                 }
+                // The *same* front end, revising what it said about itself: an
+                // antenna list learned from a rig that has only now answered,
+                // a gain ladder as long as the band the dial has just crossed
+                // into. Only the capabilities move — everything the arm above
+                // throws away belongs to this radio and is still current, and
+                // throwing it away on a QSY would blank the wideband strip and
+                // re-read every image store for nothing.
+                RadioEvent::CapabilitiesUpdated(c) => self.caps = Some(c),
                 RadioEvent::State(s) => {
                     let prev_vfo = self.state.active_freq_hz();
                     let prev_rate = self.state.sample_rate;

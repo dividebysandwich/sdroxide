@@ -12431,7 +12431,7 @@ impl Engine {
             return;
         }
         self.caps.antennas_rx = list.iter().map(|a| (*a).to_string()).collect();
-        let _ = self.event_tx.send(RadioEvent::Capabilities(self.caps.clone()));
+        let _ = self.event_tx.send(RadioEvent::CapabilitiesUpdated(self.caps.clone()));
         // A port the session remembered may only now be one this radio offers.
         self.restore_antennas();
         self.follow_band_antenna(self.state.band);
@@ -12455,7 +12455,7 @@ impl Engine {
         let Some(gains) = self.source.learned_rx_gains() else { return };
         if gains != self.caps.gains {
             self.caps.gains = gains;
-            let _ = self.event_tx.send(RadioEvent::Capabilities(self.caps.clone()));
+            let _ = self.event_tx.send(RadioEvent::CapabilitiesUpdated(self.caps.clone()));
         }
         let now = self.source.current_gains();
         if now != self.state.gains {
@@ -14961,7 +14961,7 @@ impl Engine {
         let is_dial = self.source.center_is_dial();
         if is_dial != self.caps.center_is_dial {
             self.caps.center_is_dial = is_dial;
-            let _ = self.event_tx.send(RadioEvent::Capabilities(self.caps.clone()));
+            let _ = self.event_tx.send(RadioEvent::CapabilitiesUpdated(self.caps.clone()));
         }
     }
 

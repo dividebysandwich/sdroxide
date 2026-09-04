@@ -86,8 +86,11 @@ fn caps() -> DeviceCaps {
 }
 
 /// Run an engine, tune it where `tune_to` says, and return the last gain range
-/// it published for the LNA.
-fn lna_range_after(tune_to: Option<f64>) -> GainElement {
+/// it published for the LNA — with whether that last word arrived as a
+/// *revision* ([`RadioEvent::CapabilitiesUpdated`]) rather than as a whole new
+/// front end. The distinction is the client's: a new front end makes it throw
+/// away everything it holds about the old one.
+fn lna_range_after(tune_to: Option<f64>) -> (GainElement, bool) {
     let center = Arc::new(AtomicU64::new(HF.to_bits()));
     let mut h = start_engine(
         Box::new(Rig { center: Arc::clone(&center) }),
@@ -96,15 +99,18 @@ fn lna_range_after(tune_to: Option<f64>) -> GainElement {
     );
     let thread = h.thread.take();
 
-    let mut last: Option<GainElement> = None;
+    let mut last: Option<(GainElement, bool)> = None;
     let mut sent = tune_to.is_none();
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
         while let Ok(ev) = h.event_rx.try_recv() {
-            if let RadioEvent::Capabilities(c) = ev
-                && let Some(g) = c.gains.iter().find(|g| g.name == "LNA")
-            {
-                last = Some(g.clone());
+            let (caps, update) = match ev {
+                RadioEvent::Capabilities(c) => (c, false),
+                RadioEvent::CapabilitiesUpdated(c) => (c, true),
+                _ => continue,
+            };
+            if let Some(g) = caps.gains.iter().find(|g| g.name == "LNA") {
+                last = Some((g.clone(), update));
             }
         }
         if !sent {
@@ -128,15 +134,19 @@ fn lna_range_after(tune_to: Option<f64>) -> GainElement {
 /// not the wider one the device was opened with.
 #[test]
 fn the_opening_range_is_narrowed_to_the_band_it_came_up_on() {
-    let g = lna_range_after(None);
+    let (g, _) = lna_range_after(None);
     assert_eq!(g.min_db, -18.0, "HF has 19 states, not the model's 28");
     assert_eq!(g.unit, GainUnit::Step, "a state index is not decibels");
 }
 
 /// And it follows the dial: tuning to a band with a longer ladder re-publishes
-/// the longer one.
+/// the longer one — as a *revision* of the same front end, not as a new one.
+/// That second half is not pedantry: a client reading it as a new radio blanks
+/// its wideband waterfall, re-reads every image store and silences its
+/// announcer, and would do all three every time the dial crossed a band edge.
 #[test]
 fn the_range_follows_a_retune() {
-    let g = lna_range_after(Some(VHF));
+    let (g, update) = lna_range_after(Some(VHF));
     assert_eq!(g.min_db, -27.0, "250-420 MHz has all 28 states");
+    assert!(update, "a band's ladder is a revision of this radio, not a different radio");
 }

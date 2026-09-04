@@ -7,7 +7,20 @@ use crate::{
 /// Events flowing engine → UI.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RadioEvent {
+    /// A front end this screen has not been looking at: an engine starting, a
+    /// source adopted at runtime, a link that has just come up. Everything the
+    /// screen holds about the radio belongs to the one before it.
     Capabilities(DeviceCaps),
+    /// The *same* front end, revising what it said about itself.
+    ///
+    /// Some of what a device can do is not known when it is opened, and some
+    /// of it is not a constant. A rig on a control port only answers whether
+    /// it has an antenna selector once the link has been round; an RSP's LNA
+    /// ladder is as long as the *band* allows, so it changes under the dial.
+    /// Both have to reach the screen, and neither is a new radio — read as
+    /// one, a tune across a band edge would wipe the wideband waterfall,
+    /// re-read every image store and silence the announcer mid-QSY.
+    CapabilitiesUpdated(DeviceCaps),
     /// Full state snapshot on any change (latest-wins).
     State(RadioState),
     Spectrum(SpectrumFrame),

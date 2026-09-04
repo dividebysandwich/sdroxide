@@ -1185,7 +1185,16 @@ use sdroxide_types::{
 /// below the API's 20 dB floor). Both sit at that block's tail, and
 /// `RadioConfig` rides `ServerMsg::RadioConfig` and `Command::SetRadioConfig`
 /// whole, so a v130 peer handed one reads the tail of each of those out of step.
-pub const PROTO_VERSION: u16 = 131;
+///
+/// v132: [`ServerMsg::CapabilitiesUpdated`], which says the front end revised
+/// what it said about itself rather than that there is a different one. The
+/// distinction was free while the only thing that moved mid-session was an
+/// antenna list a rig answered for once; the RSP's band-dependent LNA ladder
+/// republishes on every crossing of a band edge, and a client that reads each
+/// of those as a new radio throws away its wideband waterfall mid-QSY. The
+/// variant is appended, so no surviving discriminant moved — but a v131 peer
+/// handed one fails to decode the message carrying it.
+pub const PROTO_VERSION: u16 = 132;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -1605,6 +1614,20 @@ pub enum ServerMsg {
     /// doing and why it is not running when it is not. A whole snapshot, twice
     /// a second — see [`sdroxide_types::AisStatus`].
     AisStatus(Box<sdroxide_types::AisStatus>),
+    /// The *same* front end, revising what it said about itself — as against
+    /// [`ServerMsg::Capabilities`], which is a different one.
+    ///
+    /// Two things a device says about itself are not constants. A rig on a
+    /// control port cannot say whether it has an antenna selector until the
+    /// link has been round; an RSP's LNA ladder is as long as the *band*
+    /// allows, so its length moves under the dial. Both have to reach the
+    /// client, and neither means the radio changed — read as a new front end,
+    /// a tune across a band edge wipes the client's wideband waterfall, makes
+    /// it re-read every image store and silences its announcer, in the middle
+    /// of a QSY.
+    ///
+    /// Appended last, for the usual reason.
+    CapabilitiesUpdated(DeviceCaps),
 }
 
 /// One radio in a station's roster, as a client sees it.

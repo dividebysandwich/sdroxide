@@ -1025,6 +1025,16 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
                 latest.caps = c.clone();
                 Some(ServerMsg::Capabilities(c))
             }
+            // The same radio, revising what it said about itself. Cached like
+            // the above — a client arriving after the dial crossed a band edge
+            // must be told the ladder that band has, not the one the session
+            // opened on — but forwarded as its own message, so nobody reads it
+            // as a radio that changed underneath them. It cannot rename
+            // anything: only the label does that, and a revision leaves it.
+            RadioEvent::CapabilitiesUpdated(c) => {
+                latest.caps = c.clone();
+                Some(ServerMsg::CapabilitiesUpdated(c))
+            }
             RadioEvent::State(s) => {
                 latest.state = s.clone();
                 Some(ServerMsg::State(s))

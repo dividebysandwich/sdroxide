@@ -406,6 +406,14 @@ impl RemoteController {
             // to do with this — it is the same event an in-process engine
             // sends when it adopts a source.
             ServerMsg::Capabilities(c) => self.pending.push_back(RadioEvent::Capabilities(c)),
+            // The same radio, revising itself — a band-dependent gain ladder,
+            // an antenna list the rig only now answered for. Kept apart from
+            // the above all the way to the screen, because what the screen
+            // does about a *new* radio is throw away everything it holds about
+            // the old one.
+            ServerMsg::CapabilitiesUpdated(c) => {
+                self.pending.push_back(RadioEvent::CapabilitiesUpdated(c));
+            }
             // Which of the station's radios this session is on, and what else
             // it has. Kept rather than turned into an event: it is a fact about
             // the *connection*, which the shell reads to put the station's
