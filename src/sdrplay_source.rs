@@ -594,18 +594,25 @@ impl IqSource for SdrPlaySource {
                     .to_string(),
             );
         }
-        // HDR is not a mode that follows the dial: the path has a fixed analog
-        // filter, built only at a short list of centres. Tuned anywhere else
-        // the switch is accepted and does nothing, which reads as HDR being
-        // broken rather than as the dial being in the wrong place — so say
-        // where it does work rather than only that it does not.
-        if self.hdr && self.model().has_hdr() && !self.hdr_bw.works_at(self.center) {
-            notes.push(format!(
-                "HDR is on but does nothing at {:.3} MHz: the {} path is only built at {}.",
-                self.center / 1e6,
-                self.hdr_bw.label(),
-                self.hdr_bw.centres_label(),
-            ));
+        // A switch that is on and doing nothing has to say so on the screen and
+        // not only in a tooltip — an operator who threw it and heard the band
+        // go quiet is owed the reason. Two of them, and they stack: HDR does
+        // not work at all yet, and it could not work at this centre even once
+        // it does, the path's filter being built at a fixed handful of them.
+        if self.hdr && self.model().has_hdr() {
+            let mut note = "HDR is on, and HDR does not work yet: on the one RSPdx it has \
+                            been tried against, switching the path on silences the receiver."
+                .to_string();
+            if !self.hdr_bw.works_at(self.center) {
+                note.push_str(&format!(
+                    " It could not work at {:.3} MHz in any case — the {} filter is built \
+                     only at {}.",
+                    self.center / 1e6,
+                    self.hdr_bw.label(),
+                    self.hdr_bw.centres_label(),
+                ));
+            }
+            notes.push(note);
         }
         // A setting that quietly did nothing is worse than one that is
         // refused: only an RSPduo has a second tuner, and only the API's

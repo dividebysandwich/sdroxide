@@ -6583,10 +6583,16 @@ pub(in crate::app) fn settings_sdrplay_tab(
             if ui
                 .checkbox(&mut on, "Enable below 2 MHz")
                 .on_hover_text(
-                    "The RSPdx's high-dynamic-range path for LF/MF. It is not a mode \
-                     that follows the dial: the path has a fixed analog filter, built \
-                     only at the centres listed under the filter below. Tuned anywhere \
-                     else it does nothing. Applies immediately.",
+                    "The RSPdx's high-dynamic-range path for LF/MF. Applies \
+                     immediately.\n\nIt does not work yet: on the one RSPdx it has been \
+                     tried against, switching it on silences the receiver — at every \
+                     centre, filter, port, gain and rate tried. Whatever the mode needs \
+                     is not on the documented API surface, and finding it is somebody's \
+                     next job. Leave this off unless you are the one looking.\n\nWhat is \
+                     known: it is not a mode that follows the dial. The path has a fixed \
+                     analog filter, built only at the centres listed under the filter \
+                     below, so tuning anywhere else could not work even once the rest \
+                     does.",
                 )
                 .changed()
             {
@@ -6600,14 +6606,16 @@ pub(in crate::app) fn settings_sdrplay_tab(
             ui.end_row();
 
             // Only with the path switched on: the filter is a property of a
-            // mode that is otherwise off, and an control that does nothing is
+            // mode that is otherwise off, and a control that does nothing is
             // worse than one that is not there.
             if cfg.sdrplay.hdr {
                 ui.label("HDR filter").on_hover_text(format!(
                     "The analog filter in front of the HDR path — a different control \
                      from the receiver's own bandwidth. Each setting is built at a \
-                     fixed set of centres and does nothing elsewhere; this one works \
-                     at {}. Applies immediately.",
+                     fixed set of centres and can do nothing elsewhere; this one is \
+                     built at {}. Applies immediately.\n\nThe path itself does not work \
+                     yet — see the switch above — so this chooses a filter for a mode \
+                     that is currently silent.",
                     cfg.sdrplay.hdr_bw.centres_label(),
                 ));
                 let mut bw = cfg.sdrplay.hdr_bw;

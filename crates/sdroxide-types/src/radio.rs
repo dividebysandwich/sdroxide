@@ -5610,6 +5610,15 @@ pub struct SdrPlayConfig {
     /// [`SdrPlayDuo::enabled`], which of the two this radio listens on.
     pub duo_tuner: SdrPlayDuoTuner,
     /// RSPdx only: HDR mode below 2 MHz.
+    ///
+    /// **Does not work yet.** On the one RSPdx it has been tried against,
+    /// switching the path on silences the receiver — at every centre, filter,
+    /// antenna port, LNA state, level, offset, rate, IF and LO setting tried,
+    /// enabled both before `Init` and at runtime. The struct layouts match
+    /// `sdrplay_api_RspDx.h` and SoapySDRPlay3 drives it the same way, so
+    /// whatever the mode needs is not on the documented API surface. What is
+    /// known about it is in [`SdrPlayHdrBw`], and the panel says so where the
+    /// operator can see it.
     pub hdr: bool,
     /// RSPdx only: the HDR path's analog filter. Only meaningful with
     /// [`Self::hdr`], and only at the centre frequencies that filter is
@@ -5659,13 +5668,16 @@ impl Default for SdrPlayConfig {
 }
 
 /// The RSPdx's HDR-path analog filter, and the only frequencies each of its
-/// settings actually works at.
+/// settings could work at.
 ///
 /// HDR is not a mode that follows the dial. The path has a fixed analog filter
 /// and the hardware only implements it centred on a short list of frequencies:
 /// tuned anywhere else the switch is accepted and does nothing useful, which
 /// reads as HDR being broken rather than as the dial being in the wrong place.
 /// The lists are from the API specification's RSPdx section.
+///
+/// *Could*, because being on one of them is necessary and not sufficient — see
+/// [`SdrPlayConfig::hdr`]. Nothing here has been seen to work on hardware.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum SdrPlayHdrBw {
     Khz200,
