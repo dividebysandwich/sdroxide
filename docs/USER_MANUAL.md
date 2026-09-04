@@ -4126,6 +4126,10 @@ The report colours are WSPR's own scale, not FT8's: green above −10 dB, cyan t
 −20, yellow to −26, and pink below that — because −25 dB here is a perfectly
 good path rather than a marginal one.
 
+The list holds five thousand receptions — a night of a busy band, which is the
+span this mode is usually left running over — and the count beside the heading
+is what it is holding.
+
 A slot takes seconds of work to decode, so the status pane says **decoding…**
 rather than leaving you to wonder whether the band is shut. The **slot bar**
 below the status header shows where in the two-minute cycle the beacon is, with
@@ -4138,6 +4142,13 @@ this bar; only WSPR's turn is long enough to want a countdown with it.
 The **MAP** pane shows every station heard, fading over ten minutes — a WSPR
 beacon is heard every few minutes at best, so the FT8 map's two-minute fade
 would leave this one blank almost always.
+
+Each dot wears the colour of the band it was heard on, in the same palette the
+propagation heat uses for `ALL BANDS`, with a key under the map naming them.
+This is the one mode whose map routinely mixes bands: a beacon that hops puts
+40 m, 20 m and 10 m stations on one picture, and one colour for all of them
+cannot say which path opened. The key appears only when there is more than one
+band up.
 
 Above the map is the **PROP** button. It shades the map by where signals are
 actually getting through; pressing it reveals the rest of the controls —

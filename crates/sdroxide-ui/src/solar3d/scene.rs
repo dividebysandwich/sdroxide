@@ -3177,7 +3177,7 @@ mod tests {
     const NEW_YORK: (f64, f64) = (40.7, -74.0);
 
     fn station((lat, lon): (f64, f64), fade: f32, call: &str) -> crate::digi_map::DigiStation {
-        crate::digi_map::DigiStation { lat, lon, fade, call: Some(call.into()) }
+        crate::digi_map::DigiStation { lat, lon, fade, call: Some(call.into()), band: None }
     }
 
     fn hit((lat, lon): (f64, f64), slot_utc: i64, call: &str) -> crate::digi_map::DigiHit {

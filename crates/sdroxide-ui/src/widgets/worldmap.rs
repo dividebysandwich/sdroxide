@@ -617,17 +617,31 @@ pub fn show(
         pos2(x, y)
     };
 
-    // Every decoded station with a known grid, as small neutral dots that fade
-    // with age (`alpha`). The active DX, the clicked preview and home are
-    // painted over these below, so a selected/answered station keeps its own
-    // colour.
+    // Every decoded station with a known grid, as small dots that fade with age
+    // (`alpha`). The active DX, the clicked preview and home are painted over
+    // these below, so a selected/answered station keeps its own colour.
+    //
+    // A station whose feed named the band it was heard on wears that band's
+    // hue — the same palette the propagation heat uses in ALL BANDS, so the
+    // dots and the shading under them say the same thing. That is WSPR, whose
+    // beacon hops: a picture mixing three bands of dots in one colour cannot
+    // say which path opened (issue #316). Everything else keeps the neutral
+    // dot, because a mode that sits on one band all evening would only be
+    // adding a colour that never varies.
     for d in stations {
         if d.fade <= 0.0 {
             continue;
         }
+        let ink = match d.band {
+            Some(b) => {
+                let [r, g, bl] = crate::colormap::band_color(b);
+                theme::data_ink((r, g, bl))
+            }
+            None => map.station,
+        };
         let c = project(d.lat, d.lon);
-        p.circle_filled(c, 2.6, alpha(map.station, 55.0 * d.fade));
-        p.circle_filled(c, 1.7, alpha(map.station, 255.0 * d.fade));
+        p.circle_filled(c, 2.6, alpha(ink, 55.0 * d.fade));
+        p.circle_filled(c, 1.7, alpha(ink, 255.0 * d.fade));
     }
     // Keep the slow fade progressing even after the zoom has settled.
     if !stations.is_empty() {

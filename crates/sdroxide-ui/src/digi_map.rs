@@ -63,6 +63,14 @@ pub struct DigiStation {
     /// The callsign heard there. `None` for a mode that placed a station
     /// without naming one.
     pub call: Option<Arc<str>>,
+    /// The band the reception was on, where the feed carries a frequency.
+    ///
+    /// Only WSPR fills this in, and only because it is the one mode whose map
+    /// routinely mixes bands: a hopping beacon puts 40 m, 20 m and 10 m dots on
+    /// one picture, and undifferentiated dots cannot say which path opened
+    /// (issue #316). A mode that stays on one band all evening gains nothing
+    /// from a hue, so it leaves this `None` and keeps the neutral dot.
+    pub band: Option<sdroxide_types::Band>,
 }
 
 /// What is known about one station between decodes.
@@ -74,6 +82,7 @@ struct Seen {
     lat: f64,
     lon: f64,
     call: Option<Arc<str>>,
+    band: Option<sdroxide_types::Band>,
 }
 
 /// Station → what was last heard from it, plus the last hour of located
@@ -131,7 +140,7 @@ impl DigiStations {
         let mut fresh: Vec<DigiHit> = Vec::new();
         for d in decodes {
             let Some(grid) = d.grid.as_deref() else { continue };
-            self.note(d.from.as_deref(), grid, d.slot_utc, now_t, now_utc, &mut fresh);
+            self.note(d.from.as_deref(), grid, None, d.slot_utc, now_t, now_utc, &mut fresh);
         }
         self.retire(fresh, now_t, cutoff(now_utc));
     }
@@ -142,6 +151,7 @@ impl DigiStations {
         &mut self,
         call: Option<&str>,
         grid: &str,
+        band: Option<sdroxide_types::Band>,
         slot_utc: i64,
         now_t: f64,
         now_utc: i64,
@@ -157,6 +167,7 @@ impl DigiStations {
             lat,
             lon,
             call: None,
+            band: None,
         });
         if slot_utc > e.slot {
             // Heard again → the dot returns to full brightness, and moves if the
@@ -170,6 +181,10 @@ impl DigiStations {
             if e.call.as_deref() != call {
                 e.call = call.map(Arc::from);
             }
+            // The band of the *newest* reception, so a beacon followed across a
+            // hop moves to the hue of the band it is on now rather than the one
+            // it was first heard on.
+            e.band = band;
         }
         let hit_call = e.call.clone();
 
@@ -206,7 +221,12 @@ impl DigiStations {
                 (s.grid.as_deref(), Some(s.call.as_str()))
             };
             let Some(grid) = grid.filter(|g| !g.is_empty()) else { continue };
-            self.note(call, grid, s.slot_utc, now_t, now_utc, &mut fresh);
+            // `Gen` means the frequency fell outside every band in the
+            // station's region, which is not a hue — a WSPRnet report from
+            // another region can land there.
+            let band = Some(sdroxide_types::Band::containing(s.freq_hz))
+                .filter(|b| *b != sdroxide_types::Band::Gen);
+            self.note(call, grid, band, s.slot_utc, now_t, now_utc, &mut fresh);
         }
         self.retire(fresh, now_t, cutoff(now_utc));
     }
@@ -250,6 +270,7 @@ impl DigiStations {
                     lon: e.lon,
                     fade,
                     call: e.call.clone(),
+                    band: e.band,
                 })
             })
             .collect()
@@ -480,6 +501,37 @@ mod tests {
         s.observe(&[decode("FN42", 0)], 0.0, NOW);
         s.observe_wspr(&[wspr("FN42", 0)], 1.0, NOW);
         assert_eq!(s.history().len(), 1, "the same station and slot was recorded twice");
+    }
+
+    /// A hopping beacon puts several bands on one map, so each dot carries the
+    /// band it was heard on for the view to colour it by (issue #316) — and it
+    /// follows the beacon across a hop rather than sticking on the band it was
+    /// first heard on. A decode carries none: FT8 sits on one band all evening,
+    /// and a hue that never varies is not information.
+    #[test]
+    fn a_wspr_dot_carries_the_band_it_was_last_heard_on() {
+        use sdroxide_types::Band;
+        let mut s = DigiStations::default();
+        s.observe_wspr(&[wspr("FN42", 0)], 0.0, NOW);
+        assert_eq!(s.stations(0.0)[0].band, Some(Band::M20));
+
+        // The same beacon, a slot later, after the hop.
+        let hopped = WsprSpot { freq_hz: 7_040_100.0, ..wspr("FN42", 120) };
+        s.observe_wspr(&[hopped], 0.0, NOW + 120);
+        assert_eq!(s.stations(0.0)[0].band, Some(Band::M40));
+
+        let mut d = DigiStations::default();
+        d.observe(&[decode("FN42", 0)], 0.0, NOW);
+        assert_eq!(d.stations(0.0)[0].band, None);
+    }
+
+    /// A WSPRnet report can name a frequency in no band this station's region
+    /// has. `Gen` is not a colour, so nothing is claimed for it.
+    #[test]
+    fn a_frequency_in_no_band_gets_no_colour() {
+        let mut s = DigiStations::default();
+        s.observe_wspr(&[WsprSpot { freq_hz: 9_500_000.0, ..wspr("FN42", 0) }], 0.0, NOW);
+        assert_eq!(s.stations(0.0)[0].band, None);
     }
 
     #[test]

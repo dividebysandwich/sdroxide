@@ -1227,9 +1227,16 @@ impl SdroxideApp {
                     // held: the same reception arrives twice whenever a slot we
                     // decoded ourselves also comes back from WSPRnet, and two
                     // rows for one beacon reads as the mode double-counting.
+                    //
+                    // Through a set rather than a scan per arrival: the list
+                    // holds a night of receptions now, and a linear search
+                    // through it for every spot in a WSPRnet download is the
+                    // one shape of this that grows with the square of a busy
+                    // band (issue #316).
+                    let mut held: std::collections::HashSet<_> =
+                        self.wspr_spots.iter().map(|e| e.dedup_key()).collect();
                     for spot in s.into_iter().rev() {
-                        let key = spot.dedup_key();
-                        if self.wspr_spots.iter().any(|e| e.dedup_key() == key) {
+                        if !held.insert(spot.dedup_key()) {
                             continue;
                         }
                         self.wspr_spots.insert(0, spot);

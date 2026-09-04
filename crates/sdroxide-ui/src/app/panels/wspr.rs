@@ -26,8 +26,42 @@ use crate::chrome::StyledCombo;
 use crate::theme::ThemedScroll;
 use crate::time::{now_unix, now_unix_f64};
 
-/// How many receptions the panel keeps. Two hours of a busy 20 m evening.
-pub(in crate::app) const WSPR_SPOT_ROWS: usize = 400;
+/// How many receptions the panel keeps.
+///
+/// A full night rather than the two hours 400 rows used to cover. WSPR is the
+/// mode people leave running unattended and read back in the morning, and a
+/// list that stopped counting after two hours read as the decoder having given
+/// up (issue #316) — the counter beside the heading is the number of rows, so a
+/// cap is indistinguishable from a station that went deaf.
+///
+/// Affordable because the list is virtualised — [`SdroxideApp::wspr_spot_list`]
+/// lays out only the rows the viewport covers — and because the arrival path
+/// de-duplicates through a set rather than a scan per spot. Without both, this
+/// number is a frame-rate setting.
+pub(in crate::app) const WSPR_SPOT_ROWS: usize = 5_000;
+
+/// The height every cell in a reception row is built to.
+const WSPR_ROW_H: f32 = 19.0;
+
+/// The painted height of one reception row, excluding the spacing between them.
+///
+/// `ScrollArea::show_rows` works out which rows the viewport covers from this
+/// number alone, without laying any of them out, so a row that is not really
+/// this tall drifts further from its slot the further down the list you go. It
+/// must NOT include `item_spacing.y`, which `show_rows` adds back itself — the
+/// same trap the logbook's `row_height` documents at length.
+///
+/// A row is the frame's 3-point top and bottom margins around a run of
+/// [`row_cell`]s built to [`WSPR_ROW_H`] — except that egui never lays a row out
+/// shorter than the style's interaction size, which `theme::apply_metrics` sets
+/// to 18 points on desktop and 34 on a touch tier and RE-APPLIES whenever the
+/// window crosses the breakpoint. So this is a function of the live style and
+/// not a constant: 25 points on desktop, 40 on a phone. With a constant,
+/// resizing across that breakpoint would silently desynchronise the scroll bar
+/// from the list — which is what `the_reception_row_fits_its_slot` catches.
+fn wspr_row_slot(ui: &egui::Ui) -> f32 {
+    WSPR_ROW_H.max(ui.spacing().interact_size.y) + 6.0
+}
 
 /// A WSPR beacon is heard every few minutes at best — a duty cycle of twenty
 /// per cent means a given station transmits five times an hour. A map that
@@ -141,13 +175,14 @@ impl SdroxideApp {
             self.digi_status.as_ref().map(|s| s.transmitting).unwrap_or(false),
             map_budget,
         );
+        let legend = wspr_band_legend(ui, &stations);
         // Draggable edge under the map, as the FT8 panel has.
         let resp = crate::chrome::split_handle(ui, egui::vec2(ui.available_width(), 7.0), None);
         if resp.dragged() {
             let df = resp.drag_delta().y / (map_hi - map_lo).max(1.0);
             self.view.digi_map_fraction = (self.view.digi_map_fraction + df).clamp(0.0, 1.0);
         }
-        map_budget + crate::chrome::chip_height(ui, Some(9.5)) + 11.0
+        map_budget + crate::chrome::chip_height(ui, Some(9.5)) + legend + 11.0
     }
 
     /// The reception list, filling its column.
@@ -172,19 +207,19 @@ impl SdroxideApp {
             });
         });
 
+        // Virtualised: only the rows the viewport covers are laid out, so a
+        // night of receptions costs the same per frame as an hour of them.
+        let spots = std::mem::take(&mut self.wspr_spots);
         egui::ScrollArea::vertical()
             .id_salt("wspr-receptions")
             .max_height(ui.available_height())
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                if self.wspr_spots.is_empty() {
-                    ui.add_space(8.0);
-                    return;
-                }
-                for s in &self.wspr_spots {
+            .show_rows_themed(ui, wspr_row_slot(ui), spots.len(), |ui, rows| {
+                for s in &spots[rows] {
                     wspr_row(ui, s, home, now);
                 }
             });
+        self.wspr_spots = spots;
     }
 
     /// The beacon's own state, and the two settings an operator reaches for
@@ -559,6 +594,39 @@ impl SdroxideApp {
     }
 }
 
+/// Which band each dot's hue means, for the bands actually on the map.
+///
+/// The dots are coloured by band because a hopping beacon puts several on one
+/// picture (issue #316), and a colour nobody can name is decoration. Built from
+/// the stations themselves rather than from the band-hop schedule, so it lists
+/// what is on screen now — including bands heard before the beacon moved on,
+/// which are exactly the ones the schedule no longer mentions.
+///
+/// Returns the height it took, so the map's caller can account for it. Nothing
+/// at all when there is only one band up: a legend of one is a label for a
+/// picture that has nothing to distinguish.
+fn wspr_band_legend(ui: &mut egui::Ui, stations: &[crate::digi_map::DigiStation]) -> f32 {
+    let mut bands: Vec<Band> = stations.iter().filter_map(|s| s.band).collect();
+    bands.sort_by_key(|b| b.index());
+    bands.dedup();
+    if bands.len() < 2 {
+        return 0.0;
+    }
+    let before = ui.cursor().top();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        for b in bands {
+            let [r, g, bl] = crate::colormap::band_color(b);
+            ui.label(
+                RichText::new(format!("● {}", b.label()))
+                    .size(9.0)
+                    .color(crate::theme::data_ink((r, g, bl))),
+            );
+        }
+    });
+    (ui.cursor().top() - before).max(0.0)
+}
+
 /// One reception. Reads left to right the way the operator asks the question:
 /// who, from where, how far, how well, on how much power.
 fn wspr_row(ui: &mut egui::Ui, s: &WsprSpot, home: Option<(f64, f64)>, now: i64) {
@@ -582,17 +650,16 @@ fn wspr_row(ui: &mut egui::Ui, s: &WsprSpot, home: Option<(f64, f64)>, now: i64)
             // Fixed-width columns, so the list reads down the page as well as
             // across it: a callsign and a distance that shuffle sideways from
             // row to row are far harder to scan than ones that line up.
-            const ROW_H: f32 = 19.0;
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.set_min_height(ROW_H);
+                ui.set_min_height(WSPR_ROW_H);
                 ui.spacing_mut().item_spacing.x = 5.0;
                 // An arrow, because the direction is the whole meaning of the
                 // row: ← we heard them, → they heard us.
                 row_cell(
                     ui,
                     10.0,
-                    ROW_H,
+                    WSPR_ROW_H,
                     false,
                     egui::Label::new(
                         RichText::new(if heard_us { "→" } else { "←" }).size(11.0).strong().color(
@@ -603,7 +670,7 @@ fn wspr_row(ui: &mut egui::Ui, s: &WsprSpot, home: Option<(f64, f64)>, now: i64)
                 row_cell(
                     ui,
                     74.0,
-                    ROW_H,
+                    WSPR_ROW_H,
                     false,
                     egui::Label::new(
                         RichText::new(who).size(11.0).strong().color(crate::theme::TEXT_STRONG()),
@@ -613,7 +680,7 @@ fn wspr_row(ui: &mut egui::Ui, s: &WsprSpot, home: Option<(f64, f64)>, now: i64)
                 row_cell(
                     ui,
                     46.0,
-                    ROW_H,
+                    WSPR_ROW_H,
                     false,
                     egui::Label::new(
                         RichText::new(where_.unwrap_or(""))
@@ -625,7 +692,7 @@ fn wspr_row(ui: &mut egui::Ui, s: &WsprSpot, home: Option<(f64, f64)>, now: i64)
                 row_cell(
                     ui,
                     40.0,
-                    ROW_H,
+                    WSPR_ROW_H,
                     true,
                     egui::Label::new(
                         RichText::new(format!("{:+} dB", s.snr_db))
@@ -637,7 +704,7 @@ fn wspr_row(ui: &mut egui::Ui, s: &WsprSpot, home: Option<(f64, f64)>, now: i64)
                 row_cell(
                     ui,
                     52.0,
-                    ROW_H,
+                    WSPR_ROW_H,
                     true,
                     egui::Label::new(
                         RichText::new(km.map(|k| format!("{k:.0} km")).unwrap_or_default())
@@ -648,7 +715,7 @@ fn wspr_row(ui: &mut egui::Ui, s: &WsprSpot, home: Option<(f64, f64)>, now: i64)
                 row_cell(
                     ui,
                     50.0,
-                    ROW_H,
+                    WSPR_ROW_H,
                     true,
                     egui::Label::new(
                         RichText::new(power_label(s.power_dbm))
@@ -713,6 +780,52 @@ fn row(ui: &mut egui::Ui, label: &str, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn spot() -> WsprSpot {
+        WsprSpot {
+            slot_utc: 1_784_937_600,
+            call: "G4MQL".into(),
+            grid: Some("IO91".into()),
+            power_dbm: 23,
+            freq_hz: 14_097_100.0,
+            snr_db: -22,
+            dt: 0.3,
+            drift_hz: 0.0,
+            reporter: None,
+            reporter_grid: None,
+        }
+    }
+
+    /// `ScrollArea::show_rows` places every reception from [`wspr_row_slot`]
+    /// alone, without laying any of them out — so a row that is not really that
+    /// tall drifts further out of its slot the further down the list you scroll,
+    /// and the scroll bar lies about where it is.
+    ///
+    /// Both tiers, because `theme::apply_metrics` gives them different
+    /// `interact_size.y` and re-applies it whenever the window crosses the
+    /// breakpoint, so the slot is 25 points on desktop and 40 on a phone.
+    #[test]
+    fn the_reception_row_fits_its_slot() {
+        for tier in [crate::layout::Tier::Desktop, crate::layout::Tier::Phone] {
+            let ctx = egui::Context::default();
+            crate::theme::apply_metrics(&ctx, tier);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 400.0));
+            let (s, home) = (spot(), Some((51.5, -0.1)));
+            let (mut h, mut slot) = (0.0f32, 0.0f32);
+            ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+                // The painted extent, NOT the cursor advance: the advance
+                // includes the item spacing `show_rows` adds back itself.
+                slot = wspr_row_slot(ui);
+                h = ui.scope(|ui| wspr_row(ui, &s, home, s.slot_utc)).response.rect.height();
+            })
+            .drop_without_applying_deltas();
+            assert!(
+                (h - slot).abs() < 0.5,
+                "a {tier:?} reception row paints {h} points into a {slot}-point slot; \
+                 the virtualised list would drift"
+            );
+        }
+    }
 
     /// The colours are read at a glance to mean "how good was that path", so
     /// they have to follow WSPR's floor rather than FT8's.
