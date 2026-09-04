@@ -886,6 +886,19 @@ reaching for the other aerial do not mean opening a dialog.
   want to re-set the floor. And a fine window takes longer to fill (resolving a
   hertz needs a second of signal, on any receiver ever built), so a very deep
   zoom scrolls more slowly than a wide one.
+
+  That second one used to be paid twice over. Asking for a finer picture also
+  asked for a *longer* one, because the transform that drew a point under every
+  column had to cover however many seconds of band that resolution needed — and
+  on the narrow windows the digital modes are watched in, that was several. Each
+  row of the waterfall was an average of the last few seconds, so an FT8
+  transmission drew as one unbroken bar with no beginning and no end, and
+  turning the FFT size up made it worse. The two are separate now: how much
+  signal a transform looks at is chosen from the window on screen — about a
+  third of a second on the FT8 sub-band, which is what WSJT-X's own waterfall
+  uses — and the size you pick decides how many points that answer is drawn on.
+  A deep zoom still gets every bit of the resolution it asks for; what it no
+  longer gets is the smear that came with it.
 - **FLIP** — scroll the waterfall *upwards* (keyboard shortcut **V**). The
   newest line is drawn at the bottom and history flows up off the top, the way
   several other SDR programs draw it. The minute gridlines, the skimmer / FT8

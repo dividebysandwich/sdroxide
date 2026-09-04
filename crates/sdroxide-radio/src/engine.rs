@@ -89,8 +89,69 @@ pub const WIDE_BINS: usize = 2048;
 ///
 /// Floored at 4096 and capped at 32768: past there a single transform covers
 /// more signal than the lane's hop can hide (see [`MAX_HOP_DIV`]).
+///
+/// How much *signal* that transform looks at is a separate question, answered
+/// by [`analysis_window`] — the padding is what lets this be as large as the
+/// screen wants without the picture being an average of five seconds of band.
 fn zoom_lane_fft(display_bins: usize) -> usize {
     (display_bins * 8).next_power_of_two().clamp(4096, 32_768)
+}
+
+/// How many distinct things a transform has to be able to tell apart across the
+/// window on screen.
+///
+/// Not one per column. A column is a *drawing* unit and there can be thousands
+/// of them on a wide panel; this is a *measurement* unit, and past a certain
+/// density another one buys nothing an eye can use while costing a doubling of
+/// the time each row of the waterfall smears over. A thousand of them across
+/// the window is finer than any signal sdroxide draws is worth resolving, and
+/// on the FT8 sub-band it lands on exactly the transform WSJT-X's own waterfall
+/// uses — 2.9 Hz bins over a third of a second — which is the picture operators
+/// are comparing sdroxide's against.
+const RESOLVED_PER_VIEW: f64 = 1024.0;
+
+/// The analysis window, in samples, for a lane running at `rate_hz` whose
+/// visible window is `view_span_hz` wide, drawn on an `fft_size`-point
+/// transform.
+///
+/// A transform cannot resolve finer than the reciprocal of the time it covers,
+/// so resolution and time smear are one dial, not two — and until issue #302
+/// that dial was set by the *screen*. A 3.7 kHz FT8 window across a 2560-column
+/// panel asks for 1.4 Hz bins; at the few kilohertz a zoomed lane runs at, a
+/// transform that fine is looking at seconds of band at a time, and every FT8
+/// transmission in it is drawn as one unbroken bar. Turning the FFT size up
+/// made it worse, which is what the report said.
+///
+/// So the window is chosen from the *signal* instead — enough to resolve
+/// [`RESOLVED_PER_VIEW`] elements across what is on screen — and the transform
+/// is zero-padded out to whatever the display asked for
+/// ([`SpectrumAnalyzer::with_window`]). The screen still gets a smooth trace
+/// with a point under every column; the waterfall gets its time back.
+///
+/// The answer scales with `rate_hz / view_span_hz`, so a deep zoom keeps every
+/// bit of the resolution it went looking for — the rule is "enough to resolve
+/// what is on screen", not a fixed number of milliseconds.
+///
+/// Only for a lane drawn *narrower* than what it is fed. A window as wide as
+/// the lane comes back with the transform it was given: there is no padding to
+/// be had there and nothing to trade for it.
+fn analysis_window(fft_size: usize, rate_hz: f64, view_span_hz: f64) -> usize {
+    if !(rate_hz.is_finite() && view_span_hz.is_finite()) || view_span_hz <= 0.0 || rate_hz <= 0.0 {
+        return fft_size;
+    }
+    // A lane whose window is the whole of what it is fed has nothing to trade:
+    // every bin it computes is on screen, the padding would interpolate between
+    // points that are already a column apart, and shortening the transform
+    // would simply throw resolution away. That is the device-wide panadapter,
+    // and it is left exactly as it was.
+    if view_span_hz >= rate_hz {
+        return fft_size;
+    }
+    let want = (rate_hz / view_span_hz * RESOLVED_PER_VIEW).ceil();
+    if !want.is_finite() || want >= fft_size as f64 {
+        return fft_size;
+    }
+    (want as usize).next_power_of_two().clamp(256, fft_size)
 }
 
 /// Where a `span_hz` window on `center_hz` sits inside a `full_span_hz` band on
@@ -152,17 +213,30 @@ fn hop_div_for(rate_hz: f64, fft_size: usize, rows_per_sec: f64) -> usize {
 
 /// The device-wide panadapter analyser, at the overlap its rate and the
 /// operator's scroll speed call for — see [`hop_div_for`].
+///
+/// `view_span_hz` is the window this analyser is actually going to be *drawn*
+/// in, where that is narrower than everything it is fed — which in practice
+/// means audio mode, where the lane runs at the sound card's rate and the
+/// picture is the rig's few kilohertz of passband. Naming it lets the transform
+/// be zero-padded rather than made to cover more than a fifth of a second of
+/// signal, and the FFT setting stop being a control over how badly the
+/// waterfall smears (issue #302). `None` where the lane draws all of what it
+/// sees: a device-wide panadapter resolves the whole span and there is nothing
+/// to trade away.
 fn build_analyzer(
     fft_size: usize,
     rate_hz: f64,
     avg_tc: f32,
     rows_per_sec: f64,
+    view_span_hz: Option<f64>,
 ) -> SpectrumAnalyzer {
-    SpectrumAnalyzer::with_hop_div(
+    let window = view_span_hz.map_or(fft_size, |v| analysis_window(fft_size, rate_hz, v));
+    SpectrumAnalyzer::with_window(
         fft_size,
+        window,
         rate_hz,
         avg_tc,
-        hop_div_for(rate_hz, fft_size, rows_per_sec),
+        hop_div_for(rate_hz, window, rows_per_sec),
     )
 }
 
@@ -221,6 +295,25 @@ fn lane_pool() -> Option<rayon::ThreadPool> {
 /// this is the ceiling it stops at.
 /// See [`sdroxide_dsp::SpectrumAnalyzer::with_hop_div`].
 const MAX_HOP_DIV: usize = 8;
+
+/// Averaging time constant for the digital modes' channel analyser. Short: a
+/// slotted mode's picture is a sequence of transmissions starting and stopping,
+/// and averaging is the enemy of seeing where one ended.
+const CHANNEL_AVG_TC_S: f32 = 0.10;
+
+/// The largest transform the digital modes' channel analyser will ask for.
+///
+/// It runs at the channel rate — tens of kilohertz, against the megahertz a
+/// device-wide lane sees — so a large one here is cheap, and the display is
+/// what wants it: a 4K panel drawing a 3.7 kHz sub-band asks for a point every
+/// 1.4 Hz. The window it actually looks at is a separate and much smaller
+/// number ([`analysis_window`]).
+const CHANNEL_FFT_MAX: usize = 65_536;
+
+/// The window a slotted digital mode is drawn in when the client has not said
+/// otherwise: the FT8/FT4 sub-band, 200 Hz below the dial to 3.5 kHz above it.
+/// The same figures [`Engine::make_spectrum_frame`] falls back to.
+const DIGI_VIEW_SPAN_HZ: f64 = 3_700.0;
 
 /// How long the main panadapter keeps drawing a front end's own spectrum after
 /// the last sweep landed.
@@ -1826,6 +1919,7 @@ impl ZoomLane {
         dev_center_hz: f64,
         avg_tc: f32,
         fft: usize,
+        view_span_hz: f64,
         rows_per_sec: f64,
     ) -> Self {
         // The ladder is powers of two, so `Ddc` reaches this rate exactly and
@@ -1835,11 +1929,18 @@ impl ZoomLane {
         let offset_hz = center_hz - dev_center_hz;
         ddc.set_offset_hz(offset_hz);
         let rate_hz = ddc.out_rate();
-        // The same rule the device-wide lane uses. At the rates a zoom lane runs
-        // at it returns the eighth-hop this used to hard-code, and it stops
-        // asking for one on a shallow zoom that is still streaming megahertz.
-        let hop_div = hop_div_for(rate_hz, fft, rows_per_sec);
-        let mut analyzer = SpectrumAnalyzer::with_hop_div(fft, rate_hz, avg_tc, hop_div);
+        // How much signal one transform looks at — set by what is on screen and
+        // not by how many columns are drawing it, which is the whole of issue
+        // #302. The rest of `fft` is zero padding, so the trace still has a
+        // point per column.
+        let window = analysis_window(fft, rate_hz, view_span_hz);
+        // The same rule the device-wide lane uses, and asked about the window
+        // rather than the transform: the hop is a step through the *signal*.
+        // At the rates a zoom lane runs at it returns the eighth-hop this used
+        // to hard-code, and it stops asking for one on a shallow zoom that is
+        // still streaming megahertz.
+        let hop_div = hop_div_for(rate_hz, window, rows_per_sec);
+        let mut analyzer = SpectrumAnalyzer::with_window(fft, window, rate_hz, avg_tc, hop_div);
         // DC here is the middle of the operator's window, not the front end's
         // LO leakage, so the usual spike suppression would punch a hole through
         // whatever they had centred.
@@ -3371,8 +3472,13 @@ fn engine_thread(
     // otherwise it sees whatever the decimation left, which is what every span
     // downstream is measured in.
     let analyzer_rate = if audio_mode { radio_fs } else { state.sample_rate };
-    let analyzer =
-        build_analyzer(cfg.fft_size as usize, analyzer_rate, cfg.avg_tc, f64::from(cfg.rows()));
+    let analyzer = build_analyzer(
+        cfg.fft_size as usize,
+        analyzer_rate,
+        cfg.avg_tc,
+        f64::from(cfg.rows()),
+        audio_mode.then_some(audio_bw),
+    );
 
     // In audio mode there is no RxChain (the source is already audio); the
     // speaker path is a plain resampler → mixer instead.
@@ -4920,6 +5026,15 @@ impl Engine {
                 Some(z) if z.serves(want, in_rate) => z.aim(want.0, dev_center),
                 _ => {
                     let fft = zoom_lane_fft(self.cfg.bins());
+                    // The window the client is actually looking at, which is
+                    // what decides how much signal one transform may cover —
+                    // see [`analysis_window`]. `wanted_zoom` only returns a
+                    // lane where there is a viewport, so this always has one.
+                    let view_span = self
+                        .cfg
+                        .viewport
+                        .map(|(lo, hi)| hi - lo)
+                        .unwrap_or(in_rate / f64::from(want.1));
                     let mut lane = ZoomLane::new(
                         in_rate,
                         want.1,
@@ -4927,6 +5042,7 @@ impl Engine {
                         dev_center,
                         self.cfg.avg_tc,
                         fft,
+                        view_span,
                         f64::from(self.cfg.rows()),
                     );
                     // Start it on the device-wide analyser's picture of the
@@ -5411,6 +5527,27 @@ impl Engine {
     /// gave the averaging time constant the wrong clock.
     fn analyzer_rate(&self) -> f64 {
         if self.audio_mode { self.radio_fs } else { self.state.sample_rate }
+    }
+
+    /// The window the device-wide analyser is drawn in, where that is narrower
+    /// than what it is fed — see [`build_analyzer`].
+    ///
+    /// Audio mode only. There the lane runs at the sound card's rate and the
+    /// picture is the rig's passband mapped onto RF, so a transform with a true
+    /// bin per column of a wide panel covers more than a second of signal; on
+    /// an I/Q front end the same lane draws the whole span and every bin of it
+    /// is wanted.
+    fn analyzer_view_span(&self) -> Option<f64> {
+        if !self.audio_mode {
+            return None;
+        }
+        let view = self
+            .cfg
+            .viewport
+            .map(|(lo, hi)| hi - lo)
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .unwrap_or(self.audio_bw);
+        Some(view.min(self.audio_bw).max(1.0))
     }
 
     fn update_display_center(&mut self) {
@@ -6217,6 +6354,68 @@ impl Engine {
     }
 
     /// Construct or tear down the digi controller to match the current mode.
+    /// The transform, analysis window and overlap the digital modes' channel
+    /// analyser should run at on a channel of `ch_rate`.
+    ///
+    /// This analyser *replaces* the panadapter's whole frame while a slotted
+    /// mode is up, and it draws a window a few kilohertz wide out of a channel
+    /// tens of kilohertz wide — so both of the numbers that used to be one
+    /// fixed 16384 matter, and they pull in opposite directions.
+    ///
+    /// The **transform** has to be large enough that the visible window has a
+    /// point under every column of the display, or the picture stair-steps: at
+    /// the old fixed size a 3.7 kHz window off a 48 kHz channel was 1263 points
+    /// spread across a 2560-column panel, drawn two columns to a point. That is
+    /// the "rough and boxed" of issue #302, and turning the *FFT* setting up did
+    /// nothing because this lane never read it.
+    ///
+    /// The **window** has to be short enough that a row of the waterfall is a
+    /// moment rather than a paragraph. Growing the transform to fix the first
+    /// problem would have made the second one four times worse — 1.4 seconds of
+    /// signal in every row, on a mode whose symbols are 160 ms long — which is
+    /// why the two are chosen separately and the difference is padding.
+    ///
+    /// On the ordinary FT8 setup the window comes out at a third of a second and
+    /// 2.9 Hz a bin, which is WSJT-X's own waterfall transform, arrived at from
+    /// [`RESOLVED_PER_VIEW`] rather than copied.
+    fn channel_analyzer_shape(&self, ch_rate: f64) -> (usize, usize, usize) {
+        // What this lane actually draws: the mode's sub-band where it has one,
+        // else whatever the client is looking at, bounded by the channel.
+        let view = self
+            .cfg
+            .viewport
+            .map(|(lo, hi)| hi - lo)
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .unwrap_or(DIGI_VIEW_SPAN_HZ)
+            .min(ch_rate);
+        // A point per display column across that window, which over the whole
+        // channel is that many times wider.
+        let want = (self.cfg.bins() as f64 * ch_rate / view).ceil().max(1.0);
+        let fft = (want as usize).next_power_of_two().clamp(4096, CHANNEL_FFT_MAX);
+        let window_len = analysis_window(fft, ch_rate, view);
+        (fft, window_len, hop_div_for(ch_rate, window_len, f64::from(self.cfg.rows())))
+    }
+
+    /// Re-shape the digital modes' channel analyser when the display it serves
+    /// has changed enough to want a different one — see
+    /// [`Engine::channel_analyzer_shape`]. A no-op when there is no such lane,
+    /// and a no-op when the shape is the one already running.
+    fn sync_channel_analyzer(&mut self) {
+        let Some(have) = self.channel_analyzer.as_ref() else { return };
+        let ch_rate = self.channel_rate_hz;
+        let (fft, window_len, hop_div) = self.channel_analyzer_shape(ch_rate);
+        if have.fft_size() == fft && have.window_len() == window_len {
+            return;
+        }
+        let mut ca =
+            SpectrumAnalyzer::with_window(fft, window_len, ch_rate, CHANNEL_AVG_TC_S, hop_div);
+        // Seeded from the lane it replaces, over exactly the same span, so the
+        // waterfall does not go black for the length of one transform every
+        // time somebody drags a zoom.
+        ca.seed_from(have, (0.0, 1.0));
+        self.channel_analyzer = Some(ca);
+    }
+
     fn sync_digi_mode(&mut self) {
         let mode = self.state.rx[0].mode;
         // CW joins the digital modes here and nowhere else. It is not one — the
@@ -6248,15 +6447,19 @@ impl Engine {
         let want_channel = want && mode.is_digital() && !self.audio_mode;
         match (want_channel, self.channel_analyzer.is_some()) {
             (true, false) => {
-                // 16k-point FFT over the ~50 kHz channel ≈ 3 Hz/bin, enough to
-                // resolve 6.25 Hz FT8 tones.
                 let ch_rate = self.channel_rate_hz;
-                let mut ca = SpectrumAnalyzer::new(16_384, ch_rate, 0.10);
-                // 16384 points at the channel rate is over a second of signal
-                // before the first transform lands, and this window *is* the
-                // panadapter while a digital mode is up — so unseeded, entering
-                // FT8 blacks the display out for the whole of it. The
-                // device-wide analyser has the same band already.
+                let (fft, window_len, hop_div) = self.channel_analyzer_shape(ch_rate);
+                let mut ca = SpectrumAnalyzer::with_window(
+                    fft,
+                    window_len,
+                    ch_rate,
+                    CHANNEL_AVG_TC_S,
+                    hop_div,
+                );
+                // This window *is* the panadapter while a digital mode is up, so
+                // unseeded, entering FT8 blacks the display out for as long as
+                // the first transform takes to fill. The device-wide analyser
+                // has the same band already.
                 let window = span_fraction(
                     self.display_center_hz(),
                     self.state.sample_rate,
@@ -6264,6 +6467,15 @@ impl Engine {
                     ch_rate,
                 );
                 ca.seed_from(&self.analyzer, window);
+                debug!(
+                    rate = ch_rate,
+                    fft,
+                    window_len,
+                    hop_div,
+                    bin_hz = ch_rate / window_len as f64,
+                    window_s = window_len as f64 / ch_rate,
+                    "digital-mode channel analyser built"
+                );
                 self.channel_analyzer = Some(ca);
             }
             // Covers arriving in CW from a digital mode, where the analyzer is
@@ -7725,6 +7937,7 @@ impl Engine {
                         rate,
                         self.cfg.avg_tc,
                         f64::from(self.cfg.rows()),
+                        self.analyzer_view_span(),
                     );
                     // The replacement covers the same span, so the picture in
                     // hand is a true picture of it — coarser or finer than what
@@ -7744,6 +7957,14 @@ impl Engine {
                     self.analyzer.set_avg_tc(self.cfg.avg_tc, rate);
                     self.tx_analyzer.set_avg_tc(self.cfg.avg_tc, TX_MONITOR_RATE);
                 }
+                // The digital modes' channel analyser is sized from the display
+                // width and the window on screen too, and it *is* the frame
+                // while one of those modes is up — so a client that widens its
+                // panel or zooms into the sub-band has to be given a lane that
+                // resolves what it is now drawing. Rebuilt only when the answer
+                // actually changes: every rebuild is a seeded restart, and the
+                // viewport arrives on every frame of a drag.
+                self.sync_channel_analyzer();
             }
 
             // Digital modes (FT8/FT4).
@@ -12871,6 +13092,7 @@ impl Engine {
             self.state.sample_rate,
             self.cfg.avg_tc,
             f64::from(self.cfg.rows()),
+            self.analyzer_view_span(),
         );
         if self.mixer.is_some() {
             self.main =
@@ -13218,6 +13440,7 @@ impl Engine {
             analyzer_rate,
             self.cfg.avg_tc,
             f64::from(self.cfg.rows()),
+            self.analyzer_view_span(),
         );
 
         // Drop rate-dependent / stateful DSP so it rebuilds for the new source.
@@ -16371,6 +16594,77 @@ mod zoom_lane_fft_tests {
             let n = zoom_lane_fft(w);
             assert!((4096..=32_768).contains(&n), "{w} gave {n}");
             assert!(n.is_power_of_two(), "{w} gave {n}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod analysis_window_tests {
+    use super::{analysis_window, zoom_lane_fft};
+
+    /// How much signal one transform covers, in seconds.
+    fn secs(fft: usize, rate: f64, view: f64) -> f64 {
+        analysis_window(fft, rate, view) as f64 / rate
+    }
+
+    /// The picture issue #302 was reported about: an FT8 sub-band on a wide
+    /// panel. Before this, the transform was sized from the *columns* — 32768
+    /// points at the few kilohertz a zoomed lane runs at, which is five and a
+    /// half seconds of band in every row of the waterfall, on a mode whose
+    /// symbols are 160 ms long. Every transmission drew as one unbroken bar.
+    #[test]
+    fn an_ft8_sub_band_is_a_third_of_a_second_not_five() {
+        // A 48 kHz front end zoomed to the 3.7 kHz sub-band: the ladder settles
+        // on a 6 kHz lane, and a 2560-column panel asks for a 32768-point
+        // transform.
+        let (rate, view) = (6_000.0, 3_700.0);
+        let fft = zoom_lane_fft(2560);
+        assert_eq!(fft, 32_768);
+        assert!(
+            (5.4..5.5).contains(&(fft as f64 / rate)),
+            "the unpadded transform used to cover {:.2} s",
+            fft as f64 / rate
+        );
+        let s = secs(fft, rate, view);
+        assert!((0.2..0.4).contains(&s), "a row now covers {s:.3} s");
+        // Which is 2.9 Hz a bin — WSJT-X's own waterfall transform, arrived at
+        // from the resolution rule rather than copied from it.
+        let bin = rate / analysis_window(fft, rate, view) as f64;
+        assert!((2.0..4.0).contains(&bin), "{bin:.2} Hz a bin");
+    }
+
+    /// A deep zoom is a request for resolution and must still get it: the rule
+    /// is "enough to resolve what is on screen", not a fixed number of
+    /// milliseconds. A 200 Hz window on a carrier keeps every point it had.
+    #[test]
+    fn a_deep_zoom_keeps_its_resolution() {
+        let fft = zoom_lane_fft(2560);
+        // 48 kHz down the ladder to 375 Hz for a 200 Hz view.
+        let n = analysis_window(fft, 375.0, 200.0);
+        assert!(n >= 1_024, "a 200 Hz view was cut to {n} samples");
+        let bin = 375.0 / n as f64;
+        assert!(bin < 0.4, "{bin:.3} Hz a bin is coarser than the view deserves");
+    }
+
+    /// And a lane that draws everything it is fed is left exactly as it was: a
+    /// device-wide panadapter resolves the whole span, and every bin of it is
+    /// being looked at.
+    #[test]
+    fn a_lane_drawing_its_whole_span_is_untouched() {
+        for (fft, rate) in [(4096usize, 32_400_000.0), (65_536, 2_400_000.0), (1024, 48_000.0)] {
+            assert_eq!(analysis_window(fft, rate, rate), fft, "{fft} at {rate}");
+        }
+    }
+
+    /// Nothing a client can send makes this return something a transform cannot
+    /// use.
+    #[test]
+    fn it_is_always_a_usable_window() {
+        for view in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e-9, 1e12] {
+            for rate in [0.0, f64::NAN, 375.0, 48_000.0, 32_400_000.0] {
+                let n = analysis_window(4096, rate, view);
+                assert!(n > 0 && n <= 4096, "rate {rate} view {view} gave {n}");
+            }
         }
     }
 }

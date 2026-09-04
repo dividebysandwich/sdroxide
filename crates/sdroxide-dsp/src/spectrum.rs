@@ -14,6 +14,10 @@ use crate::{Complex32, window::blackman_harris};
 pub struct SpectrumAnalyzer {
     fft: Arc<dyn Fft<f32>>,
     fft_size: usize,
+    /// How many samples one transform actually looks at. Equal to `fft_size`
+    /// unless a caller asked for less, in which case the rest of the transform
+    /// is zeros — see [`SpectrumAnalyzer::with_window`].
+    window_len: usize,
     hop: usize,
     window: Vec<f32>,
     /// Normalization so a full-scale coherent sine reads ~0 dBFS.
@@ -232,15 +236,48 @@ impl SpectrumAnalyzer {
         avg_tc_secs: f32,
         hop_div: usize,
     ) -> Self {
+        Self::with_window(fft_size, fft_size, sample_rate, avg_tc_secs, hop_div)
+    }
+
+    /// [`Self::with_hop_div`] with the *analysis window* named separately from
+    /// the transform: `window_len` samples are windowed and the remaining
+    /// `fft_size - window_len` points are zero.
+    ///
+    /// The two are usually the same and there is nothing to choose. They part
+    /// company wherever a display is finer than the signal is worth resolving,
+    /// which is every zoomed-in view: a 3.7 kHz window across a 2560-column
+    /// panel is 1.4 Hz a column, and a transform with a true bin for each of
+    /// them is looking at **five and a half seconds** of signal at the rate a
+    /// deep zoom runs at. Nothing survives that. FT8's tones are 160 ms long
+    /// and 6.25 Hz apart, and a window that covers thirty-four of them draws
+    /// them as one continuous bar — the "rough and boxed" waterfall of issue
+    /// #302, where turning the FFT size *up* made it worse.
+    ///
+    /// Zero-padding separates the two things that were tangled together.
+    /// `window_len` sets the resolution and the time smear, which is a property
+    /// of the signal; `fft_size` sets how many points the answer is drawn on,
+    /// which is a property of the screen. The padded transform interpolates
+    /// between the true bins rather than inventing detail, so the trace is
+    /// smooth — the stair-stepping of issue #195 — while each row still covers
+    /// a fifth of a second of band.
+    pub fn with_window(
+        fft_size: usize,
+        window_len: usize,
+        sample_rate: f64,
+        avg_tc_secs: f32,
+        hop_div: usize,
+    ) -> Self {
+        let window_len = window_len.clamp(1, fft_size);
         let fft = FftPlanner::new().plan_fft_forward(fft_size);
-        let window = blackman_harris(fft_size);
+        let window = blackman_harris(window_len);
         let coherent_gain: f32 = window.iter().sum();
-        let hop = (fft_size / hop_div.max(1)).max(1);
+        let hop = (window_len / hop_div.max(1)).max(1);
         let scratch = vec![Complex32::default(); fft.get_inplace_scratch_len()];
 
         let mut analyzer = SpectrumAnalyzer {
             fft,
             fft_size,
+            window_len,
             hop,
             window,
             coherent_gain,
@@ -267,6 +304,13 @@ impl SpectrumAnalyzer {
 
     pub fn fft_size(&self) -> usize {
         self.fft_size
+    }
+
+    /// How many samples one transform looks at — the figure that sets both the
+    /// true resolution and how much time each row of the waterfall smears over.
+    /// See [`Self::with_window`].
+    pub fn window_len(&self) -> usize {
+        self.window_len
     }
 
     /// Whether the bins either side of DC are replaced by their neighbours.
@@ -459,9 +503,13 @@ impl SpectrumAnalyzer {
         // megabytes a second of pure copying, and it grows with the front end's
         // rate. One compaction per block does the same job.
         let mut at = 0;
-        while self.pending.len() - at >= self.fft_size {
-            let frame = &self.pending[at..at + self.fft_size];
-            apply_window(&mut self.work, frame, &self.window);
+        while self.pending.len() - at >= self.window_len {
+            let frame = &self.pending[at..at + self.window_len];
+            apply_window(&mut self.work[..self.window_len], frame, &self.window);
+            // The transform is in place, so the tail holds the *last* one's
+            // output rather than the zeros it was built with. A no-op on the
+            // ordinary lane, where the window is the whole transform.
+            self.work[self.window_len..].fill(Complex32::default());
             self.fft.process_with_scratch(&mut self.work, &mut self.scratch);
 
             let norm = 1.0 / (self.coherent_gain * self.coherent_gain);
@@ -630,6 +678,91 @@ impl SpectrumAnalyzer {
 mod tests {
     use super::*;
     use std::f32::consts::TAU;
+
+    /// A zero-padded transform must put the tone where the tone is and read the
+    /// level the tone has — the padding interpolates between true bins, it does
+    /// not move or rescale them.
+    #[test]
+    fn a_padded_transform_reads_the_same_tone_the_same_way() {
+        let fs = 48_000.0;
+        let tone_hz = 1_500.0f32;
+        let sig: Vec<Complex32> = (0..200_000)
+            .map(|i| {
+                let ph = TAU * tone_hz * i as f32 / fs as f32;
+                Complex32::new(ph.cos(), ph.sin())
+            })
+            .collect();
+
+        let read = |an: &mut SpectrumAnalyzer| {
+            an.set_dc_suppress(false);
+            an.process(&sig);
+            let mut db = Vec::new();
+            an.spectrum_db(&mut db);
+            let n = db.len();
+            let (peak_bin, peak_db) = db
+                .iter()
+                .enumerate()
+                .fold((0usize, f32::MIN), |b, (i, &v)| if v > b.1 { (i, v) } else { b });
+            // Bin index back to a frequency: `spectrum_db` is DC-centred.
+            let hz = (peak_bin as f64 - n as f64 / 2.0) * fs / n as f64;
+            (hz, peak_db)
+        };
+
+        let (whole_hz, whole_db) = read(&mut SpectrumAnalyzer::new(4096, fs, 0.0));
+        // The same 4096 samples of signal, drawn on a transform eight times
+        // finer: an eighth of the time smear the plain 32768 would have had.
+        let (pad_hz, pad_db) = read(&mut SpectrumAnalyzer::with_window(32_768, 4_096, fs, 0.0, 2));
+
+        assert!((whole_hz - f64::from(tone_hz)).abs() < 20.0, "unpadded found it at {whole_hz}");
+        assert!((pad_hz - f64::from(tone_hz)).abs() < 20.0, "padded found it at {pad_hz}");
+        assert!(
+            (whole_db - pad_db).abs() < 1.0,
+            "padding moved the level: {whole_db:.2} dB against {pad_db:.2} dB"
+        );
+    }
+
+    /// And the padding is padding: the tail of the working buffer holds the
+    /// *previous* transform's output, so a lane that forgot to clear it would
+    /// come out with a spectrum of its own history folded into every frame.
+    /// A steady tone through such a lane still looks plausible; a tone that
+    /// stops does not go away.
+    #[test]
+    fn the_padding_does_not_remember_the_last_transform() {
+        let fs = 48_000.0;
+        let n = 4_096;
+        let mut an = SpectrumAnalyzer::with_window(16_384, n, fs, 0.0, 1);
+        an.set_dc_suppress(false);
+        let tone: Vec<Complex32> = (0..n * 4)
+            .map(|i| {
+                let ph = TAU * 1_500.0 * i as f32 / fs as f32;
+                Complex32::new(ph.cos(), ph.sin())
+            })
+            .collect();
+        an.process(&tone);
+        // Then silence, for as many transforms as the tone got.
+        an.process(&vec![Complex32::new(0.0, 0.0); n * 4]);
+        let mut db = Vec::new();
+        an.spectrum_db(&mut db);
+        let peak = db.iter().cloned().fold(f32::MIN, f32::max);
+        assert!(peak < -100.0, "the tone outlived its own transform: peak {peak:.1} dBFS");
+    }
+
+    /// The window is what sets the time each transform covers, and the
+    /// transform is what sets how many points it is drawn on. That separation
+    /// is the whole of issue #302 — before it, asking for a finer picture asked
+    /// for a longer one.
+    #[test]
+    fn the_window_and_the_transform_are_two_different_numbers() {
+        let an = SpectrumAnalyzer::with_window(32_768, 4_096, 48_000.0, 0.0, 4);
+        assert_eq!(an.fft_size(), 32_768);
+        assert_eq!(an.window_len(), 4_096);
+        // Unasked, they are the same thing and nothing changes.
+        let plain = SpectrumAnalyzer::new(4_096, 48_000.0, 0.0);
+        assert_eq!((plain.fft_size(), plain.window_len()), (4_096, 4_096));
+        // A window longer than the transform is not a thing.
+        let clamped = SpectrumAnalyzer::with_window(1_024, 8_192, 48_000.0, 0.0, 2);
+        assert_eq!(clamped.window_len(), 1_024);
+    }
 
     /// A lane asked for a row before its hold exists answers from the running
     /// average and says it drew, so the caller knows to switch the hold on.
