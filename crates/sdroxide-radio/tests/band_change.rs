@@ -19,6 +19,58 @@ use std::time::{Duration, Instant};
 use sdroxide_radio::{Complex32, EngineConfig, IqSource, Result, start_engine};
 use sdroxide_types::{Command, DeviceCaps, Mode, RadioEvent, RxId, Vfo, WsjtxConfig};
 
+/// Point the whole process's configuration at a scratch directory, once.
+///
+/// Without this an engine built from `EngineConfig::default()` reads and writes
+/// the **operator's own** `~/.config/sdroxide` — `sdroxide_config::config_dir`
+/// keeps `SDROXIDE_CONFIG_DIR` for exactly this reason. It is not merely
+/// impolite: `Command::SetWsjtxConfig` is persisted, so a run of these tests
+/// used to leave the operator's real `wsjtx.json` switched **on** and pointed at
+/// the ephemeral port this test bound and then closed. The next run's engine
+/// loaded that at startup, broadcast a `Clear` to it before this test's own
+/// broadcast existed, and — whenever the kernel handed a test the same port back
+/// — that stray `Clear` landed in the socket below and was counted as a second
+/// one. That is what made `a_qsy_clears_the_wsjtx_clients` fail perhaps one run
+/// in four, on nothing the engine had done.
+///
+/// The directory is removed first, so a run never inherits the last one's files.
+///
+/// ⚠️ Every test in this binary must call this as its FIRST statement.
+/// `Once::call_once` makes the write itself safe — every other test is blocked
+/// inside it until the variable is set, and nothing is read before it — but a
+/// test that starts an engine without calling it would be reading the
+/// environment while this writes it.
+fn isolate_config() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let dir = std::env::temp_dir().join(format!("sdroxide-band-change-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch config directory");
+        // SAFETY: no engine exists yet in any test — see the note above.
+        unsafe { std::env::set_var("SDROXIDE_CONFIG_DIR", &dir) }
+    });
+}
+
+/// An engine configuration with a config scope of its own.
+///
+/// Belt and braces rather than the fix: the scratch directory above is per
+/// *process*, and `wsjtx.json` is one of the files a radio scope owns, so
+/// without this the three tests in this binary share one. The window that opens
+/// is narrow — every engine here loads that file within milliseconds of
+/// starting, before any of the tests has written it — and 20 runs on a shared
+/// scope showed no failure. But it is a real window under load, and the engine
+/// that loses it starts by broadcasting a `Clear` to another test's live
+/// socket, which is precisely the failure this file was made flaky by. A scope
+/// each closes it, and it is what a station running three radios does anyway.
+fn config(radio: u32) -> EngineConfig {
+    isolate_config();
+    EngineConfig {
+        tx_ham_only: false,
+        store: sdroxide_config::Store::radio(radio),
+        ..Default::default()
+    }
+}
+
 /// The 20 m FT8 slot, and the 40 m one it QSYs to.
 const DIAL_20M: f64 = 14_074_000.0;
 const DIAL_40M: f64 = 7_074_000.0;
@@ -123,11 +175,20 @@ fn clears_within(sock: &UdpSocket, dur: Duration) -> usize {
 }
 
 /// An engine parked on 20 m, broadcasting to a socket this test holds.
-fn engine_broadcasting_to(sock: &UdpSocket) -> sdroxide_radio::EngineHandles {
+///
+/// It is parked there by *construction*, not by the command below: the engine
+/// takes its opening dial from the front end, and this one's centre is already
+/// 20 m — so the band it starts on is the band the tests work from, and the
+/// `SetVfo` is the assertion that says so rather than a move. That matters,
+/// because a band change still in hand when the broadcast comes up would be
+/// announced to it: `poll_band_change` runs on its own tick, after the command
+/// that caused it, so the clients would be told about a QSY made before they
+/// were listening. Nothing here should be able to produce that, and starting on
+/// the band under test is what guarantees it.
+fn engine_broadcasting_to(sock: &UdpSocket, radio: u32) -> sdroxide_radio::EngineHandles {
     let center = Arc::new(Mutex::new(DIAL_20M));
     let src = Silent { center };
-    let cfg = EngineConfig { tx_ham_only: false, ..Default::default() };
-    let h = start_engine(Box::new(src), caps(), cfg);
+    let h = start_engine(Box::new(src), caps(), config(radio));
     h.cmd_tx.send(Command::SetVfo { vfo: Vfo::A, hz: DIAL_20M }).unwrap();
     settle(&h, |s| s.vfo_a_hz == DIAL_20M);
     h.cmd_tx
@@ -153,7 +214,7 @@ fn engine_broadcasting_to(sock: &UdpSocket) -> sdroxide_radio::EngineHandles {
 #[test]
 fn a_qsy_clears_the_wsjtx_clients() {
     let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let h = engine_broadcasting_to(&sock);
+    let h = engine_broadcasting_to(&sock, 1);
 
     h.cmd_tx.send(Command::SetVfo { vfo: Vfo::A, hz: DIAL_40M }).unwrap();
     settle(&h, |s| s.vfo_a_hz == DIAL_40M);
@@ -172,7 +233,7 @@ fn a_qsy_clears_the_wsjtx_clients() {
 #[test]
 fn tuning_about_inside_a_band_tells_the_clients_nothing() {
     let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let h = engine_broadcasting_to(&sock);
+    let h = engine_broadcasting_to(&sock, 2);
 
     h.cmd_tx.send(Command::SetVfo { vfo: Vfo::A, hz: DIAL_20M_FT4 }).unwrap();
     settle(&h, |s| s.vfo_a_hz == DIAL_20M_FT4);
@@ -210,8 +271,7 @@ fn digi_settles(
 #[test]
 fn a_qsy_empties_the_call_queue() {
     let center = Arc::new(Mutex::new(DIAL_20M));
-    let cfg = EngineConfig { tx_ham_only: false, ..Default::default() };
-    let h = start_engine(Box::new(Silent { center }), caps(), cfg);
+    let h = start_engine(Box::new(Silent { center }), caps(), config(3));
     h.cmd_tx.send(Command::SetVfo { vfo: Vfo::A, hz: DIAL_20M }).unwrap();
     h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::Ft8 }).unwrap();
     settle(&h, |s| s.vfo_a_hz == DIAL_20M && s.rx[0].mode == Mode::Ft8);
