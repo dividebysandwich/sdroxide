@@ -5813,14 +5813,28 @@ impl SdrPlayConfig {
     /// This backend offers 10 MSPS, so the narrow end is reachable in normal
     /// use rather than being a theoretical edge.
     pub fn agc_setpoint_range(&self) -> std::ops::RangeInclusive<i32> {
-        let floor = if self.sample_rate_hz < 8_064_000.0 {
+        Self::agc_setpoint_range_at(self.sample_rate_hz, self.extended_if_gr)
+    }
+
+    /// [`Self::agc_setpoint_range`] over the two things it actually depends
+    /// on, so the driver's live path can ask the same question.
+    ///
+    /// The rate is fixed for a session but the gain floor is a switch the
+    /// operator throws mid-session, and the range the settings panel offers
+    /// has to be the range the driver will accept — otherwise a set point the
+    /// panel let the operator reach is one the driver quietly clamps away.
+    pub fn agc_setpoint_range_at(
+        sample_rate_hz: f64,
+        extended_if_gr: bool,
+    ) -> std::ops::RangeInclusive<i32> {
+        let floor = if sample_rate_hz < 8_064_000.0 {
             -72
-        } else if self.sample_rate_hz < 9_216_000.0 {
+        } else if sample_rate_hz < 9_216_000.0 {
             -60
         } else {
             -48
         };
-        let ceiling = if self.extended_if_gr { 0 } else { -20 };
+        let ceiling = if extended_if_gr { 0 } else { -20 };
         floor..=ceiling
     }
 

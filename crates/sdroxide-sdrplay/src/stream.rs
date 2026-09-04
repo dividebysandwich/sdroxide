@@ -236,6 +236,11 @@ struct LiveTuner {
     /// The IF gain-reduction floor in force — the API's normal 20 dB, or 0
     /// where the operator has opened the last of the range.
     min_gr: ffi::MinGr,
+    /// The AGC set point actually programmed, in dBFS. Tracked because the
+    /// range it is allowed is not fixed: opening the gain floor above lifts
+    /// the ceiling, and closing it again has to bring a set point that went up
+    /// with it back down.
+    agc_setpoint: i32,
     antenna: String,
 }
 
@@ -243,6 +248,11 @@ struct LiveTuner {
 struct Live {
     t: [LiveTuner; TUNERS],
     hdr: bool,
+    /// The rate this session was configured for, kept because the AGC set
+    /// point's floor is a property of it — the converter trades headroom for
+    /// speed — and the live path has to clamp to the same range the settings
+    /// panel offers.
+    sample_rate_hz: f64,
 }
 
 /// The parameter block and `Update` addressee for each tuner in use.
@@ -354,6 +364,11 @@ fn run(
     // it has — so its clamp never sees a Hi-Z path.
     let aux_lna_programmed = aux_lna_wanted.min(device::max_lna_state(model, center, false, false));
 
+    // Clamped to what this *rate* allows, not to the widest range any rate
+    // allows: the API refuses a set point the converter cannot reach, and this
+    // backend offers 10 MSPS where the floor is -48.
+    let setpoint = cfg.agc_setpoint_range();
+
     let mut live = Live {
         t: std::array::from_fn(|i| {
             let is_main = i == main;
@@ -365,10 +380,12 @@ fn run(
                 // and a diversity pair gained differently is a pair the filter
                 // cannot line up.
                 min_gr: if cfg.extended_if_gr { ffi::EXTENDED_MIN_GR } else { ffi::NORMAL_MIN_GR },
+                agc_setpoint: cfg.agc_setpoint_dbfs.clamp(*setpoint.start(), *setpoint.end()),
                 antenna: if is_main { cfg.antenna.clone() } else { String::new() },
             }
         }),
         hdr,
+        sample_rate_hz: cfg.sample_rate_hz,
     };
 
     unsafe {
@@ -398,11 +415,7 @@ fn run(
             ch.ctrl_params.decimation.enable = (plan.decim > 1) as u8;
             ch.ctrl_params.decimation.decimation_factor = plan.decim;
             ch.ctrl_params.agc.enable = cfg.agc.code() as ffi::AgcControl;
-            // Clamped to what this *rate* allows, not to the widest range any
-            // rate allows: the API refuses a set point the converter cannot
-            // reach, and this backend offers 10 MSPS where the floor is -48.
-            let sp = cfg.agc_setpoint_range();
-            ch.ctrl_params.agc.set_point_dbfs = cfg.agc_setpoint_dbfs.clamp(*sp.start(), *sp.end());
+            ch.ctrl_params.agc.set_point_dbfs = live.t[i].agc_setpoint;
             if model == SdrPlayModel::RspDuo {
                 ch.rsp_duo_tuner_params.rf_notch_enable = cfg.rf_notch as u8;
                 ch.rsp_duo_tuner_params.rf_dab_notch_enable = cfg.dab_notch as u8;
@@ -763,13 +776,24 @@ fn apply(
             reason |= ffi::UPDATE_TUNER_GR;
         }
 
-        if pt.agc.is_some() || pt.agc_setpoint.is_some() {
+        // The same range the settings panel offers and the session opened
+        // with — the rate's floor, and the ceiling the gain floor just above
+        // installs. Read after `extended_if_gr` has been applied, so a switch
+        // thrown in this pass counts: it lifts the ceiling to 0 dBFS, and a
+        // set point that went up there has to come back down when it is
+        // thrown off again.
+        let sp_range = SdrPlayConfig::agc_setpoint_range_at(
+            live.sample_rate_hz,
+            lv.min_gr == ffi::EXTENDED_MIN_GR,
+        );
+        let sp =
+            pt.agc_setpoint.unwrap_or(lv.agc_setpoint).clamp(*sp_range.start(), *sp_range.end());
+        if pt.agc.is_some() || sp != lv.agc_setpoint {
             if let Some(code) = pt.agc {
                 ch.ctrl_params.agc.enable = code as ffi::AgcControl;
             }
-            if let Some(sp) = pt.agc_setpoint {
-                ch.ctrl_params.agc.set_point_dbfs = sp.clamp(-72, -20);
-            }
+            lv.agc_setpoint = sp;
+            ch.ctrl_params.agc.set_point_dbfs = sp;
             reason |= ffi::UPDATE_CTRL_AGC;
         }
         if let Some(on) = pt.bias_tee {
