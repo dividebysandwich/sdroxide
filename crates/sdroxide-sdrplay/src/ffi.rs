@@ -103,11 +103,13 @@ pub const BW_UNDEFINED: BwType = 0;
 /// `sdrplay_api_If_kHzT` — the value is the IF in kHz; `-1` is "undefined".
 pub type IfType = i32;
 pub const IF_ZERO: IfType = 0;
-/// The low IF the API's own downconverter works from. Mandatory with both of
-/// an RSPduo's tuners running, where the ADC is fixed at 6 MHz.
 /// The 450 kHz low IF. What the tuner uses where a zero IF is impractical,
 /// and — per SDRuno's HDR documentation — what the RSPdx's HDR path expects.
+/// Nothing here selects it: the driver pins a zero IF, and running the HDR
+/// path at 450 kHz by hand did not make it deliver anything either.
 pub const IF_0_450: IfType = 450;
+/// The low IF the API's own downconverter works from. Mandatory with both of
+/// an RSPduo's tuners running, where the ADC is fixed at 6 MHz.
 pub const IF_1_620: IfType = 1620;
 /// The same for an 8 MHz ADC clock.
 pub const IF_2_048: IfType = 2048;
