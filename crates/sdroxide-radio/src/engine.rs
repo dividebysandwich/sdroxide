@@ -296,6 +296,30 @@ fn lane_pool() -> Option<rayon::ThreadPool> {
 /// See [`sdroxide_dsp::SpectrumAnalyzer::with_hop_div`].
 const MAX_HOP_DIV: usize = 8;
 
+/// Where the decoder's tap is levelled to, as an RMS of full scale.
+///
+/// The controller that reads it scales to sixteen-bit at 28000 and clips at
+/// full scale, so this is a compromise between quantisation at the bottom and
+/// headroom at the top: 0.08 puts the average at 2240 counts — seventy-odd
+/// decibels above the last bit — and leaves twenty decibels of crest factor
+/// before anything is clipped, which is more than a band of overlapping
+/// transmissions ever has.
+const TAP_TARGET_RMS: f32 = 0.08;
+
+/// How long the tap's level estimate takes to follow the band.
+///
+/// Long against a transmission and short against an evening. An FT8 slot is
+/// fifteen seconds, so four is slow enough that the gain is a constant across
+/// any one of them — which is the whole point, see [`RxChain::tap_gain_for`] —
+/// and quick enough that a band opening does not leave the decoder deaf.
+const TAP_LEVEL_TC_S: f32 = 4.0;
+
+/// Bounds on the tap gain: 60 dB of lift and 40 dB of cut, which spans
+/// everything between a bare demodulator on a dead band and a front end handing
+/// over full scale.
+const TAP_GAIN_MIN: f32 = 0.01;
+const TAP_GAIN_MAX: f32 = 1_000.0;
+
 /// Averaging time constant for the digital modes' channel analyser. Short: a
 /// slotted mode's picture is a sequence of transmissions starting and stopping,
 /// and averaging is the enemy of seeing where one ended.
@@ -677,6 +701,52 @@ fn stereo_allowed(rx: &RxState) -> bool {
     wanted && !rx.auto_notch && !rx.noise_reduction.is_on()
 }
 
+/// The gain the decoder's tap rides, from a mean-square estimate of the
+/// demodulated audio that takes [`TAP_LEVEL_TC_S`] to move.
+///
+/// Levelling the tap at all is necessary — the demodulator's output is whatever
+/// the band handed over, and a signal sixty decibels below full scale would be
+/// decoded from a couple of dozen quantisation steps once the controller has
+/// made it sixteen-bit. Levelling it *quickly* is what must not happen: a gain
+/// that moves inside a transmission modulates every signal in the passband and
+/// spreads each of them across the band, which is what the AGC was doing to the
+/// decoder before issue #307. Seconds of time constant is what makes this a
+/// constant over a fifteen-second slot and still lets it follow a band that
+/// changes through the evening.
+///
+/// Updated once a block and applied to the whole of it, so it cannot move
+/// within one either. A free function rather than a method because the caller
+/// is already holding a mutable borrow of the demodulator beside it.
+fn tap_gain_for(level_db: &mut f32, gain: &mut f32, audio: &[f32], rate: f64) -> f32 {
+    if audio.is_empty() {
+        return *gain;
+    }
+    let ms: f32 = audio.iter().map(|s| s * s).sum::<f32>() / audio.len() as f32;
+    let ms = if ms.is_finite() { ms } else { 0.0 };
+    let block_db = 10.0 * (ms + 1e-20).log10();
+    // One pole per block, at the block's own length: a source that hands over
+    // ten milliseconds at a time and one that hands over a hundred must reach
+    // the same place in the same number of seconds.
+    let block_s = audio.len() as f32 / rate.max(1.0) as f32;
+    let alpha = 1.0 - (-block_s / TAP_LEVEL_TC_S).exp();
+    // In decibels rather than in power, which is the difference between a
+    // filter that is slow and one that is only slow when the step is small: a
+    // one-pole on the mean square answers a twenty-decibel change with eleven
+    // decibels of gain in the first half second, because a tenth of a hundredfold
+    // step is still an elevenfold one. A signal is quiet or loud by orders of
+    // magnitude, so the estimate lives where those are a distance.
+    *level_db = if level_db.is_finite() {
+        *level_db + (block_db - *level_db) * alpha
+    } else {
+        // Nothing measured yet: start where the signal is rather than climbing
+        // to it over the first few seconds of a session.
+        block_db
+    };
+    let want_db = 20.0 * TAP_TARGET_RMS.log10();
+    *gain = 10f32.powf((want_db - *level_db) / 20.0).clamp(TAP_GAIN_MIN, TAP_GAIN_MAX);
+    *gain
+}
+
 /// One receiver: DDC → demod → AGC → volume → resample to the device rate.
 struct RxChain {
     in_rate: f64,
@@ -693,10 +763,16 @@ struct RxChain {
     /// Said once and not again: the value is knowing that it happened at all
     /// and roughly when, not a line per block from a stage that has gone wrong.
     said_impossible: bool,
-    /// When true, `tap_out` receives a copy of the post-AGC, pre-volume audio
-    /// for the digital-mode decoder (independent of mute/volume/squelch).
+    /// When true, `tap_out` receives a copy of the demodulated audio for the
+    /// digital-mode decoder and the TCI receive stream, ahead of the AGC and of
+    /// everything after it (mute, volume, squelch, noise reduction).
     tap_enabled: bool,
     tap_out: Vec<f32>,
+    /// Slow estimate of the tap audio's level in dBFS, and the gain derived
+    /// from it. See [`tap_gain_for`] — this is the levelling a decoder can
+    /// have, as against the AGC's, which it cannot.
+    tap_level_db: f32,
+    tap_gain: f32,
     /// Adaptive auto-notch (constant-tone canceller) on the listener audio.
     notch: AutoNotch,
     notch_on: bool,
@@ -748,6 +824,8 @@ impl RxChain {
             said_impossible: false,
             tap_enabled: false,
             tap_out: Vec::new(),
+            tap_level_db: f32::NAN,
+            tap_gain: 1.0,
             notch: AutoNotch::new(),
             notch_on: false,
             nr: SpectralNr::new(),
@@ -850,6 +928,9 @@ impl RxChain {
             return (&self.out_buf, None);
         }
         let demod = self.demod.as_mut().expect("checked above");
+        let audio_rate = demod.audio_rate();
+        // Split out of the borrow `demod` holds: the tap reads a different
+        // field of the same struct.
 
         self.channel_buf.clear();
         self.ddc.process(iq, &mut self.channel_buf);
@@ -859,6 +940,32 @@ impl RxChain {
         demod.process(&self.channel_buf, &mut self.audio_buf);
         demod.set_stereo_enabled(stereo_allowed(rx));
         let stereo = demod.take_side(&mut self.side_buf);
+        // The decoder's tap, taken *before* the AGC.
+        //
+        // A modem wants the signal the antenna delivered, levelled if at all by
+        // something that does not move inside a transmission. The AGC is the
+        // opposite of that: it attacks in two milliseconds, which is a gain
+        // fluctuating across the whole audio band, and multiplying a signal by
+        // that in time is convolving it with it in frequency. FT8's tones are
+        // 6.25 Hz apart and its own noise reference sits four tones away, so
+        // the smear lands squarely on the reference: measured on a synthetic
+        // forty-signal slot, the AGC cost ten of thirteen decodes and put every
+        // reported SNR about sixteen decibels low — both halves of issue #307,
+        // and both of them worse the stronger the loudest station in the band
+        // is. What the tap gets instead is [`RxChain::tap_gain_for`], a level
+        // that takes seconds to move and so is a constant across any one
+        // transmission.
+        if self.tap_enabled {
+            let g = tap_gain_for(
+                &mut self.tap_level_db,
+                &mut self.tap_gain,
+                &self.audio_buf,
+                audio_rate,
+            );
+            self.tap_out.clear();
+            self.tap_out.extend(self.audio_buf.iter().map(|s| s * g));
+        }
+
         // FM skips the AGC entirely — a true unity bypass, not AgcMode::Off's
         // manual gain: the discriminator output is already deviation-scaled to
         // ±full scale, so there is no level to restore (Mode::audio_agc).
@@ -886,13 +993,6 @@ impl RxChain {
                      stepped over them, but something ahead of it is computing infinities"
                 );
             }
-        }
-
-        // Tap the clean, post-AGC audio before volume/mute/squelch AND before
-        // noise reduction so the FT8/FT4 decoder always sees the raw signal.
-        if self.tap_enabled {
-            self.tap_out.clear();
-            self.tap_out.extend_from_slice(&self.audio_buf);
         }
 
         // Auto-notch first (remove constant tones), then spectral NR (remove the
@@ -10124,6 +10224,11 @@ impl Engine {
                 c.tap_enabled = want;
                 if !want {
                     c.tap_out.clear();
+                } else {
+                    // Re-seed the tap's level from the first block it sees
+                    // rather than from wherever the band was when the tap was
+                    // last switched off, which may be a session ago.
+                    c.tap_level_db = f32::NAN;
                 }
             }
         }
@@ -16595,6 +16700,131 @@ mod zoom_lane_fft_tests {
             assert!((4096..=32_768).contains(&n), "{w} gave {n}");
             assert!(n.is_power_of_two(), "{w} gave {n}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tap_level_tests {
+    use super::{TAP_GAIN_MAX, TAP_GAIN_MIN, TAP_TARGET_RMS, tap_gain_for};
+
+    /// One block of a tone at `amp`.
+    fn block(amp: f32, n: usize) -> Vec<f32> {
+        (0..n).map(|k| amp * std::f32::consts::SQRT_2 * (k as f32 * 0.37).sin()).collect()
+    }
+
+    /// The decoder's tap has to be levelled — a weak signal decoded from a
+    /// couple of dozen sixteen-bit steps is a signal thrown away — and it has
+    /// to settle where the controller's own scaling expects it.
+    fn settle(amp: f32) -> f32 {
+        let (mut level, mut gain) = (f32::NAN, 1.0f32);
+        let b = block(amp, 480);
+        // Ten seconds of it, at a hundredth of a second a block.
+        for _ in 0..1_000 {
+            tap_gain_for(&mut level, &mut gain, &b, 48_000.0);
+        }
+        gain * amp
+    }
+
+    #[test]
+    fn the_tap_settles_at_the_level_the_decoder_wants() {
+        for amp in [1e-4f32, 1e-3, 0.01, 0.1, 0.5] {
+            let out = settle(amp);
+            assert!(
+                (out - TAP_TARGET_RMS).abs() < TAP_TARGET_RMS * 0.05,
+                "{amp} levelled to {out}"
+            );
+        }
+    }
+
+    /// And it must not move on the time scale a decoder cares about. That is
+    /// the whole reason it is not the AGC: a gain that changes inside a
+    /// transmission amplitude-modulates every tone in the passband and spreads
+    /// each of them across its neighbours, which cost ten of thirteen decodes
+    /// and about sixteen decibels of reported SNR in issue #307.
+    #[test]
+    fn the_level_barely_moves_across_a_symbol() {
+        let (mut level, mut gain) = (f32::NAN, 1.0f32);
+        let quiet = block(0.01, 480);
+        for _ in 0..2_000 {
+            tap_gain_for(&mut level, &mut gain, &quiet, 48_000.0);
+        }
+        // A station twenty decibels above the band opens up — a step far larger
+        // than anything a real band takes in one go.
+        let start = gain;
+        let loud = block(0.1, 480);
+        let mut after_symbol = 0.0f32;
+        let mut after_half_second = 0.0f32;
+        for k in 0..50 {
+            let g = tap_gain_for(&mut level, &mut gain, &loud, 48_000.0);
+            // An FT8 symbol is 160 ms; a block here is 10.
+            if k == 15 {
+                after_symbol = (20.0 * (g / start).log10()).abs();
+            }
+            after_half_second = (20.0 * (g / start).log10()).abs();
+        }
+        assert!(after_symbol < 1.0, "the tap gain moved {after_symbol:.2} dB across a symbol");
+        assert!(
+            after_half_second < 3.0,
+            "the tap gain moved {after_half_second:.2} dB in half a second"
+        );
+    }
+
+    /// On a band that is not changing — which is what a band is, minute to
+    /// minute — the gain is simply a constant, and a slot of audio through it
+    /// is the slot of audio the antenna delivered.
+    #[test]
+    fn a_steady_band_gives_a_constant() {
+        let (mut level, mut gain) = (f32::NAN, 1.0f32);
+        let b = block(0.02, 480);
+        for _ in 0..3_000 {
+            tap_gain_for(&mut level, &mut gain, &b, 48_000.0);
+        }
+        let settled = gain;
+        let mut worst = 0.0f32;
+        for _ in 0..(15 * 100) {
+            let g = tap_gain_for(&mut level, &mut gain, &b, 48_000.0);
+            worst = worst.max((20.0 * (g / settled).log10()).abs());
+        }
+        assert!(worst < 0.05, "the tap gain wandered {worst:.3} dB on a steady band");
+    }
+
+    /// It does follow a band that really has changed, though — over a few
+    /// slots, not inside one. A decoder left on last hour's gain would be
+    /// clipping or quantising instead.
+    #[test]
+    fn it_follows_a_band_that_has_actually_changed() {
+        let (mut level, mut gain) = (f32::NAN, 1.0f32);
+        let quiet = block(0.001, 480);
+        for _ in 0..5_000 {
+            tap_gain_for(&mut level, &mut gain, &quiet, 48_000.0);
+        }
+        let loud = block(0.1, 480);
+        for _ in 0..(30 * 100) {
+            tap_gain_for(&mut level, &mut gain, &loud, 48_000.0);
+        }
+        let out = gain * 0.1;
+        assert!(
+            (out - TAP_TARGET_RMS).abs() < TAP_TARGET_RMS * 0.05,
+            "thirty seconds after the band came up the tap is still at {out}"
+        );
+    }
+
+    /// Nothing a front end can hand over makes this produce a gain a decoder
+    /// cannot use.
+    #[test]
+    fn the_gain_is_always_usable() {
+        for amp in [0.0f32, 1e-30, 1e12, f32::NAN, f32::INFINITY] {
+            let (mut level, mut gain) = (f32::NAN, 1.0f32);
+            let b = block(amp, 128);
+            for _ in 0..10 {
+                let g = tap_gain_for(&mut level, &mut gain, &b, 48_000.0);
+                assert!(g.is_finite(), "{amp} gave {g}");
+                assert!((TAP_GAIN_MIN..=TAP_GAIN_MAX).contains(&g), "{amp} gave {g}");
+            }
+        }
+        // An empty block asks nothing and changes nothing.
+        let (mut level, mut gain) = (f32::NAN, 3.0f32);
+        assert_eq!(tap_gain_for(&mut level, &mut gain, &[], 48_000.0), 3.0);
     }
 }
 

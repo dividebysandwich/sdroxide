@@ -409,6 +409,12 @@ mode. What is in the box never changes; only where the two rows are cut does.
   the transmitter's deviation, not by signal strength, and a DRM decoder hands
   you the audio at the level the broadcaster mixed it to, so in both there is
   nothing to level and an AGC would only pump on the noise between overs.
+
+  It is a *listening* control and nothing else. The decoders are fed from a tap
+  taken ahead of it, on a level that takes seconds to move and so cannot change
+  inside a transmission — which is what a modem needs and what an AGC, attacking
+  in two milliseconds, is the opposite of. So whatever you set here, FT8 sees
+  the same signal.
 - **Man** — the fixed audio gain the receiver runs on while the AGC is `Off`,
   shown only then. Unlevelled audio is whatever the band delivered, and a weak
   SSB signal can sit tens of dB below anything the volume control can reach, so

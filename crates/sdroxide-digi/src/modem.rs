@@ -11,7 +11,18 @@ use sdroxide_types::{Decode, Mode};
 use crate::params::{AUDIO_MAX_HZ, AUDIO_MIN_HZ};
 
 const SYNC_MIN: f32 = 1.5;
-const MAX_CAND: usize = 120;
+/// How many sync candidates a slot's decode is allowed to try.
+///
+/// The list is sorted by sync power and cut here, so on a quiet band this is
+/// never reached and on a busy one it decides which of the weak signals are
+/// never looked at — which is exactly the shape of issue #307, where the gap
+/// against WSJT-X grew with the number of stations on the band.
+///
+/// Measured on a synthetic forty-signal slot: 120 candidates found thirteen
+/// messages, 300 found fourteen and 600 found fifteen, for 9.6, 10.2 and
+/// 11.8 milliseconds of decode. A slot is fifteen seconds long, so the whole
+/// range is free and the only question is how many are looked at.
+const MAX_CAND: usize = 600;
 
 /// Which of the 77-bit message layouts a decode came from, read straight from
 /// the `i3`/`n3` type bits. Guessing this from the text can't work — free text
