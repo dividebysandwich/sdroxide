@@ -3430,6 +3430,7 @@ fn engine_thread(
     caps.cw_audio_keyed = source.cw_audio_keyed();
     caps.commands_squelch = source.commands_squelch();
     caps.commands_rig_power = source.commands_rig_power();
+    caps.has_rx_antenna = source.rx_antenna().is_some();
     caps.wide_span_hz = source.wide_span_hz();
     let audio_mode = caps.audio_mode;
     let radio_fs = source.sample_rate();
@@ -4220,6 +4221,7 @@ fn engine_thread(
         // …and whether it has an antenna selector, which a CI-V rig only
         // answers once its control link has been open a round trip.
         engine.refresh_antennas();
+        engine.refresh_rx_antenna();
 
         // Drive the FT8/FT4 slot machine (runs in both RX and TX). Returns
         // owned actions to avoid borrowing `engine.digi` and `engine` at once.
@@ -5599,6 +5601,18 @@ impl Engine {
                 }
                 self.want_antenna.0 = Some(name.to_string());
             }
+            // The receiving antenna, adopted unconditionally: there is no
+            // preference here to outrank it. sdroxide never asserts this one —
+            // the radio holds it per band and switching a receive aerial nobody
+            // asked about takes it out of use with nothing on screen to say
+            // so — so a report is always the truth arriving, never the answer
+            // to a command it crossed on the wire.
+            ControlUpdate::RxAntenna(on) => {
+                if self.state.rx_antenna != on {
+                    self.state.rx_antenna = on;
+                    let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+                }
+            }
             ControlUpdate::Ptt(closed) => self.apply_hw_ptt(closed),
             // An over the operator started at the radio. Recorded, never
             // answered: see [`ControlUpdate::RigTx`] for why keying along with
@@ -5869,6 +5883,12 @@ impl Engine {
         // hears 2 m and a vertical that hears 40 are not a mode's business, and
         // a receiver left on the wrong socket hears nothing to decode.
         self.follow_band_antenna(band);
+        // The receiving antenna is *asked*, not asserted. The radio recalls it
+        // per band on its own, so a band change is exactly the moment it may
+        // have moved behind us — and this is the one funnel every band change
+        // goes through, so a QSY made at the radio's own front panel counts
+        // too. The answer arrives as `ControlUpdate::RxAntenna`.
+        self.source.reread_rx_antenna();
         if self.state.rx[0].mode.is_wspr() {
             return;
         }
@@ -7846,6 +7866,25 @@ impl Engine {
                     warn!("switching the radio {}: {e}", if on { "on" } else { "off" });
                 }
             }
+            // The radio's separate receiving antenna, in or out of circuit —
+            // the one time sdroxide writes it. Not recorded in
+            // [`Engine::band_antenna`] and not stored in a memory channel: the
+            // radio recalls it per band itself, and a preference held here
+            // would fight that on every band change.
+            SetRxAntenna(on) => {
+                if !self.caps.has_rx_antenna {
+                    return;
+                }
+                if let Err(e) = self.source.set_rx_antenna(on) {
+                    warn!("switching the receiving antenna {}: {e}", if on { "in" } else { "out" });
+                }
+                // Echoed at once so the chip answers the click; the radio's own
+                // report confirms it a round trip later.
+                if self.state.rx_antenna != on {
+                    self.state.rx_antenna = on;
+                    let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+                }
+            }
             SetAntenna { dir, name } => {
                 match dir {
                     Direction::Rx => {
@@ -7858,6 +7897,11 @@ impl Engine {
                         // A Hi-Z port has fewer front-end states than the 50 Ω
                         // one beside it.
                         self.refresh_rx_gains();
+                        // On an IC-7610 the receiving antenna's setting belongs
+                        // to the socket being selected rather than to the one
+                        // being left, so what it is now is a question for the
+                        // radio.
+                        self.source.reread_rx_antenna();
                     }
                     Direction::Tx => {
                         if let Err(e) = self.source.set_tx_antenna(&name) {
@@ -12895,6 +12939,45 @@ impl Engine {
         let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
     }
 
+    /// Re-publish the receiving antenna when the radio has since said
+    /// something about it.
+    ///
+    /// The same shape as [`Engine::refresh_antennas`], and there for the same
+    /// reason: a control link answers a round trip after the capabilities went
+    /// out, and whether this radio *has* a receiving antenna connector is only
+    /// known once its antenna reply has been seen — the flag rides behind the
+    /// socket, and a radio without the connector answers the socket alone.
+    ///
+    /// Both halves move in the same pass on purpose, so no client ever sees the
+    /// capability turn on with a stale setting behind it.
+    ///
+    /// One thing this cannot do is notice the operator reaching for the RX ANT
+    /// button on the radio itself without changing band: the setting is not
+    /// polled, so the chip is stale until the next band change. That is a
+    /// display error and never a relay movement — sdroxide writes the byte only
+    /// on a click, and every write carries the value last read back.
+    fn refresh_rx_antenna(&mut self) {
+        let now = self.source.rx_antenna();
+        let mut state_changed = false;
+        if let Some(on) = now
+            && self.state.rx_antenna != on
+        {
+            self.state.rx_antenna = on;
+            state_changed = true;
+        }
+        if now.is_some() != self.caps.has_rx_antenna {
+            self.caps.has_rx_antenna = now.is_some();
+            let _ = self.event_tx.send(RadioEvent::CapabilitiesUpdated(self.caps.clone()));
+            // And the setting behind it, whether or not it moved: a client
+            // drawing the control for the first time must not read a `false`
+            // that only means "nothing has been sent yet".
+            state_changed = true;
+        }
+        if state_changed {
+            let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+        }
+    }
+
     /// Re-publish the RX gain ranges when what they depend on has moved.
     ///
     /// The same shape as [`Engine::refresh_antennas`], and there for a
@@ -13565,6 +13648,7 @@ impl Engine {
         self.caps.cw_audio_keyed = self.source.cw_audio_keyed();
         self.caps.commands_squelch = self.source.commands_squelch();
         self.caps.commands_rig_power = self.source.commands_rig_power();
+        self.caps.has_rx_antenna = self.source.rx_antenna().is_some();
         self.caps.wide_span_hz = self.source.wide_span_hz();
         self.audio_mode = self.caps.audio_mode;
         self.radio_fs = self.source.sample_rate();

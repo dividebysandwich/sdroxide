@@ -665,11 +665,15 @@ impl IqSource for EladSource {
                 // The meters arrive on their own telemetry channels, not here;
                 // and the ELAD dialect has no squelch command, so that read is
                 // never asked for either.
+                //
+                // Nor has an FDM-DUO a separate receiving antenna: its two
+                // sockets are a choice between them, which is `Antenna` above.
                 sdroxide_cat::CatUpdate::Swr(_)
                 | sdroxide_cat::CatUpdate::Alc(_)
                 | sdroxide_cat::CatUpdate::Po(_)
                 | sdroxide_cat::CatUpdate::FwdW(_)
                 | sdroxide_cat::CatUpdate::Squelch(_)
+                | sdroxide_cat::CatUpdate::RxAntenna(_)
                 | sdroxide_cat::CatUpdate::Signal(_) => {}
             }
         }

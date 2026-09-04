@@ -227,11 +227,15 @@ pub struct IcomNetSource {
     /// `configure` sends and from this end's own writes. `None` until it has
     /// answered. See [`Self::send_cw`] for why it is worth knowing.
     break_in: Option<civ::BreakIn>,
-    /// Which antenna socket the radio says it is on, and whether it has a
-    /// selector at all: empty until it has answered the read `configure` sends,
-    /// which a radio with one connector NAKs instead — see
+    /// Which socket the radio says it is on, as the command numbers them:
+    /// `None` until it has answered the read `configure` sends, which a radio
+    /// with neither a selector nor a receiving antenna NAKs instead — see
     /// [`civ::read_antenna_frame`].
-    antenna: Option<&'static str>,
+    socket: Option<u8>,
+    /// Whether the radio's separate *receiving* antenna is switched into the
+    /// receive path. `None` on a radio whose antenna reply was the socket
+    /// alone, which is how it says it has no such connector (issue #229).
+    rx_ant: Option<bool>,
     /// How many more times to ask, and when the last ask went out. See where
     /// they are spent in [`Self::pump`].
     antenna_probes_left: u8,
@@ -253,6 +257,19 @@ pub struct IcomNetSource {
 }
 
 impl IcomNetSource {
+    /// The sockets this model's selector has, by name. Empty on a radio with
+    /// one, whose `0x12` is not a selector at all — see
+    /// `IcomModel::antenna_sockets`, which this mirrors.
+    fn antennas(&self) -> &'static [&'static str] {
+        let n = self.dev.info().model.antenna_sockets;
+        if n > 1 { &civ::ANTENNAS[..n.min(civ::ANTENNAS.len())] } else { &[] }
+    }
+
+    /// How many sockets this model has, selector or not.
+    fn antenna_sockets(&self) -> usize {
+        self.dev.info().model.antenna_sockets
+    }
+
     /// Connect, then put the radio into the state this session needs.
     pub fn open(cfg: &IcomNetConfig) -> anyhow::Result<IcomNetSource> {
         let rx_source = cfg.effective_rx_source();
@@ -367,7 +384,8 @@ impl IcomNetSource {
             transmitting: false,
             squelch_set: false,
             break_in: None,
-            antenna: None,
+            socket: None,
+            rx_ant: None,
             antenna_probes_left: ANTENNA_PROBE_RETRIES,
             last_antenna_probe: Instant::now(),
             simplex_dial: None,
@@ -690,7 +708,7 @@ impl IcomNetSource {
         // selector, so a *lost* reply is indistinguishable from that and leaves
         // the panel with no antenna control at all until the next reconnect
         // (issue #258). A few more chances, then let it go.
-        if self.antenna.is_none()
+        if self.socket.is_none()
             && self.antenna_probes_left > 0
             && self.last_antenna_probe.elapsed() >= ANTENNA_PROBE_RETRY
         {
@@ -780,13 +798,28 @@ impl IcomNetSource {
                     self.pending.push(ControlUpdate::Mode(m));
                 }
             }
-            // Which antenna socket the radio is on, asked for once when the
-            // session opens. Adopted, and its arrival is also what says the
-            // radio has a selector — see `Self::learned_antennas`.
+            // The antenna: which socket the radio is on, and behind it the
+            // receiving antenna's own in/out setting. Both adopted, and the
+            // reply's arrival — and its *shape* — is what says which of the two
+            // this radio has; see `Self::learned_antennas` and
+            // [`civ::antenna_frame`].
             0x12 => {
-                if let Some(name) = civ::parse_antenna_reply(&reply.data) {
-                    self.antenna = Some(name);
-                    self.pending.push(ControlUpdate::Antenna(name));
+                if let Some(r) = civ::parse_antenna_reply(&reply.data) {
+                    self.socket = Some(r.socket);
+                    if let Some(on) = r.rx_ant
+                        && self.rx_ant != Some(on)
+                    {
+                        self.rx_ant = Some(on);
+                        self.pending.push(ControlUpdate::RxAntenna(on));
+                    }
+                    // Not reported on a radio with one socket: there is no
+                    // selector there, and a panel told "ANT1" would draw a chip
+                    // whose other position that radio rejects.
+                    if self.antenna_sockets() > 1
+                        && let Some(name) = civ::antenna_name(r.socket, self.antenna_sockets())
+                    {
+                        self.pending.push(ControlUpdate::Antenna(name));
+                    }
                 }
             }
             // The transmit power the radio is set to, asked for once when the
@@ -1108,18 +1141,50 @@ impl IqSource for IcomNetSource {
     /// relay for both directions, so there is no transmit port to pick
     /// separately (issue #238).
     fn set_antenna(&mut self, name: &str) -> Result<()> {
-        // A name from whatever front end was on this radio before is dropped
-        // rather than turned into a socket number by accident.
-        let Some(frame) = civ::set_antenna_frame(self.civ_addr, name) else {
+        // A name from whatever front end was on this radio before — or a socket
+        // this model has not got — is dropped rather than turned into a socket
+        // number by accident.
+        let Some(n) = self.antennas().iter().position(|a| a.eq_ignore_ascii_case(name)) else {
             return Ok(());
         };
-        self.send(frame);
-        self.antenna = civ::ANTENNAS.iter().find(|a| a.eq_ignore_ascii_case(&name)).copied();
+        // The receiving antenna's setting rides out with the socket, because
+        // the same command writes both: a zero here would switch the operator's
+        // receive aerial out of circuit (issue #229).
+        self.send(civ::antenna_frame(self.civ_addr, n as u8, self.rx_ant.unwrap_or(false)));
+        self.socket = Some(n as u8);
+        // And on an IC-7610 the flag belongs to the socket being selected
+        // rather than to the one being left, so ask what it is now.
+        self.send(civ::read_antenna_frame(self.civ_addr));
         Ok(())
     }
 
     fn current_antenna(&self) -> String {
-        self.antenna.unwrap_or_default().to_string()
+        self.socket
+            .and_then(|n| civ::antenna_name(n, self.antenna_sockets()))
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    fn rx_antenna(&self) -> Option<bool> {
+        self.rx_ant
+    }
+
+    /// The same command with the socket held still. Nothing goes out until the
+    /// radio has said which socket that is, and that it has a receiving antenna
+    /// at all — see `civ::antenna_frame`.
+    fn set_rx_antenna(&mut self, on: bool) -> Result<()> {
+        let (Some(socket), true) = (self.socket, self.rx_ant.is_some()) else {
+            return Ok(());
+        };
+        self.rx_ant = Some(on);
+        self.send(civ::antenna_frame(self.civ_addr, socket, on));
+        Ok(())
+    }
+
+    /// Ask the radio again, after something it recalls per band. Never an
+    /// assertion: what comes back is adopted.
+    fn reread_rx_antenna(&mut self) {
+        self.send(civ::read_antenna_frame(self.civ_addr));
     }
 
     /// ANT1/ANT2, once the radio has answered the opening read — and nothing
@@ -1144,10 +1209,7 @@ impl IqSource for IcomNetSource {
     }
 
     fn learned_antennas(&self) -> Option<&'static [&'static str]> {
-        Some(match self.antenna {
-            Some(_) => &civ::ANTENNAS,
-            None => &[],
-        })
+        Some(if self.socket.is_some() { self.antennas() } else { &[] })
     }
 
     fn tx_begin(&mut self, center_hz: f64, _rate: f64) -> Result<f64> {

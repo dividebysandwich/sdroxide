@@ -322,6 +322,22 @@ pub struct DeviceCaps {
     /// already on the wire keeps its number.
     #[serde(default)]
     pub commands_rig_power: bool,
+    /// The radio has a separate *receiving* antenna connector, so there is a
+    /// receive aerial to switch in and out of circuit independently of the
+    /// socket the transmitter uses.
+    ///
+    /// A different thing from [`Self::antennas_rx`], which is a choice between
+    /// sockets: this one switches an extra input into the receive path and
+    /// leaves the main aerial on transmit throughout — an IC-7300MK2's RX ANT
+    /// IN/OUT, an IC-7610's RX ANT (issue #229).
+    ///
+    /// Learned rather than claimed: an Icom's antenna reply carries the flag
+    /// behind the socket only where the connector exists, so the shape of the
+    /// answer is what says so — the same spirit as [`Self::antennas_rx`] being
+    /// empty until the rig has replied at all. Appended last, so every field
+    /// already on the wire keeps its number.
+    #[serde(default)]
+    pub has_rx_antenna: bool,
 }
 
 impl DeviceCaps {

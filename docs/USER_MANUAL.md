@@ -315,12 +315,14 @@ See the [appendix](#16-appendix) for what each mode is.
 The **VFO** module has:
 
 - **A / B** select buttons in the Frequency module (the active VFO is highlighted).
-- Above them, the **⏻ power button**: the same ON/OFF switch the radio's tab on
+- Above them, the **⛓ link button**: the same **LINK** switch the radio's tab on
   the strip carries (see [§2.17](#217-running-more-than-one-radio)), lit while
-  the radio is on. It is on the main window so that a *single*-radio session —
-  which has no tab strip — can still put its radio down and pick it back up.
-  On the compact layouts, where the frequency box has no room to stack it, it is
-  the first thing in the **VFO** menu instead, labelled in words.
+  sdroxide's link to the radio is open. It is on the main window so that a
+  *single*-radio session — which has no tab strip — can still put its radio down
+  and pick it back up. On the compact layouts, where the frequency box has no
+  room to stack it, it is the first thing in the **VFO** menu instead, labelled
+  in words. It is not the radio's power switch: that is **PWR**
+  ([§2.7](#27-receiver-controls)).
 - **Swap VFOs** — exchange A and B.
 - **Copy A to B** — copy the active VFO to the other.
 - **SPLIT** — transmit on one VFO and receive on the other.
@@ -708,12 +710,12 @@ sdroxide brings the receiver back up where you left it rather than on defaults.
 
 #### The RIG box: the radio's own aerial and power switches
 
-A transceiver with an aerial selector, or with a power switch sdroxide can
-reach over the control link, gets a **RIG** box of its own on the control bar —
-next to the receive controls on a desktop layout, and behind a **RIG** button in
-the menu strip on a narrow window. Like **DIV** and **SUB**, it appears only for
-hardware that has what it drives; a radio with one socket and no remote power
-never sees it.
+A transceiver with an aerial selector, a separate receiving antenna, or a power
+switch sdroxide can reach over the control link, gets a **RIG** box of its own
+on the control bar — next to the receive controls on a desktop layout, and
+behind a **RIG** button in the menu strip on a narrow window. Like **DIV** and
+**SUB**, it appears only for hardware that has what it drives; a radio with one
+socket, no receive aerial and no remote power never sees it.
 
 - **ANT** — the socket the radio is receiving on, as a button you click to step
   to the next one: `ANT1` → `ANT2` → `ANT1` on an Icom, and round the ports of
@@ -721,12 +723,28 @@ never sees it.
   one as the **ANT** button on its front panel, and it is remembered per band
   like every other antenna choice in sdroxide — so this is the control for
   *changing your mind*, and the band memory is what saves you from having to.
-- **PWR** — **ON** and **OFF** switch the radio itself, over the control link.
-  Not sdroxide's own on/off in the tab strip, which closes the interface and
-  leaves the radio running. Two buttons rather than a switch, because a radio
-  that is off answers nothing and there is no position to read back.
+  It appears only where there is a choice of sockets: an IC-7300MK2 has one,
+  and shows **RX ANT** alone.
+- **RX ANT** — the radio's separate *receiving* antenna, switched into the
+  receive path or out of it, lit while it is in. Not a choice of socket: it is
+  an extra input — a loop, a beverage, a preamplifier — and the aerial on the
+  main socket stays on transmit throughout. An IC-7300MK2's RX ANT IN/OUT, an
+  IC-7610's RX ANT.
 
-Both are the same controls that live under **Settings → Radio**
+  Unlike the socket above, sdroxide does **not** remember this one. The radio
+  holds it per band itself, so sdroxide asks the radio again after every band
+  change and shows what it answers; clicking the chip is the only thing that
+  moves it. The one thing that will not reach the chip is the **RX ANT** button
+  on the radio's own front panel pressed without changing band — it catches up
+  at the next band change.
+- **PWR** — **ON** and **OFF** switch the radio itself, over the control link.
+  This is the one true on/off in sdroxide; the **LINK** switch in the tab strip
+  is sdroxide's own end of the connection and leaves the radio running
+  ([2.17](#217-running-more-than-one-radio)). Two buttons rather than a switch,
+  because a radio that is off answers nothing and there is no position to read
+  back.
+
+These are the same controls that live under **Settings → Radio**
 ([§6.2.2](#622-cat-radios-serial-control--usb-audio)), where the longer explanation of
 what each one needs from the radio is; they are here so that changing bands and
 reaching for the other aerial do not mean opening a dialog.
@@ -1969,23 +1987,27 @@ scanning. Besides its name, each tab carries:
   background radio still fills its FT8 list and still spots.
 - **⊞** — open this radio in a split view of its own, or close the one it
   has (see below).
-- **ON / OFF** — switch the radio itself on or off (see below). The chip is lit
-  while the radio is on, like every other chip in the program.
+- **LINK** — open or close sdroxide's link to this radio (see below). The chip
+  is lit while the link is open, like every other chip in the program.
 
 Closing a radio is deliberately *not* on the strip — that lives in
 **Settings → Radio**, behind a dialog rather than one stray click away.
 
-**Switching a radio off.** A station does not always have every radio it is set
-up for plugged in. Each tab carries a switch that says which state its radio is
-in — **ON**, lit, or **OFF**, dark — and pressing it changes that state.
-Switched off, the radio's interface is closed: no device claimed, no CAT port
-held, no network rig dialled, and no reconnecting in the background. Everything
-it is configured as stays exactly where it is. The tab stays too, with its name
-greyed, and its whole Settings → Radio page is still there to be read and
-edited. Press the switch again and the radio opens where it left off.
+**Putting a radio down.** A station does not always have every radio it is set
+up for plugged in. Each tab carries a **LINK** switch — lit while sdroxide's
+link to that radio is open, dark when it is not — and pressing it changes that.
+With the link closed, the radio's interface is closed with it: no device
+claimed, no CAT port held, no network rig dialled, and no reconnecting in the
+background. Everything it is configured as stays exactly where it is. The tab
+stays too, with its name greyed, and its whole Settings → Radio page is still
+there to be read and edited. Press the switch again and the radio opens where
+it left off.
 
-It is *sdroxide's* switch rather than the radio's, and the difference matters
-on a station with more than one rig on it. What it lets go of is this end of
+It says **LINK** rather than on and off because it is *sdroxide's* switch rather
+than the radio's, and the difference matters on a station with more than one rig
+on it. On/off in sdroxide means one thing and one control: **PWR**, which throws
+the set's own switch over the control link
+([2.7](#27-receiver-controls)). What it lets go of is this end of
 the connection — the USB device, the serial CAT port, the LAN session — so
 sdroxide is demonstrably no longer holding that radio: the dongle can be
 unplugged, the port is free for another program, and the rig's network session
@@ -2000,10 +2022,13 @@ that *is* switched on.
 
 The same switch is in the roster at the top of **Settings → Radio**, which is
 where the choice is easiest to see across all the radios at once — and on the
-main window itself, as the **⏻ power button** above the A/B selector in the
+main window itself, as the **⛓ link button** above the A/B selector in the
 Frequency module (at the top of the **VFO** menu on a tablet- or phone-width
 layout), which switches whichever radio the pane it sits on is showing. All
-three are one switch: press any of them and the others follow. It is
+three are one switch: press any of them and the others follow. There are three
+because a single-radio station has neither a tab strip nor a roster switch —
+the button in the Frequency module is the only one it gets — while a station
+with several wants it on the strip, next to the radio it belongs to. It is
 remembered: a radio switched off is still switched off after a restart, and
 sdroxide never touches its device at start-up. That is what makes it the right
 place to leave the rig that is boxed for the summer, or the dongle somebody has
@@ -6796,14 +6821,39 @@ only.
   ANT3 or ANT4 at the radio, and sdroxide shows no socket rather than claiming
   the wrong one.
 
+  One thing CI-V cannot be asked is *how many* sockets a radio has, and one
+  model turns out to answer the read without having a selector at all: an
+  IC-7300MK2's antenna command switches its receiving antenna and nothing else,
+  so it gets the **Receive antenna** row below and no socket row. That fact
+  comes from the model you picked above rather than from the radio.
+
   The same control is on the main window's **RIG** box, as **ANT** — see
   [2.7](#27-receiver-controls). You do not have to come here to change socket.
+- **Receive antenna** (Icom only) — the radio's separate receiving antenna,
+  switched into the receive path or out of it: an IC-7300MK2's RX ANT IN/OUT,
+  an IC-7610's RX ANT. The main aerial stays on transmit either way, which is
+  what makes it a different thing from the socket above rather than a third
+  socket.
+
+  The row appears only where the radio has the connector, and it says so by the
+  shape of its own answer: the antenna reply carries that setting behind the
+  socket where there is one to carry, and the socket alone where there is not.
+
+  It is deliberately not remembered here, and not carried in a memory channel.
+  The radio recalls it per band itself, so sdroxide reads it back after every
+  band change — including one you made at the radio — and shows what the radio
+  says. Ticking the box is the only thing that moves it, which is the point: a
+  receive-only input switched out behind your back is an aerial gone quiet with
+  nothing on screen to say why.
+
+  Also on the main window's **RIG** box, as **RX ANT** — see
+  [2.7](#27-receiver-controls).
 - **Radio power** (Icom only) — **On** and **Off** switch *the radio* over the
-  CI-V link, the way RS-BA1 and wfview do. This is not sdroxide's own on/off in
-  the tab strip, which closes the interface and leaves the radio running: this
-  one leaves the interface open and switches the radio off, which is the way
-  round that matters, because the link has to survive for the switch back on to
-  reach anything. Over the network that is what **Network Control** keeps
+  CI-V link, the way RS-BA1 and wfview do. This is not sdroxide's own **LINK**
+  switch in the tab strip, which closes sdroxide's end and leaves the radio
+  running: this one leaves the interface open and switches the radio off, which
+  is the way round that matters, because the link has to survive for the switch
+  back on to reach anything. Over the network that is what **Network Control** keeps
   awake; over a serial cable it is the radio's CI-V port, which stays powered
   on a set switched off at the front rather than unplugged. Powering on sends
   the run of wake-up bytes Icom's own documentation asks for, sized to the port's
@@ -6812,7 +6862,8 @@ only.
 
   Two buttons rather than a switch, deliberately: a radio that is off answers
   nothing, so there is no position to read back, and a toggle could only ever
-  show you your own last click.
+  show you your own last click. This is sdroxide's only on/off control; the
+  **LINK** switch is sdroxide's own end of the connection.
 
   These two are on the main window's **RIG** box as well, as **PWR ON** / **OFF**
   — see [2.7](#27-receiver-controls).

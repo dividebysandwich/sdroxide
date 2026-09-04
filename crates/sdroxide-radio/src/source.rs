@@ -77,6 +77,14 @@ pub enum ControlUpdate {
     /// putting a session file's port back on top of the one the operator left
     /// the radio on.
     Antenna(&'static str),
+    /// Whether the radio's separate *receiving* antenna is switched into the
+    /// receive path — an IC-7300MK2's RX ANT IN/OUT, an IC-7610's RX ANT.
+    ///
+    /// The radio's own setting arriving, and *only* ever arriving: the rig
+    /// recalls it per band (an IC-7610 keeps antenna memories at
+    /// `1A 05 0276~0287`), so it is read and adopted rather than asserted, and
+    /// sdroxide writes it exactly when the operator clicks.
+    RxAntenna(bool),
     /// The state of the radio's own PTT line — a foot switch, a mic button, or
     /// whatever is wired to the board's PTT input. `true` is keyed.
     ///
@@ -242,6 +250,37 @@ pub trait IqSource: Send {
     fn commands_rig_power(&self) -> bool {
         false
     }
+    /// Whether this radio has a separate *receiving* antenna connector, and
+    /// whether it is switched into the receive path.
+    ///
+    /// `None` — the default — where it has none, or has not said yet, which is
+    /// every SDR: a board's ports are a choice between sockets, not an extra
+    /// input switched in alongside the one the transmitter uses. `Some`
+    /// becomes `DeviceCaps::has_rx_antenna` (that there is one) and
+    /// `RadioState::rx_antenna` (which way it is set).
+    ///
+    /// Asked on every pass of the engine loop, like [`Self::learned_antennas`],
+    /// so it must not allocate or take a lock that anything else holds for
+    /// long.
+    fn rx_antenna(&self) -> Option<bool> {
+        None
+    }
+    /// Switch that connector into the receive path, or out of it.
+    ///
+    /// Only ever from an operator's click. The radio recalls the setting per
+    /// band on its own, so everywhere else it is read and adopted — see
+    /// [`Self::reread_rx_antenna`].
+    fn set_rx_antenna(&mut self, _on: bool) -> Result<()> {
+        Ok(())
+    }
+    /// Ask the radio again what its antennas are set to, because something it
+    /// recalls per band has just happened — a band change, or a socket
+    /// command whose answer belongs to the socket being selected rather than
+    /// to the one being left.
+    ///
+    /// Not an assertion: what comes back is adopted. Free on a front end with
+    /// nothing to ask.
+    fn reread_rx_antenna(&mut self) {}
     /// Whether the receive port is the source's own to decide, so a remembered
     /// one must not be restored over the top of it.
     ///
@@ -1318,6 +1357,15 @@ impl IqSource for ConvertedSource {
     }
     fn commands_rig_power(&self) -> bool {
         self.inner.commands_rig_power()
+    }
+    fn rx_antenna(&self) -> Option<bool> {
+        self.inner.rx_antenna()
+    }
+    fn set_rx_antenna(&mut self, on: bool) -> Result<()> {
+        self.inner.set_rx_antenna(on)
+    }
+    fn reread_rx_antenna(&mut self) {
+        self.inner.reread_rx_antenna();
     }
 
     fn owns_rx_antenna(&self) -> bool {

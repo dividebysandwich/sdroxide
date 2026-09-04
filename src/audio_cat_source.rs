@@ -900,6 +900,12 @@ impl IqSource for AudioCatSource {
                     self.antenna = name.to_string();
                     out.push(ControlUpdate::Antenna(name));
                 }
+                // The receiving antenna, from the same reply — read when the
+                // port opened and again after every band change, because the
+                // radio recalls it per band and this end never asserts it.
+                sdroxide_cat::CatUpdate::RxAntenna(on) => {
+                    out.push(ControlUpdate::RxAntenna(on));
+                }
                 // The power the rig came up on, read once when the port opened.
                 // The engine adopts it into the Drive slider rather than
                 // commanding the rig back — the radio's own setting is the
@@ -987,6 +993,22 @@ impl IqSource for AudioCatSource {
 
     fn commands_rig_power(&self) -> bool {
         self.cat.commands_rig_power()
+    }
+
+    /// The rig's separate receiving antenna, learned the same way the socket
+    /// list is: the flag rides behind the socket in the antenna reply, and a
+    /// radio without the connector answers the socket alone.
+    fn rx_antenna(&self) -> Option<bool> {
+        self.cat.rx_antenna()
+    }
+
+    fn set_rx_antenna(&mut self, on: bool) -> Result<()> {
+        self.cat.set_rx_antenna(on);
+        Ok(())
+    }
+
+    fn reread_rx_antenna(&mut self) {
+        self.cat.reread_antenna();
     }
 
     /// The panel's width control, sent to the only filter in the path.

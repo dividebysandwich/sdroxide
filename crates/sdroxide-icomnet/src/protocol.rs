@@ -895,6 +895,14 @@ pub struct Model {
     /// 689-bin scope and might well share this too: nobody has reported it, and
     /// guessing here would break a radio that works today.
     pub if_inverted: bool,
+    /// How many aerial sockets this model's `0x12` selector switches between.
+    ///
+    /// Mirrors `sdroxide_types::IcomModel::antenna_sockets`, which carries the
+    /// same fact for the serial CAT path and explains why it cannot simply be
+    /// asked. `1` means the command is not a selector here at all: on an
+    /// IC-7300MK2 it switches the receiving antenna in and out, and nothing
+    /// else.
+    pub antenna_sockets: usize,
 }
 
 /// Everything a model we do not recognise still gets: the common command set,
@@ -913,6 +921,7 @@ pub const UNKNOWN_MODEL: Model = Model {
     // microphone path.
     data_mode_sub: Some(0x06),
     if_inverted: false,
+    antenna_sockets: 2,
 };
 
 /// Models whose `1A 05` numbering has been read out of the manufacturer's CI-V
@@ -937,6 +946,9 @@ pub const MODELS: &[Model] = &[
         lan_afif_select: Some(0x0079),
         data_mode_sub: Some(0x06),
         if_inverted: false,
+        // One aerial socket. Its `0x12` is not a selector: the guide lists
+        // sub-command `00` alone, `00/01` switching the receiving antenna.
+        antenna_sockets: 1,
     },
     Model {
         civ_address: 0xA4,
@@ -955,6 +967,7 @@ pub const MODELS: &[Model] = &[
         lan_afif_select: Some(0x0114),
         data_mode_sub: Some(0x06),
         if_inverted: false,
+        antenna_sockets: 2,
     },
     Model {
         civ_address: 0xB2,
@@ -980,6 +993,7 @@ pub const MODELS: &[Model] = &[
         // SSB lands on the wrong sideband until the mix runs the other way.
         // See `Model::if_inverted` for what is and is not known about that.
         if_inverted: true,
+        antenna_sockets: 2,
     },
     Model {
         civ_address: 0x98,
@@ -1003,6 +1017,7 @@ pub const MODELS: &[Model] = &[
         lan_afif_select: Some(0x0086),
         data_mode_sub: Some(0x06),
         if_inverted: false,
+        antenna_sockets: 2,
     },
     Model {
         civ_address: 0xA2,
@@ -1018,6 +1033,7 @@ pub const MODELS: &[Model] = &[
         lan_afif_select: Some(0x0110),
         data_mode_sub: Some(0x06),
         if_inverted: false,
+        antenna_sockets: 2,
     },
     Model {
         civ_address: 0xAC,
@@ -1038,6 +1054,7 @@ pub const MODELS: &[Model] = &[
         lan_afif_select: Some(0x0122),
         data_mode_sub: Some(0x06),
         if_inverted: false,
+        antenna_sockets: 2,
     },
     Model {
         civ_address: 0x96,
@@ -1061,6 +1078,7 @@ pub const MODELS: &[Model] = &[
         // NG to, once per mode change.
         data_mode_sub: None,
         if_inverted: false,
+        antenna_sockets: 2,
     },
     Model {
         civ_address: 0x8E,
@@ -1088,6 +1106,7 @@ pub const MODELS: &[Model] = &[
         lan_afif_select: Some(0x0056),
         data_mode_sub: Some(0x06),
         if_inverted: false,
+        antenna_sockets: 2,
     },
 ];
 

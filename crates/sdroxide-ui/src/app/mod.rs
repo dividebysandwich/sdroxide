@@ -1548,16 +1548,16 @@ impl SdroxideApp {
         self.radio_roster.iter().find(|c| c.id == self.radio_id)?.attached_to
     }
 
-    /// Whether this radio is switched on — what the top bar's power chip
-    /// shows. `None` when there is no switch to draw: the roster is empty, the
-    /// radio is at the far end of a station that holds no switch a client may
-    /// throw, or its front end is lent out as somebody's panadapter receiver —
-    /// the same radios the strip offers no switch for.
+    /// Whether sdroxide's link to this radio is open — what the top bar's LINK
+    /// chip shows. `None` when there is no switch to draw: the roster is empty,
+    /// the radio is at the far end of a station that holds no switch a client
+    /// may throw, or its front end is lent out as somebody's panadapter
+    /// receiver — the same radios the strip offers no switch for.
     ///
     /// Read from the shell's roster either way, so a radio of this machine's
     /// own and one at a station are answered the same: the shell is what knows
     /// which of the two this tab is, and it has already asked the station.
-    pub(crate) fn own_power_state(&self) -> Option<bool> {
+    pub(crate) fn own_link_state(&self) -> Option<bool> {
         let chip = self.radio_roster.iter().find(|c| c.id == self.radio_id)?;
         (chip.switchable && chip.attached_to.is_none()).then_some(chip.enabled)
     }

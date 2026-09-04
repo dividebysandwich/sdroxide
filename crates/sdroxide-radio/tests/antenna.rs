@@ -517,3 +517,184 @@ fn the_operator_can_still_move_a_cabled_front_end() {
     drop(h);
     let _ = thread.map(|t| t.join());
 }
+
+/// A transceiver with a separate *receiving* antenna: an extra input switched
+/// into the receive path while the aerial on the main socket stays on transmit.
+///
+/// Nothing like the sockets above, and it is the difference that matters. The
+/// radio holds this setting itself, per band, and answers for it — so sdroxide
+/// reads it and adopts it, and writes it only when the operator clicks. Every
+/// write sdroxide *does* make carries the value it last read, because on an
+/// IC-7300MK2 the same command carries both and a zero there means "out of
+/// circuit" (issue #229).
+struct RxAntRig {
+    ports: Ports,
+    /// What the radio is set to, as the radio holds it. `None` is a radio with
+    /// no such connector, which is how most of them answer.
+    rx_ant: Arc<Mutex<Option<bool>>>,
+    /// Every write the engine made to it, and every time it went and asked.
+    wrote: Arc<Mutex<Vec<bool>>>,
+    asked: Arc<Mutex<usize>>,
+    /// What the radio will report next time it is polled — the answer to an
+    /// ask, or the operator reaching for the button on the radio itself.
+    report: Arc<Mutex<Option<bool>>>,
+}
+
+impl RxAntRig {
+    fn new(rx_ant: Option<bool>) -> RxAntRig {
+        RxAntRig {
+            ports: Ports::fresh(),
+            rx_ant: Arc::new(Mutex::new(rx_ant)),
+            wrote: Arc::new(Mutex::new(Vec::new())),
+            asked: Arc::new(Mutex::new(0)),
+            report: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+impl IqSource for RxAntRig {
+    fn sample_rate(&self) -> f64 {
+        RATE
+    }
+    fn center_hz(&self) -> f64 {
+        CENTER
+    }
+    fn set_center_hz(&mut self, _hz: f64) -> Result<()> {
+        Ok(())
+    }
+    fn read(&mut self, buf: &mut [Complex32]) -> Result<usize> {
+        std::thread::sleep(Duration::from_millis(5));
+        let n = buf.len().min(256);
+        buf[..n].fill(Complex32::new(0.0, 0.0));
+        Ok(n)
+    }
+    fn describe(&self) -> String {
+        "rig with a receiving antenna".into()
+    }
+    fn poll_control(&mut self) -> Vec<ControlUpdate> {
+        match self.report.lock().unwrap().take() {
+            Some(on) => vec![ControlUpdate::RxAntenna(on)],
+            None => Vec::new(),
+        }
+    }
+    fn rx_antenna(&self) -> Option<bool> {
+        *self.rx_ant.lock().unwrap()
+    }
+    fn set_rx_antenna(&mut self, on: bool) -> Result<()> {
+        self.wrote.lock().unwrap().push(on);
+        *self.rx_ant.lock().unwrap() = Some(on);
+        Ok(())
+    }
+    fn reread_rx_antenna(&mut self) {
+        *self.asked.lock().unwrap() += 1;
+        // The radio answering, a round trip later.
+        *self.report.lock().unwrap() = *self.rx_ant.lock().unwrap();
+    }
+    fn set_antenna(&mut self, name: &str) -> Result<()> {
+        self.ports.asked.lock().unwrap().push((Direction::Rx, name.into()));
+        *self.ports.rx.lock().unwrap() = name.into();
+        Ok(())
+    }
+    fn current_antenna(&self) -> String {
+        self.ports.rx()
+    }
+}
+
+/// The control appears only for a radio that has said it has the connector —
+/// which it says by answering with the flag at all. Everything else, which is
+/// every SDR, publishes nothing and gets no control.
+#[test]
+fn the_receiving_antenna_is_published_only_where_the_radio_has_one() {
+    for (has, want) in [(None, false), (Some(false), true), (Some(true), true)] {
+        let rig = RxAntRig::new(has);
+        let mut h = start_engine(Box::new(rig), caps(), EngineConfig::default());
+        let thread = h.thread.take();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut seen = None;
+        while Instant::now() < deadline && seen.is_none() {
+            if let Ok(RadioEvent::Capabilities(c) | RadioEvent::CapabilitiesUpdated(c)) =
+                h.event_rx.recv_timeout(Duration::from_millis(100))
+            {
+                seen = Some(c.has_rx_antenna);
+            }
+        }
+        assert_eq!(seen, Some(want), "a radio answering {has:?}");
+        drop(h);
+        let _ = thread.map(|t| t.join());
+    }
+}
+
+/// The end-to-end case the issue was about: a band change must *ask* the radio
+/// what its receiving antenna is set to, never assert one. sdroxide had been
+/// writing the byte as zero on every band change, which switched the operator's
+/// receive aerial out of circuit each time they changed band.
+#[test]
+fn a_band_change_asks_for_the_receiving_antenna_rather_than_asserting_it() {
+    let rig = RxAntRig::new(Some(true));
+    let (rx_ant, wrote, asked, report) =
+        (rig.rx_ant.clone(), rig.wrote.clone(), rig.asked.clone(), rig.report.clone());
+    let mut h = start_engine(Box::new(rig), caps(), EngineConfig::default());
+    let thread = h.thread.take();
+    let send = |c: Command| h.cmd_tx.send(c).unwrap();
+
+    assert!(wait_for_state(&h.event_rx, |s| s.rx_antenna), "the radio's own setting is adopted");
+
+    // Change band, one crossing at a time — the engine drains its whole
+    // command queue before it looks at the band, so two sent together are one
+    // change and the test would be counting its own timing.
+    let asks = || *asked.lock().unwrap();
+    let before = asks();
+    send(Command::SetVfo { vfo: sdroxide_types::Vfo::A, hz: 7_100_000.0 });
+    assert!(wait_for_state(&h.event_rx, |s| s.band == sdroxide_types::Band::M40));
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(asks() > before, "a band change asks");
+
+    // A socket change asks too: on an IC-7610 the flag belongs to the socket
+    // being selected rather than to the one being left.
+    let before = asks();
+    send(Command::SetAntenna { dir: Direction::Rx, name: "LNAL".into() });
+    assert!(wait_for_state(&h.event_rx, |s| s.antenna_rx == "LNAL"));
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(asks() > before, "a socket change asks");
+
+    // And back, with the socket now remembered on 40 m so the assertion of
+    // issue #258 is in the picture too.
+    let before = asks();
+    send(Command::SetVfo { vfo: sdroxide_types::Vfo::A, hz: 14_100_000.0 });
+    assert!(wait_for_state(&h.event_rx, |s| s.band == sdroxide_types::Band::M20));
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(asks() > before, "every band change asks, not just the first");
+
+    assert_eq!(*rx_ant.lock().unwrap(), Some(true), "the receive aerial was switched out");
+    assert!(wrote.lock().unwrap().is_empty(), "nothing may write it but a click");
+
+    // And what the radio says is adopted, including a change made at the radio
+    // itself that the next ask brings back.
+    *rx_ant.lock().unwrap() = Some(false);
+    *report.lock().unwrap() = Some(false);
+    assert!(wait_for_state(&h.event_rx, |s| !s.rx_antenna), "the radio's own change is adopted");
+
+    drop(h);
+    let _ = thread.map(|t| t.join());
+}
+
+/// The one thing that does move it, and the echo that answers the click before
+/// the radio has.
+#[test]
+fn only_a_click_writes_the_receiving_antenna() {
+    let rig = RxAntRig::new(Some(false));
+    let wrote = rig.wrote.clone();
+    let mut h = start_engine(Box::new(rig), caps(), EngineConfig::default());
+    let thread = h.thread.take();
+
+    h.cmd_tx.send(Command::SetRxAntenna(true)).unwrap();
+    assert!(wait_for_state(&h.event_rx, |s| s.rx_antenna));
+    assert_eq!(*wrote.lock().unwrap(), vec![true]);
+
+    h.cmd_tx.send(Command::SetRxAntenna(false)).unwrap();
+    assert!(wait_for_state(&h.event_rx, |s| !s.rx_antenna));
+    assert_eq!(*wrote.lock().unwrap(), vec![true, false]);
+
+    drop(h);
+    let _ = thread.map(|t| t.join());
+}

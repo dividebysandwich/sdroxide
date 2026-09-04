@@ -77,6 +77,47 @@ fn radio_antenna_row(
     ui.end_row();
 }
 
+/// The radio's separate *receiving* antenna, for a control link that carries
+/// one (issue #229).
+///
+/// Not the same thing as the row above, and the difference is the whole reason
+/// it exists: that one picks between the sockets a transmitter can also use,
+/// while this switches an extra receive-only input into the path and leaves the
+/// main aerial on transmit throughout. An IC-7300MK2 has one aerial socket and
+/// this; an IC-7610 has both.
+///
+/// Whether the radio has one is learned rather than claimed — the flag rides
+/// behind the socket in its antenna reply, and a radio without the connector
+/// answers the socket alone — so the row appears a round trip after the session
+/// opens, or not at all.
+fn radio_rx_antenna_row(
+    ui: &mut egui::Ui,
+    caps: Option<&sdroxide_types::DeviceCaps>,
+    rx_antenna: bool,
+    cmds: &mut Vec<Command>,
+) {
+    if !caps.is_some_and(|c| c.has_rx_antenna) {
+        return;
+    }
+    ui.label("Receive antenna").on_hover_text(
+        "The radio's separate receiving antenna — RX ANT on the back — switched \
+         into the receive path or out of it. Its own setting, the same one as \
+         the radio's RX ANT button.\n\n\
+         The aerial on the main socket stays on transmit either way: this is an \
+         extra input for receiving, a loop or a beverage, not a choice of \
+         socket.\n\n\
+         Unlike the antenna above, this is *not* remembered here. The radio \
+         holds it per band itself, so sdroxide reads it back after every band \
+         change and shows what the radio says; ticking this box is the only \
+         thing that moves it.",
+    );
+    let mut on = rx_antenna;
+    if ui.checkbox(&mut on, "In the receive path").changed() {
+        cmds.push(Command::SetRxAntenna(on));
+    }
+    ui.end_row();
+}
+
 /// The radio's own power switch, for a control link that carries one.
 ///
 /// Two buttons rather than a toggle, because there is nothing here that *reads*
@@ -94,8 +135,9 @@ fn radio_power_row(
     }
     ui.label("Radio power").on_hover_text(
         "Switch the radio itself off, and back on again, over the control \
-         link — not sdroxide's own on/off, which closes the interface and \
-         leaves the radio running.\n\n\
+         link. This is the one true on/off in the program — not sdroxide's own \
+         LINK switch, which closes sdroxide's end and leaves the radio \
+         running.\n\n\
          For the switch back on to reach anything, the radio's control end has \
          to stay awake while it is off. Over the network that is what \
          Network Control does. Over a serial cable it is the radio's CI-V \
@@ -124,8 +166,10 @@ pub(in crate::app) fn settings_cat_tab(
     radio_edit: &mut Option<sdroxide_types::RadioConfig>,
     caps: Option<&sdroxide_types::DeviceCaps>,
     // Which antenna socket the radio says it is receiving on — for the
-    // families here whose rigs have two.
+    // families here whose rigs have two — and whether its separate receiving
+    // antenna, where it has one, is in the receive path.
     antenna_rx: &str,
+    rx_antenna: bool,
     can_probe: bool,
     cmds: &mut Vec<Command>,
 ) {
@@ -727,6 +771,7 @@ pub(in crate::app) fn settings_cat_tab(
 
         if cfg.cat.family == CatFamily::Icom {
             radio_antenna_row(ui, caps, antenna_rx, "cat_icom_antenna", cmds);
+            radio_rx_antenna_row(ui, caps, rx_antenna, cmds);
             radio_power_row(ui, caps, cmds);
         }
 
@@ -2453,6 +2498,7 @@ pub(in crate::app) fn settings_icomnet_tab(
     radio_edit: &mut Option<sdroxide_types::RadioConfig>,
     caps: Option<&sdroxide_types::DeviceCaps>,
     antenna_rx: &str,
+    rx_antenna: bool,
     test: &mut bool,
     copy_report: &mut bool,
     test_result: &Option<crate::app::settings::TestOutcome>,
@@ -2520,6 +2566,7 @@ pub(in crate::app) fn settings_icomnet_tab(
         ui.end_row();
 
         radio_antenna_row(ui, caps, antenna_rx, "icomnet_antenna", cmds);
+        radio_rx_antenna_row(ui, caps, rx_antenna, cmds);
         radio_power_row(ui, caps, cmds);
 
         ui.label("Audio sample rate");

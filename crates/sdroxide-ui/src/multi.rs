@@ -681,22 +681,22 @@ impl MultiApp {
                     }
                     // The switch. A radio at the far end of a connection has
                     // one too — the request goes to the station, which is where
-                    // such a radio has always been switched on and off.
+                    // such a radio has always been opened and closed.
                     //
-                    // Lit while the radio is on, like every other chip in the
-                    // program: a chip wears the accent when what it says is the
-                    // state in force, and this one says which state its radio is
-                    // in. Lighting it for OFF read as the opposite (issue #253).
+                    // Lit while the link is open, like every other chip in the
+                    // program: a chip wears the accent when what it names is in
+                    // force. Lighting it for OFF read as the opposite (issue
+                    // #253), and reading "ON" at all read as the *radio's* own
+                    // switch however the hover text argued — so it names the
+                    // link now, and on/off is left to PWR, which really does
+                    // throw the set's own switch.
                     if Self::switchable(tab) && tab.attached_to.is_none() {
-                        let power = crate::chrome::chip(
-                            ui,
-                            tab.enabled,
-                            RichText::new(if tab.enabled { "ON" } else { "OFF" }).size(11.0),
-                        );
+                        let power =
+                            crate::chrome::chip(ui, tab.enabled, RichText::new("LINK").size(11.0));
                         let tip = if tab.enabled {
-                            crate::chrome::POWER_OFF_TIP
+                            crate::chrome::LINK_CLOSE_TIP
                         } else {
-                            crate::chrome::POWER_ON_TIP
+                            crate::chrome::LINK_OPEN_TIP
                         };
                         if power.on_hover_text(tip).clicked() {
                             actions.push(StripAction::Power { id, on: !tab.enabled });

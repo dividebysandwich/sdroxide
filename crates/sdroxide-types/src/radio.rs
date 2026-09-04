@@ -558,6 +558,35 @@ impl IcomModel {
             _ => Some(0x06),
         }
     }
+
+    /// How many aerial sockets this model's `0x12` selector switches between.
+    ///
+    /// The third thing on this list that CI-V cannot be asked. The command
+    /// carries a socket *number* and nothing anywhere says how many a radio
+    /// has, so sdroxide learns the rest by probing: a radio with no selector
+    /// NAKs the read, and one that answers is taken to have the two every
+    /// model with a selector has at least.
+    ///
+    /// The IC-7300MK2 is where that broke. It answers the read — but with the
+    /// *receiving antenna*'s setting, because on that radio `0x12` is not a
+    /// selector at all: one aerial socket, sub-command `00` and no other, and
+    /// the byte behind it switches the RX ANT connector in and out. sdroxide
+    /// offered it an ANT1/ANT2 chip whose second position sends `12 01 …`,
+    /// which the radio rejects (issue #229).
+    ///
+    /// Only that model is claimed, and only because its CI-V reference guide
+    /// says so in as many words. The rest keep the two they have always been
+    /// offered — which is not a claim about them but the existing floor, since
+    /// a radio without a selector never answers the read. The four-socket
+    /// IC-785x line is left at two on purpose: naming ANT3 would mean
+    /// extending `civ::ANTENNAS`, and a socket sdroxide cannot name already
+    /// reads back as no socket rather than a wrong one.
+    pub fn antenna_sockets(self) -> usize {
+        match self {
+            IcomModel::Ic7300Mk2 => 1,
+            _ => 2,
+        }
+    }
 }
 
 /// Which transceiver generation's `TX` command keys the rig.

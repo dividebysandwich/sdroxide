@@ -232,6 +232,10 @@ impl PanadapterSource {
             // on the radio being *listened to*, and switching the receiver
             // painting the picture off would leave nothing to draw with.
             commands_rig_power: ctrl.commands_rig_power,
+            // The transceiver's as well, and for the same reason: the receiving
+            // antenna on offer is the one on the radio being listened to. A
+            // borrowed receiver has its own aerial and no say in this.
+            has_rx_antenna: ctrl.has_rx_antenna,
         }
     }
 
@@ -617,6 +621,20 @@ impl IqSource for PanadapterSource {
 
     fn commands_rig_power(&self) -> bool {
         self.ctrl.commands_rig_power()
+    }
+
+    /// The transceiver's receiving antenna, for the reason its power switch is
+    /// the transceiver's: it is the radio being listened to.
+    fn rx_antenna(&self) -> Option<bool> {
+        self.ctrl.rx_antenna()
+    }
+
+    fn set_rx_antenna(&mut self, on: bool) -> Result<()> {
+        self.ctrl.set_rx_antenna(on)
+    }
+
+    fn reread_rx_antenna(&mut self) {
+        self.ctrl.reread_rx_antenna();
     }
 
     /// Gated on the same test, so the two answers cannot disagree: a level that

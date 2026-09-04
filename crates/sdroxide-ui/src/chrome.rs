@@ -1376,7 +1376,7 @@ pub fn chip_draggable(ui: &mut Ui, selected: bool, text: impl Into<RichText>) ->
     chip_impl(ui, selected, text.into(), None, Sense::click_and_drag(), None)
 }
 
-/// What sdroxide's own power switch does, in the one place all three of its
+/// What sdroxide's own link to a radio does, in the one place all three of its
 /// homes read it from: the frequency box, the tab strip and the settings
 /// roster.
 ///
@@ -1384,45 +1384,45 @@ pub fn chip_draggable(ui: &mut Ui, selected: bool, text: impl Into<RichText>) ->
 /// the rig's own power button — is a fair guess and a wrong one, and an
 /// operator who believed it would think a radio that is still connected had
 /// been switched off (issue #169).
-pub const POWER_OFF_TIP: &str = "Switch this radio off: sdroxide lets its interface go — the \
-     device released, a CAT port closed, a network session hung up — so it can neither receive \
-     nor transmit. Its settings are kept. This is sdroxide's switch, not the rig's: the radio \
-     itself stays powered.";
+///
+/// The chips it labels say **LINK** rather than ON and OFF for the same
+/// reason, and it took a second report to get there: a switch reading "on/off"
+/// beside a radio is read as the radio's, whatever the hover text says. On/off
+/// now belongs to one control in the whole program — **PWR**, which really does
+/// throw the set's own switch over the control link.
+pub const LINK_CLOSE_TIP: &str = "Close sdroxide's link to this radio. This is sdroxide's \
+     switch, not the rig's: the radio itself stays powered — its own switch is PWR. What is \
+     let go of is this end — the device released, a CAT port closed, a network session hung \
+     up — so the radio can neither receive nor transmit here. Its settings are kept.";
 
-/// The other half of [`POWER_OFF_TIP`].
-pub const POWER_ON_TIP: &str =
-    "Switch this radio on: its interface is opened again, where it was left";
+/// The other half of [`LINK_CLOSE_TIP`].
+pub const LINK_OPEN_TIP: &str = "Open sdroxide's link to this radio again, where it was left. \
+     This does not power the radio: that is PWR.";
 
-/// A chip carrying the IEC power symbol (⏻) instead of a label, at an exact
-/// size. The symbol is painted, not typed: no bundled font has U+23FB, so as
-/// text it would come out as a tofu box. It takes the ink the label would
-/// have taken — the same choice [`chip_impl`] makes — so it follows the chip
-/// through selection and hover under every chrome style.
-pub fn chip_power(ui: &mut Ui, selected: bool, size: egui::Vec2) -> Response {
+/// A chip carrying two interlocking rings — a link — instead of a label, at an
+/// exact size. The mark is painted, not typed: a bundled font is not to be
+/// counted on for a symbol, and as text a missing glyph comes out as a tofu
+/// box. It takes the ink the label would have taken — the same choice
+/// [`chip_impl`] makes — so it follows the chip through selection and hover
+/// under every chrome style.
+///
+/// It used to be the IEC power symbol (⏻), and that was the trouble: this is
+/// sdroxide's link to the radio, and the mains symbol is the single strongest
+/// argument that it is the radio's own switch. See [`LINK_CLOSE_TIP`].
+pub fn chip_link(ui: &mut Ui, selected: bool, size: egui::Vec2) -> Response {
     let resp = chip_impl(ui, selected, RichText::new(""), None, Sense::click(), Some(size));
     if ui.is_rect_visible(resp.rect) {
         let v = ui.style().interact_selectable(&resp, selected);
         let ink = if selected { theme::INK_ON_CYAN() } else { v.fg_stroke.color };
         let stroke = Stroke::new((size.y * 0.07).clamp(1.4, 2.2), ink);
-        let r = resp.rect.height() * 0.26;
-        // The symbol's extent runs from the top of the stem to the bottom of
-        // the ring; centring that extent, not the ring, is what makes it sit
-        // optically centred in the chip.
-        let c = resp.rect.center() + vec2(0.0, 0.22 * r);
-        // The ring, broken at the top where the stem passes through.
-        let gap = std::f32::consts::FRAC_PI_4;
-        let start = -std::f32::consts::FRAC_PI_2 + gap;
-        let sweep = std::f32::consts::TAU - 2.0 * gap;
-        let n = 24;
-        let pts: Vec<Pos2> = (0..=n)
-            .map(|i| {
-                let a = start + sweep * i as f32 / n as f32;
-                Pos2::new(c.x + r * a.cos(), c.y + r * a.sin())
-            })
-            .collect();
+        let r = resp.rect.height() * 0.24;
+        let c = resp.rect.center();
+        // Two rings overlapping by a little under half a radius: far enough
+        // apart to read as two, close enough to read as joined.
         let p = ui.painter();
-        p.add(Shape::line(pts, stroke));
-        p.line_segment([Pos2::new(c.x, c.y - r * 1.45), Pos2::new(c.x, c.y - r * 0.2)], stroke);
+        for dx in [-0.55, 0.55] {
+            p.circle_stroke(Pos2::new(c.x + dx * r, c.y), r, stroke);
+        }
     }
     resp
 }

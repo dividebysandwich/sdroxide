@@ -535,6 +535,17 @@ pub struct RadioState {
     /// Appended last: postcard numbers fields by position.
     #[serde(default)]
     pub ais: crate::AisSettings,
+    /// Whether the radio's separate receiving antenna is switched into the
+    /// receive path.
+    ///
+    /// Meaningful only where [`crate::DeviceCaps::has_rx_antenna`]. Adopted
+    /// from the radio and re-read whenever the radio may have moved it — it
+    /// recalls the setting per band on its own — rather than asserted: writing
+    /// a receive-only input nobody asked about takes an aerial out of use with
+    /// nothing on screen to say so. Appended last: postcard numbers fields by
+    /// position.
+    #[serde(default)]
+    pub rx_antenna: bool,
 }
 
 impl Default for RadioState {
@@ -580,6 +591,7 @@ impl Default for RadioState {
             qo100: crate::Qo100Settings::default(),
             vdl2: crate::Vdl2Settings::default(),
             ais: crate::AisSettings::default(),
+            rx_antenna: false,
         }
     }
 }

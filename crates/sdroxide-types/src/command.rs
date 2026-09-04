@@ -859,6 +859,20 @@ pub enum Command {
     /// Appended for the usual reason — postcard numbers variants by position.
     SetRigPower(bool),
 
+    /// Switch the radio's separate *receiving* antenna into the receive path
+    /// (`true`), or out of it (`false`) — an IC-7300MK2's RX ANT IN/OUT, an
+    /// IC-7610's RX ANT (issue #229). The transmit aerial is not touched.
+    ///
+    /// The one time sdroxide writes that setting: everywhere else it is read
+    /// from the radio and adopted, because the radio recalls it per band and
+    /// switching a receive aerial nobody asked about takes it out of use with
+    /// nothing on screen to say so.
+    ///
+    /// Ignored where [`crate::DeviceCaps::has_rx_antenna`] is false.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    SetRxAntenna(bool),
+
     /// Add channels to the memory list — a repeater directory or a channel
     /// table read from a file (issue #234).
     ///

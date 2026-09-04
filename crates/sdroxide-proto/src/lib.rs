@@ -1215,7 +1215,19 @@ use sdroxide_types::{
 /// that struct's sound-card fields, near its head, and `RadioConfig` rides
 /// `ServerMsg::RadioConfig` and `Command::SetRadioConfig` whole, so a v135 peer
 /// handed one reads almost every field after it out of step.
-pub const PROTO_VERSION: u16 = 136;
+/// v137: the receiving antenna. [`sdroxide_types::DeviceCaps`] gains
+/// `has_rx_antenna` and [`sdroxide_types::RadioState`] gains `rx_antenna` — an
+/// Icom's `0x12` reply carries that connector's in/out flag behind the socket,
+/// and sdroxide had been writing the byte as zero on every antenna command,
+/// switching an operator's receive aerial out of circuit on every band change
+/// (issue #229). Both fields sit at their struct's tail, and both structs ride
+/// whole inside `ServerMsg::Capabilities`, `ServerMsg::CapabilitiesUpdated` and
+/// `ServerMsg::State`, so a v136 peer handed one reads the tail of every one of
+/// those out of step rather than merely missing a field. With them,
+/// [`sdroxide_types::Command`] gains `SetRxAntenna`, appended, so no surviving
+/// discriminant moved — but a v136 peer handed one fails to decode the message
+/// carrying it.
+pub const PROTO_VERSION: u16 = 137;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

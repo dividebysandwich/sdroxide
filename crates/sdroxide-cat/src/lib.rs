@@ -197,6 +197,15 @@ pub enum CatUpdate {
     /// power cycle, and imposing a remembered one on top would move an antenna
     /// relay nobody asked to move.
     Antenna(&'static str),
+    /// Whether the rig's separate *receiving* antenna connector is switched
+    /// into the receive path.
+    ///
+    /// Only ever the radio reporting itself: read when the port opens and
+    /// again after anything the radio recalls per band, and adopted. sdroxide
+    /// writes it exactly when the operator clicks, because writing a
+    /// receive-only input nobody asked about takes an aerial out of use with
+    /// nothing on screen to say so.
+    RxAntenna(bool),
     /// The rig is transmitting under its *own* control — a hand on the mic
     /// button, a foot switch, its VOX, its keyer. `true` is keyed.
     ///
@@ -432,10 +441,29 @@ trait Protocol: Send {
     fn set_antenna(&mut self, _name: &str) -> Vec<Vec<u8>> {
         Vec::new()
     }
-    /// Frames asking which socket the rig is on, sent once when the port opens
-    /// so the panel adopts the radio's own setting (see
-    /// [`CatUpdate::Antenna`]). Empty for families with no such read.
+    /// Frames asking which socket the rig is on, sent when the port opens — and
+    /// again whenever the radio may have moved it behind us — so the panel
+    /// adopts the radio's own setting (see [`CatUpdate::Antenna`]). Empty for
+    /// families with no such read.
     fn read_antenna(&self) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+    /// Frames putting the rig's separate *receiving* antenna connector into
+    /// the receive path, or taking it out. Empty where the family — or this
+    /// radio — has none.
+    ///
+    /// Whether there is such a connector at all is learned rather than claimed,
+    /// and not from here: an Icom's antenna reply carries the flag behind the
+    /// socket only where the connector exists, so the shape of the answer is
+    /// what says so, and it reaches the caller as [`CatUpdate::RxAntenna`]. The
+    /// transmit aerial is not affected either way; that is the whole point of
+    /// the thing.
+    ///
+    /// Sent only when the operator asks. The radio recalls this per band on its
+    /// own, so everywhere else it is read and adopted rather than asserted:
+    /// writing a receive-only input nobody asked about takes an aerial out of
+    /// use with nothing on screen to say so.
+    fn set_rx_antenna(&mut self, _on: bool) -> Vec<Vec<u8>> {
         Vec::new()
     }
     /// Frames that switch the *radio* off, or back on again — its own power
@@ -601,6 +629,16 @@ struct Civ {
     /// and from our own writes. `None` until it has answered — a model that
     /// NAKs the read, or a reply still in flight.
     break_in: Option<civ::BreakIn>,
+    /// How many aerial sockets this model's selector has — from
+    /// `IcomModel::antenna_sockets`, because CI-V cannot be asked.
+    sockets: usize,
+    /// The socket the rig last said it was on, so the receiving antenna can be
+    /// written without moving it. `None` until it has answered.
+    socket: Option<u8>,
+    /// The receiving antenna's in/out setting, from the rig's own replies and
+    /// from our own writes. `None` on a radio whose reply was the socket
+    /// alone — which is how it says it has no such connector.
+    rx_ant: Option<bool>,
 }
 
 /// How long after a broadcast a disagreeing polled answer is put down to the
@@ -612,7 +650,7 @@ struct Civ {
 const PUSH_CROSSED_WIRES: Duration = Duration::from_secs(1);
 
 impl Civ {
-    fn new(radio: u8, data_sub: Option<u8>) -> Civ {
+    fn new(radio: u8, data_sub: Option<u8>, sockets: usize) -> Civ {
         Civ {
             radio,
             data_sub,
@@ -626,6 +664,9 @@ impl Civ {
             scope_assembler: civ::ScopeAssembler::default(),
             scope_finished: None,
             break_in: None,
+            sockets,
+            socket: None,
+            rx_ant: None,
         }
     }
 
@@ -758,8 +799,14 @@ impl Protocol for Civ {
     }
     /// ANT1/ANT2, and only once the radio has answered the read below — see
     /// [`Protocol::antennas_probed`] and [`civ::ANTENNAS`].
+    ///
+    /// Empty on a model with one socket, even though such a radio may answer
+    /// the read: one socket is not a choice, and the second position of a chip
+    /// offered for it would send `12 01 …`, which an IC-7300MK2 rejects. What
+    /// that radio answers the read *for* is the receiving antenna — see
+    /// [`Protocol::rx_antenna`].
     fn antennas(&self) -> &'static [&'static str] {
-        &civ::ANTENNAS
+        if self.sockets > 1 { &civ::ANTENNAS[..self.sockets.min(civ::ANTENNAS.len())] } else { &[] }
     }
     fn antennas_probed(&self) -> bool {
         true
@@ -772,11 +819,35 @@ impl Protocol for Civ {
     fn commands_rig_power(&self) -> bool {
         true
     }
+    /// The socket, carrying the receiving antenna's setting out with it: the
+    /// same command writes both, so a zero here would switch the operator's
+    /// receive aerial out of circuit every time the socket was asserted. The
+    /// caller re-reads afterwards, because on an IC-7610 the flag belongs to
+    /// the socket it arrives with rather than to the radio.
     fn set_antenna(&mut self, name: &str) -> Vec<Vec<u8>> {
-        civ::set_antenna_frame(self.radio, name).into_iter().collect()
+        // Against this model's own list, not the whole of `civ::ANTENNAS`: a
+        // radio with one socket has no socket to be put on, and `12 01 …` is
+        // a frame an IC-7300MK2 rejects.
+        if !self.antennas().iter().any(|a| a.eq_ignore_ascii_case(name)) {
+            return Vec::new();
+        }
+        civ::set_antenna_frame(self.radio, name, self.rx_ant.unwrap_or(false)).into_iter().collect()
     }
     fn read_antenna(&self) -> Vec<Vec<u8>> {
         vec![civ::read_antenna_frame(self.radio)]
+    }
+    /// The same command with the socket held still.
+    ///
+    /// Nothing goes out until the radio has said two things: which socket it is
+    /// on — guessing `00` would move the aerial on a two-socket rig sitting on
+    /// ANT2 — and that it has a receiving antenna at all, which it says by
+    /// answering the read with the flag behind the socket.
+    fn set_rx_antenna(&mut self, on: bool) -> Vec<Vec<u8>> {
+        let (Some(socket), true) = (self.socket, self.rx_ant.is_some()) else {
+            return Vec::new();
+        };
+        self.rx_ant = Some(on);
+        vec![civ::antenna_frame(self.radio, socket, on)]
     }
     /// The same enable sequence the LAN backend sends, because it is the same
     /// scope: run it, stream it here, and — when a span is chosen — put it in
@@ -853,13 +924,30 @@ impl Protocol for Civ {
                         }
                     }
                 }
-                // Which antenna socket the rig is on (0x12), asked for once
-                // when the port opens. A radio with a single connector NAKs
-                // the read instead, which is what keeps the antenna control
-                // off the screen for it — see `Protocol::antennas_probed`.
+                // The antenna (0x12): which socket the rig is on, and behind
+                // it the receiving antenna's own in/out setting. A radio with
+                // neither NAKs the read instead, which is what keeps both
+                // controls off the screen for it — see
+                // `Protocol::antennas_probed`.
                 0x12 => {
-                    if let Some(name) = civ::parse_antenna_reply(&reply.data) {
-                        out.push(CatUpdate::Antenna(name));
+                    if let Some(r) = civ::parse_antenna_reply(&reply.data) {
+                        self.socket = Some(r.socket);
+                        // A second byte is a radio with the connector; its
+                        // absence is a radio saying it has not got one — the
+                        // same "the shape of the answer is the signal" rule
+                        // the probe itself runs on.
+                        if let Some(on) = r.rx_ant {
+                            self.rx_ant = Some(on);
+                            out.push(CatUpdate::RxAntenna(on));
+                        }
+                        // Not reported on a radio with one socket: there is no
+                        // selector there, and a panel told "ANT1" would draw a
+                        // chip whose other position the radio rejects.
+                        if self.sockets > 1
+                            && let Some(name) = civ::antenna_name(r.socket, self.sockets)
+                        {
+                            out.push(CatUpdate::Antenna(name));
+                        }
                     }
                 }
                 // Level read (0x14): the transmit power (0x0A) and the
@@ -1020,9 +1108,16 @@ fn make_protocol(cfg: &CatConfig) -> Box<dyn Protocol> {
     match cfg.family {
         // A Xiegu speaks the dialect but is not an Icom: none of the model
         // table applies to it, so it gets the plain mode command.
-        CatFamily::Xiegu => Box::new(Civ::new(cfg.icom_radio_id, None)),
+        // A Xiegu is not in the Icom model table, so it takes the two sockets
+        // every radio with a selector has at least — which changes nothing,
+        // since it NAKs the read.
+        CatFamily::Xiegu => Box::new(Civ::new(cfg.icom_radio_id, None, 2)),
         CatFamily::Icom => {
-            let civ = Civ::new(cfg.icom_radio_id, cfg.icom_model.data_mode_sub());
+            let civ = Civ::new(
+                cfg.icom_radio_id,
+                cfg.icom_model.data_mode_sub(),
+                cfg.icom_model.antenna_sockets(),
+            );
             Box::new(if scope_active(cfg) {
                 civ.with_scope(cfg.scope_span.half_span_hz())
             } else {
@@ -1060,9 +1155,32 @@ enum CatCmd {
     Filter(Mode, f32, f32),
     /// Which antenna socket to receive on, by name.
     Antenna(String),
+    /// Switch the rig's receiving antenna into the receive path, or out of it.
+    RxAntenna(bool),
+    /// Ask the rig again what its antenna and receiving antenna are set to,
+    /// because something the radio recalls per band has just happened.
+    AntennaRead,
     /// Switch the radio itself off, or back on again.
     RigPower(bool),
     Stop,
+}
+
+/// What the serial thread publishes back for [`CatHandle`] to read *without*
+/// draining a channel.
+///
+/// Both of these are asked on every pass of the engine loop, so neither can
+/// wait behind an event queue — and both are things only the thread that reads
+/// the radio's replies can know.
+#[derive(Clone)]
+struct Learned {
+    /// Whether the sockets in `CatHandle::antennas` may be offered yet — see
+    /// [`Protocol::antennas_probed`]. `false` from the start on a family whose
+    /// list is a question for the radio, and set the moment the rig answers the
+    /// antenna read.
+    antennas_known: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The receiving antenna's setting as the radio last reported it: `0`
+    /// nothing said, `1` out of circuit, `2` in it.
+    rx_antenna: std::sync::Arc<std::sync::atomic::AtomicU8>,
 }
 
 /// Opaque handle to the running serial thread.
@@ -1082,11 +1200,9 @@ pub struct CatHandle {
     commands_squelch: bool,
     antennas: &'static [&'static str],
     commands_rig_power: bool,
-    /// Whether the sockets in `antennas` may be offered yet — see
-    /// [`Protocol::antennas_probed`]. `false` from the start on a family whose
-    /// list is a question for the radio, and set by the serial thread the
-    /// moment the rig answers the antenna read.
-    antennas_known: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// What the serial thread has found out about the radio since — see
+    /// [`Learned`].
+    learned: Learned,
 }
 
 impl CatHandle {
@@ -1163,7 +1279,7 @@ impl CatHandle {
     /// answered. What the caller publishes as `DeviceCaps::antennas_rx`, and
     /// what `IqSource::learned_antennas` re-publishes when the answer lands.
     pub fn antennas(&self) -> &'static [&'static str] {
-        if self.antennas_known.load(std::sync::atomic::Ordering::Relaxed) {
+        if self.learned.antennas_known.load(std::sync::atomic::Ordering::Relaxed) {
             self.antennas
         } else {
             &[]
@@ -1188,6 +1304,31 @@ impl CatHandle {
             return;
         }
         let _ = self.cmd_tx.send(CatCmd::Antenna(name.to_string()));
+    }
+    /// Whether this rig has a separate receiving antenna connector, and whether
+    /// it is switched into the receive path. `None` until it has said — which,
+    /// on a radio without one, is never.
+    pub fn rx_antenna(&self) -> Option<bool> {
+        match self.learned.rx_antenna.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => None,
+            n => Some(n == 2),
+        }
+    }
+    /// Switch that connector into the receive path, or out of it. Silently
+    /// ignored on a rig that has not said it has one.
+    pub fn set_rx_antenna(&self, on: bool) {
+        if self.rx_antenna().is_none() {
+            return;
+        }
+        let _ = self.cmd_tx.send(CatCmd::RxAntenna(on));
+    }
+    /// Ask the rig again what its antenna and receiving antenna are set to.
+    ///
+    /// For after a band change, or after a socket change: the radio recalls
+    /// both per band on its own, so what it is set to now is a question for it
+    /// rather than something this end may assert.
+    pub fn reread_antenna(&self) {
+        let _ = self.cmd_tx.send(CatCmd::AntennaRead);
     }
     /// Non-blocking drain of rig-reported freq/mode changes.
     pub fn poll(&self) -> Vec<CatUpdate> {
@@ -1285,6 +1426,7 @@ pub fn query_once(cfg: &CatConfig) -> Option<(Option<f64>, Option<Mode>)> {
                 | CatUpdate::Power(_)
                 | CatUpdate::Squelch(_)
                 | CatUpdate::Antenna(_)
+                | CatUpdate::RxAntenna(_)
                 | CatUpdate::Ptt(_) => {}
             }
         }
@@ -1355,16 +1497,20 @@ pub fn spawn(cfg: CatConfig) -> CatHandle {
     // to the opening read.
     let antennas = make_protocol(&cfg).antennas();
     let commands_rig_power = make_protocol(&cfg).commands_rig_power();
-    let antennas_known = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
-        !make_protocol(&cfg).antennas_probed(),
-    ));
-    let antennas_known_in = antennas_known.clone();
+    let learned = Learned {
+        antennas_known: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            !make_protocol(&cfg).antennas_probed(),
+        )),
+        // Nothing said yet — see `CatHandle::rx_antenna` for the three values.
+        rx_antenna: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
+    };
+    let learned_in = learned.clone();
     let scope = std::sync::Arc::new(std::sync::Mutex::new(None));
     let scope_in = scope.clone();
     std::thread::Builder::new()
         .name("sdroxide-cat".into())
         .spawn(move || {
-            serial_thread(cfg, cmd_rx, event_tx, telem_tx, signal_tx, scope_in, antennas_known_in)
+            serial_thread(cfg, cmd_rx, event_tx, telem_tx, signal_tx, scope_in, learned_in)
         })
         .expect("spawn cat thread");
     CatHandle {
@@ -1379,7 +1525,7 @@ pub fn spawn(cfg: CatConfig) -> CatHandle {
         commands_squelch,
         antennas,
         commands_rig_power,
-        antennas_known,
+        learned,
     }
 }
 
@@ -1934,7 +2080,7 @@ fn serial_thread(
     telem_tx: Sender<TxTelemetry>,
     signal_tx: Sender<f32>,
     scope_out: std::sync::Arc<std::sync::Mutex<Option<ScopeFrame>>>,
-    antennas_known: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    learned: Learned,
 ) {
     let mut protocol = make_protocol(&cfg);
     let poll_period = poll_period(&cfg);
@@ -2192,6 +2338,10 @@ fn serial_thread(
         // parsed). `None` until something is commanded, which is where a rig
         // nobody has switched stays.
         let mut last_sent_antenna: Option<&'static str> = None;
+        // The receiving antenna's setting as last forwarded, so the re-reads
+        // after a band change do not re-notify the engine with what it already
+        // has. `None` on a fresh connection, so the first answer always goes.
+        let mut emit_rx_antenna: Option<bool> = None;
         let mut mode_memory = ModeMemory::default();
         // Only forward genuine changes so the engine isn't re-notified every poll.
         let mut emit_freq: Option<f64> = None;
@@ -2446,6 +2596,46 @@ fn serial_thread(
                             break 'io true;
                         }
                     }
+                    // The receiving antenna, in or out of circuit. One frame,
+                    // and only ever from a click — see
+                    // [`Protocol::set_rx_antenna`].
+                    Ok(CatCmd::RxAntenna(on)) => {
+                        let mut failed = false;
+                        for f in protocol.set_rx_antenna(on) {
+                            failed |= write_frame(
+                                &mut *port,
+                                &mut *protocol,
+                                &f,
+                                &mut last_write,
+                                &mut io,
+                            );
+                        }
+                        if failed {
+                            break 'io true;
+                        }
+                    }
+                    // Asking the rig where its antennas stand, after something
+                    // it recalls per band. The suppression `last_sent_antenna`
+                    // does is written for the *opening* read crossing a command
+                    // on the wire; an answer we have gone and asked for is not
+                    // that, and swallowing it would leave the panel showing a
+                    // socket the radio has since left.
+                    Ok(CatCmd::AntennaRead) => {
+                        last_sent_antenna = None;
+                        let mut failed = false;
+                        for f in protocol.read_antenna() {
+                            failed |= write_frame(
+                                &mut *port,
+                                &mut *protocol,
+                                &f,
+                                &mut last_write,
+                                &mut io,
+                            );
+                        }
+                        if failed {
+                            break 'io true;
+                        }
+                    }
                     // The radio's own power switch. Written straight out
                     // rather than debounced: it is a button an operator
                     // presses, and the wake-up run in front of a power-on is
@@ -2475,6 +2665,7 @@ fn serial_thread(
                             last_sent_power.forget();
                             last_sent_squelch = None;
                             last_sent_antenna = None;
+                            emit_rx_antenna = None;
                             simplex_dial = None;
                             mode_memory = ModeMemory::default();
                         }
@@ -2709,7 +2900,7 @@ fn serial_thread(
             // Ask again for the socket while the rig has not answered at all.
             // See where `antenna_probes_left` is seeded.
             if antenna_probes_left > 0 && Instant::now() >= next_antenna_probe {
-                if antennas_known.load(std::sync::atomic::Ordering::Relaxed) {
+                if learned.antennas_known.load(std::sync::atomic::Ordering::Relaxed) {
                     antenna_probes_left = 0;
                 } else {
                     antenna_probes_left -= 1;
@@ -2862,13 +3053,33 @@ fn serial_thread(
                 // to the opening read crossing that command on the wire. Adopting it there would
                 // put the panel back on the port the operator just left, and leave it disagreeing
                 // with the radio.
+                // The receiving antenna's setting. Held in the atomic the
+                // engine reads on every pass, and forwarded on a change only —
+                // the re-reads after a band change answer with the same value
+                // most of the time. No `last_sent_antenna` suppression: this
+                // one is never commanded except by a click, and a click's own
+                // echo arriving is the confirmation, not a contradiction.
+                if let CatUpdate::RxAntenna(on) = u {
+                    // The rig answered the antenna read, so whatever list it
+                    // has — including the empty one a single-socket radio
+                    // gets — is settled and the probes can stop.
+                    learned.antennas_known.store(true, std::sync::atomic::Ordering::Relaxed);
+                    learned
+                        .rx_antenna
+                        .store(1 + u8::from(on), std::sync::atomic::Ordering::Relaxed);
+                    if emit_rx_antenna != Some(on) {
+                        emit_rx_antenna = Some(on);
+                        let _ = event_tx.send(u);
+                    }
+                    continue;
+                }
                 if let CatUpdate::Antenna(a) = u {
                     // The radio answered at all, so it has a selector: the
                     // sockets can be offered now (see
                     // [`Protocol::antennas_probed`]). Marked whether or not the
                     // report itself is forwarded — a rig that has one is a rig
                     // that has one, however the answer crossed our command.
-                    antennas_known.store(true, std::sync::atomic::Ordering::Relaxed);
+                    learned.antennas_known.store(true, std::sync::atomic::Ordering::Relaxed);
                     if last_sent_antenna.is_none_or(|w| w == a) {
                         let _ = event_tx.send(u);
                     }
@@ -2913,7 +3124,10 @@ fn serial_thread(
                     | CatUpdate::Signal(_)
                     | CatUpdate::Power(_)
                     | CatUpdate::Squelch(_)
+                    // Both antenna reports are handled above, where they carry
+                    // their own dedup and their own suppression.
                     | CatUpdate::Antenna(_)
+                    | CatUpdate::RxAntenna(_)
                     | CatUpdate::Ptt(_) => false,
                 };
                 if changed {
@@ -3526,6 +3740,82 @@ mod tests {
             let p = make_protocol(&CatConfig { family: f, ..CatConfig::default() });
             assert!(p.read_break_in().is_empty(), "{f:?} asserts break-in without asking");
         }
+    }
+
+    /// The antenna reply carries two things, and the receiving antenna's half
+    /// of it has to ride back out with the next socket command — otherwise
+    /// picking ANT2 on an IC-7610 switches the operator's receive aerial out
+    /// of circuit (issue #229).
+    #[test]
+    fn a_receiving_antenna_report_is_carried_back_out_with_the_socket() {
+        let mut p = make_protocol(&CatConfig {
+            family: CatFamily::Icom,
+            icom_model: sdroxide_types::IcomModel::Ic7610,
+            ..CatConfig::default()
+        });
+        // A reply *from* the radio to the controller: ANT2, receiving antenna
+        // in circuit.
+        let mut reply = vec![0xFE, 0xFE, 0xE0, 0x98, 0x12, 0x01, 0x01, 0xFD];
+        assert_eq!(
+            p.parse(&mut reply),
+            vec![CatUpdate::RxAntenna(true), CatUpdate::Antenna("ANT2")]
+        );
+        // Now go back to ANT1. The flag the radio reported goes with it.
+        let frames = p.set_antenna("ANT1");
+        assert_eq!(frames.len(), 1, "{frames:?}");
+        assert_eq!(frames[0][4..7], [0x12, 0x00, 0x01], "the receiving antenna was dropped");
+        // And switching the receiving antenna itself holds the socket still.
+        let frames = p.set_rx_antenna(false);
+        assert_eq!(frames[0][4..7], [0x12, 0x01, 0x00]);
+    }
+
+    /// A radio with one socket is offered no selector, even though it answers
+    /// the read: on an IC-7300MK2 `0x12` is the receiving antenna and nothing
+    /// else, and the second position of a chip offered for it would send
+    /// `12 01 …`, which that radio rejects.
+    #[test]
+    fn a_one_socket_model_offers_no_selector() {
+        let model = |m| {
+            make_protocol(&CatConfig {
+                family: CatFamily::Icom,
+                icom_model: m,
+                ..CatConfig::default()
+            })
+        };
+        let mut p = model(sdroxide_types::IcomModel::Ic7300Mk2);
+        assert!(p.antennas().is_empty());
+        let mut reply = vec![0xFE, 0xFE, 0xE0, 0xB6, 0x12, 0x00, 0x01, 0xFD];
+        assert_eq!(p.parse(&mut reply), vec![CatUpdate::RxAntenna(true)]);
+        // Nothing this end can do moves an aerial on it…
+        assert!(p.set_antenna("ANT1").is_empty());
+        assert!(p.set_antenna("ANT2").is_empty());
+        // …and the one control it does have works.
+        assert_eq!(p.set_rx_antenna(false)[0][4..7], [0x12, 0x00, 0x00]);
+
+        // Every other model keeps the two it has always been offered.
+        assert_eq!(model(sdroxide_types::IcomModel::Ic7610).antennas(), &["ANT1", "ANT2"]);
+        assert_eq!(model(sdroxide_types::IcomModel::Ic7300).antennas(), &["ANT1", "ANT2"]);
+    }
+
+    /// A radio whose reply is the socket alone has no receiving antenna
+    /// connector, and says so by that absence — nothing is reported and the
+    /// control never appears.
+    #[test]
+    fn a_socket_only_reply_reports_no_receiving_antenna() {
+        let mut p = make_protocol(&CatConfig {
+            family: CatFamily::Icom,
+            icom_model: sdroxide_types::IcomModel::Ic7610,
+            ..CatConfig::default()
+        });
+        let mut reply = vec![0xFE, 0xFE, 0xE0, 0x98, 0x12, 0x01, 0xFD];
+        assert_eq!(p.parse(&mut reply), vec![CatUpdate::Antenna("ANT2")]);
+        // Nothing to switch, so nothing goes out — and nothing this end
+        // believes about a connector the radio never mentioned.
+        assert!(p.set_rx_antenna(true).is_empty());
+        // The socket still carries a second byte, because two is what the
+        // command takes — and `false` is what such a radio has always been
+        // sent.
+        assert_eq!(p.set_antenna("ANT1")[0][4..7], [0x12, 0x00, 0x00]);
     }
 
     /// No other family has anything like it, and none of them may claim to.

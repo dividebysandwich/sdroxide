@@ -2323,6 +2323,7 @@ impl SdroxideApp {
                         io.radio_edit,
                         self.caps.as_ref(),
                         &self.state.antenna_rx,
+                        self.state.rx_antenna,
                         io.can_probe,
                         cmds,
                     ),
@@ -2338,6 +2339,7 @@ impl SdroxideApp {
                         io.radio_edit,
                         self.caps.as_ref(),
                         &self.state.antenna_rx,
+                        self.state.rx_antenna,
                         io.icomnet_test,
                         io.icomnet_copy_report,
                         &self.icomnet_test_result,
@@ -3730,23 +3732,21 @@ impl SdroxideApp {
                 // somebody's panadapter, whose front end is the borrower's to
                 // hold — nor by a station that does not take the request.
                 //
-                // Lit while the radio is on, as the strip's copy of the switch
-                // is: the chip says which state the radio is in, and a chip
-                // wears the accent when what it says is in force (issue #253).
+                // Lit while the link is open, as the strip's copy of the
+                // switch is: a chip wears the accent when what it names is in
+                // force (issue #253). It names the link rather than an on/off
+                // state, because a switch reading "on/off" beside a radio is
+                // read as the radio's — see [`crate::chrome::LINK_CLOSE_TIP`].
                 if chip.switchable
                     && chip.attached_to.is_none()
                     && self.radio_roster.len() > 1
-                    && crate::chrome::chip(
-                        ui,
-                        chip.enabled,
-                        RichText::new(if chip.enabled { "ON" } else { "OFF" }).size(11.0),
-                    )
-                    .on_hover_text(if chip.enabled {
-                        crate::chrome::POWER_OFF_TIP
-                    } else {
-                        crate::chrome::POWER_ON_TIP
-                    })
-                    .clicked()
+                    && crate::chrome::chip(ui, chip.enabled, RichText::new("LINK").size(11.0))
+                        .on_hover_text(if chip.enabled {
+                            crate::chrome::LINK_CLOSE_TIP
+                        } else {
+                            crate::chrome::LINK_OPEN_TIP
+                        })
+                        .clicked()
                 {
                     requests.push(crate::app::RadioTabRequest::Power {
                         id: chip.id,
