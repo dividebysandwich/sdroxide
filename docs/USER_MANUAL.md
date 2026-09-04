@@ -6380,6 +6380,18 @@ same fix without the soldering iron. Leave it off unless you see that symptom.
 It applies to receive only. Transmit hands the radio one real audio signal for
 it to modulate, and a real signal has no sideband to invert.
 
+> **Every signal drawn twice, once either side of the dial?** That is not a
+> setting either of the two above can fix — it means the card is not carrying
+> I/Q at all. A radio sending *demodulated* audio down a stereo cable puts the
+> same signal on both channels, and two identical channels make a real signal,
+> whose spectrum is symmetric about the dial by definition: there is no second
+> sideband to recover, so **Invert spectrum** has nothing to swap and **I/Q
+> correction** has no imbalance to trim. sdroxide notices it within a second of
+> the stream starting and says so in the log window. Either put **Sound format**
+> on `Demod audio`, which is what the card is actually carrying, or switch the
+> radio to its raw I/Q output — in PowerSDR that is the **Direct I/Q** box in
+> the VAC setup.
+
 **I/Q centre offset** (IQ format only) — how far above the radio's own dial its
 I/Q output is centred, for a rig whose receive I.F. has been moved off zero.
 Leave it at 0 unless you have turned such a setting on in the radio.
