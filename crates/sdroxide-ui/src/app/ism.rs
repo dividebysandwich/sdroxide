@@ -170,8 +170,12 @@ impl SdroxideApp {
                 if chip.clicked() {
                     cfg.rtl433.bands = bit;
                     // Selecting a band the receiver cannot hear would only swap
-                    // one "outside the window" row for another, so go there.
-                    cmds.push(Command::SetVfo { vfo: Vfo::A, hz: center_hz });
+                    // one "outside the window" row for another, so go there —
+                    // and go there by the *window*, not by the dial. On a
+                    // zero-IF front end the LO sits a quarter-span above the
+                    // dial and the window follows the LO, so a dial on the band
+                    // centre puts the window a quarter-span above it (#310).
+                    cmds.push(Command::TuneWidebandTo(center_hz));
                 }
                 chip.on_hover_text(format!(
                     "Listen on {label} — tunes the radio there. One band at a time: they are \

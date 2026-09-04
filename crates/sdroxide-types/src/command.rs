@@ -952,4 +952,27 @@ pub enum Command {
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     SetCessb(f32),
+
+    /// Point the front end so that a *wideband* decoder's window is centred
+    /// here — the ISM window's band buttons, and anything else that means "go
+    /// to this band" rather than "listen to this frequency".
+    ///
+    /// Not [`Command::SetVfo`], and the difference is not cosmetic. The dial is
+    /// where the demodulator listens; the wideband lanes are placed from the
+    /// front end's own centre frequency, and on a zero-IF receiver those are
+    /// not the same place — a PlutoSDR parks its local oscillator a quarter of
+    /// a span above the dial. Tuning the dial to a band centre therefore lands
+    /// the window a quarter-span above the band, and on a receiver with no
+    /// slack to slide the window back — one whose whole stream is barely wider
+    /// than the plan — it stays there. That is issue #310: pressing **868 MHz
+    /// EU** on a 2.5 Msps PlutoSDR put the window on 869.275 MHz and left
+    /// 868.300 MHz outside it.
+    ///
+    /// The engine subtracts its own LO offset, so on a front end that has none
+    /// this is exactly [`Command::SetVfo`] on the active VFO, and unlike a dial
+    /// move it always retunes rather than only when the old centre had drifted
+    /// out of span.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    TuneWidebandTo(f64),
 }

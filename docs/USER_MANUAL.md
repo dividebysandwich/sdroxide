@@ -5083,6 +5083,11 @@ milliseconds, and goes back to sleep for a minute. The **ISM** button in the
 System module opens a window that reads them and lists each device it has heard,
 with its readings in real units.
 
+That button turns green while the decoder is *running*, not while the window is
+open — like SAT and SCAN, because it is spending a receiver on your behalf
+whether or not you are watching. Closing the window therefore leaves it lit. The
+switch is **DECODING** inside the window itself.
+
 There are two sets of decoders behind that window. SDRoxide's own read a handful
 of protocols on the European 868 MHz channels, in detail and with every checksum
 verified — those are what the rest of this section describes first. The

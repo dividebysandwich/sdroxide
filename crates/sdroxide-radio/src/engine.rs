@@ -7347,6 +7347,33 @@ impl Engine {
                 }
                 self.update_tuning();
             }
+            TuneWidebandTo(hz) => {
+                self.stop_scan_for_operator();
+                // The dial that puts the front end's *own centre* on `hz`,
+                // which is where a wideband lane's window is placed from. On a
+                // receiver with no LO offset the two are the same number and
+                // this is an ordinary retune; on a zero-IF one they differ by a
+                // quarter of the span, and using the dial is what left the ISM
+                // window a quarter-span above the band it was sent to (#310).
+                let want = hz.max(0.0);
+                let dial = (want - self.lo_offset_hz()).max(0.0);
+                let vfo = self.state.active_vfo;
+                match vfo {
+                    Vfo::A => self.state.vfo_a_hz = dial,
+                    Vfo::B => self.state.vfo_b_hz = dial,
+                }
+                self.state.band = Band::containing(dial);
+                if self.audio_mode {
+                    // A rig on a sound card has no window to place: the dial is
+                    // the whole receiver, and moving it is all there is to do.
+                    self.follow_dial();
+                } else if (self.state.center_hz - want).abs() >= 0.5 {
+                    // Not `follow_dial`, which moves the front end only once the
+                    // dial has left its span. This is a request to move it.
+                    self.retune_for_vfo(dial);
+                }
+                self.update_tuning();
+            }
             SelectVfo(v) => {
                 // The mode goes with the VFO. Shelve what the one being left
                 // was listening in, and put the receiver into what the one

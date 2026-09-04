@@ -56,6 +56,9 @@ const PLUTO_LO: f64 = 868_957_858.0;
 struct Quiet {
     center: Arc<Mutex<f64>>,
     rate: f64,
+    /// How far above the dial this front end parks its LO — zero for most,
+    /// a quarter of the span for a zero-IF radio like the PlutoSDR.
+    lo_offset: f64,
     seed: u64,
 }
 
@@ -86,6 +89,9 @@ impl IqSource for Quiet {
             *z = Complex32::new(r() * 0.01, r() * 0.01);
         }
         Ok(n)
+    }
+    fn lo_offset_hz(&self) -> f64 {
+        self.lo_offset
     }
     fn describe(&self) -> String {
         "quiet stand-in".into()
@@ -153,7 +159,7 @@ fn a_band_change_re_sizes_the_window_without_a_restart() {
     let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(48_000);
     let center = Arc::new(Mutex::new(DIAL_433));
     let mut h = start_engine(
-        Box::new(Quiet { center, rate: RATE, seed: 0x1234_5678_9ABC_DEF0 }),
+        Box::new(Quiet { center, rate: RATE, lo_offset: 0.0, seed: 0x1234_5678_9ABC_DEF0 }),
         caps_at(RATE),
         EngineConfig {
             remember_session: false,
@@ -251,7 +257,7 @@ fn one_window_serves_both_lanes_when_the_front_end_has_room() {
     let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(48_000);
     let center = Arc::new(Mutex::new(PLUTO_LO));
     let mut h = start_engine(
-        Box::new(Quiet { center, rate: PLUTO_RATE, seed: 0x0BAD_F00D_DEAD_BEEF }),
+        Box::new(Quiet { center, rate: PLUTO_RATE, lo_offset: 0.0, seed: 0x0BAD_F00D_DEAD_BEEF }),
         caps_at(PLUTO_RATE),
         EngineConfig {
             remember_session: false,
@@ -301,6 +307,92 @@ fn one_window_serves_both_lanes_when_the_front_end_has_room() {
             );
         }
     }
+
+    drop(h.cmd_tx);
+    if let Some(t) = thread {
+        let _ = t.join();
+    }
+    unsafe { std::env::remove_var("SDROXIDE_CONFIG_DIR") };
+}
+
+/// Issue #310 again, after the first fix: the band button has to tune for the
+/// *window*, not for the dial.
+///
+/// The two are the same place only on a front end whose LO sits on the dial. A
+/// PlutoSDR parks its LO a quarter-span above, and the ISM window is placed from
+/// the LO — so pressing **868 MHz EU** put the dial on 868.650 MHz, the LO on
+/// 869.275, and the window 625 kHz above the plan it had just been sent to. On a
+/// 2.5 Msps stream there is no slack to slide it back, because the window *is*
+/// the stream, so it stayed there and 868.300 MHz read `outside the receiver's
+/// window` — which is exactly what was reported.
+#[test]
+fn the_band_button_tunes_for_the_window_not_for_the_dial() {
+    let root = std::env::temp_dir().join(format!("sdroxide-ism-310b-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    unsafe { std::env::set_var("SDROXIDE_CONFIG_DIR", &root) };
+
+    // A 2.5 Msps zero-IF front end: the plan needs 1.88 MHz, so the window is
+    // the undecimated stream and cannot be slid off the LO at all.
+    const RATE_2M5: f64 = 2_500_000.0;
+    const LO_OFFSET: f64 = 625_000.0;
+
+    let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(48_000);
+    let center = Arc::new(Mutex::new(433_920_000.0));
+    let seen = Arc::clone(&center);
+    let mut h = start_engine(
+        Box::new(Quiet {
+            center,
+            rate: RATE_2M5,
+            lo_offset: LO_OFFSET,
+            seed: 0x5EED_1234_5678_9ABC,
+        }),
+        caps_at(RATE_2M5),
+        EngineConfig {
+            remember_session: false,
+            audio: Some(AudioParams { producer, out_rate: 48_000.0 }),
+            ..Default::default()
+        },
+    );
+    let thread = h.thread.take();
+    let send = |c: Command| h.cmd_tx.send(c).unwrap();
+
+    // The native decoders only: this is about where the button points the
+    // receiver, and the channel plan is the thing with a fixed answer.
+    send(Command::SetIsmConfig(IsmSettings {
+        enabled: true,
+        families: u32::MAX,
+        rtl433: sdroxide_types::Rtl433Settings::OFF,
+        ..IsmSettings::default()
+    }));
+    // What the band button sends. `Command::SetVfo` here — which is what it used
+    // to send — leaves 868.300 MHz outside the window and this test hanging.
+    send(Command::TuneWidebandTo(DIAL_868));
+
+    let s = ism_status(&h, "the 868 MHz channel plan in view", |s| {
+        s.channels.iter().any(|c| c.freq_hz == 868_300_000.0 && c.live)
+    });
+
+    // Every channel, not just the one that was reported: the window is wide
+    // enough for the whole plan once it is in the right place.
+    for c in &s.channels {
+        assert!(
+            c.reason.as_deref() != Some("outside the receiver's window"),
+            "{:.3} MHz is outside a {:.3} MHz window on {:.4} MHz",
+            c.freq_hz / 1e6,
+            s.window_rate_hz / 1e6,
+            s.window_center_hz / 1e6
+        );
+    }
+
+    // And the reason it works: the *hardware centre* went to the band, with the
+    // dial left an LO offset below it rather than sitting on top of it.
+    let hw = *seen.lock().unwrap();
+    assert!(
+        (hw - DIAL_868).abs() < 1.0,
+        "the front end sat on {:.4} MHz, not the band centre",
+        hw / 1e6
+    );
 
     drop(h.cmd_tx);
     if let Some(t) = thread {

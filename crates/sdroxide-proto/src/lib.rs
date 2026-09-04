@@ -1200,7 +1200,11 @@ use sdroxide_types::{
 /// postcard describes nothing about itself, so a v132 peer handed one reads the
 /// tail of every field after it out of step — the serde default that covers a
 /// stored `radio.json` does nothing on the wire.
-pub const PROTO_VERSION: u16 = 133;
+/// v134: `Command::TuneWidebandTo`, which points the front end so a wideband
+/// decoder's *window* lands on a frequency rather than its dial (issue #310).
+/// The ISM band buttons send it instead of `Command::SetVfo`. Appended, so no
+/// surviving discriminant moved — but a v133 peer handed one fails to decode.
+pub const PROTO_VERSION: u16 = 134;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

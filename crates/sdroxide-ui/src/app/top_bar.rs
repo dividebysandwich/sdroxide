@@ -4724,10 +4724,18 @@ impl SdroxideApp {
             chip_stretched(ui, self.show_ism, ism, extra)
         };
         if ism_chip
-            .on_hover_text(
+            .on_hover_text(if ism_running {
+                // Which is not the same as "this window is open", and the chip
+                // cannot say so on its own: an operator who closes the window
+                // and finds the chip still lit has no way to guess that the
+                // green is the decoder rather than the window, or where its
+                // switch went. Same wording problem the SAT chip solves above.
+                "ISM-band devices — decoding now, whether or not this window is \
+                 open. Switch it off with DECODING inside the window."
+            } else {
                 "ISM-band devices — weather sensors, meters and home \
-                 automation heard around you",
-            )
+                 automation heard around you"
+            })
             .clicked()
         {
             self.show_ism = !self.show_ism;
