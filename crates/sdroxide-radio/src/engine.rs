@@ -596,6 +596,10 @@ struct RxChain {
     offset_hz: f64,
     /// Smoothed squelch gate gain (0 = closed, 1 = open).
     sq_gain: f32,
+    /// Whether this chain has already reported a sample that was not a number.
+    /// Said once and not again: the value is knowing that it happened at all
+    /// and roughly when, not a line per block from a stage that has gone wrong.
+    said_impossible: bool,
     /// When true, `tap_out` receives a copy of the post-AGC, pre-volume audio
     /// for the digital-mode decoder (independent of mute/volume/squelch).
     tap_enabled: bool,
@@ -648,6 +652,7 @@ impl RxChain {
             out_rate,
             offset_hz: 0.0,
             sq_gain: 1.0,
+            said_impossible: false,
             tap_enabled: false,
             tap_out: Vec::new(),
             notch: AutoNotch::new(),
@@ -772,6 +777,21 @@ impl RxChain {
                 self.agc.process_pair(&mut self.audio_buf, &mut self.side_buf);
             } else {
                 self.agc.process(&mut self.audio_buf);
+            }
+            // Nothing in a receive chain should ever hand the AGC a sample that
+            // is not a number, and until issue #305 one of them silenced the
+            // receiver for the rest of the session. It is stepped over now, but
+            // it still means a stage upstream computed something impossible,
+            // and this line is the only evidence of that anyone will ever have.
+            let bad = self.agc.take_impossible();
+            if bad > 0 && !self.said_impossible {
+                self.said_impossible = true;
+                warn!(
+                    samples = bad,
+                    mode = ?self.mode,
+                    "the receive chain produced samples that are not numbers; the AGC has \
+                     stepped over them, but something ahead of it is computing infinities"
+                );
             }
         }
 
