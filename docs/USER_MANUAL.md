@@ -1107,6 +1107,16 @@ the receiver measures the signal in its own passband, calibrated to dBm by
 > for the one you judge signals on. Changing the front end's gain moves the
 > reading with it, exactly as an attenuator ahead of a real receiver would.
 >
+> **Except on an SDRplay RSP**, which is the one front end here that reports
+> what its own gain currently is. That figure is taken off before the reading
+> is shown, so the meter is referred back to the antenna socket: it stays put
+> when the gain moves, and it stays put while the RSP's own AGC — on by
+> default — moves it for you. What that costs is that the numbers are tens of
+> dB lower than the same RSP showed before, because they no longer have the
+> front end's 20 to 60 dB of gain in them. They are the more honest number, and
+> `cal_offset_db` set for an RSP before this has to be set again. See
+> [15.15](#1515-sdrplay-rsp-rsp11a1b2-rspduo-rspdx).
+>
 > The same applies with a knob more in the way when the I/Q arrives over a
 > virtual audio cable from another program (PowerSDR, HDSDR): what the meter
 > measures is the level that program is writing into the cable, which it has
@@ -7846,14 +7856,27 @@ unplug the receiver and plug it back in.
   or 100 Hz, with an adjustable **set point** in dBFS. *Off* hands the IF gain
   slider back to you — the setting for measurement and weak-signal digital
   modes. While a loop runs, the IF slider greys out and the gain readout
-  follows what the loop actually did, not what the slider last said.
+  follows what the loop actually did, not what the slider last said. How low
+  the set point may go depends on the sample rate, because the converter has
+  less headroom to give as it goes faster: −72 dBFS below 8.064 Msps, −60
+  below 9.216 and −48 above — which over the rates offered here means the full
+  range up to 8 Msps and a −48 floor at 10. The slider follows the rate you
+  have picked, so there is nothing to work out.
 - **IF gain reduction** — the RSP's native gain unit, and deliberately kept
   that way so numbers translate directly from SDRuno/SDR++ practice: **20 dB
   is maximum gain**, 59 dB minimum.
+- **Extended IF range** — lets that reduction go below 20 dB, down to 0: the
+  last 20 dB of gain the receiver has, which the API keeps behind a switch of
+  its own and sdroxide leaves off by default. Off is the right setting for
+  ordinary listening, the bottom of the range being where an RSP is easiest to
+  overload; on is for weak signals with the LNA already at state 0. It also
+  lets the AGC set point go up to 0 dBFS.
 - **LNA state** — the front-end attenuation ladder: state 0 is maximum gain,
   each step switches more attenuation in. How many states exist depends on the
-  model *and the band* (an RSP1B has ten on VHF but seven on HF); pick more
-  than the current band has and the driver clamps, keeps your choice, and
+  model *and the band* (an RSP1B has ten on VHF but seven on HF), and the
+  slider ends where the band the radio is on ends rather than at the model's
+  widest. A higher state chosen on another band is kept and still shown beside
+  the rail: the driver clamps to what this band has, keeps your choice, and
   restores it when you tune somewhere it fits. The default is state 4, not 0:
   full front-end gain on a real antenna drives the ADC straight into overload,
   which no amount of IF gain reduction can undo. This is also the control
@@ -7872,7 +7895,21 @@ unplug the receiver and plug it back in.
   listens on: the other one carries the second aerial, or belongs to the second
   radio. Master/slave operation — sharing the receiver with another
   application — is not supported.
-- **HDR mode** (RSPdx / RSPdx R2) — the high-dynamic-range path below 2 MHz.
+- **HDR mode** (RSPdx / RSPdx R2) — the high-dynamic-range path below 2 MHz,
+  with an **HDR filter** beside it (200 kHz / 500 kHz / 1.2 MHz / 1.7 MHz) once
+  it is on. It is not a mode that follows the dial: the path's filter is built
+  only at a fixed handful of centres — 135, 175, 220, 250, 340 and 475 kHz for
+  the two narrow settings, 516, 875, 1125 and 1900 kHz for the two wide ones —
+  and tuned anywhere else it could do nothing.
+
+  > **HDR does not work yet.** On the one RSPdx it has been tried against,
+  > switching the path on silences the receiver: at every one of those centres,
+  > every filter, both antenna ports, LNA states 0–8, levels from −80 to
+  > −40 dBm, before `Init` and at runtime, at 2.0/1.0/0.5 Msps, zero IF and
+  > 450 kHz IF, and every LO setting. The parameter blocks match SDRplay's own
+  > header and SoapySDRPlay3 drives the mode the same way, so whatever it needs
+  > is not on the documented API surface. Leave the switch off unless you are
+  > the one looking for it; sdroxide says so on screen while it is on.
 - **Bias tee** — about 4.7 V DC up the coax for an active antenna (every model
   except the original RSP1).
 
@@ -13532,9 +13569,19 @@ All in [§6.2.8](#628-sdrplay-rsp-usb):
   (`sudo systemctl enable --now sdrplay` on Linux); `sdroxide --probe` names
   the missing piece.
 - The controls are the RSP's own units: **IF gain reduction** runs backwards
-  (20 dB is maximum gain, 59 minimum) and **LNA state 0 is maximum** — the
-  default of 4 exists because full front-end gain on a real antenna overloads
-  the ADC.
+  (20 dB is maximum gain, 59 minimum — or 0 with **Extended IF range** on,
+  which opens the last 20 dB the hardware has) and **LNA state 0 is maximum**
+  — the default of 4 exists because full front-end gain on a real antenna
+  overloads the ADC. How many LNA states there are belongs to the *band*, so
+  the slider's range moves with the dial.
+- **The S-meter is referred to the antenna.** Alone among the front ends here,
+  an RSP reports what its own gain currently is, and sdroxide takes that off
+  the measurement — so the reading is a fact about the aerial rather than
+  about the gain, and it holds still while the hardware AGC (on by default)
+  moves the gain underneath it. Two consequences: the numbers are tens of dB
+  lower than an RSP showed before, being the level at the socket rather than
+  at the converter; and `cal_offset_db` set for an RSP before this wants
+  setting again ([2.9](#29-the-s-meter)).
 - An **RSPduo** runs one tuner at a time, chosen at open — or **both**, either
   combined (diversity and QRM suppression, whose controls are the **DIV** box
   on the main strip) or as two radios on their own frequencies, HF in one tab
@@ -13542,8 +13589,11 @@ All in [§6.2.8](#628-sdrplay-rsp-usb):
   2 Msps, and neither is yet verified against the hardware. Two radios on one
   board both need **Run both tuners** set, because whichever opens it first is
   what puts it in that mode. Master/slave mode, sharing the receiver with
-  another application, is not supported. **HDR mode** below 2 MHz is the
-  RSPdx / RSPdx R2 path.
+  another application, is not supported.
+- **HDR mode**, the RSPdx / RSPdx R2's path below 2 MHz, **does not work yet** —
+  switching it on silences the receiver on the one RSPdx it has been tried
+  against. The controls are there, and the mode's fixed centres and filter are
+  described in [6.2.8](#628-sdrplay-rsp-usb); the fault is not.
 - Above 6.048 Msps the ADC trades bit depth for speed — worth knowing before
   picking 10 Msps for weak-signal work.
 
