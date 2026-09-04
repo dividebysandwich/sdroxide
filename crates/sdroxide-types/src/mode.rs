@@ -187,7 +187,7 @@ pub enum Mode {
     /// same bargain RTTY strikes with its tone pair (issue #212).
     Navtex,
     /// VDL Mode 2 — the VHF datalink airliners and ground stations exchange
-    /// ACARS over, on seven 25 kHz channels around 136.8 MHz.
+    /// ACARS over, on fourteen 25 kHz channels between 136.650 and 136.975 MHz.
     ///
     /// D8PSK at 10 500 symbols a second, Reed–Solomon coded, carrying AVLC
     /// frames: company messages, position reports, link handoffs, ATC datalink.

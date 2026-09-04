@@ -107,10 +107,10 @@ impl SdroxideApp {
             ui.label(RichText::new("VDL2").size(11.0).strong().color(theme::CYAN()));
             ui.label(RichText::new("aircraft datalink").weak().size(10.5));
 
-            if crate::chrome::chip(ui, centred, "136.825")
+            if crate::chrome::chip(ui, centred, "136.8125")
                 .on_hover_text(
                     "Tune to the middle of the VDL2 group. The decoder's own window slides \
-                     from there to take in as many of the seven channels as the receiver \
+                     from there to take in as many of the fourteen channels as the receiver \
                      can reach.",
                 )
                 .clicked()
@@ -159,13 +159,15 @@ impl SdroxideApp {
             }
         });
 
-        // The channel strip. Seven of them, so a glance says which are being
+        // The channel strip. Fourteen of them, so a glance says which are being
         // listened to and which are carrying anything — the two questions an
-        // empty log raises and nothing else answers.
+        // empty log raises and nothing else answers. Fixed-width slots, for the
+        // reason the counters above have them: a frame count growing a digit
+        // would otherwise reflow the strip and move every pane below it.
         if !st.channels.is_empty() {
             ui.horizontal_wrapped(|ui| {
                 ui.set_min_height(18.0);
-                for c in &st.channels {
+                for (i, c) in st.channels.iter().enumerate() {
                     let name = format!("{:.3}", c.freq_hz / 1e6);
                     let ink = if !c.live {
                         theme::gray(85)
@@ -181,18 +183,34 @@ impl SdroxideApp {
                     } else {
                         name
                     };
+                    let what = sdroxide_types::VDL2_CHANNEL_LABELS
+                        .get(i)
+                        .copied()
+                        .unwrap_or("VDL2 channel");
                     let hover = match &c.reason {
-                        Some(r) => format!("{:.3} MHz — {r}", c.freq_hz / 1e6),
+                        Some(r) => format!("{:.3} MHz, {what} — {r}", c.freq_hz / 1e6),
                         None => format!(
-                            "{:.3} MHz — {} bursts, {} frames, noise floor {:.0} dBFS",
+                            "{:.3} MHz, {what} — {} bursts, {} frames, noise floor {:.0} dBFS",
                             c.freq_hz / 1e6,
                             c.bursts,
                             c.frames,
                             c.floor_dbfs
                         ),
                     };
-                    ui.label(RichText::new(text).monospace().size(9.5).color(ink))
-                        .on_hover_text(hover);
+                    // Wide enough for the longest a channel ever reads —
+                    // "136.975 (999k)" — since the painter clips to the slot
+                    // and a clipped frame count is worse than a wrapped strip.
+                    let resp = ui.allocate_response(egui::vec2(86.0, 16.0), egui::Sense::hover());
+                    if ui.is_rect_visible(resp.rect) {
+                        ui.painter_at(resp.rect).text(
+                            egui::pos2(resp.rect.left(), resp.rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            &text,
+                            egui::FontId::monospace(9.5),
+                            ink,
+                        );
+                    }
+                    resp.on_hover_text(hover);
                 }
             });
         }
@@ -217,6 +235,9 @@ impl SdroxideApp {
 
     /// The message log, with the full card pinned to the bottom of the column.
     fn vdl2_messages(&mut self, ui: &mut egui::Ui, st: &Vdl2Status, avail_h: f32) {
+        // Out of `self` for the length of the draw so the frozen log can be
+        // read while the selection beside it is written; back at the end.
+        let mut hold = self.vdl2_hold.take();
         ui.horizontal(|ui| {
             ui.set_min_height(20.0);
             ui.label(RichText::new("MESSAGES").strong().size(10.5).color(theme::CYAN()));
@@ -228,17 +249,46 @@ impl SdroxideApp {
             if !self.vdl2_filter.is_empty() && crate::chrome::chip(ui, false, "×").clicked() {
                 self.vdl2_filter.clear();
             }
+            // Stop the log, not the decoder: on a busy plate a message is
+            // pushed off the bottom before it can be read, and the answer to
+            // that is to hold the *view* still. Everything carries on behind
+            // it, and what arrived meanwhile is counted on the chip.
+            let held = hold.is_some();
+            let label = match &hold {
+                Some((_, at)) => {
+                    let since = st.frames.saturating_sub(*at);
+                    if since > 0 { format!("HELD  +{}", count(since)) } else { "HELD".to_string() }
+                }
+                None => "HOLD".to_string(),
+            };
+            if crate::chrome::chip(ui, held, label)
+                .on_hover_text(
+                    "Hold the message log where it is, so one can be read without the next \
+                     transmission pushing it up the screen. The decoder keeps running and \
+                     the counters keep moving; letting go shows everything that arrived \
+                     meanwhile.",
+                )
+                .clicked()
+            {
+                // The two lists are different lists, so an index into one means
+                // nothing in the other.
+                self.vdl2_selected = None;
+                hold = if held { None } else { Some((st.messages.clone(), st.frames)) };
+            }
         });
 
+        let log: &[Vdl2Message] = match &hold {
+            Some((m, _)) => m,
+            None => &st.messages,
+        };
         let filter = self.vdl2_filter.trim().to_ascii_uppercase();
-        let rows: Vec<(usize, &Vdl2Message)> = st
-            .messages
+        let rows: Vec<(usize, &Vdl2Message)> = log
             .iter()
             .enumerate()
             .filter(|(_, m)| filter.is_empty() || matches_filter(m, &filter))
             .collect();
 
-        let card = self.vdl2_selected.and_then(|i| st.messages.get(i));
+        let card = self.vdl2_selected.and_then(|i| log.get(i));
         let card_h = if card.is_some() { (avail_h * 0.42).clamp(130.0, 260.0) } else { 0.0 };
         let list_h = (avail_h - card_h - 28.0).max(48.0);
 
@@ -249,12 +299,13 @@ impl SdroxideApp {
             .min_scrolled_height(list_h)
             .auto_shrink([false, false])
             // Newest at the bottom, and follow it: a log is read the way a
-            // conversation is heard.
-            .stick_to_bottom(true)
+            // conversation is heard. Not while held — the whole point of
+            // holding is that the view stays where it was put.
+            .stick_to_bottom(hold.is_none())
             .show_themed(ui, |ui| {
                 if rows.is_empty() {
                     ui.label(
-                        RichText::new(if st.messages.is_empty() {
+                        RichText::new(if log.is_empty() {
                             "nothing decoded yet"
                         } else {
                             "nothing matches the filter"
@@ -277,6 +328,7 @@ impl SdroxideApp {
             ui.separator();
             vdl2_card(ui, m, card_h);
         }
+        self.vdl2_hold = hold;
     }
 
     /// Who is out there.
@@ -349,9 +401,10 @@ impl SdroxideApp {
                 ui.label(RichText::new("Channels").strong());
                 ui.label(
                     RichText::new(
-                        "One downconverter each, all inside the same receiver window. \
-                         Switching one off saves a little processor time; it does not \
-                         make the others any more sensitive.",
+                        "Every 25 kHz slot from 136.650 to 136.975 MHz. One downconverter \
+                         each, all inside the same receiver window. Switching one off saves \
+                         a little processor time; it does not make the others any more \
+                         sensitive.",
                     )
                     .size(10.0)
                     .weak(),
@@ -360,11 +413,18 @@ impl SdroxideApp {
                     for (i, &hz) in sdroxide_types::VDL2_CHANNELS_HZ.iter().enumerate() {
                         let mut on = cfg.channel_enabled(i);
                         let label = format!("{:.3}", hz / 1e6);
+                        let what = sdroxide_types::VDL2_CHANNEL_LABELS[i];
                         let tip = if hz == sdroxide_types::VDL2_CSC_HZ {
-                            "The Common Signalling Channel — in use worldwide, and where \
-                             every link starts. The one to keep if you keep only one."
+                            format!(
+                                "{what} — in use worldwide, and where every link starts. \
+                                 The one to keep if you keep only one."
+                            )
                         } else {
-                            "A European VDL2 channel."
+                            format!(
+                                "Assigned to an {what}. Which channels carry anything \
+                                 depends on where you are: leave them all on unless you \
+                                 know otherwise."
+                            )
                         };
                         if ui.checkbox(&mut on, label).on_hover_text(tip).changed() {
                             if on {

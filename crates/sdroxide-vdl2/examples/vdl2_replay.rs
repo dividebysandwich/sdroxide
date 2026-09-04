@@ -271,6 +271,10 @@ impl Totals {
     }
 }
 
+/// Interleaved `f32` I/Q, either raw or inside the RIFF wrapper SDRoxide's own
+/// I/Q recorder writes — a recording contributed on an issue arrives as the
+/// latter, and stripping 152 bytes off half a gigabyte by hand to replay it is
+/// a step nobody should have to work out.
 fn read_cf32(path: &str) -> Vec<Complex32> {
     let mut f = std::fs::File::open(path).unwrap_or_else(|e| {
         eprintln!("{path}: {e}");
@@ -278,7 +282,8 @@ fn read_cf32(path: &str) -> Vec<Complex32> {
     });
     let mut raw = Vec::new();
     f.read_to_end(&mut raw).expect("read");
-    raw.chunks_exact(8)
+    let body = wav_payload(&raw).unwrap_or(&raw);
+    body.chunks_exact(8)
         .map(|c| {
             Complex32::new(
                 f32::from_le_bytes([c[0], c[1], c[2], c[3]]),
@@ -286,4 +291,48 @@ fn read_cf32(path: &str) -> Vec<Complex32> {
             )
         })
         .collect()
+}
+
+/// The samples inside a RIFF/WAVE file, or `None` if this is not one.
+///
+/// Only the chunk walk, not a WAV reader: the recorder writes 32-bit float
+/// stereo and anything else here would be a different file altogether, so a
+/// wrong format is refused rather than misread as I/Q.
+fn wav_payload(raw: &[u8]) -> Option<&[u8]> {
+    if raw.len() < 12 || &raw[..4] != b"RIFF" || &raw[8..12] != b"WAVE" {
+        return None;
+    }
+    let u16_at = |o: usize| u16::from_le_bytes([raw[o], raw[o + 1]]);
+    let u32_at =
+        |o: usize| u32::from_le_bytes([raw[o], raw[o + 1], raw[o + 2], raw[o + 3]]) as usize;
+    let mut pos = 12;
+    let mut fmt_ok = false;
+    while pos + 8 <= raw.len() {
+        let id = &raw[pos..pos + 4];
+        let len = u32_at(pos + 4);
+        let body = pos + 8;
+        if id == b"fmt " && len >= 16 {
+            let (format, channels, bits) = (u16_at(body), u16_at(body + 2), u16_at(body + 14));
+            // 3 is IEEE float; 0xFFFE is WAVE_FORMAT_EXTENSIBLE, whose real
+            // format sits in the extension and which this walk does not read.
+            if !(format == 3 || format == 0xfffe) || channels != 2 || bits != 32 {
+                eprintln!(
+                    "the WAV is format {format}, {channels} channels, {bits} bits — \
+                     this reads 32-bit float stereo I/Q only"
+                );
+                std::process::exit(2);
+            }
+            fmt_ok = true;
+        }
+        if id == b"data" {
+            if !fmt_ok {
+                return None;
+            }
+            let end = (body + len).min(raw.len());
+            return Some(&raw[body..end]);
+        }
+        // Chunks are word-aligned, and an odd length is followed by a pad byte.
+        pos = body + len + (len & 1);
+    }
+    None
 }

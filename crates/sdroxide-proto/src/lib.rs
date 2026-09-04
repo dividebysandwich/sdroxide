@@ -1204,7 +1204,12 @@ use sdroxide_types::{
 /// decoder's *window* lands on a frequency rather than its dial (issue #310).
 /// The ISM band buttons send it instead of `Command::SetVfo`. Appended, so no
 /// surviving discriminant moved — but a v133 peer handed one fails to decode.
-pub const PROTO_VERSION: u16 = 134;
+/// v135: the VDL2 channel plan is the whole 25 kHz raster rather than every
+/// other slot of it, so [`sdroxide_types::Vdl2Settings::channels`] is fourteen
+/// bits and not seven (issue #265). A `u8` on the wire where a `u16` is
+/// expected does not simply carry the wrong channels — postcard varints them,
+/// so a v134 peer reads the following fields out of step.
+pub const PROTO_VERSION: u16 = 135;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

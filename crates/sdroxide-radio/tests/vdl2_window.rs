@@ -204,8 +204,12 @@ fn selecting_the_mode_puts_the_message_in_the_log() {
     let st = status(&h, "a decoded message", |s| !s.messages.is_empty());
     assert!(st.unavailable.is_none(), "the lane should be running: {:?}", st.unavailable);
     assert!(st.degraded.is_none(), "a 2.4 Msps front end holds the whole plan: {:?}", st.degraded);
-    assert_eq!(st.channels.len(), 7, "every channel of the plan is reported");
-    assert!(st.channels.iter().all(|c| c.live), "all seven should be open: {:?}", st.channels);
+    assert_eq!(
+        st.channels.len(),
+        sdroxide_types::VDL2_CHANNELS_HZ.len(),
+        "every channel of the plan is reported"
+    );
+    assert!(st.channels.iter().all(|c| c.live), "all of them should be open: {:?}", st.channels);
 
     let m = st.messages.last().expect("a message");
     assert_eq!(m.src, AIRCRAFT);
@@ -274,9 +278,20 @@ fn a_narrow_window_says_which_channels_it_cannot_reach() {
     let st = status(&h, "the channels it cannot reach", |s| s.degraded.is_some());
     assert!(st.unavailable.is_none(), "it should still run: {:?}", st.unavailable);
     let why = st.degraded.unwrap();
-    assert!(why.contains("136.675"), "the sentence should name a channel: {why}");
     let live = st.channels.iter().filter(|c| c.live).count();
-    assert!(live > 0 && live < 7, "some but not all should be live, got {live}");
+    assert!(
+        live > 0 && live < sdroxide_types::VDL2_CHANNELS_HZ.len(),
+        "some but not all should be live, got {live}"
+    );
+    // The sentence has to say which channels are left, in frequencies: a count
+    // on its own does not tell an operator whether the one they came for is
+    // among them.
+    let lowest = st.channels.iter().find(|c| c.live).expect("one live channel");
+    let highest = st.channels.iter().rev().find(|c| c.live).expect("one live channel");
+    for c in [lowest, highest] {
+        let name = format!("{:.3}", c.freq_hz / 1e6);
+        assert!(why.contains(&name), "the sentence should name {name}: {why}");
+    }
     let dark = st.channels.iter().find(|c| !c.live).expect("one out of reach");
     assert_eq!(dark.reason.as_deref(), Some("outside the receiver's window"));
 

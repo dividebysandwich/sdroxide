@@ -4707,15 +4707,16 @@ tuning instruction for the service says.
 Choose **VDL2** from the end of the **DIGITAL** row. VHF Data Link Mode 2 is the
 datalink airliners and ground stations exchange ACARS over — company messages,
 position reports, weather requests, fuel and arrival figures, and the link
-management that carries them — on seven 25 kHz channels around 136.8 MHz.
+management that carries them — on fourteen 25 kHz channels between 136.650 and
+136.975 MHz.
 
 **Receive only.** These are commercial aeronautical channels. There is no
 transmit half of this panel and no callsign to set.
 
-**The frequency is chosen for you.** Selecting the mode tunes to 136.825 MHz,
+**The frequency is chosen for you.** Selecting the mode tunes to 136.8125 MHz,
 the middle of the group, and the decoder places its own window from there to
-take in as many of the seven channels as your receiver can reach. The
-**136.825** button in the panel header puts it back if you wander off.
+take in as many of the fourteen channels as your receiver can reach. The
+**136.8125** button in the panel header puts it back if you wander off.
 
 ![SDRoxide in VDL2: the whole datalink group on the waterfall, the message log and the stations sending it](images/vdl2-panel.jpg)
 
@@ -4738,19 +4739,47 @@ band 40 MHz below is enormous by comparison, and a tuner wound up to its limit
 will be overloaded by it rather than made more sensitive. If the whole air band
 rises together as you add gain, that is what has happened.
 
-**A stream of at least about 440 kHz.** The plan is 325 kHz wide, and a
+**A stream of at least about 470 kHz.** The plan is 350 kHz wide, and a
 receiver's outer edges are where its own filter is rolling off, so a window has
 to be about a third wider than the plan to hold all of it:
 
 | Stream | What happens |
 | --- | --- |
 | below 34 kHz | Refused. There is not room for one channel. |
-| 34 – 440 kHz | Runs, and says which channels it cannot reach. The window slides to take in as many as it can. |
-| 440 kHz and up | All seven channels. |
+| 34 – 467 kHz | Runs, and says which channels it cannot reach, and between which two frequencies the ones it does reach lie. The window slides to take in as many as it can. |
+| 467 kHz and up | All fourteen channels. |
 
 Almost any receiver clears the last row: an RTL-SDR at its default 2.4 Msps, an
 Airspy, a HackRF, an RX-888, a Pluto, an SDRplay. What matters far more is the
 aerial.
+
+#### The channels
+
+Every 25 kHz slot from 136.650 to 136.975 MHz, all listened to at once:
+
+| Channel | Assigned to |
+| --- | --- |
+| 136.650 | An airport's ground station — the North American assignment. |
+| 136.675 | An airspace ground station, alongside the European twelve until 2027. |
+| 136.700, 136.725, 136.750, 136.775, 136.800 | Airspace ground stations. |
+| 136.825 | An airport's ground station. |
+| 136.850 | An airspace ground station. |
+| 136.875 | An airport's ground station. |
+| 136.900 | An airspace ground station. |
+| 136.925 | An airport's ground station. |
+| 136.950 | An airspace ground station. |
+| 136.975 | The Common Signalling Channel — the one frequency in use worldwide, where every link starts. The one to keep if you keep only one. |
+
+"Airport" and "airspace" say which kind of *ground station* the slot is assigned
+to: one serving the aeroplanes on and around an aerodrome, or one serving an
+area from a remote site. Both carry aircraft as well, so neither label is a
+direction of travel — the published tables mark these GND and AIR, which reads
+backwards the first time you hear an airport's ground station on an "AIR"
+channel.
+
+Which of them are busy is a local matter, and not one this list can answer for
+you: a plate that is silent in one country is the only busy one in another.
+Leave them all on unless you have a reason not to.
 
 #### The message log
 
@@ -4760,7 +4789,7 @@ read.
 | Column | What it is |
 | --- | --- |
 | Time | When the frame was decoded, UTC. |
-| MHz | Which of the seven channels it arrived on. |
+| MHz | Which of the fourteen channels it arrived on. |
 | From → To | The two 24-bit addresses. For an aircraft this is its ICAO address — the same number its ADS-B squitters carry, so an aeroplane heard on both bands is recognisably one aeroplane. |
 | Type | The link control field: `I` for information (with its sequence numbers), `RR`/`REJ` and friends for flow control, `UI` for a broadcast, `XID` for link management. |
 | Message | The ACARS label and text, the kind of XID exchange, or — for a payload SDRoxide does not read — what it appears to be and how long. |
@@ -4769,6 +4798,12 @@ Click a line to open the full card below it: every field, the signal figures,
 and the frame as hex. The filter box searches an address, a registration, a
 flight identification, an ACARS label or the message text, and it filters the
 station list beside it at the same time.
+
+**HOLD** stops the log where it is. Near a busy airport the next transmission
+arrives before you have finished reading the last one, and this is the answer to
+that: the list stops moving and stays where you scrolled it, while the decoder,
+the counters and the channel strip carry on behind it. The chip counts what has
+arrived meanwhile — **HELD +23** — and letting go shows all of it.
 
 **Colour says what kind of traffic it is.** Yellow is ACARS — the messages with
 words in them. Cyan is XID, which is aircraft and ground stations arranging
@@ -4793,10 +4828,18 @@ Clicking a row filters the log to that station.
 
 #### The channel strip and the counters
 
-The row under the header is the seven channels. Green means frames have come out
-of it, yellow means transmissions have been detected and none has decoded, and
-grey means it is not being listened to — hovering says which of the two reasons
-that is. The counters beside them are arranged in the order the decoder fails
+The row under the header is the fourteen channels. Green means frames have come
+out of it, yellow means transmissions have been detected and none has decoded,
+and grey means it is not being listened to — hovering says which of the two
+reasons that is, and what the channel is assigned to.
+
+A channel that shows nothing at all is the ordinary case, not a fault. Which of
+the fourteen carry traffic depends entirely on where you are: in most of Europe
+it is a handful of them, in North America usually 136.975 and one or two others,
+and the rest of the raster is somebody else's local plan. Each channel is
+measured in its own bandwidth, so a strong station 25 kHz away is not counted
+as a burst here — a channel with a count on it really did hear something on
+*that* frequency. The counters beside them are arranged in the order the decoder fails
 in, and the first one that stops counting names the problem:
 
 | Reading | What it means |
@@ -4822,7 +4865,7 @@ fix it.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Channels | all seven | One downconverter each. Switching one off saves a little processor time; it does not make the others more sensitive. |
+| Channels | all fourteen | One downconverter each. Switching one off saves a little processor time; it does not make the others more sensitive. |
 | Burst threshold | 9 dB | How far above each channel's own learned noise floor a transmission has to rise before the decoder looks at it. Lower catches weaker signals and costs time spent on noise. |
 | Keep in the log | 500 messages | The oldest go first. |
 | Track at most | 300 stations | Likewise, longest-silent first. |
@@ -12857,7 +12900,7 @@ sdroxide stores its settings under the per-user config directory:
 | `renderer-fallback.txt` | text | Written only when a panic came from the graphics driver: the next start renders through OpenGL and says so. Delete it to go back to the default renderer ([14](#14-troubleshooting)). |
 | `skimmer.json` | JSON | Skimmers: which of CW / PSK / RTTY run, and each one's spot squelch in dB. Restored at startup; a narrowband (audio-mode) radio still forces them off without disturbing what you picked. |
 | `adsb.json` | JSON | ADS-B decoder ([§3.13](#313-ads-b-aircraft-on-1090-mhz)): the two timeouts, how many history dots to keep, how far ahead the speed vectors reach, and the ceiling on the aircraft table. Restored at startup, and — like `ism.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
-| `vdl2.json` | JSON | VDL2 decoder ([§3.15](#315-vdl2-what-the-aircraft-are-saying)): which of the seven channels to listen on, the burst threshold in dB, how much log and how many stations to keep, and how long a silent station stays on the list. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
+| `vdl2.json` | JSON | VDL2 decoder ([§3.15](#315-vdl2-what-the-aircraft-are-saying)): which of the fourteen channels to listen on, the burst threshold in dB, how much log and how many stations to keep, and how long a silent station stays on the list. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `ais.json` | JSON | AIS decoder ([§3.16](#316-ais-ships-on-162-mhz)): which of the two channels to listen on, the slot threshold in dB, the two timeouts, how many minutes of trail to keep, how far ahead the vectors reach, and the ceiling on the vessel table. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `ism.json` | JSON | ISM decoder: whether it runs, which device families it listens for, the burst threshold in dB, and whether the rtl_433 decoders are on, which band they watch and how wide a window they get. Restored at startup, and — like `skimmer.json` — a narrowband (audio-mode) radio forces it off without disturbing what you picked. |
 | `rtl433_flex.conf` | text | Your own ISM decoders, in rtl_433's "flex" syntax ([§5.5](#55-adding-your-own-decoders-flex-specs)). Written with a commented example the first time the ISM decoder runs, and never rewritten afterwards — like `bandplan.json`, it is yours to edit. A specification that does not pass its check is listed in the ISM window and skipped; the rest still load. **RELOAD DECODERS** in the ISM window applies an edit without a restart. |
@@ -14186,7 +14229,7 @@ using. Bind them under **Speech** on the Controls tab:
 | PACKET / PACKET-HF | AX.25 packet radio: 1200 baud Bell 202 or 9600 baud G3RUH on VHF/UHF FM, 300 baud AFSK on HF sideband. Carries Winlink sessions and offers the modem as a KISS TNC. See [11](#11-winlink-radio-email). |
 | APRS | Automatic Packet Reporting System — 1200 baud AX.25 on the region's shared channel, with a live map of every station heard, its own symbol per station, and messages you can send and answer. See [3.12](#312-aprs). |
 | ADS-B | Aircraft surveillance on 1090 MHz: a target list and a radar picture with history dots, speed vectors and data blocks. Receive only, and needs a receiver streaming at least 2 Msps. See [3.13](#313-ads-b-aircraft-on-1090-mhz). |
-| VDL2 | The VHF datalink aircraft exchange ACARS over, on seven channels around 136.8 MHz at once: a message log and the stations sending them. Receive only. See [3.15](#315-vdl2-what-the-aircraft-are-saying). |
+| VDL2 | The VHF datalink aircraft exchange ACARS over, on fourteen channels between 136.650 and 136.975 MHz at once: a message log and the stations sending them. Receive only. See [3.15](#315-vdl2-what-the-aircraft-are-saying). |
 | AIS | Ship reporting on the two channels either side of 162.000 MHz at once: a vessel list and a marine chart with hulls drawn to their heading, time-based trails and speed vectors. Receive only. See [3.16](#316-ais-ships-on-162-mhz). |
 
 ### Bands

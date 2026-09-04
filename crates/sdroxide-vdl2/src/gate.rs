@@ -12,9 +12,30 @@
 //!
 //! Correlating for the synchronisation word at every sample of every channel
 //! would cost fifteen complex multiply-accumulates per trial offset in two
-//! spectral senses, on seven channels, forever — some fifty times what this
-//! costs, to find bursts on channels that are silent most of the time. The gate
-//! is `|z|²` per sample and one comparison per thirty-two of them.
+//! spectral senses, on fourteen channels, forever — an order of magnitude more
+//! than this costs, to find bursts on channels that are silent most of the time.
+//! The gate is one band-limiting filter, `|z|²` per sample and one comparison
+//! per thirty-two of them.
+//!
+//! # Why the power is measured through a filter
+//!
+//! The channel arrives here ten times as wide as the signal in it: the
+//! downconverter ahead of the gate is designed against its own output rate, and
+//! the plan is the whole 25 kHz raster, so both of a channel's neighbours are
+//! sitting inside the stream at full strength. Measuring `|z|²` on that counts
+//! them as this channel's own power, and a ground station a mile away opens the
+//! gate on the two channels either side of the one it is transmitting on, which
+//! then spend the correlator on nothing. On a recording from Brittany, six of
+//! the fourteen channels showed between 39 and 103 bursts and not one
+//! synchronisation between them: every one of those was a neighbour.
+//!
+//! So the power is measured on a copy of the stream band-limited to the channel.
+//! It costs a dot product per sample, which is what the rest of this module is
+//! arranged to avoid — and it buys back more than it costs, because the
+//! correlator is no longer run on other stations' transmissions. It also makes
+//! the gate *more* sensitive, not less: the noise in 25 kHz is some 6 dB below
+//! the noise in the whole stream, and the threshold is measured against the
+//! floor either way.
 //!
 //! # The noise floor
 //!
@@ -34,7 +55,22 @@
 //! crate links C behind a feature flag and every one of its constants is wrong
 //! here.
 
-use sdroxide_dsp::Complex32;
+use sdroxide_dsp::{Complex32, FirDecim, lowpass_taps};
+
+use crate::demod::{CUTOFF_SYMS, SYMBOL_RATE};
+
+/// Taps in the filter the power is measured through.
+///
+/// Enough that the stopband has closed by the time it reaches the neighbouring
+/// channel's centre 25 kHz away — a windowed sinc's transition is about four
+/// sample rates over the tap count, which at a channel rate near 100 kHz and
+/// this many taps is 8 kHz, so a cutoff at 12.6 kHz is done by 20 kHz. The
+/// neighbour's own shoulder reaches down to 16.6 kHz, and what little of its
+/// power lives out there is the far tail of its shaping filter.
+///
+/// [`tests::a_transmission_on_the_next_channel_does_not_open_the_gate`] is what
+/// says the number is big enough.
+const DET_TAPS: usize = 49;
 
 /// Samples per power measurement.
 ///
@@ -52,9 +88,13 @@ const FLOOR_RISE: f32 = 0.00005;
 /// Correction from where min-tracking settles to the actual mean noise power.
 ///
 /// Measured by [`tests::the_floor_estimate_lands_on_the_true_noise_power`].
-/// Changing `BLOCK`, `FLOOR_FALL` or `FLOOR_RISE` changes this number, and that
-/// test is what will say so.
-const FLOOR_BIAS: f32 = 1.34;
+/// Changing `BLOCK`, `FLOOR_FALL`, `FLOOR_RISE` or [`DET_TAPS`] changes this
+/// number, and that test is what will say so. It grew when the power began
+/// being measured through a filter: a block of 32 samples of a stream
+/// band-limited to a quarter of its width holds a quarter as many independent
+/// ones, the spread of the block powers is wider for it, and min-tracking
+/// settles further below the mean.
+const FLOOR_BIAS: f32 = 2.585;
 
 /// How far the power must fall back below the open threshold before the
 /// transmission is over, as a power ratio — 6 dB of hysteresis.
@@ -103,7 +143,10 @@ pub struct Burst {
     pub rate_hz: f64,
     /// Absolute RF centre of the channel it came from.
     pub center_hz: f64,
-    /// Peak block power against the channel's learned floor, dB.
+    /// Peak block power against the channel's learned floor, dB. Both are
+    /// measured in the channel's own bandwidth rather than the stream's, so
+    /// this is the transmission's signal-to-noise ratio and not a figure with
+    /// nine tenths of a stream's noise in the denominator.
     pub snr_db: f32,
     /// Peak block power in absolute dBFS — the comparable figure when two
     /// channels hear the same station, since `snr_db` is referred to each
@@ -118,6 +161,12 @@ pub struct Gate {
     open_ratio: f32,
 
     inbuf: Vec<Complex32>,
+    /// The stream band-limited to this channel, which is what the power is
+    /// measured on. Only the measurement: what the decoder gets handed is the
+    /// samples as they arrived, since its own receive filter is a better one
+    /// and it wants to place it itself.
+    det: FirDecim,
+    detbuf: Vec<Complex32>,
     floor: f32,
     tracked: f32,
     seeded: bool,
@@ -145,11 +194,18 @@ pub struct Gate {
 impl Gate {
     pub fn new(rate_hz: f64, center_hz: f64, threshold_db: f32) -> Gate {
         let pre = (PRE_S * rate_hz).round().max(BLOCK as f64) as usize;
+        // The same band the receive filter passes, for the same reason: a
+        // receiver a few tens of parts per million out slides the whole signal
+        // sideways, and a detector cut to the signal's own shoulder would stop
+        // hearing it before the decoder stopped reading it.
+        let det_taps = lowpass_taps(DET_TAPS, CUTOFF_SYMS * SYMBOL_RATE / rate_hz);
         Gate {
             rate_hz,
             center_hz,
             open_ratio: 10f32.powf(threshold_db / 10.0),
             inbuf: Vec::with_capacity(BLOCK * 2),
+            det: FirDecim::with_taps(det_taps, 1),
+            detbuf: Vec::with_capacity(BLOCK * 2),
             floor: 0.0,
             tracked: 0.0,
             seeded: false,
@@ -182,18 +238,29 @@ impl Gate {
     /// Feed baseband samples; append any completed transmissions to `out`.
     pub fn push(&mut self, iq: &[Complex32], out: &mut Vec<Burst>) {
         let mut buf = std::mem::take(&mut self.inbuf);
+        let mut det = std::mem::take(&mut self.detbuf);
         buf.extend_from_slice(iq);
+        self.det.process(iq, &mut det);
+
+        // The two queues carry the same samples and drain together, so they
+        // stay in step: the filter holds its first taps back and never catches
+        // up, which puts the power measurement half a tap length ahead of the
+        // block it is measured against. Half a tap length is a fifth of a
+        // millisecond, and [`PRE_S`] of run-up is kept in front of every burst.
         let mut pos = 0usize;
-        while pos + BLOCK <= buf.len() {
-            let block = &buf[pos..pos + BLOCK];
-            let power = block.iter().map(|z| z.norm_sqr()).sum::<f32>() / BLOCK as f32;
-            self.advance(block, power, out);
+        let usable = buf.len().min(det.len());
+        while pos + BLOCK <= usable {
+            let power =
+                det[pos..pos + BLOCK].iter().map(|z| z.norm_sqr()).sum::<f32>() / BLOCK as f32;
+            self.advance(&buf[pos..pos + BLOCK], power, out);
             pos += BLOCK;
         }
         if pos > 0 {
             buf.drain(..pos);
+            det.drain(..pos);
         }
         self.inbuf = buf;
+        self.detbuf = det;
     }
 
     fn advance(&mut self, block: &[Complex32], power: f32, out: &mut Vec<Burst>) {
@@ -284,13 +351,23 @@ mod tests {
 
     /// [`FLOOR_BIAS`] is measured, not guessed: feed noise of known power and
     /// check the settled estimate against it.
+    ///
+    /// The power to check against is the noise in the *channel*, not in the
+    /// stream: the gate measures through [`DET_TAPS`] taps of low-pass, which
+    /// pass a fraction of a white spectrum equal to the sum of their squares.
+    /// That is where six of the decibels between this figure and the stream's
+    /// own noise power went, and it is the whole point — the floor a
+    /// transmission is compared against is the noise it actually competes with.
     #[test]
     fn the_floor_estimate_lands_on_the_true_noise_power() {
+        let rate = 100_000.0;
         let mut n = Noise::new(0x1234_5678);
         // Two components at sigma each, so the mean power is 2·sigma².
         let sigma = 0.03f32;
-        let want = 2.0 * sigma * sigma;
-        let mut g = Gate::new(100_000.0, 136_975_000.0, 9.0);
+        let band: f32 =
+            lowpass_taps(DET_TAPS, CUTOFF_SYMS * SYMBOL_RATE / rate).iter().map(|t| t * t).sum();
+        let want = 2.0 * sigma * sigma * band;
+        let mut g = Gate::new(rate, 136_975_000.0, 9.0);
         let mut out = Vec::new();
         let mut buf = vec![Complex32::default(); 4096];
         for _ in 0..40 {
@@ -333,6 +410,53 @@ mod tests {
         assert!(b.iq.len() >= burst.len(), "the burst was clipped");
         assert!(b.snr_db > 20.0, "signal-to-noise {}", b.snr_db);
         assert_eq!(b.center_hz, 136_975_000.0);
+    }
+
+    /// A transmission on the next channel up does not open this one's gate,
+    /// however strong it is.
+    ///
+    /// The case that made this necessary is an operator living beside an
+    /// airport: the ground station 25 kHz away arrives tens of decibels above
+    /// everything else, and before the detection filter it was counted as a
+    /// burst here — 46 of them in 25 seconds on one recording, none of which
+    /// was ever going to synchronise.
+    #[test]
+    fn a_transmission_on_the_next_channel_does_not_open_the_gate() {
+        let rate = 96_000.0;
+        let frame = vec![0x5au8; 40];
+        let p = crate::tx::TxParams { sample_rate: rate, ..crate::tx::TxParams::default() };
+        let burst = crate::tx::modulate(&frame, &p, 10.0);
+
+        // 40 dB above the noise the gate is learning its floor from, which is
+        // what a local ground station looks like.
+        let hear = |offset_hz: f64| -> usize {
+            let mut n = Noise::new(0xbeef);
+            let mut g = Gate::new(rate, 136_900_000.0, 9.0);
+            let mut out = Vec::new();
+            let mut quiet = vec![Complex32::default(); 40_000];
+            n.add(&mut quiet, 0.001);
+            g.push(&quiet, &mut out);
+
+            let w = std::f64::consts::TAU * offset_hz / rate;
+            let mut sig: Vec<Complex32> = burst
+                .iter()
+                .enumerate()
+                .map(|(i, &z)| {
+                    let ph = w * i as f64;
+                    z * Complex32::new(ph.cos() as f32, ph.sin() as f32) * 0.1
+                })
+                .collect();
+            n.add(&mut sig, 0.001);
+            g.push(&sig, &mut out);
+            let mut quiet2 = vec![Complex32::default(); 20_000];
+            n.add(&mut quiet2, 0.001);
+            g.push(&quiet2, &mut out);
+            out.len()
+        };
+
+        assert_eq!(hear(0.0), 1, "the gate missed a transmission on its own channel");
+        assert_eq!(hear(25_000.0), 0, "the channel above opened the gate");
+        assert_eq!(hear(-25_000.0), 0, "the channel below opened the gate");
     }
 
     /// A carrier that never stops is dropped and counted, not accumulated until

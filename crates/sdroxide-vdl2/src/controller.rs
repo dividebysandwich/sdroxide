@@ -414,7 +414,9 @@ mod tests {
     /// are both dark — and the panel is told which is which.
     #[test]
     fn a_dark_channel_says_why_it_is_dark() {
-        let cfg = Vdl2Settings { channels: 0b100_0000, ..Vdl2Settings::default() };
+        // The CSC alone, which is the top of the plan.
+        let csc = plan::CHANNELS.len() - 1;
+        let cfg = Vdl2Settings { channels: 1 << csc, ..Vdl2Settings::default() };
         let c = Vdl2Controller::new(plan::ideal_center_hz(), 500_000.0, cfg);
         c.on_rx_iq(&vec![Complex32::default(); 4096]);
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -430,7 +432,7 @@ mod tests {
             }
         }
         let st = st.expect("no snapshot");
-        assert!(st.channels[6].live, "the CSC should be the one left on");
+        assert!(st.channels[csc].live, "the CSC should be the one left on");
         assert_eq!(st.channels[0].reason.as_deref(), Some("switched off"));
 
         // A window too narrow to reach the outer channels.
@@ -449,7 +451,7 @@ mod tests {
             }
         }
         let st = st.expect("no snapshot");
-        assert!(st.channels[6].live);
+        assert!(st.channels[csc].live);
         assert_eq!(st.channels[0].reason.as_deref(), Some("outside the receiver's window"));
     }
 }

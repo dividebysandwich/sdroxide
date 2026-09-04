@@ -575,6 +575,15 @@ pub struct SdroxideApp {
     vdl2_filter: String,
     /// VDL2: index into the log of the message whose card is open.
     vdl2_selected: Option<usize>,
+    /// VDL2: the log frozen where the operator stopped it, and the frame count
+    /// at that moment so the panel can say how much has arrived since.
+    ///
+    /// The *log* rather than the whole status: a busy channel plate is unreadable
+    /// — a message an operator is trying to read is pushed up the screen by the
+    /// next one before they finish it — but the counters and the channel strip
+    /// beside it are what say the receiver is still working, and freezing those
+    /// too would look exactly like a decoder that had stopped.
+    vdl2_hold: Option<(Vec<sdroxide_types::Vdl2Message>, u64)>,
     /// VDL2: the decoder's own settings window is open.
     show_vdl2_setup: bool,
     vdl2_sort: panels::vdl2::Vdl2Sort,
@@ -1286,6 +1295,7 @@ impl SdroxideApp {
             vdl2_status: None,
             vdl2_filter: String::new(),
             vdl2_selected: None,
+            vdl2_hold: None,
             show_vdl2_setup: false,
             vdl2_sort: panels::vdl2::Vdl2Sort::default(),
             vdl2_sort_desc: true,

@@ -1,5 +1,5 @@
 //! VDL Mode 2 — the VHF datalink airliners and ground stations exchange ACARS
-//! over, on seven 25 kHz channels around 136.8 MHz.
+//! over, on fourteen 25 kHz channels between 136.650 and 136.975 MHz.
 //!
 //! Native-only, and driven by the engine like the ADS-B and ISM decoders: it
 //! takes complex baseband from a wideband window and hands back a message log
@@ -19,7 +19,10 @@
 //!
 //! Issue #265 contributed 24 seconds of 2.4 Msps baseband centred on
 //! 136.8135 MHz, and it is the only external evidence this decoder has. It
-//! settled three things the standard's text alone had left wrong or unproven:
+//! settled three things the standard's text alone had left wrong or unproven,
+//! and later a fourth — that six of the fourteen channels it now covers were
+//! missing from the plan, and that most of what the gate was opening on was the
+//! *neighbouring* channel:
 //! a D8PSK symbol's three bits come out **most significant first**; the data
 //! field is an ordinary **HDLC frame** — `0x7E` flags and bit stuffing — whose
 //! length in bits is what the transmission header states; and the

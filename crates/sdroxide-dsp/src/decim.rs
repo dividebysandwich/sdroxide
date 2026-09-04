@@ -340,6 +340,21 @@ impl FirDecim {
         FirDecim { taps, factor, buf: Vec::new() }
     }
 
+    /// The same dot product with taps the caller chose.
+    ///
+    /// [`FirDecim::new`] cuts at the widest frequency that will not alias at
+    /// `factor`, which is what a *rate change* wants. A caller filtering to a
+    /// signal narrower than the rate it is running at — a channel inside a
+    /// stream ten times its width — wants a cutoff of its own, and `factor` 1
+    /// makes this a plain band-limiting filter with no rate change at all.
+    ///
+    /// Real taps, unlike [`crate::ComplexFir`]'s: half the multiplies for a
+    /// filter that is not shifting anything sideways.
+    pub fn with_taps(taps: Vec<f32>, factor: usize) -> Self {
+        assert!(factor >= 1 && taps.len() > factor);
+        FirDecim { taps, factor, buf: Vec::new() }
+    }
+
     pub fn process(&mut self, input: &[Complex32], out: &mut Vec<Complex32>) {
         self.buf.extend_from_slice(input);
         let n = self.taps.len();

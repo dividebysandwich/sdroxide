@@ -22,11 +22,12 @@
 //!
 //! # The channels
 //!
-//! Seven of them, 25 kHz apart, and the decoder listens to all it can reach at
-//! once — one downconverter each inside a single receiver window, the way the
+//! Fourteen of them, 25 kHz apart, and the decoder listens to all it can reach
+//! at once — one downconverter each inside a single receiver window, the way the
 //! ISM decoder covers its channel plan. 136.975 MHz is the Common Signalling
-//! Channel, the one frequency in use worldwide; the rest are the European
-//! group, where the traffic that does not fit on the CSC goes.
+//! Channel, the one frequency in use worldwide; the rest carry the traffic that
+//! does not fit on it, and which of them are busy depends entirely on where the
+//! aerial is.
 //!
 //! # Sources
 //!
@@ -39,17 +40,63 @@ use serde::{Deserialize, Serialize};
 
 /// The VDL Mode 2 channels, ascending.
 ///
-/// 136.700–136.975 MHz is the European VDL2 allocation; 136.675 runs alongside
-/// it until 2027. Whole plan is 325 kHz wide including the outer half-channels,
-/// which is why one ordinary receiver window covers the lot.
-pub const VDL2_CHANNELS_HZ: [f64; 7] = [
+/// Every 25 kHz slot from 136.650 to 136.975 MHz. Not every other one: the
+/// datalink allocation *is* the 25 kHz raster, and which slots carry traffic is
+/// a regional matter — 136.700 to 136.975 is the twelve-channel European plan,
+/// 136.650 is the North American on-airport channel, and 136.675 runs alongside
+/// the European twelve until 2027. Skipping the slots between them was this
+/// decoder's own mistake, reported from Brittany where the local ground station
+/// is on 136.900 (issue #265).
+///
+/// Whole plan is 350 kHz wide including the outer half-channels, which is why
+/// one ordinary receiver window still covers the lot.
+///
+/// Source: the European ICAO Frequency Management Manual (EUR Doc 011) for the
+/// twelve; the Aeronautical Frequency Committee's USA VDL Mode 2 spectral plan
+/// for 136.650.
+pub const VDL2_CHANNELS_HZ: [f64; 14] = [
+    136_650_000.0,
     136_675_000.0,
+    136_700_000.0,
     136_725_000.0,
+    136_750_000.0,
     136_775_000.0,
+    136_800_000.0,
     136_825_000.0,
+    136_850_000.0,
     136_875_000.0,
+    136_900_000.0,
     136_925_000.0,
+    136_950_000.0,
     136_975_000.0,
+];
+
+/// What each channel of [`VDL2_CHANNELS_HZ`] is assigned to, in the same order.
+///
+/// "Airspace" and "airport" say which kind of *ground station* the channel is
+/// for — one serving an area from a remote ground station, or one serving the
+/// aeroplanes on and around an aerodrome. Both carry aircraft too, so the label
+/// is not a direction of travel. The published tables mark these AIR and GND,
+/// which reads exactly backwards to an operator hearing an airport's ground
+/// station on an "AIR" channel, so this spells it out instead.
+///
+/// Here rather than in the decoder because the panel says it and the panel also
+/// runs in a browser, where the decoder does not.
+pub const VDL2_CHANNEL_LABELS: [&str; 14] = [
+    "airport station (USA)",
+    "airspace station (to 2027)",
+    "airspace station",
+    "airspace station",
+    "airspace station",
+    "airspace station",
+    "airspace station",
+    "airport station",
+    "airspace station",
+    "airport station",
+    "airspace station",
+    "airport station",
+    "airspace station",
+    "common signalling channel",
 ];
 
 /// The Common Signalling Channel — the one VDL2 frequency in use worldwide.
@@ -59,28 +106,27 @@ pub const VDL2_CHANNELS_HZ: [f64; 7] = [
 pub const VDL2_CSC_HZ: f64 = 136_975_000.0;
 
 /// Where the window wants to sit to reach the whole plan: the midpoint of the
-/// outer channels' outer edges, which lands exactly on a raster slot.
-pub const VDL2_PLAN_CENTER_HZ: f64 = 136_825_000.0;
+/// outer channels' outer edges. Half a slot off the raster, because the plan
+/// has an even number of channels in it.
+pub const VDL2_PLAN_CENTER_HZ: f64 = 136_812_500.0;
 
-/// How wide one VDL2 channel's slot is — the VHF air-ground raster.
-///
-/// Not the spacing between the entries of [`VDL2_CHANNELS_HZ`], which are 50 kHz
-/// apart: the datalink assignments take every *other* slot of the 25 kHz raster,
-/// leaving a guard channel between them. The bandwidth is what matters to the
-/// receiver, which is why this is the constant the window arithmetic uses.
+/// How wide one VDL2 channel's slot is — the VHF air-ground raster, which is
+/// also the spacing between the entries of [`VDL2_CHANNELS_HZ`]. Two channels
+/// in use next to each other are 25 kHz apart with no guard slot between them,
+/// which is what the receive filter has to earn its keep against.
 pub const VDL2_CHANNEL_SPACING_HZ: f64 = 25_000.0;
 
 /// Symbols a second. D8PSK, three bits each, so 31.5 kbit/s.
 pub const VDL2_SYMBOL_RATE: f64 = 10_500.0;
 
-/// The narrowest stream that holds the whole seven-channel plan.
+/// The narrowest stream that holds the whole fourteen-channel plan.
 ///
-/// 325 kHz of plan, divided by the fraction of a front end's span that is
+/// 350 kHz of plan, divided by the fraction of a front end's span that is
 /// usable — the outer edges of any receiver's window are where its own
 /// anti-alias filter is already rolling off, and a channel sitting in the roll
 /// off decodes badly or not at all. Same three-quarters figure the ISM plan
 /// uses, for the same reason.
-pub const VDL2_PLAN_RATE_HZ: f64 = 433_334.0;
+pub const VDL2_PLAN_RATE_HZ: f64 = 466_667.0;
 
 /// The narrowest stream that holds one channel with its shoulders.
 ///
@@ -109,8 +155,9 @@ pub const VDL2_DROP_LIST_S: u16 = 1800;
 /// Default for [`Vdl2Settings::threshold_db`]: how far above the learned noise
 /// floor a burst has to rise before the decoder looks at it.
 pub const VDL2_THRESHOLD_DB: u8 = 9;
-/// Every channel enabled — the seven low bits of [`Vdl2Settings::channels`].
-pub const VDL2_ALL_CHANNELS: u8 = 0x7f;
+/// Every channel enabled — the fourteen low bits of
+/// [`Vdl2Settings::channels`].
+pub const VDL2_ALL_CHANNELS: u16 = 0x3fff;
 
 /// What kind of station an AVLC address names.
 ///
@@ -589,9 +636,17 @@ pub struct Vdl2Settings {
     /// One bit per entry of [`VDL2_CHANNELS_HZ`], ascending, low bit first.
     ///
     /// A mask rather than a list of frequencies because the plan is fixed: a
-    /// channel is either one of the seven or it is not something this decoder
+    /// channel is either one of the fourteen or it is not something this decoder
     /// knows how to listen to.
-    pub channels: u8,
+    ///
+    /// Stored under a different name from the seven-channel mask that came
+    /// before it. Every bit moved when the plan filled in the slots between the
+    /// old channels, so a `vdl2.json` written by an older build would now read
+    /// as a *different* set of channels rather than the same one — and switching
+    /// half the plan off silently is worse than the one-off cost of an operator
+    /// re-making their choice. An old file falls back to all channels on.
+    #[serde(rename = "channel_mask")]
+    pub channels: u16,
     /// How far above the learned noise floor a burst has to rise, dB.
     pub threshold_db: u8,
     /// A station with nothing heard from it for this long leaves the list.
@@ -667,30 +722,45 @@ mod tests {
     /// The plan's centre really is the midpoint of the outer channels' outer
     /// edges, and the whole plan really does fit in the rate named for it.
     #[test]
-    fn the_plan_centre_and_rate_describe_the_same_seven_channels() {
+    fn the_plan_centre_and_rate_describe_the_same_channels() {
         let lo = VDL2_CHANNELS_HZ[0] - VDL2_CHANNEL_SPACING_HZ / 2.0;
-        let hi = VDL2_CHANNELS_HZ[6] + VDL2_CHANNEL_SPACING_HZ / 2.0;
+        let hi = VDL2_CHANNELS_HZ[VDL2_CHANNELS_HZ.len() - 1] + VDL2_CHANNEL_SPACING_HZ / 2.0;
         assert_eq!((lo + hi) / 2.0, VDL2_PLAN_CENTER_HZ);
         // Three quarters of the plan rate has to cover the span, or the outer
         // channels sit in the front end's roll-off.
         assert!(VDL2_PLAN_RATE_HZ * 0.75 >= hi - lo, "the plan does not fit its own rate");
     }
 
-    /// The channels sit on the 25 kHz raster, ascending, with a guard slot
-    /// between each pair — the thing every window calculation assumes.
+    /// The channels are the whole 25 kHz raster, ascending and with nothing
+    /// skipped — the thing every window calculation assumes, and the thing that
+    /// was wrong when a French operator's local ground station on 136.900 was
+    /// nowhere in the panel (issue #265).
     #[test]
-    fn the_channels_are_a_raster() {
+    fn the_channels_are_the_whole_raster() {
         for w in VDL2_CHANNELS_HZ.windows(2) {
             let gap = w[1] - w[0];
-            assert!(gap > 0.0, "the plan is not ascending");
-            assert_eq!(gap % VDL2_CHANNEL_SPACING_HZ, 0.0, "{gap} is off the raster");
-            // Every assignment in use takes every other slot. If that ever
-            // stops being true the adjacent-channel margin changes with it, so
-            // it is asserted rather than assumed.
-            assert_eq!(gap, 2.0 * VDL2_CHANNEL_SPACING_HZ);
+            assert_eq!(gap, VDL2_CHANNEL_SPACING_HZ, "{gap} is not one raster slot");
         }
         assert!(VDL2_CHANNELS_HZ.contains(&VDL2_CSC_HZ));
-        assert!(VDL2_CHANNELS_HZ.contains(&VDL2_PLAN_CENTER_HZ));
+        // The CSC is the top of the plan, and every channel below it is a slot
+        // of the same raster.
+        assert_eq!(VDL2_CHANNELS_HZ[VDL2_CHANNELS_HZ.len() - 1], VDL2_CSC_HZ);
+        // An even number of channels puts the centre half a slot off the
+        // raster, which is legal for a window and would not be for a channel.
+        assert_eq!(VDL2_CHANNELS_HZ.len() % 2, 0);
+        assert!(!VDL2_CHANNELS_HZ.contains(&VDL2_PLAN_CENTER_HZ));
+    }
+
+    /// A `vdl2.json` from a build with the seven-channel plan in it does not
+    /// come back as seven of the fourteen: the key it was written under is not
+    /// the key this reads, so it falls back to every channel on.
+    #[test]
+    fn an_old_channel_mask_does_not_silently_mean_something_else() {
+        let old: Vdl2Settings =
+            serde_json::from_str(r#"{"channels":127,"threshold_db":11}"#).expect("parse");
+        assert_eq!(old.channels, VDL2_ALL_CHANNELS);
+        // ...while everything else in the file is still read.
+        assert_eq!(old.threshold_db, 11);
     }
 
     /// Every channel of the plan has a bit, and no bit outside it survives a
@@ -702,7 +772,7 @@ mod tests {
             assert!(all.channel_enabled(i), "channel {i} is off by default");
         }
         assert!(!all.channel_enabled(VDL2_CHANNELS_HZ.len()));
-        let wild = Vdl2Settings { channels: 0xff, ..Vdl2Settings::default() }.sane();
+        let wild = Vdl2Settings { channels: 0xffff, ..Vdl2Settings::default() }.sane();
         assert_eq!(wild.channels, VDL2_ALL_CHANNELS);
         assert!(!Vdl2Settings::OFF.any_enabled());
     }

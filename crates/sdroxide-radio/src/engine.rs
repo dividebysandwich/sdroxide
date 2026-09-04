@@ -4998,7 +4998,7 @@ impl Engine {
             }
         }
         // ...and the VDL2 lane, from a third of a megahertz around 136.8 MHz.
-        // The seven channels are split out inside the worker rather than here:
+        // The fourteen channels are split out inside the worker rather than here:
         // one downconverter per channel is the worker's business, and the engine
         // only has to place the window they all come off.
         if let Some(ddc) = self.vdl2_ddc.as_mut() {
@@ -9911,8 +9911,9 @@ impl Engine {
     /// Why the decoder will do less than it could here, even though it runs.
     ///
     /// A different kind of statement from [`Self::vdl2_unavailable`]: the lane is
-    /// working, and an operator who sees three channels lit out of seven would
-    /// otherwise have to guess whether the other four are quiet or out of reach.
+    /// working, and an operator who sees three channels lit out of fourteen
+    /// would otherwise have to guess whether the other eleven are quiet or out
+    /// of reach.
     fn vdl2_degraded(&self) -> Option<String> {
         if self.vdl2_unavailable().is_some() {
             return None;
@@ -9922,17 +9923,20 @@ impl Engine {
         let reached = sdroxide_vdl2::plan::channels_in_window(center, rate);
         let total = sdroxide_vdl2::plan::CHANNELS.len();
         if reached.len() < total {
-            let missing: Vec<String> = (0..total)
-                .filter(|i| !reached.contains(i))
-                .map(|i| format!("{:.3}", sdroxide_vdl2::plan::CHANNELS[i].center_hz / 1e6))
-                .collect();
+            // Named rather than counted, because "which ones" is the question —
+            // but the window is centred on the plan, so what it misses is the
+            // ends of it, and naming eleven frequencies would say less than
+            // naming the two edges of what is left.
+            let (lo, hi) = (reached[0], reached[reached.len() - 1]);
+            let missing = total - reached.len();
             return Some(format!(
-                "this window is {:.0} kHz wide and reaches {} of the {total} channels — \
-                 {} MHz {} outside it",
+                "this window is {:.0} kHz wide and reaches {} of the {total} channels, \
+                 {:.3} to {:.3} MHz — the other {missing} {} outside it",
                 rate / 1e3,
                 reached.len(),
-                missing.join(", "),
-                if missing.len() == 1 { "is" } else { "are" }
+                sdroxide_vdl2::plan::CHANNELS[lo].center_hz / 1e6,
+                sdroxide_vdl2::plan::CHANNELS[hi].center_hz / 1e6,
+                if missing == 1 { "is" } else { "are" }
             ));
         }
         let sps = Ddc::rate_for(rate, sdroxide_vdl2::plan::CHANNEL_TARGET_RATE_HZ)
