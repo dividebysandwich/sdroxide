@@ -13,9 +13,13 @@
 //! pins: the engine is walked from one band to the other and the lane has to be
 //! running on the far side, without the decoder being restarted.
 //!
-//! rtl_433 only, because it is the lane that can be pointed at more than one
-//! band: the native decoders are fixed on the 868 MHz channel plan, so their
-//! window slides with the dial but is never asked to change width.
+//! rtl_433 is the lane that can be pointed at more than one band: the native
+//! decoders are fixed on the 868 MHz channel plan, so their window slides with
+//! the dial but is never asked to change width.
+//!
+//! The second test here is issue #310, which is the opposite failure: a front
+//! end with room for *both* lanes at once being handed a window sized to one of
+//! them.
 
 #![cfg(feature = "rtl433")]
 
@@ -41,17 +45,23 @@ const DIAL_868: f64 = 868_650_000.0;
 /// point of the test.
 const RATE: f64 = 1_400_000.0;
 
+/// The PlutoSDR of issue #310, and where its LO sat: 3.840 Msps, which has room
+/// for the whole 868 MHz channel plan *and* rtl_433's 868 MHz band together.
+const PLUTO_RATE: f64 = 3_840_000.0;
+const PLUTO_LO: f64 = 868_957_858.0;
+
 /// A front end that tunes anywhere and hears nothing but its own noise floor.
 /// This test is about which window the engine builds, not about what decodes
 /// inside it.
 struct Quiet {
     center: Arc<Mutex<f64>>,
+    rate: f64,
     seed: u64,
 }
 
 impl IqSource for Quiet {
     fn sample_rate(&self) -> f64 {
-        RATE
+        self.rate
     }
     fn center_hz(&self) -> f64 {
         *self.center.lock().unwrap()
@@ -82,12 +92,12 @@ impl IqSource for Quiet {
     }
 }
 
-fn caps() -> DeviceCaps {
+fn caps_at(rate: f64) -> DeviceCaps {
     DeviceCaps {
         driver: "mock".into(),
         label: "mock".into(),
         rx_channels: 1,
-        sample_rates: vec![RATE],
+        sample_rates: vec![rate],
         freq_ranges_rx: vec![(1_000_000.0, 2_000_000_000.0)],
         ..DeviceCaps::default()
     }
@@ -143,8 +153,8 @@ fn a_band_change_re_sizes_the_window_without_a_restart() {
     let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(48_000);
     let center = Arc::new(Mutex::new(DIAL_433));
     let mut h = start_engine(
-        Box::new(Quiet { center, seed: 0x1234_5678_9ABC_DEF0 }),
-        caps(),
+        Box::new(Quiet { center, rate: RATE, seed: 0x1234_5678_9ABC_DEF0 }),
+        caps_at(RATE),
         EngineConfig {
             remember_session: false,
             audio: Some(AudioParams { producer, out_rate: 48_000.0 }),
@@ -212,6 +222,85 @@ fn a_band_change_re_sizes_the_window_without_a_restart() {
     send(Command::SetIsmConfig(ism_on(BAND_433, AUTO)));
     send(Command::SetVfo { vfo: Vfo::A, hz: DIAL_433 });
     ism_status(&h, "the 433.92 MHz lane starting again", lane_running_on("433.92 MHz"));
+
+    drop(h.cmd_tx);
+    if let Some(t) = thread {
+        let _ = t.join();
+    }
+    unsafe { std::env::remove_var("SDROXIDE_CONFIG_DIR") };
+}
+
+/// Issue #310: a front end wide enough for both lanes is given both.
+///
+/// A 3.840 Msps PlutoSDR on the 868 MHz band has room for the whole native
+/// channel plan and rtl_433's 868 MHz band at the same time, and was being
+/// handed a window sized to whichever of the two won a tie. On AUTO that was
+/// rtl_433's, sized 1.365 MHz — which a `Ddc` then built at 1.28 MHz, leaving a
+/// window that covered neither the band it was chosen for nor two of the four
+/// native channels.
+///
+/// So this pins both halves: the lane runs, and the channel plan is whole
+/// beside it.
+#[test]
+fn one_window_serves_both_lanes_when_the_front_end_has_room() {
+    let root = std::env::temp_dir().join(format!("sdroxide-ism-310-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    unsafe { std::env::set_var("SDROXIDE_CONFIG_DIR", &root) };
+
+    let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(48_000);
+    let center = Arc::new(Mutex::new(PLUTO_LO));
+    let mut h = start_engine(
+        Box::new(Quiet { center, rate: PLUTO_RATE, seed: 0x0BAD_F00D_DEAD_BEEF }),
+        caps_at(PLUTO_RATE),
+        EngineConfig {
+            remember_session: false,
+            audio: Some(AudioParams { producer, out_rate: 48_000.0 }),
+            ..Default::default()
+        },
+    );
+    let thread = h.thread.take();
+    let send = |c: Command| h.cmd_tx.send(c).unwrap();
+
+    // Every native family on beside the rtl_433 band, which is the operator's
+    // configuration in the ticket. Both widths are checked: the reported one
+    // and the one the ticket was filed on.
+    for bandwidth_hz in [AUTO, 2_048_000] {
+        send(Command::SetVfo { vfo: Vfo::A, hz: PLUTO_LO });
+        send(Command::SetIsmConfig(IsmSettings {
+            enabled: true,
+            families: u32::MAX,
+            rtl433: sdroxide_types::Rtl433Settings { bands: BAND_868, bandwidth_hz },
+            ..IsmSettings::default()
+        }));
+
+        let s = ism_status(&h, "the 868 MHz lane starting", lane_running_on("868 MHz EU"));
+        let lane = s.rtl433.as_ref().unwrap();
+        assert!(
+            lane.rate_hz >= 1_024_000.0,
+            "bw {bandwidth_hz}: the lane was fed {:.0} Hz for a band that asked for at least \
+             1.024 MHz",
+            lane.rate_hz
+        );
+
+        // The two channels that have decoders must be live, not "outside the
+        // receiver's window" — this receiver had room for them all along.
+        for want in [868_300_000.0, 868_420_000.0] {
+            let row = s
+                .channels
+                .iter()
+                .find(|c| c.freq_hz == want)
+                .unwrap_or_else(|| panic!("no row for {:.3} MHz", want / 1e6));
+            assert!(
+                row.live,
+                "bw {bandwidth_hz}: {:.3} MHz is idle ({:?}) in a {:.3} MHz window on {:.4} MHz",
+                want / 1e6,
+                row.reason,
+                s.window_rate_hz / 1e6,
+                s.window_center_hz / 1e6
+            );
+        }
+    }
 
     drop(h.cmd_tx);
     if let Some(t) = thread {

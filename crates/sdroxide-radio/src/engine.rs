@@ -9219,6 +9219,18 @@ impl Engine {
         })
     }
 
+    /// The width the window will actually be built at, which is not always the
+    /// width that was asked for: a `Ddc` decimates by an integer and rounds.
+    ///
+    /// Taken from the plan rather than re-derived, because the plan chose that
+    /// window by asking whether the channels and bands fit *this* width. Working
+    /// it out again here is how the two came to disagree in issue #310.
+    fn ism_window_rate_hz(&self) -> f64 {
+        self.ism_window_plan()
+            .map(|p| p.rate_hz)
+            .unwrap_or_else(|| Ddc::rate_for(self.state.sample_rate, self.ism_window_target_hz()))
+    }
+
     /// Where the ISM window wants to sit, given which lanes are switched on.
     ///
     /// Not a constant any more: the native decoders are fixed on the European
@@ -9308,7 +9320,7 @@ impl Engine {
     /// the decoder off and on put it right.
     fn sync_ism_window(&mut self) {
         let Some(ddc) = self.ism_ddc.as_ref() else { return };
-        let want_rate = Ddc::rate_for(self.state.sample_rate, self.ism_window_target_hz());
+        let want_rate = self.ism_window_rate_hz();
         if (want_rate - ddc.out_rate()).abs() >= 1.0
             || (self.state.sample_rate - self.ism_in_rate).abs() >= 1.0
         {

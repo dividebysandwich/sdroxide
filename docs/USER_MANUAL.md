@@ -5115,6 +5115,20 @@ and on a receiver handing over ~2 MHz the window then reaches the channels that
 matter. Those buttons are the only tuning control in this window; there is one
 per band, and they serve both sets of decoders at once.
 
+There is one window and both sets of decoders share it, so on a receiver with
+room to spare — a PlutoSDR at 3.84 Msps, say — it is made wide enough to hold
+the channels above *and* rtl_433's band at the same time. Where there is not
+room for both, the window goes where the most decoding gets done, which is why a
+channel with no decoder behind it never costs you one that has: switching
+rtl_433's 868 MHz band on can push 869.525 MHz out of view, and that channel
+reads nothing either way.
+
+Do not tune the dial to a channel to try to reach it. The window follows the
+receiver's own centre frequency, not the dial, and on a zero-IF radio those are
+not the same place — a PlutoSDR parks its local oscillator 960 kHz above the
+dial, so putting the dial on 868.950 MHz moves the *stream* to 869.910 and takes
+the 868 MHz channels out of reach. The band buttons put both where they belong.
+
 > **Note:** like the skimmers, this is a wideband feature. It needs a true IQ
 > source and is unavailable when a CAT radio is feeding demodulated audio.
 
@@ -5357,8 +5371,11 @@ the frequency beside `rtl_433` say what is actually being watched.
 
 The figure shown there is not always the one you picked. The window is a
 whole-number division of the receiver's stream, so a request for 250 kHz out of
-1.4 Msps settles on 350, and 1024 kHz out of the RX-888's 2.025 Msps settles on
-1012.5. It is never *narrower* than what you asked for.
+1.4 Msps settles on 350, and 1024 kHz out of the RX-888's 2.025 Msps takes the
+whole 2025 because half of it would be too little. It is never *narrower* than
+what you asked for — a lane given less than the band it was chosen for would be
+deaf at the band's edges, and rtl_433's own wireless M-Bus decoder wants at
+least 1.2 Msps whatever the band asks for.
 
 #### What it adds
 

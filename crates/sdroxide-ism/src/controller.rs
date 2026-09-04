@@ -434,7 +434,16 @@ impl Worker {
             return;
         };
 
-        let mut ddc = Ddc::new(self.window_rate_hz, bands::rate_for(band, &self.cfg.rtl433));
+        // `bands::pick` vetted this band at the width it asked for, so the lane
+        // must not then be built narrower than that: a `Ddc` left to round its
+        // own decimation hands 960 kHz back for a 1024 kHz band, which is both
+        // narrower than the band that was chosen and under the 1.2 Msps
+        // rtl_433's own wM-Bus mode C&T decoder asks for. More than asked for is
+        // fine — it only means the lane hears past its band's edges — so the
+        // width is rounded up. See `plan::width_at_least`.
+        let want = bands::rate_for(band, &self.cfg.rtl433);
+        let (target, _) = plan::width_at_least(self.window_rate_hz, want).unwrap_or((want, want));
+        let mut ddc = Ddc::new(self.window_rate_hz, target);
         ddc.set_offset_hz(band.center_hz - self.window_center_hz);
         let rate = ddc.out_rate();
 
