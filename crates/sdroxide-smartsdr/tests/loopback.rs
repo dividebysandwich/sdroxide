@@ -598,3 +598,58 @@ fn the_diagnostic_report_distinguishes_the_two_silences() {
     assert!(dump.contains("datagrams received on the VITA-49 socket(s):"), "{dump}");
     assert!(!dump.contains("no UDP at all"), "packets arrived, so this must not be claimed");
 }
+
+// ─── Panadapters: the radio only has so many ─────────────────────────────────
+
+/// A radio has two panadapters on a FLEX-6400 and four higher up, and it
+/// restores a GUI client's own when that client comes back under an id it has
+/// used before. A client that creates another every session therefore leaves
+/// one behind every session, and after two of them the radio says no — which is
+/// issue #309, `0x50000009` with an empty body.
+#[test]
+fn a_panadapter_the_radio_kept_for_us_is_taken_up_again() {
+    let sim = SimRadio::start(SimConfig { restored_pan: true, ..SimConfig::default() })
+        .expect("start simulator");
+    let mut h = connect(&sim, 48_000.0);
+
+    // Not one more asked for...
+    assert!(
+        !sim.stats.saw_command("display panafall create"),
+        "a panadapter was already waiting for us and another was created anyway:\n{}",
+        h.trace.dump()
+    );
+    // ...and the one that was waiting is carrying the receiver.
+    assert!(!collect_iq(&mut h, 2048).is_empty(), "no IQ from the adopted panadapter");
+
+    // Ours to take up is also ours to put back, which is what stops the next
+    // session finding two.
+    drop(h);
+    assert!(sim.wait_for(PATIENCE, |s| s.saw_command("display panafall remove")));
+}
+
+/// And when the radio has none left at all, the receiver still comes up: it
+/// borrows one rather than refusing to work, and says whose it is.
+#[test]
+fn a_radio_with_no_free_panadapter_still_receives() {
+    let sim =
+        SimRadio::start(SimConfig { no_free_pan: true, ..SimConfig::default() }).expect("start");
+    let mut h = connect(&sim, 48_000.0);
+
+    assert!(!collect_iq(&mut h, 2048).is_empty(), "no IQ after borrowing a panadapter");
+    let trace = h.trace.dump();
+    assert!(
+        trace.contains("Borrowing"),
+        "the operator was not told whose panadapter this is:\n{trace}"
+    );
+
+    // A borrowed one is not ours to remove: doing so would close somebody
+    // else's display.
+    drop(h);
+    // Give the teardown the same window every other test gives it, then check
+    // that the removal never came.
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(
+        !sim.stats.saw_command("display panafall remove"),
+        "another client's panadapter was removed on the way out"
+    );
+}

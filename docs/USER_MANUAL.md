@@ -7470,6 +7470,21 @@ a transient identity is one the radio has never seen, so it has no slices filed
 under it. Set a **GUI client ID** of your own (any UUID will do) to keep the
 restore and still be distinct from every other sdroxide.
 
+**Panadapters are a fixed resource.** A DAX I/Q stream is centred on a
+panadapter, so sdroxide needs one — and the radio has only so many: two on a
+FLEX-6400, four on a 6600 and up, shared with whatever SmartSDR has open. A
+radio also *restores* a GUI client's panadapters when that client comes back
+under an id it has used before, so the one from your last sdroxide session is
+usually still waiting.
+
+sdroxide takes that one up again rather than asking for another, and removes it
+on the way out. When every panadapter on the radio is in use anyway — SmartSDR
+with two open on a 6400, say — it borrows one instead of refusing to receive:
+that panadapter's span and centre follow this receiver while sdroxide is
+connected, and it is left alone at shutdown because it belongs to somebody else.
+The log and the diagnostic report say when that has happened. Close a panadapter
+in SmartSDR if you would rather sdroxide had one of its own.
+
 **No spectrum.** The control link is TCP and the spectrum is UDP, so a radio can
 answer everything you ask it and still send you nothing. If the panadapter stays
 empty while the frequency readout tracks the radio, suspect the UDP path. On a

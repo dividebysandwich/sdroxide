@@ -89,6 +89,22 @@ pub struct SimConfig {
     /// Evict this client for a duplicate client id once it has been registered
     /// for this long, as a radio does when a second client claims its id.
     pub evict_after: Option<Duration>,
+    /// The radio still holds a panadapter for this client from an earlier
+    /// session, as one does when a GUI client comes back under an id it has
+    /// used before — it is reported in the `sub pan all` burst before anything
+    /// is created.
+    ///
+    /// The state issue #309 arrives in one half of: a client that always
+    /// creates another leaves a second one behind every session, and a
+    /// FLEX-6400 has two.
+    pub restored_pan: bool,
+    /// Every panadapter the radio has is already in use — by SmartSDR, or by
+    /// this client's own abandoned sessions — so `display panafall create` is
+    /// refused. The other half of issue #309, `0x50000009` on a 6400.
+    pub no_free_pan: bool,
+    /// The client handle the existing panadapter belongs to when it is not
+    /// ours. Only meaningful with [`Self::no_free_pan`].
+    pub foreign_pan_handle: u32,
     /// Stream to FlexLib's default client port (4991) rather than to whatever
     /// address the client's datagrams came from.
     ///
@@ -125,6 +141,9 @@ impl Default for SimConfig {
             require_udp_register: false,
             unbound_dax_iq: false,
             evict_after: None,
+            restored_pan: false,
+            no_free_pan: false,
+            foreign_pan_handle: 0xDEAD_BEEF,
             stream_to_default_port: false,
         }
     }
@@ -333,6 +352,10 @@ struct Session {
     /// Other GUI clients the radio believes are connected, as
     /// `(handle, client_id, station)`.
     others: Vec<(u32, String, String)>,
+    /// Whether this client has a panadapter on the radio — none until one is
+    /// created, unless [`SimConfig::restored_pan`] says the radio kept one from
+    /// an earlier session.
+    pan_exists: bool,
     /// Whether a panadapter is bound to our DAX IQ channel.
     iq_pan_bound: bool,
     /// Whether [`SimConfig::unbound_dax_iq`] has already eaten a bind.
@@ -368,6 +391,10 @@ impl Session {
     ) -> Session {
         let phases = vec![0.0; cfg.carriers.len()];
         let slice_hz = cfg.start_freq_hz;
+        // A radio restores a GUI client's panadapters when it comes back under
+        // an id it has used before, and one it has none left to give reports
+        // whoever is holding them.
+        let cfg_restored_pan = cfg.restored_pan || cfg.no_free_pan;
         // Handles for the pre-existing clients, kept clear of ours.
         let others: Vec<(u32, String, String)> = cfg
             .existing_clients
@@ -387,6 +414,7 @@ impl Session {
             registered_at: None,
             evicted: false,
             others,
+            pan_exists: cfg_restored_pan,
             iq_pan_bound: false,
             swallowed_bind: false,
             iq_stream: None,
@@ -569,11 +597,20 @@ impl Session {
             }
             ("keepalive", _) | ("ping", _) => self.reply(seq, 0, ""),
             ("display", Some("panafall")) => match rest.get(1).copied() {
+                // A radio has a fixed number of panadapters and refuses to make
+                // one past it. The code is the one a FLEX-6400 answered with in
+                // issue #309, and it comes with an empty body, which is what
+                // made it so hard to read.
+                Some("create") if self.cfg.no_free_pan => self.reply(seq, 0x5000_0009, ""),
                 Some("create") => {
+                    self.pan_exists = true;
                     self.reply(seq, 0, &format!("{PAN_ID:X},{WATERFALL_ID:X}"));
                     self.send_pan_status();
                 }
-                Some("remove") => self.reply(seq, 0, ""),
+                Some("remove") => {
+                    self.pan_exists = false;
+                    self.reply(seq, 0, "");
+                }
                 _ => self.reply(seq, 0x5000_1000, "unknown panafall verb"),
             },
             ("display", Some("pan")) => {
@@ -729,7 +766,13 @@ impl Session {
     }
 
     fn send_pan_status(&mut self) {
-        let h = self.handle;
+        if !self.pan_exists {
+            return;
+        }
+        // A radio with none free is holding them for somebody else, so the one
+        // it reports is not under our handle — which is what decides whether a
+        // client may take it up or is only borrowing it.
+        let h = if self.cfg.no_free_pan { self.cfg.foreign_pan_handle } else { self.handle };
         let (c, b, ch) = (self.pan_center_hz, self.pan_bw_hz, self.iq_channel);
         self.status(&format!(
             "display pan {} client_handle=0x{h:08X} wnb=0 wnb_level=0 band=20 \

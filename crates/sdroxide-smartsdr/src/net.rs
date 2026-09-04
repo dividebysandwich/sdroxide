@@ -446,14 +446,31 @@ impl FlexHandle {
             }
             None => fallback = bind_fallback(&trace),
         }
-        for topic in ["slice", "pan", "tx", "meter", "radio", "daxiq", "dax", "atu"] {
+        for topic in ["slice", "tx", "meter", "radio", "daxiq", "dax", "atu"] {
             wire.send(&format!("sub {topic} all"))?;
         }
+        // `pan` last, and read rather than fired: its status burst is what says
+        // which panadapters the radio already has, and [`claim_panadapter`] has
+        // to have seen it before it decides to ask for another. A radio sends
+        // an object's status ahead of the acknowledgement, so reading as far as
+        // the reply is reading past the burst — and costs nothing, where
+        // waiting for the burst on a timer would cost every connect a tenth of
+        // a second whether or not there was anything to wait for.
+        wire.request(&mut reader, &mut deferred, "sub pan all")?;
 
         // ── Bring up the data path ──────────────────────────────────────────
         // A DAX IQ stream is centred on a panadapter, so one has to exist and
         // be bound to the channel before the stream will carry anything useful.
-        let pan_id = create_panadapter(&mut wire, &mut reader, &mut deferred, iq_rate_hz)?;
+        // A radio has only a handful, so this takes one up where it can rather
+        // than asking for another every session — see [`claim_panadapter`].
+        let (pan_id, pan_ours) = claim_panadapter(
+            &mut wire,
+            &mut reader,
+            &mut deferred,
+            &trace,
+            iq_rate_hz,
+            ident.handle,
+        )?;
         wire.send(&format!("display pan set {pan_id} daxiq_channel={iq_channel}"))?;
 
         let create = wire.request(
@@ -547,6 +564,7 @@ impl FlexHandle {
             pan_id,
             evicted: Arc::clone(&evicted),
             handle: ident.handle,
+            pan_ours,
             center: 0.0,
             if_hz: 0.0,
             rx_if: 0.0,
@@ -1046,48 +1064,147 @@ fn bind_fallback(trace: &Trace) -> Option<UdpSocket> {
 /// reports `pan=0x0`, and it never carries a sample.
 const PAN_SETTLE: Duration = Duration::from_millis(200);
 
-/// Create a panadapter for our IQ stream to follow, and set its span to the IQ
+/// Get a panadapter for our IQ stream to follow, and point it at the IQ
 /// bandwidth so the radio's own display shows what we are actually receiving.
+///
+/// Returns the panadapter's id and whether it is ours to remove again.
+///
+/// **A radio has a fixed number of these** — two on a FLEX-6400, four higher up
+/// the range — and it hands out no more, so a client that creates one every
+/// time it connects and cannot always remove it again eventually finds the
+/// radio saying no (issue #309, `0x50000009` on a 6400). Two things make that
+/// likelier than it sounds. sdroxide registers as a *GUI* client under a stable
+/// id, and a radio restores a GUI client's panadapters when that id comes back
+/// — so last session's is waiting for us on this one. And the teardown that
+/// removes ours cannot run at all if the process was killed, the network
+/// dropped, or the radio evicted us.
+///
+/// So one is *claimed* rather than created: whatever the radio has already put
+/// back under our own handle is taken up, and a new one is asked for only when
+/// there is nothing there. Anything else on the radio belongs to a client that
+/// is using it, and is borrowed only when the alternative is not working at
+/// all.
 ///
 /// `display panafall create` makes a panadapter *and* its waterfall; the reply
 /// body is `<pan id>,<waterfall id>`.
-fn create_panadapter(
+fn claim_panadapter(
     wire: &mut Wire,
     reader: &mut LineReader,
     deferred: &mut Vec<Line>,
+    trace: &Trace,
     iq_rate_hz: f64,
-) -> Result<String, FlexError> {
+    our_handle: u32,
+) -> Result<(String, bool), FlexError> {
+    if let Some(pan_id) = existing_pan(deferred, Some(our_handle)) {
+        trace.note(format!(
+            "the radio still had panadapter {pan_id} under our client handle — taking it up \
+             again rather than asking for another"
+        ));
+        configure_pan(wire, &pan_id, iq_rate_hz)?;
+        return Ok((pan_id, true));
+    }
+
     let reply = wire.request(reader, deferred, "display panafall create x=100 y=100")?;
-    if reply.code != 0 {
-        return Err(err(format!(
-            "the radio refused a panadapter (code 0x{:08X}: {})",
-            reply.code,
-            reply.body.trim()
-        )));
-    }
-    let pan = reply.body.trim().split(',').next().unwrap_or("").trim().to_string();
-    if pan.is_empty() {
-        return Err(err(format!("unparseable panafall create reply {:?}", reply.body)));
-    }
-    let pan_id = if pan.starts_with("0x") { pan } else { format!("0x{pan}") };
-
-    // Keep reading while the radio settles rather than sleeping through it: the
-    // status burst the create provokes is what carries the new pan's own state,
-    // and `deferred` is where the control thread expects to find it.
-    let settle = Instant::now() + PAN_SETTLE;
-    while Instant::now() < settle {
-        if let Some(line) = reader.next_line()? {
-            deferred.push(line);
+    if reply.code == 0 {
+        let pan = reply.body.trim().split(',').next().unwrap_or("").trim().to_string();
+        if pan.is_empty() {
+            return Err(err(format!("unparseable panafall create reply {:?}", reply.body)));
         }
+        let pan_id = if pan.starts_with("0x") { pan } else { format!("0x{pan}") };
+        // Keep reading while the radio settles rather than sleeping through it:
+        // the status burst the create provokes is what carries the new pan's own
+        // state, and `deferred` is where the control thread expects to find it.
+        settle(reader, deferred, PAN_SETTLE)?;
+        configure_pan(wire, &pan_id, iq_rate_hz)?;
+        return Ok((pan_id, true));
     }
 
+    // Refused. The radio is out of panadapters, which on a 6400 means two are
+    // already open — so borrow one rather than refusing to receive at all, and
+    // say so, because the display it belongs to is about to move.
+    if let Some(pan_id) = existing_pan(deferred, None) {
+        let note = format!(
+            "the radio would not make another panadapter (0x{:08X}{}) — every one it has is in \
+             use. Borrowing {pan_id}, which belongs to another client: its span and centre will \
+             follow this receiver. Close a panadapter in SmartSDR to get one of our own.",
+            reply.code,
+            if reply.body.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", reply.body.trim())
+            }
+        );
+        tracing::warn!(target: "smartsdr", "{note}");
+        trace.note(note);
+        configure_pan(wire, &pan_id, iq_rate_hz)?;
+        return Ok((pan_id, false));
+    }
+
+    Err(err(format!(
+        "the radio refused a panadapter (code 0x{:08X}{}) and has none we could borrow. A \
+         FLEX-6400 has two and a 6600 four, and they are shared with SmartSDR — close one \
+         there and try again.",
+        reply.code,
+        if reply.body.trim().is_empty() {
+            String::new()
+        } else {
+            format!(": {}", reply.body.trim())
+        }
+    )))
+}
+
+/// The id of a panadapter the radio has already told us about, preferring the
+/// most recently mentioned. `owner` narrows it to one client handle's own.
+///
+/// Read out of the deferred status lines rather than tracked, because this runs
+/// before the control thread that tracks anything exists — the `sub pan all`
+/// burst lands in `deferred` and nothing else has looked at it yet.
+fn existing_pan(deferred: &[Line], owner: Option<u32>) -> Option<String> {
+    deferred.iter().rev().find_map(|line| {
+        let Line::Status { object, kvs, .. } = line else { return None };
+        let id = object.strip_prefix("display pan ")?.trim();
+        if id.is_empty() {
+            return None;
+        }
+        // A status that only says `removed=1` is the radio reporting a
+        // panadapter going away, not one to take up.
+        if kvs.get("removed").is_some_and(|v| v != "0") {
+            return None;
+        }
+        if let Some(want) = owner {
+            let h = kvs.get("client_handle").and_then(|v| p::parse_hex_id(v))?;
+            if h != want {
+                return None;
+            }
+        }
+        Some(id.to_string())
+    })
+}
+
+/// Point a panadapter at the window we are actually receiving.
+fn configure_pan(wire: &mut Wire, pan_id: &str, iq_rate_hz: f64) -> Result<(), FlexError> {
     // The radio speaks MHz here, as it does for every frequency in the protocol.
     wire.send(&format!("display pan set {pan_id} bandwidth={:.6}", iq_rate_hz / 1e6))?;
     // A panadapter with no pixel geometry has no FFT to compute. We never read
     // its bins — sdroxide does its own — but the radio treats an unsized pan as
     // one to skip, and a skipped pan is not a pan a DAX IQ stream follows.
     wire.send(&format!("display pan set {pan_id} xpixels=1024 ypixels=700"))?;
-    Ok(pan_id)
+    Ok(())
+}
+
+/// Read lines into `deferred` for `dur`, rather than sleeping through it.
+fn settle(
+    reader: &mut LineReader,
+    deferred: &mut Vec<Line>,
+    dur: Duration,
+) -> Result<(), FlexError> {
+    let until = Instant::now() + dur;
+    while Instant::now() < until {
+        if let Some(line) = reader.next_line()? {
+            deferred.push(line);
+        }
+    }
+    Ok(())
 }
 
 // ─── Meters ──────────────────────────────────────────────────────────────────
@@ -1161,6 +1278,10 @@ struct ControlThread {
     /// the data thread, which needs the id to address its audio packets.
     tx_stream: Arc<AtomicU32>,
     pan_id: String,
+    /// Whether `pan_id` is a panadapter this session is entitled to remove.
+    /// False for one borrowed from another client because the radio had none
+    /// left to give — taking that away would close somebody else's display.
+    pan_ours: bool,
     center: f64,
     /// Where the radio's slice currently sits relative to the centre.
     if_hz: f64,
@@ -1330,7 +1451,9 @@ impl ControlThread {
             let _ = self.wire.send(&format!("stream remove {}", p::hex_id(tx)));
         }
         let _ = self.wire.send(&format!("stream remove {}", p::hex_id(self.iq_stream)));
-        let _ = self.wire.send(&format!("display panafall remove {}", self.pan_id));
+        if self.pan_ours {
+            let _ = self.wire.send(&format!("display panafall remove {}", self.pan_id));
+        }
         // Give the radio a moment to act on the teardown before the socket
         // closes under it; a hard close leaves the streams orphaned and still
         // transmitting to a port nobody is listening on.
