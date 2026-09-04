@@ -1590,10 +1590,28 @@ is audible.
   station spotted across the band is one click from being copied.
 - **The MHz figure after the pitch is the frequency you are working** — the
   dial plus that pitch — and it is what to log and what to give on the air. The
-  big readout at the top of the window is the dial, which sits a sidetone-pitch
-  *below* the signal, so with a 700 Hz pitch it reads 700 Hz low. The logbook's
-  **+ NEW ENTRY** ([3.2.7](#327-logging-and-the-logbook)) fills itself in from
-  the same figure, not from the dial.
+  logbook's **+ NEW ENTRY** ([3.2.7](#327-logging-and-the-logbook)) fills itself
+  in from the same figure, not from the dial.
+- **QRG** in the panel header puts the big readout on that figure too. Left off
+  — which is what every other radio does, and the default — the big readout at
+  the top of the window is the dial, a sidetone-pitch *below* the signal, so
+  with a 700 Hz pitch it reads 700 Hz low against the station you are copying;
+  and the red tuning line sits at the *edge* of its own passband rather than in
+  it. Switched on, the readout is the frequency being worked, the tuning line
+  moves onto the signal where the passband is already centred, and the two
+  numbers on screen agree. The Q-code is the one you would use to ask another
+  operator the same question.
+
+  Only the numbers move. The dial is still the dial: tuning, memories,
+  band-edge checks and the frequency `rigctld` publishes
+  ([6.9](#69-servers-letting-other-programs-drive-the-radio)) all go on using
+  it, so synchronising another radio over Hamlib still lands a sidetone away.
+  And a click on the waterfall rounds to **Click-tune rounding**
+  ([6.4.2](#642-panadapter-mouse-and-mouse-buttons), 10 Hz by default) *before*
+  the pitch is taken off, so a coarse step leaves the signal off the cursor by
+  up to half of it — which was always true, and only shows now that the readout
+  is claiming an exact number. The setting belongs to this screen and is
+  remembered.
 - **On a transceiver that keys its own transmitter, that same figure is what
   the radio's VFO reads.** It has to be: the rig makes the carrier itself, on
   its VFO, so leaving the VFO on sdroxide's zero-beat would answer every station
@@ -9173,7 +9191,9 @@ the number in the big readout — and the VFO is what the radio keys its own
 transmitter on. sdroxide therefore leaves the VFO on the station and tunes its
 own receiver the 700 Hz down, so the radio's display reads the frequency you are
 working (the same figure the CW panel shows beside the pitch, and the one to
-log) while sdroxide's readout stays the zero-beat it has always been. Nothing on
+log) while sdroxide's readout stays the zero-beat it has always been — unless
+**QRG** is on ([2.14](#214-cw-decoding-and-keyboard-sending)), which reads the
+worked frequency on this side too, so the two displays then agree. Nothing on
 the waterfall moves. Without it the paddle answered every station a whole
 sidetone low and nobody came back.
 
