@@ -7726,6 +7726,16 @@ impl Engine {
                     // An RSPdx's HDR switch rides a gain element and changes
                     // which LNA table is in force.
                     self.refresh_rx_gains();
+                    // …and a KiwiSDR's waterfall zoom rides one and changes how
+                    // wide the full-band lane is, which is what bounds the
+                    // panadapter's zoom-out. Cheap, and only sent when the
+                    // number really moved.
+                    let wide = self.source.wide_span_hz();
+                    if wide != self.caps.wide_span_hz {
+                        self.caps.wide_span_hz = wide;
+                        let _ =
+                            self.event_tx.send(RadioEvent::CapabilitiesUpdated(self.caps.clone()));
+                    }
                 }
                 Direction::Tx => {
                     if let Err(e) = self.source.set_tx_gain_element(&element, db) {

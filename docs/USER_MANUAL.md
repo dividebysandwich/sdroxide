@@ -9782,6 +9782,20 @@ answers on **80** instead, so give the port explicitly.
   the full-band strip. Worth having — without it the only band view is the
   ~12 kHz the I/Q covers, which is not enough to tune by — and it costs about
   20 kB/s against the I/Q's 44.
+- **Band view speed** is how often the receiver sends a row, 1 to 4. The only
+  setting here that changes what the link costs while it is running.
+- **Band view span** is how much band that waterfall covers: the whole 0–30 MHz
+  at the left of the slider, halving with each step to the right. It is really a
+  *resolution* control, because the receiver sends 1024 bins however wide the
+  window is — the whole band is 29 kHz to a bin, which is a band map rather than
+  a picture of anything, while 469 kHz is 458 Hz to a bin and shows the
+  individual stations in a broadcast band. Zoomed in, the window follows your
+  dial, and the panadapter below may be zoomed out to fill it. It costs nothing
+  extra on the link: the same 1024 numbers either way.
+
+  The whole band is the default and is what makes the strip a thing to *tune*
+  by — you can see where the signals are before you go there. Narrow it when you
+  are working one band and want to watch it properly.
 - **Receiver AGC** is the receiver's own, on the far side of the link and ahead
   of the I/Q. On by default, which is unlike every other interface here; see
   [15.21](#1521-public-sdrs-on-the-internet-kiwisdr--web-888-spyserver) for the

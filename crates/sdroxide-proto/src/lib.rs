@@ -1194,7 +1194,13 @@ use sdroxide_types::{
 /// of those as a new radio throws away its wideband waterfall mid-QSY. The
 /// variant is appended, so no surviving discriminant moved — but a v131 peer
 /// handed one fails to decode the message carrying it.
-pub const PROTO_VERSION: u16 = 132;
+/// v133: [`sdroxide_types::KiwiConfig`] gains `wf_zoom`, how far the
+/// receiver's own waterfall is zoomed into its band (issue #303). `RadioConfig`
+/// rides `ServerMsg::RadioConfig` and `Command::SetRadioConfig` whole and
+/// postcard describes nothing about itself, so a v132 peer handed one reads the
+/// tail of every field after it out of step — the serde default that covers a
+/// stored `radio.json` does nothing on the wire.
+pub const PROTO_VERSION: u16 = 133;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

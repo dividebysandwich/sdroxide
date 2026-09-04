@@ -2222,6 +2222,42 @@ pub(in crate::app) fn settings_kiwisdr_tab(
         }
         ui.end_row();
 
+        ui.label("Band view span").on_hover_text(
+            "How much band the receiver's waterfall covers. Its full 0-30 MHz \
+             at the left of the slider, halving with each step to the right.\n\n\
+             The waterfall is always 1024 bins wide however wide the window is, \
+             so this is really a resolution control: the whole band is 29 kHz to \
+             a bin, which is a band *map* rather than a picture of anything, \
+             while a few hundred kilohertz shows individual stations in a \
+             broadcast band. Zoomed in, the window follows your dial.\n\n\
+             The whole band is the default and is what makes the strip a thing \
+             to tune by; the panadapter below it is the ~12 kHz of I/Q. \
+             Applies immediately.",
+        );
+        let mut zoom = cfg.wf_zoom.min(KiwiConfig::WF_ZOOM_MAX);
+        let span_label = |z: u8, bw: f64| {
+            let hz = bw / f64::from(1u32 << z);
+            if hz >= 1e6 { format!("{:.1} MHz", hz / 1e6) } else { format!("{:.0} kHz", hz / 1e3) }
+        };
+        if ui
+            .add_enabled(
+                cfg.wide_lane,
+                egui::Slider::new(&mut zoom, 0..=KiwiConfig::WF_ZOOM_MAX)
+                    // The receiver's own band is not known until it answers, so
+                    // the label is against the commonest one: a 30 MHz Kiwi.
+                    .custom_formatter(|z, _| span_label(z as u8, 30e6)),
+            )
+            .changed()
+        {
+            cfg.wf_zoom = zoom;
+            cmds.push(Command::SetGain {
+                dir: Direction::Rx,
+                element: KiwiConfig::WF_ZOOM_ELEMENT.to_string(),
+                db: f64::from(zoom),
+            });
+        }
+        ui.end_row();
+
         ui.label("Receiver AGC").on_hover_text(
             "The *receiver's* AGC, which is on the far side of the link and \
              ahead of the I/Q — so it acts before anything sdroxide does.\n\n\

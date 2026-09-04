@@ -58,6 +58,11 @@ pub struct KiwiSdrSource {
     label: String,
     agc: bool,
     man_gain: u8,
+    /// How far the receiver's waterfall is zoomed in, as a power of two of its
+    /// band — see [`KiwiConfig::wf_zoom`]. Held here as well as in the handle
+    /// so [`Self::wide_span_hz`] and `current_gains` can answer without
+    /// reaching into the threads.
+    wf_zoom: u8,
     wide_lane: bool,
     /// Set once a refusal has been allowed through to the engine's reconnect
     /// path. See [`KiwiSdrSource::needs_reopen`], which is where the whole
@@ -85,6 +90,7 @@ impl KiwiSdrSource {
             label,
             agc: cfg.agc,
             man_gain: cfg.man_gain,
+            wf_zoom: cfg.wf_zoom.min(KiwiConfig::WF_ZOOM_MAX),
             wide_lane: cfg.wide_lane,
             refusal_reported: AtomicBool::new(false),
             handle,
@@ -169,10 +175,11 @@ impl IqSource for KiwiSdrSource {
         Some((frame.center_hz, frame.span_hz))
     }
 
-    /// The receiver's whole band — what the waterfall covers at zoom 0, and so
-    /// how far the panadapter may be zoomed out.
+    /// What the receiver's waterfall covers, and so how far the panadapter may
+    /// be zoomed out: its whole band at zoom 0, and a power-of-two slice of it
+    /// centred on the dial at anything else (issue #303).
     fn wide_span_hz(&self) -> f64 {
-        if self.wide_lane { self.handle.info.bandwidth_hz } else { 0.0 }
+        if self.wide_lane { self.handle.wf_span_hz() } else { 0.0 }
     }
 
     /// The receiver's own S-meter. See the module note for why not the samples.
@@ -199,6 +206,10 @@ impl IqSource for KiwiSdrSource {
             KiwiConfig::WF_SPEED_ELEMENT => {
                 self.handle.set_wf_speed(db.round().clamp(1.0, 4.0) as u8);
             }
+            KiwiConfig::WF_ZOOM_ELEMENT => {
+                self.wf_zoom = db.round().clamp(0.0, f64::from(KiwiConfig::WF_ZOOM_MAX)) as u8;
+                self.handle.set_wf_zoom(self.wf_zoom);
+            }
             _ => {}
         }
         Ok(())
@@ -208,6 +219,7 @@ impl IqSource for KiwiSdrSource {
         vec![
             (KiwiConfig::AGC_ELEMENT.to_string(), f64::from(u8::from(self.agc))),
             (KiwiConfig::MAN_GAIN_ELEMENT.to_string(), f64::from(self.man_gain)),
+            (KiwiConfig::WF_ZOOM_ELEMENT.to_string(), f64::from(self.wf_zoom)),
         ]
     }
 

@@ -75,6 +75,7 @@ pub fn spawn(cfg: &KiwiConfig, ident: &str, center_hz: f64) -> Result<KiwiHandle
         adc_overflow: AtomicBool::new(false),
         center_milli_hz: AtomicI64::new((center_hz * 1000.0) as i64),
         wf_speed: AtomicU8::new(cfg.wf_speed.clamp(1, 4)),
+        wf_zoom: AtomicU8::new(cfg.wf_zoom.min(sdroxide_types::KiwiConfig::WF_ZOOM_MAX)),
         stop: AtomicBool::new(false),
     });
 
@@ -395,7 +396,35 @@ fn audio_thread(
     shared.alive.store(false, Ordering::Relaxed);
 }
 
-/// Own the waterfall socket: one full-band frame at a time into the slot.
+/// The zoom and centre the waterfall should be on now, or `None` when it is
+/// already there.
+///
+/// At zoom 0 the window *is* the band and the centre is the band's own, so
+/// tuning never moves it — which is the ordinary case and must cost nothing.
+/// Zoomed in it follows the dial, but only once the dial has left the middle
+/// half of what is on screen: a `SET zoom` per hertz of a drag would be a
+/// command per frame at the receiver, and a window that jumped under the
+/// operator's hand at every one of them.
+fn wanted_window(shared: &Shared, info: &KiwiInfo, have: (u8, f64)) -> Option<(u8, f64)> {
+    let zoom = shared.wf_zoom.load(Ordering::Relaxed).min(KiwiConfig::WF_ZOOM_MAX);
+    if zoom == 0 {
+        let cf = info.center_hz / 1e3;
+        return (have != (0, cf)).then_some((0, cf));
+    }
+    let span = info.bandwidth_hz / f64::from(1u32 << zoom);
+    let dial = shared.center_milli_hz.load(Ordering::Relaxed) as f64 / 1000.0;
+    // The receiver clamps a window that would reach past a band edge, so clamp
+    // it here too and the two agree about what was asked for.
+    let (lo, hi) =
+        (info.center_hz - info.bandwidth_hz / 2.0, info.center_hz + info.bandwidth_hz / 2.0);
+    let cf = dial.clamp(lo + span / 2.0, hi - span / 2.0) / 1e3;
+    if have.0 == zoom && (have.1 - cf).abs() * 1e3 < span / 4.0 {
+        return None;
+    }
+    Some((zoom, cf))
+}
+
+/// Own the waterfall socket: one frame at a time into the slot.
 fn waterfall_thread(host: &str, port: u16, session: u64, shared: Arc<Shared>, info: KiwiInfo) {
     let mut ws = match connect(host, port, &format!("/{session}/W/F")) {
         Ok(ws) => ws,
@@ -410,6 +439,9 @@ fn waterfall_thread(host: &str, port: u16, session: u64, shared: Arc<Shared>, in
 
     let mut configured = false;
     let mut speed = 0u8;
+    // The window last asked for, as (zoom, centre kHz). A zoomed waterfall has
+    // to follow the dial, and the dial moves whenever the operator tunes.
+    let mut window = (u8::MAX, f64::NAN);
     let mut bins = Vec::with_capacity(p::WF_WIDTH);
     let mut last_keepalive = Instant::now();
 
@@ -421,6 +453,10 @@ fn waterfall_thread(host: &str, port: u16, session: u64, shared: Arc<Shared>, in
         if configured && want != speed {
             send(&mut ws, p::set_wf_speed(want));
             speed = want;
+        }
+        if configured && let Some(w) = wanted_window(&shared, &info, window) {
+            send(&mut ws, p::set_zoom_cf(u32::from(w.0), w.1));
+            window = w;
         }
         if last_keepalive.elapsed() >= KEEPALIVE {
             send(&mut ws, p::set_keepalive());
@@ -436,10 +472,15 @@ fn waterfall_thread(host: &str, port: u16, session: u64, shared: Arc<Shared>, in
                     }
                     for (k, _) in p::msg_params(text) {
                         if k == "wf_setup" && !configured {
-                            // Zoom 0 is the receiver's whole band, which is the
-                            // only span worth asking for: this lane exists to
-                            // show what the 12 kHz of I/Q cannot.
-                            send(&mut ws, p::set_zoom_cf(0, info.center_hz / 1e3));
+                            // Zoom 0 is the receiver's whole band, which is what
+                            // this lane is for: showing what the 12 kHz of I/Q
+                            // cannot. An operator who wants a real waterfall of
+                            // a few hundred kilohertz instead asks for one, and
+                            // the window then follows the dial (issue #303).
+                            let w = wanted_window(&shared, &info, window)
+                                .unwrap_or((0, info.center_hz / 1e3));
+                            send(&mut ws, p::set_zoom_cf(u32::from(w.0), w.1));
+                            window = w;
                             send(&mut ws, p::set_maxdb_mindb(WF_MAX_DB, WF_MIN_DB));
                             send(&mut ws, p::set_wf_comp(false));
                             send(&mut ws, p::set_interp(false));
@@ -452,15 +493,19 @@ fn waterfall_thread(host: &str, port: u16, session: u64, shared: Arc<Shared>, in
                 p::Frame::Wf(body) => {
                     bins.clear();
                     match p::decode_wf(body, info.wf_cal, &mut bins) {
-                        Ok(_) => {
+                        Ok(h) => {
+                            // Where the frame says it is, not where the last
+                            // request asked for: the receiver clamps a window
+                            // that would hang off a band edge, and a frame
+                            // already in flight when the window moves still
+                            // describes where it was.
+                            let (center_hz, span_hz) =
+                                p::wf_window(&h, info.center_hz, info.bandwidth_hz);
                             if let Ok(mut slot) = shared.wf.lock() {
                                 // Newest wins: an unread frame is overwritten
                                 // rather than queued.
-                                *slot = Some(WaterfallFrame {
-                                    center_hz: info.center_hz,
-                                    span_hz: info.bandwidth_hz,
-                                    bins: bins.clone(),
-                                });
+                                *slot =
+                                    Some(WaterfallFrame { center_hz, span_hz, bins: bins.clone() });
                             }
                         }
                         Err(e) => {

@@ -29,6 +29,17 @@ pub const SND_FLAG_LITTLE_ENDIAN: u8 = 0x80;
 /// Bins per waterfall frame — `WF_WIDTH` in `rx/rx_waterfall.h`.
 pub const WF_WIDTH: usize = 1024;
 
+/// The receiver's deepest zoom, and so the grid its `x_bin` is counted on.
+///
+/// A frame says where it starts as a bin index on the *maximum-zoom* grid,
+/// which divides the whole band into `WF_WIDTH << WF_MAX_ZOOM` bins whatever
+/// zoom the frame itself is at. Verified live against a KiwiSDR 1 on
+/// 0-30 MHz: asked for zoom 4 centred on 9950 kHz it answered `x_bin=5040155`,
+/// which on this grid is 9012.5 kHz, and a 1875 kHz window from there is
+/// centred on 9950.0 kHz exactly. At zoom 8 the same request gave a 117.2 kHz
+/// window whose strongest bin was 9999.9 kHz — WWV on 10 MHz.
+pub const WF_MAX_ZOOM: u32 = 14;
+
 /// `flags_x_zoom_server` carries the zoom in its low half and flags in its
 /// high half.
 pub const WF_FLAGS_COMPRESSION: u32 = 0x0001_0000;
@@ -133,6 +144,20 @@ pub fn decode_snd_iq(body: &[u8], out: &mut Vec<f32>) -> Result<SndHeader, Strin
         out.push(f32::from(i16::from_be_bytes([s[0], s[1]])) / 32768.0);
     }
     Ok(header)
+}
+
+/// Where a waterfall frame's 1024 bins actually sit, as `(centre, span)` in Hz.
+///
+/// Read from the frame rather than from what was asked for, which matters as
+/// soon as the window is anything but the whole band: the receiver clamps a
+/// centre that would push the window past a band edge, and a frame in flight
+/// when the window moves still describes where it was. `band_center_hz` and
+/// `bandwidth_hz` are the receiver's own, from its opening burst.
+pub fn wf_window(h: &WfHeader, band_center_hz: f64, bandwidth_hz: f64) -> (f64, f64) {
+    let span = bandwidth_hz / f64::from(1u64.wrapping_shl(h.zoom.min(WF_MAX_ZOOM)) as u32);
+    let grid = bandwidth_hz / (WF_WIDTH as f64 * f64::from(1u32 << WF_MAX_ZOOM));
+    let lo = band_center_hz - bandwidth_hz / 2.0 + f64::from(h.x_bin) * grid;
+    (lo + span / 2.0, span)
 }
 
 /// The receiver's S-meter byte pair, in dBm.
@@ -268,6 +293,32 @@ pub fn set_interp(on: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The window a frame describes, against a live receiver's own answers.
+    ///
+    /// Measured on a KiwiSDR 1 covering 0-30 MHz: asked for zoom 4 centred on
+    /// 9950 kHz it answered `x_bin=5040155 zoom=4`, and for zoom 8 on the same
+    /// centre `x_bin=5531675 zoom=8`. Both have to come back centred on what
+    /// was asked for, which is what says `x_bin` is counted on the
+    /// maximum-zoom grid and not on the frame's own.
+    #[test]
+    fn a_frames_window_is_where_the_receiver_put_it() {
+        let (center, bw) = (15_000_000.0, 30_000_000.0);
+        let h = |x_bin, zoom| WfHeader { x_bin, zoom, seq: 0, compressed: false };
+
+        let (c, span) = wf_window(&h(5_040_155, 4), center, bw);
+        assert!((c - 9_950_000.0).abs() < 500.0, "zoom 4 landed on {c}");
+        assert!((span - 1_875_000.0).abs() < 1.0, "zoom 4 spans {span}");
+
+        let (c, span) = wf_window(&h(5_531_675, 8), center, bw);
+        assert!((c - 9_950_000.0).abs() < 60.0, "zoom 8 landed on {c}");
+        assert!((span - 117_187.5).abs() < 1.0, "zoom 8 spans {span}");
+
+        // And zoom 0 is the whole band, which is what every build before
+        // issue #303 drew and what this still defaults to.
+        let (c, span) = wf_window(&h(0, 0), center, bw);
+        assert_eq!((c, span), (center, bw));
+    }
 
     /// The exact bytes a KiwiSDR 1 v1.902 sent in `mod=iq`: a three-byte tag,
     /// flags 0x0d, then 512 big-endian I/Q pairs behind ten bytes of GPS.

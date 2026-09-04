@@ -2735,6 +2735,23 @@ pub struct KiwiConfig {
     /// Waterfall frame rate, 1 (slowest) to 4. The receiver caps this at its
     /// own `wf_fps_max`, which was 23 fps on the one this was measured against.
     pub wf_speed: u8,
+    /// How far in the receiver's waterfall is zoomed, as a power of two of its
+    /// whole band: `0` is the full 0-30 MHz, `1` half of it, and so on up to
+    /// [`Self::WF_ZOOM_MAX`].
+    ///
+    /// The waterfall is always 1024 bins wide, so the zoom is what decides how
+    /// much of the band a bin covers: 29 kHz at zoom 0, which is a band *map*
+    /// and not a picture of anything, against 458 Hz at zoom 6, where a
+    /// 469 kHz slice of a broadcast band shows its individual stations. The
+    /// window follows the dial, so what is on screen is the band around what
+    /// you are listening to either way (issue #303).
+    ///
+    /// Zero by default, which is what it always was: the whole band is what
+    /// makes the strip a thing to tune *by*, and the I/Q's 12 kHz is the
+    /// detail. An operator who wants a few hundred kilohertz of real waterfall
+    /// instead can have it here.
+    #[serde(default)]
+    pub wf_zoom: u8,
     /// The *receiver's* AGC, which sits ahead of the I/Q and so ahead of
     /// everything this program does.
     ///
@@ -2761,6 +2778,7 @@ impl Default for KiwiConfig {
             ident: String::new(),
             wide_lane: true,
             wf_speed: 3,
+            wf_zoom: 0,
             agc: true,
             man_gain: 50,
         }
@@ -2779,10 +2797,24 @@ impl KiwiConfig {
     pub const MAN_GAIN_ELEMENT: &'static str = "KIWIGAIN";
     pub const WIDE_LANE_ELEMENT: &'static str = "KIWIWF";
     pub const WF_SPEED_ELEMENT: &'static str = "KIWIWFSPD";
+    pub const WF_ZOOM_ELEMENT: &'static str = "KIWIWFZOOM";
 
     /// Slowest and fastest waterfall speeds the protocol accepts.
     pub const WF_SPEED_MIN: u8 = 1;
     pub const WF_SPEED_MAX: u8 = 4;
+
+    /// The deepest waterfall zoom this client offers.
+    ///
+    /// The receiver itself goes to 14, which on a 30 MHz Kiwi is a 1.8 kHz
+    /// window — narrower than the I/Q the panadapter already draws, and so a
+    /// band view of nothing. Ten is 29 kHz, which is where the two meet.
+    pub const WF_ZOOM_MAX: u8 = 10;
+
+    /// The span the receiver's waterfall covers at [`Self::wf_zoom`], given the
+    /// band it tunes. 1024 bins are spread across whatever this returns.
+    pub fn wf_span_hz(&self, bandwidth_hz: f64) -> f64 {
+        bandwidth_hz / f64::from(1u32 << self.wf_zoom.min(Self::WF_ZOOM_MAX))
+    }
 
     /// The configured address as `host:port`, supplying the default port when
     /// the operator typed only a host. Same rule as [`RtlTcpConfig::endpoint`],

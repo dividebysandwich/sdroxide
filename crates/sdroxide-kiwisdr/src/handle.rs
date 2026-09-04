@@ -129,6 +129,12 @@ pub(crate) struct Shared {
     /// Waterfall speed the operator has asked for, read by the waterfall
     /// thread between frames.
     pub wf_speed: AtomicU8,
+    /// How far the operator has asked the receiver's waterfall to be zoomed in,
+    /// as a power of two of its whole band — see
+    /// [`sdroxide_types::KiwiConfig::wf_zoom`]. Read by the waterfall thread
+    /// between frames, alongside [`Self::center_milli_hz`], which is what the
+    /// window is centred on once it is narrower than the band.
+    pub wf_zoom: AtomicU8,
     /// Both threads stand down when this is set.
     pub stop: AtomicBool,
 }
@@ -236,6 +242,20 @@ impl KiwiHandle {
 
     pub fn set_wf_speed(&self, speed: u8) {
         self.shared.wf_speed.store(speed.clamp(1, 4), Ordering::Relaxed);
+    }
+
+    /// How far in the receiver's waterfall is zoomed. The window follows the
+    /// dial from there; see [`sdroxide_types::KiwiConfig::wf_zoom`].
+    pub fn set_wf_zoom(&self, zoom: u8) {
+        self.shared
+            .wf_zoom
+            .store(zoom.min(sdroxide_types::KiwiConfig::WF_ZOOM_MAX), Ordering::Relaxed);
+    }
+
+    /// The span the receiver's waterfall currently covers, in Hz.
+    pub fn wf_span_hz(&self) -> f64 {
+        let z = self.shared.wf_zoom.load(Ordering::Relaxed);
+        self.info.bandwidth_hz / f64::from(1u32 << z.min(sdroxide_types::KiwiConfig::WF_ZOOM_MAX))
     }
 
     /// Close both sockets and stop both threads, without dropping the handle.
