@@ -432,6 +432,12 @@ fn run(
             }
             SdrPlayModel::RspDx | SdrPlayModel::RspDxR2 => {
                 dp.rsp_dx_params.hdr_enable = hdr as u8;
+                // The HDR path's own filter, which lives in the *tuner* block
+                // rather than the device one. Written whether or not the path
+                // is switched on, like the notches beside it: a filter the
+                // operator chose and the session then ran the API's default
+                // for is a setting that silently did nothing.
+                ch.rsp_dx_tuner_params.hdr_bw = cfg.hdr_bw.code();
                 dp.rsp_dx_params.bias_t_enable = cfg.bias_tee as u8;
                 dp.rsp_dx_params.rf_notch_enable = cfg.rf_notch as u8;
                 dp.rsp_dx_params.rf_dab_notch_enable = cfg.dab_notch as u8;
