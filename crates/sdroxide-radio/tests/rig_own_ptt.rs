@@ -84,6 +84,22 @@ impl IqSource for MockRig {
         self.rig.lock().unwrap().keyed_by_us.push(center_hz);
         Ok(RATE)
     }
+    /// Take the blocks, and do nothing with them.
+    ///
+    /// Not optional, and not decoration. This rig declares `tx_channels: 1`, so
+    /// a source without these is one that says it can transmit and then refuses
+    /// the first block — which the engine treats, correctly and deliberately,
+    /// as the link having gone: it reports `ConnectionLost`, unkeys and stops.
+    /// The test would then be racing that shutdown for its next command, and
+    /// lost about one run in three. What it is measuring is which frequencies
+    /// reached `tx_begin`; the blocks after it are not its business, but they
+    /// have to be accepted for the engine to still be there to ask.
+    fn tx_write(&mut self, _samples: &[Complex32]) -> Result<()> {
+        Ok(())
+    }
+    fn tx_write_audio(&mut self, _audio: &[f32]) -> Result<()> {
+        Ok(())
+    }
 }
 
 fn caps() -> DeviceCaps {
