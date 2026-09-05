@@ -5986,11 +5986,14 @@ impl Engine {
     /// operator is mid-session on a frequency they chose, and the memory has
     /// nothing better to offer than what is already there.
     ///
-    /// So is a mode whose tone offset is a standard rather than a choice —
-    /// RTTY's pair is 2125/2295 on every band, and restoring FT8's figure over
-    /// it would leave mark and space wherever the last slot hunt happened to
-    /// land. Nothing writes an entry for those modes either, so this only
-    /// matters where a band already carries one from a slotted mode.
+    /// So is a mode whose offset belongs to the mode rather than to the band —
+    /// RTTY's pair is 2125/2295 on every band, and CW's offset is the
+    /// operator's sidetone pitch. Restoring a slotted mode's figure over either
+    /// would leave mark and space wherever the last slot hunt happened to land,
+    /// or the keyer a kilohertz outside the passband being copied (issue #336).
+    /// Nothing writes an entry for those modes either, so this only matters
+    /// where a band already carries one from a slotted mode. See
+    /// [`Mode::keeps_own_tx_offset`].
     fn follow_band_tx_offset(&mut self) {
         let band = self.state.band;
         if self.digi_tx_band == Some(band) {
@@ -5998,7 +6001,7 @@ impl Engine {
         }
         self.digi_tx_band = Some(band);
         let Some(hz) = self.digi_config.tx_audio_hz.get(&band).copied() else { return };
-        if let Some(d) = self.digi.as_mut().filter(|d| !d.mode().holds_standard_tones()) {
+        if let Some(d) = self.digi.as_mut().filter(|d| !d.mode().keeps_own_tx_offset()) {
             // `restore_audio_hz`, not `set_audio_hz`: this is the one move that
             // goes through a hold. See the trait method.
             d.restore_audio_hz(hz);
@@ -8241,6 +8244,26 @@ impl Engine {
                 }
                 self.sync_cw_filter();
                 self.sync_cw_dial();
+                // In CW the offset is the sidetone pitch, and its home is the
+                // station configuration rather than the band memory below. The
+                // engine keeps its own copy of that configuration — it is what
+                // the next `CwController` is built from — so without this the
+                // pitch would live only in the controller and a change of mode
+                // and back would come up on whatever was stored last session
+                // (issue #336).
+                //
+                // Read back rather than stored as asked, for the same reason
+                // the band memory does it: `hz` is a request the controller may
+                // not have granted exactly.
+                if self.state.rx[0].mode == Mode::Cw
+                    && let Some(actual) = self.digi.as_ref().map(|d| d.audio_hz())
+                    && (self.digi_config.cw_pitch_hz - actual).abs() > 0.5
+                {
+                    self.digi_config.cw_pitch_hz = actual;
+                    if let Err(e) = sdroxide_config::save_digi_config(&self.digi_config) {
+                        warn!("saving digi config: {e}");
+                    }
+                }
                 // Remembered against the band, and only here: this arm is the
                 // operator's own route (the offset box, the nudge chips, a click
                 // on a decode or the waterfall). The automatic movers never
@@ -8253,15 +8276,16 @@ impl Engine {
                 // Fox zone floors it, so the value on the air is the only one
                 // worth restoring later.
                 //
-                // Nothing is remembered for a mode whose offset is a standard
-                // rather than a choice: RTTY's tone pair is the same everywhere,
-                // so there is nothing about it that belongs to a band — and
-                // writing it here would hand FT8 a 2210 Hz transmit offset the
-                // next time that band came round.
+                // Nothing is remembered for a mode whose offset belongs to the
+                // mode rather than to the band: RTTY's tone pair is the same
+                // everywhere and CW's pitch is the operator's own, so there is
+                // nothing about either that belongs to a band — and writing one
+                // here would hand FT8 a 2210 Hz transmit offset, or a 700 Hz
+                // one, the next time that band came round.
                 if let Some(actual) = self
                     .digi
                     .as_ref()
-                    .filter(|d| !d.mode().holds_standard_tones())
+                    .filter(|d| !d.mode().keeps_own_tx_offset())
                     .map(|d| d.audio_hz())
                 {
                     let band = self.state.band;

@@ -898,6 +898,26 @@ impl Mode {
         self.standard_tone_offset_hz().is_some()
     }
 
+    /// True where the audio offset belongs to the *mode* rather than to the
+    /// band the dial is on, so [`crate::DigiConfig::tx_audio_hz`] neither
+    /// supplies it nor learns from it.
+    ///
+    /// Two sorts of mode qualify, for the same underlying reason. RTTY and
+    /// NAVTEX hold a tone pair fixed by convention — see
+    /// [`Self::standard_tone_offset_hz`]. And CW, where the offset is the
+    /// operator's sidetone pitch: one number for the whole station, kept in
+    /// [`crate::DigiConfig::cw_pitch_hz`], and the frequency the passband is
+    /// centred on as well as the one the keyer sends at.
+    ///
+    /// Letting the band memory have either of them costs both directions
+    /// (issue #336). A pitch written there is handed to FT8 as a transmit
+    /// offset the next time that band comes round; and an FT8 or PSK offset
+    /// stored there is handed back to CW, which puts the keyer outside its own
+    /// passband — 2069 Hz where the operator copies at 700.
+    pub fn keeps_own_tx_offset(self) -> bool {
+        self == Mode::Cw || self.holds_standard_tones()
+    }
+
     /// Which carrier position a transceiver puts this mode at, for the per-mode
     /// I.F. offsets of [`crate::PanadapterConfig`].
     ///
