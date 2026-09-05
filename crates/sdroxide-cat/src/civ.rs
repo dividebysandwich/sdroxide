@@ -532,14 +532,24 @@ pub fn antenna_name(socket: u8, sockets: usize) -> Option<&'static str> {
 /// mistake: `0` is not "leave it alone", it is *off*, and since the socket is
 /// re-asserted on every band change the operator's receive aerial was switched
 /// out of circuit every time they changed band.
-pub fn antenna_frame(radio: u8, socket: u8, rx_ant: bool) -> Vec<u8> {
-    frame(radio, 0x12, &[socket, u8::from(rx_ant)])
+///
+/// `rx_ant` is `None` on a radio whose `12` carries no such byte — a receiver
+/// has no receiving-antenna relay to switch, and an IC-R8600 answers the
+/// three-byte form with a NAK, which is a socket that never moves and no
+/// explanation (issue #334). Which form a radio takes is not guessed at: it is
+/// the shape of that radio's own reply, carried back through
+/// [`AntennaReply::rx_ant`].
+pub fn antenna_frame(radio: u8, socket: u8, rx_ant: Option<bool>) -> Vec<u8> {
+    match rx_ant {
+        Some(on) => frame(radio, 0x12, &[socket, u8::from(on)]),
+        None => frame(radio, 0x12, &[socket]),
+    }
 }
 
 /// [`antenna_frame`] by socket name — one of [`ANTENNAS`]. `None` for a name
 /// from another radio's list, which must never be allowed to pick a socket
 /// number by accident.
-pub fn set_antenna_frame(radio: u8, name: &str, rx_ant: bool) -> Option<Vec<u8>> {
+pub fn set_antenna_frame(radio: u8, name: &str, rx_ant: Option<bool>) -> Option<Vec<u8>> {
     let n = ANTENNAS.iter().position(|a| a.eq_ignore_ascii_case(name))? as u8;
     Some(antenna_frame(radio, n, rx_ant))
 }
@@ -1431,24 +1441,31 @@ mod tests {
     #[test]
     fn the_antenna_command_carries_a_socket_and_the_receiving_antenna() {
         assert_eq!(
-            set_antenna_frame(0x94, "ANT1", false),
+            set_antenna_frame(0x94, "ANT1", Some(false)),
             Some(vec![0xFE, 0xFE, 0x94, 0xE0, 0x12, 0x00, 0x00, 0xFD])
         );
         // The flag rides out with the socket rather than being zeroed: picking
         // ANT2 on an IC-7610 must not switch the receive aerial out.
         assert_eq!(
-            set_antenna_frame(0x94, "ANT2", true),
+            set_antenna_frame(0x94, "ANT2", Some(true)),
             Some(vec![0xFE, 0xFE, 0x94, 0xE0, 0x12, 0x01, 0x01, 0xFD])
         );
         // The write an IC-7300MK2 owner confirmed on the radio: its one
         // sub-command, and the flag as the whole of the payload.
         assert_eq!(
-            antenna_frame(0xB6, 0x00, true),
+            antenna_frame(0xB6, 0x00, Some(true)),
             vec![0xFE, 0xFE, 0xB6, 0xE0, 0x12, 0x00, 0x01, 0xFD]
         );
+        // A radio with no receiving-antenna relay takes the socket alone. An
+        // IC-R8600 is one, and NAKs the three-byte form — which is a selector
+        // that reads correctly and never moves (issue #334).
+        assert_eq!(
+            set_antenna_frame(0x96, "ANT2", None),
+            Some(vec![0xFE, 0xFE, 0x96, 0xE0, 0x12, 0x01, 0xFD])
+        );
         // A name off another radio's list must never pick a socket by accident.
-        assert_eq!(set_antenna_frame(0x94, "LNAW", false), None);
-        assert_eq!(set_antenna_frame(0x94, "", false), None);
+        assert_eq!(set_antenna_frame(0x94, "LNAW", Some(false)), None);
+        assert_eq!(set_antenna_frame(0x94, "", Some(false)), None);
         // The read asks for the socket, for the receiving antenna, and — by
         // being answered at all — for whether there is anything here.
         assert_eq!(read_antenna_frame(0x94), vec![0xFE, 0xFE, 0x94, 0xE0, 0x12, 0xFD]);

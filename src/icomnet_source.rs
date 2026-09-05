@@ -1149,8 +1149,11 @@ impl IqSource for IcomNetSource {
         };
         // The receiving antenna's setting rides out with the socket, because
         // the same command writes both: a zero here would switch the operator's
-        // receive aerial out of circuit (issue #229).
-        self.send(civ::antenna_frame(self.civ_addr, n as u8, self.rx_ant.unwrap_or(false)));
+        // receive aerial out of circuit (issue #229). `None` — a radio whose
+        // reply carried no such byte, which is every receiver — sends the
+        // socket alone, because the longer frame is one it answers NAK to and
+        // the antenna would never move (issue #334).
+        self.send(civ::antenna_frame(self.civ_addr, n as u8, self.rx_ant));
         self.socket = Some(n as u8);
         // And on an IC-7610 the flag belongs to the socket being selected
         // rather than to the one being left, so ask what it is now.
@@ -1177,7 +1180,7 @@ impl IqSource for IcomNetSource {
             return Ok(());
         };
         self.rx_ant = Some(on);
-        self.send(civ::antenna_frame(self.civ_addr, socket, on));
+        self.send(civ::antenna_frame(self.civ_addr, socket, Some(on)));
         Ok(())
     }
 

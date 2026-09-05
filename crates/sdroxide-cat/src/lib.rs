@@ -831,7 +831,10 @@ impl Protocol for Civ {
         if !self.antennas().iter().any(|a| a.eq_ignore_ascii_case(name)) {
             return Vec::new();
         }
-        civ::set_antenna_frame(self.radio, name, self.rx_ant.unwrap_or(false)).into_iter().collect()
+        // `self.rx_ant` says both things at once: whether the receive aerial is
+        // in circuit, and — by being `None` — whether this radio's `12` has a
+        // byte for it at all. A receiver has not, and NAKs the longer form.
+        civ::set_antenna_frame(self.radio, name, self.rx_ant).into_iter().collect()
     }
     fn read_antenna(&self) -> Vec<Vec<u8>> {
         vec![civ::read_antenna_frame(self.radio)]
@@ -847,7 +850,7 @@ impl Protocol for Civ {
             return Vec::new();
         };
         self.rx_ant = Some(on);
-        vec![civ::antenna_frame(self.radio, socket, on)]
+        vec![civ::antenna_frame(self.radio, socket, Some(on))]
     }
     /// The same enable sequence the LAN backend sends, because it is the same
     /// scope: run it, stream it here, and — when a span is chosen — put it in
@@ -3845,10 +3848,12 @@ mod tests {
         // Nothing to switch, so nothing goes out — and nothing this end
         // believes about a connector the radio never mentioned.
         assert!(p.set_rx_antenna(true).is_empty());
-        // The socket still carries a second byte, because two is what the
-        // command takes — and `false` is what such a radio has always been
-        // sent.
-        assert_eq!(p.set_antenna("ANT1")[0][4..7], [0x12, 0x00, 0x00]);
+        // And the socket goes out ALONE. Sending a byte for a connector the
+        // radio has just said it has not got is a frame it answers NAK to, and
+        // the aerial does not move: an IC-R8600 owner could read which socket
+        // they were on and never change it (issue #334). The frame is the
+        // command byte, the socket, and the terminator.
+        assert_eq!(p.set_antenna("ANT1")[0][4..], [0x12, 0x00, 0xFD]);
     }
 
     /// No other family has anything like it, and none of them may claim to.
