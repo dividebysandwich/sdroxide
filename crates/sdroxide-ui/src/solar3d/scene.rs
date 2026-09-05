@@ -847,10 +847,16 @@ fn satellites(
                 }
                 None => sat.name.clone(),
             };
+            // A satellite round the back of the Earth keeps its name — where it
+            // is in its orbit is exactly what the operator is watching — but
+            // says so by going dim, the way its marker already does by
+            // vanishing behind the globe. See [`behind_earth`].
+            let occluded = behind_earth(cam, b, pos);
+            let alpha = (if hit { 1.0 } else { 0.9 }) * if occluded { OCCLUDED_LABEL } else { 1.0 };
             s.labels.push(Label {
                 world: pos.arr(),
                 text,
-                color: lin_color(color, (if hit { 1.0 } else { 0.9 }) * fade),
+                color: lin_color(color, alpha * fade),
                 offset: [9.0, -7.0],
                 click: Click::Sat(sat.norad_id),
                 rank: RANK_ALWAYS,
@@ -1975,6 +1981,14 @@ const STATION_LABEL_MIN_PX: f32 = 90.0;
 /// names to discard nine in ten is work no frame needs to do.
 const MAX_STATION_LABELS: usize = 72;
 
+/// What is left of a label's opacity when the thing it names is behind the
+/// Earth — see [`behind_earth`].
+///
+/// Far enough down to read as "round the back" at a glance, and no further: the
+/// name still has to be legible, because a pass that has not risen yet is
+/// exactly the one an operator is waiting on.
+const OCCLUDED_LABEL: f32 = 0.38;
+
 /// Is a point on the Earth's surface turned towards the camera?
 ///
 /// The dots get this for free from the depth buffer — a marker behind the globe
@@ -1986,6 +2000,44 @@ const MAX_STATION_LABELS: usize = 72;
 /// belonging to neither hemisphere.
 fn faces_camera(cam: &Camera, dir: V3, pos: V3) -> bool {
     dir.dot((cam.eye - pos).normalize()) > 0.06
+}
+
+/// Is `pos` hidden behind the Earth from where the camera is standing?
+///
+/// [`faces_camera`] is the same question for a point *on* the surface, where
+/// the answer is a dot product against the outward normal. A satellite is not
+/// on the surface: it stands hundreds of kilometres above it and stays in sight
+/// well past the limb, so what settles it is whether the line from the eye to
+/// the satellite passes through the globe on the way — a ray against a sphere,
+/// bounded to the segment.
+///
+/// Issue #332: in a still frame there is nothing else to go on. The marker
+/// itself is handled by the depth buffer and simply disappears behind the
+/// globe, which leaves the label — painted afterwards by egui, over everything
+/// — standing on its own in the middle of the Earth, looking exactly like a
+/// satellite in front of it.
+fn behind_earth(cam: &Camera, b: &Bodies, pos: V3) -> bool {
+    let d = pos - cam.eye;
+    let f = cam.eye - b.earth;
+    let a = d.dot(d);
+    if a <= 0.0 {
+        return false;
+    }
+    let c = f.dot(f) - b.earth_r * b.earth_r;
+    // The eye is inside the sphere: not a view this camera can be in, and
+    // "everything is occluded" is the wrong answer to give if it ever is.
+    if c <= 0.0 {
+        return false;
+    }
+    let half_b = f.dot(d);
+    let disc = half_b * half_b - a * c;
+    if disc < 0.0 {
+        return false;
+    }
+    // The nearer of the two crossings. Occluding means the globe is between the
+    // two ends — before the eye is behind us, past the satellite is beyond it.
+    let t = (-half_b - disc.sqrt()) / a;
+    t > 0.0 && t < 1.0
 }
 
 /// Name a station standing on the Earth's surface, if it can be seen from here.
@@ -2585,6 +2637,33 @@ mod tests {
         assert_eq!(std::mem::size_of::<DrawData>(), 192);
         assert_eq!(std::mem::size_of::<LineInst>(), 48);
         assert_eq!(std::mem::size_of::<SpriteInst>(), 48);
+    }
+
+    /// Issue #332: whether a satellite is in front of the Earth or behind it,
+    /// decided the way the eye decides it — does the globe stand in the line of
+    /// sight?
+    #[test]
+    fn a_satellite_round_the_back_is_known_to_be_round_the_back() {
+        let b = bodies(&ui(), 1_784_937_600.0);
+        // A camera on the +x side of the Earth, well clear of it.
+        let cam = Camera::test_at(b.earth + v3(b.earth_r * 6.0, 0.0, 0.0));
+        // Low orbit, a tenth of a radius up.
+        let r = b.earth_r * 1.1;
+
+        assert!(!behind_earth(&cam, &b, b.earth + v3(r, 0.0, 0.0)), "straight at the camera");
+        assert!(behind_earth(&cam, &b, b.earth + v3(-r, 0.0, 0.0)), "straight away from it");
+        // Over the limb, where a dot product against the surface normal would
+        // give the wrong answer but the sightline is still clear.
+        assert!(!behind_earth(&cam, &b, b.earth + v3(0.0, r, 0.0)), "on the limb, in view");
+        // Round onto the far side, and hidden. Note how far round it has to go
+        // before it is: from six radii out the eye sees well past the limb,
+        // which is the whole reason this is a sightline and not a dot product.
+        assert!(behind_earth(&cam, &b, b.earth + v3(-b.earth_r * 0.9, b.earth_r * 0.6, 0.0)));
+        // Beyond the far side entirely: still behind the globe.
+        assert!(behind_earth(&cam, &b, b.earth + v3(-b.earth_r * 40.0, 0.0, 0.0)));
+        // The globe is only in the way when it is between the two: something
+        // past the *camera* is not occluded by it.
+        assert!(!behind_earth(&cam, &b, b.earth + v3(b.earth_r * 40.0, 0.0, 0.0)));
     }
 
     #[test]

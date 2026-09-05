@@ -39,6 +39,14 @@ pub fn dist_range(focus_radius: f32) -> (f32, f32) {
 }
 
 impl Camera {
+    /// A camera that is only an eye position, for tests of the geometry that
+    /// depends on nothing else — [`crate::solar3d::scene::behind_earth`] and
+    /// its like.
+    #[cfg(test)]
+    pub fn test_at(eye: V3) -> Camera {
+        Camera { view_proj: M4::IDENTITY, eye, near: 1e-4, height_px: 900.0 }
+    }
+
     pub fn from_view(st: &SolarUi, b: &Bodies, size_px: [f32; 2]) -> Camera {
         let v = &st.view;
         // While the tour is flying between two stations it supplies a blended
