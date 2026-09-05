@@ -2675,6 +2675,8 @@ struct Engine {
     /// WSJT-X UDP broadcast: decodes, status and logged QSOs sent out for
     /// GridTracker, JTAlert, N1MM+ and Log4OM. Present while enabled.
     wsjtx: Option<sdroxide_wsjtx::WsjtxUdp>,
+    /// The N1MM contactinfo broadcast, if switched on — see [`Engine::sync_n1mm`].
+    n1mm: Option<sdroxide_wsjtx::N1mmUdp>,
     wsjtx_cfg: sdroxide_types::WsjtxConfig,
     /// When the last WSJT-X heartbeat went out (clients time a station out
     /// without one).
@@ -3890,6 +3892,7 @@ fn engine_thread(
         scan_db: Vec::new(),
         audio_level: 0.0,
         wsjtx: None,
+        n1mm: None,
         wsjtx_cfg: sdroxide_types::WsjtxConfig::default(),
         wsjtx_beat: Instant::now(),
         rigctld: None,
@@ -5830,8 +5833,40 @@ impl Engine {
         }
     }
 
+    /// Start, retarget or stop the N1MM contactinfo broadcast to match its
+    /// config (issue #337).
+    ///
+    /// Its own destination and its own switch, beside the WSJT-X one rather
+    /// than instead of it: a station may well want both, and a logger that
+    /// speaks one dialect is deaf to the other.
+    fn sync_n1mm(&mut self) {
+        let cfg = &self.wsjtx_cfg.n1mm;
+        let want = cfg.enabled;
+        if want && self.n1mm.as_ref().is_some_and(|n| n.addr() == cfg.addr()) {
+            return;
+        }
+        let had = self.n1mm.take().is_some();
+        if !want {
+            if had {
+                info!("N1MM contactinfo broadcast stopped");
+            }
+            return;
+        }
+        match sdroxide_wsjtx::N1mmUdp::start(cfg) {
+            Ok(n) => self.n1mm = Some(n),
+            Err(e) => {
+                warn!("N1MM contactinfo broadcast: {e}");
+                let _ = self.event_tx.send(RadioEvent::NetStatus(Some(format!("N1MM UDP: {e}"))));
+            }
+        }
+    }
+
     /// Start, retarget or stop the WSJT-X UDP broadcast to match its config.
     fn sync_wsjtx(&mut self) {
+        // The N1MM broadcast rides the same configuration and the same call
+        // sites, so it is kept in step here rather than at a second set of
+        // them that could be forgotten.
+        self.sync_n1mm();
         let want = self.wsjtx_cfg.enabled;
         let same = self
             .wsjtx
@@ -6056,6 +6091,9 @@ impl Engine {
                     }
                     if let Some(w) = &self.wsjtx {
                         w.qso_logged(&r);
+                    }
+                    if let Some(n) = &self.n1mm {
+                        n.qso_logged(&r);
                     }
                     let _ = self.event_tx.send(RadioEvent::Ft8QsoLogged(r));
                 }
@@ -8251,6 +8289,9 @@ impl Engine {
                 // half a log (issue #341).
                 if let Some(w) = &self.wsjtx {
                     w.qso_logged(&rec);
+                }
+                if let Some(n) = &self.n1mm {
+                    n.qso_logged(&rec);
                 }
             }
             SetDigiAudioFreq(hz) => {

@@ -104,7 +104,8 @@ or connects to a remote sdroxide server.
   [qso.freedv.org](https://qso.freedv.org/) and see who else is on FreeDV,
   including callsign exchange in the RADE End-of-Over frame.
 - **Callsign lookup and QSL upload** — QRZ/HamQTH name/QTH/grid auto-fill, and
-  one-click (or automatic) upload to eQSL, QRZ Logbook, HamQTH and Club Log,
+  one-click (or automatic) upload to eQSL, QRZ Logbook, HamQTH, Club Log and
+  World Radio League,
   with LoTW ADIF export and confirmation download. Each service's credentials
   can be tested against it from the settings, without logging anything.
 - **Award tracking** — live DXCC / WAS / WAZ / grid tallies, worked vs confirmed.
@@ -5251,7 +5252,7 @@ the 868 MHz channels out of reach. The band buttons put both where they belong.
 On an **RX-888**, 868 MHz is reached through its VHF tuner, and its wideband
 downconverter delivers 2.025 Msps at the default panadapter width — enough for
 the whole channel plan, but only just, which is why the centre frequency
-matters there. A wider panadapter width ([15.20](#1520-rx-888--rx-888-mk2))
+matters there. A wider panadapter width ([15.20](#1520-rx-888-mk1--rx-888-mk2))
 covers it with room to spare.
 
 ### 5.2 Reading the device list
@@ -6027,7 +6028,7 @@ radio. Everything below the selector changes to match the choice:
   Mk2 the built-in R828D tuner is driven too, so the receiver covers VHF and UHF
   as well as HF and switches between its two antenna ports on its own. Both the
   ADC clock and how much of the digitised band the panadapter shows at once are
-  selectable — up to all of it. See [15.20](#1520-rx-888--rx-888-mk2).
+  selectable — up to all of it. See [15.20](#1520-rx-888-mk1--rx-888-mk2).
 - **Airspy HF+ (USB)** — an Airspy HF+ Dual, Discovery or Ranger, driven by
   sdroxide's own USB driver with no SoapySDR and no libairspyhf involved. See
   [6.2.9](#629-airspy-hf-usb).
@@ -10532,8 +10533,8 @@ stored in plaintext in `net.json`. How the features behave is
   **Auto-fill name/QTH/grid on spot click & QSO** looks a call up by itself
   instead of only on the **LOOKUP** button.
 - **Upload** — **Auto-upload each new QSO** is the master switch, and under it
-  is **a tab per logging service**: **QRZ**, **eQSL**, **HamQTH** and
-  **Club Log**. Each tab holds everything about that one service — whether a new
+  is **a tab per logging service**: **QRZ**, **eQSL**, **HamQTH**,
+  **Club Log** and **WRL**. Each tab holds everything about that one service — whether a new
   QSO is pushed to it, its login, and the button that checks that login. So
   setting up a service means opening its tab and filling in what is on it,
   rather than picking your fields out of all four services' at once.
@@ -10549,6 +10550,15 @@ stored in plaintext in `net.json`. How the features behave is
     calls up on QRZ but uploads to HamQTH would otherwise have nowhere to type
     them.)
   - **Club Log** — **Club Log email**, **pass** and **key**.
+  - **WRL** — the **WRL API key** for
+    [World Radio League](https://worldradioleague.com/), generated under
+    *Integrations → Developer API*. It is a key rather than a login, and WRL
+    shows it once when you generate it and stores only a hash, so copy it then.
+    Contacts go to your **default logbook**: if you keep more than one and have
+    not set a default, WRL refuses them and says so — set one there and it
+    works. **Test WRL** says both whether the key is good and whether that
+    default is set, which is the one thing you would otherwise find out a
+    contact at a time.
 
   A service's own tickbox only takes effect while the master **Auto-upload each
   new QSO** is on; with it off the tab says so, and the per-QSO **UP** button in
@@ -10562,7 +10572,8 @@ At the bottom of the tab, **APPLY** saves everything above, and
 #### Testing the credentials
 
 Each upload service's tab carries its own **Test** button — **Test QRZ Logbook /
-Test eQSL / Test HamQTH / Test Club Log** — and there is a **Test LoTW** beside
+Test eQSL / Test HamQTH / Test Club Log / Test World Radio League** — and there
+is a **Test LoTW** beside
 the confirmation login. It asks that service, there and then, whether the login
 you have typed works, and prints what came back — a green tick with the account
 the service recognised, or a red cross with its own words for the refusal.
@@ -10869,6 +10880,26 @@ exempt.
 This one is **output only**: nothing is read from the socket, so no program on
 it can tune or key the radio. Programs that want to *drive* sdroxide use rigctld
 or the TCI server above.
+
+**N1MM+ contactinfo** sits on the same page, with its own switch and its own
+port, because a logger that speaks one of these dialects is deaf to the other
+and a station may want both. It sends the same news in N1MM's words: one XML
+`contactinfo` datagram per logged contact, hand-entered contacts included.
+There is no decode stream in that protocol, so contacts are all it carries.
+
+- **Send to** — `127.0.0.1` for this machine. N1MM's own advice for a contest
+  network is this subnet's broadcast address (`192.168.1.255` for a
+  192.168.1.n network), which reaches every position at once.
+- **Port** — 12060, the port N1MM's documentation recommends.
+- **Station name** — what N1MM calls the `StationName`: the name of the
+  computer that sent the packet, which loggers show to tell one operating
+  position from another.
+
+The contest fields N1MM's format carries — section, precedence, check,
+multipliers and points — go out empty, and deliberately. Each means whatever a
+particular contest's rules say it means, and a number invented here would be a
+claim about a contest that was not being worked; the logger receiving the
+contact is the thing that knows the rules.
 
 ### 6.10 TLE: satellites and their frequencies
 

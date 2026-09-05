@@ -1227,7 +1227,29 @@ use sdroxide_types::{
 /// [`sdroxide_types::Command`] gains `SetRxAntenna`, appended, so no surviving
 /// discriminant moved — but a v136 peer handed one fails to decode the message
 /// carrying it.
-pub const PROTO_VERSION: u16 = 137;
+/// v138: a session's worth of new wire, all of it appended and none of it
+/// separable — a v137 peer handed any one of these reads the tail of the
+/// message carrying it out of step.
+///
+/// * [`sdroxide_types::Band`] gains `Cm3`, the 3 cm band an IC-905 reaches
+///   through the 10 GHz unit inside it (issue #326). A band rides inside
+///   `RadioState`, the band stack, every memory and `DigiConfig::tx_audio_hz`,
+///   and a discriminant a v137 peer has no name for stops it decoding any of
+///   them.
+/// * [`sdroxide_types::Meters`] gains `pa_temp_c`, a radio's own temperature
+///   where it measures one — a Hermes-Lite 2 does (issue #333). It sits among
+///   that struct's fields and `Meters` rides `ServerMsg::Meters` whole.
+/// * [`sdroxide_types::QsoRecord`] gains `wrl_sent` and
+///   [`sdroxide_types::NetworkConfig`] gains `wrl_api_key` and
+///   `auto_upload_wrl`; `UploadTarget` and `LoginTarget` each gain `Wrl`, the
+///   World Radio League logbook (issue #337). Both structs ride whole inside
+///   `Command::SetNetworkConfig` and `RadioEvent::Ft8QsoLogged`, and the two
+///   new variants are appended so no surviving discriminant moved — but a v137
+///   client handed one has nowhere to put it.
+/// * [`sdroxide_types::Command`] gains `LogQso`, which carries a hand-entered
+///   contact to the WSJT-X UDP listeners the way the sequencer's own contacts
+///   already went (issue #341). Appended, so no surviving discriminant moved.
+pub const PROTO_VERSION: u16 = 138;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

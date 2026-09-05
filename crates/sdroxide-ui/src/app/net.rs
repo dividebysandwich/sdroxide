@@ -47,6 +47,9 @@ fn auto_upload_targets(cfg: &NetworkConfig) -> Vec<UploadTarget> {
     if cfg.auto_upload_clublog {
         t.push(UploadTarget::ClubLog);
     }
+    if cfg.auto_upload_wrl {
+        t.push(UploadTarget::Wrl);
+    }
     t
 }
 
@@ -67,6 +70,9 @@ pub(in crate::app) fn configured_upload_targets(cfg: &NetworkConfig) -> Vec<Uplo
     }
     if !cfg.clublog.user.trim().is_empty() && !cfg.clublog_api_key.trim().is_empty() {
         t.push(UploadTarget::ClubLog);
+    }
+    if !cfg.wrl_api_key.trim().is_empty() {
+        t.push(UploadTarget::Wrl);
     }
     t
 }
@@ -203,6 +209,7 @@ impl SdroxideApp {
                     UploadTarget::QrzLogbook => rec.qrz_sent = true,
                     UploadTarget::ClubLog => rec.clublog_sent = true,
                     UploadTarget::HamQth => rec.hamqth_sent = true,
+                    UploadTarget::Wrl => rec.wrl_sent = true,
                 }
                 persist_qso_log(&self.qso_log);
             }

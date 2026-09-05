@@ -3051,6 +3051,7 @@ impl SdroxideApp {
                     UploadTarget::QrzLogbook => &mut io.net_edit.auto_upload_qrz,
                     UploadTarget::HamQth => &mut io.net_edit.auto_upload_hamqth,
                     UploadTarget::ClubLog => &mut io.net_edit.auto_upload_clublog,
+                    UploadTarget::Wrl => &mut io.net_edit.auto_upload_wrl,
                 };
                 crate::chrome::checkbox(
                     ui,
@@ -3109,6 +3110,19 @@ impl SdroxideApp {
                         net_row(ui, "Club Log email", &mut io.net_edit.clublog.user, 200.0);
                         net_secret(ui, "Club Log pass", &mut io.net_edit.clublog.password, 140.0);
                         net_secret(ui, "Club Log key", &mut io.net_edit.clublog_api_key, 200.0);
+                    }
+                    UploadTarget::Wrl => {
+                        net_secret(ui, "WRL API key", &mut io.net_edit.wrl_api_key, 240.0);
+                        ui.label(
+                            RichText::new(
+                                "The developer API key from World Radio League → Integrations → \
+                                 Developer API. It is shown once when you generate it, so copy \
+                                 it then. Contacts go to your default logbook — set one in WRL \
+                                 if you keep more than one.",
+                            )
+                            .size(10.5)
+                            .color(crate::theme::gray(140)),
+                        );
                     }
                 }
 

@@ -197,6 +197,7 @@ fn engine_broadcasting_to(sock: &UdpSocket, radio: u32) -> sdroxide_radio::Engin
             host: "127.0.0.1".into(),
             port: sock.local_addr().unwrap().port(),
             id: "sdroxide-test".into(),
+            ..WsjtxConfig::default()
         }))
         .unwrap();
     // The socket coming up sends one Clear of its own ("a fresh session starts

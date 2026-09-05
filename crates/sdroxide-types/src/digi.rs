@@ -981,6 +981,10 @@ pub struct QsoRecord {
     /// beside its `*_sent` siblings because this record rides the postcard
     /// wire, which reads it positionally.
     pub hamqth_sent: bool,
+    /// Uploaded to the World Radio League logbook (issue #337). Appended for
+    /// the reason [`Self::hamqth_sent`] gives.
+    #[serde(default)]
+    pub wrl_sent: bool,
 }
 
 impl QsoRecord {

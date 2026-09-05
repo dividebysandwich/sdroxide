@@ -44,6 +44,42 @@ pub fn post_form_status(url: &str, fields: &[(&str, &str)]) -> Result<(u16, Stri
     Ok((status, body))
 }
 
+/// POST `json` as `application/json` with a bearer token, keeping the HTTP
+/// status alongside the body.
+///
+/// For a JSON API whose refusals are a status plus a machine-readable code in
+/// the body — the World Radio League's is one — where "the key is wrong" and
+/// "that contact is already logged" have to be told apart and reported
+/// differently. See [`post_form_status`], which is this for the form-encoded
+/// services.
+pub fn post_json_status(
+    url: &str,
+    bearer: &str,
+    json: &str,
+) -> Result<(u16, String), String> {
+    let mut resp = agent()
+        .post(url)
+        .header("Authorization", &format!("Bearer {bearer}"))
+        .header("Content-Type", "application/json")
+        .send(json)
+        .map_err(|e| e.to_string())?;
+    let status = resp.status().as_u16();
+    let body = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
+    Ok((status, body))
+}
+
+/// GET `url` with a bearer token, keeping the HTTP status alongside the body.
+pub fn get_bearer_status(url: &str, bearer: &str) -> Result<(u16, String), String> {
+    let mut resp = agent()
+        .get(url)
+        .header("Authorization", &format!("Bearer {bearer}"))
+        .call()
+        .map_err(|e| e.to_string())?;
+    let status = resp.status().as_u16();
+    let body = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
+    Ok((status, body))
+}
+
 /// The body as a string, or a compact message for an HTTP status error that
 /// keeps the server's own body so the caller can report why it was rejected.
 fn body_or_status(mut resp: ureq::http::Response<ureq::Body>) -> Result<String, String> {

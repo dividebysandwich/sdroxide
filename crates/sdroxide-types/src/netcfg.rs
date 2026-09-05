@@ -309,6 +309,19 @@ pub struct NetworkConfig {
     ///
     /// [`UploadTarget::HamQth`]: crate::UploadTarget::HamQth
     pub auto_upload_hamqth: bool,
+
+    // ── World Radio League ──
+    /// The World Radio League developer API key, `wrl_live_…` (issue #337).
+    ///
+    /// A key rather than a username and password: WRL issues one per account
+    /// under Integrations → Developer API, shows it once, and stores only a
+    /// hash of it. Appended last, as the wire requires.
+    #[serde(default)]
+    pub wrl_api_key: String,
+    /// Auto-upload each new QSO to World Radio League. Appended last, as the
+    /// wire requires.
+    #[serde(default)]
+    pub auto_upload_wrl: bool,
 }
 
 impl Default for NetworkConfig {
@@ -338,6 +351,8 @@ impl Default for NetworkConfig {
             winlink: crate::WinlinkConfig::default(),
             rbn: RbnConfig::default(),
             auto_upload_hamqth: false,
+            wrl_api_key: String::new(),
+            auto_upload_wrl: false,
         }
     }
 }

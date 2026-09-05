@@ -65,6 +65,9 @@ pub enum UploadTarget {
     /// postcard numbers variants by declaration index, so inserting it next to
     /// QRZ (where it belongs on screen) would renumber Club Log on the wire.
     HamQth,
+    /// The World Radio League logbook, via its developer API (issue #337).
+    /// Appended for the reason [`UploadTarget::HamQth`] gives.
+    Wrl,
 }
 
 impl UploadTarget {
@@ -74,6 +77,7 @@ impl UploadTarget {
             UploadTarget::QrzLogbook => "QRZ",
             UploadTarget::ClubLog => "Club Log",
             UploadTarget::HamQth => "HamQTH",
+            UploadTarget::Wrl => "WRL",
         }
     }
 
@@ -90,14 +94,20 @@ impl UploadTarget {
             UploadTarget::QrzLogbook => LoginTarget::QrzLogbook,
             UploadTarget::ClubLog => LoginTarget::ClubLog,
             UploadTarget::HamQth => LoginTarget::HamQth,
+            UploadTarget::Wrl => LoginTarget::Wrl,
         }
     }
 
     /// Display order, which is deliberately not the declaration order above:
     /// the variants are numbered by the wire and appended to, while this is
     /// what the operator reads along a tab strip.
-    pub const ALL: [UploadTarget; 4] =
-        [UploadTarget::QrzLogbook, UploadTarget::Eqsl, UploadTarget::HamQth, UploadTarget::ClubLog];
+    pub const ALL: [UploadTarget; 5] = [
+        UploadTarget::QrzLogbook,
+        UploadTarget::Eqsl,
+        UploadTarget::HamQth,
+        UploadTarget::ClubLog,
+        UploadTarget::Wrl,
+    ];
 }
 
 /// A service whose stored credentials can be checked without logging a QSO.
@@ -116,6 +126,9 @@ pub enum LoginTarget {
     /// lookup uses, because HamQTH has one account per operator and the
     /// real-time logbook endpoint authenticates with it directly.
     HamQth,
+    /// The World Radio League developer API key (issue #337). Appended for the
+    /// reason [`UploadTarget::HamQth`] gives.
+    Wrl,
 }
 
 impl LoginTarget {
@@ -126,15 +139,17 @@ impl LoginTarget {
             LoginTarget::ClubLog => "Club Log",
             LoginTarget::Lotw => "LoTW",
             LoginTarget::HamQth => "HamQTH",
+            LoginTarget::Wrl => "World Radio League",
         }
     }
 
-    pub const ALL: [LoginTarget; 5] = [
+    pub const ALL: [LoginTarget; 6] = [
         LoginTarget::Eqsl,
         LoginTarget::QrzLogbook,
         LoginTarget::HamQth,
         LoginTarget::ClubLog,
         LoginTarget::Lotw,
+        LoginTarget::Wrl,
     ];
 }
 
