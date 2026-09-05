@@ -155,7 +155,11 @@ impl<'a> Speaker<'a> {
             Mode::Wspr => "whisper",
             Mode::Drm => "D R M",
             Mode::Adsb => "A D S B",
-            Mode::Vdl2 => "V D L 2",
+            // Spelt out like every other number in this table — "F T eight",
+            // "J S eight". A bare digit is not something the phonemizer can
+            // say: it reaches the voice as a character with no pronunciation
+            // and is dropped, leaving "V D L".
+            Mode::Vdl2 => "V D L two",
             Mode::Ais => "A I S",
         }
     }
