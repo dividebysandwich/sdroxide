@@ -29,6 +29,26 @@ fn scale_h() -> f32 {
 /// Tuning rounds to this step on click-tune, unless the operator has changed
 /// [`WheelSettings::click_tune_step_hz`].
 const CLICK_TUNE_STEP: f64 = 10.0;
+/// Whether this drag is asking to move one filter edge on its own.
+///
+/// AM, FM and their relatives hold the two edges together, because in those
+/// modes the halves of the passband carry the same signal and narrowing one
+/// alone throws away half of it — see [`Mode::filter_symmetric`] and issue
+/// #256. That is the right default and it is what the presets do.
+///
+/// It is not always what the operator wants. A station splattering on one side
+/// of an AM carrier is answered by closing the passband on *that* side and
+/// leaving the other open: half the audio for none of the interference, which
+/// is a trade a listener is entitled to make (issue #335). So the rule is held
+/// for as long as a modifier is not, and released while it is.
+///
+/// Ctrl — Cmd on a Mac, which is what `command` means — because Shift is spoken
+/// for twice over on this widget already: held, it measures bandwidth, and with
+/// a click it places the second receiver.
+fn one_edge_at_a_time(ui: &egui::Ui) -> bool {
+    ui.input(|i| i.modifiers.command)
+}
+
 /// Pixel distance for grabbing a filter edge with a mouse, and the floor a
 /// touched layout's wider zone is never squeezed below. See `edge_grab`.
 const EDGE_GRAB_PX: f32 = 6.0;
@@ -1605,7 +1625,10 @@ pub fn show_ext(
             let r = &mut state.rx[rx.index()];
             let max_hz = r.mode.max_filter_hz() as f64;
             let (mut lo, mut hi) = (r.filter_lo as f64, r.filter_hi as f64);
-            if r.mode.filter_symmetric() {
+            // Ctrl (Cmd on a Mac) frees the grip from its opposite number for
+            // the length of one drag — see [`one_edge_at_a_time`].
+            let alone = one_edge_at_a_time(ui);
+            if r.mode.filter_symmetric() && !alone {
                 // AM and FM carve a channel out about the carrier, so the grip
                 // being dragged sets the *half* width and the other edge
                 // follows it (issue #256). Read from whichever grip was
@@ -2630,13 +2653,17 @@ pub fn show_ext(
             };
             let ytop = if spec_h > 1.0 { spec_rect.top() } else { wf_rect.top() };
             let tint = if rx == RxId::Main { Color32::from_rgb(255, 190, 120) } else { SUB_COLOR };
-            label_box(
-                &painter,
-                pos2(edge_x + 7.0, ytop + 3.0),
-                &format!("{:+} Hz", off.round() as i64),
-                tint,
-                rect,
-            );
+            // `±` where this grip carries its opposite number with it, a plain
+            // sign where it moves alone — so the mode's rule and the modifier
+            // that suspends it are both readable off the number itself, with
+            // no chrome to hold them (issues #256, #335).
+            let together = r.mode.filter_symmetric() && !one_edge_at_a_time(ui);
+            let text = if together {
+                format!("±{} Hz", off.abs().round() as i64)
+            } else {
+                format!("{:+} Hz", off.round() as i64)
+            };
+            label_box(&painter, pos2(edge_x + 7.0, ytop + 3.0), &text, tint, rect);
         } else if (spec_rect.contains(p) || wf_rect.contains(p))
             && edge.is_none()
             && !resizing

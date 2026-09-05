@@ -687,6 +687,14 @@ filter preset these modes offer is symmetric. In SSB, CW and the data modes the
 passband sits to one side of the carrier by definition and each edge stays
 yours to place on its own.
 
+Hold **Ctrl** (**Cmd** on a Mac) while you drag and the mirroring is suspended
+for that drag: the grip you have hold of moves and the other stays where it is,
+even in the modes that normally pair them. That is the answer to a station
+splattering on one side of an AM carrier — close the passband on that side and
+leave the other open, trading half the audio for none of the interference. The
+figure beside the grip tells you which rule is in force: `±3000 Hz` while the
+edges are paired, `-3000 Hz` while the one you are holding moves alone.
+
 **ISB** is the odd one in that list. Its two edges move together like AM's, but
 what they set is the width of *each* sideband rather than of one shared
 channel — the preset marked 2.7k gives you 2.7 kHz on each side, so 5.4 kHz of
@@ -12341,7 +12349,7 @@ Touch gestures on the waterfall:
 | Drag | Pans the view and takes the dial with it, with the same flywheel coast as a mouse |
 | Two-finger pinch | Zooms the span about the point between your fingers — there is no scroll wheel to do it with |
 | Tap | Tunes to that frequency |
-| Drag a passband edge | Sets the filter. The grab zone is wider than under a mouse, but never more than a third of the passband, so tapping inside a narrow CW filter still tunes |
+| Drag a passband edge | Sets the filter. The grab zone is wider than under a mouse, but never more than a third of the passband, so tapping inside a narrow CW filter still tunes. There is no Ctrl to hold on a touch screen, so the AM and FM modes always pair their edges here |
 
 Buttons, sliders and entry fields are all drawn larger on a touched layout, so a
 row of controls is a row of finger-sized targets rather than 22-point ones.
