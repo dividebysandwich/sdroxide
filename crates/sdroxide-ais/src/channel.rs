@@ -390,3 +390,4 @@ mod tests {
         assert!(rx.counters().bursts > 0, "the gate should have opened on it");
     }
 }
+

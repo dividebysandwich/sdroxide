@@ -466,6 +466,32 @@ pub fn show(
         state.selected = None;
     }
 
+    // ── why the chart is empty ──
+    //
+    // A list with rows in it and a chart with nothing on it reads as a broken
+    // map, and that is how issue #330 was reported. It usually is not: a
+    // station has to send a position report before it can be drawn, and until
+    // it does there is genuinely nowhere to put it. Saying so is the difference
+    // between a display that looks faulty and one that is telling the operator
+    // to keep listening.
+    if live.is_empty() && !vessels.is_empty() {
+        let heard = vessels.len();
+        let note = if vessels.iter().any(|v| v.lat.is_some() && v.lon.is_some()) {
+            format!("{heard} heard — no position newer than {}s", cfg.drop_map_s)
+        } else if heard == 1 {
+            "1 station heard — waiting for it to report a position".to_string()
+        } else {
+            format!("{heard} stations heard — waiting for a position report")
+        };
+        p.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            note,
+            FontId::proportional(11.0),
+            alpha(Color32::WHITE, 130.0),
+        );
+    }
+
     if manual && resp.hovered() {
         p.text(
             rect.right_bottom() + vec2(-6.0, -4.0),

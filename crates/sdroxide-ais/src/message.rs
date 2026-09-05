@@ -144,8 +144,28 @@ pub fn parse(bits: &[bool]) -> Option<Message> {
         return None;
     }
     let kind = read(bits, 0, 6) as u8;
+    // A message shorter than its own type defines is not that message. The
+    // fields past the end would be read as zeros — see [`read`] — and zeros are
+    // a perfectly plausible navigational status, speed and position, so a frame
+    // like that does not decode into an incomplete vessel but into a confident
+    // and entirely invented one.
+    //
+    // Nothing is lost by being strict: these frames are checked by a 16-bit
+    // FCS before they arrive here, and a transmission cut short by a fade fails
+    // that check rather than reaching this function. What does reach it is the
+    // occasional burst of interference whose CRC happens to come out right, and
+    // this is what stops one of those from becoming a ship.
+    if bits.len() < payload_bits(kind)? {
+        return None;
+    }
     let repeat = read(bits, 6, 2) as u8;
     let mmsi = read(bits, 8, 30) as u32;
+    // An MMSI is nine decimal digits. The field is thirty bits wide and so can
+    // hold half as much again, and a number that cannot be an identity is not
+    // one — it is the same interference, one field further on.
+    if mmsi > 999_999_999 {
+        return None;
+    }
     let mut m = Message {
         kind,
         repeat,
@@ -335,6 +355,47 @@ pub fn parse(bits: &[bool]) -> Option<Message> {
     Some(m)
 }
 
+/// The shortest a message of each type is allowed to be, in bits, per
+/// ITU-R M.1371 — and `None` for the type numbers the standard does not define.
+///
+/// Several types are variable-length (the binary and safety-text messages carry
+/// as much as their payload needs, and an aid-to-navigation report carries as
+/// much of its name as it has), so this is a floor rather than an exact length.
+/// A floor is all that is needed: what it rules out is a frame too short to
+/// contain the fields [`parse`] is about to read out of it.
+fn payload_bits(kind: u8) -> Option<usize> {
+    Some(match kind {
+        1..=4 => 168,
+        5 => 424,
+        6 => 88,
+        7 => 72,
+        8 => 56,
+        9 => 168,
+        10 => 72,
+        11 => 168,
+        12 => 72,
+        13 => 72,
+        14 => 40,
+        15 => 88,
+        16 => 96,
+        17 => 80,
+        18 => 168,
+        19 => 312,
+        20 => 72,
+        21 => 272,
+        22 => 168,
+        23 => 160,
+        // Part A stops at 160; part B runs to 168.
+        24 => 160,
+        25 => 40,
+        26 => 60,
+        // Sent as 96 bits, though a few transmitters pad it to a full slot.
+        27 => 96,
+        // 0 is not a message number, and there is nothing above 27.
+        _ => return None,
+    })
+}
+
 fn some_text(s: String) -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
@@ -459,6 +520,43 @@ fn eta(month: u64, day: u64, hour: u64, minute: u64) -> Option<String> {
 mod tests {
     use super::*;
     use crate::tx::Payload;
+
+    /// Issue #330: a frame too short for the message it claims to be would have
+    /// the rest of its fields read out of bits that never arrived — and zero is
+    /// a valid speed, a valid navigational status and a valid position, so what
+    /// came out was not a partial vessel but a whole invented one.
+    #[test]
+    fn a_frame_too_short_for_its_type_is_not_that_type() {
+        // The header of a Class A position report and nothing after it.
+        let short = Payload::new(48).put(0, 6, 1).put(8, 30, 244_660_000).bits();
+        assert!(parse(&short).is_none(), "48 bits is not a 168-bit position report");
+
+        // The same message at its proper length still decodes.
+        let full = Payload::new(168).put(0, 6, 1).put(8, 30, 244_660_000).bits();
+        assert_eq!(parse(&full).expect("a header").mmsi, 244_660_000);
+    }
+
+    /// The message numbers the standard leaves undefined are not messages, and
+    /// neither is 0.
+    #[test]
+    fn an_undefined_message_number_is_refused() {
+        for kind in [0u8, 28, 40, 63] {
+            let bits = Payload::new(1_008).put(0, 6, u64::from(kind)).put(8, 30, 1).bits();
+            assert!(parse(&bits).is_none(), "message number {kind} is not one");
+        }
+    }
+
+    /// An MMSI is nine digits; the field it travels in holds ten. A number in
+    /// the gap is interference that got through the check sequence, not a ship.
+    #[test]
+    fn an_mmsi_too_large_to_be_one_is_refused() {
+        let bits = Payload::new(168).put(0, 6, 1).put(8, 30, 1_060_322_817).bits();
+        assert!(parse(&bits).is_none());
+
+        // The largest that can be an identity is still accepted.
+        let bits = Payload::new(168).put(0, 6, 1).put(8, 30, 999_999_999).bits();
+        assert_eq!(parse(&bits).expect("a header").mmsi, 999_999_999);
+    }
 
     /// A Class A position report reads back the way it was written, field for
     /// field — the offsets in the standard's Table 18 against the offsets in

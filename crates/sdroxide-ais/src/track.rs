@@ -87,6 +87,16 @@ impl Tracker {
         if m.mmsi == 0 {
             return;
         }
+        // A message of a type this crate does not interpret carries an MMSI and,
+        // as far as anything here can tell, nothing else — no position, no
+        // name, no speed. It may say that a station already on the list is
+        // still there, but it must not put a new one on it: a row like that
+        // cannot be drawn, cannot be identified, and is indistinguishable from
+        // the ships the operator is actually looking for. A list filling up
+        // with them beside an empty chart is what issue #330 reported.
+        if !m.known && !self.by_mmsi.contains_key(&m.mmsi) {
+            return;
+        }
         let seq = self.seq;
         self.seq = self.seq.wrapping_add(1);
         let cfg = self.cfg;
@@ -311,6 +321,29 @@ mod tests {
             .put_text(112, 20, name)
             .put_text(302, 20, "HAMBURG")
             .bits()
+    }
+
+    /// Issue #330: a message type this crate cannot interpret carries an MMSI
+    /// and nothing that can be drawn or read. Fifty rows of those beside an
+    /// empty chart is what the report looked like, so one may confirm a station
+    /// already on the list but never put a new one on it.
+    #[test]
+    fn a_message_that_cannot_be_interpreted_does_not_invent_a_station() {
+        let mut t = Tracker::new(AisSettings::default());
+        // Type 20, data link management: a real AIS message, and one with
+        // nothing in it for a vessel list.
+        let admin = Payload::new(160).put(0, 6, 20).put(8, 30, 244_660_000).bits();
+        feed(&mut t, admin.clone(), 1_000);
+        assert_eq!(t.len(), 0, "an uninterpretable message is not a vessel");
+
+        // Once the station has said something this crate does understand, the
+        // same message keeps it alive.
+        feed(&mut t, position(244_660_000, 52.0, 4.0), 1_010);
+        assert_eq!(t.len(), 1);
+        feed(&mut t, admin, 1_020);
+        let v = &t.snapshot()[0];
+        assert_eq!(v.last_at, 1_020, "it was heard from again");
+        assert_eq!(v.lat, Some(52.0), "and it did not lose its position");
     }
 
     /// The position and the name arrive in different messages minutes apart and
