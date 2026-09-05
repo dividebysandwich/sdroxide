@@ -8,7 +8,7 @@
 //!
 //! Issue #191.
 
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use sdroxide_digi::{DigiAction, DigiController, Ft8Modem};
 use sdroxide_types::{DigiConfig, Mode};
@@ -69,21 +69,21 @@ fn keyed_slots(scene: &Scene) -> Vec<i64> {
     let mut clicked = false;
     let mut heard_dx = false;
     let mut keyed = Vec::new();
-    // The slot in progress, and whether any signal has been fed into it. The
-    // decode wait below hangs off both: it belongs at a slot boundary, and only
-    // where there is something for the worker to find.
-    let mut slot = (first - 1, false);
+    // The slot in progress, for spotting a boundary.
+    let mut slot = first - 1;
+    // Which slots the DX transmits in. The decode wait below hangs off this:
+    // those are the slots whose decode the sequencer has to have acted on
+    // before REPLY is pressed, and waiting on the others costs a full decode
+    // of a quiet slot for nothing.
+    let dx_in =
+        |i: i64| (i % 2 == 0) == scene.dx_even && i - first < scene.dx_overs * 2;
 
     let mut t = start;
     let end = start + scene.slots as f64 * slot_s;
     while t < end {
         let idx = (t / slot_s).floor() as i64;
         let now = UNIX_EPOCH + Duration::from_secs_f64(t);
-        let dx_on = (idx % 2 == 0) == scene.dx_even && idx - first < scene.dx_overs * 2;
-        let heard = dx_on || scene.filler;
-        // Whether this tick put anything into the receiver: a slot we spent
-        // transmitting in has nothing for the decoder however busy the band is.
-        let fed = heard && !ctl.tx_burst_active();
+        let dx_on = dx_in(idx);
 
         if ctl.tx_burst_active() {
             // Our own over: the receiver hears nothing while we transmit.
@@ -112,26 +112,35 @@ fn keyed_slots(scene: &Scene) -> Vec<i64> {
         }
 
         let mut acted = ctl.poll(now, DIAL_HZ);
-        // On the first tick of a slot, that poll handed the slot that just ended
-        // to the decode worker. Wait for it, so the sequencer acts on the decode
-        // inside the following slot — which is where a real one lands, and is
-        // the only point at which the operator can press REPLY at all.
-        if idx != slot.0 {
-            // Generously bounded rather than unbounded: a decode takes a
-            // fraction of a second here, so the cap is only there to fail the
-            // test instead of hanging it if one never comes back at all.
-            if slot.1 {
-                for _ in 0..2_000 {
-                    if acted.iter().any(|a| matches!(a, DigiAction::Decodes(_))) {
-                        break;
-                    }
+        // On the first tick of a slot, that poll handed the slot that just
+        // ended to the decode worker. Where that slot was one the DX
+        // transmitted in, wait for the worker to answer for it, so the
+        // sequencer acts on the decode inside the following slot — which is
+        // where a real one lands, and is the only point at which the operator
+        // can press REPLY at all.
+        //
+        // Asked of the controller rather than inferred from what it returns.
+        // A slot that decodes to nothing produces no `Decodes` action at all,
+        // so "has a decode arrived?" cannot answer "has the decoder finished?":
+        // waiting on the actions stalls for ever on every quiet slot, and
+        // giving up on a timer instead means the wait for a slot that *is*
+        // about to decode expires under load — which is what made this test
+        // fail perhaps half the time in a full `cargo test` and never once run
+        // on its own. `DigiController::decoding` is the question that was
+        // actually being asked.
+        //
+        // The deadline is a guard against hanging and nothing else: by this
+        // point the worker has a slot in hand and is going to answer for it.
+        if idx != slot {
+            if dx_in(slot) {
+                let give_up = Instant::now() + Duration::from_secs(60);
+                while ctl.decoding() > 0 && Instant::now() < give_up {
                     std::thread::sleep(Duration::from_millis(5));
                     acted.extend(ctl.poll(now, DIAL_HZ));
                 }
             }
-            slot = (idx, false);
+            slot = idx;
         }
-        slot.1 |= fed;
         keyed.extend(acted.iter().filter(|a| matches!(a, DigiAction::KeyTx)).map(|_| idx));
         heard_dx |= acted.iter().any(|a| match a {
             DigiAction::Decodes(d) => d.iter().any(|x| x.from.as_deref() == Some("W9XYZ")),

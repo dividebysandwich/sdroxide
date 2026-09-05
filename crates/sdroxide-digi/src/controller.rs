@@ -149,6 +149,12 @@ pub struct DigiController {
     /// Receive periods that arrived short of a full slot — see
     /// [`DigiController::check_slot_arrived_whole`].
     short_slots: u64,
+    /// Slots handed to the decode worker and not yet answered for — see
+    /// [`DigiController::decoding`].
+    ///
+    /// A plain counter and not an atomic: both ends of it are in
+    /// [`DigiController::poll`], which is one thread.
+    decoding: usize,
     dial_hz: f64,
     audio_hz: f32,
     /// Which slot period we transmit in (even/odd), and a per-slot guard so
@@ -273,6 +279,7 @@ impl DigiController {
             tap_scratch: Vec::new(),
             last_slot_idx: i64::MIN,
             short_slots: 0,
+            decoding: 0,
             dial_hz: 0.0,
             audio_hz: 1500.0,
             tx_even,
@@ -558,6 +565,24 @@ impl DigiController {
         }
     }
 
+    /// How many receive periods have been handed to the decode worker and not
+    /// yet come back.
+    ///
+    /// Zero means the decoder has caught up: every slot dispatched so far has
+    /// been through the modem and whatever it found — including nothing — has
+    /// already been folded in by [`Self::poll`].
+    ///
+    /// The distinction that makes this worth exposing is that a slot which
+    /// decodes to nothing produces no [`DigiAction::Decodes`] at all, so
+    /// "have any decodes arrived?" cannot answer "has the decoder finished?".
+    /// They come apart in both directions — a busy slot still being worked on
+    /// looks the same as an empty one that is already done — and anything
+    /// waiting for the decoder has to ask this instead of watching the actions
+    /// and guessing.
+    pub fn decoding(&self) -> usize {
+        self.decoding
+    }
+
     /// Whether a TX burst is currently on the air (drives the engine's PTT
     /// via [`DigiAction::KeyTx`]/[`UnkeyTx`]).
     pub fn tx_burst_active(&self) -> bool {
@@ -662,6 +687,9 @@ impl DigiController {
         loop {
             match self.res_rx.try_recv() {
                 Ok((slot_idx, decodes)) => {
+                    // Answered for, whether or not it found anything: an empty
+                    // slot is a finished slot.
+                    self.decoding = self.decoding.saturating_sub(1);
                     if !decodes.is_empty() {
                         let slot_utc = self.scheduler.slot_start_unix(slot_idx) as i64;
                         // Remember which slot we heard each station in (reply
@@ -719,13 +747,13 @@ impl DigiController {
                         dx_call: self.qso.dx_call().map(str::to_string),
                         eu_vhf: self.qso.contest_selected(),
                     };
-                    let _ = self.job_tx.send(DecodeJob {
-                        audio,
-                        slot_idx,
-                        slot_utc,
-                        ap,
-                        audio_hz: self.audio_hz,
-                    });
+                    if self
+                        .job_tx
+                        .send(DecodeJob { audio, slot_idx, slot_utc, ap, audio_hz: self.audio_hz })
+                        .is_ok()
+                    {
+                        self.decoding += 1;
+                    }
                 }
             }
             self.slot_buf.clear();
