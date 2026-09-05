@@ -1100,6 +1100,16 @@ riding above it has already gone. See the RDS diagnostics tab
 ([2.7](#27-receiver-controls)) for the same warning where its effects show
 first.
 
+**Board temperature.** A radio with a temperature sensor of its own has the
+reading in the meter's bottom-left corner, in degrees Celsius — a Hermes-Lite 2
+is the one this driver meets that reports one, on every face and in receive as
+well as transmit. It is grey in normal use, amber past 55 °C and red past 70 °C.
+Those are attention thresholds and not limits the radio enforces: it is the
+board's own sensor beside the output stage, so it lags a key-down by some
+seconds and reads below the transistors themselves. What it is good for is the
+slow half — an HL2 running FT8 all afternoon heats up and stays hot, and this is
+where that shows. A radio with no sensor shows nothing here.
+
 Clicking the meter cycles three faces:
 
 - **Needle** (the default) — an analog moving-coil instrument. The needle has a

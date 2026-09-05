@@ -71,6 +71,15 @@ pub struct Meters {
     /// the last meter window, in dBFS. `f32::NEG_INFINITY` before anything has
     /// been measured.
     pub adc_peak_dbfs: f32,
+    /// The radio's own temperature in degrees Celsius, where it measures one.
+    ///
+    /// The board's sensor, not a figure derived on this side, and reported in
+    /// receive as well as transmit: what a small PA does is heat up over an
+    /// afternoon and cool slowly afterwards, and both halves of that are what
+    /// the operator is watching (issue #333). `None` on the great majority of
+    /// radios, which have no such sensor — see `IqSource::pa_temp_c`.
+    #[serde(default)]
+    pub pa_temp_c: Option<f32>,
     /// Fraction of converter samples at full scale over the same window,
     /// `0.0..=1.0`. Above [`OVERLOAD_FRACTION`] — ask [`Meters::adc_overloaded`] —
     /// the front end is

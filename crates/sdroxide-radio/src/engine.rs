@@ -4460,6 +4460,10 @@ fn engine_thread(
             // transmit, and the SWR of an over is worth reading either way —
             // but only an over *we* key is one the guard may unkey, which is
             // why the rails below stay on `tx_active` alone.
+            // The board's own temperature, where it has a sensor. Read once
+            // for both branches: it is a property of the radio, not of the
+            // direction it happens to be pointing (issue #333).
+            let pa_temp_c = engine.source.pa_temp_c();
             let meters = if engine.tx_active || engine.rig_tx {
                 // CAT/TCI rigs report real forward power / SWR; HackRF and other
                 // IQ sources have no such sensor and leave both `None` (the meter
@@ -4581,6 +4585,7 @@ fn engine_thread(
                 let (adc_peak_dbfs, adc_clip) = engine.adc.read();
                 Some(Meters {
                     s_dbm: -127.0,
+                    pa_temp_c,
                     adc_peak_dbfs,
                     adc_clip,
                     tx: Some(TxMeters { fwd_w: tele.fwd_w, swr: tele.swr, alc, po: tele.po }),
@@ -4605,6 +4610,7 @@ fn engine_thread(
                 let (adc_peak_dbfs, adc_clip) = engine.adc.read();
                 engine.rx_signal_dbm().map(|s_dbm| Meters {
                     s_dbm,
+                    pa_temp_c,
                     adc_peak_dbfs,
                     adc_clip,
                     tx: None,

@@ -355,6 +355,13 @@ impl IqSource for HpsdrSource {
         self.label.clone()
     }
 
+    /// The board's own temperature sensor, which on this family means a
+    /// Hermes-Lite 2 and nothing else (issue #333). Every other HPSDR board
+    /// answers `None` and the meter says nothing.
+    fn pa_temp_c(&mut self) -> Option<f32> {
+        self.rx.as_ref()?.pa_temp_c()
+    }
+
     /// The board's front-end LNA gain. On a Hermes-Lite 2 this is the only
     /// analogue gain there is, and leaving it at whatever the gateware came up
     /// with is the difference between a deaf receiver and a clipping one.

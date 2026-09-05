@@ -306,6 +306,10 @@ struct Ep6Info {
     /// version bytes. Their exact meaning is board-specific, so they are logged
     /// raw rather than interpreted.
     versions: Option<(u8, u8, u8, u8)>,
+    /// AIN5, the first analogue reading of a status-set-1 frame, as the raw
+    /// 12-bit converter count. On a Hermes-Lite 2 this input carries the
+    /// board's temperature sensor — see [`hl2_temperature_c`].
+    ain5: Option<u16>,
 }
 
 /// Rate limiter for the two Hermes-Lite transmit faults worth shouting about.
@@ -383,10 +387,48 @@ fn decode_ep6_status(cc: &[u8], info: &mut Ep6Info) {
     info.ptt |= cc[0] & 0x01 != 0;
     if cc[0] & 0x80 != 0 {
         info.ack = Some(((cc[0] >> 1) & 0x3F, [cc[1], cc[2], cc[3], cc[4]]));
-    } else if (cc[0] >> 3) & 0x1F == 0 {
-        info.adc_overload |= cc[1] & 0x01 != 0;
-        info.versions = Some((cc[1], cc[2], cc[3], cc[4]));
+        return;
     }
+    match (cc[0] >> 3) & 0x1F {
+        0 => {
+            info.adc_overload |= cc[1] & 0x01 != 0;
+            info.versions = Some((cc[1], cc[2], cc[3], cc[4]));
+        }
+        // Set 1: C1/C2 are AIN5 and C3/C4 AIN1, both big-endian. AIN1 is
+        // forward power on a board that has a coupler wired to it, which the
+        // stock Hermes-Lite 2 has not — AIN5 is the one that means something on
+        // every HL2, and it is the temperature sensor (issue #333).
+        1 => info.ain5 = Some(u16::from_be_bytes([cc[1], cc[2]]) & 0x0FFF),
+        _ => {}
+    }
+}
+
+/// Turn a Hermes-Lite 2's AIN5 reading into degrees Celsius.
+///
+/// The sensor is an MCP9700-class part: 500 mV at 0 °C, 10 mV per degree above
+/// it. The gateware's converter is 12-bit against a 3.26 V reference, which
+/// makes the whole conversion
+///
+/// ```text
+/// °C = (3.26 × count / 4096 − 0.5) / 0.01
+/// ```
+///
+/// the same arithmetic the other HL2 hosts use, so a temperature read here
+/// agrees with one read anywhere else on the same board.
+///
+/// This is the board, not the PA die: the sensor sits on the PCB near the
+/// output stage, so it lags a key-down by a good many seconds and reads well
+/// below the transistors themselves. That is what makes it worth showing — it
+/// is the number that says whether the *board* is running hot over an afternoon
+/// of FT8, which is the failure an HL2 actually has.
+///
+/// `None` for a reading of zero: the converter has not been sampled yet, and
+/// −50 °C is not a temperature this board reports.
+fn hl2_temperature_c(count: u16) -> Option<f32> {
+    if count == 0 {
+        return None;
+    }
+    Some((3.26 * f32::from(count) / 4096.0 - 0.5) / 0.01)
 }
 
 /// Decode an EP6 (radio→host) datagram, appending interleaved I,Q floats.
@@ -401,6 +443,7 @@ fn decode_ep6(d: &[u8], out: &mut Vec<f32>) -> Option<Ep6Info> {
         adc_overload: false,
         ack: None,
         versions: None,
+        ain5: None,
     };
     for f in 0..2 {
         let frame = &d[8 + f * 512..8 + f * 512 + 512];
@@ -462,6 +505,7 @@ pub(crate) fn run(ctx: ThreadCtx) {
         pa_enable,
         io_rx_input,
         radio_ptt: ptt_line,
+        temp_centi_c,
         mut tx,
         ctrl,
     } = ctx;
@@ -681,6 +725,16 @@ pub(crate) fn run(ctx: ThreadCtx) {
                             if radio_ptt { "closed" } else { "open" }
                         );
                     }
+                    // The board's own temperature, where the gateware sampled
+                    // it this datagram. Published as a level, like the PTT line
+                    // above, so a caller polling on the meter tick reads
+                    // whatever the last frame said rather than having to catch
+                    // one (issue #333).
+                    if hermes_lite
+                        && let Some(c) = info.ain5.and_then(hl2_temperature_c)
+                    {
+                        temp_centi_c.store((c * 100.0) as i32, Ordering::Relaxed);
+                    }
                     // An overloaded ADC is the classic "the signal looks weird"
                     // fault: everything intermodulates and the noise floor
                     // jumps. Rate-limit the warning, it can fire every datagram.
@@ -848,7 +902,7 @@ mod tests {
     #[test]
     fn ep6_status_bits() {
         let mut info =
-            Ep6Info { seq: 0, ptt: false, adc_overload: false, ack: None, versions: None };
+            Ep6Info { seq: 0, ptt: false, adc_overload: false, ack: None, versions: None, ain5: None };
         // Status set 0, PTT closed, ADC overloaded, versions in C2..C4.
         decode_ep6_status(&[0x01, 0x01, 0x11, 0x22, 0x33], &mut info);
         assert!(info.ptt);
@@ -858,10 +912,45 @@ mod tests {
         // A different status set carries power/voltage, not versions: the
         // overload flag and version bytes must not be read out of it.
         let mut other =
-            Ep6Info { seq: 0, ptt: false, adc_overload: false, ack: None, versions: None };
-        decode_ep6_status(&[0x08, 0xFF, 0xFF, 0xFF, 0xFF], &mut other);
+            Ep6Info { seq: 0, ptt: false, adc_overload: false, ack: None, versions: None, ain5: None };
+        // Set 2 (power/voltage): not versions, and not the temperature either.
+        decode_ep6_status(&[0x10, 0xFF, 0xFF, 0xFF, 0xFF], &mut other);
         assert!(!other.adc_overload);
         assert_eq!(other.versions, None);
+        assert_eq!(other.ain5, None);
+    }
+
+    /// Issue #333: a Hermes-Lite 2 reports its board temperature on AIN5, in
+    /// status set 1 — the frames this decoder used to skip past.
+    #[test]
+    fn a_hermes_lite_reports_its_temperature_on_status_set_one() {
+        // C0: set 1 in bits 7..3, ACK clear, PTT clear.
+        let cc = [1u8 << 3, 0x07, 0x8B, 0x00, 0x00];
+        let mut info =
+            Ep6Info { seq: 0, ptt: false, adc_overload: false, ack: None, versions: None, ain5: None };
+        decode_ep6_status(&cc, &mut info);
+        assert_eq!(info.ain5, Some(0x078B));
+        // 3.26 × 1931 / 4096 = 1.537 V; less the sensor's 500 mV offset, over
+        // 10 mV per degree, is a shade under 104 °C… which is what this count
+        // means and not a temperature a healthy board reaches. The arithmetic
+        // is what is under test.
+        let c = hl2_temperature_c(0x078B).expect("a reading");
+        assert!((c - 103.7).abs() < 0.5, "{c} °C");
+
+        // A room-temperature board: 25 °C is 750 mV, which is count 942.
+        let c = hl2_temperature_c(942).expect("a reading");
+        assert!((c - 25.0).abs() < 0.5, "{c} °C");
+
+        // Nothing sampled yet is not −50 °C.
+        assert_eq!(hl2_temperature_c(0), None);
+
+        // And set 0 still means what it meant: versions, not a temperature.
+        let mut info =
+            Ep6Info { seq: 0, ptt: false, adc_overload: false, ack: None, versions: None, ain5: None };
+        decode_ep6_status(&[0x00, 0x01, 0x02, 0x03, 0x04], &mut info);
+        assert!(info.ain5.is_none());
+        assert_eq!(info.versions, Some((0x01, 0x02, 0x03, 0x04)));
+        assert!(info.adc_overload);
     }
 
     /// A converter puts the radio on an intermediate frequency, and the

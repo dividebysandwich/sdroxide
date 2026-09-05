@@ -418,6 +418,20 @@ pub trait IqSource: Send {
     fn tx_telemetry(&mut self) -> Option<sdroxide_types::TxTelemetry> {
         None
     }
+    /// The radio's own temperature in degrees Celsius, where it measures one.
+    ///
+    /// Polled on the meter tick in receive as well as transmit, because the
+    /// number an operator watches is the one *after* the over: what a small PA
+    /// does over an afternoon of FT8 is heat up and stay hot, and a reading
+    /// that vanished at unkey would hide exactly the part worth seeing
+    /// (issue #333).
+    ///
+    /// Almost nothing reports one — this is the board's own sensor, not a
+    /// figure derived from anything on this side — so `None` is the ordinary
+    /// answer and the meter simply says nothing. Default: none.
+    fn pa_temp_c(&mut self) -> Option<f32> {
+        None
+    }
     /// The rig's own S-meter in dBm, polled by the engine while receiving.
     ///
     /// For a source that hands us already-demodulated audio (a CAT rig on a
@@ -1451,6 +1465,10 @@ impl IqSource for ConvertedSource {
 
     fn tx_telemetry(&mut self) -> Option<sdroxide_types::TxTelemetry> {
         self.inner.tx_telemetry()
+    }
+
+    fn pa_temp_c(&mut self) -> Option<f32> {
+        self.inner.pa_temp_c()
     }
 
     fn rx_signal_dbm(&mut self) -> Option<f32> {

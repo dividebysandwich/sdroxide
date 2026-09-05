@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -446,9 +446,22 @@ pub(crate) struct ThreadCtx {
     pub io_rx_input: HpsdrIoRxInput,
     /// The radio's own PTT line, published for [`HpsdrRx::radio_ptt`].
     pub radio_ptt: Arc<AtomicBool>,
+    /// The board's temperature in hundredths of a degree Celsius, published for
+    /// [`HpsdrRx::pa_temp_c`]. [`TEMP_UNKNOWN`] until the board reports one —
+    /// which most of them never do.
+    pub temp_centi_c: Arc<AtomicI32>,
     pub tx: Consumer<f32>,
     pub ctrl: Receiver<Ctrl>,
 }
+
+/// What [`ThreadCtx::temp_centi_c`] holds before a board has reported a
+/// temperature, and forever on the boards that have no sensor.
+///
+/// A sentinel rather than an `Option` because the value is shared with the
+/// network thread through an atomic, and a temperature that is genuinely absent
+/// has to be told apart from one that is genuinely 0 °C — a Hermes-Lite in a
+/// cold shack in February reads exactly that.
+pub const TEMP_UNKNOWN: i32 = i32::MIN;
 
 /// What every stream of one connection shares. Dropping the last handle stops
 /// the stream and shuts the network thread down.
@@ -480,6 +493,9 @@ struct DevInner {
     /// last saw it reported. A *level*, so a poll can never miss an edge by
     /// arriving late.
     radio_ptt: Arc<AtomicBool>,
+    /// The board's own temperature, hundredths of a degree — see
+    /// [`TEMP_UNKNOWN`].
+    temp_centi_c: Arc<AtomicI32>,
     /// The TX ring's feed end, claimable exactly once — by DDC 0's stream.
     tx_endpoint: Mutex<Option<Producer<f32>>>,
     /// Which DDCs have a live [`HpsdrRx`], so one cannot be vended twice: two
@@ -628,6 +644,7 @@ impl HpsdrBoard {
         // drops it a moment from now it will leave the stream alone.
         let conn_id = claim_connection(IpAddr::V4(ip));
         let radio_ptt = Arc::new(AtomicBool::new(false));
+        let temp_centi_c = Arc::new(AtomicI32::new(TEMP_UNKNOWN));
         let ctx = ThreadCtx {
             socket,
             radio: IpAddr::V4(ip),
@@ -641,6 +658,7 @@ impl HpsdrBoard {
             pa_enable,
             io_rx_input,
             radio_ptt: Arc::clone(&radio_ptt),
+            temp_centi_c: Arc::clone(&temp_centi_c),
             tx: tx_cons,
             ctrl: ctrl_rx,
         };
@@ -674,6 +692,7 @@ impl HpsdrBoard {
                 opened_at,
                 transmitting: Arc::new(AtomicBool::new(false)),
                 radio_ptt,
+                temp_centi_c,
                 tx_endpoint: Mutex::new(Some(tx_prod)),
                 attached: Mutex::new(std::collections::HashSet::new()),
             }),
@@ -690,6 +709,19 @@ impl HpsdrBoard {
     /// Board name reported by discovery (or "HPSDR" if it did not answer).
     pub fn board(&self) -> &str {
         &self.inner.board
+    }
+
+    /// The board's own temperature in degrees Celsius, where it reports one.
+    ///
+    /// A Hermes-Lite 2 does, on the analogue input its status frames carry;
+    /// nothing else in the HPSDR family that this driver has met reports a
+    /// temperature at all, so `None` is the ordinary answer. See
+    /// `protocol1::hl2_temperature_c` for what the sensor actually measures.
+    pub fn pa_temp_c(&self) -> Option<f32> {
+        match self.inner.temp_centi_c.load(Ordering::Relaxed) {
+            TEMP_UNKNOWN => None,
+            centi => Some(centi as f32 / 100.0),
+        }
     }
 
     /// OpenHPSDR protocol in use (1 or 2).
@@ -911,6 +943,19 @@ impl HpsdrRx {
     /// for it yet, so a P2 board always answers `false`.
     pub fn radio_ptt(&self) -> bool {
         self.tx.is_some() && self.dev.radio_ptt.load(Ordering::Relaxed)
+    }
+
+    /// The board's own temperature, where it reports one — see
+    /// [`HpsdrBoard::pa_temp_c`].
+    ///
+    /// Answered on every stream, not only the one that owns the transmitter:
+    /// the board has one temperature and every tab looking at it is looking at
+    /// the same hardware getting hot.
+    pub fn pa_temp_c(&self) -> Option<f32> {
+        match self.dev.temp_centi_c.load(Ordering::Relaxed) {
+            crate::net::TEMP_UNKNOWN => None,
+            centi => Some(centi as f32 / 100.0),
+        }
     }
 
     /// Stop transmitting.
