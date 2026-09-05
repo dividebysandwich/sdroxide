@@ -10846,6 +10846,12 @@ working, what you are about to transmit), and every completed QSO — as both th
 structured message and an ADIF record, so a logger can take whichever it
 prefers.
 
+**Every** completed QSO, not only the digital ones: a contact typed into the
+logbook window goes out on the same two datagrams the FT8 sequencer's own
+contacts do, so a logger that takes its log from this socket — **MacLoggerDX**,
+**RUMlogNG**, N1MM+ — sees the SSB and CW as well. An ADIF *import* is
+deliberately silent: a file of last year's contacts is not a contact being made.
+
 - **Enable** — off by default. What you decode and who you work is broadcast
   only when you say so.
 - **Send to** — `127.0.0.1` for clients on this machine, a LAN address for

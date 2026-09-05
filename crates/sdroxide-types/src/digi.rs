@@ -2142,88 +2142,105 @@ pub fn qso_log_to_adif(records: &[QsoRecord]) -> String {
         "ADIF export from sdroxide\r\n<ADIF_VER:5>3.1.4\r\n<PROGRAMID:8>sdroxide\r\n<EOH>\r\n",
     );
     for r in records {
-        let (date, time) = adif_date_time(r.start_utc);
-        let (_, time_off) = adif_date_time(r.end_utc);
-        out.push_str(&adif_field("CALL", &r.call));
-        out.push_str(&adif_field("QSO_DATE", &date));
-        out.push_str(&adif_field("TIME_ON", &time));
-        out.push_str(&adif_field("TIME_OFF", &time_off));
-        out.push_str(&adif_field("BAND", &r.band));
-        out.push_str(&adif_field("MODE", &r.mode));
-        out.push_str(&adif_field("FREQ", &format!("{:.6}", r.freq_hz / 1e6)));
-        if let Some(g) = &r.grid {
-            out.push_str(&adif_field("GRIDSQUARE", g));
-        }
-        if let Some(s) = r.rst_sent {
-            out.push_str(&adif_field("RST_SENT", &s.to_string()));
-        }
-        if let Some(s) = r.rst_rcvd {
-            out.push_str(&adif_field("RST_RCVD", &s.to_string()));
-        }
-        // Extended fields — written only when populated.
-        let opt_str = |out: &mut String, name: &str, v: &str| {
-            if !v.trim().is_empty() {
-                out.push_str(&adif_field(name, v.trim()));
-            }
-        };
-        opt_str(&mut out, "NAME", &r.name);
-        opt_str(&mut out, "QTH", &r.qth);
-        opt_str(&mut out, "STATE", &r.state);
-        opt_str(&mut out, "CNTY", &r.county);
-        opt_str(&mut out, "COUNTRY", &r.country);
-        if let Some(v) = r.dxcc {
-            out.push_str(&adif_field("DXCC", &v.to_string()));
-        }
-        if let Some(v) = r.cq_zone {
-            out.push_str(&adif_field("CQZ", &v.to_string()));
-        }
-        if let Some(v) = r.itu_zone {
-            out.push_str(&adif_field("ITUZ", &v.to_string()));
-        }
-        opt_str(&mut out, "CONT", &r.continent);
-        opt_str(&mut out, "IOTA", &r.iota);
-        opt_str(&mut out, "SIG", &r.sig);
-        opt_str(&mut out, "SIG_INFO", &r.sig_info);
-        if let Some(v) = r.tx_pwr {
-            out.push_str(&adif_field("TX_PWR", &format!("{v}")));
-        }
-        opt_str(&mut out, "OPERATOR", &r.operator);
-        opt_str(&mut out, "CONTEST_ID", &r.contest_id);
-        if let Some(v) = r.srx {
-            out.push_str(&adif_field("SRX", &v.to_string()));
-        }
-        if let Some(v) = r.stx {
-            out.push_str(&adif_field("STX", &v.to_string()));
-        }
-        opt_str(&mut out, "SRX_STRING", &r.srx_string);
-        opt_str(&mut out, "STX_STRING", &r.stx_string);
-        opt_str(&mut out, "MY_STATE", &r.my_state);
-        opt_str(&mut out, "MY_COUNTRY", &r.my_country);
-        if let Some(v) = r.my_dxcc {
-            out.push_str(&adif_field("MY_DXCC", &v.to_string()));
-        }
-        if let Some(v) = r.my_cq_zone {
-            out.push_str(&adif_field("MY_CQ_ZONE", &v.to_string()));
-        }
-        if let Some(v) = r.my_itu_zone {
-            out.push_str(&adif_field("MY_ITU_ZONE", &v.to_string()));
-        }
-        opt_str(&mut out, "QSL_VIA", &r.qsl_via);
-        let yn = |out: &mut String, name: &str, v: bool| {
-            if v {
-                out.push_str(&adif_field(name, "Y"));
-            }
-        };
-        yn(&mut out, "LOTW_QSL_SENT", r.lotw_sent);
-        yn(&mut out, "LOTW_QSL_RCVD", r.lotw_rcvd);
-        yn(&mut out, "EQSL_QSL_SENT", r.eqsl_sent);
-        yn(&mut out, "EQSL_QSL_RCVD", r.eqsl_rcvd);
-        yn(&mut out, "QSL_SENT", r.qsl_sent);
-        yn(&mut out, "QSL_RCVD", r.qsl_rcvd);
-        out.push_str(&adif_field("STATION_CALLSIGN", &r.my_call));
-        out.push_str(&adif_field("MY_GRIDSQUARE", &r.my_grid));
-        out.push_str("<EOR>\r\n");
+        out.push_str(&qso_to_adif_record(r));
+        out.push_str("\r\n");
     }
+    out
+}
+
+/// One contact as a bare ADIF record, ending in `<EOR>` and nothing after it.
+///
+/// The record on its own, with no `<EOH>` header and no free text in front of
+/// it, because that is what a *record* is — and what the WSJT-X UDP protocol's
+/// ADIF message carries. A whole file export sent down that socket begins with
+/// a line of prose before the first tag, and a logger reading the datagram as
+/// the single record its protocol promises can make nothing of it (issue #341).
+///
+/// [`qso_log_to_adif`] is this with a file header in front and one record per
+/// contact, which is what a file wants and a datagram does not.
+pub fn qso_to_adif_record(r: &QsoRecord) -> String {
+    let mut out = String::new();
+    let (date, time) = adif_date_time(r.start_utc);
+    let (_, time_off) = adif_date_time(r.end_utc);
+    out.push_str(&adif_field("CALL", &r.call));
+    out.push_str(&adif_field("QSO_DATE", &date));
+    out.push_str(&adif_field("TIME_ON", &time));
+    out.push_str(&adif_field("TIME_OFF", &time_off));
+    out.push_str(&adif_field("BAND", &r.band));
+    out.push_str(&adif_field("MODE", &r.mode));
+    out.push_str(&adif_field("FREQ", &format!("{:.6}", r.freq_hz / 1e6)));
+    if let Some(g) = &r.grid {
+        out.push_str(&adif_field("GRIDSQUARE", g));
+    }
+    if let Some(s) = r.rst_sent {
+        out.push_str(&adif_field("RST_SENT", &s.to_string()));
+    }
+    if let Some(s) = r.rst_rcvd {
+        out.push_str(&adif_field("RST_RCVD", &s.to_string()));
+    }
+    // Extended fields — written only when populated.
+    let opt_str = |out: &mut String, name: &str, v: &str| {
+        if !v.trim().is_empty() {
+            out.push_str(&adif_field(name, v.trim()));
+        }
+    };
+    opt_str(&mut out, "NAME", &r.name);
+    opt_str(&mut out, "QTH", &r.qth);
+    opt_str(&mut out, "STATE", &r.state);
+    opt_str(&mut out, "CNTY", &r.county);
+    opt_str(&mut out, "COUNTRY", &r.country);
+    if let Some(v) = r.dxcc {
+        out.push_str(&adif_field("DXCC", &v.to_string()));
+    }
+    if let Some(v) = r.cq_zone {
+        out.push_str(&adif_field("CQZ", &v.to_string()));
+    }
+    if let Some(v) = r.itu_zone {
+        out.push_str(&adif_field("ITUZ", &v.to_string()));
+    }
+    opt_str(&mut out, "CONT", &r.continent);
+    opt_str(&mut out, "IOTA", &r.iota);
+    opt_str(&mut out, "SIG", &r.sig);
+    opt_str(&mut out, "SIG_INFO", &r.sig_info);
+    if let Some(v) = r.tx_pwr {
+        out.push_str(&adif_field("TX_PWR", &format!("{v}")));
+    }
+    opt_str(&mut out, "OPERATOR", &r.operator);
+    opt_str(&mut out, "CONTEST_ID", &r.contest_id);
+    if let Some(v) = r.srx {
+        out.push_str(&adif_field("SRX", &v.to_string()));
+    }
+    if let Some(v) = r.stx {
+        out.push_str(&adif_field("STX", &v.to_string()));
+    }
+    opt_str(&mut out, "SRX_STRING", &r.srx_string);
+    opt_str(&mut out, "STX_STRING", &r.stx_string);
+    opt_str(&mut out, "MY_STATE", &r.my_state);
+    opt_str(&mut out, "MY_COUNTRY", &r.my_country);
+    if let Some(v) = r.my_dxcc {
+        out.push_str(&adif_field("MY_DXCC", &v.to_string()));
+    }
+    if let Some(v) = r.my_cq_zone {
+        out.push_str(&adif_field("MY_CQ_ZONE", &v.to_string()));
+    }
+    if let Some(v) = r.my_itu_zone {
+        out.push_str(&adif_field("MY_ITU_ZONE", &v.to_string()));
+    }
+    opt_str(&mut out, "QSL_VIA", &r.qsl_via);
+    let yn = |out: &mut String, name: &str, v: bool| {
+        if v {
+            out.push_str(&adif_field(name, "Y"));
+        }
+    };
+    yn(&mut out, "LOTW_QSL_SENT", r.lotw_sent);
+    yn(&mut out, "LOTW_QSL_RCVD", r.lotw_rcvd);
+    yn(&mut out, "EQSL_QSL_SENT", r.eqsl_sent);
+    yn(&mut out, "EQSL_QSL_RCVD", r.eqsl_rcvd);
+    yn(&mut out, "QSL_SENT", r.qsl_sent);
+    yn(&mut out, "QSL_RCVD", r.qsl_rcvd);
+    out.push_str(&adif_field("STATION_CALLSIGN", &r.my_call));
+    out.push_str(&adif_field("MY_GRIDSQUARE", &r.my_grid));
+    out.push_str("<EOR>");
     out
 }
 
@@ -2794,6 +2811,35 @@ mod tests {
                 assert!(!inside_lo.is_empty(), "{b:?} in {region:?} has no ADIF name");
             }
         }
+    }
+
+    /// Issue #341: the WSJT-X ADIF datagram carries a *record*. A file export
+    /// down that socket starts with a line of prose and an `<EOH>`, which is a
+    /// perfectly good file and not what the message is defined to hold.
+    #[test]
+    fn one_contact_becomes_a_bare_adif_record() {
+        let rec = QsoRecord {
+            call: "W9XYZ".into(),
+            band: "20m".into(),
+            mode: "SSB".into(),
+            freq_hz: 14_250_000.0,
+            my_call: "W1AW".into(),
+            my_grid: "FN31".into(),
+            ..QsoRecord::default()
+        };
+        let one = qso_to_adif_record(&rec);
+        assert!(one.starts_with("<CALL:5>W9XYZ"), "{one}");
+        assert!(one.ends_with("<EOR>"), "{one}");
+        assert!(!one.contains("<EOH>"), "a record carries no file header: {one}");
+        assert!(!one.contains("ADIF export"), "{one}");
+
+        // The file form is that record with a header in front of it, so the two
+        // cannot drift apart.
+        let file = qso_log_to_adif(std::slice::from_ref(&rec));
+        assert!(file.starts_with("ADIF export from sdroxide\r\n"), "{file}");
+        assert!(file.contains("<EOH>\r\n"), "{file}");
+        assert!(file.contains(&one), "the file must contain the record verbatim");
+        assert!(file.ends_with("<EOR>\r\n"), "{file}");
     }
 
     #[test]

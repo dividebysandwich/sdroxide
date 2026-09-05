@@ -8244,6 +8244,15 @@ impl Engine {
                 self.sync_adsb_home();
                 self.emit_digi_status();
             }
+            LogQso(rec) => {
+                // The same two datagrams the sequencer's own contacts go out
+                // as — a hand-entered SSB or CW contact is a contact, and a
+                // logger told about one kind and not the other is a logger with
+                // half a log (issue #341).
+                if let Some(w) = &self.wsjtx {
+                    w.qso_logged(&rec);
+                }
+            }
             SetDigiAudioFreq(hz) => {
                 if let Some(d) = self.digi.as_mut() {
                     d.set_audio_hz(hz);

@@ -989,4 +989,23 @@ pub enum Command {
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     TuneWidebandTo(f64),
+
+    /// A contact was entered in the log by hand — pass it on to whatever is
+    /// listening for logged QSOs (issue #341).
+    ///
+    /// The digital modes' own contacts do not come this way: the sequencer logs
+    /// them inside the engine, which broadcasts them there. What this carries
+    /// is everything else — an SSB or CW contact typed into the log window —
+    /// which until now reached the operator's own logbook and nothing beyond
+    /// it, so a station forwarding to MacLoggerDX or N1MM saw its FT8 and
+    /// nothing else.
+    ///
+    /// Deliberately not sent for an ADIF *import*: a file of last year's
+    /// contacts is not a contact being made, and pushing a few thousand of them
+    /// at a logger would be worse than useless. Nor for an *edit* — the
+    /// protocol has no message for one, and re-sending the record would log it
+    /// twice.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    LogQso(Box<crate::QsoRecord>),
 }

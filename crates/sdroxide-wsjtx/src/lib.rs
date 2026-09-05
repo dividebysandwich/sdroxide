@@ -94,12 +94,16 @@ impl WsjtxUdp {
     /// A completed contact, in both the forms loggers accept: the structured
     /// message and the ADIF record. Which one a logger takes is its own choice;
     /// sending both is what WSJT-X does.
+    ///
+    /// The ADIF half is the bare record — the fields and `<EOR>`, nothing
+    /// before them. This used to carry a whole file export, header line and
+    /// all, which is a well-formed *file* and not what this message is defined
+    /// to hold: a logger reading the datagram as the single record the protocol
+    /// promises found a line of prose where the first tag should be
+    /// (issue #341).
     pub fn qso_logged(&self, q: &QsoRecord) {
         self.send(msg::qso_logged(&self.id, q));
-        self.send(msg::logged_adif(
-            &self.id,
-            &sdroxide_types::qso_log_to_adif(std::slice::from_ref(q)),
-        ));
+        self.send(msg::logged_adif(&self.id, &sdroxide_types::qso_to_adif_record(q)));
     }
 
     /// We're going away — clients drop us from their station lists.

@@ -6,7 +6,7 @@
 //! asks them what would be new on every row of every slot.
 
 use eframe::egui::{self, Color32, RichText};
-use sdroxide_types::{LookupProvider, QsoRecord, UploadTarget};
+use sdroxide_types::{Command, LookupProvider, QsoRecord, UploadTarget};
 
 use crate::theme::ThemedScroll;
 use crate::time::now_unix;
@@ -399,7 +399,11 @@ impl SdroxideApp {
 
     /// The logbook overlay: a session-grouped list of all QSOs (digital and
     /// manual), with add / edit / delete and ADIF/TXT export.
-    pub(in crate::app) fn logbook_window(&mut self, ctx: &egui::Context) {
+    pub(in crate::app) fn logbook_window(
+        &mut self,
+        ctx: &egui::Context,
+        cmds: &mut Vec<Command>,
+    ) {
         let mut open = self.show_logbook;
         let resp = egui::Window::new("LOGBOOK")
             .id(crate::layout::salted_id(ctx, "LOGBOOK"))
@@ -453,7 +457,7 @@ impl SdroxideApp {
                 });
                 if self.log_edit.is_some() {
                     ui.add_space(4.0);
-                    self.log_entry_form(ui);
+                    self.log_entry_form(ui, cmds);
                 }
                 ui.separator();
                 // Virtualised: show_rows lays out only the items the viewport
@@ -481,7 +485,7 @@ impl SdroxideApp {
     }
 
     /// The new/edit entry form (shown inside the logbook when active).
-    fn log_entry_form(&mut self, ui: &mut egui::Ui) {
+    fn log_entry_form(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         if self.log_edit.is_none() {
             return;
         }
@@ -661,6 +665,14 @@ impl SdroxideApp {
                         if rec.id == 0 {
                             let mut rec = rec;
                             rec.id = self.next_log_id();
+                            // Out to whatever is listening for logged contacts
+                            // before it goes in the book, because the record
+                            // is about to be moved into it. The digital modes'
+                            // own contacts are broadcast by the engine where
+                            // the sequencer logs them; this is every other
+                            // contact, which used to reach the operator's own
+                            // logbook and nothing beyond it (issue #341).
+                            cmds.push(Command::LogQso(Box::new(rec.clone())));
                             self.qso_log.push(rec);
                             // A hand-entered contact is one worked this session
                             // too; an ADIF import is not, and does not count.
