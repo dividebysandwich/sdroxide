@@ -229,8 +229,23 @@ fn analyse(log: &[(Instant, Ev)], key_at: Instant) -> Turnaround {
 }
 
 /// Key up, hold, key down — and time all of it.
+///
+/// Every wait here is measured in *receive blocks*, not in fixed milliseconds,
+/// because the block is what the engine's main loop turns on: `source.read()`
+/// blocks for one, and the transmit pump is the same loop a few lines further
+/// down. A wait shorter than a block is a wait the engine spends entirely
+/// inside `read`, and the thing being measured never gets a turn.
+///
+/// That is not hypothetical — it is what this test used to do. A fixed 300 ms
+/// over against the slowest case here, a 16384-sample buffer at 48 kHz, is 300
+/// ms against a 341 ms block: the engine keyed, sat in one `read`, and unkeyed
+/// again without a single transmit block in between, so `key→air` was a dash
+/// and the assertion below failed on an engine that was behaving correctly.
 fn one_over(audio_mode: bool, cat_delay: Duration, rx_block: usize) -> Turnaround {
     let rate = if audio_mode { 48_000.0 } else { 2_400_000.0 };
+    // How long the source takes to hand over one receive block, which is this
+    // engine's whole loop granularity.
+    let block = Duration::from_secs_f64(rx_block as f64 / rate);
     let log: Log = Arc::new(Mutex::new(Vec::new()));
     let src =
         TimedSource { center: 144_800_000.0, rate, log: Arc::clone(&log), cat_delay, rx_block };
@@ -239,16 +254,20 @@ fn one_over(audio_mode: bool, cat_delay: Duration, rx_block: usize) -> Turnaroun
     let thread = h.thread.take();
 
     // Let the engine settle and take several receive blocks, so the idle tick
-    // has something to take a median of. Long enough to clear three of the
-    // slowest block we test (341 ms of audio), or the measurement is a hole.
+    // has something to take a median of. Four of them, or the measurement is a
+    // hole — and never less than the 1.4 s the engine wants to come up.
     h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::Nfm }).unwrap();
-    std::thread::sleep(Duration::from_millis(1400));
+    std::thread::sleep((block * 4).max(Duration::from_millis(1400)));
 
+    // The over: at least three blocks, so there is room for the loop to come
+    // round, notice the key-up and pump audio before the key-down.
     let key_at = Instant::now();
     h.cmd_tx.send(Command::SetPtt(true)).unwrap();
-    std::thread::sleep(Duration::from_millis(300));
+    std::thread::sleep((block * 3).max(Duration::from_millis(300)));
     h.cmd_tx.send(Command::SetPtt(false)).unwrap();
-    std::thread::sleep(Duration::from_millis(400));
+    // …and long enough after it for at least one receive block to arrive, which
+    // is what `unkey_to_rx` is measuring.
+    std::thread::sleep((block * 2).max(Duration::from_millis(400)));
 
     drop(h.cmd_tx);
     if let Some(t) = thread {
