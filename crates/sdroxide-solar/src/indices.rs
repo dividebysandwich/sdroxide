@@ -251,6 +251,7 @@ fn band_group(band: sdroxide_types::Band) -> Option<&'static str> {
         | Band::M2
         | Band::M125
         | Band::M70
+        | Band::Cm3
         | Band::Cm33
         | Band::Cm23
         | Band::Cm13

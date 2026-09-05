@@ -2772,7 +2772,7 @@ fn smartsdr_caps(model: &str, label: String) -> DeviceCaps {
 /// greyed out the 70 cm button on a rig that has the band, and a 54 MHz
 /// transmit ceiling refused to key a 2 m rig that was hearing the band
 /// perfectly well. What holds a licensed operator in bounds is the
-/// amateur-band gate — region-aware, and 70 cm is the highest band sdroxide's
+/// amateur-band gate — region-aware, and 3 cm is the highest band sdroxide's
 /// table knows — plus the rig's own refusal. An operator who wants a firmer
 /// limit than that can state one in Settings.
 fn cat_caps(radio: &RadioConfig) -> DeviceCaps {

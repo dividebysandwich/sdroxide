@@ -71,6 +71,7 @@ fn ham_label(band: Band, region: Region) -> &'static str {
             Region::R1 => "6cm HAM",
             Region::R2 | Region::R3 => "5cm HAM",
         },
+        Band::Cm3 => "3cm HAM",
         Band::Gen => "GEN",
     }
 }

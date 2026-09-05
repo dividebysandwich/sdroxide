@@ -210,9 +210,9 @@ fn hz_to_mhz(hz: f64) -> f64 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct BandRow {
     /// Which band. `M160` … `M10`, `M6`, `M4`, `M2`, `M125`, `M70`, `Cm33`,
-    /// `Cm23`, `Cm13`, `Cm9`, `Cm6`. Leave a band out and this region simply
-    /// does not have it — which is how the built-in tables give Regions 2 and 3
-    /// no 4 m.
+    /// `Cm23`, `Cm13`, `Cm9`, `Cm6`, `Cm3`. Leave a band out and this region
+    /// simply does not have it — which is how the built-in tables give Regions 2
+    /// and 3 no 4 m.
     band: Band,
     lo_mhz: f64,
     hi_mhz: f64,
@@ -368,8 +368,16 @@ impl std::error::Error for BandPlanError {}
 ///
 /// New entries are appended as bands are added. Old ones stay: a file that
 /// predates 4 m predates everything after it too.
-const BANDS_ADDED_SINCE_THE_FILE: &[Band] =
-    &[Band::M4, Band::M125, Band::Cm33, Band::Cm23, Band::Cm13, Band::Cm9, Band::Cm6];
+const BANDS_ADDED_SINCE_THE_FILE: &[Band] = &[
+    Band::M4,
+    Band::M125,
+    Band::Cm33,
+    Band::Cm23,
+    Band::Cm13,
+    Band::Cm9,
+    Band::Cm6,
+    Band::Cm3,
+];
 
 impl TryFrom<PlanFile> for BandPlan {
     type Error = BandPlanError;

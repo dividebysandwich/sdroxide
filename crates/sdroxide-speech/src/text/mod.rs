@@ -191,6 +191,7 @@ impl<'a> Speaker<'a> {
                 sdroxide_types::Region::R1 => "six centimeters",
                 sdroxide_types::Region::R2 | sdroxide_types::Region::R3 => "five centimeters",
             },
+            Band::Cm3 => "three centimeters",
             Band::Gen => "general coverage",
         }
     }

@@ -50,10 +50,17 @@ pub enum Band {
     /// RSGB, the WIA and the NRRL, and 5 cm in the Americas; see
     /// [`Band::label_in`], which says whichever the station's own region does.
     Cm6,
+    /// 3 cm — 10.0–10.5 GHz, the same allocation in all three regions.
+    ///
+    /// Appended for the reason [`Band::M70`] gives, and reached by a
+    /// transverter in every station but one: the IC-905 carries Icom's own
+    /// 10 GHz unit *inside* it, so its 3 cm is the radio's own band and not an
+    /// entry in the transverter table (issue #326).
+    Cm3,
 }
 
 impl Band {
-    pub const ALL: [Band; 21] = [
+    pub const ALL: [Band; 22] = [
         Band::M160,
         Band::M80,
         Band::M60,
@@ -74,6 +81,7 @@ impl Band {
         Band::Cm13,
         Band::Cm9,
         Band::Cm6,
+        Band::Cm3,
         Band::Gen,
     ];
 
@@ -128,6 +136,7 @@ impl Band {
                 Region::R1 => "6CM",
                 Region::R2 | Region::R3 => "5CM",
             },
+            Band::Cm3 => "3CM",
             Band::Gen => "GEN",
         }
     }
@@ -265,6 +274,11 @@ impl Band {
                 (5_650_000_000.0, 5_925_000_000.0),
                 (5_650_000_000.0, 5_925_000_000.0),
             ),
+            // 3 cm. The one microwave band the three regions agree on exactly,
+            // 10.0 to 10.5 GHz throughout — though several national licences
+            // stop at 10.45 or carve the middle out, which is what a
+            // hand-edited `bandplan.json` is for.
+            Band::Cm3 => Some((10_000_000_000.0, 10_500_000_000.0)),
             Band::Gen => None,
         }
     }
@@ -328,6 +342,9 @@ impl Band {
             Band::Cm13 => (2_320_200_000.0, Mode::Usb),
             Band::Cm9 => (3_400_100_000.0, Mode::Usb),
             Band::Cm6 => (5_760_100_000.0, Mode::Usb),
+            // The 3 cm narrow-band calling frequency, and the same one
+            // everywhere: 10368.100 is where a 3 cm contact starts.
+            Band::Cm3 => (10_368_100_000.0, Mode::Usb),
             Band::Gen => (7_200_000.0, Mode::Am),
         }
     }
@@ -336,6 +353,28 @@ impl Band {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #326: an IC-905 carries Icom's 10 GHz transverter inside the
+    /// radio, so 3 cm is a band it *has* rather than one reached through the
+    /// transverter table — and it has to be on the band bar like any other.
+    #[test]
+    fn three_centimetres_is_a_band_in_every_region() {
+        for r in Region::ALL {
+            assert_eq!(
+                Band::Cm3.edges_in(r),
+                Some((10_000_000_000.0, 10_500_000_000.0)),
+                "3 cm in {r:?}"
+            );
+            assert_eq!(Band::Cm3.label_in(r), "3CM");
+        }
+        // The narrow-band calling frequency, which is where a 3 cm contact
+        // starts wherever you are.
+        assert_eq!(Band::Cm3.default_entry(), (10_368_100_000.0, crate::Mode::Usb));
+        // On the bar between 6 cm and general coverage, and nowhere else.
+        assert_eq!(Band::ALL.iter().filter(|b| **b == Band::Cm3).count(), 1);
+        assert!(Band::Cm3.index() > Band::Cm6.index());
+        assert!(Band::Cm3.index() < Band::Gen.index());
+    }
 
     /// Region 1 is the default, and it must still be exactly the band table
     /// sdroxide shipped before regions existed — an installation that never

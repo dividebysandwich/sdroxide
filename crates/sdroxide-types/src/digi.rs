@@ -2056,8 +2056,8 @@ pub fn fmt_report(db: i16) -> String {
 /// widest region that has it, so a frequency inside any region's allocation
 /// lands on the right name.
 ///
-/// Above 6 cm the answer is the empty string: sdroxide has no 3 cm band or
-/// anything beyond, and naming a 10 GHz contact `6cm` would put a false
+/// Above 3 cm the answer is the empty string: sdroxide has no 1.2 cm band or
+/// anything beyond, and naming a 24 GHz contact `3cm` would put a false
 /// statement in a log file. An empty band field is one the importer derives from
 /// the frequency, which is the truthful outcome.
 pub fn adif_band(freq_hz: f64) -> &'static str {
@@ -2083,6 +2083,7 @@ pub fn adif_band(freq_hz: f64) -> &'static str {
         m if m < 2450.1 => "13cm",
         m if m < 3500.1 => "9cm",
         m if m < 5925.1 => "6cm",
+        m if m < 10500.1 => "3cm",
         _ => "",
     }
 }
@@ -2770,12 +2771,15 @@ mod tests {
             // ADIF has no "5cm": the band the Americas call 5 cm logs as 6 cm,
             // which is the name the enumeration defines.
             (5_900_000_000.0, "6cm"),
+            // 3 cm, which an IC-905 reaches with Icom's own transverter inside
+            // it (issue #326).
+            (10_368_100_000.0, "3cm"),
         ] {
             assert_eq!(adif_band(hz), band, "{hz} Hz");
         }
         // Above every band sdroxide knows, the honest answer is none at all
-        // rather than the nearest name.
-        assert_eq!(adif_band(10_368_100_000.0), "");
+        // rather than the nearest name — 1.2 cm and up have no band here.
+        assert_eq!(adif_band(24_048_000_000.0), "");
         // And a contact anywhere inside a band gets one name for the whole of
         // it, in every region — the widest allocation included, so a US 40 m
         // contact at 7.290 and a Region 2 5 cm one at 5.9 GHz are not filed

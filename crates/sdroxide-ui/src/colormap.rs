@@ -211,6 +211,7 @@ pub fn band_color(band: sdroxide_types::Band) -> [u8; 3] {
         Band::Cm13 => [226, 224, 140], // pale straw
         Band::Cm9 => [160, 220, 172],  // pale green
         Band::Cm6 => [150, 204, 236],  // pale sky
+        Band::Cm3 => [166, 178, 240],  // pale blue
         // Not a band: nothing is ever binned here.
         Band::Gen => [128, 128, 128],
     }
