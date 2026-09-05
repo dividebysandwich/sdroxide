@@ -684,6 +684,7 @@ impl SdroxideApp {
                     .and_then(|id| self.mem_folders.iter().find(|f| f.id == id))
                     .map(|f| f.name.as_str());
                 crate::widgets::memories::MemMark {
+                    id: m.id,
                     freq_hz: m.freq_hz,
                     text: match folder {
                         Some(f) => format!("Mem: {f} / {}", m.name),

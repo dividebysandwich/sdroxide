@@ -9,6 +9,20 @@
 //! overprinting. What does not fit is dropped: the marks annotate the picture,
 //! and a memory list deep enough to bury the waterfall would cost more than it
 //! tells.
+//!
+//! # Clicking one recalls it
+//!
+//! The label is a control as well as an annotation (issue #320). A mark is a
+//! channel somebody stored on purpose and then went looking for on the
+//! waterfall; making them cross to the memory window to press it was asking
+//! them to name a thing they were already pointing at. A click recalls the
+//! memory whole — dial, mode and filter — exactly as the list does, because a
+//! memory is a channel and not a frequency.
+//!
+//! Laying out and drawing are separate passes for that reason: the boxes have
+//! to exist before the pointer is dealt with, several hundred lines before
+//! anything is painted. Same split, and for the same reason, as the network
+//! spot boxes next door.
 
 use eframe::egui::{
     Color32, FontId, Painter, Rect, Stroke, StrokeKind, pos2,
@@ -24,10 +38,25 @@ use crate::view::ViewState;
 /// does: which folder a memory is filed under is a lookup into the folder list,
 /// and the painter has no business holding one.
 pub struct MemMark {
+    /// Which memory this is, for [`sdroxide_types::Command::RecallMemory`] when
+    /// the mark is clicked.
+    pub id: u32,
     /// The memory's dial frequency.
     pub freq_hz: f64,
     /// Already formatted — `Mem: folder / name`.
     pub text: String,
+}
+
+/// One mark, placed. Produced by [`layout`] and consumed by [`draw`], with the
+/// pointer handled in between.
+pub struct MemBox {
+    /// The label's box — what a click has to land in.
+    pub rect: Rect,
+    /// Which mark in the slice this was laid out from.
+    pub idx: usize,
+    /// The frequency line, from the strip edge out past the label.
+    tick: [eframe::egui::Pos2; 2],
+    galley: std::sync::Arc<eframe::egui::Galley>,
 }
 
 const BOX_H: f32 = 16.0;
@@ -52,23 +81,27 @@ const MAX_FRAC: f32 = 0.5;
 /// the signal being worked.
 const PANEL_MAX_FRAC: f32 = 0.12;
 
-/// Draw the memory marks along the waterfall's oldest edge — its bottom
+/// Place the memory marks along the waterfall's oldest edge — its bottom
 /// normally, its top when the waterfall is flipped — stacked inwards past the
 /// band-plan strip.
 ///
 /// `strip_h` is how much of that edge the band-plan strip has already taken
 /// (zero when it stood aside), and `panel_below` says a mode panel is sharing
 /// the height.
-pub fn overlay(
+///
+/// Nothing is painted here; [`draw`] does that once the pointer has had its
+/// look at the boxes.
+pub fn layout(
     p: &Painter,
     view: &ViewState,
     wf: &Rect,
     marks: &[MemMark],
     strip_h: f32,
     panel_below: bool,
-) {
+) -> Vec<MemBox> {
+    let mut out = Vec::new();
     if marks.is_empty() || view.span() <= 0.0 || wf.height() < 24.0 {
-        return;
+        return out;
     }
     let fs = crate::theme::panadapter_font_scale();
     let box_h = BOX_H * fs;
@@ -76,26 +109,26 @@ pub fn overlay(
     let fit = ((wf.height() * frac - strip_h) / (box_h + LANE_GAP)).floor().max(0.0) as usize;
     let lanes = fit.min(MAX_LANES);
     if lanes == 0 {
-        return;
+        return out;
     }
 
     let ink = crate::theme::scope().good;
-    let line = Color32::from_rgba_unmultiplied(ink.r(), ink.g(), ink.b(), 140);
     let font = FontId::proportional(PT * fs);
 
     // In screen order, so packing a label into a lane only ever has to look
     // leftwards — as the spot lanes do.
-    let mut vis: Vec<(f32, &MemMark)> = marks
+    let mut vis: Vec<(f32, usize, &MemMark)> = marks
         .iter()
-        .filter(|m| (view.view_lo_hz..=view.view_hi_hz).contains(&m.freq_hz))
-        .map(|m| (view.freq_to_x(m.freq_hz, wf), m))
+        .enumerate()
+        .filter(|(_, m)| (view.view_lo_hz..=view.view_hi_hz).contains(&m.freq_hz))
+        .map(|(i, m)| (view.freq_to_x(m.freq_hz, wf), i, m))
         .collect();
     vis.sort_by(|a, b| a.0.total_cmp(&b.0));
 
     let flip = view.waterfall_flip;
     let edge = if flip { wf.top() + strip_h } else { wf.bottom() - strip_h };
     let mut lane_right: Vec<f32> = Vec::new();
-    for (x, m) in vis {
+    for (x, idx, m) in vis {
         // Truncated rather than clipped, so a name too long for the box says so
         // with an ellipsis instead of stopping mid-word.
         let mut job = LayoutJob::single_section(
@@ -129,12 +162,35 @@ pub fn overlay(
         // From the band-plan strip out past the label, so one stacked two lanes
         // deep still reads as belonging to the frequency under it.
         let tip = if flip { bottom + TICK } else { top - TICK };
-        p.line_segment([pos2(x, edge), pos2(x, tip)], Stroke::new(1.0, line));
-        p.circle_filled(pos2(x, edge), 1.8, ink);
+        out.push(MemBox {
+            rect: Rect::from_min_size(pos2(left, top), vec2(w, box_h)),
+            idx,
+            tick: [pos2(x, edge), pos2(x, tip)],
+            galley,
+        });
+    }
+    out
+}
 
-        let rect = Rect::from_min_size(pos2(left, top), vec2(w, box_h));
-        p.rect_filled(rect, 2.0, Color32::from_rgba_unmultiplied(6, 12, 20, 222));
-        p.rect_stroke(rect, 2.0, Stroke::new(1.0, line), StrokeKind::Inside);
-        p.galley(pos2(left + PAD_X, top + (box_h - galley.size().y) * 0.5), galley, ink);
+/// Paint what [`layout`] placed. `hovered` is the box the pointer is over, if
+/// any — it brightens, because a mark that can be pressed has to say so.
+pub fn draw(p: &Painter, boxes: &[MemBox], hovered: Option<usize>) {
+    let ink = crate::theme::scope().good;
+    let line = Color32::from_rgba_unmultiplied(ink.r(), ink.g(), ink.b(), 140);
+    for (k, b) in boxes.iter().enumerate() {
+        let on = hovered == Some(k);
+        let edge = if on { ink } else { line };
+        p.line_segment(b.tick, Stroke::new(1.0, edge));
+        p.circle_filled(b.tick[0], 1.8, ink);
+        let fill = if on {
+            Color32::from_rgba_unmultiplied(14, 34, 44, 240)
+        } else {
+            Color32::from_rgba_unmultiplied(6, 12, 20, 222)
+        };
+        p.rect_filled(b.rect, 2.0, fill);
+        p.rect_stroke(b.rect, 2.0, Stroke::new(if on { 1.4 } else { 1.0 }, edge), StrokeKind::Inside);
+        let g = b.galley.clone();
+        let y = b.rect.top() + (b.rect.height() - g.size().y) * 0.5;
+        p.galley(pos2(b.rect.left() + PAD_X, y), g, ink);
     }
 }

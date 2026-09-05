@@ -278,9 +278,13 @@ is labelled just inside the band-plan strip, reading `Mem: folder / name` — or
 `Mem: name` for one that is not filed in a folder — on a thin green line drawn
 at the frequency itself. Channels close together stagger into stacked rows
 rather than overprinting; a name too long for its label is cut short with an
-ellipsis, and anything that would need a fifth row is left out. The marks are an
-annotation, not a control: [§2.12](#212-memory-channels) is where a channel is
-stored and recalled.
+ellipsis, and anything that would need a fifth row is left out.
+
+**Click a mark to recall that memory** — dial, mode and filter together, exactly
+as pressing it in the memory list does; the label brightens as you point at it.
+Shift-click one to put the *second* receiver on its frequency instead, as
+shift-clicking anywhere else on the panadapter does.
+[§2.12](#212-memory-channels) is where a channel is stored, renamed and filed.
 
 ### 2.4 Bands and modes
 

@@ -1195,9 +1195,10 @@ pub fn show_ext(
     // a "this one, there" annotation.
     ism: &[IsmLabel],
     // Stored memories whose dial lands on the visible span, marked along the
-    // waterfall's oldest edge under the band-plan strip. Like the ISM labels,
-    // an annotation and not a control: the memory list is where a channel is
-    // recalled from.
+    // waterfall's oldest edge under the band-plan strip. Unlike the ISM
+    // labels, these are controls: clicking one recalls that channel whole —
+    // dial, mode and filter — as pressing it in the memory window does
+    // (issue #320).
     mem: &[crate::widgets::memories::MemMark],
     // Operator's pointer preferences: what the wheel does (plain and with
     // Shift), whether left-drag tunes, and the click-tune rounding.
@@ -1300,6 +1301,13 @@ pub fn show_ext(
     let spot_boxes = layout_spots(&painter, view, &rect, &lanes_rect, skimmer, click_sets_offset);
     let net_boxes = layout_net_spots(&painter, view, &rect, &lanes_rect, net_spots);
     let ism_boxes = layout_ism_labels(&painter, view, &rect, &lanes_rect, ism);
+    // The memory marks, laid out here for the same reason: a click has to be
+    // tested against them, and the pointer is dealt with long before the
+    // waterfall is painted. The strip depth they stack inwards from is asked
+    // for separately rather than taken from the draw call's return.
+    let mem_strip_h = crate::widgets::bandplan::height(view, &wf_rect, panel_below);
+    let mem_boxes =
+        crate::widgets::memories::layout(&painter, view, &wf_rect, mem, mem_strip_h, panel_below);
 
     // --- interactions -----------------------------------------------------
     // Model: grabbing a filter edge (left button, spectrum strip) always
@@ -1372,6 +1380,10 @@ pub fn show_ext(
     let sub_drag_id = ui.id().with("sub-drag");
     let mut sub_drag: bool = ui.data(|d| d.get_temp(sub_drag_id)).unwrap_or(false);
     let hover_sub = resp.hover_pos().map(sub_grab_at).unwrap_or(false) && hover_edge.is_none();
+    // Which memory mark the pointer is over, if any. Drives the cursor, the
+    // mark's own highlight, and what a click on it does (issue #320).
+    let hover_mem =
+        resp.hover_pos().and_then(|p| mem_boxes.iter().position(|b| b.rect.contains(p)));
 
     // The frequency-scale strip doubles as the spectrum/waterfall resize grip
     // and as the frequency axis: a vertical drag there changes the spectrum
@@ -1510,6 +1522,8 @@ pub fn show_ext(
     }
     if measuring.is_some() || (resp.hovered() && ui.input(|i| i.modifiers.shift)) {
         ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
+    } else if hover_mem.is_some() {
+        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
     } else if hover_edge.is_some() || edge.is_some() {
         ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
     } else if sub_drag {
@@ -1770,10 +1784,16 @@ pub fn show_ext(
                     // That matters most in FT8, where a plain click moves the
                     // transmit offset instead of tuning: without this there
                     // would be no way to park the sub on a signal at all.
-                    let hz = net_boxes
+                    let hz = mem_boxes
                         .iter()
                         .find(|b| b.rect.contains(pos))
-                        .map(|b| net_spots[b.idx].freq_hz)
+                        .map(|b| mem[b.idx].freq_hz)
+                        .or_else(|| {
+                            net_boxes
+                                .iter()
+                                .find(|b| b.rect.contains(pos))
+                                .map(|b| net_spots[b.idx].freq_hz)
+                        })
                         .or_else(|| {
                             spot_boxes
                                 .iter()
@@ -1789,6 +1809,13 @@ pub fn show_ext(
                         state.vfo_b_hz = hz;
                         cmds.push(Command::TuneInSpan { vfo: Vfo::B, hz });
                     }
+                } else if let Some(mb) = mem_boxes.iter().find(|b| b.rect.contains(pos)) {
+                    // A memory mark: recall the channel it stands for — dial,
+                    // mode and filter together, exactly as pressing it in the
+                    // memory window does (issue #320). Ahead of the spot boxes
+                    // and of click-to-tune because the operator is pointing at
+                    // a named thing, not at a frequency.
+                    cmds.push(Command::RecallMemory(mem[mb.idx].id));
                 } else if let Some(nb) = net_boxes.iter().find(|b| b.rect.contains(pos)) {
                     // Network spot: tune + set mode, and hand the spot back so the
                     // app can pre-fill a log entry (and optionally look it up).
@@ -2150,8 +2177,12 @@ pub fn show_ext(
     // Bandplan strip along the bottom of the waterfall (over the GPU layer),
     // with the stored memories marked on the same edge, stacked inwards from
     // however deep the strip ended up.
-    let strip_h = crate::widgets::bandplan::overlay(&painter, view, &wf_rect, panel_below);
-    crate::widgets::memories::overlay(&painter, view, &wf_rect, mem, strip_h, panel_below);
+    crate::widgets::bandplan::overlay(&painter, view, &wf_rect, panel_below);
+    crate::widgets::memories::draw(
+        &painter,
+        &mem_boxes,
+        hover_mem,
+    );
 
     // --- VFO markers + passband shading -----------------------------------
     let in_view = |hz: f64| (view.view_lo_hz..=view.view_hi_hz).contains(&hz);
@@ -2670,6 +2701,10 @@ pub fn show_ext(
             && !resp.dragged()
             && !spot_boxes.iter().any(|b| b.rect.contains(p))
             && !net_boxes.iter().any(|b| b.rect.contains(p))
+            // A memory mark answers the crosshair's question already, and with
+            // the frequency that clicking it will actually reach rather than
+            // the one under the pointer.
+            && hover_mem.is_none()
         {
             // Item 6: crosshair + click-tune frequency readout.
             let line = Color32::from_rgba_unmultiplied(185, 205, 225, 70);
