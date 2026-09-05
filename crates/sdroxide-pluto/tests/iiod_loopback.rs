@@ -176,6 +176,15 @@ struct DeviceState {
     /// Models a wedged DMA: the connection is fine, the server is answering,
     /// and no amount of further reading will ever produce a sample.
     wedged_until_reopen: bool,
+    /// The carrier range the synthesiser will actually accept, in Hz.
+    ///
+    /// A real AD9361 driver answers `-EINVAL` to a `frequency` outside the
+    /// range of the part it bound as, which is the only thing that tells a
+    /// board carrying the frequency-expansion modification apart from a stock
+    /// one — the EEPROM model string and `frequency_available` are both the
+    /// unmodified answer on plenty of firmwares (issue #340). `None` accepts
+    /// anything, which is what the rest of these tests want.
+    lo_limit_hz: Option<(f64, f64)>,
 }
 
 /// The sample-rate floor a stock Pluto publishes — and refuses.
@@ -292,6 +301,11 @@ fn default_attr(key: &str) -> &'static str {
     match key {
         "ad9361-phy/OUTPUT/altvoltage0/frequency_available" => "[70000000 1 6000000000]",
         "ad9361-phy/OUTPUT/altvoltage1/frequency_available" => "[70000000 1 6000000000]",
+        // Where a Pluto's synthesisers sit before anyone has tuned it: inside
+        // the part's range, as they have to be, and not the `0` the catch-all
+        // below would hand back.
+        "ad9361-phy/OUTPUT/altvoltage0/frequency" => "2400000000",
+        "ad9361-phy/OUTPUT/altvoltage1/frequency" => "2400000000",
         "ad9361-phy/INPUT/voltage0/hardwaregain_available" => "[0 1 71]",
         "ad9361-phy/OUTPUT/voltage0/hardwaregain_available" => "[-89.750000 0.250000 0.000000]",
         "ad9361-phy/INPUT/voltage0/gain_control_mode_available" => {
@@ -397,6 +411,13 @@ fn serve(sock: TcpStream, state: Arc<Mutex<DeviceState>>, stop: Arc<AtomicBool>,
                 }
                 let value =
                     String::from_utf8_lossy(&payload).trim_end_matches('\0').trim().to_string();
+                if refuses_carrier(&state, &key, &value) {
+                    let _ = writer.write_all(b"-22\n");
+                    if writer.flush().is_err() {
+                        break;
+                    }
+                    continue;
+                }
                 // The receive gain register belongs to the AD9361 unless the
                 // gain-control mode is manual; writing it in an attack mode is
                 // `-EOPNOTSUPP`, not a silently ignored write.
@@ -604,6 +625,20 @@ fn stalled_chunk(writer: &mut TcpStream, data: &[u8], mask: &str, how_long: Dura
 /// `["iio:device0", "INPUT", "voltage0", "hardwaregain"]` →
 /// `"ad9361-phy/INPUT/voltage0/hardwaregain"`, so the fake keys on names a
 /// reader recognises rather than on `iio:deviceN`.
+/// Whether the synthesiser would refuse this write, the way a real AD9361
+/// driver refuses a carrier outside the range of the part it bound as.
+///
+/// Shared by both fake servers below so the two cannot drift: it is the only
+/// signal that tells a board carrying the frequency-expansion modification
+/// apart from a stock one — see `DeviceState::lo_limit_hz` and issue #340.
+fn refuses_carrier(state: &Mutex<DeviceState>, key: &str, value: &str) -> bool {
+    if !(key.ends_with("/frequency") && key.contains("/altvoltage")) {
+        return false;
+    }
+    let Some((lo, hi)) = state.lock().expect("lock").lo_limit_hz else { return false };
+    value.parse::<f64>().is_ok_and(|hz| hz < lo || hz > hi)
+}
+
 fn attr_key(words: &[&str]) -> String {
     let mut parts: Vec<String> = words.iter().map(|s| s.to_string()).collect();
     if let Some(first) = parts.first_mut() {
@@ -1409,21 +1444,25 @@ fn a_non_pluto_iio_device_is_refused_by_name() {
     assert!(text.contains("adc081c"), "{text}");
 }
 
-/// A firmware that publishes no `_available` attributes still has to work — and
-/// has to say which figures are guesses rather than quoting them as fact.
-#[test]
-fn a_silent_firmware_falls_back_and_says_so() {
+/// A board whose firmware says nothing useful about its tuning range, with a
+/// synthesiser that accepts `lo_limit_hz` and refuses everything else.
+///
+/// The model string is the AD9363 one and every `_available` attribute is
+/// stripped, so nothing the client can *read* distinguishes a stock board from
+/// a modified one — only what the synthesiser does.
+fn silent_firmware(lo_limit_hz: (f64, f64)) -> (PlutoHandle, Arc<AtomicBool>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
-    // The same context with every `_available` attribute removed, and an
-    // AD9363 model string.
     let xml = CONTEXT_XML
         .replace("(Z7010-AD9364)", "(Z7010-AD9363)")
         .lines()
         .filter(|l| !l.contains("_available"))
         .collect::<Vec<_>>()
         .join("\n");
-    let state = Arc::new(Mutex::new(DeviceState::default()));
+    let state = Arc::new(Mutex::new(DeviceState {
+        lo_limit_hz: Some(lo_limit_hz),
+        ..DeviceState::default()
+    }));
     let stop = Arc::new(AtomicBool::new(false));
     {
         let state = Arc::clone(&state);
@@ -1438,17 +1477,56 @@ fn a_silent_firmware_falls_back_and_says_so() {
             }
         });
     }
-
     let handle = PlutoHandle::open(&addr.to_string(), &config(), 435_000_000.0)
         .expect("a silent firmware still opens");
-    // The AD9363 range, because that is what the model string names.
-    assert_eq!(handle.limits.rx_lo_hz, (325_000_000.0, 3_800_000_000.0));
+    (handle, stop)
+}
+
+/// A firmware that publishes no `_available` attributes still has to work — and
+/// has to say which figures are guesses rather than quoting them as fact.
+#[test]
+fn a_silent_firmware_falls_back_and_says_so() {
+    let (handle, stop) = silent_firmware(AD9363_LO_HZ);
+    // The AD9363 range, because that is what the synthesiser turned out to do.
+    assert_eq!(handle.limits.rx_lo_hz, AD9363_LO_HZ);
     let status = handle.open_status().expect("a guessed limit has to announce itself");
     assert!(status.contains("assuming"), "{status}");
-    assert!(status.contains("tuning range"), "{status}");
+    // …but not about the tuning range, which was measured rather than guessed.
+    assert!(!status.contains("tuning range"), "{status}");
     drop(handle);
     stop.store(true, Ordering::Relaxed);
 }
+
+/// Issue #340: the frequency-expansion modification leaves every *claim* a
+/// Pluto makes about itself untouched — the EEPROM still says AD9363 and the
+/// firmware still publishes the stock range, if it publishes one at all. Only
+/// the synthesiser knows, so the synthesiser is what gets asked.
+#[test]
+fn a_board_modified_to_reach_70_mhz_is_allowed_to() {
+    let (handle, stop) = silent_firmware(AD9364_LO_HZ);
+    assert_eq!(handle.limits.rx_lo_hz, AD9364_LO_HZ);
+    // Both halves of the part move together, so the transmit range follows.
+    assert_eq!(handle.limits.tx_lo_hz, AD9364_LO_HZ);
+    drop(handle);
+    stop.store(true, Ordering::Relaxed);
+}
+
+/// …and the same measurement in the other direction: a firmware that
+/// advertises the wide range on a part that will not deliver it must not leave
+/// the operator tuning to frequencies the radio never reaches.
+#[test]
+fn a_stock_board_advertising_the_wide_range_is_held_to_what_it_can_do() {
+    let fake = Fake::start();
+    fake.state.lock().expect("lock").lo_limit_hz = Some(AD9363_LO_HZ);
+    // `CONTEXT_XML` publishes `[70000000 1 6000000000]` for both synthesisers.
+    let handle = PlutoHandle::open(&fake.address(), &config(), 435_000_000.0).expect("open");
+    assert_eq!(handle.limits.rx_lo_hz, AD9363_LO_HZ);
+    assert_eq!(handle.limits.tx_lo_hz, AD9363_LO_HZ);
+}
+
+/// The stock AD9363 tuning range, and the AD9364 one a modified board reaches.
+const AD9363_LO_HZ: (f64, f64) = (325_000_000.0, 3_800_000_000.0);
+const AD9364_LO_HZ: (f64, f64) = (70_000_000.0, 6_000_000_000.0);
 
 /// The same server as [`serve`], with the context document substituted.
 fn serve_with_xml(
@@ -1509,8 +1587,12 @@ fn serve_with_xml(
                 }
                 let value =
                     String::from_utf8_lossy(&payload).trim_end_matches('\0').trim().to_string();
-                state.lock().expect("lock").attrs.push((key, value));
-                writer.write_all(format!("{len}\n").as_bytes()).is_ok()
+                if refuses_carrier(&state, &key, &value) {
+                    writer.write_all(b"-22\n").is_ok()
+                } else {
+                    state.lock().expect("lock").attrs.push((key, value));
+                    writer.write_all(format!("{len}\n").as_bytes()).is_ok()
+                }
             }
             Some("OPEN") | Some("CLOSE") => writer.write_all(b"0\n").is_ok(),
             Some("READBUF") | Some("WRITEBUF") => writer.write_all(b"-11\n").is_ok(),
