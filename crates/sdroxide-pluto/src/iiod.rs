@@ -92,7 +92,21 @@ const IO_DEADLINE: Duration = Duration::from_secs(8);
 /// while the daemon on the same board answers a fresh connection in six
 /// milliseconds. Every second spent waiting on that socket is a second of dead
 /// audio, and [`crate::stream::rx_thread`] can now redial in ~50 ms.
+///
+/// A starting point rather than a fixed rule: a link carrying nearly as many
+/// bytes per second as it can hold stalls for longer than this and still
+/// recovers, so [`Connection::widen_payload_deadline`] lets the receive thread
+/// raise it when the evidence says the stalls are the transport rather than a
+/// wedge. See [`MAX_PAYLOAD_DEADLINE`].
 const PAYLOAD_DEADLINE: Duration = Duration::from_secs(2);
+
+/// The most [`Connection::widen_payload_deadline`] may stretch a payload read
+/// to.
+///
+/// Stops just short of [`IO_DEADLINE`]: past that a stalled payload would
+/// outlast the wait for a reply that has not started yet, and the two
+/// deadlines would no longer say different things about where the fault is.
+const MAX_PAYLOAD_DEADLINE: Duration = Duration::from_secs(6);
 
 /// How long a write may block. Commands are tiny, so this only ever fires when
 /// the link itself has gone.
@@ -172,6 +186,10 @@ pub struct Connection {
     /// Whether the head of a buffer response has been traced yet. Only the
     /// first one is worth keeping; after that it is 8 MB/s of noise.
     traced_head: bool,
+    /// How long a read that is part-way through an announced payload may stall
+    /// before this connection is called dead — see [`PAYLOAD_DEADLINE`], which
+    /// is where it starts.
+    payload_deadline: Duration,
 }
 
 impl Connection {
@@ -199,6 +217,7 @@ impl Connection {
             writer,
             trace,
             traced_head: false,
+            payload_deadline: PAYLOAD_DEADLINE,
         };
         // Tell the server how long it may wait on the device. Old firmwares
         // that don't know the command answer -EINVAL, which is not fatal.
@@ -206,6 +225,23 @@ impl Connection {
             conn.trace.note(format!("TIMEOUT not accepted ({e}); continuing with the default"));
         }
         Ok(conn)
+    }
+
+    /// Give a part-way-through payload read longer — or shorter — before this
+    /// connection is called dead. Clamped to [`MAX_PAYLOAD_DEADLINE`].
+    ///
+    /// For the receive thread to raise when a socket it replaced for stalling
+    /// mid-payload had been delivering samples perfectly well beforehand: that
+    /// is the signature of a link running close to its capacity, not of the
+    /// wedge [`PAYLOAD_DEADLINE`] was chosen for, and replacing the socket
+    /// every time costs more than waiting the stall out would have.
+    pub fn set_payload_deadline(&mut self, deadline: Duration) {
+        self.payload_deadline = deadline.min(MAX_PAYLOAD_DEADLINE);
+    }
+
+    /// How long this connection currently allows a stalled payload read.
+    pub fn payload_deadline(&self) -> Duration {
+        self.payload_deadline
     }
 
     // ---- commands -------------------------------------------------------
@@ -517,7 +553,7 @@ impl Connection {
     /// this wait is held to a different standard than the one for a reply that
     /// has not started yet.
     fn read_exact_into(&mut self, cmd: &str, buf: &mut [u8]) -> Result<()> {
-        self.reader.get_mut().deadline = PAYLOAD_DEADLINE;
+        self.reader.get_mut().deadline = self.payload_deadline;
         let outcome = self.reader.read_exact(buf);
         self.reader.get_mut().deadline = IO_DEADLINE;
         outcome.map_err(|e| match e.kind() {

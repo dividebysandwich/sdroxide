@@ -83,6 +83,29 @@ fn silence_before_restart(buffer_samples: usize, rate_hz: f64) -> Duration {
     (span * 3).max(RESTART_FLOOR)
 }
 
+/// How long to leave a buffer alone after it has answered "nothing yet" before
+/// asking it again.
+///
+/// `-EAGAIN` is meant to cost a whole server-side device timeout to collect —
+/// the server sits on the `READBUF` until [`SERVER_TIMEOUT_MS`] runs out, so
+/// asking again the moment it answers is one command every three seconds and
+/// pacing it would be pointless. That assumption is not a guarantee: a
+/// firmware that does not honour `TIMEOUT`, or a buffer whose DMA has stopped,
+/// answers immediately instead, and then the retry loop is bounded by nothing
+/// but the round-trip time and sits on a core at 100% for as long as the
+/// condition lasts.
+///
+/// Waiting a fraction of the buffer's own airtime costs nothing even when the
+/// device is healthy, because a buffer cannot produce more often than that
+/// anyway; the ceiling keeps the added latency small on the long buffers where
+/// a quarter of the airtime would be a visible delay.
+///
+/// [`SERVER_TIMEOUT_MS`]: crate::iiod
+fn pace_after_empty(buffer_samples: usize, rate_hz: f64) -> Duration {
+    let span = Duration::from_secs_f64(buffer_samples as f64 / rate_hz.max(1.0));
+    (span / 4).clamp(Duration::from_millis(1), Duration::from_millis(20))
+}
+
 /// Periodic throughput accounting, emitted once per [`STATS_INTERVAL`] so a
 /// tester can see whether samples are flowing — and at what rate — without a
 /// per-buffer log flood. A wrong sample layout or a wrong rate shows up
@@ -385,10 +408,18 @@ pub(crate) fn rx_thread(mut conn: Connection, shared: Arc<Shared>, mut ring: Pro
     // before it is reopened. Reset on every open so a buffer is judged from
     // when it started, not from the last one's death.
     let patience = silence_before_restart(shared.buffer_samples, shared.rate_hz);
+    // How long to leave an empty buffer alone before asking it again — see
+    // [`pace_after_empty`].
+    let empty_pace = pace_after_empty(shared.buffer_samples, shared.rate_hz);
     let mut last_sets = Instant::now();
     // Consecutive socket replacements with no samples in between — see
     // [`MAX_BLIND_REDIALS`].
     let mut blind_redials = 0u32;
+    // How long a payload read may stall on this stream's socket. Raised when a
+    // link that had been delivering perfectly well stalls anyway, and carried
+    // across redials so each replacement inherits what the last one learnt —
+    // see `Connection::set_payload_deadline`.
+    let mut payload_deadline = conn.payload_deadline();
 
     while shared.alive.load(Ordering::Relaxed) {
         let want_pairs = shared.rx_pairs.load(Ordering::Relaxed).clamp(1, max_pairs);
@@ -449,9 +480,19 @@ pub(crate) fn rx_thread(mut conn: Connection, shared: Arc<Shared>, mut ring: Pro
             last_sets = Instant::now();
             continue;
         }
+        let asked_at = Instant::now();
         let n = match conn.read_buf(&phy.rx_buffer_id, open_pairs * 2, &mut raw[..want_bytes]) {
             Ok(n) => n,
-            Err(Error::Remote { code, .. }) if code == EAGAIN || code == ETIMEDOUT => continue,
+            Err(Error::Remote { code, .. }) if code == EAGAIN || code == ETIMEDOUT => {
+                // Nothing yet, which is ordinary. Ask again — but not sooner
+                // than the buffer could possibly have refilled, or a server
+                // that refuses instantly turns this into a spin. See
+                // [`pace_after_empty`].
+                if let Some(rest) = empty_pace.checked_sub(asked_at.elapsed()) {
+                    std::thread::sleep(rest);
+                }
+                continue;
+            }
             // The server answered, so the link works and the refusal is
             // considered: that is the engine's to act on, not ours to retry.
             Err(e @ Error::Remote { .. }) => {
@@ -467,7 +508,22 @@ pub(crate) fn rx_thread(mut conn: Connection, shared: Arc<Shared>, mut ring: Pro
                     break;
                 }
                 blind_redials += 1;
-                let Some(fresh) = redial_rx(&shared, &e) else { break };
+                // A payload that ran out of time on a socket which had been
+                // delivering samples is not a wedge — it is a link with less
+                // headroom than it is being asked for, and the bytes were on
+                // their way. Replacing the socket throws away a transfer that
+                // would have finished, so the replacement gets longer before
+                // the same call is made about it.
+                if e.is_payload_stall() && stats.total_samples > 0 {
+                    payload_deadline *= 2;
+                    tracing::info!(
+                        "PlutoSDR: the receive link stalls under load — allowing a payload                          {:.1}s to arrive before the socket is replaced",
+                        payload_deadline.as_secs_f64()
+                    );
+                }
+                let Some(mut fresh) = redial_rx(&shared, &e) else { break };
+                fresh.set_payload_deadline(payload_deadline);
+                payload_deadline = fresh.payload_deadline();
                 conn = fresh;
                 open_pairs = 0;
                 stats.closed();

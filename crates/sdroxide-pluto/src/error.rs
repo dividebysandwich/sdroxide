@@ -62,6 +62,22 @@ impl Error {
         }
     }
 
+    /// Whether this is a read that stalled part-way through a payload the
+    /// server had already announced.
+    ///
+    /// The one failure that says "this link is slower than it is being asked
+    /// to be" rather than "this connection is finished": the bytes exist and
+    /// the server is trying to send them, it just could not get them across in
+    /// the time allowed. See `Connection::set_payload_deadline`.
+    pub fn is_payload_stall(&self) -> bool {
+        use std::io::ErrorKind::{Interrupted, TimedOut, WouldBlock};
+        matches!(
+            self,
+            Error::Io { op: "read payload", source }
+                if matches!(source.kind(), WouldBlock | TimedOut | Interrupted)
+        )
+    }
+
     /// Translate a failure to connect into an instruction.
     ///
     /// These three cases are nearly the whole support burden of this backend.
@@ -125,6 +141,8 @@ fn errno_text(code: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::io::ErrorKind;
+
     use super::*;
 
     #[test]
@@ -133,6 +151,25 @@ mod tests {
         let s = e.to_string();
         assert!(s.contains("device busy"), "{s}");
         assert!(s.contains("iio-oscilloscope"), "{s}");
+    }
+
+    /// The one I/O failure worth telling apart from the rest: the server had
+    /// already committed to the bytes, so the link was slow rather than dead.
+    #[test]
+    fn a_payload_that_ran_out_of_time_is_a_stall_and_not_a_dead_socket() {
+        let stalled = Error::io("read payload", std::io::Error::from(ErrorKind::WouldBlock));
+        assert!(stalled.is_payload_stall());
+
+        // Same failure, but before the reply started: not a payload stall.
+        let waiting = Error::io("read line", std::io::Error::from(ErrorKind::WouldBlock));
+        assert!(!waiting.is_payload_stall());
+
+        // Same read, but the peer hung up: the connection really is finished.
+        let closed = Error::io("read payload", std::io::Error::from(ErrorKind::ConnectionReset));
+        assert!(!closed.is_payload_stall());
+
+        // And a refusal the server spelled out is not an I/O failure at all.
+        assert!(!Error::Remote { cmd: "READBUF".into(), code: -11 }.is_payload_stall());
     }
 
     #[test]
