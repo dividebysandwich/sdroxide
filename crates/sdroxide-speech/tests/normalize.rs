@@ -12,7 +12,15 @@ fn cfg() -> SpeechSettings {
 
 /// `Meters` has no `Default` — it is always built from a real measurement.
 fn meters(s_dbm: f32) -> Meters {
-    Meters { s_dbm, adc_peak_dbfs: -30.0, adc_clip: 0.0, tx: None, stereo: false, tone: None }
+    Meters {
+        s_dbm,
+        pa_temp_c: None,
+        adc_peak_dbfs: -30.0,
+        adc_clip: 0.0,
+        tx: None,
+        stereo: false,
+        tone: None,
+    }
 }
 
 #[test]

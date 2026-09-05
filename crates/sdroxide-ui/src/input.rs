@@ -1349,8 +1349,12 @@ mod tests {
         assert_eq!(step_band(Band::M2, true), Some(Band::M70));
         assert_eq!(step_band(Band::M70, true), Some(Band::Cm23));
         assert_eq!(step_band(Band::Cm23, false), Some(Band::M70));
-        // Wraps within the ham bands only, from the highest to the lowest.
-        assert_eq!(step_band(Band::Cm6, true), Some(Band::M160));
+        // Wraps within the ham bands only, from the highest to the lowest —
+        // 3 cm being the highest since the IC-905 got its own 10 GHz band
+        // (issue #326).
+        assert_eq!(step_band(Band::Cm6, true), Some(Band::Cm3));
+        assert_eq!(step_band(Band::Cm3, true), Some(Band::M160));
+        assert_eq!(step_band(Band::Cm3, false), Some(Band::Cm6));
         assert_eq!(step_band(Band::Gen, true), None);
     }
 

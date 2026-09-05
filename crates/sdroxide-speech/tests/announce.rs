@@ -40,6 +40,7 @@ fn step(a: &mut Announcer, s: &RadioState, now: f64) {
 fn meters(swr: Option<f32>, fwd: Option<f32>, keyed: bool) -> Meters {
     Meters {
         s_dbm: -100.0,
+        pa_temp_c: None,
         adc_peak_dbfs: -30.0,
         adc_clip: 0.0,
         tx: keyed.then_some(TxMeters { fwd_w: fwd, swr, alc: 0.0, po: None }),
