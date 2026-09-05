@@ -174,14 +174,21 @@ impl Device {
         let mut usb = usb::open(settings.serial.as_deref(), firmware_override)?;
         let mut identity = identify(&usb);
 
-        // A receiver the firmware did not recognise streams perfectly and
+        // A receiver the firmware failed to *identify* streams perfectly and
         // ignores every front-end switch — the bias tee included, which is the
         // way this usually shows up. The detection runs once, at boot, so the
         // one thing worth trying is booting it again.
-        if identity.is_some_and(|i| !i.front_end_ready()) {
+        //
+        // Only a failed detection, mind. A board the firmware named and this
+        // driver does not steer — an RX-888 Mk1, which has neither the Mk2's
+        // attenuator nor its VGA — is not a fault and reloading the firmware
+        // would find the same answer a second time, having told its owner to go
+        // and unplug a receiver that is working (issue #342).
+        if identity.is_some_and(|i| !i.recognised()) {
             tracing::warn!(
-                "RX-888: the firmware reports hardware id 0x{:02x}, not an Mk2 — its front-end \
-                 GPIO was never initialised. Reloading the firmware to run the detection again.",
+                "RX-888: the firmware did not recognise this receiver (hardware id 0x{:02x}) — \
+                 its front-end GPIO was never initialised. Reloading the firmware to run the \
+                 detection again.",
                 identity.map(|i| i.hardware).unwrap_or(0),
             );
             usb = usb::reload_firmware(usb, firmware_override)?;
@@ -667,19 +674,40 @@ fn tuner_present(usb: &UsbDev) -> bool {
 /// Ask the running firmware what it is and what it thinks it is driving.
 fn identify(usb: &UsbDev) -> Option<Identity> {
     let id = usb.vendor_in(Cmd::TestFx3, 0, 0, 4).ok().and_then(|b| Identity::parse(&b))?;
-    tracing::info!("RX-888 firmware {} (hardware id 0x{:02x})", id.version, id.hardware);
+    tracing::info!("{} — firmware {} (hardware id 0x{:02x})", id.board(), id.version, id.hardware);
     Some(id)
 }
 
-/// The operator-facing consequence of a firmware that did not recognise the
-/// receiver: everything on the front panel of the settings page is inert.
+/// The operator-facing consequence of a receiver whose front end this driver
+/// cannot steer: everything on the front panel of the settings page is inert.
 ///
 /// Stated in terms of what stops working rather than in terms of a hardware id,
 /// because the symptom — "the bias tee does nothing" — is what brings someone
 /// here, and nothing else in the program can tell them why.
+///
+/// Two different situations end up here and they need different answers
+/// (issue #342). A board the firmware *failed to identify* is a fault, and
+/// re-plugging it usually clears it. A board it identified and this driver does
+/// not drive — an RX-888 Mk1, which has none of the Mk2's front-end parts to
+/// drive — is not a fault at all: it will stream for as long as it is plugged
+/// in, and no amount of re-plugging will grow it an attenuator. Telling the
+/// second owner the first story is what sends them looking for a problem that
+/// is not there.
 fn front_end_warning(identity: Option<Identity>) -> Option<String> {
     let id = identity?;
-    (!id.front_end_ready()).then(|| {
+    if id.front_end_ready() {
+        return None;
+    }
+    Some(if id.recognised() {
+        format!(
+            "this is {}, and sdroxide drives the Mk2's front end only: the bias tee, dither, \
+             ADC range and both gain stages will do nothing here, and there is no VHF tuner to \
+             reach. Reception is unaffected — the ADC, the sample clock and the whole HF \
+             spectrum work exactly as they do on a Mk2, and the gain in front of the converter \
+             is whatever the board itself sets.",
+            id.board()
+        )
+    } else {
         format!(
             "the RX-888 firmware did not recognise this receiver (hardware id 0x{:02x}), so it \
              never initialised the front-end controls: the bias tee, dither, ADC range and both \

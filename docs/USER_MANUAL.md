@@ -6022,7 +6022,7 @@ radio. Everything below the selector changes to match the choice:
   full-band strip. Receive only. Browse the public ones with **PUBLIC SDR** and
   open one as a radio: see
   [15.21](#1521-public-sdrs-on-the-internet-kiwisdr--web-888-spyserver).
-- **RX-888 (USB)** — an RX-888 / RX-888 Mk2 direct-sampling receiver, likewise
+- **RX-888 (USB)** — an RX-888 Mk1 / Mk2 direct-sampling receiver, likewise
   driven directly over USB, with its firmware bundled and uploaded for it. On a
   Mk2 the built-in R828D tuner is driven too, so the receiver covers VHF and UHF
   as well as HF and switches between its two antenna ports on its own. Both the
@@ -13077,7 +13077,7 @@ to its default, and a partial file is normal rather than a special case.
 | `"RtlTcp"` | RTL-SDR published by `rtl_tcp` | `"rtltcp"` |
 | `"SpyServer"` | A receiver published by a SpyServer | `"spyserver"` |
 | `"SpyServerVfo"` | The same, narrow I/Q + the server's FFT | `"spyserver_vfo"` |
-| `"Rx888"` | RX-888 Mk2 | `"rx888"` |
+| `"Rx888"` | RX-888 Mk1 / Mk2 | `"rx888"` |
 | `"AirspyHf"` | Airspy HF+ | `"airspyhf"` |
 | `"Airspy"` | Airspy R2 / Mini | `"airspy"` |
 | `"HackRf"` | HackRF One / Pro / Jawbreaker / rad1o | `"hackrf"` |
@@ -14082,13 +14082,22 @@ All in [§6.2.17](#6217-limesdr-family--limerfe-limesuite):
 - **Rescan is not free** — LimeSuite opens each candidate board, which can
   disturb one another program is using.
 
-### 15.20 RX-888 / RX-888 Mk2
+### 15.20 RX-888 Mk1 / RX-888 Mk2
 
 - Firmware is bundled and uploaded automatically. On a Mk2 the built-in
   R828D tuner is driven too, so it covers VHF/UHF as well as HF and switches
   between its two antenna ports on its own. The [ISM decoder](#5-ism-band-decoder)
   reaches 868 MHz through that tuner, where the downconverter width — 2.025 Msps
   at the default settings — is exactly why the 868.880 MHz centre matters.
+- **A Mk1 receives.** Open it as **RX-888 (USB)** like any other: the firmware
+  upload, the ADC clock, the panadapter width and the whole HF spectrum work
+  exactly as they do on a Mk2, because the ADC, the clock synthesiser and the
+  FX3 are the same parts. What a Mk1 has not got is the Mk2's front end — no
+  PE4312 attenuator, no AD8370 VGA, no VHF tuner — so the bias tee, dither, ADC
+  range and both gain sliders do nothing on one, and there is no VHF to reach.
+  sdroxide says so once, by name, when the receiver opens; the gain in front of
+  the converter is whatever the board itself sets. No SoapySDR module is needed
+  or wanted, on Windows or anywhere else (issue #342).
 - The **ADC clock** decides how much spectrum is digitised (half the clock)
   and how much USB bandwidth it takes (two bytes per sample). The list offers
   the common clocks from 8.1 to 129.6 Msps, and the **or, in Msps** field

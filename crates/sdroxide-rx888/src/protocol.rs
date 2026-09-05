@@ -215,8 +215,36 @@ impl Stats {
 pub mod hardware {
     /// The firmware's detection failed: no front-end control at all.
     pub const NO_RADIO: u8 = 0x00;
-    /// RX-888 Mk2, the only receiver this driver (and this firmware) supports.
+    /// The rest are the SDDC firmware's own board numbers, in its order — the
+    /// same `radio_type_t` the bundled image was built from (see
+    /// `firmware/PROVENANCE.md`). They are worth naming even though this driver
+    /// steers none of their front ends: a board the firmware recognised
+    /// perfectly well is a different thing from one it failed to identify, and
+    /// telling an RX-888 Mk1 owner that detection failed sends them to unplug a
+    /// receiver that is working exactly as it should (issue #342).
+    pub const BBRF103: u8 = 0x01;
+    pub const HF103: u8 = 0x02;
+    /// RX-888 Mk1: the same LTC2208 and FX3 as the Mk2 behind a different front
+    /// end — no PE4312 attenuator, no AD8370 VGA, and no VHF tuner. It streams
+    /// here; nothing this driver offers in front of the ADC reaches it.
+    pub const RX888: u8 = 0x03;
+    /// RX-888 Mk2, the receiver this driver steers.
     pub const RX888R2: u8 = 0x04;
+    pub const RX999: u8 = 0x05;
+    pub const RXLUCY: u8 = 0x06;
+
+    /// The board's name, or `None` for a number this table does not know.
+    pub fn name(id: u8) -> Option<&'static str> {
+        Some(match id {
+            BBRF103 => "BBRF103",
+            HF103 => "HF103",
+            RX888 => "RX-888 Mk1",
+            RX888R2 => "RX-888 Mk2",
+            RX999 => "RX-999",
+            RXLUCY => "RX-Lucy",
+            _ => return None,
+        })
+    }
 }
 
 /// Firmware version as reported by `TESTFX3`.
@@ -257,6 +285,25 @@ impl Identity {
     pub fn front_end_ready(&self) -> bool {
         self.hardware == hardware::RX888R2
     }
+
+    /// Whether the firmware identified the board at all.
+    ///
+    /// Not the same question as [`Self::front_end_ready`], and conflating the
+    /// two is issue #342: an RX-888 Mk1 answers `0x03`, which is the firmware
+    /// saying "I know exactly what this is" about a board whose front end this
+    /// driver does not steer. Only `0x00` means the detection failed, and only
+    /// that is worth reloading the firmware over.
+    pub fn recognised(&self) -> bool {
+        hardware::name(self.hardware).is_some()
+    }
+
+    /// What the board is called, for anything an operator reads.
+    pub fn board(&self) -> String {
+        match hardware::name(self.hardware) {
+            Some(n) => n.to_string(),
+            None => format!("an unknown board (hardware id 0x{:02x})", self.hardware),
+        }
+    }
 }
 
 impl std::fmt::Display for Version {
@@ -268,6 +315,38 @@ impl std::fmt::Display for Version {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #342: the firmware's own board numbers, and the difference between
+    /// "I do not know what this is" and "I know, and it is not the one this
+    /// driver steers".
+    #[test]
+    fn a_recognised_board_is_not_a_failed_detection() {
+        let id = |h| Identity { hardware: h, version: Version { major: 2, minor: 3 } };
+
+        // The Mk2: named, recognised, and driven.
+        assert!(id(hardware::RX888R2).front_end_ready());
+        assert!(id(hardware::RX888R2).recognised());
+        assert_eq!(id(hardware::RX888R2).board(), "RX-888 Mk2");
+
+        // The Mk1: named and recognised, but nothing here steers its front end.
+        // What it must NOT do is look like a detection failure — that is what
+        // sent its owner to re-plug a working receiver.
+        assert!(id(hardware::RX888).recognised());
+        assert!(!id(hardware::RX888).front_end_ready());
+        assert_eq!(id(hardware::RX888).board(), "RX-888 Mk1");
+
+        // The rest of the family is named too, rather than reported as a number.
+        for h in [hardware::BBRF103, hardware::HF103, hardware::RX999, hardware::RXLUCY] {
+            assert!(id(h).recognised(), "0x{h:02x}");
+            assert!(!id(h).board().contains("unknown"), "0x{h:02x}");
+        }
+
+        // Detection genuinely failed, and a number nobody has heard of.
+        assert!(!id(hardware::NO_RADIO).recognised());
+        assert!(id(hardware::NO_RADIO).board().contains("unknown"));
+        assert!(!id(0x7f).recognised());
+        assert!(id(0x7f).board().contains("0x7f"));
+    }
 
     #[test]
     fn stats_decode_matches_the_documented_offsets() {
