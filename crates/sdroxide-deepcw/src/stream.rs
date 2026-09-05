@@ -287,6 +287,8 @@ enum Msg {
 pub struct Worker {
     audio: Sender<Msg>,
     updates: Receiver<Result<Update, Error>>,
+    /// Messages handed over and not yet dealt with — see [`Worker::queued`].
+    queued: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     _thread: std::thread::JoinHandle<()>,
 }
 
@@ -299,30 +301,56 @@ impl Worker {
         let (audio_tx, audio_rx) = unbounded::<Msg>();
         let (update_tx, update_rx) = unbounded();
 
+        let queued = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let thread_queued = std::sync::Arc::clone(&queued);
         let thread = std::thread::Builder::new()
             .name("sdroxide-deepcw".into())
-            .spawn(move || run(audio_rx, update_tx))
+            .spawn(move || run(audio_rx, update_tx, &thread_queued))
             .map_err(|e| Error::Load(e.to_string()))?;
 
-        Ok(Worker { audio: audio_tx, updates: update_rx, _thread: thread })
+        Ok(Worker { audio: audio_tx, updates: update_rx, queued, _thread: thread })
     }
 
     /// Hand over a block.
     pub fn push(&self, audio: &[f32]) {
         if !audio.is_empty() {
-            let _ = self.audio.send(Msg::Audio(audio.to_vec()));
+            self.send(Msg::Audio(audio.to_vec()));
         }
     }
 
     /// Commit the tail without waiting for a word gap. For the end of a
     /// transmission, where the last words would otherwise never settle.
     pub fn flush(&self) {
-        let _ = self.audio.send(Msg::Flush);
+        self.send(Msg::Flush);
     }
 
     /// Clear the buffered audio and the tail being decoded.
     pub fn reset(&self) {
-        let _ = self.audio.send(Msg::Reset);
+        self.send(Msg::Reset);
+    }
+
+    /// How much of what has been handed over the worker has not dealt with yet.
+    ///
+    /// Zero means everything sent before the call has been through the model
+    /// and whatever it produced is already on the update channel — so a caller
+    /// that has finished pushing audio can tell "the decoder has nothing left
+    /// to say" from "the decoder has not got to it yet". Those are
+    /// indistinguishable from the outside otherwise, and waiting a fixed time
+    /// to tell them apart is a guess that a loaded machine loses: a decode is
+    /// tens of milliseconds of arithmetic, but nothing bounds how long this
+    /// thread waits to be scheduled.
+    pub fn queued(&self) -> usize {
+        self.queued.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Count it out, then hand it over. In that order, so the count is never
+    /// seen low for a message that is already on its way.
+    fn send(&self, msg: Msg) {
+        self.queued.fetch_add(1, std::sync::atomic::Ordering::Release);
+        if self.audio.send(msg).is_err() {
+            // The thread is gone and nothing will ever mark this done.
+            self.queued.fetch_sub(1, std::sync::atomic::Ordering::Release);
+        }
     }
 
     /// Anything the worker has finished since the last call.
@@ -331,7 +359,11 @@ impl Worker {
     }
 }
 
-fn run(audio: Receiver<Msg>, updates: Sender<Result<Update, Error>>) {
+fn run(
+    audio: Receiver<Msg>,
+    updates: Sender<Result<Update, Error>>,
+    queued: &std::sync::atomic::AtomicUsize,
+) {
     let mut stream = match Stream::new() {
         Ok(s) => s,
         Err(e) => {
@@ -342,26 +374,37 @@ fn run(audio: Receiver<Msg>, updates: Sender<Result<Update, Error>>) {
 
     while let Ok(first) = audio.recv() {
         let mut flush = false;
+        // Taken in, not yet dealt with: the count comes down after the model
+        // has run and the update is on the channel, which is what makes zero
+        // mean "there is nothing more to come" — see [`Worker::queued`].
+        let mut taken = 0usize;
         let mut apply = |msg, flush: &mut bool| match msg {
             Msg::Audio(block) => stream.push(&block),
             Msg::Flush => *flush = true,
             Msg::Reset => stream.reset(),
         };
         apply(first, &mut flush);
+        taken += 1;
         // Take everything already waiting before spending 25 ms in the model, so
         // a decode always sees the newest audio rather than replaying a backlog.
         loop {
             match audio.try_recv() {
-                Ok(msg) => apply(msg, &mut flush),
+                Ok(msg) => {
+                    apply(msg, &mut flush);
+                    taken += 1;
+                }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return,
             }
         }
 
         let update = if flush { stream.flush() } else { stream.poll() };
-        if let Some(update) = update
-            && updates.send(update).is_err()
-        {
+        let sent = match update {
+            Some(update) => updates.send(update).is_ok(),
+            None => true,
+        };
+        queued.fetch_sub(taken, std::sync::atomic::Ordering::Release);
+        if !sent {
             return;
         }
     }

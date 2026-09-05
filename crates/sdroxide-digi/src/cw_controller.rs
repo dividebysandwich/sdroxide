@@ -790,20 +790,34 @@ mod tests {
 
     /// Settle the receive window: the model decodes on its own thread, so the
     /// text a test wants has to be waited for rather than read straight back.
+    ///
+    /// Waited for on the decoder's own account rather than by watching the text
+    /// stop changing. "The display has not moved for a second" is not the same
+    /// claim as "the decoder has finished", and on a machine running the rest
+    /// of this suite beside it they come apart: a decode is tens of
+    /// milliseconds of arithmetic but nothing bounds how long that thread waits
+    /// to be scheduled, so a pause between two committed words outlasted the
+    /// window and this returned half a transmission. `Worker::queued` answers
+    /// the question that was actually being asked.
     fn settle(c: &mut CwController) -> String {
         if let Some(deep) = c.deep.as_ref() {
             deep.flush();
+            // Everything pushed — the whole transmission, and the flush behind
+            // it — is through the model by the time this reaches zero, and
+            // whatever it produced is already on the update channel.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            while deep.queued() > 0 && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
         }
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        let mut idle = 0;
-        while std::time::Instant::now() < deadline && idle < 100 {
+        // Now drain it into the display. Nothing further is coming, so this
+        // converges immediately; the loop is here because `poll` moves one
+        // update at a time.
+        for _ in 0..100 {
             let before = c.rx_display();
             c.poll(SystemTime::now(), 14_030_000.0);
             if c.rx_display() == before {
-                idle += 1;
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            } else {
-                idle = 0;
+                break;
             }
         }
         c.rx_display().trim().to_string()
