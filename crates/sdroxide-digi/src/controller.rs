@@ -20,6 +20,18 @@ use sdroxide_types::{
 use crate::clock::ClockMonitor;
 use crate::modem::{ApHints, Ft8Modem};
 use crate::params::{DECODE_RATE, DigiParams};
+
+/// How much of a slot's audio has to arrive before the period counts as whole.
+///
+/// Not 100%: a slot legitimately ends a few blocks short, because the boundary
+/// is noticed on a poll rather than on a sample, and the tap is handed over in
+/// blocks of a few tens of milliseconds. Five per cent of a 15 s slot is 750 ms
+/// — far more slack than that, and far less than the gap that costs a decode.
+const SLOT_COMPLETE_FRAC: f64 = 0.95;
+
+/// How often a run of short periods says so again — every tenth, which at
+/// fifteen seconds a slot is about once every two and a half minutes.
+const SHORT_SLOT_REPORT_EVERY: u64 = 10;
 use crate::qso::QsoMachine;
 use crate::scheduler::SlotScheduler;
 
@@ -134,6 +146,9 @@ pub struct DigiController {
     slot_buf: Vec<i16>,
     tap_scratch: Vec<f32>,
     last_slot_idx: i64,
+    /// Receive periods that arrived short of a full slot — see
+    /// [`DigiController::check_slot_arrived_whole`].
+    short_slots: u64,
     dial_hz: f64,
     audio_hz: f32,
     /// Which slot period we transmit in (even/odd), and a per-slot guard so
@@ -257,6 +272,7 @@ impl DigiController {
             slot_buf: Vec::with_capacity(params.slot_samples()),
             tap_scratch: Vec::new(),
             last_slot_idx: i64::MIN,
+            short_slots: 0,
             dial_hz: 0.0,
             audio_hz: 1500.0,
             tx_even,
@@ -498,6 +514,50 @@ impl DigiController {
         }
     }
 
+    /// Say so when a slot's audio arrived short, because a slot that is short
+    /// is a slot that will not decode.
+    ///
+    /// The buffer is filled by *arrival*: whatever the sound card handed over
+    /// during the slot, spliced end to end. So a capture stream that loses
+    /// samples — a virtual audio cable that is not keeping pace, a machine that
+    /// is not emptying the card — does not merely make the audio shorter, it
+    /// moves every symbol after the gap earlier than the moment it was actually
+    /// sent. The decoder aligns what it is given to the slot it belongs to, so
+    /// a gap anywhere in the middle costs the whole slot.
+    ///
+    /// That failure is invisible from the operator's side: the waterfall is
+    /// full of signals, the panel says nothing, and no decodes appear
+    /// (issue #338). The audio layer reports the glitch, but nothing there
+    /// knows it has cost a decode — and nothing here knew the audio had a hole
+    /// in it. This is the join between the two.
+    ///
+    /// A slot this station transmitted in is skipped: the receiver is stood
+    /// down for the length of an over on a half-duplex radio, and its buffer is
+    /// legitimately a fraction of a slot.
+    fn check_slot_arrived_whole(&mut self) {
+        if self.last_slot_idx == self.tx_fired_slot {
+            return;
+        }
+        let want = (self.params.slot_s * DECODE_RATE) as usize;
+        let got = self.slot_buf.len();
+        if want == 0 || got >= (want as f64 * SLOT_COMPLETE_FRAC) as usize {
+            return;
+        }
+        self.short_slots = self.short_slots.saturating_add(1);
+        // One line per run of them, not one per slot: this fires every fifteen
+        // seconds for as long as the fault lasts, and the log has to stay
+        // readable enough to find the rest of the session in.
+        if self.short_slots == 1 || self.short_slots.is_multiple_of(SHORT_SLOT_REPORT_EVERY) {
+            tracing::warn!(
+                "{}: the last receive period arrived {:.1} s short of the {:.1} s it should be —                  the audio device is losing samples, which moves every tone after the gap and                  costs the whole period. Nothing will decode while this lasts. {} such period(s)                  so far; look for the audio glitch warnings above and at the device feeding                  sdroxide (a virtual audio cable is the usual one).",
+                self.params.mode.label(),
+                (want - got) as f64 / DECODE_RATE,
+                self.params.slot_s,
+                self.short_slots,
+            );
+        }
+    }
+
     /// Whether a TX burst is currently on the air (drives the engine's PTT
     /// via [`DigiAction::KeyTx`]/[`UnkeyTx`]).
     pub fn tx_burst_active(&self) -> bool {
@@ -648,6 +708,7 @@ impl DigiController {
         let idx = self.scheduler.slot_index(now);
         if idx != self.last_slot_idx {
             if self.last_slot_idx != i64::MIN {
+                self.check_slot_arrived_whole();
                 let min_samples = (self.params.slot_s * DECODE_RATE * 0.5) as usize;
                 if self.slot_buf.len() >= min_samples {
                     let audio = std::mem::take(&mut self.slot_buf);

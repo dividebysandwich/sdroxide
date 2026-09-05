@@ -13161,6 +13161,50 @@ The radio's capture device could not be opened. Common causes:
   warning banner naming the device; use **Dismiss** to hide it after fixing the
   device.
 
+**"A buffer underrun or overrun occurred", and FT8/FT4 will not decode.**
+The audio device is losing samples. The line in the diagnostics reads
+
+```
+WARN sdroxide_audio: mic input: the audio stream from "…" glitched — the host
+says samples were lost between two callbacks …
+```
+
+and after the first one they are counted and summarised rather than repeated,
+so a stream that does this every few seconds no longer buries the rest of the
+log. The host is telling sdroxide that the captured audio is not continuous:
+what arrives is spliced end to end, with a hole taken out of the middle.
+
+For listening, that is a click. For the timed modes it is fatal, and silently
+so — every tone after the gap arrives earlier than it was sent, so the whole
+fifteen-second period misaligns and decodes nothing while the waterfall looks
+perfectly healthy. When that happens the FT8 panel says so directly:
+
+```
+WARN sdroxide_digi: FT8: the last receive period arrived 0.4 s short of the
+15.0 s it should be — the audio device is losing samples …
+```
+
+A **virtual audio cable** — VB-Audio, VAC, Flex DAX — is the usual source, and
+it is not a fault in the cable so much as a consequence of what one is: there is
+no crystal at either end, so the program feeding it and sdroxide reading it
+drift apart until the driver drops or repeats a buffer to catch up. Things that
+help, roughly in order:
+
+- Set the **same sample rate** on both ends of the cable (48000 Hz) in Windows'
+  Sound → device → Advanced, on the cable's playback *and* recording sides, and
+  in the program feeding it. A rate mismatch is resampled by Windows and is the
+  most common cause of a steady drip of glitches.
+- On VB-Audio's Control Panel, raise the cable's internal buffer (`Max Latency`)
+  a step or two.
+- Give sdroxide and the feeding program a moment of CPU: a machine that is busy
+  enough to stall either one for a few tens of milliseconds produces exactly
+  this.
+- Where the radio offers a real sound device as well as a virtual one, use it.
+
+A **real sound card** reporting the same thing means this machine is not keeping
+up with it, which is the `capture frames dropped` warning's territory rather
+than this one — see [§6.2](#62-radio-choosing-and-configuring-the-rig).
+
 **"No radio" at startup, or the radio disappears mid-session.**
 sdroxide shows the reason it could not open the interface and keeps trying it in
 the background — every second at first, then more slowly — so a rig that is
