@@ -26,7 +26,7 @@ ewebsock = { path = "vendor/ewebsock" }
 soapysdr = { path = "vendor/soapysdr" }
 
 [workspace.package]
-version = "1.6.4"
+version = "1.6.5"
 edition = "2024"
 # The native binary links mfsk-core (GPL-3.0-or-later) for FT8/FT4 and the
 # DeepCW model (AGPL-3.0-only) for CW, so the built binary carries both. AGPL is
