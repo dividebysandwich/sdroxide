@@ -92,7 +92,81 @@ pub struct Palette {
     /// The dark stripe those bars alternate with.
     pub hazard_dark: Color32,
 }
+/// Nord — the light arctic palette: polar-night ground and snow-storm ink,
+/// frost accents.
+const NORD: Palette = Palette {
+    light: false,
+    no_dim: false,
+    bg_deep: Color32::from_rgb(46, 52, 64),
+    panel: Color32::from_rgb(59, 66, 82),
+    input_bg: Color32::from_rgb(67, 76, 94),
+    fill: Color32::from_rgb(76, 86, 106),
+    fill_hover: Color32::from_rgb(94, 129, 172),
+    fill_active: Color32::from_rgb(129, 161, 193),
+    line: Color32::from_rgb(67, 76, 94),
+    line_lit: Color32::from_rgb(129, 161, 193),
+    text: Color32::from_rgb(216, 222, 233),
+    text_strong: Color32::from_rgb(236, 239, 244),
+    cyan: Color32::from_rgb(129, 161, 193),
+    cyan_dim: Color32::from_rgb(94, 129, 172),
+    pink: Color32::from_rgb(191, 97, 106),
+    yellow: Color32::from_rgb(235, 203, 139),
+    green: Color32::from_rgb(163, 190, 140),
+    ink_on_cyan: Color32::from_rgb(20, 24, 32),
+    ink_on_bright: Color32::from_rgb(0, 0, 0),
+    red_deep: Color32::from_rgb(136, 57, 67),
+    cq_bg: Color32::from_rgb(235, 203, 139),
+    tome_bg: Color32::from_rgb(44, 36, 6),
+    done_bg: Color32::from_rgb(8, 42, 23),
+    row_bg: Color32::from_rgb(67, 76, 94),
+    row_hover: Color32::from_rgb(76, 86, 106),
+    scroll_track: Color32::from_rgb(67, 76, 94),
+    scroll_handle: Color32::from_rgb(94, 129, 172),
+    scroll_handle_hover: Color32::from_rgb(129, 161, 193),
+    scroll_handle_drag: Color32::from_rgb(191, 97, 106),
+    faint_bg: Color32::from_rgb(67, 76, 94),
+    alert: Color32::from_rgb(191, 97, 106),
+    hazard: Color32::from_rgb(235, 203, 139),
+    hazard_dark: Color32::from_rgb(22, 18, 4),
+};
 
+/// Nord Dark — the same arctic family on a darker ground: polar night scaled
+/// down toward black, the frost and aurora accents unchanged.
+const NORD_DARK: Palette = Palette {
+    light: false,
+    no_dim: false,
+    bg_deep: Color32::from_rgb(20, 24, 32),
+    panel: Color32::from_rgb(30, 34, 44),
+    input_bg: Color32::from_rgb(40, 46, 58),
+    fill: Color32::from_rgb(46, 52, 64),
+    fill_hover: Color32::from_rgb(59, 66, 82),
+    fill_active: Color32::from_rgb(76, 86, 106),
+    line: Color32::from_rgb(40, 46, 58),
+    line_lit: Color32::from_rgb(94, 129, 172),
+    text: Color32::from_rgb(216, 222, 233),
+    text_strong: Color32::from_rgb(236, 239, 244),
+    cyan: Color32::from_rgb(136, 192, 208),
+    cyan_dim: Color32::from_rgb(129, 161, 193),
+    pink: Color32::from_rgb(191, 97, 106),
+    yellow: Color32::from_rgb(235, 203, 139),
+    green: Color32::from_rgb(163, 190, 140),
+    ink_on_cyan: Color32::from_rgb(20, 24, 32),
+    ink_on_bright: Color32::from_rgb(0, 0, 0),
+    red_deep: Color32::from_rgb(136, 57, 67),
+    cq_bg: Color32::from_rgb(235, 203, 139),
+    tome_bg: Color32::from_rgb(44, 36, 6),
+    done_bg: Color32::from_rgb(8, 42, 23),
+    row_bg: Color32::from_rgb(36, 42, 52),
+    row_hover: Color32::from_rgb(46, 52, 64),
+    scroll_track: Color32::from_rgb(24, 28, 36),
+    scroll_handle: Color32::from_rgb(94, 129, 172),
+    scroll_handle_hover: Color32::from_rgb(136, 192, 208),
+    scroll_handle_drag: Color32::from_rgb(191, 97, 106),
+    faint_bg: Color32::from_rgb(24, 28, 36),
+    alert: Color32::from_rgb(191, 97, 106),
+    hazard: Color32::from_rgb(235, 203, 139),
+    hazard_dark: Color32::from_rgb(22, 18, 4),
+};
 /// `c(0x00d0f4)` — a palette entry from one hex triple, so a theme reads as a
 /// column of colour values.
 const fn c(rgb: u32) -> Color32 {
@@ -415,8 +489,17 @@ const HIGH_CONTRAST: Palette = Palette {
 };
 
 /// Indexed by [`theme_index`].
-static PALETTES: [Palette; 7] =
-    [DEFAULT, GREEN_PHOSPHOR, AMBER_PHOSPHOR, TEAL_ORANGE, RAINBOW, LIGHT, HIGH_CONTRAST];
+static PALETTES: [Palette; 9] = [
+    DEFAULT,
+    GREEN_PHOSPHOR,
+    AMBER_PHOSPHOR,
+    TEAL_ORANGE,
+    RAINBOW,
+    LIGHT,
+    HIGH_CONTRAST,
+    NORD,
+    NORD_DARK,
+];
 
 /// The S-meter instrument's colours: the face wash, the backlight bloom, the
 /// cool-side (below the red-line) inks, the bar's recessed rail, and the cool
@@ -654,7 +737,7 @@ const METER_HIGH_CONTRAST: MeterPalette = MeterPalette {
 /// Indexed by [`theme_index`], like [`PALETTES`]. Rainbow keeps the historic
 /// navy instrument: its grounds are the default's, and the meter already
 /// reads in the accents the ramps give it.
-static METER_PALETTES: [MeterPalette; 7] = [
+static METER_PALETTES: [MeterPalette; 9] = [
     METER_DEFAULT,
     METER_GREEN,
     METER_AMBER,
@@ -662,6 +745,10 @@ static METER_PALETTES: [MeterPalette; 7] = [
     METER_DEFAULT,
     METER_LIGHT,
     METER_HIGH_CONTRAST,
+    // Nord and Nord Dark keep the classic navy-glass instrument: it was
+    // already the arctic look — cyan backlight, ice at S9.
+    METER_DEFAULT,
+    METER_DEFAULT,
 ];
 
 /// The current theme's S-meter instrument colours.
@@ -744,7 +831,7 @@ const SCOPE_LIGHT: ScopePalette = ScopePalette {
 /// Indexed by [`theme_index`], like [`PALETTES`]. High contrast lends the
 /// instruments its own roles like any other dark theme — its accents were
 /// already picked to sit on black, which is what the glass is.
-static SCOPE_PALETTES: [ScopePalette; 7] = [
+static SCOPE_PALETTES: [ScopePalette; 9] = [
     scope_from(&DEFAULT),
     scope_from(&GREEN_PHOSPHOR),
     scope_from(&AMBER_PHOSPHOR),
@@ -752,6 +839,8 @@ static SCOPE_PALETTES: [ScopePalette; 7] = [
     scope_from(&RAINBOW),
     SCOPE_LIGHT,
     scope_from(&HIGH_CONTRAST),
+    scope_from(&NORD),
+    scope_from(&NORD_DARK),
 ];
 
 /// The current theme's instrument inks — see [`ScopePalette`].
@@ -877,7 +966,7 @@ const MAP_HIGH_CONTRAST: MapPalette = MapPalette {
 };
 
 /// Indexed by [`theme_index`], like [`PALETTES`].
-static MAP_PALETTES: [MapPalette; 7] = [
+static MAP_PALETTES: [MapPalette; 9] = [
     map_from(&DEFAULT),
     map_from(&GREEN_PHOSPHOR),
     map_from(&AMBER_PHOSPHOR),
@@ -885,6 +974,8 @@ static MAP_PALETTES: [MapPalette; 7] = [
     map_from(&RAINBOW),
     SCOPE_MAP_LIGHT,
     MAP_HIGH_CONTRAST,
+    map_from(&NORD),
+    map_from(&NORD_DARK),
 ];
 
 /// The current theme's world-map inks — see [`MapPalette`].
@@ -912,6 +1003,8 @@ const fn theme_index(t: UiTheme) -> u8 {
         UiTheme::Rainbow => 4,
         UiTheme::Light => 5,
         UiTheme::HighContrast => 6,
+        UiTheme::Nord => 7,
+        UiTheme::NordDark => 8,
     }
 }
 
@@ -1750,12 +1843,17 @@ mod tests {
     }
 
     /// The alert role stays red in every theme — the phosphor themes are
-    /// monochrome, but a TX or SWR indication must never come out green.
+    /// monochrome, but a TX or SWR indication must never come out green. Red
+    /// has to dominate by a clear margin rather than sit at some exact hue:
+    /// Nord and Nord Dark carry the authentic aurora red `#BF616A`, which is
+    /// unmistakably red yet not as saturated as the default's `#FF5555`.
     #[test]
     fn every_theme_keeps_alerts_red() {
         for (i, p) in PALETTES.iter().enumerate() {
             assert!(
-                p.alert.r() > 180 && p.alert.g() < 90 && p.alert.b() < 120,
+                p.alert.r() > 150
+                    && p.alert.r() as i32 >= p.alert.g() as i32 + 30
+                    && p.alert.r() as i32 >= p.alert.b() as i32 + 30,
                 "palette {i} has a non-red alert colour {:?}",
                 p.alert
             );

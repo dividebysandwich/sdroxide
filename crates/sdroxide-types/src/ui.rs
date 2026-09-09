@@ -297,6 +297,13 @@ pub enum UiTheme {
     /// faint. For low vision, for glare, and for a display that has lost its
     /// contrast.
     HighContrast,
+    /// Nord — the light arctic palette: polar-night ground and snow-storm
+    /// ink, frost accents. A dimmer, colder counterpart to the navy/cyan of
+    /// the default look.
+    Nord,
+    /// Nord Dark — the same arctic family on a darker ground: polar night
+    /// scaled down toward black, the frost and aurora accents unchanged.
+    NordDark,
     /// The classic navy/cyan/pink look. Declared last because serde demands
     /// the catch-all be the final variant: it also swallows an unrecognised
     /// value in a hand-edited config, so a typo degrades to the default theme
@@ -307,7 +314,7 @@ pub enum UiTheme {
 }
 
 impl UiTheme {
-    pub const ALL: [UiTheme; 7] = [
+    pub const ALL: [UiTheme; 9] = [
         UiTheme::Default,
         UiTheme::Light,
         UiTheme::HighContrast,
@@ -315,6 +322,8 @@ impl UiTheme {
         UiTheme::AmberPhosphor,
         UiTheme::TealOrange,
         UiTheme::Rainbow,
+        UiTheme::Nord,
+        UiTheme::NordDark,
     ];
 
     pub fn label(self) -> &'static str {
@@ -326,6 +335,8 @@ impl UiTheme {
             UiTheme::AmberPhosphor => "Amber phosphor",
             UiTheme::TealOrange => "Teal / orange",
             UiTheme::Rainbow => "Rainbow",
+            UiTheme::Nord => "Nord",
+            UiTheme::NordDark => "Nord dark",
         }
     }
 
