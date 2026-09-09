@@ -25,6 +25,16 @@ ewebsock = { path = "vendor/ewebsock" }
 # See vendor/soapysdr/PROVENANCE.md; this stays until the method is upstream.
 soapysdr = { path = "vendor/soapysdr" }
 
+# `mfsk-core` 0.10.2 with CB callsign acceptance added to the WSJT-77
+# validators (`is_cb_callsign`, short-circuited in is_valid_callsign and
+# is_plausible_callsign). Upstream jl1nie/mfsk-core has no CB support, so
+# 11 m/WSJT-CB traffic — whose calls ride free-text and hashed forms on the
+# unmodified 77-bit wire — is dropped by the FT8 block decoder's plausible-
+# message filter. The fork is madmedicnl/mfsk-core, branch cb-support, pinned
+# to the integration commit and tracked as a git dep for the same reason the
+# vendor/ entries are: upstream's code under upstream's licence.
+mfsk-core = { git = "https://github.com/madmedicnl/mfsk-core", rev = "ebd8a8884d9b6bce73fd06290115597a3533603b" }
+
 [workspace.package]
 version = "1.6.5"
 edition = "2024"

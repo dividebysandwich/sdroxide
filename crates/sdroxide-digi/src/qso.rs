@@ -118,13 +118,108 @@ fn reply_step(payload: &Payload) -> Option<QsoStep> {
     }
 }
 
+/// An 11 m (CB) callsign, in the WSJT-CB grammar — `N{1,3}L{1,2}N{1,3}`, a
+/// four-digit unit only behind a one-digit prefix, or `N{1,3}L{1,2}/L{2}`.
+/// Delegated to mfsk-core so the validator and this sequencer can never drift.
+#[inline]
+fn is_cb(call: &str) -> bool {
+    mfsk_core::msg::wsjt77::is_cb_callsign(call.trim())
+}
+
+/// The payload half of a WSJT-CB free-text line: "TOKEN0 [TOKEN1]" where
+/// TOKEN0 is a CB callsign and TOKEN1 a report or sign-off. The wire limit is
+/// thirteen characters, which leaves room for an address and exactly one such
+/// token — a line with anything else, or no CB address, has no CB payload at
+/// all (and so must not move an exchange, like any `Payload::Other`).
+fn cb_payload(d: &Decode) -> Option<Payload> {
+    if !d.free_text {
+        return None;
+    }
+    let mut toks = d.message.split_whitespace();
+    let t0 = toks.next()?;
+    if !is_cb(t0) {
+        return None;
+    }
+    let p = toks.next()?;
+    if toks.next().is_some() {
+        return None;
+    }
+    Some(match p {
+        "RR73" => Payload::Rr73,
+        "RRR" => Payload::Rrr,
+        "73" => Payload::B73,
+        s if s.starts_with("R-") || s.starts_with("R+") => {
+            s[1..].parse().map(Payload::RReport).unwrap_or(Payload::Other)
+        }
+        s if (s.starts_with('-') || s.starts_with('+')) && s[1..].parse::<i16>().is_ok() => {
+            let v: i16 = s[1..].parse().unwrap();
+            Payload::Report(if s.starts_with('-') { -v } else { v })
+        }
+        _ => Payload::Other,
+    })
+}
+
+/// The addressing of a WSJT-CB free-text line, which names its addressee
+/// first: "26AT715 R-07" is that station speaking to the local one — the
+/// sender is omitted outside the opening exchange — and "26AT715 1A1", or any
+/// line whose *second* token is our call, is a reply to our CQ. When the
+/// sender is not spelled out, the exchange's own peer stands in, exactly as
+/// WSJT-CB keeps the selected DX when its parser reads back our own call.
+///
+/// `None` for free text with no CB addressing, so unaddressed free text keeps
+/// its ordinary (decoration-only) treatment.
+fn cb_address(
+    d: &Decode,
+    my_call: &str,
+    dx: Option<&str>,
+) -> Option<(Option<String>, Option<String>)> {
+    if !d.free_text {
+        return None;
+    }
+    let toks: Vec<&str> = d.message.split_whitespace().collect();
+    let t0 = *toks.first()?;
+    if !is_cb(t0) {
+        return None;
+    }
+    let mine = my_call.trim();
+    // Addressed to us by name.
+    if t0.eq_ignore_ascii_case(mine) {
+        // The second token, when it is a CB call that is not us, is who spoke;
+        // otherwise a finished exchange omits the sender and it is the peer we
+        // are already working.
+        let from = toks
+            .get(1)
+            .filter(|t| is_cb(t) && !t.eq_ignore_ascii_case(mine))
+            .copied()
+            .or(dx)
+            .map(str::to_string);
+        return Some((Some(mine.to_string()), from));
+    }
+    // A reply to our CQ: "DXCALL MYCALL".
+    if toks.get(1).is_some_and(|t| t.eq_ignore_ascii_case(mine)) {
+        return Some((Some(mine.to_string()), Some(t0.to_string())));
+    }
+    None
+}
+
+/// The effective payload of a decode, honouring WSJT-CB free text: the CB
+/// report/final is the *second* token of such a line, which the generic
+/// `to <from> <payload>` classifier would look for in the wrong place.
+fn payload_of(d: &Decode) -> Payload {
+    if d.free_text {
+        cb_payload(d).unwrap_or_else(|| classify_payload(&d.message))
+    } else {
+        classify_payload(&d.message)
+    }
+}
+
 /// True when this decode is a station *calling* us: addressed to our station,
 /// and not the tail of a contact already finished. A 73 or an RR73 is somebody
 /// signing off, not somebody asking to be worked.
-fn is_call_to_us(d: &Decode, my_call: &str) -> bool {
+fn is_call_to_us(d: &Decode, payload: &Payload, my_call: &str) -> bool {
     d.to.as_deref() == Some(my_call)
         && d.from.as_deref().is_some_and(|f| !f.is_empty())
-        && !matches!(classify_payload(&d.message), Payload::B73 | Payload::Rrr | Payload::Rr73)
+        && !matches!(payload, Payload::B73 | Payload::Rrr | Payload::Rr73)
 }
 
 fn is_grid(t: &str) -> bool {
@@ -572,14 +667,33 @@ impl QsoMachine {
             }
             return changed;
         }
+        // WSJT-CB free-text traffic does not carry its addressing in the
+        // layout: "26AT715 R-07" is addressed *by the first token*, to the
+        // station whose call it is. The rest of this method only understands
+        // `to`/`from` fields, so every decode passes through the CB rewrite
+        // first — the addressing stays as decoded (free text, no addressee)
+        // unless it actually names this station, and the payload is read the
+        // CB way (second token) wherever it might be.
+        let effective: Vec<(Decode, Payload)> = decodes
+            .iter()
+            .map(|d| {
+                let (to, from) = cb_address(d, &my_call, self.dx.as_ref().map(|x| x.call.as_str()))
+                    .unwrap_or((None, None));
+                let mut e = d.clone();
+                if to.is_some() || from.is_some() {
+                    e.to = to;
+                    e.from = from;
+                }
+                (e, payload_of(d))
+            })
+            .collect();
         // Remember who has been calling us and what they sent, whether or not
         // it touches the contact in hand. A station calling while we are busy
         // elsewhere — or stood down — is one the operator may pick later, and
         // this is the only record of where their exchange had got to.
-        for d in decodes {
-            if let Some(from) = d.from.as_deref().filter(|_| is_call_to_us(d, &my_call)) {
-                self.called_us
-                    .insert(from.to_ascii_uppercase(), (now_utc, classify_payload(&d.message)));
+        for (d, payload) in &effective {
+            if let Some(from) = d.from.as_deref().filter(|_| is_call_to_us(d, payload, &my_call)) {
+                self.called_us.insert(from.to_ascii_uppercase(), (now_utc, payload.clone()));
             }
         }
         // Housekeeping only — `start_qso` checks the age itself, since a silent
@@ -591,21 +705,21 @@ impl QsoMachine {
         let mut changed = false;
         let dx_call = self.dx.as_ref().map(|d| d.call.clone());
         let answered_us = dx_call.as_deref().is_some_and(|dx| {
-            decodes
+            effective
                 .iter()
-                .any(|d| d.from.as_deref() == Some(dx) && d.to.as_deref() == Some(my_call.as_str()))
+                .any(|(d, _)| d.from.as_deref() == Some(dx) && d.to.as_deref() == Some(my_call.as_str()))
         });
         // A CQ can be answered by several stations in one slot. Choose between
         // them once, up front, rather than taking whichever the decoder
         // happened to report first.
         let answerer = (self.step == QsoStep::CallingCq && self.dx.is_none())
-            .then(|| self.pick_answerer(decodes, &my_call))
+            .then(|| self.pick_answerer(&effective, &my_call))
             .flatten();
         if let Some(pick) = &answerer {
-            let others: Vec<&str> = decodes
+            let others: Vec<&str> = effective
                 .iter()
-                .filter(|d| is_call_to_us(d, &my_call))
-                .filter_map(|d| d.from.as_deref())
+                .filter(|(d, p)| is_call_to_us(d, p, &my_call))
+                .filter_map(|(d, _)| d.from.as_deref())
                 .filter(|c| c != pick)
                 .collect();
             if !others.is_empty() {
@@ -617,7 +731,7 @@ impl QsoMachine {
             }
         }
         let hound = self.dxped() == DxpedMode::Hound;
-        for d in decodes {
+        for (d, payload) in &effective {
             let Some(from) = d.from.as_deref().filter(|f| !f.is_empty()) else { continue };
             let to_me = d.to.as_deref() == Some(my_call.as_str());
 
@@ -643,7 +757,6 @@ impl QsoMachine {
             // (they're free) or address us directly (no need to keep waiting).
             if self.step == QsoStep::WaitCq {
                 if self.dx.as_ref().map(|x| x.call.as_str()) == Some(from) && (d.is_cq || to_me) {
-                    let payload = classify_payload(&d.message);
                     // Where to pick the exchange up. Their CQ says nothing
                     // about us, so we open with our grid; anything addressed to
                     // us is answered from where *they* are, because resuming at
@@ -651,22 +764,22 @@ impl QsoMachine {
                     // and is waiting on a report. A bare 73 asks for nothing at
                     // all, so it is not the thing we were waiting for.
                     let Some(resume) =
-                        (if d.is_cq { Some(QsoStep::TxGrid) } else { reply_step(&payload) })
+                        (if d.is_cq { Some(QsoStep::TxGrid) } else { reply_step(payload) })
                     else {
                         continue;
                     };
                     if let Some(dx) = self.dx.as_mut() {
                         dx.last_utc = now_utc;
-                        if dx.grid.is_none() {
-                            if let Payload::Grid(g) = &payload {
-                                dx.grid = Some(g.clone());
-                            }
+                        if let Payload::Grid(g) = payload
+                            && dx.grid.is_none()
+                        {
+                            dx.grid = Some(g.clone());
                         }
                     }
                     if let Payload::Report(r) | Payload::RReport(r) = payload {
-                        self.set_rcvd(r);
+                        self.set_rcvd(*r);
                     }
-                    self.set_exch_rcvd(&payload);
+                    self.set_exch_rcvd(payload);
                     // They are on the air and free: that is the thing we were
                     // waiting for, so the calls we made before they went quiet
                     // must not count against the ones we are about to make.
@@ -694,20 +807,19 @@ impl QsoMachine {
             //
             // A Hound is exempt: a Fox is *always* working somebody, and a Hound
             // that stood down each time would never be answered at all.
-            if let Some(other) = other.filter(|_| !hound) {
-                if matches!(self.step, QsoStep::TxGrid | QsoStep::TxReport | QsoStep::TxRReport) {
-                    self.note_working(from, other);
-                    self.step = QsoStep::WaitCq;
-                    self.deadline_utc = now_utc + WAIT_CQ_S;
-                    changed = true;
-                    continue;
-                }
+            if let Some(other) = other.filter(|_| !hound)
+                && matches!(self.step, QsoStep::TxGrid | QsoStep::TxReport | QsoStep::TxRReport)
+            {
+                self.note_working(from, other);
+                self.step = QsoStep::WaitCq;
+                self.deadline_utc = now_utc + WAIT_CQ_S;
+                changed = true;
+                continue;
             }
 
             if !to_me {
                 continue; // everything else must be addressed to us
             }
-            let payload = classify_payload(&d.message);
 
             // Contact just logged: if the DX repeats their message they didn't
             // hear our final one — queue a single re-send. A bare 73 means they
@@ -751,7 +863,7 @@ impl QsoMachine {
                 // answered it — before ever sending them a report.
                 self.progress();
                 self.progress_utc = now_utc;
-                changed |= self.advance(&payload, now_utc);
+changed |= self.advance(payload, now_utc);
                 // Whatever they sent, we are working them now. An answer we
                 // could not parse is still an answer, and staying in `CallingCq`
                 // would leave them adopted but never replied to — and, because
@@ -770,10 +882,10 @@ impl QsoMachine {
             }
             if let Some(dx) = self.dx.as_mut() {
                 dx.last_utc = now_utc;
-                if dx.grid.is_none() {
-                    if let Payload::Grid(g) = &payload {
-                        dx.grid = Some(g.clone());
-                    }
+                if let Payload::Grid(g) = payload
+                    && dx.grid.is_none()
+                {
+                    dx.grid = Some(g.clone());
                 }
                 if dx.rpt_sent.is_none() {
                     dx.rpt_sent = Some(d.snr_db);
@@ -787,7 +899,7 @@ impl QsoMachine {
             self.transcript.push(TranscriptLine::rcvd(d.message.clone()));
             self.progress();
             self.progress_utc = now_utc;
-            changed |= self.advance(&payload, now_utc);
+            changed |= self.advance(payload, now_utc);
         }
         changed
     }
@@ -800,11 +912,11 @@ impl QsoMachine {
     /// difference between "solid" and "marginal" matters, a couple of dB does
     /// not) a new DXCC entity is worth more than a repeat one. Beyond that the
     /// strongest wins, because it is the one most likely to complete.
-    fn pick_answerer(&self, decodes: &[Decode], my_call: &str) -> Option<String> {
+    fn pick_answerer(&self, decodes: &[(Decode, Payload)], my_call: &str) -> Option<String> {
         decodes
             .iter()
-            .filter(|d| is_call_to_us(d, my_call))
-            .filter_map(|d| {
+            .filter(|(d, p)| is_call_to_us(d, p, my_call))
+            .filter_map(|(d, _)| {
                 let call = d.from.as_deref().filter(|f| !f.is_empty())?;
                 Some((call, d.snr_db))
             })
@@ -1037,6 +1149,32 @@ impl QsoMachine {
             return self.plan_eu_vhf(dx_call, &mg, rpt_sent);
         }
         let fill = |tmpl: &str, rpt: Option<i16>| DigiConfig::fill(tmpl, mc, &mg, dx_call, rpt);
+        // A WSJT-CB exchange between two 11 m stations: both callsigns are
+        // non-standard, so nothing has a layout to carry it, and free text has
+        // room for an address and one narrow token — which is why WSJT-CB
+        // itself says a CB pair "cannot reliably carry signal reports" and
+        // falls back to a short deterministic exchange. Plan that vocabulary:
+        // CQ, the address pair, report, rogered report, RR73 and 73, each line
+        // inside the 13-character limit.
+        if is_cb(mc) && self.dx.as_ref().is_none_or(|d| is_cb(&d.call)) {
+            let rpt = rpt_sent.map(sdroxide_types::fmt_report);
+            return match self.step {
+                QsoStep::CallingCq => Some(format!("CQ {}", mc.trim())),
+                QsoStep::TxGrid => Some(format!("{dx_call} {}", mc.trim())),
+                QsoStep::TxReport => Some(format!(
+                    "{dx_call} {}",
+                    rpt.as_deref().unwrap_or(mc.trim())
+                )),
+                QsoStep::TxRReport => Some(format!(
+                    "{dx_call} R{}",
+                    rpt.as_deref().unwrap_or(mc.trim())
+                )),
+                QsoStep::TxRr73 => Some(format!("{dx_call} RR73")),
+                QsoStep::Tx73 => Some(format!("{dx_call} 73")),
+                QsoStep::Confirming => self.resend.then(|| self.final_msg.clone()).flatten(),
+                QsoStep::Idle | QsoStep::WaitCq => None,
+            };
+        }
         match self.step {
             QsoStep::CallingCq => Some(fill(&self.cfg.msg_cq, None)),
             QsoStep::TxGrid => Some(fill(&self.cfg.msg_grid, None)),
@@ -2307,5 +2445,105 @@ mod tests {
         // After the confirm window the contact is retired.
         assert!(q.tick(145 + CONFIRM_S));
         assert_eq!(q.step(), QsoStep::Idle);
+    }
+
+    /// A WSJT-CB free-text decode, exactly as the modem's `parse_message`
+    /// leaves it: no addressing in the fields (the addressing lives in the
+    /// first token), `is_cq` only for the one free-text form that is a
+    /// recognised CQ.
+    fn cb_free_text(msg: &str) -> Decode {
+        let toks: Vec<&str> = msg.split_whitespace().collect();
+        let cq = toks.first() == Some(&"CQ") && toks.get(1).is_some_and(|t| is_cb(t));
+        Decode {
+            slot_utc: 0,
+            snr_db: -10,
+            dt: 0.1,
+            audio_hz: 1500.0,
+            message: msg.to_string(),
+            to: None,
+            from: cq.then(|| toks[1].to_string()),
+            grid: None,
+            is_cq: cq,
+            cq_to: cq.then(|| toks[1].to_string()),
+            free_text: true,
+            rr73_to: None,
+        }
+    }
+
+    /// The whole CB vocabulary fits the free-text wire limit (13 characters)
+    /// against both slot shapes — CQ caller and answerer.
+    fn assert_all_cb_shapes_fit(msg: &str) {
+        assert!(
+            msg.len() <= 13,
+            "{msg}: a WSJT-CB line must fit the free-text limit"
+        );
+        assert!(
+            msg.bytes().all(|b| matches!(b, b'0'..=b'9' | b'A'..=b'Z' | b' ' | b'+' | b'-' | b'.' | b'/' | b'?')),
+            "{msg}: outside the free-text alphabet"
+        );
+    }
+
+    /// We (a CB station) call CQ; a CB peer answers; the two run the whole
+    /// WSJT-CB exchange in free text and the contact logs. WSJT-CB's own note
+    /// is that such a pair "cannot reliably carry signal reports", so the
+    /// shortening is deliberate: every message is an address plus one token.
+    #[test]
+    fn a_cb_pair_runs_the_wsjt_cb_free_text_exchange() {
+        let mut q = QsoMachine::new(
+            Mode::Ft8,
+            DigiConfig { my_call: "26AT715".into(), my_grid: "JO21".into(), ..Default::default() },
+        );
+        q.call_cq();
+        let cq = q.plan_tx().expect("CQ message");
+        assert_eq!(cq, "CQ 26AT715");
+        assert_all_cb_shapes_fit(&cq);
+
+        // 1A1 answers by spelling our call first — that is what makes it a
+        // reply. There is no grid in a CB exchange, so the adopted answerer
+        // is sent their report at us.
+        assert!(q.on_rx(&[cb_free_text("26AT715 1A1")], 115));
+        assert_eq!(q.step(), QsoStep::TxReport);
+        let a = q.plan_tx().expect("report");
+        assert_eq!(a, "1A1 -10");
+        assert_all_cb_shapes_fit(&a);
+
+        // Their rogered report, sender omitted from the finished exchange.
+        q.note_tx_sent(130);
+        assert!(q.on_rx(&[cb_free_text("26AT715 R-07")], 145));
+        assert_eq!(q.step(), QsoStep::TxRr73);
+        let b = q.plan_tx().expect("RR73");
+        assert_eq!(b, "1A1 RR73");
+        assert_all_cb_shapes_fit(&b);
+
+        // Our final goes out and the contact logs.
+        q.note_tx_sent(160);
+        assert_eq!(q.take_completed().expect("logged").call, "1A1");
+        assert_eq!(q.step(), QsoStep::Confirming);
+        assert_eq!(q.plan_tx(), None, "nothing more until they repeat theirs");
+    }
+
+    /// We answer a WSJT-CB station's free-text CQ from the picked-station
+    /// hold, the same way the ordinary exchange answers a CQ (issue coverage:
+    /// the CQ recognition comes from `parse_message`'s free-text arm).
+    #[test]
+    fn answering_a_cb_cq_uses_the_free_text_vocabulary() {
+        let mut q = QsoMachine::new(
+            Mode::Ft8,
+            DigiConfig { my_call: "1A1".into(), ..Default::default() },
+        );
+        q.start_qso("26AT715".into(), None, -8, true, 100);
+        assert!(q.on_rx(&[cb_free_text("CQ 26AT715")], 115));
+        assert_eq!(q.step(), QsoStep::TxGrid);
+        let open = q.plan_tx().expect("address pair");
+        assert_eq!(open, "26AT715 1A1");
+        assert_all_cb_shapes_fit(&open);
+
+        // Their report is addressed to us by name; the sender is implied.
+        q.note_tx_sent(130);
+        assert!(q.on_rx(&[cb_free_text("1A1 R-07")], 145));
+        assert_eq!(q.step(), QsoStep::TxRr73);
+        let final_msg = q.plan_tx().expect("RR73");
+        assert_eq!(final_msg, "26AT715 RR73");
+        assert_all_cb_shapes_fit(&final_msg);
     }
 }

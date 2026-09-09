@@ -20,7 +20,10 @@ sdroxide-deepcw.workspace = true
 sdroxide-rade.workspace = true
 # The JS8 candidate loop hands complex baseband between mfsk-core primitives.
 num-complex.workspace = true
-mfsk-core = { version = "0.10.0", default-features = false, features = ["std", "ft8", "ft4", "wspr", "parallel", "fft-rustfft"] }
+# 0.10.2 pins the git-patched fork (see workspace [patch.crates-io]); caret
+# would float whatever crates.io publishes against a locked source, and a git
+# patch must match the requirement exactly to replace it.
+mfsk-core = { version = "0.10.2", default-features = false, features = ["std", "ft8", "ft4", "wspr", "parallel", "fft-rustfft"] }
 crossbeam-channel.workspace = true
 # The WSPR candidate search is four-fifths Fano and splits cleanly across
 # candidates. Already in the tree via mfsk-core's `parallel` feature.

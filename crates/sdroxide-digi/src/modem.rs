@@ -408,6 +408,23 @@ fn pack_message(text: &str) -> Option<([u8; 77], String)> {
         }
     }
 
+    // 3a. A two-token WSJT-CB line stays free text — an address pair
+    //     ("26AT715 1A1") or a CB call followed by a bare final ("26AT715 73").
+    //     WSJT-CB reads such lines as free text, and a hash is `<...>` to it.
+    //     Calls like 1A1 — and the final 73 itself — look pack28-standard, so
+    //     without this the ladder hashes the CB side or spells "73" out as a
+    //     callsign (rungs 3b/4). The CB plan's lines are the only ones like
+    //     this: with a grid or report after them messages are mixed-band
+    //     traffic and keep the hashed layout.
+    if toks.len() == 2 && is_cb_callsign(c1)
+        && (is_cb_callsign(c2) || matches!(c2, "73" | "RR73" | "RRR"))
+    {
+        let free: String = text.chars().take(13).collect();
+        if let Some(m) = wsjt77::pack77_free_text(free.trim_end()) {
+            return Some((m, free.trim_end().to_string()));
+        }
+    }
+
     // 3b. One compound / non-standard callsign addressed with a grid or a
     //     signal report — neither of which the layout below has anywhere to
     //     put. The standard layout does, so long as that callsign travels as
@@ -423,7 +440,13 @@ fn pack_message(text: &str) -> Option<([u8; 77], String)> {
         "RRR" | "RR73" | "73" => payload,
         _ => "",
     };
-    if c1 == "CQ" && !c2.is_empty() && !wsjt77::is_standard_callsign(c2) {
+    if c1 == "CQ" && !c2.is_empty() && !wsjt77::is_standard_callsign(c2)
+        // A bare "CQ 26AT715" is WSJT-CB's free-text form: keep it free-text
+        // rather than the type-4 spelling so the two clients are identical on
+        // the air. With a grid after the call ("CQ 26AT715 JO21") the type-4
+        // spelling is the only thing that works at all — free text truncates.
+        && !(is_cb_callsign(c2) && toks.len() == 2)
+    {
         let m = wsjt77::pack77_type4(c2, "", "", true)?;
         return Some((m, format!("CQ {c2}")));
     }
@@ -844,8 +867,22 @@ struct Parsed {
 /// (from the type bits, never guessed from the text) decides which decorations
 /// to strip and whether there is any addressing at all.
 fn parse_message(text: &str, kind: MsgKind) -> Parsed {
-    // Free text carries no addressing, however much it may look like it does.
+    // Free text carries no addressing, however much it may look like it does —
+    // with one exception. A WSJT-CB station opens with the free-text CQ
+    // "CQ 26AT715", which names its CB sender in a fixed position; recognising
+    // it is what lets the sequencer offer a CB station as a station to work,
+    // and the UI colour it as a CQ to answer.
     if kind == MsgKind::FreeText {
+        let toks: Vec<&str> = text.split_whitespace().collect();
+        if toks.first() == Some(&"CQ") && toks.get(1).is_some_and(|t| is_cb_callsign(t)) {
+            return Parsed {
+                from: Some(toks[1].to_string()),
+                is_cq: true,
+                cq_to: Some(toks[1].to_string()),
+                free_text: true,
+                ..Default::default()
+            };
+        }
         return Parsed { free_text: true, ..Default::default() };
     }
     let mut toks: Vec<&str> = text.split_whitespace().collect();
@@ -942,6 +979,15 @@ fn is_callish(t: &str) -> bool {
         && t.chars().any(|c| c.is_ascii_digit())
         && t.chars().any(|c| c.is_ascii_alphabetic())
         && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '/')
+}
+
+/// An 11 m (CB) callsign: `N{1,3}L{1,2}N{1,3}`, a four-digit unit only behind a
+/// one-digit prefix, or the split `N{1,3}L{1,2}/L{2}` form — the WSJT-CB
+/// grammar (see `mfsk-core::msg::wsjt77::is_cb_callsign`, whose table this
+/// defers to so the two can never drift apart).
+#[inline]
+fn is_cb_callsign(t: &str) -> bool {
+    wsjt77::is_cb_callsign(t)
 }
 
 #[cfg(test)]
@@ -1144,6 +1190,48 @@ mod tests {
         // The same text as a real message does address someone.
         let p = parse_message("W9XYZ RR73", MsgKind::Standard);
         assert_eq!(p.to.as_deref(), Some("W9XYZ"));
+    }
+
+    #[test]
+    fn a_wsjt_cb_cq_is_a_free_text_cq() {
+        // WSJT-CB opens with the free-text CQ "CQ 26AT715" — the one free-text
+        // form whose sender sits in a fixed position. Recognising it is what
+        // turns a CB station into a station the sequencer may work.
+        let p = parse_message("CQ 26AT715", MsgKind::FreeText);
+        assert!(p.free_text);
+        assert!(p.is_cq);
+        assert_eq!(p.cq_to.as_deref(), Some("26AT715"));
+        assert_eq!(p.from.as_deref(), Some("26AT715"));
+        // A free-text CQ to a non-CB call is still just free text — the
+        // recognition is deliberately confined to the WSJT-CB vocabulary.
+        let p = parse_message("CQ W1AW", MsgKind::FreeText);
+        assert!(p.free_text);
+        assert!(!p.is_cq, "CQ to a standard call is not a recognised CB CQ");
+    }
+
+    #[test]
+    fn cb_pairs_travel_as_free_text_not_hashes() {
+        // Two CB calls cannot be carried in anything a WSJT-CB peer would read
+        // (a hash is dropped as "<...>" there), so the whole CB-CB vocabulary
+        // rides the 13-character free-text layout — reports, rogered reports,
+        // and finals alike. Every shape the CB plan emits stays inside it.
+        for msg in [
+            "CQ 26AT715",       // CQ
+            "26AT715 1A1",      // address pair (grid exchange has no grid here)
+            "1A1 -10",          // bare report
+            "26AT715 R-07",     // rogered report, sender implied
+            "1A1 RR73",         // final, CQ caller
+            "26AT715 73",       // final, answerer
+        ] {
+            let (sent, decodes) = round_trip(Mode::Ft8, msg);
+            assert_eq!(sent, msg, "{msg} must survive the pack round-trip whole");
+            assert_eq!(decodes[0].message, msg, "{msg}");
+            assert!(decodes[0].free_text, "{msg} must go out as free text");
+            assert!(
+                !decodes[0].message.contains('<'),
+                "{msg} must not be hashed (WSJT-CB peers drop hashes)"
+            );
+        }
     }
 
     #[test]
