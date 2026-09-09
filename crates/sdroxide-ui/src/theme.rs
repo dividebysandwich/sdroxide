@@ -92,6 +92,8 @@ pub struct Palette {
     /// The dark stripe those bars alternate with.
     pub hazard_dark: Color32,
 }
+/// Nord — the light arctic palette: polar-night ground and snow-storm ink,
+/// frost accents.
 pub fn nord() -> Palette {
     Palette {
         light: false,
@@ -115,9 +117,23 @@ pub fn nord() -> Palette {
         ink_on_bright: Color32::from_rgb(0, 0, 0),
         red_deep: Color32::from_rgb(136, 57, 67),
         cq_bg: Color32::from_rgb(235, 203, 139),
+        tome_bg: Color32::from_rgb(44, 36, 6),
+        done_bg: Color32::from_rgb(8, 42, 23),
+        row_bg: Color32::from_rgb(67, 76, 94),
+        row_hover: Color32::from_rgb(76, 86, 106),
+        scroll_track: Color32::from_rgb(67, 76, 94),
+        scroll_handle: Color32::from_rgb(94, 129, 172),
+        scroll_handle_hover: Color32::from_rgb(129, 161, 193),
+        scroll_handle_drag: Color32::from_rgb(191, 97, 106),
+        faint_bg: Color32::from_rgb(67, 76, 94),
+        alert: Color32::from_rgb(191, 97, 106),
+        hazard: Color32::from_rgb(235, 203, 139),
+        hazard_dark: Color32::from_rgb(22, 18, 4),
     }
 }
 
+/// Nord Dark — the same arctic family on a darker ground: polar night scaled
+/// down toward black, the frost and aurora accents unchanged.
 pub fn nord_dark() -> Palette {
     Palette {
         light: false,
@@ -125,7 +141,36 @@ pub fn nord_dark() -> Palette {
         bg_deep: Color32::from_rgb(20, 24, 32),
         panel: Color32::from_rgb(30, 34, 44),
         input_bg: Color32::from_rgb(40, 46, 58),
-        fill: Color32::from_rgb(46, 52,
+        fill: Color32::from_rgb(46, 52, 64),
+        fill_hover: Color32::from_rgb(59, 66, 82),
+        fill_active: Color32::from_rgb(76, 86, 106),
+        line: Color32::from_rgb(40, 46, 58),
+        line_lit: Color32::from_rgb(94, 129, 172),
+        text: Color32::from_rgb(216, 222, 233),
+        text_strong: Color32::from_rgb(236, 239, 244),
+        cyan: Color32::from_rgb(136, 192, 208),
+        cyan_dim: Color32::from_rgb(129, 161, 193),
+        pink: Color32::from_rgb(191, 97, 106),
+        yellow: Color32::from_rgb(235, 203, 139),
+        green: Color32::from_rgb(163, 190, 140),
+        ink_on_cyan: Color32::from_rgb(20, 24, 32),
+        ink_on_bright: Color32::from_rgb(0, 0, 0),
+        red_deep: Color32::from_rgb(136, 57, 67),
+        cq_bg: Color32::from_rgb(235, 203, 139),
+        tome_bg: Color32::from_rgb(44, 36, 6),
+        done_bg: Color32::from_rgb(8, 42, 23),
+        row_bg: Color32::from_rgb(36, 42, 52),
+        row_hover: Color32::from_rgb(46, 52, 64),
+        scroll_track: Color32::from_rgb(24, 28, 36),
+        scroll_handle: Color32::from_rgb(94, 129, 172),
+        scroll_handle_hover: Color32::from_rgb(136, 192, 208),
+        scroll_handle_drag: Color32::from_rgb(191, 97, 106),
+        faint_bg: Color32::from_rgb(24, 28, 36),
+        alert: Color32::from_rgb(191, 97, 106),
+        hazard: Color32::from_rgb(235, 203, 139),
+        hazard_dark: Color32::from_rgb(22, 18, 4),
+    }
+}
 /// `c(0x00d0f4)` — a palette entry from one hex triple, so a theme reads as a
 /// column of colour values.
 const fn c(rgb: u32) -> Color32 {
