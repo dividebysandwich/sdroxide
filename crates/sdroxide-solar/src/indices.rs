@@ -238,7 +238,9 @@ fn band_group(band: sdroxide_types::Band) -> Option<&'static str> {
         Band::M17 | Band::M15 => Some("17m-15m"),
         Band::M12 | Band::M10 => Some("12m-10m"),
         // Not published. 160 m and 60 m are below and inside the range
-        // respectively; 6 m and up are covered — if at all — by the sporadic-E
+        // respectively, and 11 m sits right under the published group's lower
+        // edge without being part of any of its four groups; 6 m and up are
+        // covered — if at all — by the sporadic-E
         // and aurora entries, which are about a phenomenon rather than a band
         // and are not interchangeable with a Good/Fair/Poor verdict. The
         // microwave bands are not an HF forecast's business at all: what opens
@@ -257,6 +259,7 @@ fn band_group(band: sdroxide_types::Band) -> Option<&'static str> {
         | Band::Cm13
         | Band::Cm9
         | Band::Cm6
+        | Band::M11
         | Band::Gen => None,
     }
 }

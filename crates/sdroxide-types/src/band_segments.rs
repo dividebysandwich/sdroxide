@@ -100,6 +100,10 @@ pub const SEGMENTS_R1: &[Segment] = &[
     seg(24.890 * M, 24.915 * M, Cw),
     seg(24.915 * M, 24.930 * M, Digi),
     seg(24.930 * M, 24.990 * M, Phone),
+    // 11m — the CB band, which is all-modes by regulation rather than a ham
+    // segment: no amateur plan splits it, so one `All` span covers the forty
+    // channels and the digimode cluster above them.
+    seg(26.965 * M, 27.710 * M, All),
     // 10m
     seg(28.000 * M, 28.070 * M, Cw),
     seg(28.070 * M, 28.190 * M, Digi),
@@ -152,6 +156,10 @@ pub const SEGMENTS_R2: &[Segment] = &[
     seg(24.890 * M, 24.915 * M, Cw),
     seg(24.915 * M, 24.930 * M, Digi),
     seg(24.930 * M, 24.990 * M, All),
+    // 11m — the CB band, all-modes, and identical in every region for the same
+    // reason it is permissive in Region 2's plan: nothing here is amateur and
+    // nothing is split.
+    seg(26.965 * M, 27.710 * M, All),
     // 10m
     seg(28.000 * M, 28.070 * M, Cw),
     seg(28.070 * M, 28.190 * M, Digi),
@@ -200,6 +208,10 @@ pub const SEGMENTS_R3: &[Segment] = &[
     seg(24.890 * M, 24.915 * M, Cw),
     seg(24.915 * M, 24.930 * M, Digi),
     seg(24.930 * M, 24.990 * M, All),
+    // 11m — the CB band, all-modes, and identical in every region for the same
+    // reason it is permissive in Region 2's plan: nothing here is amateur and
+    // nothing is split.
+    seg(26.965 * M, 27.710 * M, All),
     // 10m
     seg(28.000 * M, 28.070 * M, Cw),
     seg(28.070 * M, 28.190 * M, Digi),
@@ -313,6 +325,8 @@ pub const FT8_DIALS: &[f64] = &[
     18_100_000.0,
     21_074_000.0,
     24_915_000.0,
+    // 11 m: the 27.265 channel 26 digimode spot.
+    27_265_000.0,
     28_074_000.0,
 ];
 /// FT4 dial frequencies (Hz).
@@ -354,6 +368,8 @@ pub const JS8_DIALS: &[f64] = &[
     18_104_000.0,
     21_078_000.0,
     24_922_000.0,
+    // 11 m: the JS8 call channel on channel 25.
+    27_245_000.0,
     28_078_000.0,
 ];
 /// WSPR dial frequencies (Hz). The 200 Hz WSPR window sits ~1400–1600 Hz above
@@ -367,6 +383,9 @@ pub const WSPR_DIALS: &[f64] = &[
     18_104_600.0,
     21_094_600.0,
     24_924_600.0,
+    // 11 m shares channel 25 with SSTV; listed because the dial is published,
+    // while the hop bands deliberately omit the band (see `wspr_default_hop_bands`).
+    27_255_000.0,
     28_124_600.0,
 ];
 
@@ -392,6 +411,13 @@ pub const SSTV_DIALS: &[(f64, &str, u8)] = &[
     (14_230_000.0, "", mask::ALL),
     (14_233_000.0, "secondary", mask::ALL),
     (21_340_000.0, "", mask::ALL),
+    // 11 m — SSTV rides the digimode cluster above the CB channels. 27.700 is
+    // the established calling frequency; 27.255 shares channel 25 with JS8,
+    // 27.375 rides channel 37 and 27.710 is the top of the cluster.
+    (27_255_000.0, "secondary", mask::ALL),
+    (27_375_000.0, "secondary", mask::ALL),
+    (27_700_000.0, "", mask::ALL),
+    (27_710_000.0, "secondary", mask::ALL),
     (28_680_000.0, "", mask::ALL),
     (28_690_000.0, "secondary", mask::ALL),
 ];
@@ -458,6 +484,7 @@ pub const PSK_RANGES_R1: &[(f64, f64)] = &[
     (18_097_000.0, 18_100_000.0), // 17m (below FT8 @ 18.100)
     (21_070_000.0, 21_073_000.0), // 15m
     (24_920_000.0, 24_923_000.0), // 12m
+    (27_498_000.0, 27_502_000.0), // 11m (PSK31 at 27.500, ±2 kHz like 10 m)
     (28_118_000.0, 28_122_000.0), // 10m
 ];
 
@@ -472,6 +499,7 @@ pub const PSK_RANGES_R23: &[(f64, f64)] = &[
     (18_097_000.0, 18_100_000.0), // 17m
     (21_070_000.0, 21_073_000.0), // 15m
     (24_920_000.0, 24_923_000.0), // 12m
+    (27_498_000.0, 27_502_000.0), // 11m (PSK31 at 27.500)
     (28_118_000.0, 28_122_000.0), // 10m
 ];
 
@@ -484,6 +512,7 @@ pub const RTTY_RANGES_R1: &[(f64, f64)] = &[
     (18_101_000.0, 18_109_000.0), // 17m
     (21_080_000.0, 21_120_000.0), // 15m
     (24_921_000.0, 24_930_000.0), // 12m
+    (27_498_000.0, 27_506_000.0), // 11m (RTTY at 27.500)
     (28_083_000.0, 28_120_000.0), // 10m
 ];
 
@@ -497,6 +526,7 @@ pub const RTTY_RANGES_R23: &[(f64, f64)] = &[
     (18_101_000.0, 18_109_000.0), // 17m
     (21_080_000.0, 21_120_000.0), // 15m
     (24_921_000.0, 24_930_000.0), // 12m
+    (27_498_000.0, 27_506_000.0), // 11m (RTTY at 27.500)
     (28_083_000.0, 28_120_000.0), // 10m
 ];
 
@@ -612,6 +642,7 @@ pub const PSK_DIALS: &[(f64, &str, u8)] = &[
     (18_097_000.0, "", mask::ALL),
     (21_070_000.0, "", mask::ALL),
     (24_920_000.0, "", mask::ALL),
+    (27_500_000.0, "", mask::ALL),
     (28_120_000.0, "", mask::ALL),
 ];
 
@@ -628,6 +659,7 @@ pub const RTTY_DIALS: &[(f64, &str, u8)] = &[
     (18_105_000.0, "", mask::ALL),
     (21_080_000.0, "", mask::ALL),
     (24_925_000.0, "", mask::ALL),
+    (27_500_000.0, "", mask::ALL),
     (28_080_000.0, "", mask::ALL),
 ];
 

@@ -57,6 +57,9 @@ fn ham_label(band: Band, region: Region) -> &'static str {
         Band::M17 => "17m HAM",
         Band::M15 => "15m HAM",
         Band::M12 => "12m HAM",
+        // Not an amateur band: 11 m is the CB band, which is why it is labelled
+        // CB even though it now rides the band bar like any other.
+        Band::M11 => "11m CB",
         Band::M10 => "10m HAM",
         Band::M6 => "6m HAM",
         Band::M4 => "4m HAM",
@@ -103,7 +106,6 @@ fn non_ham(region: Region) -> Vec<Seg> {
         s(17.480 * M, 17.900 * M, "16m BC", Kind::Broadcast),
         s(21.450 * M, 21.850 * M, "13m BC", Kind::Broadcast),
         s(25.670 * M, 26.100 * M, "11m BC", Kind::Broadcast),
-        s(26.965 * M, 27.405 * M, "CB", Kind::Cb),
     ];
     // 75 m broadcasting: 3.950–4.000 in Region 1, all of 3.900–4.000 in
     // Region 3, and none of it in Region 2, where the band is 80 m.

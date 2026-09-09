@@ -176,6 +176,7 @@ impl<'a> Speaker<'a> {
             Band::M17 => "seventeen meters",
             Band::M15 => "fifteen meters",
             Band::M12 => "twelve meters",
+            Band::M11 => "eleven meters",
             Band::M10 => "ten meters",
             Band::M6 => "six meters",
             Band::M4 => "four meters",

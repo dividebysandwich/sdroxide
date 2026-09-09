@@ -2112,6 +2112,11 @@ pub fn adif_band(freq_hz: f64) -> &'static str {
         m if m < 18.2 => "17m",
         m if m < 21.5 => "15m",
         m if m < 25.0 => "12m",
+        // ADIF has no 11 m enumeration — the CB band is not an amateur one — so
+        // its contacts log under the custom name, between 12 m and 10 m. The
+        // threshold stays above the extended CB channels (to 27.855) rather than
+        // on the band edge, matching the "above the widest top edge" rule.
+        m if m < 27.8 => "11m",
         m if m < 29.8 => "10m",
         m if m < 54.1 => "6m",
         m if m < 70.6 => "4m",

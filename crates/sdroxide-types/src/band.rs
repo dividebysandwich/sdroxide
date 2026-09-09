@@ -57,10 +57,17 @@ pub enum Band {
     /// 10 GHz unit *inside* it, so its 3 cm is the radio's own band and not an
     /// entry in the transverter table (issue #326).
     Cm3,
+    /// 11 m — the CB band, 26.965–27.710 MHz. Not an amateur allocation in any
+    /// region, but the frequency range this build is for: it is where the
+    /// HF digimodes the rest of the table feeds (FT8, JS8, SSTV, PSK31, RTTY)
+    /// meet the CB channels. Appended, like every band after [`Band::M70`], so
+    /// the postcard wire indices of the surviving variants do not move;
+    /// [`Band::ALL`] shows it between 12 m and 10 m.
+    M11,
 }
 
 impl Band {
-    pub const ALL: [Band; 22] = [
+    pub const ALL: [Band; 23] = [
         Band::M160,
         Band::M80,
         Band::M60,
@@ -70,6 +77,7 @@ impl Band {
         Band::M17,
         Band::M15,
         Band::M12,
+        Band::M11,
         Band::M10,
         Band::M6,
         Band::M4,
@@ -122,6 +130,7 @@ impl Band {
             Band::M17 => "17M",
             Band::M15 => "15M",
             Band::M12 => "12M",
+            Band::M11 => "11M",
             Band::M10 => "10M",
             Band::M6 => "6M",
             Band::M4 => "4M",
@@ -221,6 +230,10 @@ impl Band {
             Band::M17 => Some((18_068_000.0, 18_168_000.0)),
             Band::M15 => Some((21_000_000.0, 21_450_000.0)),
             Band::M12 => Some((24_890_000.0, 24_990_000.0)),
+            // The CB band is not a per-region amateur allocation — 26.965–27.710
+            // covers the 40 channels plus the digimode cluster above them, in
+            // every region, which is why the three plans agree exactly.
+            Band::M11 => Some((26_965_000.0, 27_710_000.0)),
             Band::M10 => Some((28_000_000.0, 29_700_000.0)),
             Band::M6 => by_region(
                 (50_000_000.0, 52_000_000.0),
@@ -313,6 +326,10 @@ impl Band {
             Band::M17 => (18_120_000.0, Mode::Usb),
             Band::M15 => (21_250_000.0, Mode::Usb),
             Band::M12 => (24_940_000.0, Mode::Usb),
+            // The JS8 call channel, square in the middle of the 11 m digimode
+            // cluster: this build exists to work the digital modes there, so a
+            // band button lands where one of them is listening.
+            Band::M11 => (27_245_000.0, Mode::Usb),
             Band::M10 => (28_400_000.0, Mode::Usb),
             Band::M6 => (50_150_000.0, Mode::Usb),
             // 70.200 is the 4 m SSB/CW calling frequency, in the narrow-band

@@ -377,6 +377,7 @@ const BANDS_ADDED_SINCE_THE_FILE: &[Band] = &[
     Band::Cm9,
     Band::Cm6,
     Band::Cm3,
+    Band::M11,
 ];
 
 impl TryFrom<PlanFile> for BandPlan {

@@ -1249,7 +1249,12 @@ use sdroxide_types::{
 /// * [`sdroxide_types::Command`] gains `LogQso`, which carries a hand-entered
 ///   contact to the WSJT-X UDP listeners the way the sequencer's own contacts
 ///   already went (issue #341). Appended, so no surviving discriminant moved.
-pub const PROTO_VERSION: u16 = 138;
+/// v139: [`sdroxide_types::Band`] gains `M11`, the 11 m CB band (26.965–27.710
+/// MHz), with its digimode conventions. A band rides inside `RadioState`, the
+/// band stack, every memory and `DigiConfig::tx_audio_hz`, and the new variant
+/// is appended so no surviving discriminant moved — but a v138 peer handed one
+/// has no name for it and fails to decode any of those.
+pub const PROTO_VERSION: u16 = 139;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

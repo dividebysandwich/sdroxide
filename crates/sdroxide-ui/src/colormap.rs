@@ -199,6 +199,7 @@ pub fn band_color(band: sdroxide_types::Band) -> [u8; 3] {
         Band::M17 => [46, 200, 170],  // teal
         Band::M15 => [52, 168, 226],  // sky
         Band::M12 => [70, 116, 232],  // blue
+        Band::M11 => [96, 104, 240],  // periwinkle — between 12 m's blue and 10 m's indigo
         Band::M10 => [122, 92, 236],  // indigo
         Band::M6 => [176, 84, 226],   // violet
         Band::M4 => [202, 78, 224],   // purple
