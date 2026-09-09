@@ -92,7 +92,40 @@ pub struct Palette {
     /// The dark stripe those bars alternate with.
     pub hazard_dark: Color32,
 }
+pub fn nord() -> Palette {
+    Palette {
+        light: false,
+        no_dim: false,
+        bg_deep: Color32::from_rgb(46, 52, 64),
+        panel: Color32::from_rgb(59, 66, 82),
+        input_bg: Color32::from_rgb(67, 76, 94),
+        fill: Color32::from_rgb(76, 86, 106),
+        fill_hover: Color32::from_rgb(94, 129, 172),
+        fill_active: Color32::from_rgb(129, 161, 193),
+        line: Color32::from_rgb(67, 76, 94),
+        line_lit: Color32::from_rgb(129, 161, 193),
+        text: Color32::from_rgb(216, 222, 233),
+        text_strong: Color32::from_rgb(236, 239, 244),
+        cyan: Color32::from_rgb(129, 161, 193),
+        cyan_dim: Color32::from_rgb(94, 129, 172),
+        pink: Color32::from_rgb(191, 97, 106),
+        yellow: Color32::from_rgb(235, 203, 139),
+        green: Color32::from_rgb(163, 190, 140),
+        ink_on_cyan: Color32::from_rgb(20, 24, 32),
+        ink_on_bright: Color32::from_rgb(0, 0, 0),
+        red_deep: Color32::from_rgb(136, 57, 67),
+        cq_bg: Color32::from_rgb(235, 203, 139),
+    }
+}
 
+pub fn nord_dark() -> Palette {
+    Palette {
+        light: false,
+        no_dim: false,
+        bg_deep: Color32::from_rgb(20, 24, 32),
+        panel: Color32::from_rgb(30, 34, 44),
+        input_bg: Color32::from_rgb(40, 46, 58),
+        fill: Color32::from_rgb(46, 52,
 /// `c(0x00d0f4)` — a palette entry from one hex triple, so a theme reads as a
 /// column of colour values.
 const fn c(rgb: u32) -> Color32 {
