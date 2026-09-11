@@ -41,7 +41,7 @@ use self::radio::{
     settings_icomnet_tab, settings_kiwisdr_tab, settings_lime_tab, settings_pluto_tab,
     settings_rtlsdr_tab, settings_rtltcp_tab, settings_rx888_tab, settings_sdrplay_tab,
     settings_smartsdr_tab, settings_soapy_devices, settings_soapy_tab, settings_spyserver_tab,
-    settings_tci_tab,
+    settings_tci_tab, settings_usb_audio_tab,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use self::remote::settings_remote_tab;
@@ -726,6 +726,10 @@ fn iface_opts(soapy_supported: bool) -> Vec<sdroxide_types::Backend> {
     // dlopen at runtime rather than linked, so nothing here needs it
     // installed to build or to see this entry — only to open it.
     opts.push(sdroxide_types::Backend::Fobos);
+    // Pure Rust over the machine's own sound cards, in every build variant.
+    // Nothing to install and nothing to enumerate free — the radio is the two
+    // device names picked here.
+    opts.push(sdroxide_types::Backend::UsbAudio);
     // Case-folded so HackRF lands under H beside HPSDR rather than after
     // it, which a byte-order sort would do.
     opts.sort_by_key(|b| b.label().to_ascii_lowercase());
@@ -745,6 +749,7 @@ fn free_device_probe(backend: sdroxide_types::Backend) -> Option<sdroxide_types:
     use sdroxide_types::{Backend as B, DeviceProbe as P};
     Some(match backend {
         B::Cat => P::RadioAudio,
+        B::UsbAudio => P::RadioAudio,
         B::RtlSdr => P::RtlSdr,
         B::Rx888 => P::Rx888,
         B::AirspyHf => P::AirspyHf,
@@ -2341,6 +2346,24 @@ impl SdroxideApp {
                         io.can_probe,
                         cmds,
                     ),
+                    Backend::UsbAudio => {
+                        settings_usb_audio_tab(
+                            ui,
+                            &self
+                                .radio_audio_devices
+                                .as_ref()
+                                .map(|(i, _)| i.as_slice())
+                                .unwrap_or(&[]),
+                            &self
+                                .radio_audio_devices
+                                .as_ref()
+                                .map(|(_, o)| o.as_slice())
+                                .unwrap_or(&[]),
+                            io.radio_edit,
+                            io.apply_iface,
+                            io.can_probe,
+                        );
+                    }
                     Backend::Tci => settings_tci_tab(
                         ui,
                         io.radio_edit,

@@ -165,10 +165,17 @@ pub enum Backend {
     /// and a machine without it enumerates nothing and opening explains what
     /// to install. Appended last, for the same reason as `SmartSdr` above.
     Fobos,
+    /// A radio with no control port at all — a handheld, a walkie, a toy, a
+    /// USB dongle rig: receive comes in from one of the computer's sound
+    /// cards, transmit goes out another, and keying is the radio's own VOX
+    /// firing on the audio it hears at its mic line. Same audio machinery as a
+    /// demod-audio CAT rig, minus the serial. Appended last, for the same
+    /// reason as `SmartSdr` above.
+    UsbAudio,
 }
 
 impl Backend {
-    pub const ALL: [Backend; 22] = [
+    pub const ALL: [Backend; 23] = [
         Backend::Auto,
         Backend::Soapy,
         Backend::Cat,
@@ -191,6 +198,7 @@ impl Backend {
         Backend::Lime,
         Backend::HydraSdr,
         Backend::Fobos,
+        Backend::UsbAudio,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -216,6 +224,7 @@ impl Backend {
             Backend::Lime => "LimeSDR + LimeRFE (LimeSuite)",
             Backend::HydraSdr => "HydraSDR RFOne (USB)",
             Backend::Fobos => "RigExpert Fobos SDR (USB)",
+            Backend::UsbAudio => "USB audio radio (sound card)",
             Backend::None => "Not configured",
         }
     }
