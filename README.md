@@ -7,6 +7,25 @@ binary, as a **server that streams the same UI to a web browser** over
 WebSocket. It includes an integrated, persistent **logbook**, many digital modes like **FT8/FT4/FT2**
 built-in, and **TCI and Hamlib rigctld servers** so third-party programs like WSJT-X can use it as their radio.
 
+## This fork — the CB band
+
+As upstream wrote it, SDR Oxide is a PowerSDR/Thetis-style transceiver for the
+amateur bands. **This fork adds the 11 m citizens band** and is tuned for CB
+use: it speaks the same hashed WSJT-style exchange the community's
+[WSJT-CB](https://github.com/vash909/WSJT-CB) client uses on 27 MHz, reads
+CB-shaped callsigns, and resolves them with WSJT-CB's own CB country numbering —
+so every 11 m station decoded shows its **country flag**, exactly like the
+amateur decodes below do. The CB band is an addition, not a change: the amateur
+bands, modes, logbook and awards remain upstream's, untouched, and both run
+from the same session.
+
+The program is equally useful with **no licence at all**. For a **short-wave
+listener** it is a full receiver that decodes every WSPR beacon in HF around
+the clock, labels ~4,600 longwave and shortwave broadcast transmitters on the
+waterfall (each with its transmit schedule and site), and decodes DRM shortwave
+radio, weather fax, and the ADS-B/VDL2 aircraft overhead — and the browser
+server lets you listen from anywhere, antenna in the garden.
+
 <hr/>
 
 <img width="1496" height="933" alt="image" src="https://github.com/user-attachments/assets/9d88118c-0efe-45c5-9918-8ee2bb91b700" />
@@ -1593,4 +1612,12 @@ network counts as conveying it to them, so they have to be offered the
 Corresponding Source.** Using sdroxide on your own machine changes nothing. The
 model is confined to the `sdroxide-deepcw` crate, and the wasm web client links
 none of it.
+
+## Acknowledgements
+
+The 11 m band interoperates with, and follows the framing, callsign conventions
+and CB country numbering of,
+[WSJT-CB](https://github.com/vash909/WSJT-CB) — thanks to its developers for
+publishing them — and the amateur-side FT8/FT4/FT2 it builds on comes from the
+WSJT-X project. All of it stands on your work.
 
