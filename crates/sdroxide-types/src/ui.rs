@@ -287,6 +287,37 @@ pub enum UiTheme {
     AmberPhosphor,
     TealOrange,
     Rainbow,
+    /// The Nordic palette: polar-night navy grounds, snow-storm text, frost
+    /// cyan accents and a purple chrome. Already a dark theme — NordDark is
+    /// its near-black echo.
+    Nord,
+    /// The same accents as [`UiTheme::Nord`] on near-black grounds, so the
+    /// panels sit almost in the page behind them.
+    NordDark,
+    /// The warm Gruvbox palette: parchment text on near-black browns, blue and
+    /// aqua accents, and the iconic bright-orange chrome.
+    Gruvbox,
+    /// The Everforest palette: green-tinged deep blues, soft cream text, and
+    /// mossy accent hues.
+    Everforest,
+    /// Ethan Schoonover's Solarized dark: teal, blue and magenta accents on
+    /// the deep blue-grey base03/base02 grounds.
+    SolarizedDark,
+    /// Solarized on paper: the same accents carried down until they read as
+    /// text on the pale base3 ground.
+    Solarized,
+    /// The Dracula palette: graphite mantles, mint-bright cyan, soft magenta
+    /// chrome.
+    Dracula,
+    /// Catppuccin Mocha, the dark flavour: a deep indigo base, sky-blue and
+    /// mauve accents.
+    CatppuccinMocha,
+    /// Catppuccin Latte, the light flavour: a cream base with teal and blue
+    /// accents taken down to where they read as text on it.
+    CatppuccinLatte,
+    /// A near-monochrome light theme: white panels, graphite lines and a
+    /// single restrained blue accent — the modern development-tool look.
+    ModernMinimalist,
     /// White panels, near-black ink, dark saturated accents — the one theme
     /// that inverts the ground. The instruments (panadapter, S-meter, map,
     /// solar globe) keep their dark glass: a waterfall has no bright-ground
@@ -307,7 +338,7 @@ pub enum UiTheme {
 }
 
 impl UiTheme {
-    pub const ALL: [UiTheme; 7] = [
+    pub const ALL: [UiTheme; 17] = [
         UiTheme::Default,
         UiTheme::Light,
         UiTheme::HighContrast,
@@ -315,6 +346,16 @@ impl UiTheme {
         UiTheme::AmberPhosphor,
         UiTheme::TealOrange,
         UiTheme::Rainbow,
+        UiTheme::Nord,
+        UiTheme::NordDark,
+        UiTheme::Gruvbox,
+        UiTheme::Everforest,
+        UiTheme::SolarizedDark,
+        UiTheme::Solarized,
+        UiTheme::Dracula,
+        UiTheme::CatppuccinMocha,
+        UiTheme::CatppuccinLatte,
+        UiTheme::ModernMinimalist,
     ];
 
     pub fn label(self) -> &'static str {
@@ -326,13 +367,29 @@ impl UiTheme {
             UiTheme::AmberPhosphor => "Amber phosphor",
             UiTheme::TealOrange => "Teal / orange",
             UiTheme::Rainbow => "Rainbow",
+            UiTheme::Nord => "Nord",
+            UiTheme::NordDark => "Nord dark",
+            UiTheme::Gruvbox => "Gruvbox",
+            UiTheme::Everforest => "Everforest",
+            UiTheme::SolarizedDark => "Solarized dark",
+            UiTheme::Solarized => "Solarized",
+            UiTheme::Dracula => "Dracula",
+            UiTheme::CatppuccinMocha => "Catppuccin mocha",
+            UiTheme::CatppuccinLatte => "Catppuccin latte",
+            UiTheme::ModernMinimalist => "Modern minimalist",
         }
     }
 
     /// True where the chrome sits on a bright ground, so anything that has to
     /// pick an ink or a shade by hand knows which way round the world is.
     pub fn is_light(self) -> bool {
-        matches!(self, UiTheme::Light)
+        matches!(
+            self,
+            UiTheme::Light
+                | UiTheme::Solarized
+                | UiTheme::CatppuccinLatte
+                | UiTheme::ModernMinimalist
+        )
     }
 }
 
