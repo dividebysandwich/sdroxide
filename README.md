@@ -1,4 +1,4 @@
-# SDR Oxide
+# SDR Oxide BUT tuned for CB use!
 
 A PowerSDR/Thetis-style software-defined-radio transceiver client in Rust, with
 pluggable radio backends (**SoapySDR**, **OpenHPSDR**, **TCI**, **SmartSDR**, **Icom LAN**, **ELAD**, and **CAT**), an
