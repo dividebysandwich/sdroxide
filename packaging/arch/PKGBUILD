@@ -39,10 +39,11 @@ prepare() {
 build() {
   cd "$srcdir/$pkgname"
   export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-  # trunk usually /usr/bin when built locally. rustup + stable + the wasm32
-  # target for the web client that embed-web bakes into the binary.
-  rustup toolchain install stable --profile minimal
-  rustup target add --toolchain stable wasm32-unknown-unknown
+  # rustup from the repos + stable + the wasm32 target for the web client that
+  # embed-web bakes into the binary. `rustup default` makes plain `cargo`
+  # work for trunk and nested build scripts, not just our `cargo +stable`.
+  rustup default stable --profile minimal
+  rustup target add wasm32-unknown-unknown
   # trunk is not in the official repositories; the release workflow pre-drops a
   # pinned binary into PATH (see .github/workflows/release.yml), `cargo install`
   # is the fallback for local builds.

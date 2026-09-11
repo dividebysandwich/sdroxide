@@ -706,8 +706,8 @@ jobs:
   # exact glibc/ALSA that Arch users get from pacman.
   #
   # makepkg refuses to run as root, so the build runs as an unprivileged
-  # `builder` user via runuser; rustup and the pre-dropped trunk live in that
-  # user's home. The PKGBUILD itself (packaging/arch) clones the repo at
+  # `builder` user via runuser; rustup (toolchains land in the builder's home)
+  # and the pre-dropped trunk are available to that user. The PKGBUILD itself (packaging/arch) clones the repo at
   # `#tag=v$pkgver` and pulls the vendor/ submodules itself, so users can also
   # build it locally.
   arch:
@@ -726,7 +726,7 @@ jobs:
           pacman-key --init
           pacman-key --populate archlinux
           pacman -Syu --noconfirm --needed \
-            git curl wget cmake clang autoconf automake libtool pkgconf alsa-lib
+            git curl wget cmake clang autoconf automake libtool pkgconf alsa-lib rustup
 
       - uses: actions/checkout@v7
         with:
@@ -750,7 +750,6 @@ jobs:
           runuser -u builder -- bash -c '
             set -euo pipefail
             export PATH="/opt/trunk/bin:/home/builder/.cargo/bin:/usr/local/bin:$PATH"
-            curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
             # Keep pkgver in step with whatever tag triggered the run.
             sed -i "s/^pkgver=.*/pkgver=${GITHUB_REF_NAME#v}/" "$GITHUB_WORKSPACE/packaging/arch/PKGBUILD"
             cd "$GITHUB_WORKSPACE/packaging/arch"
