@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use crate::cb_country;
 use crate::entity_flags::flag_for_prefix;
 
 /// The embedded country file. Attribution: cty.dat by Jim Reisert AD1C,
@@ -60,6 +61,9 @@ struct Cty {
     /// Primary prefix and flag code per entity — parallel to `entities`.
     prefixes: Vec<&'static str>,
     flags: Vec<&'static str>,
+    /// ITU zone per entity — parallel to `entities`; `EntityPlace` carries the
+    /// CQ zone but not this, and CB resolution needs both.
+    itus: Vec<u8>,
     /// The same entities, placed — parallel to `entities`.
     places: Vec<EntityPlace>,
     /// Prefixes bucketed by first byte, each bucket sorted longest-first.
@@ -77,6 +81,7 @@ fn parse() -> Cty {
     let mut entities: Vec<&'static str> = Vec::new();
     let mut prefixes: Vec<&'static str> = Vec::new();
     let mut flags: Vec<&'static str> = Vec::new();
+    let mut itus: Vec<u8> = Vec::new();
     let mut places: Vec<EntityPlace> = Vec::new();
     let mut by_first: HashMap<u8, Vec<Pfx>> = HashMap::new();
     let mut exact: HashMap<&'static str, Pfx> = HashMap::new();
@@ -112,6 +117,7 @@ fn parse() -> Cty {
         entities.push(name);
         prefixes.push(primary);
         flags.push(flag);
+        itus.push(itu);
         places.push(EntityPlace { name, lat, lon, cq_zone: cq, continent: cont, flag });
         // Parse the comma-separated prefix list from the continuation lines
         // in place (each token borrows the 'static file) until one ends ';'.
@@ -155,7 +161,7 @@ fn parse() -> Cty {
     for v in by_first.values_mut() {
         v.sort_by(|a, b| b.key.len().cmp(&a.key.len()));
     }
-    Cty { entities, prefixes, flags, places, by_first, exact }
+    Cty { entities, prefixes, flags, itus, places, by_first, exact }
 }
 
 /// Every DXCC entity in the country file, placed. The list a "what have I not
@@ -214,6 +220,13 @@ impl Cty {
         let bucket = self.by_first.get(&first)?;
         bucket.iter().find(|p| key.starts_with(p.key))
     }
+
+    /// The entity whose primary prefix is exactly `primary` — cty.dat's stable
+    /// handle for an entity, used to share its flag and position with a CB
+    /// country that flies the same one.
+    fn by_primary(&self, primary: &str) -> Option<usize> {
+        self.prefixes.iter().position(|p| *p == primary)
+    }
 }
 
 /// The country file entry a callsign resolves to, or `None`.
@@ -241,8 +254,14 @@ fn lookup(call: &str) -> Option<&'static Pfx> {
 
 /// Resolve the DXCC entity + zones for a callsign. Handles `/` portable calls
 /// heuristically (the shorter added part is treated as the location prefix).
+///
+/// An 11 m CB callsign resigns the quiet way: its leading digits name a
+/// country in WSJT-CB's own CB numbering, resolved *before* the amateur
+/// table is consulted so nothing CB-shaped is ever mistaken for an amateur
+/// prefix (`1A1` is Italy on the CB band, not the Sovereign Military Order
+/// of Malta's 1A).
 pub fn resolve_callsign(call: &str) -> Option<EntityInfo> {
-    lookup(call).map(|p| cty().info(p))
+    cb_callsign_info(call).map(|c| c.info).or_else(|| lookup(call).map(|p| cty().info(p)))
 }
 
 /// Place a callsign on the planet: its entity's nominal centre.
@@ -254,8 +273,47 @@ pub fn resolve_callsign(call: &str) -> Option<EntityInfo> {
 /// States it can be two thousand kilometres out. Callers that place paths from
 /// this must say so rather than let it pass as a measurement.
 pub fn resolve_place(call: &str) -> Option<EntityPlace> {
+    if let Some(c) = cb_callsign_info(call) {
+        return Some(EntityPlace {
+            name: c.info.name,
+            lat: c.lat,
+            lon: c.lon,
+            cq_zone: c.info.cq_zone,
+            continent: c.info.continent,
+            flag: c.info.flag,
+        });
+    }
     let p = lookup(call)?;
     cty().places.get(p.ent).copied()
+}
+
+/// `CbCell` carries what a CB country resolution knows: an [`EntityInfo`] whose
+/// flag and continent come from the DXCC entity that flies the same flag, and
+/// that entity's nominal centre for placing it.
+struct CbCell {
+    info: EntityInfo,
+    lat: f64,
+    lon: f64,
+}
+
+/// The entity a CB callsign's country number resolves to. `None` either when
+/// the call is not CB-shaped or when its country number is not in WSJT-CB's
+/// list.
+fn cb_callsign_info(call: &str) -> Option<CbCell> {
+    let code = cb_country::cb_country_number(call)? as u16;
+    let (name, pfx) = cb_country::name_prefix(code)?;
+    let cty = cty();
+    let (flag, continent, cq, itu, lat, lon) = if let Some(ent) = cty.by_primary(pfx) {
+        let place = cty.places[ent];
+        (cty.flags[ent], place.continent, place.cq_zone, cty.itus[ent], place.lat, place.lon)
+    } else {
+        cb_country::fallback_cell(pfx).map(|(f, c)| (f, c, 0, 0, 0.0, 0.0))?
+    };
+    Some(CbCell {
+        info: EntityInfo { name, cq_zone: cq, itu_zone: itu, continent, primary_prefix: pfx, flag },
+        lat,
+        lon,
+    })
 }
 
 /// Resolve a token meant to *be* a prefix rather than to be a callsign: an
@@ -389,5 +447,113 @@ mod tests {
         let de = resolve_callsign("DL1ABC").unwrap();
         assert_eq!(de.cq_zone, 14);
         assert_eq!(de.continent, "EU");
+    }
+
+    #[test]
+    fn cb_country_numbers() {
+        assert_eq!(cb_country::cb_country_number("26AT715"), Some(26));
+        assert_eq!(cb_country::cb_country_number("1AT1000"), Some(1));
+        assert_eq!(cb_country::cb_country_number("15DC123"), Some(15));
+        assert_eq!(cb_country::cb_country_number("9ZZ12"), Some(9));
+        assert_eq!(cb_country::cb_country_number("999ZZ/ZZ"), Some(999));
+        assert_eq!(cb_country::cb_country_number("26ZZ/MM"), Some(26));
+        assert_eq!(cb_country::cb_country_number("2ZZ1234"), Some(2));
+        // A 4-digit suffix needs a single-digit prefix.
+        assert_eq!(cb_country::cb_country_number("26ZZ1234"), None);
+        // Base-only and amateur shapes are not CB callsigns.
+        assert_eq!(cb_country::cb_country_number("26AT"), None);
+        assert_eq!(cb_country::cb_country_number("9M0SDX"), None);
+        assert_eq!(cb_country::cb_country_number("IT9ABC"), None);
+        assert_eq!(cb_country::cb_country_number("1A0KM"), None);
+        assert_eq!(cb_country::cb_country_number(""), None);
+    }
+
+    #[test]
+    fn cb_entities() {
+        let eng = resolve_callsign("26AT715").expect("England on CB");
+        assert_eq!(eng.name, "England");
+        assert_eq!(eng.flag, "GB-ENG");
+        assert_eq!(eng.continent, "EU");
+        let it = resolve_callsign("1AT1000").expect("Italy on CB");
+        assert_eq!(it.name, "Italy");
+        assert_eq!(it.flag, "IT");
+        let ch = resolve_callsign("15DC123").expect("Switzerland on CB");
+        assert_eq!(ch.name, "Switzerland");
+        assert_eq!(ch.flag, "CH");
+        assert_eq!(ch.cq_zone, 14);
+        let us = resolve_callsign("2AA243").expect("U.S.A. on CB");
+        assert_eq!(us.name, "U.S.A.");
+        assert_eq!(us.flag, "US");
+        let smom = resolve_callsign("318ZZ1").expect("SMOM on CB");
+        assert_eq!(smom.name, "Survey Military Of Malta");
+        assert_eq!(smom.primary_prefix, "1A");
+        // A CB shape with no country number falls through to the amateur table
+        // untouched; amateur calls never get grabbed by the CB path either.
+        assert_eq!(resolve_callsign("9M0SDX").unwrap().name, "Spratly Islands");
+        assert_eq!(resolve_callsign("1A0KM").unwrap().name, "Sov Mil Order of Malta");
+        assert_eq!(resolve_callsign("IT9ABC").unwrap().flag, "IT");
+        // And the placed form carries England's own position.
+        let place = resolve_place("26AT715").expect("England place");
+        assert_eq!(place.name, "England");
+        assert!((-10.0..10.0).contains(&place.lon), "England at {}", place.lon);
+    }
+
+    /// Every entry of the CB list is a real, resolvable country. Mostly it is
+    /// a §-guard: a typo'd DXCC prefix silently shows the *wrong* flag, and
+    /// only walking the whole table can catch that. Two rows are flagless on
+    /// purpose — the Sovereign Military Order of Malta and Spratly Islands,
+    /// which the country file also leaves flagless.
+    #[test]
+    fn every_cb_country_resolves() {
+        let mut missing: Vec<(u16, String, String)> = vec![];
+        let mut wrong_name: Vec<(String, String, String)> = vec![];
+        let mut flagless: Vec<(&str, &str)> = vec![];
+        let mut contless: Vec<(&str, &str)> = vec![];
+        let mut count = 0;
+        for row in crate::cb_country::CB {
+            let (code, name, pfx) = *row;
+            let lead = format!("{code:03}").trim_start_matches('0').to_string();
+            let call = match lead.len() {
+                1 => format!("{lead}ZZ1000"),
+                2 => format!("{lead}ZZ100"),
+                _ => format!("{lead}ZZ1"),
+            };
+            let Some(info) = resolve_callsign(&call) else {
+                missing.push((code, name.to_string(), pfx.to_string()));
+                continue;
+            };
+            count += 1;
+            if info.name != name {
+                wrong_name.push((name.to_string(), info.name.to_string(), pfx.to_string()));
+            }
+            if info.primary_prefix != pfx {
+                wrong_name.push((
+                    name.to_string(),
+                    info.primary_prefix.to_string(),
+                    pfx.to_string(),
+                ));
+            }
+            if info.flag.is_empty() {
+                flagless.push((name, pfx));
+            }
+            if info.continent.is_empty() {
+                contless.push((name, pfx));
+            }
+        }
+        eprintln!("CB entries resolving: {count}/{}", crate::cb_country::CB.len());
+        eprintln!("unresolved: {missing:?}");
+        eprintln!("name/prefix mismatches: {wrong_name:?}");
+        eprintln!("flagless: {flagless:?}");
+        eprintln!("continent-less: {contless:?}");
+        assert!(missing.is_empty(), "CB rows that never resolve: {missing:?}");
+        assert!(wrong_name.is_empty(), "wrong name/prefix: {wrong_name:?}");
+        // These rows are flagless on purpose — the Sovereign Military
+        // Order of Malta, Spratly Islands and Scarborough Reef, which the
+        // country file itself leaves flagless.
+        assert!(
+            flagless.iter().all(|(_, p)| *p == "1A" || *p == "1S" || *p == "BS7"),
+            "unexpected flagless: {flagless:?}"
+        );
+        assert!(contless.is_empty(), "no continent: {contless:?}");
     }
 }
