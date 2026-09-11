@@ -700,9 +700,72 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+  # Arch Linux package. Built inside an `archlinux:base-devel` container on
+  # tags only, so what lands in the release is a normal `pacman -U`-installable
+  # package rather than the portable tarball, and the binary links against the
+  # exact glibc/ALSA that Arch users get from pacman.
+  #
+  # makepkg refuses to run as root, so the build runs as an unprivileged
+  # `builder` user via runuser; rustup and the pre-dropped trunk live in that
+  # user's home. The PKGBUILD itself (packaging/arch) clones the repo at
+  # `#tag=v$pkgver` and pulls the vendor/ submodules itself, so users can also
+  # build it locally.
+  arch:
+    name: arch (x86_64)
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      # The image has no sudo and GH runs us as root. Packages MUST go in
+      # before checkout: without git in the container, actions/checkout
+      # silently falls back to the REST API download, which cannot fetch the
+      # vendor/ submodules.
+      - name: Install build environment (Arch container)
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm --needed \
+            git curl wget cmake clang autoconf automake libtool pkgconf alsa-lib
+
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # Pre-built trunk binary (same pin as the rest of the workflow) so the
+      # container build never compiles it; the PKGBUILD's build() falls back to
+      # `cargo install` when trunk is missing, which is what keeps it
+      # self-contained for Arch users who build the package themselves.
+      - name: Install trunk
+        run: |
+          mkdir -p /opt/trunk/bin
+          curl -sSfL https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xzf - -C /opt/trunk/bin
+          chmod +x /opt/trunk/bin/trunk
+
+      - name: Build Arch package
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- bash -c '
+            set -euo pipefail
+            export PATH="/opt/trunk/bin:/home/builder/.cargo/bin:/usr/local/bin:$PATH"
+            curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            # Keep pkgver in step with whatever tag triggered the run.
+            sed -i "s/^pkgver=.*/pkgver=${GITHUB_REF_NAME#v}/" "$GITHUB_WORKSPACE/packaging/arch/PKGBUILD"
+            cd "$GITHUB_WORKSPACE/packaging/arch"
+            makepkg -f -c --noconfirm
+          '
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pkg-arch-x86_64
+          path: packaging/arch/*.pkg.tar.zst
+          if-no-files-found: error
+
   release:
     name: create release
-    needs: [web, build]
+    needs: [web, build, arch]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
@@ -778,6 +841,22 @@ jobs:
           - **It needs FUSE to mount itself**, which every desktop distribution
             has (`fuse3`). Where it is missing —  a minimal container, say — run
             it as `APPIMAGE_EXTRACT_AND_RUN=1 ./sdroxide-….AppImage` instead.
+
+          ### Arch Linux
+
+          `sdroxide-<version>-1-x86_64.pkg.tar.zst` is a normal Arch Linux
+          package (the **Standard** build — no SoapySDR). It is built inside an
+          Arch container, so it links against the exact glibc/ALSA Arch users
+          have. Its only declared runtime requirement is `alsa-lib`, and it
+          installs the udev rules, menu entry, icons and the speech voice for
+          you:
+
+          ```
+          sudo pacman -U sdroxide-<version>-1-x86_64.pkg.tar.zst
+          ```
+
+          The PKGBUILD it is built from lives in the repo at
+          `packaging/arch/`, if you would rather build it yourself.
 
           ### Requirements (SoapySDR builds)
 
