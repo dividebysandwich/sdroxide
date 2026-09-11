@@ -57,14 +57,16 @@ pub enum Band {
     /// 10 GHz unit *inside* it, so its 3 cm is the radio's own band and not an
     /// entry in the transverter table (issue #326).
     Cm3,
-    /// 11 m — the citizens' band, 26.965–27.405, and **not an amateur
+    /// 11 m — the citizens' band, 26.965–27.860, and **not an amateur
     /// allocation** (issue #396).
     ///
     /// The one band here that is not ours. It is on the bar because it is a
     /// band people work: a busy one in Europe, with its own digimode
     /// conventions on the ordinary 40-channel grid — FT8 on channel 26, JS8 on
     /// 25, SSTV on 23 and 37, packet on 24 and 36 — and a receiver that could
-    /// not be pointed at it by name was simply worse at its job.
+    /// not be pointed at it by name was simply worse at its job. The edges
+    /// extend above the 40-channel grid (27.405) to include 27.700 MHz, the
+    /// most-used 11 m SSTV calling frequency.
     ///
     /// What does *not* follow is a transmit permission. Every other band in
     /// this list is one an amateur licence grants; this one is a separate
@@ -307,17 +309,19 @@ impl Band {
             Band::M17 => Some((18_068_000.0, 18_168_000.0)),
             Band::M15 => Some((21_000_000.0, 21_450_000.0)),
             Band::M12 => Some((24_890_000.0, 24_990_000.0)),
-            // 11 m: the 40-channel citizens' band, 26.965–27.405. Not an IARU
-            // allocation at all — see [`Band::M11`] — but the same 40 channels
-            // in all three regions, because CEPT, the FCC and the ACMA all
-            // grant that grid.
+            // 11 m: the 40-channel citizens' band plus the adjacent freeband
+            // where 11 m SSTV lives (27.700 MHz). Not an IARU allocation at
+            // all — see [`Band::M11`] — but the channels and the SSTV
+            // convention above them are what this fork is for.
             //
-            // The wider claims are deliberately absent. Above 27.405 is the
-            // "freeband", which no administration grants to anybody; the UK's
-            // second block at 27.60125–27.99125 is a national arrangement and
-            // belongs in that operator's own `bandplan.json`, which is what
-            // the file is for.
-            Band::M11 => Some((26_965_000.0, 27_405_000.0)),
+            // The upper edge (27.860) is above the 40-channel grid (27.405)
+            // deliberately: 27.700 is the most-used 11 m SSTV frequency and
+            // must be inside the band for the propagation map and the
+            // frequency picker to treat it as 11 m rather than general
+            // coverage. The UK's second block (27.60125–27.99125) also sits
+            // here, which an operator with that licence can use without a
+            // hand-edited `bandplan.json`.
+            Band::M11 => Some((26_965_000.0, 27_860_000.0)),
             Band::M10 => Some((28_000_000.0, 29_700_000.0)),
             Band::M6 => by_region(
                 (50_000_000.0, 52_000_000.0),
@@ -484,8 +488,8 @@ mod tests {
         for r in Region::ALL {
             assert_eq!(
                 Band::M11.edges_in(r),
-                Some((26_965_000.0, 27_405_000.0)),
-                "11 m in {r:?} is not the 40-channel allocation"
+                Some((26_965_000.0, 27_860_000.0)),
+                "11 m in {r:?} is not the expected allocation"
             );
             assert_eq!(Band::M11.label_in(r), "11M");
         }

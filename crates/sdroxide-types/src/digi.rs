@@ -2193,7 +2193,8 @@ pub fn adif_band(freq_hz: f64) -> &'static str {
         // An empty BAND is what a log for a contact there honestly holds —
         // better than filing it under 10m, which is what the coarse `< 29.8`
         // below used to do to every frequency in this gap (issue #396).
-        m if m < 27.5 => "",
+        // Extends to 28.0 to cover the freeband SSTV area (up to 27.860).
+        m if m < 28.0 => "",
         m if m < 29.8 => "10m",
         m if m < 54.1 => "6m",
         m if m < 70.6 => "4m",
