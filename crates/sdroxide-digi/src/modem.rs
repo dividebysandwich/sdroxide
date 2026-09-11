@@ -416,6 +416,26 @@ fn pack_message(text: &str) -> Option<([u8; 77], String)> {
         return Some((m, sent));
     }
 
+    // 3c. WSJT-CB's one-call messages (issue #396): a bare station call
+    //     ("26AT715") or that call with a report or sign-off token
+    //     ("26AT715 -07", "26AT715 R-07", "26AT715 RR73", "26AT715 73").
+    //     The rungs below would read the status word as a second callsign —
+    //     "73" and "RR73" even pass WSJT-X's own shape rules — and hash it,
+    //     which is not the message anyone on the band sent. Free text carries
+    //     the whole line, and that is how WSJT-CB reads it back. A genuine
+    //     *pair* in the same two tokens ("26AT715 25TT304") is not this shape
+    //     and stays on the two-hash ladder above.
+    if !c1.is_empty()
+        && wsjt77::is_cb_callsign(c1)
+        && matches!(toks.len(), 1 | 2)
+        && (toks.len() == 1 || is_cb_payload_tok(c2))
+    {
+        let free: String = text.chars().take(13).collect();
+        if let Some(m) = wsjt77::pack77_free_text(free.trim_end()) {
+            return Some((m, free.trim_end().to_string()));
+        }
+    }
+
     // 4. One compound / non-standard callsign, the other one hashed. Only a
     //    bare RRR / RR73 / 73 fits alongside it — a grid or report is lost, so
     //    the returned text says so.
@@ -819,6 +839,17 @@ fn same_signal(a: &Decode, b: &Decode) -> bool {
 /// Join up to three message tokens, dropping the empty ones.
 fn join3(a: &str, b: &str, c: &str) -> String {
     [a, b, c].iter().filter(|t| !t.is_empty()).copied().collect::<Vec<_>>().join(" ")
+}
+
+/// Whether a message token is a WSJT-CB report or sign-off rather than a
+/// callsign: `RRR` / `RR73` / `73`, or a signed report like `-07`, `+05`,
+/// `R-07`, `R+05`. The very names are callsign-shaped to WSJT-X's validator —
+/// the reason [`pack_message`] has to look at the lones at all.
+fn is_cb_payload_tok(t: &str) -> bool {
+    matches!(t, "RRR" | "RR73" | "73")
+        || (t.starts_with("R-") || t.starts_with("R+") || t.starts_with('-') || t.starts_with('+'))
+            && t.len() >= 2
+            && t[1..].parse::<i16>().is_ok()
 }
 
 /// Unpack 77 message bits and build a [`Decode`], or `None` if unpacking fails.
@@ -1466,6 +1497,22 @@ mod tests {
         // caller is told what actually went out.
         let (_, sent) = pack_message("THANKS FOR THE CONTACT").expect("packs");
         assert_eq!(sent, "THANKS FOR TH");
+    }
+
+    #[test]
+    fn a_cb_single_call_sequence_goes_out_as_free_text() {
+        // WSJT-CB works a CB-CB contact one call at a time (issue #396): a
+        // bare identity call, then a named report / R+report / RR73 / 73. A
+        // message carrying two long CB calls would have to hash both — the
+        // layout cannot spell either — which WSJT-CB finds unreliable, so
+        // ours never pairs them. All five fit the thirteen characters of free
+        // text, and that is how WSJT-CB sends and reads them on the air.
+        for text in ["25TT304", "26AT715 -10", "26AT715 R-10", "26AT715 RR73", "26AT715 73"] {
+            let (bits, sent) = pack_message(text).expect("packs");
+            assert_eq!(sent, text);
+            assert_eq!(msg_kind(&bits), MsgKind::FreeText, "{text}");
+            assert_eq!(wsjt77::unpack77(&bits).as_deref(), Some(text));
+        }
     }
 
     #[test]
