@@ -484,7 +484,9 @@ const NTOKENS: u32 = 2_063_592;
 /// The everyday layout with one (or both) callsign(s) carried as their 22-bit
 /// hash rather than spelled out — the only way FT8 can send a report to a
 /// station whose callsign the 28-bit field cannot hold (issue #348), and the
-/// way WSJT-CB opens, reports and closes on 11 m (issue #396).
+/// way WSJT-CB's *addressed pairs* travel on 11 m: a station already worked
+/// this session, or whose bare-call identity was heard clearly, is named by
+/// hash where the two-hash one-call sequence above does not fit (issue #396).
 ///
 /// **Single hash (the historical path):** one callsign travels as
 /// `NTOKENS + hash22`, the other spelled out. The non-standard layout
