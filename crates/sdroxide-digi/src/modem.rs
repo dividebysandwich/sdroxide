@@ -1502,13 +1502,13 @@ mod tests {
     }
 
     #[test]
-    fn a_cb_single_call_sequence_goes_out_as_free_text() {
-        // WSJT-CB works a CB-CB contact one call at a time (issue #396): a
-        // bare identity call, then a named report / R+report / RR73 / 73. A
-        // message carrying two long CB calls would have to hash both — the
-        // layout cannot spell either — which WSJT-CB finds unreliable, so
-        // ours never pairs them. All five fit the thirteen characters of free
-        // text, and that is how WSJT-CB sends and reads them on the air.
+    fn a_cb_one_call_messages_go_out_as_free_text() {
+        // WSJT-CB's report and sign-off messages name only the DX: a single
+        // call plus a payload, short enough for the thirteen characters of
+        // free text — and that is how WSJT-CB sends and reads them on the air
+        // (issue #396). The *opener* is a two-call pair and travels hashed
+        // instead (see a_cb_pair_packs_as_two_hashes_including_the_status_payloads);
+        // a lone bare call is still a legal free-text identity.
         for text in ["25TT304", "26AT715 -10", "26AT715 R-10", "26AT715 RR73", "26AT715 73"] {
             let (bits, sent) = pack_message(text).expect("packs");
             assert_eq!(sent, text);

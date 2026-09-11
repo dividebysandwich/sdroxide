@@ -693,7 +693,9 @@ impl QsoMachine {
                 // not count against the ones we are about to make.
                 self.progress();
                 self.progress_utc = now_utc;
-                self.step = QsoStep::TxGrid;
+                // Answerer already named itself; as the caller we now reply
+                // with the one-call report WSJT-CB sends at tx2.
+                self.step = QsoStep::TxReport;
                 changed = true;
                 continue;
             }
@@ -1141,18 +1143,18 @@ impl QsoMachine {
             return self.plan_eu_vhf(dx_call, &mg, rpt_sent);
         }
         let fill = |tmpl: &str, rpt: Option<i16>| DigiConfig::fill(tmpl, mc, &mg, dx_call, rpt);
-        // On 11 m the exchange goes out one call at a time (WSJT-CB's message
-        // sequence: MYCALL, then HISCALL +/-NN, HISCALL R+/-NN, HISCALL RR73,
-        // HISCALL 73). A message carrying two long CB calls would have to hash
-        // both of them, and WSJT-CB finds that pattern unreliable — so ours
-        // never names the DX and us together. The identity slot is a bare call,
-        // and a report or sign-off names the DX alone; all of it fits the
-        // thirteen characters of free text, which is exactly how WSJT-CB also
-        // sends and reads those messages on the air (issue #396).
+        // On 11 m the exchange follows WSJT-CB's message sequence (issue
+        // #396). The *identity* slot — the message that answers a CQ — is the
+        // pair "HISCALL MYCALL" (WSJT-CB's tx1): two long CB calls can only
+        // travel as a pair of hashes, and that is exactly what tells the DX
+        // who answered and who is being answered. Only once the DX is on line
+        // do reports and sign-offs go out one call at a time as free text —
+        // HISCALL +/-NN, HISCALL R+/-NN, HISCALL RR73, HISCALL 73 — the form
+        // WSJT-CB itself sends and a lone call never would.
         if self.cb {
             return match self.step {
                 QsoStep::CallingCq => Some(fill(&self.cfg.msg_cq, None)),
-                QsoStep::TxGrid => Some(fill("{MYCALL}", None)),
+                QsoStep::TxGrid => Some(fill("{DX} {MYCALL}", None)),
                 QsoStep::TxReport => Some(fill("{DX} {REPORT}", rpt_sent)),
                 QsoStep::TxRReport => Some(fill("{DX} R{REPORT}", rpt_sent)),
                 QsoStep::TxRr73 => Some(fill("{DX} RR73", None)),
@@ -2504,8 +2506,10 @@ mod tests {
         q.set_cb(true);
         q.start_qso("26AT715".into(), None, -10, false, 100);
         assert_eq!(q.step(), QsoStep::TxGrid);
-        // Opener first (a bare call — WSJT-CB's identity slot, not a pair).
-        assert_eq!(q.plan_tx().as_deref(), Some("25TT304"));
+        // The opener answers the CQ with both calls on the wire — WSJT-CB's
+        // tx1 "HISCALL MYCALL", a pair that travels hashed so the DX knows who
+        // answered (issue #396).
+        assert_eq!(q.plan_tx().as_deref(), Some("26AT715 25TT304"));
 
         // Their report as WSJT-CB writes it: our call, then the payload.
         q.note_tx_sent(115);
@@ -2530,7 +2534,8 @@ mod tests {
     /// WSJT-CB answers our CQ with a bare "26AT715" — free text, no CQ word,
     /// no addressee — there to be a *clear* decode that seeds every listener's
     /// hash table. With no contact in hand, that is the answer to our CQ, and
-    /// it must open the exchange (issue #396).
+    /// it must open the exchange (issue #396); as the caller we reply with the
+    /// one-call report WSJT-CB sends at tx2.
     #[test]
     fn a_cb_bare_call_answers_our_cq() {
         let mut q = QsoMachine::new(Mode::Ft8, cb_cfg());
@@ -2540,8 +2545,8 @@ mod tests {
 
         // Their identity message arrives as free text with no addressing.
         assert!(q.on_rx(&[cb_decode("26AT715")], 115));
-        assert_eq!(q.step(), QsoStep::TxGrid);
-        assert_eq!(q.plan_tx().as_deref(), Some("25TT304"));
+        assert_eq!(q.step(), QsoStep::TxReport);
+        assert_eq!(q.plan_tx().as_deref(), Some("26AT715 -10"));
 
         // Their report, written the WSJT-CB way, now has a contact to advance.
         q.note_tx_sent(130);
@@ -2562,7 +2567,8 @@ mod tests {
 
         assert!(q.on_rx(&[decode("25TT304 26AT715")], 115));
         assert_eq!(q.step(), QsoStep::TxGrid);
-        assert_eq!(q.plan_tx().as_deref(), Some("25TT304"));
+        // The pair is the answer: our call meets theirs on the wire.
+        assert_eq!(q.plan_tx().as_deref(), Some("26AT715 25TT304"));
     }
 
     /// Off the 11 m band, CB-shaped free text must not be read as addressed to
