@@ -408,6 +408,28 @@ fn pack_message(text: &str) -> Option<([u8; 77], String)> {
         }
     }
 
+    // 3a. The 11 m identity opener — WSJT-CB's tx1, "<DX> MYCALL": the DX
+    //     named by an explicit hash, *our* call spelled out in the clear
+    //     (issue #396). Neither call fits a 28-bit field, so Type 4 carries
+    //     them — the DX in its 12-bit hash field, ours in the 58-bit base-38
+    //     field — which is exactly the message WSJT-CB transmits, so the DX
+    //     learns who is answering even without holding our call yet. `iflip`
+    //     is forced to 0 (hash first): the packer would otherwise flip it for
+    //     a non-standard "standard" call, and the field order must match WSJT-CB.
+    let dx = eu_vhf::bare(c1);
+    if toks.len() == 2
+        && c1.starts_with('<')
+        && c1.ends_with('>')
+        && dx != c2
+        && wsjt77::is_cb_callsign(dx)
+        && wsjt77::is_cb_callsign(c2)
+    {
+        if let Some(mut m) = wsjt77::pack77_type4(c2, dx, "", false) {
+            m[70] = 0; // iflip=0: the DX's hash reads first, "<DX> MYCALL"
+            return Some((m, format!("<{dx}> {c2}")));
+        }
+    }
+
     // 3b. One compound / non-standard callsign addressed with a grid or a
     //     signal report — neither of which the layout below has anywhere to
     //     put. The standard layout does, so long as that callsign travels as
@@ -1651,6 +1673,35 @@ mod tests {
             let out = wsjt77::unpack77_with_hash(&bits, &ht).expect("unpacks");
             assert_eq!(out, resolved);
         }
+    }
+
+    /// The 11 m identity opener — WSJT-CB's tx1 — is the one message where
+    /// our call leaves the *spelled* side of the pair: `<26AT715> 25TT304`.
+    /// Type 4 hashes the DX into its 12-bit field and spells ours in the
+    /// 58-bit base-38 field, and the hash reads first (`iflip=0`), exactly the
+    /// 77 bits WSJT-CB itself transmits (verified against its `pack77`). The
+    /// un-bracketed, both-hashed pair is the addressed form, and lives above.
+    #[test]
+    fn a_cb_opener_is_hash_then_spelled_out() {
+        use mfsk_core::msg::hash_table::CallsignHashTable;
+        let (bits, sent) = pack_message("<26AT715> 25TT304").expect("packs");
+        assert_eq!(sent, "<26AT715> 25TT304");
+        assert_eq!(msg_kind(&bits), MsgKind::NonStandard);
+        // The exact WSJT-CB reference encoding for these two calls.
+        assert_eq!(
+            bits.iter().map(|b| if *b == 1 { '1' } else { '0' }).collect::<String>(),
+            "01100101001100000000000000000000000010001110101000111110100001111010110000100"
+        );
+        // Unresolved, the DX reads as a hash; the 12-bit hash is what a WSJT-CB
+        // receiver matches against its *own* call to resolve, while mfsk-core's
+        // table-based unpack keeps it bracketed. Either way our call arrives
+        // spelled out — that is the whole point of the form.
+        assert_eq!(wsjt77::unpack77(&bits).as_deref(), Some("<...> 25TT304"));
+        let mut ht = CallsignHashTable::new();
+        for call in ["26AT715", "25TT304"] {
+            ht.insert(call);
+        }
+        assert_eq!(wsjt77::unpack77_with_hash(&bits, &ht).as_deref(), Some("<26AT715> 25TT304"));
     }
 
     /// A CB call in an otherwise standard pair hashes alone, exactly like any
