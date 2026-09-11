@@ -13,8 +13,8 @@ use std::time::SystemTime;
 
 use sdroxide_dsp::MonoResampler;
 use sdroxide_types::{
-    Decode, DigiConfig, DigiStatus, Mode, QsoRecord, RifpMeta, RifpStatus, SstvMode, SstvStatus,
-    adif_band,
+    Band, Decode, DigiConfig, DigiStatus, Mode, QsoRecord, RifpMeta, RifpStatus, SstvMode,
+    SstvStatus, adif_band,
 };
 
 use crate::clock::ClockMonitor;
@@ -762,6 +762,11 @@ impl DigiController {
     /// machine, and (D3) schedules TX. Returns actions for the engine.
     pub fn poll(&mut self, now: SystemTime, dial_hz: f64) -> Vec<DigiAction> {
         self.dial_hz = dial_hz;
+        // 11 m (issue #396) switches the exchange to WSJT-CB conventions: no
+        // grid, both calls hashed, free-text reports. `Band::containing` rather
+        // than `adif_band`: ADIF has no 11 m enumeration and says `""`, while
+        // the band the operator is actually tuned to is the thing that decides.
+        self.qso.set_cb(Band::containing(self.dial_hz) == Band::M11);
         let mut actions = Vec::new();
 
         // 0. Advance QSO timeouts (WaitCq give-up, Confirming retire).

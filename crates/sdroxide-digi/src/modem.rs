@@ -461,36 +461,38 @@ fn pack_message(text: &str) -> Option<([u8; 77], String)> {
 /// *reads* the hash range — `pack28` has no arm that writes one.
 const NTOKENS: u32 = 2_063_592;
 
-/// The everyday layout with one callsign carried as its 22-bit hash rather
-/// than spelled out, which is the only way FT8 can send a report or a grid to
-/// a station whose callsign the 28-bit field cannot hold (issue #348).
+/// The everyday layout with one (or both) callsign(s) carried as their 22-bit
+/// hash rather than spelled out — the only way FT8 can send a report to a
+/// station whose callsign the 28-bit field cannot hold (issue #348), and the
+/// way WSJT-CB opens, reports and closes on 11 m (issue #396).
 ///
-/// The non-standard layout (`i3 = 4`, [`wsjt77::pack77_type4`]) spells such a
-/// callsign out in full, but it spends 58 of its 77 bits doing so and has room
-/// left for nothing but a bare `RRR` / `RR73` / `73`. So a reply to
-/// `R7KJG/QRP` that should have carried `R-12` went out as an acknowledgement
-/// with no report in it at all, and the contact stalled there. The way through
-/// is the one WSJT-X takes, and the reason the hash range exists: send
-/// `<R7KJG/QRP> F4CYH R-12` as an ordinary `i3 = 1` message whose first
+/// **Single hash (the historical path):** one callsign travels as
+/// `NTOKENS + hash22`, the other spelled out. The non-standard layout
+/// (`i3 = 4`, [`wsjt77::pack77_type4`]) spells such a callsign out in full, but
+/// it spends 58 of its 77 bits doing so and has room left for nothing but a
+/// bare `RRR` / `RR73` / `73`. So a reply to `R7KJG/QRP` that should have
+/// carried `R-12` went out as an acknowledgement with no report in it at all,
+/// and the contact stalled there. The way through is the one WSJT-X takes:
+/// send `<R7KJG/QRP> F4CYH R-12` as an ordinary `i3 = 1` message whose first
 /// callsign field holds `NTOKENS + hash22`. Both ends resolve it — the far end
 /// because the hash is of its own callsign, and this one because the contact
 /// opened with a message that spelled the callsign out.
 ///
+/// **Both hashed (CB pair, 11 m):** neither callsign fits a 28-bit field
+/// at all — both are nonstandard — so the only `i3 = 1` form the layout can
+/// carry is a grid-less pair of hashes. The status payloads (`""` / `RRR` /
+/// `RR73` / `73`) ride too: on 11 m there is no third amateur station
+/// listening for a spelled form to seed the hash table.
+///
 /// `None` for anything that layout should not carry, leaving the ladder in
 /// [`pack_message`] to go on to the next rung:
 ///
-/// * A bare `RRR` / `RR73` / `73`, and an empty payload. Those fit the
-///   non-standard layout whole, and spelling the callsign out is worth more
-///   than the hash saves — it is what lets a third station resolve the hashes
-///   in everything around it.
-/// * Both callsigns non-standard, or neither. Hashing both would leave a
-///   message that only a station which had already heard *both* spell
-///   themselves out could read, and the everyday packer already handles
-///   neither.
+/// * Both callsigns standard (handled earlier by rung 3).
+/// * A single hash with an empty payload or a bare `RRR` / `RR73` / `73`:
+///   those fit the non-standard layout whole, and spelling the callsign out is
+///   worth more than the hash saves — it is what lets a third station resolve
+///   the hashes in everything around it.
 fn pack77_hashed(c1: &str, c2: &str, payload: &str) -> Option<([u8; 77], String)> {
-    if payload.is_empty() || matches!(payload, "RRR" | "RR73" | "73") {
-        return None;
-    }
     // A callsign the operator wrote in brackets is one they are asking to have
     // hashed; one that will not fit the 28-bit field has to be, brackets or no.
     let (b1, b2) = (eu_vhf::bare(c1), eu_vhf::bare(c2));
@@ -500,7 +502,42 @@ fn pack77_hashed(c1: &str, c2: &str, payload: &str) -> Option<([u8; 77], String)
             && (tok.starts_with('<') || !wsjt77::is_standard_callsign(bare))
     };
     let (h1, h2) = (wants_hash(c1, b1), wants_hash(c2, b2));
-    if h1 == h2 {
+    if !h1 && !h2 {
+        // Neither hashed: the everyday rung already handled the spelling.
+        return None;
+    }
+    // Both hashed — a bracketed pair, or a callsign pair no 28-bit field can
+    // hold (both ends of a CB contact, issue #396). There is no standard
+    // spelling of either, so a grid-less pair of hashes is the only form the
+    // everyday layout can carry them in. On 11 m the empty / RRR / RR73 / 73
+    // payloads ride too: those are all a pair of hashes leaves room for anyway,
+    // and no third amateur station is listening to prefer a spelled form.
+    if h1 && h2 {
+        if !wsjt77::is_valid_callsign(b1) || !wsjt77::is_valid_callsign(b2) {
+            return None;
+        }
+        const STAND_IN: &str = "K1ABC";
+        let mut msg = wsjt77::pack77(STAND_IN, STAND_IN, payload)?;
+        let overlay = |msg: &mut [u8; 77], start: usize, call: &str| {
+            // WSJT-X hashes the callsign whole (`save_hash_call`), so the hash
+            // is taken here rather than through mfsk-core's table, which strips
+            // a `/P` or `/R` suffix first — the same divergence [`eu_vhf`]
+            // keeps its own table for.
+            let n28 = NTOKENS + mfsk_core::msg::hash_table::ihashcall(call, 22);
+            for i in 0..28 {
+                msg[start + i] = ((n28 >> (27 - i)) & 1) as u8;
+            }
+        };
+        overlay(&mut msg, 0, b1);
+        overlay(&mut msg, 29, b2);
+        return Some((msg, join3(&format!("<{b1}>"), &format!("<{b2}>"), payload)));
+    }
+    // One hashed, one spelled out — the historical single-hash path.
+    if payload.is_empty() || matches!(payload, "RRR" | "RR73" | "73") {
+        // Bare RRR/RR73/73 and an empty payload fit the non-standard layout
+        // whole, and spelling the callsign out is worth more than the hash
+        // saves — it is what lets a third station resolve the hashes in
+        // everything around it.
         return None;
     }
     let (hashed, spelled) = if h1 { (b1, b2) } else { (b2, b1) };
@@ -514,10 +551,6 @@ fn pack77_hashed(c1: &str, c2: &str, payload: &str) -> Option<([u8; 77], String)
     const STAND_IN: &str = "K1ABC";
     let mut msg =
         wsjt77::pack77(if h1 { STAND_IN } else { b1 }, if h2 { STAND_IN } else { b2 }, payload)?;
-    // WSJT-X hashes the callsign whole, `/QRP` and all (`save_hash_call`), so
-    // the hash is taken here rather than through mfsk-core's table, which
-    // strips a `/P` or `/R` suffix first — the same divergence [`eu_vhf`]
-    // keeps its own table for.
     let n28 = NTOKENS + mfsk_core::msg::hash_table::ihashcall(hashed, 22);
     let start = if h1 { 0 } else { 29 };
     for i in 0..28 {
@@ -1531,5 +1564,77 @@ mod tests {
         let d = decodes.iter().find(|d| d.message.contains("DL/W1AW")).expect("decoded");
         assert!(d.is_cq);
         assert_eq!(d.from.as_deref(), Some("DL/W1AW"));
+    }
+
+    /// 11 m opens and reports with *both* calls hashed (WSJT-CB, issue #396):
+    /// neither ends up in a 28-bit field, so a grid-less pair of hashes is the
+    /// only everyday form the layout carries — and the empty report (the
+    /// grid-less opener) and the bare sign-offs ride with it.
+    #[test]
+    fn a_cb_pair_packs_as_two_hashes_including_the_status_payloads() {
+        use mfsk_core::msg::hash_table::CallsignHashTable;
+        let mut ht = CallsignHashTable::new();
+        for call in ["26AT715", "25TT304"] {
+            ht.insert(call);
+        }
+        for (text, resolved) in [
+            ("26AT715 25TT304", "<26AT715> <25TT304>"),
+            ("26AT715 25TT304 -07", "<26AT715> <25TT304> -07"),
+            ("26AT715 25TT304 R-03", "<26AT715> <25TT304> R-03"),
+            ("26AT715 25TT304 RRR", "<26AT715> <25TT304> RRR"),
+            ("26AT715 25TT304 RR73", "<26AT715> <25TT304> RR73"),
+            ("26AT715 25TT304 73", "<26AT715> <25TT304> 73"),
+            ("26AT715 25TT304 JO31", "<26AT715> <25TT304> JO31"),
+        ] {
+            let (bits, sent) = pack_message(text).expect("packs");
+            // Both hashed calls stay bracketed in the display text.
+            let toks: Vec<&str> = text.split_whitespace().collect();
+            let shown = ["<26AT715>", "<25TT304>"]
+                .into_iter()
+                .chain(toks.iter().skip(2).copied())
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert_eq!(sent, shown);
+            // The everyday layout, and a round trip resolves the hashes —
+            // keeping the brackets, as `unpack77_with_hash` does for any call
+            // that arrived hashed. The address parser strips them again.
+            assert_eq!(msg_kind(&bits), MsgKind::Standard);
+            let out = wsjt77::unpack77_with_hash(&bits, &ht).expect("unpacks");
+            assert_eq!(out, resolved);
+        }
+    }
+
+    /// A CB call in an otherwise standard pair hashes alone, exactly like any
+    /// other nonstandard callsign — `<26AT715> 25TT304 R-07`.
+    #[test]
+    fn a_cb_pair_against_a_standard_call_hashes_just_the_cb_side() {
+        let (bits, sent) = pack_message("26AT715 AB1CD R-07").expect("packs");
+        assert_eq!(sent, "<26AT715> AB1CD R-07");
+        assert_eq!(msg_kind(&bits), MsgKind::Standard);
+    }
+
+    /// A CQ from an 11 m call is spelled out on the non-standard layout, as a
+    /// CQ to any callsign that cannot fit a 28-bit field is.
+    #[test]
+    fn a_cb_call_can_call_cq() {
+        let (sent, decodes) = round_trip(Mode::Ft8, "CQ 26AT715");
+        assert_eq!(sent, "CQ 26AT715");
+        let d = decodes.iter().find(|d| d.message.contains("26AT715")).expect("decoded");
+        assert!(d.is_cq);
+        assert_eq!(d.from.as_deref(), Some("26AT715"));
+    }
+
+    /// A CB callsign is a valid, plausible callsign to the validator the whole
+    /// FT8 decoder gates on (now true in the mfsk-core fork); without that the
+    /// free-text report "25TT304 -07" and spelled CQ are silently dropped by
+    /// the CRC-14 filter, as the nonstandard *layout* messages already were
+    /// before the fork.
+    #[test]
+    fn cb_calls_pass_the_plausibility_gate() {
+        assert!(wsjt77::is_valid_callsign("26AT715"));
+        assert!(wsjt77::is_plausible_callsign("26AT715"));
+        assert!(wsjt77::is_valid_callsign("1AT106"));
+        assert!(wsjt77::is_valid_callsign("999ZZ/ZZ"));
+        assert!(!wsjt77::is_standard_callsign("26AT715"));
     }
 }
