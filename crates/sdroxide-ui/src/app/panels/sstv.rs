@@ -656,6 +656,7 @@ impl SdroxideApp {
             // Whichever one is up takes the row.
             Some(0) => (avail.x, 0.0),
             Some(_) => (0.0, avail.x),
+            None if self.ui_settings.swl => (avail.x, 0.0),
             None => {
                 let tx = (avail.x * self.view.sstv_tx_fraction)
                     .clamp(300.0, (avail.x - handle_w - 300.0).max(300.0));
@@ -804,84 +805,86 @@ impl SdroxideApp {
                                     );
                                 }
 
-                                ui.add_space(12.0);
-                                ui.separator();
-                                ui.label(RichText::new("TX slant").size(10.0).weak()).on_hover_text(
-                                    "Transmit clock trim (ppm) to remove slant on the far-end decoder",
-                                );
-                                ui.add_enabled_ui(self.digi_cfg_seeded, |ui| {
-                                    ui.spacing_mut().slider_width = 130.0;
-                                    let resp = crate::chrome::slider(ui, egui::Slider::new(
-                                            &mut self.digi_cfg_edit.sstv_tx_ppm,
-                                            -5000.0..=5000.0,
-                                        )
-                                        .suffix(" ppm")
-                                        .fixed_decimals(0),
+                                if !self.ui_settings.swl {
+                                    ui.add_space(12.0);
+                                    ui.separator();
+                                    ui.label(RichText::new("TX slant").size(10.0).weak()).on_hover_text(
+                                        "Transmit clock trim (ppm) to remove slant on the far-end decoder",
                                     );
-                                    if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
-                                        cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
-                                    }
-                                    if ui
-                                        .small_button("0")
-                                        .on_hover_text("Reset to 0 ppm")
-                                        .clicked()
-                                    {
-                                        self.digi_cfg_edit.sstv_tx_ppm = 0.0;
-                                        cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
-                                    }
-                                    ui.separator();
-                                    // The callsign in tones after the picture.
-                                    // Beside the slant trim rather than in the
-                                    // banner window: the banner identifies the
-                                    // station to a person looking at the
-                                    // picture, this identifies it to the
-                                    // repeater decoding it, and the two are set
-                                    // for different reasons.
-                                    if crate::chrome::checkbox(
-                                        ui,
-                                        &mut self.digi_cfg_edit.sstv_fsk_id,
-                                        "FSK ID",
-                                    )
-                                    .on_hover_text(
-                                        "Send your callsign in tones after each picture — the \
-                                         identification SSTV repeaters and other programs read. \
-                                         Adds about 2.5 seconds, and sends nothing at all until \
-                                         you have set a callsign.",
-                                    )
-                                    .changed()
-                                    {
-                                        cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
-                                    }
-                                    ui.separator();
-                                    // Dead air before the calibration header, so
-                                    // the rig is really on the air by the time
-                                    // the VIS code goes out. Here rather than in
-                                    // the setup window because it is the same
-                                    // kind of per-station trim as the slant
-                                    // beside it, and the operator who needs it
-                                    // finds out by transmitting.
-                                    ui.label(RichText::new("TX lead").size(10.0).weak());
-                                    if ui
-                                        .add(
-                                            egui::DragValue::new(
-                                                &mut self.digi_cfg_edit.sstv_txdelay_ms,
+                                    ui.add_enabled_ui(self.digi_cfg_seeded, |ui| {
+                                        ui.spacing_mut().slider_width = 130.0;
+                                        let resp = crate::chrome::slider(ui, egui::Slider::new(
+                                                &mut self.digi_cfg_edit.sstv_tx_ppm,
+                                                -5000.0..=5000.0,
                                             )
-                                            .range(0..=3000)
-                                            .speed(10.0)
-                                            .suffix(" ms"),
+                                            .suffix(" ppm")
+                                            .fixed_decimals(0),
+                                        );
+                                        if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+                                            cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+                                        }
+                                        if ui
+                                            .small_button("0")
+                                            .on_hover_text("Reset to 0 ppm")
+                                            .clicked()
+                                        {
+                                            self.digi_cfg_edit.sstv_tx_ppm = 0.0;
+                                            cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+                                        }
+                                        ui.separator();
+                                        // The callsign in tones after the picture.
+                                        // Beside the slant trim rather than in the
+                                        // banner window: the banner identifies the
+                                        // station to a person looking at the
+                                        // picture, this identifies it to the
+                                        // repeater decoding it, and the two are set
+                                        // for different reasons.
+                                        if crate::chrome::checkbox(
+                                            ui,
+                                            &mut self.digi_cfg_edit.sstv_fsk_id,
+                                            "FSK ID",
                                         )
                                         .on_hover_text(
-                                            "Silence sent after keying and before the picture's \
-                                             leader and VIS code. A decoder that misses any of \
-                                             that header shows no picture at all, so this covers \
-                                             the gap between asking a rig for PTT and it really \
-                                             being on the air. 0 for an SDR that keys instantly.",
+                                            "Send your callsign in tones after each picture — the \
+                                             identification SSTV repeaters and other programs read. \
+                                             Adds about 2.5 seconds, and sends nothing at all until \
+                                             you have set a callsign.",
                                         )
                                         .changed()
-                                    {
-                                        cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
-                                    }
-                                });
+                                        {
+                                            cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+                                        }
+                                        ui.separator();
+                                        // Dead air before the calibration header, so
+                                        // the rig is really on the air by the time
+                                        // the VIS code goes out. Here rather than in
+                                        // the setup window because it is the same
+                                        // kind of per-station trim as the slant
+                                        // beside it, and the operator who needs it
+                                        // finds out by transmitting.
+                                        ui.label(RichText::new("TX lead").size(10.0).weak());
+                                        if ui
+                                            .add(
+                                                egui::DragValue::new(
+                                                    &mut self.digi_cfg_edit.sstv_txdelay_ms,
+                                                )
+                                                .range(0..=3000)
+                                                .speed(10.0)
+                                                .suffix(" ms"),
+                                            )
+                                            .on_hover_text(
+                                                "Silence sent after keying and before the picture's \
+                                                 leader and VIS code. A decoder that misses any of \
+                                                 that header shows no picture at all, so this covers \
+                                                 the gap between asking a rig for PTT and it really \
+                                                 being on the air. 0 for an SDR that keys instantly.",
+                                            )
+                                            .changed()
+                                        {
+                                            cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+                                        }
+                                    });
+                                }
                             });
                         });
                     ui.add_space(6.0);
@@ -1036,7 +1039,7 @@ impl SdroxideApp {
 
             // Draggable vertical divider between the receive side and the
             // TRANSMIT (send) column — mirrors the FT8 decode/QSO splitter.
-            if pane.is_none() {
+            if !self.ui_settings.swl && pane.is_none() {
                 let hresp = crate::chrome::split_handle(ui, egui::vec2(handle_w, full_h), None);
                 if hresp.dragged() {
                     // Dragging right shrinks the TX column (grows the receive side).
@@ -1046,7 +1049,7 @@ impl SdroxideApp {
             }
 
             // ── RIGHT: transmit compositor, full height ──
-            if pane.is_none_or(|p| p != 0) {
+            if !self.ui_settings.swl && pane.is_none_or(|p| p != 0) {
             ui.allocate_ui(egui::vec2(tx_w, full_h), |ui| {
                 sstv_section(ui, "TRANSMIT", egui::vec2(tx_w, full_h), |ui| {
                     // The compositor is a fixed stack — the five slots, the

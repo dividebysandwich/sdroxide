@@ -128,141 +128,143 @@ impl SdroxideApp {
                             }
                         }
 
-                        ui.label("TX delay");
-                        ui.horizontal(|ui| {
+                        if !self.ui_settings.swl {
+                            ui.label("TX delay");
+                            ui.horizontal(|ui| {
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut cfg.packet_txdelay_ms)
+                                            .range(50..=2000)
+                                            .suffix(" ms"),
+                                    )
+                                    .on_hover_text(
+                                        "Flags sent before a frame, so the far end can hear us and \
+                                         lock its clock. On a CAT rig sdroxide alone spends 165–240 \
+                                         ms getting on the air, and the rig's own transmit-ready \
+                                         time is on top of that.",
+                                    )
+                                    .changed();
+                            });
+                            ui.end_row();
+
+                            ui.label("Packet length");
+                            ui.horizontal(|ui| {
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut cfg.packet_paclen)
+                                            .range(16..=256)
+                                            .suffix(" bytes"),
+                                    )
+                                    .on_hover_text(
+                                        "The most a single frame carries. Shorter frames survive a \
+                                         marginal path — only the frame that was hit is resent — and \
+                                         cost more overhead. 128 on HF, 256 where the path is solid.",
+                                    )
+                                    .changed();
+                                ui.label(RichText::new("window").weak());
+                                let window_max = if cfg.packet_ext_seq { 127 } else { 7 };
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut cfg.packet_maxframe)
+                                            .range(1..=window_max),
+                                    )
+                                    .on_hover_text(
+                                        "Frames sent before waiting for an acknowledgement. More \
+                                         fills a good path; on a bad one it is more to resend.",
+                                    )
+                                    .changed();
+                            });
+                            ui.end_row();
+
+                            ui.label("Extended");
                             changed |= ui
-                                .add(
-                                    egui::DragValue::new(&mut cfg.packet_txdelay_ms)
-                                        .range(50..=2000)
-                                        .suffix(" ms"),
-                                )
+                                .checkbox(&mut cfg.packet_ext_seq, "Ask for mod-128")
                                 .on_hover_text(
-                                    "Flags sent before a frame, so the far end can hear us and \
-                                     lock its clock. On a CAT rig sdroxide alone spends 165–240 \
-                                     ms getting on the air, and the rig's own transmit-ready \
-                                     time is on top of that.",
+                                    "Extended sequence numbers, for a window bigger than seven. Many \
+                                     nodes refuse the request with a DM, which looks exactly like a \
+                                     station that would not talk to you — so leave it off unless you \
+                                     know the far end wants it.",
                                 )
                                 .changed();
-                        });
-                        ui.end_row();
+                            ui.end_row();
 
-                        ui.label("Packet length");
-                        ui.horizontal(|ui| {
+                            ui.label("Answer calls");
                             changed |= ui
-                                .add(
-                                    egui::DragValue::new(&mut cfg.packet_paclen)
-                                        .range(16..=256)
-                                        .suffix(" bytes"),
-                                )
+                                .checkbox(&mut cfg.packet_accept_incoming, "Accept connections")
                                 .on_hover_text(
-                                    "The most a single frame carries. Shorter frames survive a \
-                                     marginal path — only the frame that was hit is resent — and \
-                                     cost more overhead. 128 on HF, 256 where the path is solid.",
+                                    "Off for a Winlink client, which dials out and has no reason to \
+                                     answer. On to be reachable as a peer: a call arrives in the \
+                                     terminal pane and you talk to whoever made it. A station whose \
+                                     link is already busy with a Winlink session refuses calls until \
+                                     that finishes.",
                                 )
                                 .changed();
-                            ui.label(RichText::new("window").weak());
-                            let window_max = if cfg.packet_ext_seq { 127 } else { 7 };
-                            changed |= ui
-                                .add(
-                                    egui::DragValue::new(&mut cfg.packet_maxframe)
-                                        .range(1..=window_max),
-                                )
-                                .on_hover_text(
-                                    "Frames sent before waiting for an acknowledgement. More \
-                                     fills a good path; on a bad one it is more to resend.",
-                                )
-                                .changed();
-                        });
-                        ui.end_row();
+                            ui.end_row();
 
-                        ui.label("Extended");
-                        changed |= ui
-                            .checkbox(&mut cfg.packet_ext_seq, "Ask for mod-128")
-                            .on_hover_text(
-                                "Extended sequence numbers, for a window bigger than seven. Many \
-                                 nodes refuse the request with a DM, which looks exactly like a \
-                                 station that would not talk to you — so leave it off unless you \
-                                 know the far end wants it.",
-                            )
-                            .changed();
-                        ui.end_row();
-
-                        ui.label("Answer calls");
-                        changed |= ui
-                            .checkbox(&mut cfg.packet_accept_incoming, "Accept connections")
-                            .on_hover_text(
-                                "Off for a Winlink client, which dials out and has no reason to \
-                                 answer. On to be reachable as a peer: a call arrives in the \
-                                 terminal pane and you talk to whoever made it. A station whose \
-                                 link is already busy with a Winlink session refuses calls until \
-                                 that finishes.",
-                            )
-                            .changed();
-                        ui.end_row();
-
-                        ui.label("Connect text");
-                        changed |= crate::chrome::field(
-                            ui,
-                            egui::TextEdit::singleline(&mut cfg.packet_connect_text)
-                                .hint_text("what a caller is greeted with"),
-                        )
-                        .on_hover_text(
-                            "Sent to a station that connects to us, once the link is up. Empty \
-                             sends nothing — which looks broken to whoever called.",
-                        )
-                        .changed();
-                        ui.end_row();
-
-                        ui.label("Default via");
-                        changed |= crate::chrome::field(
-                            ui,
-                            egui::TextEdit::singleline(&mut cfg.packet_connect_via)
-                                .hint_text("OE3XLR-1,OE3XMS-1"),
-                        )
-                        .on_hover_text(
-                            "The digipeater path the terminal starts with. The path to your \
-                             local node is the same every time, and retyping it is how a hop \
-                             gets left off.",
-                        )
-                        .changed();
-                        ui.end_row();
-
-                        ui.label("Beacon");
-                        ui.horizontal(|ui| {
-                            changed |= ui
-                                .add(
-                                    egui::DragValue::new(&mut cfg.packet_beacon_minutes)
-                                        .range(0..=120)
-                                        .suffix(" min"),
-                                )
-                                .on_hover_text("0 disables the timer")
-                                .changed();
+                            ui.label("Connect text");
                             changed |= crate::chrome::field(
                                 ui,
-                                egui::TextEdit::singleline(&mut cfg.packet_beacon_text)
-                                    .hint_text("beacon text"),
+                                egui::TextEdit::singleline(&mut cfg.packet_connect_text)
+                                    .hint_text("what a caller is greeted with"),
+                            )
+                            .on_hover_text(
+                                "Sent to a station that connects to us, once the link is up. Empty \
+                                 sends nothing — which looks broken to whoever called.",
                             )
                             .changed();
-                        });
-                        ui.end_row();
+                            ui.end_row();
 
-                        ui.label("KISS server");
-                        ui.horizontal(|ui| {
-                            changed |= ui
-                                .checkbox(&mut cfg.packet_kiss_server, "Serve")
-                                .on_hover_text(
-                                    "Offer this modem as a KISS TNC on a socket, so Pat, an \
-                                     APRS client or the Linux AX.25 stack can use the radio.",
+                            ui.label("Default via");
+                            changed |= crate::chrome::field(
+                                ui,
+                                egui::TextEdit::singleline(&mut cfg.packet_connect_via)
+                                    .hint_text("OE3XLR-1,OE3XMS-1"),
+                            )
+                            .on_hover_text(
+                                "The digipeater path the terminal starts with. The path to your \
+                                 local node is the same every time, and retyping it is how a hop \
+                                 gets left off.",
+                            )
+                            .changed();
+                            ui.end_row();
+
+                            ui.label("Beacon");
+                            ui.horizontal(|ui| {
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut cfg.packet_beacon_minutes)
+                                            .range(0..=120)
+                                            .suffix(" min"),
+                                    )
+                                    .on_hover_text("0 disables the timer")
+                                    .changed();
+                                changed |= crate::chrome::field(
+                                    ui,
+                                    egui::TextEdit::singleline(&mut cfg.packet_beacon_text)
+                                        .hint_text("beacon text"),
                                 )
                                 .changed();
-                            changed |= ui
-                                .add(
-                                    egui::DragValue::new(&mut cfg.packet_kiss_port)
-                                        .range(1024..=65535),
-                                )
-                                .changed();
-                        });
-                        ui.end_row();
+                            });
+                            ui.end_row();
+
+                            ui.label("KISS server");
+                            ui.horizontal(|ui| {
+                                changed |= ui
+                                    .checkbox(&mut cfg.packet_kiss_server, "Serve")
+                                    .on_hover_text(
+                                        "Offer this modem as a KISS TNC on a socket, so Pat, an \
+                                         APRS client or the Linux AX.25 stack can use the radio.",
+                                    )
+                                    .changed();
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut cfg.packet_kiss_port)
+                                            .range(1024..=65535),
+                                    )
+                                    .changed();
+                            });
+                            ui.end_row();
+                        }
                     }
 
                     if mode.is_aprs() {
@@ -493,76 +495,78 @@ impl SdroxideApp {
                         .changed();
                         ui.end_row();
 
-                        ui.label("Beacon");
-                        ui.horizontal(|ui| {
+                        if !self.ui_settings.swl {
+                            ui.label("Beacon");
+                            ui.horizontal(|ui| {
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut cfg.aprs_beacon_minutes)
+                                            .range(0..=120)
+                                            .suffix(" min"),
+                                    )
+                                    .on_hover_text(
+                                        "0 — the default — never beacons on a timer. Thirty minutes \
+                                         is the convention for a fixed station; a moving one \
+                                         beacons oftener, but every beacon is somebody else's \
+                                         channel time.",
+                                    )
+                                    .changed();
+                                changed |= ui
+                                    .checkbox(&mut cfg.aprs_compressed, "Compressed")
+                                    .on_hover_text(
+                                        "The compressed position format: a third of the air time \
+                                         and more precise. Every receiver since the 1990s reads it.",
+                                    )
+                                    .changed();
+                            });
+                            ui.end_row();
+                            if cfg.aprs_beacon_minutes > 0 {
+                                ui.label("");
+                                ui.label(
+                                    RichText::new(
+                                        "The first goes out one interval from now, not immediately.",
+                                    )
+                                    .size(10.0)
+                                    .weak(),
+                                );
+                                ui.end_row();
+                            }
+
+                            ui.label("Messages");
                             changed |= ui
-                                .add(
-                                    egui::DragValue::new(&mut cfg.aprs_beacon_minutes)
-                                        .range(0..=120)
-                                        .suffix(" min"),
-                                )
+                                .checkbox(&mut cfg.aprs_ack_messages, "Acknowledge")
                                 .on_hover_text(
-                                    "0 — the default — never beacons on a timer. Thirty minutes \
-                                     is the convention for a fixed station; a moving one \
-                                     beacons oftener, but every beacon is somebody else's \
-                                     channel time.",
+                                    "Answer messages addressed to you. An acknowledgement is a \
+                                     transmission this station makes without being asked, so a \
+                                     receive-only setup should turn it off — and the beacon then \
+                                     stops claiming to be reachable too.",
                                 )
                                 .changed();
-                            changed |= ui
-                                .checkbox(&mut cfg.aprs_compressed, "Compressed")
-                                .on_hover_text(
-                                    "The compressed position format: a third of the air time \
-                                     and more precise. Every receiver since the 1990s reads it.",
-                                )
-                                .changed();
-                        });
-                        ui.end_row();
-                        if cfg.aprs_beacon_minutes > 0 {
-                            ui.label("");
-                            ui.label(
-                                RichText::new(
-                                    "The first goes out one interval from now, not immediately.",
-                                )
-                                .size(10.0)
-                                .weak(),
-                            );
+                            ui.end_row();
+
+                            ui.label("TX delay");
+                            ui.horizontal(|ui| {
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut cfg.packet_txdelay_ms)
+                                            .range(50..=2000)
+                                            .suffix(" ms"),
+                                    )
+                                    .on_hover_text(
+                                        "Flags sent ahead of every frame, so the far end's modem \
+                                         hears the carrier and locks its clock before the data \
+                                         starts. It has to outlast everything between pressing \
+                                         transmit and radiating: sdroxide alone spends 165–240 ms \
+                                         of it on a CAT rig, and a radio taking audio over a \
+                                         network buffers more on top. Too little and the far end \
+                                         never locks — the transmission is there and nothing \
+                                         decodes it.",
+                                    )
+                                    .changed();
+                                ui.label(RichText::new("shared with the packet mode").size(9.5).weak());
+                            });
                             ui.end_row();
                         }
-
-                        ui.label("Messages");
-                        changed |= ui
-                            .checkbox(&mut cfg.aprs_ack_messages, "Acknowledge")
-                            .on_hover_text(
-                                "Answer messages addressed to you. An acknowledgement is a \
-                                 transmission this station makes without being asked, so a \
-                                 receive-only setup should turn it off — and the beacon then \
-                                 stops claiming to be reachable too.",
-                            )
-                            .changed();
-                        ui.end_row();
-
-                        ui.label("TX delay");
-                        ui.horizontal(|ui| {
-                            changed |= ui
-                                .add(
-                                    egui::DragValue::new(&mut cfg.packet_txdelay_ms)
-                                        .range(50..=2000)
-                                        .suffix(" ms"),
-                                )
-                                .on_hover_text(
-                                    "Flags sent ahead of every frame, so the far end's modem \
-                                     hears the carrier and locks its clock before the data \
-                                     starts. It has to outlast everything between pressing \
-                                     transmit and radiating: sdroxide alone spends 165–240 ms \
-                                     of it on a CAT rig, and a radio taking audio over a \
-                                     network buffers more on top. Too little and the far end \
-                                     never locks — the transmission is there and nothing \
-                                     decodes it.",
-                                )
-                                .changed();
-                            ui.label(RichText::new("shared with the packet mode").size(9.5).weak());
-                        });
-                        ui.end_row();
 
                         ui.label("Keep stations");
                         changed |= ui
@@ -580,7 +584,7 @@ impl SdroxideApp {
                         ui.end_row();
                     }
 
-                    if mode.is_js8() {
+                    if mode.is_js8() && !self.ui_settings.swl {
                         let turbo = cfg.js8_speed == sdroxide_types::Js8Speed::Turbo;
                         ui.label("Auto-reply");
                         changed |= ui
@@ -698,7 +702,7 @@ impl SdroxideApp {
                     // every setting the operator typed is discarded the moment
                     // the window closes — which is what happened when this
                     // was written the other way (issue #150).
-                    if !mode.is_aprs() {
+                    if !mode.is_aprs() && !self.ui_settings.swl {
                         ui.label("TX period");
                         ui.horizontal(|ui| {
                             changed |=
@@ -882,57 +886,59 @@ impl SdroxideApp {
                     // would be ignored. One write route, and the rail on the
                     // transmit strip is the other end of it.
                     let fm = mode.is_fm_carrier();
-                    ui.label("TX audio");
-                    ui.horizontal(|ui| {
-                        let mut db = sdroxide_types::tx_level_db(cfg.tx_level_for(mode)).round();
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut db)
-                                    .range(sdroxide_types::TX_AUDIO_LEVEL_MIN_DB..=0.0)
-                                    .suffix(" dB"),
-                            )
-                            .on_hover_text(if fm {
-                                "How loud this mode's burst is handed to a radio that \
-                                 modulates it itself — and on FM that is the deviation, \
-                                 because an FM transmitter turns audio level into frequency \
-                                 swing and has no ALC to catch it. 1200 baud packet wants \
-                                 about 3 kHz where voice wants 5, so full scale into a data \
-                                 input set for voice over-deviates — which sounds completely \
-                                 normal to a listener and decodes for nobody. Turn it down \
-                                 until other stations report you, or set the level at the \
-                                 radio.\n\nThis level belongs to this mode alone. A mode you \
-                                 have never set starts from the FM figure, and the sideband \
-                                 modes start from their own — so a deviation set for 1200 \
-                                 baud never lands on FT8."
-                            } else {
-                                "How loud this mode's over is handed to a radio that \
-                                 modulates it itself — a CAT rig on its sound card, a FLEX, \
-                                 an Icom on its network port. On sideband this is drive into \
-                                 the modulator: bring it down until the rig's ALC is barely \
-                                 moving and set the power at the radio, because ALC riding \
-                                 on a constant-envelope mode is what splatters. Drive \
-                                 reaches the rig's power register here, not its audio, so \
-                                 this is the level.\n\nThis level belongs to this mode \
-                                 alone: FT8, RTTY, PSK and MCW each keep their own, because \
-                                 they do not load a modulator the same way. The same rail is \
-                                 on the transmit strip, where you can reach it while you are \
-                                 transmitting."
-                            })
-                            .changed()
-                        {
-                            let level = sdroxide_types::tx_level_from_db(db);
-                            cfg.set_tx_level(mode, level);
-                            cmds.push(Command::SetDigiTxLevel { mode, level });
-                        }
-                        ui.label(
-                            RichText::new(if fm { "deviation, on FM" } else { "drive, on SSB" })
-                                .size(9.5)
-                                .weak(),
-                        );
-                    });
-                    ui.end_row();
+                    if !self.ui_settings.swl {
+                        ui.label("TX audio");
+                        ui.horizontal(|ui| {
+                            let mut db = sdroxide_types::tx_level_db(cfg.tx_level_for(mode)).round();
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut db)
+                                        .range(sdroxide_types::TX_AUDIO_LEVEL_MIN_DB..=0.0)
+                                        .suffix(" dB"),
+                                )
+                                .on_hover_text(if fm {
+                                    "How loud this mode's burst is handed to a radio that \
+                                     modulates it itself — and on FM that is the deviation, \
+                                     because an FM transmitter turns audio level into frequency \
+                                     swing and has no ALC to catch it. 1200 baud packet wants \
+                                     about 3 kHz where voice wants 5, so full scale into a data \
+                                     input set for voice over-deviates — which sounds completely \
+                                     normal to a listener and decodes for nobody. Turn it down \
+                                     until other stations report you, or set the level at the \
+                                     radio.\n\nThis level belongs to this mode alone. A mode you \
+                                     have never set starts from the FM figure, and the sideband \
+                                     modes start from their own — so a deviation set for 1200 \
+                                     baud never lands on FT8."
+                                } else {
+                                    "How loud this mode's over is handed to a radio that \
+                                     modulates it itself — a CAT rig on its sound card, a FLEX, \
+                                     an Icom on its network port. On sideband this is drive into \
+                                     the modulator: bring it down until the rig's ALC is barely \
+                                     moving and set the power at the radio, because ALC riding \
+                                     on a constant-envelope mode is what splatters. Drive \
+                                     reaches the rig's power register here, not its audio, so \
+                                     this is the level.\n\nThis level belongs to this mode \
+                                     alone: FT8, RTTY, PSK and MCW each keep their own, because \
+                                     they do not load a modulator the same way. The same rail is \
+                                     on the transmit strip, where you can reach it while you are \
+                                     transmitting."
+                                })
+                                .changed()
+                            {
+                                let level = sdroxide_types::tx_level_from_db(db);
+                                cfg.set_tx_level(mode, level);
+                                cmds.push(Command::SetDigiTxLevel { mode, level });
+                            }
+                            ui.label(
+                                RichText::new(if fm { "deviation, on FM" } else { "drive, on SSB" })
+                                    .size(9.5)
+                                    .weak(),
+                            );
+                        });
+                        ui.end_row();
+                    }
                 });
-                if !mode.is_aprs() {
+                if !mode.is_aprs() && !self.ui_settings.swl {
                     ui.separator();
                     ui.label(
                         RichText::new("Message templates  {MYCALL} {MYGRID} {DX} {REPORT}")

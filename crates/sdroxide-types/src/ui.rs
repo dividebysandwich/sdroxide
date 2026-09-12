@@ -654,6 +654,16 @@ pub struct UiSettings {
     /// operator's. The 3D globe is untouched — its cities are night-side lights
     /// rather than markers, and nothing is written across a contact there.
     pub map_cities: bool,
+    /// SWL (Short Wave Listener) mode. When on, every transmit control in the
+    /// UI is hidden rather than greyed out — the PTT, the CALL CQ button, the
+    /// TX level slider, the SEND chip, all of it. What remains is a clean
+    /// receive-only interface, which is what an operator with a listening
+    /// dongle (an RTL-SDR, a SpyServer, a WebSDR) actually needs.
+    ///
+    /// Off by default: a station with a transmitter should see the controls
+    /// until it says otherwise.
+    #[serde(default)]
+    pub swl: bool,
 }
 
 /// Default for [`UiSettings::spot_colors`] — every kind on its stock tint.
@@ -751,6 +761,7 @@ impl Default for UiSettings {
             decode_cq_only: false,
             decode_new_only: false,
             map_cities: true,
+            swl: false,
         }
     }
 }

@@ -209,6 +209,18 @@ pub(in crate::app) fn settings_ui_tab(
         enum_combo(ui, "ui-menu-font", &mut cfg.menu_font_size, &FontSize::ALL, FontSize::label);
         ui.end_row();
 
+        ui.label("SWL mode").on_hover_text(
+            "Short Wave Listener mode. Hides every transmit control in the \
+             interface — the PTT, CALL CQ, TX level, SEND, BEACON, all of it. \
+             What remains is a clean receive-only UI, which is what an \
+             operator with a listening dongle (an RTL-SDR, a SpyServer, a \
+             WebSDR) actually needs.\n\n\
+             The radio can still transmit if the hardware supports it; this \
+             only hides the buttons.",
+        );
+        crate::chrome::checkbox(ui, &mut cfg.swl, "hide all transmit controls");
+        ui.end_row();
+
         ui.label("Cities on maps").on_hover_text(
             "Draw the world's cities — a dot per place, with its name beside it \
              where there is room — on the flat maps: FT8/WSPR, APRS, ADS-B and \

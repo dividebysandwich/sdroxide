@@ -220,110 +220,112 @@ impl SdroxideApp {
         }
 
         // ── connect bar ───────────────────────────────────────────────────
-        let mut connect = false;
-        // Nothing transmits without a station callsign, and the refusal used to
-        // arrive only after CONNECT was pressed. Saying so on the button is the
-        // difference between a setting to go and find and a mode that looks
-        // broken (issue #159).
-        let have_call = !self.digi_cfg_edit.packet_mycall.trim().is_empty();
-        ui.horizontal(|ui| {
-            let can_edit = !connected && !working;
-            ui.add_enabled_ui(can_edit, |ui| {
-                let resp = crate::chrome::field(
-                    ui,
-                    egui::TextEdit::singleline(&mut self.packet_target)
-                        .desired_width(84.0)
-                        .hint_text("callsign"),
-                );
-                if resp.changed() {
-                    self.packet_target = self.packet_target.to_uppercase();
-                }
-                connect |= resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                let resp = crate::chrome::field(
-                    ui,
-                    egui::TextEdit::singleline(&mut self.packet_via)
-                        .desired_width(120.0)
-                        .hint_text("via"),
-                )
-                .on_hover_text(
-                    "Digipeaters, nearest first, separated by commas — OE3XLR-1,OE3XMS-1. Leave \
-                     it empty for a station you can hear directly, or to use the default path \
-                     from the packet settings.",
-                );
-                if resp.changed() {
-                    self.packet_via = self.packet_via.to_uppercase();
-                }
-                connect |= resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            });
+        if !self.ui_settings.swl {
+            let mut connect = false;
+            // Nothing transmits without a station callsign, and the refusal used to
+            // arrive only after CONNECT was pressed. Saying so on the button is the
+            // difference between a setting to go and find and a mode that looks
+            // broken (issue #159).
+            let have_call = !self.digi_cfg_edit.packet_mycall.trim().is_empty();
+            ui.horizontal(|ui| {
+                let can_edit = !connected && !working;
+                ui.add_enabled_ui(can_edit, |ui| {
+                    let resp = crate::chrome::field(
+                        ui,
+                        egui::TextEdit::singleline(&mut self.packet_target)
+                            .desired_width(84.0)
+                            .hint_text("callsign"),
+                    );
+                    if resp.changed() {
+                        self.packet_target = self.packet_target.to_uppercase();
+                    }
+                    connect |= resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let resp = crate::chrome::field(
+                        ui,
+                        egui::TextEdit::singleline(&mut self.packet_via)
+                            .desired_width(120.0)
+                            .hint_text("via"),
+                    )
+                    .on_hover_text(
+                        "Digipeaters, nearest first, separated by commas — OE3XLR-1,OE3XMS-1. Leave \
+                         it empty for a station you can hear directly, or to use the default path \
+                         from the packet settings.",
+                    );
+                    if resp.changed() {
+                        self.packet_via = self.packet_via.to_uppercase();
+                    }
+                    connect |= resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                });
 
-            let ready = !self.packet_target.trim().is_empty();
-            if connected || working {
-                if tx_gated(ui, tx_ok, |ui| {
+                let ready = !self.packet_target.trim().is_empty();
+                if connected || working {
+                    if tx_gated(ui, tx_ok, |ui| {
+                        crate::chrome::chip_accent(
+                            ui,
+                            false,
+                            RichText::new(" DISCONNECT ").strong(),
+                            theme::ALERT(),
+                            theme::INK_ON_CYAN(),
+                        )
+                        .on_hover_text(
+                            "Hang up properly, and wait for the far end to agree. Changing mode \
+                             instead ends the session without telling anybody.",
+                        )
+                    })
+                    .clicked()
+                    {
+                        cmds.push(Command::PacketDisconnect);
+                    }
+                } else if tx_gated(ui, tx_ok && ready && have_call && !busy, |ui| {
                     crate::chrome::chip_accent(
                         ui,
                         false,
-                        RichText::new(" DISCONNECT ").strong(),
-                        theme::ALERT(),
+                        RichText::new(" CONNECT ").strong(),
+                        theme::GREEN(),
                         theme::INK_ON_CYAN(),
                     )
-                    .on_hover_text(
-                        "Hang up properly, and wait for the far end to agree. Changing mode \
-                         instead ends the session without telling anybody.",
-                    )
+                    .on_hover_text(if busy {
+                        "The MAIL window has the link. Finish or stop that session first."
+                    } else if !have_call {
+                        "This station has no callsign yet — set one under SETUP, above the monitor \
+                         pane. Nothing transmits until it is set."
+                    } else if ready {
+                        "Call this station in connected mode — a node, a BBS, or another operator."
+                    } else {
+                        "Needs a callsign to call."
+                    })
                 })
                 .clicked()
                 {
-                    cmds.push(Command::PacketDisconnect);
+                    connect = true;
                 }
-            } else if tx_gated(ui, tx_ok && ready && have_call && !busy, |ui| {
-                crate::chrome::chip_accent(
-                    ui,
-                    false,
-                    RichText::new(" CONNECT ").strong(),
-                    theme::GREEN(),
-                    theme::INK_ON_CYAN(),
-                )
-                .on_hover_text(if busy {
-                    "The MAIL window has the link. Finish or stop that session first."
-                } else if !have_call {
-                    "This station has no callsign yet — set one under SETUP, above the monitor \
-                     pane. Nothing transmits until it is set."
-                } else if ready {
-                    "Call this station in connected mode — a node, a BBS, or another operator."
-                } else {
-                    "Needs a callsign to call."
-                })
-            })
-            .clicked()
+
+                crate::chrome::row_tail(ui, |ui| {
+                    if crate::chrome::chip(ui, false, RichText::new(" CLEAR ").size(10.5))
+                        .on_hover_text(
+                            "Empty the transcript. The link is untouched — a connected station stays \
+                             connected.",
+                        )
+                        .clicked()
+                    {
+                        cmds.push(Command::PacketTermClear);
+                    }
+                });
+            });
+
+            if connect
+                && tx_ok
+                && have_call
+                && !connected
+                && !working
+                && !self.packet_target.trim().is_empty()
             {
-                connect = true;
+                cmds.push(Command::PacketConnect {
+                    call: self.packet_target.trim().to_string(),
+                    via: self.packet_via.trim().to_string(),
+                    ext: self.digi_cfg_edit.packet_ext_seq,
+                });
             }
-
-            crate::chrome::row_tail(ui, |ui| {
-                if crate::chrome::chip(ui, false, RichText::new(" CLEAR ").size(10.5))
-                    .on_hover_text(
-                        "Empty the transcript. The link is untouched — a connected station stays \
-                         connected.",
-                    )
-                    .clicked()
-                {
-                    cmds.push(Command::PacketTermClear);
-                }
-            });
-        });
-
-        if connect
-            && tx_ok
-            && have_call
-            && !connected
-            && !working
-            && !self.packet_target.trim().is_empty()
-        {
-            cmds.push(Command::PacketConnect {
-                call: self.packet_target.trim().to_string(),
-                via: self.packet_via.trim().to_string(),
-                ext: self.digi_cfg_edit.packet_ext_seq,
-            });
         }
 
         // ── scrollback ────────────────────────────────────────────────────
@@ -361,51 +363,53 @@ impl SdroxideApp {
             });
 
         // ── the line you type on ──────────────────────────────────────────
-        let mut send = false;
-        ui.horizontal(|ui| {
-            let room = (ui.available_width() - 56.0).max(80.0);
-            ui.add_enabled_ui(connected, |ui| {
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut self.packet_draft)
-                        .desired_width(room)
-                        .hint_text(if connected { "type here" } else { "not connected" }),
-                );
-                if resp.has_focus() {
-                    self.packet_recall(ui, &resp);
+        if !self.ui_settings.swl {
+            let mut send = false;
+            ui.horizontal(|ui| {
+                let room = (ui.available_width() - 56.0).max(80.0);
+                ui.add_enabled_ui(connected, |ui| {
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.packet_draft)
+                            .desired_width(room)
+                            .hint_text(if connected { "type here" } else { "not connected" }),
+                    );
+                    if resp.has_focus() {
+                        self.packet_recall(ui, &resp);
+                    }
+                    send |= resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                });
+                if tx_gated(ui, tx_ok && connected, |ui| {
+                    crate::chrome::chip_accent(
+                        ui,
+                        false,
+                        RichText::new(" SEND ").size(10.0).strong(),
+                        theme::GREEN(),
+                        theme::INK_ON_CYAN(),
+                    )
+                    .on_hover_text("Send the line. A node or a BBS reads one line at a time.")
+                })
+                .clicked()
+                {
+                    send = true;
                 }
-                send |= resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             });
-            if tx_gated(ui, tx_ok && connected, |ui| {
-                crate::chrome::chip_accent(
-                    ui,
-                    false,
-                    RichText::new(" SEND ").size(10.0).strong(),
-                    theme::GREEN(),
-                    theme::INK_ON_CYAN(),
-                )
-                .on_hover_text("Send the line. A node or a BBS reads one line at a time.")
-            })
-            .clicked()
-            {
-                send = true;
-            }
-        });
 
-        // Return goes through the same gate as the button: a keystroke must not
-        // do what a greyed-out button refuses to.
-        if send && tx_ok && connected {
-            let line = self.packet_draft.trim_end().to_string();
-            cmds.push(Command::PacketSend { text: line.clone() });
-            // An empty line is a real thing to send — it is how you get a BBS
-            // to reprint its prompt — but it is not worth remembering.
-            if !line.trim().is_empty() && self.packet_history.last() != Some(&line) {
-                self.packet_history.push(line);
-                if self.packet_history.len() > 100 {
-                    self.packet_history.remove(0);
+            // Return goes through the same gate as the button: a keystroke must not
+            // do what a greyed-out button refuses to.
+            if send && tx_ok && connected {
+                let line = self.packet_draft.trim_end().to_string();
+                cmds.push(Command::PacketSend { text: line.clone() });
+                // An empty line is a real thing to send — it is how you get a BBS
+                // to reprint its prompt — but it is not worth remembering.
+                if !line.trim().is_empty() && self.packet_history.last() != Some(&line) {
+                    self.packet_history.push(line);
+                    if self.packet_history.len() > 100 {
+                        self.packet_history.remove(0);
+                    }
                 }
+                self.packet_history_at = None;
+                self.packet_draft.clear();
             }
-            self.packet_history_at = None;
-            self.packet_draft.clear();
         }
     }
 

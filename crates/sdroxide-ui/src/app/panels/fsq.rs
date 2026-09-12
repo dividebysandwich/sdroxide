@@ -350,75 +350,79 @@ impl SdroxideApp {
                             });
                     });
                     ui.add_space(4.0);
-                    let tgt = if self.fsq_target.is_empty() {
-                        "ALLCALL".to_string()
-                    } else {
-                        self.fsq_target.clone()
-                    };
-                    // Row 1: To: target + message input + SEND.
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!("{tgt}:"))
-                                .monospace()
-                                .color(crate::theme::CYAN_DIM()),
-                        );
-                        let resp = crate::chrome::field(
-                            ui,
-                            egui::TextEdit::singleline(&mut self.text_tx)
-                                .desired_width((ui.available_width() - 62.0).max(60.0))
-                                .hint_text("Message…"),
-                        );
-                        // Return is the same button, so it is shut off with it.
-                        let entered = tx_ok
-                            && resp.lost_focus()
-                            && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        let send = entered
-                            || tx_gated(ui, tx_ok, |ui| {
-                                crate::chrome::chip_accent(
-                                    ui,
-                                    false,
-                                    " SEND ",
-                                    crate::theme::ALERT(),
-                                    crate::theme::INK_ON_CYAN(),
-                                )
-                            })
-                            .clicked();
-                        if send && !self.text_tx.trim().is_empty() {
-                            let call = if my_call.is_empty() { "NOCALL" } else { &my_call };
-                            let body = self.text_tx.trim();
-                            let full = if self.fsq_target.is_empty() {
-                                format!("{call}: {body}\n")
-                            } else {
-                                format!("{call}:{} {body}\n", self.fsq_target)
-                            };
-                            cmds.push(Command::DigiAbortTx);
-                            cmds.push(Command::DigiTxText(full));
-                            cmds.push(Command::DigiTxActive(true));
-                            self.text_tx.clear();
-                        }
-                    });
-                    // Row 2: CQ / ? heard / CLEAR.
-                    ui.horizontal(|ui| {
-                        if tx_gated(ui, tx_ok, |ui| crate::chrome::chip(ui, false, " CALL CQ "))
-                            .clicked()
-                        {
-                            cmds.push(Command::DigiCallCq);
-                        }
-                        if !self.fsq_target.is_empty()
-                            && tx_gated(ui, tx_ok, |ui| crate::chrome::chip(ui, false, " ? heard "))
+                    if !self.ui_settings.swl {
+                        let tgt = if self.fsq_target.is_empty() {
+                            "ALLCALL".to_string()
+                        } else {
+                            self.fsq_target.clone()
+                        };
+                        // Row 1: To: target + message input + SEND.
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!("{tgt}:"))
+                                    .monospace()
+                                    .color(crate::theme::CYAN_DIM()),
+                            );
+                            let resp = crate::chrome::field(
+                                ui,
+                                egui::TextEdit::singleline(&mut self.text_tx)
+                                    .desired_width((ui.available_width() - 62.0).max(60.0))
+                                    .hint_text("Message…"),
+                            );
+                            // Return is the same button, so it is shut off with it.
+                            let entered = tx_ok
+                                && resp.lost_focus()
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                            let send = entered
+                                || tx_gated(ui, tx_ok, |ui| {
+                                    crate::chrome::chip_accent(
+                                        ui,
+                                        false,
+                                        " SEND ",
+                                        crate::theme::ALERT(),
+                                        crate::theme::INK_ON_CYAN(),
+                                    )
+                                })
+                                .clicked();
+                            if send && !self.text_tx.trim().is_empty() {
+                                let call = if my_call.is_empty() { "NOCALL" } else { &my_call };
+                                let body = self.text_tx.trim();
+                                let full = if self.fsq_target.is_empty() {
+                                    format!("{call}: {body}\n")
+                                } else {
+                                    format!("{call}:{} {body}\n", self.fsq_target)
+                                };
+                                cmds.push(Command::DigiAbortTx);
+                                cmds.push(Command::DigiTxText(full));
+                                cmds.push(Command::DigiTxActive(true));
+                                self.text_tx.clear();
+                            }
+                        });
+                        // Row 2: CQ / ? heard / CLEAR.
+                        ui.horizontal(|ui| {
+                            if tx_gated(ui, tx_ok, |ui| crate::chrome::chip(ui, false, " CALL CQ "))
                                 .clicked()
-                        {
-                            let call = if my_call.is_empty() { "NOCALL" } else { &my_call };
-                            let full = format!("{call}:{}?\n", self.fsq_target);
-                            cmds.push(Command::DigiAbortTx);
-                            cmds.push(Command::DigiTxText(full));
-                            cmds.push(Command::DigiTxActive(true));
-                        }
-                        if crate::chrome::chip(ui, false, " CLEAR ").clicked() {
-                            self.text_tx.clear();
-                            cmds.push(Command::DigiAbortTx);
-                        }
-                    });
+                            {
+                                cmds.push(Command::DigiCallCq);
+                            }
+                            if !self.fsq_target.is_empty()
+                                && tx_gated(ui, tx_ok, |ui| {
+                                    crate::chrome::chip(ui, false, " ? heard ")
+                                })
+                                .clicked()
+                            {
+                                let call = if my_call.is_empty() { "NOCALL" } else { &my_call };
+                                let full = format!("{call}:{}?\n", self.fsq_target);
+                                cmds.push(Command::DigiAbortTx);
+                                cmds.push(Command::DigiTxText(full));
+                                cmds.push(Command::DigiTxActive(true));
+                            }
+                            if crate::chrome::chip(ui, false, " CLEAR ").clicked() {
+                                self.text_tx.clear();
+                                cmds.push(Command::DigiAbortTx);
+                            }
+                        });
+                    }
                 });
             }
         });
