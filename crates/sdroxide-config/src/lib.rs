@@ -1219,6 +1219,20 @@ pub struct Session {
     /// Absent in a session written before this existed.
     #[serde(default)]
     pub band_antenna: BandAntennas,
+    /// The antenna sockets each VFO was left on, `[A, B]`, as `(RX, TX)`.
+    ///
+    /// The companion to [`Self::vfo_modes`], and there for the same reason: a
+    /// VFO is a whole listening position, not a dial. [`Self::band_antenna`]
+    /// cannot stand in for this — it holds one socket per band, so two VFOs at
+    /// opposite ends of the same band write the same entry and the second
+    /// choice wins for both (issue #404).
+    ///
+    /// Either side may be `None`, for a VFO that has never had a socket chosen
+    /// on it or a direction with no port to choose; the whole field is absent
+    /// in a session written before this was remembered. No preference means no
+    /// assertion, the same rule the two memories above follow.
+    #[serde(default)]
+    pub vfo_antennas: Option<[(Option<String>, Option<String>); 2]>,
 }
 
 /// Which antenna socket was last chosen on each band — see
@@ -1267,6 +1281,10 @@ impl Default for Session {
             tx_gains: Vec::new(),
             recording_mono: radio.recording_mono,
             band_antenna: BandAntennas::new(),
+            // And no socket of its own for either VFO until one has been
+            // chosen on it — nothing moves a relay before the operator has
+            // said what belongs where.
+            vfo_antennas: None,
         }
     }
 }
@@ -2179,6 +2197,12 @@ mod tests {
             band_antenna: BandAntennas::from([
                 (sdroxide_types::Band::M40, (Some("ANT1".into()), None)),
                 (sdroxide_types::Band::M2, (Some("ANT2".into()), Some("ANT2".into()))),
+            ]),
+            // Both VFOs on 40 m, one on each socket — what the band map above
+            // cannot express on its own.
+            vfo_antennas: Some([
+                (Some("ANT1".into()), None),
+                (Some("ANT2".into()), Some("ANT2".into())),
             ]),
         };
         let back: Session = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();

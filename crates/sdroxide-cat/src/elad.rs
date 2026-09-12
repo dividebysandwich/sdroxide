@@ -239,6 +239,7 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
+        | Mode::AtChat
         | Mode::Rade
         | Mode::Spec
         | Mode::Sstv

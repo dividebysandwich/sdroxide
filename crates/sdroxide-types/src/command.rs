@@ -1023,4 +1023,34 @@ pub enum Command {
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     SstvRestartRx,
+
+    /// AtCHAT NET: send a chat line. `to` empty is the common channel; a
+    /// callsign is a directed (private) message.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    AtChatSendChat {
+        to: String,
+        text: String,
+    },
+
+    /// AtCHAT NET: send a file (or image) to a station, or to the common
+    /// channel when `to` is empty. `path` is read engine-side.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    AtChatSendFile {
+        to: String,
+        path: String,
+    },
+
+    /// AtCHAT NET: drop the channel link, keeping the station's state in RAM so
+    /// a later reconnect resumes half-finished transfers.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    AtChatDrop,
+
+    /// AtCHAT NET: rejoin the channel after an [`Command::AtChatDrop`], sending
+    /// only a JOIN_REQUEST — never claiming master while a beacon is heard.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    AtChatReconnect,
 }

@@ -57,6 +57,8 @@ decodes DRM shortwave radio, weather fax, and the ADS-B/VDL2 aircraft overhead
 <hr/>
 
 > ## [User Manual](docs/USER_MANUAL.md)
+>
+> ### [QO-100 Quick-start Guide](docs/qo100-quickstart.en.md) ([Türkçe](docs/qo100-quickstart.tr.md))
 
 One binary, three ways to run it:
 

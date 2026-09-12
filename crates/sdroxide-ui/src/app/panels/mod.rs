@@ -21,6 +21,7 @@
 pub(in crate::app) mod adsb;
 pub(in crate::app) mod ais;
 pub(in crate::app) mod aprs;
+pub(in crate::app) mod atchat;
 pub(in crate::app) mod cw;
 pub(in crate::app) mod decodes;
 pub(in crate::app) mod fsq;
@@ -69,6 +70,10 @@ pub(in crate::app) fn panel_panes(mode: Mode) -> &'static [&'static str] {
         // they move independently, so they get a pane each rather than sharing
         // one.
         Mode::Packet | Mode::PacketHf => &["MONITOR", "TERMINAL"],
+        // CHAT is the roster and the conversation; FILES is the transfers in
+        // flight and the received-image viewer — two things an AtCHAT operator
+        // watches move independently.
+        Mode::AtChat => &["CHAT", "FILES"],
         // Three, because an APRS operator watches three things that move
         // independently: who is out there, where they are, and what they said.
         Mode::Aprs => &["STATIONS", "MESSAGES", "MAP"],

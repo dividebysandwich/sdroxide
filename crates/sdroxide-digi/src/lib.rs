@@ -13,6 +13,7 @@
 //! for anything that links it.
 
 pub mod aprs_controller;
+pub mod atchat_controller;
 pub(crate) mod ax25_channel;
 pub mod clock;
 pub mod controller;
@@ -42,6 +43,7 @@ pub mod wspr;
 pub mod wspr_controller;
 
 pub use aprs_controller::AprsController;
+pub use atchat_controller::AtChatController;
 pub use clock::ClockMonitor;
 pub use controller::{DigiAction, DigiController};
 pub use cw_controller::CwController;
@@ -238,6 +240,29 @@ pub trait DigiEngine: Send {
     /// FSQ image: queue a grayscale image (`w*h` bytes) and start transmitting.
     fn set_image(&mut self, _gray: Vec<u8>, _w: u16, _h: u16) {}
 
+    // --- AtCHAT NET ---
+    //
+    // A whole NET protocol rather than a keyboard buffer: chat is addressed
+    // (common channel or a directed callsign), files go by block-CRC-ARQ, and
+    // the link can be dropped and resumed. These are the operator's side of
+    // that, and default to inert.
+
+    /// AtCHAT: send a chat line — `to` empty is the common channel, a callsign
+    /// is a directed message.
+    fn atchat_send_chat(&mut self, _to: String, _text: String) {}
+
+    /// AtCHAT: send a file or image to a station (or the common channel when
+    /// `to` is empty).
+    fn atchat_send_file(&mut self, _to: String, _path: std::path::PathBuf) {}
+
+    /// AtCHAT: drop the channel link, keeping station state so a reconnect can
+    /// resume half-finished transfers.
+    fn atchat_drop(&mut self) {}
+
+    /// AtCHAT: rejoin after [`DigiEngine::atchat_drop`] — a JOIN_REQUEST only,
+    /// never a master claim while a beacon is heard.
+    fn atchat_reconnect(&mut self) {}
+
     // --- digital voice ---
     //
     // The text and image modes are decoded *from* the receive audio and
@@ -284,6 +309,8 @@ mod dispatch_tests {
             "cw"
         } else if mode.is_rade() {
             "rade"
+        } else if mode.is_atchat() {
+            "atchat"
         } else if mode.is_sstv() {
             "sstv"
         } else if mode.is_wefax() {
@@ -328,6 +355,9 @@ mod dispatch_tests {
         assert_eq!(pick(Mode::Hell), "hell");
         assert_eq!(pick(Mode::Psk), "text");
         assert_eq!(pick(Mode::Rade), "rade");
+        // AtCHAT is neither slotted nor a keyboard modem; the fall-through
+        // would hand it an FT8 decoder and its NET station would never join.
+        assert_eq!(pick(Mode::AtChat), "atchat");
         assert_eq!(pick(Mode::Wefax), "wefax");
         // Both packet modes reach the one packet controller. HF packet is the
         // quiet trap of the pair: it is a keyboard-shaped mode on a sideband,

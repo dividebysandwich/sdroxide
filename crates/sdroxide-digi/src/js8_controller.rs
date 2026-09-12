@@ -1153,6 +1153,7 @@ impl DigiEngine for Js8Controller {
                 next_hb_in_s: self.hb_countdown_s,
                 hb_hz: self.hb_hz,
             }),
+            atchat: None,
             fox_queue: Vec::new(),
             call_queue: Vec::new(),
             clock_offset_s: self.clock.offset_s(),

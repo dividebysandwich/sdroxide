@@ -18,3 +18,6 @@ crates/sdroxide-web/dist/index.html
 # `[patch.crates-io]` and its own `Cargo.lock`.
 /vendor/*/target
 /vendor/*/Cargo.lock
+
+# AtCHAT / file-transfer received files (runtime output)
+received/

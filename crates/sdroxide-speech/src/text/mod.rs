@@ -161,6 +161,7 @@ impl<'a> Speaker<'a> {
             // and is dropped, leaving "V D L".
             Mode::Vdl2 => "V D L two",
             Mode::Ais => "A I S",
+            Mode::AtChat => "at chat",
         }
     }
 

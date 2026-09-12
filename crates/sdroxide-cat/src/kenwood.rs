@@ -367,6 +367,7 @@ fn mode_digit(m: Mode) -> (char, bool) {
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
+        | Mode::AtChat
         | Mode::Rade => ('2', true),
         Mode::Usb | Mode::Spec | Mode::Sstv | Mode::Wefax | Mode::Navtex | Mode::RfPaint => {
             ('2', false)

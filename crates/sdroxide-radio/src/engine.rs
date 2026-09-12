@@ -17,10 +17,10 @@ use sdroxide_adsb::{AdsbAction, AdsbController};
 use sdroxide_ais::{AisAction, AisController};
 use sdroxide_config::BandStacks;
 use sdroxide_digi::{
-    AprsController, CwController, DigiAction, DigiController, DigiEngine, FsqController,
-    HellController, Js8Controller, NavtexController, PacketController, RadeController,
-    RfPaintController, RifpController, SstvController, TextModemController, WefaxController,
-    WsprController,
+    AprsController, AtChatController, CwController, DigiAction, DigiController, DigiEngine,
+    FsqController, HellController, Js8Controller, NavtexController, PacketController,
+    RadeController, RfPaintController, RifpController, SstvController, TextModemController,
+    WefaxController, WsprController,
 };
 use sdroxide_drm::DrmDemod;
 use sdroxide_dsp::{
@@ -2139,24 +2139,48 @@ impl ZoomLane {
 }
 
 /// The listening position a VFO keeps while the other one is in use: the mode
-/// it was left in and the passband that went with it.
+/// it was left in, the passband that went with it, and the antenna socket it
+/// was heard on.
 ///
 /// The filter travels with the mode because it belongs to it — selecting a mode
 /// installs that mode's default width, so a VFO restored on its mode alone
 /// would come back with a passband the operator had already narrowed and lost.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// The antenna is an `Option` because it is a preference and not an assertion:
+/// a VFO nobody has chosen a socket on leaves the front end exactly where it
+/// is, the same "no preference means no assertion" rule
+/// [`Engine::restore_antennas`] and [`Engine::follow_band_antenna`] follow.
+#[derive(Debug, Clone, PartialEq)]
 struct VfoMemory {
     mode: Mode,
     filter_lo: f32,
     filter_hi: f32,
+    antenna_rx: Option<String>,
+    antenna_tx: Option<String>,
 }
 
 impl VfoMemory {
     /// What the receiver is listening in right now, ready to be shelved under
     /// the VFO that is being left.
-    fn of(rx: &RxState) -> VfoMemory {
-        VfoMemory { mode: rx.mode, filter_lo: rx.filter_lo, filter_hi: rx.filter_hi }
+    fn of(state: &RadioState) -> VfoMemory {
+        let rx = &state.rx[0];
+        VfoMemory {
+            mode: rx.mode,
+            filter_lo: rx.filter_lo,
+            filter_hi: rx.filter_hi,
+            // The socket in use, not the one last asked for: a rig that moved
+            // its own selector while this VFO was in front is still what the
+            // operator was listening on.
+            antenna_rx: chosen(&state.antenna_rx),
+            antenna_tx: chosen(&state.antenna_tx),
+        }
     }
+}
+
+/// A socket name worth remembering, or `None` for a front end that has no
+/// selector and reports an empty one.
+fn chosen(name: &str) -> Option<String> {
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 struct Engine {
@@ -3727,7 +3751,7 @@ fn engine_thread(
     // mode the receiver came up in — the command line's, the session's, or the
     // default — and the *inactive* one is then given back the mode it was
     // actually left in, just below.
-    let initial_vfo_memory = VfoMemory::of(&state.rx[0]);
+    let initial_vfo_memory = VfoMemory::of(&state);
 
     let mut engine = Engine {
         // Out of declaration order on purpose: literal fields are evaluated
@@ -3943,7 +3967,7 @@ fn engine_thread(
         good_vfo_hz: source_center_hz,
         // Both VFOs start on the mode the receiver came up in; the remembered
         // pair is folded in below, once the engine owns them.
-        vfo_memory: [initial_vfo_memory; 2],
+        vfo_memory: [initial_vfo_memory.clone(), initial_vfo_memory],
         spots: sdroxide_net::SpotManager::new(),
         winlink: open_mailbox(&sdroxide_types::WinlinkConfig::default()),
         kiss: None,
@@ -4100,6 +4124,15 @@ fn engine_thread(
             _ => engine.state.vfo_b_hz,
         });
         (engine.vfo_memory[idle].filter_lo, engine.vfo_memory[idle].filter_hi) = (lo, hi);
+    }
+    // And the socket it was left on, on the same terms: the active VFO is
+    // already on whatever the front end opened on, and `restore_antennas` has
+    // the last word there, so only the other slot is filled in (issue #404).
+    if let Some(ants) = engine.session.as_ref().and_then(|s| s.vfo_antennas.clone()) {
+        let idle = 1 - engine.state.active_vfo.index();
+        let (rx, tx) = ants[idle].clone();
+        engine.vfo_memory[idle].antenna_rx = rx;
+        engine.vfo_memory[idle].antenna_tx = tx;
     }
     engine.push_rx_mode();
     engine.keep_vfo_in_span();
@@ -6318,6 +6351,12 @@ impl Engine {
             ))
         } else if mode.is_rade() {
             Box::new(RadeController::new(self.digi_config.clone(), tap_rate))
+        } else if mode.is_atchat() {
+            // Ahead of the fall-through, which is FT8's: AtCHAT is neither
+            // slotted nor a keyboard modem — it runs a whole NET protocol on
+            // its own thread — and nothing further down would notice it had
+            // been handed an FT8 decoder.
+            Box::new(AtChatController::new(self.digi_config.clone(), tap_rate))
         } else if mode.is_sstv() {
             // Both SSTV modes, one controller: HF and VHF differ in the radio
             // underneath, not in the picture — the same reason the two packet
@@ -7530,26 +7569,29 @@ impl Engine {
                 self.update_tuning();
             }
             SelectVfo(v) => {
-                // The mode goes with the VFO. Shelve what the one being left
-                // was listening in, and put the receiver into what the one
-                // being taken up was left in (issue #286).
-                self.shelve_vfo_mode();
+                // The mode goes with the VFO, and so does the antenna socket.
+                // Shelve what the one being left was listening in, and put the
+                // receiver into what the one being taken up was left in
+                // (issues #286 and #404).
+                self.shelve_vfo_state();
                 self.state.active_vfo = v;
                 self.recall_vfo_mode();
+                self.recall_vfo_antenna();
                 self.state.band = Band::containing(self.state.active_freq_hz());
                 self.follow_dial();
                 self.update_tuning();
             }
             SwapVfos => {
                 // A swap exchanges the whole listening position, not just the
-                // two numbers: A's mode and passband go to B along with its
-                // dial. The active VFO does not change, so what it is now
-                // holding is the *other* one's setup, and the receiver has to
-                // be put into it.
-                self.shelve_vfo_mode();
+                // two numbers: A's mode, passband and antenna go to B along
+                // with its dial. The active VFO does not change, so what it is
+                // now holding is the *other* one's setup, and the receiver has
+                // to be put into it.
+                self.shelve_vfo_state();
                 std::mem::swap(&mut self.state.vfo_a_hz, &mut self.state.vfo_b_hz);
                 self.vfo_memory.swap(0, 1);
                 self.recall_vfo_mode();
+                self.recall_vfo_antenna();
                 self.state.band = Band::containing(self.state.active_freq_hz());
                 self.follow_dial();
                 self.update_tuning();
@@ -7559,12 +7601,13 @@ impl Engine {
                 // A=B copies the position, mode included — otherwise the VFO
                 // that was just made a duplicate of A would listen to A's
                 // frequency in something else.
-                self.shelve_vfo_mode();
-                self.vfo_memory[Vfo::B.index()] = self.vfo_memory[Vfo::A.index()];
+                self.shelve_vfo_state();
+                self.vfo_memory[Vfo::B.index()] = self.vfo_memory[Vfo::A.index()].clone();
                 // A no-op while A is the active VFO, and the whole point of the
                 // call while B is: the receiver has just been moved onto A's
-                // frequency and has to hear it in A's mode.
+                // frequency and has to hear it in A's mode, on A's antenna.
                 self.recall_vfo_mode();
+                self.recall_vfo_antenna();
                 self.update_tuning();
             }
             SetSplit(on) => self.state.split = on,
@@ -8884,6 +8927,52 @@ impl Engine {
                     && self.state.rx[0].mode.is_packet()
                 {
                     d.packet_term_clear();
+                }
+                return;
+            }
+            // AtCHAT NET. No transmit gate of its own on any of these: the
+            // frames leave through the station's own listen-before-transmit and
+            // the engine's normal PTT path, exactly as a beacon does. A refusal
+            // is written into the station's own log, where the panel shows it —
+            // except "you are not in AtCHAT", which has no controller to log
+            // into and so is a Notice.
+            AtChatSendChat { to, text } => {
+                match self.digi.as_mut() {
+                    Some(d) if self.state.rx[0].mode.is_atchat() => d.atchat_send_chat(to, text),
+                    _ => {
+                        let _ = self.event_tx.send(RadioEvent::Notice(Some(
+                            "switch the radio to ATCHAT to send".into(),
+                        )));
+                    }
+                }
+                return;
+            }
+            AtChatSendFile { to, path } => {
+                match self.digi.as_mut() {
+                    Some(d) if self.state.rx[0].mode.is_atchat() => {
+                        d.atchat_send_file(to, std::path::PathBuf::from(path));
+                    }
+                    _ => {
+                        let _ = self.event_tx.send(RadioEvent::Notice(Some(
+                            "switch the radio to ATCHAT to send a file".into(),
+                        )));
+                    }
+                }
+                return;
+            }
+            AtChatDrop => {
+                if let Some(d) = self.digi.as_mut()
+                    && self.state.rx[0].mode.is_atchat()
+                {
+                    d.atchat_drop();
+                }
+                return;
+            }
+            AtChatReconnect => {
+                if let Some(d) = self.digi.as_mut()
+                    && self.state.rx[0].mode.is_atchat()
+                {
+                    d.atchat_reconnect();
                 }
                 return;
             }
@@ -11939,8 +12028,8 @@ impl Engine {
         self.update_tuning();
     }
 
-    /// Record what the active VFO is listening in, so taking up the other one
-    /// can leave it there.
+    /// Record the position the active VFO is listening in — mode, passband and
+    /// antenna socket — so taking up the other one can leave it there.
     ///
     /// Called on the way *out* of a VFO rather than on every mode change: the
     /// only thing that has to be true is that the shelf is current at the
@@ -11948,8 +12037,8 @@ impl Engine {
     /// path that can change a mode or a filter width — the mode buttons, a band
     /// stack recall, a memory, the scanner, rigctld, a remote client, the rig's
     /// own knob.
-    fn shelve_vfo_mode(&mut self) {
-        self.vfo_memory[self.state.active_vfo.index()] = VfoMemory::of(&self.state.rx[0]);
+    fn shelve_vfo_state(&mut self) {
+        self.vfo_memory[self.state.active_vfo.index()] = VfoMemory::of(&self.state);
     }
 
     /// Put the main receiver into the mode and passband the now-active VFO was
@@ -11961,7 +12050,7 @@ impl Engine {
     /// afterwards because selecting a mode installs that mode's default width,
     /// which would otherwise throw away a passband the operator had narrowed.
     fn recall_vfo_mode(&mut self) {
-        let want = self.vfo_memory[self.state.active_vfo.index()];
+        let want = self.vfo_memory[self.state.active_vfo.index()].clone();
         if want.mode != self.state.rx[0].mode {
             self.set_rx_mode(RxId::Main, want.mode);
         }
@@ -11978,6 +12067,79 @@ impl Engine {
         // too — exactly as `set_rx_mode` does for the mode it commands.
         // Self-guarded, and a no-op on every front end that filters here.
         self.push_control_filter();
+    }
+
+    /// Put the now-active VFO back on the antenna socket it was last heard on —
+    /// but only while the switch stays inside one band.
+    ///
+    /// Two VFOs at the same end of the same band is the one case the per-band
+    /// memory cannot cover. [`Engine::band_antenna`] holds one socket per band,
+    /// so an RSPdx operator listening on Antenna A with VFO A and on Antenna B
+    /// with VFO B writes both choices into the same entry and the second one
+    /// wins for both — switching back left the front end on the wrong socket
+    /// while the frequency and the mode came back correctly (issue #404).
+    ///
+    /// Crossing a band edge is the band's business and not the VFO's, so this
+    /// stands aside for it: an A/B press onto a VFO parked on another band is a
+    /// band change like any other, and [`Engine::poll_band_change`] calls
+    /// [`Engine::follow_band_antenna`] for it a moment later. Which aerial
+    /// hears 2 m is a fact about the station rather than about a VFO, and a
+    /// shelf written the last time that VFO happened to be on the band would
+    /// argue with the operator's standing choice for it. The division is the
+    /// one an operator would state: the A/B button keeps the socket, a band
+    /// change recalls it.
+    ///
+    /// Nothing is written back into the band memory here either. That record
+    /// holds the operator's explicit choice on a band — `SetAntenna` and
+    /// nothing else puts anything in it — and the finer, per-VFO record does
+    /// not get to speak for the band as a whole.
+    ///
+    /// Unlike a band change this *is* compared against the cached socket before
+    /// it is sent. `follow_band_antenna` asserts rather than compares because a
+    /// rig moves its own selector when its band stacking register changes under
+    /// it (issue #258); an A/B press within one band moves no register, so an
+    /// unconditional write here would only click a relay on every press.
+    fn recall_vfo_antenna(&mut self) {
+        // The band the dial has landed on — read from the dial rather than
+        // taken from `state.band`, which the callers set *after* this so that a
+        // mode moving the dial of its own accord (APRS does) is accounted for —
+        // against the band being left, which `state.band` still holds.
+        if Band::containing(self.state.active_freq_hz()) != self.state.band {
+            return;
+        }
+        let want = self.vfo_memory[self.state.active_vfo.index()].clone();
+        let before = (self.state.antenna_rx.clone(), self.state.antenna_tx.clone());
+        // Not where the source owns the receive port: a LimeSDR with a LimeRFE
+        // in front of it listens on the socket the front end is cabled to. Same
+        // exemption as `restore_antennas` and `follow_band_antenna`.
+        if let Some(name) = want
+            .antenna_rx
+            .filter(|n| !self.source.owns_rx_antenna() && self.caps.antennas_rx.contains(n))
+            .filter(|n| *n != self.state.antenna_rx)
+        {
+            if let Err(e) = self.source.set_antenna(&name) {
+                warn!("switching to RX antenna {name} for VFO {:?}: {e}", self.state.active_vfo);
+            }
+            self.state.antenna_rx = self.source.current_antenna();
+            // A Hi-Z port has fewer front-end states than the 50 Ohm one beside
+            // it, exactly as it does for a socket chosen by hand.
+            self.refresh_rx_gains();
+            self.want_antenna.0 = Some(name);
+        }
+        if let Some(name) = want
+            .antenna_tx
+            .filter(|n| self.caps.antennas_tx.contains(n))
+            .filter(|n| *n != self.state.antenna_tx)
+        {
+            if let Err(e) = self.source.set_tx_antenna(&name) {
+                warn!("switching to TX antenna {name} for VFO {:?}: {e}", self.state.active_vfo);
+            }
+            self.state.antenna_tx = self.source.current_tx_antenna();
+            self.want_antenna.1 = Some(name);
+        }
+        if before != (self.state.antenna_rx.clone(), self.state.antenna_tx.clone()) {
+            let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+        }
     }
 
     fn set_rx_mode(&mut self, rx: RxId, mode: Mode) {
@@ -13261,7 +13423,6 @@ impl Engine {
         // What the hardware reports, not what was asked for, and dropped when it
         // is empty: a front end with no antenna to choose (a CAT rig, a file)
         // must not erase the port a real radio was left on.
-        let keep = |name: &str| (!name.is_empty()).then(|| name.to_string());
         // Both dials and which one was in use, so a station left listening on
         // B — or split, with the other VFO on the DX's transmit frequency —
         // comes back set up the way it was rather than with B collapsed onto A.
@@ -13279,8 +13440,8 @@ impl Engine {
                 m[self.state.active_vfo.index()] = self.state.rx[0].mode;
                 m
             }),
-            antenna_rx: keep(&self.state.antenna_rx).or_else(|| saved.antenna_rx.clone()),
-            antenna_tx: keep(&self.state.antenna_tx).or_else(|| saved.antenna_tx.clone()),
+            antenna_rx: chosen(&self.state.antenna_rx).or_else(|| saved.antenna_rx.clone()),
+            antenna_tx: chosen(&self.state.antenna_tx).or_else(|| saved.antenna_tx.clone()),
             volume: self.state.rx[0].volume,
             muted: self.state.rx[0].muted,
             rx_gain_db: self.state.rx[0].manual_gain_db,
@@ -13307,6 +13468,18 @@ impl Engine {
             tx_gains: self.want_gains.1.clone(),
             recording_mono: self.state.recording_mono,
             band_antenna: self.band_antenna.clone(),
+            // The shelf again, with the live socket written into the active
+            // slot on the way past for the same reason the modes are: the shelf
+            // is only current for the VFO that is *not* in use.
+            vfo_antennas: Some({
+                let mut a = [
+                    (self.vfo_memory[0].antenna_rx.clone(), self.vfo_memory[0].antenna_tx.clone()),
+                    (self.vfo_memory[1].antenna_rx.clone(), self.vfo_memory[1].antenna_tx.clone()),
+                ];
+                a[self.state.active_vfo.index()] =
+                    (chosen(&self.state.antenna_rx), chosen(&self.state.antenna_tx));
+                a
+            }),
         };
         if now == *saved {
             return;
@@ -15908,6 +16081,7 @@ fn rig_mode_class(m: Mode) -> u8 {
         | Mode::RfPaint
         | Mode::Rade
         | Mode::PacketHf
+        | Mode::AtChat
         | Mode::Spec => 1,
         // DRM sits on the dial in a channel about as wide as AM's, and a
         // rig has no DRM setting to report back — see `to_hamlib_mode`.

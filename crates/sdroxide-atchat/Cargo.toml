@@ -1,0 +1,60 @@
+[package]
+name = "sdroxide-atchat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AtCHAT NET: an OFDM multi-station chat/file mode — DigiEngine, a virtual TCP channel for radio-less development, and the standalone test tools"
+
+# The modem, the NET protocol (master election, roster, ARQ file transfer) and
+# the virtual channel are a straight port of barisdinc/AtChat (originally MIT);
+# folded in here under the workspace licence.
+
+[features]
+# The standalone RF-less test tools (the [[bin]] targets). Off by default so a
+# consumer of the library — sdroxide-digi, and the app behind it — links none of
+# the CLI machinery.
+tools = ["dep:clap", "dep:tracing-subscriber", "tokio/signal"]
+
+[dependencies]
+num-complex.workspace = true
+rustfft.workspace = true
+serde.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+serde_json = "1"
+crc32fast = "1"
+base64 = "0.22"
+rand = "0.8"
+rand_distr = "0.4"
+tokio = { version = "1", features = ["rt", "macros", "time", "sync", "net", "io-util", "fs"] }
+clap = { version = "4", features = ["derive"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+[dev-dependencies]
+# The protocol scenarios drive two stations at once under
+# `#[tokio::test(flavor = "multi_thread")]`; the library itself runs the session
+# on a current-thread runtime, so the multi-threaded scheduler is a test-only
+# need and stays out of the normal build.
+tokio = { version = "1", features = ["rt-multi-thread"] }
+hound = "3"
+tempfile = "3"
+
+# ── Standalone RF-less test tools (build with --features tools) ──
+# monitor and channel are not part of sdroxide itself; these are the bench
+# versions for exercising the protocol without a radio. The client one is the
+# same station the ATCHAT mode drives, on a plain terminal.
+
+[[bin]]
+name = "atchat-channel"
+path = "src/bin/channel.rs"
+required-features = ["tools"]
+
+[[bin]]
+name = "atchat-client"
+path = "src/bin/client.rs"
+required-features = ["tools"]
+
+[[bin]]
+name = "atchat-monitor"
+path = "src/bin/monitor.rs"
+required-features = ["tools"]

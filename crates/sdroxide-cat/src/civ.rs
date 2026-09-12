@@ -66,7 +66,9 @@ pub fn mode_to_civ(m: Mode) -> u8 {
         | Mode::RfPaint
         | Mode::Rade
         // HF packet is 300 baud AFSK on a sideband, like any keyboard mode.
-        | Mode::PacketHf => 0x01,
+        | Mode::PacketHf
+        // AtChat NET is a 2.7 kHz COFDM keyboard/file mode on a sideband.
+        | Mode::AtChat => 0x01,
         Mode::Am | Mode::Sam | Mode::Dsb | Mode::Isb | Mode::Drm => 0x02,
         Mode::Cw => 0x03,
         // RIFP is FSK on the carrier, and VHF packet frequency-modulates it,

@@ -557,6 +557,33 @@ pub struct SdroxideApp {
     /// Packet: how far back through [`Self::packet_history`] the operator has
     /// walked. `None` means they are typing something new.
     packet_history_at: Option<usize>,
+    /// AtCHAT: what is typed on the chat line but not yet sent. The active
+    /// chat tab decides where it goes — the common channel, or one callsign.
+    atchat_draft: String,
+    /// AtCHAT: the open direct-message tabs, in the order they appeared. The
+    /// common "CHAT" tab is always present and is not in this list.
+    atchat_dm_tabs: Vec<String>,
+    /// AtCHAT: the selected chat tab. `None` is the common "CHAT" tab (lines go
+    /// to ALL); `Some(call)` is that station's direct-message tab.
+    atchat_chat_tab: Option<String>,
+    /// AtCHAT: the permanent LOG tab is up — the transcript area shows the
+    /// station's on-air activity log instead of a conversation. Takes
+    /// precedence over [`Self::atchat_chat_tab`] while set; any other tab
+    /// click clears it.
+    atchat_show_log: bool,
+    /// AtCHAT: newest incoming direct-message timestamp already turned into a
+    /// tab, per peer — so closing a tab does not make an old message reopen it.
+    atchat_dm_seen: std::collections::HashMap<String, u64>,
+    /// AtCHAT: newest incoming direct-message timestamp the operator has viewed
+    /// for that peer — drives the unread dot on an inactive DM tab.
+    atchat_dm_read: std::collections::HashMap<String, u64>,
+    /// AtCHAT: which received image the viewer is showing — an index into the
+    /// image-only subset of the status file list, oldest first.
+    atchat_img_at: usize,
+    /// AtCHAT: received images decoded from disk once and kept as textures,
+    /// keyed by file path. `None` marks a path that would not decode, so it is
+    /// not retried every frame.
+    atchat_img_cache: std::collections::HashMap<String, Option<egui::TextureHandle>>,
     /// APRS: the station icons, decoded once and kept as textures.
     aprs_icons: crate::aprs_icons::AprsIcons,
     /// APRS: the map's centre, zoom and selected station.
@@ -1338,6 +1365,14 @@ impl SdroxideApp {
             packet_draft: String::new(),
             packet_history: Vec::new(),
             packet_history_at: None,
+            atchat_draft: String::new(),
+            atchat_dm_tabs: Vec::new(),
+            atchat_chat_tab: None,
+            atchat_show_log: false,
+            atchat_dm_seen: std::collections::HashMap::new(),
+            atchat_dm_read: std::collections::HashMap::new(),
+            atchat_img_at: 0,
+            atchat_img_cache: std::collections::HashMap::new(),
             aprs_show_traffic: false,
             aprs_filter: String::new(),
             aprs_lat_buf: String::new(),

@@ -193,6 +193,7 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
+        | Mode::AtChat
         | Mode::Rade => '6',
         // No QMX has an FM position at all, so there is nothing closer to ask
         // for than a sideband — which at least leaves the sound card in the

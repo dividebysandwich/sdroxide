@@ -14,6 +14,11 @@ license = "GPL-3.0-or-later"
 [dependencies]
 sdroxide-types.workspace = true
 sdroxide-dsp.workspace = true
+# AtCHAT NET: the OFDM modem, the NET protocol station and its channel. Its own
+# crate, free of the rest of the workspace, so it and its standalone test tools
+# build without this crate's GPL/C-library chain; the thin DigiEngine controller
+# that bridges it onto the radio lives here because it needs the DSP resamplers.
+sdroxide-atchat.workspace = true
 sdroxide-ax25.workspace = true
 sdroxide-aprs.workspace = true
 sdroxide-deepcw.workspace = true

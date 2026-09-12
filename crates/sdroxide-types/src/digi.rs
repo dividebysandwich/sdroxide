@@ -484,6 +484,12 @@ pub struct DigiStatus {
     /// "are we in JS8?" test.
     #[serde(default)]
     pub js8: Option<crate::Js8Status>,
+    /// AtCHAT NET: roster, chat, transfers and the station's own log. `None` in
+    /// every other mode, so the panel that renders it is its own "are we in
+    /// AtCHAT?" test — the same rule [`DigiStatus::js8`] follows. Boxed because
+    /// it is much the largest of these optionals and present for one mode only.
+    #[serde(default)]
+    pub atchat: Option<Box<crate::AtChatStatus>>,
     /// Fox mode: the pile-up, callers being worked first. Empty in every other
     /// role, so the panel showing it is its own "are we the Fox?" test.
     #[serde(default)]
@@ -883,6 +889,7 @@ impl DigiStatus {
             navtex: None,
             aprs: None,
             js8: None,
+            atchat: None,
             fox_queue: Vec::new(),
             call_queue: Vec::new(),
             clock_offset_s: None,
@@ -1761,6 +1768,21 @@ pub struct DigiConfig {
     #[serde(default = "default_aprs_ttl")]
     pub aprs_station_ttl_min: u32,
 
+    // ── AtCHAT NET ──
+    /// Work AtCHAT on a virtual TCP channel instead of over the radio.
+    ///
+    /// Off by default: selecting the mode puts the station on the *air*, which
+    /// is what a digital mode is for. The virtual channel is for developing and
+    /// testing without a radio — a `channel_server`-compatible TCP endpoint
+    /// stands in for the RF path — and an operator who wants that asks for it.
+    #[serde(default)]
+    pub atchat_virtual: bool,
+    /// The `IP:port` of the virtual channel, used only when
+    /// [`atchat_virtual`](Self::atchat_virtual) is set. `127.0.0.1:6000` is the
+    /// `channel_server` default.
+    #[serde(default = "default_atchat_virtual_addr")]
+    pub atchat_virtual_addr: String,
+
     /// How loud a digital mode's transmit audio is handed to a radio that
     /// modulates it itself — a CAT rig on a sound card, a FLEX, an Icom on its
     /// network port — for a mode with no entry of its own in
@@ -1919,6 +1941,12 @@ fn cw_default_pitch() -> f32 {
     700.0
 }
 
+/// Default for [`DigiConfig::atchat_virtual_addr`] — the `channel_server`
+/// default endpoint on the loopback.
+fn default_atchat_virtual_addr() -> String {
+    "127.0.0.1:6000".into()
+}
+
 fn cw_default_wpm() -> f32 {
     20.0
 }
@@ -2029,6 +2057,8 @@ impl Default for DigiConfig {
             aprs_compressed: true,
             aprs_ack_messages: true,
             aprs_station_ttl_min: default_aprs_ttl(),
+            atchat_virtual: false,
+            atchat_virtual_addr: default_atchat_virtual_addr(),
             tx_audio_level_fm: 1.0,
             tx_audio_level_ssb: 1.0,
             tx_audio_levels: std::collections::HashMap::new(),

@@ -1344,6 +1344,7 @@ impl QsoMachine {
             navtex: None,
             aprs: None,
             js8: None,
+            atchat: None,
             fox_queue: self.fox.as_ref().map(Fox::status).unwrap_or_default(),
             call_queue: self.queue.iter().cloned().collect(),
             clock_offset_s: None,

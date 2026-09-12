@@ -695,6 +695,8 @@ impl eframe::App for SdroxideApp {
                             crate::chrome::angled_frame(ui, crate::theme::PINK(), |ui| {
                                 if mode.is_rade() {
                                     self.rade_panel(ui, &mut cmds, panel_h);
+                                } else if mode.is_atchat() {
+                                    self.atchat_panel(ui, &mut cmds, panel_h);
                                 } else if mode.is_wefax() {
                                     self.wefax_panel(ui, &mut cmds, panel_h);
                                 } else if mode == Mode::Navtex {

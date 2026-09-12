@@ -4882,6 +4882,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdroxide-atchat"
+version = "1.6.6"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "clap",
+ "crc32fast",
+ "hound",
+ "num-complex",
+ "rand 0.8.8",
+ "rand_distr",
+ "rustfft",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "sdroxide-audio"
 version = "1.6.6"
 dependencies = [
@@ -4952,6 +4973,7 @@ dependencies = [
  "num-complex",
  "rayon",
  "sdroxide-aprs",
+ "sdroxide-atchat",
  "sdroxide-ax25",
  "sdroxide-deepcw",
  "sdroxide-dsp",
@@ -6170,6 +6192,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

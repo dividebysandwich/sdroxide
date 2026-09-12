@@ -966,6 +966,7 @@ impl PacketController {
             navtex: None,
             aprs: None,
             js8: None,
+            atchat: None,
             fox_queue: Vec::new(),
             call_queue: Vec::new(),
             clock_offset_s: None,

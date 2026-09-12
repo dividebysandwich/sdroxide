@@ -637,6 +637,7 @@ impl AprsController {
             navtex: None,
             aprs: Some(Box::new(self.aprs_status())),
             js8: None,
+            atchat: None,
             fox_queue: Vec::new(),
             call_queue: Vec::new(),
             clock_offset_s: None,
