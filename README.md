@@ -7,7 +7,7 @@ binary, as a **server that streams the same UI to a web browser** over
 WebSocket. It includes an integrated, persistent **logbook**, many digital modes like **FT8/FT4/FT2**
 built-in, and **TCI and Hamlib rigctld servers** so third-party programs like WSJT-X can use it as their radio.
 
-## This fork — the CB band
+## This fork — the CB band, on a receiver for the listener
 
 As upstream wrote it, SDR Oxide is a PowerSDR/Thetis-style transceiver for the
 amateur bands. **This fork adds the 11 m citizens band** and is tuned for CB
@@ -19,12 +19,28 @@ amateur decodes below do. The CB band is an addition, not a change: the amateur
 bands, modes, logbook and awards remain upstream's, untouched, and both run
 from the same session.
 
-The program is equally useful with **no licence at all**. For a **short-wave
-listener** it is a full receiver that decodes every WSPR beacon in HF around
-the clock, labels ~4,600 longwave and shortwave broadcast transmitters on the
-waterfall (each with its transmit schedule and site), and decodes DRM shortwave
-radio, weather fax, and the ADS-B/VDL2 aircraft overhead — and the browser
-server lets you listen from anywhere, antenna in the garden.
+It is now **built for the licence-free operator too.** The shortwave broadcast
+services have **bands of their own** on the selector and in the band plan —
+**LW / MW / SW / FM** — so a listener jumps straight to longwave, medium wave,
+the shortwave broadcast bands and VHF FM instead of hunting in general
+coverage, and on any frequency an amateur band shares with shortwave the
+amateur band keeps the name. An **SWL mode** toggle hides every transmit
+control — PTT, CALL CQ, TX level, SEND, all of it — leaving a clean
+receive-only interface for the operator with a listening dongle, a SpyServer or
+a KiwiSDR. And as a receiver it is a full one: it decodes every WSPR beacon in
+HF around the clock, labels ~4,600 longwave and shortwave broadcast
+transmitters on the waterfall (each with its transmit schedule and site),
+decodes DRM shortwave radio, weather fax, and the ADS-B/VDL2 aircraft overhead
+— and the browser server lets you listen from anywhere, antenna in the garden.
+
+| | Upstream (`dividebysandwich/sdroxide`) | This fork |
+| --- | --- | --- |
+| **Amateur bands** | 160 m … 3 cm, by IARU region, with band-plan lockout | identical, untouched |
+| **11 m / citizens' band** | not present | on the bar (26.965–27.860 MHz): WSJT-CB interop, country flags, digimode channels, TX lockout |
+| **Broadcast bands** | general coverage only | **LW / MW / SW / FM** on the selector and in the band plan |
+| **SWL mode** | — | a toggle that hides every transmit control |
+| **Radio backends** | 17 kinds of radio | plus a **USB sound-card** backend for VOX-keyed handhelds, walkies and dongles |
+| **UI themes** | the built-in set | 10 more — Nord, Gruvbox, Everforest, Solarized, Dracula, Catppuccin, … |
 
 <hr/>
 

@@ -135,7 +135,9 @@ or connects to a remote sdroxide server.
   transceiver over USB, an RTL-SDR
   published over the network by
   `rtl_tcp`, a PlutoSDR, or a CAT-controlled radio with audio over a USB sound
-  card (demodulated audio or stereo IQ).
+  card (demodulated audio or stereo IQ) — plus a **USB audio radio**: a
+  handheld or walkie with no control port at all, reachable only through the
+  sound card, keyed by its own VOX ([§15.22](#1522-usb-audio-radio-sound-card)).
 - **Several radios at once** — each in its own tab with its own tuning, mode,
   panadapter and audio, sharing your memories, logbook and a station-wide
   transmit interlock. Multi-receiver hardware serves one tab per receiver from
@@ -293,18 +295,36 @@ shift-clicking anywhere else on the panadapter does.
 Click the **Band / Mode** button (which reads, for example, `20M · USB`) to open a
 popup with three rows:
 
-- **BAND:** `160M 80M 60M 40M 30M 20M 17M 15M 12M 10M 6M 4M 2M 1.25M 70CM 33CM
-  23CM 13CM 9CM 6CM GEN`. Each
+- **BAND:** `LW MW 160M 80M 60M 40M 30M 20M 17M 15M 12M 10M 11M 6M 4M FM 2M 1.25M 70CM
+  33CM 23CM 13CM 9CM 6CM SW GEN`. Each
   band remembers your last frequency, mode, and filter. A band your region's
   band plan does not have gets no button at all — `4M` (70 MHz) is an amateur
   allocation in IARU Region 1 only, so it is absent in Regions 2 and 3, and
   `1.25M` (220 MHz) and `33CM` (902 MHz) are Region 2's alone, so they are absent
   in the other two. `6CM` reads `5CM` outside Region 1, which is what the band
-  plans there call it. Once
+  plans there call it.
+
+  **`11M` is the citizens' band** — not an amateur allocation, so the transmit
+  lockout holds there ([6.1](#61-general-station-audio-and-remote-access)).
+  **`LW`, `MW`, `SW` and `FM` are the broadcast services** a short-wave
+  listener tunes: longwave 148.5–283.5 kHz, medium wave 526.5–1606.5 kHz (530–
+  1700 in the Americas), the whole shortwave broadcast span 2.3–26.1 MHz, and
+  VHF FM broadcast 87.5–108 MHz. None is an amateur allocation, so the same
+  lockout applies, and each stays an ordinary band button: the dial jumps there
+  (198 kHz AM, 1 MHz AM, 6.175 MHz AM, 100 MHz WFM), band stepping walks
+  through them, and the band stack remembers what you last listened to. `SW`
+  deliberately overlies the amateur HF bands, and the amateur band always wins
+  the name — a frequency in a shared span reports as the amateur band, `SW`
+  owns only the broadcast-only slice ([6.1](#61-general-station-audio-and-remote-access));
+  the labels that make these bands usable are in
+  [§10.6](#106-broadcast-stations-on-longwave-and-shortwave). Tick **SWL mode**
+  on the UI tab ([6.3](#63-ui-display-preferences-and-voice-announcements)) and
+  every transmit control disappears, for a clean receive-only radio. Once
   band conditions have
   been fetched the button are tinted by the published forecast — green Good,
   yellow Fair, pink Poor — and hovering one gives it in words. Bands the
-  forecast does not cover are left uncoloured; see
+  forecast does not cover (the broadcast bands among them) are left uncoloured;
+  see
   [§2.15](#215-band-conditions). In a digital mode, the bands where that mode
   has a standard calling frequency carry a cyan underline; see
   [§3.1](#31-general-considerations).
@@ -2866,6 +2886,11 @@ is a list of paths rather than contacts (3.11).
 
 ### 3.1 General considerations
 
+On 11 m, where the family is worked on the citizens' band rather than an
+amateur allocation, the FT8/FT4/FT2 (and JS8) exchange follows **WSJT-CB's**
+conventions instead — grid-less, one call at a time, its own hashed pairs and
+free-text reports — see [3.2.8](#328-11-m-and-the-citizens-band-wsjt-cb).
+
 Every digital mode is entered the same way: open the Band/Mode popup and choose
 the mode from the **DIGITAL** row. The panadapter locks to the digital sub-band
 (the audio range just above the dial), and the mode's operating panel appears in
@@ -3478,6 +3503,44 @@ CQ/ITU zones, IOTA and POTA/SOTA references, and per-service QSL status. See
 one-click upload buttons and award tracking.
 
 The log is stored in `qso_log.json`.
+
+#### 3.2.8 11 m and the citizens' band (WSJT-CB)
+
+On **11 m** the whole exchange follows the conventions of the community's
+[WSJT-CB](https://github.com/vash909/WSJT-CB) client rather than the amateur
+FT8 ones — because that is who is on the band to work. Press **11M** in the
+band row and the mode's band buttons land on the citizens' band's own channels
+as usual ([6.1](#61-general-station-audio-and-remote-access) lists them), but
+everything the sequencer puts on the air changes:
+
+- **No Maidenhead grid.** CB stations do not carry locators, so the identity,
+  the report and the sign-off all leave the grid word out — in a slot that
+  would carry `JN78ve` the band carries nothing instead (issue #396). Your own
+  grid is still used for the map and the great-circle paths, just not
+  transmitted.
+- **The calls are WSJT-CB's.** A lone call — `26AT715` — is free text on the
+  wire, and that is how a CB station answers a CQ: no report, no pair, just
+  the call. An addressed identity is **hashed** the way WSJT-CB hashes it and
+  sent as a **Type 4** message, `<DX> MYCALL` — the far station's call as the
+  hash *first*, your own call spelled out in the clear — which is the exact
+  form the WSJT-CB client itself transmits, not a pair of hashes. The CQ
+  itself goes out in the usual CQ form, grid-less.
+- **The sequence is WSJT-CB's.** A CQ answered by a bare call gets a report;
+  the report, the R-report and the sign-off all travel *one call at a time* as
+  free text — `26AT715 -07`, `26AT715 R+05`, `26AT715 RR73`, `26AT715 73` —
+  each exactly as WSJT-CB writes it, so a contact with their client completes
+  cleanly in the other direction too.
+- **Every 11 m decode shows its country flag.** A CB-shaped callsign is read by
+  shape, and its leading digits resolve as the **CB country number** — `26AT715`
+  is 026, England — using WSJT-CB's own country numbering, so the flag, the
+  entity and the sort-by-country the amateur decodes have are exactly what a
+  CB operator is used to seeing (the reference's own historical names —
+  "East Germany", "Czechoslovakia", "Alaska" — come with it).
+- **Logging and permission.** A completed contact logs with an **empty ADIF
+  band** — ADIF's enumeration runs 12 m, 10 m, 8 m with nothing in between —
+  and with `tx_ham_only` set (the default) sdroxide refuses to key up there at
+  all, because the citizens' band is not an amateur allocation. Both are the
+  band's bullet in [6.1](#61-general-station-audio-and-remote-access).
 
 ### 3.3 PSK31 and RTTY
 
@@ -5917,27 +5980,52 @@ decides every band plan sdroxide draws and enforces:
   edges are what the band buttons jump to, what `Band` a frequency reports as,
   and — with `tx_ham_only` set, which is the default — where transmit is
   refused.
-- **11 m** (`M11`) is on the bar and is **not an amateur band.** 26.965–27.405
-  is the citizens' band — the same forty channels under CEPT, the FCC and the
-  ACMA — and it is here because it is a band people work, busy in Europe and
-  with its own digimode conventions on the ordinary channel grid: FT8 on
+- **11 m** (`M11`) is on the bar and is **not an amateur band.** 26.965–27.860
+  covers the forty citizens'-band channels (the same grid under CEPT, the FCC
+  and the ACMA) and reaches up into the UK's second 27.6 MHz block — widened
+  so the 27.700 SSTV channel sits inside the band — and it is here because it
+  is a band people work, busy in Europe and with its own digimode conventions on
+  the ordinary channel grid: FT8 on
   **27.265** (ch 26), JS8 on **27.245** (ch 25), SSTV on **27.255** and
-  **27.375** (ch 23 and 37), 1200-baud packet on **27.235** and **27.365**
+  **27.375** (ch 23 and 37), SSTV's wider calling channel on **27.700**, 1200-baud
+  packet on **27.235** and **27.365**
   (ch 24 and 36). Those appear in the ⇵ frequency picker like any other
   convention, and pressing **11M** in a digital mode lands on the mode's
-  channel. What does not follow is permission to transmit: with `tx_ham_only`
+  channel. The exchange itself follows WSJT-CB — grid-less, one call at a time,
+  with country flags on every decode; see
+  [§3.2.8](#328-11-m-and-the-citizens-band-wsjt-cb). What does not follow is
+  permission to transmit: with `tx_ham_only`
   set (the default) sdroxide refuses to key up there, because an amateur
   licence does not grant the citizens' band and this end cannot check what
   else you hold — the refusal names the band and says how to lift it. A
   contact there logs with an **empty ADIF band**, because ADIF's enumeration
   runs 12 m, 10 m, 8 m with nothing in between (issue #396).
 
-  The frequencies **above 27.405** that circulate on the same lists — 27.500,
-  27.585, 27.635, 27.700, 27.710 — are the freeband, which no administration
-  grants, and sdroxide does not offer them as channels. They tune by hand like
-  anything else, and a licence that does cover part of that range (the UK's
-  second CB block starts at 27.60125) goes in `bandplan.json` and in your own
-  saved frequencies.
+  The frequencies **above the forty-channel grid** that circulate on the same
+  lists — 27.500, 27.585, 27.635, 27.710 — are the freeband, which no
+  administration grants, and sdroxide does not offer them as channels (the
+  27.700 SSTV calling channel aside). They tune by hand like anything else —
+  the widened band edges reach them — and a licence that does cover part of
+  that range (the UK's second CB block starts at 27.60125) goes in
+  `bandplan.json` and in your own saved frequencies.
+- **Longwave, medium wave, shortwave and FM broadcast** — `LW`, `MW`, `SW` and
+  `FM` are on the bar for the listener the way 11 m is for the CB operator.
+  None is an amateur allocation, so with `tx_ham_only` set (the default) the
+  transmit lockout holds there exactly as it does on 11 m; and none has an ADIF
+  band, so a broadcast contact logs with an empty band like a CB one. The
+  spans are longwave **148.5–283.5 kHz**, medium wave **526.5–1606.5 kHz** (the
+  Americas' expanded band runs to 1700, and those regions' edges follow),
+  the whole shortwave broadcast span **2.3–26.1 MHz**, and VHF FM broadcast
+  **87.5–108 MHz**. The dial buttons land on **198 kHz AM**, **1 MHz AM**,
+  **6.175 MHz AM** (the 49 m band) and **100 MHz WFM**, and band stepping walks
+  through them like any other band. **Shortwave deliberately overlaps the
+  amateur HF bands** — the broadcast allocations thread between them and in
+  places sit inside them, and no one span can hold them without touching what
+  is already on the bar. The amateur band always wins the name: a frequency
+  that is in both reports as the amateur band, and `SW` owns only the
+  broadcast-only ground between them — 6.175 MHz is `SW`, 14.200 MHz is 20 m.
+  The waterfall labels that make these bands worth listening to are in
+  [§10.6](#106-broadcast-stations-on-longwave-and-shortwave).
 - **What a band is called** — the 5650 MHz band is **6 cm** to the IARU
   Region 1 VHF handbook, the RSGB, the WIA and the NRRL, and **5 cm** to plans
   across the other two regions, so the band button, the band-plan strip and the
@@ -5987,7 +6075,7 @@ The file is one row per line, in **megahertz**, and it explains itself in a
 
 | List | What it sets |
 | --- | --- |
-| `bands` | The allocations. `band` is one of `M160` `M80` `M60` `M40` `M30` `M20` `M17` `M15` `M12` `M10` `M6` `M4` `M2` `M125` `M70` `Cm33` `Cm23` `Cm13` `Cm9` `Cm6` — metres up to 2 m, then the band's own name, and `Cm` from 33 cm up because `M6` was already 6 m. Leave a band out and the region does not have it — with one exception, below. |
+| `bands` | The allocations. `band` is one of `Lw` `Mw` `M160` `M80` `M60` `M40` `M30` `M20` `M17` `M15` `M12` `M10` `M11` `M6` `M4` `Fm` `M2` `M125` `M70` `Cm33` `Cm23` `Cm13` `Cm9` `Cm6` `Cm3` — metres up to 2 m, then the band's own name, `Cm` from 33 cm up because `M6` was already 6 m, and `Lw`, `Mw`, `Sw`, `Fm` for the broadcast services (see the bullet above for what `Sw` deliberately overlapping the amateur bands does). Leave a band out and the region does not have it — with one exception, below. |
 | `segments` | The CW / data / phone / beacon / all-modes blocks on the waterfall strip. `kind` is `Cw`, `Digi`, `Phone`, `Beacon` or `All`. |
 | `psk_windows` | Where the PSK31 skimmer listens. |
 | `rtty_windows` | Where the RTTY skimmer listens. |
@@ -6019,7 +6107,8 @@ would then refuse.
 
 **A band sdroxide adds later** — 4 m (`M4`) was the first, and 1.25 m (`M125`),
 33 cm (`Cm33`), 23 cm (`Cm23`), 13 cm (`Cm13`), 9 cm (`Cm9`), 6 cm (`Cm6`),
-3 cm (`Cm3`) and 11 m (`M11`) since — is not in a file
+3 cm (`Cm3`), 11 m (`M11`) and the broadcast services
+`Lw`, `Mw`, `Sw`, `Fm` since — is not in a file
 written before it existed, and a file that has never heard of a band is not
 saying you have not got it. So a band on that short list is filled in from the
 built-in tables when your file names it in **no** region at all, exactly as a
@@ -10470,6 +10559,14 @@ provide.
 The **UI** tab holds display preferences, stored in `config.toml` under `[ui]`, and the
 spoken announcements below them under `[speech]`:
 
+- **SWL mode** — *Short Wave Listener* mode. Tick **hide all transmit controls** and
+  every transmit control in the interface disappears — the PTT, **CALL CQ**, the
+  TX level, **SEND**, **BEACON**, all of it (stored as `swl` under `[ui]`). What
+  remains is a clean receive-only UI, which is what an operator with a listening
+  dongle — an RTL-SDR, a SpyServer, a KiwiSDR — actually needs. The radio can
+  still transmit if the hardware supports it; this only hides the buttons, so a
+  ham who also listens leaves it off. It is the companion to the broadcast bands
+  on the selector ([§2.4](#24-bands-and-modes)) for a licence-free station.
 - **Layout** — which control strip the window wears. **Auto** picks one from the
   window size and is what you want; **Desktop**, **Tablet**, **Small screen**
   and **Phone** force it, to see how the compact strips look without a phone to
@@ -10502,6 +10599,18 @@ spoken announcements below them under `[speech]`:
   **High contrast** (white on black, at the widest separation the screen can
   give), **Green phosphor** and **Amber phosphor** (monochrome CRT looks),
   **Teal / orange**, or **Rainbow** (the accents spread across the spectrum).
+  The ten themes this fork adds sit alongside them: **Nord** and **Nord dark**
+  (polar-night navy, frost cyan), **Gruvbox** (parchment on near-black browns),
+  **Everforest** (green-tinged deep blues, cream text), **Solarized** and
+  **Solarized dark** (Ethan Schoonover's palette, dark and on paper),
+  **Dracula** (graphite, mint cyan, soft magenta), **Catppuccin mocha** (deep
+  indigo, sky blue) and **Catppuccin latte** (cream, teal and blue), and
+  **Modern minimalist**. The dark ones are hand-tuned fabrics; the three
+  bright-ground themes (*Solarized*, *Catppuccin latte*, *Modern minimalist*)
+  hold a 4.5:1 contrast promise on every ink, tint and chip on their own
+  panels, and every theme's instruments — paper meters on bright grounds,
+  dark-glass scopes, atlas-shaded maps — derive from its own hues rather than
+  a second hand-written table.
   Applied the moment it is picked, no restart. Every theme keeps transmit, SWR
   and error indications red on purpose — whether RF is leaving the antenna is
   never left to a shade of green. Content colours (the waterfall palette below,
@@ -14794,6 +14903,45 @@ the project's own reverse proxy, at a `something.proxy.kiwisdr.com` address,
 and those answer on **port 80** rather than on a Kiwi's usual 8073. Give the
 port explicitly. Picking a receiver from the browse window always gets this
 right.
+
+### 15.22 USB audio radio (sound card)
+
+A radio with **no control port at all** — a handheld, a walkie, a toy, a USB
+dongle rig. It reaches sdroxide through the computer's ordinary sound cards,
+so it is the one radio that needs a cable to the PC even though nothing on it
+says why: receive comes into a sound card's **line or mic input** (the
+radio's headphone socket), transmit leaves through another into the **radio's
+mic socket**, and the radio keys itself **off VOX** — the moment audio arrives
+at its mic line it broadcasts it. There is no CAT, no TCI, no serial anywhere,
+which is exactly the point.
+
+In Settings → Radio, interface **USB audio radio (sound card)**, pick the two
+devices:
+
+- **Receive (radio → PC)** — the sound card the radio's own audio comes in on.
+  Everything on the panadapter and in the decoders arrives here.
+- **Transmit (PC → radio mic)** — the sound card that carries the audio the
+  radio must broadcast. Because the radio keys itself by VOX the moment audio
+  arrives, this device is silent unless the radio is being transmitted
+  through.
+
+That is the whole tab. Every other radio control is absent because the hardware
+has none: the **dial becomes a label** rather than a command (the radio tunes
+itself with its own knobs), and there is **no PTT to command** — transmit is
+audio into the radio's microphone, keyed by VOX. **Apply / reconnect** reopens
+the radio with the chosen cards without a restart.
+
+Two things follow from the way it works. **The band plan and transmit lockout
+still apply** — sdroxide knows where the dial *is* because you tuned it here,
+even though nothing told the radio — so the usual ham-band / 11 m / broadcast
+rules hold ([6.1](#61-general-station-audio-and-remote-access)). And because
+the only "measurements" come from the audio stream itself, an audio radio has
+**no SWR bridge, no forward-power telemetry and no rig-reported S-meter** —
+the level figures that still work are audio levels, which describe the radio's
+own audio rather than what its antenna hears, and the radio's front panel is
+where signal strength really lives. It is otherwise a perfectly ordinary radio:
+every mode, the logbook, the panadapter (a demodulated-audio spectrum), spots
+and awards all work as they do on any other backend.
 
 ---
 
