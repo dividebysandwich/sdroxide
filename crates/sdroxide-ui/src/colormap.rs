@@ -236,6 +236,14 @@ pub fn band_color(band: sdroxide_types::Band) -> [u8; 3] {
         Band::Cm9 => [160, 220, 172],  // pale green
         Band::Cm6 => [150, 204, 236],  // pale sky
         Band::Cm3 => [166, 178, 240],  // pale blue
+        // The broadcast services an SWL tunes — the same desaturated family as
+        // 11 m, out of the amateur rotation on purpose, because none of them is
+        // an amateur band. LW and MW sit below 160 m as a dark slate pair, SW a
+        // muted sea-green, FM a sage.
+        Band::Lw => [80, 92, 116],   // slate blue
+        Band::Mw => [120, 104, 72],  // slate tan
+        Band::Sw => [56, 128, 120],  // sea green
+        Band::Fm => [116, 132, 108], // sage
         // Not a band: nothing is ever binned here.
         Band::Gen => [128, 128, 128],
     }

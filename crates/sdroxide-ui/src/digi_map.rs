@@ -526,11 +526,13 @@ mod tests {
     }
 
     /// A WSPRnet report can name a frequency in no band this station's region
-    /// has. `Gen` is not a colour, so nothing is claimed for it.
+    /// has. `Gen` is not a colour, so nothing is claimed for it. (9.5 MHz used
+    /// to be "no band"—it is inside the shortwave span now, so the report is
+    /// 27.9 MHz, above 11 m and below 6 m in every region.)
     #[test]
     fn a_frequency_in_no_band_gets_no_colour() {
         let mut s = DigiStations::default();
-        s.observe_wspr(&[WsprSpot { freq_hz: 9_500_000.0, ..wspr("FN42", 0) }], 0.0, NOW);
+        s.observe_wspr(&[WsprSpot { freq_hz: 27_900_000.0, ..wspr("FN42", 0) }], 0.0, NOW);
         assert_eq!(s.stations(0.0)[0].band, None);
     }
 

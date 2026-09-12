@@ -81,10 +81,64 @@ pub enum Band {
     /// Appended for the reason [`Band::M70`] gives; [`Band::ALL`] puts it
     /// between 12 m and 10 m, where the frequencies are.
     M11,
+    /// Longwave broadcast — 148.5–283.5 kHz, the Region 1 AM allocation (and
+    /// the same span everywhere here: no other region has an LW *broadcast*
+    /// band, but a listener reaches NDBs across all three, and a band that is
+    /// about listening has no reason to stop at a licence boundary).
+    ///
+    /// The first of the broadcast services on the bar. None of them is an
+    /// amateur allocation — [`Band::is_amateur`] says no and the transmit
+    /// lockout holds (with `tx_ham_only` set, the default) exactly as it does
+    /// on [`Band::M11`].
+    ///
+    /// Appended for the reason [`Band::M70`] gives; [`Band::ALL`] puts it
+    /// before 160 m, where the frequencies are.
+    Lw,
+    /// Medium wave / AM broadcast — 526.5–1606.5 kHz in Regions 1 and 3, the
+    /// Americas' expanded band of 530–1700 kHz in Region 2. The band every AM
+    /// receiver in the world is on.
+    ///
+    /// Not an amateur allocation; see [`Band::Lw`] for what that means here.
+    ///
+    /// Appended for the reason [`Band::M70`] gives; [`Band::ALL`] puts it
+    /// between longwave and 160 m, where the frequencies are.
+    Mw,
+    /// Shortwave broadcast — 2.3–26.1 MHz, the span the ITU shortwave
+    /// broadcasting allocations live in and every "SW" on a receiver's band
+    /// switch covers. The band an SWL is really there for.
+    ///
+    /// The one entry on the bar that is deliberately not disjoint from the
+    /// others: shortwave broadcasting is a dozen interleaved allocations
+    /// (120 m through 11 m) that thread between the amateur HF bands, and in
+    /// three places — 80/60/40 m in some regions — sit *inside* them. No one
+    /// span can hold the broadcast bands without touching what is already on
+    /// the bar. So it overlaps on purpose, and [`Band::ALL`] puts it at the
+    /// **end**, so the amateur band always wins: [`Band::containing`] takes the
+    /// first match in bar order, and a frequency in an amateur band reports as
+    /// that band; SW is what a frequency in *no* amateur band but inside the
+    /// broadcast span reports as. 6.175 and 9.65 are SW; 14.200 is 20 m. The
+    /// one thing an overlap is never allowed to do here — hide another band —
+    /// never happens, because SW is last but one.
+    ///
+    /// Not an amateur allocation, which is the whole point of a listener's
+    /// band; see [`Band::Lw`].
+    ///
+    /// Appended for the reason [`Band::M70`] gives; [`Band::ALL`] puts it just
+    /// before [`Band::Gen`].
+    Sw,
+    /// VHF FM broadcast — 87.5–108 MHz, the band every FM receiver is on.
+    ///
+    /// Not an amateur allocation; see [`Band::Lw`] for what that means here.
+    ///
+    /// Appended for the reason [`Band::M70`] gives; [`Band::ALL`] puts it
+    /// between 4 m and 2 m, where the frequencies are.
+    Fm,
 }
 
 impl Band {
-    pub const ALL: [Band; 23] = [
+    pub const ALL: [Band; 27] = [
+        Band::Lw,
+        Band::Mw,
         Band::M160,
         Band::M80,
         Band::M60,
@@ -98,6 +152,7 @@ impl Band {
         Band::M10,
         Band::M6,
         Band::M4,
+        Band::Fm,
         Band::M2,
         Band::M125,
         Band::M70,
@@ -107,6 +162,7 @@ impl Band {
         Band::Cm9,
         Band::Cm6,
         Band::Cm3,
+        Band::Sw,
         Band::Gen,
     ];
 
@@ -130,7 +186,7 @@ impl Band {
     ///
     /// Append-only, forever. A new band goes on the end here and wherever it
     /// belongs in [`Band::ALL`]; the two lists are deliberately different.
-    const DECLARED: [Band; 23] = [
+    const DECLARED: [Band; 27] = [
         Band::M160,
         Band::M80,
         Band::M60,
@@ -154,6 +210,10 @@ impl Band {
         Band::Cm6,
         Band::Cm3,
         Band::M11,
+        Band::Lw,
+        Band::Mw,
+        Band::Sw,
+        Band::Fm,
     ];
 
     /// This band's position in the *declaration* order, which is append-only
@@ -213,20 +273,29 @@ impl Band {
                 Region::R2 | Region::R3 => "5CM",
             },
             Band::Cm3 => "3CM",
+            // The broadcast services an SWL tunes. Short labels, because three
+            // of them are initials anyway and a radio face would not hang a
+            // "BC" on them either.
+            Band::Lw => "LW",
+            Band::Mw => "MW",
+            Band::Sw => "SW",
+            Band::Fm => "FM",
             Band::Gen => "GEN",
         }
     }
 
     /// Whether this band is an *amateur* allocation.
     ///
-    /// True for every band on the bar but two: [`Band::Gen`], which is the
-    /// absence of a band, and [`Band::M11`], which is the citizens' band — a
-    /// separate radio service that an amateur licence does not grant. The
-    /// transmit lockout asks this rather than comparing against `Gen`, so
-    /// putting a band on the bar so it can be *listened* to does not quietly
-    /// hand out permission to key up on it (issue #396).
+    /// True for every band on the bar but six: [`Band::Gen`], which is the
+    /// absence of a band, [`Band::M11`], which is the citizens' band — a
+    /// separate radio service that an amateur licence does not grant — and the
+    /// four broadcast services [`Band::Lw`], [`Band::Mw`], [`Band::Sw`] and
+    /// [`Band::Fm`], which belong to broadcasting. The transmit lockout asks
+    /// this rather than comparing against `Gen`, so putting a band on the bar
+    /// so it can be *listened* to does not quietly hand out permission to key
+    /// up on it (issue #396).
     pub fn is_amateur(self) -> bool {
-        !matches!(self, Band::Gen | Band::M11)
+        !matches!(self, Band::Gen | Band::M11 | Band::Lw | Band::Mw | Band::Sw | Band::Fm)
     }
 
     /// Band edges in Hz for the station's configured region (see
@@ -380,6 +449,28 @@ impl Band {
             // stop at 10.45 or carve the middle out, which is what a
             // hand-edited `bandplan.json` is for.
             Band::Cm3 => Some((10_000_000_000.0, 10_500_000_000.0)),
+            // The broadcast services an SWL tunes. None is an amateur
+            // allocation and none has an ADIF band — see [`crate::adif_band`] —
+            // but each is a span a receiver actually covers, which is what a
+            // band on this bar is for: a button to jump to it and a name for
+            // the dial that sits in it.
+            //
+            // Longwave is a Region 1 broadcast band, but the span is the same
+            // everywhere a listener can reach an NDB; see [`Band::Lw`].
+            Band::Lw => Some((148_500.0, 283_500.0)),
+            // Medium wave: the Americas' expanded band runs to 1700, the rest
+            // of the world's 526.5–1606.5.
+            Band::Mw => by_region(
+                (526_500.0, 1_606_500.0),
+                (530_000.0, 1_700_000.0),
+                (526_500.0, 1_606_500.0),
+            ),
+            // Shortwave broadcast, deliberately overlapping the amateur HF
+            // bands — see [`Band::Sw`]. `containing` walks [`Band::ALL`] in
+            // order and SW sits at its end, so the amateur band wins every
+            // shared frequency; SW catches only the broadcast-only span.
+            Band::Sw => Some((2_300_000.0, 26_100_000.0)),
+            Band::Fm => Some((87_500_000.0, 108_000_000.0)),
             Band::Gen => None,
         }
     }
@@ -449,6 +540,17 @@ impl Band {
             // The 3 cm narrow-band calling frequency, and the same one
             // everywhere: 10368.100 is where a 3 cm contact starts.
             Band::Cm3 => (10_368_100_000.0, Mode::Usb),
+            // A listener's dial, not a ham calling frequency: nobody
+            // transmits on these bands, so there is no calling frequency — AM
+            // for the amplitude-modulated broadcast bands, wide-FM for
+            // broadcast FM. The band stack replaces each the moment the
+            // operator tunes anywhere else.
+            Band::Lw => (198_000.0, Mode::Am),
+            Band::Mw => (1_000_000.0, Mode::Am),
+            // 6.175, the 49 m band — the most crowded shortwave broadcast
+            // allocation, and where an afternoon's listening starts.
+            Band::Sw => (6_175_000.0, Mode::Am),
+            Band::Fm => (100_000_000.0, Mode::Wfm),
             Band::Gen => (7_200_000.0, Mode::Am),
         }
     }
@@ -500,7 +602,7 @@ mod tests {
         for b in Band::ALL {
             assert_eq!(
                 b.is_amateur(),
-                !matches!(b, Band::M11 | Band::Gen),
+                !matches!(b, Band::M11 | Band::Gen | Band::Lw | Band::Mw | Band::Sw | Band::Fm),
                 "{b:?} is on the wrong side of is_amateur"
             );
         }
@@ -589,15 +691,19 @@ mod tests {
         assert_eq!(Band::containing_in(425_000_000.0, Region::R1), Band::Gen);
         assert_eq!(Band::containing_in(425_000_000.0, Region::R2), Band::M70);
         assert_eq!(Band::containing_in(425_000_000.0, Region::R3), Band::Gen);
-        // 40 m above 7.200 is Region 2's alone.
-        assert_eq!(Band::containing_in(7_250_000.0, Region::R1), Band::Gen);
+        // 40 m above 7.200 is Region 2's alone — but the shortwave broadcast
+        // span covers it elsewhere, so Regions 1 and 3 read it as SW rather
+        // than general coverage (see [`Band::Sw`]).
+        assert_eq!(Band::containing_in(7_250_000.0, Region::R1), Band::Sw);
         assert_eq!(Band::containing_in(7_250_000.0, Region::R2), Band::M40);
-        assert_eq!(Band::containing_in(7_250_000.0, Region::R3), Band::Gen);
-        // 80 m: Region 2 to 4.000, Region 3 to 3.900, Region 1 to 3.800.
-        assert_eq!(Band::containing_in(3_850_000.0, Region::R1), Band::Gen);
+        assert_eq!(Band::containing_in(7_250_000.0, Region::R3), Band::Sw);
+        // 80 m: Region 2 to 4.000, Region 3 to 3.900, Region 1 to 3.800. What
+        // is above the local 80 m is shortwave broadcast, not general
+        // coverage.
+        assert_eq!(Band::containing_in(3_850_000.0, Region::R1), Band::Sw);
         assert_eq!(Band::containing_in(3_850_000.0, Region::R2), Band::M80);
         assert_eq!(Band::containing_in(3_850_000.0, Region::R3), Band::M80);
-        assert_eq!(Band::containing_in(3_950_000.0, Region::R3), Band::Gen);
+        assert_eq!(Band::containing_in(3_950_000.0, Region::R3), Band::Sw);
         assert_eq!(Band::containing_in(3_950_000.0, Region::R2), Band::M80);
         // 160 m's lower edge.
         assert_eq!(Band::containing_in(1_805_000.0, Region::R1), Band::Gen);
@@ -675,12 +781,18 @@ mod tests {
 
     /// Every band's edges have to be the right way round and disjoint from
     /// every other band's, in every region — `containing` returns the first
-    /// match, so an overlap would silently hide a band.
+    /// match, so an overlap would silently hide a band. The one deliberate
+    /// exception is [`Band::Sw`], which is *meant* to overlie the amateur HF
+    /// bands and is pinned down by its own test below; being last in the bar,
+    /// it is the one that yields.
     #[test]
     fn edges_are_ordered_and_disjoint_in_every_region() {
         for region in Region::ALL {
-            let mut spans: Vec<(Band, (f64, f64))> =
-                Band::ALL.iter().filter_map(|&b| b.edges_in(region).map(|e| (b, e))).collect();
+            let mut spans: Vec<(Band, (f64, f64))> = Band::ALL
+                .iter()
+                .filter(|b| **b != Band::Sw)
+                .filter_map(|&b| b.edges_in(region).map(|e| (b, e)))
+                .collect();
             for (b, (lo, hi)) in &spans {
                 assert!(lo < hi, "{b:?} in {region:?}: {lo} >= {hi}");
             }
@@ -688,6 +800,90 @@ mod tests {
             for w in spans.windows(2) {
                 assert!(w[0].1.1 < w[1].1.0, "{:?} and {:?} overlap in {region:?}", w[0].0, w[1].0);
             }
+        }
+    }
+
+    /// The broadcast services an SWL tunes: real bands with real edges and real
+    /// buttons — the point of the SWL mode — and nothing to do with amateur
+    /// radio, so the transmit lockout holds on them exactly as on 11 m.
+    #[test]
+    fn the_broadcast_bands_are_there_to_be_listened_to() {
+        for (band, label, lo, hi) in [
+            (Band::Lw, "LW", 148_500.0, 283_500.0),
+            (Band::Mw, "MW", 526_500.0, 1_606_500.0),
+            (Band::Sw, "SW", 2_300_000.0, 26_100_000.0),
+            (Band::Fm, "FM", 87_500_000.0, 108_000_000.0),
+        ] {
+            // Regions 1 and 3 share a table; Region 2's AM band is the
+            // expanded one and gets its own assertions below.
+            for r in [Region::R1, Region::R3] {
+                assert_eq!(band.label_in(r), label, "{band:?} in {r:?}");
+                assert_eq!(band.edges_in(r), Some((lo, hi)), "{band:?} in {r:?}");
+            }
+            assert!(!band.is_amateur(), "{band:?} must be receive-only");
+        }
+        // The same labels and the Americas' expanded AM band, which runs to
+        // 1700.
+        for r in [Region::R1, Region::R3] {
+            assert_eq!(Band::Mw.label_in(r), "MW");
+        }
+        assert_eq!(Band::Mw.edges_in(Region::R2), Some((530_000.0, 1_700_000.0)));
+        assert_eq!(Band::Mw.label_in(Region::R2), "MW");
+        assert_eq!(Band::Lw.edges_in(Region::R2), Some((148_500.0, 283_500.0)));
+        assert_eq!(Band::Sw.edges_in(Region::R2), Some((2_300_000.0, 26_100_000.0)));
+        assert_eq!(Band::Fm.edges_in(Region::R2), Some((87_500_000.0, 108_000_000.0)));
+        // And none of them resolves a frequency into any other band.
+        assert_eq!(Band::containing_in(198_000.0, Region::R1), Band::Lw);
+        assert_eq!(Band::containing_in(1_000_000.0, Region::R1), Band::Mw);
+        assert_eq!(Band::containing_in(100_000_000.0, Region::R1), Band::Fm);
+        // 283.5 kHz to 526.5 kHz is nobody's band.
+        assert!(matches!(Band::containing_in(400_000.0, Region::R1), Band::Gen));
+    }
+
+    /// The cost of one SW span is that it overlaps the amateur bands, and the
+    /// deal is that the amateur band always wins: SW is last-but-one in
+    /// `Band::ALL`, `containing` takes the first match, and no frequency any
+    /// amateur band owns reports as SW — the one thing an overlap may never
+    /// do, hide another band.
+    #[test]
+    fn sw_yields_to_the_amateur_band_it_overlaps() {
+        // A broadcast-only frequency reports as SW.
+        for hz in [2_500_000.0, 6_175_000.0, 9_650_000.0, 15_120_000.0, 25_900_000.0] {
+            assert_eq!(Band::containing_in(hz, Region::R1), Band::Sw, "{hz} is not SW");
+        }
+        // An amateur-band frequency stays its own band, for all three regions.
+        for region in Region::ALL {
+            for (hz, band) in [
+                (3_500_000.0, Band::M80),
+                (5_360_000.0, Band::M60),
+                (7_050_000.0, Band::M40),
+                (14_200_000.0, Band::M20),
+                (18_100_000.0, Band::M17),
+                (21_250_000.0, Band::M15),
+                (24_940_000.0, Band::M12),
+            ] {
+                assert_eq!(Band::containing_in(hz, region), band, "{hz} in {region:?}");
+            }
+        }
+        // A shared frequency flips with the region, the way the allocations
+        // do: 3.900 is 75 m broadcasting in Region 1 and 80 m amateur in
+        // Region 2; 7.250 the same split with 40 m.
+        assert_eq!(Band::containing_in(3_900_000.0, Region::R1), Band::Sw);
+        assert_eq!(Band::containing_in(3_900_000.0, Region::R2), Band::M80);
+        assert_eq!(Band::containing_in(7_250_000.0, Region::R1), Band::Sw);
+        assert_eq!(Band::containing_in(7_250_000.0, Region::R2), Band::M40);
+        // Above the broadcast span the dial is general coverage again, and FM
+        // never eats into 2 m.
+        assert!(matches!(Band::containing_in(26_500_000.0, Region::R1), Band::Gen));
+        assert_eq!(Band::containing_in(145_500_000.0, Region::R1), Band::M2);
+        // No broadcast band carries a WSPR dial, so the hop cycle never offers
+        // one to transmit on.
+        for &hz in crate::WSPR_DIALS.iter() {
+            assert!(
+                Band::containing(hz).is_amateur(),
+                "{hz} sits in {b:?}",
+                b = Band::containing(hz)
+            );
         }
     }
 

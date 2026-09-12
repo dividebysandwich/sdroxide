@@ -197,6 +197,12 @@ impl<'a> Speaker<'a> {
                 sdroxide_types::Region::R2 | sdroxide_types::Region::R3 => "five centimeters",
             },
             Band::Cm3 => "three centimeters",
+            // The broadcast services an SWL tunes, said the way any of them
+            // would say it on the air.
+            Band::Lw => "long wave",
+            Band::Mw => "medium wave",
+            Band::Sw => "short wave",
+            Band::Fm => "F M",
             Band::Gen => "general coverage",
         }
     }

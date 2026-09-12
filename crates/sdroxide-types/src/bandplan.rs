@@ -210,9 +210,11 @@ fn hz_to_mhz(hz: f64) -> f64 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct BandRow {
     /// Which band. `M160` … `M10`, `M6`, `M4`, `M2`, `M125`, `M70`, `Cm33`,
-    /// `Cm23`, `Cm13`, `Cm9`, `Cm6`, `Cm3`. Leave a band out and this region
-    /// simply does not have it — which is how the built-in tables give Regions 2
-    /// and 3 no 4 m.
+    /// `Cm23`, `Cm13`, `Cm9`, `Cm6`, `Cm3` — plus the broadcast services an
+    /// SWL listens to, `Lw` (longwave), `Mw` (medium wave), `Sw` (shortwave)
+    /// and `Fm` (FM broadcast, see [`crate::Band::Lw`]). Leave a band out and
+    /// this region simply does not have it — which is how the built-in tables
+    /// give Regions 2 and 3 no 4 m.
     band: Band,
     lo_mhz: f64,
     hi_mhz: f64,
@@ -262,9 +264,14 @@ fn readme() -> Vec<String> {
          and skimmer window follows this file.",
         "All frequencies are in MHz. Edges are inclusive; a sub-segment covers \
          [lo_mhz, hi_mhz).",
-        "bands: the amateur allocations. Omit a band and this region does not have it; \
+        "bands: the amateur allocations, plus the broadcast services an SWL tunes. \
+         Omit a band and this region does not have it; \
          narrow one to your own licence and sdroxide will refuse to transmit outside it \
          (with tx_ham_only set, which is the default).",
+        "The broadcast bands — Lw, Mw, Sw, Fm — are not amateur allocations, so the \
+         transmit lockout holds there with the default tx_ham_only, exactly as it does \
+         on 11 m (M11). Sw deliberately overlies the amateur HF bands; the operator on \
+         a frequency in both is read as being on the amateur band.",
         "A band sdroxide adds in a later version — 4 m (M4) was the first, the microwave bands \
          (Cm33 through Cm6) the latest — is not in a file written before it existed, so it is \
          filled in from the built-in tables when this file names it in no region at all. Give it \
@@ -378,6 +385,10 @@ const BANDS_ADDED_SINCE_THE_FILE: &[Band] = &[
     Band::Cm6,
     Band::Cm3,
     Band::M11,
+    Band::Lw,
+    Band::Mw,
+    Band::Sw,
+    Band::Fm,
 ];
 
 impl TryFrom<PlanFile> for BandPlan {
@@ -452,11 +463,18 @@ impl RegionPlan {
         // Overlapping bands are not rejected: `containing` takes the first
         // match, which is a defined answer, and an operator splitting a band
         // into licence classes may well want them to touch. But they are worth
-        // saying out loud, because the *other* band then never appears.
+        // saying out loud, because the *other* band then never appears. One
+        // overlap is not said out loud: shortwave lies across the amateur HF
+        // bands on purpose, and [`Band::Sw`] sits last in [`Band::ALL`] so the
+        // amateur band always wins — it is the row this file exists to carry,
+        // not a mistake the file would ever warn about.
         let mut spans: Vec<(Band, (f64, f64))> =
             Band::ALL.iter().zip(edges.iter()).filter_map(|(b, e)| e.map(|e| (*b, e))).collect();
         spans.sort_by(|a, b| a.1.0.total_cmp(&b.1.0));
         for w in spans.windows(2) {
+            if w[0].0 == Band::Sw || w[1].0 == Band::Sw {
+                continue;
+            }
             if w[0].1.1 >= w[1].1.0 {
                 problems.push(format!(
                     "region {r}: {} ({}–{} MHz) overlaps {} ({}–{} MHz); a frequency in both \
@@ -750,7 +768,10 @@ mod tests {
     }
 
     /// A band the file leaves out is a band the region does not have — which is
-    /// how an operator says "no 60 m here".
+    /// how an operator says "no 60 m here". The one exception is shortwave,
+    /// which has always been in the SWL's table of reference: a file predating
+    /// the band is filled in from the built-in span (2.3–26.1 MHz), so what was
+    /// general coverage on this dial is named SW now.
     #[test]
     fn a_band_left_out_is_a_band_that_is_not_there() {
         let p = parse(
@@ -761,7 +782,7 @@ mod tests {
         let r1 = p.region(Region::R1);
         assert_eq!(r1.edges(Band::M20), Some((14_000_000.0, 14_350_000.0)));
         assert_eq!(r1.edges(Band::M60), None);
-        assert_eq!(r1.containing(5_357_000.0), Band::Gen);
+        assert_eq!(r1.containing(5_357_000.0), Band::Sw, "filled in, not general coverage");
         assert_eq!(r1.containing(14_200_000.0), Band::M20);
         assert!(!p.is_default());
     }
@@ -803,6 +824,13 @@ mod tests {
             older.region(Region::R3).edges(Band::Cm9),
             Some((3_300_000_000.0, 3_500_000_000.0))
         );
+        // And the broadcast services fill themselves in the same way, 11 m
+        // having been the newest band when the file was written.
+        assert_eq!(older.region(Region::R1).edges(Band::Lw), Some((148_500.0, 283_500.0)));
+        assert_eq!(older.region(Region::R2).edges(Band::Mw), Some((530_000.0, 1_700_000.0)));
+        assert_eq!(older.region(Region::R1).edges(Band::Sw), Some((2_300_000.0, 26_100_000.0)));
+        assert_eq!(older.region(Region::R1).containing(9_650_000.0), Band::Sw);
+        assert_eq!(older.region(Region::R1).edges(Band::Fm), Some((87_500_000.0, 108_000_000.0)));
 
         // Named in one region: the file decides 4 m everywhere from then on, so
         // leaving it out of Region 1 means Region 1 has not got it.

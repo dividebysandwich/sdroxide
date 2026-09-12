@@ -338,7 +338,7 @@ impl PropStore {
         now_utc: i64,
     ) {
         let band = Band::containing(freq_hz);
-        if band == Band::Gen {
+        if matches!(band, Band::Gen | Band::Lw | Band::Mw | Band::Sw | Band::Fm) {
             return;
         }
         let band_ix = Band::ALL.iter().position(|b| *b == band).unwrap_or(0) as u8;

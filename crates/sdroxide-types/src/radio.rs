@@ -6523,7 +6523,7 @@ mod drive_trim_tests {
         assert_eq!(cfg.drive_trim_db(7_074_000.0), -6.0);
         assert_eq!(cfg.drive_trim_db(28_074_000.0), 0.0, "a row set to zero is no trim at all");
         assert_eq!(cfg.drive_trim_db(14_074_000.0), 0.0, "a band with no row is untouched");
-        assert_eq!(cfg.drive_trim_db(11_000_000.0), -12.0, "outside every ham band");
+        assert_eq!(cfg.drive_trim_db(2_100_000.0), -12.0, "outside every band on the dial");
         // The station that has never opened the table, which is nearly all of
         // them: nothing is looked up and nothing is changed.
         assert_eq!(RadioConfig::default().drive_trim_db(7_074_000.0), 0.0);

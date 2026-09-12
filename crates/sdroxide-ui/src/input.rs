@@ -439,9 +439,11 @@ pub(crate) fn apply_action(
     }
 }
 
-/// Next/previous amateur band, skipping the general-coverage pseudo-band and
-/// any band the station's own band plan does not give this region — stepping
-/// onto Region 1's 4 m in the Americas would be stepping out of band.
+/// Next/previous band, skipping the general-coverage pseudo-band and any band
+/// the station's own band plan does not give this region — stepping onto
+/// Region 1's 4 m in the Americas would be stepping out of band. The broadcast
+/// bands (LW, MW, SW, FM) are in the cycle with everything else: for an SWL
+/// they are half the point of the key.
 fn step_band(cur: sdroxide_types::Band, up: bool) -> Option<sdroxide_types::Band> {
     use sdroxide_types::Band;
     let ham: Vec<Band> = Band::ALL.iter().copied().filter(|b| b.edges().is_some()).collect();
@@ -1342,20 +1344,31 @@ mod tests {
         assert_eq!(step_band(Band::M20, true), Some(Band::M17));
         assert_eq!(step_band(Band::M20, false), Some(Band::M30));
         // 4 m sits between 6 m and 2 m, in the region that has it — which is
-        // Region 1, the default these tests run under.
+        // Region 1, the default these tests run under. The broadcast services
+        // sit in frequency order too: rather than skipping over them, the step
+        // crosses FM between 4 m and 2 m.
         assert_eq!(step_band(Band::M6, true), Some(Band::M4));
-        assert_eq!(step_band(Band::M4, true), Some(Band::M2));
+        assert_eq!(step_band(Band::M4, true), Some(Band::Fm));
+        assert_eq!(step_band(Band::Fm, true), Some(Band::M2));
+        // And downward the same list, from the broadcast bands into the
+        // amateur ones.
+        assert_eq!(step_band(Band::Sw, false), Some(Band::Cm3));
+        assert_eq!(step_band(Band::Mw, true), Some(Band::M160));
         // 1.25 m and 33 cm are Region 2's alone, so in Region 1 the step from
         // 2 m goes straight to 70 cm and from there to 23 cm.
         assert_eq!(step_band(Band::M2, true), Some(Band::M70));
         assert_eq!(step_band(Band::M70, true), Some(Band::Cm23));
         assert_eq!(step_band(Band::Cm23, false), Some(Band::M70));
-        // Wraps within the ham bands only, from the highest to the lowest —
-        // 3 cm being the highest since the IC-905 got its own 10 GHz band
-        // (issue #326).
+        // Wraps within the bands that have edges: shortwave is the last stop
+        // on the wheel and LW the first, so 3 cm wraps to SW and SW to LW.
+        // (3 cm is the highest amateur band since the IC-905 got its own
+        // 10 GHz band, issue #326.)
         assert_eq!(step_band(Band::Cm6, true), Some(Band::Cm3));
-        assert_eq!(step_band(Band::Cm3, true), Some(Band::M160));
+        assert_eq!(step_band(Band::Cm3, true), Some(Band::Sw));
         assert_eq!(step_band(Band::Cm3, false), Some(Band::Cm6));
+        assert_eq!(step_band(Band::Sw, true), Some(Band::Lw));
+        assert_eq!(step_band(Band::Sw, false), Some(Band::Cm3));
+        assert_eq!(step_band(Band::Lw, false), Some(Band::Sw));
         assert_eq!(step_band(Band::Gen, true), None);
     }
 

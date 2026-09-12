@@ -77,6 +77,13 @@ fn ham_label(band: Band, region: Region) -> &'static str {
             Region::R2 | Region::R3 => "5cm HAM",
         },
         Band::Cm3 => "3cm HAM",
+        // Never drawn either: the broadcast services are not amateur, so
+        // `coarse` and `fine` skip them like CB, and `non_ham` already carries
+        // their allocations with their own labels and colours.
+        Band::Lw => "LW AM",
+        Band::Mw => "MW AM",
+        Band::Sw => "SW BC",
+        Band::Fm => "FM BC",
         Band::Gen => "GEN",
     }
 }
