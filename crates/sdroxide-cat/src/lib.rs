@@ -2994,9 +2994,15 @@ fn serial_thread(
             // don't have, and the offsets cleared at open collect a few. One arriving on the heels
             // of a key-down is worth saying out loud: the operator is looking at a transmitter that
             // did not key, with no other sign of why.
-            if protocol.refused()
-                && ptt_written.is_some_and(|t| t.elapsed() < Duration::from_millis(500))
-            {
+            let refused = protocol.refused();
+            // Whatever it refused may have been an output-power write, which the memory already
+            // records as the level the rig is on. Nothing in a refusal says which command it was,
+            // so the memory is dropped either way: the next level asked for goes out for real
+            // instead of being deduped against one the rig never took (issue #420).
+            if refused {
+                last_sent_power.forget();
+            }
+            if refused && ptt_written.is_some_and(|t| t.elapsed() < Duration::from_millis(500)) {
                 ptt_written = None;
                 warn!(
                     "the radio refused a command at key-down — if it did not transmit, \

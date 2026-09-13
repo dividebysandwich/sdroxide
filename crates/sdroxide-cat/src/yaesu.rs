@@ -172,6 +172,9 @@ pub struct Yaesu {
     width_known: bool,
     /// Set when [`Self::width`] changed under a frame we had already written.
     reframed: bool,
+    /// The rig answered `?;` since this was last read (see
+    /// [`Protocol::refused`]).
+    nak: bool,
 }
 
 impl Yaesu {
@@ -183,6 +186,7 @@ impl Yaesu {
             width: DEFAULT_WIDTH,
             width_known: false,
             reframed: false,
+            nak: false,
         }
     }
 
@@ -488,6 +492,10 @@ impl Protocol for Yaesu {
         std::mem::take(&mut self.reframed)
     }
 
+    fn refused(&mut self) -> bool {
+        std::mem::take(&mut self.nak)
+    }
+
     fn parse(&mut self, buf: &mut Vec<u8>) -> Vec<CatUpdate> {
         // Accumulate ASCII, split on ';'.
         self.buf.push_str(&String::from_utf8_lossy(buf));
@@ -546,6 +554,7 @@ impl Protocol for Yaesu {
                 // so this can only be a breadcrumb — but it is the difference
                 // between "the radio is ignoring me" and silence.
                 debug!("Yaesu CAT: rig rejected a command (?)");
+                self.nak = true;
             }
         }
         out
@@ -559,6 +568,17 @@ mod tests {
     fn parse_str(y: &mut Yaesu, s: &str) -> Vec<CatUpdate> {
         let mut buf = s.as_bytes().to_vec();
         y.parse(&mut buf)
+    }
+
+    /// A `?;` is reported as a refusal, once, so the CAT loop can stop
+    /// believing the last level it wrote reached the rig (issue #420).
+    #[test]
+    fn a_question_mark_is_a_refusal_reported_once() {
+        let mut y = Yaesu::new();
+        assert!(!y.refused());
+        assert!(parse_str(&mut y, "?;").is_empty());
+        assert!(y.refused());
+        assert!(!y.refused(), "reported once, then cleared");
     }
 
     /// `TX;` read back. Only "is it transmitting" is taken from it: which
