@@ -431,8 +431,19 @@ impl DigiController {
         // Fox's own half of the band is out of bounds. Both branches below are
         // no-ops under `hold_tx_freq`, which is checked inside each of them
         // rather than here, so every other caller is covered by the same gate.
+        //
+        // On 11 m the rule is the reverse, and it replaces the auto hunt
+        // outright: the WSJT-CB norm is to answer a CQ exactly where it was
+        // heard — the caller is one station expecting the reply on its own
+        // tone, the band is quiet enough that the quiet-spot hunt has nothing
+        // worth picking around, and the whole contact then sits on that tone
+        // rather than drifting off the station being worked. Auto TX FRQ's
+        // hunt would move us away from them, so on this band it is not asked;
+        // an explicit Hold TX still wins through `set_audio_hz`'s own gate.
         if !self.is_hound() {
-            if self.qso.status(false).config.auto_tx_freq {
+            if Band::containing(self.dial_hz) == Band::M11 {
+                self.set_audio_hz(audio_hz);
+            } else if self.qso.status(false).config.auto_tx_freq {
                 self.pick_tx_freq();
             } else {
                 self.set_audio_hz(audio_hz);
@@ -1268,6 +1279,37 @@ mod tests {
         c.set_config(DigiConfig { auto_tx_freq: false, ..cfg() });
         c.start_qso("K1ABC".into(), None, -10, 800.0, false);
         assert_eq!(c.audio_hz(), 800.0);
+    }
+
+    #[test]
+    fn on_11m_reply_sits_on_the_callers_tone_for_the_whole_qso() {
+        // 11 m FT8 follows WSJT-CB etiquette (issue #396): a CQ is answered on
+        // the caller's own tone and the contact stays there, because the band
+        // is quiet enough that picking a quieter spot has nothing to offer, and
+        // drifting off the station you are working is a worse trade. Auto TX
+        // FRQ normally hunts the quietest spot in our period; on this band the
+        // hunt is not asked and the reply lands where the CQ was heard.
+        let mut c = DigiController::new(Mode::Ft8, cfg(), 12_000.0);
+        c.dial_hz = 27_123_000.0; // 11 m, where the CQ was heard
+        c.start_qso("11M213".into(), None, -10, 700.0, false);
+        assert_eq!(c.audio_hz(), 700.0, "11 m should answer on the caller's tone, not hunt");
+
+        // With the same setting anywhere off 11 m, hunting still applies.
+        let mut c = DigiController::new(Mode::Ft8, cfg(), 12_000.0);
+        c.dial_hz = 14_074_000.0; // 20 m
+        c.tune_audio_hz(1500.0);
+        c.recent_activity.push((EVEN_SLOT_IDX, 1500.0));
+        c.start_qso("W9XYZ".into(), None, -10, 2400.0, false);
+        assert_ne!(c.audio_hz(), 2400.0, "a non-11 m reply still uses Auto TX FRQ's hunt");
+
+        // An explicit Hold TX wins on 11 m too: it is the operator's own act,
+        // and `set_audio_hz` is gated on it before the band rule is consulted.
+        let mut c =
+            DigiController::new(Mode::Ft8, DigiConfig { hold_tx_freq: true, ..cfg() }, 12_000.0);
+        c.dial_hz = 27_123_000.0;
+        c.tune_audio_hz(820.0);
+        c.start_qso("11M213".into(), None, -10, 700.0, false);
+        assert_eq!(c.audio_hz(), 820.0, "an explicit hold outranks the 11 m follow");
     }
 
     #[test]

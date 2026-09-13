@@ -179,11 +179,14 @@ impl SdroxideApp {
                          frequency moves."
                         } else {
                             "Pick our transmit frequency automatically: the quietest spot in the \
-                         period we transmit in, rather than the frequency of whoever we are \
-                         answering — they transmit in the other period, so theirs says nothing \
-                         about who is there when we key. Off does NOT hold the frequency: it \
-                         answers on the frequency of the station being called. To hold, use \
-                         Hold TX."
+                             period we transmit in, rather than the frequency of whoever we are \
+                             answering — they transmit in the other period, so theirs says nothing \
+                             about who is there when we key. Off does NOT hold the frequency: it \
+                             answers on the frequency of the station being called. To hold, use \
+                             Hold TX.\n\nOne band is exempt: on 11 m the WSJT-CB norm is to \
+                             answer a CQ on the caller's own tone and stay there for the whole \
+                             contact, so the hunt is skipped and a CQ reply sits on the frequency \
+                             it was heard at whether this is on or off."
                         });
                 if auto_chip.clicked() {
                     self.digi_cfg_edit.auto_tx_freq = !auto;
