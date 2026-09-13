@@ -168,7 +168,11 @@ pub fn make_demod(mode: Mode, channel_rate: f64) -> Option<Box<dyn Demodulator>>
         Mode::Nfm | Mode::SstvFm | Mode::RttyFm => {
             Some(Box::new(FmDemod::new(channel_rate, lo, hi)))
         }
-        Mode::Wfm => Some(Box::new(WfmDemod::new(channel_rate))),
+        Mode::Wfm => {
+            let mut d = WfmDemod::new(channel_rate);
+            d.set_filter(lo, hi);
+            Some(Box::new(d))
+        }
         // DRM's decoder is a vendored C++ receiver, which cannot be linked from
         // this crate — see `Demodulator::take_drm`. The engine builds
         // `sdroxide_drm::DrmDemod` itself; reaching here means it forgot to,
@@ -871,6 +875,15 @@ const WFM_HEADROOM: f32 = 0.7;
 /// (49 vs 65 MMAC/s).
 const WFM_LPF_TAPS: usize = 383;
 
+/// Taps for the channel filter ahead of the discriminator. Fewer than the
+/// narrow modes use: the passband is most of the channel, and at 256 kHz 63
+/// taps still give a transition of about 13 kHz.
+const WFM_FILTER_TAPS: usize = 63;
+
+/// The narrowest channel filter WFM will take. Below this the discriminator is
+/// fed a slice of the deviation and the audio is noise, not a narrower station.
+const WFM_MIN_FILTER_HZ: f64 = 20_000.0;
+
 /// Below this channel rate the 53 kHz composite does not survive the DDC, so
 /// stereo is not attempted at all.
 const WFM_STEREO_MIN_RATE: f64 = 150_000.0;
@@ -880,8 +893,7 @@ impl WfmDemod {
         let bw = (rate * 0.45).min(110_000.0);
         WfmDemod {
             rate,
-            // Fewer taps: the passband is nearly the whole channel.
-            fir: ComplexFir::new(bandpass_taps(63, -bw, bw, rate)),
+            fir: ComplexFir::new(bandpass_taps(WFM_FILTER_TAPS, -bw, bw, rate)),
             lpf_m: RealFirDecim::new(WFM_LPF_TAPS, 15_000.0, rate, 4),
             lpf_s: RealFirDecim::new(WFM_LPF_TAPS, 15_000.0, rate, 4),
             dc: DcBlock::new(5.0, rate),
@@ -1002,8 +1014,22 @@ impl Demodulator for WfmDemod {
         }
     }
 
-    fn set_filter(&mut self, _lo: f32, _hi: f32) {
-        // WFM bandwidth is fixed by the broadcast standard.
+    /// The pre-discriminator channel filter. The broadcast standard fixes the
+    /// *signal's* width, not the receiver's: narrowing it is how an adjacent
+    /// station 100 kHz away is kept out of the discriminator, at the cost of
+    /// stereo and RDS first and audio distortion after (issue #414 — this used
+    /// to be ignored, so the BW chip did nothing in WFM).
+    fn set_filter(&mut self, lo: f32, hi: f32) {
+        let edge = self.rate * 0.45;
+        let mut lo = f64::from(lo).clamp(-edge, edge);
+        let mut hi = f64::from(hi).clamp(-edge, edge);
+        if hi - lo < WFM_MIN_FILTER_HZ {
+            let mid = ((lo + hi) / 2.0)
+                .clamp(-edge + WFM_MIN_FILTER_HZ / 2.0, edge - WFM_MIN_FILTER_HZ / 2.0);
+            lo = mid - WFM_MIN_FILTER_HZ / 2.0;
+            hi = mid + WFM_MIN_FILTER_HZ / 2.0;
+        }
+        self.fir.set_taps(bandpass_taps(WFM_FILTER_TAPS, lo, hi, self.rate));
     }
 
     fn audio_rate(&self) -> f64 {

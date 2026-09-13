@@ -382,6 +382,40 @@ fn wfm_stereo_separates_hard_panned_channels() {
     assert!(sep >= 30.0, "separation only {sep:.1} dB at 192 kHz");
 }
 
+/// Issue #414: the BW chip reaches the WFM channel filter. A carrier 80 kHz
+/// off the dial is inside the default ±96 kHz passband and must be pushed well
+/// down by a ±40 kHz one — which is what keeps an adjacent station out of the
+/// discriminator.
+#[test]
+fn wfm_channel_filter_follows_the_bw_setting() {
+    let rate = 256_000.0;
+    let carrier: Vec<C32> = (0..(rate * 0.5) as usize)
+        .map(|i| {
+            let ph = std::f64::consts::TAU * 80_000.0 * i as f64 / rate;
+            C32::new(ph.cos() as f32 * 0.5, ph.sin() as f32 * 0.5)
+        })
+        .collect();
+    let level = |lo: f32, hi: f32| {
+        let mut demod = make_demod(Mode::Wfm, rate).unwrap();
+        demod.set_filter(lo, hi);
+        let mut audio = Vec::new();
+        for chunk in carrier.chunks(8_192) {
+            demod.process(chunk, &mut audio);
+        }
+        demod.power_dbfs()
+    };
+    let wide = level(-96_000.0, 96_000.0);
+    let narrow = level(-40_000.0, 40_000.0);
+    assert!(
+        wide - narrow > 30.0,
+        "narrowing the filter moved the carrier only {:.1} dB ({wide:.1} → {narrow:.1})",
+        wide - narrow
+    );
+    // A width below the floor is widened to it rather than closing the channel.
+    let silly = level(-10.0, 10.0);
+    assert!(silly.is_finite());
+}
+
 #[test]
 fn wfm_never_locks_on_a_dead_frequency() {
     // Pure noise, no station at all. `|i_lp|` alone hovers around 0.015 here —
