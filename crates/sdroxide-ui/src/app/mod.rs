@@ -918,14 +918,14 @@ pub struct SdroxideApp {
     /// remote client has nothing here to read them from and no business
     /// writing them. Left at the default and never persisted in the browser.
     remote_access: sdroxide_types::RemoteAccess,
-    /// Which station the **Remote** tab dials — the address as last entered,
+    /// Which station the **General** tab dials — the address as last entered,
     /// read from this machine's `config.toml` and written back as it is typed.
     /// Belongs to the screen, not to the station, so unlike `remote_access` it
     /// is editable from every native client.
     #[cfg(not(target_arch = "wasm32"))]
     remote_server: sdroxide_types::RemoteServer,
-    /// What the last CONNECT from the Remote tab did — "connecting…" while the
-    /// shell has it, then whatever came back. Shown on that tab, because a
+    /// What the last CONNECT from the General tab did — "connecting…" while the
+    /// shell has it, then whatever came back. Shown in the dialog, because a
     /// connection that failed to open leaves no tab of its own to say so.
     #[cfg(not(target_arch = "wasm32"))]
     remote_status: Option<Result<String, String>>,
@@ -1067,11 +1067,11 @@ pub(crate) enum RadioTabRequest {
         preset: Option<Box<sdroxide_types::RadioConfig>>,
     },
     /// Open somebody else's station as a tab of its own: dial this WebSocket
-    /// URL and, if it answers, show it under `name`. Queued by the **Remote**
+    /// URL and, if it answers, show it under `name`. Queued by the **General**
     /// tab's CONNECT button — the connection is made by the shell, because
     /// only it can add a tab to hold it.
     ///
-    /// Native only, like the Remote tab that queues it: the address it dials
+    /// Native only, like the General tab section that queues it: the address it dials
     /// is remembered in this machine's `config.toml`, which a browser has no
     /// equivalent of. A browser client reaches the radios of the station that
     /// served it, which arrive by themselves.
@@ -1919,12 +1919,12 @@ impl SdroxideApp {
         self.can_add_radio = can;
     }
 
-    /// How the connection the Remote tab asked for went (see
-    /// [`SdroxideApp::remote_status`]). Success is reported on the tab as well
+    /// How the connection the General tab asked for went (see
+    /// [`SdroxideApp::remote_status`]). Success is reported in the dialog as well
     /// as by the new radio appearing, because the operator may well be looking
     /// at the dialog rather than at the strip behind it.
     ///
-    /// Native only, like the Remote tab itself.
+    /// Native only, like the General tab section itself.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn set_remote_status(&mut self, status: Result<String, String>) {
         self.remote_status = Some(status);

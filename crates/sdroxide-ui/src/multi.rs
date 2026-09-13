@@ -143,7 +143,7 @@ pub struct MultiApp {
     /// empty, and always holding the focused tab ([`Self::sanitize_panes`]).
     panes: Vec<u32>,
     factory: Option<RadioFactory>,
-    /// How a station somewhere else is dialled — Settings → Remote. Present
+    /// How a station somewhere else is dialled — General → connect. Present
     /// in every native session, including one that is itself a remote client:
     /// a screen with no radio of its own is exactly the one most likely to be
     /// pointed at a server.
@@ -896,7 +896,7 @@ impl MultiApp {
         // A tab that arrived without a name of its own takes the station's,
         // once the station has said what that is: the browser client dials the
         // page's own host, so there is no address anybody typed to name it
-        // after. A tab that *was* named — dialled from Settings → Remote, or
+        // after. A tab that *was* named — dialled from Settings → General, or
         // renamed since — keeps what it has.
         for tab in &mut self.tabs {
             if tab.name.is_empty()

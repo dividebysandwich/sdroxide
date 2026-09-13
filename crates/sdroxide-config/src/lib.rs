@@ -252,7 +252,7 @@ pub struct Settings {
     ///
     /// A table for the same reason.
     pub alerts: sdroxide_types::AlertSettings,
-    /// The sdroxide server this screen dials from Settings → Remote — the
+    /// The sdroxide server this screen dials from Settings → General — the
     /// counterpart of `remote_access` above, and client-side like `[ui]` and
     /// `[speech]`: it is where *this* machine goes, not who may come here.
     ///
@@ -501,7 +501,7 @@ pub fn save_remote_access(access: &sdroxide_types::RemoteAccess) -> Result<(), C
     s.save()
 }
 
-/// Load the server this screen last dialled from Settings → Remote.
+/// Load the server this screen last dialled from Settings → General.
 pub fn load_remote_server() -> sdroxide_types::RemoteServer {
     Settings::load().remote_server
 }
@@ -2414,7 +2414,7 @@ mod tests {
     }
 
     /// The fourth table, and the one most recently appended: the address the
-    /// Remote tab dials must survive a write, and must not take the scalars
+    /// General tab dials must survive a write, and must not take the scalars
     /// above it with it.
     #[test]
     fn the_remote_server_address_survives_a_write() {

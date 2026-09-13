@@ -138,7 +138,7 @@ struct Cli {
     ///
     /// A bare address is dialled as plain "ws://". Where the server sits behind
     /// something that terminates HTTPS for it — a reverse proxy on 443 — give
-    /// the whole "wss://host/ws" instead; the GUI's Remote tab has a switch for
+    /// the whole "wss://host/ws" instead; the GUI's General tab has a switch for
     /// the same thing.
     #[arg(long, value_name = "HOST[:PORT]")]
     connect: Option<String>,

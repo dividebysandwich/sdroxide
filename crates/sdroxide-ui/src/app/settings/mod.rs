@@ -58,12 +58,11 @@ use crate::app::persist::{persist_alerts_settings, persist_speech_settings, pers
 use crate::chrome::StyledCombo;
 use crate::theme::ThemedScroll as _;
 
-/// Settings dialog tabs: General (station identity + audio devices), the radio
-/// interface and its settings, display/UI preferences and spoken
-/// announcements, control inputs
-/// (keyboard/mouse bindings), the network cockpit (spot feeds + uploads), the
-/// built-in TCI server, and — the other direction — the sdroxide server this
-/// screen connects *out* to.
+/// Settings dialog tabs: General (station identity + audio devices, and the
+/// sdroxide server this screen connects *out* to), the radio interface and its
+/// settings, display/UI preferences and spoken announcements, control inputs
+/// (keyboard/mouse bindings), the network cockpit (spot feeds + uploads), and
+/// the built-in TCI server.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum SettingsTab {
     General,
@@ -84,10 +83,6 @@ pub(in crate::app) enum SettingsTab {
     /// sequencer's timings and a test button apiece — and this is the one page
     /// in here whose being hard to find could cost somebody a front end.
     TrSwitch,
-    /// Dial another station. Native only: a browser client is already attached
-    /// to the server that served it and has nowhere to put a second one.
-    #[cfg(not(target_arch = "wasm32"))]
-    Remote,
     Tle,
 }
 
@@ -233,7 +228,7 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// credentials are `config.toml` on the machine the radio is attached to,
     /// and this is not it.
     access_edit: Option<&'a mut sdroxide_types::RemoteAccess>,
-    /// The other direction — which station this screen dials from the Remote
+    /// The other direction — which station this screen dials from the General
     /// tab, and whether CONNECT was pressed. Editable everywhere `access_edit`
     /// is not: it is this machine's own setting, so a remote client is exactly
     /// as entitled to it as the shack machine.
@@ -1697,9 +1692,7 @@ impl SdroxideApp {
     ) {
         use sdroxide_types::Backend;
 
-        // Built rather than written out, because one of the tabs only exists on
-        // native (see [`SettingsTab::Remote`]).
-        let mut tabs = vec![
+        let tabs = vec![
             (SettingsTab::General, "General"),
             (SettingsTab::Radio, "Radio"),
             (SettingsTab::Ui, "UI"),
@@ -1711,12 +1704,8 @@ impl SdroxideApp {
             (SettingsTab::Winlink, "Winlink"),
             (SettingsTab::Servers, "Servers"),
             (SettingsTab::TrSwitch, "T/R switch"),
+            (SettingsTab::Tle, "TLE"),
         ];
-        // Next to Servers: the two are the same subject from opposite ends —
-        // what this station offers others, and where this screen goes.
-        #[cfg(not(target_arch = "wasm32"))]
-        tabs.push((SettingsTab::Remote, "Remote"));
-        tabs.push((SettingsTab::Tle, "TLE"));
         // Wrapped: the tab strip no longer fits the window's width on one line.
         // Real tabs rather than chips — a chip strip standing in for a tab strip
         // reads as a row of buttons that happen to stay pressed, with nothing to
@@ -1902,6 +1891,29 @@ impl SdroxideApp {
                     ui.separator();
                     ui.add_space(6.0);
                     remote_access_settings(ui, access);
+                }
+
+                // Dial another station. The same thing `--connect` does on the
+                // command line — here because the General tab is where a fresh
+                // screen says where it belongs. Native only: a browser client is
+                // already attached to the server that served it and has nowhere
+                // to put a second connection.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    settings_remote_tab(
+                        ui,
+                        io.remote_edit,
+                        io.remote_connect,
+                        // A session with no shell around it has nowhere to put
+                        // the connection. Every native build has one; this is
+                        // what keeps the button honest if that ever stops being
+                        // true.
+                        !self.radio_roster.is_empty(),
+                        self.remote_status.as_ref(),
+                    );
                 }
             }
             SettingsTab::Radio => {
@@ -3311,17 +3323,6 @@ impl SdroxideApp {
                     io.relay_test,
                 );
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            SettingsTab::Remote => settings_remote_tab(
-                ui,
-                io.remote_edit,
-                io.remote_connect,
-                // A session with no shell around it has nowhere to put the
-                // connection. Every native build has one; this is what keeps
-                // the button honest if that ever stops being true.
-                !self.radio_roster.is_empty(),
-                self.remote_status.as_ref(),
-            ),
             SettingsTab::Tle => settings_tle_tab(ui, io),
         }
     }
@@ -3882,7 +3883,7 @@ impl SdroxideApp {
             // Absent where there is nothing to add: a client that only drives
             // somebody else's station, and that station does not take roster
             // edits. Connecting to a further server is still offered, on the
-            // Remote tab.
+            // General tab.
             //
             // Where a radio can go in more than one place — this computer and a
             // station at the far end of a connection — the chip asks which

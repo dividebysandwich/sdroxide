@@ -1,4 +1,5 @@
-//! The Remote tab: connect this screen to an sdroxide server somewhere else.
+//! The connect-to-a-server section on the General tab: connect this screen to
+//! an sdroxide server somewhere else.
 //!
 //! The same thing `--connect` does on the command line, without the command
 //! line — and, because a station reached this way arrives as a radio tab of its
@@ -7,7 +8,7 @@
 //! commands.
 //!
 //! Native only. A browser client is already attached to the server that served
-//! it and has nowhere to put a second connection, so there is no such tab
+//! it and has nowhere to put a second connection, so the section does not exist
 //! there — see [`crate::app::persist::load_remote_server`].
 //!
 //! What is edited here is the *screen's* setting, not the station's: it is

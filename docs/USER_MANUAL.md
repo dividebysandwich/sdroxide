@@ -170,7 +170,7 @@ or connects to a remote sdroxide server.
 - **Remote and web operation:** run headless as a server and control it from a
   browser or from a second sdroxide instance over the network, behind a username
   and password. A station reached that way opens as a radio tab beside your own
-  ones — enter its address on **Settings → Remote** and press CONNECT.
+  ones — enter its address on **Settings → General** and press CONNECT.
 
 ---
 
@@ -2102,7 +2102,7 @@ be dragged about too, but they are in no roster here, so they come back at the
 end of the strip next time.
 
 **Adding somebody else's station.** A radio in a tab does not have to be
-attached to this machine. **Settings → Remote** takes the address of an sdroxide
+attached to this machine. **Settings → General** takes the address of an sdroxide
 server and gives it a tab of its own, exactly like a local radio
 ([8.2](#82-connect-a-native-remote-client)) — the engine stays where the antenna
 is, and what crosses the network is the spectrum, the audio and the commands.
@@ -6021,7 +6021,6 @@ window opens the same dialog on its Spots tab). Twelve tabs run across the top:
 | **Winlink** | The radio-email account, and whether it forwards over the internet or on the air. [6.8](#68-winlink-radio-email-account) |
 | **Servers** | Hamlib rigctld, the built-in TCI server, and the WSJT-X UDP broadcast. [6.9](#69-servers-letting-other-programs-drive-the-radio) |
 | **T/R switch** | The relay that grounds the SDR's antenna while the station transmits, and the sequencer around it. [6.11](#611-tr-switch-protecting-the-receiver-on-transmit) |
-| **Remote** | The address of an sdroxide server elsewhere, and the button that connects to it. [8.2](#82-connect-a-native-remote-client) |
 | **TLE** | Satellites to track beyond the amateur set, and their frequencies. [6.10](#610-tle-satellites-and-their-frequencies) |
 
 Most settings take effect the moment you change them. The ones that open or
@@ -6050,7 +6049,7 @@ which interface to open, and the buttons that scan a bus or test an address. See
 [8.4](#84-what-to-know).) `input.json` and the `[ui]` half of
 `config.toml` are the exception, and belong to the screen in front of you: a
 display preference and a knob on your desk have nothing to do with the radio in
-the other room — and so does the `[remote_server]` address on the **Remote**
+the other room — and so does the `[remote_server]` address on the **General**
 tab, which is where *this* screen goes rather than anything about the station it
 arrives at. The rest of `config.toml` — including the `[remote_access]`
 sign-in — belongs to the engine's machine, which is why the **Remote access**
@@ -6340,6 +6339,13 @@ started with `--connect`, and the 3D view's tab. See
 Like every other password sdroxide stores — the cluster login, QRZ, eQSL — it is
 kept in the clear, so `config.toml` is worth the same file permissions as the
 rest of your config directory.
+
+**Connect to a server** — the same thing `--connect` does without the command
+line. The machine this screen runs on can drive an sdroxide somewhere else —
+the shack, a remote site — as a radio tab of its own. Enter the server's
+**Address** and **Port** and press **CONNECT**; a pasted `ws://` or `wss://`
+URL is used exactly as typed and leaves those two boxes greyed out. See
+[§ 8.2 Connect a native remote client](#82-connect-a-native-remote-client).
 
 ### 6.2 Radio: choosing and configuring the rig
 
@@ -12643,8 +12649,9 @@ second one to start finds the address taken.
 
 ### 8.2 Connect a native remote client
 
-From the GUI, on any other machine running sdroxide: open **Settings →
-Remote**, enter the server's **Address** and **Port**, and press **CONNECT**.
+From the GUI, on any other machine running sdroxide: open **Settings →**
+**General**, enter the server's **Address** and **Port** in the connect section at
+the bottom, and press **CONNECT**.
 
 The station comes up as a radio tab of its own, beside whatever radios that
 sdroxide already has open — the tab strip at the top of the window switches
@@ -12672,7 +12679,7 @@ sdroxide --connect HOST:4950
 
 `--connect` accepts `host`, `host:port`, or a full `ws://…` URL. A client
 started this way has no radio of its own — and can still reach **Settings →
-Remote** to connect to a second station.
+General** to connect to a second station.
 
 **A station with several radios arrives with all of them.** The connection you
 make is to one radio — the first, unless you named another — and the station
@@ -13697,7 +13704,7 @@ and not the station's.
 
 | File | Format | Contents |
 | --- | --- | --- |
-| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `dismissed_update` (the published release whose update banner was dismissed, [§6.3](#63-ui-display-preferences-and-voice-announcements)), `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **Remote** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
+| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `dismissed_update` (the published release whose update banner was dismissed, [§6.3](#63-ui-display-preferences-and-voice-announcements)), `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **General** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
 | `radio.json` | JSON | Which radio interface is selected and everything that configures it — the CAT/HPSDR/TCI/SmartSDR/RTL-SDR/rtl_tcp/SpyServer/RX-888/Airspy HF+/SDRplay/PlutoSDR sections, the converter offset and stated tuning ranges, and the radio's sound-card device names. |
 | `digi.json` | JSON | Digital-mode operator settings: your callsign and grid, FT8/FT4/FT2 TX period, auto-sequence and message templates, the transmit-frequency hold (`hold_tx_freq`) and the per-band transmit offsets it pins (`tx_audio_hz`), the per-mode transmit-audio levels (`tx_audio_levels`, with `tx_audio_level_fm` / `tx_audio_level_ssb` as the level a mode with no entry of its own inherits), and the WSPR beacon's duty cycle, power and band-hop list. |
 | `memories.json` | JSON | Saved memory channels. |

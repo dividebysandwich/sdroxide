@@ -361,7 +361,7 @@ fn connect_remote(
     )?;
     // Named after the address, minus the parts every server shares — the shell
     // overrides this with whatever the operator typed when the connection came
-    // from the Remote tab.
+    // from the General tab.
     // Somebody else's radio: this station's switch does not reach it (see
     // [`sdroxide_ui::RadioTab::enabled`]).
     Ok(sdroxide_ui::RadioTab { id, name: tab_name(url), enabled: true, ctrl: Box::new(ctrl) })
@@ -382,7 +382,7 @@ fn tab_name(url: &str) -> String {
     }
 }
 
-/// The Remote tab's dialler, handed to the shell so CONNECT has something to
+/// The General tab's dialler, handed to the shell so CONNECT has something to
 /// call. Lives here because the connection needs this machine's sound devices.
 fn remote_factory() -> sdroxide_ui::RemoteFactory {
     Box::new(connect_remote)
@@ -420,7 +420,7 @@ pub fn run_remote(url: &str) -> Result<()> {
                 connect_remote(&url, 0, &cc.egui_ctx).map_err(|e| format!("connect {url}: {e}"))?;
             // No radio factory: this machine's own hardware, if it has any, is
             // not what this session is for. A *further* server still is —
-            // Settings → Remote works here exactly as it does in the shack.
+            // Settings → General works here exactly as it does in the shack.
             Ok(Box::new(sdroxide_ui::MultiApp::new(cc, vec![tab], None, Some(remote_factory()))))
         }),
     )
