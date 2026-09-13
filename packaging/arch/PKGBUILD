@@ -1,0 +1,97 @@
+# Arch Linux package for the sdroxide SDR transceiver (CB / 11m fork).
+#
+# Builds what the release workflow calls the Standard variant: --no-default-features
+# --features embed-web,rtl433, i.e. no SoapySDR at all. The web client is compiled
+# from crates/sdroxide-web with trunk and baked into the binary (embed-web), the
+# DRM receiver (Dream + faad2 + the FFT) and RADE's FARGAN Opus are built from the
+# vendored sources in the tree, and rtl_433 is statically linked. The only runtime
+# requirement is ALSA.
+#
+# The binary also embeds the DeepCW model (AGPL-3.0-only) and the RX-888 FX3
+# firmware (MIT); their notices ship under /usr/share/doc/sdroxide, like the .deb.
+#
+# The release workflow builds this in an archlinux:base-devel container so the
+# package links against the exact glibc/ALSA that Arch users get from pacman.
+# Make sure pkgver matches the tag being released (the workflow edits it for you).
+
+pkgname=sdroxide
+pkgver=1.6.7
+pkgrel=1
+pkgdesc="PowerSDR/Thetis-style SDR transceiver tuned for CB/11m — native GUI, web UI, FT8/FT4, CW, SSTV"
+arch=('x86_64')
+url="https://github.com/madmedicnl/sdroxide"
+license=('GPL-3.0-or-later')
+depends=('alsa-lib')
+optdepends=('libfdk-aac: optional xHE-AAC DRM shortwave decoding')
+makedepends=('base-devel' 'git' 'rustup' 'cmake' 'clang' 'autoconf' 'automake' 'libtool' 'pkgconf' 'curl' 'wget')
+provides=('sdroxide')
+# The tag tarball is deliberately a git+ source so prepare() can pull the
+# vendor/ submodules at their pinned commits (rade_c, faad2, rtl_433); GitHub's
+# tag archives do not include submodules.
+source=("$pkgname::git+$url.git#tag=v$pkgver")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$srcdir/$pkgname"
+  git submodule update --init --recursive
+}
+
+build() {
+  cd "$srcdir/$pkgname"
+  export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+  # rustup from the repos + stable + the wasm32 target for the web client that
+  # embed-web bakes into the binary. `rustup default` makes plain `cargo`
+  # work for trunk and nested build scripts, not just our `cargo +stable`.
+  rustup toolchain install stable --profile minimal
+  rustup default stable
+  rustup target add wasm32-unknown-unknown
+  # trunk is not in the official repositories; the release workflow pre-drops a
+  # pinned binary into PATH (see .github/workflows/release.yml), `cargo install`
+  # is the fallback for local builds.
+  if ! command -v trunk >/dev/null 2>&1; then
+    cargo +stable install trunk --version 0.21.14
+  fi
+  (cd crates/sdroxide-web && trunk build --release)
+  cargo +stable build --release --locked -p sdroxide --no-default-features --features embed-web,rtl433
+}
+
+package() {
+  cd "$srcdir/$pkgname"
+  # Mirrors the cargo-deb asset list in Cargo.toml, adapted to Arch layout.
+  install -Dm755 target/release/sdroxide "$pkgdir/usr/bin/sdroxide"
+  install -Dm644 packaging/linux/sdroxide.desktop "$pkgdir/usr/share/applications/sdroxide.desktop"
+  install -Dm644 packaging/icons/sdroxide.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/sdroxide.svg"
+  local s
+  for s in 16 24 32 48 64 128 256 512; do
+    install -Dm644 "packaging/icons/sdroxide-$s.png" "$pkgdir/usr/share/icons/hicolor/${s}x${s}/apps/sdroxide.png"
+  done
+  # The .deb installs all ten udev rules; so does this package.
+  install -Dm644 packaging/linux/60-sdroxide-*.rules "$pkgdir/usr/lib/udev/rules.d/"
+  # The speech voice is read at run time (CC BY-NC-SA, so it is a data file,
+  # not part of the binary); /usr/share/sdroxide/voices is the search path.
+  install -Dm644 assets/voices/en_US-hfc_female-medium.onnx \
+    assets/voices/en_US-hfc_female-medium.onnx.json \
+    assets/voices/en_US-hfc_female-medium.MODEL_CARD \
+    "$pkgdir/usr/share/sdroxide/voices/"
+  # Notices that have to travel with the binary (see the comments in Cargo.toml).
+  install -Dm644 LICENSE "$pkgdir/usr/share/doc/sdroxide/LICENSE"
+  install -Dm644 assets/voices/LICENSE-voice.txt "$pkgdir/usr/share/doc/sdroxide/LICENSE-voice.txt"
+  install -Dm644 crates/sdroxide-speech/assets/LICENSE-cmudict.txt "$pkgdir/usr/share/doc/sdroxide/LICENSE-cmudict.txt"
+  install -Dm644 crates/sdroxide-rx888/firmware/LICENSE.txt "$pkgdir/usr/share/doc/sdroxide/LICENSE-rx888-firmware.txt"
+  install -Dm644 crates/sdroxide-deepcw/LICENSE "$pkgdir/usr/share/doc/sdroxide/LICENSE-deepcw.txt"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/sdroxide/README.md"
+}
+
+post_install() {
+  update-desktop-database -q 2>/dev/null || true
+  gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
+  udevadm control --reload 2>/dev/null || true
+}
+
+post_upgrade() {
+  post_install
+}
+
+post_remove() {
+  udevadm control --reload 2>/dev/null || true
+}

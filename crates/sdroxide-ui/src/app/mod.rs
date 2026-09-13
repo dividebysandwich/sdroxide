@@ -95,7 +95,8 @@ pub(in crate::app) fn rx_only_hint(resp: egui::Response, tx_ok: bool) -> egui::R
 }
 
 /// Draw a control that puts this station on the air: as `add` draws it on a
-/// transceiver, greyed out and explaining itself on a receiver.
+/// transceiver, greyed out and explaining itself on a receiver, or hidden
+/// entirely in SWL mode.
 ///
 /// For the controls whose only condition is that there *is* a transmitter. One
 /// that is also greyed for a reason of its own keeps its own
@@ -106,7 +107,20 @@ pub(in crate::app) fn tx_gated(
     tx_ok: bool,
     add: impl FnOnce(&mut egui::Ui) -> egui::Response,
 ) -> egui::Response {
+    if SWL_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        // SWL mode: hide the control entirely rather than greying it out.
+        return ui.label("");
+    }
     rx_only_hint(ui.add_enabled_ui(tx_ok, add).inner, tx_ok)
+}
+
+/// Global flag mirrored from [`UiSettings::swl`] every frame so `tx_gated`
+/// can read it without threading the setting through every panel.
+static SWL_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Update the global SWL flag. Called once per frame from the app.
+pub(in crate::app) fn set_swl_active(on: bool) {
+    SWL_ACTIVE.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub struct SdroxideApp {
@@ -1933,7 +1947,7 @@ impl SdroxideApp {
     /// No capabilities yet reads as "cannot", matching the rest of the window:
     /// the top bar leaves its PTT out until the engine has said what it has.
     pub(in crate::app) fn tx_capable(&self) -> bool {
-        self.caps.as_ref().is_some_and(|c| c.is_transmit_capable())
+        !self.ui_settings.swl && self.caps.as_ref().is_some_and(|c| c.is_transmit_capable())
     }
 
     /// The CW tone being copied, in Hz — the cursor the CW panel moves and the

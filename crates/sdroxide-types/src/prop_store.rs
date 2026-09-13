@@ -162,6 +162,12 @@ impl PropStore {
     /// offset: by the time it reaches any other caller the dial may have moved,
     /// and a decode filed under the wrong band is worse on this map than a
     /// decode dropped.
+    ///
+    /// When a decode carries no grid square — common on 11 m, where WSJT-CB
+    /// messages do not exchange one — the far end is placed at its DXCC
+    /// entity's nominal centre via [`crate::resolve_place`]. That is the same
+    /// precision the Reverse Beacon Network gets, which is better than
+    /// dropping the observation altogether.
     pub fn observe_decodes(
         &mut self,
         decodes: &[Decode],
@@ -175,11 +181,26 @@ impl PropStore {
         }
         let Some(home) = grid_to_latlon(my_grid) else { return };
         for d in decodes {
-            let Some(grid) = d.grid.as_deref().filter(|g| !g.is_empty()) else { continue };
-            let Some(far) = grid_to_latlon(grid) else { continue };
             let freq = dial_hz + d.audio_hz as f64;
             let margin = margin_db(source, d.snr_db as f32, None);
-            self.fold(far, home, freq, d.slot_utc, source, Some(margin), grid, now_utc);
+
+            // Prefer the grid square when present — it is precise.
+            if let Some(grid) = d.grid.as_deref().filter(|g| !g.is_empty()) {
+                if let Some(far) = grid_to_latlon(grid) {
+                    self.fold(far, home, freq, d.slot_utc, source, Some(margin), grid, now_utc);
+                    continue;
+                }
+            }
+            // Fallback: resolve the callsign to a country-level position.
+            // Coarser than a grid, but the propagation map can still show that
+            // the band is open in a direction — exactly what 11 m CB stations
+            // need, since their messages carry no locator.
+            if let Some(call) = d.from.as_deref().filter(|c| !c.is_empty()) {
+                if let Some(place) = crate::resolve_place(call) {
+                    let far = (place.lat, place.lon);
+                    self.fold(far, home, freq, d.slot_utc, source, Some(margin), call, now_utc);
+                }
+            }
         }
     }
 
@@ -317,7 +338,7 @@ impl PropStore {
         now_utc: i64,
     ) {
         let band = Band::containing(freq_hz);
-        if band == Band::Gen {
+        if matches!(band, Band::Gen | Band::Lw | Band::Mw | Band::Sw | Band::Fm) {
             return;
         }
         let band_ix = Band::ALL.iter().position(|b| *b == band).unwrap_or(0) as u8;
@@ -699,5 +720,58 @@ mod tests {
         assert_eq!(heat_at(&s, Band::M20, HOME), 0.0, "the operator's own cell was heated");
         assert_eq!(heat_at(&s, Band::M20, FAR), 0.0, "the far station's cell was heated");
         assert!(s.field.plane(Band::M20).unwrap().peak() > 0.0, "nothing was heated at all");
+    }
+
+    /// A decode without a grid square but with a callsign is placed at the
+    /// callsign's country centre — coarser than a locator, but better than
+    /// dropping it altogether. This is what makes the propagation map work on
+    /// 11 m, where WSJT-CB messages do not exchange grids.
+    #[test]
+    fn a_gridless_decode_is_placed_by_callsign_country() {
+        let mut s = PropStore::default();
+        let d = Decode {
+            slot_utc: NOW,
+            snr_db: -12,
+            dt: 0.2,
+            audio_hz: 1500.0,
+            message: "CQ DL1ABC".into(),
+            to: None,
+            from: Some("DL1ABC".into()),
+            grid: None, // no grid
+            is_cq: true,
+            cq_to: None,
+            free_text: false,
+            rr73_to: None,
+        };
+        s.observe_decodes(&[d], PropSource::Ft8, 14_074_000.0, HOME, NOW);
+        assert!(
+            s.field.plane(Band::M20).is_some(),
+            "a gridless decode with a known callsign was dropped"
+        );
+    }
+
+    /// A CB callsign without a grid is placed by its country number.
+    #[test]
+    fn a_cb_callsign_without_grid_contributes_to_propagation() {
+        let mut s = PropStore::default();
+        let d = Decode {
+            slot_utc: NOW,
+            snr_db: -10,
+            dt: 0.1,
+            audio_hz: 1500.0,
+            message: "CQ 26AT715".into(),
+            to: None,
+            from: Some("26AT715".into()),
+            grid: None,
+            is_cq: true,
+            cq_to: None,
+            free_text: false,
+            rr73_to: None,
+        };
+        s.observe_decodes(&[d], PropSource::Ft8, 27_265_000.0, HOME, NOW);
+        assert!(
+            s.field.plane(Band::M11).is_some(),
+            "a CB callsign without grid did not contribute to 11 m propagation"
+        );
     }
 }

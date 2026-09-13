@@ -153,14 +153,18 @@ impl SdroxideApp {
         // Counted here or the row would be laid out past the bottom of the
         // panel, where it does not clip: it paints over whatever is below.
         let macro_h = 4.0 + crate::chrome::chip_height(ui, None);
-        let rx_h = (content_bottom
-            - ui.cursor().top()
-            - btn_h
-            - macro_h
-            - input_h
-            - 2.0 * gap
-            - bottom_pad)
-            .max(24.0);
+        let rx_h = if self.ui_settings.swl {
+            (content_bottom - ui.cursor().top() - bottom_pad).max(24.0)
+        } else {
+            (content_bottom
+                - ui.cursor().top()
+                - btn_h
+                - macro_h
+                - input_h
+                - 2.0 * gap
+                - bottom_pad)
+                .max(24.0)
+        };
 
         ui.allocate_ui(egui::vec2(ui.available_width(), rx_h), |ui| {
             egui::Frame::new()
@@ -197,6 +201,10 @@ impl SdroxideApp {
                 });
         });
         ui.add_space(gap);
+
+        if self.ui_settings.swl {
+            return;
+        }
 
         // Transmit box. Characters already keyed are green, and they are keyed
         // as they are typed rather than a line at a time — which is how a CW
@@ -641,71 +649,80 @@ impl SdroxideApp {
             changed = true;
         }
 
-        // Farnsworth: elements at the sending speed, spacing stretched to this.
-        let fw = cfg.cw_farnsworth_wpm;
-        let fw_on = fw > 0.0 && fw < cfg.cw_wpm;
-        let face = if fw_on { format!("FW {fw:.0}") } else { "FW".to_string() };
-        let btn = crate::chrome::chip(ui, fw_on, RichText::new(face).size(10.5)).on_hover_text(
-            "Farnsworth: send the characters at full speed and stretch only the gaps \
+        if !self.ui_settings.swl {
+            // Farnsworth: elements at the sending speed, spacing stretched to this.
+            let fw = cfg.cw_farnsworth_wpm;
+            let fw_on = fw > 0.0 && fw < cfg.cw_wpm;
+            let face = if fw_on { format!("FW {fw:.0}") } else { "FW".to_string() };
+            let btn = crate::chrome::chip(ui, fw_on, RichText::new(face).size(10.5)).on_hover_text(
+                "Farnsworth: send the characters at full speed and stretch only the gaps \
              between them, so they are heard at the right rhythm but arrive slowly enough \
              to write down.",
-        );
-        let mut pick_fw = None;
-        let resp = egui::Popup::from_toggle_button_response(&btn)
-            .frame(crate::chrome::window_frame())
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-            .show(|ui| {
-                crate::chrome::window_body_bg(ui);
-                ui.set_max_width(180.0);
-                if ui.selectable_label(!fw_on, "Off — normal spacing").clicked() {
-                    pick_fw = Some(0.0);
-                }
-                for w in [5.0f32, 8.0, 10.0, 13.0, 15.0, 18.0] {
-                    if w >= cfg.cw_wpm {
-                        continue; // stretching to faster than the elements is not a thing
+            );
+            let mut pick_fw = None;
+            let resp = egui::Popup::from_toggle_button_response(&btn)
+                .frame(crate::chrome::window_frame())
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+                .show(|ui| {
+                    crate::chrome::window_body_bg(ui);
+                    ui.set_max_width(180.0);
+                    if ui.selectable_label(!fw_on, "Off — normal spacing").clicked() {
+                        pick_fw = Some(0.0);
                     }
-                    if ui.selectable_label((fw - w).abs() < 0.5, format!("{w:.0} WPM")).clicked() {
-                        pick_fw = Some(w);
+                    for w in [5.0f32, 8.0, 10.0, 13.0, 15.0, 18.0] {
+                        if w >= cfg.cw_wpm {
+                            continue; // stretching to faster than the elements is not a thing
+                        }
+                        if ui
+                            .selectable_label((fw - w).abs() < 0.5, format!("{w:.0} WPM"))
+                            .clicked()
+                        {
+                            pick_fw = Some(w);
+                        }
                     }
-                }
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_popup_cut_border(ui.ctx(), &r.response, 1.0);
-        }
-        if let Some(w) = pick_fw {
-            cfg.cw_farnsworth_wpm = w;
-            changed = true;
-        }
-
-        // Transmit speed.
-        let wpm = cfg.cw_wpm;
-        let btn = crate::chrome::chip(ui, false, RichText::new(format!("{wpm:.0} WPM")).size(11.0))
-            .on_hover_text("Keying speed");
-        let mut pick = None;
-        let resp = egui::Popup::from_toggle_button_response(&btn)
-            .frame(crate::chrome::window_frame())
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-            .show(|ui| {
-                crate::chrome::window_body_bg(ui);
-                ui.set_max_width(140.0);
-                for w in WPM_STEPS {
-                    if ui.selectable_label((wpm - w).abs() < 0.5, format!("{w:.0} WPM")).clicked() {
-                        pick = Some(*w);
-                    }
-                }
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_popup_cut_border(ui.ctx(), &r.response, 1.0);
-        }
-        if let Some(w) = pick {
-            cfg.cw_wpm = w;
-            // Farnsworth spacing slower than the elements is the only kind
-            // there is; a speed drop that inverted them would send gibberish
-            // timing.
-            if cfg.cw_farnsworth_wpm >= w {
-                cfg.cw_farnsworth_wpm = 0.0;
+                });
+            if let Some(r) = &resp {
+                crate::chrome::paint_popup_cut_border(ui.ctx(), &r.response, 1.0);
             }
-            changed = true;
+            if let Some(w) = pick_fw {
+                cfg.cw_farnsworth_wpm = w;
+                changed = true;
+            }
+
+            // Transmit speed.
+            let wpm = cfg.cw_wpm;
+            let btn =
+                crate::chrome::chip(ui, false, RichText::new(format!("{wpm:.0} WPM")).size(11.0))
+                    .on_hover_text("Keying speed");
+            let mut pick = None;
+            let resp = egui::Popup::from_toggle_button_response(&btn)
+                .frame(crate::chrome::window_frame())
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+                .show(|ui| {
+                    crate::chrome::window_body_bg(ui);
+                    ui.set_max_width(140.0);
+                    for w in WPM_STEPS {
+                        if ui
+                            .selectable_label((wpm - w).abs() < 0.5, format!("{w:.0} WPM"))
+                            .clicked()
+                        {
+                            pick = Some(*w);
+                        }
+                    }
+                });
+            if let Some(r) = &resp {
+                crate::chrome::paint_popup_cut_border(ui.ctx(), &r.response, 1.0);
+            }
+            if let Some(w) = pick {
+                cfg.cw_wpm = w;
+                // Farnsworth spacing slower than the elements is the only kind
+                // there is; a speed drop that inverted them would send gibberish
+                // timing.
+                if cfg.cw_farnsworth_wpm >= w {
+                    cfg.cw_farnsworth_wpm = 0.0;
+                }
+                changed = true;
+            }
         }
 
         if changed && self.digi_cfg_seeded {

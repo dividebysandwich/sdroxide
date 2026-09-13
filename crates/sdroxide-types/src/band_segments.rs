@@ -794,13 +794,12 @@ fn wideband_by_design(mode: crate::Mode) -> bool {
 /// (issue #396). The channel number is carried as the note, because that is
 /// what a CB operator is actually reading off their radio.
 ///
-/// **Only the channels inside the 40-channel allocation.** The lists that
-/// circulate also name 27.500 (CW/PSK31/RTTY), 27.585 (FAX), 27.635 and
-/// 27.700–27.710 (SSTV), and every one of those is above 27.405 — the
-/// "freeband", which no administration grants. sdroxide is not going to point
-/// a transmitter at them by name. They tune by hand like anything else, and a
-/// licence that does cover them (the UK's second block starts at 27.60125) is
-/// what a hand-edited `bandplan.json` and the operator's own presets are for.
+/// **Mostly the channels inside the 40-channel allocation,** plus the
+/// 27.700 MHz SSTV calling frequency that sits in the "freeband" above
+/// 27.405.  The lists that circulate also name 27.500 (CW/PSK31/RTTY),
+/// 27.585 (FAX), and 27.635 (SSTV), but 27.700 is the one the 11 m SSTV
+/// community has actually settled on and is too widely used to leave out.
+/// The band edges are widened to include it (see [`crate::Band::M11`]).
 ///
 /// WSPR is absent for a different reason: 27.255 is quoted for it, and
 /// nobody appears to use it.
@@ -816,6 +815,7 @@ const CB11_DIALS: &[(crate::Mode, f64, &str)] = &[
     (crate::Mode::Ft8, 27_265_000.0, "ch 26"),
     (crate::Mode::Packet, 27_365_000.0, "ch 36, 1200 baud"),
     (crate::Mode::Sstv, 27_375_000.0, "ch 37"),
+    (crate::Mode::Sstv, 27_700_000.0, "freeband, primary SSTV"),
 ];
 
 /// The conventional dial frequencies for `mode` in the station's configured
@@ -1501,10 +1501,9 @@ mod js8_tests {
         assert!(ch.iter().any(|c| c.dial_hz == 14_078_000.0), "20 m JS8 missing");
     }
 
-    /// Issue #396: the 11 m channels are the ones inside the 40-channel
-    /// allocation and nowhere else. The lists that circulate also name
-    /// frequencies above 27.405 — the freeband, which nobody is licensed for —
-    /// and sdroxide does not point a transmitter at those by name.
+    /// The 11 m channels are inside the widened allocation (which includes the
+    /// freeband SSTV area up to 27.860). Each one is offered for its mode in
+    /// the M11 band.
     #[test]
     fn the_eleven_metre_channels_are_inside_the_allocation() {
         let (lo, hi) =

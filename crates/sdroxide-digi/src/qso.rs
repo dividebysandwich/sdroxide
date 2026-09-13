@@ -100,6 +100,35 @@ pub(crate) fn classify_payload(text: &str) -> Payload {
     }
 }
 
+/// The one-token payload of an 11 m free-text message addressed to us
+/// (WSJT-CB sends its report and sign-off as `<OURCALL> <payload>` — e.g.
+/// `25TT304 -07`, `25TT304 RR73` — so the payload sits where the *second*
+/// token is rather than in the slot [`classify_payload`] reads). `None` for a
+/// bare call, which is not anything owed.
+fn classify_cb_payload(tok: &str) -> Option<Payload> {
+    match tok {
+        "RR73" => Some(Payload::Rr73),
+        "RRR" => Some(Payload::Rrr),
+        "73" => Some(Payload::B73),
+        s if s.starts_with("R-") || s.starts_with("R+") => {
+            s[1..].parse().map(Payload::RReport).ok()
+        }
+        s if (s.starts_with('-') || s.starts_with('+')) && s[1..].parse::<i16>().is_ok() => {
+            let v: i16 = s[1..].parse().ok()?;
+            Some(Payload::Report(if s.starts_with('-') { -v } else { v }))
+        }
+        _ => None,
+    }
+}
+
+/// The payload WSJT-CB's one-call free text carries when it is addressed to
+/// us — the token after our call in `25TT304 -07` / `25TT304 RR73`. `None`
+/// when the text is not that shape at all.
+fn cb_free_text_payload(message: &str, my_call: &str) -> Option<Payload> {
+    let mut toks = message.split_whitespace();
+    if toks.next() == Some(my_call) { toks.next().and_then(classify_cb_payload) } else { None }
+}
+
 /// Where our reply to `payload` belongs in the exchange — the message that
 /// answers what they just sent us. `None` when nothing is owed: a bare 73
 /// closes a contact rather than asking for anything.
@@ -168,6 +197,10 @@ struct Dx {
 pub struct QsoMachine {
     cfg: DigiConfig,
     mode: Mode,
+    /// True on the 11 m citizens' band (issue #396): calls are free-text or
+    /// hashed (WSJT-CB), there is no Maidenhead grid, and the exchange opens,
+    /// reports and closes without one.
+    cb: bool,
     step: QsoStep,
     dx: Option<Dx>,
     audio_hz: f32,
@@ -229,6 +262,7 @@ impl QsoMachine {
         QsoMachine {
             cfg,
             mode,
+            cb: false,
             step: QsoStep::Idle,
             dx: None,
             audio_hz: 1500.0,
@@ -250,6 +284,14 @@ impl QsoMachine {
             queue: std::collections::VecDeque::new(),
             called_us: std::collections::HashMap::new(),
         }
+    }
+
+    /// Whether we are operating on the 11 m citizens' band (issue #396). The band
+    /// switches the whole exchange to WSJT-CB conventions: no grid, one-call
+    /// messages (a bare identity call, then "HISCALL REPORT"), and reports that
+    /// may arrive as free text addressed to us.
+    pub fn set_cb(&mut self, cb: bool) {
+        self.cb = cb;
     }
 
     pub fn set_config(&mut self, cfg: DigiConfig) {
@@ -618,8 +660,59 @@ impl QsoMachine {
         }
         let hound = self.dxped() == DxpedMode::Hound;
         for d in decodes {
-            let Some(from) = d.from.as_deref().filter(|f| !f.is_empty()) else { continue };
-            let to_me = d.to.as_deref() == Some(my_call.as_str());
+            // 11 m: WSJT-CB answers a CQ with its station's call and nothing
+            // else — "26AT715" free text, no CQ word, no addressee — there
+            // precisely to be a *clear* decode that seeds every listener's hash
+            // table. Free text carries no addressing, so nothing below can
+            // attribute it; with our CQ unanswered, an unattributed bare call
+            // is the best signal we have that someone answered (issue #396).
+            if self.cb
+                && self.dx.is_none()
+                && d.free_text
+                && !d.is_cq
+                && matches!(self.step, QsoStep::CallingCq | QsoStep::WaitCq)
+                && d.message.split_whitespace().count() == 1
+                && mfsk_core::msg::wsjt77::is_cb_callsign(&d.message)
+                && d.message != my_call
+            {
+                let call = d.message.clone();
+                self.dx = Some(Dx {
+                    call: call.clone(),
+                    grid: None,
+                    rpt_sent: Some(d.snr_db),
+                    rpt_rcvd: None,
+                    exch_rcvd: None,
+                    serial_sent: None,
+                    started_utc: now_utc,
+                    last_utc: now_utc,
+                });
+                self.logged = false; // a new contact, whatever the last one did
+                self.transcript.push(TranscriptLine::rcvd(d.message.clone()));
+                // Somebody came back to us: the CQ run is over and a fresh
+                // contact starts here, so the calls we spent finding them must
+                // not count against the ones we are about to make.
+                self.progress();
+                self.progress_utc = now_utc;
+                // Answerer already named itself; as the caller we now reply
+                // with the one-call report WSJT-CB sends at tx2.
+                self.step = QsoStep::TxReport;
+                changed = true;
+                continue;
+            }
+            // 11 m: WSJT-CB writes its report and sign-off *to us* as one-call
+            // free text naming the destination — "25TT304 -07", "25TT304 RR73"
+            // — with no sender of its own. With a contact in hand that is the
+            // DX we are already working, so it is read as coming from them
+            // rather than dropped as an unattributable decode (issue #396).
+            let cb_payload = cb_free_text_payload(&d.message, &my_call);
+            let cb_to_me = self.cb && cb_payload.is_some() && self.dx.is_some();
+            let from = d
+                .from
+                .as_deref()
+                .filter(|f| !f.is_empty())
+                .or_else(|| cb_to_me.then_some(dx_call.as_deref()).flatten());
+            let Some(from) = from else { continue };
+            let to_me = d.to.as_deref() == Some(my_call.as_str()) || cb_to_me;
 
             // Hound: the Fox closes our contact inside a message addressed to
             // the *next* Hound ("<us> RR73; W9XYZ <fox> +03"), so `to` never
@@ -643,16 +736,25 @@ impl QsoMachine {
             // (they're free) or address us directly (no need to keep waiting).
             if self.step == QsoStep::WaitCq {
                 if self.dx.as_ref().map(|x| x.call.as_str()) == Some(from) && (d.is_cq || to_me) {
-                    let payload = classify_payload(&d.message);
+                    let payload =
+                        cb_payload.clone().unwrap_or_else(|| classify_payload(&d.message));
                     // Where to pick the exchange up. Their CQ says nothing
                     // about us, so we open with our grid; anything addressed to
                     // us is answered from where *they* are, because resuming at
                     // Tx1 would send our grid to a station that already has it
                     // and is waiting on a report. A bare 73 asks for nothing at
                     // all, so it is not the thing we were waiting for.
-                    let Some(resume) =
-                        (if d.is_cq { Some(QsoStep::TxGrid) } else { reply_step(&payload) })
-                    else {
+                    //
+                    // On 11 m an addressed pair with no payload — "<us> them" —
+                    // is the band's grid-less opener (WSJT-CB's `cb_pair`), and
+                    // opens the exchange exactly as a locator would.
+                    let Some(resume) = (if d.is_cq
+                        || (self.cb && !d.free_text && d.message.split_whitespace().count() == 2)
+                    {
+                        Some(QsoStep::TxGrid)
+                    } else {
+                        reply_step(&payload)
+                    }) else {
                         continue;
                     };
                     if let Some(dx) = self.dx.as_mut() {
@@ -707,7 +809,7 @@ impl QsoMachine {
             if !to_me {
                 continue; // everything else must be addressed to us
             }
-            let payload = classify_payload(&d.message);
+            let payload = cb_payload.clone().unwrap_or_else(|| classify_payload(&d.message));
 
             // Contact just logged: if the DX repeats their message they didn't
             // hear our final one — queue a single re-send. A bare 73 means they
@@ -1030,13 +1132,39 @@ impl QsoMachine {
         let dx_call = dx.map(|d| d.call.as_str()).unwrap_or("");
         let mc = &self.cfg.my_call;
         // FT8/FT4 use the 4-character Maidenhead locator; a 6-char grid like
-        // "JN78ve" is truncated to "JN78" for the transmitted message.
-        let mg: String = self.cfg.my_grid.chars().take(4).collect();
+        // "JN78ve" is truncated to "JN78" for the transmitted message. On 11 m
+        // there is no grid at all: the band's contacts open, report and close
+        // without one (WSJT-CB writes a bare call or one-call "HISCALL REPORT"
+        // instead of a long form), so the grid word is dropped (issue #396).
+        let my_grid = self.cfg.my_grid.to_ascii_uppercase();
+        let mg: String = if self.cb { String::new() } else { my_grid.chars().take(4).collect() };
         let rpt_sent = dx.and_then(|d| d.rpt_sent);
         if self.contest() == ContestMode::EuVhf {
             return self.plan_eu_vhf(dx_call, &mg, rpt_sent);
         }
         let fill = |tmpl: &str, rpt: Option<i16>| DigiConfig::fill(tmpl, mc, &mg, dx_call, rpt);
+        // On 11 m the exchange follows WSJT-CB's message sequence (issue
+        // #396). The *identity* slot — the message that answers a CQ — is
+        // WSJT-CB's tx1 verbatim, "<HISCALL> MYCALL": the DX travels as an
+        // explicit hash so the pair fits the wire, and *our* call is spelled
+        // out in the clear so the DX knows at once who answered (Type 4, hash
+        // first — the form WSJT-CB itself transmits, not a pair of hashes).
+        // Only once the DX is on line do reports and sign-offs go out one call
+        // at a time as free text — HISCALL +/-NN, HISCALL R+/-NN, HISCALL
+        // RR73, HISCALL 73 — the form WSJT-CB itself sends and a lone call
+        // never would.
+        if self.cb {
+            return match self.step {
+                QsoStep::CallingCq => Some(fill(&self.cfg.msg_cq, None)),
+                QsoStep::TxGrid => Some(fill("<{DX}> {MYCALL}", None)),
+                QsoStep::TxReport => Some(fill("{DX} {REPORT}", rpt_sent)),
+                QsoStep::TxRReport => Some(fill("{DX} R{REPORT}", rpt_sent)),
+                QsoStep::TxRr73 => Some(fill("{DX} RR73", None)),
+                QsoStep::Tx73 => Some(fill("{DX} 73", None)),
+                QsoStep::Confirming => self.resend.then(|| self.final_msg.clone()).flatten(),
+                QsoStep::Idle | QsoStep::WaitCq => None,
+            };
+        }
         match self.step {
             QsoStep::CallingCq => Some(fill(&self.cfg.msg_cq, None)),
             QsoStep::TxGrid => Some(fill(&self.cfg.msg_grid, None)),
@@ -2308,5 +2436,156 @@ mod tests {
         // After the confirm window the contact is retired.
         assert!(q.tick(145 + CONFIRM_S));
         assert_eq!(q.step(), QsoStep::Idle);
+    }
+
+    /// A station set up on the 11 m citizens' band: a CB callsign and, being
+    /// CB, no Maidenhead grid (issue #396).
+    fn cb_cfg() -> DigiConfig {
+        DigiConfig { my_call: "25TT304".into(), my_grid: String::new(), ..Default::default() }
+    }
+
+    /// A WSJT-CB one-call free-text decode: "25TT304 -07", "25TT304 RR73".
+    /// Free text carries no addressing by design — the destination is the first
+    /// token and the sender is absent.
+    fn cb_decode(msg: &str) -> Decode {
+        Decode {
+            slot_utc: 0,
+            snr_db: -10,
+            dt: 0.1,
+            audio_hz: 1500.0,
+            message: msg.to_string(),
+            to: None,
+            from: None,
+            grid: None,
+            is_cq: false,
+            cq_to: None,
+            free_text: true,
+            rr73_to: None,
+        }
+    }
+
+    /// On 11 m every transmission is grid-less and both calls travel hashed
+    /// (WSJT-CB's `<OURCALL> <THEIR>`), so a CQ answered by the other station
+    /// opens the contact without a locator.
+    #[test]
+    fn a_cb_cq_opens_without_a_grid() {
+        let mut q = QsoMachine::new(Mode::Ft8, cb_cfg());
+        q.set_cb(true);
+        q.call_cq();
+        // The CQ itself carries no grid: the template's locator word is empty.
+        assert_eq!(q.plan_tx().as_deref(), Some("CQ 25TT304"));
+
+        // 26AT715 answers with the two-hash pair — no grid to read.
+        assert!(q.on_rx(&[decode("25TT304 26AT715")], 115));
+        assert_eq!(q.step(), QsoStep::TxReport);
+        assert_eq!(q.plan_tx().as_deref(), Some("26AT715 -10"));
+
+        // Their report comes back addressed, and the exchange completes.
+        assert!(q.on_rx(&[decode("25TT304 26AT715 -02")], 130));
+        assert_eq!(q.step(), QsoStep::TxRReport);
+        assert_eq!(q.plan_tx().as_deref(), Some("26AT715 R-10"));
+
+        assert!(q.on_rx(&[decode("25TT304 26AT715 R-07")], 145));
+        assert_eq!(q.step(), QsoStep::TxRr73);
+        assert_eq!(q.plan_tx().as_deref(), Some("26AT715 RR73"));
+
+        assert!(q.on_rx(&[decode("25TT304 26AT715 RR73")], 160));
+        assert_eq!(q.step(), QsoStep::Tx73);
+        assert_eq!(q.plan_tx().as_deref(), Some("26AT715 73"));
+
+        // No grid anywhere: the log entry stands without one.
+        q.note_tx_sent(175);
+        let rec = q.take_completed().expect("logged");
+        assert_eq!(rec.call, "26AT715");
+        assert_eq!(rec.grid, None);
+    }
+
+    /// WSJT-CB sends its report and sign-off as one-call free text naming the
+    /// destination — "25TT304 -07" — with no sender of its own. To a station
+    /// mid-contact that is the DX, and the QSO must advance on it.
+    #[test]
+    fn a_cb_free_text_report_advances_the_exchange() {
+        let mut q = QsoMachine::new(Mode::Ft8, cb_cfg());
+        q.set_cb(true);
+        q.start_qso("26AT715".into(), None, -10, false, 100);
+        assert_eq!(q.step(), QsoStep::TxGrid);
+        // The opener answers the CQ exactly as WSJT-CB's tx1 writes it: the
+        // DX hashed, our call spelled out so the DX knows who answered
+        // (issue #396).
+        assert_eq!(q.plan_tx().as_deref(), Some("<26AT715> 25TT304"));
+
+        // Their report as WSJT-CB writes it: our call, then the payload.
+        q.note_tx_sent(115);
+        assert!(q.on_rx(&[cb_decode("25TT304 -07")], 130));
+        assert_eq!(q.step(), QsoStep::TxRReport);
+        assert_eq!(q.plan_tx().as_deref(), Some("26AT715 R-10"));
+
+        // ... and their close as free text, addressed the same way.
+        q.note_tx_sent(145);
+        assert!(q.on_rx(&[cb_decode("25TT304 RR73")], 160));
+        assert_eq!(q.step(), QsoStep::Tx73);
+        assert_eq!(q.plan_tx().as_deref(), Some("26AT715 73"));
+
+        // A repeated free-text 73 while worn-out is a "I heard you", not a
+        // request for another transmission.
+        q.note_tx_sent(175);
+        assert!(q.on_rx(&[cb_decode("25TT304 73")], 190));
+        assert_eq!(q.step(), QsoStep::Confirming);
+        assert!(!q.wants_tx());
+    }
+
+    /// WSJT-CB answers our CQ with a bare "26AT715" — free text, no CQ word,
+    /// no addressee — there to be a *clear* decode that seeds every listener's
+    /// hash table. With no contact in hand, that is the answer to our CQ, and
+    /// it must open the exchange (issue #396); as the caller we reply with the
+    /// one-call report WSJT-CB sends at tx2.
+    #[test]
+    fn a_cb_bare_call_answers_our_cq() {
+        let mut q = QsoMachine::new(Mode::Ft8, cb_cfg());
+        q.set_cb(true);
+        q.call_cq();
+        assert_eq!(q.step(), QsoStep::CallingCq);
+
+        // Their identity message arrives as free text with no addressing.
+        assert!(q.on_rx(&[cb_decode("26AT715")], 115));
+        assert_eq!(q.step(), QsoStep::TxReport);
+        assert_eq!(q.plan_tx().as_deref(), Some("26AT715 -10"));
+
+        // Their report, written the WSJT-CB way, now has a contact to advance.
+        q.note_tx_sent(130);
+        assert!(q.on_rx(&[cb_decode("25TT304 -07")], 145));
+        assert_eq!(q.step(), QsoStep::TxRReport);
+        assert_eq!(q.plan_tx().as_deref(), Some("26AT715 R-10"));
+    }
+
+    /// The pair opener while we are *waiting* for a picked station — their
+    /// `<us> them` with nothing after it — is the band's grid-less answer to a
+    /// locator, and opens the exchange rather than jumping to a report.
+    #[test]
+    fn a_cb_pair_opener_while_waiting_opens_the_exchange() {
+        let mut q = QsoMachine::new(Mode::Ft8, cb_cfg());
+        q.set_cb(true);
+        q.start_qso("26AT715".into(), None, -10, true, 100);
+        assert_eq!(q.step(), QsoStep::WaitCq);
+
+        assert!(q.on_rx(&[decode("25TT304 26AT715")], 115));
+        assert_eq!(q.step(), QsoStep::TxGrid);
+        // The pair is the answer, named WSJT-CB's way: their message answers
+        // with our call hashed and theirs spelled.
+        assert_eq!(q.plan_tx().as_deref(), Some("<26AT715> 25TT304"));
+    }
+
+    /// Off the 11 m band, CB-shaped free text must not be read as addressed to
+    /// us: a "25TT304 -07" is a random three-token-free-text-free decoding, not
+    /// the DX speaking.
+    #[test]
+    fn cb_free_text_is_ignored_outside_the_cb_band() {
+        let mut q = QsoMachine::new(Mode::Ft8, cfg());
+        q.start_qso("AB1CD".into(), Some("FN42".into()), -10, false, 100);
+        assert_eq!(q.step(), QsoStep::TxGrid);
+
+        let before = q.step();
+        assert!(!q.on_rx(&[cb_decode("AB1CD -07")], 115));
+        assert_eq!(q.step(), before);
     }
 }

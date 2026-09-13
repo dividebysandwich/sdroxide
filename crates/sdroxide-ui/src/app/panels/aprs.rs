@@ -152,58 +152,60 @@ impl SdroxideApp {
                 {
                     self.show_digi_settings = !self.show_digi_settings;
                 }
-                // The beacon interval, here rather than only in the setup
-                // dialog: how often an unattended transmitter keys is the
-                // setting an operator reaches for while watching the channel,
-                // not while in a dialog.
-                let cfg = &mut self.digi_cfg_edit;
-                let before = cfg.aprs_beacon_minutes;
-                let resp = ui
-                    .add_enabled(
-                        // Not gated on having a callsign or a position:
-                        // setting the interval before filling those in is a
-                        // perfectly ordinary order to do things in, and the
-                        // warning to the left already says why nothing is
-                        // going out yet. Only a receiver, which cannot beacon
-                        // at all, greys it.
-                        tx_ok,
-                        egui::DragValue::new(&mut cfg.aprs_beacon_minutes)
-                            .range(0..=120)
-                            .speed(0.25)
-                            .custom_formatter(|n, _| {
-                                if n < 1.0 { "off".into() } else { format!("{n:.0} min") }
-                            }),
-                    )
-                    .on_hover_text(
-                        "How often to beacon your position, unattended. `off` — the default — \
-                         never beacons: selecting a mode must not put a station on the air. \
-                         Thirty minutes is the convention for a fixed station, oftener for a \
-                         moving one, and every beacon is somebody else's channel time.",
-                    );
-                if resp.changed() && cfg.aprs_beacon_minutes != before {
-                    let cfg = cfg.clone();
-                    cmds.push(Command::SetDigiConfig(cfg));
-                }
-                if tx_gated(ui, tx_ok && have_call && have_pos, |ui| {
-                    crate::chrome::chip_accent(
-                        ui,
-                        false,
-                        RichText::new(" BEACON ").strong(),
-                        theme::GREEN(),
-                        theme::INK_ON_CYAN(),
-                    )
-                    .on_hover_text(if !have_call {
-                        "This station has no callsign — see the warning to the left."
-                    } else if !have_pos {
-                        "This station has no position to report — see the warning to the left."
-                    } else {
-                        "Send one position report now, without waiting for the interval. It \
-                         waits for the channel to be clear like everything else."
+                if !self.ui_settings.swl {
+                    // The beacon interval, here rather than only in the setup
+                    // dialog: how often an unattended transmitter keys is the
+                    // setting an operator reaches for while watching the channel,
+                    // not while in a dialog.
+                    let cfg = &mut self.digi_cfg_edit;
+                    let before = cfg.aprs_beacon_minutes;
+                    let resp = ui
+                        .add_enabled(
+                            // Not gated on having a callsign or a position:
+                            // setting the interval before filling those in is a
+                            // perfectly ordinary order to do things in, and the
+                            // warning to the left already says why nothing is
+                            // going out yet. Only a receiver, which cannot beacon
+                            // at all, greys it.
+                            tx_ok,
+                            egui::DragValue::new(&mut cfg.aprs_beacon_minutes)
+                                .range(0..=120)
+                                .speed(0.25)
+                                .custom_formatter(|n, _| {
+                                    if n < 1.0 { "off".into() } else { format!("{n:.0} min") }
+                                }),
+                        )
+                        .on_hover_text(
+                            "How often to beacon your position, unattended. `off` — the default — \
+                             never beacons: selecting a mode must not put a station on the air. \
+                             Thirty minutes is the convention for a fixed station, oftener for a \
+                             moving one, and every beacon is somebody else's channel time.",
+                        );
+                    if resp.changed() && cfg.aprs_beacon_minutes != before {
+                        let cfg = cfg.clone();
+                        cmds.push(Command::SetDigiConfig(cfg));
+                    }
+                    if tx_gated(ui, tx_ok && have_call && have_pos, |ui| {
+                        crate::chrome::chip_accent(
+                            ui,
+                            false,
+                            RichText::new(" BEACON ").strong(),
+                            theme::GREEN(),
+                            theme::INK_ON_CYAN(),
+                        )
+                        .on_hover_text(if !have_call {
+                            "This station has no callsign — see the warning to the left."
+                        } else if !have_pos {
+                            "This station has no position to report — see the warning to the left."
+                        } else {
+                            "Send one position report now, without waiting for the interval. It \
+                             waits for the channel to be clear like everything else."
+                        })
                     })
-                })
-                .clicked()
-                {
-                    cmds.push(Command::AprsBeacon);
+                    .clicked()
+                    {
+                        cmds.push(Command::AprsBeacon);
+                    }
                 }
                 aprs_tx_slot(ui, st, transmitting);
             });
@@ -749,65 +751,67 @@ impl SdroxideApp {
             });
 
         ui.add_space(2.0);
-        let mut send = false;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let to = ui.add(
-                egui::TextEdit::singleline(&mut self.aprs_target)
-                    .hint_text("to")
-                    .desired_width(78.0)
-                    .font(egui::TextStyle::Monospace),
-            );
-            if to.changed() {
-                self.aprs_target = self.aprs_target.to_ascii_uppercase();
-            }
-            let room = (ui.available_width() - 56.0).max(60.0);
-            let text = ui.add(
-                egui::TextEdit::singleline(&mut self.aprs_draft)
-                    .hint_text("message")
-                    .desired_width(room)
-                    .char_limit(MSG_MAX),
-            );
-            if text.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                send = true;
-            }
-            let ready = !self.aprs_target.trim().is_empty() && !self.aprs_draft.trim().is_empty();
-            if tx_gated(ui, tx_ok && ready && have_call, |ui| {
-                crate::chrome::chip_accent(
-                    ui,
-                    false,
-                    RichText::new(" SEND ").size(10.0).strong(),
-                    theme::GREEN(),
-                    theme::INK_ON_CYAN(),
-                )
-                .on_hover_text(if !have_call {
-                    "This station has no callsign, so nothing can be transmitted. Set one under \
-                     Settings → General, or an APRS-specific one with its SSID under SETUP."
-                } else if !ready {
-                    "Needs a station to address and something to say."
-                } else {
-                    "Send it, and keep retrying until the far end acknowledges. Messages are \
-                     the one thing on this channel that is answered."
+        if !self.ui_settings.swl {
+            let mut send = false;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let to = ui.add(
+                    egui::TextEdit::singleline(&mut self.aprs_target)
+                        .hint_text("to")
+                        .desired_width(78.0)
+                        .font(egui::TextStyle::Monospace),
+                );
+                if to.changed() {
+                    self.aprs_target = self.aprs_target.to_ascii_uppercase();
+                }
+                let room = (ui.available_width() - 56.0).max(60.0);
+                let text = ui.add(
+                    egui::TextEdit::singleline(&mut self.aprs_draft)
+                        .hint_text("message")
+                        .desired_width(room)
+                        .char_limit(MSG_MAX),
+                );
+                if text.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    send = true;
+                }
+                let ready = !self.aprs_target.trim().is_empty() && !self.aprs_draft.trim().is_empty();
+                if tx_gated(ui, tx_ok && ready && have_call, |ui| {
+                    crate::chrome::chip_accent(
+                        ui,
+                        false,
+                        RichText::new(" SEND ").size(10.0).strong(),
+                        theme::GREEN(),
+                        theme::INK_ON_CYAN(),
+                    )
+                    .on_hover_text(if !have_call {
+                        "This station has no callsign, so nothing can be transmitted. Set one under \
+                         Settings → General, or an APRS-specific one with its SSID under SETUP."
+                    } else if !ready {
+                        "Needs a station to address and something to say."
+                    } else {
+                        "Send it, and keep retrying until the far end acknowledges. Messages are \
+                         the one thing on this channel that is answered."
+                    })
                 })
-            })
-            .clicked()
-            {
-                send = true;
-            }
-        });
-        // Enter in the message box goes through the same gate as the button: a
-        // keystroke must not do what a greyed-out button refuses to.
-        if send
-            && have_call
-            && !self.aprs_target.trim().is_empty()
-            && !self.aprs_draft.trim().is_empty()
-            && tx_ok
-        {
-            cmds.push(Command::AprsSendMessage {
-                to: self.aprs_target.trim().to_ascii_uppercase(),
-                text: self.aprs_draft.trim().to_string(),
+                .clicked()
+                {
+                    send = true;
+                }
             });
-            self.aprs_draft.clear();
+            // Enter in the message box goes through the same gate as the button: a
+            // keystroke must not do what a greyed-out button refuses to.
+            if send
+                && have_call
+                && !self.aprs_target.trim().is_empty()
+                && !self.aprs_draft.trim().is_empty()
+                && tx_ok
+            {
+                cmds.push(Command::AprsSendMessage {
+                    to: self.aprs_target.trim().to_ascii_uppercase(),
+                    text: self.aprs_draft.trim().to_string(),
+                });
+                self.aprs_draft.clear();
+            }
         }
     }
 }

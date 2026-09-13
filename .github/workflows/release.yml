@@ -3,8 +3,10 @@ name: Release
 on:
   push:
     tags: ['v*']
-  # Manual runs build all artifacts (downloadable from the run page) without
-  # creating a release — useful for testing the pipeline.
+  # Manual runs build all artifacts and upload them to the run page. Run one
+  # against a `v*` ref (`gh workflow run release.yml --ref vX.Y.Z`, dispatched
+  # the same way tag pushes would) to publish the platform builds and create
+  # the GitHub Release too.
   workflow_dispatch:
 
 permissions:
@@ -700,10 +702,14 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+  # Arch Linux. No package is shipped in the release any more: Arch users
+  # build sdroxide themselves from the PKGBUILD in packaging/arch/, which
+  # clones the repo at `#tag=v$pkgver` and pulls the vendor/ submodules on its
+  # own, so it always matches the release it advertises.
   release:
     name: create release
     needs: [web, build]
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || startsWith(github.ref_name, 'v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -778,6 +784,16 @@ jobs:
           - **It needs FUSE to mount itself**, which every desktop distribution
             has (`fuse3`). Where it is missing —  a minimal container, say — run
             it as `APPIMAGE_EXTRACT_AND_RUN=1 ./sdroxide-….AppImage` instead.
+
+          ### Arch Linux
+
+          No Arch package ships with the release — build sdroxide with the
+          PKGBUILD in `packaging/arch/`, which clones the repo at the matching
+          tag and pulls the vendored submodules itself:
+
+          ```
+          cd sdroxide/packaging/arch && makepkg -si
+          ```
 
           ### Requirements (SoapySDR builds)
 

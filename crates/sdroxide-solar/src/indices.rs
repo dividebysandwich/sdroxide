@@ -249,8 +249,15 @@ fn band_group(band: sdroxide_types::Band) -> Option<&'static str> {
         // 11 m is inside the range the "12m-10m" verdict covers, but it is not
         // one of the bands that verdict is published *about* — it is not an
         // amateur band at all — and quoting an amateur forecast at it would be
-        // claiming an authority the source does not have.
+        // claiming an authority the source does not have. The same goes for
+        // the broadcast services: longwave and medium wave sit below the
+        // published range, FM and the SW broadcast span are not HF amateur
+        // bands, and nothing an HF forecast is graded on applies to them.
         | Band::M11
+        | Band::Lw
+        | Band::Mw
+        | Band::Sw
+        | Band::Fm
         | Band::M6
         | Band::M4
         | Band::M2

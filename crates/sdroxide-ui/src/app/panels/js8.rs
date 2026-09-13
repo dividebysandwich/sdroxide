@@ -243,52 +243,54 @@ impl SdroxideApp {
                 cmds.push(Command::SetDigiAudioFreq((audio_hz + 10.0).clamp(200.0, 3500.0)));
             }
             self.digi_freq_chip(ui, cmds);
-            // Beacon state. An unattended transmitter must say so where the
-            // operator is already looking, and say when it will key next — a
-            // countdown is the difference between "armed" and "hung".
-            let hb_min = self.digi_cfg_edit.js8_heartbeat_min;
-            // Lit by what the engine is *doing*, not by what is configured: at
-            // Turbo the interval is set and nothing beacons, and a chip that
-            // claimed otherwise would be the one place this must not be wrong.
-            let hb_on = crate::chrome::chip(ui, js8.next_hb_in_s.is_some(), "HB AUTO")
-                .on_hover_text(match js8.next_hb_in_s {
-                    Some(_) => format!("Beaconing every {hb_min} min — click to stop"),
-                    None if js8.speed == Js8Speed::Turbo => {
-                        "Turbo does not beacon — it is the local and VHF speed".to_string()
-                    }
-                    None => "Beacon your callsign and grid every 15 minutes".to_string(),
-                })
-                .clicked();
-            if hb_on {
-                // Off if it was on; otherwise the interval most of the band
-                // uses, which SETUP can then change.
-                self.digi_cfg_edit.js8_heartbeat_min = if hb_min > 0 { 0 } else { 15 };
-                cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
-            }
-            if let Some(left) = js8.next_hb_in_s {
-                ui.label(
-                    RichText::new(format!("{}:{:02}", left / 60, left % 60))
-                        .monospace()
-                        .color(crate::theme::CYAN_DIM()),
-                )
-                .on_hover_text("Until the next heartbeat");
-            }
-            // Beacons do not go out on the working frequency, so the waterfall
-            // shows a burst where the panel's marker is not. Saying where it
-            // went is the difference between that reading as a bug and as the
-            // sub-band convention working.
-            if let Some(hz) = js8.hb_hz {
-                ui.label(
-                    RichText::new(format!("HB {hz:.0} Hz"))
-                        .monospace()
-                        .color(crate::theme::GREEN()),
-                )
-                .on_hover_text(format!(
-                    "The last beacon went out at {hz:.0} Hz — a free slot in the {:.0}–{:.0} Hz \
-                     heartbeat sub-band, chosen so it lands clear of the signals being decoded.",
-                    sdroxide_types::HB_BAND_LO_HZ,
-                    sdroxide_types::HB_BAND_HI_HZ,
-                ));
+            if !self.ui_settings.swl {
+                // Beacon state. An unattended transmitter must say so where the
+                // operator is already looking, and say when it will key next — a
+                // countdown is the difference between "armed" and "hung".
+                let hb_min = self.digi_cfg_edit.js8_heartbeat_min;
+                // Lit by what the engine is *doing*, not by what is configured: at
+                // Turbo the interval is set and nothing beacons, and a chip that
+                // claimed otherwise would be the one place this must not be wrong.
+                let hb_on = crate::chrome::chip(ui, js8.next_hb_in_s.is_some(), "HB AUTO")
+                    .on_hover_text(match js8.next_hb_in_s {
+                        Some(_) => format!("Beaconing every {hb_min} min — click to stop"),
+                        None if js8.speed == Js8Speed::Turbo => {
+                            "Turbo does not beacon — it is the local and VHF speed".to_string()
+                        }
+                        None => "Beacon your callsign and grid every 15 minutes".to_string(),
+                    })
+                    .clicked();
+                if hb_on {
+                    // Off if it was on; otherwise the interval most of the band
+                    // uses, which SETUP can then change.
+                    self.digi_cfg_edit.js8_heartbeat_min = if hb_min > 0 { 0 } else { 15 };
+                    cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+                }
+                if let Some(left) = js8.next_hb_in_s {
+                    ui.label(
+                        RichText::new(format!("{}:{:02}", left / 60, left % 60))
+                            .monospace()
+                            .color(crate::theme::CYAN_DIM()),
+                    )
+                    .on_hover_text("Until the next heartbeat");
+                }
+                // Beacons do not go out on the working frequency, so the waterfall
+                // shows a burst where the panel's marker is not. Saying where it
+                // went is the difference between that reading as a bug and as the
+                // sub-band convention working.
+                if let Some(hz) = js8.hb_hz {
+                    ui.label(
+                        RichText::new(format!("HB {hz:.0} Hz"))
+                            .monospace()
+                            .color(crate::theme::GREEN()),
+                    )
+                    .on_hover_text(format!(
+                        "The last beacon went out at {hz:.0} Hz — a free slot in the {:.0}–{:.0} Hz \
+                         heartbeat sub-band, chosen so it lands clear of the signals being decoded.",
+                        sdroxide_types::HB_BAND_LO_HZ,
+                        sdroxide_types::HB_BAND_HI_HZ,
+                    ));
+                }
             }
             crate::chrome::row_tail(ui, |ui| {
                 // Every setting this mode has — callsign, groups, auto-reply,
@@ -391,9 +393,11 @@ impl SdroxideApp {
                 // First declared is lowest in a bottom-up layout, so this is
                 // the gap between the controls and the panel edge. Without it
                 // they sit flush against the frame.
-                ui.add_space(8.0);
-                self.js8_compose(ui, cmds, js8);
-                ui.add_space(4.0);
+                if !self.ui_settings.swl {
+                    ui.add_space(8.0);
+                    self.js8_compose(ui, cmds, js8);
+                    ui.add_space(4.0);
+                }
                 // Back to normal order for the scrolling part.
                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                     self.js8_conversation(ui, js8);
@@ -644,9 +648,15 @@ impl SdroxideApp {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            let resp = reply_btn(ui);
+                                            let resp = if self.ui_settings.swl {
+                                                ui.label("")
+                                            } else {
+                                                reply_btn(ui)
+                                            };
                                             reply = resp.clicked();
-                                            reply_left = Some(resp.rect.left());
+                                            if !self.ui_settings.swl {
+                                                reply_left = Some(resp.rect.left());
+                                            }
                                             ui.with_layout(
                                                 egui::Layout::left_to_right(egui::Align::Center),
                                                 |ui| {
@@ -760,9 +770,15 @@ impl SdroxideApp {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        let resp = reply_btn(ui);
+                                        let resp = if self.ui_settings.swl {
+                                            ui.label("")
+                                        } else {
+                                            reply_btn(ui)
+                                        };
                                         reply = resp.clicked();
-                                        reply_left = Some(resp.rect.left());
+                                        if !self.ui_settings.swl {
+                                            reply_left = Some(resp.rect.left());
+                                        }
                                         ui.with_layout(
                                             egui::Layout::left_to_right(egui::Align::Center),
                                             |ui| {

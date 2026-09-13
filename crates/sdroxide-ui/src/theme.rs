@@ -99,6 +99,28 @@ const fn c(rgb: u32) -> Color32 {
     Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 
+/// One sRGB channel of `a` taken `num`/`den` of the way to `b` — the
+/// const-evaluable workhorse behind [`blend`].
+const fn chan(a: u8, b: u8, num: u32, den: u32) -> u8 {
+    (a as i32 + ((b as i32 - a as i32) * num as i32) / den as i32) as u8
+}
+
+/// `a` taken `num`/`den` of the way to `b`, staying a `const fn` so the
+/// derived instrument palettes can be baked into statics.
+///
+/// The newer themes get their meters, scope tints and maps from the palette by
+/// blending its own hues rather than by hand-writing a second colour table per
+/// theme — the fields a widget needs are specific shades of the roles it reads
+/// (`a tick is the body text taken back toward the panel`), and blending keeps
+/// every derived instrument in the theme's own family.
+const fn blend(a: Color32, b: Color32, num: u32, den: u32) -> Color32 {
+    Color32::from_rgb(
+        chan(a.r(), b.r(), num, den),
+        chan(a.g(), b.g(), num, den),
+        chan(a.b(), b.b(), num, den),
+    )
+}
+
 /// The classic look: dark navy panels, cyan accents, hot-pink strokes. Must
 /// stay bit-exact to the historic constants — it is the default every
 /// screenshot in the manual shows.
@@ -414,9 +436,413 @@ const HIGH_CONTRAST: Palette = Palette {
     hazard_dark: c(0x000000),
 };
 
+/// The Nordic palette: the polar-night navy range with snow-storm text and
+/// frost accents. Nord is already a dark theme; [`NORD_DARK`] is its
+/// near-black echo.
+const NORD: Palette = Palette {
+    light: false,
+    no_dim: false,
+    bg_deep: c(0x242b37),
+    panel: c(0x2e3440),
+    input_bg: c(0x1f2631),
+    fill: c(0x3b4252),
+    fill_hover: c(0x464d60),
+    fill_active: c(0x4c566a),
+    line: c(0x434c5e),
+    line_lit: c(0x5e81ac),
+    text: c(0xd8dee9),
+    text_strong: c(0xeceff4),
+    cyan: c(0x88c0d0),
+    cyan_dim: c(0x81a1c1),
+    pink: c(0xb48ead),
+    yellow: c(0xebcb8b),
+    green: c(0xa3be8c),
+    ink_on_cyan: c(0x16202b),
+    ink_on_bright: Color32::BLACK,
+    red_deep: c(0x5e3a49),
+    cq_bg: c(0x40323e),
+    tome_bg: c(0x423a26),
+    done_bg: c(0x303b35),
+    row_bg: c(0x29303b),
+    row_hover: c(0x3e4657),
+    scroll_track: c(0x2b3240),
+    scroll_handle: c(0x5e81ac),
+    scroll_handle_hover: c(0x88c0d0),
+    scroll_handle_drag: c(0xeceff4),
+    faint_bg: c(0x2b3240),
+    // Nord's own red is a muted rose (g=0x61) — too close to the edge of "is
+    // this red?" to be an alarm. A hotter red of the same family stands in.
+    alert: c(0xd44755),
+    hazard: c(0xebcb8b),
+    hazard_dark: c(0x232112),
+};
+
+/// Nord's accents on near-black grounds, so the panels sit almost in the page
+/// behind them.
+const NORD_DARK: Palette = Palette {
+    light: false,
+    no_dim: false,
+    bg_deep: c(0x12151c),
+    panel: c(0x161b24),
+    input_bg: c(0x0e1118),
+    fill: c(0x242a35),
+    fill_hover: c(0x2e3644),
+    fill_active: c(0x394253),
+    line: c(0x2d3542),
+    line_lit: c(0x5e81ac),
+    text: c(0xd8dee9),
+    text_strong: c(0xeceff4),
+    cyan: c(0x88c0d0),
+    cyan_dim: c(0x81a1c1),
+    pink: c(0xb48ead),
+    yellow: c(0xebcb8b),
+    green: c(0xa3be8c),
+    ink_on_cyan: c(0x16202b),
+    ink_on_bright: Color32::BLACK,
+    red_deep: c(0x4e2c3c),
+    cq_bg: c(0x381f30),
+    tome_bg: c(0x38321f),
+    done_bg: c(0x222e28),
+    row_bg: c(0x141920),
+    row_hover: c(0x2c3443),
+    scroll_track: c(0x151b24),
+    scroll_handle: c(0x5e81ac),
+    scroll_handle_hover: c(0x88c0d0),
+    scroll_handle_drag: c(0xeceff4),
+    faint_bg: c(0x151b24),
+    alert: c(0xd44755),
+    hazard: c(0xebcb8b),
+    hazard_dark: c(0x1b1912),
+};
+
+/// The warm Gruvbox palette: parchment text on near-black browns, blue/aqua
+/// accents, and the bright-orange chrome that makes it unmistakable.
+const GRUVBOX: Palette = Palette {
+    light: false,
+    no_dim: false,
+    bg_deep: c(0x1d2021),
+    panel: c(0x282828),
+    input_bg: c(0x1f1f1f),
+    fill: c(0x32302f),
+    fill_hover: c(0x403e3b),
+    fill_active: c(0x504945),
+    line: c(0x423e3c),
+    line_lit: c(0x928374),
+    text: c(0xebdbb2),
+    text_strong: c(0xfbf1c7),
+    cyan: c(0x83a598),
+    cyan_dim: c(0x627c72),
+    pink: c(0xfe8019),
+    yellow: c(0xfabd2f),
+    green: c(0xb8bb26),
+    ink_on_cyan: c(0x14201e),
+    ink_on_bright: Color32::BLACK,
+    red_deep: c(0x6b2a20),
+    cq_bg: c(0x3d2726),
+    tome_bg: c(0x3a3320),
+    done_bg: c(0x2c371f),
+    row_bg: c(0x232323),
+    row_hover: c(0x3c3a37),
+    scroll_track: c(0x232323),
+    scroll_handle: c(0x928374),
+    scroll_handle_hover: c(0x83a598),
+    scroll_handle_drag: c(0xfabd2f),
+    faint_bg: c(0x232323),
+    alert: c(0xfb4934),
+    hazard: c(0xfabd2f),
+    hazard_dark: c(0x1e1c13),
+};
+
+/// The Everforest palette: green-tinged deep blues, soft cream text and mossy
+/// accent hues.
+const EVERFOREST: Palette = Palette {
+    light: false,
+    no_dim: false,
+    bg_deep: c(0x1a1f28),
+    panel: c(0x1e232e),
+    input_bg: c(0x181d26),
+    fill: c(0x252c3b),
+    fill_hover: c(0x2d3444),
+    fill_active: c(0x33394c),
+    line: c(0x313849),
+    line_lit: c(0x4a5366),
+    text: c(0xd3c6aa),
+    text_strong: c(0xf4e8cf),
+    cyan: c(0x7fbbb3),
+    cyan_dim: c(0x5e8c86),
+    pink: c(0xd699b6),
+    yellow: c(0xdbbc7f),
+    green: c(0xa7c080),
+    ink_on_cyan: c(0x14221c),
+    ink_on_bright: Color32::BLACK,
+    red_deep: c(0x68393b),
+    cq_bg: c(0x3d2c31),
+    tome_bg: c(0x3f3627),
+    done_bg: c(0x2d3a27),
+    row_bg: c(0x1b212b),
+    row_hover: c(0x2c3445),
+    scroll_track: c(0x1c232e),
+    scroll_handle: c(0x83c092),
+    scroll_handle_hover: c(0xa7c080),
+    scroll_handle_drag: c(0xd699b6),
+    faint_bg: c(0x1c232e),
+    // Everforest's own red is a muted rose — the same trade as Nord, for the
+    // same reason: an alarm that could be mistaken for a shade is no alarm.
+    alert: c(0xde4f45),
+    hazard: c(0xdbbc7f),
+    hazard_dark: c(0x1c1b12),
+};
+
+/// Ethan Schoonover's Solarized: teal, blue and magenta accents on the deep
+/// blue-grey base03/base02 grounds.
+const SOLARIZED_DARK: Palette = Palette {
+    light: false,
+    no_dim: false,
+    bg_deep: c(0x002b36),
+    panel: c(0x073642),
+    input_bg: c(0x052831),
+    fill: c(0x0b4a56),
+    fill_hover: c(0x105864),
+    fill_active: c(0x15606e),
+    line: c(0x194650),
+    line_lit: c(0x586e75),
+    text: c(0x93a1a1),
+    text_strong: c(0xeee8d5),
+    cyan: c(0x2aa198),
+    cyan_dim: c(0x268bd2),
+    pink: c(0xd33682),
+    yellow: c(0xb58900),
+    green: c(0x859900),
+    ink_on_cyan: c(0x0a2a24),
+    ink_on_bright: Color32::BLACK,
+    red_deep: c(0x642322),
+    cq_bg: c(0x2e2326),
+    tome_bg: c(0x2e2a14),
+    done_bg: c(0x22301d),
+    row_bg: c(0x06313c),
+    row_hover: c(0x104a58),
+    scroll_track: c(0x052831),
+    scroll_handle: c(0x268bd2),
+    scroll_handle_hover: c(0x2aa198),
+    scroll_handle_drag: c(0xd33682),
+    faint_bg: c(0x052831),
+    alert: c(0xdc322f),
+    hazard: c(0xb58900),
+    hazard_dark: c(0x171407),
+};
+
+/// Solarized on paper — the same accents carried down until each one clears
+/// 4.5:1 against the pale base3 ground, the bargain every bright-ground theme
+/// strikes (see [`LIGHT`]).
+const SOLARIZED: Palette = Palette {
+    light: true,
+    no_dim: false,
+    bg_deep: c(0xefe9d5),
+    panel: c(0xfdf6e3),
+    input_bg: c(0xeee8d5),
+    fill: c(0xece4ce),
+    fill_hover: c(0xe1d9bf),
+    fill_active: c(0xd6cdaf),
+    line: c(0xd0c7a8),
+    line_lit: c(0x657b83),
+    text: c(0x586e75),
+    text_strong: c(0x002b36),
+    cyan: c(0x1b6963),
+    cyan_dim: c(0x1b6497),
+    pink: c(0x8f2457),
+    yellow: c(0x735500),
+    green: c(0x505c00),
+    ink_on_cyan: c(0xffffff),
+    ink_on_bright: c(0xffffff),
+    red_deep: c(0x791c1a),
+    cq_bg: c(0xfae9e2),
+    tome_bg: c(0xf8f3dc),
+    done_bg: c(0xe9f3e0),
+    row_bg: c(0xf7f1df),
+    row_hover: c(0xede5ca),
+    scroll_track: c(0xeee8d5),
+    scroll_handle: c(0x586e75),
+    scroll_handle_hover: c(0x1b6963),
+    scroll_handle_drag: c(0x8f2457),
+    faint_bg: c(0xf1ebd9),
+    alert: c(0xd02b28),
+    hazard: c(0xffd23f),
+    hazard_dark: c(0x161204),
+};
+
+/// The Dracula palette: graphite mantles, mint-bright cyan, soft magenta
+/// chrome.
+const DRACULA: Palette = Palette {
+    light: false,
+    no_dim: false,
+    bg_deep: c(0x1f2129),
+    panel: c(0x282a36),
+    input_bg: c(0x1e1f28),
+    fill: c(0x343746),
+    fill_hover: c(0x3e4252),
+    fill_active: c(0x44475a),
+    line: c(0x383b4b),
+    line_lit: c(0x6272a4),
+    text: c(0xf8f8f2),
+    text_strong: c(0xffffff),
+    cyan: c(0x8be9fd),
+    cyan_dim: c(0x93a0cb),
+    pink: c(0xff79c6),
+    yellow: c(0xf1fa8c),
+    green: c(0x50fa7b),
+    ink_on_cyan: c(0x0f1e26),
+    ink_on_bright: Color32::BLACK,
+    red_deep: c(0x5e2436),
+    cq_bg: c(0x412540),
+    tome_bg: c(0x3c3a20),
+    done_bg: c(0x213b28),
+    row_bg: c(0x242632),
+    row_hover: c(0x343746),
+    scroll_track: c(0x232531),
+    scroll_handle: c(0x6272a4),
+    scroll_handle_hover: c(0x8be9fd),
+    scroll_handle_drag: c(0xff79c6),
+    faint_bg: c(0x232531),
+    alert: c(0xff5555),
+    hazard: c(0xf1fa8c),
+    hazard_dark: c(0x161707),
+};
+
+/// Catppuccin Mocha: a deep indigo base, sky-blue accents, mauve chrome.
+const CATPPUCCIN_MOCHA: Palette = Palette {
+    light: false,
+    no_dim: false,
+    bg_deep: c(0x11111b),
+    panel: c(0x1e1e2e),
+    input_bg: c(0x181825),
+    fill: c(0x313244),
+    fill_hover: c(0x3b3e50),
+    fill_active: c(0x45475a),
+    line: c(0x2b2e3f),
+    line_lit: c(0x6c7086),
+    text: c(0xcdd6f4),
+    text_strong: c(0xffffff),
+    cyan: c(0x89dceb),
+    cyan_dim: c(0x74c7ec),
+    pink: c(0xcba6f7),
+    yellow: c(0xf9e2af),
+    green: c(0xa6e3a1),
+    ink_on_cyan: c(0x0f2029),
+    ink_on_bright: Color32::BLACK,
+    red_deep: c(0x57303a),
+    cq_bg: c(0x402b38),
+    tome_bg: c(0x403c27),
+    done_bg: c(0x2c3e2b),
+    row_bg: c(0x1a1a29),
+    row_hover: c(0x313344),
+    scroll_track: c(0x1b1d30),
+    scroll_handle: c(0x6c7086),
+    scroll_handle_hover: c(0x89dceb),
+    scroll_handle_drag: c(0xf9e2af),
+    faint_bg: c(0x1b1d30),
+    // Mocha's own red is a pastel rose — carried to a red that reads as an
+    // alarm, like the Nord/Everforest trade above.
+    alert: c(0xe04757),
+    hazard: c(0xf9e2af),
+    hazard_dark: c(0x191807),
+};
+
+/// Catppuccin Latte: the light flavour — a cream base with teal and blue
+/// accents taken down until each clears 4.5:1 as text.
+const CATPPUCCIN_LATTE: Palette = Palette {
+    light: true,
+    no_dim: false,
+    bg_deep: c(0xdce0e8),
+    panel: c(0xeff1f5),
+    input_bg: c(0xe6e9ef),
+    fill: c(0xe2e5eb),
+    fill_hover: c(0xd4d8e0),
+    fill_active: c(0xc6cbd6),
+    line: c(0xc7cbd4),
+    line_lit: c(0x7c7f93),
+    text: c(0x4c4f69),
+    text_strong: c(0x262938),
+    cyan: c(0x107077),
+    cyan_dim: c(0x146b7d),
+    pink: c(0xa04086),
+    yellow: c(0x8a5a0b),
+    green: c(0x2f761d),
+    ink_on_cyan: c(0xffffff),
+    ink_on_bright: c(0xffffff),
+    red_deep: c(0x801a2a),
+    cq_bg: c(0xf9e2ea),
+    tome_bg: c(0xfaedce),
+    done_bg: c(0xdff0da),
+    row_bg: c(0xeaedf2),
+    row_hover: c(0xdfe3eb),
+    scroll_track: c(0xe0e3e9),
+    scroll_handle: c(0x7c7f93),
+    scroll_handle_hover: c(0x107077),
+    scroll_handle_drag: c(0xa04086),
+    faint_bg: c(0xe9ecf2),
+    alert: c(0xd20f39),
+    hazard: c(0xffd23f),
+    hazard_dark: c(0x161204),
+};
+
+/// A near-monochrome light theme: white panels, graphite lines and one
+/// restrained blue accent — everything else rides the neutrals.
+const MODERN_MINIMALIST: Palette = Palette {
+    light: true,
+    no_dim: false,
+    bg_deep: c(0xe9ebee),
+    panel: c(0xffffff),
+    input_bg: c(0xf2f4f6),
+    fill: c(0xe7eaed),
+    fill_hover: c(0xdce0e4),
+    fill_active: c(0xcfd4d9),
+    line: c(0xdde2e7),
+    line_lit: c(0xaab3bc),
+    text: c(0x23272b),
+    text_strong: c(0x0e1113),
+    cyan: c(0x1d4ed8),
+    cyan_dim: c(0x46658d),
+    pink: c(0x5a6470),
+    yellow: c(0x7d6025),
+    green: c(0x2e7d32),
+    ink_on_cyan: c(0xffffff),
+    ink_on_bright: c(0xffffff),
+    red_deep: c(0x8c2735),
+    cq_bg: c(0xf4e9ec),
+    tome_bg: c(0xf7f0e0),
+    done_bg: c(0xe8f2e8),
+    row_bg: c(0xf7f9fa),
+    row_hover: c(0xedf0f3),
+    scroll_track: c(0xe7eaed),
+    scroll_handle: c(0x8a94a0),
+    scroll_handle_hover: c(0x1d4ed8),
+    scroll_handle_drag: c(0x5a6470),
+    faint_bg: c(0xf1f3f5),
+    alert: c(0xc62828),
+    hazard: c(0xffd23f),
+    hazard_dark: c(0x161204),
+};
+
 /// Indexed by [`theme_index`].
-static PALETTES: [Palette; 7] =
-    [DEFAULT, GREEN_PHOSPHOR, AMBER_PHOSPHOR, TEAL_ORANGE, RAINBOW, LIGHT, HIGH_CONTRAST];
+static PALETTES: [Palette; 17] = [
+    DEFAULT,           // 0  Default
+    GREEN_PHOSPHOR,    // 1  Green phosphor
+    AMBER_PHOSPHOR,    // 2  Amber phosphor
+    TEAL_ORANGE,       // 3  Teal / orange
+    RAINBOW,           // 4  Rainbow
+    NORD,              // 5  Nord
+    NORD_DARK,         // 6  Nord dark
+    GRUVBOX,           // 7  Gruvbox
+    EVERFOREST,        // 8  Everforest
+    SOLARIZED_DARK,    // 9  Solarized dark
+    SOLARIZED,         // 10 Solarized
+    DRACULA,           // 11 Dracula
+    CATPPUCCIN_MOCHA,  // 12 Catppuccin mocha
+    CATPPUCCIN_LATTE,  // 13 Catppuccin latte
+    MODERN_MINIMALIST, // 14 Modern minimalist
+    LIGHT,             // 15 Light
+    HIGH_CONTRAST,     // 16 High contrast
+];
 
 /// The S-meter instrument's colours: the face wash, the backlight bloom, the
 /// cool-side (below the red-line) inks, the bar's recessed rail, and the cool
@@ -651,17 +1077,97 @@ const METER_HIGH_CONTRAST: MeterPalette = MeterPalette {
     ramp_hi: c(0xccffff),
 };
 
+/// A Glass instrument built from a dark theme's palette rather than written
+/// out: the theme's panel is the dial, its cyan is the backlight and the
+/// ramps, its text is the ink, and the historic red blade rides on top.
+///
+/// The hand-written meters above stay hand-written because they predate the
+/// runtime switch and carry historic exact values; the newer dark themes share
+/// one structure, and giving each a second hand-written colour table would be
+/// a maintenance hazard, not a favour.
+const fn meter_from(p: &Palette) -> MeterPalette {
+    MeterPalette {
+        face: MeterFace::Glass,
+        needle_root: c(0x9e0c22),
+        needle_mid: c(0xff2c38),
+        needle_tip: c(0xffe2e6),
+        needle_glow: c(0xff3c46),
+        face_top: blend(p.panel, Color32::WHITE, 300, 1000),
+        face_bot: p.input_bg,
+        glass: blend(p.cyan, p.panel, 350, 1000),
+        backlight: p.cyan_dim,
+        readout: p.text_strong,
+        subdued: p.text,
+        tick_minor: blend(p.text, p.panel, 420, 1000),
+        tick_major: blend(p.text_strong, p.cyan, 250, 1000),
+        label: p.text,
+        grid_line: p.line,
+        grid_label: blend(p.text, p.panel, 300, 1000),
+        rail_top: p.input_bg,
+        rail_bot: p.panel,
+        rail_edge: p.line_lit,
+        ramp_lo: blend(p.cyan, Color32::BLACK, 350, 1000),
+        ramp_mid: p.cyan,
+        ramp_hi: blend(p.cyan, Color32::WHITE, 400, 1000),
+    }
+}
+
+/// The printed-dial instrument every bright-ground theme wears — the same
+/// white card with dark ink that [`METER_LIGHT`] hand-writes, aged to the
+/// theme's own accents. See [`MeterPalette::Paper`] for why the instrument
+/// inverts this way rather than following the chrome.
+const fn meter_paper(p: &Palette) -> MeterPalette {
+    MeterPalette {
+        face: MeterFace::Paper,
+        // Painted metal: dark, and darkening rather than flaring towards the
+        // point.
+        needle_root: blend(p.text, Color32::BLACK, 250, 1000),
+        needle_mid: p.text_strong,
+        needle_tip: Color32::BLACK,
+        needle_glow: Color32::TRANSPARENT,
+        face_top: p.panel,
+        face_bot: blend(p.panel, Color32::BLACK, 40, 1000),
+        glass: blend(p.line_lit, p.panel, 400, 1000),
+        backlight: blend(p.cyan, p.panel, 800, 1000),
+        readout: p.text_strong,
+        subdued: p.text,
+        tick_minor: blend(p.text, p.panel, 350, 1000),
+        tick_major: p.text_strong,
+        label: p.text_strong,
+        grid_line: blend(p.panel, p.line, 500, 1000),
+        grid_label: p.text,
+        rail_top: blend(p.input_bg, Color32::BLACK, 150, 1000),
+        rail_bot: blend(p.input_bg, Color32::WHITE, 450, 1000),
+        rail_edge: p.line_lit,
+        // Ink, not light, exactly as METER_LIGHT's: the ramps read as printed
+        // bands, deep teal → the theme's accent → a pale top.
+        ramp_lo: blend(p.cyan, Color32::BLACK, 550, 1000),
+        ramp_mid: p.cyan,
+        ramp_hi: blend(p.cyan, Color32::WHITE, 250, 1000),
+    }
+}
+
 /// Indexed by [`theme_index`], like [`PALETTES`]. Rainbow keeps the historic
 /// navy instrument: its grounds are the default's, and the meter already
 /// reads in the accents the ramps give it.
-static METER_PALETTES: [MeterPalette; 7] = [
-    METER_DEFAULT,
-    METER_GREEN,
-    METER_AMBER,
-    METER_TEAL,
-    METER_DEFAULT,
-    METER_LIGHT,
-    METER_HIGH_CONTRAST,
+static METER_PALETTES: [MeterPalette; 17] = [
+    METER_DEFAULT,                   // 0  Default
+    METER_GREEN,                     // 1  Green phosphor
+    METER_AMBER,                     // 2  Amber phosphor
+    METER_TEAL,                      // 3  Teal / orange
+    METER_DEFAULT,                   // 4  Rainbow
+    meter_from(&NORD),               // 5  Nord
+    meter_from(&NORD_DARK),          // 6  Nord dark
+    meter_from(&GRUVBOX),            // 7  Gruvbox
+    meter_from(&EVERFOREST),         // 8  Everforest
+    meter_from(&SOLARIZED_DARK),     // 9  Solarized dark
+    meter_paper(&SOLARIZED),         // 10 Solarized
+    meter_from(&DRACULA),            // 11 Dracula
+    meter_from(&CATPPUCCIN_MOCHA),   // 12 Catppuccin mocha
+    meter_paper(&CATPPUCCIN_LATTE),  // 13 Catppuccin latte
+    meter_paper(&MODERN_MINIMALIST), // 14 Modern minimalist
+    METER_LIGHT,                     // 15 Light
+    METER_HIGH_CONTRAST,             // 16 High contrast
 ];
 
 /// The current theme's S-meter instrument colours.
@@ -741,17 +1247,48 @@ const SCOPE_LIGHT: ScopePalette = ScopePalette {
     chrome: c(0xff3d63),
 };
 
+/// The instrument inks any bright-ground theme wears. The glass stays dark in
+/// every theme — a waterfall has no bright form — so the accents that went
+/// *down* to read on white get brightened back *up* to sit on the glass,
+/// against the same neutral graphite [`SCOPE_LIGHT`] paints on. Restrained
+/// monochrome themes stay monochrome here too: blending their muted accents
+/// with white keeps the hue without the noise.
+const fn scope_light_from(p: &Palette) -> ScopePalette {
+    ScopePalette {
+        ground: c(0x0d1117),
+        shell: c(0x1b2431),
+        ink: c(0xc3cedb),
+        ink_strong: c(0xeaf2fa),
+        line: c(0x39485c),
+        accent: blend(p.cyan, Color32::WHITE, 450, 1000),
+        accent_dim: blend(p.cyan_dim, Color32::WHITE, 450, 1000),
+        good: blend(p.green, Color32::WHITE, 500, 1000),
+        warn: blend(p.yellow, Color32::WHITE, 350, 1000),
+        chrome: blend(p.pink, Color32::WHITE, 400, 1000),
+    }
+}
+
 /// Indexed by [`theme_index`], like [`PALETTES`]. High contrast lends the
 /// instruments its own roles like any other dark theme — its accents were
 /// already picked to sit on black, which is what the glass is.
-static SCOPE_PALETTES: [ScopePalette; 7] = [
-    scope_from(&DEFAULT),
-    scope_from(&GREEN_PHOSPHOR),
-    scope_from(&AMBER_PHOSPHOR),
-    scope_from(&TEAL_ORANGE),
-    scope_from(&RAINBOW),
-    SCOPE_LIGHT,
-    scope_from(&HIGH_CONTRAST),
+static SCOPE_PALETTES: [ScopePalette; 17] = [
+    scope_from(&DEFAULT),                 // 0  Default
+    scope_from(&GREEN_PHOSPHOR),          // 1  Green phosphor
+    scope_from(&AMBER_PHOSPHOR),          // 2  Amber phosphor
+    scope_from(&TEAL_ORANGE),             // 3  Teal / orange
+    scope_from(&RAINBOW),                 // 4  Rainbow
+    scope_from(&NORD),                    // 5  Nord
+    scope_from(&NORD_DARK),               // 6  Nord dark
+    scope_from(&GRUVBOX),                 // 7  Gruvbox
+    scope_from(&EVERFOREST),              // 8  Everforest
+    scope_from(&SOLARIZED_DARK),          // 9  Solarized dark
+    scope_light_from(&SOLARIZED),         // 10 Solarized
+    scope_from(&DRACULA),                 // 11 Dracula
+    scope_from(&CATPPUCCIN_MOCHA),        // 12 Catppuccin mocha
+    scope_light_from(&CATPPUCCIN_LATTE),  // 13 Catppuccin latte
+    scope_light_from(&MODERN_MINIMALIST), // 14 Modern minimalist
+    SCOPE_LIGHT,                          // 15 Light
+    scope_from(&HIGH_CONTRAST),           // 16 High contrast
 ];
 
 /// The current theme's instrument inks — see [`ScopePalette`].
@@ -876,15 +1413,50 @@ const MAP_HIGH_CONTRAST: MapPalette = MapPalette {
     shell: c(0x000000),
 };
 
+/// Any bright-ground theme's map, read as the printed atlas
+/// [`SCOPE_MAP_LIGHT`] paints: the accent tints a pale sea, the land is that
+/// hue taken back toward the paper, and every marker goes dark enough to find
+/// on both.
+const fn map_light_from(p: &Palette) -> MapPalette {
+    MapPalette {
+        sea: blend(p.panel, p.cyan, 60, 1000),
+        land: blend(p.cyan, p.panel, 350, 1000),
+        border: blend(p.text, p.panel, 200, 1000),
+        river: p.cyan_dim,
+        city: p.yellow,
+        city_label: p.text,
+        station: p.text_strong,
+        trail: p.cyan,
+        comet: p.cyan_dim,
+        home: p.green,
+        dx: p.pink,
+        hover: p.yellow,
+        preview: p.yellow,
+        hint: Color32::from_rgba_premultiplied(0, 0, 0, 110),
+        frame: p.red_deep,
+        shell: p.bg_deep,
+    }
+}
+
 /// Indexed by [`theme_index`], like [`PALETTES`].
-static MAP_PALETTES: [MapPalette; 7] = [
-    map_from(&DEFAULT),
-    map_from(&GREEN_PHOSPHOR),
-    map_from(&AMBER_PHOSPHOR),
-    map_from(&TEAL_ORANGE),
-    map_from(&RAINBOW),
-    SCOPE_MAP_LIGHT,
-    MAP_HIGH_CONTRAST,
+static MAP_PALETTES: [MapPalette; 17] = [
+    map_from(&DEFAULT),                 // 0  Default
+    map_from(&GREEN_PHOSPHOR),          // 1  Green phosphor
+    map_from(&AMBER_PHOSPHOR),          // 2  Amber phosphor
+    map_from(&TEAL_ORANGE),             // 3  Teal / orange
+    map_from(&RAINBOW),                 // 4  Rainbow
+    map_from(&NORD),                    // 5  Nord
+    map_from(&NORD_DARK),               // 6  Nord dark
+    map_from(&GRUVBOX),                 // 7  Gruvbox
+    map_from(&EVERFOREST),              // 8  Everforest
+    map_from(&SOLARIZED_DARK),          // 9  Solarized dark
+    map_light_from(&SOLARIZED),         // 10 Solarized
+    map_from(&DRACULA),                 // 11 Dracula
+    map_from(&CATPPUCCIN_MOCHA),        // 12 Catppuccin mocha
+    map_light_from(&CATPPUCCIN_LATTE),  // 13 Catppuccin latte
+    map_light_from(&MODERN_MINIMALIST), // 14 Modern minimalist
+    SCOPE_MAP_LIGHT,                    // 15 Light
+    MAP_HIGH_CONTRAST,                  // 16 High contrast
 ];
 
 /// The current theme's world-map inks — see [`MapPalette`].
@@ -910,8 +1482,18 @@ const fn theme_index(t: UiTheme) -> u8 {
         UiTheme::AmberPhosphor => 2,
         UiTheme::TealOrange => 3,
         UiTheme::Rainbow => 4,
-        UiTheme::Light => 5,
-        UiTheme::HighContrast => 6,
+        UiTheme::Nord => 5,
+        UiTheme::NordDark => 6,
+        UiTheme::Gruvbox => 7,
+        UiTheme::Everforest => 8,
+        UiTheme::SolarizedDark => 9,
+        UiTheme::Solarized => 10,
+        UiTheme::Dracula => 11,
+        UiTheme::CatppuccinMocha => 12,
+        UiTheme::CatppuccinLatte => 13,
+        UiTheme::ModernMinimalist => 14,
+        UiTheme::Light => 15,
+        UiTheme::HighContrast => 16,
     }
 }
 
@@ -1916,6 +2498,112 @@ mod tests {
         // against, and the one the user has to be able to find: 7:1.
         let r = contrast(map.station, map.sea);
         assert!(r >= 7.0, "Light map station dots are {r:.2}:1 on the sea — needs 7:1");
+    }
+
+    /// Every theme's body ink clears AA on its own panel. The dark themes
+    /// mostly do so with room to spare, but the pale Solarized ground and the
+    /// mid-grey Solarized text are the pair this catches — readability is what
+    /// the whole palette structure is in service of.
+    #[test]
+    fn every_theme_keeps_its_body_panel_readable() {
+        for (i, p) in PALETTES.iter().enumerate() {
+            for (ink, name) in [(p.text, "text"), (p.text_strong, "text_strong")] {
+                let r = contrast(ink, p.panel);
+                assert!(r >= 4.5, "palette {i} {name} is {r:.2}:1 on the panel — needs 4.5:1");
+            }
+        }
+    }
+
+    /// The bright-ground themes are more than the Light palette alone: each of
+    /// them has to keep every role it uses as *ink* over 4.5:1 on its own
+    /// panel — the same promise [`the_light_theme_has_no_bright_ink_on_white`]
+    /// makes about Light, kept for Solarized, Catppuccin latte and the modern
+    /// minimalist theme too.
+    #[test]
+    fn every_bright_theme_keeps_its_ink_readable() {
+        for (i, p) in PALETTES.iter().enumerate() {
+            if !p.light {
+                continue;
+            }
+            for (ink, name) in [
+                (p.text, "text"),
+                (p.text_strong, "text_strong"),
+                (p.cyan, "cyan"),
+                (p.cyan_dim, "cyan_dim"),
+                (p.pink, "pink"),
+                (p.yellow, "yellow"),
+                (p.green, "green"),
+                (p.alert, "alert"),
+            ] {
+                let r = contrast(ink, p.panel);
+                assert!(r >= 4.5, "palette {i} {name} is {r:.2}:1 on the panel — needs 4.5:1");
+            }
+            for (bg, name) in [(p.cq_bg, "cq_bg"), (p.tome_bg, "tome_bg"), (p.done_bg, "done_bg")] {
+                let r = contrast(p.text, bg);
+                assert!(r >= 4.5, "palette {i} text is {r:.2}:1 on {name} — needs 4.5:1");
+            }
+            for (fill, name) in [(p.cyan, "cyan"), (p.green, "green"), (p.yellow, "yellow")] {
+                let ink = if name == "cyan" { p.ink_on_cyan } else { p.ink_on_bright };
+                let r = contrast(ink, fill);
+                assert!(r >= 4.5, "palette {i} ink on the {name} chip is {r:.2}:1 — needs 4.5:1");
+            }
+        }
+    }
+
+    /// The instruments follow the same rule on every bright ground as they do
+    /// on Light: a printed dial, glass that stays dark, and a map that brightens
+    /// into an atlas — asserted for every palette that declares itself light,
+    /// since the handful of dark-theme identities can't be stronger than the
+    /// weakest of the three grounds.
+    #[test]
+    fn every_bright_theme_keeps_its_instruments_readable() {
+        for (i, p) in PALETTES.iter().enumerate() {
+            if !p.light {
+                continue;
+            }
+            let (scope, map, meter) = (&SCOPE_PALETTES[i], &MAP_PALETTES[i], &METER_PALETTES[i]);
+
+            assert_eq!(meter.face, MeterFace::Paper, "palette {i} meter is a printed dial");
+            assert_eq!(meter.needle_tip, Color32::BLACK, "a printed pointer is black at the point");
+            assert!(
+                luminance(meter.face_top) > 0.5 && luminance(meter.readout) < 0.1,
+                "palette {i} paper dial wants dark ink on a light card"
+            );
+            for (face, name) in [(scope.ground, "scope ground"), (scope.shell, "scope shell")] {
+                assert!(luminance(face) < 0.06, "palette {i} {name} must stay dark glass");
+            }
+            for (ink, name) in [
+                (scope.ink, "ink"),
+                (scope.accent, "accent"),
+                (scope.good, "good"),
+                (scope.warn, "warn"),
+                (scope.chrome, "chrome"),
+            ] {
+                let r = contrast(ink, scope.ground);
+                assert!(
+                    r >= 4.5,
+                    "palette {i} scope {name} is {r:.2}:1 on the glass — needs 4.5:1"
+                );
+            }
+
+            assert!(luminance(map.sea) > 0.5, "palette {i} map is an atlas, not a night sky");
+            for (ink, name) in [
+                (map.land, "land"),
+                (map.station, "station"),
+                (map.trail, "trail"),
+                (map.home, "home"),
+                (map.dx, "dx"),
+                (map.hover, "hover"),
+                (map.frame, "frame"),
+            ] {
+                assert!(
+                    luminance(ink) < luminance(map.sea),
+                    "palette {i} map {name} is lighter than the sea it is drawn on"
+                );
+            }
+            let r = contrast(map.station, map.sea);
+            assert!(r >= 7.0, "palette {i} map station dots are {r:.2}:1 on the sea — needs 7:1");
+        }
     }
 
     /// [`data_ink`] leaves a dark theme's data colours alone and brings a

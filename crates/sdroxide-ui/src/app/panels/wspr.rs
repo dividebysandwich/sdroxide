@@ -382,106 +382,110 @@ impl SdroxideApp {
         // was on be turned off after the radio was swapped for one that cannot
         // key. The percentages go grey.
         let tx_ok = self.tx_capable();
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(RichText::new("TRANSMIT").size(9.5).color(crate::theme::CYAN_DIM()));
-            let cur = self.digi_cfg_edit.wspr_tx_percent;
-            for (pct, label) in [(0u8, "OFF"), (10, "10%"), (20, "20%"), (33, "33%"), (50, "50%")] {
-                // Off is the resting state and reads as one; anything else puts
-                // a carrier on the air, so it is accented like the other
-                // controls in this program that do.
-                let resp = if pct == 0 {
-                    crate::chrome::chip(ui, cur == 0, RichText::new(label).size(10.5))
-                } else {
-                    rx_only_hint(
-                        crate::chrome::chip_accent_enabled(
-                            ui,
-                            tx_ok,
-                            cur == pct,
-                            label,
-                            Some(10.5),
-                            crate::theme::PINK(),
-                            crate::theme::INK_ON_CYAN(),
-                        ),
-                        tx_ok,
-                    )
-                };
-                if resp
-                    .on_hover_text(if pct == 0 {
-                        "Receive only.".to_string()
+        if !self.ui_settings.swl {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(RichText::new("TRANSMIT").size(9.5).color(crate::theme::CYAN_DIM()));
+                let cur = self.digi_cfg_edit.wspr_tx_percent;
+                for (pct, label) in [(0u8, "OFF"), (10, "10%"), (20, "20%"), (33, "33%"), (50, "50%")] {
+                    // Off is the resting state and reads as one; anything else puts
+                    // a carrier on the air, so it is accented like the other
+                    // controls in this program that do.
+                    let resp = if pct == 0 {
+                        crate::chrome::chip(ui, cur == 0, RichText::new(label).size(10.5))
                     } else {
-                        format!(
-                            "Beacon in one two-minute slot out of every {} — {pct}% of them, \
-                             evenly spaced — at {}. Which slot the cycle starts on is drawn from \
-                             your callsign, so two stations running this program do not start \
-                             together.",
-                            (100 + pct as u32 / 2) / pct as u32,
-                            power_label(self.digi_cfg_edit.wspr_power_dbm),
+                        rx_only_hint(
+                            crate::chrome::chip_accent_enabled(
+                                ui,
+                                tx_ok,
+                                cur == pct,
+                                label,
+                                Some(10.5),
+                                crate::theme::PINK(),
+                                crate::theme::INK_ON_CYAN(),
+                            ),
+                            tx_ok,
                         )
-                    })
-                    .clicked()
-                    && cur != pct
+                    };
+                    if resp
+                        .on_hover_text(if pct == 0 {
+                            "Receive only.".to_string()
+                        } else {
+                            format!(
+                                "Beacon in one two-minute slot out of every {} — {pct}% of them, \
+                                 evenly spaced — at {}. Which slot the cycle starts on is drawn from \
+                                 your callsign, so two stations running this program do not start \
+                                 together.",
+                                (100 + pct as u32 / 2) / pct as u32,
+                                power_label(self.digi_cfg_edit.wspr_power_dbm),
+                            )
+                        })
+                        .clicked()
+                        && cur != pct
+                        && self.digi_cfg_seeded
+                    {
+                        self.digi_cfg_edit.wspr_tx_percent = pct;
+                        cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+                    }
+                }
+            });
+
+            // Power, in the unit an operator sets their radio in.
+            //
+            // A picker rather than a free number: WSPR's fifty-bit message can name
+            // exactly nineteen levels, so anything else would have to be rounded
+            // silently — and the figure goes out on the air, where everybody who
+            // hears it uses it to judge the path. Offering only what can be said is
+            // what keeps the announcement true.
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(RichText::new("POWER").size(9.5).color(crate::theme::CYAN_DIM()));
+                let cur = sdroxide_types::round_power_dbm(self.digi_cfg_edit.wspr_power_dbm);
+                let mut chosen = None;
+                egui::ComboBox::from_id_salt("wspr-power")
+                    .selected_text(RichText::new(power_label(cur)).size(10.5))
+                    .width(84.0)
+                    .show_styled(ui, |ui| {
+                        for p in sdroxide_types::WSPR_POWERS_DBM {
+                            if ui.selectable_label(cur == p, power_label(p)).clicked() {
+                                chosen = Some(p);
+                            }
+                        }
+                    });
+                if let Some(p) = chosen
+                    && p != self.digi_cfg_edit.wspr_power_dbm
                     && self.digi_cfg_seeded
                 {
-                    self.digi_cfg_edit.wspr_tx_percent = pct;
+                    self.digi_cfg_edit.wspr_power_dbm = p;
                     cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
                 }
-            }
-        });
+                ui.label(
+                    RichText::new("what you actually radiate")
+                        .size(9.5)
+                        .color(crate::theme::gray(110)),
+                )
+                .on_hover_text(
+                    "This goes out in the message, and everyone who hears you judges the path by \
+                     it — so an optimistic figure here makes their measurements wrong as well as \
+                     yours.",
+                );
 
-        // Power, in the unit an operator sets their radio in.
-        //
-        // A picker rather than a free number: WSPR's fifty-bit message can name
-        // exactly nineteen levels, so anything else would have to be rounded
-        // silently — and the figure goes out on the air, where everybody who
-        // hears it uses it to judge the path. Offering only what can be said is
-        // what keeps the announcement true.
-        ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(RichText::new("POWER").size(9.5).color(crate::theme::CYAN_DIM()));
-            let cur = sdroxide_types::round_power_dbm(self.digi_cfg_edit.wspr_power_dbm);
-            let mut chosen = None;
-            egui::ComboBox::from_id_salt("wspr-power")
-                .selected_text(RichText::new(power_label(cur)).size(10.5))
-                .width(84.0)
-                .show_styled(ui, |ui| {
-                    for p in sdroxide_types::WSPR_POWERS_DBM {
-                        if ui.selectable_label(cur == p, power_label(p)).clicked() {
-                            chosen = Some(p);
-                        }
-                    }
-                });
-            if let Some(p) = chosen
-                && p != self.digi_cfg_edit.wspr_power_dbm
-                && self.digi_cfg_seeded
-            {
-                self.digi_cfg_edit.wspr_power_dbm = p;
-                cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
-            }
-            ui.label(
-                RichText::new("what you actually radiate").size(9.5).color(crate::theme::gray(110)),
-            )
-            .on_hover_text(
-                "This goes out in the message, and everyone who hears you judges the path by \
-                 it — so an optimistic figure here makes their measurements wrong as well as \
-                 yours.",
-            );
-
-            // Moving inside the 200 Hz window is the WSPR convention, and it is
-            // the only other thing about a transmission worth a switch.
-            let auto = self.digi_cfg_edit.auto_tx_freq;
-            let resp = crate::chrome::chip(ui, auto, RichText::new("ROAM").size(10.5));
-            if resp.clicked() && self.digi_cfg_seeded {
-                self.digi_cfg_edit.auto_tx_freq = !auto;
-                cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
-            }
-            resp.on_hover_text(
-                "Pick a different offset inside the 200 Hz window for every transmission. \
-                 This is the convention: two hundred hertz shared by everyone only works if \
-                 nobody parks in the middle of it. Off holds where the cursor is.",
-            );
-        });
+                // Moving inside the 200 Hz window is the WSPR convention, and it is
+                // the only other thing about a transmission worth a switch.
+                let auto = self.digi_cfg_edit.auto_tx_freq;
+                let resp = crate::chrome::chip(ui, auto, RichText::new("ROAM").size(10.5));
+                if resp.clicked() && self.digi_cfg_seeded {
+                    self.digi_cfg_edit.auto_tx_freq = !auto;
+                    cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+                }
+                resp.on_hover_text(
+                    "Pick a different offset inside the 200 Hz window for every transmission. \
+                     This is the convention: two hundred hertz shared by everyone only works if \
+                     nobody parks in the middle of it. Off holds where the cursor is.",
+                );
+            });
+        }
 
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
@@ -564,24 +568,29 @@ impl SdroxideApp {
         // for twice — this only says where it is kept.
         let call = self.digi_cfg_edit.my_call.trim();
         let grid = self.digi_cfg_edit.my_grid.trim();
-        ui.label(
-            RichText::new(if call.is_empty() || grid.is_empty() {
-                "Set your callsign and grid on the General tab of Settings before transmitting."
+        let identity = if call.is_empty() || grid.is_empty() {
+            if self.ui_settings.swl {
+                "Set your callsign and grid on the General tab of Settings to label your spots."
                     .to_string()
             } else {
-                // The locator as it will go out: a six-character one is sent as
-                // its first four, and saying so here is less surprising than
-                // letting the operator find it on a spot page.
-                let sent = sdroxide_types::wspr_grid4(grid).unwrap_or_else(|| grid.to_string());
-                format!("Transmitting as {call} in {sent} — set on the General tab of Settings.")
-            })
-            .size(10.0)
-            .color(if call.is_empty() || grid.is_empty() {
-                crate::theme::YELLOW()
-            } else {
-                crate::theme::gray(110)
-            }),
-        );
+                "Set your callsign and grid on the General tab of Settings before transmitting."
+                    .to_string()
+            }
+        } else if self.ui_settings.swl {
+            let sent = sdroxide_types::wspr_grid4(grid).unwrap_or_else(|| grid.to_string());
+            format!("Listening as {call} in {sent} — set on the General tab of Settings.")
+        } else {
+            // The locator as it will go out: a six-character one is sent as
+            // its first four, and saying so here is less surprising than
+            // letting the operator find it on a spot page.
+            let sent = sdroxide_types::wspr_grid4(grid).unwrap_or_else(|| grid.to_string());
+            format!("Transmitting as {call} in {sent} — set on the General tab of Settings.")
+        };
+        ui.label(RichText::new(identity).size(10.0).color(if call.is_empty() || grid.is_empty() {
+            crate::theme::YELLOW()
+        } else {
+            crate::theme::gray(110)
+        }));
         // The engine's verdict, not the panel's guess: it is whatever the
         // message packer actually refused, so it can never disagree with what
         // the transmitter does. Shown only when transmitting is asked for —

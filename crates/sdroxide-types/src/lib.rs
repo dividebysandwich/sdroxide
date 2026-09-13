@@ -15,6 +15,7 @@ mod bandplan;
 pub mod broadcast;
 mod callsign;
 mod caps;
+mod cb_country;
 mod chirp;
 mod command;
 mod contacts;

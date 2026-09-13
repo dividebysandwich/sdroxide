@@ -163,7 +163,9 @@ impl SdroxideApp {
             // Whether the engine chooses our transmit frequency. Here rather
             // than in the setup window because it decides what clicking a
             // decode in this list does.
-            if self.digi_cfg_seeded {
+            // SWL mode: the whole TX frequency row is meaningless without a
+            // transmitter, so hide it entirely.
+            if self.digi_cfg_seeded && !self.ui_settings.swl {
                 let held = self.digi_cfg_edit.hold_tx_freq;
                 let auto = self.digi_cfg_edit.auto_tx_freq;
                 // Greyed while held, because held wins: leaving it live would
@@ -1477,41 +1479,49 @@ impl SdroxideApp {
         // Only the two controls that put us on the air are gated on there being
         // a transmitter: STOP QSO and STOP TX stay live, because a stop is
         // worth having even where it should have nothing to stop.
+        // SWL mode: hide the entire action-button row.
         let tx_ok = self.tx_capable();
-        ui.horizontal_wrapped(|ui| {
-            let cq = ui.add_enabled_ui(!in_qso && tx_ok, |ui| {
-                rx_only_hint(
-                    crate::chrome::chip_accent(
-                        ui,
-                        false,
-                        RichText::new("  CALL CQ  ").size(15.0).strong(),
-                        crate::theme::GREEN(),
-                        crate::theme::INK_ON_CYAN(),
-                    ),
-                    tx_ok,
+        if !self.ui_settings.swl {
+            ui.horizontal_wrapped(|ui| {
+                let cq = ui.add_enabled_ui(!in_qso && tx_ok, |ui| {
+                    rx_only_hint(
+                        crate::chrome::chip_accent(
+                            ui,
+                            false,
+                            RichText::new("  CALL CQ  ").size(15.0).strong(),
+                            crate::theme::GREEN(),
+                            crate::theme::INK_ON_CYAN(),
+                        ),
+                        tx_ok,
+                    )
+                });
+                if cq.inner.clicked() {
+                    cmds.push(Command::DigiCallCq);
+                }
+                if crate::chrome::chip(ui, false, RichText::new(" STOP QSO ").size(14.0)).clicked()
+                {
+                    cmds.push(Command::DigiStopQso);
+                }
+                if crate::chrome::chip_accent(
+                    ui,
+                    false,
+                    RichText::new(" STOP TX ").size(15.0).strong(),
+                    crate::theme::ALERT(),
+                    Color32::WHITE,
                 )
+                .clicked()
+                {
+                    cmds.push(Command::DigiAbortTx);
+                }
             });
-            if cq.inner.clicked() {
-                cmds.push(Command::DigiCallCq);
-            }
-            if crate::chrome::chip(ui, false, RichText::new(" STOP QSO ").size(14.0)).clicked() {
-                cmds.push(Command::DigiStopQso);
-            }
-            if crate::chrome::chip_accent(
-                ui,
-                false,
-                RichText::new(" STOP TX ").size(15.0).strong(),
-                crate::theme::ALERT(),
-                Color32::WHITE,
-            )
-            .clicked()
-            {
-                cmds.push(Command::DigiAbortTx);
-            }
-        });
+        }
         ui.add_space(gap);
         // Message picker: choose by hand which message goes next (WSJT-X's
         // Tx1–Tx6), or send a line of free text in the next slot.
+        // SWL mode: hide the message picker and free text entry.
+        if self.ui_settings.swl {
+            return;
+        }
         let has_dx = status.as_ref().and_then(|s| s.dx_call.as_ref()).is_some();
         let step_now = status.as_ref().map(|s| s.step);
         ui.horizontal(|ui| {

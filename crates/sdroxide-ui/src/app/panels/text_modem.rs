@@ -75,8 +75,12 @@ impl SdroxideApp {
         let input_h = 56.0; // fixed-height, internally-scrolling TX box
         let gap = 5.0;
         let bottom_pad = 12.0; // clear space below the button row
-        let rx_h = (content_bottom - ui.cursor().top() - btn_h - input_h - 2.0 * gap - bottom_pad)
-            .max(24.0);
+        let rx_h = if self.ui_settings.swl {
+            (content_bottom - ui.cursor().top() - bottom_pad).max(24.0)
+        } else {
+            (content_bottom - ui.cursor().top() - btn_h - input_h - 2.0 * gap - bottom_pad)
+                .max(24.0)
+        };
 
         ui.allocate_ui(egui::vec2(ui.available_width(), rx_h), |ui| {
             egui::Frame::new()
@@ -116,6 +120,10 @@ impl SdroxideApp {
                 });
         });
         ui.add_space(gap);
+
+        if self.ui_settings.swl {
+            return;
+        }
 
         // TX input: already-sent characters are coloured green via a layouter.
         let prev = self.text_tx.clone();
@@ -385,8 +393,12 @@ impl SdroxideApp {
         let input_h = 56.0;
         let gap = 5.0;
         let bottom_pad = 12.0;
-        let rx_h = (content_bottom - ui.cursor().top() - btn_h - input_h - 2.0 * gap - bottom_pad)
-            .max(28.0);
+        let rx_h = if self.ui_settings.swl {
+            (content_bottom - ui.cursor().top() - bottom_pad).max(28.0)
+        } else {
+            (content_bottom - ui.cursor().top() - btn_h - input_h - 2.0 * gap - bottom_pad)
+                .max(28.0)
+        };
 
         let (rect, resp) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), rx_h),
@@ -402,6 +414,10 @@ impl SdroxideApp {
         }
         self.hell.draw(ui, rect, &self.view.hell);
         ui.add_space(gap);
+
+        if self.ui_settings.swl {
+            return;
+        }
 
         // TX input: already-sent characters coloured green, exactly as the
         // keyboard modes do it.

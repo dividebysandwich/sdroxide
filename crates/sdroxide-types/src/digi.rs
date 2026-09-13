@@ -2206,9 +2206,26 @@ pub fn fmt_report(db: i16) -> String {
 /// anything beyond, and naming a 24 GHz contact `3cm` would put a false
 /// statement in a log file. An empty band field is one the importer derives from
 /// the frequency, which is the truthful outcome.
+///
+/// The same honesty is owed the broadcast services an SWL tunes: ADIF
+/// enumerates no `LW`, `MW` or `FM` band — its list covers amateur allocations
+/// and nothing else — so a frequency in longwave, medium-wave or FM broadcast
+/// reports empty too, rather than borrowing the `160m` / `2m` whose coarse
+/// thresholds used to swallow it. Shortwave is different: `Sw` deliberately
+/// overlies the amateur HF bands (see [`crate::Band::Sw`]), so its shared
+/// frequencies read as the amateur band ADIF does have — the same answer they
+/// read before the band existed.
 pub fn adif_band(freq_hz: f64) -> &'static str {
     let mhz = freq_hz / 1e6;
     match mhz {
+        // Below longwave nothing is a band at all.
+        m if m < 0.1485 => "",
+        // Longwave broadcast and the gap above it.
+        m if m < 0.2835 => "",
+        m if m < 0.5265 => "",
+        // Medium-wave / AM broadcast; the Americas' expanded band is the
+        // widest span, so 1.7 MHz is the threshold.
+        m if m < 1.7 => "",
         m if m < 2.0 => "160m",
         m if m < 4.0 => "80m",
         m if m < 5.5 => "60m",
@@ -2223,10 +2240,16 @@ pub fn adif_band(freq_hz: f64) -> &'static str {
         // An empty BAND is what a log for a contact there honestly holds —
         // better than filing it under 10m, which is what the coarse `< 29.8`
         // below used to do to every frequency in this gap (issue #396).
-        m if m < 27.5 => "",
+        // Extends to 28.0 to cover the freeband SSTV area (up to 27.860).
+        m if m < 28.0 => "",
         m if m < 29.8 => "10m",
         m if m < 54.1 => "6m",
         m if m < 70.6 => "4m",
+        // Above 4 m ADIF list is bare until 2 m; FM broadcast sits in that
+        // gap and takes the empty string rather than the `2m` the coarse
+        // threshold used to give it.
+        m if m < 87.5 => "",
+        m if m < 108.0 => "",
         m if m < 148.1 => "2m",
         m if m < 225.1 => "1.25m",
         m if m < 450.1 => "70cm",
@@ -2957,6 +2980,16 @@ mod tests {
         // edge falls on is not something a log has to have an opinion about.
         for region in crate::Region::ALL {
             for b in crate::Band::ALL {
+                if b == crate::Band::Sw {
+                    // SW deliberately overlies the amateur HF bands (see
+                    // [`crate::Band::Sw`]); `adif_band` is a coarse frequency
+                    // read, not the band plan, so each part of SW reads as the
+                    // amateur threshold that covers that part — which is the
+                    // same answer those frequencies gave before the band
+                    // existed, under GEN. There is no honest single name for
+                    // "shortwave", and no straddle assertion to make.
+                    continue;
+                }
                 let Some((lo, hi)) = b.edges_in(region) else { continue };
                 let (inside_lo, inside_hi) = (adif_band(lo + 1000.0), adif_band(hi - 1000.0));
                 assert_eq!(inside_lo, inside_hi, "{b:?} in {region:?} straddles two ADIF bands");
@@ -2964,7 +2997,9 @@ mod tests {
                 // must not borrow one: ADIF's enumeration runs 12m, 10m, 8m
                 // with nothing in between, because the citizens' band is not
                 // an amateur allocation and no amateur log has a column for it
-                // (issue #396). An empty BAND is the honest record.
+                // (issue #396). An empty BAND is the honest record — the same
+                // reason the broadcast services report empty: ADIF enumerates
+                // no LW, MW or FM band either.
                 if !b.is_amateur() {
                     assert!(inside_lo.is_empty(), "{b:?} in {region:?} borrowed an ADIF name");
                     continue;

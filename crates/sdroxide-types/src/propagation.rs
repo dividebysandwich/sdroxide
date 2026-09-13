@@ -186,8 +186,10 @@ impl PropObservation {
     /// Build an observation from two positions, filling in the band and the
     /// path length.
     ///
-    /// `None` when the frequency is not in an amateur band — the propagation
-    /// map is indexed by band, and a shortwave broadcast has no plane to go in.
+    /// `None` when the frequency is in no band the map can fold — the broadcast
+    /// services, which are bands of their own now but are not amateur ones and
+    /// have no plane to go in, and general coverage. (11 m *is* folded: the map
+    /// carries CB skip for the operators who run it.)
     pub fn new(
         tx: (f64, f64),
         rx: (f64, f64),
@@ -197,7 +199,7 @@ impl PropObservation {
         margin_db: Option<f32>,
     ) -> Option<Self> {
         let band = Band::containing(freq_hz);
-        if band == Band::Gen {
+        if matches!(band, Band::Gen | Band::Lw | Band::Mw | Band::Sw | Band::Fm) {
             return None;
         }
         Some(PropObservation {

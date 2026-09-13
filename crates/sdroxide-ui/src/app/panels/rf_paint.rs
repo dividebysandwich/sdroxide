@@ -208,6 +208,21 @@ impl SdroxideApp {
         }
         self.rf_paint.ensure(&ctx);
 
+        if self.ui_settings.swl {
+            egui::Frame::new()
+                .fill(crate::theme::ROW_BG())
+                .stroke(egui::Stroke::new(1.0, crate::theme::LINE_LIT()))
+                .inner_margin(egui::Margin { left: 10, right: 8, top: 6, bottom: 7 })
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new("RF Paint is a transmit-only mode — nothing to show in SWL.")
+                            .size(11.0)
+                            .weak(),
+                    );
+                });
+            return;
+        }
+
         let status = self.digi_status.clone();
         let transmitting = status.as_ref().map(|s| s.transmitting).unwrap_or(false);
         let progress =

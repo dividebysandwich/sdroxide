@@ -81,7 +81,7 @@ impl SpeechDigest {
             recording: s.recording,
             // The transmit frequency, not the active one: with split on, the
             // frequency your licence cares about is the one you would key on.
-            in_ham_band: Band::containing(s.tx_freq_hz()) != Band::Gen,
+            in_ham_band: Band::containing(s.tx_freq_hz()).is_amateur(),
             segment: segment_kind_at(s.rx_freq_hz()),
             antenna_rx: fnv1a(s.antenna_rx.as_bytes()),
             freq_hz: s.active_freq_hz().round() as i64,

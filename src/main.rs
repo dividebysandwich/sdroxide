@@ -26,6 +26,7 @@ mod session_trace;
 mod smartsdr_source;
 mod spyserver_source;
 mod tci_source;
+mod usb_audio_source;
 
 use anyhow::{Context, bail};
 use clap::Parser;
@@ -1445,6 +1446,7 @@ fn open_configured_source(
         // until the operator picks an interface.
         Backend::None => bail!("no radio interface selected — choose one in Settings → Radio"),
         Backend::Cat => open_cat_source(radio),
+        Backend::UsbAudio => open_usb_audio_source(radio, cli.center_hz()),
         Backend::Hpsdr => open_hpsdr_source(radio, cli.center_hz()),
         Backend::Tci => open_tci_source(radio, cli.center_hz()),
         Backend::IcomNet => open_icomnet_source(radio),
@@ -1606,6 +1608,24 @@ fn open_cat_source(radio: &RadioConfig) -> anyhow::Result<(Box<dyn IqSource>, De
     Ok((Box::new(src), caps))
 }
 
+/// Open a radio that has nothing but its sound cards: no control port to
+/// command, no dial to move, keyed by the rig's own VOX. Receive comes from one
+/// of the computer's input devices, transmit leaves into one of its output
+/// devices, and the initial centre is the same place every non-CAT front end
+/// takes its own.
+fn open_usb_audio_source(
+    radio: &RadioConfig,
+    center_hz: f64,
+) -> anyhow::Result<(Box<dyn IqSource>, DeviceCaps)> {
+    let src = usb_audio_source::UsbAudioSource::open(
+        radio.radio_audio_in.as_deref(),
+        radio.radio_audio_out.as_deref(),
+        center_hz,
+    )
+    .context("opening USB audio radio")?;
+    Ok((Box::new(src), usb_audio_caps()))
+}
+
 /// Build the HPSDR (ethernet SDR) source from radio.json. The target IP is the
 /// manual override, else the persisted selection, else the first device found by
 /// a discovery scan; the protocol is detected when the connection opens.
@@ -1633,10 +1653,8 @@ fn open_hpsdr_source(
         radio.hpsdr.ddc,
     );
     if src.io_inputs_offered() {
-        caps.antennas_rx = sdroxide_types::HpsdrIoRxInput::ALL
-            .iter()
-            .map(|i| i.label().to_string())
-            .collect();
+        caps.antennas_rx =
+            sdroxide_types::HpsdrIoRxInput::ALL.iter().map(|i| i.label().to_string()).collect();
     }
     Ok((Box::new(src), caps))
 }
@@ -2802,6 +2820,25 @@ fn cat_caps(radio: &RadioConfig) -> DeviceCaps {
         // does not implement, because it has no I/Q transmitter — and failed
         // the over with "device is not transmit capable" on a radio that plainly
         // can.
+        tx_audio: true,
+        freq_ranges_rx: vec![(10_000.0, 10_500_000_000.0)],
+        freq_ranges_tx: vec![(1_800_000.0, 10_500_000_000.0)],
+        ..DeviceCaps::default()
+    }
+}
+
+/// Capabilities for the sound-card-only radio: demod audio in, raw audio out
+/// to the radio's mic, keyed by its VOX. The tuning ranges are the same broad
+/// ones a CAT rig publishes — the dial is a label here, not a command, and the
+/// operator states narrower ones in `radio.json` if they want the gate to
+/// follow them.
+fn usb_audio_caps() -> DeviceCaps {
+    DeviceCaps {
+        driver: "usb-audio".into(),
+        label: "USB audio radio (sound card)".into(),
+        rx_channels: 1,
+        tx_channels: 1,
+        audio_mode: true,
         tx_audio: true,
         freq_ranges_rx: vec![(10_000.0, 10_500_000_000.0)],
         freq_ranges_tx: vec![(1_800_000.0, 10_500_000_000.0)],

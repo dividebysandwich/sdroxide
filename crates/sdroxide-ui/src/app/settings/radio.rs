@@ -9,7 +9,7 @@ use eframe::egui::{self, Color32, ComboBox, DragValue, RichText, Slider};
 use sdroxide_types::{Command, Direction};
 
 use crate::app::SdroxideApp;
-use crate::app::settings::enum_combo;
+use crate::app::settings::{device_combo, enum_combo};
 use crate::chrome::StyledCombo;
 
 /// Why a discovery or test control is greyed out.
@@ -889,6 +889,66 @@ pub(in crate::app) fn settings_cat_tab(
     });
     ui.add_space(6.0);
     ui.label(RichText::new("Press \"Apply / reconnect\" to switch without a restart.").weak());
+}
+
+/// The sound-card radio: no control cable, so the whole tab is the two card
+/// choices (receive in, transmit out) and the reminder that the rig keys itself
+/// off VOX. Drawn after the CAT tab so the two sink-holes for audio devices
+/// sit together in the file.
+pub(in crate::app) fn settings_usb_audio_tab(
+    ui: &mut egui::Ui,
+    inputs: &[String],
+    outputs: &[String],
+    radio_edit: &mut Option<sdroxide_types::RadioConfig>,
+    apply: &mut bool,
+    can_probe: bool,
+) {
+    let Some(cfg) = radio_edit.as_mut() else {
+        ui.label("Waiting for the configuration of the machine the radio is attached to.");
+        return;
+    };
+    // Read out before the combos, which hand the fields to their editors.
+    let (ci, co) = (cfg.radio_audio_in.clone(), cfg.radio_audio_out.clone());
+    egui::Grid::new("usb-audio-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+        probe_only(ui, can_probe, |ui| {
+            ui.label("Receive (radio → PC)").on_hover_text(
+                "The sound card the radio's own audio comes in on — its headphone \
+                 socket into the computer's line or mic input. Everything on the \
+                 panadapter and in the decoders arrives here.",
+            );
+            device_combo(ui, "ua-in", inputs, &ci, |n| cfg.radio_audio_in = n);
+            ui.end_row();
+            ui.label("Transmit (PC → radio mic)").on_hover_text(
+                "The sound card that carries the audio the radio must broadcast — \
+                 the computer's output into the radio's mic socket. The radio keys \
+                 itself, by VOX, the moment audio arrives here, so this device is \
+                 silent unless the radio is being transmitted through.",
+            );
+            device_combo(ui, "ua-out", outputs, &co, |n| cfg.radio_audio_out = n);
+            ui.end_row();
+        });
+    });
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new(
+            "This radio has no control cable — it keys itself off VOX, so there is no PTT to \
+             command. Transmit is audio into the radio's microphone.",
+        )
+        .weak(),
+    );
+    ui.horizontal(|ui| {
+        if ui
+            .button("Apply / reconnect")
+            .on_hover_text("Reopen the radio with these sound cards — no restart")
+            .clicked()
+        {
+            *apply = true;
+        }
+        ui.add(
+            egui::Label::new(RichText::new("Reconnects the radio without restarting.").weak())
+                .wrap(),
+        );
+    });
 }
 
 /// HPSDR interface: network device discovery / manual IP / sample rate (the

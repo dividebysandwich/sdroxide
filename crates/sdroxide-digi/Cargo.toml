@@ -25,7 +25,12 @@ sdroxide-deepcw.workspace = true
 sdroxide-rade.workspace = true
 # The JS8 candidate loop hands complex baseband between mfsk-core primitives.
 num-complex.workspace = true
-mfsk-core = { version = "0.10.0", default-features = false, features = ["std", "ft8", "ft4", "wspr", "parallel", "fft-rustfft"] }
+# From the madmedicnl fork (branch cb-support, rev ebd8a88): the crates.io
+# release rejects 11 m CB callsigns in is_valid_callsign/is_plausible_callsign,
+# which silently drops every WSJT-CB message. The fork widens exactly the
+# validator (a 77-bit round trip is spot-checked against the stock 0.10.2
+# layouts in tests) and nothing else.
+mfsk-core = { git = "https://github.com/madmedicnl/mfsk-core.git", rev = "ebd8a8884d9b6bce73fd06290115597a3533603b", default-features = false, features = ["std", "ft8", "ft4", "wspr", "parallel", "fft-rustfft"] }
 crossbeam-channel.workspace = true
 # The WSPR candidate search is four-fifths Fano and splits cleanly across
 # candidates. Already in the tree via mfsk-core's `parallel` feature.
