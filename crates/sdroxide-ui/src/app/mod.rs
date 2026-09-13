@@ -904,9 +904,11 @@ pub struct SdroxideApp {
     region_edit: sdroxide_types::Region,
     /// Weather fax: the chart being painted and the gallery of saved ones.
     wefax: crate::wefax::WefaxUi,
-    /// Whether the operator has dismissed the out-of-band transmit warning
-    /// this session. Never persisted: `--oob-tx` has to be passed again on the
-    /// next launch, so the warning has to be acknowledged again too.
+    /// Whether the out-of-band transmit warning has been acknowledged for this
+    /// session. Seeded from the screen's remembered choice, so ticking the
+    /// warning's "don't show this again" box keeps it away on the next launch;
+    /// otherwise a dismissal lasts until the window closes, and `--oob-tx` on
+    /// the next launch warns afresh.
     oob_tx_ack: bool,
     /// The sign-in screen a server that asks for a password puts up, in place
     /// of everything above.
@@ -1501,7 +1503,7 @@ impl SdroxideApp {
             sat_ui: Default::default(),
             sat_sub_status: Vec::new(),
             wefax: Default::default(),
-            oob_tx_ack: false,
+            oob_tx_ack: ui_settings.oob_tx_dismissed,
             login: Default::default(),
             remote_access: persist::load_remote_access(),
             #[cfg(not(target_arch = "wasm32"))]

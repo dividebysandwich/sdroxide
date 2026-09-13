@@ -669,6 +669,17 @@ pub struct UiSettings {
     /// until it says otherwise.
     #[serde(default)]
     pub swl: bool,
+    /// Whether the operator has told the out-of-band transmit warning not to
+    /// come up again on this screen.
+    ///
+    /// The warning's button is a one-shot acknowledgement for the session;
+    /// this is the remembered half, ticked from the checkbox beside it by an
+    /// operator who runs with `--oob-tx` every launch and knows what it means.
+    /// In `[ui]` because it belongs to the screen, not the station — a remote
+    /// client is warned from the engine's state too, and should make its own
+    /// choice rather than inherit the shack machine's.
+    #[serde(default)]
+    pub oob_tx_dismissed: bool,
 }
 
 /// Default for [`UiSettings::spot_colors`] — every kind on its stock tint.
@@ -768,6 +779,7 @@ impl Default for UiSettings {
             decode_new_only: false,
             map_cities: true,
             swl: false,
+            oob_tx_dismissed: false,
         }
     }
 }

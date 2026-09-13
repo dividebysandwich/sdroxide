@@ -13641,8 +13641,11 @@ sdroxide --oob-tx
 ```
 
 A warning appears in the middle of the window on startup and stays there until
-you dismiss it by hand. It comes back on the next launch, because the flag has
-to be passed again on the next launch.
+you dismiss it by hand. **I UNDERSTAND** dismisses it for that run, and it comes
+back on the next launch, because the flag has to be passed again on the next
+launch. Tick **Don't show again** beside that button instead and the
+acknowledgement is remembered on that screen: the lockout is still off while the
+engine runs with `--oob-tx`, but the page is not shown again.
 
 The flag can only ever *loosen* the lockout, never tighten it: without it,
 sdroxide behaves exactly as it always has.

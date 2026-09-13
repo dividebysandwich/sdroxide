@@ -1556,7 +1556,7 @@ way.
 | `--tx-tune <SECS>` | Headless TX smoke test: key a tune carrier at minimal drive, then exit. |
 | `--ft8-cq <SECS>` | Headless FT8 smoke test: call CQ at minimal power, then exit. |
 | `--rade-rx <SECS>` | Headless RADE smoke test: receive for SECS seconds and report whether the modem synced. Pair with `--file`. |
-| `--oob-tx` | Lift the amateur-band transmit lockout for this run, for licensed out-of-band use. Shows a warning that must be dismissed by hand; never persisted, so it has to be passed again every launch. |
+| `--oob-tx` | Lift the amateur-band transmit lockout for this run, for licensed out-of-band use. Shows a warning that must be dismissed by hand; the flag is never persisted, so it has to be passed again every launch. The warning's *Don't show again* box remembers the acknowledgement on that screen. |
 | console extras | `--fps <N>` lines/sec, `--width <CHARS>`, `--db-floor <dBFS>`, `--db-ceil <dBFS>`. |
 
 ## Keyboard shortcuts

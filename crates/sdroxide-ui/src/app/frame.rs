@@ -1569,9 +1569,12 @@ impl SdroxideApp {
     /// Modal and dismissed by hand, because the band-edge lockout is the last
     /// thing between a mistyped frequency and an out-of-band transmission, and
     /// an operator who does not know it is off is exactly the operator who will
-    /// find out the expensive way. Dismissing it is a one-shot acknowledgement,
-    /// not a preference: it comes back next launch, because the flag has to be
-    /// passed again next launch.
+    /// find out the expensive way. The button is a one-shot acknowledgement: it
+    /// comes back next launch, because the flag has to be passed again next
+    /// launch. The checkbox beside it is the remembered half — ticked, the
+    /// acknowledgement is kept on this screen and the page does not come back,
+    /// for an operator who runs with `--oob-tx` every time and knows what it
+    /// means.
     ///
     /// Driven off the *engine's* state rather than off this process's arguments
     /// so a remote client is warned too — the licence at risk belongs to
@@ -1581,6 +1584,7 @@ impl SdroxideApp {
             return;
         }
         let mut dismissed = false;
+        let mut remember = false;
         let resp = egui::Window::new("⚠  TRANSMIT LOCKOUT DISABLED")
             .id(crate::layout::salted_id(ctx, "oob-tx-window"))
             .frame(crate::chrome::window_frame())
@@ -1622,18 +1626,38 @@ impl SdroxideApp {
                     {
                         dismissed = true;
                     }
-                    ui.label(
-                        RichText::new("Restart without --oob-tx to put the lockout back.")
-                            .color(crate::theme::LINE_LIT())
-                            .size(10.5),
-                    );
+                    // Next to the button, so the operator who knows what the
+                    // lockout being off means can say so once and not be
+                    // stopped by this page every launch. Ticking it is itself
+                    // an acknowledgement, so the window goes away with it.
+                    if ui
+                        .checkbox(&mut self.ui_settings.oob_tx_dismissed, "Don't show again")
+                        .on_hover_text(
+                            "Remember this acknowledgement on this screen. The lockout is still \
+                             off while the engine runs with --oob-tx — this only stops the \
+                             warning from being shown again.",
+                        )
+                        .changed()
+                    {
+                        remember = true;
+                        dismissed = true;
+                    }
                 });
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Restart without --oob-tx to put the lockout back.")
+                        .color(crate::theme::LINE_LIT())
+                        .size(10.5),
+                );
             });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
         }
         if dismissed {
             self.oob_tx_ack = true;
+        }
+        if remember {
+            crate::app::persist::persist_ui_settings(&self.ui_settings);
         }
     }
 
