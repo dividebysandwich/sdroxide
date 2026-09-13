@@ -147,6 +147,25 @@ pub enum BandRating {
     Unknown,
 }
 
+/// One band's verdict as shown: the published word, and whether it is the
+/// band's own group or a stand-in read from the nearest published group.
+///
+/// The forecast covers four groups (80m-40m through 12m-10m) and nothing else.
+/// Three bands — 160 m and 60 m below and inside the range, 11 m which is
+/// not an amateur band — are read from the nearest published group as an
+/// honest stand-in: they carry the same colour, but the text is prefixed with
+/// "≈" and the tooltip says where the word came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BandVerdict<'a> {
+    /// The verdict word: "Good", "Poor", "Closed", …
+    pub verdict: &'a str,
+    /// The published group the word was read from.
+    pub group: &'a str,
+    /// `true` when this band has no published group of its own and `group` is
+    /// the nearest stand-in — currently true for 160 m, 60 m and 11 m.
+    pub derived: bool,
+}
+
 impl BandRating {
     pub fn of(verdict: &str) -> BandRating {
         let v = verdict.trim().to_ascii_lowercase();
@@ -203,20 +222,28 @@ pub struct BandConditions {
 }
 
 impl BandConditions {
-    /// The verdict for `band`, or `None` where the feed says nothing about it.
+    /// The verdict for `band`, or `None` where no published or derived group
+    /// exists — the broadcast services, 6 m and above, and microwave.
     ///
-    /// `None` is the common case at both ends of the spectrum and must render
-    /// as blank rather than as a guess: the four groups published cover 80 m
-    /// through 10 m and nothing else, so 160 m, 60 m and everything above
-    /// 10 m have no verdict here at all. 60 m in particular sits *inside* the
-    /// published range and is still not covered — it is not part of the
-    /// "80m-40m" group, and folding it in would be inventing data.
-    pub fn for_band(&self, band: sdroxide_types::Band, daylight: bool) -> Option<&str> {
-        let group = band_group(band)?;
+    /// Most bands read the verdict straight from their published group; the
+    /// three bands the feed says nothing about (160 m, 60 m, 11 m) read the
+    /// nearest published group as an honest stand-in, marked [`BandVerdict::derived`].
+    pub fn verdict_for(
+        &self,
+        band: sdroxide_types::Band,
+        daylight: bool,
+    ) -> Option<BandVerdict<'_>> {
+        let (group, derived) = band_group(band)?;
         self.hf
             .iter()
             .find(|c| c.day == daylight && c.group.eq_ignore_ascii_case(group))
-            .map(|c| c.verdict.as_str())
+            .map(|c| BandVerdict { verdict: c.verdict.as_str(), group, derived })
+    }
+
+    /// The verdict for `band`, or `None` where nothing is published or
+    /// derived — see [`Self::verdict_for`].
+    pub fn for_band(&self, band: sdroxide_types::Band, daylight: bool) -> Option<&str> {
+        self.verdict_for(band, daylight).map(|v| v.verdict)
     }
 
     /// The same, graded.
@@ -229,32 +256,43 @@ impl BandConditions {
     }
 }
 
-/// Which published group a band belongs to, if any.
-fn band_group(band: sdroxide_types::Band) -> Option<&'static str> {
+/// Which published group a band belongs to, if any — and whether that group is
+/// the band's own or a stand-in read from the nearest published group.
+fn band_group(band: sdroxide_types::Band) -> Option<(&'static str, bool)> {
     use sdroxide_types::Band;
     match band {
-        Band::M80 | Band::M40 => Some("80m-40m"),
-        Band::M30 | Band::M20 => Some("30m-20m"),
-        Band::M17 | Band::M15 => Some("17m-15m"),
-        Band::M12 | Band::M10 => Some("12m-10m"),
-        // Not published. 160 m and 60 m are below and inside the range
-        // respectively; 6 m and up are covered — if at all — by the sporadic-E
-        // and aurora entries, which are about a phenomenon rather than a band
-        // and are not interchangeable with a Good/Fair/Poor verdict. The
-        // microwave bands are not an HF forecast's business at all: what opens
-        // them is rain scatter, aircraft and the troposphere, none of which a
-        // solar-flux verdict knows anything about.
-        Band::M160
-        | Band::M60
-        // 11 m is inside the range the "12m-10m" verdict covers, but it is not
-        // one of the bands that verdict is published *about* — it is not an
-        // amateur band at all — and quoting an amateur forecast at it would be
-        // claiming an authority the source does not have. The same goes for
-        // the broadcast services: longwave and medium wave sit below the
-        // published range, FM and the SW broadcast span are not HF amateur
-        // bands, and nothing an HF forecast is graded on applies to them.
-        | Band::M11
-        | Band::Lw
+        Band::M80 | Band::M40 => Some(("80m-40m", false)),
+        Band::M30 | Band::M20 => Some(("30m-20m", false)),
+        Band::M17 | Band::M15 => Some(("17m-15m", false)),
+        Band::M12 | Band::M10 => Some(("12m-10m", false)),
+        // The three bands the forecast says nothing about are read from the
+        // nearest published group as an explicit stand-in, not a guess:
+        //
+        // * 160 m is below the published range but is the same night-time
+        //   F2 star as the 80m-40m group, and by day the same D-layer kills
+        //   it — the group's verdict is a close read of its daytime death
+        //   exactly because 80 m is near-dead too.
+        // * 60 m sits *inside* the published range with no group of its own
+        //   ("80m-40m" skips it), and propagates like the 80 m end of that
+        //   group.
+        // * 11 m is not an amateur band and no verdict is published *about*
+        //   it; it is the scarcely-distinguishable close cousin of 10 m and
+        //   reads the "12m-10m" verdict, which is how the operators who know
+        //   this band work it.
+        //
+        // The `derived` flag (always true here) is what lets the UI print "≈"
+        // and say where the word came from, so a band that has no published
+        // verdict never appears to have won one.
+        Band::M160 | Band::M60 => Some(("80m-40m", true)),
+        Band::M11 => Some(("12m-10m", true)),
+        // Everything else is not an HF forecast's business: 6 m and up are
+        // covered — if at all — by the sporadic-E and aurora entries, which
+        // are about a phenomenon rather than a band; longwave and medium wave
+        // sit below the published range; FM and the SW broadcast span are not
+        // amateur bands; and the microwave bands are opened by rain scatter,
+        // aircraft and the troposphere, none of which a solar-flux verdict
+        // knows anything about.
+        Band::Lw
         | Band::Mw
         | Band::Sw
         | Band::Fm
@@ -560,13 +598,10 @@ mod tests {
         }
     }
 
-    /// The bands the feed says nothing about must say nothing. Inventing a
-    /// verdict for 160 m or 6 m from the neighbouring group would be the one
-    /// way this feature could actively mislead.
-    ///
-    /// Written as "everything outside the four published groups" rather than as
-    /// a list, so a band added later is silent by default and has to be given a
-    /// group deliberately to gain a verdict.
+    /// The bands nothing is published or derived for must say nothing.
+    /// Everything outside the four published groups, the three bands that read
+    /// a neighbouring group, and GEN is silent by default and has to be given
+    /// a group deliberately to gain a verdict.
     #[test]
     fn unpublished_bands_have_no_verdict_rather_than_a_guess() {
         use sdroxide_types::Band;
@@ -582,11 +617,59 @@ mod tests {
                     | Band::M15
                     | Band::M12
                     | Band::M10
+                    // The three stand-in bands, which read a neighbouring
+                    // published group and are covered below.
+                    | Band::M160
+                    | Band::M60
+                    | Band::M11
             )
         }) {
             assert_eq!(c.for_band(b, true), None, "{b:?} was given a verdict");
             assert_eq!(c.for_band(b, false), None, "{b:?} was given a verdict");
             assert_eq!(c.rating_for_band(b, true), None);
+        }
+    }
+
+    /// The three bands the forecast says nothing about read the nearest
+    /// published group as an explicit stand-in: 11 m reads the verdict 10 m
+    /// gets, and 160 m and 60 m read what 80 m gets.
+    #[test]
+    fn the_unpublished_bands_read_the_nearest_group_standing_in() {
+        use sdroxide_types::Band;
+        let xml = r#"<solar><solardata>
+            <calculatedconditions>
+              <band name="80m-40m" time="day">Poor</band>
+              <band name="80m-40m" time="night">Good</band>
+              <band name="12m-10m" time="day">Fair</band>
+              <band name="12m-10m" time="night">Good</band>
+            </calculatedconditions>
+        </solardata></solar>"#;
+        let c = parse_band_conditions(xml).unwrap();
+
+        // 11 m walks with 10 m — the same verdict, half for half.
+        for day in [true, false] {
+            let v = c.verdict_for(Band::M11, day).unwrap();
+            assert_eq!(v.verdict, c.for_band(Band::M10, day).unwrap(), "11 m vs 10 m ({day})");
+            assert_eq!(v.group, "12m-10m");
+            assert!(v.derived, "11 m has no published group of its own");
+        }
+
+        // 160 m and 60 m walk with 80 m.
+        for (half, word) in [(true, "Poor"), (false, "Good")] {
+            let v = c.verdict_for(Band::M160, half).unwrap();
+            assert_eq!(v.verdict, word, "160 m {half}");
+            assert_eq!(v.group, "80m-40m");
+            assert!(v.derived);
+            let v = c.verdict_for(Band::M60, half).unwrap();
+            assert_eq!(v.verdict, word, "60 m {half}");
+            assert!(v.derived);
+        }
+
+        // The published bands are never marked derived.
+        for b in [Band::M80, Band::M40, Band::M10] {
+            let v = c.verdict_for(b, true).unwrap();
+            assert!(!v.derived, "{b:?} was marked as a stand-in");
+            assert_eq!(v.verdict, c.for_band(b, true).unwrap());
         }
     }
 

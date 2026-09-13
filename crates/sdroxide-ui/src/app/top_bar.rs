@@ -6106,14 +6106,15 @@ fn band_mode_menu(
                 Some(hz) => (state.active_freq_hz() - hz).abs() < 500.0,
                 None => state.band == b,
             };
-            // The published forecast, where there is one. Colour only: the
-            // chip still says what band it is, and a band nothing is published
-            // about — 160 m, 60 m, and everything above 10 m — looks exactly
-            // as it did before rather than being given a verdict it has not
-            // got. The words, the source and the age are in the tooltip.
-            let verdict = conditions.and_then(|c| c.for_band(b, daylight));
+            // The published forecast, where there is one — including the three
+            // stand-in bands (160 m, 60 m, 11 m), which read the nearest
+            // published group and say so, in the tooltip, in the same breath
+            // as the word. Colour only: the chip still says what band it is. A
+            // band with no verdict of any kind — 6 m and up, the broadcast
+            // span — looks exactly as it did before.
+            let verdict = conditions.and_then(|c| c.verdict_for(b, daylight));
             let tint = verdict
-                .map(sdroxide_solar::BandRating::of)
+                .map(|v| sdroxide_solar::BandRating::of(v.verdict))
                 .and_then(crate::app::bands::rating_color);
             let resp = crate::chrome::chip_enabled_tinted(
                 ui,
@@ -6124,12 +6125,27 @@ fn band_mode_menu(
                 std_hz.is_some(),
             );
             let resp = match verdict {
-                Some(v) => resp.on_hover_text(format!(
-                    "{}: {v} ({}) — forecast by HAMQSL.com from the solar indices, \
-                     not a measurement of your own path.",
-                    b.label(),
-                    if daylight { "daytime" } else { "night" },
-                )),
+                Some(v) => {
+                    let hour = if daylight { "daytime" } else { "night" };
+                    if v.derived {
+                        resp.on_hover_text(format!(
+                            "{}: ≈{} ({hour}) — the published {} group's verdict, the \
+                             nearest stand-in; HAMQSL.com grades nothing for {} itself. \
+                             A forecast, not a measurement of your own path.",
+                            b.label(),
+                            v.verdict,
+                            v.group,
+                            b.label(),
+                        ))
+                    } else {
+                        resp.on_hover_text(format!(
+                            "{}: {} ({hour}) — forecast by HAMQSL.com from the solar \
+                             indices, not a measurement of your own path.",
+                            b.label(),
+                            v.verdict,
+                        ))
+                    }
+                }
                 None => resp,
             };
             // A chip that cannot be pressed has to say why. A band greyed out

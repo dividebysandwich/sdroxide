@@ -5,7 +5,9 @@
 //! * **CONDX** is N0NBH's calculated verdict — one word per band group per half
 //!   of the day, computed globally from the solar indices. It says nothing
 //!   about this station, this antenna or any particular path, and it covers
-//!   80 m through 10 m and nothing else.
+//!   80 m through 10 m and nothing else. Three bands outside that span — 160 m,
+//!   60 m and 11 m — read the nearest published group as a stand-in and are
+//!   marked with "≈", hover for the explanation.
 //! * **PATHS**, **REACH** and **BEST** come from the propagation field: real
 //!   receptions, by this station and — when the Reverse Beacon Network is
 //!   switched on — by everyone else's. That is a measurement.
@@ -116,20 +118,38 @@ impl SdroxideApp {
                         }
                         ui.label(RichText::new(b.label()).size(11.0).strong());
 
-                        // The forecast. Blank where none is published — see the
-                        // module note; 160 m, 60 m and everything above 10 m
-                        // live here permanently.
+                        // The forecast. Derived bands — 160 m, 60 m and 11 m,
+                        // which HAMQSL.com publishes nothing about — read the
+                        // nearest published group and are marked with "≈", so a
+                        // band that has no verdict of its own never appears to
+                        // have won one.
                         match self
                             .band_conditions
                             .as_ref()
-                            .and_then(|c| c.for_band(b, self.daylight))
+                            .and_then(|c| c.verdict_for(b, self.daylight))
                         {
                             Some(v) => {
-                                let t = RichText::new(v).size(10.5);
-                                ui.label(match rating_color(BandRating::of(v)) {
+                                let shown = if v.derived {
+                                    format!("≈{}", v.verdict)
+                                } else {
+                                    v.verdict.to_string()
+                                };
+                                let t = RichText::new(shown).size(10.5);
+                                let t = match rating_color(BandRating::of(v.verdict)) {
                                     Some(c) => t.color(c),
                                     None => t,
-                                });
+                                };
+                                let resp = ui.label(t);
+                                if v.derived {
+                                    resp.on_hover_text(format!(
+                                        "{} is not one of the bands HAMQSL.com grades; this \
+                                         is the published {} group's verdict, read as the \
+                                         nearest stand-in.\n\nA forecast, not a measurement \
+                                         of your own path.",
+                                        b.label(),
+                                        v.group,
+                                    ));
+                                }
                             }
                             None => {
                                 ui.label(dim("—"));

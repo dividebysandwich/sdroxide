@@ -46,8 +46,8 @@ pub use feed::{FeedCmd, RawUpdate, SolarFeed, band_conditions_cached};
 pub use imagery::{SdoChannel, SunImage};
 pub use impact::{Impact, earth_impact};
 pub use indices::{
-    BandConditions, BandRating, GeomagneticIndex, HfBandCondition, MufEstimate, SolarFlux,
-    SpaceWeather, VhfCondition, XrayLevel,
+    BandConditions, BandRating, BandVerdict, GeomagneticIndex, HfBandCondition, MufEstimate,
+    SolarFlux, SpaceWeather, VhfCondition, XrayLevel,
 };
 pub use planets::{Moon, Planet, Surface};
 pub use satellites::{Observation, Pass, PassSearch, SatState, Satellite};
