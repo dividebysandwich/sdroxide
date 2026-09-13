@@ -270,8 +270,10 @@ impl Phy {
         } else {
             missing.push("a transmit attenuation range");
         }
-        limits.rx_ports = read_list(conn, &phy_id, phy, RX_CHAN, "rf_port_select_available")?;
-        limits.tx_ports = read_list(conn, &phy_id, phy, TX_CHAN, "rf_port_select_available")?;
+        let rx_ports = read_list(conn, &phy_id, phy, RX_CHAN, "rf_port_select_available")?;
+        limits.rx_ports = usable_ports(conn, &phy_id, phy, RX_CHAN, rx_ports)?;
+        let tx_ports = read_list(conn, &phy_id, phy, TX_CHAN, "rf_port_select_available")?;
+        limits.tx_ports = usable_ports(conn, &phy_id, phy, TX_CHAN, tx_ports)?;
         let modes = read_list(conn, &phy_id, phy, RX_CHAN, "gain_control_mode_available")?;
         if !modes.is_empty() {
             limits.agc_modes = modes;
@@ -1066,6 +1068,72 @@ fn read_list(
     }
     let text = conn.read_attr(dev_id, Some(chan), attr)?;
     Ok(text.split_whitespace().map(str::to_string).collect())
+}
+
+/// The ports of `available` this board will actually switch to.
+///
+/// `rf_port_select_available` is the AD9361's whole multiplexer — nine
+/// receive inputs and three transmit-monitor loopbacks — but a board wires one
+/// or two of them, and a Pluto's device tree *locks* the selection
+/// (`adi,rx-rf-port-input-select-lock-enable`), after which the driver answers
+/// `-EINVAL` to every port but the one it booted on. Offering the whole list
+/// put an ANT button on the panel that logged a refusal per click and moved
+/// nothing (issue #314). So each candidate is tried once, here, before any
+/// buffer is open, and the port the board was on is put back afterwards.
+///
+/// The transmit-monitor inputs are calibration loopbacks from the part's own
+/// transmitter, not antennas, and are never offered.
+fn usable_ports(
+    conn: &mut Connection,
+    dev_id: &str,
+    dev: &crate::context::Device,
+    chan: (bool, &str),
+    available: Vec<String>,
+) -> Result<Vec<String>> {
+    let mut candidates: Vec<String> =
+        available.into_iter().filter(|p| !p.starts_with("TX_MONITOR")).collect();
+    if candidates.len() <= 1
+        || !dev.channel(chan.1, chan.0).is_some_and(|c| c.has_attr("rf_port_select"))
+    {
+        return Ok(candidates);
+    }
+    let current = conn.read_attr(dev_id, Some(chan), "rf_port_select")?.trim().to_string();
+    let mut refused = Vec::new();
+    let mut moved = false;
+    candidates.retain(|port| {
+        if *port == current {
+            return true;
+        }
+        match conn.write_attr(dev_id, Some(chan), "rf_port_select", port) {
+            Ok(()) => {
+                moved = true;
+                true
+            }
+            Err(e) if e.remote_code() == Some(-22) => {
+                refused.push(port.clone());
+                false
+            }
+            // Anything else is not the board saying no to this port, so the
+            // port stays on offer rather than being judged on a lost write.
+            Err(e) => {
+                tracing::debug!("PlutoSDR: could not try port {port} ({e}); still offering it");
+                true
+            }
+        }
+    });
+    if moved && !current.is_empty() {
+        conn.write_attr(dev_id, Some(chan), "rf_port_select", &current)?;
+    }
+    if !refused.is_empty() {
+        tracing::info!(
+            "PlutoSDR: the {} port is fixed by this board's device tree — it refused {}; \
+             offering {}",
+            if chan.0 { "transmit" } else { "receive" },
+            refused.join(", "),
+            candidates.join(", ")
+        );
+    }
+    Ok(candidates)
 }
 
 /// Parse IIO's `[min step max]` range spelling into `(min, step, max)`.

@@ -185,6 +185,10 @@ struct DeviceState {
     /// unmodified answer on plenty of firmwares (issue #340). `None` accepts
     /// anything, which is what the rest of these tests want.
     lo_limit_hz: Option<(f64, f64)>,
+    /// The port selection is locked by the device tree, as on a stock Pluto:
+    /// `rf_port_select` takes only the port the part is already on and answers
+    /// `-EINVAL` to any other (issue #314).
+    ports_locked: bool,
 }
 
 /// The sample-rate floor a stock Pluto publishes — and refuses.
@@ -453,7 +457,14 @@ fn serve(sock: TcpStream, state: Arc<Mutex<DeviceState>>, stop: Arc<AtomicBool>,
                 // driver answers `-EINVAL` and the mux stays where it was.
                 // Modelled because a fake that took it would bless a client
                 // whose ANT button does nothing on real hardware (issue #314).
-                if key.ends_with("/rf_port_select") && state.lock().expect("lock").rx_buffer_open {
+                if key.ends_with("/rf_port_select") && {
+                    let g = state.lock().expect("lock");
+                    let current = g
+                        .get(&key)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| default_attr(&key).into());
+                    g.rx_buffer_open || (g.ports_locked && value != current)
+                } {
                     let _ = writer.write_all(b"-22\n");
                     if writer.flush().is_err() {
                         break;
@@ -1052,19 +1063,85 @@ fn selecting_the_port_already_selected_writes_nothing() {
     assert_eq!(already, "A_BALANCED");
 
     let tx_already = handle.tx_port().to_string();
+    // Opening tries each port once to learn which the board takes (issue
+    // #314), so count only what is written from here on.
+    let (rx_before, tx_before) = {
+        let g = fake.state.lock().expect("lock");
+        (
+            g.writes_of("ad9361-phy/INPUT/voltage0/rf_port_select").len(),
+            g.writes_of("ad9361-phy/OUTPUT/voltage0/rf_port_select").len(),
+        )
+    };
     handle.set_rx_port(&already);
     handle.set_tx_port(&tx_already);
     std::thread::sleep(Duration::from_millis(50));
     let g = fake.state.lock().expect("lock");
-    assert!(g.writes_of("ad9361-phy/INPUT/voltage0/rf_port_select").is_empty(), "no-op RX port");
-    assert!(g.writes_of("ad9361-phy/OUTPUT/voltage0/rf_port_select").is_empty(), "no-op TX port");
+    assert_eq!(
+        g.writes_of("ad9361-phy/INPUT/voltage0/rf_port_select").len(),
+        rx_before,
+        "no-op RX port"
+    );
+    assert_eq!(
+        g.writes_of("ad9361-phy/OUTPUT/voltage0/rf_port_select").len(),
+        tx_before,
+        "no-op TX port"
+    );
     drop(g);
 
     // A real change still goes through.
     handle.set_rx_port("B_BALANCED");
     wait_for("the port change", || {
-        !fake.state.lock().unwrap().writes_of("ad9361-phy/INPUT/voltage0/rf_port_select").is_empty()
+        fake.state.lock().unwrap().writes_of("ad9361-phy/INPUT/voltage0/rf_port_select").len()
+            > rx_before
     });
+}
+
+/// Issue #314: a stock Pluto's device tree locks the port selection, and the
+/// driver refuses every port but the one it booted on. Those are not offered —
+/// an ANT button that can only be refused is not a control — and trying them
+/// at open leaves the board on the port it was on.
+#[test]
+fn a_board_with_locked_ports_offers_only_the_one_it_is_on() {
+    let fake = Fake::start_with(
+        DeviceState {
+            attrs: vec![(
+                "ad9361-phy/INPUT/voltage0/rf_port_select_available".to_string(),
+                "A_BALANCED B_BALANCED C_BALANCED A_N A_P TX_MONITOR1 TX_MONITOR2".to_string(),
+            )],
+            ports_locked: true,
+            ..DeviceState::default()
+        },
+        CONTEXT_XML.to_string(),
+    );
+    let handle =
+        PlutoHandle::open(&fake.address(), &config(), 435_000_000.0).expect("open the fake Pluto");
+    assert_eq!(handle.limits.rx_ports, vec!["A_BALANCED"]);
+    assert_eq!(handle.limits.tx_ports, vec!["A"]);
+    assert_eq!(handle.rx_port(), "A_BALANCED");
+    let g = fake.state.lock().expect("lock");
+    assert_eq!(g.get("ad9361-phy/INPUT/voltage0/rf_port_select"), None, "nothing was moved");
+    // The transmit-monitor loopbacks were never even tried.
+    drop(g);
+
+    // An unlocked board keeps every real port, and not the monitors.
+    let open = Fake::start_with(
+        DeviceState {
+            attrs: vec![(
+                "ad9361-phy/INPUT/voltage0/rf_port_select_available".to_string(),
+                "A_BALANCED B_BALANCED TX_MONITOR1".to_string(),
+            )],
+            ..DeviceState::default()
+        },
+        CONTEXT_XML.to_string(),
+    );
+    let handle =
+        PlutoHandle::open(&open.address(), &config(), 435_000_000.0).expect("open the fake Pluto");
+    assert_eq!(handle.limits.rx_ports, vec!["A_BALANCED", "B_BALANCED"]);
+    assert_eq!(
+        open.state.lock().unwrap().get("ad9361-phy/INPUT/voltage0/rf_port_select"),
+        Some("A_BALANCED"),
+        "the port tried at open is put back"
+    );
 }
 
 /// The AD9361 refuses `rf_port_select` while a buffer is running on it, so the
