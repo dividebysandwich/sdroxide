@@ -653,6 +653,28 @@ impl SdroxideApp {
     pub(in crate::app) fn top_bar(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
         let tier = crate::layout::tier(ui.ctx());
+        // A double-click on the strip's empty ground toggles the layout override
+        // between Auto and Small screen — the operator asking the strip to fold
+        // down to a single row, and back, without diving into Settings. Registered
+        // before any module so every widget drawn later sits on top of it for
+        // hit-testing: a click on a chip or the VFO box is the widget's, and only
+        // the bare space between the main elements reaches this. Phones are left
+        // out — a phone is already the smallest layout there is, and forcing the
+        // tablet tier down onto it is nobody's shortcut.
+        if tier != crate::layout::Tier::Phone {
+            let toggle = ui.interact(
+                ui.max_rect(),
+                crate::layout::salted_id(ui.ctx(), "strip-layout-toggle"),
+                egui::Sense::click(),
+            );
+            if toggle.double_clicked() {
+                self.ui_settings.layout = match self.ui_settings.layout {
+                    sdroxide_types::LayoutMode::Small => sdroxide_types::LayoutMode::Auto,
+                    _ => sdroxide_types::LayoutMode::Small,
+                };
+                crate::app::persist::persist_ui_settings(&self.ui_settings);
+            }
+        }
         // The desktop plans its own rows; only the compact strips still lean
         // on a wrapping layout.
         if !tier.compact() {
