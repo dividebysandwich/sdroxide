@@ -921,9 +921,10 @@ reaching for the other aerial do not mean opening a dialog.
   ceiling in the FFT popup are yours to keep only while FIT is off).
 - **CTR** — keep the tuned frequency in the **middle** of the panadapter. Lit,
   the window slides under the dial every time you tune, so the marker stays put
-  and the band scrolls past it. With it off — the way it has always worked — the
-  window holds still and the marker travels across it until the dial leaves the
-  span, at which point the picture jumps a whole window at once.
+  and the band scrolls past it. It is **on** for a new station, and a radio keeps
+  whichever way you leave it. With it off the window holds still and the marker
+  travels across it until the dial leaves the span, at which point the picture
+  jumps a whole window at once.
 
   Zoomed in this costs nothing: the window is a viewport onto a wider captured
   span, and the receiver is never disturbed. Zoomed all the way out there is
