@@ -172,7 +172,7 @@ pub(crate) fn apply_action(
                 let grid = if d != 0.0 { grid.min(d.abs()) } else { grid };
                 let hz = if grid > 0.0 {
                     // Whole grid units, so an accelerated spin stays on it too.
-                    (state.active_freq_hz() / grid).round() * grid + (d / grid).round() * grid
+                    step_on_grid(state.active_freq_hz(), (d / grid).round(), grid)
                 } else {
                     state.active_freq_hz() + d
                 };
@@ -1067,6 +1067,28 @@ fn persist_input_settings(_cfg: &InputSettings) {
     // Written by eframe's periodic `save()` into localStorage.
 }
 
+/// Move `steps` whole steps of `grid` from `hz`, landing on the grid.
+///
+/// A dial left between two grid points goes to the *next one in the direction
+/// of travel* on the first step, not to the nearest one and then a whole step
+/// further: from 14 262 500 one kHz up is 14 263 000, not 14 264 000
+/// (issue #431). Rounding to the nearest first overshot by a step whenever the
+/// dial sat past the half-way point. `steps == 0` rounds to the nearest point.
+pub fn step_on_grid(hz: f64, steps: f64, grid: f64) -> f64 {
+    // Float division leaves a frequency that is on the grid a hair either side
+    // of it; that must not count as "between two points".
+    const EPS: f64 = 1e-6;
+    let units = hz / grid;
+    let base = if steps > 0.0 {
+        (units + EPS).floor()
+    } else if steps < 0.0 {
+        (units - EPS).ceil()
+    } else {
+        units.round()
+    };
+    (base + steps) * grid
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1146,18 +1168,27 @@ mod tests {
             );
             state.vfo_a_hz
         };
-        // Left behind 37.4 Hz off the grid by a drag, and stepped either way.
+        // Left behind 37.4 Hz off the grid by a drag, and stepped either way:
+        // the first step lands on the next grid point in that direction.
         assert_eq!(tune(14_074_037.4, 100.0, 100.0), 14_074_100.0);
-        assert_eq!(tune(14_074_037.4, -100.0, 100.0), 14_073_900.0);
+        assert_eq!(tune(14_074_037.4, -100.0, 100.0), 14_074_000.0);
         // A finer binding keeps its own grid, and a coarser one its own.
-        assert_eq!(tune(14_074_037.4, 10.0, 10.0), 14_074_050.0);
+        assert_eq!(tune(14_074_037.4, 10.0, 10.0), 14_074_040.0);
         assert_eq!(tune(14_074_037.4, 1_000.0, 1_000.0), 14_075_000.0);
+        // Issue #431: past the half-way point the first step must not overshoot.
+        assert_eq!(tune(14_262_500.0, 1_000.0, 1_000.0), 14_263_000.0);
+        assert_eq!(tune(14_262_800.0, 1_000.0, 1_000.0), 14_263_000.0);
+        assert_eq!(tune(14_262_800.0, -1_000.0, 1_000.0), 14_262_000.0);
+        assert_eq!(tune(14_262_200.0, -1_000.0, 1_000.0), 14_262_000.0);
+        // On the grid already, a step is exactly one step.
+        assert_eq!(tune(14_263_000.0, 1_000.0, 1_000.0), 14_264_000.0);
+        assert_eq!(tune(14_263_000.0, -1_000.0, 1_000.0), 14_262_000.0);
         // Acceleration moves by whole steps rather than off the grid.
         assert_eq!(tune(14_074_000.0, 137.0, 100.0), 14_074_100.0);
         assert_eq!(tune(14_074_000.0, 262.0, 100.0), 14_074_300.0);
         // A binding set to move by less than its step tunes by that instead,
         // on the grid its own move makes.
-        assert_eq!(tune(14_074_037.4, 50.0, 100.0), 14_074_100.0);
+        assert_eq!(tune(14_074_037.4, 50.0, 100.0), 14_074_050.0);
         // No step at all is the old free-running behaviour.
         assert_eq!(tune(14_074_037.4, 100.0, 0.0), 14_074_137.4);
     }
