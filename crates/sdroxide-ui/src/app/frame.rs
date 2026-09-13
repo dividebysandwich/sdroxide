@@ -184,6 +184,8 @@ impl eframe::App for SdroxideApp {
             self.applied_ui_font = self.ui_settings.menu_font_size;
             crate::theme::apply_zoom(&ctx);
             ctx.request_repaint();
+        } else {
+            self.remember_ui_zoom(&ctx);
         }
         self.drain_events(&ctx, now);
         self.poll_adif_import();

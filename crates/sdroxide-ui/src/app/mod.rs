@@ -1137,6 +1137,7 @@ impl SdroxideApp {
         crate::theme::set_spot_colors(&ui_settings.spot_colors);
         crate::theme::set_bandplan_colors(&ui_settings.bandplan_colors);
         crate::theme::set_map_cities(ui_settings.map_cities);
+        crate::theme::set_ui_zoom(ui_settings.ui_zoom);
         crate::theme::apply(egui_ctx);
         // What this renderer will carry. Gathered here because it is the one
         // place that holds the render state and the controller at once, and
@@ -1534,6 +1535,27 @@ impl SdroxideApp {
             for c in cmds {
                 self.ctrl.send(c);
             }
+        }
+    }
+
+    /// Keep the operator's ctrl+plus / ctrl+minus zoom for next time
+    /// (issue #425).
+    ///
+    /// egui owns the zoom factor and changes it on those keys without telling
+    /// anybody, so it is compared with what the settings would put there: a
+    /// difference is the operator zooming, and the part of it that is not the
+    /// menu font size is stored. Another radio tab may already have stored it
+    /// this frame, which is why a tab behind the shared value only catches up
+    /// rather than writing the file again.
+    pub(in crate::app) fn remember_ui_zoom(&mut self, ctx: &egui::Context) {
+        let shared = crate::theme::ui_zoom();
+        let zoom = ctx.zoom_factor() / crate::theme::ui_scale();
+        if (zoom - shared).abs() > 1e-3 {
+            crate::theme::set_ui_zoom(zoom);
+            self.ui_settings.ui_zoom = crate::theme::ui_zoom();
+            crate::app::persist::persist_ui_settings(&self.ui_settings);
+        } else if (self.ui_settings.ui_zoom - shared).abs() > 1e-3 {
+            self.ui_settings.ui_zoom = shared;
         }
     }
 
