@@ -8256,7 +8256,13 @@ configured in exactly the same way as one on your desk.
   Apply.
 - **RX / TX port** — the AD9361's `rf_port_select`. A stock Pluto wires one of
   each (`A_BALANCED` and `A`), so leave these empty unless you have a board that
-  does not.
+  does not. The **ANT** control only offers the ports the board will actually
+  switch to: each is tried once as the radio connects, and a Pluto whose device
+  tree locks the port — every stock one — offers just the port it is on. The
+  transmit-monitor loopbacks are never offered (issue #314). While the AGC is in
+  one of its attack modes the main window's **Gain** slider is greyed out, since
+  the AD9361 ignores a gain written then; set the AGC to *Manual* to use it
+  (issue #417).
 
 **AD9363 or AD9364.** A stock Pluto is an AD9363 and covers **325 MHz–3.8 GHz**;
 a great many have had the well-known firmware change applied, which turns them
@@ -14038,6 +14044,9 @@ Check **CW keying** on the Radio tab — see
 [6.2.2](#622-cat-radios-serial-control--usb-audio). A rig in CW
 ignores audio sent to its sound card, so it can only be keyed from text: with
 **Rig keyer (CAT)**, on Yaesu check that CW memory 1 is free to be overwritten;
+on a Yaesu FTX-1, sdroxide plays that memory with `KY01`, the form its CAT
+manual gives; through **Hamlib rigctld**, the text goes to Hamlib's `send_morse`,
+so it is Hamlib's backend for your rig that keys it (issue #412);
 on Kenwood, that break-in is on (sdroxide only asserts it when the rig has
 reported CW, because the same command is the VOX switch in every other mode);
 on Icom, that the radio takes `16 47` — sdroxide turns semi break-in on with
