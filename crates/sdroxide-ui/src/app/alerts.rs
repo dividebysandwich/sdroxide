@@ -10,6 +10,8 @@
 
 use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 #[cfg(not(target_arch = "wasm32"))]
@@ -84,7 +86,6 @@ impl Cooldown {
 #[cfg(not(target_arch = "wasm32"))]
 enum Job {
     Play { sound: AlertSound, volume: f32 },
-    Quit,
 }
 
 /// The alarms themselves: settings plus, on native, a background worker that
@@ -99,18 +100,38 @@ pub struct AlertRuntime {
 
 /// Owns the worker. Dropping it asks the worker to quit and waits for it, so
 /// the cpal stream is closed tidily and never outlives its ring.
+///
+/// The order in `drop` matters: the sender of the job channel is closed *before*
+/// the join. `rx.recv()` then answers `Err` once the channel runs dry, so a
+/// worker that is blocked waiting, pacing a tone, or draining a failed device
+/// has a way out and `join` cannot wait on a thread that is waiting on this one
+/// to let go of the channel. `stop` is the shared "drop what you are doing"
+/// flag watched inside the tone-pacing loop, so a close during a tone hands the
+/// thread back within a tick rather than after the alarm finished.
 #[cfg(not(target_arch = "wasm32"))]
 struct AlertSink {
-    tx: SyncSender<Job>,
+    tx: Option<SyncSender<Job>>,
     thread: Option<JoinHandle<()>>,
+    stop: Arc<AtomicU64>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for AlertSink {
     fn drop(&mut self) {
-        let _ = self.tx.send(Job::Quit);
+        self.stop.fetch_add(1, Ordering::SeqCst);
+        self.tx.take();
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            // Join through a sentinel rather than directly: a worker stuck
+            // *opening* a contended device has nothing to be woken by — it is
+            // not waiting on the channel or the stop flag yet — so a plain
+            // `join` could hold the app's close on ALSA's timetable. Give it a
+            // grace period, then leave it to fall off with the process.
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = t.join();
+                let _ = done_tx.send(());
+            });
+            let _ = done_rx.recv_timeout(CLOSE_GRACE);
         }
     }
 }
@@ -347,22 +368,26 @@ impl AlertRuntime {
 impl AlertSink {
     fn start(device: Option<String>, status: Arc<Mutex<AlertStatus>>) -> Self {
         let (tx, rx) = sync_channel::<Job>(16);
+        let stop = Arc::new(AtomicU64::new(0));
         let thread = {
             let status = status.clone();
+            let stop = stop.clone();
             std::thread::Builder::new()
                 .name("alerts".into())
-                .spawn(move || worker(rx, device, status))
+                .spawn(move || worker(rx, device, status, stop))
                 .ok()
         };
         if thread.is_none() {
             *status.lock().unwrap() =
                 AlertStatus::Failed("could not start the alert thread".into());
         }
-        AlertSink { tx, thread }
+        AlertSink { tx: Some(tx), thread, stop }
     }
 
     fn play(&self, sound: AlertSound, volume: f32) {
-        let _ = self.tx.try_send(Job::Play { sound, volume });
+        if let Some(tx) = &self.tx {
+            let _ = tx.try_send(Job::Play { sound, volume });
+        }
     }
 }
 
@@ -376,14 +401,29 @@ const LEAD_S: f64 = 0.08;
 #[cfg(not(target_arch = "wasm32"))]
 const TICK: Duration = Duration::from_millis(20);
 
+/// How long `drop` waits for the worker to wind down. Long enough for the
+/// stream to be closed tidy in the normal case — the worker answers the stop
+/// flag inside a tick — short enough that a worker wedged inside a blocking
+/// device open cannot hold the app's exit on an audio driver.
+#[cfg(not(target_arch = "wasm32"))]
+const CLOSE_GRACE: Duration = Duration::from_millis(1500);
+
 /// Open the alert device and drive it until told to quit.
 #[cfg(not(target_arch = "wasm32"))]
-fn worker(rx: Receiver<Job>, device: Option<String>, status: Arc<Mutex<AlertStatus>>) {
+fn worker(
+    rx: Receiver<Job>,
+    device: Option<String>,
+    status: Arc<Mutex<AlertStatus>>,
+    stop: Arc<AtomicU64>,
+) {
     let (out, mut ring) = match sdroxide_audio::start_output(device.as_deref(), 48_000) {
         Ok(ok) => ok,
         Err(e) => {
             *status.lock().unwrap() = AlertStatus::Failed(e.to_string());
-            // Nothing can be played — drain and go.
+            // Nothing can be played. Drain and discard what is queued; the
+            // channel closes when the sink drops, so `recv` answers `Err` and
+            // the thread can leave instead of sitting on a sender that the
+            // joining side cannot release.
             while rx.recv().is_ok() {}
             return;
         }
@@ -393,24 +433,28 @@ fn worker(rx: Receiver<Job>, device: Option<String>, status: Arc<Mutex<AlertStat
     let capacity = out.sample_rate as usize * 2;
     let lead = (out.sample_rate * LEAD_S) as usize;
 
-    while let Ok(job) = rx.recv() {
-        match job {
-            Job::Quit => break,
-            Job::Play { sound, volume } => {
-                // Paced one frame at a time, exactly like the speech worker:
-                // never run more than `lead` stereo frames ahead of the sound
-                // card, so a tone starts when it should and the whole pattern
-                // lands within a beat of the decode.
-                for s in render(sound, out.sample_rate as u32, volume) {
-                    loop {
-                        if queued_frames(capacity, ring.slots()) < lead && ring.slots() >= 2 {
-                            break;
-                        }
-                        std::thread::sleep(TICK);
-                    }
-                    let _ = ring.push(s);
+    while let Ok(Job::Play { sound, volume }) = rx.recv() {
+        // Paced one frame at a time, exactly like the speech worker:
+        // never run more than `lead` stereo frames ahead of the sound
+        // card, so a tone starts when it should and the whole pattern
+        // lands within a beat of the decode. The pacing loop watches
+        // `stop` as well, so a close during a tone hands the thread
+        // back to the join within a tick rather than after the alarm.
+        let generation = stop.load(Ordering::SeqCst);
+        for s in render(sound, out.sample_rate as u32, volume) {
+            loop {
+                if stop.load(Ordering::SeqCst) != generation {
+                    break;
                 }
+                if queued_frames(capacity, ring.slots()) < lead && ring.slots() >= 2 {
+                    break;
+                }
+                std::thread::sleep(TICK);
             }
+            if stop.load(Ordering::SeqCst) != generation {
+                break;
+            }
+            let _ = ring.push(s);
         }
     }
 }
@@ -451,6 +495,25 @@ mod tests {
         let mut r = AlertRuntime::new(AlertSettings::default());
         r.on_ft8(&[dec(Some("OE3ABC"), Some("K1ABC"), false)], "oe3abc", "J063", &log(), "");
         assert_eq!(r.status(), AlertStatus::Idle);
+    }
+
+    /// The shutdown contract that kept a failed worker alive, simulated
+    /// without audio: a receiver shaped exactly like the failed-open drain
+    /// (`while rx.recv().is_ok() {}`) must end the moment its sender is
+    /// dropped. `AlertSink::drop` now closes the channel *before* joining, so
+    /// a worker that can no longer be serviced hands the thread back instead
+    /// of leaving the app's close waiting on it.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn closing_the_channel_releases_a_draining_worker() {
+        let (tx, rx) = sync_channel::<Job>(16);
+        let drain = std::thread::spawn(move || {
+            while rx.recv().is_ok() {}
+        });
+        std::thread::sleep(Duration::from_millis(10));
+        drop(tx);
+        let done = drain.join().map(|_| true).unwrap_or(false);
+        assert!(done, "a drained worker must exit when its sender is released");
     }
 
     #[test]
