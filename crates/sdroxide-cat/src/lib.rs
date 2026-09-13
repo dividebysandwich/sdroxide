@@ -693,6 +693,20 @@ impl Civ {
         self
     }
 
+    /// Whether a frame is this radio talking to us (or to everybody), which is
+    /// all a dial or mode report is allowed to be.
+    ///
+    /// CI-V is a bus with no checksum. Another radio, an amplifier or a tuner on
+    /// the same line broadcasts its own dial, and a frame corrupted in transit
+    /// can land its bytes in the address fields — and either, read as this
+    /// radio's frequency, moved the dial to wherever it said, which during an
+    /// FT8 session was a jump to the GEN band (issue #415). A radio configured
+    /// at the broadcast address `00` is taken at its word from any sender.
+    fn ours(&self, reply: &civ::CivReply) -> bool {
+        (self.radio == 0x00 || reply.from == self.radio)
+            && (reply.to == civ::CONTROLLER_ADDR || reply.to == 0x00)
+    }
+
     /// Whether the rig turning up at `now`, where we believed `seen`, disproves
     /// the transceive claim.
     ///
@@ -913,6 +927,9 @@ impl Protocol for Civ {
                 // written (`IcomNetSource::on_reply`); this is the serial side
                 // of the link catching up with it.
                 0x00 | 0x03 => {
+                    if !self.ours(&reply) || !civ::plausible_freq_payload(&reply.data) {
+                        continue;
+                    }
                     if let Some(hz) = civ::decode_freq(&reply.data) {
                         let broadcast = reply.cmd == 0x00;
                         self.pushed &= !self.moved_silently(&self.seen_freq, &hz, broadcast);
@@ -925,6 +942,9 @@ impl Protocol for Civ {
                     }
                 }
                 0x01 | 0x04 => {
+                    if !self.ours(&reply) {
+                        continue;
+                    }
                     if let Some(&b) = reply.data.first() {
                         let broadcast = reply.cmd == 0x01;
                         // Judged on the mode *byte*, not the app's `Mode`: two
@@ -3669,6 +3689,46 @@ mod tests {
         let mut buf = vec![0xFE, 0xFE, 0x00, 0x94, 0x01, civ::mode_to_civ(Mode::Cw), 0xFD];
         assert_eq!(p.parse(&mut buf), vec![CatUpdate::Mode(Mode::Cw)]);
         assert!(p.pushes_updates());
+    }
+
+    /// Issue #415: only this radio's dial moves the app's. Another station on
+    /// the bus, a frame addressed elsewhere, and payloads that are two frames
+    /// welded together by a collision are all read past.
+    #[test]
+    fn a_dial_report_that_is_not_this_radio_talking_is_read_past() {
+        let mut p = icom();
+        let with = |to: u8, from: u8, payload: &[u8]| {
+            let mut b = vec![0xFE, 0xFE, to, from, 0x03];
+            b.extend_from_slice(payload);
+            b.push(0xFD);
+            b
+        };
+        let f = civ::encode_freq(14_074_000.0);
+        // Another radio's broadcast, and one addressed to another controller.
+        assert!(p.parse(&mut with(0x00, 0x88, &f)).is_empty());
+        assert!(p.parse(&mut with(0xE2, 0x94, &f)).is_empty());
+        // Too short, too long, and carrying the collision jam.
+        assert!(p.parse(&mut with(0xE0, 0x94, &f[..4])).is_empty());
+        let mut long = f.to_vec();
+        long.extend_from_slice(&[0x00, 0x00]);
+        assert!(p.parse(&mut with(0xE0, 0x94, &long)).is_empty());
+        let mut jam = f.clone();
+        jam[2] = 0xFC;
+        assert!(p.parse(&mut with(0xE0, 0x94, &jam)).is_empty());
+        // Another radio's mode change is not this one's either.
+        let mut mode = vec![0xFE, 0xFE, 0x00, 0x88, 0x01, civ::mode_to_civ(Mode::Am), 0xFD];
+        assert!(p.parse(&mut mode).is_empty());
+        // ...and the radio itself, answering or broadcasting, still is.
+        assert_eq!(p.parse(&mut polled_freq(14_074_000.0)), vec![CatUpdate::Freq(14_074_000.0)]);
+        assert_eq!(p.parse(&mut broadcast_freq(7_074_000.0)), vec![CatUpdate::Freq(7_074_000.0)]);
+
+        // A radio set up at the broadcast address listens to whoever answers.
+        let mut any = make_protocol(&CatConfig {
+            family: CatFamily::Icom,
+            icom_radio_id: 0x00,
+            ..CatConfig::default()
+        });
+        assert_eq!(any.parse(&mut with(0xE0, 0x94, &f)), vec![CatUpdate::Freq(14_074_000.0)]);
     }
 
     /// Our own frames come back on the bus. A rig address of `E0` is this end

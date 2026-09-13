@@ -26,6 +26,14 @@ pub fn encode_freq(hz: f64) -> [u8; 5] {
     out
 }
 
+/// Whether a frequency report's payload has the shape of one: five BCD bytes,
+/// or six from a radio above 10 GHz, and no `FC` (the bus's collision jam) or
+/// stray preamble byte inside it — both of which mean two frames welded
+/// together on the wire rather than a frequency (issue #415).
+pub fn plausible_freq_payload(data: &[u8]) -> bool {
+    matches!(data.len(), 5 | 6) && !data.iter().any(|&b| b == 0xFC || b == PREAMBLE)
+}
+
 /// Decode 5 little-endian BCD bytes back to a frequency in Hz.
 pub fn decode_freq(bytes: &[u8]) -> Option<f64> {
     if bytes.len() < 5 {
