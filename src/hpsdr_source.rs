@@ -83,6 +83,11 @@ pub struct HpsdrSource {
     /// Whether the "the transmitter is too far outside the receiver's window"
     /// complaint has already been made this session.
     ps_warned_offset: bool,
+
+    /// Where the HL2IOBoard takes its receive signal from, when that is offered
+    /// as the receive antenna — see [`HpsdrSource::io_inputs_offered`]. `None`
+    /// on every other board and configuration.
+    io_rx_input: Option<sdroxide_types::HpsdrIoRxInput>,
 }
 
 impl HpsdrSource {
@@ -172,6 +177,15 @@ impl HpsdrSource {
                 );
             }
         }
+        // Offered only where an operator has said J9 is wired — moving the
+        // setting off the radio's own input is that statement. A board with
+        // nothing on J9 is deaf there, so the choice is not put on the panel of
+        // an HL2 that has never used it.
+        let io_rx_input = (board.protocol() == 1
+            && board.has_lna_gain()
+            && cfg.ddc == 0
+            && cfg.io_rx_input != sdroxide_types::HpsdrIoRxInput::Radio)
+            .then_some(cfg.io_rx_input);
         Ok(HpsdrSource {
             rate,
             center: center_hz,
@@ -204,7 +218,14 @@ impl HpsdrSource {
             ps_tx_iq: Vec::new(),
             ps_log_at: Instant::now(),
             ps_warned_offset: false,
+            io_rx_input,
         })
+    }
+
+    /// Whether the HL2IOBoard's receive inputs are offered as receive antennas,
+    /// so the band memory keeps one per band (issue #292).
+    pub fn io_inputs_offered(&self) -> bool {
+        self.io_rx_input.is_some()
     }
 
     /// The connection's rate, remembered rather than asked for: it is fixed
@@ -364,6 +385,29 @@ impl IqSource for HpsdrSource {
 
     fn describe(&self) -> String {
         self.label.clone()
+    }
+
+    /// The HL2IOBoard's receive input, where it is offered — the radio's own
+    /// jack or the board's J9 — so it follows the per-band antenna memory like
+    /// any other receiving antenna rather than being one setting for every band.
+    fn set_antenna(&mut self, name: &str) -> Result<()> {
+        let Some(current) = self.io_rx_input.as_mut() else { return Ok(()) };
+        let Some(input) =
+            sdroxide_types::HpsdrIoRxInput::ALL.into_iter().find(|i| i.label() == name)
+        else {
+            return Ok(());
+        };
+        if *current != input {
+            *current = input;
+            if let Some(rx) = self.rx.as_ref() {
+                rx.set_io_rx_input(input);
+            }
+        }
+        Ok(())
+    }
+
+    fn current_antenna(&self) -> String {
+        self.io_rx_input.map_or_else(String::new, |i| i.label().to_string())
     }
 
     /// The board's own temperature sensor, which on this family means a

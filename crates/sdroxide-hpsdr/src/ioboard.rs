@@ -200,6 +200,26 @@ impl IoBoard {
         }
     }
 
+    /// Move the receive input while running.
+    ///
+    /// A board already found is told straight away; one still being probed
+    /// picks it up with the rest of its start-up writes, after the reset that
+    /// would otherwise undo it.
+    pub(crate) fn set_rx_input(&mut self, input: HpsdrIoRxInput) {
+        if self.rx_input == input {
+            return;
+        }
+        self.rx_input = input;
+        if self.presence == Presence::Present {
+            self.queue.push_back(Op::write(REG_RF_INPUTS, input.code()));
+            tracing::info!(
+                "HL2IOBoard: receive input -> {} (mode {})",
+                input.label(),
+                input.code()
+            );
+        }
+    }
+
     /// The C&C block to put in this datagram, or `None` to leave the slot to the
     /// ordinary register rotation — which is the answer almost every time, since
     /// this talks only when the frequency moves.
@@ -477,6 +497,44 @@ mod tests {
         ack(&mut board, now, [0; 4]);
         let next = board.next_request(now, RX_HZ, RX_HZ, 0).expect("straight to the frequency");
         assert_eq!(next[3], REG_TX_FREQ_BYTE4, "no redundant mode write");
+    }
+
+    /// Issue #292: the receive input follows the band, so it has to be movable
+    /// while running — written at once to a board already found, and to one
+    /// still being probed after the reset that would otherwise undo it.
+    #[test]
+    fn the_receive_input_can_be_moved_while_running() {
+        let now = Instant::now();
+        let mut board = IoBoard::new(HpsdrIoRxInput::IoBoard);
+        find(&mut board, now);
+        board.next_request(now, RX_HZ, RX_HZ, 0).expect("the reset");
+        ack(&mut board, now, [0; 4]);
+        board.next_request(now, RX_HZ, RX_HZ, 0).expect("the input mode");
+        ack(&mut board, now, [0; 4]);
+        // The band changes to one kept on the radio's own jack.
+        board.set_rx_input(HpsdrIoRxInput::Radio);
+        let mut wrote = None;
+        for _ in 0..10 {
+            let Some(cc) = board.next_request(now, RX_HZ, RX_HZ, 0) else { break };
+            ack(&mut board, now, [0; 4]);
+            if cc[3] == REG_RF_INPUTS {
+                wrote = Some(cc[4]);
+                break;
+            }
+        }
+        assert_eq!(wrote, Some(0), "the radio's own input is mode 0");
+        // Setting what it already is costs nothing.
+        board.set_rx_input(HpsdrIoRxInput::Radio);
+        assert!(board.queue.iter().all(|op| op.reg != REG_RF_INPUTS));
+
+        // Before the board is found, the choice waits for the start-up writes.
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        board.set_rx_input(HpsdrIoRxInput::IoBoard);
+        find(&mut board, now);
+        board.next_request(now, RX_HZ, RX_HZ, 0).expect("the reset");
+        ack(&mut board, now, [0; 4]);
+        let sel = board.next_request(now, RX_HZ, RX_HZ, 0).expect("the input mode");
+        assert_eq!((sel[3], sel[4]), (REG_RF_INPUTS, 1));
     }
 
     #[test]

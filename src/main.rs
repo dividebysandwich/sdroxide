@@ -1625,13 +1625,19 @@ fn open_hpsdr_source(
 
     let src = hpsdr_source::HpsdrSource::open(ip, &radio.hpsdr, center_hz)
         .context("opening HPSDR device")?;
-    let caps = hpsdr_caps(
+    let mut caps = hpsdr_caps(
         src.board(),
         src.sample_rate_hz(),
         src.protocol(),
         src.has_lna_gain(),
         radio.hpsdr.ddc,
     );
+    if src.io_inputs_offered() {
+        caps.antennas_rx = sdroxide_types::HpsdrIoRxInput::ALL
+            .iter()
+            .map(|i| i.label().to_string())
+            .collect();
+    }
     Ok((Box::new(src), caps))
 }
 

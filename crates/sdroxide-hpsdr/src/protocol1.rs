@@ -674,6 +674,11 @@ pub(crate) fn run(ctx: ThreadCtx) {
                         );
                     }
                 }
+                Ctrl::IoRxInput(input) => {
+                    if let Some(b) = io_board.as_mut() {
+                        b.set_rx_input(input);
+                    }
+                }
                 Ctrl::RxGain(db) => {
                     if has_lna {
                         regs.lna_gain = Some(db);

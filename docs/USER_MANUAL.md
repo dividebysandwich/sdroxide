@@ -6492,7 +6492,9 @@ which turns the onboard amplifier off and leaves transmit at the low-power RF1
 output, which is how an external amplifier or a transverter is driven. And it
 does not choose the receive port: that is remembered **per band** already, so
 selecting the transverter's antenna once on the band leaves it there
-([6.2](#62-radio-choosing-and-configuring-the-rig)).
+([6.2](#62-radio-choosing-and-configuring-the-rig)). On a Hermes-Lite 2 with an
+HL2IOBoard that means its **IO board RX input** — offered on the ANT control
+once the setting is moved off *Radio's own input* ([6.2.3](#623-hpsdr-network-radios)).
 
 **RX range** and **TX range**, below the offset, are where you tell sdroxide
 which frequencies this radio actually covers. They are **in megahertz**, written
@@ -7808,7 +7810,11 @@ going out.
   you have wired the IO board's own SMA jacks: J9 can replace the radio's receive
   input, and J10 is a PureSignal (transmit sample) input. Selecting **IO board
   J9** with nothing connected to it leaves the receiver deaf. Takes effect on
-  *Apply / reconnect*.
+  *Apply / reconnect*. Once it is set to one of the J9 choices, the three inputs
+  also appear on the receiver's **ANT** control and are remembered **per band**
+  like any other receiving antenna — so a transverter band can listen on J9
+  while HF stays on the radio's own jack. Left at *Radio's own input*, no ANT
+  control is shown, because an HL2 that has never used J9 has nothing there.
 
 > **Help wanted — the HPSDR backend is not fully tested yet.** 
 > If you own an HPSDR board, you can help by running with diagnostic logging 

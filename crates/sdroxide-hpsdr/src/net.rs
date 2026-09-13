@@ -401,6 +401,10 @@ pub(crate) enum Ctrl {
     BandDial(Option<f64>),
     /// Front-end LNA gain in dB (Hermes-Lite 2 only; ignored elsewhere).
     RxGain(f64),
+    /// Where an HL2IOBoard takes its receive signal from — its `REG_RF_INPUTS`
+    /// — changed while running, because the antenna memory keeps it per band
+    /// (issue #292). Protocol 1 only; there is no accessory bus on Protocol 2.
+    IoRxInput(HpsdrIoRxInput),
     /// Where the radio *would* transmit, sent while receiving so an accessory
     /// board can switch bands before the operator keys. Loads the TX NCO
     /// register too, which is harmless: it does nothing until MOX.
@@ -1057,6 +1061,14 @@ impl HpsdrRx {
     pub fn set_band_dial(&self, hz: Option<f64>) {
         if self.ddc == 0 {
             let _ = self.dev.ctrl.send(Ctrl::BandDial(hz));
+        }
+    }
+
+    /// Move the HL2IOBoard's receive input. Only DDC 0 — the accessory board
+    /// is the *board's*, not a stream's.
+    pub fn set_io_rx_input(&self, input: HpsdrIoRxInput) {
+        if self.ddc == 0 {
+            let _ = self.dev.ctrl.send(Ctrl::IoRxInput(input));
         }
     }
 
