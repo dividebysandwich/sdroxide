@@ -161,6 +161,21 @@ impl Regs {
         self.oc.word(freq, self.ptt)
     }
 
+    /// The transmit and receive frequencies an accessory board is told: the
+    /// ones on the air. With a transverter in front the NCOs are on the I.F.,
+    /// and a board steering an amplifier or a band's antenna from them would
+    /// switch for 28 MHz while the dial says 144 (issue #292). The transmit
+    /// side keeps its split from the receiver: the transverter shifts both.
+    fn io_board_freqs(&self) -> (u64, u64) {
+        match self.band_dial {
+            Some(dial) => {
+                let tx = f64::from(self.tx_freq) + (dial - f64::from(self.rx_freq));
+                (tx.max(0.0).round() as u64, dial.max(0.0).round() as u64)
+            }
+            None => (u64::from(self.tx_freq), u64::from(self.rx_freq)),
+        }
+    }
+
     /// C2 of the drive register (`0x09`). On a Hermes-Lite it carries the PA
     /// and T/R-relay bits; on anything else it stays zero — those bits are
     /// Apollo tuner/filter commands there, and asserting them would operate
@@ -917,9 +932,10 @@ pub(crate) fn run(ctx: ThreadCtx) {
             // something to say, which is only when the transmit frequency
             // moves; the register rotation keeps the slot the rest of the time
             // and never loses its turn (`rot.take` is not reached here).
+            let (io_tx, io_rx) = regs.io_board_freqs();
             let cc = io_board
                 .as_mut()
-                .and_then(|b| b.next_request(now, regs.tx_freq, regs.rx_freq, mox))
+                .and_then(|b| b.next_request(now, io_tx, io_rx, mox))
                 .unwrap_or_else(|| regs.cc(rot.take(&regs)));
             let d = build_ep2(&mut out_seq, speed, mox, regs.oc(), cc, &tx_scratch);
             let _ = socket.send_to(&d, dest);
@@ -1088,6 +1104,28 @@ mod tests {
         // Putting it back is the radio on its own bands again.
         regs.band_dial = None;
         assert_eq!(regs.oc(), alex_oc(128_700_000.0));
+    }
+
+    /// Issue #292: the HL2 I/O board is told the frequencies on the air too. A
+    /// 2 m transverter on a 28 MHz I.F. with the transmitter 2 kHz split from
+    /// the receiver has the board hear 144.174 / 144.176 MHz, not the I.F. —
+    /// and a 3 cm dial, which does not fit in 32 bits, arrives whole.
+    #[test]
+    fn the_io_board_is_told_the_dial_not_the_if() {
+        let mut regs = Regs {
+            rx_freq: 28_174_000,
+            tx_freq: 28_176_000,
+            band_dial: None,
+            lna_gain: None,
+            pa: None,
+            oc: HpsdrOcPlan::preset(HpsdrFilterBoard::Alex),
+            ptt: false,
+        };
+        assert_eq!(regs.io_board_freqs(), (28_176_000, 28_174_000), "no transverter: the NCOs");
+        regs.band_dial = Some(144_174_000.0);
+        assert_eq!(regs.io_board_freqs(), (144_176_000, 144_174_000));
+        regs.band_dial = Some(10_368_174_000.0);
+        assert_eq!(regs.io_board_freqs(), (10_368_176_000, 10_368_174_000));
     }
 
     #[test]
