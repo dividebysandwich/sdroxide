@@ -464,7 +464,10 @@ mod tests {
         feed(&mut t, position(3_160_021, 42.9, -79.6), 1_000);
         feed(&mut t, position(316_001_234, 42.5, -79.9), 1_000);
         assert_eq!(t.len(), 2);
-        assert_eq!(t.snapshot()[0].kind, AisKind::BaseStation);
+        // `snapshot` is in map order, so find the coast station by number.
+        let shore =
+            t.snapshot().into_iter().find(|v| v.mmsi == 3_160_021).expect("the coast station");
+        assert_eq!(shore.kind, AisKind::BaseStation);
     }
 
     /// A message that says nothing about a field must not erase what an earlier
