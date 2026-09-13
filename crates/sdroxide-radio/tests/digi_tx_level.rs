@@ -189,6 +189,22 @@ fn a_digital_over_reaches_the_rig_at_the_level_a_tune_does() {
     );
 }
 
+/// Issue #419: TUNE in a data mode is how an operator sets the transmit-audio
+/// level against the rig's ALC, so the tune tone follows that mode's level. It
+/// used to go out at full scale whatever the slider said, and the slider only
+/// did anything once a real over started.
+///
+/// `Ft4` is used because nothing else in this file writes its level.
+#[test]
+fn a_tune_in_a_data_mode_goes_out_at_that_modes_level() {
+    let tune = peak_of(vec![
+        Command::SetDigiTxLevel { mode: Mode::Ft4, level: 0.3 },
+        Command::SetMode { rx: RxId::Main, mode: Mode::Ft4 },
+        Command::SetTune(true),
+    ]);
+    assert!((tune - 0.3).abs() < 0.03, "a tune in FT4 at a 0.3 level reached the rig at {tune}");
+}
+
 /// RTTY is audio on a sideband, so it takes the sideband level and never the FM
 /// one.
 ///

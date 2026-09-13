@@ -15683,8 +15683,19 @@ impl Engine {
             // attenuating here as well would scale the carrier twice. Elsewhere
             // (a CAT rig's sound card) the tone amplitude is the only tune-level
             // control there is.
+            //
+            // ...except for the operator's transmit-audio level in a mode that
+            // has one. That level is where the waveform sits against the rig's
+            // ALC, and TUNE is how an operator sets it: a tone that ignored the
+            // slider left ALC wherever full scale put it, and the slider only
+            // came alive on the first real over (issue #419).
             let amp = if self.source.commands_tx_power() {
-                1.0
+                let mode = self.state.rx[0].mode;
+                if mode.takes_digi_tx_audio() && (mode != Mode::Cw || self.caps.cw_audio_keyed) {
+                    self.digi_tx_audio_level()
+                } else {
+                    1.0
+                }
             } else {
                 self.state.tx.tune_drive.clamp(0.05, 1.0)
             };
