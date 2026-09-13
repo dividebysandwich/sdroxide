@@ -2400,6 +2400,19 @@ impl SdroxideApp {
         self.rx_gains().first().cloned()
     }
 
+    /// Whether `element` is a PlutoSDR's receive gain while the AD9361's own
+    /// AGC runs — when the part ignores the register, so a slider on it would
+    /// move nothing. Read from the AGC mode the source publishes beside the
+    /// gain.
+    fn pluto_agc_owns_gain(&self, element: &str) -> bool {
+        self.caps.as_ref().is_some_and(|c| c.driver == "pluto")
+            && element == sdroxide_types::PlutoConfig::RF_GAIN_ELEMENT
+            && self.state.gains.iter().any(|(n, v)| {
+                n == sdroxide_types::PlutoConfig::AGC_ELEMENT
+                    && sdroxide_types::PlutoAgc::from_code(*v) != sdroxide_types::PlutoAgc::Manual
+            })
+    }
+
     /// Whether the SQL rail drives the *radio's* squelch rather than the
     /// engine's own gate — true on a transceiver that hands us audio it has
     /// already squelched, which is the only front end where the software gate
@@ -2531,6 +2544,18 @@ impl SdroxideApp {
                     .map(|(_, d)| *d)
                     .unwrap_or(g.min_db);
                 let step = if g.step_db > 0.0 { g.step_db } else { 1.0 };
+                // A PlutoSDR in one of its attack modes owns its own gain
+                // register: the AD9361 ignores a gain written while its AGC
+                // runs, so the rail is drawn inert and says why rather than
+                // looking broken (issue #417).
+                let hardware_agc = self.pluto_agc_owns_gain(&g.name);
+                if hardware_agc {
+                    hint.push_str(
+                        "\n\nThe PlutoSDR's own AGC is setting this gain, so moving the \
+                         slider does nothing. Set Settings → Radio → AGC to Manual to \
+                         control it here.",
+                    );
+                }
                 // Narrower rail than Vol: this one carries a dB readout,
                 // and the module has to stay inside one wrapped row. In
                 // a menu the column is the constraint instead, and
@@ -2540,18 +2565,23 @@ impl SdroxideApp {
                         if !narrow {
                             ui.spacing_mut().slider_width = RX_DB_RAIL_W;
                         }
-                        crate::chrome::slider(
-                            ui,
-                            Slider::new(&mut db, g.min_db..=g.max_db)
-                                .step_by(step)
-                                // Whatever this element is actually counted in.
-                                // Labelling a step index "dB" reported a number
-                                // three times too small, in a unit it was not.
-                                .suffix(g.suffix()),
-                        )
+                        ui.add_enabled_ui(!hardware_agc, |ui| {
+                            crate::chrome::slider(
+                                ui,
+                                Slider::new(&mut db, g.min_db..=g.max_db)
+                                    .step_by(step)
+                                    // Whatever this element is actually counted
+                                    // in. Labelling a step index "dB" reported a
+                                    // number three times too small, in a unit it
+                                    // was not.
+                                    .suffix(g.suffix()),
+                            )
+                        })
+                        .inner
                     })
                     .inner
-                    .on_hover_text(&hint);
+                    .on_hover_text(&hint)
+                    .on_disabled_hover_text(&hint);
                 if resp.changed() {
                     // Optimistic echo so the knob tracks the drag instead
                     // of snapping back until the engine answers.
