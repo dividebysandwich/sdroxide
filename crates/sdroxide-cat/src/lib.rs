@@ -640,6 +640,9 @@ struct Civ {
     /// from our own writes. `None` on a radio whose reply was the socket
     /// alone — which is how it says it has no such connector.
     rx_ant: Option<bool>,
+    /// Whether the power-output meter is read during an over — see
+    /// [`Civ::without_po_meter`].
+    po_meter: bool,
 }
 
 /// How long after a broadcast a disagreeing polled answer is put down to the
@@ -668,7 +671,18 @@ impl Civ {
             sockets,
             socket: None,
             rx_ant: None,
+            po_meter: true,
         }
+    }
+
+    /// Leave the power-output meter unread. A Xiegu G90 answers `15 11` with
+    /// a figure that is not Icom's 0–255 BCD scale — `02 5F` at 75 % drive,
+    /// which is not BCD at all, and `02 41` at 10 %, which the Icom table reads
+    /// as full power (issue #430). A bar that is wrong in both directions is
+    /// worse than none; SWR and ALC still show.
+    fn without_po_meter(mut self) -> Civ {
+        self.po_meter = false;
+        self
     }
 
     /// Stream the rig's scope this session, sweeping `half_span` either side of
@@ -720,11 +734,11 @@ impl Protocol for Civ {
     fn tx_telemetry_requests(&self) -> Vec<Vec<u8>> {
         // Three reads per telemetry tick. All are answered on the same command
         // and are told apart by their sub-command byte on the way back in.
-        vec![
-            civ::read_swr_frame(self.radio),
-            civ::read_alc_frame(self.radio),
-            civ::read_po_frame(self.radio),
-        ]
+        let mut reads = vec![civ::read_swr_frame(self.radio), civ::read_alc_frame(self.radio)];
+        if self.po_meter {
+            reads.push(civ::read_po_frame(self.radio));
+        }
+        reads
     }
     fn tx_state_requests(&self) -> Vec<Vec<u8>> {
         vec![civ::read_ptt_frame(self.radio)]
@@ -1115,7 +1129,7 @@ fn make_protocol(cfg: &CatConfig) -> Box<dyn Protocol> {
         // A Xiegu is not in the Icom model table, so it takes the two sockets
         // every radio with a selector has at least — which changes nothing,
         // since it NAKs the read.
-        CatFamily::Xiegu => Box::new(Civ::new(cfg.icom_radio_id, None, 2)),
+        CatFamily::Xiegu => Box::new(Civ::new(cfg.icom_radio_id, None, 2).without_po_meter()),
         CatFamily::Icom => {
             let civ = Civ::new(
                 cfg.icom_radio_id,
@@ -3371,6 +3385,19 @@ mod tests {
         // needless frame in front of the next key-down is exactly what the
         // rate limiting elsewhere in this file exists to avoid.
         assert_eq!(dial_to_restore(false, Some(14_050_000.0), Some(14_050_600.0)), None);
+    }
+
+    /// Issue #430: a Xiegu's `15 11` is not Icom's PO scale, so it is not
+    /// asked for; an Icom still reads all three meters.
+    #[test]
+    fn a_xiegu_is_not_asked_for_the_power_meter() {
+        let family = |f| make_protocol(&CatConfig { family: f, ..CatConfig::default() });
+        let asks_po = |f| {
+            family(f).tx_telemetry_requests().iter().any(|r| r.get(4..6) == Some(&[0x15, 0x11]))
+        };
+        assert!(!asks_po(CatFamily::Xiegu));
+        assert!(asks_po(CatFamily::Icom));
+        assert_eq!(family(CatFamily::Xiegu).tx_telemetry_requests().len(), 2, "SWR and ALC stay");
     }
 
     /// Only the family whose radios document the behaviour asks for it.
