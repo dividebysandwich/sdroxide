@@ -87,6 +87,15 @@ fn run(
     let mut spots: Vec<Spot> = Vec::new();
     let connected_at = Instant::now();
     let _ = events.send(NetEvent::Status(Some(format!("Cluster: connected to {addr}"))));
+    // A node sends nothing until it has a callsign, and with none to give it
+    // the connection sits at the login prompt looking healthy. Say so where
+    // the operator is looking for spots (issue #410).
+    if login.trim().is_empty() {
+        let _ = events.send(NetEvent::Status(Some(format!(
+            "Cluster: connected to {addr}, but no callsign to log in with — set your callsign, \
+             or a cluster login, and the node will start sending spots"
+        ))));
+    }
 
     loop {
         if matches!(ctrl.try_recv(), Ok(Ctrl::Shutdown)) {
