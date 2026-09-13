@@ -94,6 +94,10 @@ struct Ran {
 }
 
 fn run(external_audio: bool) -> Ran {
+    run_calibrated(external_audio, 0.0)
+}
+
+fn run_calibrated(external_audio: bool, cal_offset_db: f32) -> Ran {
     let (producer, mut consumer) = rtrb::RingBuffer::<f32>::new(48_000 * 4);
     let src = PairedSource { center: CENTER, external_audio };
     let mut h = start_engine(
@@ -101,6 +105,7 @@ fn run(external_audio: bool) -> Ran {
         caps(external_audio),
         EngineConfig {
             audio: Some(AudioParams { producer, out_rate: AUDIO_RATE }),
+            cal_offset_db,
             ..Default::default()
         },
     );
@@ -166,6 +171,21 @@ fn the_meter_reads_the_audio_that_is_heard() {
     assert!(
         (s_dbm - want).abs() < 1.0,
         "expected about {want:.1} dBm from the rig's audio, got {s_dbm:.1}"
+    );
+}
+
+/// Issue #427: the S-meter calibration belongs to the attached receiver's own
+/// front end. The transceiver's audio is a different quantity on a different
+/// scale, so a non-zero calibration must not move the meter while it is what
+/// is being heard.
+#[test]
+fn the_receivers_calibration_does_not_land_on_the_transceivers_audio() {
+    let s_dbm = run_calibrated(true, 30.0).s_dbm.expect("a pairing must still publish an S-meter");
+    let want = 20.0 * RIG_AUDIO.log10();
+    assert!(
+        (s_dbm - want).abs() < 1.0,
+        "a 30 dB receiver calibration moved the transceiver-audio meter: expected about \
+         {want:.1}, got {s_dbm:.1}"
     );
 }
 

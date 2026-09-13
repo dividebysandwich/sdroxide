@@ -12386,8 +12386,14 @@ impl Engine {
         // and a meter reading a signal nobody is listening to is worse than no
         // meter. The audio actually being heard is the only honest measurement
         // left once the rig has declined to report its own.
+        //
+        // Without `cal_offset_db`: that offset is the *attached receiver's*
+        // dBFS→dBm figure, set against its own front end, and the transceiver's
+        // audio is an AGC'd level on a different scale altogether. Adding it
+        // moved the meter by the whole calibration the moment the audio source
+        // switched (issue #427).
         if self.caps.rx_audio_external {
-            return Some(self.audio_level_dbfs() + self.cal_offset_db);
+            return Some(self.audio_level_dbfs());
         }
         if let Some(p) = self.main.as_ref().and_then(|c| c.power_dbfs()) {
             let gain = self.source.rx_gain_db().unwrap_or(0.0);
