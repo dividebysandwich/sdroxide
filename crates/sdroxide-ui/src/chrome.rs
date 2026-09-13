@@ -661,6 +661,22 @@ pub fn slider(ui: &mut Ui, slider: egui::Slider<'_>) -> Response {
     .inner
 }
 
+/// [`slider`] whose value readout never measures narrower than `readout_w`.
+///
+/// egui sizes the readout to its text, so a value that gains a digit or a
+/// minus sign mid-drag widens it and pushes the rail sideways under the
+/// pointer — which moves the value back, which narrows it again: the setting
+/// oscillates between two numbers for as long as the pointer is held there
+/// (issue #429). Pinned to the widest the readout gets, the rail stays put.
+pub fn slider_readout(ui: &mut Ui, readout_w: f32, slider: egui::Slider<'_>) -> Response {
+    ui.scope(|ui| {
+        let size = &mut ui.spacing_mut().interact_size;
+        size.x = size.x.max(readout_w);
+        self::slider(ui, slider)
+    })
+    .inner
+}
+
 /// [`slider`] that may be greyed out — `ui.add_enabled`, with a skin.
 pub fn slider_enabled(ui: &mut Ui, enabled: bool, slider: egui::Slider<'_>) -> Response {
     ui.add_enabled_ui(enabled, |ui| self::slider(ui, slider)).inner
