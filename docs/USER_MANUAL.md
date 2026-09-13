@@ -14057,8 +14057,8 @@ or VFO REV, where it answers `?;` and does nothing; on any rig, that
 the radio is actually in CW (**Mode control** = `CAT`) and that the **Drive**
 slider — which *is* the rig's output power on a CAT rig, in CW as in every other
 mode — is not down at the bottom. On a radio whose keyer sdroxide cannot drive
-at all — a Xiegu G90 keys up with no power out, and rigctld and the ELAD have
-no text keying — choose **Sound card (MCW)** instead: the keyed tone goes out
+at all — a Xiegu G90 keys up with no power out, and the ELAD has no text
+keying — choose **Sound card (MCW)** instead: the keyed tone goes out
 as audio and the rig is kept on the **Digimode mode** sideband rather than
 switched to CW (on the G90, `Radio controlled` with the rig parked in U-D, as
 for FT8).
