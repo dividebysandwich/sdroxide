@@ -91,11 +91,35 @@ impl Outbox {
         None
     }
 
-    /// The handshake finished: everything that was waiting, in order.
+    /// The handshake finished: everything that was waiting, in order — except
+    /// anything that moves the dial.
+    ///
+    /// A tune queued before the handshake was worked out from the state this
+    /// client had *before it had heard from the station*: a first connection's
+    /// defaults, or whatever it last saw. Sent now, it overrode what the
+    /// station's other operators were listening to — a phone's first connect
+    /// put a Pluto somebody was using on 127.550 MHz onto 14.200 MHz, outside
+    /// the board's range, and broke the session for both (issue #405). The
+    /// station's state arrives with the `HelloAck` that opens this gate, and
+    /// that is what the dial should start from.
     fn release(&mut self) -> Vec<ClientMsg> {
         self.opened = true;
-        self.queued.drain(..).collect()
+        self.queued.drain(..).filter(|m| !moves_the_dial(m)).collect()
     }
+}
+
+/// Whether a message tunes the station — see [`Outbox::release`].
+fn moves_the_dial(msg: &ClientMsg) -> bool {
+    matches!(
+        msg,
+        ClientMsg::Command(
+            Command::SetVfo { .. }
+                | Command::SetCenter(_)
+                | Command::SetBand(_)
+                | Command::TuneInSpan { .. }
+                | Command::TuneWidebandTo(_)
+        )
+    )
 }
 
 pub struct RemoteController {
@@ -265,6 +289,10 @@ impl RemoteController {
                 // Whatever the server wanted, it has it: the handshake is over
                 // and everything the UI produced while it ran can go out now.
                 self.auth = AuthPhase::Open;
+                // A centre still waiting on its coalescing window was worked out
+                // before the station's state arrived, like the tunes the gate
+                // drops below.
+                self.center_pending = None;
                 let queued = self.outbox.release();
                 for msg in queued {
                     self.write(&msg);
@@ -837,8 +865,7 @@ mod tests {
     #[test]
     fn queued_commands_keep_their_order_and_then_pass_through() {
         let mut ob = Outbox::default();
-        for cmd in [Command::SetPtt(true), Command::SetPtt(false), Command::SetCenter(14_074_000.0)]
-        {
+        for cmd in [Command::SetPtt(true), Command::SetPtt(false), Command::SetTune(true)] {
             assert!(ob.send(ClientMsg::Command(cmd)).is_none());
         }
         assert_eq!(
@@ -846,12 +873,31 @@ mod tests {
             [
                 ClientMsg::Command(Command::SetPtt(true)),
                 ClientMsg::Command(Command::SetPtt(false)),
-                ClientMsg::Command(Command::SetCenter(14_074_000.0)),
+                ClientMsg::Command(Command::SetTune(true)),
             ]
         );
         // After the handshake the gate is transparent.
         let passed = ob.send(ClientMsg::Ping(7));
         assert_eq!(passed, Some(ClientMsg::Ping(7)));
+    }
+
+    /// Issue #405: a tune the UI produced before it had the station's state is
+    /// not sent — the dial starts from what the station says, not from this
+    /// client's defaults. Everything else queued still goes, in order.
+    #[test]
+    fn a_tune_queued_before_the_handshake_is_not_sent() {
+        let mut ob = Outbox::default();
+        for cmd in [
+            Command::SetVfo { vfo: sdroxide_types::Vfo::A, hz: 14_200_000.0 },
+            Command::SetPtt(false),
+            Command::SetCenter(14_200_000.0),
+        ] {
+            assert!(ob.send(ClientMsg::Command(cmd)).is_none());
+        }
+        assert_eq!(ob.release(), [ClientMsg::Command(Command::SetPtt(false))]);
+        // Once open, a tune is the operator's and goes straight out.
+        let tune = ClientMsg::Command(Command::SetCenter(127_550_000.0));
+        assert_eq!(ob.send(tune.clone()), Some(tune));
     }
 
     /// A socket that never opens — or a sign-in nobody ever completes — must

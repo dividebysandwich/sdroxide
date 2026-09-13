@@ -1093,6 +1093,28 @@ impl MultiApp {
         i
     }
 
+    /// Hand the station radio's network spots to this machine's other radios.
+    /// See [`SdroxideApp::adopt_spot_feed`]. A connection to another station
+    /// keeps its own: that station's radio runs its own feeds.
+    fn share_spot_feed(&mut self) {
+        let Some(station) = self.station_radio else { return };
+        let Some(src) = self.tabs.iter().position(|t| t.id == station) else { return };
+        let generation = self.tabs[src].app.spot_feed().0;
+        let behind = |i: usize, t: &Tab| i != src && !t.remote && t.app.wants_spot_feed(generation);
+        if !self.tabs.iter().enumerate().any(|(i, t)| behind(i, t)) {
+            return;
+        }
+        let (spots, status) = {
+            let (_, spots, status) = self.tabs[src].app.spot_feed();
+            (spots.to_vec(), status.map(str::to_string))
+        };
+        for (i, tab) in self.tabs.iter_mut().enumerate() {
+            if behind(i, tab) {
+                tab.app.adopt_spot_feed(generation, &spots, status.as_deref());
+            }
+        }
+    }
+
     fn close_tab(&mut self, i: usize, ctx: &egui::Context) {
         if i >= self.tabs.len() || self.tabs.len() == 1 {
             return;
@@ -1219,6 +1241,7 @@ impl eframe::App for MultiApp {
                 }
             }
         }
+        self.share_spot_feed();
         // A link that has dropped is redialled here rather than on the error
         // screen, for the same reason: the screen belongs to one tab, and a
         // station's other radios have nobody looking at them to press anything.

@@ -365,6 +365,10 @@ struct BlockSync {
     corrected: u8,
     bad_run: u32,
     good_run: u32,
+    /// This lock has once run [`CONFIRM_BLOCKS`] good blocks in a row. Unlike
+    /// [`BlockSync::synced`] it survives an isolated bad block, and is only
+    /// cleared when sync is abandoned.
+    confirmed: bool,
 }
 
 impl BlockSync {
@@ -380,6 +384,7 @@ impl BlockSync {
             corrected: 0,
             bad_run: 0,
             good_run: 0,
+            confirmed: false,
         }
     }
 
@@ -391,8 +396,9 @@ impl BlockSync {
         self.state == SyncState::Locked && self.good_run >= CONFIRM_BLOCKS
     }
 
-    /// Shift in one bit; call `emit` with each completed group.
-    fn push(&mut self, bit: u8, emit: &mut impl FnMut([u16; 4], u8, u8)) {
+    /// Shift in one bit; call `emit` with each completed group and whether this
+    /// lock has been confirmed (see [`BlockSync::confirmed`]).
+    fn push(&mut self, bit: u8, emit: &mut impl FnMut([u16; 4], u8, u8, bool)) {
         self.reg = ((self.reg << 1) | bit as u32) & 0x3ff_ffff;
         self.filled = self.filled.saturating_add(1);
         if self.filled < 26 {
@@ -416,6 +422,7 @@ impl BlockSync {
                 self.valid = 1 << pos;
                 self.good_run = 1;
                 self.bad_run = 0;
+                self.confirmed = false;
                 self.finish_block(pos, emit);
             }
             SyncState::Locked => {
@@ -433,6 +440,9 @@ impl BlockSync {
                         }
                         self.good_run = self.good_run.saturating_add(1);
                         self.bad_run = 0;
+                        if self.good_run >= CONFIRM_BLOCKS {
+                            self.confirmed = true;
+                        }
                     }
                     None => {
                         // Keep the raw information bits so the diagnostics view
@@ -453,10 +463,10 @@ impl BlockSync {
     }
 
     /// Advance past the block just decided, emitting the group when D is done.
-    fn finish_block(&mut self, pos: usize, emit: &mut impl FnMut([u16; 4], u8, u8)) {
+    fn finish_block(&mut self, pos: usize, emit: &mut impl FnMut([u16; 4], u8, u8, bool)) {
         self.countdown = 26;
         if pos == 3 {
-            emit(self.group, self.valid, self.corrected);
+            emit(self.group, self.valid, self.corrected, self.confirmed);
             self.group = [0; 4];
             self.valid = 0;
             self.corrected = 0;
@@ -1035,7 +1045,7 @@ impl RdsRx {
         let (blocks, asm, pending) = (&mut self.blocks, &mut self.asm, &mut self.pending);
         let emitted = &mut self.emitted;
         for &bit in &self.bits {
-            blocks.push(bit, &mut |group, valid, corrected| {
+            blocks.push(bit, &mut |group, valid, corrected, confirmed| {
                 let stats = &mut asm.data.stats;
                 stats.groups += 1;
                 stats.blocks_ok += (valid & !corrected).count_ones() as u64;
@@ -1046,7 +1056,15 @@ impl RdsRx {
                     let idx = ((b >> 12) << 1) | ((b >> 11) & 1);
                     stats.group_types[idx as usize] += 1;
                 }
-                asm.group(group, valid);
+                // Only a confirmed lock feeds the station picture. A lone offset
+                // word matches by chance about once in 200 bit positions, and
+                // the groups collected on such a lock are programme material —
+                // two identical ones were enough to invent a station identity
+                // on a stereo broadcast with no data subcarrier at all. The
+                // diagnostics log below still gets every group.
+                if confirmed {
+                    asm.group(group, valid);
+                }
 
                 *emitted += 1;
                 if pending.len() >= MAX_PENDING_GROUPS {

@@ -11,23 +11,34 @@
 //!
 //! # The two bit orders, which is the thing to get right
 //!
-//! AIS uses HDLC's framing and departs from its bit order, and the two halves
-//! of this module are where that shows:
+//! Everything on the line is HDLC's order: each octet goes out **least
+//! significant bit first**, the data field exactly as the check sequence
+//! behind it. What is AIS's own is how a field is read *out of* those octets:
+//! ITU-R M.1371 states its field tables **most significant bit first** across
+//! the octets in order, so the first six bits of a message are its type as a
+//! number — but only once each octet has been put back the right way round.
 //!
-//! * The **check sequence** is HDLC's, computed over octets assembled
-//!   **least significant bit first** from the received stream — the same
-//!   CRC-16/X.25 an AX.25 frame carries, which is why
-//!   [`sdroxide_ax25::fcs`] is what checks it rather than a second copy of the
-//!   table.
-//! * The **data field** is read **most significant bit first** straight off the
-//!   received stream, because ITU-R M.1371 states its field tables that way:
-//!   the first six bits on the air are the message type, as a number.
+//! * The **check sequence** is HDLC's CRC-16/X.25 over the octets assembled
+//!   least significant bit first from the received stream — the same one an
+//!   AX.25 frame carries, which is why [`sdroxide_ax25::fcs`] is what checks
+//!   it rather than a second copy of the table.
+//! * The **data field** is those same octets, handed on spread out most
+//!   significant bit first — the order [`crate::message`] reads.
 //!
-//! Getting either backwards produces a decoder that finds frames and reports
-//! nonsense, or one that reads sensible-looking fields and rejects every frame
-//! — so this module hands out the *bits*, in reception order, and lets
-//! [`crate::message`] do the second reading. Nothing here packs a payload
-//! octet, and nothing in `message` computes a checksum.
+//! Reading the data field straight off the received stream instead is the
+//! mistake this module used to make (issues #345, #400, #408), and it is worth
+//! knowing what it looks like because every frame still passes its check:
+//! a Class A position report, type 1 = `000001`, arrives as `xx1000…` and reads
+//! as type 8, 9, 10 or 11 — no position at all — while a Class B report reads
+//! as a base station at a position made of other fields' bits. An empty chart
+//! and ships scattered over the world are the same bug. The reference is
+//! rtl-ais (`protodec.c`: pack LSB-first, check, unpack MSB-first) and the
+//! pinned test is a sentence from gpsd's AIVDM documentation, decoded by
+//! `gpsdecode`, turned back into the bits a transponder would key.
+//!
+//! This module hands out the data field as *bits* in the message's order and
+//! lets [`crate::message`] do the field reading. Nothing in `message` computes
+//! a checksum.
 //!
 //! # NRZI, and why the receiver's polarity does not matter
 //!
@@ -76,8 +87,9 @@ pub enum Reject {
 /// Flag hunting, de-stuffing and NRZI decode over one burst.
 ///
 /// Fed line levels as the slicer produces them, yields the **data field** of
-/// every frame whose check sequence verifies, as bits in reception order with
-/// the check sequence already stripped.
+/// every frame whose check sequence verifies, as bits in the message's own
+/// order — each octet most significant bit first — with the check sequence
+/// already stripped.
 #[derive(Debug, Default)]
 pub struct Deframer {
     /// The previous line level, for the transition decode.
@@ -188,19 +200,23 @@ impl Deframer {
             self.rejects.push(Reject::Length);
             return;
         }
-        if !sdroxide_ax25::fcs::check(&octets_lsb_first(&bits)) {
+        let mut octets = octets_lsb_first(&bits);
+        if !sdroxide_ax25::fcs::check(&octets) {
             self.rejects.push(Reject::BadFcs);
             return;
         }
-        bits.truncate(bits.len() - 16);
+        octets.truncate(octets.len() - 2);
+        bits.clear();
+        bits.extend(bits_msb_first(&octets));
         out.push(bits);
     }
 }
 
 /// Pack a bit stream into octets, least significant bit first — the order
-/// HDLC's check sequence is computed over.
+/// every octet is on the line in, and so the order HDLC's check sequence is
+/// computed over.
 ///
-/// Not the order the data field is read in; see the module note.
+/// Not the order the data field's *fields* are read in; see the module note.
 pub fn octets_lsb_first(bits: &[bool]) -> Vec<u8> {
     bits.chunks(8)
         .map(|c| c.iter().enumerate().fold(0u8, |b, (i, &v)| if v { b | 1 << i } else { b }))
@@ -213,12 +229,28 @@ pub fn bits_lsb_first(octets: &[u8]) -> Vec<bool> {
     octets.iter().flat_map(|&b| (0..8).map(move |i| b >> i & 1 != 0)).collect()
 }
 
+/// Pack a message's bits into octets, most significant bit first — the order
+/// [`crate::message`] reads fields in. A last partial octet is padded with
+/// zeros at its low end, which is where a transmitter's fill bits go.
+pub fn octets_msb_first(bits: &[bool]) -> Vec<u8> {
+    bits.chunks(8)
+        .map(|c| c.iter().enumerate().fold(0u8, |b, (i, &v)| if v { b | 0x80 >> i } else { b }))
+        .collect()
+}
+
+/// Spread octets into a message's bits, most significant bit first. The
+/// inverse of [`octets_msb_first`].
+pub fn bits_msb_first(octets: &[u8]) -> Vec<bool> {
+    octets.iter().flat_map(|&b| (0..8).map(move |i| b >> (7 - i) & 1 != 0)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// Build the bit stream a transmitter would put on the line: flags, a
-    /// stuffed body, and NRZI over the lot.
+    /// stuffed body, and NRZI over the lot. `data_bits` are in the message's
+    /// order; each octet goes on the line least significant bit first.
     fn framed(data_bits: &[bool]) -> Vec<bool> {
         let mut bits = Vec::new();
         let push_flag = |bits: &mut Vec<bool>| {
@@ -226,9 +258,11 @@ mod tests {
                 bits.push(FLAG >> i & 1 != 0);
             }
         };
-        // A body is the data field plus the check sequence over it.
-        let mut body = data_bits.to_vec();
-        let fcs = sdroxide_ax25::fcs::fcs(&octets_lsb_first(&body));
+        // A body is the data field plus the check sequence over it, both as
+        // octets sent least significant bit first.
+        let octets = octets_msb_first(data_bits);
+        let mut body = bits_lsb_first(&octets);
+        let fcs = sdroxide_ax25::fcs::fcs(&octets);
         body.extend(bits_lsb_first(&fcs));
 
         push_flag(&mut bits);
@@ -349,5 +383,47 @@ mod tests {
         // ...and it really is least-significant-bit-first: a lone 1 bit at the
         // head of the stream is bit 0 of the first octet.
         assert_eq!(octets_lsb_first(&[true, false, false, false, false, false, false, false]), [1]);
+        // The message packing is the other way round: a lone 1 bit at the head
+        // of a message is the top bit of its first octet.
+        assert_eq!(octets_msb_first(&bits_msb_first(&bytes)), bytes);
+        assert_eq!(octets_msb_first(&[true]), [0x80]);
+    }
+
+    /// A real position report, from outside sdroxide, survives the air.
+    ///
+    /// The sentence is the worked example in gpsd's AIVDM documentation, and
+    /// the expected fields are what `gpsdecode` makes of it — not what this
+    /// crate does. It is keyed the way a transponder keys it: octets packed from
+    /// the message most significant bit first, each sent least significant bit
+    /// first (rtl-ais `protodec.c` unpacks exactly that). The first octet of a
+    /// type 1 report with repeat 0 is `0b0000_0100`, so the first eight data
+    /// bits on the line are `0010_0000` — pinned as a literal, so the two ends
+    /// cannot drift back into agreeing with each other again (issue #345).
+    #[test]
+    fn a_published_position_report_decodes_to_what_gpsd_reads() {
+        let msg = crate::sixbit::unarmour("177KQJ5000G?tO`K>RA1wUbN0TKH", 0).expect("armoured");
+        assert_eq!(msg.len(), 168);
+
+        let line = framed(&msg);
+        // Undo the NRZI and the opening flag to look at the first data octet as
+        // it went out: after the flag, the next eight bits.
+        let bits: Vec<bool> = line.windows(2).map(|w| w[0] == w[1]).collect();
+        assert_eq!(&bits[8..16], &[false, false, true, false, false, false, false, false]);
+
+        let mut rx = Deframer::new();
+        let mut out = Vec::new();
+        for lvl in line {
+            rx.push_level(lvl, &mut out);
+        }
+        assert_eq!(out.len(), 1, "rejects: {:?}", rx.rejects);
+        let m = crate::message::parse(&out[0]).expect("a message");
+        assert_eq!(m.kind, 1);
+        assert_eq!(m.mmsi, 477_553_000);
+        let f = m.fix.expect("a position");
+        assert_eq!(f.nav_status, Some(5), "moored");
+        assert!((f.lat.expect("lat") - 47.582_833_3).abs() < 1e-6, "{:?}", f.lat);
+        assert!((f.lon.expect("lon") + 122.345_833_3).abs() < 1e-6, "{:?}", f.lon);
+        assert_eq!(f.cog_deg, Some(51.0));
+        assert_eq!(f.heading_deg, Some(181.0));
     }
 }

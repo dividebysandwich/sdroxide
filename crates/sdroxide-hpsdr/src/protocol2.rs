@@ -607,6 +607,9 @@ impl P2Thread {
                     // Protocol 2 boards have no front-end gain register this
                     // crate drives; the DDC command carries no gain field.
                     Ctrl::RxGain(_) => {}
+                    // The HL2IOBoard is a Hermes-Lite accessory on Protocol 1's
+                    // I2C tunnel; nothing here to switch.
+                    Ctrl::IoRxInput(_) => {}
                     // The open collectors follow the dial here exactly as they
                     // do on Protocol 1: a band decoder switches for the signal
                     // on the air, not for the I.F. a transverter left the radio

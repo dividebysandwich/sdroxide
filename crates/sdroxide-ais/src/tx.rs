@@ -44,7 +44,7 @@ use std::f64::consts::TAU;
 use sdroxide_dsp::Complex32;
 use sdroxide_types::AIS_BIT_RATE;
 
-use crate::hdlc::{FLAG, bits_lsb_first, octets_lsb_first};
+use crate::hdlc::{FLAG, bits_lsb_first, bits_msb_first, octets_msb_first};
 
 /// How the test transmitter is set up.
 #[derive(Debug, Clone, Copy)]
@@ -130,9 +130,13 @@ fn line_levels(data_bits: &[bool]) -> Vec<bool> {
     let flag: Vec<bool> = (0..8).map(|i| FLAG >> i & 1 != 0).collect();
     bits.extend_from_slice(&flag);
 
-    // Body: the data field and the check sequence over it.
-    let mut body = data_bits.to_vec();
-    let fcs = sdroxide_ax25::fcs::fcs(&octets_lsb_first(&body));
+    // Body: the data field and the check sequence over it. The message is
+    // packed into octets most significant bit first, the way its field tables
+    // read, and every octet — data and check alike — goes on the line least
+    // significant bit first, the way HDLC sends one.
+    let octets = octets_msb_first(data_bits);
+    let mut body = bits_lsb_first(&octets);
+    let fcs = sdroxide_ax25::fcs::fcs(&octets);
     body.extend(bits_lsb_first(&fcs));
 
     // ...stuffed: a zero after every five ones, so `0111_1110` can only ever be
@@ -165,9 +169,10 @@ fn line_levels(data_bits: &[bool]) -> Vec<bool> {
     line
 }
 
-/// Modulate a data field given as octets — the form a frame arrives in.
+/// Modulate a data field given as octets, packed from the message most
+/// significant bit first.
 pub fn modulate(data: &[u8], p: &TxParams) -> Vec<Complex32> {
-    modulate_bits(&bits_lsb_first(data), p)
+    modulate_bits(&bits_msb_first(data), p)
 }
 
 /// Modulate a data field given as the bit stream itself, most significant bit

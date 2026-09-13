@@ -640,6 +640,9 @@ struct Civ {
     /// from our own writes. `None` on a radio whose reply was the socket
     /// alone — which is how it says it has no such connector.
     rx_ant: Option<bool>,
+    /// Whether the power-output meter is read during an over — see
+    /// [`Civ::without_po_meter`].
+    po_meter: bool,
 }
 
 /// How long after a broadcast a disagreeing polled answer is put down to the
@@ -668,7 +671,18 @@ impl Civ {
             sockets,
             socket: None,
             rx_ant: None,
+            po_meter: true,
         }
+    }
+
+    /// Leave the power-output meter unread. A Xiegu G90 answers `15 11` with
+    /// a figure that is not Icom's 0–255 BCD scale — `02 5F` at 75 % drive,
+    /// which is not BCD at all, and `02 41` at 10 %, which the Icom table reads
+    /// as full power (issue #430). A bar that is wrong in both directions is
+    /// worse than none; SWR and ALC still show.
+    fn without_po_meter(mut self) -> Civ {
+        self.po_meter = false;
+        self
     }
 
     /// Stream the rig's scope this session, sweeping `half_span` either side of
@@ -677,6 +691,20 @@ impl Civ {
         self.scope = true;
         self.scope_half_span = half_span;
         self
+    }
+
+    /// Whether a frame is this radio talking to us (or to everybody), which is
+    /// all a dial or mode report is allowed to be.
+    ///
+    /// CI-V is a bus with no checksum. Another radio, an amplifier or a tuner on
+    /// the same line broadcasts its own dial, and a frame corrupted in transit
+    /// can land its bytes in the address fields — and either, read as this
+    /// radio's frequency, moved the dial to wherever it said, which during an
+    /// FT8 session was a jump to the GEN band (issue #415). A radio configured
+    /// at the broadcast address `00` is taken at its word from any sender.
+    fn ours(&self, reply: &civ::CivReply) -> bool {
+        (self.radio == 0x00 || reply.from == self.radio)
+            && (reply.to == civ::CONTROLLER_ADDR || reply.to == 0x00)
     }
 
     /// Whether the rig turning up at `now`, where we believed `seen`, disproves
@@ -720,11 +748,11 @@ impl Protocol for Civ {
     fn tx_telemetry_requests(&self) -> Vec<Vec<u8>> {
         // Three reads per telemetry tick. All are answered on the same command
         // and are told apart by their sub-command byte on the way back in.
-        vec![
-            civ::read_swr_frame(self.radio),
-            civ::read_alc_frame(self.radio),
-            civ::read_po_frame(self.radio),
-        ]
+        let mut reads = vec![civ::read_swr_frame(self.radio), civ::read_alc_frame(self.radio)];
+        if self.po_meter {
+            reads.push(civ::read_po_frame(self.radio));
+        }
+        reads
     }
     fn tx_state_requests(&self) -> Vec<Vec<u8>> {
         vec![civ::read_ptt_frame(self.radio)]
@@ -899,6 +927,9 @@ impl Protocol for Civ {
                 // written (`IcomNetSource::on_reply`); this is the serial side
                 // of the link catching up with it.
                 0x00 | 0x03 => {
+                    if !self.ours(&reply) || !civ::plausible_freq_payload(&reply.data) {
+                        continue;
+                    }
                     if let Some(hz) = civ::decode_freq(&reply.data) {
                         let broadcast = reply.cmd == 0x00;
                         self.pushed &= !self.moved_silently(&self.seen_freq, &hz, broadcast);
@@ -911,6 +942,9 @@ impl Protocol for Civ {
                     }
                 }
                 0x01 | 0x04 => {
+                    if !self.ours(&reply) {
+                        continue;
+                    }
                     if let Some(&b) = reply.data.first() {
                         let broadcast = reply.cmd == 0x01;
                         // Judged on the mode *byte*, not the app's `Mode`: two
@@ -1115,7 +1149,7 @@ fn make_protocol(cfg: &CatConfig) -> Box<dyn Protocol> {
         // A Xiegu is not in the Icom model table, so it takes the two sockets
         // every radio with a selector has at least — which changes nothing,
         // since it NAKs the read.
-        CatFamily::Xiegu => Box::new(Civ::new(cfg.icom_radio_id, None, 2)),
+        CatFamily::Xiegu => Box::new(Civ::new(cfg.icom_radio_id, None, 2).without_po_meter()),
         CatFamily::Icom => {
             let civ = Civ::new(
                 cfg.icom_radio_id,
@@ -1211,6 +1245,8 @@ pub struct CatHandle {
     /// What the serial thread has found out about the radio since — see
     /// [`Learned`].
     learned: Learned,
+    /// The serial thread, until [`CatHandle::release`] has waited for it.
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl CatHandle {
@@ -1364,6 +1400,36 @@ impl CatHandle {
         self.scope.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
 }
+
+impl CatHandle {
+    /// Stop the serial thread and wait for it to let go of the port.
+    ///
+    /// Dropping the handle only *asks* the thread to stop, and it answers in its
+    /// own time — while it does, it still holds the serial port, which is
+    /// exclusive on every platform sdroxide runs on. A runtime interface switch
+    /// builds the replacement before the old source is dropped, so the new open
+    /// hit a port the old thread had not closed yet and failed (issue #15). The
+    /// wait is bounded: a thread wedged in a driver call is left to finish on
+    /// its own rather than taking the engine down with it.
+    pub fn release(&mut self) {
+        let _ = self.cmd_tx.send(CatCmd::Stop);
+        let Some(thread) = self.thread.take() else { return };
+        let deadline = std::time::Instant::now() + RELEASE_WAIT;
+        while !thread.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if thread.is_finished() {
+            let _ = thread.join();
+        } else {
+            warn!("CAT: the serial thread did not stop within {RELEASE_WAIT:?}; reopening anyway");
+        }
+    }
+}
+
+/// How long [`CatHandle::release`] waits for the serial thread. Longer than one
+/// reply timeout, which is the longest the thread goes without looking at its
+/// commands.
+const RELEASE_WAIT: Duration = Duration::from_secs(2);
 
 impl Drop for CatHandle {
     fn drop(&mut self) {
@@ -1533,7 +1599,7 @@ pub fn spawn(cfg: CatConfig) -> CatHandle {
     let learned_in = learned.clone();
     let scope = std::sync::Arc::new(std::sync::Mutex::new(None));
     let scope_in = scope.clone();
-    std::thread::Builder::new()
+    let thread = std::thread::Builder::new()
         .name("sdroxide-cat".into())
         .spawn(move || {
             serial_thread(cfg, cmd_rx, event_tx, telem_tx, signal_tx, scope_in, learned_in)
@@ -1552,6 +1618,7 @@ pub fn spawn(cfg: CatConfig) -> CatHandle {
         antennas,
         commands_rig_power,
         learned,
+        thread: Some(thread),
     }
 }
 
@@ -2980,9 +3047,15 @@ fn serial_thread(
             // don't have, and the offsets cleared at open collect a few. One arriving on the heels
             // of a key-down is worth saying out loud: the operator is looking at a transmitter that
             // did not key, with no other sign of why.
-            if protocol.refused()
-                && ptt_written.is_some_and(|t| t.elapsed() < Duration::from_millis(500))
-            {
+            let refused = protocol.refused();
+            // Whatever it refused may have been an output-power write, which the memory already
+            // records as the level the rig is on. Nothing in a refusal says which command it was,
+            // so the memory is dropped either way: the next level asked for goes out for real
+            // instead of being deduped against one the rig never took (issue #420).
+            if refused {
+                last_sent_power.forget();
+            }
+            if refused && ptt_written.is_some_and(|t| t.elapsed() < Duration::from_millis(500)) {
                 ptt_written = None;
                 warn!(
                     "the radio refused a command at key-down — if it did not transmit, \
@@ -3373,6 +3446,41 @@ mod tests {
         assert_eq!(dial_to_restore(false, Some(14_050_000.0), Some(14_050_600.0)), None);
     }
 
+    /// Issue #15: releasing a CAT handle waits for its serial thread to exit —
+    /// which is what frees the port for the replacement — and does so promptly
+    /// even while the thread is sitting out a failed open.
+    #[test]
+    fn releasing_a_handle_stops_its_serial_thread() {
+        let mut h = spawn(CatConfig {
+            family: CatFamily::Icom,
+            serial: sdroxide_types::SerialConfig {
+                path: "/nonexistent/sdroxide-test-port".into(),
+                ..Default::default()
+            },
+            ..CatConfig::default()
+        });
+        // Let it fail its first open and start waiting to retry.
+        std::thread::sleep(Duration::from_millis(100));
+        let t = std::time::Instant::now();
+        h.release();
+        assert!(t.elapsed() < RELEASE_WAIT, "release waited {:?}", t.elapsed());
+        assert!(h.thread.is_none(), "the thread was joined");
+        h.release(); // and again is harmless
+    }
+
+    /// Issue #430: a Xiegu's `15 11` is not Icom's PO scale, so it is not
+    /// asked for; an Icom still reads all three meters.
+    #[test]
+    fn a_xiegu_is_not_asked_for_the_power_meter() {
+        let family = |f| make_protocol(&CatConfig { family: f, ..CatConfig::default() });
+        let asks_po = |f| {
+            family(f).tx_telemetry_requests().iter().any(|r| r.get(4..6) == Some(&[0x15, 0x11]))
+        };
+        assert!(!asks_po(CatFamily::Xiegu));
+        assert!(asks_po(CatFamily::Icom));
+        assert_eq!(family(CatFamily::Xiegu).tx_telemetry_requests().len(), 2, "SWR and ALC stay");
+    }
+
     /// Only the family whose radios document the behaviour asks for it.
     #[test]
     fn only_elecraft_re_asserts_the_dial_after_a_mode_change() {
@@ -3636,6 +3744,46 @@ mod tests {
         let mut buf = vec![0xFE, 0xFE, 0x00, 0x94, 0x01, civ::mode_to_civ(Mode::Cw), 0xFD];
         assert_eq!(p.parse(&mut buf), vec![CatUpdate::Mode(Mode::Cw)]);
         assert!(p.pushes_updates());
+    }
+
+    /// Issue #415: only this radio's dial moves the app's. Another station on
+    /// the bus, a frame addressed elsewhere, and payloads that are two frames
+    /// welded together by a collision are all read past.
+    #[test]
+    fn a_dial_report_that_is_not_this_radio_talking_is_read_past() {
+        let mut p = icom();
+        let with = |to: u8, from: u8, payload: &[u8]| {
+            let mut b = vec![0xFE, 0xFE, to, from, 0x03];
+            b.extend_from_slice(payload);
+            b.push(0xFD);
+            b
+        };
+        let f = civ::encode_freq(14_074_000.0);
+        // Another radio's broadcast, and one addressed to another controller.
+        assert!(p.parse(&mut with(0x00, 0x88, &f)).is_empty());
+        assert!(p.parse(&mut with(0xE2, 0x94, &f)).is_empty());
+        // Too short, too long, and carrying the collision jam.
+        assert!(p.parse(&mut with(0xE0, 0x94, &f[..4])).is_empty());
+        let mut long = f.to_vec();
+        long.extend_from_slice(&[0x00, 0x00]);
+        assert!(p.parse(&mut with(0xE0, 0x94, &long)).is_empty());
+        let mut jam = f.clone();
+        jam[2] = 0xFC;
+        assert!(p.parse(&mut with(0xE0, 0x94, &jam)).is_empty());
+        // Another radio's mode change is not this one's either.
+        let mut mode = vec![0xFE, 0xFE, 0x00, 0x88, 0x01, civ::mode_to_civ(Mode::Am), 0xFD];
+        assert!(p.parse(&mut mode).is_empty());
+        // ...and the radio itself, answering or broadcasting, still is.
+        assert_eq!(p.parse(&mut polled_freq(14_074_000.0)), vec![CatUpdate::Freq(14_074_000.0)]);
+        assert_eq!(p.parse(&mut broadcast_freq(7_074_000.0)), vec![CatUpdate::Freq(7_074_000.0)]);
+
+        // A radio set up at the broadcast address listens to whoever answers.
+        let mut any = make_protocol(&CatConfig {
+            family: CatFamily::Icom,
+            icom_radio_id: 0x00,
+            ..CatConfig::default()
+        });
+        assert_eq!(any.parse(&mut with(0xE0, 0x94, &f)), vec![CatUpdate::Freq(14_074_000.0)]);
     }
 
     /// Our own frames come back on the bus. A rig address of `E0` is this end

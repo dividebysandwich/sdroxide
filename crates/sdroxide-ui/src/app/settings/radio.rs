@@ -1203,7 +1203,8 @@ pub(in crate::app) fn settings_hpsdr_tab(
              automatically and needs no setting; this one exists only for operators who have \
              wired its own SMA jacks. Leave it at \"Radio's own input\" otherwise — selecting the \
              IO board's J9 with nothing connected to it leaves the receiver deaf. Applies on \
-             Apply / reconnect.",
+             Apply / reconnect. Set to either J9 choice, the inputs also appear on the ANT \
+             control and are remembered per band.",
         );
         ComboBox::from_id_salt("hpsdr_io_rx")
             .width(220.0)

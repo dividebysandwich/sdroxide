@@ -588,6 +588,11 @@ pub struct UiSettings {
     /// factor, so the spacing around the text follows it and the waterfall and
     /// skimmer sizes below are relative to it. `Medium` is the historic size.
     pub menu_font_size: FontSize,
+    /// The operator's own zoom on top of [`Self::menu_font_size`] — what
+    /// ctrl+plus / ctrl+minus (and ctrl+0) set. Kept so a window zoomed out to
+    /// fit every control opens that way next time instead of at 100 %
+    /// (issue #425). `1.0` is no zoom.
+    pub ui_zoom: f32,
     /// Which face the S-meter wears — needle (the stock one), bar or trace.
     /// Cycled by clicking the meter; see [`SmeterStyle`] for why it is a
     /// screen preference rather than part of a radio's view.
@@ -749,6 +754,7 @@ impl Default for UiSettings {
             skimmer_font_size: FontSize::Medium,
             waterfall_font_size: FontSize::Small,
             menu_font_size: FontSize::Medium,
+            ui_zoom: 1.0,
             smeter_style: SmeterStyle::Needle,
             update_check: true,
             memory_sort: crate::MemorySort::Stored,

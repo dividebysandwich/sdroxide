@@ -173,7 +173,7 @@ pub(crate) struct IoBoard {
     queue: VecDeque<Op>,
     /// The transmit frequency the board has been told, so an unchanged dial is
     /// silent.
-    sent_hz: Option<u32>,
+    sent_hz: Option<u64>,
     /// The receive frequency *code* it has been told. Held as the code rather
     /// than the frequency because that is what the board acts on, and a code
     /// spans a whole band (see [`hertz_to_code`]).
@@ -200,17 +200,39 @@ impl IoBoard {
         }
     }
 
+    /// Move the receive input while running.
+    ///
+    /// A board already found is told straight away; one still being probed
+    /// picks it up with the rest of its start-up writes, after the reset that
+    /// would otherwise undo it.
+    pub(crate) fn set_rx_input(&mut self, input: HpsdrIoRxInput) {
+        if self.rx_input == input {
+            return;
+        }
+        self.rx_input = input;
+        if self.presence == Presence::Present {
+            self.queue.push_back(Op::write(REG_RF_INPUTS, input.code()));
+            tracing::info!(
+                "HL2IOBoard: receive input -> {} (mode {})",
+                input.label(),
+                input.code()
+            );
+        }
+    }
+
     /// The C&C block to put in this datagram, or `None` to leave the slot to the
     /// ordinary register rotation — which is the answer almost every time, since
     /// this talks only when the frequency moves.
     ///
     /// `tx_freq_hz` is the frequency the radio would transmit on right now;
-    /// `rx_freq_hz` is where its receiver is tuned.
+    /// `rx_freq_hz` is where its receiver is tuned. Both are on the *air*: with
+    /// a transverter in front they are the transverter's band, not the I.F. the
+    /// radio itself is on, and a 3 cm dial does not fit in 32 bits.
     pub(crate) fn next_request(
         &mut self,
         now: Instant,
-        tx_freq_hz: u32,
-        rx_freq_hz: u32,
+        tx_freq_hz: u64,
+        rx_freq_hz: u64,
         mox: u8,
     ) -> Option<[u8; 5]> {
         // A request still waiting on its answer holds the bus: the protocol
@@ -237,7 +259,7 @@ impl IoBoard {
     }
 
     /// Queue whatever there is to say, if anything.
-    fn refill(&mut self, now: Instant, tx_freq_hz: u32, rx_freq_hz: u32) {
+    fn refill(&mut self, now: Instant, tx_freq_hz: u64, rx_freq_hz: u64) {
         if !self.queue.is_empty() {
             return;
         }
@@ -385,7 +407,7 @@ impl IoBoard {
 /// and preselector on, and deduplicating on the *code* rather than the frequency
 /// means a spun dial puts nothing at all on the I2C bus while a band change
 /// always does.
-fn hertz_to_code(hz: u32) -> u8 {
+fn hertz_to_code(hz: u64) -> u8 {
     if hz == 0 {
         return 0;
     }
@@ -398,10 +420,10 @@ fn hertz_to_code(hz: u32) -> u8 {
 /// The five register writes that hand `hz` to the board, **BYTE0 last** — that
 /// write is what makes the board act on the frequency, so the other four have to
 /// already be in place.
-fn freq_writes(hz: u32) -> [Op; 5] {
-    // A five-byte big-endian field. A 32-bit frequency in Hz never fills the
-    // top byte, which is there for transverted frequencies above 4.29 GHz.
-    let be = (hz as u64).to_be_bytes();
+fn freq_writes(hz: u64) -> [Op; 5] {
+    // A five-byte big-endian field; the top byte is there for transverted
+    // frequencies above 4.29 GHz.
+    let be = hz.to_be_bytes();
     [
         Op::write(REG_TX_FREQ_BYTE4, be[3]),
         Op::write(REG_TX_FREQ_BYTE4 + 1, be[4]),
@@ -417,7 +439,7 @@ mod tests {
 
     /// A receive frequency for the tests that are not about the receive code.
     /// Held fixed so it contributes exactly one write after the reset.
-    const RX_HZ: u32 = 14_074_000;
+    const RX_HZ: u64 = 14_074_000;
 
     /// Answer the request `board` just made, as the gateware would.
     fn ack(board: &mut IoBoard, now: Instant, data: [u8; 4]) {
@@ -475,6 +497,44 @@ mod tests {
         ack(&mut board, now, [0; 4]);
         let next = board.next_request(now, RX_HZ, RX_HZ, 0).expect("straight to the frequency");
         assert_eq!(next[3], REG_TX_FREQ_BYTE4, "no redundant mode write");
+    }
+
+    /// Issue #292: the receive input follows the band, so it has to be movable
+    /// while running — written at once to a board already found, and to one
+    /// still being probed after the reset that would otherwise undo it.
+    #[test]
+    fn the_receive_input_can_be_moved_while_running() {
+        let now = Instant::now();
+        let mut board = IoBoard::new(HpsdrIoRxInput::IoBoard);
+        find(&mut board, now);
+        board.next_request(now, RX_HZ, RX_HZ, 0).expect("the reset");
+        ack(&mut board, now, [0; 4]);
+        board.next_request(now, RX_HZ, RX_HZ, 0).expect("the input mode");
+        ack(&mut board, now, [0; 4]);
+        // The band changes to one kept on the radio's own jack.
+        board.set_rx_input(HpsdrIoRxInput::Radio);
+        let mut wrote = None;
+        for _ in 0..10 {
+            let Some(cc) = board.next_request(now, RX_HZ, RX_HZ, 0) else { break };
+            ack(&mut board, now, [0; 4]);
+            if cc[3] == REG_RF_INPUTS {
+                wrote = Some(cc[4]);
+                break;
+            }
+        }
+        assert_eq!(wrote, Some(0), "the radio's own input is mode 0");
+        // Setting what it already is costs nothing.
+        board.set_rx_input(HpsdrIoRxInput::Radio);
+        assert!(board.queue.iter().all(|op| op.reg != REG_RF_INPUTS));
+
+        // Before the board is found, the choice waits for the start-up writes.
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        board.set_rx_input(HpsdrIoRxInput::IoBoard);
+        find(&mut board, now);
+        board.next_request(now, RX_HZ, RX_HZ, 0).expect("the reset");
+        ack(&mut board, now, [0; 4]);
+        let sel = board.next_request(now, RX_HZ, RX_HZ, 0).expect("the input mode");
+        assert_eq!((sel[3], sel[4]), (REG_RF_INPUTS, 1));
     }
 
     #[test]

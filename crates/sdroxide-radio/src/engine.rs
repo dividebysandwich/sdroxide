@@ -699,7 +699,7 @@ fn stereo_allowed(rx: &RxState) -> bool {
     // does — with NR or the notch running the matrix would comb, and half of
     // an ISB pair through a comb filter is worse than the two summed.
     let wanted = rx.wfm_stereo || rx.mode == Mode::Isb;
-    wanted && !rx.auto_notch && !rx.noise_reduction.is_on()
+    wanted && !(rx.auto_notch && rx.mode.auto_notch_applies()) && !rx.noise_reduction.is_on()
 }
 
 /// The gain the decoder's tap rides, from a mean-square estimate of the
@@ -1009,7 +1009,7 @@ impl RxChain {
             }
             self.notch_on = rx.auto_notch;
         }
-        if self.notch_on {
+        if self.notch_on && self.mode.auto_notch_applies() {
             self.notch.process(&mut self.audio_buf);
         }
         if self.nr_level != rx.noise_reduction {
@@ -5338,7 +5338,7 @@ impl Engine {
             }
             self.audio_notch_on = notch_on;
         }
-        if self.audio_notch_on {
+        if self.audio_notch_on && self.state.rx[0].mode.auto_notch_applies() {
             self.audio_notch.process(&mut self.audio_re);
         }
         let nr_level = self.state.rx[0].noise_reduction;
@@ -12386,8 +12386,14 @@ impl Engine {
         // and a meter reading a signal nobody is listening to is worse than no
         // meter. The audio actually being heard is the only honest measurement
         // left once the rig has declined to report its own.
+        //
+        // Without `cal_offset_db`: that offset is the *attached receiver's*
+        // dBFS→dBm figure, set against its own front end, and the transceiver's
+        // audio is an AGC'd level on a different scale altogether. Adding it
+        // moved the meter by the whole calibration the moment the audio source
+        // switched (issue #427).
         if self.caps.rx_audio_external {
-            return Some(self.audio_level_dbfs() + self.cal_offset_db);
+            return Some(self.audio_level_dbfs());
         }
         if let Some(p) = self.main.as_ref().and_then(|c| c.power_dbfs()) {
             let gain = self.source.rx_gain_db().unwrap_or(0.0);
@@ -15677,8 +15683,19 @@ impl Engine {
             // attenuating here as well would scale the carrier twice. Elsewhere
             // (a CAT rig's sound card) the tone amplitude is the only tune-level
             // control there is.
+            //
+            // ...except for the operator's transmit-audio level in a mode that
+            // has one. That level is where the waveform sits against the rig's
+            // ALC, and TUNE is how an operator sets it: a tone that ignored the
+            // slider left ALC wherever full scale put it, and the slider only
+            // came alive on the first real over (issue #419).
             let amp = if self.source.commands_tx_power() {
-                1.0
+                let mode = self.state.rx[0].mode;
+                if mode.takes_digi_tx_audio() && (mode != Mode::Cw || self.caps.cw_audio_keyed) {
+                    self.digi_tx_audio_level()
+                } else {
+                    1.0
+                }
             } else {
                 self.state.tx.tune_drive.clamp(0.05, 1.0)
             };

@@ -1780,8 +1780,29 @@ pub fn map_cities() -> bool {
 /// ride on top of this one, so those two settings stay relative adjustments to
 /// whatever size the interface as a whole is wearing.
 pub fn apply_zoom(ctx: &egui::Context) {
-    ctx.set_zoom_factor(ui_scale());
+    ctx.set_zoom_factor(ui_scale() * ui_zoom());
 }
+
+/// The operator's own zoom on top of [`ui_scale`] — `UiSettings::ui_zoom`,
+/// held beside the font sizes for the same reason they are atomics.
+static UI_ZOOM: AtomicU32 = AtomicU32::new(0x3F80_0000); // 1.0f32
+
+/// The zoom multiplier [`apply_zoom`] puts on top of [`ui_scale`].
+pub fn ui_zoom() -> f32 {
+    f32::from_bits(UI_ZOOM.load(Ordering::Relaxed))
+}
+
+/// Store the operator's zoom multiplier. Out-of-range or non-finite values are
+/// taken as no zoom rather than a window too small or too large to recover.
+pub fn set_ui_zoom(zoom: f32) {
+    let z = if zoom.is_finite() { zoom.clamp(UI_ZOOM_MIN, UI_ZOOM_MAX) } else { 1.0 };
+    UI_ZOOM.store(z.to_bits(), Ordering::Relaxed);
+}
+
+/// The bounds [`set_ui_zoom`] holds the multiplier to — egui's own ctrl+minus
+/// and ctrl+plus stop well inside them.
+pub const UI_ZOOM_MIN: f32 = 0.25;
+pub const UI_ZOOM_MAX: f32 = 4.0;
 
 /// The palette under the historic constant names — these were `pub const`s
 /// before the theme became switchable, and the call sites still read them by

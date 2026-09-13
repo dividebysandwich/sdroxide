@@ -2400,6 +2400,19 @@ impl SdroxideApp {
         self.rx_gains().first().cloned()
     }
 
+    /// Whether `element` is a PlutoSDR's receive gain while the AD9361's own
+    /// AGC runs — when the part ignores the register, so a slider on it would
+    /// move nothing. Read from the AGC mode the source publishes beside the
+    /// gain.
+    fn pluto_agc_owns_gain(&self, element: &str) -> bool {
+        self.caps.as_ref().is_some_and(|c| c.driver == "pluto")
+            && element == sdroxide_types::PlutoConfig::RF_GAIN_ELEMENT
+            && self.state.gains.iter().any(|(n, v)| {
+                n == sdroxide_types::PlutoConfig::AGC_ELEMENT
+                    && sdroxide_types::PlutoAgc::from_code(*v) != sdroxide_types::PlutoAgc::Manual
+            })
+    }
+
     /// Whether the SQL rail drives the *radio's* squelch rather than the
     /// engine's own gate — true on a transceiver that hands us audio it has
     /// already squelched, which is the only front end where the software gate
@@ -2531,6 +2544,18 @@ impl SdroxideApp {
                     .map(|(_, d)| *d)
                     .unwrap_or(g.min_db);
                 let step = if g.step_db > 0.0 { g.step_db } else { 1.0 };
+                // A PlutoSDR in one of its attack modes owns its own gain
+                // register: the AD9361 ignores a gain written while its AGC
+                // runs, so the rail is drawn inert and says why rather than
+                // looking broken (issue #417).
+                let hardware_agc = self.pluto_agc_owns_gain(&g.name);
+                if hardware_agc {
+                    hint.push_str(
+                        "\n\nThe PlutoSDR's own AGC is setting this gain, so moving the \
+                         slider does nothing. Set Settings → Radio → AGC to Manual to \
+                         control it here.",
+                    );
+                }
                 // Narrower rail than Vol: this one carries a dB readout,
                 // and the module has to stay inside one wrapped row. In
                 // a menu the column is the constraint instead, and
@@ -2540,18 +2565,24 @@ impl SdroxideApp {
                         if !narrow {
                             ui.spacing_mut().slider_width = RX_DB_RAIL_W;
                         }
-                        crate::chrome::slider(
-                            ui,
-                            Slider::new(&mut db, g.min_db..=g.max_db)
-                                .step_by(step)
-                                // Whatever this element is actually counted in.
-                                // Labelling a step index "dB" reported a number
-                                // three times too small, in a unit it was not.
-                                .suffix(g.suffix()),
-                        )
+                        ui.add_enabled_ui(!hardware_agc, |ui| {
+                            crate::chrome::slider_readout(
+                                ui,
+                                value_field_w(ui, "-888.8 dB"),
+                                Slider::new(&mut db, g.min_db..=g.max_db)
+                                    .step_by(step)
+                                    // Whatever this element is actually counted
+                                    // in. Labelling a step index "dB" reported a
+                                    // number three times too small, in a unit it
+                                    // was not.
+                                    .suffix(g.suffix()),
+                            )
+                        })
+                        .inner
                     })
                     .inner
-                    .on_hover_text(&hint);
+                    .on_hover_text(&hint)
+                    .on_disabled_hover_text(&hint);
                 if resp.changed() {
                     // Optimistic echo so the knob tracks the drag instead
                     // of snapping back until the engine answers.
@@ -2592,8 +2623,9 @@ impl SdroxideApp {
                             if !narrow {
                                 ui.spacing_mut().slider_width = RX_DB_RAIL_W;
                             }
-                            crate::chrome::slider(
+                            crate::chrome::slider_readout(
                                 ui,
+                                value_field_w(ui, "-888.8 dB"),
                                 Slider::new(&mut db, 0.0..=sdroxide_types::MAX_MANUAL_GAIN_DB)
                                     .step_by(1.0)
                                     .suffix(" dB"),
@@ -2627,8 +2659,9 @@ impl SdroxideApp {
                 // what got through and can never open what was shut out
                 // (issue #192).
                 let mut sql = self.state.rig_squelch;
-                if crate::chrome::slider(
+                if crate::chrome::slider_readout(
                     ui,
+                    sql_readout_w(ui),
                     Slider::new(&mut sql, 0.0..=1.0).show_value(true).custom_formatter(|v, _| {
                         if v <= 0.001 { "open".into() } else { format!("{:.0}%", v * 100.0) }
                     }),
@@ -2656,8 +2689,9 @@ impl SdroxideApp {
                     Some(p) if p.is_finite() => format!("\n\nThe passband is at {p:.0} dBFS now."),
                     _ => String::new(),
                 };
-                if crate::chrome::slider(
+                if crate::chrome::slider_readout(
                     ui,
+                    sql_readout_w(ui),
                     Slider::new(
                         &mut sql,
                         sdroxide_types::SQUELCH_OPEN_DB..=sdroxide_types::SQUELCH_CLOSED_DB,
@@ -3961,8 +3995,9 @@ impl SdroxideApp {
         let mut drive = self.state.tx.drive;
         let hover = self.drive_hover();
         ui.label("Drive").on_hover_text(&hover);
-        if crate::chrome::slider(
+        if crate::chrome::slider_readout(
             ui,
+            value_field_w(ui, "100%"),
             Slider::new(&mut drive, 0.0..=1.0)
                 .show_value(true)
                 .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
@@ -3978,8 +4013,9 @@ impl SdroxideApp {
     fn tx_tune_level(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let mut tune_drive = self.state.tx.tune_drive;
         ui.label("Tune");
-        if crate::chrome::slider(
+        if crate::chrome::slider_readout(
             ui,
+            value_field_w(ui, "100%"),
             Slider::new(&mut tune_drive, 0.0..=1.0)
                 .show_value(true)
                 .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
@@ -4042,8 +4078,9 @@ impl SdroxideApp {
         let mut db = self.state.tx.cessb_db;
         let hover = self.cessb_hover();
         ui.label("CESSB").on_hover_text(hover.clone());
-        if crate::chrome::slider(
+        if crate::chrome::slider_readout(
             ui,
+            value_field_w(ui, "88 dB"),
             Slider::new(&mut db, 0.0..=sdroxide_types::CESSB_MAX_DB)
                 .show_value(true)
                 .custom_formatter(|v, _| cessb_value_text(v as f32)),
@@ -4177,8 +4214,9 @@ impl SdroxideApp {
     fn tx_digi_level(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let mut db = self.digi_tx_level_db();
         ui.label("TX audio");
-        if crate::chrome::slider(
+        if crate::chrome::slider_readout(
             ui,
+            value_field_w(ui, "-88 dB"),
             Slider::new(&mut db, sdroxide_types::TX_AUDIO_LEVEL_MIN_DB..=0.0)
                 .show_value(true)
                 .custom_formatter(|v, _| format!("{v:.0} dB")),
@@ -4935,8 +4973,9 @@ impl SdroxideApp {
         // above sets both at once from what is on screen.
         ui.horizontal(|ui| {
             ui.label("floor");
-            crate::chrome::slider(
+            crate::chrome::slider_readout(
                 ui,
+                value_field_w(ui, "-888 dB"),
                 Slider::new(&mut self.view.db_floor, -160.0..=-40.0)
                     .show_value(true)
                     .custom_formatter(|v, _| format!("{v:.0} dB")),
@@ -4947,8 +4986,9 @@ impl SdroxideApp {
         });
         ui.horizontal(|ui| {
             ui.label("ceil ");
-            crate::chrome::slider(
+            crate::chrome::slider_readout(
                 ui,
+                value_field_w(ui, "-888 dB"),
                 Slider::new(&mut self.view.db_ceil, -100.0..=20.0)
                     .show_value(true)
                     .custom_formatter(|v, _| format!("{v:.0} dB")),
@@ -5392,6 +5432,14 @@ fn tx_rows_w_for(ui: &egui::Ui, keyer: bool, side_col_w: f32) -> f32 {
 /// button padding, never narrower than the style's interact size. Measured
 /// from the style rather than pinned to a literal, because both figures move
 /// with the tier.
+/// The width of the squelch rail's readout, at the longest either of its two
+/// forms reads: the dBFS threshold at its deepest, or the radio's own squelch
+/// as a percentage.
+fn sql_readout_w(ui: &egui::Ui) -> f32 {
+    let sql_readout = format!("{:.0}", sdroxide_types::SQUELCH_OPEN_DB);
+    value_field_w(ui, &sql_readout).max(value_field_w(ui, "100%"))
+}
+
 fn value_field_w(ui: &egui::Ui, text: &str) -> f32 {
     let w = crate::chrome::text_width(ui, text, egui::TextStyle::Body.resolve(ui.style()))
         + 2.0 * ui.spacing().button_padding.x;
@@ -5612,6 +5660,11 @@ fn rx_chips(mode: Mode) -> Vec<RxChip> {
     // fit on a 1366-pixel screen (issue #211).
     let mut chips =
         vec![RxChip::Bw, RxChip::Nb, RxChip::Anc, RxChip::Nr, RxChip::Mute, RxChip::Rec];
+    // No auto-notch on broadcast audio, where what it cancels is the programme
+    // (issue #434).
+    if !mode.auto_notch_applies() {
+        chips.retain(|c| *c != RxChip::Anc);
+    }
     // Binaural audio goes where it is worth a permanent button: CW, where the
     // signal is a tone and so placing it by pitch places the signal, and SSB,
     // where what it buys is the decorrelated noise around the voice
@@ -5714,12 +5767,7 @@ fn rx_rows(ui: &egui::Ui, gain: bool, decim: bool, agc_off: bool, mode: Mode) ->
     // be swapped under a running window (`Engine::adopt_source`), so a box
     // sized for one of them would change width when the operator applied a new
     // interface.
-    let sql_readout = format!("{:.0}", sdroxide_types::SQUELCH_OPEN_DB);
-    let noise = label("SQL")
-        + g
-        + rail
-        + g
-        + value_field_w(ui, &sql_readout).max(value_field_w(ui, "100%"));
+    let noise = label("SQL") + g + rail + g + sql_readout_w(ui);
 
     // Then the run itself. Each chip is priced at its widest label, so the box
     // does not breathe as a decode comes and goes (see [`RxChip::width_label`])
@@ -7037,8 +7085,9 @@ mod tests {
                             );
                         }
                         ui.label("Drive");
-                        crate::chrome::slider(
+                        crate::chrome::slider_readout(
                             ui,
+                            value_field_w(ui, "100%"),
                             Slider::new(&mut drive, 0.0..=1.0)
                                 .show_value(true)
                                 .custom_formatter(pct),
@@ -7058,8 +7107,9 @@ mod tests {
                             size,
                         );
                         ui.label("Tune");
-                        crate::chrome::slider(
+                        crate::chrome::slider_readout(
                             ui,
+                            value_field_w(ui, "100%"),
                             Slider::new(&mut tune, 0.0..=1.0)
                                 .show_value(true)
                                 .custom_formatter(pct),
@@ -7834,8 +7884,9 @@ mod tests {
                                         ui.label("Gain");
                                         ui.scope(|ui| {
                                             ui.spacing_mut().slider_width = RX_DB_RAIL_W;
-                                            crate::chrome::slider(
+                                            crate::chrome::slider_readout(
                                                 ui,
+                                                value_field_w(ui, "-888.8 dB"),
                                                 Slider::new(&mut db, -88.8..=0.0)
                                                     .step_by(0.1)
                                                     .suffix(" dB"),
@@ -7855,8 +7906,9 @@ mod tests {
                                             ui.label("Man");
                                             ui.scope(|ui| {
                                                 ui.spacing_mut().slider_width = RX_DB_RAIL_W;
-                                                crate::chrome::slider(
+                                                crate::chrome::slider_readout(
                                                     ui,
+                                                    value_field_w(ui, "-888.8 dB"),
                                                     Slider::new(
                                                         &mut man,
                                                         0.0..=sdroxide_types::MAX_MANUAL_GAIN_DB,
@@ -7875,8 +7927,9 @@ mod tests {
                             let row2 = ui
                                 .horizontal(|ui| {
                                     ui.label("SQL");
-                                    crate::chrome::slider(
+                                    crate::chrome::slider_readout(
                                         ui,
+                                        sql_readout_w(ui),
                                         Slider::new(
                                             &mut sql,
                                             sdroxide_types::SQUELCH_OPEN_DB

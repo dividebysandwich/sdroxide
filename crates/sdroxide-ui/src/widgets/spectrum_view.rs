@@ -1764,7 +1764,7 @@ pub fn show_ext(
                         // tune has always rounded — this is the same courtesy.
                         let step = wheel.tune_step_hz;
                         let hz = if step > 0.0 {
-                            (state.active_freq_hz() / step).round() * step + detents as f64 * step
+                            crate::input::step_on_grid(state.active_freq_hz(), detents as f64, step)
                         } else {
                             state.active_freq_hz()
                         };

@@ -102,9 +102,30 @@ struct ModelCaps {
     /// Widths at or below which `NA` has to select the narrow position first,
     /// or `None` on a generation that has no such switch.
     narrow_max: Option<(u32, u32)>,
-    /// The `KY` parameter that plays back the *stored-text* memory [`CW_MEM`]
-    /// was written to. See [`caps_for`] for why this is not a constant.
-    cw_play: u8,
+    /// How `KY` plays back the *stored-text* memory [`CW_MEM`] was written
+    /// to. See [`caps_for`] for why this is not a constant.
+    cw_play: CwPlay,
+}
+
+/// The shape of the `KY` that plays a stored-text keyer memory.
+#[derive(Clone, Copy)]
+enum CwPlay {
+    /// `KY<n>;` — one parameter, the playback number itself.
+    Number(u8),
+    /// `KY0<slot>;` — the FTX-1's two parameters: `0` for the CW *text*
+    /// memories (`1` would be the recorded messages), then the slot. Its CAT
+    /// manual (2507-B) documents nothing else, so the single-digit form every
+    /// other model takes is not a command it has (issue #412).
+    TextSlot,
+}
+
+impl CwPlay {
+    fn frame(self) -> Vec<u8> {
+        match self {
+            CwPlay::Number(n) => format!("KY{n};").into_bytes(),
+            CwPlay::TextSlot => format!("KY0{CW_MEM};").into_bytes(),
+        }
+    }
 }
 
 /// The model behind an `ID;` reply, or `None` for one this file has no tables
@@ -127,14 +148,14 @@ fn caps_for(id: u32) -> Option<ModelCaps> {
             cw_widths: FT991_CW_WIDTHS,
             ssb_widths: FT991_SSB_WIDTHS,
             narrow_max: Some((FT991_CW_NARROW_MAX, FT991_SSB_NARROW_MAX)),
-            cw_play: CW_MEM + 5,
+            cw_play: CwPlay::Number(CW_MEM + 5),
         },
         ModelCaps {
             name: "FTDX101",
             cw_widths: FTDX101_CW_WIDTHS,
             ssb_widths: FTDX101_SSB_WIDTHS,
             narrow_max: None,
-            cw_play: CW_MEM + 5,
+            cw_play: CwPlay::Number(CW_MEM + 5),
         },
     );
     Some(match id {
@@ -144,7 +165,17 @@ fn caps_for(id: u32) -> Option<ModelCaps> {
         761 => ModelCaps { name: "FTDX10", ..ftdx101 },
         681 => ModelCaps { name: "FTDX101D", ..ftdx101 },
         682 => ModelCaps { name: "FTDX101MP", ..ftdx101 },
-        800 => ModelCaps { name: "FT-710", cw_play: CW_MEM, ..ftdx101 },
+        800 => ModelCaps { name: "FT-710", cw_play: CwPlay::Number(CW_MEM), ..ftdx101 },
+        // No filter tables: its `SH` table is not one this file has, so the
+        // filter is left as the operator set it. The keyer is the reason it is
+        // named at all.
+        840 => ModelCaps {
+            name: "FTX-1",
+            cw_widths: &[],
+            ssb_widths: &[],
+            narrow_max: None,
+            cw_play: CwPlay::TextSlot,
+        },
         _ => return None,
     })
 }
@@ -156,7 +187,7 @@ const UNKNOWN_CAPS: ModelCaps = ModelCaps {
     cw_widths: &[],
     ssb_widths: &[],
     narrow_max: None,
-    cw_play: CW_MEM + 5,
+    cw_play: CwPlay::Number(CW_MEM + 5),
 };
 
 pub struct Yaesu {
@@ -172,6 +203,9 @@ pub struct Yaesu {
     width_known: bool,
     /// Set when [`Self::width`] changed under a frame we had already written.
     reframed: bool,
+    /// The rig answered `?;` since this was last read (see
+    /// [`Protocol::refused`]).
+    nak: bool,
 }
 
 impl Yaesu {
@@ -183,6 +217,7 @@ impl Yaesu {
             width: DEFAULT_WIDTH,
             width_known: false,
             reframed: false,
+            nak: false,
         }
     }
 
@@ -432,7 +467,7 @@ impl Protocol for Yaesu {
             format!("KM{CW_MEM}{msg};").into_bytes(),
             // Which parameter plays back what `KM` just wrote is a question
             // about the model, not the family — see `caps_for`.
-            format!("KY{};", self.caps.cw_play).into_bytes(),
+            self.caps.cw_play.frame(),
         ]
     }
 
@@ -486,6 +521,10 @@ impl Protocol for Yaesu {
 
     fn reframed(&mut self) -> bool {
         std::mem::take(&mut self.reframed)
+    }
+
+    fn refused(&mut self) -> bool {
+        std::mem::take(&mut self.nak)
     }
 
     fn parse(&mut self, buf: &mut Vec<u8>) -> Vec<CatUpdate> {
@@ -546,6 +585,7 @@ impl Protocol for Yaesu {
                 // so this can only be a breadcrumb — but it is the difference
                 // between "the radio is ignoring me" and silence.
                 debug!("Yaesu CAT: rig rejected a command (?)");
+                self.nak = true;
             }
         }
         out
@@ -559,6 +599,17 @@ mod tests {
     fn parse_str(y: &mut Yaesu, s: &str) -> Vec<CatUpdate> {
         let mut buf = s.as_bytes().to_vec();
         y.parse(&mut buf)
+    }
+
+    /// A `?;` is reported as a refusal, once, so the CAT loop can stop
+    /// believing the last level it wrote reached the rig (issue #420).
+    #[test]
+    fn a_question_mark_is_a_refusal_reported_once() {
+        let mut y = Yaesu::new();
+        assert!(!y.refused());
+        assert!(parse_str(&mut y, "?;").is_empty());
+        assert!(y.refused());
+        assert!(!y.refused(), "reported once, then cleared");
     }
 
     /// `TX;` read back. Only "is it transmitting" is taken from it: which
@@ -660,6 +711,11 @@ mod tests {
             parse_str(&mut y, id);
             assert_eq!(frames(y.send_cw("test")).last().unwrap(), "KY6;", "{id}");
         }
+
+        // The FTX-1 names the text memory and the slot in two parameters.
+        let mut y = Yaesu::new();
+        parse_str(&mut y, "ID0840;");
+        assert_eq!(frames(y.send_cw("test")), vec!["BI1;", "KM1TEST;", "KY01;"]);
 
         // And an unidentified rig uses the range all but one model wants, which
         // is the safer default: it is also what the memory `KM` just wrote is

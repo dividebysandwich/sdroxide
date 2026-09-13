@@ -71,6 +71,10 @@ pub struct PlutoSource {
     /// answers `IqSource::sample_rate` — see that method.
     rate: f64,
     label: String,
+    /// The receive AGC mode this chain was last put in. Published beside the
+    /// gain so a panel can tell that the gain register is the AD9361's while
+    /// an attack mode runs, and a gain slider moves nothing (issue #417).
+    agc: PlutoAgc,
 }
 
 impl PlutoSource {
@@ -116,6 +120,7 @@ impl PlutoSource {
             label,
             rx: Some(rx),
             rig: Some(rig),
+            agc: cfg.agc,
         })
     }
 
@@ -231,7 +236,10 @@ impl IqSource for PlutoSource {
         let Some(rx) = self.rx.as_mut() else { return Ok(()) };
         match name {
             PlutoConfig::RF_GAIN_ELEMENT => rx.set_rx_gain_db(db),
-            PlutoConfig::AGC_ELEMENT => rx.set_agc_mode(PlutoAgc::from_code(db).iio_name()),
+            PlutoConfig::AGC_ELEMENT => {
+                self.agc = PlutoAgc::from_code(db);
+                rx.set_agc_mode(self.agc.iio_name());
+            }
             PlutoConfig::PPM_ELEMENT => rx.set_ppm(db),
             _ => {}
         }
@@ -240,7 +248,10 @@ impl IqSource for PlutoSource {
 
     fn current_gains(&self) -> Vec<(String, f64)> {
         match self.rx.as_ref() {
-            Some(rx) => vec![(PlutoConfig::RF_GAIN_ELEMENT.to_string(), rx.rx_gain_db())],
+            Some(rx) => vec![
+                (PlutoConfig::RF_GAIN_ELEMENT.to_string(), rx.rx_gain_db()),
+                (PlutoConfig::AGC_ELEMENT.to_string(), self.agc.code()),
+            ],
             None => Vec::new(),
         }
     }

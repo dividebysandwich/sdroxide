@@ -288,6 +288,39 @@ impl Protocol for Rigctld {
         true
     }
 
+    /// Hamlib's own `send_morse`, which each of its backends turns into
+    /// whatever its rig's keyer takes. The chunk is kept to the shortest a
+    /// Hamlib backend accepts in one go (the FTX-1's, at 24) so nothing is cut
+    /// off inside the daemon (issue #412).
+    fn cw_chunk_len(&self) -> usize {
+        24
+    }
+
+    fn send_cw(&mut self, text: &str) -> Vec<Vec<u8>> {
+        // One line is one command, so a line break is a word break; anything
+        // else unprintable has no Morse character and no business on the line.
+        let msg: String = text
+            .chars()
+            .map(|c| if c.is_whitespace() { ' ' } else { c.to_ascii_uppercase() })
+            .filter(|c| !c.is_control())
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if msg.is_empty() {
+            return Vec::new();
+        }
+        vec![cmd(&format!("b {msg}"))]
+    }
+
+    fn abort_cw(&mut self) -> Vec<Vec<u8>> {
+        vec![cmd("\\stop_morse")]
+    }
+
+    fn set_cw_wpm(&mut self, wpm: f32) -> Vec<Vec<u8>> {
+        vec![cmd(&format!("L KEYSPD {}", wpm.round().clamp(4.0, 60.0) as u32))]
+    }
+
     fn refused(&mut self) -> bool {
         std::mem::take(&mut self.failed)
     }
@@ -313,6 +346,13 @@ impl Protocol for Rigctld {
                 continue;
             }
             let Some((head, rest)) = line.split_once(':') else {
+                // Some daemons print a level's value bare, with no label line
+                // (Hamlib 4.6.2 answers `get_level` that way — issue #427).
+                // Inside an open block it is that block's value; outside one it
+                // is nothing anybody asked for.
+                if !line.is_empty() && self.block != Block::Other {
+                    self.value(line, &mut out);
+                }
                 continue;
             };
             // An echo header opens a block; anything else with a colon in it is
@@ -419,6 +459,42 @@ mod tests {
             parse_str(&mut r, "get_level: SWR\nLevel: 2.000000\nRPRT 0\n"),
             vec![CatUpdate::Swr(2.0)]
         );
+    }
+
+    /// Issue #412: CW text goes to the daemon's `send_morse`, one line per
+    /// chunk, so a rig whose keyer only Hamlib knows how to drive can still be
+    /// keyed from the panel.
+    #[test]
+    fn cw_text_goes_out_as_send_morse() {
+        let mut r = Rigctld::new();
+        assert_eq!(r.send_cw("cq de\nw1aw  k"), vec![b"+b CQ DE W1AW K\n".to_vec()]);
+        assert!(r.send_cw(" \n ").is_empty());
+        assert_eq!(r.set_cw_wpm(22.4), vec![b"+L KEYSPD 22\n".to_vec()]);
+        assert_eq!(r.abort_cw(), vec![b"+\\stop_morse\n".to_vec()]);
+        assert!(r.cw_chunk_len() > 0);
+    }
+
+    /// Issue #427: a Hamlib 4.6.2 `rigctld` answers `get_level` with the
+    /// number on a line of its own. Skipping it meant the rig's S-meter was
+    /// never read at all, silently.
+    #[test]
+    fn a_bare_level_value_is_still_read() {
+        let mut r = Rigctld::new();
+        assert_eq!(
+            parse_str(&mut r, "get_level: STRENGTH\n-60\nRPRT 0\n"),
+            vec![CatUpdate::Signal(-133.0)]
+        );
+        assert_eq!(
+            parse_str(&mut r, "get_level: SWR\n1.300000\nRPRT 0\n"),
+            vec![CatUpdate::Swr(1.3)]
+        );
+        assert_eq!(
+            parse_str(&mut r, "get_level: RFPOWER\n0.500000\nRPRT 0\n"),
+            vec![CatUpdate::Power(0.5)]
+        );
+        // Outside a block a bare number is nothing: not a level, not a meter.
+        assert!(parse_str(&mut r, "-60\n").is_empty());
+        assert!(parse_str(&mut r, "get_level: ALC\n3\nRPRT 0\n").is_empty());
     }
 
     #[test]

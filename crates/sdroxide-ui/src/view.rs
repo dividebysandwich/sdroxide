@@ -76,12 +76,16 @@ pub struct ViewState {
     /// the picture jumps a whole window. That jump is what this exists to
     /// remove: with it on the band scrolls past a fixed marker instead.
     ///
+    /// On for a new station (issues #411, #422): operators arriving from other
+    /// SDR programs expect the dial in the middle and read the jump as a fault.
+    /// A saved view keeps whatever it was left on.
+    ///
     /// Zoomed in the slide is free — the window is a viewport onto a wider
     /// captured span. Zoomed all the way out there is nowhere left to slide,
     /// so the front end's own centre is moved instead, exactly as a drag that
     /// reaches the edge already does (issue #133). A receiver whose centre
     /// *is* its dial has nothing to do either way: it is already centred.
-    #[serde(default)]
+    #[serde(default = "center_on_vfo_default")]
     pub center_on_vfo: bool,
     /// Hide the spectrum line, showing only the waterfall (and, in FT8/FT4,
     /// giving the freed height to the operating panel).
@@ -540,7 +544,7 @@ impl Default for ViewState {
             peak_hold: false,
             spectrum_3d: false,
             spectrum_3d_solid: spectrum_3d_solid_default(),
-            center_on_vfo: false,
+            center_on_vfo: center_on_vfo_default(),
             spectrum_collapsed: false,
             waterfall_collapsed: false,
             waterfall_flip: false,
@@ -703,6 +707,11 @@ fn auto_fit_default() -> bool {
 /// because it fixes the shape of the persisted blob, and taken from the kind
 /// list itself so the two cannot drift apart.
 pub const SPOT_KINDS: usize = sdroxide_types::SpotKind::COUNT;
+
+/// Default for [`ViewState::center_on_vfo`]: on.
+fn center_on_vfo_default() -> bool {
+    true
+}
 
 /// Default for [`ViewState::spot_kinds_shown`] — every kind shown, so enabling
 /// a feed is enough to see its spots.
