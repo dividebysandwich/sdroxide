@@ -98,6 +98,9 @@ pub struct AudioCatSource {
     /// Starts empty rather than at a guess: it is filled in by the rig's own
     /// answer to the read the control port sends as it opens.
     antenna: String,
+    /// Set by [`IqSource::release`]: the serial port and both sound devices
+    /// have been given back, and the engine is to build a replacement.
+    released: bool,
 }
 
 impl AudioCatSource {
@@ -330,6 +333,7 @@ impl AudioCatSource {
             last_signal: None,
             signal_max_age,
             antenna: String::new(),
+            released: false,
         })
     }
 
@@ -839,6 +843,24 @@ impl IqSource for AudioCatSource {
 
     fn open_status(&self) -> Option<String> {
         self.status.clone()
+    }
+
+    fn needs_reopen(&self) -> bool {
+        self.released
+    }
+
+    /// Give back the serial port and the two sound devices before the engine
+    /// opens the replacement, which will want at least one of them — the same
+    /// rig on the same port, or the same card for a new one (issue #15). The
+    /// serial thread is waited for, since the port is not free until it exits.
+    fn release(&mut self) {
+        if self.released {
+            return;
+        }
+        self.cat.release();
+        self.in_stream = None;
+        self.out = None;
+        self.released = true;
     }
 
     fn display_bandwidth(&self) -> Option<f64> {

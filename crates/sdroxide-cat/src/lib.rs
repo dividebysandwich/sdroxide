@@ -1245,6 +1245,8 @@ pub struct CatHandle {
     /// What the serial thread has found out about the radio since — see
     /// [`Learned`].
     learned: Learned,
+    /// The serial thread, until [`CatHandle::release`] has waited for it.
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl CatHandle {
@@ -1398,6 +1400,36 @@ impl CatHandle {
         self.scope.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
 }
+
+impl CatHandle {
+    /// Stop the serial thread and wait for it to let go of the port.
+    ///
+    /// Dropping the handle only *asks* the thread to stop, and it answers in its
+    /// own time — while it does, it still holds the serial port, which is
+    /// exclusive on every platform sdroxide runs on. A runtime interface switch
+    /// builds the replacement before the old source is dropped, so the new open
+    /// hit a port the old thread had not closed yet and failed (issue #15). The
+    /// wait is bounded: a thread wedged in a driver call is left to finish on
+    /// its own rather than taking the engine down with it.
+    pub fn release(&mut self) {
+        let _ = self.cmd_tx.send(CatCmd::Stop);
+        let Some(thread) = self.thread.take() else { return };
+        let deadline = std::time::Instant::now() + RELEASE_WAIT;
+        while !thread.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if thread.is_finished() {
+            let _ = thread.join();
+        } else {
+            warn!("CAT: the serial thread did not stop within {RELEASE_WAIT:?}; reopening anyway");
+        }
+    }
+}
+
+/// How long [`CatHandle::release`] waits for the serial thread. Longer than one
+/// reply timeout, which is the longest the thread goes without looking at its
+/// commands.
+const RELEASE_WAIT: Duration = Duration::from_secs(2);
 
 impl Drop for CatHandle {
     fn drop(&mut self) {
@@ -1567,7 +1599,7 @@ pub fn spawn(cfg: CatConfig) -> CatHandle {
     let learned_in = learned.clone();
     let scope = std::sync::Arc::new(std::sync::Mutex::new(None));
     let scope_in = scope.clone();
-    std::thread::Builder::new()
+    let thread = std::thread::Builder::new()
         .name("sdroxide-cat".into())
         .spawn(move || {
             serial_thread(cfg, cmd_rx, event_tx, telem_tx, signal_tx, scope_in, learned_in)
@@ -1586,6 +1618,7 @@ pub fn spawn(cfg: CatConfig) -> CatHandle {
         antennas,
         commands_rig_power,
         learned,
+        thread: Some(thread),
     }
 }
 
@@ -3411,6 +3444,28 @@ mod tests {
         // needless frame in front of the next key-down is exactly what the
         // rate limiting elsewhere in this file exists to avoid.
         assert_eq!(dial_to_restore(false, Some(14_050_000.0), Some(14_050_600.0)), None);
+    }
+
+    /// Issue #15: releasing a CAT handle waits for its serial thread to exit —
+    /// which is what frees the port for the replacement — and does so promptly
+    /// even while the thread is sitting out a failed open.
+    #[test]
+    fn releasing_a_handle_stops_its_serial_thread() {
+        let mut h = spawn(CatConfig {
+            family: CatFamily::Icom,
+            serial: sdroxide_types::SerialConfig {
+                path: "/nonexistent/sdroxide-test-port".into(),
+                ..Default::default()
+            },
+            ..CatConfig::default()
+        });
+        // Let it fail its first open and start waiting to retry.
+        std::thread::sleep(Duration::from_millis(100));
+        let t = std::time::Instant::now();
+        h.release();
+        assert!(t.elapsed() < RELEASE_WAIT, "release waited {:?}", t.elapsed());
+        assert!(h.thread.is_none(), "the thread was joined");
+        h.release(); // and again is harmless
     }
 
     /// Issue #430: a Xiegu's `15 11` is not Icom's PO scale, so it is not
