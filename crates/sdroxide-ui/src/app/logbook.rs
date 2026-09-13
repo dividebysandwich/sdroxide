@@ -669,6 +669,15 @@ impl SdroxideApp {
                             // contact, which used to reach the operator's own
                             // logbook and nothing beyond it (issue #341).
                             cmds.push(Command::LogQso(Box::new(rec.clone())));
+                            // ...and to the online logbooks set to take every
+                            // new contact, the way a sequencer-logged one is
+                            // (issue #428). New entries only: an edit is not a
+                            // second contact.
+                            if let Some((qso_id, adif, targets)) =
+                                crate::app::net::auto_upload_adif(&self.net_cfg_edit, &rec)
+                            {
+                                self.pending_uploads.push((qso_id, adif, targets));
+                            }
                             self.qso_log.push(rec);
                             // A hand-entered contact is one worked this session
                             // too; an ADIF import is not, and does not count.
