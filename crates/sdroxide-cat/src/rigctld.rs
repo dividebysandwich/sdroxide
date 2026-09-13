@@ -313,6 +313,13 @@ impl Protocol for Rigctld {
                 continue;
             }
             let Some((head, rest)) = line.split_once(':') else {
+                // Some daemons print a level's value bare, with no label line
+                // (Hamlib 4.6.2 answers `get_level` that way — issue #427).
+                // Inside an open block it is that block's value; outside one it
+                // is nothing anybody asked for.
+                if !line.is_empty() && self.block != Block::Other {
+                    self.value(line, &mut out);
+                }
                 continue;
             };
             // An echo header opens a block; anything else with a colon in it is
@@ -419,6 +426,29 @@ mod tests {
             parse_str(&mut r, "get_level: SWR\nLevel: 2.000000\nRPRT 0\n"),
             vec![CatUpdate::Swr(2.0)]
         );
+    }
+
+    /// Issue #427: a Hamlib 4.6.2 `rigctld` answers `get_level` with the
+    /// number on a line of its own. Skipping it meant the rig's S-meter was
+    /// never read at all, silently.
+    #[test]
+    fn a_bare_level_value_is_still_read() {
+        let mut r = Rigctld::new();
+        assert_eq!(
+            parse_str(&mut r, "get_level: STRENGTH\n-60\nRPRT 0\n"),
+            vec![CatUpdate::Signal(-133.0)]
+        );
+        assert_eq!(
+            parse_str(&mut r, "get_level: SWR\n1.300000\nRPRT 0\n"),
+            vec![CatUpdate::Swr(1.3)]
+        );
+        assert_eq!(
+            parse_str(&mut r, "get_level: RFPOWER\n0.500000\nRPRT 0\n"),
+            vec![CatUpdate::Power(0.5)]
+        );
+        // Outside a block a bare number is nothing: not a level, not a meter.
+        assert!(parse_str(&mut r, "-60\n").is_empty());
+        assert!(parse_str(&mut r, "get_level: ALC\n3\nRPRT 0\n").is_empty());
     }
 
     #[test]
