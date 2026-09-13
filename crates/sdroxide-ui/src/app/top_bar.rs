@@ -5660,6 +5660,11 @@ fn rx_chips(mode: Mode) -> Vec<RxChip> {
     // fit on a 1366-pixel screen (issue #211).
     let mut chips =
         vec![RxChip::Bw, RxChip::Nb, RxChip::Anc, RxChip::Nr, RxChip::Mute, RxChip::Rec];
+    // No auto-notch on broadcast audio, where what it cancels is the programme
+    // (issue #434).
+    if !mode.auto_notch_applies() {
+        chips.retain(|c| *c != RxChip::Anc);
+    }
     // Binaural audio goes where it is worth a permanent button: CW, where the
     // signal is a tone and so placing it by pitch places the signal, and SSB,
     // where what it buys is the decorrelated noise around the voice

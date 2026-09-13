@@ -1034,6 +1034,18 @@ impl Mode {
         matches!(self, Mode::Cw | Mode::Lsb | Mode::Usb)
     }
 
+    /// Whether the audio auto-notch (ANC) is offered and run in this mode.
+    ///
+    /// Not on broadcast audio. The notch is an adaptive line-canceller: it
+    /// removes whatever is predictable across a fraction of a millisecond,
+    /// which on a heterodyne is the whistle and on AM or FM programme — music,
+    /// sustained and full of low notes — is the programme itself. On AM it
+    /// took the audio away with the whistle (issue #434), and DRM's decoded
+    /// audio is the same material.
+    pub fn auto_notch_applies(self) -> bool {
+        !matches!(self, Mode::Am | Mode::Sam | Mode::Wfm | Mode::Drm)
+    }
+
     /// Furthest a filter edge may be dragged from the carrier — bounded by
     /// the mode's DSP channel bandwidth.
     pub fn max_filter_hz(self) -> f32 {
@@ -1918,5 +1930,23 @@ mod tests {
         }
         assert!(Mode::Sstv.sideband_follows_band() && Mode::Rade.sideband_follows_band());
         assert!(!Mode::SstvFm.sideband_follows_band());
+    }
+}
+
+#[cfg(test)]
+mod auto_notch_tests {
+    use super::Mode;
+
+    /// Issue #434: no auto-notch on broadcast audio, where the "tone" it
+    /// cancels is the programme; still there for the voice and CW modes it was
+    /// made for.
+    #[test]
+    fn the_auto_notch_is_not_offered_on_broadcast_audio() {
+        for m in [Mode::Am, Mode::Sam, Mode::Wfm, Mode::Drm] {
+            assert!(!m.auto_notch_applies(), "{m:?}");
+        }
+        for m in [Mode::Usb, Mode::Lsb, Mode::Cw, Mode::Nfm, Mode::Dsb] {
+            assert!(m.auto_notch_applies(), "{m:?}");
+        }
     }
 }

@@ -699,7 +699,7 @@ fn stereo_allowed(rx: &RxState) -> bool {
     // does — with NR or the notch running the matrix would comb, and half of
     // an ISB pair through a comb filter is worse than the two summed.
     let wanted = rx.wfm_stereo || rx.mode == Mode::Isb;
-    wanted && !rx.auto_notch && !rx.noise_reduction.is_on()
+    wanted && !(rx.auto_notch && rx.mode.auto_notch_applies()) && !rx.noise_reduction.is_on()
 }
 
 /// The gain the decoder's tap rides, from a mean-square estimate of the
@@ -1009,7 +1009,7 @@ impl RxChain {
             }
             self.notch_on = rx.auto_notch;
         }
-        if self.notch_on {
+        if self.notch_on && self.mode.auto_notch_applies() {
             self.notch.process(&mut self.audio_buf);
         }
         if self.nr_level != rx.noise_reduction {
@@ -5338,7 +5338,7 @@ impl Engine {
             }
             self.audio_notch_on = notch_on;
         }
-        if self.audio_notch_on {
+        if self.audio_notch_on && self.state.rx[0].mode.auto_notch_applies() {
             self.audio_notch.process(&mut self.audio_re);
         }
         let nr_level = self.state.rx[0].noise_reduction;
