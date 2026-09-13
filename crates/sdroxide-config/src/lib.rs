@@ -247,6 +247,11 @@ pub struct Settings {
     ///
     /// Also a table, so it goes after every plain value for the reason above.
     pub speech: sdroxide_types::SpeechSettings,
+    /// Audible alerts. A client-side preference like `[speech]`: what the
+    /// operator at this screen wants heard when a decode matters.
+    ///
+    /// A table for the same reason.
+    pub alerts: sdroxide_types::AlertSettings,
     /// The sdroxide server this screen dials from Settings → Remote — the
     /// counterpart of `remote_access` above, and client-side like `[ui]` and
     /// `[speech]`: it is where *this* machine goes, not who may come here.
@@ -280,6 +285,7 @@ impl Default for Settings {
             ui: sdroxide_types::UiSettings::default(),
             remote_access: sdroxide_types::RemoteAccess::default(),
             speech: sdroxide_types::SpeechSettings::default(),
+            alerts: sdroxide_types::AlertSettings::default(),
             remote_server: sdroxide_types::RemoteServer::default(),
         }
     }
@@ -518,6 +524,19 @@ pub fn load_speech_settings() -> sdroxide_types::SpeechSettings {
 pub fn save_speech_settings(speech: &sdroxide_types::SpeechSettings) -> Result<(), ConfigError> {
     let mut s = Settings::load();
     s.speech = speech.clone();
+    s.save()
+}
+
+/// Load just the audible-alert preferences.
+pub fn load_alerts_settings() -> sdroxide_types::AlertSettings {
+    Settings::load().alerts
+}
+
+/// Persist the audible-alert preferences, preserving every other setting
+/// (read-modify-write, like [`save_ui_settings`]).
+pub fn save_alerts_settings(alerts: &sdroxide_types::AlertSettings) -> Result<(), ConfigError> {
+    let mut s = Settings::load();
+    s.alerts = alerts.clone();
     s.save()
 }
 
@@ -2418,6 +2437,41 @@ mod tests {
         assert!(!back.tx_ham_only, "a value below a table must not become part of it");
         assert_eq!(back.server_port, 4952, "the port we listen on is not the one we dial");
         assert_eq!(back.speech, s.speech, "the table above must survive too");
+    }
+
+    /// The alerts table carries sub-tables of its own, so it gets the same
+    /// swallowing test: a write that scatters `[alerts.events.new-dxcc]` must
+    /// leave every scalar above it standing.
+    #[test]
+    fn alerts_settings_survive_a_write_without_swallowing_anything() {
+        let mut alerts = sdroxide_types::AlertSettings {
+            enabled: true,
+            volume: 0.4,
+            device: Some("Speakers".into()),
+            ..Default::default()
+        };
+        alerts.events.called.sound = sdroxide_types::AlertSound::Warble;
+        alerts.events.new_dxcc.enabled = true;
+
+        let s = Settings { alerts: alerts.clone(), tx_ham_only: false, ..Settings::default() };
+        let text = toml::to_string_pretty(&s).unwrap();
+        let back: Settings = toml::from_str(&text).unwrap();
+        assert_eq!(back, s);
+        assert_eq!(back.alerts, alerts);
+        assert!(back.alerts.enabled);
+        assert_eq!(back.alerts.events.called.sound, sdroxide_types::AlertSound::Warble);
+        assert_eq!(back.alerts.volume, 0.4);
+        assert!(!back.tx_ham_only, "a value below a table must not become part of it");
+        assert_eq!(back.speech, s.speech, "the table above must survive too");
+        assert_eq!(back.remote_server, s.remote_server, "the table below must survive too");
+    }
+
+    /// A `config.toml` written before this feature existed has no alerts table,
+    /// and must come up quiet rather than beeping at its owner.
+    #[test]
+    fn a_config_without_an_alerts_table_stays_quiet() {
+        let s: Settings = toml::from_str("server_port = 4950").unwrap();
+        assert!(!s.alerts.enabled);
     }
 
     /// A `config.toml` written before this feature existed has no address to

@@ -71,6 +71,10 @@ sdroxide-config = { path = "../sdroxide-config" }
 # ...and the half that links a model runtime and a sound card. Cargo unifies
 # this with the entry above, so native gets `synth` and wasm does not.
 sdroxide-speech = { path = "../sdroxide-speech", features = ["synth"] }
+# The alarm half of the same story: cpal output for the audible alerts. A hard
+# dependency here (cpal owns the host audio stack), so it lives in the native
+# block and never reaches the wasm dependency path.
+sdroxide-audio = { path = "../sdroxide-audio" }
 # MIDI control surfaces (VFO knob, PTT button, faders). Native-only: it links
 # the host MIDI stack, so it must never reach the wasm dependency path.
 sdroxide-midi = { path = "../sdroxide-midi" }

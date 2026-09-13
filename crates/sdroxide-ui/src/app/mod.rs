@@ -19,6 +19,7 @@
 //! below directly; what they expose *to each other* is marked
 //! `pub(in crate::app)`, which is as wide as anything here ever gets.
 
+pub(in crate::app) mod alerts;
 pub(in crate::app) mod awards;
 pub(in crate::app) mod bands;
 pub(in crate::app) mod drm;
@@ -61,7 +62,8 @@ use self::panels::fsq::fsq_load_contacts;
 use self::panels::rf_paint::RfPaintUi;
 use self::panels::sstv::SstvUi;
 use self::persist::{
-    load_broadcast_stations, load_qso_log, load_speech_settings, load_ui_settings,
+    load_alerts_settings, load_broadcast_stations, load_qso_log, load_speech_settings,
+    load_ui_settings,
 };
 use self::settings::servers::TciServerStatus;
 use self::settings::{SatEditState, SettingsTab, TestOutcome};
@@ -287,6 +289,10 @@ pub struct SdroxideApp {
     speech: speech::SpeechRuntime,
     /// Voices found on disk, listed when the settings dialog opens.
     speech_voices: Vec<String>,
+    /// Audible alerts: played over a separate output, so they are heard even
+    /// when the radio audio is somewhere else. Always present — switched off,
+    /// the sink is closed and the cost is a boolean per decode batch.
+    alerts: alerts::AlertRuntime,
     radio_cfg: Option<sdroxide_types::RadioConfig>,
     /// The converter offset being typed on the Radio tab, in Hz. Held apart
     /// from `radio_cfg` because every other field on that tab is written to
@@ -1240,6 +1246,7 @@ impl SdroxideApp {
             applied_ui_font: ui_settings.menu_font_size,
             speech: speech::SpeechRuntime::new(load_speech_settings(storage)),
             speech_voices: Vec::new(),
+            alerts: alerts::AlertRuntime::new(load_alerts_settings(storage)),
             radio_cfg: None,
             converter_edit_hz: None,
             range_edit: None,

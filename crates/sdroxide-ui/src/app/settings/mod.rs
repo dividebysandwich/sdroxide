@@ -26,9 +26,12 @@ pub(in crate::app) mod servers;
 pub(in crate::app) mod tle;
 pub(in crate::app) mod ui_tab;
 
+pub(in crate::app) mod alerts;
+
 use eframe::egui::{self, Color32, ComboBox, RichText};
 use sdroxide_types::{Command, LoginTarget, LookupProvider, NetworkConfig, UploadTarget};
 
+use self::alerts::alerts_settings;
 use self::controls::settings_controls_tab;
 use self::general::{device_combo, region_combo, remote_access_settings};
 use self::net::{
@@ -51,7 +54,7 @@ use self::servers::{
 use self::tle::settings_tle_tab;
 use self::ui_tab::settings_ui_tab;
 use crate::app::SdroxideApp;
-use crate::app::persist::{persist_speech_settings, persist_ui_settings};
+use crate::app::persist::{persist_alerts_settings, persist_speech_settings, persist_ui_settings};
 use crate::chrome::StyledCombo;
 use crate::theme::ThemedScroll as _;
 
@@ -66,6 +69,7 @@ pub(in crate::app) enum SettingsTab {
     General,
     Radio,
     Ui,
+    Alerts,
     Controls,
     Spots,
     FreeDv,
@@ -318,6 +322,14 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// The TEST button was pressed; answered after the closure, where the
     /// announcer is reachable.
     speech_test: &'a mut bool,
+    /// Audible alerts, edited in place and written back after the window
+    /// closure like [`Self::speech_edit`].
+    alerts_edit: &'a mut sdroxide_types::AlertSettings,
+    /// How the alarm sink is doing, read from the settings tab.
+    alerts_status: &'a crate::app::alerts::AlertStatus,
+    /// The TEST button was pressed; answered after the closure, where the
+    /// alarm runtime is reachable.
+    alerts_test: &'a mut bool,
     /// The station's IARU region. Applied and sent the moment it changes —
     /// there is no APPLY step on the General tab, and the whole point of it is
     /// that the band plan follows immediately.
@@ -952,6 +964,9 @@ impl SdroxideApp {
         let mut speech_edit = self.speech.settings().clone();
         let speech_status = self.speech.status();
         let mut speech_test = false;
+        let mut alerts_edit = self.alerts.settings().clone();
+        let alerts_status = self.alerts.status();
+        let mut alerts_test = false;
         let mut hpsdr_discover = false;
         let mut rtlsdr_rescan = false;
         let mut rx888_rescan = false;
@@ -1168,6 +1183,9 @@ impl SdroxideApp {
                             speech_voices: &self.speech_voices,
                             speech_status: &speech_status,
                             speech_test: &mut speech_test,
+                            alerts_edit: &mut alerts_edit,
+                            alerts_status: &alerts_status,
+                            alerts_test: &mut alerts_test,
                             net_sync: &mut net_sync,
                             tci_srv_edit: &mut tci_srv_edit,
                             tci_srv_apply: &mut tci_srv_apply,
@@ -1600,6 +1618,16 @@ impl SdroxideApp {
         if speech_test {
             self.speech.announcer.say_sample(ctx.input(|i| i.time));
         }
+        if &alerts_edit != self.alerts.settings() {
+            // Live, like speech: a changed volume or rule reaches the running
+            // worker on the next decode, and a changed device or master toggle
+            // swaps the sink.
+            self.alerts.set_settings(alerts_edit.clone());
+            persist_alerts_settings(&alerts_edit);
+        }
+        if alerts_test {
+            self.alerts.test();
+        }
         // Written as it is typed, like the control bindings: the server rereads
         // the file for every sign-in, so there is no APPLY step to hang this
         // off. Gated on owning the server, so a remote client cannot write its
@@ -1675,6 +1703,7 @@ impl SdroxideApp {
             (SettingsTab::General, "General"),
             (SettingsTab::Radio, "Radio"),
             (SettingsTab::Ui, "UI"),
+            (SettingsTab::Alerts, "Alerts"),
             (SettingsTab::Controls, "Controls"),
             (SettingsTab::Spots, "Spots"),
             (SettingsTab::FreeDv, "FreeDV"),
@@ -2612,6 +2641,15 @@ impl SdroxideApp {
                     self.audio_devices.as_ref().map(|d| d.outputs.as_slice()).unwrap_or(&[]),
                     io.speech_status,
                     io.speech_test,
+                );
+            }
+            SettingsTab::Alerts => {
+                alerts_settings(
+                    ui,
+                    io.alerts_edit,
+                    self.audio_devices.as_ref().map(|d| d.outputs.as_slice()).unwrap_or(&[]),
+                    io.alerts_status,
+                    io.alerts_test,
                 );
             }
             SettingsTab::Spots => {

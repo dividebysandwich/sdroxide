@@ -1251,6 +1251,21 @@ impl SdroxideApp {
                     {
                         self.speech.announcer.on_ft8(&d, st, now);
                     }
+                    // Audible alarms are the one thing that must not wait for
+                    // the window to be focused: ringing when the operator is
+                    // looking at this tab is a duplicate, not a feature.
+                    if self.alerts.enabled()
+                        && let Some(st) = self.digi_status.clone()
+                    {
+                        let dial_hz = self.state.active_freq_hz();
+                        let band =
+                            if dial_hz > 0.0 { sdroxide_types::adif_band(dial_hz) } else { "" };
+                        // A clone of the novelty index: `log_index()` borrows
+                        // the whole app, and the runtime needs `&mut self` to
+                        // arm its cooldowns.
+                        let log = self.log_index().clone();
+                        self.alerts.on_ft8(&d, &st.config.my_call, &st.config.my_grid, &log, band);
+                    }
                     // Prepend newest-slot decodes; keep a rolling window.
                     for dec in d.into_iter().rev() {
                         self.digi_decodes.insert(0, dec);
