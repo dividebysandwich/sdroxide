@@ -1380,8 +1380,18 @@ impl SdroxideApp {
                     self.skimmer_active_at.retain(|id, _| live.contains(id));
                     self.skimmer_spots = s;
                 }
-                RadioEvent::Spots(s) => self.spots = s,
-                RadioEvent::NetStatus(s) => self.net_status = s,
+                // A tab that shares the station radio's feeds drops back to
+                // them on the next frame if its own engine says anything.
+                RadioEvent::Spots(s) => {
+                    self.spots = s;
+                    self.spots_gen += 1;
+                    self.adopted_spots_gen = None;
+                }
+                RadioEvent::NetStatus(s) => {
+                    self.net_status = s;
+                    self.spots_gen += 1;
+                    self.adopted_spots_gen = None;
+                }
                 RadioEvent::TciServerStatus { running, addr, clients, error } => {
                     self.tci_srv_status = Some(TciServerStatus { running, addr, clients, error });
                 }

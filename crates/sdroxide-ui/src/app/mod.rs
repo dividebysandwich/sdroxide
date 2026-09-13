@@ -700,6 +700,13 @@ pub struct SdroxideApp {
     spots: Vec<Spot>,
     /// Latest feed/connection status line (cluster state, feed errors).
     net_status: Option<String>,
+    /// Bumped whenever `spots` or `net_status` changes, so the multi-radio
+    /// shell can hand the station radio's feeds to the other tabs without
+    /// comparing or cloning the list every frame.
+    spots_gen: u64,
+    /// The station radio's `spots_gen` this tab last took its spots from, in a
+    /// multi-radio window — see [`SdroxideApp::adopt_spot_feed`].
+    adopted_spots_gen: Option<u64>,
     /// Spots window open state.
     show_spots: bool,
     /// Show only spots that fall inside the current panadapter view span.
@@ -1386,6 +1393,8 @@ impl SdroxideApp {
             log_edit: None,
             spots: Vec::new(),
             net_status: None,
+            spots_gen: 0,
+            adopted_spots_gen: None,
             show_spots: false,
             spot_in_view_only: false,
             spot_search: String::new(),
@@ -1531,6 +1540,35 @@ impl SdroxideApp {
     /// Multi-radio: mark the logbook file as shared with other tabs.
     pub(crate) fn set_shared_log(&mut self, shared: bool) {
         self.shared_log = shared;
+    }
+
+    /// Multi-radio: the network spots and feed status this tab holds, and the
+    /// generation they are at.
+    pub(crate) fn spot_feed(&self) -> (u64, &[Spot], Option<&str>) {
+        (self.spots_gen, &self.spots, self.net_status.as_deref())
+    }
+
+    /// Multi-radio: take the station radio's spots and feed status.
+    ///
+    /// Only the station radio's engine runs the feeds — a DX cluster login, an
+    /// RBN socket and the reporters are things a station has one of — so every
+    /// other tab's engine sends none, and a spot never reached the waterfall or
+    /// the SPOTS list of any radio but the first (issue #410). `generation` is the
+    /// station tab's own counter.
+    pub(crate) fn adopt_spot_feed(
+        &mut self,
+        generation: u64,
+        spots: &[Spot],
+        status: Option<&str>,
+    ) {
+        self.adopted_spots_gen = Some(generation);
+        self.spots = spots.to_vec();
+        self.net_status = status.map(str::to_string);
+    }
+
+    /// Whether this tab is behind the station radio's spot generation `generation`.
+    pub(crate) fn wants_spot_feed(&self, generation: u64) -> bool {
+        self.adopted_spots_gen != Some(generation)
     }
 
     /// Whether this radio is on the air — the tab strip's TX badge.
