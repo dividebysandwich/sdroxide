@@ -599,8 +599,30 @@ impl eframe::App for SdroxideApp {
                     let pan =
                         spectrum_view::WindowPan::of(self.caps.as_ref(), self.state.center_hz)
                             .with_outer(Some(self.zoom_out_window()), self.state.sample_rate);
+                    // The level slider takes a narrow column off the right of
+                    // the panadapter. `split` declines on a window too small to
+                    // spare it, and the picture then keeps every column.
+                    let area = ui.available_rect_before_wrap();
+                    let (spec_area, level) = match crate::widgets::level_slider::split(area) {
+                        Some((s, l)) => (s, Some(l)),
+                        None => (area, None),
+                    };
+                    // Reserve the panadapter's whole height in this layout
+                    // before drawing into a child: `new_child`'s allocations
+                    // are invisible to `allocate_ui`'s space accounting, so
+                    // without this the split handle and the panel below were
+                    // laid out as if the panadapter had taken no height at all
+                    // — which collapsed the waterfall to a sliver in the modes
+                    // that have a panel under it.
+                    ui.allocate_space(area.size());
+                    let mut spec_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(spec_area)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
+                    spec_ui.shrink_clip_rect(spec_area);
                     spectrum_view::show_ext(
-                        ui,
+                        &mut spec_ui,
                         &mut self.view,
                         &mut self.state,
                         frame.as_ref(),
@@ -666,6 +688,13 @@ impl eframe::App for SdroxideApp {
                         show_panel,
                         &mut cmds,
                     );
+                    if let Some(l) = level
+                        && crate::widgets::level_slider::show(ui, l, &mut self.view)
+                    {
+                        // A hand on the level is a manual override: the next
+                        // automatic fit would otherwise walk it back.
+                        self.view.auto_fit = false;
+                    }
                 });
             }
             // Only between two things: with the panadapter switched off there
@@ -822,8 +851,29 @@ impl eframe::App for SdroxideApp {
                     let pan =
                         spectrum_view::WindowPan::of(self.caps.as_ref(), self.state.center_hz)
                             .with_outer(Some(self.zoom_out_window()), self.state.sample_rate);
+                    // The level slider's column, exactly as on the digital
+                    // path above.
+                    let area = ui.available_rect_before_wrap();
+                    let (spec_area, level) = match crate::widgets::level_slider::split(area) {
+                        Some((s, l)) => (s, Some(l)),
+                        None => (area, None),
+                    };
+                    // Reserve the panadapter's whole height in this layout
+                    // before drawing into a child: `new_child`'s allocations
+                    // are invisible to `allocate_ui`'s space accounting, so
+                    // without this the split handle and the panel below were
+                    // laid out as if the panadapter had taken no height at all
+                    // — which collapsed the waterfall to a sliver in the modes
+                    // that have a panel under it.
+                    ui.allocate_space(area.size());
+                    let mut spec_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(spec_area)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
+                    spec_ui.shrink_clip_rect(spec_area);
                     spectrum_view::show_ext(
-                        ui,
+                        &mut spec_ui,
                         &mut self.view,
                         &mut self.state,
                         frame.as_ref(),
@@ -853,6 +903,11 @@ impl eframe::App for SdroxideApp {
                         show_panel,
                         &mut cmds,
                     );
+                    if let Some(l) = level
+                        && crate::widgets::level_slider::show(ui, l, &mut self.view)
+                    {
+                        self.view.auto_fit = false;
+                    }
                 });
             }
             if show_panel {
