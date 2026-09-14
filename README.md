@@ -1,5 +1,12 @@
 # SDR Oxide BUT tuned for CB use!
 
+> **This is a fork.** It is [sdroxide](https://github.com/dividebysandwich/sdroxide)
+> — the **amateur ("ham") radio** transceiver by dividebysandwich — with a
+> **CB / shortwave-listener** focus layered on top. The Ham version is upstream;
+> everything here is upstream's program plus the citizen-band and listener
+> additions described below, and credit for the original is entirely upstream's.
+> When something is not CB/SWL-specific, it is upstream and is best read there.
+
 A PowerSDR/Thetis-style software-defined-radio transceiver client in Rust, with
 pluggable radio backends (**SoapySDR**, **OpenHPSDR**, **TCI**, **SmartSDR**, **Icom LAN**, **ELAD**, and **CAT**), an
 [egui](https://github.com/emilk/egui) GUI, and a cyberpunk theme. It runs as a **native desktop application** and, from the same
