@@ -1345,7 +1345,7 @@ impl SdroxideApp {
     fn disp_menu(&mut self, ui: &mut egui::Ui, btn: egui::Response, cmds: &mut Vec<Command>) {
         let btn = btn.on_hover_text(
             "The panadapter — its two layers, their speeds and detail, peak hold — plus \
-             waterfall contrast, FFT size and the skimmers",
+             waterfall levels, the view options and the skimmers",
         );
         crate::chrome::menu_popup(ui, &btn, |ui| {
             crate::chrome::menu_caption(ui, "Display");
@@ -4568,25 +4568,17 @@ impl SdroxideApp {
             // seconds. Start it again from now instead.
             self.wide_wf.clear();
         }
-        if picks_layers
-            && chip_stretched(ui, self.view.waterfall_flip, DISPLAY_FLIP_CHIP, extra)
-                .on_hover_text("Scroll the waterfall upwards — newest row at the bottom (V)")
-                .clicked()
-        {
-            self.view.waterfall_flip = !self.view.waterfall_flip;
-        }
     }
 
     /// The top row's labels, in draw order: the solar view and the layer
-    /// switches, the full-band strip only where there is one, then the
-    /// waterfall flip. The width the box is measured against has to list the
-    /// same chips [`Self::display_view_chips`] draws, in the same order.
+    /// switches, then the full-band strip only where there is one. The width
+    /// the box is measured against has to list the same chips
+    /// [`Self::display_view_chips`] draws, in the same order.
     fn display_view_row(&self) -> Vec<&'static str> {
         let mut row: Vec<&'static str> = DISPLAY_VIEW_CHIPS[..2].to_vec();
         if self.wide_frame.is_some() {
             row.push(DISPLAY_VIEW_CHIPS[2]);
         }
-        row.push(DISPLAY_FLIP_CHIP);
         row
     }
 
@@ -4881,7 +4873,7 @@ impl SdroxideApp {
         });
     }
 
-    /// The level fit, the skimmers and the FFT popup — the condensed Display
+    /// The level fit, the skimmers and the VIEW popup — the condensed Display
     /// box's bottom row, and the tail of the DISP menu's row.
     fn display_tool_chips(
         &mut self,
@@ -4890,7 +4882,7 @@ impl SdroxideApp {
         narrow: bool,
         extra: f32,
     ) {
-        let [fit, ctr, _, fft] = DISPLAY_TOOL_CHIPS;
+        let [fit, ctr, _, view] = DISPLAY_TOOL_CHIPS;
         // Lit while the floor/ceiling are kept fitted by themselves. Switching
         // it on fits immediately, which is also how a one-off fit is asked for:
         // click it off and on again.
@@ -4931,9 +4923,12 @@ impl SdroxideApp {
             return;
         }
         self.skimmer_button(ui, cmds, extra);
-        // Floor/ceiling + FFT size live in a popup off this button.
-        let fft_btn = chip_stretched(ui, false, fft, extra)
-            .on_hover_text("Spectrum floor / ceiling and FFT size");
+        // Waterfall levels, FFT size and the scroll direction live in a popup
+        // off this button. "VIEW" rather than "FFT": an operator looking for
+        // contrast or a flip does not think of the transform by name.
+        let fft_btn = chip_stretched(ui, false, view, extra).on_hover_text(
+            "Waterfall levels and contrast, FFT size, and the scroll direction",
+        );
         let fft_id = egui::Popup::default_response_id(&fft_btn);
         let now = ui.input(|i| i.time);
         let alpha =
@@ -5000,8 +4995,8 @@ impl SdroxideApp {
         });
     }
 
-    /// Spectrum floor/ceiling, FFT size and the waterfall's scroll direction.
-    /// Inlined by the DISP menu, behind the FFT chip in the Display box — see
+    /// Waterfall level (floor/ceiling), FFT size and the scroll direction.
+    /// Inlined by the DISP menu, behind the VIEW chip in the Display box — see
     /// [`Self::skimmer_controls`] for why a menu cannot use the popup.
     fn spectrum_controls(&mut self, ui: &mut egui::Ui) {
         crate::chrome::menu_caption(ui, "Spectrum");
@@ -5065,7 +5060,7 @@ impl SdroxideApp {
             }
         });
         crate::chrome::menu_caption(ui, "Waterfall");
-        if crate::chrome::chip(ui, self.view.waterfall_flip, "FLIP")
+        if crate::chrome::chip(ui, self.view.waterfall_flip, DISPLAY_FLIP_CHIP)
             .on_hover_text("Scroll the waterfall upwards — newest row at the bottom (V)")
             .clicked()
         {
@@ -5379,15 +5374,15 @@ const SYSTEM_CHIPS_BOTTOM: [&str; 5] = ["MAIL", "MEM", "SCAN", "⚙ SETTINGS", "
 pub(in crate::app) const DISPLAY_VIEW_CHIPS: [&str; 3] = ["☀ 3D", "SPEC", "WIDE"];
 
 /// The Display box's bottom row: the level fit, centre tuning, the skimmers,
-/// and the FFT/levels popup. Read by the measurement and by each chip's own
-/// draw site.
-const DISPLAY_TOOL_CHIPS: [&str; 4] = ["FIT", "CTR", "SKIM", "FFT"];
+/// and the display popup (waterfall levels, FFT size and scroll direction).
+/// Read by the measurement and by each chip's own draw site.
+const DISPLAY_TOOL_CHIPS: [&str; 4] = ["FIT", "CTR", "SKIM", "VIEW"];
 
-/// The waterfall's scroll direction, a chip of the Display box's top row.
+/// The waterfall's scroll direction, a chip inside the VIEW popup.
 ///
-/// It used to live only inside the FFT popup, under a "Waterfall" caption, and
-/// an operator looking for a flip never found it there. On the top row it fits
-/// in the width the tool row already needs, so it costs the strip no room.
+/// It used to sit under a "Waterfall" caption in a popup labelled "FFT" — a
+/// name an operator looking to flip the picture never clicks. The popup is
+/// "VIEW" now, and the flip is one of the things it plainly holds.
 const DISPLAY_FLIP_CHIP: &str = "FLIP";
 
 /// The keying chips' shared size: PTT and TUNE drawn to the wider of the two
