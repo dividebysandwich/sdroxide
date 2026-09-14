@@ -188,6 +188,21 @@ impl SdroxideApp {
             self.band_activity_fetch = persist::spawn_band_activity_fetch();
         }
 
+        // The activity modes' global reach, the same way: PSK Reporter's
+        // reception reports over the last fifteen minutes.
+        if let Some(rx) = &self.psk_activity_fetch
+            && let Ok(result) = rx.try_recv()
+        {
+            self.psk_activity_fetch = None;
+            if result.is_some() {
+                self.psk_activity = result;
+            }
+        }
+        if self.psk_activity_fetch.is_none() && now_t >= self.psk_activity_due {
+            self.psk_activity_due = now_t + 600.0;
+            self.psk_activity_fetch = persist::spawn_psk_activity_fetch();
+        }
+
         if now_t - self.daylight_at < 60.0 {
             return;
         }

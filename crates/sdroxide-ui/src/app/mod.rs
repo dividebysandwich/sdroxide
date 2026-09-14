@@ -692,6 +692,14 @@ pub struct SdroxideApp {
         Option<std::sync::mpsc::Receiver<Option<sdroxide_solar::BandActivityTable>>>,
     /// Frame clock reading after which another activity fetch is due.
     band_activity_due: f64,
+    /// Global PSK Reporter activity per band — the activity modes' counterpart
+    /// of `band_activity`, from the same fetch pattern.
+    psk_activity: Option<sdroxide_solar::BandActivityTable>,
+    /// The in-flight PSK activity fetch, if there is one.
+    psk_activity_fetch:
+        Option<std::sync::mpsc::Receiver<Option<sdroxide_solar::BandActivityTable>>>,
+    /// Frame clock reading after which another PSK activity fetch is due.
+    psk_activity_due: f64,
     /// Whether the Sun is up at the operator's own locator, recomputed a few
     /// times a minute. Which half of the published table to read.
     daylight: bool,
@@ -1417,6 +1425,9 @@ impl SdroxideApp {
             band_activity: None,
             band_activity_fetch: None,
             band_activity_due: 0.0,
+            psk_activity: None,
+            psk_activity_fetch: None,
+            psk_activity_due: 0.0,
             daylight: true,
             daylight_at: f64::NEG_INFINITY,
             show_bands: false,

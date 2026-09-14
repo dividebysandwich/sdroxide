@@ -8,10 +8,13 @@
 //!   80 m through 10 m and nothing else. Three bands outside that span — 160 m,
 //!   60 m and 11 m — read the nearest published group as a stand-in and are
 //!   marked with "≈", hover for the explanation.
-//! * **WSPR** is the world's WSPR network on the band over the last fifteen
-//!   minutes, from [wspr.live](https://wspr.live). A measurement that needs
-//!   none of our own receivers to have heard anything, which is what makes it
-//!   useful on a night when the operator's own antenna is deaf to the band.
+//! *   **WSPR** and **PSK** are the world's networks on the band over the last
+//!     fifteen minutes: WSPR's weak-signal beacons from
+//!     [wspr.live](https://wspr.live), the activity modes — FT8, FT4, the
+//!     CW/RTTY reporting — from [PSK Reporter](https://pskreporter.info). A
+//!     measurement that needs none of our own receivers to have heard anything,
+//!     which is what makes it useful on a night when the operator's own antenna
+//!     is deaf to the band.
 //! * **PATHS**, **REACH** and **BEST** come from the propagation field: real
 //!   receptions, by this station and — when the Reverse Beacon Network is
 //!   switched on — by everyone else's. That is a measurement too, of this
@@ -73,6 +76,16 @@ fn activity_age(app: &SdroxideApp) -> Option<String> {
     Some(sdroxide_solar::timefmt::age(crate::time::now_unix() - a.observed_unix))
 }
 
+/// How old the PSK Reporter activity snapshot is, as words, or `None` if there
+/// is none.
+fn psk_activity_age(app: &SdroxideApp) -> Option<String> {
+    let a = app.psk_activity.as_ref()?;
+    if a.observed_unix <= 0 {
+        return None;
+    }
+    Some(sdroxide_solar::timefmt::age(crate::time::now_unix() - a.observed_unix))
+}
+
 /// A reception-report count as a short string: 19 397 becomes "19.4k", 932
 /// stays "932".
 fn count_short(n: u64) -> String {
@@ -101,6 +114,44 @@ fn activity_color(paths: u64) -> Color32 {
     } else {
         crate::theme::CYAN_DIM()
     }
+}
+
+/// One measured-activity cell: the band's report count, coloured by activity,
+/// with the three figures and the source on hover. `table` is `None` until the
+/// first fetch lands, and a band with no WSPR/PSK allocation stays blank.
+fn activity_cell(
+    ui: &mut egui::Ui,
+    table: Option<&sdroxide_solar::BandActivityTable>,
+    band: Band,
+    source: &str,
+    note: &str,
+) {
+    match table.and_then(|t| t.for_band(band)) {
+        Some(a) => {
+            ui.label(
+                RichText::new(count_short(a.paths)).size(10.5).color(activity_color(a.paths)),
+            )
+            .on_hover_text(format!(
+                "Global activity on {} in the last 15 minutes, from {source}:\n\
+                 {} reception reports · {} transmitters · {} receivers\n\n\
+                 {note}\n\n\
+                 Shown brighter the busier the band is; it says the band is being heard \
+                 somewhere, not that it is open to you.",
+                band.label(),
+                a.paths,
+                a.tx,
+                a.rx,
+            ));
+        }
+        None => {
+            ui.label(dim_ink_text());
+        }
+    }
+}
+
+/// The dash an empty cell wears.
+fn dim_ink_text() -> RichText {
+    RichText::new("—").size(9.5).color(dim_ink())
 }
 
 impl SdroxideApp {
@@ -145,16 +196,20 @@ impl SdroxideApp {
             if let Some(a) = activity_age(self) {
                 ui.label(dim(&format!("· WSPR activity {a} old (wspr.live)")));
             }
+            if let Some(a) = psk_activity_age(self) {
+                ui.label(dim(&format!("· PSK activity {a} old")));
+            }
         });
         ui.add_space(4.0);
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("bands_grid").num_columns(6).spacing([14.0, 3.0]).striped(true).show(
+            egui::Grid::new("bands_grid").num_columns(7).spacing([14.0, 3.0]).striped(true).show(
                 ui,
                 |ui| {
                     ui.label(dim("BAND"));
                     ui.label(dim("CONDX"));
                     ui.label(dim("WSPR"));
+                    ui.label(dim("PSK"));
                     ui.label(dim("PATHS"));
                     ui.label(dim("REACH"));
                     ui.label(dim("BEST"));
@@ -204,33 +259,24 @@ impl SdroxideApp {
                             }
                         }
 
-                        // The world's WSPR network on this band: a measurement
-                        // that needs none of our own receivers to have heard
-                        // anything, from the public wspr.live database.
-                        match self.band_activity.as_ref().and_then(|a| a.for_band(b)) {
-                            Some(a) => {
-                                ui.label(
-                                    RichText::new(count_short(a.paths))
-                                        .size(10.5)
-                                        .color(activity_color(a.paths)),
-                                )
-                                .on_hover_text(format!(
-                                    "Global WSPR activity on {} in the last 15 minutes:\n\
-                                     {} reception reports · {} transmitters · {} receivers\n\n\
-                                     From wspr.live — the world's WSPR network, not your own \
-                                     receiver. Shown brighter the busier the band is; it says \
-                                     the band is being heard somewhere, not that it is open \
-                                     to you.",
-                                    b.label(),
-                                    a.paths,
-                                    a.tx,
-                                    a.rx,
-                                ));
-                            }
-                            None => {
-                                ui.label(dim("—"));
-                            }
-                        }
+                        // The world's WSPR network, then its activity-mode
+                        // counterpart: two measurements that need none of our
+                        // own receivers to have heard anything.
+                        activity_cell(
+                            ui,
+                            self.band_activity.as_ref(),
+                            b,
+                            "wspr.live",
+                            "The world's WSPR network — weak-signal beacons.",
+                        );
+                        activity_cell(
+                            ui,
+                            self.psk_activity.as_ref(),
+                            b,
+                            "PSK Reporter",
+                            "Reception reports from the activity modes: FT8, FT4 and the \
+                             CW/RTTY reporting that WSPR's beacons do not cover.",
+                        );
 
                         // The evidence.
                         match field.plane(b).filter(|p| !p.is_empty()) {

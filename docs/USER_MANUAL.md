@@ -1950,6 +1950,7 @@ solar indices rather than a measurement of anything.
 | --- | --- |
 | `CONDX` | The published verdict — Good, Fair or Poor — for this band, for whichever half of the day it is at your QTH |
 | `WSPR` | Global WSPR activity on the band over the last 15 minutes, from [wspr.live](https://wspr.live): how many reception reports the world's WSPR network produced. A measurement that needs nobody at *your* receiver. Shown brighter the busier the band is; hover for the report, transmitter and receiver counts |
+| `PSK` | The same figure for the activity modes, from [PSK Reporter](https://pskreporter.info): FT8, FT4 and the CW/RTTY reporting that WSPR's beacons do not cover. Same shape, same brightening, same hover |
 | `PATHS` | Decayed count of receptions in this band's field: *how much* got through |
 | `REACH` | Share of the world with evidence on it: *how widely* it got through |
 | `BEST` | Best decode margin anywhere in the band, dB above the mode's own floor |
@@ -1958,10 +1959,11 @@ solar indices rather than a measurement of anything.
 pile-up is a great many paths through one small piece of sky, and a band quietly
 open everywhere is the reverse.
 
-`WSPR`, `PATHS` and `REACH` are all measurements, but of different things:
-`WSPR` is the whole world's network, and `PATHS`/`REACH` are what this station
-(and the Reverse Beacon Network, when it is on) actually heard. `WSPR` is the
-one that is never blank merely because your own antenna is deaf to the band.
+`WSPR`, `PSK`, `PATHS` and `REACH` are all measurements, but of different things:
+`WSPR` is the whole world's WSPR network, `PSK` is the activity modes from
+PSK Reporter, and `PATHS`/`REACH` are what this station (and the Reverse Beacon
+Network, when it is on) actually heard. `WSPR` and `PSK` are never blank merely
+because your own antenna is deaf to the band.
 
 The same verdicts colour the band buttons in the **band/mode menu**, so choosing a
 band shows its forecast where you are already looking. Green is Good, yellow
@@ -1999,6 +2001,11 @@ The **WSPR** column is a second request, to the public
 [wspr.live](https://wspr.live) database, fetched every ten minutes for as long as
 the program is running. It asks for one thing — the reception-report count per
 band over the last fifteen minutes — and is cached on disk like the rest.
+
+The **PSK** column is PSK Reporter's receive-side: the reports in the same
+fifteen-minute window for 160 m through 10 m, one request every ten minutes,
+cached and interpreted exactly like the WSPR one. PSK Reporter asks its clients
+to query no more than once every few minutes, so ten is comfortably inside it.
 
 The document is cached on disk, so the last verdicts are on screen immediately
 at startup and survive being offline. Everywhere they appear they are labelled

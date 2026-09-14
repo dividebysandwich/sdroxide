@@ -813,6 +813,59 @@ pub fn band_activity_cached() -> Option<indices::BandActivityTable> {
     }
 }
 
+/// Cached name for the PSK Reporter activity document.
+const PSK_ACTIVITY_CACHE: &str = "psk-activity.xml";
+
+/// How often the global PSK Reporter activity is refetched, seconds.
+///
+/// PSK Reporter asks clients to query no more than once every few minutes; ten
+/// is well inside that, and the window the query asks for is fifteen.
+pub const PSK_ACTIVITY_PERIOD_S: i64 = 600;
+
+/// Global PSK Reporter activity per band, fetched if the cached copy has
+/// expired. The activity-mode sibling of [`band_activity_cached`]: same shape,
+/// same cache, same worker pattern.
+pub fn psk_activity_cached() -> Option<indices::BandActivityTable> {
+    let url = indices::PSK_ACTIVITY_URL;
+    let mut cache = Cache::open();
+    let read = |cache: &Cache| {
+        cache
+            .read_string(PSK_ACTIVITY_CACHE)
+            .and_then(|t| indices::parse_psk_activity(&t, cache.fetched_at(url)))
+    };
+    if now_unix() - cache.fetched_at(url) < PSK_ACTIVITY_PERIOD_S
+        && let Some(t) = read(&cache)
+    {
+        return Some(t);
+    }
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(TIMEOUT))
+        .user_agent(concat!("sdroxide/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .into();
+    match http_get(&agent, url, &cache.validators(url), JSON_LIMIT) {
+        Ok(Some((bytes, validators, _))) => {
+            let now = now_unix();
+            let parsed = std::str::from_utf8(&bytes)
+                .ok()
+                .and_then(|t| indices::parse_psk_activity(t, now));
+            if parsed.is_some() {
+                cache.write(PSK_ACTIVITY_CACHE, url, &bytes, validators);
+            }
+            parsed.or_else(|| read(&cache))
+        }
+        Ok(None) => {
+            cache.touch(url, now_unix());
+            read(&cache)
+        }
+        Err(e) => {
+            tracing::warn!("PSK activity fetch failed: {e}");
+            read(&cache)
+        }
+    }
+}
+
 /// Conditional GET. `Ok(None)` means 304 Not Modified.
 ///
 /// The third member of the tuple is the response's `Warning` header, which is

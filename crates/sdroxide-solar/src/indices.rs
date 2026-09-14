@@ -664,13 +664,68 @@ pub fn parse_band_activity(json: &str, observed_unix: i64) -> Option<BandActivit
     Some(BandActivityTable { bands, observed_unix })
 }
 
+/// The PSK Reporter retrieve query: every reception report in the last fifteen
+/// minutes on 160 m–10 m. `rronly=1` keeps the answer to the report list, which
+/// is the small form; the frequency in whole MHz is the band code, the same
+/// convention wspr.live uses, so the two columns share a type.
+pub const PSK_ACTIVITY_URL: &str =
+    "https://retrieve.pskreporter.info/query?flowStartSeconds=-900&rronly=1&frange=1800000-30000000";
+
+/// Parse PSK Reporter's reception-report XML into per-band activity.
+///
+/// The counterpart of [`parse_band_activity`] for the activity modes: FT8, FT4
+/// and the CW/RTTY reporting that WSPR's beacons do not cover. Counts reports,
+/// distinct senders and distinct receivers, the same three figures per band.
+pub fn parse_psk_activity(xml: &str, observed_unix: i64) -> Option<BandActivityTable> {
+    use std::collections::{HashMap, HashSet};
+
+    #[derive(Default)]
+    struct Acc {
+        paths: u64,
+        tx: HashSet<String>,
+        rx: HashSet<String>,
+    }
+
+    let doc = roxmltree::Document::parse(xml).ok()?;
+    let mut acc: HashMap<i16, Acc> = HashMap::new();
+    for node in doc.descendants().filter(|n| n.has_tag_name("receptionReport")) {
+        let Some(freq) = node.attribute("frequency").and_then(|f| f.parse::<f64>().ok()) else {
+            continue;
+        };
+        if freq <= 0.0 {
+            continue;
+        }
+        // Whole MHz: 14.074 is band 14, 3.5 is band 3 — the same code the WSPR
+        // table uses, and the lookup ignores a code with no amateur band behind
+        // it (27 MHz freeband, out-of-band spots).
+        let entry = acc.entry((freq / 1_000_000.0) as i16).or_default();
+        entry.paths += 1;
+        if let Some(s) = node.attribute("senderCallsign").filter(|s| !s.is_empty()) {
+            entry.tx.insert(s.to_ascii_uppercase());
+        }
+        if let Some(r) = node.attribute("receiverCallsign").filter(|s| !s.is_empty()) {
+            entry.rx.insert(r.to_ascii_uppercase());
+        }
+    }
+    let mut bands: Vec<BandActivity> = acc
+        .into_iter()
+        .map(|(band, a)| BandActivity {
+            band,
+            paths: a.paths,
+            tx: a.tx.len() as u64,
+            rx: a.rx.len() as u64,
+        })
+        .collect();
+    bands.sort_by_key(|a| a.band);
+    Some(BandActivityTable { bands, observed_unix })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// The real document, as fetched.
     const HAMQSL: &str = include_str!("../tests/fixtures/hamqsl.xml");
-
     #[test]
     fn parses_the_published_band_conditions() {
         let c = parse_band_conditions(HAMQSL).expect("the real document must parse");
@@ -990,5 +1045,25 @@ mod tests {
         assert_eq!(wspr_band_code(Band::M10), Some(28));
         assert_eq!(wspr_band_code(Band::Cm23), Some(1296));
         assert_eq!(wspr_band_code(Band::M11), None);
+    }
+
+    #[test]
+    fn psk_activity_counts_reports_per_band() {
+        let xml = r#"<?xml version="1.0"?>
+        <receptionReports>
+          <receptionReport senderCallsign="K1ABC" frequency="14074123" receiverCallsign="W9XYZ"/>
+          <receptionReport senderCallsign="K1ABC" frequency="14074100" receiverCallsign="N0AAA"/>
+          <receptionReport senderCallsign="DL1ABC" frequency="7074000" receiverCallsign="W9XYZ"/>
+          <receptionReport senderCallsign="CB1" frequency="27245000" receiverCallsign="X1"/>
+        </receptionReports>"#;
+        let t = parse_psk_activity(xml, 7).unwrap();
+        let twenty = t.for_band(sdroxide_types::Band::M20).unwrap();
+        assert_eq!(twenty.paths, 2);
+        assert_eq!(twenty.tx, 1, "one distinct sender");
+        assert_eq!(twenty.rx, 2, "two distinct receivers");
+        assert_eq!(t.for_band(sdroxide_types::Band::M40).unwrap().paths, 1);
+        // 27 MHz maps to a code with no amateur band behind it.
+        assert!(t.for_band(sdroxide_types::Band::M11).is_none());
+        assert!(parse_psk_activity("not xml", 0).is_none());
     }
 }

@@ -252,6 +252,27 @@ pub(in crate::app) fn spawn_band_activity_fetch()
     None
 }
 
+/// Fetch (or reuse) the global PSK Reporter activity on a worker thread. The
+/// activity-mode sibling of [`spawn_band_activity_fetch`].
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn spawn_psk_activity_fetch()
+-> Option<std::sync::mpsc::Receiver<Option<sdroxide_solar::BandActivityTable>>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("psk-activity".into())
+        .spawn(move || {
+            let _ = tx.send(sdroxide_solar::psk_activity_cached());
+        })
+        .ok()?;
+    Some(rx)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn spawn_psk_activity_fetch()
+-> Option<std::sync::mpsc::Receiver<Option<sdroxide_solar::BandActivityTable>>> {
+    None
+}
+
 // ── Update check ─────────────────────────────────────────────────────────────
 //
 // One request to sdroxide.com per start, asking what the released version is.
