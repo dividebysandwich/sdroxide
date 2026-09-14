@@ -8,9 +8,14 @@
 //!   80 m through 10 m and nothing else. Three bands outside that span — 160 m,
 //!   60 m and 11 m — read the nearest published group as a stand-in and are
 //!   marked with "≈", hover for the explanation.
+//! * **WSPR** is the world's WSPR network on the band over the last fifteen
+//!   minutes, from [wspr.live](https://wspr.live). A measurement that needs
+//!   none of our own receivers to have heard anything, which is what makes it
+//!   useful on a night when the operator's own antenna is deaf to the band.
 //! * **PATHS**, **REACH** and **BEST** come from the propagation field: real
 //!   receptions, by this station and — when the Reverse Beacon Network is
-//!   switched on — by everyone else's. That is a measurement.
+//!   switched on — by everyone else's. That is a measurement too, of this
+//!   station's own sky rather than the world's.
 //!
 //! PATHS and REACH are both shown because either alone misleads: a contest
 //! pile-up on one bearing is a great many paths through a very small piece of
@@ -59,6 +64,27 @@ pub(in crate::app) fn conditions_age(app: &SdroxideApp) -> Option<String> {
     Some(sdroxide_solar::timefmt::age(crate::time::now_unix() - c.observed_unix))
 }
 
+/// How old the WSPR activity snapshot is, as words, or `None` if there is none.
+fn activity_age(app: &SdroxideApp) -> Option<String> {
+    let a = app.band_activity.as_ref()?;
+    if a.observed_unix <= 0 {
+        return None;
+    }
+    Some(sdroxide_solar::timefmt::age(crate::time::now_unix() - a.observed_unix))
+}
+
+/// A reception-report count as a short string: 19 397 becomes "19.4k", 932
+/// stays "932".
+fn count_short(n: u64) -> String {
+    if n >= 10_000 {
+        format!("{:.0}k", n as f64 / 1000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        n.to_string()
+    }
+}
+
 impl SdroxideApp {
     /// The BANDS window: one row per band, forecast beside evidence.
     pub(in crate::app) fn bands_window(&mut self, ctx: &egui::Context) {
@@ -98,15 +124,19 @@ impl SdroxideApp {
                     ui.label(dim("· no forecast yet — fetching from HAMQSL.com"));
                 }
             }
+            if let Some(a) = activity_age(self) {
+                ui.label(dim(&format!("· WSPR activity {a} old (wspr.live)")));
+            }
         });
         ui.add_space(4.0);
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("bands_grid").num_columns(5).spacing([14.0, 3.0]).striped(true).show(
+            egui::Grid::new("bands_grid").num_columns(6).spacing([14.0, 3.0]).striped(true).show(
                 ui,
                 |ui| {
                     ui.label(dim("BAND"));
                     ui.label(dim("CONDX"));
+                    ui.label(dim("WSPR"));
                     ui.label(dim("PATHS"));
                     ui.label(dim("REACH"));
                     ui.label(dim("BEST"));
@@ -156,6 +186,29 @@ impl SdroxideApp {
                             }
                         }
 
+                        // The world's WSPR network on this band: a measurement
+                        // that needs none of our own receivers to have heard
+                        // anything, from the public wspr.live database.
+                        match self.band_activity.as_ref().and_then(|a| a.for_band(b)) {
+                            Some(a) => {
+                                ui.label(RichText::new(count_short(a.paths)).size(10.5))
+                                    .on_hover_text(format!(
+                                        "Global WSPR activity on {} in the last 15 minutes:\n\
+                                         {} reception reports · {} transmitters · {} receivers\n\n\
+                                         From wspr.live — the world's WSPR network, not your own \
+                                         receiver. It says the band is being heard somewhere, not \
+                                         that it is open to you.",
+                                        b.label(),
+                                        a.paths,
+                                        a.tx,
+                                        a.rx,
+                                    ));
+                            }
+                            None => {
+                                ui.label(dim("—"));
+                            }
+                        }
+
                         // The evidence.
                         match field.plane(b).filter(|p| !p.is_empty()) {
                             Some(p) => {
@@ -190,9 +243,10 @@ impl SdroxideApp {
 
         ui.add_space(6.0);
         ui.label(
-            dim("CONDX is a global forecast; the rest is what has actually been heard. \
-                 An empty row means nothing was decoded — which may mean the band was \
-                 shut, or only that nobody was on it.")
+            dim("CONDX is a global forecast. WSPR is what the world's WSPR network heard \
+                 (wspr.live); PATHS, REACH and BEST are what this station and the RBN heard. \
+                 An empty row means nothing was decoded — which may mean the band was shut, \
+                 or only that nobody was on it.")
             .italics(),
         );
     }

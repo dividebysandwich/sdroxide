@@ -172,6 +172,22 @@ impl SdroxideApp {
             self.band_conditions = Some(c);
         }
 
+        // The global WSPR activity, on its own cadence: wspr.live answers over
+        // a fifteen-minute window, so ten is often enough to keep the column
+        // moving and quiet enough to be a good guest on a free database.
+        if let Some(rx) = &self.band_activity_fetch
+            && let Ok(result) = rx.try_recv()
+        {
+            self.band_activity_fetch = None;
+            if result.is_some() {
+                self.band_activity = result;
+            }
+        }
+        if self.band_activity_fetch.is_none() && now_t >= self.band_activity_due {
+            self.band_activity_due = now_t + 600.0;
+            self.band_activity_fetch = persist::spawn_band_activity_fetch();
+        }
+
         if now_t - self.daylight_at < 60.0 {
             return;
         }

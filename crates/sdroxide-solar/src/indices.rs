@@ -552,6 +552,118 @@ pub fn estimate_muf(
     })
 }
 
+// ── WSPR activity (wspr.live) ────────────────────────────────────────────────
+//
+// The other measured answer beside the propagation field. N0NBH grades a band
+// from the solar indices and the propagation field counts what this station (and
+// the RBN, when it is on) actually heard; this counts what the whole world's
+// WSPR network heard, which needs no antenna of ours and is never blank because
+// the band is quiet at our end of it.
+
+/// One band's global WSPR activity over the query window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BandActivity {
+    /// The wspr.live band code: the frequency in whole MHz, so 14 is 20 m and
+    /// 7 is 40 m. `0` and `-1` are the 630 m and 2200 m bands.
+    pub band: i16,
+    /// Reception reports in the window.
+    pub paths: u64,
+    /// Distinct transmitters heard.
+    pub tx: u64,
+    /// Distinct receivers doing the hearing.
+    pub rx: u64,
+}
+
+/// Global WSPR activity, one entry per band, as one snapshot.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BandActivityTable {
+    pub bands: Vec<BandActivity>,
+    /// When the query was run — the window's end.
+    pub observed_unix: i64,
+}
+
+impl BandActivityTable {
+    /// The activity on `band`, or `None` where the band has no wspr.live code
+    /// (11 m, the broadcast and microwave bands) or nothing was reported on it.
+    pub fn for_band(&self, band: sdroxide_types::Band) -> Option<&BandActivity> {
+        let code = wspr_band_code(band)?;
+        self.bands.iter().find(|a| a.band == code)
+    }
+}
+
+/// The wspr.live band code for an amateur band, where WSPR is worked on it.
+pub fn wspr_band_code(band: sdroxide_types::Band) -> Option<i16> {
+    use sdroxide_types::Band;
+    Some(match band {
+        Band::M160 => 1,
+        Band::M80 => 3,
+        Band::M60 => 5,
+        Band::M40 => 7,
+        Band::M30 => 10,
+        Band::M20 => 14,
+        Band::M17 => 18,
+        Band::M15 => 21,
+        Band::M12 => 24,
+        Band::M10 => 28,
+        Band::M6 => 50,
+        Band::M2 => 144,
+        Band::Cm23 => 1296,
+        // 11 m has no WSPR allocation, and the broadcast, 4 m, 1.25 m and
+        // 70 cm bands are not worked on WSPR in the database.
+        _ => return None,
+    })
+}
+
+/// The wspr.live query: reception reports per band over the last fifteen
+/// minutes. ClickHouse's HTTP interface takes the whole statement in the
+/// `query` parameter and ignores everything else.
+const BAND_ACTIVITY_SQL: &str = "SELECT band, count() AS paths, uniq(tx_sign) AS tx, \
+     uniq(rx_sign) AS rx FROM wspr.rx WHERE time > now() - INTERVAL 15 MINUTE \
+     GROUP BY band ORDER BY band FORMAT JSON";
+
+/// The URL the global WSPR activity is fetched from.
+pub fn band_activity_url() -> String {
+    format!("https://db1.wspr.live/?query={}", pct_encode(BAND_ACTIVITY_SQL))
+}
+
+/// Percent-encode for a query parameter. Local and tiny: the crate has no
+/// url-encoding dependency and the one string to escape is fixed.
+fn pct_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 2);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            b' ' => out.push_str("%20"),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Parse ClickHouse's `FORMAT JSON` result. Integers are JSON numbers here, but
+/// the format quotes 64-bit values by default, so both forms are accepted.
+pub fn parse_band_activity(json: &str, observed_unix: i64) -> Option<BandActivityTable> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let rows = v.get("data")?.as_array()?;
+    let num = |v: Option<&serde_json::Value>| -> u64 {
+        v.and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .unwrap_or(0)
+    };
+    let mut bands = Vec::new();
+    for row in rows {
+        let Some(band) = row.get("band").and_then(|v| v.as_i64()) else { continue };
+        bands.push(BandActivity {
+            band: band as i16,
+            paths: num(row.get("paths")),
+            tx: num(row.get("tx")),
+            rx: num(row.get("rx")),
+        });
+    }
+    Some(BandActivityTable { bands, observed_unix })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -843,5 +955,40 @@ mod tests {
         assert_eq!(s[0].mufd, 20.0);
         assert!(parse_ionosondes("not json").is_empty());
         assert!(parse_ionosondes("[]").is_empty());
+    }
+
+    #[test]
+    fn the_activity_url_escapes_its_query() {
+        let url = band_activity_url();
+        assert!(url.starts_with("https://db1.wspr.live/?query="));
+        assert!(!url.contains(' '), "spaces must be escaped");
+        assert!(url.contains("FROM%20wspr.rx"));
+    }
+
+    #[test]
+    fn band_activity_parses_clickhouse_json() {
+        let json = r#"{"meta":[],"data":[
+            {"band":7,"paths":19397,"tx":332,"rx":525},
+            {"band":14,"paths":"19344","tx":"511","rx":"543"}
+        ],"rows":2}"#;
+        let t = parse_band_activity(json, 42).unwrap();
+        assert_eq!(t.observed_unix, 42);
+        assert_eq!(t.for_band(sdroxide_types::Band::M40).unwrap().paths, 19397);
+        // 64-bit values may arrive quoted; both forms parse.
+        assert_eq!(t.for_band(sdroxide_types::Band::M20).unwrap().tx, 511);
+        // A band with no WSPR code, and one absent from the window, are both
+        // absent rather than zero.
+        assert!(t.for_band(sdroxide_types::Band::M11).is_none());
+        assert!(t.for_band(sdroxide_types::Band::M15).is_none());
+    }
+
+    #[test]
+    fn wspr_band_codes_are_the_frequency_in_mhz() {
+        use sdroxide_types::Band;
+        assert_eq!(wspr_band_code(Band::M160), Some(1));
+        assert_eq!(wspr_band_code(Band::M20), Some(14));
+        assert_eq!(wspr_band_code(Band::M10), Some(28));
+        assert_eq!(wspr_band_code(Band::Cm23), Some(1296));
+        assert_eq!(wspr_band_code(Band::M11), None);
     }
 }

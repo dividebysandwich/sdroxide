@@ -225,6 +225,33 @@ pub(in crate::app) fn spawn_band_conditions_fetch()
     None
 }
 
+/// Fetch (or reuse) the global WSPR activity on a worker thread.
+///
+/// The same shape as [`spawn_band_conditions_fetch`], and off the UI thread for
+/// the same reason. `None` means the thread could not be spawned; an
+/// unreachable database and an expired cache both arrive as `Ok(None)` on the
+/// channel instead.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn spawn_band_activity_fetch()
+-> Option<std::sync::mpsc::Receiver<Option<sdroxide_solar::BandActivityTable>>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("band-activity".into())
+        .spawn(move || {
+            let _ = tx.send(sdroxide_solar::band_activity_cached());
+        })
+        .ok()?;
+    Some(rx)
+}
+
+/// The browser gets no disk cache and no HTTP client of its own here; the
+/// measured column stays empty there rather than guessed.
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn spawn_band_activity_fetch()
+-> Option<std::sync::mpsc::Receiver<Option<sdroxide_solar::BandActivityTable>>> {
+    None
+}
+
 // ── Update check ─────────────────────────────────────────────────────────────
 //
 // One request to sdroxide.com per start, asking what the released version is.

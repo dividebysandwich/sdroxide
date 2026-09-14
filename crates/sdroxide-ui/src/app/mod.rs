@@ -684,6 +684,14 @@ pub struct SdroxideApp {
     /// whether that turns into a request or a cache read; this only decides
     /// when to ask it.
     band_conditions_due: f64,
+    /// Global WSPR activity per band, from wspr.live — the measured column
+    /// beside the forecast. Fetched every ten minutes, native only.
+    band_activity: Option<sdroxide_solar::BandActivityTable>,
+    /// The in-flight activity fetch, if there is one.
+    band_activity_fetch:
+        Option<std::sync::mpsc::Receiver<Option<sdroxide_solar::BandActivityTable>>>,
+    /// Frame clock reading after which another activity fetch is due.
+    band_activity_due: f64,
     /// Whether the Sun is up at the operator's own locator, recomputed a few
     /// times a minute. Which half of the published table to read.
     daylight: bool,
@@ -1406,6 +1414,9 @@ impl SdroxideApp {
             band_conditions: None,
             band_conditions_fetch: None,
             band_conditions_due: 0.0,
+            band_activity: None,
+            band_activity_fetch: None,
+            band_activity_due: 0.0,
             daylight: true,
             daylight_at: f64::NEG_INFINITY,
             show_bands: false,

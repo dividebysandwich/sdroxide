@@ -1949,6 +1949,7 @@ solar indices rather than a measurement of anything.
 | Column | What it is |
 | --- | --- |
 | `CONDX` | The published verdict — Good, Fair or Poor — for this band, for whichever half of the day it is at your QTH |
+| `WSPR` | Global WSPR activity on the band over the last 15 minutes, from [wspr.live](https://wspr.live): how many reception reports the world's WSPR network produced. A measurement that needs nobody at *your* receiver — hover for the report, transmitter and receiver counts |
 | `PATHS` | Decayed count of receptions in this band's field: *how much* got through |
 | `REACH` | Share of the world with evidence on it: *how widely* it got through |
 | `BEST` | Best decode margin anywhere in the band, dB above the mode's own floor |
@@ -1956,6 +1957,11 @@ solar indices rather than a measurement of anything.
 `PATHS` and `REACH` are both there because either alone misleads: a contest
 pile-up is a great many paths through one small piece of sky, and a band quietly
 open everywhere is the reverse.
+
+`WSPR`, `PATHS` and `REACH` are all measurements, but of different things:
+`WSPR` is the whole world's network, and `PATHS`/`REACH` are what this station
+(and the Reverse Beacon Network, when it is on) actually heard. `WSPR` is the
+one that is never blank merely because your own antenna is deaf to the band.
 
 The same verdicts colour the band buttons in the **band/mode menu**, so choosing a
 band shows its forecast where you are already looking. Green is Good, yellow
@@ -1988,6 +1994,11 @@ while the [3D view](#7-solar-system-3d-view) is open: the band menu is always
 there, so these have to be too. It stays one request an hour — the two share a
 cache, so with the 3D view open the second one comes back "not modified" —
 and hourly is the interval the publisher asks for.
+
+The **WSPR** column is a second request, to the public
+[wspr.live](https://wspr.live) database, fetched every ten minutes for as long as
+the program is running. It asks for one thing — the reception-report count per
+band over the last fifteen minutes — and is cached on disk like the rest.
 
 The document is cached on disk, so the last verdicts are on screen immediately
 at startup and survive being offline. Everywhere they appear they are labelled
@@ -12616,6 +12627,7 @@ either way. The hosts contacted:
 | `nowcoast.noaa.gov` | Global infrared and visible cloud mosaics (NOAA/NESDIS GMGSI, served by nowCOAST) | 10 min |
 | `prop.kc2g.com` | Ionosonde soundings for the MUF estimate (GIRO network, aggregated by KC2G) | 15 min |
 | `www.hamqsl.com` | Calculated band conditions (N0NBH) — see [§2.15](#215-band-conditions). **Fetched whether or not this window is open** | 1 h |
+| `db1.wspr.live` | Global WSPR activity per band (the wspr.live ClickHouse database) — see [§2.15](#215-band-conditions). **Fetched whether or not this window is open** | 10 min |
 | `celestrak.org` | Orbital element sets: the listings you subscribe to (the amateur group and the ISS by default), plus QO-100 | 6 h |
 
 `hamqsl.com` is the one entry here that is a single operator's server rather than

@@ -753,6 +753,66 @@ fn parse_bc(text: &str) -> Option<indices::BandConditions> {
     indices::parse_band_conditions(text)
 }
 
+/// Cached name for the global WSPR activity document.
+const BAND_ACTIVITY_CACHE: &str = "wspr-activity.json";
+
+/// How often the global WSPR activity is refetched, seconds.
+///
+/// The query's window is fifteen minutes, so ten keeps the figure moving
+/// without polling a free public database harder than it needs to.
+pub const BAND_ACTIVITY_PERIOD_S: i64 = 600;
+
+/// The global WSPR activity per band, fetched if the cached copy has expired.
+///
+/// Blocking, and meant to be called from a worker thread — a standalone fetch
+/// like [`band_conditions_cached`], for the same reason: the column it fills is
+/// in the BANDS window, which the operator expects to be populated whenever
+/// they open it, not only once the 3D view has been up. Returns the cached
+/// copy when the database is unreachable, and `None` only when there is no
+/// usable copy at all.
+pub fn band_activity_cached() -> Option<indices::BandActivityTable> {
+    let url = indices::band_activity_url();
+    let mut cache = Cache::open();
+    let read = |cache: &Cache| {
+        cache
+            .read_string(BAND_ACTIVITY_CACHE)
+            .and_then(|t| indices::parse_band_activity(&t, cache.fetched_at(&url)))
+    };
+    if now_unix() - cache.fetched_at(&url) < BAND_ACTIVITY_PERIOD_S
+        && let Some(t) = read(&cache)
+    {
+        return Some(t);
+    }
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(TIMEOUT))
+        .user_agent(concat!("sdroxide/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .into();
+    match http_get(&agent, &url, &cache.validators(&url), JSON_LIMIT) {
+        Ok(Some((bytes, validators, _))) => {
+            let now = now_unix();
+            let parsed = std::str::from_utf8(&bytes)
+                .ok()
+                .and_then(|t| indices::parse_band_activity(t, now));
+            // Only cache what parsed; an error page over a good document would
+            // outlive the failed fetch.
+            if parsed.is_some() {
+                cache.write(BAND_ACTIVITY_CACHE, &url, &bytes, validators);
+            }
+            parsed.or_else(|| read(&cache))
+        }
+        Ok(None) => {
+            cache.touch(&url, now_unix());
+            read(&cache)
+        }
+        Err(e) => {
+            tracing::warn!("WSPR activity fetch failed: {e}");
+            read(&cache)
+        }
+    }
+}
+
 /// Conditional GET. `Ok(None)` means 304 Not Modified.
 ///
 /// The third member of the tuple is the response's `Warning` header, which is
