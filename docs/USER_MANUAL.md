@@ -297,7 +297,7 @@ shift-clicking anywhere else on the panadapter does.
 ### 2.4 Bands and modes
 
 Click the **Band / Mode** button (which reads, for example, `20M · USB`) to open a
-popup with three rows:
+popup with four rows:
 
 - **BAND:** `LW MW 160M 80M 60M 40M 30M 20M 17M 15M 12M 10M 11M 6M 4M FM 2M 1.25M 70CM
   33CM 23CM 13CM 9CM 6CM SW GEN`. Each
@@ -316,7 +316,10 @@ popup with three rows:
   VHF FM broadcast 87.5–108 MHz. None is an amateur allocation, so the same
   lockout applies, and each stays an ordinary band button: the dial jumps there
   (198 kHz AM, 1 MHz AM, 6.175 MHz AM, 100 MHz WFM), band stepping walks
-  through them, and the band stack remembers what you last listened to. `SW`
+  through them, and the band stack remembers what you last listened to. The
+  broadcast **FM** band is the exception: picking it always comes up **WFM**,
+  whatever mode the stack last held, because an FM broadcast channel is nothing
+  to listen to in AM. `SW`
   deliberately overlies the amateur HF bands, and the amateur band always wins
   the name — a frequency in a shared span reports as the amateur band, `SW`
   owns only the broadcast-only slice ([6.1](#61-general-station-audio-and-remote-access));
@@ -332,8 +335,12 @@ popup with three rows:
   [§2.15](#215-band-conditions). In a digital mode, the bands where that mode
   has a standard calling frequency carry a cyan underline; see
   [§3.1](#31-general-considerations).
+- **PRIMARY MODES:** `AM NFM USB LSB` — the four a CB or short-wave operator
+  reaches for, on their own row above the full list so they are one click rather
+  than a hunt through the digital modes. `FM` here is **NFM** (narrow); the
+  broadcast band's own button comes up **WFM** (see below).
 - **MODE:** `LSB USB CW AM SAM NFM WFM DRM DIGU DIGL DSB ISB SPEC`.
-- **DIGITAL:** `FT8 FT4 PSK RTTY RTTY-FM OLIVIA THOR FSQ HELL SSTV SSTV-FM NAVTEX RIFP RFPAINT RADE` (see
+- **DIGITAL:** `FT8 FT4 FT2 JS8 WSPR PSK RTTY RTTY-FM OLIVIA THOR FSQ ATCHAT HELL SSTV SSTV-FM NAVTEX RIFP RFPAINT RADE PACKET PACKET-HF APRS ADS-B VDL2 AIS` (see
   [Digital modes](#3-digital-modes)).
 
 ![The band and mode selector popup](images/04-band-mode-popup.jpg)
@@ -836,7 +843,7 @@ These are the same controls that live under **Settings → Radio**
 what each one needs from the radio is; they are here so that changing bands and
 reaching for the other aerial do not mean opening a dialog.
 
-### 2.8 The display and FFT controls
+### 2.8 The display and view controls
 
 **Display module:**
 
@@ -945,7 +952,9 @@ reaching for the other aerial do not mean opening a dialog.
   one refit is started every five seconds. Switching FIT **on** fits at once,
   which is also how to ask for a one-off fit: click it off and on again.
   Switching it off leaves the levels wherever you set them (the floor and
-  ceiling in the FFT popup are yours to keep only while FIT is off).
+  ceiling in the VIEW popup are yours to keep only while FIT is off, and so is
+  the level slider beside the waterfall — see
+  [Waterfall level](#waterfall-level)).
 - **CTR** — keep the tuned frequency in the **middle** of the panadapter. Lit,
   the window slides under the dial every time you tune, so the marker stays put
   and the band scrolls past it. It is **on** for a new station, and a radio keeps
@@ -968,13 +977,17 @@ reaching for the other aerial do not mean opening a dialog.
 - **SCAN** — opens the scanner window; lit while a scan is running, green while
   it has stopped on a signal. See [Scanning](#213-scanning).
 
-**FFT module:**
+**VIEW module:**
 
 - **floor** / **ceil** — the waterfall's dB range, one slider each. Bring the
   floor up until the noise just darkens and the ceiling down until the strongest
   signal you care about reaches full colour; **FIT** above does both at once
   from what is on screen, which is the quicker answer when a band change has
-  moved the whole picture.
+  moved the whole picture. The same two numbers are on the
+  [level slider](#waterfall-level) beside the waterfall, for a quick drag
+  without opening this popup.
+- **FLIP** — scroll the waterfall upwards, newest row at the bottom, instead of
+  the default top-to-bottom. The **V** key does the same.
 - **FFT** size — `2048`, `4096`, `8192`, `16384`, `32768`, `65536` or `131072`.
   This is the FFT over the *whole* of what the radio streams, and the panadapter
   grows it with the zoom until it runs out.
@@ -1047,6 +1060,24 @@ unlabelled ticks between them, so a wide panadapter gets more markers to read
 against than a narrow one rather than the same handful stretched across it.
 
 ![Waterfall colour schemes](images/05-colormaps.png)
+
+#### Waterfall level
+
+A thin vertical slider sits on the right edge of the panadapter, beside the
+waterfall: the SDR-style level control, without opening a popup.
+
+- **Drag** it, or **scroll** over it, and the floor and ceiling move together —
+  the picture brightens or darkens and the contrast is left alone.
+- **Shift-drag** or **shift-scroll** moves the two ends apart or together,
+  which sets the contrast.
+- Moving it turns **FIT** off: a hand on the level is a manual override, and an
+  automatic fit would otherwise walk it back. Click **FIT** to hand it back.
+- Hover it to read the floor and ceiling in dB.
+
+It writes the same `db_floor` and `db_ceil` as the VIEW popup's sliders and the
+keyboard bindings, so all of them agree. On a window too small to spare the
+column — a phone, or a very narrow pane — it is not shown, and the popup
+sliders are still there.
 
 #### Panadapter detail
 
@@ -10701,6 +10732,15 @@ spoken announcements below them under `[speech]`:
   still transmit if the hardware supports it; this only hides the buttons, so a
   ham who also listens leaves it off. It is the companion to the broadcast bands
   on the selector ([§2.4](#24-bands-and-modes)) for a licence-free station.
+- **Simple UI** — tick **hide advanced chips** and the top strip drops the
+  controls a CB operator or a short-wave listener never opens: the **☀ 3D** view,
+  the **WIDE** strip, the **CTR** centre-lock, the **SKIM**mers, and the
+  **AWARDS**, **SAT**, **ISM** and **MAIL** chips (stored as `simple_ui` under
+  `[ui]`). What stays is what the hobby actually uses — tuning, mode, volume,
+  squelch, bandwidth, the waterfall and its level slider, memories and scanning.
+  Nothing is turned off, only hidden: clear the tick to bring the chips back.
+  The radio keeps working exactly as before, so it is safe to leave on and
+  switch off for a moment when you want the extras.
 - **Layout** — which control strip the window wears. **Auto** picks one from the
   window size and is what you want; **Desktop**, **Tablet**, **Small screen**
   and **Phone** force it, to see how the compact strips look without a phone to
@@ -12964,7 +13004,7 @@ row of menu buttons:
 | **VFO** | A↔B, A→B, SPLIT, SUB, and the RIT/XIT offsets |
 | **SUB** | The second receiver's frequency, mode, filter and level (only while it is running) |
 | **TX** | TUNE, the voice keyer, and the drive, tune and mic levels |
-| **DISP** | ☀ 3D, WIDE, FIT, CTR, the panadapter boxes (the spectrum and waterfall switches, peak hold, their speeds and the detail), the skimmers, and the spectrum floor/ceiling and FFT size |
+| **DISP** | ☀ 3D, WIDE, FIT, CTR, the panadapter boxes (the spectrum and waterfall switches, peak hold, their speeds and the detail), the skimmers, and the VIEW options (waterfall floor/ceiling, FFT size and scroll direction) |
 | **SYS** | LOG, SPOTS, AWARDS, BANDS, SAT, ISM, PUBLIC SDR, MAIL, MEM, SCAN, SETTINGS, HELP |
 
 A menu stays open until you tap outside it or tap its button again — the top-bar

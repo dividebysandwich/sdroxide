@@ -27,7 +27,11 @@ coverage, and on any frequency an amateur band shares with shortwave the
 amateur band keeps the name. An **SWL mode** toggle hides every transmit
 control — PTT, CALL CQ, TX level, SEND, all of it — leaving a clean
 receive-only interface for the operator with a listening dongle, a SpyServer or
-a KiwiSDR. And as a receiver it is a full one: it decodes every WSPR beacon in
+a KiwiSDR. A **Simple UI** toggle hides the advanced *chips* the same way,
+leaving the controls a CB or shortwave operator reaches for; the band/mode menu
+leads with a **Primary modes** row — **AM · FM · USB · LSB** — instead of
+burying them among the digital modes; and picking the **FM** broadcast band
+comes up **WFM**. And as a receiver it is a full one: it decodes every WSPR beacon in
 HF around the clock, labels ~4,600 longwave and shortwave broadcast
 transmitters on the waterfall (each with its transmit schedule and site),
 decodes DRM shortwave radio, weather fax, and the ADS-B/VDL2 aircraft overhead
@@ -37,22 +41,36 @@ decodes DRM shortwave radio, weather fax, and the ADS-B/VDL2 aircraft overhead
 | --- | --- | --- |
 | **Amateur bands** | 160 m … 3 cm, by IARU region, with band-plan lockout | identical, untouched |
 | **11 m / citizens' band** | not present | on the bar (26.965–27.860 MHz): WSJT-CB interop, country flags, digimode channels, TX lockout |
-| **Broadcast bands** | general coverage only | **LW / MW / SW / FM** on the selector and in the band plan |
+| **Broadcast bands** | general coverage only | **LW / MW / SW / FM** on the selector and in the band plan; picking **FM** comes up **WFM** |
 | **SWL mode** | — | a toggle that hides every transmit control |
+| **Simple interface** | — | a toggle that hides the advanced chips (3D, skimmers, layers, awards, satellites, ISM, Winlink), leaving the CB/SWL controls; the band/mode menu leads with **AM · FM · USB · LSB** |
+| **Waterfall levels** | a popup behind a chip | a vertical level slider beside the waterfall, plus the popup |
 | **Radio backends** | 17 kinds of radio | plus a **USB sound-card** backend for VOX-keyed handhelds, walkies and dongles |
 | **UI themes** | the built-in set | 10 more — Nord, Gruvbox, Everforest, Solarized, Dracula, Catppuccin, … |
 
 <hr/>
 
-<img width="1496" height="933" alt="image" src="https://github.com/user-attachments/assets/9d88118c-0efe-45c5-9918-8ee2bb91b700" />
+![The panadapter with the full top strip](docs/images/01-main-window.jpg)
+
+The full interface: the radio, receiver, display and system controls along the top, the waterfall with its level slider on the right.
 
 <hr/>
 
-<img width="1682" height="1212" alt="image" src="https://github.com/user-attachments/assets/aa08f5d3-ec62-4d91-9dd0-13bde1b0ae43" />
+![The band and mode menu, leading with the primary modes](docs/images/04-band-mode-popup.jpg)
+
+The band/mode menu — a **Primary modes** row (**AM · FM · USB · LSB**) above the full mode and digital lists.
 
 <hr/>
 
-<img width="1496" height="933" alt="image" src="https://github.com/user-attachments/assets/902a73ff-c8bf-43cd-9fc3-884d40ce4b04" />
+![The General settings tab](docs/images/settings-general.jpg)
+
+**Settings → General**: station identity, IARU region and band plan, the settings file, the SWR guard and the audio devices.
+
+<hr/>
+
+![The simple interface, with the advanced chips hidden](docs/images/simple-ui.jpg)
+
+**Simple UI**: the advanced chips hidden, leaving tuning, mode, volume, squelch, bandwidth, the waterfall, memories and scanning.
 
 <hr/>
 
