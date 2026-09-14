@@ -298,6 +298,18 @@ impl Band {
         !matches!(self, Band::Gen | Band::M11 | Band::Lw | Band::Mw | Band::Sw | Band::Fm)
     }
 
+    /// Whether this is a *broadcast* service — the four an SWL tunes for their
+    /// programmes: [`Band::Lw`], [`Band::Mw`], [`Band::Sw`] and [`Band::Fm`].
+    ///
+    /// They sit on the dial among the amateur bands they share the spectrum
+    /// with, which is where the frequencies put them, but they are not
+    /// allocations and not the same kind of thing: the band selector keeps
+    /// them in a run of their own after the allocations rather than threading
+    /// them between 160 m and 30 m or between 4 m and 2 m.
+    pub fn is_broadcast(self) -> bool {
+        matches!(self, Band::Lw | Band::Mw | Band::Sw | Band::Fm)
+    }
+
     /// Band edges in Hz for the station's configured region (see
     /// [`crate::region`]). `None` for general coverage.
     pub fn edges(self) -> Option<(f64, f64)> {

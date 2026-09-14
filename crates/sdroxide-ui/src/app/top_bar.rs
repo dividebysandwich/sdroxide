@@ -6156,8 +6156,11 @@ fn band_mode_menu(
 ) {
     crate::chrome::menu_caption(ui, "Band");
     let digital = mode.is_digital();
-    ui.horizontal_wrapped(|ui| {
-        for b in Band::ALL {
+    {
+        // One band chip, drawn from the menu's state. A closure because the
+        // bands come in two runs below — the allocations first, the broadcast
+        // services together at the end — and both runs want exactly this chip.
+        let mut band_chip = |ui: &mut egui::Ui, b: Band| {
             // A band the station's own band plan does not give this region gets
             // no button: 4 m is Region 1's alone and 1.25 m and 33 cm are the
             // Americas', and offering an operator a button that tunes outside
@@ -6166,7 +6169,7 @@ fn band_mode_menu(
             // something their licence has not got. GEN is the one bandless entry
             // that stays: it is the absence of a band.
             if b != Band::Gen && b.edges().is_none() {
-                continue;
+                return;
             }
             let std_hz = if digital { digi_freq_for_band(mode, b) } else { None };
             let digi_hz = band_chip_dial(mode, b, std_hz);
@@ -6239,8 +6242,29 @@ fn band_mode_menu(
                     None => cmds.push(Command::SetBand(b)),
                 }
             }
-        }
-    });
+        };
+        // The allocations, in bar order — 160 m up through 3 cm, with 11 m
+        // where the frequencies put it.
+        ui.horizontal_wrapped(|ui| {
+            for b in Band::ALL.into_iter().filter(|b| !b.is_broadcast()) {
+                band_chip(ui, b);
+            }
+        });
+        // The broadcast services on their own line under a caption, after the
+        // amateur bands rather than threaded between them. They are what an
+        // SWL tunes and they are not allocations the band plan knows; LW and MW
+        // ahead of 160 m, and FM between 4 m and 2 m, made the bar read as one
+        // list of one kind of thing.
+        ui.add_space(6.0);
+        crate::chrome::menu_caption(ui, "Broadcast");
+        ui.horizontal_wrapped(|ui| {
+            // By frequency, the way a radio face orders them — not the bar's
+            // order, which threads FM between 4 m and 2 m and SW at the end.
+            for b in [Band::Lw, Band::Mw, Band::Sw, Band::Fm] {
+                band_chip(ui, b);
+            }
+        });
+    }
     ui.add_space(6.0);
     crate::chrome::menu_caption(ui, "CB plan (11 m)");
     ui.horizontal_wrapped(|ui| {
