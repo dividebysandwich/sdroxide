@@ -221,6 +221,19 @@ pub(in crate::app) fn settings_ui_tab(
         crate::chrome::checkbox(ui, &mut cfg.swl, "hide all transmit controls");
         ui.end_row();
 
+        ui.label("Simple UI").on_hover_text(
+            "Hide the advanced extras from the top strip: the 3D view, the \
+             skimmers, the spectrum/waterfall layer switches, award tracking, \
+             satellites, ISM decoding and radio email. The controls a CB \
+             operator or a short-wave listener reaches for — tuning, mode, \
+             volume, squelch, bandwidth, the waterfall, memories, scanning — \
+             all stay.\n\n\
+             Nothing is turned off, only hidden: switch this back on to bring \
+             the chips back.",
+        );
+        crate::chrome::checkbox(ui, &mut cfg.simple_ui, "hide advanced chips");
+        ui.end_row();
+
         ui.label("Cities on maps").on_hover_text(
             "Draw the world's cities — a dot per place, with its name beside it \
              where there is room — on the flat maps: FT8/WSPR, APRS, ADS-B and \

@@ -680,6 +680,17 @@ pub struct UiSettings {
     /// choice rather than inherit the shack machine's.
     #[serde(default)]
     pub oob_tx_dismissed: bool,
+    /// Simple interface. When on, the chips for the advanced extras — the 3D
+    /// view, the skimmers, the layer switches, award tracking, satellites, ISM
+    /// decoding, radio email — are hidden from the top strip, leaving the
+    /// controls a CB operator or a short-wave listener actually reaches for.
+    ///
+    /// A display preference like the theme, so each screen chooses; the
+    /// features themselves are untouched, only their entry points. Off by
+    /// default: an operator arriving from the full interface should not find
+    /// parts of it missing until they ask.
+    #[serde(default)]
+    pub simple_ui: bool,
 }
 
 /// Default for [`UiSettings::spot_colors`] — every kind on its stock tint.
@@ -780,6 +791,7 @@ impl Default for UiSettings {
             map_cities: true,
             swl: false,
             oob_tx_dismissed: false,
+            simple_ui: false,
         }
     }
 }

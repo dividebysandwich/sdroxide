@@ -791,7 +791,7 @@ impl SdroxideApp {
         }
         let w = self.display_rows_w(ui);
         boxes.push((Kind::Display, StripBox { w, flex: 1.0, max_w: w * CHIP_STRETCH_FACTOR }));
-        let w = system_rows_w(ui);
+        let w = system_rows_w(ui, self.ui_settings.simple_ui);
         boxes.push((Kind::System, StripBox { w, flex: 1.0, max_w: w * CHIP_STRETCH_FACTOR }));
 
         // A whole row is worth more than digit size: when the strip packs into
@@ -4549,11 +4549,15 @@ impl SdroxideApp {
         // A phone draws the waterfall alone, so the two chips that choose what
         // else is drawn have nothing to control there.
         let picks_layers = !crate::layout::tier(ui.ctx()).waterfall_only();
-        self.solar_button(ui, extra);
+        let simple = self.ui_settings.simple_ui;
+        if !simple {
+            self.solar_button(ui, extra);
+        }
         if picks_layers && !narrow {
             self.layers_button(ui, spec, extra);
         }
         if picks_layers
+            && !simple
             && has_wide
             && chip_stretched(ui, self.view.wide_waterfall, wide, extra)
                 .on_hover_text(
@@ -4575,11 +4579,27 @@ impl SdroxideApp {
     /// the box is measured against has to list the same chips
     /// [`Self::display_view_chips`] draws, in the same order.
     fn display_view_row(&self) -> Vec<&'static str> {
+        // Simple interface: only the layer switches. The 3D view and the
+        // full-band strip are the two an SWL or CB operator never opens.
+        if self.ui_settings.simple_ui {
+            return vec![DISPLAY_VIEW_CHIPS[1]];
+        }
         let mut row: Vec<&'static str> = DISPLAY_VIEW_CHIPS[..2].to_vec();
         if self.wide_frame.is_some() {
             row.push(DISPLAY_VIEW_CHIPS[2]);
         }
         row
+    }
+
+    /// The bottom-row labels for the current interface mode. Simple keeps the
+    /// level fit and the VIEW popup (waterfall levels and flip); the centre-lock
+    /// and the skimmers go.
+    fn display_tool_row(&self) -> Vec<&'static str> {
+        if self.ui_settings.simple_ui {
+            vec![DISPLAY_TOOL_CHIPS[0], DISPLAY_TOOL_CHIPS[3]]
+        } else {
+            DISPLAY_TOOL_CHIPS.to_vec()
+        }
     }
 
     /// The SPEC chip: the spectrum/waterfall layer switches, behind a popup.
@@ -4883,6 +4903,7 @@ impl SdroxideApp {
         extra: f32,
     ) {
         let [fit, ctr, _, view] = DISPLAY_TOOL_CHIPS;
+        let simple = self.ui_settings.simple_ui;
         // Lit while the floor/ceiling are kept fitted by themselves. Switching
         // it on fits immediately, which is also how a one-off fit is asked for:
         // click it off and on again.
@@ -4905,14 +4926,15 @@ impl SdroxideApp {
         // whole span every time the dial leaves it. Switching it on centres at
         // once, which is also how a one-off "put me back in the middle" is
         // asked for: click it on, and off again if you would rather pan freely.
-        if chip_stretched(ui, self.view.center_on_vfo, ctr, extra)
-            .on_hover_text(
-                "Keep the tuned frequency in the middle of the panadapter: the window slides \
-                 under the dial instead of the picture jumping a whole span when you tune off \
-                 the edge. Switch it on to centre at once; switch it off to pan and zoom \
-                 wherever you like.",
-            )
-            .clicked()
+        if !simple
+            && chip_stretched(ui, self.view.center_on_vfo, ctr, extra)
+                .on_hover_text(
+                    "Keep the tuned frequency in the middle of the panadapter: the window slides \
+                     under the dial instead of the picture jumping a whole span when you tune off \
+                     the edge. Switch it on to centre at once; switch it off to pan and zoom \
+                     wherever you like.",
+                )
+                .clicked()
         {
             self.view.center_on_vfo = !self.view.center_on_vfo;
         }
@@ -4922,7 +4944,9 @@ impl SdroxideApp {
         if narrow {
             return;
         }
-        self.skimmer_button(ui, cmds, extra);
+        if !simple {
+            self.skimmer_button(ui, cmds, extra);
+        }
         // Waterfall levels, FFT size and the scroll direction live in a popup
         // off this button. "VIEW" rather than "FFT": an operator looking for
         // contrast or a flip does not think of the transform by name.
@@ -4973,8 +4997,8 @@ impl SdroxideApp {
     /// rows plus the box margins.
     fn display_rows_w(&self, ui: &egui::Ui) -> f32 {
         let row1 = self.display_view_row();
-        chip_row_w(ui, &row1).max(chip_row_w(ui, &DISPLAY_TOOL_CHIPS))
-            + 2.0 * crate::chrome::MODULE_MARGIN_X
+        let row2 = self.display_tool_row();
+        chip_row_w(ui, &row1).max(chip_row_w(ui, &row2)) + 2.0 * crate::chrome::MODULE_MARGIN_X
     }
 
     /// The condensed Display box: the view chips on top, the tool chips below,
@@ -4982,10 +5006,9 @@ impl SdroxideApp {
     fn display_condensed(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, w: f32) {
         let inner = w - 2.0 * crate::chrome::MODULE_MARGIN_X;
         let row1 = self.display_view_row();
+        let row2 = self.display_tool_row();
         let extra1 = ((inner - chip_row_w(ui, &row1)) / row1.len() as f32).max(0.0);
-        let extra2 = ((inner - chip_row_w(ui, &DISPLAY_TOOL_CHIPS))
-            / DISPLAY_TOOL_CHIPS.len() as f32)
-            .max(0.0);
+        let extra2 = ((inner - chip_row_w(ui, &row2)) / row2.len() as f32).max(0.0);
         crate::chrome::module_bare_h(ui, w, crate::chrome::MODULE_TALL_H, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(MODULE_ROW_SPACING, MODULE_ROW_SPACING);
@@ -5072,6 +5095,7 @@ impl SdroxideApp {
     /// `extra` stretches each chip past its label; the popup passes 0.
     fn system_chips_top(&mut self, ui: &mut egui::Ui, extra: f32) {
         let [log, spots, awards, bands, sat_label, ism, public_sdrs] = SYSTEM_CHIPS_TOP;
+        let simple = self.ui_settings.simple_ui;
         if chip_stretched(ui, self.show_logbook, log, extra)
             .on_hover_text("Logbook — all QSOs (digital + manual)")
             .clicked()
@@ -5084,9 +5108,10 @@ impl SdroxideApp {
         {
             self.show_spots = !self.show_spots;
         }
-        if chip_stretched(ui, self.show_awards, awards, extra)
-            .on_hover_text("Award tracking — DXCC / WAS / WAZ / grids")
-            .clicked()
+        if !simple
+            && chip_stretched(ui, self.show_awards, awards, extra)
+                .on_hover_text("Award tracking — DXCC / WAS / WAZ / grids")
+                .clicked()
         {
             self.show_awards = !self.show_awards;
         }
@@ -5104,63 +5129,69 @@ impl SdroxideApp {
         // window is open, and that has to be visible. QO-100 shares this chip
         // because it shares the window — it is a satellite, and the only reason
         // it ever had a chip of its own was that its calibration arrived first.
-        let qo100_running = self.state.qo100.enabled;
-        let sat_chip = if self.sat_track.is_some() || qo100_running {
-            accent_chip_stretched(
-                ui,
-                true,
-                sat_label,
-                crate::theme::GREEN(),
-                crate::theme::INK_ON_BRIGHT(),
-                extra,
-            )
-        } else {
-            chip_stretched(ui, self.show_sat, sat_label, extra)
-        };
-        if sat_chip
-            .on_hover_text(match (&self.sat_track, qo100_running) {
-                (Some(t), _) => format!("Satellite — locked on {}", t.name),
-                (None, true) => "Satellite — the QO-100 beacon calibration is running".into(),
-                (None, false) => {
-                    "Satellite — Doppler tracking, and the QO-100 beacon calibration".into()
-                }
-            })
-            .clicked()
-        {
-            self.show_sat = !self.show_sat;
-        }
-        // Accented while the decoder is actually running, like the scanner and
-        // the satellite lock: it is spending CPU on four downconverters whether
-        // or not the window is open.
-        let ism_running = self.state.ism.any_enabled();
-        let ism_chip = if ism_running {
-            accent_chip_stretched(
-                ui,
-                true,
-                ism,
-                crate::theme::GREEN(),
-                crate::theme::INK_ON_BRIGHT(),
-                extra,
-            )
-        } else {
-            chip_stretched(ui, self.show_ism, ism, extra)
-        };
-        if ism_chip
-            .on_hover_text(if ism_running {
-                // Which is not the same as "this window is open", and the chip
-                // cannot say so on its own: an operator who closes the window
-                // and finds the chip still lit has no way to guess that the
-                // green is the decoder rather than the window, or where its
-                // switch went. Same wording problem the SAT chip solves above.
-                "ISM-band devices — decoding now, whether or not this window is \
-                 open. Switch it off with DECODING inside the window."
+        //
+        // The satellite and ISM chips are the two a CB or SWL operator never
+        // opens, so the simple interface leaves them out.
+        if !simple {
+            let qo100_running = self.state.qo100.enabled;
+            let sat_chip = if self.sat_track.is_some() || qo100_running {
+                accent_chip_stretched(
+                    ui,
+                    true,
+                    sat_label,
+                    crate::theme::GREEN(),
+                    crate::theme::INK_ON_BRIGHT(),
+                    extra,
+                )
             } else {
-                "ISM-band devices — weather sensors, meters and home \
-                 automation heard around you"
-            })
-            .clicked()
-        {
-            self.show_ism = !self.show_ism;
+                chip_stretched(ui, self.show_sat, sat_label, extra)
+            };
+            if sat_chip
+                .on_hover_text(match (&self.sat_track, qo100_running) {
+                    (Some(t), _) => format!("Satellite — locked on {}", t.name),
+                    (None, true) => "Satellite — the QO-100 beacon calibration is running".into(),
+                    (None, false) => {
+                        "Satellite — Doppler tracking, and the QO-100 beacon calibration".into()
+                    }
+                })
+                .clicked()
+            {
+                self.show_sat = !self.show_sat;
+            }
+            // Accented while the decoder is actually running, like the scanner
+            // and the satellite lock: it is spending CPU on four downconverters
+            // whether or not the window is open.
+            let ism_running = self.state.ism.any_enabled();
+            let ism_chip = if ism_running {
+                accent_chip_stretched(
+                    ui,
+                    true,
+                    ism,
+                    crate::theme::GREEN(),
+                    crate::theme::INK_ON_BRIGHT(),
+                    extra,
+                )
+            } else {
+                chip_stretched(ui, self.show_ism, ism, extra)
+            };
+            if ism_chip
+                .on_hover_text(if ism_running {
+                    // Which is not the same as "this window is open", and the
+                    // chip cannot say so on its own: an operator who closes the
+                    // window and finds the chip still lit has no way to guess
+                    // that the green is the decoder rather than the window, or
+                    // where its switch went. Same wording problem the SAT chip
+                    // solves above.
+                    "ISM-band devices — decoding now, whether or not this window is \
+                     open. Switch it off with DECODING inside the window."
+                } else {
+                    "ISM-band devices — weather sensors, meters and home \
+                     automation heard around you"
+                })
+                .clicked()
+            {
+                self.show_ism = !self.show_ism;
+            }
         }
         // Named for what it lists rather than for the WebSDR network, which is
         // the one thing it does *not* list: PA3FWM's receivers speak a
@@ -5182,9 +5213,11 @@ impl SdroxideApp {
     /// The remaining window chips — the condensed System box's bottom row.
     fn system_chips_bottom(&mut self, ui: &mut egui::Ui, extra: f32) {
         let [mail, mem, scan_label, settings, help] = SYSTEM_CHIPS_BOTTOM;
-        if chip_stretched(ui, self.mail.open, mail, extra)
-            .on_hover_text("Winlink radio email")
-            .clicked()
+        let simple = self.ui_settings.simple_ui;
+        if !simple
+            && chip_stretched(ui, self.mail.open, mail, extra)
+                .on_hover_text("Winlink radio email")
+                .clicked()
         {
             self.mail.open = !self.mail.open;
         }
@@ -5248,9 +5281,11 @@ impl SdroxideApp {
     /// chips splitting its share of the packer's stretch evenly.
     fn windows_condensed(&mut self, ui: &mut egui::Ui, w: f32) {
         let inner = w - 2.0 * crate::chrome::MODULE_MARGIN_X;
-        let (top, bottom): (&[&str], &[&str]) = (&SYSTEM_CHIPS_TOP, &SYSTEM_CHIPS_BOTTOM);
-        let extra1 = ((inner - chip_row_w(ui, top)) / top.len() as f32).max(0.0);
-        let extra2 = ((inner - chip_row_w(ui, bottom)) / bottom.len() as f32).max(0.0);
+        let simple = self.ui_settings.simple_ui;
+        let top = system_top_row(simple);
+        let bottom = system_bottom_row(simple);
+        let extra1 = ((inner - chip_row_w(ui, &top)) / top.len() as f32).max(0.0);
+        let extra2 = ((inner - chip_row_w(ui, &bottom)) / bottom.len() as f32).max(0.0);
         crate::chrome::module_bare_h(ui, w, crate::chrome::MODULE_TALL_H, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(MODULE_ROW_SPACING, MODULE_ROW_SPACING);
@@ -6017,9 +6052,30 @@ fn accent_chip_stretched(
 /// wider row plus the box's side margins. Measured against the live style
 /// rather than fixed, because a touched layout pads every chip out past its
 /// desktop width — see `the_condensed_system_box_fits_its_chips`.
-fn system_rows_w(ui: &egui::Ui) -> f32 {
-    chip_row_w(ui, &SYSTEM_CHIPS_TOP).max(chip_row_w(ui, &SYSTEM_CHIPS_BOTTOM))
+fn system_rows_w(ui: &egui::Ui, simple: bool) -> f32 {
+    chip_row_w(ui, &system_top_row(simple)).max(chip_row_w(ui, &system_bottom_row(simple)))
         + 2.0 * crate::chrome::MODULE_MARGIN_X
+}
+
+/// The System box's top-row labels. Simple drops the three an SWL or CB
+/// operator does not use: award tracking, satellites and ISM decoding.
+fn system_top_row(simple: bool) -> Vec<&'static str> {
+    SYSTEM_CHIPS_TOP
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !(simple && matches!(i, 2 | 4 | 5)))
+        .map(|(_, l)| *l)
+        .collect()
+}
+
+/// The System box's bottom-row labels. Simple drops Winlink radio email.
+fn system_bottom_row(simple: bool) -> Vec<&'static str> {
+    SYSTEM_CHIPS_BOTTOM
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !(simple && *i == 0))
+        .map(|(_, l)| *l)
+        .collect()
 }
 
 /// Why a band chip is greyed out, in the operator's terms.
@@ -6182,6 +6238,19 @@ fn band_mode_menu(
                     Some(hz) => cmds.push(Command::SetVfo { vfo: state.active_vfo, hz }),
                     None => cmds.push(Command::SetBand(b)),
                 }
+            }
+        }
+    });
+    ui.add_space(6.0);
+    crate::chrome::menu_caption(ui, "Primary modes");
+    ui.horizontal(|ui| {
+        // The four a CB or short-wave operator reaches for: AM and FM on 11 m,
+        // the sidebands above it. On their own row rather than left to be found
+        // among the digital and DRM modes, which is where the full list below
+        // buries them.
+        for m in [Mode::Am, Mode::Nfm, Mode::Usb, Mode::Lsb] {
+            if crate::chrome::chip(ui, mode == m, RichText::new(m.label()).size(14.0)).clicked() {
+                cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
             }
         }
     });
@@ -6895,12 +6964,24 @@ mod tests {
     /// zero stretch. Hands back the width the box left for its contents, and
     /// how far each chip reached into it, both measured from the box's inner
     /// left edge.
+    /// The simple interface drops the System chips a CB or SWL operator does
+    /// not use — award tracking, satellites, ISM and radio email — and keeps
+    /// the rest, in order. Hiding only *reduces* the row widths, so it can only
+    /// help the strip pack; this guards the set that goes.
+    #[test]
+    fn the_simple_interface_drops_the_advanced_system_chips() {
+        assert_eq!(system_top_row(false), SYSTEM_CHIPS_TOP.to_vec());
+        assert_eq!(system_bottom_row(false), SYSTEM_CHIPS_BOTTOM.to_vec());
+        assert_eq!(system_top_row(true), vec!["LOG", "SPOTS", "BANDS", "PUBLIC SDR"]);
+        assert_eq!(system_bottom_row(true), vec!["MEM", "SCAN", "⚙ SETTINGS", "? HELP"]);
+    }
+
     fn system_box_and_chips() -> (f32, Vec<(&'static str, f32)>) {
         let (ctx, input) = desktop_ctx();
         let mut out = None;
         ctx.run_ui(input, |ui| {
             let mut chips = Vec::new();
-            let width = system_rows_w(ui);
+            let width = system_rows_w(ui, false);
             let room =
                 crate::chrome::module_bare_h(ui, width, crate::chrome::MODULE_TALL_H, |ui| {
                     // Read before the rows are drawn: egui grows a Ui's
@@ -7424,7 +7505,7 @@ mod tests {
         let tx = tx_rows_w_for(ui, mode.allows_voice_keyer(), side);
         let display = chip_row_w(ui, &DISPLAY_VIEW_CHIPS).max(chip_row_w(ui, &DISPLAY_TOOL_CHIPS))
             + 2.0 * crate::chrome::MODULE_MARGIN_X;
-        let system = system_rows_w(ui);
+        let system = system_rows_w(ui, false);
         vec![
             StripBox { w: freq_w, flex: 0.0, max_w: freq_w },
             StripBox { w: SMETER_W, flex: 3.0, max_w: f32::INFINITY },
