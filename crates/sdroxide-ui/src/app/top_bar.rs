@@ -4568,6 +4568,26 @@ impl SdroxideApp {
             // seconds. Start it again from now instead.
             self.wide_wf.clear();
         }
+        if picks_layers
+            && chip_stretched(ui, self.view.waterfall_flip, DISPLAY_FLIP_CHIP, extra)
+                .on_hover_text("Scroll the waterfall upwards — newest row at the bottom (V)")
+                .clicked()
+        {
+            self.view.waterfall_flip = !self.view.waterfall_flip;
+        }
+    }
+
+    /// The top row's labels, in draw order: the solar view and the layer
+    /// switches, the full-band strip only where there is one, then the
+    /// waterfall flip. The width the box is measured against has to list the
+    /// same chips [`Self::display_view_chips`] draws, in the same order.
+    fn display_view_row(&self) -> Vec<&'static str> {
+        let mut row: Vec<&'static str> = DISPLAY_VIEW_CHIPS[..2].to_vec();
+        if self.wide_frame.is_some() {
+            row.push(DISPLAY_VIEW_CHIPS[2]);
+        }
+        row.push(DISPLAY_FLIP_CHIP);
+        row
     }
 
     /// The SPEC chip: the spectrum/waterfall layer switches, behind a popup.
@@ -4957,9 +4977,8 @@ impl SdroxideApp {
     /// The condensed Display box's natural width: the wider of its two chip
     /// rows plus the box margins.
     fn display_rows_w(&self, ui: &egui::Ui) -> f32 {
-        let row1: &[&str] =
-            if self.wide_frame.is_some() { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..2] };
-        chip_row_w(ui, row1).max(chip_row_w(ui, &DISPLAY_TOOL_CHIPS))
+        let row1 = self.display_view_row();
+        chip_row_w(ui, &row1).max(chip_row_w(ui, &DISPLAY_TOOL_CHIPS))
             + 2.0 * crate::chrome::MODULE_MARGIN_X
     }
 
@@ -4967,9 +4986,8 @@ impl SdroxideApp {
     /// each row's chips splitting its share of the packer's stretch evenly.
     fn display_condensed(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, w: f32) {
         let inner = w - 2.0 * crate::chrome::MODULE_MARGIN_X;
-        let row1: &[&str] =
-            if self.wide_frame.is_some() { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..2] };
-        let extra1 = ((inner - chip_row_w(ui, row1)) / row1.len() as f32).max(0.0);
+        let row1 = self.display_view_row();
+        let extra1 = ((inner - chip_row_w(ui, &row1)) / row1.len() as f32).max(0.0);
         let extra2 = ((inner - chip_row_w(ui, &DISPLAY_TOOL_CHIPS))
             / DISPLAY_TOOL_CHIPS.len() as f32)
             .max(0.0);
@@ -5364,6 +5382,13 @@ pub(in crate::app) const DISPLAY_VIEW_CHIPS: [&str; 3] = ["☀ 3D", "SPEC", "WID
 /// and the FFT/levels popup. Read by the measurement and by each chip's own
 /// draw site.
 const DISPLAY_TOOL_CHIPS: [&str; 4] = ["FIT", "CTR", "SKIM", "FFT"];
+
+/// The waterfall's scroll direction, a chip of the Display box's top row.
+///
+/// It used to live only inside the FFT popup, under a "Waterfall" caption, and
+/// an operator looking for a flip never found it there. On the top row it fits
+/// in the width the tool row already needs, so it costs the strip no room.
+const DISPLAY_FLIP_CHIP: &str = "FLIP";
 
 /// The keying chips' shared size: PTT and TUNE drawn to the wider of the two
 /// labels, so the chips match and the level blocks beside them start on the
