@@ -583,8 +583,10 @@ pub struct BandActivityTable {
 }
 
 impl BandActivityTable {
-    /// The activity on `band`, or `None` where the band has no wspr.live code
-    /// (11 m, the broadcast and microwave bands) or nothing was reported on it.
+    /// The activity on `band`, or `None` where the band has no code (the
+    /// broadcast and microwave bands) or nothing was reported on it. 11 m has
+    /// code 27 — the freeband reporters fold onto it — so its column fills
+    /// only when somebody is actually heard there.
     pub fn for_band(&self, band: sdroxide_types::Band) -> Option<&BandActivity> {
         let code = wspr_band_code(band)?;
         self.bands.iter().find(|a| a.band == code)
@@ -604,12 +606,15 @@ pub fn wspr_band_code(band: sdroxide_types::Band) -> Option<i16> {
         Band::M17 => 18,
         Band::M15 => 21,
         Band::M12 => 24,
+        Band::M11 => 27,
         Band::M10 => 28,
         Band::M6 => 50,
         Band::M2 => 144,
         Band::Cm23 => 1296,
-        // 11 m has no WSPR allocation, and the broadcast, 4 m, 1.25 m and
-        // 70 cm bands are not worked on WSPR in the database.
+        // The broadcast, 4 m, 1.25 m and 70 cm bands are not worked on WSPR in
+        // the database. 11 m is the citizens' band: no WSPR allocation either,
+        // but it reads code 27 so the measured column picks up reporters on
+        // the freeband frequencies when there are any.
         _ => return None,
     })
 }
@@ -671,6 +676,20 @@ pub fn parse_band_activity(json: &str, observed_unix: i64) -> Option<BandActivit
 pub const PSK_ACTIVITY_URL: &str =
     "https://retrieve.pskreporter.info/query?flowStartSeconds=-900&rronly=1&frange=1800000-30000000";
 
+/// The band code for a PSK Reporter reception frequency: whole MHz — 14.074 is
+/// band 14, 3.5 is band 3 — the same convention the WSPR table uses, so the
+/// two columns share a lookup. The citizens' band is the one exception:
+/// 26.965 through 27.860 MHz straddles the 26/27 MHz line, so a report
+/// anywhere in it counts as code 27, the code [`Band::M11`] reads. A frequency
+/// with no band code behind it (out-of-band spots) is simply never looked up.
+fn psk_band_code(hz: f64) -> i16 {
+    if (26_965_000.0..27_860_000.0).contains(&hz) {
+        27
+    } else {
+        (hz / 1_000_000.0) as i16
+    }
+}
+
 /// Parse PSK Reporter's reception-report XML into per-band activity.
 ///
 /// The counterpart of [`parse_band_activity`] for the activity modes: FT8, FT4
@@ -695,10 +714,7 @@ pub fn parse_psk_activity(xml: &str, observed_unix: i64) -> Option<BandActivityT
         if freq <= 0.0 {
             continue;
         }
-        // Whole MHz: 14.074 is band 14, 3.5 is band 3 — the same code the WSPR
-        // table uses, and the lookup ignores a code with no amateur band behind
-        // it (27 MHz freeband, out-of-band spots).
-        let entry = acc.entry((freq / 1_000_000.0) as i16).or_default();
+        let entry = acc.entry(psk_band_code(freq)).or_default();
         entry.paths += 1;
         if let Some(s) = node.attribute("senderCallsign").filter(|s| !s.is_empty()) {
             entry.tx.insert(s.to_ascii_uppercase());
@@ -1033,7 +1049,7 @@ mod tests {
         assert_eq!(t.for_band(sdroxide_types::Band::M20).unwrap().tx, 511);
         // A band with no WSPR code, and one absent from the window, are both
         // absent rather than zero.
-        assert!(t.for_band(sdroxide_types::Band::M11).is_none());
+        assert!(t.for_band(sdroxide_types::Band::Gen).is_none());
         assert!(t.for_band(sdroxide_types::Band::M15).is_none());
     }
 
@@ -1044,7 +1060,10 @@ mod tests {
         assert_eq!(wspr_band_code(Band::M20), Some(14));
         assert_eq!(wspr_band_code(Band::M10), Some(28));
         assert_eq!(wspr_band_code(Band::Cm23), Some(1296));
-        assert_eq!(wspr_band_code(Band::M11), None);
+        // 11 m: no WSPR allocation, but code 27 so reporters on the freeband
+        // frequencies register when there are any.
+        assert_eq!(wspr_band_code(Band::M11), Some(27));
+        assert_eq!(wspr_band_code(Band::Sw), None);
     }
 
     #[test]
@@ -1055,6 +1074,7 @@ mod tests {
           <receptionReport senderCallsign="K1ABC" frequency="14074100" receiverCallsign="N0AAA"/>
           <receptionReport senderCallsign="DL1ABC" frequency="7074000" receiverCallsign="W9XYZ"/>
           <receptionReport senderCallsign="CB1" frequency="27245000" receiverCallsign="X1"/>
+          <receptionReport senderCallsign="CB2" frequency="26965000" receiverCallsign="Y1"/>
         </receptionReports>"#;
         let t = parse_psk_activity(xml, 7).unwrap();
         let twenty = t.for_band(sdroxide_types::Band::M20).unwrap();
@@ -1062,8 +1082,11 @@ mod tests {
         assert_eq!(twenty.tx, 1, "one distinct sender");
         assert_eq!(twenty.rx, 2, "two distinct receivers");
         assert_eq!(t.for_band(sdroxide_types::Band::M40).unwrap().paths, 1);
-        // 27 MHz maps to a code with no amateur band behind it.
-        assert!(t.for_band(sdroxide_types::Band::M11).is_none());
+        // 26.965 and 27.245 MHz both land in the citizens' band (26.965–27.860),
+        // so 11 m picks up the count.
+        let cb = t.for_band(sdroxide_types::Band::M11).unwrap();
+        assert_eq!(cb.paths, 2);
+        assert_eq!(cb.tx, 2, "two distinct senders across the two freqs");
         assert!(parse_psk_activity("not xml", 0).is_none());
     }
 }

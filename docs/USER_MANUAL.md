@@ -1950,7 +1950,7 @@ solar indices rather than a measurement of anything.
 | --- | --- |
 | `CONDX` | The published verdict — Good, Fair or Poor — for this band, for whichever half of the day it is at your QTH |
 | `WSPR` | Global WSPR activity on the band over the last 15 minutes, from [wspr.live](https://wspr.live): how many reception reports the world's WSPR network produced. A measurement that needs nobody at *your* receiver. Shown brighter the busier the band is; hover for the report, transmitter and receiver counts |
-| `PSK` | The same figure for the activity modes, from [PSK Reporter](https://pskreporter.info): FT8, FT4 and the CW/RTTY reporting that WSPR's beacons do not cover. Same shape, same brightening, same hover |
+| `PSK` | The same figure for the activity modes, from [PSK Reporter](https://pskreporter.info): FT8, FT4 and the CW/RTTY reporting that WSPR's beacons do not cover, including the freeband reporters on 11 m. Same shape, same brightening, same hover |
 | `PATHS` | Decayed count of receptions in this band's field: *how much* got through |
 | `REACH` | Share of the world with evidence on it: *how widely* it got through |
 | `BEST` | Best decode margin anywhere in the band, dB above the mode's own floor |
@@ -2003,9 +2003,11 @@ the program is running. It asks for one thing — the reception-report count per
 band over the last fifteen minutes — and is cached on disk like the rest.
 
 The **PSK** column is PSK Reporter's receive-side: the reports in the same
-fifteen-minute window for 160 m through 10 m, one request every ten minutes,
-cached and interpreted exactly like the WSPR one. PSK Reporter asks its clients
-to query no more than once every few minutes, so ten is comfortably inside it.
+fifteen-minute window for 160 m through 10 m — and the 11 m citizens' band,
+which wears the same code, so freeband FT8 is counted where the operator is
+actually working — one request every ten minutes, cached and interpreted
+exactly like the WSPR one. PSK Reporter asks its clients to query no more
+than once every few minutes, so ten is comfortably inside it.
 
 The document is cached on disk, so the last verdicts are on screen immediately
 at startup and survive being offline. Everywhere they appear they are labelled
