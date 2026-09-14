@@ -249,20 +249,6 @@ pub(in crate::app) fn settings_ui_tab(
         ui.end_row();
     });
 
-    // Native only: the check is about *this binary* being out of date, and
-    // the browser client has no binary of its own to be behind — its station
-    // serves it fresh every time.
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        ui.add_space(10.0);
-        crate::chrome::checkbox(ui, &mut cfg.update_check, "Check for updates at startup")
-            .on_hover_text(
-                "Asks sdroxide.com once per start whether a newer release has been \
-                 published, and says so in a dismissable banner above the waterfall. \
-                 Nothing is sent beyond the request itself.",
-            );
-    }
-
     let Some(cloud_march) = cloud_march else { return };
     ui.add_space(14.0);
     ui.label(RichText::new("3D view").size(14.0).strong().color(crate::theme::CYAN()));

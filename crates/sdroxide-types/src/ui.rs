@@ -597,11 +597,6 @@ pub struct UiSettings {
     /// Cycled by clicking the meter; see [`SmeterStyle`] for why it is a
     /// screen preference rather than part of a radio's view.
     pub smeter_style: SmeterStyle,
-    /// Ask sdroxide.com once per start whether a newer release has been
-    /// published, and say so in the notice banner above the panadapter. In
-    /// `[ui]` because it is this screen's preference, like the theme — the
-    /// native client checks for its own build, wherever its radio is.
-    pub update_check: bool,
     /// How the memory channel window orders its list. This screen's
     /// preference, not the station's: the store keeps its own order and every
     /// client reads it whichever way its operator asked for.
@@ -778,7 +773,6 @@ impl Default for UiSettings {
             menu_font_size: FontSize::Medium,
             ui_zoom: 1.0,
             smeter_style: SmeterStyle::Needle,
-            update_check: true,
             memory_sort: crate::MemorySort::Stored,
             memory_sort_desc: false,
             decode_sort: crate::DecodeSort::None,

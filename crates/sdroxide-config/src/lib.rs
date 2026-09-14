@@ -217,10 +217,6 @@ pub struct Settings {
     pub audio_output: Option<String>,
     /// Preferred audio input (microphone) device name; `None` = system default.
     pub audio_input: Option<String>,
-    /// The published version the operator dismissed the update banner for.
-    /// The banner stays away until sdroxide.com names a newer version than
-    /// the running build that is also not this one. Empty = nothing dismissed.
-    pub dismissed_update: String,
     /// The ITU / IARU region this station is in, which decides every band edge
     /// and sub-segment sdroxide draws and enforces.
     ///
@@ -284,7 +280,6 @@ impl Default for Settings {
             swr_limit: 2.5,
             audio_output: None,
             audio_input: None,
-            dismissed_update: String::new(),
             region: sdroxide_types::Region::default(),
             cb_plan: sdroxide_types::CbPlan::default(),
             ui: sdroxide_types::UiSettings::default(),
@@ -1994,86 +1989,6 @@ pub fn clear_broadcast_cache() -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// Where the released version is read from: the script that drives the
-/// download page at sdroxide.com, which holds it in a `RELEASE` constant at
-/// the top. Reading the page's own source of truth means the check can never
-/// disagree with what the download buttons would actually hand out.
-const UPDATE_CHECK_URL: &str = "https://sdroxide.com/script.js";
-
-/// The released version according to sdroxide.com, or `None` when the site
-/// is unreachable or the script no longer parses. Blocking, so callers put
-/// it on a worker thread. A query parameter that changes every start defeats
-/// any cache between here and the server, so a new release is seen the day
-/// it ships rather than when a proxy's copy expires.
-pub fn fetch_published_version() -> Option<String> {
-    let url = format!("{UPDATE_CHECK_URL}?cb={}", now_unix());
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_connect(Some(std::time::Duration::from_secs(15)))
-        .timeout_global(Some(std::time::Duration::from_secs(30)))
-        .user_agent(concat!("sdroxide/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .into();
-    let mut resp = agent.get(&url).call().ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let text = resp.body_mut().with_config().limit(1024 * 1024).read_to_string().ok()?;
-    parse_published_version(&text)
-}
-
-/// Pull the version out of the script's `RELEASE` constant, which reads
-/// `version: "1.3.2",`. The first `version:` key with a quoted value
-/// immediately after it wins; the value must look like a version number, so
-/// an error page or a rewritten script yields `None` rather than a banner
-/// announcing an "update" to whatever was scraped.
-fn parse_published_version(js: &str) -> Option<String> {
-    for (at, _) in js.match_indices("version:") {
-        let rest = js[at + "version:".len()..].trim_start();
-        let Some(rest) = rest.strip_prefix('"') else { continue };
-        let Some(close) = rest.find('"') else { continue };
-        let v = &rest[..close];
-        if !v.is_empty()
-            && v.chars().all(|c| c.is_ascii_digit() || c == '.')
-            && v.chars().next().is_some_and(|c| c.is_ascii_digit())
-        {
-            return Some(v.to_string());
-        }
-    }
-    None
-}
-
-/// Whether `candidate` is a strictly newer version than `current`, comparing
-/// dotted components numerically — so `1.10.0` beats `1.9.9`, and a build
-/// ahead of the published release (this machine running `1.4.0` while the
-/// site still says `1.3.2`) is *not* offered its own past as an update.
-/// Missing components count as zero, so `1.4` and `1.4.0` are the same.
-pub fn version_is_newer(candidate: &str, current: &str) -> bool {
-    let parts = |v: &str| -> Vec<u64> {
-        v.split('.').map(|p| p.trim().parse::<u64>().unwrap_or(0)).collect()
-    };
-    let (a, b) = (parts(candidate), parts(current));
-    for i in 0..a.len().max(b.len()) {
-        let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
-        if x != y {
-            return x > y;
-        }
-    }
-    false
-}
-
-/// The published version the operator last dismissed the update banner for.
-pub fn load_dismissed_update() -> String {
-    Settings::load().dismissed_update
-}
-
-/// Remember a dismissed update, preserving every other setting
-/// (read-modify-write, like [`save_ui_settings`]).
-pub fn save_dismissed_update(version: &str) -> Result<(), ConfigError> {
-    let mut s = Settings::load();
-    s.dismissed_update = version.to_string();
-    s.save()
-}
-
 /// Seconds since the Unix epoch.
 fn now_unix() -> i64 {
     std::time::SystemTime::now()
@@ -2095,39 +2010,6 @@ pub fn save_voice_names(names: &[String]) -> Result<(), ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn published_version_parses_from_release_constant() {
-        // The shape script.js actually has: prose mentioning "version" above
-        // the constant, then the RELEASE object.
-        let js = r#"
-            /* Everything on the page (version pills, download links,
-               filenames) is derived from this object. */
-            const RELEASE = {
-              repo: "dividebysandwich/sdroxide",
-              version: "1.3.2",   // <-- change me for a new release
-              tag: "v1.3.2",
-            };
-        "#;
-        assert_eq!(parse_published_version(js), Some("1.3.2".to_string()));
-        // An error page, a script without the constant, and a quoted value
-        // that is not a version number all yield nothing.
-        assert_eq!(parse_published_version("<html>404</html>"), None);
-        assert_eq!(parse_published_version(r#"version: "v1.3.2""#), None);
-        assert_eq!(parse_published_version("version: 1.3.2"), None);
-    }
-
-    #[test]
-    fn version_is_newer_compares_numerically() {
-        assert!(version_is_newer("1.4.0", "1.3.2"));
-        assert!(version_is_newer("1.10.0", "1.9.9"));
-        assert!(version_is_newer("2.0", "1.9.9"));
-        // Equal — including a missing trailing component — is not newer.
-        assert!(!version_is_newer("1.4.0", "1.4.0"));
-        assert!(!version_is_newer("1.4", "1.4.0"));
-        // A build ahead of the published release is not offered its own past.
-        assert!(!version_is_newer("1.3.2", "1.4.0"));
-    }
 
     #[test]
     fn digi_config_roundtrip_via_json() {

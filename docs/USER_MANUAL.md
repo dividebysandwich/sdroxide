@@ -10918,14 +10918,6 @@ spoken announcements below them under `[speech]`:
   land, the rivers, the borders and your stations stay; the cities and their
   names go. The 3D globe is unaffected — its cities are night-side lights rather
   than markers, and nothing there is written across a contact.
-- **Check for updates at startup** — asks sdroxide.com once per start whether a
-  newer release has been published, and if so says which in a dismissable banner
-  above the waterfall (the same amber strip the radio warnings use), with a link
-  to the download page. **Dismiss** remembers that release, so the banner stays
-  away until the *next* one ships. Nothing is sent beyond the request itself,
-  and unticking the box means sdroxide never contacts the site at all. On by
-  default; native clients only — the browser client is served fresh by its
-  station every time, so it has no binary of its own to be behind.
 
 Under **3D view**:
 
@@ -13788,7 +13780,7 @@ and not the station's.
 
 | File | Format | Contents |
 | --- | --- | --- |
-| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `dismissed_update` (the published release whose update banner was dismissed, [§6.3](#63-ui-display-preferences-and-voice-announcements)), `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), `cb_plan` (`"World"` / `"Cept"` / `"Germany80"` / `"Uk27_81"` / `"Us"` / `"Australia"` — the CB channel plan, [§6.1](#61-general-station-audio-and-remote-access)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **General** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
+| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), `cb_plan` (`"World"` / `"Cept"` / `"Germany80"` / `"Uk27_81"` / `"Us"` / `"Australia"` — the CB channel plan, [§6.1](#61-general-station-audio-and-remote-access)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **General** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
 | `radio.json` | JSON | Which radio interface is selected and everything that configures it — the CAT/HPSDR/TCI/SmartSDR/RTL-SDR/rtl_tcp/SpyServer/RX-888/Airspy HF+/SDRplay/PlutoSDR sections, the converter offset and stated tuning ranges, and the radio's sound-card device names. |
 | `digi.json` | JSON | Digital-mode operator settings: your callsign and grid, FT8/FT4/FT2 TX period, auto-sequence and message templates, the transmit-frequency hold (`hold_tx_freq`) and the per-band transmit offsets it pins (`tx_audio_hz`), the per-mode transmit-audio levels (`tx_audio_levels`, with `tx_audio_level_fm` / `tx_audio_level_ssb` as the level a mode with no entry of its own inherits), and the WSPR beacon's duty cycle, power and band-hop list. |
 | `memories.json` | JSON | Saved memory channels. |

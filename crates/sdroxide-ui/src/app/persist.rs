@@ -273,54 +273,7 @@ pub(in crate::app) fn spawn_psk_activity_fetch()
     None
 }
 
-// ── Update check ─────────────────────────────────────────────────────────────
-//
-// One request to sdroxide.com per start, asking what the released version is.
-// Native only: the check is about *this binary* being out of date, and the
-// browser client has no binary — it is served fresh by its station every time.
-
-/// Ask sdroxide.com for the released version on a worker thread.
-///
-/// Off the UI thread because it is a network round trip; the app picks the
-/// result up from the receiver on a later frame. A version only arrives on
-/// the channel when it is strictly newer than the running build *and* differs
-/// from the one whose banner the operator already dismissed — an unreachable
-/// site, a current or ahead-of-release build and a dismissed release all just
-/// let the channel close quietly.
-#[cfg(not(target_arch = "wasm32"))]
-pub(in crate::app) fn spawn_update_check() -> Option<std::sync::mpsc::Receiver<String>> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::Builder::new()
-        .name("update-check".into())
-        .spawn(move || {
-            let Some(published) = sdroxide_config::fetch_published_version() else { return };
-            if sdroxide_config::version_is_newer(&published, env!("CARGO_PKG_VERSION"))
-                && published != sdroxide_config::load_dismissed_update()
-            {
-                let _ = tx.send(published);
-            }
-        })
-        .ok()?;
-    Some(rx)
-}
-
-/// No binary to be out of date in the browser, so nothing to check.
-#[cfg(target_arch = "wasm32")]
-pub(in crate::app) fn spawn_update_check() -> Option<std::sync::mpsc::Receiver<String>> {
-    None
-}
-
-/// Remember that the operator dismissed the banner for `version`, so it only
-/// returns when a different release is published.
-#[cfg(not(target_arch = "wasm32"))]
-pub(in crate::app) fn persist_dismissed_update(version: &str) {
-    if let Err(e) = sdroxide_config::save_dismissed_update(version) {
-        eprintln!("failed to save the dismissed update version: {e}");
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(in crate::app) fn persist_dismissed_update(_version: &str) {}
+// ── Schedule download ───────────────────────────────────────────────────────
 
 /// The result of a background schedule download.
 pub(in crate::app) type ScheduleFetch = Result<Vec<sdroxide_types::BroadcastStation>, String>;

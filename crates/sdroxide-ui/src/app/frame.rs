@@ -305,53 +305,6 @@ impl eframe::App for SdroxideApp {
                     });
                 });
         }
-        // The startup version check landing. At most one message ever comes:
-        // the worker only sends a release newer than this build that was not
-        // already dismissed, then hangs up — as it also does, without
-        // sending, when the site is unreachable or nothing is new.
-        if let Some(rx) = &self.update_fetch {
-            match rx.try_recv() {
-                Ok(v) => {
-                    self.update_notice = Some(v);
-                    self.update_fetch = None;
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.update_fetch = None,
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
-            }
-        }
-        // A newer release on sdroxide.com — the radio warnings' banner in
-        // the same place, but its Dismiss also remembers the version, so the
-        // banner stays away until the *next* release ships.
-        if let Some(version) = self.update_notice.clone() {
-            let (wash, rule, mark, ink) = notice_banner_colors();
-            egui::Frame::new()
-                .fill(wash)
-                .stroke(egui::Stroke::new(1.0, rule))
-                .inner_margin(egui::Margin::symmetric(8, 5))
-                .show(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new("⚠").size(15.0).color(mark));
-                        ui.label(
-                            RichText::new(format!(
-                                "SDRoxide {version} has been released — this is {}.",
-                                env!("CARGO_PKG_VERSION")
-                            ))
-                            .size(13.0)
-                            .color(ink),
-                        );
-                        ui.hyperlink_to(
-                            RichText::new("Get it at sdroxide.com").size(13.0),
-                            "https://sdroxide.com/",
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("Dismiss").clicked() {
-                                crate::app::persist::persist_dismissed_update(&version);
-                                self.update_notice = None;
-                            }
-                        });
-                    });
-                });
-        }
         // Network-spot overlay (shared by voice + digital panadapter paths). A
         // clicked spot is captured here and pre-filled into a log entry below.
         // The broadcast stations are refreshed first, before anything reads

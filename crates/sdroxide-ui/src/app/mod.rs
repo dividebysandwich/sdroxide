@@ -170,13 +170,6 @@ pub struct SdroxideApp {
     /// Persistent, non-fatal operator notice (e.g. radio audio input
     /// unavailable / mono card selected for IQ). Shown as a warning banner.
     radio_notice: Option<String>,
-    /// A newer release published on sdroxide.com — the version string
-    /// itself. Set at most once, when the startup check lands; drawn in the
-    /// notice banner's clothes above the panadapter, with a Dismiss that also
-    /// remembers the version so the banner returns only for the next release.
-    update_notice: Option<String>,
-    /// The startup version check still in flight, if there is one.
-    update_fetch: Option<std::sync::mpsc::Receiver<String>>,
     sent_cfg: Option<SpectrumConfig>,
     desired_cfg: Option<SpectrumConfig>,
     desired_at: f64,
@@ -1457,15 +1450,6 @@ impl SdroxideApp {
             // cache it fills.
             broadcast_fetch: if station_writer {
                 persist::spawn_schedule_fetch(false)
-            } else {
-                None
-            },
-            // One version check per start, from one tab for the whole
-            // station — every tab is the same binary. Off when the operator
-            // has switched the check off in Settings → UI.
-            update_notice: None,
-            update_fetch: if station_writer && ui_settings.update_check {
-                persist::spawn_update_check()
             } else {
                 None
             },
