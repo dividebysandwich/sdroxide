@@ -12342,11 +12342,25 @@ impl Engine {
             }
         }
 
-        let entry = self.stacks.get(&band).and_then(|s| s.first().copied()).unwrap_or_else(|| {
-            let (freq_hz, mode) = band.default_entry();
-            let (filter_lo, filter_hi) = mode.default_filter_at(freq_hz);
-            BandStackEntry { freq_hz, mode, filter_lo, filter_hi }
-        });
+        let mut entry =
+            self.stacks.get(&band).and_then(|s| s.first().copied()).unwrap_or_else(|| {
+                let (freq_hz, mode) = band.default_entry();
+                let (filter_lo, filter_hi) = mode.default_filter_at(freq_hz);
+                BandStackEntry { freq_hz, mode, filter_lo, filter_hi }
+            });
+
+        // The FM broadcast band is WFM by its nature. The stack remembers the
+        // mode a band was last left in, which is right for the ham bands — the
+        // sideband and passband an operator works a band in are theirs to keep
+        // — but an FM broadcast channel tuned in AM (or left that way by an
+        // earlier session) is nothing to restore: picking FM means wanting to
+        // hear the broadcast.
+        if band == Band::Fm && entry.mode != Mode::Wfm {
+            entry.mode = Mode::Wfm;
+            let (filter_lo, filter_hi) = Mode::Wfm.default_filter_at(entry.freq_hz);
+            entry.filter_lo = filter_lo;
+            entry.filter_hi = filter_hi;
+        }
 
         self.state.band = band;
         self.apply_entry(entry);
