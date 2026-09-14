@@ -85,6 +85,24 @@ fn count_short(n: u64) -> String {
     }
 }
 
+/// The colour the WSPR count is shown in — brighter the busier the band is
+/// globally.
+///
+/// Deliberately *not* the CONDX palette: this is a magnitude, not a verdict.
+/// A band the whole world is working reads green, one with a steady stream
+/// reads cyan, one that is barely there reads dim — and a low count on 160 m,
+/// where few people run WSPR, is ordinary rather than a fault, which is why
+/// the ramp is absolute and the tooltip says what the number is.
+fn activity_color(paths: u64) -> Color32 {
+    if paths >= 1_000 {
+        crate::theme::GREEN()
+    } else if paths >= 100 {
+        crate::theme::CYAN()
+    } else {
+        crate::theme::CYAN_DIM()
+    }
+}
+
 impl SdroxideApp {
     /// The BANDS window: one row per band, forecast beside evidence.
     pub(in crate::app) fn bands_window(&mut self, ctx: &egui::Context) {
@@ -191,18 +209,23 @@ impl SdroxideApp {
                         // anything, from the public wspr.live database.
                         match self.band_activity.as_ref().and_then(|a| a.for_band(b)) {
                             Some(a) => {
-                                ui.label(RichText::new(count_short(a.paths)).size(10.5))
-                                    .on_hover_text(format!(
-                                        "Global WSPR activity on {} in the last 15 minutes:\n\
-                                         {} reception reports · {} transmitters · {} receivers\n\n\
-                                         From wspr.live — the world's WSPR network, not your own \
-                                         receiver. It says the band is being heard somewhere, not \
-                                         that it is open to you.",
-                                        b.label(),
-                                        a.paths,
-                                        a.tx,
-                                        a.rx,
-                                    ));
+                                ui.label(
+                                    RichText::new(count_short(a.paths))
+                                        .size(10.5)
+                                        .color(activity_color(a.paths)),
+                                )
+                                .on_hover_text(format!(
+                                    "Global WSPR activity on {} in the last 15 minutes:\n\
+                                     {} reception reports · {} transmitters · {} receivers\n\n\
+                                     From wspr.live — the world's WSPR network, not your own \
+                                     receiver. Shown brighter the busier the band is; it says \
+                                     the band is being heard somewhere, not that it is open \
+                                     to you.",
+                                    b.label(),
+                                    a.paths,
+                                    a.tx,
+                                    a.rx,
+                                ));
                             }
                             None => {
                                 ui.label(dim("—"));

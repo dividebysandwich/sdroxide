@@ -1949,7 +1949,7 @@ solar indices rather than a measurement of anything.
 | Column | What it is |
 | --- | --- |
 | `CONDX` | The published verdict — Good, Fair or Poor — for this band, for whichever half of the day it is at your QTH |
-| `WSPR` | Global WSPR activity on the band over the last 15 minutes, from [wspr.live](https://wspr.live): how many reception reports the world's WSPR network produced. A measurement that needs nobody at *your* receiver — hover for the report, transmitter and receiver counts |
+| `WSPR` | Global WSPR activity on the band over the last 15 minutes, from [wspr.live](https://wspr.live): how many reception reports the world's WSPR network produced. A measurement that needs nobody at *your* receiver. Shown brighter the busier the band is; hover for the report, transmitter and receiver counts |
 | `PATHS` | Decayed count of receptions in this band's field: *how much* got through |
 | `REACH` | Share of the world with evidence on it: *how widely* it got through |
 | `BEST` | Best decode margin anywhere in the band, dB above the mode's own floor |
