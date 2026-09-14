@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crossbeam_channel::{Receiver, Sender, TrySendError};
+use crossbeam_channel::{Receiver, Sender};
 use sdroxide_dsp::MonoResampler;
 
 use super::{Phonemes, Synth, SynthError, Voice, find_voice};
@@ -32,6 +32,12 @@ const LEAD_S: f64 = 0.08;
 
 /// Worker poll interval while pacing audio into the ring.
 const TICK: Duration = Duration::from_millis(20);
+
+/// How long [`SpeechEngine::drop`] waits for the worker to wind down. Long
+/// enough for a tidy stop in the normal case — the worker answers the stop
+/// counter inside a tick — short enough that a worker wedged inside a blocking
+/// device open cannot hold the app's exit on an audio driver.
+const CLOSE_GRACE: Duration = Duration::from_millis(1500);
 
 /// Longest chunk handed to the model at once. VITS synthesizes a whole
 /// utterance in one pass, so chunking gets the first word out sooner, bounds
@@ -72,7 +78,8 @@ struct Shared {
 
 /// A running speech backend.
 pub struct SpeechEngine {
-    tx: Sender<Job>,
+    /// `None` once dropped: taking it closes the channel the worker reads from.
+    tx: Option<Sender<Job>>,
     shared: Arc<Shared>,
     status: Arc<Mutex<SpeechStatus>>,
     thread: Option<JoinHandle<()>>,
@@ -110,7 +117,7 @@ impl SpeechEngine {
             *status.lock().unwrap() =
                 SpeechStatus::Failed("could not start the speech thread".into());
         }
-        SpeechEngine { tx, shared, status, thread }
+        SpeechEngine { tx: Some(tx), shared, status, thread }
     }
 
     pub fn status(&self) -> SpeechStatus {
@@ -151,10 +158,28 @@ impl SpeechHandle {
 
 impl Drop for SpeechEngine {
     fn drop(&mut self) {
+        // Close the job channel *before* joining. `recv` then answers `Err`
+        // once the queue drains, so a worker that is blocked waiting, speaking,
+        // or stuck inside a device open while it builds its backend has a way
+        // out and the join cannot wait on a thread that is waiting on this one
+        // to release the channel. The `Quit` is a best-effort head start; the
+        // disconnect is what guarantees the exit.
         self.shared.stop_seq.fetch_add(1, Ordering::SeqCst);
-        let _ = self.tx.send(Job::Quit);
+        if let Some(tx) = self.tx.as_ref() {
+            let _ = tx.try_send(Job::Quit);
+        }
+        self.tx.take();
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            // Bounded: a worker wedged opening a contended sound device has
+            // nothing to be woken by, so a plain `join` could hold the app's
+            // close on the audio driver's timetable. Give it a grace period,
+            // then leave it to fall off with the process.
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = t.join();
+                let _ = done_tx.send(());
+            });
+            let _ = done_rx.recv_timeout(CLOSE_GRACE);
         }
     }
 }
@@ -162,14 +187,15 @@ impl Drop for SpeechEngine {
 impl SpeechSink for SpeechEngine {
     fn speak(&mut self, text: &str, seq: u64) {
         self.shared.busy.store(true, Ordering::SeqCst);
-        match self.tx.try_send(Job::Speak { text: text.to_string(), seq }) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
-                // Nothing will be spoken, so do not leave the announcer waiting
-                // on a `busy` that never clears.
-                self.shared.busy.store(false, Ordering::SeqCst);
-                self.shared.done_seq.store(seq, Ordering::SeqCst);
-            }
+        // A send that finds the queue full or the channel closed (the engine is
+        // shutting down) must not leave the announcer waiting on a `busy` that
+        // never clears.
+        let queued = self.tx.as_ref().is_some_and(|tx| {
+            tx.try_send(Job::Speak { text: text.to_string(), seq }).is_ok()
+        });
+        if !queued {
+            self.shared.busy.store(false, Ordering::SeqCst);
+            self.shared.done_seq.store(seq, Ordering::SeqCst);
         }
     }
 

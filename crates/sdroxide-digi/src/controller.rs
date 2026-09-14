@@ -881,6 +881,13 @@ impl DigiController {
         // offset, synthesize the burst and ask the engine to key.
         if self.burst.is_none()
             && idx != self.tx_fired_slot
+            // Never two overs in a row, whatever the parity bookkeeping says.
+            // `tx_even` follows the DX, and a stray or duplicated decode of them
+            // landing in our own slot flips it every slot — after which the
+            // parity gate matches every slot and a full burst is keyed in both
+            // parities: a near-continuous carrier with no listening gap. The
+            // slot after a transmission is for listening, always.
+            && idx != self.tx_fired_slot.saturating_add(1)
             && self.qso.wants_tx()
             && self.scheduler.is_even(idx) == self.tx_even
         {
@@ -1117,6 +1124,46 @@ mod tests {
             }
         }
         assert!(any_signal, "burst produced only silence");
+    }
+
+    /// The transmit parity follows the DX, and a stray or duplicated decode of
+    /// them landing in our own slot flips it every slot — after which the parity
+    /// gate matched every slot and a full burst was keyed in both parities: a
+    /// near-continuous carrier with no listening gap. Whatever the bookkeeping
+    /// says, the slot after a transmission is for listening.
+    #[test]
+    fn a_flipped_parity_does_not_key_two_slots_in_a_row() {
+        let mut c = DigiController::new(Mode::Ft8, cfg(), 12_000.0);
+        c.call_cq();
+        // 1 s into an even slot (`cfg` calls CQ even, and 1_609_459_200/15 is
+        // even), so the first over goes out here.
+        let first = UNIX_EPOCH + Duration::from_secs_f64(1_609_459_201.0);
+        assert!(
+            c.poll(first, 14_074_000.0).iter().any(|a| matches!(a, DigiAction::KeyTx)),
+            "the CQ should key in our slot"
+        );
+        let first_slot = c.tx_fired_slot;
+        // The over plays out.
+        let mut block = [0.0f32; 480];
+        while !c.fill_tx_block(&mut block) {}
+
+        // The DX decodes in our own slot, flipping the parity to the one that
+        // begins with the immediately following slot.
+        c.tx_even = !c.scheduler.is_even(first_slot);
+        let next = UNIX_EPOCH + Duration::from_secs_f64(1_609_459_216.0);
+        let actions = c.poll(next, 14_074_000.0);
+        assert!(
+            !actions.iter().any(|a| matches!(a, DigiAction::KeyTx)),
+            "the slot straight after an over is for listening, got {actions:?}"
+        );
+
+        // Two slots on, the next over is allowed again.
+        let after = UNIX_EPOCH + Duration::from_secs_f64(1_609_459_231.0);
+        c.tx_even = c.scheduler.is_even(c.scheduler.slot_index(after));
+        assert!(
+            c.poll(after, 14_074_000.0).iter().any(|a| matches!(a, DigiAction::KeyTx)),
+            "two slots on, the next over should go out"
+        );
     }
 
     /// The headroom this mode declares has to be the headroom it actually

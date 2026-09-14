@@ -7,7 +7,7 @@ use sdroxide_radio::{AudioParams, EngineHandles, EngineSwap, MicParams, triple_b
 use sdroxide_types::{
     AudioDevices, Command, RadioConfig, RadioController, RadioEvent, SpectrumFrame,
 };
-use tracing::warn;
+use tracing::{info, warn};
 
 pub struct LocalController {
     cmd_tx: Sender<Command>,
@@ -208,17 +208,25 @@ impl RadioController for LocalController {
         // it by swapping the senders for endpoints wired to nothing. The audio
         // streams go too — an exclusive device has to be free before another
         // radio (or another program) can have it.
+        //
+        // Logged stage by stage: a close that hangs here has to name which join
+        // it is stuck on, or the only symptom is a window that will not go away.
+        info!("shutdown: disconnecting the engine");
         let (dead_cmd, _) = sdroxide_radio::crossbeam_channel::unbounded();
         self.cmd_tx = dead_cmd;
         let (dead_swap, _) = sdroxide_radio::crossbeam_channel::unbounded();
         self.swap_tx = dead_swap;
+        info!("shutdown: closing the audio output");
         self.audio_out = None;
+        info!("shutdown: closing the microphone");
         self.mic_in = None;
         // An open still in flight is abandoned rather than waited for; whatever
         // it opens is closed again as soon as it exists.
         self.pending_mic = None;
         if let Some(t) = self.thread.take() {
+            info!("shutdown: joining the engine thread");
             let _ = t.join();
+            info!("shutdown: engine thread joined");
         }
     }
 }
