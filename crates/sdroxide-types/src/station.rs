@@ -57,6 +57,11 @@ pub struct StationConfig {
     /// the band buttons, the waterfall's band strip and the frequency displays
     /// all agree with the station they are operating.
     pub region: Region,
+    /// Which country's CB channels the station works — the same reasoning as
+    /// the region, and station-wide for the same reason: 11 m is not the same
+    /// band everywhere, and the channel numbers an operator reads belong to
+    /// where the antenna is. Every client adopts it into [`crate::set_cb_plan`].
+    pub cb_plan: crate::CbPlan,
     /// The band plan itself — `bandplan.json` on the engine's machine, or the
     /// built-in IARU tables where there is no file.
     ///

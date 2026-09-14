@@ -902,6 +902,10 @@ pub struct SdroxideApp {
     /// station's and not a stale local guess. The dropdown writes through it to
     /// [`Command::SetRegion`].
     region_edit: sdroxide_types::Region,
+    /// The station's CB channel plan, as the General tab's dropdown last showed
+    /// it. Overwritten by every `StationConfig` announcement like the region
+    /// beside it; the dropdown writes through it to [`Command::SetCbPlan`].
+    cb_plan_edit: sdroxide_types::CbPlan,
     /// Weather fax: the chart being painted and the gallery of saved ones.
     wefax: crate::wefax::WefaxUi,
     /// Whether the out-of-band transmit warning has been acknowledged for this
@@ -1500,6 +1504,7 @@ impl SdroxideApp {
             // station's setting before the app is built, and a remote client
             // starts on the default until the station says otherwise.
             region_edit: sdroxide_types::region(),
+            cb_plan_edit: sdroxide_types::cb_plan(),
             sat_ui: Default::default(),
             sat_sub_status: Vec::new(),
             wefax: Default::default(),

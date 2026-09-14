@@ -2256,6 +2256,26 @@ pub fn show_ext(
             wf_rect.y_range(),
             Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 60, 60, 140)),
         );
+        // On the citizens' band, name the channel the dial is on: an 11 m
+        // operator thinks in channels, and which country's channels those are
+        // is the station's CB plan. Tagged by the line like the sub's, on
+        // whichever side has room.
+        if sdroxide_types::Band::containing(line_hz) == sdroxide_types::Band::M11
+            && let Some((n, _)) = sdroxide_types::cb_plan().on_channel(line_hz)
+        {
+            let (anchor, tx) = if x > rect.right() - 40.0 {
+                (Align2::RIGHT_TOP, x - 3.0)
+            } else {
+                (Align2::LEFT_TOP, x + 3.0)
+            };
+            painter.text(
+                pos2(tx, wf_rect.top() + 2.0),
+                anchor,
+                format!("CH {n}"),
+                FontId::proportional(9.5 * crate::theme::panadapter_font_scale()),
+                Color32::from_rgb(255, 200, 90),
+            );
+        }
     }
 
     // --- sub receiver ------------------------------------------------------

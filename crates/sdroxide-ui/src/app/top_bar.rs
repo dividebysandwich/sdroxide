@@ -6242,6 +6242,22 @@ fn band_mode_menu(
         }
     });
     ui.add_space(6.0);
+    crate::chrome::menu_caption(ui, "CB plan (11 m)");
+    ui.horizontal_wrapped(|ui| {
+        // Which country's channels the 11 m dial reads in. Only the channels
+        // and the channel the band opens on — the band's edges are left wide,
+        // so switching never changes what receives or transmits.
+        let current = sdroxide_types::cb_plan();
+        for p in sdroxide_types::CbPlan::ALL {
+            if crate::chrome::chip(ui, current == p, p.short())
+                .on_hover_text(format!("{} — {}", p.label(), p.modes()))
+                .clicked()
+            {
+                cmds.push(Command::SetCbPlan(p));
+            }
+        }
+    });
+    ui.add_space(6.0);
     crate::chrome::menu_caption(ui, "Primary modes");
     ui.horizontal(|ui| {
         // The four a CB or short-wave operator reaches for: AM and FM on 11 m,

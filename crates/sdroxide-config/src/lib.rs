@@ -232,6 +232,10 @@ pub struct Settings {
     /// Region 1 by default, which is the band plan every sdroxide before this
     /// setting had.
     pub region: sdroxide_types::Region,
+    /// Which country's CB channels the station works. A plain value beside
+    /// `region`, for the same reason: it belongs to the station and travels to
+    /// clients in the [`sdroxide_types::StationConfig`] bundle.
+    pub cb_plan: sdroxide_types::CbPlan,
     /// UI / display preferences (frame rate, waterfall + spectrum speed).
     pub ui: sdroxide_types::UiSettings,
     /// Username and password a remote client must present in server mode.
@@ -282,6 +286,7 @@ impl Default for Settings {
             audio_input: None,
             dismissed_update: String::new(),
             region: sdroxide_types::Region::default(),
+            cb_plan: sdroxide_types::CbPlan::default(),
             ui: sdroxide_types::UiSettings::default(),
             remote_access: sdroxide_types::RemoteAccess::default(),
             speech: sdroxide_types::SpeechSettings::default(),
@@ -307,6 +312,20 @@ pub fn save_ui_settings(ui: &sdroxide_types::UiSettings) -> Result<(), ConfigErr
 /// Load just the station's IARU region.
 pub fn load_region() -> sdroxide_types::Region {
     Settings::load().region
+}
+
+/// Load just the station's CB channel plan.
+pub fn load_cb_plan() -> sdroxide_types::CbPlan {
+    Settings::load().cb_plan
+}
+
+/// Persist the station's CB plan, preserving every other setting. Like
+/// [`save_region`], it does not apply it — the caller does, with
+/// [`sdroxide_types::set_cb_plan`].
+pub fn save_cb_plan(plan: sdroxide_types::CbPlan) -> Result<(), ConfigError> {
+    let mut s = Settings::load();
+    s.cb_plan = plan;
+    s.save()
 }
 
 /// Persist the station's IARU region, preserving every other setting

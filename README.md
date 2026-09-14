@@ -41,6 +41,7 @@ decodes DRM shortwave radio, weather fax, and the ADS-B/VDL2 aircraft overhead
 | --- | --- | --- |
 | **Amateur bands** | 160 m … 3 cm, by IARU region, with band-plan lockout | identical, untouched |
 | **11 m / citizens' band** | not present | on the bar (26.965–27.860 MHz): WSJT-CB interop, country flags, digimode channels, TX lockout |
+| **CB channel plans** | — | per-country channels on 11 m — World/freeband, CEPT/EU, Germany 80 ch, UK 27/81, USA, Australia — with the channel number shown on the panadapter |
 | **Broadcast bands** | general coverage only | **LW / MW / SW / FM** on the selector and in the band plan; picking **FM** comes up **WFM** |
 | **SWL mode** | — | a toggle that hides every transmit control |
 | **Simple interface** | — | a toggle that hides the advanced chips (3D, skimmers, layers, awards, satellites, ISM, Winlink), leaving the CB/SWL controls; the band/mode menu leads with **AM · FM · USB · LSB** |

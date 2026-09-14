@@ -3468,6 +3468,7 @@ fn engine_thread(
     // first call also seeds `bandplan.json` if the operator has none.
     sdroxide_types::set_band_plan(sdroxide_config::load_band_plan());
     sdroxide_types::set_region(sdroxide_config::load_region());
+    sdroxide_types::set_cb_plan(sdroxide_config::load_cb_plan());
     // The operator's own additions to the digital modes' frequency tables. Read
     // here for the same reason as the plan above: they are process-wide, every
     // radio at the station offers the same ones, and a headless `--server`
@@ -9159,6 +9160,16 @@ impl Engine {
                 self.state.band = Band::containing(self.state.active_freq_hz());
                 self.emit_station_config();
             }
+            SetCbPlan(plan) => {
+                if let Err(e) = sdroxide_config::save_cb_plan(plan) {
+                    warn!("saving CB plan: {e}");
+                }
+                sdroxide_types::set_cb_plan(plan);
+                // The stations are a station setting, so every client is told;
+                // nothing in the receiver changes, only the channel the 11 m
+                // dial reads in.
+                self.emit_station_config();
+            }
             SetCessb(db) => {
                 let db = db.clamp(0.0, sdroxide_types::CESSB_MAX_DB);
                 if self.state.tx.cessb_db == db {
@@ -11130,6 +11141,7 @@ impl Engine {
                 rotator: self.rot_cfg.clone(),
                 relay: self.relay_cfg.clone(),
                 region: sdroxide_types::region(),
+                cb_plan: sdroxide_types::cb_plan(),
                 band_plan: sdroxide_types::band_plan().clone(),
                 digi_presets: sdroxide_types::digi_presets().to_vec(),
             },

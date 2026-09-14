@@ -1532,6 +1532,8 @@ impl SdroxideApp {
                     // radio.
                     self.region_edit = c.region;
                     sdroxide_types::set_region(c.region);
+                    self.cb_plan_edit = c.cb_plan;
+                    sdroxide_types::set_cb_plan(c.cb_plan);
                     // Only when it actually changed: installing leaks the
                     // previous plan, and this bundle arrives on every
                     // station-config edit — a password change must not cost an

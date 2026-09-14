@@ -126,7 +126,7 @@ or connects to a remote sdroxide server.
 - **Zoom out past the I/Q** — on a receiver that publishes a full-band
   spectrum as well as its I/Q (a KiwiSDR, a SpyServer, an RX-888), the main
   panadapter keeps widening past the streamed passband and draws those spans
-  from the full-band bins. See [§2.8](#28-the-display-and-fft-controls).
+  from the full-band bins. See [§2.8](#28-the-display-and-view-controls).
 - **QO-100 beacon plugin** — tracks the 10489.750 MHz narrowband beacon,
   measures how far your LNB is off, and (with AUTO) keeps correcting the
   converter offset as it drifts. In the **SAT** window's QO-100 tab; see
@@ -249,7 +249,7 @@ The smaller grey number below the readout is the *inactive* VFO's frequency.
   release the button the measurement lingers and fades out over about five
   seconds, so you can read it after letting go. The same ruler works on the
   full-band strip (see **WIDE** in
-  [§2.8](#28-the-display-and-fft-controls)), where it measures in megahertz.
+  [§2.8](#28-the-display-and-view-controls)), where it measures in megahertz.
 
 ![Bandwidth measurement tool](images/bw_measurement.jpg)
 
@@ -267,7 +267,7 @@ tuning does the same, and one notch of the wheel is one step of it.
 ![Tuning on the panadapter, showing the VFO marker and filter passband](images/03-panadapter-tuning.png)
 
 **Band-plan strip.** A colour-coded strip along the bottom of the waterfall (its
-top when the waterfall is flipped — see [§2.8](#28-the-display-and-fft-controls))
+top when the waterfall is flipped — see [§2.8](#28-the-display-and-view-controls))
 labels the allocations. Zoomed out it shows coarse bands (ham, broadcast, CB,
 AM); zoomed into a ham band it splits into the CW / digital / SSB / beacon
 sub-segments, or an all-modes block where the plan gives one. When you zoom in
@@ -335,6 +335,15 @@ popup with four rows:
   [§2.15](#215-band-conditions). In a digital mode, the bands where that mode
   has a standard calling frequency carry a cyan underline; see
   [§3.1](#31-general-considerations).
+- **CB PLAN (11 M):** `WORLD EU DE UK US AU` — which country's channels the
+  11 m dial reads in. 11 m is not one band: the world shares the 40-channel
+  CEPT/FCC table (`EU`), Germany adds a high band for 80 (`DE`), the UK's 27/81
+  channels sit at their own frequencies (`UK`), and the US and Australia work
+  the shared 40 in AM and SSB. `WORLD` is the permissive default — the 40 shared
+  channels plus the high band, any mode. The plan decides the channels, the
+  channel the band opens on, and the `CH nn` readout on the panadapter; it does
+  **not** move the band's edges, so switching never changes what receives or
+  transmits. The same choice is on the General tab ([6.1](#61-general-station-audio-and-remote-access)).
 - **PRIMARY MODES:** `AM NFM USB LSB` — the four a CB or short-wave operator
   reaches for, on their own row above the full list so they are one click rather
   than a hunt through the digital modes. `FM` here is **NFM** (narrow); the
@@ -490,7 +499,7 @@ mode. What is in the box never changes; only where the two rows are cut does.
     the bandwidth is eight times finer, across the whole span rather than only
     the part you have zoomed into. (Zooming gets its own resolution without
     this — see the **FFT** control in
-    [§2.8](#28-the-display-and-fft-controls) — so this is no longer the only
+    [§2.8](#28-the-display-and-view-controls) — so this is no longer the only
     way to a detailed picture, but it is still the way to a detailed picture of
     everything you can see.)
   - **A quieter noise floor.** Every halving throws away half the noise power
@@ -6042,7 +6051,7 @@ window opens the same dialog on its Spots tab). Twelve tabs run across the top:
 
 | Tab | What it holds |
 | --- | --- |
-| **General** | Which version this is, your callsign, grid and IARU region, the sound devices, and who may connect remotely. [6.1](#61-general-station-audio-and-remote-access) |
+| **General** | Which version this is, your callsign, grid, IARU region and CB plan, the sound devices, and who may connect remotely. [6.1](#61-general-station-audio-and-remote-access) |
 | **Radio** | Which rig sdroxide talks to, and how. [6.2](#62-radio-choosing-and-configuring-the-rig) |
 | **UI** | Frame rate, waterfall palette, spectrum background, spot label colours, 3D cloud rendering, and the spoken announcements. [6.3](#63-ui-display-preferences-and-voice-announcements) |
 | **Controls** | Keyboard, mouse and MIDI bindings. [6.4](#64-controls-keyboard-mouse-and-midi) |
@@ -6151,6 +6160,17 @@ decides every band plan sdroxide draws and enforces:
   the widened band edges reach them — and a licence that does cover part of
   that range (the UK's second CB block starts at 27.60125) goes in
   `bandplan.json` and in your own saved frequencies.
+
+  **CB plan** — which country's channels the 11 m dial reads in, set on the
+  General tab beside the IARU region and in the band/mode menu. The world
+  shares the 40-channel CEPT/FCC table (**EU**); Germany adds a high band for
+  80 (**DE**); the UK's 27/81 channels sit at their own frequencies (**UK**);
+  the US and Australia work the shared 40 in AM and SSB. **WORLD** (the
+  default) is the 40 plus the high band, permissive about mode. The plan picks
+  the channels, the channel 11 m opens on, and the **`CH nn`** readout on the
+  panadapter — it does **not** move the band's edges, so switching plans never
+  changes what receives or transmits. It is a station setting (`cb_plan` in
+  `config.toml`), so every radio and every client at the station agrees.
 - **Longwave, medium wave, shortwave and FM broadcast** — `LW`, `MW`, `SW` and
   `FM` are on the bar for the listener the way 11 m is for the CB operator.
   None is an amateur allocation, so with `tx_ham_only` set (the default) the
@@ -6176,7 +6196,7 @@ decides every band plan sdroxide draws and enforces:
   follow it: ADIF defines `6cm` for 5.65–5.925 GHz and nothing called `5cm`, so
   that is the band a contact there is filed under wherever you are.
 - **Sub-segments** — the CW / data / SSB / beacon blocks on the waterfall's
-  band strip ([§ 2.8](#28-the-display-and-fft-controls)). Region 1 splits the top of each
+  band strip ([§ 2.8](#28-the-display-and-view-controls)). Region 1 splits the top of each
   band into a phone sub-band; Regions 2 and 3 hand it to all modes, and their
   40 m data segment starts 5 kHz lower.
 - **Skimmer windows** — where the PSK and RTTY skimmers listen. 40 m PSK is
@@ -10815,9 +10835,9 @@ spoken announcements below them under `[speech]`:
 - **Panadapter detail**, the spectrum's **reaction** and the waterfall's
   **scroll** speed are not here: they moved to the **SPEC** popup in the Display
   module, beside the picture they change — see
-  [§2.8](#28-the-display-and-fft-controls).
+  [§2.8](#28-the-display-and-view-controls).
 - **Waterfall palette** — the waterfall colour scheme (see
-  [2.8](#28-the-display-and-fft-controls) and the [appendix](#waterfall-colour-schemes)).
+  [2.8](#28-the-display-and-view-controls) and the [appendix](#waterfall-colour-schemes)).
 - **Tuning buttons** — the **−** / step / **+** row under the control strip on a
   phone or tablet ([9.5](#95-phones-and-tablets)), with the step it is currently
   set to shown beside the box. Never drawn on a desktop.
@@ -10828,7 +10848,7 @@ spoken announcements below them under `[speech]`:
   a signal's *signature* off the picture needs: an interpolated signal cannot be
   told apart from a genuinely wider one, and the smoothing is why a waterfall
   can look lower-resolution than the transform behind it really is. A bigger FFT
-  (the **FFT** chip, [2.8](#28-the-display-and-fft-controls)) is the other half
+  (the **VIEW** chip, [2.8](#28-the-display-and-view-controls)) is the other half
   of that, and the two are worth setting together.
 - **Spectrum background** — a vertical gradient behind the spectrum line, filled
   from the **top** colour down to the **bottom** colour (default dark red →
@@ -13747,7 +13767,7 @@ and not the station's.
 
 | File | Format | Contents |
 | --- | --- | --- |
-| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `dismissed_update` (the published release whose update banner was dismissed, [§6.3](#63-ui-display-preferences-and-voice-announcements)), `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **General** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
+| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `dismissed_update` (the published release whose update banner was dismissed, [§6.3](#63-ui-display-preferences-and-voice-announcements)), `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), `cb_plan` (`"World"` / `"Cept"` / `"Germany80"` / `"Uk27_81"` / `"Us"` / `"Australia"` — the CB channel plan, [§6.1](#61-general-station-audio-and-remote-access)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **General** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
 | `radio.json` | JSON | Which radio interface is selected and everything that configures it — the CAT/HPSDR/TCI/SmartSDR/RTL-SDR/rtl_tcp/SpyServer/RX-888/Airspy HF+/SDRplay/PlutoSDR sections, the converter offset and stated tuning ranges, and the radio's sound-card device names. |
 | `digi.json` | JSON | Digital-mode operator settings: your callsign and grid, FT8/FT4/FT2 TX period, auto-sequence and message templates, the transmit-frequency hold (`hold_tx_freq`) and the per-band transmit offsets it pins (`tx_audio_hz`), the per-mode transmit-audio levels (`tx_audio_levels`, with `tx_audio_level_fm` / `tx_audio_level_ssb` as the level a mode with no entry of its own inherits), and the WSPR beacon's duty cycle, power and band-hop list. |
 | `memories.json` | JSON | Saved memory channels. |
@@ -15011,7 +15031,7 @@ the band view off, or slow it down, in Settings → Radio if that matters.
 
 The main panadapter is not stuck at those 12 kHz, though: keep zooming out and
 it widens past them and goes on to cover the whole 0–30 MHz, drawn from the same
-waterfall bins the strip uses ([§2.8](#28-the-display-and-fft-controls)). It
+waterfall bins the strip uses ([§2.8](#28-the-display-and-view-controls)). It
 coarsens where it crosses over — those bins are all there is out there — and
 zooming back in returns the I/Q's own resolution.
 
@@ -15050,7 +15070,7 @@ Its **width** is your choice, though: the band view is one stage of the server's
 own decimation ladder, and **I/Q bandwidth**'s neighbour in Settings → Radio
 picks which. Stage 0 is the widest the server offers, and is the default. As
 with a KiwiSDR, the main panadapter can be zoomed out to cover the whole of it
-([§2.8](#28-the-display-and-fft-controls)).
+([§2.8](#28-the-display-and-view-controls)).
 
 #### Where your reports come from
 

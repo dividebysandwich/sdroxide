@@ -265,6 +265,7 @@ fn main() -> anyhow::Result<()> {
     if cli.connect.is_none() {
         sdroxide_types::set_band_plan(sdroxide_config::load_band_plan());
         sdroxide_types::set_region(settings.region);
+        sdroxide_types::set_cb_plan(settings.cb_plan);
     }
 
     if cli.probe {

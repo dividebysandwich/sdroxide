@@ -5,7 +5,9 @@
 //! in-band.
 
 use eframe::egui::{self, Color32, ComboBox, RichText};
-use sdroxide_types::{Command, Region, RemoteAccess, SWR_LIMIT_MAX, SWR_LIMIT_MIN, swr_tune_limit};
+use sdroxide_types::{
+    CbPlan, Command, Region, RemoteAccess, SWR_LIMIT_MAX, SWR_LIMIT_MIN, swr_tune_limit,
+};
 
 use crate::app::SdroxideApp;
 use crate::app::persist::band_plan_path;
@@ -24,6 +26,23 @@ pub(in crate::app) fn region_combo(ui: &mut egui::Ui, region: &mut Region) {
             for r in Region::ALL {
                 if ui.selectable_label(*region == r, r.label()).clicked() {
                     *region = r;
+                }
+            }
+        },
+    );
+}
+
+/// The CB channel-plan dropdown: which country's 27 MHz channels the 11 m dial
+/// reads in. Only the channels and the channel the band opens on — the band's
+/// edges are left wide, so switching plans never changes what receives or
+/// transmits.
+pub(in crate::app) fn cb_plan_combo(ui: &mut egui::Ui, plan: &mut CbPlan) {
+    ComboBox::from_id_salt("cb-plan").width(360.0).selected_text(plan.label()).show_styled(
+        ui,
+        |ui| {
+            for p in CbPlan::ALL {
+                if ui.selectable_label(*plan == p, p.label()).clicked() {
+                    *plan = p;
                 }
             }
         },

@@ -505,9 +505,10 @@ impl Band {
             Band::M17 => (18_120_000.0, Mode::Usb),
             Band::M15 => (21_250_000.0, Mode::Usb),
             Band::M12 => (24_940_000.0, Mode::Usb),
-            // Channel 25, the agreed 11 m digital calling channel — and the
-            // one part of the band a program like this one is any use on.
-            Band::M11 => (27_245_000.0, Mode::Usb),
+            // The station's CB plan decides: channel 25 (27.245), the agreed
+            // 11 m digital calling channel, where the plan has it — the UK's
+            // 27/81 channels do not, so that plan opens on its own channel 19.
+            Band::M11 => crate::cb_plan().default_entry(),
             Band::M10 => (28_400_000.0, Mode::Usb),
             Band::M6 => (50_150_000.0, Mode::Usb),
             // 70.200 is the 4 m SSB/CW calling frequency, in the narrow-band

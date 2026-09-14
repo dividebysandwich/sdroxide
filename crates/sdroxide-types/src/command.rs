@@ -489,6 +489,12 @@ pub enum Command {
     /// on the same continent as the first.
     SetRegion(crate::Region),
 
+    /// Set the station's CB channel plan — which country's 27 MHz channels the
+    /// dial reads in. Persisted engine-side and echoed to every client in the
+    /// [`crate::RadioEvent::StationConfig`] bundle, like [`Command::SetRegion`].
+    /// Appended for the usual reason: postcard numbers variants by position.
+    SetCbPlan(crate::CbPlan),
+
     /// Re-read `bandplan.json` from the engine's config directory and adopt it.
     ///
     /// The band plan is a file the operator edits in a text editor, so the

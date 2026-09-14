@@ -33,7 +33,7 @@ use sdroxide_types::{Command, LoginTarget, LookupProvider, NetworkConfig, Upload
 
 use self::alerts::alerts_settings;
 use self::controls::settings_controls_tab;
-use self::general::{device_combo, region_combo, remote_access_settings};
+use self::general::{cb_plan_combo, device_combo, region_combo, remote_access_settings};
 use self::net::{
     broadcast_stations_settings, net_heading, net_row, net_secret, operator_identity_note,
     settings_freedv_tab,
@@ -329,6 +329,9 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// there is no APPLY step on the General tab, and the whole point of it is
     /// that the band plan follows immediately.
     region_edit: &'a mut sdroxide_types::Region,
+    /// The station's CB channel plan. Same contract as `region_edit`: no APPLY
+    /// step, applied and announced the moment it changes.
+    cb_plan_edit: &'a mut sdroxide_types::CbPlan,
     /// The transmit parametric EQ (voice modes only). Same contract as
     /// `region_edit`: no APPLY step, sent the moment a band changes. This is
     /// live `RadioState`, not a per-backend `RadioConfig`, so it applies
@@ -1009,6 +1012,7 @@ impl SdroxideApp {
         let mut digi_edit = self.digi_cfg_edit.clone();
         let digi_seeded = self.digi_cfg_seeded;
         let mut region_edit = self.region_edit;
+        let mut cb_plan_edit = self.cb_plan_edit;
         let mut tx_eq_edit = self.state.tx.eq;
         let mut net_edit = self.net_cfg_edit.clone();
         let mut net_cmds = self.net_cluster_cmds.clone();
@@ -1209,6 +1213,7 @@ impl SdroxideApp {
                             radio_tabs: &mut radio_tab_reqs,
                             radio_name_edit: &mut radio_name_edit,
                             region_edit: &mut region_edit,
+                            cb_plan_edit: &mut cb_plan_edit,
                             tx_eq_edit: &mut tx_eq_edit,
                             tab: &mut tab,
                             upload_tab: &mut upload_tab,
@@ -1669,6 +1674,11 @@ impl SdroxideApp {
             sdroxide_types::set_region(region_edit);
             cmds.push(Command::SetRegion(region_edit));
         }
+        if cb_plan_edit != self.cb_plan_edit {
+            self.cb_plan_edit = cb_plan_edit;
+            sdroxide_types::set_cb_plan(cb_plan_edit);
+            cmds.push(Command::SetCbPlan(cb_plan_edit));
+        }
         // The transmit EQ: live `RadioState`, applied the moment a band
         // changes, same as the region above. There is no per-backend config
         // to wait on, so no APPLY step either.
@@ -1790,6 +1800,9 @@ impl SdroxideApp {
                         ui.label("IARU region");
                         region_combo(ui, io.region_edit);
                         ui.end_row();
+                        ui.label("CB plan");
+                        cb_plan_combo(ui, io.cb_plan_edit);
+                        ui.end_row();
                     },
                 );
                 ui.add_space(6.0);
@@ -1807,6 +1820,18 @@ impl SdroxideApp {
                             sdroxide_types::Region::R2 => "420–450 MHz, and 40 m runs to 7.300",
                             sdroxide_types::Region::R3 => "430–450 MHz, and 80 m stops at 3.900",
                         }
+                    ))
+                    .weak(),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(format!(
+                        "11 m (CB) is not the same band everywhere. This picks which country's \
+                         channels the 11 m dial reads in: {}. Only the channels and the channel \
+                         the band opens on — the band's edges are left wide, so switching plans \
+                         never changes what receives or transmits. Applies to every radio at this \
+                         station.",
+                        io.cb_plan_edit.label(),
                     ))
                     .weak(),
                 );

@@ -16,6 +16,7 @@ mod bandplan;
 pub mod broadcast;
 mod callsign;
 mod caps;
+mod cb;
 mod cb_country;
 mod chirp;
 mod command;
@@ -205,6 +206,7 @@ pub use rds::{
     pty_name, rt_plus_class,
 };
 pub use region::{Region, region, set_region};
+pub use cb::{CbPlan, cb_plan, set_cb_plan};
 pub use relay::{
     DEFAULT_HOLD_MS, DEFAULT_LEAD_MS, FailSafe, MAX_CHANNEL, RelayChannel, RelayConfig,
     RelayDevice, RelayFamily, RelayLink, RelayRole, RelayStatus, SenseConfig, SenseLine,
