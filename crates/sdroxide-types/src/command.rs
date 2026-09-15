@@ -1071,4 +1071,31 @@ pub enum Command {
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     AtChatReconnect,
+
+    /// Save the state of the station — dials and VFOs, mode and filters,
+    /// gains and drive, antennas, the digital identity and templates, and the
+    /// band stacks (issue #197) — under a name the operator chooses, so it can
+    /// be put back on in one click later. The hardware (backend, audio
+    /// devices, converters) is deliberately not part of it.
+    ///
+    /// A name already in use is overwritten. The engine answers with the
+    /// profile list and a notice.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    ProfileSave(String),
+
+    /// Put the station back onto a saved profile: the dials, VFOs, mode and
+    /// filters, the gains, drive and antennas, the digital identity and
+    /// message templates, and the band stacks it was saved with. Whatever a
+    /// profile deliberately scoped out — the backend, the audio devices, the
+    /// converters — is left exactly as it is.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    ProfileApply(String),
+
+    /// Drop a saved profile by name. The radio stays exactly where it is; only
+    /// the named snapshot goes.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    ProfileDelete(String),
 }

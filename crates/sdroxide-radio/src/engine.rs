@@ -2886,6 +2886,10 @@ struct Engine {
     /// engine does not remember its session (see
     /// [`EngineConfig::remember_session`]).
     session: Option<sdroxide_config::Session>,
+    /// The station's named profiles (issue #197): the operator's saveable
+    /// working setups, held here so an apply is a memory read rather than
+    /// one whenever a radio's dial is clicked.
+    profiles: Vec<sdroxide_config::Profile>,
     /// The antenna ports the operator wants, RX and TX: the command line's
     /// choice, else the remembered session's, else whatever they last picked in
     /// the UI. Re-applied whenever a front end is (re)opened, because a
@@ -3665,6 +3669,7 @@ fn engine_thread(
     // never taken in it; the list is the part that goes.
     scan_cfg.forget_stale_skips();
     let stacks = sdroxide_config::load_bandstacks();
+    let profiles = sdroxide_config::load_profiles();
     let digi_config = sdroxide_config::load_digi_config();
     // Only the per-band drive calibration is kept out of `radio.json` — the
     // engine deliberately does not hold that file (see
@@ -3677,6 +3682,9 @@ fn engine_thread(
     let _ = event_tx.send(RadioEvent::Memories(memories.clone()));
     let _ = event_tx.send(RadioEvent::MemoryFolders(mem_folders.clone()));
     let _ = event_tx.send(RadioEvent::Scanner(scan_cfg.clone()));
+    let _ = event_tx.send(RadioEvent::Profiles(
+        profiles.iter().map(|p| p.name.clone()).collect(),
+    ));
     // Surface any warning captured while opening the source (e.g. radio audio
     // device unavailable / mono card chosen for IQ) so the UI can show it
     // instead of an unexplained "waiting for spectrum" — together with any
@@ -3992,6 +4000,7 @@ fn engine_thread(
         want_gains,
         want_decimation,
         store: engine_cfg.store,
+        profiles,
         instance: engine_cfg.instance,
         primary: engine_cfg.primary,
         tx_gate: engine_cfg.tx_gate,
@@ -9287,6 +9296,74 @@ impl Engine {
                 self.reopen_source();
                 return;
             }
+
+            // ── Station profiles (issue #197) ──────────────────────────
+            //
+            // The station's named working setups — dials, VFOs, mode and
+            // filters, gains and drive, the digital identity, and the band
+            // stacks. The hardware is deliberately not part of it.
+
+            ProfileSave(name) => {
+                let name = name.trim().to_string();
+                if name.is_empty() {
+                    return;
+                }
+                let snapshot = sdroxide_config::Profile {
+                    name: name.clone(),
+                    session: self.current_session(),
+                    digi: self.digi_config.clone(),
+                    stacks: self.stacks.clone(),
+                };
+                match self
+                    .profiles
+                    .iter()
+                    .position(|p| p.name.eq_ignore_ascii_case(&name))
+                {
+                    Some(i) => self.profiles[i] = snapshot,
+                    None => self.profiles.push(snapshot),
+                }
+                if let Err(e) = sdroxide_config::save_profiles(&self.profiles) {
+                    warn!("saving profiles: {e}");
+                    self.notice(&format!("Could not save your profiles: {e}"));
+                }
+                self.emit_profile_names();
+                self.notice(&format!("Profile \u{201c}{name}\u{201d} saved."));
+                return;
+            }
+
+            ProfileApply(name) => {
+                let Some(profile) =
+                    self.profiles.iter().find(|p| p.name.eq_ignore_ascii_case(&name)).cloned()
+                else {
+                    self.notice(&format!(
+                        "Profile \u{201c}{name}\u{201d} does not exist."
+                    ));
+                    return;
+                };
+                self.apply_profile(&profile);
+                self.emit_profile_names();
+                self.notice(&format!("Profile \u{201c}{name}\u{201d} applied."));
+                return;
+            }
+
+            ProfileDelete(name) => {
+                let before = self.profiles.len();
+                self.profiles
+                    .retain(|p| !p.name.eq_ignore_ascii_case(&name));
+                if self.profiles.len() == before {
+                    self.notice(&format!(
+                        "Profile \u{201c}{name}\u{201d} does not exist."
+                    ));
+                    return;
+                }
+                if let Err(e) = sdroxide_config::save_profiles(&self.profiles) {
+                    warn!("saving profiles: {e}");
+                    self.notice(&format!("Could not save your profiles: {e}"));
+                }
+                self.emit_profile_names();
+                self.notice(&format!("Profile \u{201c}{name}\u{201d} deleted."));
+                return;
+            }
         }
         let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
     }
@@ -13462,28 +13539,45 @@ impl Engine {
     /// intermediate frequencies is worth a file write.
     fn save_session(&mut self) {
         let Some(saved) = self.session.as_ref() else { return };
-        // What the hardware reports, not what was asked for, and dropped when it
+        let mut now = self.current_session();
+        // What the hardware reports, not what was asked for, and kept when it
         // is empty: a front end with no antenna to choose (a CAT rig, a file)
         // must not erase the port a real radio was left on.
-        // Both dials and which one was in use, so a station left listening on
-        // B — or split, with the other VFO on the DX's transmit frequency —
-        // comes back set up the way it was rather than with B collapsed onto A.
-        let now = sdroxide_config::Session {
+        now.antenna_rx = chosen(&self.state.antenna_rx).or_else(|| saved.antenna_rx.clone());
+        now.antenna_tx = chosen(&self.state.antenna_tx).or_else(|| saved.antenna_tx.clone());
+        if now == *saved {
+            return;
+        }
+        match self.store.save_session(&now) {
+            Ok(()) => self.session = Some(now),
+            // Don't latch the new value on failure, so the next tick retries.
+            Err(e) => warn!("saving the session (dial + mode + antennas + levels): {e}"),
+        }
+    }
+
+    /// The session this engine's present state describes — both dials and
+    /// which one was in use, the modes and filters, the levels, the gains and
+    /// the antennas, exactly as the operator left them.
+    ///
+    /// The raw standing state, with nothing merged in from a previously saved
+    /// session. `save_session` adds the antenna fallback for a front end that
+    /// cannot report its ports; a profile snapshot wants the plain truth.
+    fn current_session(&self) -> sdroxide_config::Session {
+        sdroxide_config::Session {
             freq_hz: self.state.vfo_a_hz,
             vfo_b_hz: Some(self.state.vfo_b_hz),
             active_vfo: self.state.active_vfo,
             mode: self.state.rx[0].mode,
             // The shelf is only current for the VFO that is *not* in use, so
             // the live mode is written into the active slot on the way past
-            // rather than shelved here — `save_session` is called from a timer
-            // and from `Drop`, and neither is a VFO change.
+            // rather than shelved here.
             vfo_modes: Some({
                 let mut m = [self.vfo_memory[0].mode, self.vfo_memory[1].mode];
                 m[self.state.active_vfo.index()] = self.state.rx[0].mode;
                 m
             }),
-            antenna_rx: chosen(&self.state.antenna_rx).or_else(|| saved.antenna_rx.clone()),
-            antenna_tx: chosen(&self.state.antenna_tx).or_else(|| saved.antenna_tx.clone()),
+            antenna_rx: chosen(&self.state.antenna_rx),
+            antenna_tx: chosen(&self.state.antenna_tx),
             volume: self.state.rx[0].volume,
             muted: self.state.rx[0].muted,
             rx_gain_db: self.state.rx[0].manual_gain_db,
@@ -13496,23 +13590,21 @@ impl Engine {
             squelch_db: self.state.rx[0].squelch_db,
             noise_reduction: self.state.rx[0].noise_reduction,
             binaural: self.state.rx[0].binaural,
-            // The standing choice again, not what the front end of the moment
-            // could do with it: a session written while the radio was switched
-            // off would otherwise put 1 on disk and lose it for good.
+            // The standing choice, not what the front end of the moment could
+            // do with it: a session written while the radio was switched off
+            // would otherwise put 1 on disk and lose it for good.
             decimation: self.want_decimation,
             repeater: self.state.repeater,
             // What the operator asked for rather than what the device currently
             // reports, for the antennas' reason again: a front end with no gain
             // to set — a CAT rig, a file — must not erase the stages a real
-            // receiver was left on, and a driver that moves a gain by itself
-            // (an AGC riding the IF) is not the operator changing their mind.
+            // receiver was left on.
             gains: self.want_gains.0.clone(),
             tx_gains: self.want_gains.1.clone(),
             recording_mono: self.state.recording_mono,
             band_antenna: self.band_antenna.clone(),
             // The shelf again, with the live socket written into the active
-            // slot on the way past for the same reason the modes are: the shelf
-            // is only current for the VFO that is *not* in use.
+            // slot on the way past for the same reason the modes are.
             vfo_antennas: Some({
                 let mut a = [
                     (self.vfo_memory[0].antenna_rx.clone(), self.vfo_memory[0].antenna_tx.clone()),
@@ -13522,15 +13614,132 @@ impl Engine {
                     (chosen(&self.state.antenna_rx), chosen(&self.state.antenna_tx));
                 a
             }),
+        }
+    }
+
+    /// Announce the station's profile list. The screen only ever needs the
+    /// names to offer; the profiles themselves stay with everything else the
+    /// radio remembers (issue #197).
+    fn emit_profile_names(&self) {
+        let names = self.profiles.iter().map(|p| p.name.clone()).collect();
+        let _ = self.event_tx.send(RadioEvent::Profiles(names));
+    }
+
+    /// Put the station back onto a saved profile (issue #197): the dials,
+    /// VFOs, mode and filters, the levels and gains and antennas, the digital
+    /// identity and templates, and the band stacks. What a profile scoped out
+    /// — the backend, the audio devices, the converters — is untouched: the
+    /// apply works through the same paths a band change or a session restore
+    /// do, so the front end is retuned rather than reopened.
+    fn apply_profile(&mut self, profile: &sdroxide_config::Profile) {
+        // The band stacks go wholesale: this way of working the station
+        // brought its own setup for each band with it, and switching back
+        // should put them back too.
+        self.stacks = profile.stacks.clone();
+        if let Err(e) = sdroxide_config::save_bandstacks(&self.stacks) {
+            warn!("saving band stacks: {e}");
+        }
+        let s = &profile.session;
+
+        // The active VFO retunes through the same path a band click does —
+        // dial, band, mode and filters together. The band-stack memory it is
+        // recalled against is the profile's own, carried in wholesale above,
+        // so the filter offsets come from how this way of working the station
+        // heard that band.
+        self.state.active_vfo = s.active_vfo;
+        let mode = s.vfo_modes.map(|m| m[s.active_vfo.index()]).unwrap_or(s.mode);
+        let band = Band::containing(s.freq_hz);
+        let (filter_lo, filter_hi) = self
+            .stacks
+            .get(&band)
+            .and_then(|st| st.first())
+            .map(|e| (e.filter_lo, e.filter_hi))
+            .unwrap_or_else(|| mode.default_filter_at(s.freq_hz));
+        self.apply_entry(BandStackEntry { freq_hz: s.freq_hz, mode, filter_lo, filter_hi });
+
+        // The inactive VFO has no dial of its own to retune; it is placed
+        // exactly as it was left — the other dial, the mode and the socket
+        // from the session, and the mode's default filter at that dial, the
+        // same way startup seeds the shelf.
+        let idle = 1 - s.active_vfo.index();
+        let other_freq = match s.active_vfo {
+            sdroxide_types::Vfo::A => s.vfo_b_hz.unwrap_or(s.freq_hz),
+            sdroxide_types::Vfo::B => s.freq_hz,
         };
-        if now == *saved {
-            return;
+        match s.active_vfo {
+            sdroxide_types::Vfo::A => self.state.vfo_b_hz = other_freq,
+            sdroxide_types::Vfo::B => self.state.vfo_a_hz = other_freq,
         }
-        match self.store.save_session(&now) {
-            Ok(()) => self.session = Some(now),
-            // Don't latch the new value on failure, so the next tick retries.
-            Err(e) => warn!("saving the session (dial + mode + antennas + levels): {e}"),
+        if let Some(modes) = s.vfo_modes {
+            self.vfo_memory[idle].mode = modes[idle];
+            let (lo, hi) = modes[idle].default_filter_at(other_freq);
+            (self.vfo_memory[idle].filter_lo, self.vfo_memory[idle].filter_hi) = (lo, hi);
         }
+        if let Some(ants) = s.vfo_antennas.clone() {
+            (self.vfo_memory[idle].antenna_rx, self.vfo_memory[idle].antenna_tx) =
+                ants[idle].clone();
+        }
+
+        // The receiver and transmitter levels, exactly as a session restore
+        // sets them.
+        self.state.rx[0].volume = s.volume;
+        self.state.rx[0].muted = s.muted;
+        self.state.rx[0].manual_gain_db = s.rx_gain_db;
+        self.state.rx[0].agc = s.agc;
+        self.state.rx[0].squelch_db = s.squelch_db;
+        self.state.rx[0].noise_reduction = s.noise_reduction;
+        self.state.rx[0].binaural = s.binaural;
+        self.state.tx.drive = s.drive;
+        self.state.tx.tune_drive = s.tune_drive;
+        self.state.tx.mic_gain = s.mic_gain;
+        self.state.tx.cessb_db = s.cessb_db.clamp(0.0, sdroxide_types::CESSB_MAX_DB);
+        self.state.tx.eq = s.tx_eq.clamped();
+        self.state.repeater = s.repeater.clamped();
+
+        // The hardware preferences travel with the profile: the antenna port
+        // and the gain stages, applied through the same paths an antenna CLI
+        // or a session restore would take, so the preference lands on a device
+        // that offers it and is ignored by one that does not.
+        self.want_antenna = (s.antenna_rx.clone(), s.antenna_tx.clone());
+        self.band_antenna = s.band_antenna.clone();
+        self.restore_antennas();
+        self.follow_band_antenna(self.state.band);
+        self.want_gains = (s.gains.clone(), s.tx_gains.clone());
+        self.restore_gains();
+
+        // The digital identity and the message templates. The engine-owned
+        // fields (the per-band TX offset, the per-mode levels, the contest
+        // serial) stay as the engine has them — they follow the band and the
+        // mode the profile just moved to, not the profile.
+        let digi = keep_engine_owned(profile.digi.clone(), &self.digi_config);
+        self.digi_config = digi.clone();
+        if let Some(d) = self.digi.as_mut() {
+            d.set_config(digi);
+        }
+        if self.state.rx[0].mode == sdroxide_types::Mode::Cw {
+            self.source.set_cw_wpm(self.digi_config.cw_wpm);
+        }
+        self.sync_cw_filter();
+        self.sync_cw_dial();
+        if let Err(e) = sdroxide_config::save_digi_config(&self.digi_config) {
+            warn!("saving digi config: {e}");
+        }
+        self.digi_dirty = false;
+        self.mark_shared_store_write();
+        self.spots.set_operator(&self.digi_config.my_call, &self.report_grid());
+        self.sync_adsb_home();
+        self.emit_digi_status();
+
+        // The radio now describes where the profile left it; the remembered
+        // session is replaced so the periodic check compares against what is
+        // really running rather than against a stale remembered pre-apply
+        // value and "corrects" the radio back.
+        let now = self.current_session();
+        if let Err(e) = self.store.save_session(&now) {
+            warn!("saving the session after applying a profile: {e}");
+        }
+        self.session = Some(now);
+        let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
     }
 
     /// Write the memory list out, and say so on screen if it could not be

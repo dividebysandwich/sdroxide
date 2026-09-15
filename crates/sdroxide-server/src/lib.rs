@@ -1222,6 +1222,12 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             // client's, and it is only ever asked for from the machine the
             // credentials live on. Same treatment as `RadioEvent::Notice`.
             RadioEvent::LoginTest(_) => None,
+            // Not forwarded: there is no `ServerMsg::Profiles` variant for the
+            // browser's settings dialog to build its row from (see the event's
+            // docs). A remote engine still applies a profile asked for by name,
+            // because the command crosses the wire; the list of names simply
+            // does not reach a remote screen. Same treatment as `LoginTest`.
+            RadioEvent::Profiles(_) => None,
         }
     };
     // The satellite half of the station config also drives this machine's own

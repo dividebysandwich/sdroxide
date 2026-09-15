@@ -260,6 +260,17 @@ pub struct SdroxideApp {
     /// wherever you last were, but a restart starts again at General, so it is
     /// never written to storage in [`eframe::App::save`].
     settings_tab: SettingsTab,
+    /// The name being typed in the Profiles tab's save box. Owned on the app
+    /// because the dialog lives across taps of the tab bar, and a half-typed
+    /// name is not a setting.
+    profile_name_edit: String,
+    /// The station's saved profile names (issue #197), announced by the engine
+    /// at start and after every save/apply/delete. Only the names — the
+    /// profiles themselves stay with the radio's other remembered files.
+    ///
+    /// Empty on a client that has not heard the announcement yet (a browser
+    /// client that connects late), or that the announcement is native-only.
+    profiles: Vec<String>,
     /// Which logging service the Uploads tab's own strip is showing. Session-only
     /// for the same reason as `settings_tab`: it is where the operator happens to
     /// be in the dialog, not a setting.
@@ -1262,6 +1273,8 @@ impl SdroxideApp {
             probe_waiting: 0,
             probe_wait_until: 0.0,
             settings_tab: SettingsTab::General,
+            profile_name_edit: String::new(),
+            profiles: Vec::new(),
             settings_upload_tab: sdroxide_types::UploadTarget::QrzLogbook,
             ui_settings,
             applied_look: (ui_settings.theme, ui_settings.button_style, ui_settings.window_style),

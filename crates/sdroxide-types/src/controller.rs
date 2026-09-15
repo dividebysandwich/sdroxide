@@ -357,6 +357,19 @@ pub enum RadioEvent {
     ///
     /// Appended last, for the usual reason.
     AisStatus(Box<crate::AisStatus>),
+    /// The names of the station's saved profiles, after a save, an apply or a
+    /// delete (issue #197). The engine owns the store; the screen only needs
+    /// the list to offer, so the payload is names — the profiles themselves
+    /// live with everything else the radio remembers.
+    ///
+    /// Native-engine only for now: bridging this to a remote/WASM client would
+    /// mean a matching variant in `sdroxide_proto::ServerMsg`, and while the
+    /// command works from a remote client, this list is what a remote UI would
+    /// build its row from — not done yet, for the same reason `Qo100Status`
+    /// is not.
+    ///
+    /// Appended last, for the usual reason.
+    Profiles(Vec<String>),
 }
 
 /// Snapshot of the frontend's switchable sound devices (native clients).

@@ -1369,6 +1369,44 @@ pub fn save_session(session: &Session) -> Result<(), ConfigError> {
 pub type BandStacks =
     std::collections::HashMap<sdroxide_types::Band, Vec<sdroxide_types::BandStackEntry>>;
 
+/// One named snapshot of how the station is being worked — the whole
+/// rememberable radio state (dials, VFOs, mode, filters, gains, drive,
+/// antennas) plus the digital identity and message templates it works with
+/// and the band stacks it was put together in (issue #197).
+///
+/// A profile is a scoping of the operator's working setup, not a config
+/// backup: it deliberately does **not** carry the hardware. The backend, the
+/// audio devices and the converters are personal to a radio — profiles
+/// follow the operator across the rig they always sit at, and a "contest"
+/// profile should not drag yesterday's sound card behind it.
+///
+/// "Save" writes whatever the radio is doing right now; "apply" puts the
+/// radio back onto a saved setup without touching hardware it is not part of.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Profile {
+    /// The operator's name for it — "contest", "DX", "CB", the band plan.
+    pub name: String,
+    /// The remembered radio state: dials, VFOs, mode, filters, gains, drive,
+    /// antennas.
+    pub session: Session,
+    /// The digital identity and the message templates.
+    pub digi: sdroxide_types::DigiConfig,
+    /// The band stacks — which bands this way of working the station has its
+    /// setup stored in.
+    pub stacks: BandStacks,
+}
+
+/// The named profiles defined on this station. Station scope, like the band
+/// stacks: a profile is a way of working the station, not a thing a single
+/// radio owns.
+pub fn load_profiles() -> Vec<Profile> {
+    load_json_list("profiles.json")
+}
+
+pub fn save_profiles(profiles: &Vec<Profile>) -> Result<(), ConfigError> {
+    save_json("profiles.json", profiles)
+}
+
 fn load_json<T: serde::de::DeserializeOwned + Default>(file: &str) -> T {
     let Ok(dir) = config_dir() else { return T::default() };
     let FileText::Text(text) = read_config_text(&dir, file) else { return T::default() };
