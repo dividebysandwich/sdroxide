@@ -5100,6 +5100,10 @@ impl SdroxideApp {
     fn system_chips_top(&mut self, ui: &mut egui::Ui, extra: f32) {
         let [log, spots, awards, bands, sat_label, ism, public_sdrs] = SYSTEM_CHIPS_TOP;
         let simple = self.ui_settings.simple_ui;
+        // Listener mode hides the ham receive extras: the spot feeds (DX
+        // cluster / POTA / SOTA) here, and the award tracking below (which the
+        // simple interface already drops).
+        let listener = self.ui_settings.listener_mode;
         if chip_stretched(ui, self.show_logbook, log, extra)
             .on_hover_text("Logbook — all QSOs (digital + manual)")
             .clicked()
@@ -5116,9 +5120,10 @@ impl SdroxideApp {
         {
             self.show_swl = !self.show_swl;
         }
-        if chip_stretched(ui, self.show_spots, spots, extra)
-            .on_hover_text("Live spots — DX cluster, POTA, SOTA, PSK Reporter")
-            .clicked()
+        if !listener
+            && chip_stretched(ui, self.show_spots, spots, extra)
+                .on_hover_text("Live spots — DX cluster, POTA, SOTA, PSK Reporter")
+                .clicked()
         {
             self.show_spots = !self.show_spots;
         }

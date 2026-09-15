@@ -250,6 +250,21 @@ pub(in crate::app) fn settings_ui_tab(
         crate::chrome::checkbox(ui, &mut cfg.simple_ui, "hide advanced chips");
         ui.end_row();
 
+        ui.label("Listener mode").on_hover_text(
+            "A shortwave listener's screen: turns on SWL mode and Simple UI, \
+             and hides the ham receive extras that mean nothing to a listener — \
+             the DX-cluster / POTA / SOTA spots and the award tracking. The two \
+             switches above stay settable on their own afterwards; this is a \
+             starting point, not a lock.",
+        );
+        if crate::chrome::checkbox(ui, &mut cfg.listener_mode, "listener mode").changed()
+            && cfg.listener_mode
+        {
+            cfg.swl = true;
+            cfg.simple_ui = true;
+        }
+        ui.end_row();
+
         ui.label("Cities on maps").on_hover_text(
             "Draw the world's cities — a dot per place, with its name beside it \
              where there is room — on the flat maps: FT8/WSPR, APRS, ADS-B and \

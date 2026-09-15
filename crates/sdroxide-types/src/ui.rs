@@ -707,6 +707,19 @@ pub struct UiSettings {
     /// parts of it missing until they ask.
     #[serde(default)]
     pub simple_ui: bool,
+    /// Listener mode: this screen is a shortwave listener's, not a
+    /// transceiver's.
+    ///
+    /// Turning it on sets [`Self::swl`] and [`Self::simple_ui`] — and hides the
+    /// ham *receive* chrome that means nothing to a listener: the DX-cluster /
+    /// POTA / SOTA spots and the award tracking. The two switches stay
+    /// independently toggleable afterwards; this is a starting point, not a
+    /// lock.
+    ///
+    /// A display preference like the two above, so each screen chooses; the
+    /// data it shows is the station's.
+    #[serde(default)]
+    pub listener_mode: bool,
 }
 
 /// Default for [`UiSettings::spot_colors`] — every kind on its stock tint.
@@ -809,6 +822,7 @@ impl Default for UiSettings {
             oob_tx_dismissed: false,
             cb_tx_warning_ack: false,
             simple_ui: false,
+            listener_mode: false,
         }
     }
 }
