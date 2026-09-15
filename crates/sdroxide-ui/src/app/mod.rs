@@ -26,6 +26,7 @@ pub(in crate::app) mod drm;
 pub(in crate::app) mod frame;
 pub(in crate::app) mod ism;
 pub(in crate::app) mod logbook;
+pub(in crate::app) mod swl_log;
 pub(in crate::app) mod net;
 pub(in crate::app) mod panels;
 pub(crate) mod persist;
@@ -62,7 +63,7 @@ use self::panels::fsq::fsq_load_contacts;
 use self::panels::rf_paint::RfPaintUi;
 use self::panels::sstv::SstvUi;
 use self::persist::{
-    load_alerts_settings, load_broadcast_stations, load_qso_log, load_speech_settings,
+    load_alerts_settings, load_broadcast_stations, load_qso_log, load_speech_settings, load_swl_log,
     load_ui_settings,
 };
 use self::settings::servers::TciServerStatus;
@@ -492,6 +493,14 @@ pub struct SdroxideApp {
     /// reports back how many characters have been sent so we colour them green).
     text_tx: String,
     qso_log: Vec<QsoRecord>,
+    /// The listener's reception log (`swl_log.json`) — separate from the QSO
+    /// log on purpose. See [`crate::app::swl_log`].
+    pub(in crate::app) swl_log: Vec<sdroxide_types::SwlEntry>,
+    /// The reception log window's own state: open, the entry being edited, and
+    /// the row the REPORT button acts on.
+    pub(in crate::app) show_swl: bool,
+    pub(in crate::app) swl_edit: Option<crate::app::swl_log::SwlEditForm>,
+    pub(in crate::app) swl_selected: Option<u64>,
     /// Cached newest-first ordering and day grouping of [`Self::qso_log`], so
     /// the logbook list does not re-sort and re-group the whole log on every
     /// frame it is open. See `logbook::LogView`.
@@ -1379,6 +1388,10 @@ impl SdroxideApp {
             digi_status: None,
             text_tx: String::new(),
             qso_log: load_qso_log(storage),
+            swl_log: load_swl_log(storage),
+            show_swl: false,
+            swl_edit: None,
+            swl_selected: None,
             log_view: Default::default(),
             session_qsos: 0,
             show_digi_settings: false,

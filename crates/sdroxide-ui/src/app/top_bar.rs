@@ -5106,6 +5106,16 @@ impl SdroxideApp {
         {
             self.show_logbook = !self.show_logbook;
         }
+        // The listener's log. Offered while SWL mode is on; the two are shown
+        // side by side rather than swapped so an operator who wants both is not
+        // stopped from having both.
+        if self.ui_settings.swl
+            && chip_stretched(ui, self.show_swl, "LISTEN", extra)
+                .on_hover_text("Reception log — stations heard, with SINPO/SIO")
+                .clicked()
+        {
+            self.show_swl = !self.show_swl;
+        }
         if chip_stretched(ui, self.show_spots, spots, extra)
             .on_hover_text("Live spots — DX cluster, POTA, SOTA, PSK Reporter")
             .clicked()

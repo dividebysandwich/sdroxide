@@ -5,7 +5,7 @@
 //! configuration; in the browser there is no filesystem, so the same state
 //! lives in eframe's storage (or, where it is bundled data, nowhere at all).
 
-use sdroxide_types::QsoRecord;
+use sdroxide_types::{QsoRecord, SwlEntry};
 
 // ── Logbook persistence (native: config-dir JSON; wasm: eframe storage) ──────
 #[cfg(not(target_arch = "wasm32"))]
@@ -27,6 +27,29 @@ pub(in crate::app) fn persist_qso_log(log: &[QsoRecord]) {
 
 #[cfg(target_arch = "wasm32")]
 pub(in crate::app) fn persist_qso_log(_log: &[QsoRecord]) {
+    // Written by eframe's periodic `save()` into localStorage.
+}
+
+// ── Reception log persistence (native: config-dir JSON; wasm: eframe storage) ─
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_swl_log(_storage: Option<&dyn eframe::Storage>) -> Vec<SwlEntry> {
+    sdroxide_config::load_swl_log()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_swl_log(storage: Option<&dyn eframe::Storage>) -> Vec<SwlEntry> {
+    storage.and_then(|s| eframe::get_value(s, "swl_log")).unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn persist_swl_log(log: &[SwlEntry]) {
+    if let Err(e) = sdroxide_config::save_swl_log(log) {
+        eprintln!("failed to save reception log: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn persist_swl_log(_log: &[SwlEntry]) {
     // Written by eframe's periodic `save()` into localStorage.
 }
 
