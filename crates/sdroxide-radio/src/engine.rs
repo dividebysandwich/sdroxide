@@ -5363,8 +5363,20 @@ impl Engine {
             &mut self.main_play_r,
         );
         let right = (!self.main_play_r.is_empty()).then_some(&self.main_play_r[..]);
+        // The time-shift window works here too: a demod-audio rig is a
+        // listener's front end as much as an SDR is.
+        self.replay.push(&self.audio_play);
+        if self.replay.on() {
+            let n = self.audio_play.len();
+            self.replay.read_into(&mut self.replay_buf, n);
+        }
+        let (speaker, speaker_right): (&[f32], Option<&[f32]>) = if self.replay.on() {
+            (&self.replay_buf, None)
+        } else {
+            (&self.audio_play, right)
+        };
         if let Some(mixer) = self.mixer.as_mut() {
-            mixer.push(&self.audio_play, right, &self.audio_play_rec, None);
+            mixer.push(speaker, speaker_right, &self.audio_play_rec, None);
         }
     }
 

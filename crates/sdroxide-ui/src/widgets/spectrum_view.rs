@@ -2688,10 +2688,12 @@ pub fn show_ext(
                 let tod = (t as i64).rem_euclid(86_400);
                 // Seconds only when the step is finer than a minute — on a slow
                 // waterfall they would all read ":00" and cost width for it.
+                // `z` rather than a bare time: every time in this program is
+                // UTC, and the axis is where a listener reads it off.
                 let text = if step < 60.0 {
-                    format!("{:02}:{:02}:{:02}", tod / 3600, (tod % 3600) / 60, tod % 60)
+                    format!("{:02}:{:02}:{:02}z", tod / 3600, (tod % 3600) / 60, tod % 60)
                 } else {
-                    format!("{:02}:{:02}", tod / 3600, (tod % 3600) / 60)
+                    format!("{:02}:{:02}z", tod / 3600, (tod % 3600) / 60)
                 };
                 label_box(
                     &painter,
