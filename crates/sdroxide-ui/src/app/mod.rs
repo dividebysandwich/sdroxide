@@ -1205,7 +1205,13 @@ impl SdroxideApp {
         // The look and the font sizes must be selected before `theme::apply`
         // reads them, or the first frame flashes the default theme at the
         // default scale.
-        let ui_settings = load_ui_settings(storage);
+        let mut ui_settings = load_ui_settings(storage);
+        // Start in SWL mode when asked: either the stored preference or this
+        // run's `--swl`. The session's own toggle can still turn it off, but
+        // the next start honours the preference again.
+        if ui_settings.start_swl || sdroxide_types::force_swl() {
+            ui_settings.swl = true;
+        }
         crate::theme::set_look(
             ui_settings.theme,
             ui_settings.button_style,

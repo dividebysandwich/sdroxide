@@ -252,6 +252,15 @@ pub(in crate::app) fn settings_ui_tab(
         crate::chrome::checkbox(ui, &mut cfg.simple_ui, "hide advanced chips");
         ui.end_row();
 
+        ui.label("Start in SWL mode").on_hover_text(
+            "Open every session with SWL mode already on, so a listener's \
+             screen is what the program comes up as. Off unless asked for; the \
+             SWL mode switch above can still turn it off for a session, and the \
+             next start honours this setting again.",
+        );
+        crate::chrome::checkbox(ui, &mut cfg.start_swl, "start with SWL mode on");
+        ui.end_row();
+
         ui.label("Cities on maps").on_hover_text(
             "Draw the world's cities — a dot per place, with its name beside it \
              where there is room — on the flat maps: FT8/WSPR, APRS, ADS-B and \
