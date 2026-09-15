@@ -50,13 +50,12 @@ pub struct Sinpo { pub s: u8, pub i: u8, pub n: u8, pub p: u8, pub o: u8 }
 
 - `swl_log.json` under the config directory, next to `qso_log.json`, with the
   same load/save shape (atomic write, one file).
-- Engine owns it, like the QSO log: the UI sends an add/edit/delete command and
-  the engine answers with the fresh list, so a remote client never holds the
-  data — exactly the profiles and QSO-log pattern already in place.
-- Commands: `SwlLogAdd(Box<SwlEntry>)`, `SwlLogUpdate(Box<SwlEntry>)`,
-  `SwlLogDelete(u64)`, and the list arriving back as a `RadioEvent`. All
-  appended to the enums, postcard-safe. The entry carries its `heard_at_unix`
-  as the key.
+- **Owned by the UI, like the QSO log** (`persist.rs` → `sdroxide_config`,
+  and eframe storage in the browser) — *not* the engine-owned profiles pattern
+  first written here. The QSO log is the sibling window and stores this way,
+  and one log of the two being engine-owned and the other not would be a
+  difference with nothing behind it. The engine keeps only its `LogQso`
+  side-effects; it does not hold the logbook, and it will not hold this.
 
 ### UI (`sdroxide-ui`)
 
