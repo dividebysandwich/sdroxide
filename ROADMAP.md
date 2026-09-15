@@ -10,8 +10,15 @@ its own.
 
 ## Phase 1 — the listener's identity
 
-The goal: opening the program should feel like a listener's radio, not a
-transceiver with the transmit parts hidden.
+**Done.** A **listener mode** switch (it sets SWL mode and Simple UI and hides
+the DX-cluster/POTA/SOTA spots and the awards), a **LISTEN window** with the
+SWL reception log — station, frequency, UTC, mode, language, **SINPO or SIO**,
+S-meter, notes — and a **REPORT** button that writes the entry as a reception
+report to send to the broadcaster. The log lives in `swl_log.json`, its own
+file, and records what was *heard* rather than worked.
+
+The goal it was built for: opening the program should feel like a listener's
+radio, not a transceiver with the transmit parts hidden.
 
 - **Listener profile.** One setting that sets SWL mode and Simple UI, and hides
   the ham *receive* chrome that means nothing to a listener — awards

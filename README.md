@@ -34,11 +34,14 @@ Already here, carried over from the CB/SWL work this fork grew out of:
 - **Utilities and images** — DRM shortwave, weather fax, NAVTEX, ADS-B/VDL2 —
   and the **browser server**, so you can listen from anywhere, antenna in the
   garden.
+- **A listener's screen** — a **listener mode** that turns on SWL mode and
+  Simple UI and drops the ham extras; and a **LISTEN log** that records what was
+  *heard* — station, frequency, UTC, **SINPO/SIO**, notes — with a **reception
+  report** to send to the broadcaster.
 
 See **[ROADMAP.md](ROADMAP.md)** for what is being built for listeners next: a
-**browsable broadcast schedule** you can tune from, a **SINPO listening log**
-with reception reports, **scheduled recordings and instant replay**, and
-**ECSS** for medium-wave DX.
+**browsable broadcast schedule** you can tune from, **scheduled recordings and
+instant replay**, and **ECSS** for medium-wave DX.
 
 | | Upstream (`dividebysandwich/sdroxide`) | This fork |
 | --- | --- | --- |
