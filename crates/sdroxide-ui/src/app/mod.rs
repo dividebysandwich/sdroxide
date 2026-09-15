@@ -26,6 +26,7 @@ pub(in crate::app) mod drm;
 pub(in crate::app) mod frame;
 pub(in crate::app) mod ism;
 pub(in crate::app) mod logbook;
+pub(in crate::app) mod schedule;
 pub(in crate::app) mod swl_log;
 pub(in crate::app) mod net;
 pub(in crate::app) mod panels;
@@ -501,6 +502,8 @@ pub struct SdroxideApp {
     pub(in crate::app) show_swl: bool,
     pub(in crate::app) swl_edit: Option<crate::app::swl_log::SwlEditForm>,
     pub(in crate::app) swl_selected: Option<u64>,
+    /// The broadcast schedule window and its filters.
+    pub(in crate::app) schedule: crate::app::schedule::ScheduleUi,
     /// Cached newest-first ordering and day grouping of [`Self::qso_log`], so
     /// the logbook list does not re-sort and re-group the whole log on every
     /// frame it is open. See `logbook::LogView`.
@@ -1392,6 +1395,7 @@ impl SdroxideApp {
             show_swl: false,
             swl_edit: None,
             swl_selected: None,
+            schedule: Default::default(),
             log_view: Default::default(),
             session_qsos: 0,
             show_digi_settings: false,

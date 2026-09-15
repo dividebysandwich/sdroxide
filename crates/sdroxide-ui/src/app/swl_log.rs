@@ -115,6 +115,23 @@ impl SwlEditForm {
         }
     }
 
+    /// A fresh entry from a schedule row: the station, language and site are
+    /// already known, so a reception from the schedule is a judgement away.
+    pub(in crate::app) fn from_station(
+        freq_hz: f64,
+        mode: Mode,
+        station: &str,
+        language: &str,
+        site: &str,
+        smeter_dbm: Option<f32>,
+    ) -> Self {
+        let mut f = Self::new(freq_hz, mode, smeter_dbm);
+        f.station = station.to_string();
+        f.language = language.to_string();
+        f.site = site.to_string();
+        f
+    }
+
     fn from_entry(e: &SwlEntry) -> Self {
         let (sinpo, judged, s, i, n, p, o) = match e.report {
             Some(SignalReport::Sinpo(r)) => (true, true, r.s, r.i, r.n, r.p, r.o),

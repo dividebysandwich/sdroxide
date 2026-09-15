@@ -5114,6 +5114,13 @@ impl SdroxideApp {
         // side by side rather than swapped so an operator who wants both is not
         // stopped from having both.
         if self.ui_settings.swl
+            && chip_stretched(ui, self.schedule.show, "SCHEDULE", extra)
+                .on_hover_text("Broadcast schedule — what is on, when and where")
+                .clicked()
+        {
+            self.schedule.show = !self.schedule.show;
+        }
+        if self.ui_settings.swl
             && chip_stretched(ui, self.show_swl, "LISTEN", extra)
                 .on_hover_text("Reception log — stations heard, with SINPO/SIO")
                 .clicked()

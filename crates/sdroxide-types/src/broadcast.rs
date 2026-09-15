@@ -389,6 +389,30 @@ impl BroadcastStation {
         self.mode.as_deref().filter(|m| !m.is_empty()).unwrap_or("AM")
     }
 
+    /// The emission mode to tune, as a [`crate::Mode`]. The schedule's own
+    /// strings mapped onto the modes; anything unrecognised is AM.
+    pub fn mode(&self) -> crate::Mode {
+        match self.mode_str().to_ascii_uppercase().as_str() {
+            "SAM" => crate::Mode::Sam,
+            "USB" => crate::Mode::Usb,
+            "LSB" => crate::Mode::Lsb,
+            "CW" => crate::Mode::Cw,
+            "DRM" => crate::Mode::Drm,
+            "FM" | "WFM" => crate::Mode::Wfm,
+            _ => crate::Mode::Am,
+        }
+    }
+
+    /// Whether the entry matches a free-text query over the fields a listener
+    /// searches by: name, site, country, language and target.
+    pub fn matches_query(&self, q: &str) -> bool {
+        let q = q.trim().to_ascii_lowercase();
+        q.is_empty()
+            || [&self.name, &self.site, &self.country, &self.lang, &self.target]
+                .iter()
+                .any(|f| f.to_ascii_lowercase().contains(&q))
+    }
+
     /// Whether this transmission is scheduled at `unix` (seconds since epoch).
     ///
     /// Three independent gates, any of which passes trivially when the entry
@@ -492,6 +516,33 @@ impl BroadcastStation {
 }
 
 /// The hand-kept longwave and standard-time entries.
+/// The metre band a broadcast frequency falls in — `"49m"`, `"MW"`, `"120m"` —
+/// for the schedule's band filter and its rows. The edges are the conventional
+/// ones the published schedules use; a frequency between bands has no name.
+pub fn metre_band(khz: f64) -> Option<&'static str> {
+    let k = khz;
+    const BANDS: [(&str, f64, f64); 17] = [
+        ("LW", 148.5, 283.5),
+        ("MW", 526.5, 1606.5),
+        ("120m", 2300.0, 2495.0),
+        ("90m", 3200.0, 3400.0),
+        ("75m", 3900.0, 4000.0),
+        ("60m", 4750.0, 5060.0),
+        ("49m", 5900.0, 6200.0),
+        ("41m", 7200.0, 7450.0),
+        ("31m", 9400.0, 9900.0),
+        ("25m", 11_600.0, 12_100.0),
+        ("22m", 13_570.0, 13_870.0),
+        ("19m", 15_100.0, 15_800.0),
+        ("16m", 17_480.0, 17_900.0),
+        ("15m", 18_900.0, 19_020.0),
+        ("13m", 21_450.0, 21_850.0),
+        ("11m", 25_670.0, 26_100.0),
+        ("FM", 87_500.0, 108_000.0),
+    ];
+    BANDS.iter().find(|&&(_, lo, hi)| (lo..=hi).contains(&k)).map(|&(name, _, _)| name)
+}
+
 pub fn seed() -> &'static [BroadcastStation] {
     static PARSED: OnceLock<Vec<BroadcastStation>> = OnceLock::new();
     PARSED.get_or_init(|| {
@@ -977,5 +1028,45 @@ mod tests {
         let spots = on_air(builtin(), THU_1234);
         assert!(spots.iter().any(|s| s.freq_hz == 225_000.0));
         assert!(spots.iter().all(|s| s.kind == SpotKind::Broadcast));
+    }
+}
+
+#[cfg(test)]
+mod schedule_query_tests {
+    use super::*;
+
+    #[test]
+    fn metre_bands_are_named() {
+        assert_eq!(metre_band(6185.0), Some("49m"));
+        assert_eq!(metre_band(9410.0), Some("31m"));
+        assert_eq!(metre_band(1000.0), Some("MW"));
+        assert_eq!(metre_band(200.0), Some("LW"));
+        assert_eq!(metre_band(50_000.0), None);
+    }
+
+    #[test]
+    fn queries_match_the_fields_a_listener_searches() {
+        let s: BroadcastStation = serde_json::from_str(
+            r#"{"name":"BBC World Service","freq_khz":6185.0,"site":"Ascension",
+                "country":"Ascension","lang":"English","target":"Africa"}"#,
+        )
+        .unwrap();
+        assert!(s.matches_query("bbc"));
+        assert!(s.matches_query("ENGLISH"));
+        assert!(s.matches_query("ascension"));
+        assert!(s.matches_query("africa"));
+        assert!(!s.matches_query("romania"));
+        assert!(s.matches_query(""), "an empty query matches everything");
+    }
+
+    #[test]
+    fn modes_map_onto_the_receiver_with_am_as_the_default() {
+        let mut s: BroadcastStation =
+            serde_json::from_str(r#"{"name":"X","freq_khz":6000.0}"#).unwrap();
+        assert_eq!(s.mode(), crate::Mode::Am);
+        s.mode = Some("USB".into());
+        assert_eq!(s.mode(), crate::Mode::Usb);
+        s.mode = Some("SAM".into());
+        assert_eq!(s.mode(), crate::Mode::Sam);
     }
 }
