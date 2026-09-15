@@ -39,8 +39,9 @@ chosen UTC time (or now), by metre band, language and target, and by free text
 over name/site/country/language/target. A row can be **TUNE**d, or **LOG**ged
 straight into the reception log with the station, language and site filled in.
 
-What is left: **favourites** — "my stations", tied to the schedule rather than
-to bare frequencies.
+**Complete.** Favourites are in: a row carries a star, starred stations are kept
+by name in `broadcast_favourites.json`, and a **★ FAVS** filter shows only them
+— tied to the station rather than to a bare frequency.
 
 ## Phase 3 — listening tools
 
@@ -63,13 +64,15 @@ to bare frequencies.
 
 ## Phase 4 — polish
 
-- **UTC first**: a prominent UTC clock, and UTC wherever a time is shown.
-- **Utility labels**: VOLMET, NAVTEX, time signals, numbers stations — the same
-  idea as the broadcast labels, for the listener who follows utilities.
+- **UTC first**: **UTC clock done** in the SCHEDULE and LISTEN windows, where a
+  listener works. A general "UTC everywhere" pass is still open.
+- **Utility labels**: VOLMET, time signals, numbers stations — the same idea as
+  the broadcast labels. Needs a small built-in utility table; not started.
 - **DRM for the listener**: show the programme text and MOT slideshow, not just
-  the audio.
+  the audio. **Blocked**: the DRM decoder is vendored (Dream) and does not hand
+  its MOT/journaline stream out, so this needs work in `sdroxide-drm` first.
 - **Band scanning for listeners**: walk 49 m and stop on carriers, with the
-  station name.
+  station name. The scanner exists; not started.
 
 ## Not goals
 
