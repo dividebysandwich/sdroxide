@@ -58,8 +58,8 @@ pub struct Loaded {
 pub type LoadInbox = std::sync::Arc<std::sync::Mutex<Option<Result<Loaded, String>>>>;
 
 /// Open a text file via a native "Open" dialog (off the UI thread) and store
-/// its contents into `inbox` for the UI to pick up next frame. Native only —
-/// the browser client has no filesystem picker here.
+/// its contents into `inbox` for the UI to pick up next frame. Native opens a
+/// filesystem picker; the browser openes its own file input (see the wasm arm).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_text(filter_name: &str, ext: &str, inbox: LoadInbox) {
     let filter_name = filter_name.to_string();
@@ -88,9 +88,6 @@ pub fn load_text(filter_name: &str, ext: &str, inbox: LoadInbox) {
         .ok();
 }
 
-// Native only, with `load_text`: the browser hands its own decoded string to
-// the wasm client, so none of this is reachable there.
-#[cfg(not(target_arch = "wasm32"))]
 /// Decode the bytes of a text file, saying what — if anything — had to be
 /// assumed to do it.
 ///
@@ -104,6 +101,9 @@ pub fn load_text(filter_name: &str, ext: &str, inbox: LoadInbox) {
 /// log — callsign, date, band, mode, frequency — are ASCII under every one of
 /// these encodings, so even a wrongly guessed code page costs at worst the
 /// spelling of a name, where refusing the file costs the whole log.
+///
+/// Both platforms run the same chain: a native pick reads bytes off disk, a
+/// browser pick reads the same bytes off a `FileReader`.
 pub fn decode_text(bytes: &[u8]) -> Loaded {
     let unicode = |text: String| Loaded { text, assumed: None };
     if let Some(rest) = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]) {
@@ -126,7 +126,6 @@ pub fn decode_text(bytes: &[u8]) -> Loaded {
     Loaded { text: bytes.iter().map(|&b| table(b)).collect(), assumed: Some(name) }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// UTF-16 code units in the order `pair` reads them, surrogates paired up. A
 /// lone surrogate or a trailing odd byte is a truncated file, not a reason to
 /// throw the rest away.
@@ -135,7 +134,6 @@ fn from_utf16(bytes: &[u8], pair: fn([u8; 2]) -> u16) -> String {
     char::decode_utf16(units).map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER)).collect()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Whether a file that is not Unicode reads better as Cyrillic than as Western
 /// European.
 ///
@@ -153,6 +151,103 @@ fn looks_cyrillic(bytes: &[u8]) -> bool {
         longest = longest.max(run);
     }
     longest >= 3
+}
+
+#[cfg(target_arch = "wasm32")]
+/// Open a text file through the browser's own picker and store its contents
+/// into `inbox` for the UI to pick up next frame — the missing half of issue
+/// #445, where the logbook's IMPORT sat native-only while the browser client
+/// could still *write* files.
+///
+/// A hidden `<input type="file">` does the picking — the only filesystem a
+/// page is allowed — and a `FileReader` hands back the raw bytes, which go
+/// through the same [`decode_text`] a native open uses, so a Web 1.0 log in
+/// Windows-1251 imports identically in both. The one picker element lives for
+/// the life of the page; opening the dialog again just re-arms its handler,
+/// and resetting the input's value each time keeps the *same* file pickable
+/// twice (a change event only fires when the selection actually changes).
+pub fn load_text(_filter_name: &str, ext: &str, inbox: LoadInbox) {
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+
+    // A file input, kept between calls. `HtmlInputElement` is not `Sync`, so a
+    // `thread_local` instead of a `static`.
+    thread_local! {
+        static PICKER: std::cell::RefCell<Option<web_sys::HtmlInputElement>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    let Some(window) = web_sys::window() else { return };
+    let Some(doc) = window.document() else { return };
+    let Some(body) = doc.body() else { return };
+
+    // Getting a picker to exist: create it once, or clone the one we have.
+    let input = {
+        let ready = PICKER.with(|slot| slot.borrow().clone());
+        match ready {
+            Some(el) => el,
+            None => {
+                let Ok(el) = doc
+                    .create_element("input")
+                    .map(|e| e.unchecked_into::<web_sys::HtmlInputElement>())
+                else {
+                    return;
+                };
+                let _ = el.set_attribute("type", "file");
+                // Invisible, but still in the DOM so it can be told to click.
+                let _ = el.set_attribute("style", "display: none;");
+                let _ = body.append_child(el.as_ref());
+                PICKER.with(|slot| *slot.borrow_mut() = Some(el.clone()));
+                el
+            }
+        }
+    };
+
+    input.set_accept(&format!(".{ext}"));
+    // The selection can be made again even if it is the same file as last
+    // time: clearing the value makes a re-pick a change again.
+    input.set_value("");
+
+    let for_change = input.clone();
+    let on_change = Closure::wrap(Box::new(move || {
+        let Some(file) = for_change.files().and_then(|list| list.get(0)) else { return };
+        let Ok(reader) = web_sys::FileReader::new() else { return };
+        // The reader is reported back into the load handler below, which is
+        // what keeps it alive until the file has actually arrived; nothing on
+        // the page holds it after that.
+        let read_here = reader.clone();
+        let ok_inbox = inbox.clone();
+        let on_load = Closure::once(move || {
+            let loaded = read_here.result().ok().and_then(|v| {
+                // An ArrayBuffer, read as its bytes and decoded exactly as the
+                // native arm decodes bytes off disk.
+                let bytes = js_sys::Uint8Array::new(&v).to_vec();
+                Some(decode_text(&bytes))
+            });
+            if let Ok(mut g) = ok_inbox.lock() {
+                *g = Some(match loaded {
+                    Some(l) => Ok(l),
+                    None => Err("the browser could not read that file".into()),
+                });
+            }
+        });
+        let err_inbox = inbox.clone();
+        let on_error = Closure::once(move || {
+            if let Ok(mut g) = err_inbox.lock() {
+                *g = Some(Err("the browser could not read that file".into()));
+            }
+        });
+        reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
+        reader.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+        on_load.forget();
+        on_error.forget();
+        let _ = reader.read_as_array_buffer(&file);
+    }) as Box<dyn FnMut()>);
+
+    // Re-armed rather than accumulated: swapping the handler drops the one
+    // from the previous pick (its closure graph dies with it).
+    input.set_onchange(Some(on_change.as_ref().unchecked_ref()));
+    on_change.forget();
+    let _ = input.click();
 }
 
 #[cfg(target_arch = "wasm32")]

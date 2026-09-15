@@ -540,7 +540,6 @@ impl SdroxideApp {
         // operator who wants their local machines in here already has the file
         // (issue #234).
         ui.horizontal(|ui| {
-            #[cfg(not(target_arch = "wasm32"))]
             if crate::chrome::chip(ui, false, "IMPORT")
                 .on_hover_text(
                     "Read a channel list from a CHIRP CSV file (.csv) — a repeater \
