@@ -230,6 +230,13 @@ pub struct CwController {
     tx_pushed: usize,
     tx_active: bool,
     keyed: bool,
+    /// The keyboard-as-straight-key mode (issue #322): the PC keyboard's
+    /// Space bar pressed as a straight key.
+    ///
+    /// Only on the sidetone route — a rig that keys itself from text has no
+    /// way to hear a hand keyed into its sound card, and can only send the
+    /// timed text a message commits to. Such a radio never enters the mode.
+    straight: bool,
     last_sent: usize,
     /// Something has actually been sent since transmit was switched on.
     ///
@@ -291,6 +298,7 @@ impl CwController {
             tx_pushed: 0,
             tx_active: false,
             keyed: false,
+            straight: false,
             last_sent: 0,
             over_had_text: false,
             idle_samples: 0,
@@ -611,7 +619,12 @@ impl DigiEngine for CwController {
             // out, not five seconds later. The hang below exists to bridge the
             // gaps between typed characters, and under `send_on_enter` there
             // are no gaps to bridge — only a carrier nobody is using.
-            if self.cfg.send_on_enter && self.over_had_text {
+            //
+            // A straight key is not a committed line: an element or a pause in
+            // an element is not a finished over, and the operator still holding
+            // the frequency between elements must keep it through the idle
+            // hang rather than getting a PTT cycle per character.
+            if !self.straight && self.cfg.send_on_enter && self.over_had_text {
                 self.over_had_text = false;
                 self.tx_active = false;
                 self.status_dirty = true;
@@ -688,6 +701,12 @@ impl DigiEngine for CwController {
         self.last_sent = 0;
         self.idle_samples = 0;
         self.over_had_text = false;
+        // An abort also hands the frequency back from a key that was
+        // mid-character: the operator is stopping, not pausing between dits.
+        if self.straight {
+            self.tx.set_manual(false);
+            self.straight = false;
+        }
         if let Some(cat) = self.cat.as_mut() {
             let sending = cat.sending_since.is_some();
             cat.clear();
@@ -782,6 +801,43 @@ impl DigiEngine for CwController {
         // it — that is what the panel's CLEAR is for.
         if let Some(cat) = self.cat.as_mut() {
             cat.last_input = Some(SystemTime::now());
+        }
+        self.status_dirty = true;
+    }
+
+    /// The keyboard as a straight key (issue #322): enter or leave the mode.
+    ///
+    /// Engaged, the keyer drops whatever timed text it was holding — the
+    /// operator has just taken the frequency into their own hand — and the
+    /// keyboard becomes the key, down while a key is held, up on release (a
+    /// straight key is drawn, not timed, so it cannot live in the timed queue).
+    ///
+    /// Only the sidetone route has it: a rig that keys itself from text
+    /// ([`Self::cat`]) has its own keyer between here and the air and nothing
+    /// can be hand-keyed through it.
+    fn set_straight(&mut self, on: bool) {
+        if self.cat.is_some() || on == self.straight {
+            return;
+        }
+        self.straight = on;
+        self.tx.set_manual(on);
+        self.tx.set_held(false);
+        self.status_dirty = true;
+    }
+
+    /// Where the straight key sits this instant, while [`Self::straight`] is
+    /// engaged. A key-down over an off transmitter starts the over — keying is
+    /// itself the instruction to transmit, exactly as typing in the box is.
+    fn key_down(&mut self, down: bool) {
+        if !self.straight || self.cat.is_some() {
+            return;
+        }
+        if down && !self.tx_active {
+            self.set_tx_active(true);
+        }
+        self.tx.set_held(down);
+        if down {
+            self.idle_samples = 0;
         }
         self.status_dirty = true;
     }

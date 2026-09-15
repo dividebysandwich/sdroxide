@@ -499,6 +499,13 @@ pub struct SdroxideApp {
     /// Screen state, not the operator's: the buttons themselves live in
     /// `DigiConfig`.
     cw_macro_edit: bool,
+    /// Whether the CW panel's keyboard-as-straight-key mode is engaged (issue
+    /// #322). Screen state: the keyer's engagement lives in the controller,
+    /// and this is the toggle's face and where the key is read.
+    cw_straight: bool,
+    /// Whether the Space bar was down the last frame, so a key press or
+    /// release is told to the keyer once — never per frame.
+    cw_key_down: bool,
     /// The FT8/FT4 transmit-offset box, as typed. Kept as text rather than a
     /// number so a half-finished figure survives between frames: parsing every
     /// keystroke would rewrite "8" to 200 before the 2 was pressed.
@@ -1409,6 +1416,8 @@ impl SdroxideApp {
             aprs_lon_buf: String::new(),
             digi_cfg_seeded: false,
             cw_macro_edit: false,
+            cw_straight: false,
+            cw_key_down: false,
             digi_tx_hz_edit: String::new(),
             digi_preview: None,
             map_view: Default::default(),

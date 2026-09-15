@@ -252,12 +252,17 @@ impl SdroxideApp {
         // On a receiver the box goes grey with the buttons, and here that is
         // more than tidiness: typing into it *is* the instruction to send, so a
         // live box on a radio with no transmitter would key nothing on every
-        // keystroke.
+        // keystroke. The straight key (issue #322) locks it out too — the box
+        // is the *text* keyer, and with the Space bar made a key, typing into
+        // it would be the text keyer speaking over the operator's hand.
         let tx_ok = self.tx_capable();
-        let entered = tx_ok && send_on_enter && crate::chrome::take_return(ui, tx_id);
+        let entered = tx_ok
+            && !self.cw_straight
+            && send_on_enter
+            && crate::chrome::take_return(ui, tx_id);
 
         let resp = ui
-            .add_enabled_ui(tx_ok, |ui| {
+            .add_enabled_ui(tx_ok && !self.cw_straight, |ui| {
                 ui.allocate_ui(egui::vec2(ui.available_width(), input_h), |ui| {
                     egui::Frame::new()
                         .fill(crate::theme::ROW_BG())
@@ -320,7 +325,63 @@ impl SdroxideApp {
         }
         ui.add_space(gap);
 
+        // The keyboard as a straight key (issue #322): with the mode on, the
+        // Space bar is the key — down while held, up on release — and the
+        // box above is locked out so a stray space does not type into it.
+        if self.cw_straight && tx_ok {
+            // The key is the operator's only when nothing on screen holds the
+            // keyboard: a caret in some other field is a typist, not a keyer.
+            let free = !ui.memory(|m| m.focused().is_some()) && !ui.ctx().egui_wants_keyboard_input();
+            let down = free && ui.input(|i| i.key_down(egui::Key::Space));
+            if down != self.cw_key_down {
+                self.cw_key_down = down;
+                cmds.push(Command::CwKey(down));
+            }
+            // Swallow the press so a PTT bound to Space, or the search box's
+            // catch-all, does not fire under a keyed hand as well.
+            ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Space));
+        } else if self.cw_key_down {
+            // The mode went off, or the keyboard was taken — either way a key
+            // let go of the rig mid-character would hold the frequency.
+            self.cw_key_down = false;
+            cmds.push(Command::CwKey(false));
+        }
+
         ui.horizontal(|ui| {
+            // The straight-key toggle (issue #322): Space bar as the key.
+            // A rig that keys itself from text has no use for it — the
+            // controller refuses to engage — but the button still shows rather
+            // than silently not being there, because the operator may not know
+            // their radio's answer is that of a keyer rather than a rig that
+            // can be hand-keyed through its sound card.
+            if tx_gated(ui, tx_ok, |ui| {
+                let on = self.cw_straight;
+                crate::chrome::chip(
+                    ui,
+                    on,
+                    RichText::new(if on { " KEY ● " } else { " KEY " }).size(12.0).strong(),
+                )
+                .on_hover_text(
+                    "Hold the Space bar as a straight key — down while it is held, up on \
+                     release — instead of typing text. The transmit box is locked while it \
+                     is on, and the whole keyer is handed to the key: whatever text was \
+                     queued is dropped.\n\n\
+                     An SDR keys this through its own transmit chain; a rig that keys \
+                     itself from text has nothing for a hand key to drive, so the mode \
+                     does not engage there.",
+                )
+            })
+            .clicked()
+            {
+                if self.cw_straight {
+                    cmds.push(Command::CwStraight(false));
+                    self.cw_straight = false;
+                } else {
+                    cmds.push(Command::DigiAbortTx);
+                    cmds.push(Command::CwStraight(true));
+                    self.cw_straight = true;
+                }
+            }
             let label = if tx_on { "  TX ON  " } else { "   TX   " };
             if tx_gated(ui, tx_ok, |ui| {
                 crate::chrome::chip_accent(

@@ -178,6 +178,16 @@ pub trait DigiEngine: Send {
     fn set_tx_text(&mut self, _text: String) {}
     /// Continuous keyboard modes: enter/leave transmit.
     fn set_tx_active(&mut self, _on: bool) {}
+    /// CW: engage (true) or drop (false) the keyboard-as-straight-key mode, and
+    /// the key up or down a PC key makes while it is engaged (issue #322).
+    ///
+    /// Text is timed and queued; a straight key is not text and has no timing
+    /// of its own — a button is held and the carrier follows the hand. The two
+    /// are one [`CwController`] here, so its manual keyer takes over the
+    /// sidetone while set and hands the key's position to it directly. Nothing
+    /// else implements either: a straight key only exists on the CW panel.
+    fn set_straight(&mut self, _on: bool) {}
+    fn key_down(&mut self, _down: bool) {}
     /// Throw away what has been copied so far, so the operator can start a
     /// fresh page. Only the received text goes: the decoder keeps running, an
     /// over in progress is untouched, and nothing already logged is lost. Inert

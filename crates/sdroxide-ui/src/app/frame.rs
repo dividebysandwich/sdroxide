@@ -1178,6 +1178,13 @@ impl SdroxideApp {
                         // keyed again the moment transmit came on. A QSY rebuilds
                         // nothing, and takes the half-typed over with it.
                         self.text_tx.clear();
+                        // The keyboard-as-straight-key toggle lives in the
+                        // panel; the keyer lives in the engine. The two are
+                        // kept in step only while the panel draws, so a
+                        // mode change drops the latch and lets a fresh
+                        // controller start unheld (issue #322).
+                        self.cw_straight = false;
+                        self.cw_key_down = false;
                     } else if qsy_clears_decodes(prev_band, self.state.band, self.state.rx[0].mode)
                     {
                         self.clear_digi_band_rx();

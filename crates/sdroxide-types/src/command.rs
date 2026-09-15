@@ -240,6 +240,18 @@ pub enum Command {
     DigiTxText(String),
     /// Continuous keyboard modes: enter (true) or leave (false) transmit.
     DigiTxActive(bool),
+    /// CW: use the PC keyboard as a straight key (issue #322) — engage (true)
+    /// or leave (false) the mode. Typed text is keyed to its timing queue; a
+    /// straight key cannot be a queue, so this hands the whole keyer over to
+    /// [`Command::CwKey`]. Refused (harmlessly) where the rig keys itself from
+    /// text and a hand keyed into its sound card would go nowhere.
+    CwStraight(bool),
+    /// CW, with the straight key engaged: the key's position — down (true)
+    /// while a key is held, up (false) when it is released. Sent on each
+    /// change, never per frame: a held key is one press, and a repeat of down
+    /// from a stale frame would be a dit inside whatever the operator is
+    /// sending.
+    CwKey(bool),
     /// Empty the received-text window: the decoded stream of a keyboard mode,
     /// the packet monitor, the JS8 conversation. Only what has been copied goes
     /// — nothing about the receiver or an over in progress changes, so this is

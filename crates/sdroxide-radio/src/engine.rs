@@ -8553,6 +8553,16 @@ impl Engine {
                     }
                 }
             }
+            CwStraight(on) => {
+                if let Some(d) = self.digi.as_mut() {
+                    d.set_straight(on);
+                }
+            }
+            CwKey(down) => {
+                if let Some(d) = self.digi.as_mut() {
+                    d.key_down(down);
+                }
+            }
             SstvSetMode(mode) => {
                 if let Some(d) = self.digi.as_mut() {
                     d.set_sstv_mode(mode);
