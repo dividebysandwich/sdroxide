@@ -62,6 +62,13 @@ pub struct StationConfig {
     /// band everywhere, and the channel numbers an operator reads belong to
     /// where the antenna is. Every client adopts it into [`crate::set_cb_plan`].
     pub cb_plan: crate::CbPlan,
+    /// Whether this station may transmit on 11 m at all.
+    ///
+    /// A station fact, not a screen preference: it is `config.toml`'s answer to
+    /// the same question `tx_ham_only` asks, and a remote client has to show the
+    /// permission the radio it is attached to actually has rather than a switch
+    /// of its own. Every client adopts it into [`crate::set_cb_tx_allowed`].
+    pub cb_tx_allowed: bool,
     /// The band plan itself — `bandplan.json` on the engine's machine, or the
     /// built-in IARU tables where there is no file.
     ///

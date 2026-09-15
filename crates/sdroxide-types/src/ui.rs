@@ -685,6 +685,17 @@ pub struct UiSettings {
     /// choice rather than inherit the shack machine's.
     #[serde(default)]
     pub oob_tx_dismissed: bool,
+    /// Whether the operator has confirmed the one-time warning shown when they
+    /// first switch on transmit for the 11 m citizens' band: that CB is not an
+    /// amateur band, and that using it is subject to the rules of the country
+    /// they are in.
+    ///
+    /// The confirmation is taken once per screen rather than every time the
+    /// switch is flipped. In `[ui]` like `oob_tx_dismissed`, for the same
+    /// reason as there: the permission itself is the station's
+    /// (`cb_tx_allowed` in `config.toml`), the acknowledgement is the screen's.
+    #[serde(default)]
+    pub cb_tx_warning_ack: bool,
     /// Simple interface. When on, the chips for the advanced extras — the 3D
     /// view, the skimmers, the layer switches, award tracking, satellites, ISM
     /// decoding, radio email — are hidden from the top strip, leaving the
@@ -796,6 +807,7 @@ impl Default for UiSettings {
             map_cities: true,
             swl: false,
             oob_tx_dismissed: false,
+            cb_tx_warning_ack: false,
             simple_ui: false,
         }
     }

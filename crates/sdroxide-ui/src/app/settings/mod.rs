@@ -341,6 +341,10 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// The station's CB channel plan. Same contract as `region_edit`: no APPLY
     /// step, applied and announced the moment it changes.
     cb_plan_edit: &'a mut sdroxide_types::CbPlan,
+    /// The station's 11 m transmit permission. Same contract as `region_edit`,
+    /// except that switching it on for the first time raises the confirmation
+    /// window instead of granting it: the caller applies it once acknowledged.
+    cb_tx_edit: &'a mut bool,
     /// The transmit parametric EQ (voice modes only). Same contract as
     /// `region_edit`: no APPLY step, sent the moment a band changes. This is
     /// live `RadioState`, not a per-backend `RadioConfig`, so it applies
@@ -1023,6 +1027,7 @@ impl SdroxideApp {
         let digi_seeded = self.digi_cfg_seeded;
         let mut region_edit = self.region_edit;
         let mut cb_plan_edit = self.cb_plan_edit;
+        let mut cb_tx_edit = self.cb_tx_edit;
         let mut tx_eq_edit = self.state.tx.eq;
         let mut net_edit = self.net_cfg_edit.clone();
         let mut net_cmds = self.net_cluster_cmds.clone();
@@ -1225,6 +1230,7 @@ impl SdroxideApp {
                             radio_name_edit: &mut radio_name_edit,
                             region_edit: &mut region_edit,
                             cb_plan_edit: &mut cb_plan_edit,
+                            cb_tx_edit: &mut cb_tx_edit,
                             tx_eq_edit: &mut tx_eq_edit,
                             tab: &mut tab,
                             upload_tab: &mut upload_tab,
@@ -1691,6 +1697,19 @@ impl SdroxideApp {
             sdroxide_types::set_cb_plan(cb_plan_edit);
             cmds.push(Command::SetCbPlan(cb_plan_edit));
         }
+        // 11 m transmit, the exception to the amateur-band lockout. Switching
+        // it on for the first time raises the confirmation window rather than
+        // granting it: the caller applies it once the operator has acknowledged
+        // that CB is not an amateur band. Switching it *off* never asks.
+        if cb_tx_edit != self.cb_tx_edit {
+            if !cb_tx_edit || self.ui_settings.cb_tx_warning_ack {
+                self.cb_tx_edit = cb_tx_edit;
+                sdroxide_types::set_cb_tx_allowed(cb_tx_edit);
+                cmds.push(Command::SetCbTxAllowed(cb_tx_edit));
+            } else {
+                self.cb_tx_confirm_open = true;
+            }
+        }
         // The transmit EQ: live `RadioState`, applied the moment a band
         // changes, same as the region above. There is no per-backend config
         // to wait on, so no APPLY step either.
@@ -1846,6 +1865,24 @@ impl SdroxideApp {
                          station.",
                         io.cb_plan_edit.label(),
                     ))
+                    .weak(),
+                );
+                ui.add_space(8.0);
+                crate::chrome::checkbox(ui, io.cb_tx_edit, "Allow transmit on 11 m (CB)")
+                    .on_hover_text(
+                        "The amateur-band lockout refuses transmit on every band that is not an \
+                         amateur allocation, and 11 m is one: it is a separate radio service with \
+                         its own rules and its own type-approved equipment. Switching this on \
+                         permits transmit there — and nowhere else; the broadcast bands stay \
+                         receive-only. You will be asked to confirm it the first time.",
+                    );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(
+                        "CB is licence-free in many countries, but not all, and the allowed \
+                         channels, modes and power differ. Using the band is subject to the rules \
+                         of the country you are in.",
+                    )
                     .weak(),
                 );
                 ui.add_space(6.0);

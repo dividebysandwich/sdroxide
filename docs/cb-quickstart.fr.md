@@ -140,9 +140,17 @@ pour passer de « 11 m à la maison » à « écoute des ondes courtes ».
 
 ## Remarque sur l'émission
 
-- Hors des bandes amateurs, le **verrouillage d'émission** est actif par
-  défaut. **La 11 m / CB n'est pas une bande amateur**, donc l'émission est
-  bloquée sauf si vous levez le verrouillage avec `--oob-tx` pour la session.
+- **L'émission sur 11 m est désactivée par défaut.** Le verrouillage des bandes
+  amateurs refuse toute bande qui n'est pas une allocation amateur, et la CB en
+  est une : c'est un service radio distinct, avec ses propres règles et son
+  propre matériel homologué. Pour émettre sur 11 m, activez **Allow transmit on
+  11 m (CB)** dans l'onglet General. La première fois, vous devez confirmer un
+  avertissement : la CB n'est pas une bande amateur et son usage relève des
+  règles du pays où vous vous trouvez.
+- L'interrupteur ouvre **la 11 m et rien d'autre** — les bandes de
+  radiodiffusion restent en réception seule. La voie `--oob-tx` /
+  `tx_ham_only = false` reste disponible pour l'émission hors bandes sous
+  licence, mais pour la CB c'est ce réglage qui compte.
 - Le droit d'émettre en 11 m, et à quelle puissance/mode, varie selon le pays
   (en France et en Belgique, les canaux CEPT libres avec une puissance
   limitée). **Vérifiez la réglementation en vigueur — la responsabilité est la

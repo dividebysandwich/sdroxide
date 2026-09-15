@@ -1405,9 +1405,12 @@ cut band and a little more mic gain gets the same tone with none of the risk.
 > **Transmit safety:** by default sdroxide refuses to transmit outside the
 > amateur bands (`tx_ham_only`), and stops the transmission if the radio reports
 > a high SWR (`swr_guard`, below). Transmit hardware gains start at minimum and
-> the tune drive defaults low. Raise drive deliberately. The band lockout can
-> only be lifted from the command line, one run at a time, with `--oob-tx`
-> ([12](#12-command-line-reference)).
+> the tune drive defaults low. Raise drive deliberately. The one exception
+> built in is the 11 m citizens' band — a transmitting service, but not an
+> amateur one — which opens when the station switches on **Allow transmit on
+> 11 m (CB)** (confirmed once); it opens 11 m and nothing else. The general
+> band lockout can otherwise only be lifted from the command line, one run at a
+> time, with `--oob-tx` ([12](#12-command-line-reference)).
 
 **The SWR guard** stops the over when the antenna system is not what it should
 be — a feeder that has come off, a coax switch left on the wrong port, a
@@ -3628,8 +3631,11 @@ everything the sequencer puts on the air changes:
   "East Germany", "Czechoslovakia", "Alaska" — come with it).
 - **Logging and permission.** A completed contact logs with an **empty ADIF
   band** — ADIF's enumeration runs 12 m, 10 m, 8 m with nothing in between —
-  and with `tx_ham_only` set (the default) sdroxide refuses to key up there at
-  all, because the citizens' band is not an amateur allocation. Both are the
+  and because the citizens' band is not an amateur allocation the amateur-band
+  lockout refuses to key up there until the station opts in: **Allow transmit
+  on 11 m (CB)** on the General tab, confirmed once behind a warning that CB is
+  a separate service governed by your own country's rules. That switch opens
+  11 m and nothing else; the broadcast bands stay receive-only. Both are the
   band's bullet in [6.1](#61-general-station-audio-and-remote-access).
 
 ### 3.3 PSK31 and RTTY

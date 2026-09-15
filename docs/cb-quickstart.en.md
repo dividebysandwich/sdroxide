@@ -138,9 +138,15 @@ between "11 m at home" and "listening to shortwave".
 
 ## A note on transmitting
 
-- Outside the amateur bands the **transmit lockout** is on by default. **11 m /
-  CB is not an amateur band**, so transmit is blocked unless you lift the
-  lockout with `--oob-tx` for that session.
+- **11 m transmit is off by default.** The amateur-band lockout refuses every
+  band that is not an amateur allocation, and CB is one: it is a separate radio
+  service with its own rules and its own type-approved equipment. To key up on
+  11 m, switch on **Allow transmit on 11 m (CB)** on the General tab. The first
+  time you do, you have to confirm a warning that CB is not an amateur band and
+  that using it is subject to the rules of the country you are in.
+- The switch opens **11 m and nothing else** — the broadcast bands stay
+  receive-only. The `--oob-tx` / `tx_ham_only = false` route is still there for
+  licensed out-of-band use, but for CB the setting is the way.
 - Whether you may transmit on 11 m, and at what power/mode, differs by country
   (in the Netherlands, the licence-free CEPT channels at limited power).
   **Check the current rules — the responsibility is yours.**

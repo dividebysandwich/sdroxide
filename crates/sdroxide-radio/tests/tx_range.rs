@@ -60,11 +60,16 @@ impl IqSource for MockRig {
 /// Key up on `hz` with these capabilities, and report whether the transmitter
 /// was actually started.
 fn keys_up_on(caps: DeviceCaps, hz: f64) -> bool {
+    keys_up_on_with(caps, hz, false, false)
+}
+
+/// The same, but with the amateur-band licence gate armed (`tx_ham_only`) and,
+/// when wanted, the 11 m opt-in. The gate tests below need it armed: its whole
+/// point is that it refuses every non-amateur band.
+fn keys_up_on_with(caps: DeviceCaps, hz: f64, tx_ham_only: bool, cb_tx_allowed: bool) -> bool {
     let keyed = Arc::new(Mutex::new(Vec::new()));
     let src = MockRig { rate: 600_000.0, center: hz, keyed: Arc::clone(&keyed) };
-    // The licence gate is a separate rule with its own tests; these frequencies
-    // are all in amateur bands anyway, so it never fires either way.
-    let cfg = EngineConfig { tx_ham_only: false, ..Default::default() };
+    let cfg = EngineConfig { tx_ham_only, cb_tx_allowed, ..Default::default() };
     let mut h = start_engine(Box::new(src), caps, cfg);
     let thread = h.thread.take();
 
@@ -142,4 +147,25 @@ fn a_stated_range_becomes_the_limit() {
     );
     assert!(keys_up_on(stated.clone(), 435_000_000.0), "inside the range the operator stated");
     assert!(!keys_up_on(stated, 145_500_000.0), "outside it — the operator's limit is a limit");
+}
+
+/// 11 m is a transmitting service but not an amateur allocation, so the licence
+/// gate refuses it by default even on a radio that covers it — and opens it only
+/// when the station has deliberately opted in (`cb_tx_allowed`, the switch
+/// behind the one-time warning). The opt-in opens 11 m and nothing else: the
+/// broadcast and general-coverage bands stay receive-only.
+#[test]
+fn eleven_metres_needs_the_cb_opt_in() {
+    let wide = caps(vec![(500_000.0, 60_000_000.0)], vec![(500_000.0, 60_000_000.0)]);
+    let cb = 27_265_000.0;
+    let bc = 6_000_000.0; // 49 m broadcast, not an amateur band either
+
+    assert!(!keys_up_on_with(wide.clone(), cb, true, false), "11 m must be locked by default");
+    assert!(
+        !keys_up_on_with(wide.clone(), bc, true, false),
+        "broadcast stays locked with the opt-in off"
+    );
+
+    assert!(keys_up_on_with(wide.clone(), cb, true, true), "11 m must key once opted in");
+    assert!(!keys_up_on_with(wide, bc, true, true), "the opt-in opens 11 m only");
 }

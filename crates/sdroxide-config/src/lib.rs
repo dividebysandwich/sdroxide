@@ -232,6 +232,17 @@ pub struct Settings {
     /// `region`, for the same reason: it belongs to the station and travels to
     /// clients in the [`sdroxide_types::StationConfig`] bundle.
     pub cb_plan: sdroxide_types::CbPlan,
+    /// Allow transmit on the 11 m citizens' band.
+    ///
+    /// [`Self::tx_ham_only`] refuses every non-amateur band, and 11 m is one:
+    /// it is a separate radio service with its own rules and its own
+    /// type-approved equipment, not a free-for-all. This is the operator's
+    /// deliberate opt-in, taken after acknowledging that — the interface makes
+    /// them confirm it once. It opens 11 m and nothing else; the broadcast
+    /// services stay receive-only. A station property like `cb_plan`, so it
+    /// travels to remote clients in the [`sdroxide_types::StationConfig`]
+    /// bundle. Off by default.
+    pub cb_tx_allowed: bool,
     /// UI / display preferences (frame rate, waterfall + spectrum speed).
     pub ui: sdroxide_types::UiSettings,
     /// Username and password a remote client must present in server mode.
@@ -282,6 +293,7 @@ impl Default for Settings {
             audio_input: None,
             region: sdroxide_types::Region::default(),
             cb_plan: sdroxide_types::CbPlan::default(),
+            cb_tx_allowed: false,
             ui: sdroxide_types::UiSettings::default(),
             remote_access: sdroxide_types::RemoteAccess::default(),
             speech: sdroxide_types::SpeechSettings::default(),
@@ -312,6 +324,20 @@ pub fn load_region() -> sdroxide_types::Region {
 /// Load just the station's CB channel plan.
 pub fn load_cb_plan() -> sdroxide_types::CbPlan {
     Settings::load().cb_plan
+}
+
+/// Load just the station's 11 m transmit permission.
+pub fn load_cb_tx_allowed() -> bool {
+    Settings::load().cb_tx_allowed
+}
+
+/// Persist the station's 11 m transmit permission, preserving every other
+/// setting. Like [`save_cb_plan`], it does not apply it — the caller does, with
+/// [`sdroxide_types::set_cb_tx_allowed`].
+pub fn save_cb_tx_allowed(allowed: bool) -> Result<(), ConfigError> {
+    let mut s = Settings::load();
+    s.cb_tx_allowed = allowed;
+    s.save()
 }
 
 /// Persist the station's CB plan, preserving every other setting. Like

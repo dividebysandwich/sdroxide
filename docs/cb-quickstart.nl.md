@@ -139,9 +139,16 @@ tussen "thuis op de 11 m" en "luisteren op de kortegolf" te wisselen.
 
 ## Let op — zenden
 
-- Buiten de amateurbanden staat de **zend-lockout** standaard aan. **11 m/CB is
-  geen amateurband**, dus zenden is geblokkeerd tenzij je de lockout met
-  `--oob-tx` voor die sessie opheft.
+- **Zenden op 11 m staat standaard uit.** De amateurband-lockout weigert elke
+  band die geen amateurallocatie is, en CB is dat niet: het is een aparte
+  radiodienst met eigen regels en eigen goedgekeurde apparatuur. Om op 11 m te
+  kunnen zenden zet je **Allow transmit on 11 m (CB)** aan op het tabblad
+  General. De eerste keer moet je een waarschuwing bevestigen dat CB geen
+  amateurband is en dat het gebruik onderworpen is aan de regels van het land
+  waar je bent.
+- De schakelaar opent **alleen 11 m** — de omroepbanden blijven alleen
+  ontvangen. De route via `--oob-tx` / `tx_ham_only = false` blijft bestaan voor
+  gelicentieerd gebruik buiten de banden, maar voor CB is de instelling de weg.
 - Of je op de 11 m mag zenden, en met welk vermogen/mode, verschilt per land
   (in Nederland de vergunningvrije CEPT-kanalen met beperkt vermogen).
   **Controleer de actuele regelgeving — jij blijft verantwoordelijk.**

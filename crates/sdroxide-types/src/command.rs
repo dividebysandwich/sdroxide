@@ -1098,4 +1098,14 @@ pub enum Command {
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     ProfileDelete(String),
+
+    /// Allow or refuse transmit on the 11 m citizens' band.
+    ///
+    /// 11 m is not an amateur allocation, so the amateur-band lockout refuses it
+    /// like any other non-amateur band; this is the operator's deliberate opt-in
+    /// after acknowledging that CB is a separate service governed by their own
+    /// country's rules. The broadcast services stay locked either way.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    SetCbTxAllowed(bool),
 }

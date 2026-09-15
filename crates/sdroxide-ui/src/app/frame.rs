@@ -921,6 +921,7 @@ impl eframe::App for SdroxideApp {
         self.help.ui(&ctx);
         // Last, so it lands on top of everything else that opened this frame.
         self.oob_tx_window(&ctx);
+        self.cb_tx_confirm_window(&ctx, &mut cmds);
         #[cfg(not(target_arch = "wasm32"))]
         {
             let grid = self.my_grid();
@@ -1495,6 +1496,8 @@ impl SdroxideApp {
                     sdroxide_types::set_region(c.region);
                     self.cb_plan_edit = c.cb_plan;
                     sdroxide_types::set_cb_plan(c.cb_plan);
+                    self.cb_tx_edit = c.cb_tx_allowed;
+                    sdroxide_types::set_cb_tx_allowed(c.cb_tx_allowed);
                     // Only when it actually changed: installing leaks the
                     // previous plan, and this bundle arrives on every
                     // station-config edit — a password change must not cost an
@@ -1676,6 +1679,85 @@ impl SdroxideApp {
         }
         if remember {
             crate::app::persist::persist_ui_settings(&self.ui_settings);
+        }
+    }
+
+    /// The one-time warning shown when 11 m transmit is switched on.
+    ///
+    /// 11 m is not an amateur band, so it sits behind the same lockout as every
+    /// other non-amateur band until the operator deliberately opens it. This is
+    /// that deliberateness made explicit: the permission is not granted until
+    /// they confirm they know what the band is and that its use is governed by
+    /// their own country's rules. Confirmed once per screen
+    /// (`cb_tx_warning_ack`), not on every flip of the switch.
+    fn cb_tx_confirm_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
+        if !self.cb_tx_confirm_open {
+            return;
+        }
+        let mut confirm = false;
+        let mut cancel = false;
+        let resp = egui::Window::new("⚠  11 m (CB) — NOT AN AMATEUR BAND")
+            .id(crate::layout::salted_id(ctx, "cb-tx-confirm-window"))
+            .frame(crate::chrome::window_frame())
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                crate::chrome::window_body_bg(ui);
+                ui.set_max_width(crate::layout::window_w(ctx, 460.0));
+                ui.label(
+                    RichText::new("You are about to allow transmit on the 11 m band.")
+                        .color(crate::theme::TEXT_STRONG())
+                        .size(13.0),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(
+                        "11 m is not an amateur band. It is a separate radio service with its \
+                         own channels, modes, power limits and type-approved equipment, and \
+                         those differ from country to country. Transmitting there is subject to \
+                         the rules of the country you are operating from.",
+                    )
+                    .color(crate::theme::TEXT()),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(
+                        "Only continue if you know what your country allows on 27 MHz and you \
+                         are operating within it — you remain responsible for the transmission.",
+                    )
+                    .color(crate::theme::TEXT()),
+                );
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if crate::chrome::chip_accent(
+                        ui,
+                        false,
+                        RichText::new("  I UNDERSTAND  ").strong(),
+                        crate::theme::ALERT(),
+                        crate::theme::TEXT_STRONG(),
+                    )
+                    .clicked()
+                    {
+                        confirm = true;
+                    }
+                    if crate::chrome::chip(ui, false, "Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if let Some(r) = &resp {
+            crate::chrome::paint_window_border(ctx, &r.response);
+        }
+        if confirm {
+            self.ui_settings.cb_tx_warning_ack = true;
+            crate::app::persist::persist_ui_settings(&self.ui_settings);
+            self.cb_tx_edit = true;
+            sdroxide_types::set_cb_tx_allowed(true);
+            cmds.push(Command::SetCbTxAllowed(true));
+            self.cb_tx_confirm_open = false;
+        } else if cancel {
+            self.cb_tx_confirm_open = false;
         }
     }
 

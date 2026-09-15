@@ -64,7 +64,7 @@ zeroes line up with the printed channel.
 | | Upstream (`dividebysandwich/sdroxide`) | This fork |
 | --- | --- | --- |
 | **Amateur bands** | 160 m … 3 cm, by IARU region, with band-plan lockout | identical, untouched |
-| **11 m / citizens' band** | not present | on the bar (26.965–27.860 MHz): WSJT-CB interop, country flags, digimode channels, TX lockout |
+| **11 m / citizens' band** | not present | on the bar (26.965–27.860 MHz): WSJT-CB interop, country flags, digimode channels, transmit opt-in behind a one-time warning |
 | **CB channel plans** | — | per-country channels on 11 m — World/freeband, CEPT/EU, Germany 80 ch, UK 27/81, USA, Australia — with the channel number shown on the panadapter |
 | **Broadcast bands** | general coverage only | **LW / MW / SW / FM** on the selector and in the band plan; picking **FM** comes up **WFM** |
 | **SWL mode** | — | a toggle that hides every transmit control |

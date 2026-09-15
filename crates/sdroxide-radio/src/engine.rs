@@ -531,6 +531,11 @@ pub struct EngineConfig {
     pub initial_antenna: (Option<String>, Option<String>),
     /// Refuse to key up outside amateur bands.
     pub tx_ham_only: bool,
+    /// Allow transmit on the 11 m citizens' band, which `tx_ham_only` would
+    /// otherwise refuse along with every other non-amateur band. The station's
+    /// deliberate opt-in; off unless they have asked for it, and it opens 11 m
+    /// and nothing else.
+    pub cb_tx_allowed: bool,
     /// Abort the over and latch out transmit when the rig reports an SWR at or
     /// above [`Self::swr_limit`]. Inert on rigs that do not measure SWR.
     pub swr_guard: bool,
@@ -596,6 +601,7 @@ impl Default for EngineConfig {
             initial_mode: None,
             initial_antenna: (None, None),
             tx_ham_only: true,
+            cb_tx_allowed: false,
             swr_guard: true,
             swr_limit: 2.5,
             reopen: None,
@@ -2370,6 +2376,10 @@ struct Engine {
     rx_af_gain_db: f32,
     tx_center_hz: f64,
     tx_ham_only: bool,
+    /// Whether 11 m may be keyed — the `tx_ham_only` exception, from the
+    /// station's config. Kept as a field rather than read from the process-wide
+    /// flag so an engine's policy is its own (and a test's is settable).
+    cb_tx_allowed: bool,
     /// SWR guard: trip threshold, and the latch it sets.
     ///
     /// ⚠️ The count is the part that makes this usable rather than infuriating.
@@ -3473,6 +3483,10 @@ fn engine_thread(
     sdroxide_types::set_band_plan(sdroxide_config::load_band_plan());
     sdroxide_types::set_region(sdroxide_config::load_region());
     sdroxide_types::set_cb_plan(sdroxide_config::load_cb_plan());
+    // The operator's deliberate opt-in to transmit on 11 m, which is otherwise
+    // refused like every other non-amateur band. Process-wide for the same
+    // reason as the plan: it travels to clients in the station bundle.
+    sdroxide_types::set_cb_tx_allowed(engine_cfg.cb_tx_allowed);
     // The operator's own additions to the digital modes' frequency tables. Read
     // here for the same reason as the plan above: they are process-wide, every
     // radio at the station offers the same ones, and a headless `--server`
@@ -3809,6 +3823,7 @@ fn engine_thread(
         rx_af_gain_db: radio_cfg.rx_audio_gain_db,
         tx_center_hz: 0.0,
         tx_ham_only: engine_cfg.tx_ham_only,
+        cb_tx_allowed: engine_cfg.cb_tx_allowed,
         swr_guard: engine_cfg.swr_guard,
         swr_limit: engine_cfg.swr_limit.clamp(SWR_LIMIT_MIN, SWR_LIMIT_MAX),
         swr_over: 0,
@@ -9189,6 +9204,17 @@ impl Engine {
                 // dial reads in.
                 self.emit_station_config();
             }
+            SetCbTxAllowed(allowed) => {
+                if let Err(e) = sdroxide_config::save_cb_tx_allowed(allowed) {
+                    warn!("saving 11 m transmit permission: {e}");
+                }
+                self.cb_tx_allowed = allowed;
+                sdroxide_types::set_cb_tx_allowed(allowed);
+                // A station fact like the CB plan, so every client is told. No
+                // transmission starts or stops here: the lockout reads it the
+                // next time somebody keys.
+                self.emit_station_config();
+            }
             SetCessb(db) => {
                 let db = db.clamp(0.0, sdroxide_types::CESSB_MAX_DB);
                 if self.state.tx.cessb_db == db {
@@ -11229,6 +11255,7 @@ impl Engine {
                 relay: self.relay_cfg.clone(),
                 region: sdroxide_types::region(),
                 cb_plan: sdroxide_types::cb_plan(),
+                cb_tx_allowed: sdroxide_types::cb_tx_allowed(),
                 band_plan: sdroxide_types::band_plan().clone(),
                 digi_presets: sdroxide_types::digi_presets().to_vec(),
             },
@@ -14930,9 +14957,23 @@ impl Engine {
             // not an amateur allocation — 11 m, the citizens' band — precisely
             // so it can be listened to, and a band being nameable must not be
             // the same thing as a licence to key up on it (issue #396).
+            //
+            // 11 m is the one exception, and only on purpose: CB is a
+            // separate radio service, not an amateur band, but it is a
+            // *transmitting* service, and an operator who works it may key
+            // there once they have acknowledged that their own country's rules
+            // and type-approved equipment govern it (`cb_tx_allowed`, the opt-in
+            // behind the warning). The broadcast services and general coverage
+            // stay locked either way: they are receive-only everywhere.
             let band = Band::containing(txf);
-            if self.tx_ham_only && !band.is_amateur() {
-                return self.deny_tx(&if band == Band::Gen {
+            let cb_allowed = band == Band::M11 && self.cb_tx_allowed;
+            if self.tx_ham_only && !band.is_amateur() && !cb_allowed {
+                return self.deny_tx(&if band == Band::M11 {
+                    "11 m (CB) is not an amateur band — turn on \"Allow transmit on 11 m \
+                     (CB)\" on Settings → General to work the citizens' band, or pass \
+                     --oob-tx, if you are authorised to transmit here"
+                        .to_string()
+                } else if band == Band::Gen {
                     "outside amateur bands (set tx_ham_only = false in config.toml, or pass \
                      --oob-tx, if you are licensed to transmit here)"
                         .to_string()

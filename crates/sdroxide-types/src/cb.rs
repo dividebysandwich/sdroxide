@@ -21,7 +21,7 @@
 //! spacing elsewhere is three 10 kHz steps then a 20 kHz skip. The table is
 //! therefore written out rather than generated from a spacing.
 
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -179,6 +179,33 @@ pub fn cb_plan() -> CbPlan {
 /// announces its own.
 pub fn set_cb_plan(p: CbPlan) {
     CURRENT.store(p.index(), Ordering::Relaxed);
+}
+
+/// Whether the 11 m band may be keyed even though it is not an amateur
+/// allocation.
+///
+/// Off by default, and that default is the whole point: the transmit lockout
+/// ([`crate::Band::is_amateur`]) refuses every non-amateur band so a licensed
+/// operator cannot key outside their allocation by accident, and 11 m is a
+/// separate radio service with its own rules and its own type-approved
+/// equipment — not a free-for-all. Turning this on is a deliberate act by an
+/// operator who knows that, which is why the interface makes them acknowledge
+/// it once.
+///
+/// The broadcast services (Lw/Mw/Sw/Fm) and general coverage stay locked either
+/// way: they are receive-only everywhere. This opens 11 m and nothing else.
+static CB_TX_ALLOWED: AtomicBool = AtomicBool::new(false);
+
+/// Whether transmit is currently allowed on the 11 m citizens' band.
+pub fn cb_tx_allowed() -> bool {
+    CB_TX_ALLOWED.load(Ordering::Relaxed)
+}
+
+/// Adopt `v` as the station's 11 m transmit permission. Called at startup from
+/// the config, by the engine when the operator changes it, and on a remote
+/// client when the station announces its own.
+pub fn set_cb_tx_allowed(v: bool) {
+    CB_TX_ALLOWED.store(v, Ordering::Relaxed);
 }
 
 #[cfg(test)]

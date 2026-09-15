@@ -136,10 +136,16 @@ a casa" ad "ascolto onde corte".
 
 ## Nota sulla trasmissione
 
-- Fuori dalle bande amatoriali il **blocco di trasmissione** è attivo per
-  impostazione predefinita. **Gli 11 m / CB non sono una banda amatoriale**,
-  quindi la trasmissione è bloccata se non lo disattivi con `--oob-tx` per la
-  sessione.
+- **La trasmissione sugli 11 m è disattivata per impostazione predefinita.** Il
+  blocco delle bande amatoriali rifiuta ogni banda che non sia un'allocazione
+  amatoriale, e la CB non lo è: è un servizio radio separato, con regole proprie
+  e apparati omologati propri. Per trasmettere sugli 11 m attiva **Allow
+  transmit on 11 m (CB)** nella scheda General. La prima volta devi confermare
+  un avviso: la CB non è una banda amatoriale e il suo uso è soggetto alle
+  regole del paese in cui ti trovi.
+- L'interruttore apre **solo gli 11 m** — le bande di diffusione restano in sola
+  ricezione. La via `--oob-tx` / `tx_ham_only = false` resta per l'emissione
+  fuori banda sotto licenza, ma per la CB è l'impostazione che conta.
 - Se e come puoi trasmettere sugli 11 m, e con quale potenza/modo, dipende dal
   paese (in Italia i canali CEPT liberi con potenza limitata). **Controlla la
   normativa vigente — la responsabilità è tua.**

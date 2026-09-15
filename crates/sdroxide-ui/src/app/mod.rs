@@ -933,6 +933,15 @@ pub struct SdroxideApp {
     /// it. Overwritten by every `StationConfig` announcement like the region
     /// beside it; the dropdown writes through it to [`Command::SetCbPlan`].
     cb_plan_edit: sdroxide_types::CbPlan,
+    /// The station's 11 m transmit permission, as the General tab's switch last
+    /// showed it. Overwritten by every `StationConfig` announcement like the CB
+    /// plan beside it; the switch writes through it to
+    /// [`Command::SetCbTxAllowed`].
+    cb_tx_edit: bool,
+    /// Set when the operator has switched 11 m transmit on without yet having
+    /// confirmed the one-time warning. The confirmation window is drawn from
+    /// this; the permission itself is not granted until they confirm.
+    cb_tx_confirm_open: bool,
     /// Weather fax: the chart being painted and the gallery of saved ones.
     wefax: crate::wefax::WefaxUi,
     /// Whether the out-of-band transmit warning has been acknowledged for this
@@ -1533,6 +1542,8 @@ impl SdroxideApp {
             // starts on the default until the station says otherwise.
             region_edit: sdroxide_types::region(),
             cb_plan_edit: sdroxide_types::cb_plan(),
+            cb_tx_edit: sdroxide_types::cb_tx_allowed(),
+            cb_tx_confirm_open: false,
             sat_ui: Default::default(),
             sat_sub_status: Vec::new(),
             wefax: Default::default(),

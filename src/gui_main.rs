@@ -54,6 +54,7 @@ fn build_controller(
         initial_mode: boot.initial_mode,
         initial_antenna: boot.initial_antenna,
         tx_ham_only,
+        cb_tx_allowed: settings.cb_tx_allowed,
         swr_guard: settings.swr_guard,
         swr_limit: settings.swr_limit,
         reopen: boot.reopen,
