@@ -47,8 +47,11 @@ to bare frequencies.
 - **Time-shift buffer / instant replay.** **Done** — a rolling two-minute window
   (mono, ~23 MB per receiver) and a **REPLAY** control in the LISTEN window: a
   DVR two minutes behind live. The CAT-audio path is not covered yet.
-- **Scheduled recordings.** "Record 49 m at 18:00 UTC for 30 minutes", audio and
-  optionally IQ, with a filename that names the station.
+- **Scheduled recordings.** **Done** — a job is a start time, a frequency, a
+  mode, a duration and what to capture (audio / I/Q / both); the RECORDINGS
+  window lists and edits them, and a scheduler runs the engine's recorder. The
+  filename is the engine's own for now; naming it after the station is a
+  follow-up.
 - **ECSS.** Selectable-sideband synchronous AM (SAM with one sideband), the
   standard medium-wave DX tool for ducking an adjacent channel.
 - **Listener audio chain.** Bandwidth, tone and noise reduction aimed at
