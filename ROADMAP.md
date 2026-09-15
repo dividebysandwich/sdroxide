@@ -64,15 +64,23 @@ by name in `broadcast_favourites.json`, and a **★ FAVS** filter shows only the
 
 ## Phase 4 — polish
 
-- **UTC first**: **UTC clock done** in the SCHEDULE and LISTEN windows, where a
+- **UTC first**: **UTC clock** in the SCHEDULE and LISTEN windows, where a
   listener works. A general "UTC everywhere" pass is still open.
-- **Utility labels**: VOLMET, time signals, numbers stations — the same idea as
-  the broadcast labels. Needs a small built-in utility table; not started.
-- **DRM for the listener**: show the programme text and MOT slideshow, not just
-  the audio. **Blocked**: the DRM decoder is vendored (Dream) and does not hand
-  its MOT/journaline stream out, so this needs work in `sdroxide-drm` first.
-- **Band scanning for listeners**: walk 49 m and stop on carriers, with the
-  station name. The scanner exists; not started.
+- **Utility labels**: **Done** — a built-in table (time signals WWV/WWVH, CHU,
+  RWM, BPM; Shannon/RAF/New York VOLMET; the Buzzer), merged into every loaded
+  schedule so they get the same labels and can be starred and logged.
+- **Band naming**: **Done** — the band chip names the metre band on shortwave
+  ("SW 49m · AM") and the band/mode menu offers the metre bands as shortcuts,
+  from one table shared with the schedule's filter.
+- **Band scanning for listeners**: **Done** — a Broadcast band row in the
+  scanner (LW, MW and every metre band as one-click ranges), and the status
+  line names the station it stops on.
+- **DRM for the listener**: the programme label and scrolling text are already
+  decoded and shown. The **MOT slideshow** is the part left: the vendored Dream
+  decoder compiles the MOT and Journaline classes but the Rust shim only
+  surfaces the label and text, so it needs the shim extended (C++ + FFI + a
+  panel) and a real signal with a slideshow to validate. The largest remaining
+  item.
 
 ## Not goals
 
