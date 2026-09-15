@@ -9,19 +9,14 @@ listener's tools — the broadcast schedule, the SWL log, time-shift replay,
 scheduled recordings, ECSS, the receive tone and the scan bands. Upstream is the
 original; everything here is upstream's program plus those additions.
 
-The listener work also has a listener-only fork at
-[`madmedicnl/sdroxide-swl`](https://github.com/madmedicnl/sdroxide-swl).
+The listener work used to live in a listener-only fork,
+`madmedicnl/sdroxide-swl`. It has been **retired**: merged into this fork and
+archived on GitHub with a note pointing here. Everything is on `main` now.
 
 ## Repository layout and how to work on it
 
-- The **working clone is shared** with the listener-only fork. Two branches, two
-  repositories:
-  - `main` → this fork, `origin` = `madmedicnl/sdroxide`.
-  - `swl`  → the listener-only fork. Push with
-    `git push https://github.com/madmedicnl/sdroxide-swl.git swl:main`.
-- Since the SWL work was merged into `main`, the two branches carry the same
-  program. Keep them in step: after work on `main`, merge `main` into `swl` and
-  push it, and vice versa.
+- `main` → this fork, `origin` = `madmedicnl/sdroxide`. The only repository to
+  push to; the old `swl` branch and its fork are gone.
 - The plan for the listener side lives in [`ROADMAP.md`](ROADMAP.md).
 
 ## Keeping up with upstream
