@@ -15235,7 +15235,7 @@ stripped.
 1. **Settings → Radio → USB audio radio (sound card)** ([15.22](#1522-usb-audio-radio-sound-card)).
    Set **Receive** to the card the radio's EXT SPKR arrives on, and **Transmit**
    to the card feeding the radio's mic through the trimpot.
-2. **Settings → T/R switch** ([6.11](#611-t-r-switch-protecting-the-receiver-on-transmit)):
+2. **Settings → T/R switch** ([6.11](#611-tr-switch-protecting-the-receiver-on-transmit)):
    link **Serial RTS/DTR line**, the FTDI's port (`/dev/ttyUSB0`, `COMx`), and
    **contact 1 → RTS**. Give that contact a role that is *not* "Ground the SDR
    antenna" — this is a PTT closure, not an antenna relay; **Aux** fits, or
