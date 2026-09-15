@@ -9,6 +9,8 @@ de [README](../README.md).
 > Dit is de CB/SWL-fork van sdroxide. De 11 m en de omroepbanden zijn eraan
 > toegevoegd; de amateurbanden en de rest zijn upstream en ongewijzigd.
 
+*English: [cb-quickstart.en.md](cb-quickstart.en.md).*
+
 Vetgedrukte namen zoals **SETTINGS** en **Callsign** zijn knoppen en velden
 zoals ze op het scherm staan. `Settings > Radio` is een menupad.
 
