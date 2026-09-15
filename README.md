@@ -41,9 +41,9 @@ Already here, carried over from the CB/SWL work this fork grew out of:
   frequency, UTC, **SINPO/SIO**, notes — with a **reception report** to send to
   the broadcaster.
 
-See **[ROADMAP.md](ROADMAP.md)** for what is being built for listeners next: a
-**browsable broadcast schedule** you can tune from, **scheduled recordings and
-instant replay**, and **ECSS** for medium-wave DX.
+See **[ROADMAP.md](ROADMAP.md)** for the listener work: the schedule, the
+reception log, time-shift replay and scheduled recordings, ECSS for medium-wave
+DX, and where it goes next.
 
 | | Upstream (`dividebysandwich/sdroxide`) | This fork |
 | --- | --- | --- |

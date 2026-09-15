@@ -52,10 +52,14 @@ to bare frequencies.
   window lists and edits them, and a scheduler runs the engine's recorder. The
   filename is the engine's own for now; naming it after the station is a
   follow-up.
-- **ECSS.** Selectable-sideband synchronous AM (SAM with one sideband), the
-  standard medium-wave DX tool for ducking an adjacent channel.
-- **Listener audio chain.** Bandwidth, tone and noise reduction aimed at
-  broadcast audio, rather than the speech-trained tools the ham side uses.
+- **ECSS.** **Done** — two one-sided SAM presets, ECSS-U and ECSS-L, that keep
+  one sideband and reject the other: the medium-wave DX trick for ducking an
+  adjacent channel. Deliberately on SAM alone; AM and C-QUAM would not honour
+  it.
+- **Listener audio chain.** **Tone done** — a low-shelf / peak / high-shelf on
+  the demodulated audio, in front of the speakers, edited in the LISTEN window.
+  Noise reduction aimed at broadcast rather than speech is still open; the
+  bandwidth side is the existing filter.
 
 ## Phase 4 — polish
 
