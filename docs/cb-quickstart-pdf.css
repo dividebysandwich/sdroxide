@@ -1,0 +1,12 @@
+@page { size: A4; margin: 16mm 15mm; }
+html { font-size: 11pt; }
+body { font-family: "DejaVu Sans", "Noto Sans", sans-serif; line-height: 1.45; color: #111; }
+h1 { font-size: 20pt; margin: 0 0 .6em; border-bottom: 2px solid #444; padding-bottom: .2em; }
+h2 { font-size: 14pt; margin-top: 1.3em; border-bottom: 1px solid #bbb; padding-bottom: .15em; }
+h3 { font-size: 12pt; margin-top: 1em; }
+code, pre { font-family: "DejaVu Sans Mono", monospace; font-size: 9.5pt; }
+pre { background: #f4f4f4; padding: .6em; border-radius: 3px; white-space: pre-wrap; }
+blockquote { border-left: 3px solid #888; margin: .8em 0; padding: .2em 0 .2em 1em; color: #333; background:#fafafa; }
+a { color: #0645ad; text-decoration: none; word-break: break-all; }
+ul, ol { margin: .4em 0 .8em 1.4em; }
+hr { border: none; border-top: 1px solid #ccc; margin: 1.2em 0; }

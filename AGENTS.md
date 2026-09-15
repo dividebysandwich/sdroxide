@@ -32,3 +32,22 @@ whole point is that they outlive any one conversation.
 If #373 is **rejected or closed unmerged**, decide with the user between a
 runtime strict/loose policy upstream or keeping the fork pin — do not silently
 drop CB validation.
+
+## Regenerating the CB quick-start PDFs
+
+`docs/cb-quickstart.{en,nl}.md` is the source; the matching `.pdf` is generated
+and can drift. The TeX engines on this machine are unusable (`xelatex.fmt` and
+`latex.fmt` are missing), so render through HTML and headless Edge instead. From
+the repo root, once per language (`en`, `nl`) — the stylesheet is
+`docs/cb-quickstart-pdf.css`:
+
+```sh
+pandoc docs/cb-quickstart.en.md -s -c docs/cb-quickstart-pdf.css -o /tmp/cb-en.html
+/opt/microsoft/msedge/msedge --headless=new --disable-gpu --no-sandbox \
+  --user-data-dir=/tmp/edge-pdf --print-to-pdf=docs/cb-quickstart.en.pdf \
+  --no-pdf-header-footer file:///tmp/cb-en.html
+```
+
+Commit the `.md` and the regenerated `.pdf` together, and say so if the `.md`
+changed but the PDF was not remade. (`docs/qo100-quickstart.*.pdf` predate this
+note and were rendered from a separate HTML source; leave them alone.)
