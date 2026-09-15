@@ -313,7 +313,7 @@ pub fn season_file(unix: i64) -> String {
 ///
 /// Only `name` and `freq_khz` are required — everything else defaults — so a
 /// hand-added entry can be two fields long and still work.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct BroadcastStation {
     /// Station or programme name, as an operator would look for it.
     pub name: String,
@@ -555,9 +555,65 @@ pub fn seed() -> &'static [BroadcastStation] {
 /// The schedule is whatever `sdroxide-config` last downloaded, or the compiled-in
 /// fallback; the seed is always added because EiBi covers neither longwave nor
 /// the time stations.
+/// Utility stations worth labelling: the time signals and VOLMET broadcasts a
+/// shortwave listener tunes to, which the EiBi *broadcast* schedule does not
+/// carry. They run around the clock — no start or end — and carry no programme
+/// language or target, which is what makes them utility rather than broadcast.
+pub fn utilities() -> &'static [BroadcastStation] {
+    static PARSED: OnceLock<Vec<BroadcastStation>> = OnceLock::new();
+    PARSED.get_or_init(|| {
+        // (name, kHz, site, country, mode)
+        const TABLE: &[(&str, f64, &str, &str, &str)] = &[
+            ("WWV time signal", 2500.0, "Fort Collins, CO", "United States", "AM"),
+            ("WWV time signal", 5000.0, "Fort Collins, CO", "United States", "AM"),
+            ("WWV time signal", 10000.0, "Fort Collins, CO", "United States", "AM"),
+            ("WWV time signal", 15000.0, "Fort Collins, CO", "United States", "AM"),
+            ("WWV time signal", 20000.0, "Fort Collins, CO", "United States", "AM"),
+            ("WWVH time signal", 2500.0, "Kekaha, HI", "United States", "AM"),
+            ("WWVH time signal", 5000.0, "Kekaha, HI", "United States", "AM"),
+            ("WWVH time signal", 10000.0, "Kekaha, HI", "United States", "AM"),
+            ("WWVH time signal", 15000.0, "Kekaha, HI", "United States", "AM"),
+            ("CHU time signal", 3330.0, "Ottawa, ON", "Canada", "AM"),
+            ("CHU time signal", 7850.0, "Ottawa, ON", "Canada", "AM"),
+            ("CHU time signal", 14670.0, "Ottawa, ON", "Canada", "AM"),
+            ("RWM time signal", 4996.0, "Moscow", "Russia", "AM"),
+            ("RWM time signal", 9996.0, "Moscow", "Russia", "AM"),
+            ("RWM time signal", 14996.0, "Moscow", "Russia", "AM"),
+            ("BPM time signal", 2500.0, "Pucheng", "China", "AM"),
+            ("BPM time signal", 5000.0, "Pucheng", "China", "AM"),
+            ("BPM time signal", 10000.0, "Pucheng", "China", "AM"),
+            ("BPM time signal", 15000.0, "Pucheng", "China", "AM"),
+            ("Shannon VOLMET", 5505.0, "Shannon", "Ireland", "USB"),
+            ("Shannon VOLMET", 8957.0, "Shannon", "Ireland", "USB"),
+            ("Shannon VOLMET", 13264.0, "Shannon", "Ireland", "USB"),
+            ("RAF VOLMET", 5450.0, "United Kingdom", "United Kingdom", "USB"),
+            ("RAF VOLMET", 11253.0, "United Kingdom", "United Kingdom", "USB"),
+            ("New York VOLMET", 3485.0, "New York, NY", "United States", "USB"),
+            ("New York VOLMET", 6604.0, "New York, NY", "United States", "USB"),
+            ("New York VOLMET", 10051.0, "New York, NY", "United States", "USB"),
+            ("New York VOLMET", 13270.0, "New York, NY", "United States", "USB"),
+            ("UVB-76 \"The Buzzer\"", 4625.0, "Moscow", "Russia", "AM"),
+        ];
+        TABLE
+            .iter()
+            .map(|&(name, freq_khz, site, country, mode)| BroadcastStation {
+                name: name.to_string(),
+                freq_khz,
+                site: site.to_string(),
+                country: country.to_string(),
+                mode: Some(mode.to_string()),
+                ..Default::default()
+            })
+            .collect()
+    })
+}
+
 pub fn merge(schedule: Vec<BroadcastStation>) -> Vec<BroadcastStation> {
     let mut all = schedule;
     all.extend(seed().iter().cloned());
+    // The utilities are not in EiBi at all; they are added here so every load
+    // path — the built-in table and a downloaded season alike — carries them.
+    all.extend(utilities().iter().cloned());
     all.sort_by(|a, b| {
         a.freq_khz
             .total_cmp(&b.freq_khz)
@@ -1068,5 +1124,31 @@ mod schedule_query_tests {
         assert_eq!(s.mode(), crate::Mode::Usb);
         s.mode = Some("SAM".into());
         assert_eq!(s.mode(), crate::Mode::Sam);
+    }
+}
+
+#[cfg(test)]
+mod utility_tests {
+    use super::*;
+
+    #[test]
+    fn the_utility_table_is_sane() {
+        let u = utilities();
+        assert!(u.len() >= 20, "a small table, not empty: {}", u.len());
+        assert!(u.iter().any(|s| s.name.contains("WWV")), "time signals are in");
+        assert!(u.iter().any(|s| s.name.contains("VOLMET")), "and the VOLMETs");
+        // Nothing outside HF/MF, and every one names a site.
+        for s in u {
+            assert!((200.0..=30_000.0).contains(&s.freq_khz), "{} kHz", s.freq_khz);
+            assert!(!s.site.is_empty(), "{} has no site", s.name);
+            assert_eq!(s.start_utc, None, "{} runs around the clock", s.name);
+            assert!(s.on_air_at(0), "{} is on at any time", s.name);
+        }
+    }
+
+    #[test]
+    fn utilities_ride_along_with_a_merged_schedule() {
+        let merged = merge(Vec::new());
+        assert!(merged.iter().any(|s| s.name.contains("WWV")), "merged in");
     }
 }
