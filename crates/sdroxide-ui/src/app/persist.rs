@@ -5,7 +5,7 @@
 //! configuration; in the browser there is no filesystem, so the same state
 //! lives in eframe's storage (or, where it is bundled data, nowhere at all).
 
-use sdroxide_types::{QsoRecord, SwlEntry};
+use sdroxide_types::{QsoRecord, RecordingJob, SwlEntry};
 
 // ── Logbook persistence (native: config-dir JSON; wasm: eframe storage) ──────
 #[cfg(not(target_arch = "wasm32"))]
@@ -50,6 +50,29 @@ pub(in crate::app) fn persist_swl_log(log: &[SwlEntry]) {
 
 #[cfg(target_arch = "wasm32")]
 pub(in crate::app) fn persist_swl_log(_log: &[SwlEntry]) {
+    // Written by eframe's periodic `save()` into localStorage.
+}
+
+// ── Recording jobs (native: config-dir JSON; wasm: eframe storage) ───────────
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_recording_jobs(_storage: Option<&dyn eframe::Storage>) -> Vec<RecordingJob> {
+    sdroxide_config::load_recording_jobs()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_recording_jobs(storage: Option<&dyn eframe::Storage>) -> Vec<RecordingJob> {
+    storage.and_then(|s| eframe::get_value(s, "recording_jobs")).unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn persist_recording_jobs(jobs: &[RecordingJob]) {
+    if let Err(e) = sdroxide_config::save_recording_jobs(jobs) {
+        eprintln!("failed to save recording jobs: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn persist_recording_jobs(_jobs: &[RecordingJob]) {
     // Written by eframe's periodic `save()` into localStorage.
 }
 

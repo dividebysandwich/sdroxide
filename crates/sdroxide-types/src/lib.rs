@@ -43,7 +43,8 @@ pub mod publicsdr;
 mod qo100;
 mod radio;
 mod rds;
-pub mod region;
+pub mod recording;
+mod region;
 mod relay;
 mod repeater;
 mod rifp;
@@ -207,6 +208,7 @@ pub use rds::{
     RdsClock, RdsData, RdsGroupLog, RdsStandard, RdsStats, RtPlus, af_code_hz, pi_callsign,
     pty_name, rt_plus_class,
 };
+pub use recording::{JobAction, RecordingJob, RecordingKind};
 pub use region::{Region, region, set_region};
 pub use cb::{CbPlan, cb_plan, cb_tx_allowed, set_cb_plan, set_cb_tx_allowed};
 pub use relay::{

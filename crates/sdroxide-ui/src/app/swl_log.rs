@@ -215,6 +215,12 @@ impl SdroxideApp {
                         let s = self.meters.map(|m| m.s_dbm);
                         self.swl_edit = Some(SwlEditForm::new(freq, mode, s));
                     }
+                    if crate::chrome::chip(ui, false, "JOBS")
+                        .on_hover_text("Scheduled recordings — record a band at a set time")
+                        .clicked()
+                    {
+                        self.jobs.show = true;
+                    }
                     let replay = self.state.replay;
                     if crate::chrome::chip(ui, replay, "REPLAY")
                         .on_hover_text(

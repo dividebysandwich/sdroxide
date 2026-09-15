@@ -1707,6 +1707,15 @@ pub fn save_qso_log(log: &[sdroxide_types::QsoRecord]) -> Result<(), ConfigError
     save_json("qso_log.json", &log)
 }
 
+/// Scheduled recordings (`recording_jobs.json`).
+pub fn load_recording_jobs() -> Vec<sdroxide_types::RecordingJob> {
+    load_json_list("recording_jobs.json")
+}
+
+pub fn save_recording_jobs(jobs: &[sdroxide_types::RecordingJob]) -> Result<(), ConfigError> {
+    save_json("recording_jobs.json", &jobs)
+}
+
 /// The shortwave listener's reception log (`swl_log.json`) — what was *heard*.
 ///
 /// A separate file from the QSO log on purpose: a reception has no callsign and

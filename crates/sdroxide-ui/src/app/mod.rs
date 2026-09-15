@@ -26,6 +26,7 @@ pub(in crate::app) mod drm;
 pub(in crate::app) mod frame;
 pub(in crate::app) mod ism;
 pub(in crate::app) mod logbook;
+pub(in crate::app) mod recording_jobs;
 pub(in crate::app) mod schedule;
 pub(in crate::app) mod swl_log;
 pub(in crate::app) mod net;
@@ -64,7 +65,8 @@ use self::panels::fsq::fsq_load_contacts;
 use self::panels::rf_paint::RfPaintUi;
 use self::panels::sstv::SstvUi;
 use self::persist::{
-    load_alerts_settings, load_broadcast_stations, load_qso_log, load_speech_settings, load_swl_log,
+    load_alerts_settings, load_broadcast_stations, load_qso_log, load_recording_jobs,
+    load_speech_settings, load_swl_log,
     load_ui_settings,
 };
 use self::settings::servers::TciServerStatus;
@@ -504,6 +506,9 @@ pub struct SdroxideApp {
     pub(in crate::app) swl_selected: Option<u64>,
     /// The broadcast schedule window and its filters.
     pub(in crate::app) schedule: crate::app::schedule::ScheduleUi,
+    /// Scheduled recordings: the jobs, and the clock that runs them.
+    pub(in crate::app) recording_jobs: Vec<sdroxide_types::RecordingJob>,
+    pub(in crate::app) jobs: crate::app::recording_jobs::JobsUi,
     /// Cached newest-first ordering and day grouping of [`Self::qso_log`], so
     /// the logbook list does not re-sort and re-group the whole log on every
     /// frame it is open. See `logbook::LogView`.
@@ -1396,6 +1401,8 @@ impl SdroxideApp {
             swl_edit: None,
             swl_selected: None,
             schedule: Default::default(),
+            recording_jobs: load_recording_jobs(storage),
+            jobs: Default::default(),
             log_view: Default::default(),
             session_qsos: 0,
             show_digi_settings: false,
