@@ -1796,7 +1796,16 @@ impl SdroxideApp {
 
     /// The band/mode chip's label, e.g. `20m · USB`.
     fn band_mode_label(&self) -> String {
-        format!("{} · {}", self.state.band.label(), self.state.rx[0].mode.label())
+        // On shortwave, name the metre band too: the schedule speaks in 49 m and
+        // 41 m, so the radio face should as well rather than saying "SW" and
+        // leaving the listener to translate.
+        let metre = (self.state.band == Band::Sw)
+            .then(|| sdroxide_types::broadcast::metre_band(self.state.rx_freq_hz() / 1e3))
+            .flatten();
+        match metre {
+            Some(m) => format!("{} {m} · {}", self.state.band.label(), self.state.rx[0].mode.label()),
+            None => format!("{} · {}", self.state.band.label(), self.state.rx[0].mode.label()),
+        }
     }
 
     /// The name of the stored memory channel the active VFO is parked on, if
@@ -6315,6 +6324,25 @@ fn band_mode_menu(
             // order, which threads FM between 4 m and 2 m and SW at the end.
             for b in [Band::Lw, Band::Mw, Band::Sw, Band::Fm] {
                 band_chip(ui, b);
+            }
+        });
+        // The metre bands themselves, under the broadcast services: a listener
+        // plans in 49 m and 41 m, and a shortcut that lands in the middle of one
+        // is what turns the name into a place. One table with the schedule's
+        // (`broadcast::METRE_BANDS`), so the two agree.
+        ui.horizontal_wrapped(|ui| {
+            let dial_khz = state.rx_freq_hz() / 1e3;
+            let here = sdroxide_types::broadcast::metre_band(dial_khz);
+            for &(name, lo, hi) in sdroxide_types::broadcast::METRE_BANDS {
+                let lit = state.band == Band::Sw && here == Some(name);
+                if crate::chrome::chip(ui, lit, name)
+                    .on_hover_text(format!("Tune to the middle of {name} broadcast"))
+                    .clicked()
+                {
+                    let hz = (lo + hi) * 500.0;
+                    cmds.push(Command::SetVfo { vfo: state.active_vfo, hz });
+                    cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Am });
+                }
             }
         });
     }

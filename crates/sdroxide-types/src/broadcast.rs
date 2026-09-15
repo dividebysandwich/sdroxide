@@ -521,27 +521,43 @@ impl BroadcastStation {
 /// ones the published schedules use; a frequency between bands has no name.
 pub fn metre_band(khz: f64) -> Option<&'static str> {
     let k = khz;
-    const BANDS: [(&str, f64, f64); 17] = [
-        ("LW", 148.5, 283.5),
-        ("MW", 526.5, 1606.5),
-        ("120m", 2300.0, 2495.0),
-        ("90m", 3200.0, 3400.0),
-        ("75m", 3900.0, 4000.0),
-        ("60m", 4750.0, 5060.0),
-        ("49m", 5900.0, 6200.0),
-        ("41m", 7200.0, 7450.0),
-        ("31m", 9400.0, 9900.0),
-        ("25m", 11_600.0, 12_100.0),
-        ("22m", 13_570.0, 13_870.0),
-        ("19m", 15_100.0, 15_800.0),
-        ("16m", 17_480.0, 17_900.0),
-        ("15m", 18_900.0, 19_020.0),
-        ("13m", 21_450.0, 21_850.0),
-        ("11m", 25_670.0, 26_100.0),
-        ("FM", 87_500.0, 108_000.0),
-    ];
-    BANDS.iter().find(|&&(_, lo, hi)| (lo..=hi).contains(&k)).map(|&(name, _, _)| name)
+    if (148.5..=283.5).contains(&k) {
+        return Some("LW");
+    }
+    if (526.5..=1606.5).contains(&k) {
+        return Some("MW");
+    }
+    if (87_500.0..=108_000.0).contains(&k) {
+        return Some("FM");
+    }
+    METRE_BANDS
+        .iter()
+        .find(|&&(_, lo, hi)| (lo..=hi).contains(&k))
+        .map(|&(name, _, _)| name)
 }
+
+/// The shortwave broadcast metre bands, `(name, low_khz, high_khz)` — the
+/// conventional edges the schedules use.
+///
+/// One table, shared by [`metre_band`] and the band selector's metre
+/// shortcuts, so the name the schedule shows and the name the band bar offers
+/// cannot come to disagree.
+pub const METRE_BANDS: &[(&str, f64, f64)] = &[
+    ("120m", 2300.0, 2495.0),
+    ("90m", 3200.0, 3400.0),
+    ("75m", 3900.0, 4000.0),
+    ("60m", 4750.0, 5060.0),
+    ("49m", 5900.0, 6200.0),
+    ("41m", 7200.0, 7450.0),
+    ("31m", 9400.0, 9900.0),
+    ("25m", 11_600.0, 12_100.0),
+    ("22m", 13_570.0, 13_870.0),
+    ("19m", 15_100.0, 15_800.0),
+    ("16m", 17_480.0, 17_900.0),
+    ("15m", 18_900.0, 19_020.0),
+    ("13m", 21_450.0, 21_850.0),
+    ("11m", 25_670.0, 26_100.0),
+];
 
 pub fn seed() -> &'static [BroadcastStation] {
     static PARSED: OnceLock<Vec<BroadcastStation>> = OnceLock::new();
