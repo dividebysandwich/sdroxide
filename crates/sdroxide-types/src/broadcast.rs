@@ -608,12 +608,19 @@ pub fn utilities() -> &'static [BroadcastStation] {
     })
 }
 
+/// Append the built-in utility stations to a loaded schedule.
+///
+/// Separate from [`merge`] on purpose: `merge` is about EiBi rows and the
+/// parser test pins its totals, so the utilities are added by the caller once
+/// the schedule is in hand rather than folded into the count.
+pub fn with_utilities(mut schedule: Vec<BroadcastStation>) -> Vec<BroadcastStation> {
+    schedule.extend(utilities().iter().cloned());
+    schedule
+}
+
 pub fn merge(schedule: Vec<BroadcastStation>) -> Vec<BroadcastStation> {
     let mut all = schedule;
     all.extend(seed().iter().cloned());
-    // The utilities are not in EiBi at all; they are added here so every load
-    // path — the built-in table and a downloaded season alike — carries them.
-    all.extend(utilities().iter().cloned());
     all.sort_by(|a, b| {
         a.freq_khz
             .total_cmp(&b.freq_khz)
@@ -1147,8 +1154,9 @@ mod utility_tests {
     }
 
     #[test]
-    fn utilities_ride_along_with_a_merged_schedule() {
-        let merged = merge(Vec::new());
-        assert!(merged.iter().any(|s| s.name.contains("WWV")), "merged in");
+    fn utilities_ride_along_with_a_loaded_schedule() {
+        let with = with_utilities(seed().to_vec());
+        assert_eq!(with.len(), seed().len() + utilities().len());
+        assert!(with.iter().any(|s| s.name.contains("WWV")), "added in");
     }
 }

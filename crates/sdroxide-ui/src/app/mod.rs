@@ -1500,7 +1500,7 @@ impl SdroxideApp {
             show_spots: false,
             spot_in_view_only: false,
             spot_search: String::new(),
-            broadcast: load_broadcast_stations(),
+            broadcast: sdroxide_types::broadcast::with_utilities(load_broadcast_stations()),
             broadcast_spots: Vec::new(),
             broadcast_minute: -1,
             // Kicked off at startup: the first run has no cached schedule, and
