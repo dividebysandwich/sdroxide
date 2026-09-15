@@ -35,11 +35,11 @@ drop CB validation.
 
 ## Regenerating the CB quick-start PDFs
 
-`docs/cb-quickstart.{en,nl}.md` is the source; the matching `.pdf` is generated
-and can drift. The TeX engines on this machine are unusable (`xelatex.fmt` and
-`latex.fmt` are missing), so render through HTML and headless Edge instead. From
-the repo root, once per language (`en`, `nl`) — the stylesheet is
-`docs/cb-quickstart-pdf.css`:
+`docs/cb-quickstart.{en,nl,fr,it}.md` is the source; the matching `.pdf` is
+generated and can drift. The TeX engines on this machine are unusable
+(`xelatex.fmt` and `latex.fmt` are missing), so render through HTML and headless
+Edge instead. From the repo root, once per language (`en`, `nl`, `fr`, `it`) —
+the stylesheet is `docs/cb-quickstart-pdf.css`:
 
 ```sh
 pandoc docs/cb-quickstart.en.md -s -c docs/cb-quickstart-pdf.css -o /tmp/cb-en.html

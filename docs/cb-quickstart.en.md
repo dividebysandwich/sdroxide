@@ -10,7 +10,10 @@ for the why of this fork, see the [README](../README.md).
 > are added on top; the amateur bands and everything else are upstream and
 > unchanged.
 
-*Nederlands: [cb-quickstart.nl.md](cb-quickstart.nl.md). PDF: [cb-quickstart.en.pdf](cb-quickstart.en.pdf).*
+*Nederlands: [cb-quickstart.nl.md](cb-quickstart.nl.md). Français:
+[cb-quickstart.fr.md](cb-quickstart.fr.md). Italiano:
+[cb-quickstart.it.md](cb-quickstart.it.md). PDF:
+[cb-quickstart.en.pdf](cb-quickstart.en.pdf).*
 
 Bold names such as **SETTINGS** and **Callsign** are buttons and fields exactly
 as they appear on screen. `Settings > Radio` is a menu path.
