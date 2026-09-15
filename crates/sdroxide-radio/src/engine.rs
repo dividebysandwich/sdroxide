@@ -26,7 +26,8 @@ use sdroxide_drm::DrmDemod;
 use sdroxide_dsp::{
     AdcMeter, Agc, AutoNotch, Binaural, Cessb, DcBlock, Ddc, Decimator, DeepFilterNr, Demodulator,
     Duc, Modulator, MonoResampler, Nco, NeuralNr, NoiseBlanker, ParametricEq, SpecBleachNr,
-    SpectralNr, SpectrumAnalyzer, StereoResampler, SubToneGen, ToneBurst, channel_target,
+    ReplayBuffer, SpectralNr, SpectrumAnalyzer, StereoResampler, SubToneGen, ToneBurst,
+    channel_target,
     make_demod, make_modulator,
 };
 use sdroxide_ism::{IsmAction, IsmController};
@@ -462,6 +463,11 @@ const DRM_RETUNE_HZ: f64 = 2_000.0;
 /// station's name sitting under the new one's audio is worse than showing
 /// nothing for the second it takes to re-acquire.
 const RDS_RETUNE_HZ: f64 = 50_000.0;
+
+/// How much audio the time-shift window keeps. Two minutes covers a station
+/// identification or a frequency read-out, and costs about 23 MB per receiver
+/// at 48 kHz.
+const REPLAY_SECONDS: f64 = 120.0;
 
 pub struct EngineHandles {
     pub cmd_tx: Sender<Command>,
@@ -2744,6 +2750,11 @@ struct Engine {
     /// The main chain's audio for this block, copied out so the borrow of the
     /// chain ends before a digital-voice mode gets the chance to replace it.
     main_play: Vec<f32>,
+    /// The time-shift window: the last couple of minutes of the speaker's summed
+    /// audio, and the read-out buffer replay plays from. See
+    /// [`sdroxide_dsp::ReplayBuffer`].
+    replay: ReplayBuffer,
+    replay_buf: Vec<f32>,
     /// Right channel of the main chain, non-empty only while WFM stereo is
     /// decoding and the sub receiver is off — or while the binaural widener
     /// below is placing the passband across the two ears.
@@ -3961,6 +3972,10 @@ fn engine_thread(
         voice_play: Vec::new(),
         main_play: Vec::new(),
         main_play_r: Vec::new(),
+        // Two minutes of the speaker's audio. Sized from the output rate, which
+        // is what the buffer holds; rebuilt if that rate changes.
+        replay: ReplayBuffer::new((REPLAY_SECONDS * audio_out_rate) as usize),
+        replay_buf: Vec::new(),
         binaural: None,
         bin_left: Vec::new(),
         speech_duck: 1.0,
@@ -5078,8 +5093,21 @@ impl Engine {
             None if !self.main_play_r_rec.is_empty() => Some(&self.main_play_r_rec),
             None => None,
         };
+        // Feed the time-shift window from the live audio, then play from it
+        // instead of from live while replay is on. The recorder keeps the live
+        // tap either way: replay is for the speakers, not the archive.
+        self.replay.push(&self.main_play);
+        if self.replay.on() {
+            let n = self.main_play.len();
+            self.replay.read_into(&mut self.replay_buf, n);
+        }
+        let (speaker, speaker_right): (&[f32], Option<&[f32]>) = if self.replay.on() {
+            (&self.replay_buf, None)
+        } else {
+            (&self.main_play, right)
+        };
         if let Some(mixer) = self.mixer.as_mut() {
-            mixer.push(&self.main_play, right, &self.main_play_rec, rec_right);
+            mixer.push(speaker, speaker_right, &self.main_play_rec, rec_right);
         }
         // Feed the high-resolution channel spectrum from the DDC output.
         if let (Some(ca), Some(main)) = (self.channel_analyzer.as_mut(), self.main.as_ref()) {
@@ -5451,6 +5479,10 @@ impl Engine {
             self.audio_rs_in_rate = in_rate;
             self.audio_rs_out_rate = self.audio_out_rate;
             self.audio_resampler = MonoResampler::new(in_rate, self.audio_out_rate);
+            // The window holds output-rate samples; a new output rate means a
+            // new window. Drop what it held rather than play mixed rates.
+            self.replay = ReplayBuffer::new((REPLAY_SECONDS * self.audio_out_rate) as usize);
+            self.replay_buf.clear();
         }
         let rx0 = &self.state.rx[0];
         let vol = if rx0.muted { 0.0 } else { rx0.volume };
@@ -9203,6 +9235,11 @@ impl Engine {
                 // nothing in the receiver changes, only the channel the 11 m
                 // dial reads in.
                 self.emit_station_config();
+            }
+            SetReplay(on) => {
+                self.replay.set_on(on);
+                self.state.replay = on;
+                self.emit_state();
             }
             SetCbTxAllowed(allowed) => {
                 if let Err(e) = sdroxide_config::save_cb_tx_allowed(allowed) {

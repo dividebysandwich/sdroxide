@@ -10,7 +10,7 @@
 //! changes. The engine is not involved.
 
 use eframe::egui::{self, RichText};
-use sdroxide_types::{Mode, SignalReport, Sio, Sinpo, SwlEntry};
+use sdroxide_types::{Command, Mode, SignalReport, Sio, Sinpo, SwlEntry};
 
 use crate::app::SdroxideApp;
 use crate::app::persist::persist_swl_log;
@@ -197,7 +197,7 @@ impl SwlEditForm {
 
 impl SdroxideApp {
     /// The LISTEN window: the reception log, its entry form and its report.
-    pub(in crate::app) fn swl_window(&mut self, ctx: &egui::Context) {
+    pub(in crate::app) fn swl_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
         let mut open = self.show_swl;
         let resp = egui::Window::new("LISTEN")
             .id(crate::layout::salted_id(ctx, "LISTEN"))
@@ -214,6 +214,16 @@ impl SdroxideApp {
                         let mode = self.state.rx[0].mode;
                         let s = self.meters.map(|m| m.s_dbm);
                         self.swl_edit = Some(SwlEditForm::new(freq, mode, s));
+                    }
+                    let replay = self.state.replay;
+                    if crate::chrome::chip(ui, replay, "REPLAY")
+                        .on_hover_text(
+                            "Play the last two minutes instead of live — catch the station id \
+                             you just missed",
+                        )
+                        .clicked()
+                    {
+                        cmds.push(Command::SetReplay(!replay));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let selected = self

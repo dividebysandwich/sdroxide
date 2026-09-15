@@ -1099,6 +1099,13 @@ pub enum Command {
     /// Appended for the usual reason — postcard numbers variants by position.
     ProfileDelete(String),
 
+    /// Turn the time-shift replay on or off. On, the receiver plays the last
+    /// couple of minutes instead of live, so a station identification or a
+    /// read-out frequency can be heard again; off returns to now.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    SetReplay(bool),
+
     /// Allow or refuse transmit on the 11 m citizens' band.
     ///
     /// 11 m is not an amateur allocation, so the amateur-band lockout refuses it
