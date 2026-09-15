@@ -180,7 +180,7 @@ impl SdroxideApp {
             self.broadcast_fetch_status = Some(match result {
                 Ok(stations) => {
                     let msg = format!("{} transmissions", stations.len());
-                    self.broadcast = stations;
+                    self.broadcast = sdroxide_types::broadcast::with_utilities(stations);
                     // Force the on-air list to be rebuilt from the new schedule
                     // rather than waiting up to a minute for the tick.
                     self.broadcast_minute = -1;
@@ -207,7 +207,8 @@ impl SdroxideApp {
 
     /// Re-read the operator's own station file and lay it over the schedule.
     pub(in crate::app) fn reload_broadcast_stations(&mut self) {
-        self.broadcast = crate::app::persist::load_broadcast_stations();
+        self.broadcast =
+            sdroxide_types::broadcast::with_utilities(crate::app::persist::load_broadcast_stations());
         self.broadcast_minute = -1;
     }
 

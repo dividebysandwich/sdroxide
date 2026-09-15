@@ -68,6 +68,12 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     record_iq: Option<std::path::PathBuf>,
 
+    /// Start in SWL mode (Short Wave Listener): hide every transmit control.
+    /// The same as ticking "Start in SWL mode" in Settings → UI, for this run
+    /// only and without changing the stored preference.
+    #[arg(long)]
+    swl: bool,
+
     /// Center frequency in Hz (default: where the last session was left)
     #[arg(long)]
     freq: Option<f64>,
@@ -252,6 +258,9 @@ fn main() -> anyhow::Result<()> {
 
     let mut cli = Cli::parse();
     let settings = Settings::load();
+    // `--swl` for this run: the UI reads this when it builds, and it is not a
+    // preference — nothing is written to disk.
+    sdroxide_types::set_force_swl(cli.swl);
     // Before anything reads a band edge — the console panadapter, the headless
     // smoke tests and the GUI all do. The engine sets these again from the same
     // files when it starts; doing it here as well means even the paths that

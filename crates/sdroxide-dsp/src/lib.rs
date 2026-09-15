@@ -34,6 +34,7 @@ mod olivia;
 mod predistort;
 mod psk;
 mod rds;
+mod replay;
 mod resample;
 pub mod rifp;
 mod rtty;
@@ -110,6 +111,7 @@ pub use wbddc::{WbDdc, clamp_center_hz, reachable_range_hz};
 pub use wbspectrum::WideSpectrum;
 pub use wefax::{Ioc as WefaxIoc, Lpm as WefaxLpm, WefaxEvent, WefaxRx};
 pub use window::blackman_harris;
+pub use replay::ReplayBuffer;
 
 pub type Complex32 = num_complex::Complex<f32>;
 

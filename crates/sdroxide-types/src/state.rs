@@ -500,6 +500,13 @@ pub struct RadioState {
     /// licence is on the line, and they may not be the one who started the
     /// engine.
     #[serde(default)]
+    /// Whether the receiver is playing the time-shift replay rather than live
+    /// audio. Drives the REPLAY control's lit state.
+    pub replay: bool,
+    /// Receive tone: a low-shelf / peak / high-shelf on the demodulated audio,
+    /// the listener's tone control. Reuses [`TxEqState`]'s shape — the same
+    /// three bands — but applies on receive, in front of the speakers.
+    pub rx_tone: TxEqState,
     pub oob_tx: bool,
     /// The *radio's own* squelch threshold, as a `0..1` fraction of its scale —
     /// `0` open, `1` closed, the way the knob on the front panel reads.
@@ -602,6 +609,8 @@ impl Default for RadioState {
             iq_recording: false,
             iq_recording_file: None,
             iq_recording_mb: 0,
+            replay: false,
+            rx_tone: TxEqState::default(),
             oob_tx: false,
             // Open, until the radio says otherwise: the level is adopted from
             // the rig, and until one has answered there is nothing to claim.

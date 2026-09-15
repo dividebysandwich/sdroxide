@@ -1,22 +1,39 @@
-# Agent notes
+# Agent notes — SDR Oxide, the CB and SWL fork
 
-## Watch list — open upstream PRs from this fork
+## What this repository is
 
-Check these at the start of a session (`gh pr view <n> --repo <repo>`); the
-whole point is that they outlive any one conversation.
+A fork of [sdroxide](https://github.com/dividebysandwich/sdroxide) tuned for the
+**11 m citizens band** and for **shortwave listening**. Both live in one
+program: the CB band, its WSJT-CB interoperability and channel plans, and the
+listener's tools — the broadcast schedule, the SWL log, time-shift replay,
+scheduled recordings, ECSS, the receive tone and the scan bands. Upstream is the
+original; everything here is upstream's program plus those additions.
 
-| PR | What | Action when its state changes |
-| --- | --- | --- |
-| `jl1nie/mfsk-core#373` | opt-in `cb-callsigns` feature so sdroxide can drop the mfsk fork | **see below — the one that needs work** |
-| `dividebysandwich/sdroxide#423` | umbrella for the CB/SWL fork features | close once the individual PRs are in |
-| `dividebysandwich/sdroxide#450` | decode-list CSV / received-report ADIF | — |
-| `dividebysandwich/sdroxide#451` | opt-in first-press rounds to 000 | — |
-| `dividebysandwich/sdroxide#452` | browser ADIF / CHIRP import | — |
-| `dividebysandwich/sdroxide#453` | PC-keyboard CW straight key | — |
-| `dividebysandwich/sdroxide#454` | station profiles | — |
-| `dividebysandwich/sdroxide#455` | ten UI themes | — |
-| `dividebysandwich/sdroxide#456` | USB sound-card backend | — |
-| `dividebysandwich/sdroxide#457` | audible alerts | — |
+The listener work also has a listener-only fork at
+[`madmedicnl/sdroxide-swl`](https://github.com/madmedicnl/sdroxide-swl).
+
+## Repository layout and how to work on it
+
+- The **working clone is shared** with the listener-only fork. Two branches, two
+  repositories:
+  - `main` → this fork, `origin` = `madmedicnl/sdroxide`.
+  - `swl`  → the listener-only fork. Push with
+    `git push https://github.com/madmedicnl/sdroxide-swl.git swl:main`.
+- Since the SWL work was merged into `main`, the two branches carry the same
+  program. Keep them in step: after work on `main`, merge `main` into `swl` and
+  push it, and vice versa.
+- The plan for the listener side lives in [`ROADMAP.md`](ROADMAP.md).
+
+## Keeping up with upstream
+
+- `dividebysandwich/sdroxide` is the original. Fetch and merge rather than
+  cherry-pick where possible, so the history stays recognisable.
+- Features useful to *anyone* (not just CB or SWL) are candidates to offer
+  upstream as pull requests rather than keep here.
+- Watch list:
+  - `dividebysandwich/sdroxide` — upstream moves; merge regularly.
+  - `jl1nie/mfsk-core#373` — the opt-in `cb-callsigns` feature; when it merges,
+    the `mfsk-core` fork pin in `crates/sdroxide-digi/Cargo.toml` can go.
 
 ### When `jl1nie/mfsk-core#373` merges
 
@@ -33,7 +50,7 @@ If #373 is **rejected or closed unmerged**, decide with the user between a
 runtime strict/loose policy upstream or keeping the fork pin — do not silently
 drop CB validation.
 
-## Regenerating the CB quick-start PDFs
+## Regenerating the quick-start PDFs
 
 `docs/cb-quickstart.{en,nl,fr,it}.md` is the source; the matching `.pdf` is
 generated and can drift. The TeX engines on this machine are unusable
@@ -52,7 +69,7 @@ Commit the `.md` and the regenerated `.pdf` together, and say so if the `.md`
 changed but the PDF was not remade. (`docs/qo100-quickstart.*.pdf` predate this
 note and were rendered from a separate HTML source; leave them alone.)
 
-## Cutting a CB release
+## Cutting a release
 
 1. Bump the workspace version in `Cargo.toml` **first** and let `cargo` refresh
    `Cargo.lock`; commit it. The Windows `.msi` and the macOS bundle take their
@@ -68,3 +85,19 @@ note and were rendered from a separate HTML source; leave them alone.)
    so switch them in the same commit that announces it.
 4. Install locally: `cargo build --release`, `pkill -x sdroxide`, then
    `cp target/release/sdroxide ~/.cargo/bin/sdroxide`.
+
+## Build and test
+
+- `cargo build --release` — the full binary (needs the vendored submodules; see
+  the README's Building section).
+- `cargo test --release --workspace` — everything.
+- `cargo check --release --target wasm32-unknown-unknown -p sdroxide-ui` — the
+  browser client, which shares the same UI code.
+
+## House rules
+
+- Keep changes listener-first: when a choice is between a ham workflow and a
+  listening one, this fork takes the listening one.
+- Do not touch the vendored subtrees (`vendor/`) except to update a submodule.
+- Commit messages: a short imperative subject, then the why. Say what was *not*
+  tested when it could not be tested here.

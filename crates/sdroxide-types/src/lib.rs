@@ -43,7 +43,8 @@ pub mod publicsdr;
 mod qo100;
 mod radio;
 mod rds;
-pub mod region;
+pub mod recording;
+mod region;
 mod relay;
 mod repeater;
 mod rifp;
@@ -59,6 +60,7 @@ mod spot;
 mod sstv;
 mod state;
 mod station;
+mod swl;
 mod tciserver;
 pub mod text;
 mod tone;
@@ -206,6 +208,7 @@ pub use rds::{
     RdsClock, RdsData, RdsGroupLog, RdsStandard, RdsStats, RtPlus, af_code_hz, pi_callsign,
     pty_name, rt_plus_class,
 };
+pub use recording::{JobAction, RecordingJob, RecordingKind};
 pub use region::{Region, region, set_region};
 pub use cb::{CbPlan, cb_plan, cb_tx_allowed, set_cb_plan, set_cb_tx_allowed};
 pub use relay::{
@@ -243,6 +246,7 @@ pub use speech::{
 };
 pub use spot::{Spot, SpotKind};
 pub use sstv::{SstvMode, SstvStatus};
+pub use ui::{force_swl, set_force_swl};
 pub use state::{
     CESSB_MAX_DB, MAX_DECIMATION, MAX_MANUAL_GAIN_DB, MIN_DECIMATED_RATE_HZ, OffsetState,
     RadioState, RxId, RxState, SQUELCH_CLOSED_DB, SQUELCH_OPEN_DB, SWR_LIMIT_MAX, SWR_LIMIT_MIN,
@@ -250,6 +254,7 @@ pub use state::{
     panadapter_fft_ceiling, swr_tune_limit, zoom_lane_decimation,
 };
 pub use station::StationConfig;
+pub use swl::{Sio, Sinpo, SignalReport, SwlEntry};
 pub use tciserver::TciServerConfig;
 pub use tone::{CTCSS_TONES, SubTone};
 pub use ui::{

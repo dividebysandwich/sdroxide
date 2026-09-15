@@ -313,7 +313,7 @@ pub fn season_file(unix: i64) -> String {
 ///
 /// Only `name` and `freq_khz` are required — everything else defaults — so a
 /// hand-added entry can be two fields long and still work.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct BroadcastStation {
     /// Station or programme name, as an operator would look for it.
     pub name: String,
@@ -387,6 +387,30 @@ impl BroadcastStation {
     /// The emission mode to tune, defaulting to AM.
     pub fn mode_str(&self) -> &str {
         self.mode.as_deref().filter(|m| !m.is_empty()).unwrap_or("AM")
+    }
+
+    /// The emission mode to tune, as a [`crate::Mode`]. The schedule's own
+    /// strings mapped onto the modes; anything unrecognised is AM.
+    pub fn mode(&self) -> crate::Mode {
+        match self.mode_str().to_ascii_uppercase().as_str() {
+            "SAM" => crate::Mode::Sam,
+            "USB" => crate::Mode::Usb,
+            "LSB" => crate::Mode::Lsb,
+            "CW" => crate::Mode::Cw,
+            "DRM" => crate::Mode::Drm,
+            "FM" | "WFM" => crate::Mode::Wfm,
+            _ => crate::Mode::Am,
+        }
+    }
+
+    /// Whether the entry matches a free-text query over the fields a listener
+    /// searches by: name, site, country, language and target.
+    pub fn matches_query(&self, q: &str) -> bool {
+        let q = q.trim().to_ascii_lowercase();
+        q.is_empty()
+            || [&self.name, &self.site, &self.country, &self.lang, &self.target]
+                .iter()
+                .any(|f| f.to_ascii_lowercase().contains(&q))
     }
 
     /// Whether this transmission is scheduled at `unix` (seconds since epoch).
@@ -492,6 +516,49 @@ impl BroadcastStation {
 }
 
 /// The hand-kept longwave and standard-time entries.
+/// The metre band a broadcast frequency falls in — `"49m"`, `"MW"`, `"120m"` —
+/// for the schedule's band filter and its rows. The edges are the conventional
+/// ones the published schedules use; a frequency between bands has no name.
+pub fn metre_band(khz: f64) -> Option<&'static str> {
+    let k = khz;
+    if (148.5..=283.5).contains(&k) {
+        return Some("LW");
+    }
+    if (526.5..=1606.5).contains(&k) {
+        return Some("MW");
+    }
+    if (87_500.0..=108_000.0).contains(&k) {
+        return Some("FM");
+    }
+    METRE_BANDS
+        .iter()
+        .find(|&&(_, lo, hi)| (lo..=hi).contains(&k))
+        .map(|&(name, _, _)| name)
+}
+
+/// The shortwave broadcast metre bands, `(name, low_khz, high_khz)` — the
+/// conventional edges the schedules use.
+///
+/// One table, shared by [`metre_band`] and the band selector's metre
+/// shortcuts, so the name the schedule shows and the name the band bar offers
+/// cannot come to disagree.
+pub const METRE_BANDS: &[(&str, f64, f64)] = &[
+    ("120m", 2300.0, 2495.0),
+    ("90m", 3200.0, 3400.0),
+    ("75m", 3900.0, 4000.0),
+    ("60m", 4750.0, 5060.0),
+    ("49m", 5900.0, 6200.0),
+    ("41m", 7200.0, 7450.0),
+    ("31m", 9400.0, 9900.0),
+    ("25m", 11_600.0, 12_100.0),
+    ("22m", 13_570.0, 13_870.0),
+    ("19m", 15_100.0, 15_800.0),
+    ("16m", 17_480.0, 17_900.0),
+    ("15m", 18_900.0, 19_020.0),
+    ("13m", 21_450.0, 21_850.0),
+    ("11m", 25_670.0, 26_100.0),
+];
+
 pub fn seed() -> &'static [BroadcastStation] {
     static PARSED: OnceLock<Vec<BroadcastStation>> = OnceLock::new();
     PARSED.get_or_init(|| {
@@ -504,6 +571,69 @@ pub fn seed() -> &'static [BroadcastStation] {
 /// The schedule is whatever `sdroxide-config` last downloaded, or the compiled-in
 /// fallback; the seed is always added because EiBi covers neither longwave nor
 /// the time stations.
+/// Utility stations worth labelling: the time signals and VOLMET broadcasts a
+/// shortwave listener tunes to, which the EiBi *broadcast* schedule does not
+/// carry. They run around the clock — no start or end — and carry no programme
+/// language or target, which is what makes them utility rather than broadcast.
+pub fn utilities() -> &'static [BroadcastStation] {
+    static PARSED: OnceLock<Vec<BroadcastStation>> = OnceLock::new();
+    PARSED.get_or_init(|| {
+        // (name, kHz, site, country, mode)
+        const TABLE: &[(&str, f64, &str, &str, &str)] = &[
+            ("WWV time signal", 2500.0, "Fort Collins, CO", "United States", "AM"),
+            ("WWV time signal", 5000.0, "Fort Collins, CO", "United States", "AM"),
+            ("WWV time signal", 10000.0, "Fort Collins, CO", "United States", "AM"),
+            ("WWV time signal", 15000.0, "Fort Collins, CO", "United States", "AM"),
+            ("WWV time signal", 20000.0, "Fort Collins, CO", "United States", "AM"),
+            ("WWVH time signal", 2500.0, "Kekaha, HI", "United States", "AM"),
+            ("WWVH time signal", 5000.0, "Kekaha, HI", "United States", "AM"),
+            ("WWVH time signal", 10000.0, "Kekaha, HI", "United States", "AM"),
+            ("WWVH time signal", 15000.0, "Kekaha, HI", "United States", "AM"),
+            ("CHU time signal", 3330.0, "Ottawa, ON", "Canada", "AM"),
+            ("CHU time signal", 7850.0, "Ottawa, ON", "Canada", "AM"),
+            ("CHU time signal", 14670.0, "Ottawa, ON", "Canada", "AM"),
+            ("RWM time signal", 4996.0, "Moscow", "Russia", "AM"),
+            ("RWM time signal", 9996.0, "Moscow", "Russia", "AM"),
+            ("RWM time signal", 14996.0, "Moscow", "Russia", "AM"),
+            ("BPM time signal", 2500.0, "Pucheng", "China", "AM"),
+            ("BPM time signal", 5000.0, "Pucheng", "China", "AM"),
+            ("BPM time signal", 10000.0, "Pucheng", "China", "AM"),
+            ("BPM time signal", 15000.0, "Pucheng", "China", "AM"),
+            ("Shannon VOLMET", 5505.0, "Shannon", "Ireland", "USB"),
+            ("Shannon VOLMET", 8957.0, "Shannon", "Ireland", "USB"),
+            ("Shannon VOLMET", 13264.0, "Shannon", "Ireland", "USB"),
+            ("RAF VOLMET", 5450.0, "United Kingdom", "United Kingdom", "USB"),
+            ("RAF VOLMET", 11253.0, "United Kingdom", "United Kingdom", "USB"),
+            ("New York VOLMET", 3485.0, "New York, NY", "United States", "USB"),
+            ("New York VOLMET", 6604.0, "New York, NY", "United States", "USB"),
+            ("New York VOLMET", 10051.0, "New York, NY", "United States", "USB"),
+            ("New York VOLMET", 13270.0, "New York, NY", "United States", "USB"),
+            ("UVB-76 \"The Buzzer\"", 4625.0, "Moscow", "Russia", "AM"),
+        ];
+        TABLE
+            .iter()
+            .map(|&(name, freq_khz, site, country, mode)| BroadcastStation {
+                name: name.to_string(),
+                freq_khz,
+                site: site.to_string(),
+                country: country.to_string(),
+                mode: Some(mode.to_string()),
+                ..Default::default()
+            })
+            .collect()
+    })
+}
+
+/// Append the built-in utility stations to a loaded schedule.
+///
+/// Separate from [`merge`] on purpose: `merge` is about EiBi rows and the
+/// parser test pins its totals, so the utilities are added by the caller once
+/// the schedule is in hand rather than folded into the count.
+pub fn with_utilities(mut schedule: Vec<BroadcastStation>) -> Vec<BroadcastStation> {
+    schedule.extend(utilities().iter().cloned());
+    schedule
+}
+
 pub fn merge(schedule: Vec<BroadcastStation>) -> Vec<BroadcastStation> {
     let mut all = schedule;
     all.extend(seed().iter().cloned());
@@ -977,5 +1107,72 @@ mod tests {
         let spots = on_air(builtin(), THU_1234);
         assert!(spots.iter().any(|s| s.freq_hz == 225_000.0));
         assert!(spots.iter().all(|s| s.kind == SpotKind::Broadcast));
+    }
+}
+
+#[cfg(test)]
+mod schedule_query_tests {
+    use super::*;
+
+    #[test]
+    fn metre_bands_are_named() {
+        assert_eq!(metre_band(6185.0), Some("49m"));
+        assert_eq!(metre_band(9410.0), Some("31m"));
+        assert_eq!(metre_band(1000.0), Some("MW"));
+        assert_eq!(metre_band(200.0), Some("LW"));
+        assert_eq!(metre_band(50_000.0), None);
+    }
+
+    #[test]
+    fn queries_match_the_fields_a_listener_searches() {
+        let s: BroadcastStation = serde_json::from_str(
+            r#"{"name":"BBC World Service","freq_khz":6185.0,"site":"Ascension",
+                "country":"Ascension","lang":"English","target":"Africa"}"#,
+        )
+        .unwrap();
+        assert!(s.matches_query("bbc"));
+        assert!(s.matches_query("ENGLISH"));
+        assert!(s.matches_query("ascension"));
+        assert!(s.matches_query("africa"));
+        assert!(!s.matches_query("romania"));
+        assert!(s.matches_query(""), "an empty query matches everything");
+    }
+
+    #[test]
+    fn modes_map_onto_the_receiver_with_am_as_the_default() {
+        let mut s: BroadcastStation =
+            serde_json::from_str(r#"{"name":"X","freq_khz":6000.0}"#).unwrap();
+        assert_eq!(s.mode(), crate::Mode::Am);
+        s.mode = Some("USB".into());
+        assert_eq!(s.mode(), crate::Mode::Usb);
+        s.mode = Some("SAM".into());
+        assert_eq!(s.mode(), crate::Mode::Sam);
+    }
+}
+
+#[cfg(test)]
+mod utility_tests {
+    use super::*;
+
+    #[test]
+    fn the_utility_table_is_sane() {
+        let u = utilities();
+        assert!(u.len() >= 20, "a small table, not empty: {}", u.len());
+        assert!(u.iter().any(|s| s.name.contains("WWV")), "time signals are in");
+        assert!(u.iter().any(|s| s.name.contains("VOLMET")), "and the VOLMETs");
+        // Nothing outside HF/MF, and every one names a site.
+        for s in u {
+            assert!((200.0..=30_000.0).contains(&s.freq_khz), "{} kHz", s.freq_khz);
+            assert!(!s.site.is_empty(), "{} has no site", s.name);
+            assert_eq!(s.start_utc, None, "{} runs around the clock", s.name);
+            assert!(s.on_air_at(0), "{} is on at any time", s.name);
+        }
+    }
+
+    #[test]
+    fn utilities_ride_along_with_a_loaded_schedule() {
+        let with = with_utilities(seed().to_vec());
+        assert_eq!(with.len(), seed().len() + utilities().len());
+        assert!(with.iter().any(|s| s.name.contains("WWV")), "added in");
     }
 }

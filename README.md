@@ -81,6 +81,46 @@ zeroes line up with the printed channel.
 | **Radio backends** | 17 kinds of radio | plus a **USB sound-card** backend for VOX-keyed handhelds, walkies and dongles |
 | **UI themes** | the built-in set | 10 more — Nord, Gruvbox, Everforest, Solarized, Dracula, Catppuccin, … |
 
+## … and the shortwave listener
+
+The same receiver, pointed at the **shortwave listener**: no licence, no
+callsign, and no transmitting unless asked for.
+
+- **Broadcast bands of their own** — **LW / MW / SW / FM** on the selector and in
+  the band plan, and on shortwave the band chip names the **metre band** it is
+  in ("SW 49m · AM") with the metre bands offered as shortcuts.
+- **A browsable broadcast schedule** — the ~4,600 EiBi transmitters, filtered by
+  a chosen UTC time, metre band, language and target area, and tuned or logged
+  from the list. The **time signals and VOLMET** the schedule does not carry are
+  labelled too, and stations can be **starred**.
+- **A listener's log** — what was *heard* rather than worked: station,
+  frequency, UTC, **SINPO or SIO**, S-meter and notes, with a **reception
+  report** to send to the broadcaster. A **UTC clock** sits in the window
+  headers.
+- **Listening tools** — a two-minute **time-shift replay** (hear that station
+  identification again), **scheduled recordings**, **ECSS** on SAM for
+  medium-wave DX, and a receive **tone** control.
+- **Scanning a band** — walk 49 m and stop on carriers, with the station named.
+- **C-QUAM AM stereo** on the medium wave, **SWL mode** to hide every transmit
+  control (and **Start in SWL mode**, or `--swl`, to come up that way), and
+  utilities and images — DRM, weather fax, NAVTEX, ADS-B/VDL2.
+
+See **[ROADMAP.md](ROADMAP.md)** for the listener work and where it goes next.
+
+| | Upstream (`dividebysandwich/sdroxide`) | This fork |
+| --- | --- | --- |
+| **Focus** | amateur (ham) transceiver | **CB and shortwave listening**, with transmit behind explicit switches |
+| **Broadcast bands** | general coverage only | **LW / MW / SW / FM**, metre bands named and offered as shortcuts |
+| **Broadcast schedule** | — | EiBi labelled with UTC window and site, a **SCHEDULE** window to filter and tune it, utilities labelled, favourites starred |
+| **Listening log** | QSO logbook | a separate **SWL log** with **SINPO/SIO** and a reception report |
+| **C-QUAM AM stereo** | — | decoded on MW, with a stereo lamp and a mono blend |
+| **MW/SW DX tools** | ham audio chain | **ECSS** on SAM, sync AM, a receive **tone** control |
+| **Listening tools** | — | two-minute time-shift **replay**, **scheduled recordings**, band scanning with station names |
+| **Listening mode** | — | **SWL mode** hides every transmit control and swaps the ham chips for the listener's; **Start in SWL mode** or **`--swl`** |
+| **Decode-list export** | — | the decode list to **CSV** and a *received-report* **ADIF** |
+| **Radio backends** | 17 kinds of radio | plus a **USB sound-card** backend for VOX-keyed radios and dongles |
+| **UI themes** | the built-in set | 10 more — Nord, Gruvbox, Everforest, Solarized, Dracula, Catppuccin, … |
+
 <hr/>
 
 ![The panadapter with the full top strip](docs/images/01-main-window.jpg)

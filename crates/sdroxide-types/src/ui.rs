@@ -2,6 +2,8 @@
 //! coarse speed enum shared by the waterfall-scroll and spectrum-averaging
 //! settings. Kept wasm-safe (no I/O) so the egui client can use it directly.
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use serde::{Deserialize, Serialize};
 
 use crate::SpotKind;
@@ -670,10 +672,22 @@ pub struct UiSettings {
     /// receive-only interface, which is what an operator with a listening
     /// dongle (an RTL-SDR, a SpyServer, a WebSDR) actually needs.
     ///
+    /// It also swaps the strip's ham extras for the listener's: the spot feeds
+    /// (DX cluster / POTA / SOTA) and the award tracking give way to SCHEDULE
+    /// and LISTEN. One switch, not two — a listener should not have to find a
+    /// second one to be rid of the parts they never open.
+    ///
     /// Off by default: a station with a transmitter should see the controls
     /// until it says otherwise.
     #[serde(default)]
     pub swl: bool,
+    /// Start every session in SWL mode, whether or not [`Self::swl`] was left
+    /// on when the program closed. Off by default — and the box beside it in
+    /// Settings is the "unless the user asked for it" half of the rule: a
+    /// listener ticks it once and gets the listener's interface at every start;
+    /// nobody else is changed.
+    #[serde(default)]
+    pub start_swl: bool,
     /// Whether the operator has told the out-of-band transmit warning not to
     /// come up again on this screen.
     ///
@@ -809,6 +823,7 @@ impl Default for UiSettings {
             oob_tx_dismissed: false,
             cb_tx_warning_ack: false,
             simple_ui: false,
+            start_swl: false,
         }
     }
 }
@@ -968,4 +983,20 @@ mod tune_step_tests {
             assert_eq!(ui.tune_step_label(), want);
         }
     }
+}
+
+/// `--swl` for this process: force SWL mode on for the run regardless of the
+/// stored preference. Set by the binary at startup; read when a tab is built.
+/// A process-wide flag rather than a field on `UiSettings` because it is not a
+/// preference — it lasts as long as the run and is never written to disk.
+static FORCE_SWL: AtomicBool = AtomicBool::new(false);
+
+/// Whether `--swl` asked for SWL mode this run.
+pub fn force_swl() -> bool {
+    FORCE_SWL.load(Ordering::Relaxed)
+}
+
+/// Set by the binary when `--swl` was passed.
+pub fn set_force_swl(on: bool) {
+    FORCE_SWL.store(on, Ordering::Relaxed);
 }

@@ -13709,6 +13709,7 @@ sends them.
 | `--freedv-reporter-probe <SECS>` | Connect to FreeDV Reporter read-only for SECS seconds and print what arrives. Uses the server's view role, so nothing is reported and you do not appear on the site. Needs no radio. |
 | `--freedv-reporter-host <HOST[:PORT]>` | FreeDV Reporter host for the probe (default `qso.freedv.org`). |
 | `--record-iq <PATH>` | Write every raw IQ sample the receiver delivers to PATH, in the same interleaved CF32 format `--file` reads back. For capturing a band to work on offline — see [5.6](#56-nothing-is-being-decoded). Large: 8 bytes a sample, so about 16 MB a second at 2 Msps, and it runs until you quit. Radio 0 only. |
+| `--swl` | Start in SWL mode (Short Wave Listener): hide every transmit control for this run. The same as ticking **Start in SWL mode** in Settings → UI, without changing the stored preference. |
 | `--oob-tx` | Allow transmit on **any** frequency the hardware supports, not just the amateur bands. See below. |
 
 **Testing without a radio:** `--siggen` (built-in signal generator), `--file`

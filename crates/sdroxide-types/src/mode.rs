@@ -1150,9 +1150,25 @@ impl Mode {
                 ("500", 450.0, 950.0),
                 ("1k", 200.0, 1200.0),
             ],
-            Mode::Am | Mode::Sam | Mode::Cquam => {
+            Mode::Am | Mode::Cquam => {
                 &[("6k", -3000.0, 3000.0), ("10k", -5000.0, 5000.0), ("16k", -8000.0, 8000.0)]
             }
+            // Synchronous AM adds **ECSS**: one sideband kept and the other
+            // rejected. On an AM broadcast the two sidebands carry the same
+            // programme, so dropping one is how a medium-wave DXer ducks an
+            // adjacent channel — and a fading one, since the sidebands fade
+            // independently. It is a SAM preset, not an AM one: plain AM is an
+            // envelope detector and would hear both sidebands whatever the
+            // filter said, and C-QUAM's difference lives in the phase, which a
+            // one-sided filter would break. The offset keeps the carrier's own
+            // residual out of the passband.
+            Mode::Sam => &[
+                ("6k", -3000.0, 3000.0),
+                ("10k", -5000.0, 5000.0),
+                ("16k", -8000.0, 8000.0),
+                ("ECSS-U", 60.0, 5000.0),
+                ("ECSS-L", -5000.0, -60.0),
+            ],
             // Both sidebands at once, so the label is the width of *each* one
             // — an ISB channel described as "2.7 kHz per sideband" is 5.4 kHz
             // of spectrum, and calling it 5.4k would read as half of what the
@@ -1640,7 +1656,12 @@ mod tests {
         for m in Mode::ALL {
             let all_symmetric = m.filter_presets().iter().all(|(_, lo, hi)| lo == &-hi);
             if m.filter_symmetric() {
-                assert!(all_symmetric, "{m:?} mirrors its edges but has an off-centre preset");
+                // SAM is the one exception: its ECSS presets are deliberately
+                // one-sided (see the presets above).
+                assert!(
+                    all_symmetric || m == Mode::Sam,
+                    "{m:?} mirrors its edges but has an off-centre preset"
+                );
             } else if !m.filter_presets().is_empty() {
                 assert!(
                     !all_symmetric || m == Mode::Adsb || m == Mode::Vdl2 || m == Mode::Ais,

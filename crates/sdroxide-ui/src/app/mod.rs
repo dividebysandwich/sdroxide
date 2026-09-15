@@ -26,6 +26,9 @@ pub(in crate::app) mod drm;
 pub(in crate::app) mod frame;
 pub(in crate::app) mod ism;
 pub(in crate::app) mod logbook;
+pub(in crate::app) mod recording_jobs;
+pub(in crate::app) mod schedule;
+pub(in crate::app) mod swl_log;
 pub(in crate::app) mod net;
 pub(in crate::app) mod panels;
 pub(crate) mod persist;
@@ -62,7 +65,9 @@ use self::panels::fsq::fsq_load_contacts;
 use self::panels::rf_paint::RfPaintUi;
 use self::panels::sstv::SstvUi;
 use self::persist::{
-    load_alerts_settings, load_broadcast_stations, load_qso_log, load_speech_settings,
+    load_alerts_settings, load_broadcast_favourites, load_broadcast_stations, load_qso_log,
+    load_recording_jobs,
+    load_speech_settings, load_swl_log,
     load_ui_settings,
 };
 use self::settings::servers::TciServerStatus;
@@ -492,6 +497,21 @@ pub struct SdroxideApp {
     /// reports back how many characters have been sent so we colour them green).
     text_tx: String,
     qso_log: Vec<QsoRecord>,
+    /// The listener's reception log (`swl_log.json`) — separate from the QSO
+    /// log on purpose. See [`crate::app::swl_log`].
+    pub(in crate::app) swl_log: Vec<sdroxide_types::SwlEntry>,
+    /// The reception log window's own state: open, the entry being edited, and
+    /// the row the REPORT button acts on.
+    pub(in crate::app) show_swl: bool,
+    pub(in crate::app) swl_edit: Option<crate::app::swl_log::SwlEditForm>,
+    pub(in crate::app) swl_selected: Option<u64>,
+    /// The broadcast schedule window and its filters.
+    pub(in crate::app) schedule: crate::app::schedule::ScheduleUi,
+    /// Favourite broadcast stations, by name (`broadcast_favourites.json`).
+    pub(in crate::app) broadcast_favs: Vec<String>,
+    /// Scheduled recordings: the jobs, and the clock that runs them.
+    pub(in crate::app) recording_jobs: Vec<sdroxide_types::RecordingJob>,
+    pub(in crate::app) jobs: crate::app::recording_jobs::JobsUi,
     /// Cached newest-first ordering and day grouping of [`Self::qso_log`], so
     /// the logbook list does not re-sort and re-group the whole log on every
     /// frame it is open. See `logbook::LogView`.
@@ -1185,7 +1205,13 @@ impl SdroxideApp {
         // The look and the font sizes must be selected before `theme::apply`
         // reads them, or the first frame flashes the default theme at the
         // default scale.
-        let ui_settings = load_ui_settings(storage);
+        let mut ui_settings = load_ui_settings(storage);
+        // Start in SWL mode when asked: either the stored preference or this
+        // run's `--swl`. The session's own toggle can still turn it off, but
+        // the next start honours the preference again.
+        if ui_settings.start_swl || sdroxide_types::force_swl() {
+            ui_settings.swl = true;
+        }
         crate::theme::set_look(
             ui_settings.theme,
             ui_settings.button_style,
@@ -1379,6 +1405,14 @@ impl SdroxideApp {
             digi_status: None,
             text_tx: String::new(),
             qso_log: load_qso_log(storage),
+            swl_log: load_swl_log(storage),
+            show_swl: false,
+            swl_edit: None,
+            swl_selected: None,
+            schedule: Default::default(),
+            broadcast_favs: load_broadcast_favourites(storage),
+            recording_jobs: load_recording_jobs(storage),
+            jobs: Default::default(),
             log_view: Default::default(),
             session_qsos: 0,
             show_digi_settings: false,
@@ -1472,7 +1506,7 @@ impl SdroxideApp {
             show_spots: false,
             spot_in_view_only: false,
             spot_search: String::new(),
-            broadcast: load_broadcast_stations(),
+            broadcast: sdroxide_types::broadcast::with_utilities(load_broadcast_stations()),
             broadcast_spots: Vec::new(),
             broadcast_minute: -1,
             // Kicked off at startup: the first run has no cached schedule, and

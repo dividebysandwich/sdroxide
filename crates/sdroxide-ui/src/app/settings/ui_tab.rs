@@ -231,6 +231,8 @@ pub(in crate::app) fn settings_ui_tab(
              What remains is a clean receive-only UI, which is what an \
              operator with a listening dongle (an RTL-SDR, a SpyServer, a \
              WebSDR) actually needs.\n\n\
+             It also swaps the strip's ham extras for the listener's: the spot \
+             feeds and the award tracking give way to SCHEDULE and LISTEN.\n\n\
              The radio can still transmit if the hardware supports it; this \
              only hides the buttons.",
         );
@@ -248,6 +250,15 @@ pub(in crate::app) fn settings_ui_tab(
              the chips back.",
         );
         crate::chrome::checkbox(ui, &mut cfg.simple_ui, "hide advanced chips");
+        ui.end_row();
+
+        ui.label("Start in SWL mode").on_hover_text(
+            "Open every session with SWL mode already on, so a listener's \
+             screen is what the program comes up as. Off unless asked for; the \
+             SWL mode switch above can still turn it off for a session, and the \
+             next start honours this setting again.",
+        );
+        crate::chrome::checkbox(ui, &mut cfg.start_swl, "start with SWL mode on");
         ui.end_row();
 
         ui.label("Cities on maps").on_hover_text(
