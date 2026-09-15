@@ -791,7 +791,7 @@ impl SdroxideApp {
         }
         let w = self.display_rows_w(ui);
         boxes.push((Kind::Display, StripBox { w, flex: 1.0, max_w: w * CHIP_STRETCH_FACTOR }));
-        let w = system_rows_w(ui, self.ui_settings.simple_ui);
+        let w = system_rows_w(ui, self.ui_settings.simple_ui, self.ui_settings.swl);
         boxes.push((Kind::System, StripBox { w, flex: 1.0, max_w: w * CHIP_STRETCH_FACTOR }));
 
         // A whole row is worth more than digit size: when the strip packs into
@@ -5100,41 +5100,42 @@ impl SdroxideApp {
     fn system_chips_top(&mut self, ui: &mut egui::Ui, extra: f32) {
         let [log, spots, awards, bands, sat_label, ism, public_sdrs] = SYSTEM_CHIPS_TOP;
         let simple = self.ui_settings.simple_ui;
-        // Listener mode hides the ham receive extras: the spot feeds (DX
-        // cluster / POTA / SOTA) here, and the award tracking below (which the
-        // simple interface already drops).
-        let listener = self.ui_settings.listener_mode;
+        // SWL mode is the listener's screen, and it takes the row the way the
+        // listener uses it: the spot feeds (DX cluster / POTA / SOTA) and the
+        // award tracking are ham receive extras they never open, so those two
+        // give way to the listener's own windows, SCHEDULE and LISTEN. The
+        // labels here are mirrored by `system_top_row`, which is what sizes the
+        // box — the two have to agree or the strip overflows (issue #211).
+        let swl = self.ui_settings.swl;
         if chip_stretched(ui, self.show_logbook, log, extra)
             .on_hover_text("Logbook — all QSOs (digital + manual)")
             .clicked()
         {
             self.show_logbook = !self.show_logbook;
         }
-        // The listener's log. Offered while SWL mode is on; the two are shown
-        // side by side rather than swapped so an operator who wants both is not
-        // stopped from having both.
-        if self.ui_settings.swl
+        if swl
             && chip_stretched(ui, self.schedule.show, "SCHEDULE", extra)
                 .on_hover_text("Broadcast schedule — what is on, when and where")
                 .clicked()
         {
             self.schedule.show = !self.schedule.show;
         }
-        if self.ui_settings.swl
+        if swl
             && chip_stretched(ui, self.show_swl, "LISTEN", extra)
                 .on_hover_text("Reception log — stations heard, with SINPO/SIO")
                 .clicked()
         {
             self.show_swl = !self.show_swl;
         }
-        if !listener
+        if !swl
             && chip_stretched(ui, self.show_spots, spots, extra)
                 .on_hover_text("Live spots — DX cluster, POTA, SOTA, PSK Reporter")
                 .clicked()
         {
             self.show_spots = !self.show_spots;
         }
-        if !simple
+        if !swl
+            && !simple
             && chip_stretched(ui, self.show_awards, awards, extra)
                 .on_hover_text("Award tracking — DXCC / WAS / WAZ / grids")
                 .clicked()
@@ -5308,7 +5309,7 @@ impl SdroxideApp {
     fn windows_condensed(&mut self, ui: &mut egui::Ui, w: f32) {
         let inner = w - 2.0 * crate::chrome::MODULE_MARGIN_X;
         let simple = self.ui_settings.simple_ui;
-        let top = system_top_row(simple);
+        let top = system_top_row(simple, self.ui_settings.swl);
         let bottom = system_bottom_row(simple);
         let extra1 = ((inner - chip_row_w(ui, &top)) / top.len() as f32).max(0.0);
         let extra2 = ((inner - chip_row_w(ui, &bottom)) / bottom.len() as f32).max(0.0);
@@ -6080,20 +6081,27 @@ fn accent_chip_stretched(
 /// wider row plus the box's side margins. Measured against the live style
 /// rather than fixed, because a touched layout pads every chip out past its
 /// desktop width — see `the_condensed_system_box_fits_its_chips`.
-fn system_rows_w(ui: &egui::Ui, simple: bool) -> f32 {
-    chip_row_w(ui, &system_top_row(simple)).max(chip_row_w(ui, &system_bottom_row(simple)))
+fn system_rows_w(ui: &egui::Ui, simple: bool, swl: bool) -> f32 {
+    chip_row_w(ui, &system_top_row(simple, swl)).max(chip_row_w(ui, &system_bottom_row(simple)))
         + 2.0 * crate::chrome::MODULE_MARGIN_X
 }
 
 /// The System box's top-row labels. Simple drops the three an SWL or CB
 /// operator does not use: award tracking, satellites and ISM decoding.
-fn system_top_row(simple: bool) -> Vec<&'static str> {
-    SYSTEM_CHIPS_TOP
+fn system_top_row(simple: bool, swl: bool) -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = SYSTEM_CHIPS_TOP
         .iter()
         .enumerate()
         .filter(|(i, _)| !(simple && matches!(i, 2 | 4 | 5)))
+        // SWL takes over the spots and awards slots with its own two windows.
+        .filter(|(i, _)| !(swl && matches!(i, 1 | 2)))
         .map(|(_, l)| *l)
-        .collect()
+        .collect();
+    if swl {
+        v.insert(1, "LISTEN");
+        v.insert(1, "SCHEDULE");
+    }
+    v
 }
 
 /// The System box's bottom-row labels. Simple drops Winlink radio email.
@@ -7056,9 +7064,13 @@ mod tests {
     /// help the strip pack; this guards the set that goes.
     #[test]
     fn the_simple_interface_drops_the_advanced_system_chips() {
-        assert_eq!(system_top_row(false), SYSTEM_CHIPS_TOP.to_vec());
+        assert_eq!(system_top_row(false, false), SYSTEM_CHIPS_TOP.to_vec());
         assert_eq!(system_bottom_row(false), SYSTEM_CHIPS_BOTTOM.to_vec());
-        assert_eq!(system_top_row(true), vec!["LOG", "SPOTS", "BANDS", "PUBLIC SDR"]);
+        assert_eq!(system_top_row(true, false), vec!["LOG", "SPOTS", "BANDS", "PUBLIC SDR"]);
+        assert_eq!(
+            system_top_row(false, true),
+            vec!["LOG", "SCHEDULE", "LISTEN", "BANDS", "SAT", "ISM", "PUBLIC SDR"]
+        );
         assert_eq!(system_bottom_row(true), vec!["MEM", "SCAN", "⚙ SETTINGS", "? HELP"]);
     }
 
@@ -7067,7 +7079,7 @@ mod tests {
         let mut out = None;
         ctx.run_ui(input, |ui| {
             let mut chips = Vec::new();
-            let width = system_rows_w(ui, false);
+            let width = system_rows_w(ui, false, false);
             let room =
                 crate::chrome::module_bare_h(ui, width, crate::chrome::MODULE_TALL_H, |ui| {
                     // Read before the rows are drawn: egui grows a Ui's
@@ -7591,7 +7603,7 @@ mod tests {
         let tx = tx_rows_w_for(ui, mode.allows_voice_keyer(), side);
         let display = chip_row_w(ui, &DISPLAY_VIEW_CHIPS).max(chip_row_w(ui, &DISPLAY_TOOL_CHIPS))
             + 2.0 * crate::chrome::MODULE_MARGIN_X;
-        let system = system_rows_w(ui, false);
+        let system = system_rows_w(ui, false, false);
         vec![
             StripBox { w: freq_w, flex: 0.0, max_w: freq_w },
             StripBox { w: SMETER_W, flex: 3.0, max_w: f32::INFINITY },

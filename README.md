@@ -34,10 +34,12 @@ Already here, carried over from the CB/SWL work this fork grew out of:
 - **Utilities and images** — DRM shortwave, weather fax, NAVTEX, ADS-B/VDL2 —
   and the **browser server**, so you can listen from anywhere, antenna in the
   garden.
-- **A listener's screen** — a **listener mode** that turns on SWL mode and
-  Simple UI and drops the ham extras; and a **LISTEN log** that records what was
-  *heard* — station, frequency, UTC, **SINPO/SIO**, notes — with a **reception
-  report** to send to the broadcaster.
+- **A listener's screen** — **SWL mode** hides the transmit controls and swaps
+  the ham extras (spots, awards) for the listener's own windows; a **SCHEDULE
+  browser** filters the EiBi table by time, band, language and target and tunes
+  or logs a station; and a **LISTEN log** records what was *heard* — station,
+  frequency, UTC, **SINPO/SIO**, notes — with a **reception report** to send to
+  the broadcaster.
 
 See **[ROADMAP.md](ROADMAP.md)** for what is being built for listeners next: a
 **browsable broadcast schedule** you can tune from, **scheduled recordings and

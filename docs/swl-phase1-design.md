@@ -99,6 +99,11 @@ Notes:      ...
 
 ## 3. The listener profile
 
+> **As built:** the separate `listener_mode` switch was folded into **SWL
+> mode** instead — one switch, not two. SWL mode now hides the transmit
+> controls *and* swaps the spot feeds and awards for SCHEDULE and LISTEN. The
+> design below is kept as written, with that correction.
+
 One switch, `listener_mode`, that carries the identity:
 
 - Sets **SWL mode** and **Simple UI** on, and keeps them on (they stay
