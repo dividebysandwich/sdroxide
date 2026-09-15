@@ -551,6 +551,14 @@ jobs:
             wix build packaging/windows/main.wxs -arch x64 \
               -d Version="$CARGO_VERSION" -d BinDir="$BIN_DIR" \
               -o "out/$PKG.msi"
+            # Stable-named copies of the default build, so a page can link
+            # "the Windows build" once instead of carrying a version in the
+            # URL that has to be edited on every release. Only the default
+            # variant publishes them, so they never collide with the SoapySDR
+            # .zip and always mean the recommended build. The versioned files
+            # beside them remain the canonical, archiveable names.
+            cp "out/$PKG.msi" out/sdroxide-windows-x86_64.msi
+            cp "out/$PKG.zip" out/sdroxide-windows-x86_64.zip
           fi
 
       - name: Package (macOS)

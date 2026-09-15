@@ -51,3 +51,20 @@ pandoc docs/cb-quickstart.en.md -s -c docs/cb-quickstart-pdf.css -o /tmp/cb-en.h
 Commit the `.md` and the regenerated `.pdf` together, and say so if the `.md`
 changed but the PDF was not remade. (`docs/qo100-quickstart.*.pdf` predate this
 note and were rendered from a separate HTML source; leave them alone.)
+
+## Cutting a CB release
+
+1. Bump the workspace version in `Cargo.toml` **first** and let `cargo` refresh
+   `Cargo.lock`; commit it. The Windows `.msi` and the macOS bundle take their
+   version from `Cargo.toml`, so a re-tag on the same version installs as the
+   same version rather than an upgrade.
+2. Tag `vX.Y.Z_CB` and push it, then dispatch the release by hand — a tag push
+   does **not** run the workflow:
+   `gh workflow run release.yml --ref vX.Y.Z_CB --repo madmedicnl/sdroxide`
+3. From the release that first carries the stable-named Windows assets, point
+   the README's top download links at them —
+   `.../releases/latest/download/sdroxide-windows-x86_64.msi` and `.zip` — so
+   they stop being edited every release. They do not exist before that release,
+   so switch them in the same commit that announces it.
+4. Install locally: `cargo build --release`, `pkill -x sdroxide`, then
+   `cp target/release/sdroxide ~/.cargo/bin/sdroxide`.
