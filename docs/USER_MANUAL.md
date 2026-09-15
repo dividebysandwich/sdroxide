@@ -142,6 +142,8 @@ or connects to a remote sdroxide server.
   card (demodulated audio or stereo IQ) — plus a **USB audio radio**: a
   handheld or walkie with no control port at all, reachable only through the
   sound card, keyed by its own VOX ([§15.22](#1522-usb-audio-radio-sound-card)).
+  A **DIY isolated FTDI + optocoupler interface** puts a commanded PTT on such a
+  radio too, e.g. the Luiton LT-310SDR ([§15.23](#1523-luiton-lt-310sdr--diy-isolated-digimode--audio-interface-experimental-at-your-own-risk), experimental).
 - **Several radios at once** — each in its own tab with its own tuning, mode,
   panadapter and audio, sharing your memories, logbook and a station-wide
   transmit interlock. Multi-receiver hardware serves one tab per receiver from
@@ -15180,6 +15182,78 @@ own audio rather than what its antenna hears, and the radio's front panel is
 where signal strength really lives. It is otherwise a perfectly ordinary radio:
 every mode, the logbook, the panadapter (a demodulated-audio spectrum), spots
 and awards all work as they do on any other backend.
+
+### 15.23 Luiton LT-310SDR — DIY isolated digimode & audio interface (EXPERIMENTAL, at your own risk.)
+
+The Luiton LT-310SDR has no CAT port, so it is driven the way [15.22](#1522-usb-audio-radio-sound-card)
+describes — through the sound cards — with one difference: the **PTT is
+commanded over a USB-to-serial line**, not left to the radio's VOX. That needs
+a small, galvanically isolated interface between the PC and the radio.
+
+**This is experimental.** sdroxide drives it through the T/R switch's *Serial
+RTS/DTR line* rather than a dedicated PTT field; the "keeps receiving if the
+program dies" behaviour is whatever the serial driver does with RTS when the
+port closes; and it has not been tested against real hardware here. Build it and
+use it **at your own risk.**
+
+#### The interface
+
+The interface provides galvanic isolation for both audio and PTT control
+between a PC (running sdroxide, JS8Call, WSJT-X, …) and the Luiton LT-310SDR
+transceiver.
+
+**Components**
+
+- 1× FTDI USB-to-TTL adapter: DSD TECH SH-U09C5 (or similar FT232RL module)
+- 1× optocoupler: PC817 (DIP-4)
+- 1× resistor: 1 kΩ (0.25 W)
+- 2× audio isolation transformers: 1:1 600 Ω : 600 Ω (EI14 / Bourns)
+- 1× potentiometer: 10 kΩ trimpot (TX audio level adjustment)
+- Connectors: 1× RJ12 plug (6P6C), 3× 3.5 mm stereo jacks, perfboard, project box
+
+**1. PTT control.** Connect the FTDI **RTS** line through the 1 kΩ resistor to
+PC817 **pin 1 (anode)**, and FTDI **GND** to PC817 **pin 2 (cathode)**. Connect
+PC817 **pin 4 (collector)** to the **PTT** pin on the RJ12, and **pin 3
+(emitter)** to the **GND** pin on the RJ12. Driving RTS HIGH lights the
+optocoupler's LED and grounds the radio's PTT line — no electrical contact
+between PC and radio.
+
+**2. TX audio (PC soundcard out → radio mic in).** Connect PC line-out (tip &
+sleeve) across the primary of the first 1:1 transformer. One secondary pin goes
+to **GND** on the RJ12; the other goes through the 10 kΩ potentiometer to the
+**MIC** pin on the RJ12. Isolated, and the trimpot stops the PC output
+overdriving the sensitive mic input.
+
+**3. RX audio (radio speaker out → PC soundcard in).** Connect the Luiton
+**EXT SPKR** 3.5 mm jack (tip & sleeve) across the primary of the second
+transformer; its secondary goes straight across **PC line-in / mic-in** (tip &
+sleeve). Isolated reception for the decoders, and ground-loop mains hum is
+stripped.
+
+#### Configuring sdroxide
+
+1. **Settings → Radio → USB audio radio (sound card)** ([15.22](#1522-usb-audio-radio-sound-card)).
+   Set **Receive** to the card the radio's EXT SPKR arrives on, and **Transmit**
+   to the card feeding the radio's mic through the trimpot.
+2. **Settings → T/R switch** ([6.11](#611-t-r-switch-protecting-the-receiver-on-transmit)):
+   link **Serial RTS/DTR line**, the FTDI's port (`/dev/ttyUSB0`, `COMx`), and
+   **contact 1 → RTS**. Give that contact a role that is *not* "Ground the SDR
+   antenna" — this is a PTT closure, not an antenna relay; **Aux** fits, or
+   leave the other contacts at **Not used**. Key-down asserts RTS and key-up
+   drops it, which is exactly the PTT the interface wants.
+3. Tune on the radio's own dial. On this backend sdroxide's dial is a label, so
+   the band plan and the transmit lockout follow what you type here, not the
+   radio ([15.22](#1522-usb-audio-radio-sound-card)).
+
+The PTT being the T/R switch's serial line leaves the switch's other channels
+free for an antenna relay or an amplifier key line, since each link can carry
+more than one contact.
+
+**Failsafe caveat.** sdroxide drops RTS on key-up and closes the port when it
+exits. Whether the radio returns to receive if the program *crashes* depends on
+the serial driver lowering RTS when the port closes — many FTDI drivers do, some
+do not. If a stuck transmitter must be impossible, wire the optocoupler so a
+floating RTS is the *receive* state, and test it.
 
 ---
 
