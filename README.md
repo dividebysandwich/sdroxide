@@ -1,5 +1,12 @@
 # SDR Oxide BUT tuned for CB use!
 
+> **Windows download** — [**installer (`.msi`)**](https://github.com/madmedicnl/sdroxide/releases/download/v1.6.7_CB/sdroxide-v1.6.7_CB-windows-x86_64.msi)
+> · [**portable `.zip`** (contains `sdroxide.exe`)](https://github.com/madmedicnl/sdroxide/releases/download/v1.6.7_CB/sdroxide-v1.6.7_CB-windows-x86_64.zip)
+> · [every platform and build](https://github.com/madmedicnl/sdroxide/releases/latest)
+>
+> Linux (AppImage · `.deb` · tarball) and macOS (`.dmg`) are on the same
+> [Releases page](https://github.com/madmedicnl/sdroxide/releases/latest).
+
 > **This is a fork.** It is [sdroxide](https://github.com/dividebysandwich/sdroxide)
 > — the **amateur ("ham") radio** transceiver by dividebysandwich — with a
 > **CB / shortwave-listener** focus layered on top. The Ham version is upstream;
@@ -44,6 +51,16 @@ transmitters on the waterfall (each with its transmit schedule and site),
 decodes DRM shortwave radio, weather fax, and the ADS-B/VDL2 aircraft overhead
 — and the browser server lets you listen from anywhere, antenna in the garden.
 
+It keeps growing where the CB and listener use needs it. A **Profile** saves a
+whole working setup — dials and VFOs, mode and filters, gains, drive and
+antennas, the digital identity and the band stacks — and puts it all back in one
+click, so the contest, DX and CB setups are one tab away. The **PC keyboard is a
+straight key** (hold **Space**). The decode list exports to **CSV** and a
+*received-report* **ADIF**, for logging what you hear rather than what you work.
+The **browser client imports** ADIF and CHIRP files as well as writing them out.
+And the step row can be told to **round to 000** on the first press, so the
+zeroes line up with the printed channel.
+
 | | Upstream (`dividebysandwich/sdroxide`) | This fork |
 | --- | --- | --- |
 | **Amateur bands** | 160 m … 3 cm, by IARU region, with band-plan lockout | identical, untouched |
@@ -52,6 +69,13 @@ decodes DRM shortwave radio, weather fax, and the ADS-B/VDL2 aircraft overhead
 | **Broadcast bands** | general coverage only | **LW / MW / SW / FM** on the selector and in the band plan; picking **FM** comes up **WFM** |
 | **SWL mode** | — | a toggle that hides every transmit control |
 | **Simple interface** | — | a toggle that hides the advanced chips (3D, skimmers, layers, awards, satellites, ISM, Winlink), leaving the CB/SWL controls; the band/mode menu leads with **AM · FM · USB · LSB** |
+| **Station profiles** | — | save and re-apply a whole working setup in one click — dials and VFOs, mode and filters, gains, drive and antennas, the digital identity and the band stacks |
+| **CW straight key** | — | the PC keyboard as a straight key: hold **Space**, sidetone through the transmit chain, any half-typed auto-keyer text dropped |
+| **Decode-list export** | — | the decode list to **CSV** and a *received-report* **ADIF**, for the listener who logs what is heard |
+| **Browser import** | export only | the browser client imports **ADIF** and **CHIRP** files too, not just writes them out |
+| **First-press tuning** | — | opt-in *first press rounds to 000* on the step row, lining the zeroes up with the printed channel |
+| **Propagation columns** | — | measured **WSPR** and **PSK Reporter** activity columns in the **BANDS** window |
+| **Audible alerts** | — | calls, directed CQs and new DXCC/grids ring on their own audio output |
 | **Waterfall levels** | a popup behind a chip | a vertical level slider beside the waterfall, plus the popup |
 | **Radio backends** | 17 kinds of radio | plus a **USB sound-card** backend for VOX-keyed handhelds, walkies and dongles |
 | **UI themes** | the built-in set | 10 more — Nord, Gruvbox, Everforest, Solarized, Dracula, Catppuccin, … |
@@ -161,6 +185,12 @@ One binary, three ways to run it:
 - **Transmit** — PTT and tune carrier, drive/ALC metering, device-aware
   half-duplex sequencing (HackRF) or full-duplex (LimeSDR), and a ham-band /
   TX-range lockout so you can't key outside your allocation.
+- **CW straight key** — the PC keyboard is a straight key when you want it to
+  be: hold **Space** and the keyer follows the key — down while held, up on
+  release — dropping any half-typed automatic message rather than letting a
+  fragment of it surface between elements. An SDR sends the sidetone through its
+  own transmit chain; a radio that keys itself from text keys from the Space bar
+  instead.
 - **Resizable layout** — drag the frequency-scale strip to resize the spectrum
   vs. waterfall split; in FT8/FT4/FT2, drag the divider to resize the operating
   panel.
@@ -195,7 +225,9 @@ One binary, three ways to run it:
   takes. See "T/R switch" in the user manual for what this cannot do.
 - **Persistence** — device, rates, gains, memories, band stacks, the FT8/FT4/FT2
   operator profile, network/QSL credentials, control bindings, and the logbook
-  are all stored under `~/.config/sdroxide/`.
+  are all stored under `~/.config/sdroxide/`. Named **station profiles**
+  (`profiles.json`) sit alongside them, each one a saved snapshot put back whole
+  from the Profiles tab of Settings.
 
 ## FT8 / FT4 / FT2
 
@@ -399,7 +431,14 @@ holds both FT8/FT4/FT2 and manually entered QSOs:
 - FT8/FT4/FT2 QSOs are logged automatically as they complete.
 - **IMPORT** loads QSOs from an ADIF (`.adi`) file (de-duplicated against the
   existing log); export the whole book to **ADIF** or plain **TXT**. A
-  QSL/confirmation status column shows what's been uploaded and confirmed.
+  QSL/confirmation status column shows what's been uploaded and confirmed. The
+  browser client reads too: **IMPORT** picks a file from the machine the browser
+  runs on and feeds it through the same decoder, and the memories window's
+  **IMPORT** loads a CHIRP CSV the same way.
+- The **DECODES** panel is the listener's log: **CSV** writes one row per decode
+  (the receiver's dial plus the decode's audio offset), and **ADIF** writes
+  *received reports* rather than contacts — what an SWL who never transmits can
+  actually submit.
 - Records also hold DXCC entity, CQ/ITU zones, IOTA and POTA/SOTA references, and
   per-service QSL status — the data behind lookup, upload and award tracking.
 - The log is stored at `~/.config/sdroxide/qso_log.json` (native) or in browser
