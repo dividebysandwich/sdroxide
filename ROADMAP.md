@@ -43,9 +43,9 @@ to bare frequencies.
 
 ## Phase 3 — listening tools
 
-- **Time-shift buffer / instant replay.** Keep a rolling few minutes of audio so
-  the thing you just missed can be played again. For a listener this is worth
-  more than another decoder.
+- **Time-shift buffer / instant replay.** **Done** — a rolling two-minute window
+  (mono, ~23 MB per receiver) and a **REPLAY** control in the LISTEN window: a
+  DVR two minutes behind live. The CAT-audio path is not covered yet.
 - **Scheduled recordings.** "Record 49 m at 18:00 UTC for 30 minutes", audio and
   optionally IQ, with a filename that names the station.
 - **ECSS.** Selectable-sideband synchronous AM (SAM with one sideband), the
