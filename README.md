@@ -109,6 +109,8 @@ The band/mode menu — a **Primary modes** row (**AM · FM · USB · LSB**) abov
 > ## [User Manual](docs/USER_MANUAL.md)
 >
 > ### [QO-100 Quick-start Guide](docs/qo100-quickstart.en.md) ([Türkçe](docs/qo100-quickstart.tr.md))
+>
+> ### [CB quick-start (Nederlands)](docs/cb-quickstart.nl.md)
 
 One binary, three ways to run it:
 
