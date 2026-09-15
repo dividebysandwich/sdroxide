@@ -1196,7 +1196,11 @@ impl SdroxideApp {
         }
         if moved != 0.0 {
             let vfo = self.state.active_vfo;
-            let hz = (self.state.active_freq_hz() + moved).max(0.0);
+            let hz = stepped_hz(
+                self.state.active_freq_hz(),
+                moved,
+                self.ui_settings.tune_step_round_first,
+            );
             cmds.push(Command::SetVfo { vfo, hz });
         }
     }
@@ -6133,6 +6137,23 @@ fn band_chip_dial(mode: Mode, band: Band, std_hz: Option<f64>) -> Option<f64> {
     }
 }
 
+/// The dial after one press of the step row.
+///
+/// Normally exactly `step` from where the dial is — the buttons move by the
+/// step they claim, never to a multiple of it. With `round_first` (issue #422)
+/// a dial left off a whole kilohertz is tidied to the nearest one *instead* of
+/// stepping; the press after that finds it already on a whole kilohertz and
+/// steps as usual, so the tidy costs one press and then never interferes again.
+fn stepped_hz(cur: f64, step: f64, round_first: bool) -> f64 {
+    if round_first {
+        let rounded = (cur / 1000.0).round() * 1000.0;
+        if (cur - rounded).abs() >= 0.5 {
+            return rounded.max(0.0);
+        }
+    }
+    (cur + step).max(0.0)
+}
+
 /// The band + mode + digital chip rows: the body of the band/mode popup.
 ///
 /// A free function taking the state it draws from, rather than a method, so a
@@ -7913,6 +7934,20 @@ mod tests {
         })
         .drop_without_applying_deltas();
         ctx.memory(|m| m.area_rect(id)).expect("the menu was shown")
+    }
+
+    #[test]
+    fn the_step_rounds_only_when_asked_and_only_once() {
+        // Off: exactly the step, from anywhere.
+        assert_eq!(stepped_hz(27_265_436.0, 1000.0, false), 27_266_436.0);
+        // On: the first press tidies to the nearest kilohertz...
+        assert_eq!(stepped_hz(27_265_436.0, 1000.0, true), 27_265_000.0);
+        assert_eq!(stepped_hz(27_265_600.0, -1000.0, true), 27_266_000.0);
+        // ...and once the dial is on one, the step applies.
+        assert_eq!(stepped_hz(27_265_000.0, 1000.0, true), 27_266_000.0);
+        // Never below zero, rounding or stepping.
+        assert_eq!(stepped_hz(400.0, -1000.0, false), 0.0);
+        assert_eq!(stepped_hz(27_265_600.0, -2000.0, false), 27_263_600.0);
     }
 
     /// Issue #260: in APRS the band buttons stopped being band buttons.

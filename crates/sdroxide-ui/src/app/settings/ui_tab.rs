@@ -105,6 +105,22 @@ pub(in crate::app) fn settings_ui_tab(
         });
         ui.end_row();
 
+        // Only meaningful with the row above, so it sits under it.
+        if cfg.tune_step_buttons {
+            ui.label("");
+            crate::chrome::checkbox(
+                ui,
+                &mut cfg.tune_step_round_first,
+                "First press rounds to 000",
+            )
+            .on_hover_text(
+                "A dial left off a whole kilohertz is rounded to the nearest one by the first \
+                 press of step-down or step-up; after that the buttons move by the step as \
+                 usual. Off, every press moves by exactly the step.",
+            );
+            ui.end_row();
+        }
+
         ui.label("Waterfall smoothing");
         crate::chrome::checkbox(ui, &mut cfg.waterfall_smooth, "Interpolate").on_hover_text(
             "Blend each screen pixel with the bins and rows around it, so a signal looks \

@@ -528,6 +528,16 @@ pub struct UiSettings {
     /// between sessions: an operator working one band works one channel
     /// spacing.
     pub tune_step_hz: f64,
+    /// Make the first press of the step row round the dial to a whole
+    /// kilohertz instead of moving it by the step; presses after that move it
+    /// normally.
+    ///
+    /// Off by default, and deliberately so: the step buttons move by exactly
+    /// the step, and a silent jump to the nearest kilohertz is a second,
+    /// invisible edit — see `tune_step_row`. On, it is the touch-screen habit of
+    /// tidying a dial left anywhere before working down a band (issue #422).
+    /// Only meaningful with [`Self::tune_step_buttons`].
+    pub tune_step_round_first: bool,
     /// Whether the waterfall's history is drawn through a smoothing filter.
     ///
     /// On — the default, and what it has always done — each screen pixel is
@@ -758,6 +768,7 @@ impl Default for UiSettings {
             // 1 kHz: the round step the operators who asked for this tune in,
             // on a band where the stations sit 3 kHz apart.
             tune_step_hz: 1_000.0,
+            tune_step_round_first: false,
             spectrum_detail: SpectrumDetail::Auto,
             spectrum_gradient: true,
             gradient_top: [64, 0, 0],   // dark red
