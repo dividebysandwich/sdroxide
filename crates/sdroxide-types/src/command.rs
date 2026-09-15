@@ -1099,6 +1099,11 @@ pub enum Command {
     /// Appended for the usual reason — postcard numbers variants by position.
     ProfileDelete(String),
 
+    /// Set the receive tone (low/peak/high shelves on the demodulated audio).
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    SetRxTone(Box<crate::TxEqState>),
+
     /// Turn the time-shift replay on or off. On, the receiver plays the last
     /// couple of minutes instead of live, so a station identification or a
     /// read-out frequency can be heard again; off returns to now.

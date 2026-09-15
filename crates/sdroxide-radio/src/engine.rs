@@ -2755,6 +2755,10 @@ struct Engine {
     /// [`sdroxide_dsp::ReplayBuffer`].
     replay: ReplayBuffer,
     replay_buf: Vec<f32>,
+    /// The listener's receive tone, applied to the speaker audio. A filter
+    /// kept alive across blocks; reconfigured only when the settings change.
+    rx_eq: ParametricEq,
+    rx_eq_cfg: sdroxide_types::TxEqState,
     /// Right channel of the main chain, non-empty only while WFM stereo is
     /// decoding and the sub receiver is off — or while the binaural widener
     /// below is placing the passband across the two ears.
@@ -3976,6 +3980,8 @@ fn engine_thread(
         // is what the buffer holds; rebuilt if that rate changes.
         replay: ReplayBuffer::new((REPLAY_SECONDS * audio_out_rate) as usize),
         replay_buf: Vec::new(),
+        rx_eq: ParametricEq::new(),
+        rx_eq_cfg: sdroxide_types::TxEqState::default(),
         binaural: None,
         bin_left: Vec::new(),
         speech_duck: 1.0,
@@ -5093,6 +5099,15 @@ impl Engine {
             None if !self.main_play_r_rec.is_empty() => Some(&self.main_play_r_rec),
             None => None,
         };
+        // The listener's receive tone, in front of the speakers (and the
+        // time-shift window, so a replay sounds like what was heard).
+        if self.state.rx_tone != self.rx_eq_cfg {
+            self.rx_eq.configure(&self.state.rx_tone, self.audio_out_rate);
+            self.rx_eq_cfg = self.state.rx_tone.clone();
+        }
+        if self.state.rx_tone.enabled {
+            self.rx_eq.process(&mut self.main_play);
+        }
         // Feed the time-shift window from the live audio, then play from it
         // instead of from live while replay is on. The recorder keeps the live
         // tap either way: replay is for the speakers, not the archive.
@@ -9235,6 +9250,10 @@ impl Engine {
                 // nothing in the receiver changes, only the channel the 11 m
                 // dial reads in.
                 self.emit_station_config();
+            }
+            SetRxTone(tone) => {
+                self.state.rx_tone = *tone;
+                self.emit_state();
             }
             SetReplay(on) => {
                 self.replay.set_on(on);

@@ -255,6 +255,31 @@ impl SdroxideApp {
                         );
                     });
                 });
+                // The listener's tone control: shelves on the demodulated
+                // audio, in front of the speakers. Broadcast audio wants a
+                // tone control the ham speech chain never needed.
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Tone").size(11.0).color(crate::theme::gray(150)));
+                    let mut tone = self.state.rx_tone.clone();
+                    let before = tone.clone();
+                    crate::chrome::checkbox(ui, &mut tone.enabled, "on");
+                    let mut band = |ui: &mut egui::Ui, name: &str, b: &mut sdroxide_types::TxEqBand| {
+                        ui.label(RichText::new(name).size(11.0));
+                        ui.add(
+                            egui::DragValue::new(&mut b.gain_db)
+                                .speed(0.2)
+                                .range(-12.0..=12.0)
+                                .suffix(" dB"),
+                        );
+                    };
+                    band(ui, "Bass", &mut tone.low);
+                    band(ui, "Mid", &mut tone.mid);
+                    band(ui, "Treble", &mut tone.high);
+                    if tone != before {
+                        self.state.rx_tone = tone.clone();
+                        cmds.push(Command::SetRxTone(Box::new(tone)));
+                    }
+                });
                 if self.swl_edit.is_some() {
                     ui.add_space(4.0);
                     self.swl_entry_form(ui);
