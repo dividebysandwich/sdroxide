@@ -2663,9 +2663,152 @@ pub fn qso_log_to_text(records: &[QsoRecord]) -> String {
     out
 }
 
+/// A CSV field, quoted only where it has to be — a comma, a quote or a line
+/// break. A decoded message is usually bare text, but free-text and compound
+/// calls can carry any of those, and a spreadsheet is entitled to one column
+/// per cell.
+fn csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+/// `slot_utc` as `YYYY-MM-DD HH:MM:SS`, UTC.
+fn decode_utc(dec: &Decode) -> String {
+    let (date, time) = adif_date_time(dec.slot_utc);
+    format!(
+        "{}-{}-{} {}:{}:{}",
+        &date[0..4],
+        &date[4..6],
+        &date[6..8],
+        &time[0..2],
+        &time[2..4],
+        &time[4..6]
+    )
+}
+
+/// The decode list as CSV: one row per decode, for a spreadsheet or a quick
+/// look in a text editor.
+///
+/// This is the short-wave listener's export. Nothing in the decode list is a
+/// contact, so there is no [`QsoRecord`] to write and the logbook's own ADIF and
+/// text exports have nothing to say about it (issue #433). `dial_hz` and `mode`
+/// come from the receiver: a [`Decode`] carries the audio offset, not the
+/// absolute frequency, so the signal is the dial plus `audio_hz`.
+pub fn digi_decodes_to_csv(decodes: &[Decode], dial_hz: f64, mode: Mode) -> String {
+    let mut out = String::from("utc,snr_db,dt,freq_mhz,band,mode,call,to,grid,cq,message\r\n");
+    for d in decodes {
+        let freq = dial_hz + d.audio_hz as f64;
+        out.push_str(&format!(
+            "{},{},{:.2},{:.6},{},{},{},{},{},{},{}\r\n",
+            decode_utc(d),
+            d.snr_db,
+            d.dt,
+            freq / 1e6,
+            crate::Band::containing(freq).label(),
+            mode.label(),
+            csv_field(d.from.as_deref().unwrap_or("")),
+            csv_field(d.to.as_deref().unwrap_or("")),
+            d.grid.as_deref().unwrap_or(""),
+            if d.is_cq { "CQ" } else { "" },
+            csv_field(&d.message),
+        ));
+    }
+    out
+}
+
+/// One received decode as a bare ADIF record, ending in `<EOR>`.
+///
+/// A received report, not a contact: there is no report *sent*, no serial and no
+/// operator at this end, so those tags are left out rather than filled with a
+/// placeholder that would claim a QSO happened. `CALL` is the station heard —
+/// what an SWL logs — and the decode's own figures ride in `APP_` fields ADIF
+/// reserves for exactly this, with the message in `COMMENT`.
+pub fn digi_decode_to_adif_record(d: &Decode, dial_hz: f64, mode: Mode) -> String {
+    let mut out = String::new();
+    let freq = dial_hz + d.audio_hz as f64;
+    let (date, time) = adif_date_time(d.slot_utc);
+    if let Some(call) = &d.from {
+        out.push_str(&adif_field("CALL", call));
+    }
+    out.push_str(&adif_field("QSO_DATE", &date));
+    out.push_str(&adif_field("TIME_ON", &time));
+    out.push_str(&adif_field("BAND", adif_band(freq)));
+    out.push_str(&adif_field("MODE", mode.label()));
+    out.push_str(&adif_field("FREQ", &format!("{:.6}", freq / 1e6)));
+    if let Some(g) = &d.grid {
+        out.push_str(&adif_field("GRIDSQUARE", g));
+    }
+    if !d.message.trim().is_empty() {
+        out.push_str(&adif_field("COMMENT", &d.message));
+    }
+    out.push_str(&adif_field("APP_SDROXIDE_SNR", &d.snr_db.to_string()));
+    out.push_str(&adif_field("APP_SDROXIDE_DT", &format!("{:.2}", d.dt)));
+    out.push_str("<EOR>");
+    out
+}
+
+/// The whole decode list as an ADIF file.
+pub fn digi_decodes_to_adif(decodes: &[Decode], dial_hz: f64, mode: Mode) -> String {
+    let mut out = String::from(
+        "ADIF export from sdroxide — received reports (SWL)\r\n\
+         <ADIF_VER:5>3.1.4\r\n<PROGRAMID:8>sdroxide\r\n<EOH>\r\n",
+    );
+    for d in decodes {
+        out.push_str(&digi_decode_to_adif_record(d, dial_hz, mode));
+        out.push_str("\r\n");
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #433: an SWL's received reports export without a contact to hang
+    /// them on — a CSV for a spreadsheet, and an ADIF whose records are honest
+    /// about having sent nothing.
+    #[test]
+    fn swl_decodes_export_as_csv_and_received_adif() {
+        let d = Decode {
+            slot_utc: 1_760_000_000,
+            snr_db: -7,
+            dt: 0.2,
+            audio_hz: 1500.0,
+            message: "CQ 19AT250 JO22".into(),
+            to: None,
+            from: Some("19AT250".into()),
+            grid: Some("JO22".into()),
+            is_cq: true,
+            cq_to: None,
+            free_text: false,
+            rr73_to: None,
+        };
+        let csv = digi_decodes_to_csv(std::slice::from_ref(&d), 27_265_000.0, Mode::Ft8);
+        assert!(
+            csv.starts_with("utc,snr_db,dt,freq_mhz,band,mode,call,to,grid,cq,message"),
+            "{csv}"
+        );
+        // The frequency is the dial plus the audio offset, and the band is the
+        // member band CB decodes live in — the one ADIF cannot name.
+        assert!(csv.contains("27.266500"), "dial + audio: {csv}");
+        assert!(csv.contains(",11M,FT8,19AT250,"), "band, mode and caller: {csv}");
+
+        // A message with a comma is quoted; a spreadsheet is one cell per column.
+        let mut comma = d.clone();
+        comma.message = "CQ, TEST".into();
+        let csv = digi_decodes_to_csv(&[comma], 27_265_000.0, Mode::Ft8);
+        assert!(csv.contains("\"CQ, TEST\""), "a comma must be quoted: {csv}");
+
+        let adif = digi_decodes_to_adif(&[d], 27_265_000.0, Mode::Ft8);
+        assert!(adif.contains("<CALL:7>19AT250"), "the heard call: {adif}");
+        assert!(adif.contains("<MODE:3>FT8"), "{adif}");
+        assert!(adif.contains("APP_SDROXIDE_SNR"), "the decode's own figure: {adif}");
+        assert!(!adif.contains("RST_SENT"), "an SWL report sends nothing: {adif}");
+        assert!(!adif.contains("RST_RCVD"), "and made no contact: {adif}");
+    }
 
     #[test]
     fn a_band_keyed_offset_survives_the_config_file() {
