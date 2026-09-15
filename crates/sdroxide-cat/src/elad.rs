@@ -222,7 +222,7 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Adsb
         | Mode::Vdl2
         | Mode::Ais => '4',
-        Mode::Am | Mode::Sam | Mode::Dsb | Mode::Isb | Mode::Drm => '5',
+        Mode::Am | Mode::Sam | Mode::Dsb | Mode::Isb | Mode::Drm | Mode::Cquam => '5',
         // Everything else is upper sideband: the digital and keyboard modes,
         // and the receive-only modes that have no transmit side at all.
         Mode::Usb

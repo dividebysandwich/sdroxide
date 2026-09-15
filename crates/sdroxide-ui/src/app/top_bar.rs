@@ -5757,6 +5757,8 @@ fn rx_chips(mode: Mode) -> Vec<RxChip> {
     match mode {
         // Only WFM has a stereo pilot to lock or an RDS subcarrier to decode.
         Mode::Wfm => chips.extend([RxChip::Stereo, RxChip::Rds]),
+        // C-QUAM has the pilot too, but no RDS.
+        Mode::Cquam => chips.push(RxChip::Stereo),
         // Only DRM has a decoder whose state is worth a light of its own.
         Mode::Drm => chips.push(RxChip::Drm),
         // Only NFM carries a sub-audible tone.
@@ -6324,6 +6326,7 @@ fn band_mode_menu(
             Mode::Cw,
             Mode::Am,
             Mode::Sam,
+            Mode::Cquam,
             Mode::Nfm,
             Mode::Wfm,
             // DRM belongs with the analog modes rather than under "Digital"

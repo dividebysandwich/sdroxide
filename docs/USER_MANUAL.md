@@ -44,7 +44,7 @@ or connects to a remote sdroxide server.
   selectable waterfall colour schemes (including an Icom-style palette).
 - **Dual VFO (A/B)** with split operation, VFO swap/copy, and an independently
   tunable sub-receiver with its own mode and filter.
-- **All the common modes:** LSB, USB, CW, AM, SAM, NFM, WFM, DRM, DIGU, DIGL, DSB,
+- **All the common modes:** LSB, USB, CW, AM, SAM, C-QUAM, NFM, WFM, DRM, DIGU, DIGL, DSB,
   **ISB** (independent sideband — two services on one carrier, one in each ear), a
   spectrum-only mode (SPEC), the automatic digital modes **FT8**, **FT4** and
   **FT2**, the
@@ -349,7 +349,7 @@ popup with four rows:
   reaches for, on their own row above the full list so they are one click rather
   than a hunt through the digital modes. `FM` here is **NFM** (narrow); the
   broadcast band's own button comes up **WFM** (see below).
-- **MODE:** `LSB USB CW AM SAM NFM WFM DRM DIGU DIGL DSB ISB SPEC`.
+- **MODE:** `LSB USB CW AM SAM C-QUAM NFM WFM DRM DIGU DIGL DSB ISB SPEC`.
 - **DIGITAL:** `FT8 FT4 FT2 JS8 WSPR PSK RTTY RTTY-FM OLIVIA THOR FSQ ATCHAT HELL SSTV SSTV-FM NAVTEX RIFP RFPAINT RADE PACKET PACKET-HF APRS ADS-B VDL2 AIS` (see
   [Digital modes](#3-digital-modes)).
 
@@ -13692,7 +13692,7 @@ sends them.
 | `--freq <HZ>` | Center frequency in Hz (default: where the last session was left, or 14,200,000 on a first run). |
 | `--rate <HZ>` | Sample rate in Hz (default: from config). |
 | `--gain <DB>` | Overall RX gain in dB (default: hardware AGC or a moderate value). |
-| `--mode <MODE>` | Initial mode (USB, LSB, CW, AM, SAM, NFM, WFM, DIGU, DIGL, DSB, ISB, SPEC, FT8, FT4, FT2, PSK, RTTY, OLIVIA, THOR, FSQ, SSTV, RIFP, WEFAX, RFPAINT, RADE, DRM, ADS-B, VDL2, AIS). Default: the mode the last session was left in. |
+| `--mode <MODE>` | Initial mode (USB, LSB, CW, AM, SAM, C-QUAM, NFM, WFM, DIGU, DIGL, DSB, ISB, SPEC, FT8, FT4, FT2, PSK, RTTY, OLIVIA, THOR, FSQ, SSTV, RIFP, WEFAX, RFPAINT, RADE, DRM, ADS-B, VDL2, AIS). Default: the mode the last session was left in. |
 | `--antenna <NAME>` | RX antenna port, as the device names it (LNAH, TX/RX — `--probe` lists them). Default: the port the last session was left on, and failing that whatever the driver selects. |
 | `--tx-antenna <NAME>` | TX antenna port, likewise (BAND1, BAND2). |
 | `--server` | Run as a server (web client + WebSocket streaming backend). |
@@ -15253,6 +15253,7 @@ using. Bind them under **Speech** on the Controls tab:
 | CW | Morse (continuous wave). Decoded on a waterfall cursor, with type-ahead keyboard sending — see [2.14](#214-cw-decoding-and-keyboard-sending). |
 | AM | Amplitude modulation. |
 | SAM | Synchronous AM. |
+| C-QUAM | C-QUAM, Motorola's AM stereo for the medium wave: AM carrying the sum and the stereo difference as carrier phase, with a 25 Hz pilot for the stereo lamp and the mono blend. Receive only. See [`cquam-design.md`](cquam-design.md). |
 | NFM / WFM | Narrow / wide FM. WFM decodes broadcast stereo and RDS/RBDS automatically. |
 | DIGU / DIGL | Data over USB / LSB (general digital). |
 | DSB | Double sideband. |

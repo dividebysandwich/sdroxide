@@ -250,6 +250,17 @@ pub enum Mode {
     /// decoded/encoded by `sdroxide-atchat`. Appended for the same reason as
     /// [`Mode::Hell`].
     AtChat,
+    /// C-QUAM — Motorola's AM stereo, as used on the medium-wave broadcast
+    /// band. Conventional AM for the sum (`L + R`, so an envelope detector
+    /// still hears mono) with the difference carried as carrier *phase*
+    /// modulation, plus a 25 Hz pilot that only tells the receiver stereo is
+    /// present — unlike FM's, it is not needed to rebuild the audio.
+    ///
+    /// Receive only, and SWL in intent: it is a broadcast service, not an
+    /// amateur one, so it stays a mode of its own rather than changing what
+    /// [`Mode::Am`] and [`Mode::Sam`] already do. Appended for the same reason
+    /// as [`Mode::Hell`].
+    Cquam,
 }
 
 /// The bands on which a mode that keeps phone practice rides the lower
@@ -270,12 +281,13 @@ const PHONE_LSB_BANDS: [(f64, f64); 3] =
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 39] = [
+    pub const ALL: [Mode; 40] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
         Mode::Am,
         Mode::Sam,
+        Mode::Cquam,
         Mode::Nfm,
         Mode::Wfm,
         Mode::Drm,
@@ -634,7 +646,16 @@ impl Mode {
         // ISB is receive-only by capability: transmitting it wants two
         // modulators driving one linear amplifier, and no radio sdroxide
         // drives is wired that way.
-        matches!(self, Mode::Wefax | Mode::Adsb | Mode::Navtex | Mode::Vdl2 | Mode::Isb | Mode::Ais)
+        matches!(
+            self,
+            Mode::Wefax
+                | Mode::Adsb
+                | Mode::Navtex
+                | Mode::Vdl2
+                | Mode::Isb
+                | Mode::Ais
+                | Mode::Cquam
+        )
     }
 
     /// True for Hellschreiber. Forks the digi panel to the scrolling raster UI:
@@ -673,6 +694,7 @@ impl Mode {
             Mode::Cw => "CW",
             Mode::Am => "AM",
             Mode::Sam => "SAM",
+            Mode::Cquam => "C-QUAM",
             Mode::Nfm => "NFM",
             Mode::Wfm => "WFM",
             Mode::Digu => "DIGU",
@@ -719,7 +741,7 @@ impl Mode {
             Mode::Usb | Mode::AtChat => (150.0, 2850.0),
             // CW passband is centered on the sidetone pitch (default 700 Hz).
             Mode::Cw => (450.0, 950.0),
-            Mode::Am | Mode::Sam => (-5000.0, 5000.0),
+            Mode::Am | Mode::Sam | Mode::Cquam => (-5000.0, 5000.0),
             // DRM's carrier set is symmetric about the dial and 10 kHz
             // wide in the occupancy almost every broadcast uses. This
             // does not gate the decode — the transmission says how wide
@@ -953,7 +975,7 @@ impl Mode {
             // ISB joins them for the same reason DSB does: the carrier is on
             // the dial and a rig with an I.F. output has no separate setting
             // for it.
-            Mode::Am | Mode::Sam | Mode::Dsb | Mode::Drm | Mode::Isb => C::Am,
+            Mode::Am | Mode::Sam | Mode::Cquam | Mode::Dsb | Mode::Drm | Mode::Isb => C::Am,
             // WFM is FM's carrier position too; a rig with an I.F. output has
             // no such mode, so nothing here is lost by grouping them.
             // ADS-B joins them for the same reason WFM does: no radio with an
@@ -1043,7 +1065,7 @@ impl Mode {
     /// took the audio away with the whistle (issue #434), and DRM's decoded
     /// audio is the same material.
     pub fn auto_notch_applies(self) -> bool {
-        !matches!(self, Mode::Am | Mode::Sam | Mode::Wfm | Mode::Drm)
+        !matches!(self, Mode::Am | Mode::Sam | Mode::Cquam | Mode::Wfm | Mode::Drm)
     }
 
     /// Furthest a filter edge may be dragged from the carrier — bounded by
@@ -1092,6 +1114,7 @@ impl Mode {
             self,
             Mode::Am
                 | Mode::Sam
+                | Mode::Cquam
                 | Mode::Dsb
                 // Both sidebands, always the same width: dragging one edge
                 // has to move the other, or one ear ends up wider than the
@@ -1127,7 +1150,7 @@ impl Mode {
                 ("500", 450.0, 950.0),
                 ("1k", 200.0, 1200.0),
             ],
-            Mode::Am | Mode::Sam => {
+            Mode::Am | Mode::Sam | Mode::Cquam => {
                 &[("6k", -3000.0, 3000.0), ("10k", -5000.0, 5000.0), ("16k", -8000.0, 8000.0)]
             }
             // Both sidebands at once, so the label is the width of *each* one
@@ -1722,7 +1745,7 @@ mod tests {
         // dropped and nothing listed twice.
         // The last variant *by discriminant*, which is the one appended most
         // recently — not the one that reads last in the picker.
-        let last = Mode::AtChat as u8;
+        let last = Mode::Cquam as u8;
         for i in 0..=last {
             let present = Mode::ALL.iter().filter(|m| **m as u8 == i).count();
             assert_eq!(present, 1, "discriminant {i} appears {present} times in Mode::ALL");

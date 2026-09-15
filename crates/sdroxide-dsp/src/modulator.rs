@@ -67,6 +67,10 @@ pub fn make_modulator(mode: Mode, rate: f64, passband: (f32, f32)) -> Option<Box
         // modulator means the transmit gate refuses the over rather than
         // putting something else on the air under an ISB label.
         Mode::Isb => None,
+        // C-QUAM is receive only — see the decoder. No modulator means the
+        // transmit gate refuses the over rather than putting a plain AM signal
+        // on the air under a stereo label.
+        Mode::Cquam => None,
         // VHF SSTV modulates the carrier through the voice FM path — see the
         // demodulator, which is its other half: the picture goes into an FM
         // transmitter exactly as speech would.

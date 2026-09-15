@@ -67,6 +67,7 @@ zeroes line up with the printed channel.
 | **11 m / citizens' band** | not present | on the bar (26.965–27.860 MHz): WSJT-CB interop, country flags, digimode channels, transmit opt-in behind a one-time warning |
 | **CB channel plans** | — | per-country channels on 11 m — World/freeband, CEPT/EU, Germany 80 ch, UK 27/81, USA, Australia — with the channel number shown on the panadapter |
 | **Broadcast bands** | general coverage only | **LW / MW / SW / FM** on the selector and in the band plan; picking **FM** comes up **WFM** |
+| **C-QUAM AM stereo** | — | decodes Motorola **C-QUAM** on the medium wave — its own receive-only mode, with a stereo lamp and a mono blend when the pilot fades (not yet verified against a real signal) |
 | **SWL mode** | — | a toggle that hides every transmit control |
 | **Simple interface** | — | a toggle that hides the advanced chips (3D, skimmers, layers, awards, satellites, ISM, Winlink), leaving the CB/SWL controls; the band/mode menu leads with **AM · FM · USB · LSB** |
 | **Station profiles** | — | save and re-apply a whole working setup in one click — dials and VFOs, mode and filters, gains, drive and antennas, the digital identity and the band stacks |
@@ -144,7 +145,8 @@ One binary, three ways to run it:
   floor/ceiling fitted to the signals currently on screen — refitting on a band
   change, after a pan or zoom, and when the levels drift, eased in rather than
   switched.
-- **Modes** — SSB (USB/LSB), CW, AM, SAM, NFM (with **CTCSS/DCS** decoding and
+- **Modes** — SSB (USB/LSB), CW, AM, SAM, **C-QUAM** (AM stereo on the medium
+  wave), NFM (with **CTCSS/DCS** decoding and
   tone squelch), WFM (with broadcast
   pilot-tone **stereo** and **RDS/RBDS**), DSB, **ISB** (independent sideband —
   the two sidebands are two different transmissions, one to each ear), DIGU/DIGL, a

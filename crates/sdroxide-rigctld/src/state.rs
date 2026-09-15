@@ -119,7 +119,7 @@ pub fn to_hamlib_mode(m: Mode) -> &'static str {
         // the carrier is on the dial and the channel is about as wide.
         // It is also how the signal would reach an outboard decoder — off
         // a receiver set to AM.
-        Mode::Am | Mode::Drm => "AM",
+        Mode::Am | Mode::Drm | Mode::Cquam => "AM",
         Mode::Sam => "SAM",
         Mode::Nfm => "FM",
         // RIFP, VHF packet and VHF SSTV are data on an FM carrier, not on a

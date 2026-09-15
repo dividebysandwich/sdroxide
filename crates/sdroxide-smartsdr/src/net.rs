@@ -1628,7 +1628,7 @@ fn mode_to_flex(m: Mode) -> &'static str {
     match m {
         Mode::Lsb => "LSB",
         Mode::Cw => "CW",
-        Mode::Am | Mode::Drm => "AM",
+        Mode::Am | Mode::Drm | Mode::Cquam => "AM",
         Mode::Sam => "SAM",
         Mode::Dsb | Mode::Isb => "DSB",
         // The radio has one FM; wideband FM is ours to do from the IQ.

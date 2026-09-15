@@ -16388,7 +16388,7 @@ fn rig_mode_class(m: Mode) -> u8 {
         | Mode::Spec => 1,
         // DRM sits on the dial in a channel about as wide as AM's, and a
         // rig has no DRM setting to report back — see `to_hamlib_mode`.
-        Mode::Am | Mode::Sam | Mode::Dsb | Mode::Isb | Mode::Drm => 2,
+        Mode::Am | Mode::Sam | Mode::Dsb | Mode::Isb | Mode::Drm | Mode::Cquam => 2,
         Mode::Cw => 3,
         // RIFP, VHF packet, APRS, VHF SSTV and VHF RTTY are data on an FM
         // carrier, so a rig reporting plain FM is still where we left it.

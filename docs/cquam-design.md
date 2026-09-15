@@ -5,6 +5,12 @@ broadcast band, as a receive-only SWL feature of this fork. Written before any
 code; the aim is to fix the signal model, the integration points and the test
 plan, and to name the risks while they are still cheap to change.
 
+> **Status:** implemented. `Mode::Cquam` (receive-only) exists, with the
+> decoder in `crates/sdroxide-dsp/src/demod.rs` and synthetic round-trip,
+> pilot and carrier-inversion tests that pass. It is **unverified against a
+> real signal** until the 918 kHz capture below is decoded, so the blend
+> thresholds and the sign conventions are still first-cut.
+
 ## Scope
 
 - **Receive only**, first pass. C-QUAM *transmit* (an encoder, a 25 Hz pilot,

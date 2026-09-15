@@ -555,7 +555,7 @@ fn candidates(m: Mode) -> &'static [&'static str] {
             &["USB"]
         }
         Mode::Cw => &["CW"],
-        Mode::Am | Mode::Sam | Mode::Drm => &["AM"],
+        Mode::Am | Mode::Sam | Mode::Drm | Mode::Cquam => &["AM"],
         Mode::Dsb => &["DSB"],
         // No rig has an ISB position; DSB is the same filter and AM is the
         // fallback every rig does have.

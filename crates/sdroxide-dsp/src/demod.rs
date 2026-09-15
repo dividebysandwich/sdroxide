@@ -157,6 +157,7 @@ pub fn make_demod(mode: Mode, channel_rate: f64) -> Option<Box<dyn Demodulator>>
         Mode::Am => Some(Box::new(AmDemod::new(channel_rate, lo, hi))),
         Mode::Isb => Some(Box::new(IsbDemod::new(channel_rate, lo, hi))),
         Mode::Sam => Some(Box::new(SamDemod::new(channel_rate, lo, hi))),
+        Mode::Cquam => Some(Box::new(CquamDemod::new(channel_rate, lo, hi))),
         // VHF SSTV takes the NFM voice path rather than the flat packet one,
         // and deliberately: on 2 m a picture is sent through an ordinary FM
         // transceiver's microphone input and received by another one, so what
@@ -561,6 +562,180 @@ impl Demodulator for SamDemod {
 
     fn power_dbfs(&self) -> f32 {
         self.power.dbfs()
+    }
+}
+
+/// Pilot strength (radians of phase modulation) below which the difference is
+/// faded out to mono, and above which stereo is fully restored.
+///
+/// The C-QUAM pilot is a few percent of modulation, so these are small phase
+/// deviations. They are first-cut values: the blend curve wants tuning against
+/// a real C-QUAM signal (the 918 kHz daytime capture in
+/// `docs/cquam-design.md`), which is also what confirms the sign conventions.
+const CB_PILOT_MONO_RAD: f32 = 0.005;
+const CB_PILOT_LOCK_RAD: f32 = 0.020;
+
+/// C-QUAM: Motorola's AM stereo, as used on the medium-wave broadcast band.
+///
+/// Conventional AM carries the sum (`L + R`) in the envelope, and the
+/// difference rides as carrier *phase* modulation. A synchronous carrier
+/// detector splits the signal into an in-phase arm (`L + R`) and a quadrature
+/// arm; their phase, `atan2(Q, I)`, is the difference — exactly, and
+/// independent of the envelope, because that is what the encoder's balanced
+/// modulators put on the carrier. The 25 Hz pilot is not needed to rebuild the
+/// audio (unlike FM's): it only says "stereo", so here it drives the indicator
+/// and the mono blend rather than the decode.
+///
+/// Output is mid/side at half amplitude, as [`Demodulator`] expects: `out` is
+/// `(L + R)/2` and [`Demodulator::take_side`] is `(L - R)/2`, so the caller's
+/// `L = M + S`, `R = M - S` matrix is right.
+///
+/// Receive only, and a broadcast service rather than an amateur one — see
+/// [`Mode::Cquam`].
+pub struct CquamDemod {
+    rate: f64,
+    fir: ComplexFir,
+    /// Removes the carrier term (the DC in the in-phase arm), leaving `L + R`.
+    dc: DcBlock,
+    /// Carrier PLL. Deliberately slower than [`SamDemod`]'s: the phase
+    /// modulation *is* the difference signal, so a loop that could track audio
+    /// would erase it.
+    phase: f64,
+    freq: f64,
+    alpha: f64,
+    beta: f64,
+    max_freq: f64,
+    /// Slow mean of the in-phase arm. A PLL can lock 180° off, which would
+    /// invert both arms and swap `L` and `R`; this resolves it by flipping the
+    /// arms, without disturbing the loop.
+    i_mean: f64,
+    /// Free-running 25 Hz reference the pilot is correlated against.
+    pilot_phase: f64,
+    pilot_i: f64,
+    pilot_q: f64,
+    /// Smoothed pilot amplitude, in radians of phase modulation.
+    pilot_amp: f32,
+    /// One-pole high-pass sections that take the pilot (and any DC) out of the
+    /// difference; broadcast `L - R` starts well above 25 Hz.
+    side_hp: [DcBlock; 2],
+    /// Operator override: `false` forces mono regardless of the pilot.
+    enabled: bool,
+    side_out: Vec<f32>,
+    filtered: Vec<Complex32>,
+    power: PowerMeter,
+}
+
+impl CquamDemod {
+    pub fn new(rate: f64, lo: f32, hi: f32) -> Self {
+        // Loop natural frequency 5 Hz, damping 0.707 — narrow enough that the
+        // audio phase modulation, pilot included, is not tracked as carrier
+        // drift and erased.
+        let wn = std::f64::consts::TAU * 5.0 / rate;
+        CquamDemod {
+            rate,
+            fir: ComplexFir::new(bandpass_taps(PASSBAND_TAPS, lo as f64, hi as f64, rate)),
+            dc: DcBlock::new(20.0, rate),
+            phase: 0.0,
+            freq: 0.0,
+            alpha: 2.0 * 0.707 * wn,
+            beta: wn * wn,
+            max_freq: std::f64::consts::TAU * 200.0 / rate,
+            i_mean: 1.0,
+            pilot_phase: 0.0,
+            pilot_i: 0.0,
+            pilot_q: 0.0,
+            pilot_amp: 0.0,
+            side_hp: [DcBlock::new(45.0, rate), DcBlock::new(45.0, rate)],
+            enabled: true,
+            side_out: Vec::new(),
+            filtered: Vec::new(),
+            power: PowerMeter::new(),
+        }
+    }
+}
+
+impl Demodulator for CquamDemod {
+    fn process(&mut self, iq: &[Complex32], out: &mut Vec<f32>) {
+        self.filtered.clear();
+        self.fir.process(iq, &mut self.filtered);
+        self.power.update(&self.filtered);
+        self.side_out.clear();
+        self.side_out.reserve(self.filtered.len());
+
+        let dphi = std::f64::consts::TAU * 25.0 / self.rate;
+        for &z in &self.filtered {
+            let r = Complex32::new(self.phase.cos() as f32, -(self.phase.sin() as f32));
+            let v = z * r;
+            let err = (v.im as f64).atan2(v.re as f64);
+            self.freq = (self.freq + self.beta * err).clamp(-self.max_freq, self.max_freq);
+            self.phase += self.freq + self.alpha * err;
+            self.phase %= std::f64::consts::TAU;
+
+            // Resolve the loop's 180° ambiguity: the in-phase arm must come out
+            // positive (the envelope is), so flip the arms — not the loop — when
+            // the slow mean says the lock is inverted.
+            self.i_mean += 1.0e-5 * (v.re as f64 - self.i_mean);
+            let pol = if self.i_mean < 0.0 { -1.0 } else { 1.0 };
+            let i = pol * v.re as f64;
+            let q = pol * v.im as f64;
+
+            out.push(self.dc.run(i as f32) * 0.5);
+
+            // The difference is the carrier phase; the pilot rides on it and is
+            // high-passed out below, but is measured here, ahead of that.
+            let phi = q.atan2(i);
+            self.pilot_phase -= dphi;
+            if self.pilot_phase < -std::f64::consts::PI {
+                self.pilot_phase += std::f64::consts::TAU;
+            }
+            let (pc, ps) = (self.pilot_phase.cos(), self.pilot_phase.sin());
+            self.pilot_i += 2.0e-3 * (phi * pc - self.pilot_i);
+            self.pilot_q += 2.0e-3 * (phi * ps - self.pilot_q);
+            let amp = (self.pilot_i * self.pilot_i + self.pilot_q * self.pilot_q).sqrt() as f32;
+            self.pilot_amp += 0.02 * (amp - self.pilot_amp);
+
+            let mut d = phi as f32;
+            for hp in &mut self.side_hp {
+                d = hp.run(d);
+            }
+            self.side_out.push(d * 0.5);
+        }
+    }
+
+    fn set_filter(&mut self, lo: f32, hi: f32) {
+        self.fir.set_taps(bandpass_taps(PASSBAND_TAPS, lo as f64, hi as f64, self.rate));
+    }
+
+    fn audio_rate(&self) -> f64 {
+        self.rate
+    }
+
+    fn power_dbfs(&self) -> f32 {
+        self.power.dbfs()
+    }
+
+    fn take_side(&mut self, out: &mut Vec<f32>) -> bool {
+        if !self.enabled || self.side_out.is_empty() || self.stereo_blend() <= 1e-4 {
+            return false;
+        }
+        out.extend_from_slice(&self.side_out);
+        true
+    }
+
+    fn stereo_locked(&self) -> bool {
+        self.enabled && self.pilot_amp > CB_PILOT_LOCK_RAD
+    }
+
+    fn stereo_blend(&self) -> f32 {
+        if !self.enabled {
+            return 0.0;
+        }
+        ((self.pilot_amp - CB_PILOT_MONO_RAD) / (CB_PILOT_LOCK_RAD - CB_PILOT_MONO_RAD))
+            .clamp(0.0, 1.0)
+    }
+
+    fn set_stereo_enabled(&mut self, on: bool) {
+        self.enabled = on;
     }
 }
 
@@ -1258,5 +1433,124 @@ impl PilotPll {
     /// Exists for the RDS decoder, whose subcarrier is this frequency tripled.
     fn tracked_hz(&self) -> Option<f64> {
         self.locked.then(|| (self.nominal + self.freq) * self.rate / std::f64::consts::TAU)
+    }
+}
+
+#[cfg(test)]
+mod cquam_tests {
+    use super::*;
+
+    const RATE: f64 = 48_000.0;
+    const TAU: f64 = std::f64::consts::TAU;
+
+    /// Encode L/R as C-QUAM: the sum in the envelope, the difference plus a
+    /// 25 Hz pilot in the carrier phase. Analytical complex baseband, carrier
+    /// at DC, which is what the demodulator is handed.
+    fn encode(l: &[f32], r: &[f32], mod_index: f32, pilot_rad: f64) -> Vec<Complex32> {
+        l.iter()
+            .zip(r)
+            .enumerate()
+            .map(|(n, (&l, &r))| {
+                let m = (l + r) * mod_index;
+                let s = (l - r) * mod_index;
+                let pilot = pilot_rad * (TAU * 25.0 * n as f64 / RATE).sin();
+                let phi = s as f64 + pilot;
+                let env = 1.0 + m as f64;
+                Complex32::new((env * phi.cos()) as f32, (env * phi.sin()) as f32)
+            })
+            .collect()
+    }
+
+    fn tone(n: usize, f: f64, gain: f32) -> Vec<f32> {
+        (0..n).map(|i| gain * (TAU * f * i as f64 / RATE).sin() as f32).collect()
+    }
+
+    /// Goertzel-style magnitude at `f` over `x`.
+    fn mag_at(x: &[f32], f: f64) -> f32 {
+        let w = TAU * f / RATE;
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (i, &s) in x.iter().enumerate() {
+            let p = w * i as f64;
+            re += s as f64 * p.cos();
+            im -= s as f64 * p.sin();
+        }
+        ((re * re + im * im).sqrt() / x.len() as f64) as f32
+    }
+
+    /// Decode a whole capture; returns the sum and (blend-scaled) side, in step.
+    fn run(iq: &[Complex32]) -> (Vec<f32>, Vec<f32>) {
+        let mut d = CquamDemod::new(RATE, -5000.0, 5000.0);
+        let (mut sum, mut side) = (Vec::new(), Vec::new());
+        for chunk in iq.chunks(1024) {
+            let mut o = Vec::new();
+            d.process(chunk, &mut o);
+            let mut s = Vec::new();
+            if d.take_side(&mut s) {
+                side.extend_from_slice(&s);
+            } else {
+                side.extend(std::iter::repeat_n(0.0f32, o.len()));
+            }
+            sum.extend_from_slice(&o);
+        }
+        (sum, side)
+    }
+
+    fn matrix(sum: &[f32], side: &[f32]) -> (Vec<f32>, Vec<f32>) {
+        let l = sum.iter().zip(side).map(|(&m, &s)| m + s).collect();
+        let r = sum.iter().zip(side).map(|(&m, &s)| m - s).collect();
+        (l, r)
+    }
+
+    #[test]
+    fn recovers_both_channels() {
+        let n = RATE as usize * 2;
+        let (l, r) = (tone(n, 1000.0, 0.4), tone(n, 400.0, 0.4));
+        let (sum, side) = run(&encode(&l, &r, 0.3, 0.05));
+        let skip = 24_000;
+        let (lr, rr) = matrix(&sum[skip..], &side[skip..]);
+        let (l1k, l400) = (mag_at(&lr, 1000.0), mag_at(&lr, 400.0));
+        let (r1k, r400) = (mag_at(&rr, 1000.0), mag_at(&rr, 400.0));
+        assert!(l1k > 5.0 * l400, "L should be the 1 kHz tone: {l1k} vs {l400}");
+        assert!(r400 > 5.0 * r1k, "R should be the 400 Hz tone: {r400} vs {r1k}");
+    }
+
+    #[test]
+    fn channel_sense_survives_a_carrier_inversion() {
+        // A PLL may lock 180° off, which inverts both arms; the channels must
+        // still come out the right way round rather than swapping.
+        let n = RATE as usize * 2;
+        let (l, r) = (tone(n, 1000.0, 0.4), tone(n, 400.0, 0.4));
+        let mut iq = encode(&l, &r, 0.3, 0.05);
+        for z in &mut iq {
+            *z = Complex32::new(-z.re, -z.im);
+        }
+        let (sum, side) = run(&iq);
+        let skip = 24_000;
+        let (lr, rr) = matrix(&sum[skip..], &side[skip..]);
+        assert!(mag_at(&lr, 1000.0) > 5.0 * mag_at(&lr, 400.0), "L inverted");
+        assert!(mag_at(&rr, 400.0) > 5.0 * mag_at(&rr, 1000.0), "R inverted");
+    }
+
+    #[test]
+    fn a_carrier_is_stereo_locked_and_a_mono_one_is_not() {
+        let n = RATE as usize;
+        let (l, r) = (tone(n, 1000.0, 0.4), tone(n, 400.0, 0.4));
+        let mut stereo = CquamDemod::new(RATE, -5000.0, 5000.0);
+        for chunk in encode(&l, &r, 0.3, 0.05).chunks(1024) {
+            let mut o = Vec::new();
+            stereo.process(chunk, &mut o);
+        }
+        assert!(stereo.stereo_locked(), "a pilot means stereo, blend {}", stereo.stereo_blend());
+
+        // Same sum, no difference and no pilot: a plain AM signal, which must
+        // not claim stereo.
+        let mut mono = CquamDemod::new(RATE, -5000.0, 5000.0);
+        for chunk in encode(&l, &l, 0.3, 0.0).chunks(1024) {
+            let mut o = Vec::new();
+            mono.process(chunk, &mut o);
+        }
+        assert!(!mono.stereo_locked(), "no pilot means no lock");
+        let mut s = Vec::new();
+        assert!(!mono.take_side(&mut s), "and no difference channel");
     }
 }
