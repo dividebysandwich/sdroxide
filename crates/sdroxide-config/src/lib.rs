@@ -1707,6 +1707,16 @@ pub fn save_qso_log(log: &[sdroxide_types::QsoRecord]) -> Result<(), ConfigError
     save_json("qso_log.json", &log)
 }
 
+/// Favourite broadcast stations (`broadcast_favourites.json`), by name — the
+/// stations a listener comes back to.
+pub fn load_broadcast_favourites() -> Vec<String> {
+    load_json_list("broadcast_favourites.json")
+}
+
+pub fn save_broadcast_favourites(names: &[String]) -> Result<(), ConfigError> {
+    save_json("broadcast_favourites.json", &names)
+}
+
 /// Scheduled recordings (`recording_jobs.json`).
 pub fn load_recording_jobs() -> Vec<sdroxide_types::RecordingJob> {
     load_json_list("recording_jobs.json")

@@ -53,6 +53,29 @@ pub(in crate::app) fn persist_swl_log(_log: &[SwlEntry]) {
     // Written by eframe's periodic `save()` into localStorage.
 }
 
+// ── Broadcast favourites (native: config-dir JSON; wasm: eframe storage) ─────
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_broadcast_favourites(_storage: Option<&dyn eframe::Storage>) -> Vec<String> {
+    sdroxide_config::load_broadcast_favourites()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_broadcast_favourites(storage: Option<&dyn eframe::Storage>) -> Vec<String> {
+    storage.and_then(|s| eframe::get_value(s, "broadcast_favourites")).unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn persist_broadcast_favourites(names: &[String]) {
+    if let Err(e) = sdroxide_config::save_broadcast_favourites(names) {
+        eprintln!("failed to save broadcast favourites: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn persist_broadcast_favourites(_names: &[String]) {
+    // Written by eframe's periodic `save()` into localStorage.
+}
+
 // ── Recording jobs (native: config-dir JSON; wasm: eframe storage) ───────────
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::app) fn load_recording_jobs(_storage: Option<&dyn eframe::Storage>) -> Vec<RecordingJob> {

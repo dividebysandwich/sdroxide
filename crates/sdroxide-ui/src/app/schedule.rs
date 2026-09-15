@@ -30,6 +30,8 @@ pub(in crate::app) struct ScheduleUi {
     /// The filter time as UTC `HHMM`, ignored while `use_now`.
     pub hhmm: u16,
     pub use_now: bool,
+    /// Show only the listener's favourite stations.
+    pub favourites_only: bool,
 }
 
 impl Default for ScheduleUi {
@@ -42,6 +44,7 @@ impl Default for ScheduleUi {
             band: String::new(),
             hhmm: 0,
             use_now: true,
+            favourites_only: false,
         }
     }
 }
@@ -98,6 +101,7 @@ impl SdroxideApp {
                         && contains_ci(&s.lang, &f.lang)
                         && contains_ci(&s.target, &f.target)
                         && (f.band.is_empty() || broadcast::metre_band(s.freq_khz) == Some(f.band.as_str()))
+                        && (!f.favourites_only || self.broadcast_favs.iter().any(|n| n == &s.name))
                 })
                 .cloned()
                 .collect();
@@ -108,6 +112,7 @@ impl SdroxideApp {
 
         let mut tune: Option<BroadcastStation> = None;
         let mut log: Option<BroadcastStation> = None;
+        let mut fav_toggle: Option<(String, bool)> = None;
         let resp = egui::Window::new("SCHEDULE")
             .id(crate::layout::salted_id(ctx, "SCHEDULE"))
             .open(&mut open)
@@ -168,6 +173,18 @@ impl SdroxideApp {
                                 ui.selectable_value(&mut self.schedule.band, b.to_string(), label);
                             }
                         });
+                    if crate::chrome::chip(ui, self.schedule.favourites_only, "★ FAVS")
+                        .on_hover_text("Only the stations you have starred")
+                        .clicked()
+                    {
+                        self.schedule.favourites_only = !self.schedule.favourites_only;
+                    }
+                    ui.separator();
+                    ui.label(
+                        RichText::new(format!("{} UTC", crate::time::utc_clock(now)))
+                            .monospace()
+                            .color(crate::theme::CYAN()),
+                    );
                 });
                 ui.add_space(2.0);
                 ui.label(
@@ -215,6 +232,15 @@ impl SdroxideApp {
                                         .size(11.0)
                                         .color(crate::theme::gray(140)),
                                 );
+                                let fav =
+                                    self.broadcast_favs.iter().any(|n| n == &s.name);
+                                if ui
+                                    .small_button(if fav { "★" } else { "☆" })
+                                    .on_hover_text("Favourite this station")
+                                    .clicked()
+                                {
+                                    fav_toggle = Some((s.name.clone(), !fav));
+                                }
                                 if ui.small_button("TUNE").clicked() {
                                     tune = Some(s.clone());
                                 }
@@ -231,6 +257,14 @@ impl SdroxideApp {
         }
         self.schedule.show = open;
 
+        if let Some((name, on)) = fav_toggle {
+            self.broadcast_favs.retain(|n| n != &name);
+            if on {
+                self.broadcast_favs.push(name);
+                self.broadcast_favs.sort();
+            }
+            crate::app::persist::persist_broadcast_favourites(&self.broadcast_favs);
+        }
         if let Some(s) = tune {
             cmds.push(Command::SetVfo { vfo: Vfo::A, hz: s.freq_hz() });
             cmds.push(Command::SetMode { rx: RxId::Main, mode: s.mode() });

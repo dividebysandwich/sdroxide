@@ -209,6 +209,12 @@ impl SdroxideApp {
             .show(ctx, |ui| {
                 crate::chrome::window_body_bg(ui);
                 ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("{} UTC", crate::time::utc_clock(now_unix())))
+                            .monospace()
+                            .color(crate::theme::CYAN()),
+                    );
+                    ui.separator();
                     if crate::chrome::chip(ui, false, "+ NEW").clicked() {
                         let freq = self.on_air_freq_hz();
                         let mode = self.state.rx[0].mode;

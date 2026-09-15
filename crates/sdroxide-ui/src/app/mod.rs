@@ -65,7 +65,8 @@ use self::panels::fsq::fsq_load_contacts;
 use self::panels::rf_paint::RfPaintUi;
 use self::panels::sstv::SstvUi;
 use self::persist::{
-    load_alerts_settings, load_broadcast_stations, load_qso_log, load_recording_jobs,
+    load_alerts_settings, load_broadcast_favourites, load_broadcast_stations, load_qso_log,
+    load_recording_jobs,
     load_speech_settings, load_swl_log,
     load_ui_settings,
 };
@@ -506,6 +507,8 @@ pub struct SdroxideApp {
     pub(in crate::app) swl_selected: Option<u64>,
     /// The broadcast schedule window and its filters.
     pub(in crate::app) schedule: crate::app::schedule::ScheduleUi,
+    /// Favourite broadcast stations, by name (`broadcast_favourites.json`).
+    pub(in crate::app) broadcast_favs: Vec<String>,
     /// Scheduled recordings: the jobs, and the clock that runs them.
     pub(in crate::app) recording_jobs: Vec<sdroxide_types::RecordingJob>,
     pub(in crate::app) jobs: crate::app::recording_jobs::JobsUi,
@@ -1401,6 +1404,7 @@ impl SdroxideApp {
             swl_edit: None,
             swl_selected: None,
             schedule: Default::default(),
+            broadcast_favs: load_broadcast_favourites(storage),
             recording_jobs: load_recording_jobs(storage),
             jobs: Default::default(),
             log_view: Default::default(),
