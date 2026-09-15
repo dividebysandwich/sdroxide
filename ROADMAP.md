@@ -33,14 +33,13 @@ radio, not a transceiver with the transmit parts hidden.
 
 ## Phase 2 — the broadcast schedule (the centrepiece)
 
-- **Browsable schedule.** The EiBi data is already in the program, labelling the
-  waterfall with each transmitter's UTC window, language and site. Surface it as
-  a list you can search and filter: *"what is on now?"*, *"19:00 UTC, Dutch, to
-  Europe"*, *"everything on 49 m"*.
-- **Tune from the schedule.** Clicking a station tunes the dial, sets AM (or the
-  right mode), and opens a log entry with the station identity filled in.
-- **Favourites.** "My stations", tied to the schedule rather than to bare
-  frequencies.
+**Almost done.** The **SCHEDULE window** browses the EiBi table: filter by a
+chosen UTC time (or now), by metre band, language and target, and by free text
+over name/site/country/language/target. A row can be **TUNE**d, or **LOG**ged
+straight into the reception log with the station, language and site filled in.
+
+What is left: **favourites** — "my stations", tied to the schedule rather than
+to bare frequencies.
 
 ## Phase 3 — listening tools
 
