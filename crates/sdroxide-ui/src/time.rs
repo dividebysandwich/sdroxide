@@ -6,13 +6,13 @@
 //! logbook, the waterfall's time gridlines, and the solar view, whose whole
 //! scene is a function of an explicit timestamp.
 
-/// Current Unix time (UTC seconds).
 /// The current UTC time as a listener reads it, `HH:MM:SS`.
 pub fn utc_clock(unix: i64) -> String {
     let (_, _, _, h, mi, s) = sdroxide_types::utc_ymd_hms(unix);
     format!("{h:02}:{mi:02}:{s:02}")
 }
 
+/// Current Unix time (UTC seconds).
 pub fn now_unix() -> i64 {
     now_unix_f64() as i64
 }
