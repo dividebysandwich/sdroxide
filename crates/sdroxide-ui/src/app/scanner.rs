@@ -83,6 +83,29 @@ impl SdroxideApp {
     }
 
     fn scanner_range(&self, ui: &mut egui::Ui, cfg: &mut ScannerConfig) {
+        // Broadcast bands as one-click ranges: a listener walks 49 m, not a
+        // pair of typed frequencies. The metre table is the schedule's, so the
+        // band named here is the band named there. LW and MW lead it.
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Broadcast band").weak());
+            let mut preset = |ui: &mut egui::Ui, name: &str, lo: f64, hi: f64| {
+                let on = (cfg.range_lo_hz - lo).abs() < 1.0 && (cfg.range_hi_hz - hi).abs() < 1.0;
+                if crate::chrome::chip(ui, on, name)
+                    .on_hover_text(format!("Scan {name} ({:.0}-{:.0} kHz)", lo / 1e3, hi / 1e3))
+                    .clicked()
+                {
+                    cfg.range_lo_hz = lo;
+                    cfg.range_hi_hz = hi;
+                    cfg.mode = Mode::Am;
+                }
+            };
+            preset(ui, "LW", 148_500.0, 283_500.0);
+            preset(ui, "MW", 526_500.0, 1_606_500.0);
+            for &(name, lo, hi) in sdroxide_types::broadcast::METRE_BANDS {
+                preset(ui, name, lo * 1e3, hi * 1e3);
+            }
+        });
+        ui.add_space(4.0);
         egui::Grid::new("scan-range").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
             ui.label("From");
             ui.horizontal(|ui| {
@@ -423,6 +446,21 @@ impl SdroxideApp {
                 (format!("scanning · {here:.6} MHz"), crate::theme::CYAN())
             };
             ui.label(RichText::new(text).color(colour).strong());
+            // Name what it stopped on, from the broadcast table, so a listener
+            // does not have to know 6.185 MHz is Taiwan.
+            if scan.holding
+                && let Some(st) = sdroxide_types::broadcast::at_dial(
+                    &self.broadcast,
+                    self.state.active_freq_hz(),
+                    crate::time::now_unix(),
+                )
+            {
+                ui.label(
+                    RichText::new(format!("· {}", st.name))
+                        .color(crate::theme::TEXT())
+                        .strong(),
+                );
+            }
             crate::chrome::row_tail(ui, |ui| {
                 if crate::chrome::chip(ui, false, "SKIP")
                     .on_hover_text("Move on, and don't stop on this channel again")
