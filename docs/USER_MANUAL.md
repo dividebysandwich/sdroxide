@@ -309,7 +309,8 @@ popup with four rows:
   plans there call it.
 
   **`11M` is the citizens' band** — not an amateur allocation, so the transmit
-  lockout holds there ([6.1](#61-general-station-audio-and-remote-access)).
+  lockout holds there until the station opts in with **Allow transmit on 11 m
+  (CB)** ([6.1](#61-general-station-audio-and-remote-access)).
   **`LW`, `MW`, `SW` and `FM` are the broadcast services** a short-wave
   listener tunes: longwave 148.5–283.5 kHz, medium wave 526.5–1606.5 kHz (530–
   1700 in the Americas), the whole shortwave broadcast span 2.3–26.1 MHz, and
@@ -6197,6 +6198,16 @@ decides every band plan sdroxide draws and enforces:
   panadapter — it does **not** move the band's edges, so switching plans never
   changes what receives or transmits. It is a station setting (`cb_plan` in
   `config.toml`), so every radio and every client at the station agrees.
+
+  **Allow transmit on 11 m (CB)** — sits under the CB plan, and is off by
+  default. The amateur-band lockout refuses every band that is not an amateur
+  allocation and 11 m is one, so this is the deliberate way to open it without
+  dropping the lockout for the broadcast bands too. Switching it on raises a
+  warning the first time — CB is not an amateur band, and its channels, modes,
+  power and required equipment are your country's law — and the permission is
+  not granted until that is confirmed; the confirmation is remembered per
+  screen. It opens 11 m and nothing else. A station setting (`cb_tx_allowed` in
+  `config.toml`), so it travels to every client along with the CB plan.
 - **Longwave, medium wave, shortwave and FM broadcast** — `LW`, `MW`, `SW` and
   `FM` are on the bar for the listener the way 11 m is for the CB operator.
   None is an amateur allocation, so with `tx_ham_only` set (the default) the
@@ -13786,7 +13797,7 @@ and not the station's.
 
 | File | Format | Contents |
 | --- | --- | --- |
-| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), `cb_plan` (`"World"` / `"Cept"` / `"Germany80"` / `"Uk27_81"` / `"Us"` / `"Australia"` — the CB channel plan, [§6.1](#61-general-station-audio-and-remote-access)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **General** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
+| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), `cb_plan` (`"World"` / `"Cept"` / `"Germany80"` / `"Uk27_81"` / `"Us"` / `"Australia"` — the CB channel plan, [§6.1](#61-general-station-audio-and-remote-access)), `cb_tx_allowed` (true only after the 11 m transmit opt-in is confirmed, [§6.1](#61-general-station-audio-and-remote-access)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **General** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
 | `radio.json` | JSON | Which radio interface is selected and everything that configures it — the CAT/HPSDR/TCI/SmartSDR/RTL-SDR/rtl_tcp/SpyServer/RX-888/Airspy HF+/SDRplay/PlutoSDR sections, the converter offset and stated tuning ranges, and the radio's sound-card device names. |
 | `digi.json` | JSON | Digital-mode operator settings: your callsign and grid, FT8/FT4/FT2 TX period, auto-sequence and message templates, the transmit-frequency hold (`hold_tx_freq`) and the per-band transmit offsets it pins (`tx_audio_hz`), the per-mode transmit-audio levels (`tx_audio_levels`, with `tx_audio_level_fm` / `tx_audio_level_ssb` as the level a mode with no entry of its own inherits), and the WSPR beacon's duty cycle, power and band-hop list. |
 | `memories.json` | JSON | Saved memory channels. |
