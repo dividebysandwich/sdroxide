@@ -1,84 +1,55 @@
-# SDR Oxide BUT tuned for CB use!
-
-> **Windows download** — [**installer (`.msi`)**](https://github.com/madmedicnl/sdroxide/releases/download/v1.6.7_CB/sdroxide-v1.6.7_CB-windows-x86_64.msi)
-> · [**portable `.zip`** (contains `sdroxide.exe`)](https://github.com/madmedicnl/sdroxide/releases/download/v1.6.7_CB/sdroxide-v1.6.7_CB-windows-x86_64.zip)
-> · [every platform and build](https://github.com/madmedicnl/sdroxide/releases/latest)
->
-> Linux (AppImage · `.deb` · tarball) and macOS (`.dmg`) are on the same
-> [Releases page](https://github.com/madmedicnl/sdroxide/releases/latest).
+# SDR Oxide — the SWL edition
 
 > **This is a fork.** It is [sdroxide](https://github.com/dividebysandwich/sdroxide)
-> — the **amateur ("ham") radio** transceiver by dividebysandwich — with a
-> **CB / shortwave-listener** focus layered on top. The Ham version is upstream;
-> everything here is upstream's program plus the citizen-band and listener
-> additions described below, and credit for the original is entirely upstream's.
-> When something is not CB/SWL-specific, it is upstream and is best read there.
+> — the **amateur ("ham") radio** transceiver by dividebysandwich — rebuilt
+> around the **shortwave listener**. Everything here is upstream's program plus
+> the listening features described below; credit for the original is entirely
+> upstream's, and where something is not listener-specific it is upstream and
+> best read there.
 
-A PowerSDR/Thetis-style software-defined-radio transceiver client in Rust, with
-pluggable radio backends (**SoapySDR**, **OpenHPSDR**, **TCI**, **SmartSDR**, **Icom LAN**, **ELAD**, and **CAT**), an
-[egui](https://github.com/emilk/egui) GUI, and a cyberpunk theme. It runs as a **native desktop application** and, from the same
+A PowerSDR/Thetis-style software-defined-radio client in Rust, with pluggable
+radio backends (**SoapySDR**, **OpenHPSDR**, **TCI**, **SmartSDR**, **Icom LAN**,
+**ELAD**, and **CAT**), an [egui](https://github.com/emilk/egui) GUI, and a
+cyberpunk theme. It runs as a **native desktop application** and, from the same
 binary, as a **server that streams the same UI to a web browser** over
-WebSocket. It includes an integrated, persistent **logbook**, many digital modes like **FT8/FT4/FT2**
-built-in, and **TCI and Hamlib rigctld servers** so third-party programs like WSJT-X can use it as their radio.
+WebSocket.
 
-## This fork — the CB band, on a receiver for the listener
+## This fork — for the shortwave listener
 
-As upstream wrote it, SDR Oxide is a PowerSDR/Thetis-style transceiver for the
-amateur bands. **This fork adds the 11 m citizens band** and is tuned for CB
-use: it speaks the same hashed WSJT-style exchange the community's
-[WSJT-CB](https://github.com/vash909/WSJT-CB) client uses on 27 MHz, reads
-CB-shaped callsigns, and resolves them with WSJT-CB's own CB country numbering —
-so every 11 m station decoded shows its **country flag**, exactly like the
-amateur decodes below do. The CB band is an addition, not a change: the amateur
-bands, modes, logbook and awards remain upstream's, untouched, and both run
-from the same session.
+sdroxide upstream is a transceiver for the amateur bands, and a very good
+receiver underneath. This fork takes that receiver and points it at the
+**listener**: no licence, no callsign, and no transmitting unless you want it.
 
-It is now **built for the licence-free operator too.** The shortwave broadcast
-services have **bands of their own** on the selector and in the band plan —
-**LW / MW / SW / FM** — so a listener jumps straight to longwave, medium wave,
-the shortwave broadcast bands and VHF FM instead of hunting in general
-coverage, and on any frequency an amateur band shares with shortwave the
-amateur band keeps the name. An **SWL mode** toggle hides every transmit
-control — PTT, CALL CQ, TX level, SEND, all of it — leaving a clean
-receive-only interface for the operator with a listening dongle, a SpyServer or
-a KiwiSDR. A **Simple UI** toggle hides the advanced *chips* the same way,
-leaving the controls a CB or shortwave operator reaches for; the band/mode menu
-leads with a **Primary modes** row — **AM · FM · USB · LSB** — instead of
-burying them among the digital modes; and picking the **FM** broadcast band
-comes up **WFM**. And as a receiver it is a full one: it decodes every WSPR beacon in
-HF around the clock, labels ~4,600 longwave and shortwave broadcast
-transmitters on the waterfall (each with its transmit schedule and site),
-decodes DRM shortwave radio, weather fax, and the ADS-B/VDL2 aircraft overhead
-— and the browser server lets you listen from anywhere, antenna in the garden.
+Already here, carried over from the CB/SWL work this fork grew out of:
 
-It keeps growing where the CB and listener use needs it. A **Profile** saves a
-whole working setup — dials and VFOs, mode and filters, gains, drive and
-antennas, the digital identity and the band stacks — and puts it all back in one
-click, so the contest, DX and CB setups are one tab away. The **PC keyboard is a
-straight key** (hold **Space**). The decode list exports to **CSV** and a
-*received-report* **ADIF**, for logging what you hear rather than what you work.
-The **browser client imports** ADIF and CHIRP files as well as writing them out.
-And the step row can be told to **round to 000** on the first press, so the
-zeroes line up with the printed channel.
+- **Broadcast bands of their own** — **LW / MW / SW / FM** on the selector and in
+  the band plan, so you jump straight to longwave, medium wave, the shortwave
+  broadcast bands and VHF FM instead of hunting in general coverage.
+- **~4,600 broadcast transmitters labelled** on the waterfall (EiBi), each with
+  its UTC transmit window and transmitter site.
+- **C-QUAM AM stereo** on the medium wave — a receive-only mode of its own.
+- **SWL mode** — one toggle hides every transmit control.
+- **Simple UI** — hides the advanced chips, with **AM · FM · USB · LSB** up
+  front.
+- **Utilities and images** — DRM shortwave, weather fax, NAVTEX, ADS-B/VDL2 —
+  and the **browser server**, so you can listen from anywhere, antenna in the
+  garden.
+
+See **[ROADMAP.md](ROADMAP.md)** for what is being built for listeners next: a
+**browsable broadcast schedule** you can tune from, a **SINPO listening log**
+with reception reports, **scheduled recordings and instant replay**, and
+**ECSS** for medium-wave DX.
 
 | | Upstream (`dividebysandwich/sdroxide`) | This fork |
 | --- | --- | --- |
-| **Amateur bands** | 160 m … 3 cm, by IARU region, with band-plan lockout | identical, untouched |
-| **11 m / citizens' band** | not present | on the bar (26.965–27.860 MHz): WSJT-CB interop, country flags, digimode channels, transmit opt-in behind a one-time warning |
-| **CB channel plans** | — | per-country channels on 11 m — World/freeband, CEPT/EU, Germany 80 ch, UK 27/81, USA, Australia — with the channel number shown on the panadapter |
-| **Broadcast bands** | general coverage only | **LW / MW / SW / FM** on the selector and in the band plan; picking **FM** comes up **WFM** |
-| **C-QUAM AM stereo** | — | decodes Motorola **C-QUAM** on the medium wave — its own receive-only mode, with a stereo lamp and a mono blend when the pilot fades (not yet verified against a real signal) |
-| **SWL mode** | — | a toggle that hides every transmit control |
-| **Simple interface** | — | a toggle that hides the advanced chips (3D, skimmers, layers, awards, satellites, ISM, Winlink), leaving the CB/SWL controls; the band/mode menu leads with **AM · FM · USB · LSB** |
-| **Station profiles** | — | save and re-apply a whole working setup in one click — dials and VFOs, mode and filters, gains, drive and antennas, the digital identity and the band stacks |
-| **CW straight key** | — | the PC keyboard as a straight key: hold **Space**, sidetone through the transmit chain, any half-typed auto-keyer text dropped |
-| **Decode-list export** | — | the decode list to **CSV** and a *received-report* **ADIF**, for the listener who logs what is heard |
-| **Browser import** | export only | the browser client imports **ADIF** and **CHIRP** files too, not just writes them out |
-| **First-press tuning** | — | opt-in *first press rounds to 000* on the step row, lining the zeroes up with the printed channel |
-| **Propagation columns** | — | measured **WSPR** and **PSK Reporter** activity columns in the **BANDS** window |
-| **Audible alerts** | — | calls, directed CQs and new DXCC/grids ring on their own audio output |
-| **Waterfall levels** | a popup behind a chip | a vertical level slider beside the waterfall, plus the popup |
-| **Radio backends** | 17 kinds of radio | plus a **USB sound-card** backend for VOX-keyed handhelds, walkies and dongles |
+| **Focus** | amateur (ham) transceiver | **shortwave listening** first; transmit hidden by default |
+| **Broadcast bands** | general coverage only | **LW / MW / SW / FM** on the selector and in the band plan; **FM** opens **WFM** |
+| **Broadcast schedule** | — | ~4,600 EiBi transmitters labelled with UTC window and site (a browsable picker is on the roadmap) |
+| **C-QUAM AM stereo** | — | decodes Motorola **C-QUAM** on MW, with a stereo lamp and a mono blend |
+| **Listening mode** | — | **SWL mode** hides every transmit control; **Simple UI** trims the advanced chips |
+| **Decode-list export** | — | the decode list to **CSV** and a *received-report* **ADIF** |
+| **MW/SW tools** | ham audio chain | C-QUAM now; **ECSS** and a listener audio chain on the roadmap |
+| **Radio backends** | 17 kinds of radio | plus a **USB sound-card** backend for VOX-keyed radios and dongles |
 | **UI themes** | the built-in set | 10 more — Nord, Gruvbox, Everforest, Solarized, Dracula, Catppuccin, … |
 
 <hr/>
