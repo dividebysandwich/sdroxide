@@ -75,6 +75,7 @@ fn where_to_look(file: &str) -> &'static str {
     match file {
         "memories.json" | "memory_folders.json" => "check the MEM window",
         "qso_log.json" => "check the LOG window",
+        "swl_log.json" => "check the LISTEN window",
         "contacts.json" => "check the FSQ contacts list",
         "scanner.json" => "check the SCAN window",
         "config.toml" => "check Settings",
@@ -1704,6 +1705,18 @@ pub fn load_qso_log() -> Vec<sdroxide_types::QsoRecord> {
 
 pub fn save_qso_log(log: &[sdroxide_types::QsoRecord]) -> Result<(), ConfigError> {
     save_json("qso_log.json", &log)
+}
+
+/// The shortwave listener's reception log (`swl_log.json`) — what was *heard*.
+///
+/// A separate file from the QSO log on purpose: a reception has no callsign and
+/// no exchange, and the two are shown by different windows.
+pub fn load_swl_log() -> Vec<sdroxide_types::SwlEntry> {
+    load_json_list("swl_log.json")
+}
+
+pub fn save_swl_log(log: &[sdroxide_types::SwlEntry]) -> Result<(), ConfigError> {
+    save_json("swl_log.json", &log)
 }
 
 /// Network cockpit config (spot feeds, callsign lookup, uploads; credentials).

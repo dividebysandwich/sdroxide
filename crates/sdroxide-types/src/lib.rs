@@ -59,6 +59,7 @@ mod spot;
 mod sstv;
 mod state;
 mod station;
+mod swl;
 mod tciserver;
 pub mod text;
 mod tone;
@@ -250,6 +251,7 @@ pub use state::{
     panadapter_fft_ceiling, swr_tune_limit, zoom_lane_decimation,
 };
 pub use station::StationConfig;
+pub use swl::{Sio, Sinpo, SignalReport, SwlEntry};
 pub use tciserver::TciServerConfig;
 pub use tone::{CTCSS_TONES, SubTone};
 pub use ui::{
