@@ -23,3 +23,8 @@ tracing.workspace = true
 
 [build-dependencies]
 cc = "1"
+
+[dev-dependencies]
+# The capture example's log filter, so the backlog line can be watched while
+# it runs.
+tracing-subscriber.workspace = true

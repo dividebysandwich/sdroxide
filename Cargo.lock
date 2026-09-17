@@ -5203,6 +5203,7 @@ dependencies = [
  "sdroxide-faad2",
  "sdroxide-types",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
