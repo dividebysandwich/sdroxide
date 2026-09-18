@@ -170,6 +170,19 @@ impl SdroxideApp {
                         .color(theme::CYAN_DIM()),
                 );
                 ui.label(RichText::new(m.kind_label()).size(10.5).weak());
+                // The time the message states, pulled out of the body: a
+                // warning is read against when it was issued, and finding the
+                // figure in a column of positions by eye is the tedious part.
+                // Display only — the system clock is never set from it.
+                if let Some((h, min)) = m.body_time_utc() {
+                    ui.label(
+                        RichText::new(format!("{h:02}{min:02} UTC"))
+                            .monospace()
+                            .size(10.5)
+                            .color(theme::GREEN()),
+                    )
+                    .on_hover_text("Time of day stated in the message (UTC): display only");
+                }
             }
             Some(_) => {
                 ui.label(RichText::new("RECEIVING").strong().color(theme::ALERT()));

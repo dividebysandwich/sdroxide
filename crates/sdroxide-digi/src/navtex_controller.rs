@@ -387,6 +387,26 @@ mod tests {
         assert!(s.messages[0].text.contains("SECOND PASS"), "a worse copy replaced a better one");
     }
 
+    /// The time a message states survives framing and is readable from the
+    /// filed message — the panel shows it beside the station header
+    /// (issue #212).
+    #[test]
+    fn the_time_in_a_body_survives_framing() {
+        let mut c = ctrl();
+        feed(&mut c, "ZCZC FA12 GALE WARNING NORTH SEA AT 1200 UTC NNNN");
+        let s = c.navtex_status();
+        let m = &s.messages[0];
+        assert!(m.text.contains("AT 1200 UTC"), "body {:?}", m.text);
+        assert_eq!(m.body_time_utc(), Some((12, 0)));
+
+        // A message with no time of day in it reports none, rather than a
+        // zero that would read as midnight.
+        feed(&mut c, "ZCZC PA01 NAVAREA ONE NNNN");
+        let s = c.navtex_status();
+        let m = s.messages.iter().find(|m| m.serial == 1).expect("second message");
+        assert_eq!(m.body_time_utc(), None);
+    }
+
     /// Two different messages from the same transmitter are two messages: the
     /// serial number is part of what identifies one.
     #[test]

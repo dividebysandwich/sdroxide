@@ -5139,6 +5139,14 @@ for you, and the readout still says where the signal is.
   nothing selected and nothing arriving it shows everything decoded, message or
   not, which is the honest view when a header has been missed.
 
+**The time a message states** is shown beside its heading, where the body names
+one — `1200 UTC`, `0900Z`, `06:30 UTC`. It is read out of the text, not a field
+of the format: a gale warning states when it was issued, a station's time
+broadcast is an ordinary message that happens to carry a clock reading. Only a
+four-digit time **marked** as one is taken, so a position (`5103N 00109E`) or a
+serial is not mistaken for a time of day. It is shown for the reader and
+**nothing else** — sdroxide never sets the system clock from it.
+
 **A station repeats itself, and that is the point.** Each transmitter has a ten
 minute slot every four hours, and it sends the same messages again on the next
 one. sdroxide keeps *one* entry per message — a repeat replaces the copy already

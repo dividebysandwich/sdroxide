@@ -796,6 +796,88 @@ impl NavtexMessage {
     pub fn is_mandatory(&self) -> bool {
         matches!(self.kind, 'A' | 'B' | 'D')
     }
+
+    /// The time-of-day a NAVTEX body states, as `(hour, minute)` UTC, if it
+    /// names one.
+    ///
+    /// Time is not a message class: a NAVTEX station's time broadcasts and the
+    /// `AT 1200 UTC` in a gale warning are ordinary text that happens to carry
+    /// a clock reading, so this reads the body rather than the header. It is a
+    /// convenience for the reader — a warning is nearly always read against
+    /// when it was issued, and picking the figure out of a column of positions
+    /// by eye is the tedious part — not a synchronisation source: sdroxide
+    /// never sets the system clock from it (issue #212).
+    ///
+    /// Only a four-digit time that is *marked* as a time counts — followed by
+    /// `UTC`, `Z` or as `HHMMZ` — so a bare four-digit number in a position or
+    /// a serial is not mistaken for one. `HH:MM` is accepted too, since
+    /// stations send it. The first such reading in the body wins; a message
+    /// that states several is a forecast table, and the first is its header
+    /// time.
+    #[must_use]
+    pub fn body_time_utc(&self) -> Option<(u8, u8)> {
+        parse_navtex_time(&self.text)
+    }
+}
+
+/// Pull the first marked UTC time-of-day out of a NAVTEX body.
+///
+/// Free function rather than a method's private detail so the tests can reach
+/// it with raw text, including the shapes a real station sends.
+pub(crate) fn parse_navtex_time(text: &str) -> Option<(u8, u8)> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i + 3 < bytes.len() {
+        // A four-digit run, optionally written `HH:MM`.
+        let digits = if bytes[i].is_ascii_digit()
+            && bytes[i + 1].is_ascii_digit()
+            && bytes.get(i + 2) == Some(&b':')
+            && bytes.get(i + 3).is_some_and(u8::is_ascii_digit)
+            && bytes.get(i + 4).is_some_and(u8::is_ascii_digit)
+        {
+            // Colon form: HH:MM.
+            Some((
+                (bytes[i] - b'0') * 10 + (bytes[i + 1] - b'0'),
+                (bytes[i + 3] - b'0') * 10 + (bytes[i + 4] - b'0'),
+                5usize,
+            ))
+        } else if bytes[i..].len() >= 4
+            && bytes[i..i + 4].iter().all(u8::is_ascii_digit)
+            && (i == 0 || !bytes[i - 1].is_ascii_digit())
+        {
+            // Bare form: HHMM, but only where it is a whole word (the guard
+            // above rejects the tail of a longer number).
+            Some((
+                (bytes[i] - b'0') * 10 + (bytes[i + 1] - b'0'),
+                (bytes[i + 2] - b'0') * 10 + (bytes[i + 3] - b'0'),
+                4usize,
+            ))
+        } else {
+            None
+        };
+        if let Some((hh, mm, len)) = digits {
+            // Marked as a time: the token right after the digits says so. This
+            // is what keeps a bare HHMM in a position, a serial or a count from
+            // being read as a clock. Two shapes count, and nothing else:
+            //
+            // * the digits run straight into a `Z` — `1200Z`, the maritime
+            //   shorthand for "1200 UTC";
+            // * the next word is `UTC` (or `UT`), after any spaces — `1200 UTC`.
+            let after = &text[i + len..];
+            let zulu = after.as_bytes().first().is_some_and(|c| c.eq_ignore_ascii_case(&b'Z'));
+            let word = after.trim_start();
+            let utc = word.len() >= 3
+                && word[..3].eq_ignore_ascii_case("UTC")
+                && word.as_bytes().get(3).is_none_or(|c| !c.is_ascii_alphabetic());
+            if hh < 24 && mm < 60 && (zulu || utc) {
+                return Some((hh, mm));
+            }
+            i += len;
+            continue;
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Messages kept. A station transmits on a ten-minute slot every four hours
@@ -3398,6 +3480,52 @@ mod tests {
         }
         // A known civil date: 2021-01-01 00:01:00 UTC.
         assert_eq!(ymd_hms_to_unix(2021, 1, 1, 0, 1, 0), 1_609_459_260);
+    }
+
+    /// The time a NAVTEX message states, in the shapes stations actually send
+    /// (issue #212).
+    #[test]
+    fn a_navtex_body_time_is_read_where_it_is_marked() {
+        // The two markings: `UTC` after a space, and the maritime `Z` suffix.
+        assert_eq!(parse_navtex_time("GALE WARNING AT 1200 UTC"), Some((12, 0)));
+        assert_eq!(parse_navtex_time("WIND 0900Z INCREASING"), Some((9, 0)));
+        // Lower case and the colon form a few stations use.
+        assert_eq!(parse_navtex_time("issued 1200 utc"), Some((12, 0)));
+        assert_eq!(parse_navtex_time("FROM 06:30 UTC"), Some((6, 30)));
+        // The first reading wins when a body states several — a forecast table
+        // is not a clock.
+        assert_eq!(parse_navtex_time("1200 UTC then 1800 UTC"), Some((12, 0)));
+    }
+
+    /// A four-digit number that is not marked as a time is not one: positions,
+    /// serials and counts are full of them.
+    #[test]
+    fn an_unmarked_number_is_not_a_time() {
+        assert_eq!(parse_navtex_time("5103N 00109E"), None, "a position");
+        assert_eq!(parse_navtex_time("SERIAL 1200"), None, "a bare count");
+        assert_eq!(parse_navtex_time("CHANNEL 3184"), None);
+        // A time of day out of range is not a time either — 2560 is a serial.
+        assert_eq!(parse_navtex_time("2560 UTC"), None, "hour 25");
+        assert_eq!(parse_navtex_time("1299 UTC"), None, "minute 99");
+        // The tail of a longer number must not be read as HHMM either.
+        assert_eq!(parse_navtex_time("REF 11200 UTC"), None);
+    }
+
+    /// The accessor reads the body, and a message with no time says so.
+    #[test]
+    fn the_message_accessor_reads_the_body() {
+        let mut m = NavtexMessage {
+            station: 'F',
+            kind: 'A',
+            serial: 12,
+            text: "GALE WARNING\nAT 1200 UTC".into(),
+            at: 0,
+            complete: true,
+            lost: 0,
+        };
+        assert_eq!(m.body_time_utc(), Some((12, 0)));
+        m.text = "NAVAREA ONE".into();
+        assert_eq!(m.body_time_utc(), None);
     }
 }
 
