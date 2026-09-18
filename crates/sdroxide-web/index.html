@@ -2,15 +2,40 @@
 <html>
 <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- viewport-fit=cover: installed full screen, the page owns the whole
+         panel including the area behind a notch or rounded corners. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>sdroxide</title>
+    <!-- Installed to a home screen ("Add to Home screen"), the manifest is what
+         makes this open with no address bar and no toolbars. A tablet browser
+         otherwise keeps its chrome for good: the page sets overflow:hidden so a
+         drag pans the waterfall, so it never scrolls, so the toolbar never
+         auto-hides and a third of the panel is browser. -->
+    <link rel="manifest" href="manifest.json" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <!-- iOS honours none of the manifest: these are its equivalents. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="sdroxide" />
+    <link rel="apple-touch-icon" href="sdroxide-192.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="sdroxide-192.png" />
     <link data-trunk rel="rust" data-wasm-opt="z" />
     <link data-trunk rel="copy-file" href="assets/audio_bridge.js" />
     <link data-trunk rel="copy-file" href="assets/pcm_worklet.js" />
     <link data-trunk rel="copy-file" href="assets/ws_arraybuffer.js" />
+    <link data-trunk rel="copy-file" href="assets/wake_lock.js" />
+    <link data-trunk rel="copy-file" href="assets/manifest.json" />
+    <!-- The icons the manifest names, from the one source every other platform
+         renders from (packaging/icons/sdroxide.svg via render.sh). -->
+    <link data-trunk rel="copy-file" href="../../packaging/icons/sdroxide-192.png" />
+    <link data-trunk rel="copy-file" href="../../packaging/icons/sdroxide-512.png" />
     <!-- Must run before the wasm opens its socket. -->
     <script src="ws_arraybuffer.js"></script>
     <script src="audio_bridge.js"></script>
+    <!-- Keeps a watched panel from blanking; see the file for why it is safe to
+         run unconditionally. -->
+    <script src="wake_lock.js"></script>
     <style>
         html, body {
             margin: 0;

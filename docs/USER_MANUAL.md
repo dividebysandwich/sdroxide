@@ -13417,6 +13417,43 @@ Remember that **audio needs a secure context**
 ([9.3](#93-audio-needs-a-secure-context)): a phone opening the server over plain
 HTTP on the LAN gets the waterfall and the controls but no sound at all.
 
+#### Installing it to the home screen
+
+In a browser tab, a third of a tablet's screen is address bar and toolbars, and
+they never go away: the page deliberately does not scroll — a drag pans the
+waterfall instead — so the browser never hides its own chrome the way it does on
+an ordinary site.
+
+Install it instead, and it launches with none of that:
+
+| Browser | How |
+| --- | --- |
+| Samsung Internet, Chrome, Edge (Android) | menu → **Add page to Home screen** |
+| Safari (iOS, iPadOS) | Share → **Add to Home Screen** |
+
+Then **launch it from the new icon**, not from the browser — opening the same
+address in a tab still shows the tab. On Android it is installed as a web app
+and runs genuinely full screen, with no address bar and no status bar; on
+Samsung DeX it behaves as an ordinary desktop window.
+
+This needs the same **secure context** as audio
+([9.3](#93-audio-needs-a-secure-context)). Over plain HTTP on the LAN a browser
+will offer a plain bookmark at best, so the two reasons to put the server behind
+HTTPS — or to reach it over a tunnel, a VPN or Tailscale — are the same reason.
+
+**The screen stays awake** while the client is in front. A receiver is watched
+rather than read, and a tablet left alone blanks after half a minute; installed
+full screen that takes the whole application away and puts a lock screen in
+front of it. The client asks the browser to hold the screen on, gives that up
+whenever you switch away — a client in the background has no business keeping
+your screen lit — and asks again when you come back. A browser that does not
+support it, or one told not to by battery saver or a device policy, simply
+sleeps as it always did: this is a comfort, not a requirement, and nothing warns
+you about it.
+
+The home-screen icon is sdroxide's own, the same artwork the desktop
+application and the packaged builds use.
+
 ---
 
 ## 10. Spotting, awards, and QSL upload

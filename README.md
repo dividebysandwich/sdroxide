@@ -34,7 +34,9 @@ One binary, three ways to run it:
   WebAssembly. Every radio the station has is served, one client each: `/ws`
   and `/ws/<id>`, listed at `/radios`. Its roster is editable from a client
   too — a signed-in operator can add a radio to the station and close one
-  again, without touching the machine or restarting it.
+  again, without touching the machine or restarting it. On a phone or tablet it
+  installs to the home screen and runs full screen, holding the screen awake
+  while it is in front.
 - **Native remote** — `sdroxide --connect host:4950`; the desktop UI driving a
   remote server instead of local hardware. A station with several radios comes
   up with all of them, one tab each.
