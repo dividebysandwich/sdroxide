@@ -1379,7 +1379,16 @@ use sdroxide_types::{
 /// fields by position: a v155 peer reads the extra bytes as the start of
 /// whatever follows the state, and fails to decode `HelloAck` and every state
 /// update.
-pub const PROTO_VERSION: u16 = 156;
+/// v157: SSTV picture styling, `DigiConfig::sstv_style` (an
+/// `sdroxide_types::SstvStyle`) — the banner strip's gradient and outline, the
+/// banner text's colour, gradient and outline, a rainbow override for all the
+/// picture's text, and the slot message's ink and outline. One appended field
+/// rather than a dozen, and it lets a station give its picture a look rather
+/// than one flat colour. Appended to `DigiConfig`'s tail, and `DigiConfig` rides
+/// `Command::SetDigiConfig` and `DigiStatus` whole, so a v156 peer reads the
+/// extra bytes as the start of the next field and fails to decode every digital
+/// status.
+pub const PROTO_VERSION: u16 = 157;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

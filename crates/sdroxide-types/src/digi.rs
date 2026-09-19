@@ -1259,6 +1259,62 @@ impl CwMacro {
     }
 }
 
+/// How the text drawn into a transmitted SSTV picture looks: the banner strip's
+/// gradient and outline, and the slot message's ink.
+///
+/// Its own struct rather than a dozen more `DigiConfig` fields, because it is
+/// one idea — "how do I want my picture to look" — and because `DigiConfig`
+/// rides the wire whole: one appended field means one protocol bump instead of
+/// six. The defaults reproduce the original look exactly (strip fades to black,
+/// banner text plain, message white on black), so an existing `digi.json` and
+/// an operator who never opens the editor both see no change.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SstvStyle {
+    /// Fade the banner strip to [`Self::banner_fill2`] at its bottom edge
+    /// instead of to black. The top colour is
+    /// [`DigiConfig::sstv_banner_fill`](DigiConfig::sstv_banner_fill).
+    pub banner_gradient: bool,
+    /// The colour the strip's gradient reaches at its bottom, when
+    /// [`Self::banner_gradient`] is on.
+    pub banner_fill2: [u8; 3],
+    /// Draw the banner text with an outline in [`Self::banner_outline_ink`].
+    pub banner_outline: bool,
+    pub banner_outline_ink: [u8; 3],
+    /// Fade the banner text from its ink to [`Self::banner_ink2`] across the
+    /// strip, left to right.
+    pub banner_ink_gradient: bool,
+    pub banner_ink2: [u8; 3],
+    /// Override every colour the picture's text would use — the banner's ink
+    /// and its gradient, and the slot message — with a horizontal rainbow.
+    /// Takes precedence over all of them.
+    pub rainbow_text: bool,
+    /// The colour the slot message is printed in.
+    pub message_ink: [u8; 3],
+    /// Draw the message text with an outline in [`Self::message_outline_ink`].
+    /// On by default, which is what the message has always been: white text
+    /// with a black edge, readable over any picture.
+    pub message_outline: bool,
+    pub message_outline_ink: [u8; 3],
+}
+
+impl Default for SstvStyle {
+    fn default() -> Self {
+        SstvStyle {
+            banner_gradient: false,
+            banner_fill2: [0, 0, 0],
+            banner_outline: false,
+            banner_outline_ink: [0, 0, 0],
+            banner_ink_gradient: false,
+            banner_ink2: [0, 0, 0],
+            rainbow_text: false,
+            message_ink: [255, 255, 255],
+            message_outline: true,
+            message_outline_ink: [0, 0, 0],
+        }
+    }
+}
+
 /// echoed to clients in [`DigiStatus`]. `#[serde(default)]` so an older
 /// `digi.json` without the newer fields still loads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1934,6 +1990,11 @@ pub struct DigiConfig {
     /// that quietly kept its spots to itself would be missing the mode.
     #[serde(default = "yes")]
     pub wspr_upload: bool,
+    /// SSTV: how the text drawn into a transmitted picture looks — the banner
+    /// strip's gradient and outline, and the slot message's ink. See
+    /// [`SstvStyle`].
+    #[serde(default)]
+    pub sstv_style: SstvStyle,
 }
 
 fn wspr_default_power() -> i16 {
@@ -2115,6 +2176,7 @@ impl Default for DigiConfig {
             wspr_hop: false,
             wspr_hop_bands: wspr_default_hop_bands(),
             wspr_upload: true,
+            sstv_style: SstvStyle::default(),
         }
     }
 }

@@ -32,10 +32,23 @@ pub struct Banner {
     pub left: String,
     /// Text printed at the right end, right-aligned.
     pub right: String,
-    /// Colour at the top of the strip, fading to black at its bottom.
+    /// Colour at the top of the strip. It fades to [`Self::fill2`], or to black
+    /// when that is `None`.
     pub fill: [u8; 3],
+    /// The colour the strip fades to at its bottom, when the operator asked for
+    /// a gradient. `None` fades to black, which is the original look.
+    pub fill2: Option<[u8; 3]>,
     /// Colour both texts are printed in.
     pub ink: [u8; 3],
+    /// The colour the text fades to across the strip, when the operator asked
+    /// for a text gradient. `None` prints it in one colour.
+    pub ink2: Option<[u8; 3]>,
+    /// Override both texts with a horizontal rainbow, whatever the colours
+    /// above say.
+    pub rainbow: bool,
+    /// Colour the texts are outlined in, when the operator asked for an
+    /// outline. `None` prints them plain.
+    pub outline: Option<[u8; 3]>,
 }
 
 impl Banner {
@@ -54,7 +67,11 @@ impl Banner {
             left: expand(&cfg.sstv_banner_left, &cfg.my_call, &cfg.my_grid),
             right: expand(&cfg.sstv_banner_right, &cfg.my_call, &cfg.my_grid),
             fill: cfg.sstv_banner_fill,
+            fill2: cfg.sstv_style.banner_gradient.then_some(cfg.sstv_style.banner_fill2),
             ink: cfg.sstv_banner_ink,
+            ink2: cfg.sstv_style.banner_ink_gradient.then_some(cfg.sstv_style.banner_ink2),
+            rainbow: cfg.sstv_style.rainbow_text,
+            outline: cfg.sstv_style.banner_outline.then_some(cfg.sstv_style.banner_outline_ink),
         })
     }
 }
@@ -160,13 +177,14 @@ pub fn compose(
     sh: u16,
     message: &str,
     banner: Option<&Banner>,
+    style: &sdroxide_types::SstvStyle,
 ) -> (Vec<u8>, u16, u16) {
     let mut img = crop_scale(src_rgb, sw, sh, w, h);
     let strip = match banner {
         Some(b) => draw_banner(&mut img, w as usize, h as usize, b),
         None => 0,
     };
-    draw_message(&mut img, w as usize, h as usize, message, strip);
+    draw_message(&mut img, w as usize, h as usize, message, strip, style);
     (img, w, h)
 }
 
@@ -268,39 +286,100 @@ fn draw_banner(img: &mut [u8], w: usize, h: usize, banner: &Banner) -> usize {
     }
     let [fr, fg, fb] = banner.fill;
     for y in 0..strip {
-        let t = 1.0 - (y as f32 / strip as f32);
-        let shade = |c: u8| (f32::from(c) * t) as u8;
+        // `t` runs 0 at the top edge to 1 at the bottom. With a second colour
+        // the strip is a straight two-stop gradient; without one it keeps the
+        // original fade to black.
+        let t = y as f32 / strip as f32;
+        let (r, g, b) = match banner.fill2 {
+            Some([r2, g2, b2]) => {
+                let lerp = |a: u8, c: u8| (f32::from(a) + (f32::from(c) - f32::from(a)) * t) as u8;
+                (lerp(fr, r2), lerp(fg, g2), lerp(fb, b2))
+            }
+            None => {
+                let shade = 1.0 - t;
+                (
+                    (f32::from(fr) * shade) as u8,
+                    (f32::from(fg) * shade) as u8,
+                    (f32::from(fb) * shade) as u8,
+                )
+            }
+        };
         for x in 0..w {
-            put(img, w, h, x as i32, y as i32, shade(fr), shade(fg), shade(fb));
+            put(img, w, h, x as i32, y as i32, r, g, b);
         }
     }
     let Some(font) = message_font() else {
         return strip;
     };
-    let ink = (banner.ink[0], banner.ink[1], banner.ink[2]);
+    let ink = if banner.rainbow {
+        Ink::Rainbow
+    } else if let Some(c2) = banner.ink2 {
+        Ink::Gradient(banner.ink, c2)
+    } else {
+        Ink::Solid(banner.ink)
+    };
     let scale = PxScale::from(strip as f32 * 11.0 / 16.0);
     let baseline = (strip as f32 * 0.72).round();
     // The inset scales with the strip too, so a tall banner does not print
     // hard against the edge of the picture.
     let pad = (strip as f32 * 4.0 / 16.0).max(1.0);
+    // An outline, in eight directions, ahead of the ink — the message overlay's
+    // technique, sized to the strip so a taller banner gets a bolder edge.
+    let outline_off = (strip as f32 * 1.0 / 16.0).max(1.0);
+    let draw_one = |img: &mut [u8], text: &str, x: f32| {
+        if let Some(oc) = banner.outline {
+            for (ox, oy) in [
+                (-outline_off, 0.0),
+                (outline_off, 0.0),
+                (0.0, -outline_off),
+                (0.0, outline_off),
+                (-outline_off, -outline_off),
+                (outline_off, -outline_off),
+                (-outline_off, outline_off),
+                (outline_off, outline_off),
+            ] {
+                draw_text(
+                    img,
+                    w,
+                    h,
+                    x + ox,
+                    baseline + oy,
+                    text,
+                    &font,
+                    scale,
+                    Ink::Solid(oc),
+                    1.0,
+                );
+            }
+        }
+        draw_text(img, w, h, x, baseline, text, &font, scale, ink, 1.0);
+    };
     if !banner.left.is_empty() {
-        draw_text(img, w, h, pad, baseline, &banner.left, &font, scale, ink, 1.0);
+        draw_one(img, &banner.left, pad);
     }
     if !banner.right.is_empty() {
         let tw = text_width(&banner.right, &font, scale);
-        draw_text(img, w, h, w as f32 - tw - pad, baseline, &banner.right, &font, scale, ink, 1.0);
+        draw_one(img, &banner.right, w as f32 - tw - pad);
     }
     strip
 }
 
-/// Overlay the message in a single font, white with a black outline, starting
-/// just below the banner — or at the top of the picture when there is none.
-/// The first line is drawn at double the size of the rest (a title line), with
-/// its outline thickened to match.
-fn draw_message(img: &mut [u8], w: usize, h: usize, message: &str, top: usize) {
+/// Overlay the message in a single font, its colour and outline from
+/// `style`, starting just below the banner — or at the top of the picture when
+/// there is none. The first line is drawn at double the size of the rest (a
+/// title line), with its outline thickened to match.
+fn draw_message(
+    img: &mut [u8],
+    w: usize,
+    h: usize,
+    message: &str,
+    top: usize,
+    style: &sdroxide_types::SstvStyle,
+) {
     let Some(font) = message_font() else {
         return;
     };
+    let ink = if style.rainbow_text { Ink::Rainbow } else { Ink::Solid(style.message_ink) };
     let base_px = 30.0_f32;
     let mut baseline = top as f32;
     for (i, line) in message.lines().enumerate() {
@@ -312,21 +391,35 @@ fn draw_message(img: &mut [u8], w: usize, h: usize, message: &str, top: usize) {
             continue;
         }
         let scale = PxScale::from(px);
-        let outline = px / base_px * 1.5;
-        // Black outline: draw the glyphs offset in eight directions.
-        for (ox, oy) in [
-            (-outline, 0.0),
-            (outline, 0.0),
-            (0.0, -outline),
-            (0.0, outline),
-            (-outline, -outline),
-            (outline, -outline),
-            (-outline, outline),
-            (outline, outline),
-        ] {
-            draw_text(img, w, h, 6.0 + ox, baseline + oy, line, &font, scale, (0, 0, 0), 1.0);
+        if style.message_outline {
+            let oc = style.message_outline_ink;
+            let outline = px / base_px * 1.5;
+            // Outline: draw the glyphs offset in eight directions.
+            for (ox, oy) in [
+                (-outline, 0.0),
+                (outline, 0.0),
+                (0.0, -outline),
+                (0.0, outline),
+                (-outline, -outline),
+                (outline, -outline),
+                (-outline, outline),
+                (outline, outline),
+            ] {
+                draw_text(
+                    img,
+                    w,
+                    h,
+                    6.0 + ox,
+                    baseline + oy,
+                    line,
+                    &font,
+                    scale,
+                    Ink::Solid(oc),
+                    1.0,
+                );
+            }
         }
-        draw_text(img, w, h, 6.0, baseline, line, &font, scale, (255, 255, 255), 1.0);
+        draw_text(img, w, h, 6.0, baseline, line, &font, scale, ink, 1.0);
         if baseline as usize >= h {
             break;
         }
@@ -348,6 +441,57 @@ fn text_width(text: &str, font: &FontRef<'static>, scale: PxScale) -> f32 {
     width
 }
 
+/// How text is coloured as it is drawn: one colour, a gradient across the
+/// picture, or a rainbow. `x` is the pixel's own position and `span` the width
+/// the gradient or rainbow runs over (the picture's), so the same call draws
+/// every variant.
+#[derive(Clone, Copy)]
+enum Ink {
+    Solid([u8; 3]),
+    Gradient([u8; 3], [u8; 3]),
+    Rainbow,
+}
+
+impl Ink {
+    /// The colour at pixel column `x`, over a run `span` wide.
+    fn at(self, x: f32, span: f32) -> (u8, u8, u8) {
+        let span = span.max(1.0);
+        match self {
+            Ink::Solid(c) => (c[0], c[1], c[2]),
+            Ink::Gradient(a, b) => {
+                let t = (x / span).clamp(0.0, 1.0);
+                let l = |p: u8, q: u8| (f32::from(p) + (f32::from(q) - f32::from(p)) * t) as u8;
+                (l(a[0], b[0]), l(a[1], b[1]), l(a[2], b[2]))
+            }
+            Ink::Rainbow => {
+                // Hue sweeps a full turn across the picture's width. Saturation
+                // and value are full, which is what makes it read as a rainbow
+                // rather than a pastel.
+                let hue = (x / span).rem_euclid(1.0) * 360.0;
+                hsv_to_rgb(hue, 1.0, 1.0)
+            }
+        }
+    }
+}
+
+/// HSV (h 0..360, s/v 0..1) to 8-bit RGB.
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+    let c = v * s;
+    let hp = h / 60.0;
+    let x = c * (1.0 - (hp.rem_euclid(2.0) - 1.0).abs());
+    let (r, g, b) = match hp as i32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = v - c;
+    let to = |f: f32| ((f + m).clamp(0.0, 1.0) * 255.0).round() as u8;
+    (to(r), to(g), to(b))
+}
+
 fn draw_text(
     img: &mut [u8],
     w: usize,
@@ -357,9 +501,10 @@ fn draw_text(
     text: &str,
     font: &FontRef<'static>,
     scale: PxScale,
-    color: (u8, u8, u8),
+    ink: Ink,
     alpha: f32,
 ) {
+    let span = w as f32;
     let scaled = font.as_scaled(scale);
     let mut caret = x;
     let mut prev = None;
@@ -374,7 +519,8 @@ fn draw_text(
             outlined.draw(|gx, gy, cov| {
                 let px = bounds.min.x as i32 + gx as i32;
                 let py = bounds.min.y as i32 + gy as i32;
-                blend(img, w, h, px, py, color.0, color.1, color.2, cov * alpha);
+                let (r, g, b) = ink.at(px as f32, span);
+                blend(img, w, h, px, py, r, g, b, cov * alpha);
             });
         }
         caret += scaled.h_advance(gid);
@@ -385,7 +531,7 @@ fn draw_text(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sdroxide_types::{Command, DigiConfig, ImagePresets, ImageSlotInfo};
+    use sdroxide_types::{Command, DigiConfig, ImagePresets, ImageSlotInfo, SstvStyle};
 
     fn presets(messages: &[&str]) -> ImagePresets {
         ImagePresets {
@@ -515,9 +661,115 @@ mod tests {
             4,
             "",
             Some(&Banner { height: 2, fill: [170, 0, 0], ..Banner::default() }),
+            &sdroxide_types::SstvStyle::default(),
         );
-        let (without, _, _) = compose(4, 4, &src, 4, 4, "", None);
+        let (without, _, _) =
+            compose(4, 4, &src, 4, 4, "", None, &sdroxide_types::SstvStyle::default());
         assert_eq!(with[0], 170);
         assert_eq!(&without[..12], &[200u8; 12]);
+    }
+
+    /// The gradient option: the strip runs between the two colours instead of
+    /// fading to black.
+    #[test]
+    fn a_gradient_strip_runs_between_its_two_colours() {
+        let mut img = vec![0u8; 8 * 8 * 3];
+        let b =
+            Banner { height: 8, fill: [200, 0, 0], fill2: Some([0, 0, 200]), ..Banner::default() };
+        assert_eq!(draw_banner(&mut img, 8, 8, &b), 8);
+        assert_eq!(&img[0..3], &[200, 0, 0], "top row should be the first colour");
+        let last = &img[7 * 8 * 3..7 * 8 * 3 + 3];
+        assert!(last[2] > 150 && last[0] < 60, "bottom row should be mostly the second: {last:?}");
+    }
+
+    /// The outline option: the chosen outline colour reaches the strip, around
+    /// the ink.
+    #[test]
+    fn a_text_outline_puts_the_outline_colour_in_the_strip() {
+        let mut img = vec![0u8; 96 * 28 * 3];
+        let b = Banner {
+            height: 28,
+            left: "OO".to_string(),
+            fill: [0, 160, 0],
+            ink: [255, 255, 255],
+            outline: Some([255, 0, 0]),
+            ..Banner::default()
+        };
+        draw_banner(&mut img, 96, 28, &b);
+        let has = |c: [u8; 3]| {
+            img.chunks_exact(3).any(|p| {
+                (i32::from(p[0]) - i32::from(c[0])).abs() < 40
+                    && (i32::from(p[1]) - i32::from(c[1])).abs() < 40
+                    && (i32::from(p[2]) - i32::from(c[2])).abs() < 40
+            })
+        };
+        assert!(has([255, 255, 255]), "the white ink is missing");
+        assert!(has([255, 0, 0]), "the red outline is missing");
+    }
+
+    /// The text gradient: the ink moves from the first colour to the second
+    /// across the width, so red pixels sit left of blue ones.
+    #[test]
+    fn a_text_gradient_runs_across_the_strip() {
+        let (w, h) = (240usize, 28usize);
+        let mut img = vec![0u8; w * h * 3];
+        let b = Banner {
+            height: 28,
+            left: "IIIIIIIIII".to_string(),
+            fill: [0, 0, 0],
+            ink: [255, 0, 0],
+            ink2: Some([0, 0, 255]),
+            ..Banner::default()
+        };
+        draw_banner(&mut img, w, h, &b);
+        // Compare the leftmost and rightmost inked pixels: a gradient moves the
+        // colour from the first toward the second across the text, whatever the
+        // text's own extent within the strip.
+        let at = |x: usize, y: usize| {
+            let i = (y * w + x) * 3;
+            (i32::from(img[i]), i32::from(img[i + 1]), i32::from(img[i + 2]))
+        };
+        let (mut left, mut right) = (None, None);
+        for y in 0..h {
+            for x in 0..w {
+                let p = at(x, y);
+                if p.0.max(p.1).max(p.2) > 30 {
+                    if left.is_none() {
+                        left = Some((x, y));
+                    }
+                    right = Some((x, y));
+                }
+            }
+        }
+        let (lx, ly) = left.expect("some text should be drawn");
+        let (rx, ry) = right.expect("some text should be drawn");
+        let (lr, _, lb) = at(lx, ly);
+        let (rr, _, rb) = at(rx, ry);
+        assert!(rx > lx, "the text should span some width");
+        assert!(lr > rr && rb > lb, "left {lr},{lb} should be redder than right {rr},{rb}");
+    }
+
+    /// The rainbow override covers the spectrum, not one hue.
+    #[test]
+    fn rainbow_text_covers_the_spectrum() {
+        let (w, h) = (320usize, 120usize);
+        let mut img = vec![0u8; w * h * 3];
+        let style =
+            SstvStyle { rainbow_text: true, message_outline: false, ..SstvStyle::default() };
+        draw_message(&mut img, w, h, "WWWWWWWWWWWWWWWWWWWWWWWW", 0, &style);
+        let (mut reds, mut greens, mut blues) = (0, 0, 0);
+        for p in img.chunks_exact(3) {
+            let (r, g, b) = (i32::from(p[0]), i32::from(p[1]), i32::from(p[2]));
+            if r > 150 && g < 80 && b < 80 {
+                reds += 1;
+            }
+            if g > 150 && r < 80 && b < 80 {
+                greens += 1;
+            }
+            if b > 150 && r < 80 && g < 80 {
+                blues += 1;
+            }
+        }
+        assert!(reds > 0 && greens > 0 && blues > 0, "r{reds} g{greens} b{blues}");
     }
 }

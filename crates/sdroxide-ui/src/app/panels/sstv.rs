@@ -82,6 +82,10 @@ pub(in crate::app) struct SstvUi {
     /// template is edited, when a colour is picked, and comparing the composed
     /// banner catches all of that with one test.
     pub(in crate::app) banner: Option<crate::sstv::Banner>,
+    /// How the banner and message are styled — the gradient, outlines and ink.
+    /// Kept beside the banner for the same staleness test: a colour picked in
+    /// the editor changes this and the preview is recomposed.
+    pub(in crate::app) style: sdroxide_types::SstvStyle,
     /// Whether the banner editor window is open.
     pub(in crate::app) banner_open: bool,
     /// Auto mode: RX auto-detects the mode; TX defaults to Martin 1 until a mode
@@ -168,6 +172,7 @@ impl Default for SstvUi {
             rx_dims: (0, 0),
             preview_dims: (0, 0),
             banner: None,
+            style: sdroxide_types::SstvStyle::default(),
             banner_open: false,
             auto: true,
             presets: ImagePresets::default(),
@@ -459,6 +464,7 @@ impl SstvUi {
                     slot.sh,
                     &message,
                     self.banner.as_ref(),
+                    &self.style,
                 );
                 let ci = crate::sstv::color_image(&rgb, w, h);
                 self.preview_tex =
@@ -479,6 +485,7 @@ impl SstvUi {
             slot.sh,
             self.current_message(),
             self.banner.as_ref(),
+            &self.style,
         );
         crate::sstv::encode_png(&rgb, w, h)
     }
@@ -616,6 +623,12 @@ impl SdroxideApp {
         let banner = crate::sstv::Banner::from_config(&self.digi_cfg_edit);
         if self.sstv.banner != banner {
             self.sstv.banner = banner;
+            self.sstv.preview_dirty = true;
+        }
+        // ...and the style, which the message overlay needs whether or not
+        // there is a banner.
+        if self.sstv.style != self.digi_cfg_edit.sstv_style {
+            self.sstv.style = self.digi_cfg_edit.sstv_style;
             self.sstv.preview_dirty = true;
         }
         // The transmitted size: SSTV's line format fixes it, RIFP leaves it to
@@ -1596,8 +1609,8 @@ impl SdroxideApp {
                                     changed |= ui
                                         .color_edit_button_srgb(&mut cfg.sstv_banner_fill)
                                         .on_hover_text(
-                                            "The strip, at its top edge — it fades to black at \
-                                             the bottom",
+                                            "The strip, at its top edge — it fades to black, or \
+                                             to the gradient colour below it",
                                         )
                                         .changed();
                                     ui.label(RichText::new("strip").size(10.5).weak());
@@ -1607,6 +1620,113 @@ impl SdroxideApp {
                                         .on_hover_text("Both texts")
                                         .changed();
                                     ui.label(RichText::new("text").size(10.5).weak());
+                                });
+                                ui.end_row();
+
+                                ui.label("Gradient");
+                                ui.horizontal(|ui| {
+                                    changed |= crate::chrome::checkbox(
+                                        ui,
+                                        &mut cfg.sstv_style.banner_gradient,
+                                        "fade to",
+                                    )
+                                    .on_hover_text(
+                                        "Fade the strip from its top colour to a second one \
+                                         instead of to black.",
+                                    )
+                                    .changed();
+                                    ui.add_enabled_ui(cfg.sstv_style.banner_gradient, |ui| {
+                                        changed |= ui
+                                            .color_edit_button_srgb(
+                                                &mut cfg.sstv_style.banner_fill2,
+                                            )
+                                            .changed();
+                                    });
+                                });
+                                ui.end_row();
+
+                                ui.label("Text outline");
+                                ui.horizontal(|ui| {
+                                    changed |= crate::chrome::checkbox(
+                                        ui,
+                                        &mut cfg.sstv_style.banner_outline,
+                                        "in",
+                                    )
+                                    .on_hover_text(
+                                        "Draw an outline around the banner text, so it stays \
+                                         readable over a busy or light strip.",
+                                    )
+                                    .changed();
+                                    ui.add_enabled_ui(cfg.sstv_style.banner_outline, |ui| {
+                                        changed |= ui
+                                            .color_edit_button_srgb(
+                                                &mut cfg.sstv_style.banner_outline_ink,
+                                            )
+                                            .changed();
+                                    });
+                                });
+                                ui.end_row();
+
+                                ui.label("Text gradient");
+                                ui.horizontal(|ui| {
+                                    changed |= crate::chrome::checkbox(
+                                        ui,
+                                        &mut cfg.sstv_style.banner_ink_gradient,
+                                        "fade to",
+                                    )
+                                    .on_hover_text(
+                                        "Fade the banner text from its colour to a second one \
+                                         across the width of the picture.",
+                                    )
+                                    .changed();
+                                    ui.add_enabled_ui(
+                                        cfg.sstv_style.banner_ink_gradient
+                                            && !cfg.sstv_style.rainbow_text,
+                                        |ui| {
+                                            changed |= ui
+                                                .color_edit_button_srgb(
+                                                    &mut cfg.sstv_style.banner_ink2,
+                                                )
+                                                .changed();
+                                        },
+                                    );
+                                });
+                                ui.end_row();
+
+                                ui.label("Rainbow text");
+                                changed |= crate::chrome::checkbox(
+                                    ui,
+                                    &mut cfg.sstv_style.rainbow_text,
+                                    "all text, overriding the colours above",
+                                )
+                                .on_hover_text(
+                                    "Draw every text in the picture — banner and message — as a \
+                                     horizontal rainbow, ignoring the colours above.",
+                                )
+                                .changed();
+                                ui.end_row();
+
+                                ui.label("Message");
+                                ui.horizontal(|ui| {
+                                    changed |= ui
+                                        .color_edit_button_srgb(&mut cfg.sstv_style.message_ink)
+                                        .on_hover_text("The slot message's text colour")
+                                        .changed();
+                                    ui.label(RichText::new("text").size(10.5).weak());
+                                    ui.add_space(8.0);
+                                    changed |= crate::chrome::checkbox(
+                                        ui,
+                                        &mut cfg.sstv_style.message_outline,
+                                        "outline in",
+                                    )
+                                    .changed();
+                                    ui.add_enabled_ui(cfg.sstv_style.message_outline, |ui| {
+                                        changed |= ui
+                                            .color_edit_button_srgb(
+                                                &mut cfg.sstv_style.message_outline_ink,
+                                            )
+                                            .changed();
+                                    });
                                 });
                                 ui.end_row();
 
@@ -1642,6 +1762,7 @@ impl SdroxideApp {
                         cfg.sstv_banner_fill = d.sstv_banner_fill;
                         cfg.sstv_banner_ink = d.sstv_banner_ink;
                         cfg.sstv_banner_height = d.sstv_banner_height;
+                        cfg.sstv_style = d.sstv_style;
                         changed = true;
                     }
                     if !seeded {
