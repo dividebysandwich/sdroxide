@@ -283,8 +283,23 @@ pub struct WefaxRx {
 /// own black/white detail cannot fill one, short enough that several fit in the
 /// five-second start signal.
 const TONE_WINDOW_S: f64 = 0.5;
-/// Matching windows needed to accept a start or stop signal (≈1.5 s).
+/// Matching windows needed to accept a start signal while *idle* (≈1.5 s).
 const TONE_RUN: u32 = 3;
+/// Matching windows needed to accept a start signal heard *while a picture is
+/// being drawn* (≈3 s).
+///
+/// A real start signal is five seconds long and is the second way to learn that
+/// a page is over — the stop tone, the first way, is the first thing a fade
+/// takes. But a chart's own high-contrast detail can hold a start-tone-looking
+/// rate for a window or two, and each false accept cuts a healthy picture in
+/// two (issue #496). Asking for twice the evidence mid-picture still catches
+/// the real five-second signal with two seconds to spare, and a fading chart
+/// is far less likely to fake three seconds than one and a half.
+const START_RUN_RECEIVING: u32 = 6;
+/// Matching windows needed to accept a stop signal (≈3.5 s). A stop tone is
+/// five seconds long; requiring most of it keeps a noise burst or a fade from
+/// ending a chart whose signal is merely dipping (issue #496).
+const STOP_RUN: u32 = 7;
 /// How far a measured crossing rate may be from the nominal one, as a fraction.
 const TONE_TOL: f64 = 0.18;
 /// Give up looking for the phasing pulse after this long and start the picture
@@ -293,10 +308,15 @@ const PHASE_TIMEOUT_S: f64 = 35.0;
 /// Phasing lines to average the skew over before locking.
 const PHASE_LINES: u32 = 5;
 /// Phasing-looking lines in a row, in the middle of a picture, that mean the
-/// next transmission has begun on top of it. Four is about eight seconds at
-/// 30 LPM and two at 120 — short enough to lose almost none of the new chart's
-/// thirty-second phasing signal, long enough that no picture can fake it.
-const REPHASE_LINES: u32 = 4;
+/// next transmission has begun on top of it.
+///
+/// Eight is four seconds at 120 LPM — short enough to lose almost none of the
+/// new chart's thirty-second phasing signal, long enough that a chart's own
+/// graphic has to hold the same shape for four seconds to fake it. Four was
+/// not (issue #496): a dark image with one bright feature in a fixed place
+/// passes the shape test line after line, and two seconds of it was cutting
+/// pictures up.
+const REPHASE_LINES: u32 = 8;
 /// How far two phasing lines' pulses may sit apart, as a fraction of a line,
 /// and still be read as the same phasing signal. The line clock drifts by parts
 /// per million between lines; a picture that happened to look like phasing twice
@@ -511,18 +531,20 @@ impl WefaxRx {
         if !self.auto_start {
             return;
         }
-        if let Some(ioc) = self.start_tone(level) {
+        if let Some(ioc) = self.start_tone(level, TONE_RUN) {
             self.begin(ioc, true, out);
         }
     }
 
     /// Feed the start-signal detector one sample; `Some(ioc)` once a whole
-    /// start signal has been heard.
+    /// start signal has been heard. `required` matching windows are demanded,
+    /// because how much evidence a start signal needs depends on what else is
+    /// on the line: see [`TONE_RUN`] and [`START_RUN_RECEIVING`].
     ///
     /// Run while receiving as well as while idle: the next transmission's start
     /// signal is the second way to learn that this picture is over, and the
     /// stop tone — the first way — is also the first thing a fade takes.
-    fn start_tone(&mut self, level: f32) -> Option<Ioc> {
+    fn start_tone(&mut self, level: f32, required: u32) -> Option<Ioc> {
         let window = (self.rate * TONE_WINDOW_S) as u32;
         let rate = self.start_det.push(level, window)?;
         // Crossings per window → crossings per second → the alternation rate,
@@ -535,7 +557,7 @@ impl WefaxRx {
         match hit {
             Some(ioc) if ioc == self.start_ioc => {
                 self.start_run += 1;
-                if self.start_run >= TONE_RUN {
+                if self.start_run >= required {
                     self.start_run = 0;
                     return Some(ioc);
                 }
@@ -557,7 +579,9 @@ impl WefaxRx {
     /// in a row with the patch in the same place, to within the line clock's own
     /// drift, is a phasing signal.
     fn note_phasing_line(&mut self, line: &[f32]) -> bool {
-        let Some(skew) = phasing_skew(line) else {
+        // The strict test: mid-picture, a line that is merely "mostly black
+        // with a white patch" is a chart's own graphic, not a phasing pulse.
+        let Some(skew) = phasing_skew_strict(line) else {
             self.rephase_lines = 0;
             return false;
         };
@@ -584,12 +608,12 @@ impl WefaxRx {
         // the *next* chart to the old page on the old line phase, which is a
         // picture that can never come out straight (issue #276). Finish the
         // page here instead and phase the new one properly.
-        if self.auto_start {
-            if let Some(ioc) = self.start_tone(level) {
-                self.finish(false, out);
-                self.begin(ioc, true, out);
-                return;
-            }
+        if self.auto_start
+            && let Some(ioc) = self.start_tone(level, START_RUN_RECEIVING)
+        {
+            self.finish(false, out);
+            self.begin(ioc, true, out);
+            return;
         }
 
         if self.auto_stop {
@@ -598,7 +622,7 @@ impl WefaxRx {
                 let alt_hz = rate / TONE_WINDOW_S / 2.0;
                 if (alt_hz - STOP_TONE_HZ).abs() <= STOP_TONE_HZ * TONE_TOL {
                     self.stop_run += 1;
-                    if self.stop_run >= TONE_RUN {
+                    if self.stop_run >= STOP_RUN {
                         // The stop tone is already in the last line or two;
                         // they are dropped rather than left as a barcode at the
                         // bottom of the chart.
@@ -707,6 +731,26 @@ fn resample_line(line: &[f32], width: usize) -> Vec<u8> {
 /// `None` when the line does not look like a phasing line at all, which is how
 /// a picture that is already under way falls through to the timeout.
 fn phasing_skew(line: &[f32]) -> Option<u32> {
+    phasing_skew_with(line, false)
+}
+
+/// The same, with the extra evidence a *mid-picture* rephase has to demand.
+///
+/// A chart's own graphic can be mostly black with one bright patch, and a patch
+/// that does not move is in the same place line after line — which is the whole
+/// of what the lenient test looks for, and enough to cut a picture in two
+/// (issue #496). So the strict test also requires the line to be almost black,
+/// the patch to be nearly white, and — the discriminator a chart cannot fake
+/// without a border — the patch to sit at the *end* of the line, where a real
+/// phasing pulse belongs.
+///
+/// Used only for the mid-picture rephase. Phasing proper uses the lenient test,
+/// because there the pulse is expected and a noisy line should still align.
+fn phasing_skew_strict(line: &[f32]) -> Option<u32> {
+    phasing_skew_with(line, true)
+}
+
+fn phasing_skew_with(line: &[f32], strict: bool) -> Option<u32> {
     let n = line.len();
     let pulse = (n as f64 * 0.05).round() as usize;
     if n < 32 || pulse == 0 {
@@ -714,7 +758,8 @@ fn phasing_skew(line: &[f32]) -> Option<u32> {
     }
     // A phasing line is mostly black. If it is not, this is picture.
     let mean: f32 = line.iter().sum::<f32>() / n as f32;
-    if mean > 0.35 {
+    let max_mean = if strict { 0.20 } else { 0.35 };
+    if mean > max_mean {
         return None;
     }
     // Running sum over a pulse-wide window, wrapping, so a pulse split across
@@ -729,7 +774,14 @@ fn phasing_skew(line: &[f32]) -> Option<u32> {
         acc += line[(start + pulse) % n];
     }
     // The window has to actually be white, or there was no pulse to find.
-    if best.0 / pulse as f32 <= 0.55 {
+    let min_pulse = if strict { 0.75 } else { 0.55 };
+    if best.0 / pulse as f32 <= min_pulse {
+        return None;
+    }
+    // Mid-picture, the pulse has to be where a real one is: in the last few per
+    // cent of the line. A chart's bright feature can be anywhere, and this is
+    // what tells the two apart.
+    if strict && best.1 + 2 * pulse < n {
         return None;
     }
     // The picture begins just after the pulse.
@@ -800,6 +852,37 @@ mod tests {
             }
         }
         modulate(&levels)
+    }
+
+    /// A dark chart: every line almost entirely black with one bright patch at
+    /// `x_frac` of the line — the night side of an infrared satellite image,
+    /// or any chart with one heavy graphic on an otherwise black field.
+    ///
+    /// This is the shape that used to cut pictures up: it passes the old
+    /// "mostly black with a white 5 %" test for a phasing line, and a patch
+    /// fixed in place does so line after line.
+    fn dark_chart(lpm: Lpm, lines: usize, x_frac: f64) -> Vec<f32> {
+        let per = (RATE * lpm.line_secs()) as usize;
+        let band = (per as f64 * 0.05) as usize;
+        let x = (per as f64 * x_frac) as usize;
+        let mut levels = Vec::new();
+        for _ in 0..lines {
+            let mut line = vec![0.0f32; per];
+            for v in line.iter_mut().skip(x).take(band) {
+                *v = 1.0;
+            }
+            levels.extend(line);
+        }
+        modulate(&levels)
+    }
+
+    /// Drive `rx` from idle into `Phase::Image`, so a test can feed it picture.
+    fn into_image(rx: &mut WefaxRx, lpm: Lpm) -> Vec<WefaxEvent> {
+        let mut out = Vec::new();
+        rx.start_manual(&mut out);
+        let ev = drain(rx, &phasing(lpm, 8));
+        assert!(rx.receiving() && !rx.phasing(), "did not reach the picture: {ev:?}");
+        out
     }
 
     fn drain(rx: &mut WefaxRx, audio: &[f32]) -> Vec<WefaxEvent> {
@@ -957,7 +1040,11 @@ mod tests {
         let mut audio = phasing(lpm, 8);
         audio.extend(ramp_picture(lpm, 6));
         // The next transmission, arriving with nothing but its phasing signal.
-        audio.extend(phasing(lpm, 10));
+        // A real one runs about thirty seconds — sixty lines at 120 LPM — and
+        // the rephase spends eight of them recognising it before the new page
+        // starts phasing afresh, so the fixture has to leave enough to phase
+        // the second page from.
+        audio.extend(phasing(lpm, 16));
         audio.extend(ramp_picture(lpm, 6));
         let ev = drain(&mut rx, &audio);
 
@@ -1027,6 +1114,68 @@ mod tests {
         audio.extend(phasing(lpm, 10));
         let ev = drain(&mut rx, &audio);
         assert!(!ev.iter().any(|e| matches!(e, WefaxEvent::Complete { .. })), "{ev:?}");
+        assert!(rx.receiving());
+    }
+
+    /// Issue #496: a chart's own high-contrast detail must not be read as the
+    /// next transmission's phasing signal.
+    ///
+    /// `dark_chart` is mostly black with one bright patch per line, in a fixed
+    /// place — a satellite image's night side, or a chart with a heavy graphic.
+    /// It passes the shape test for a phasing line, and a patch that does not
+    /// move passes it line after line, so the old four-line run cut the picture
+    /// into fragments. The patch is in the *middle* of the line; a real phasing
+    /// pulse is at the end, which is the extra evidence a mid-picture rephase
+    /// has to demand.
+    #[test]
+    fn a_dark_chart_with_a_bright_feature_is_not_a_new_transmission() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut out = into_image(&mut rx, lpm);
+        // Six seconds of it, which is what a chart produces.
+        out.extend(drain(&mut rx, &dark_chart(lpm, 12, 0.5)));
+        assert!(
+            !out.iter().any(|e| matches!(e, WefaxEvent::Complete { .. })),
+            "a chart's own graphic ended the page: {out:?}"
+        );
+        assert!(rx.receiving());
+    }
+
+    /// Issue #496: a brief burst at the stop tone's rate is a noise burst or a
+    /// fade, not five seconds of stop tone. It must not end a healthy chart.
+    #[test]
+    fn a_brief_stop_tone_burst_does_not_end_the_picture() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut out = into_image(&mut rx, lpm);
+        let mut audio = ramp_picture(lpm, 2);
+        audio.extend(tone(STOP_TONE_HZ, 1.5));
+        audio.extend(ramp_picture(lpm, 2));
+        out.extend(drain(&mut rx, &audio));
+        assert!(
+            !out.iter().any(|e| matches!(e, WefaxEvent::Complete { .. })),
+            "a 1.5 s burst ended the page: {out:?}"
+        );
+        assert!(rx.receiving());
+    }
+
+    /// ...and the same for a brief burst at the start tone's rate mid-picture.
+    #[test]
+    fn a_brief_start_tone_burst_does_not_cut_the_page() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut out = into_image(&mut rx, lpm);
+        let mut audio = ramp_picture(lpm, 2);
+        audio.extend(tone(Ioc::I576.start_tone_hz(), 1.5));
+        audio.extend(ramp_picture(lpm, 2));
+        out.extend(drain(&mut rx, &audio));
+        assert!(
+            !out.iter().any(|e| matches!(e, WefaxEvent::Complete { .. })),
+            "a 1.5 s start burst cut the page: {out:?}"
+        );
         assert!(rx.receiving());
     }
 
