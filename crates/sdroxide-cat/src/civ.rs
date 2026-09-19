@@ -86,7 +86,6 @@ pub fn mode_to_civ(m: Mode) -> u8 {
         // 1090 MHz. Grouped with FM so nothing downstream has to special-case
         // a mode a radio can neither be put into nor report back.
         Mode::Nfm
-        | Mode::Wfm
         | Mode::Rifp
         | Mode::Packet
         | Mode::Aprs
@@ -96,6 +95,10 @@ pub fn mode_to_civ(m: Mode) -> u8 {
         | Mode::Vdl2
         | Mode::Ais
         | Mode::HdRadio => 0x05,
+        // Wide FM has a mode byte of its own on CI-V, and it is not the same
+        // one as narrow FM. Sending `0x05` for a broadcast station left the rig
+        // in narrow FM, so selecting WFM did nothing at all (issue #494).
+        Mode::Wfm => 0x06,
         Mode::Spec => 0x01,
     }
 }
@@ -107,7 +110,10 @@ pub fn civ_to_mode(b: u8) -> Option<Mode> {
         0x01 => Mode::Usb,
         0x02 => Mode::Am,
         0x03 | 0x07 => Mode::Cw,
-        0x05 | 0x06 => Mode::Nfm,
+        0x05 => Mode::Nfm,
+        // Wide FM is its own byte, and reporting it as narrow FM made a rig
+        // sitting on WFM read back as one that could not be there (issue #494).
+        0x06 => Mode::Wfm,
         _ => return None,
     })
 }
@@ -1234,6 +1240,23 @@ mod tests {
             assert_eq!(mode(m, Some(0x06))[0][5], 0x05, "{} is not FM", m.label());
             assert_eq!(mode(m, Some(0x06))[1][6], 0x01, "{} left DATA off", m.label());
         }
+    }
+
+    /// Wide FM is its own CI-V mode byte, not narrow FM with a wider filter.
+    ///
+    /// Selecting WFM used to send `0x05` — the narrow-FM byte — so a rig that
+    /// was in FM stayed in FM and the control did nothing at all (issue #494).
+    #[test]
+    fn wide_fm_is_its_own_mode_byte() {
+        assert_eq!(mode_to_civ(Mode::Nfm), 0x05);
+        assert_eq!(mode_to_civ(Mode::Wfm), 0x06);
+        assert_eq!(civ_to_mode(0x05), Some(Mode::Nfm));
+        assert_eq!(civ_to_mode(0x06), Some(Mode::Wfm));
+        // And the whole frame carries it, with filter 1 beside the mode.
+        assert_eq!(
+            set_mode_frame(0x94, Mode::Wfm),
+            vec![0xFE, 0xFE, 0x94, 0xE0, 0x06, 0x06, 0x01, 0xFD],
+        );
     }
 
     /// Icom's filter is an index, but unlike Yaesu's it comes from a formula
