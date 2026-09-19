@@ -18,6 +18,7 @@ mod kenwood;
 mod qrplabs;
 mod rigctld;
 mod rshfiq;
+mod trusdx;
 mod yaesu;
 
 use std::time::{Duration, Instant};
@@ -547,6 +548,70 @@ trait Protocol: Send {
     }
 
     fn parse(&mut self, buf: &mut Vec<u8>) -> Vec<CatUpdate>;
+
+    /// Whether the serial adapter's DTR line is wired to the radio's reset, so
+    /// it must be held high for the whole session and never used to key.
+    ///
+    /// True for the (tr)uSDX on the common CH340 board: opening the port — or
+    /// toggling DTR at any point — resets the radio. A PTT method of DTR would
+    /// therefore reboot the transceiver on every over, and a forced-low DTR
+    /// would hold it in reset. The serial thread asserts the line when this is
+    /// true and ignores a configured DTR key-down.
+    fn holds_dtr_high(&self) -> bool {
+        false
+    }
+
+    /// Whether this family carries receive and transmit audio *inside* the CAT
+    /// byte stream rather than over a sound card.
+    ///
+    /// True for exactly one radio, the (tr)uSDX, which has no sound card at
+    /// all: the serial link carries 8-bit audio between `;`-delimited CAT
+    /// frames. A family that answers true must implement
+    /// [`Self::take_stream_audio`] and [`Self::encode_tx_audio`], and the
+    /// serial thread will route bytes through [`Self::parse`] and the audio
+    /// through a ring instead of expecting a capture device.
+    fn streams_audio(&self) -> bool {
+        false
+    }
+
+    /// The frame that asks the radio to start its in-band audio stream, or
+    /// empty where there is none. Written at open and again on the retry below.
+    fn stream_start(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    /// Whether the radio has acknowledged that its stream is running — the
+    /// `US` that follows the enable. Until it has, the serial thread keeps
+    /// re-asking, because a radio that reboots as the port opens loses the
+    /// first ask and would otherwise sit silent for the session.
+    fn stream_active(&self) -> bool {
+        false
+    }
+
+    /// The frame that suspends the in-band stream, and the one that resumes it.
+    ///
+    /// Written on either side of every control command on a family that cannot
+    /// take a CAT frame while its stream is running — an audio-first link,
+    /// where a command *into* the stream kills it outright (the (tr)uSDX).
+    /// Empty on every other family, where control frames go out whenever they
+    /// like and these are never consulted.
+    fn stream_pause(&self) -> Vec<u8> {
+        Vec::new()
+    }
+    fn stream_resume(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    /// Take the receive audio this profile has pulled out of the byte stream
+    /// since the last call. Appends unsigned 8-bit samples to `out`.
+    ///
+    /// Only ever called on a family whose [`Self::streams_audio`] is true.
+    fn take_stream_audio(&mut self, _out: &mut Vec<u8>) {}
+
+    /// Encode a block of transmit audio — mono, `-1.0..=1.0` — as the bytes
+    /// this radio takes, appending to `out`. The encoding is the family's own:
+    /// the (tr)uSDX wants unsigned 8-bit with the delimiter escaped.
+    fn encode_tx_audio(&self, _samples: &[f32], _out: &mut Vec<u8>) {}
 
     /// Called with every protocol-generated frame the moment it is actually
     /// written to the link — and only then. What a profile *generates* is not
@@ -1174,6 +1239,10 @@ fn make_protocol(cfg: &CatConfig) -> Box<dyn Protocol> {
         // transmit relay: everything else about an RS-HFIQ is I/Q, and so
         // sdroxide's.
         CatFamily::RsHfiq => Box::new(rshfiq::RsHfiq::new()),
+        // The one family whose audio is *in* the byte stream: the serial
+        // thread routes bytes to the profile's own demultiplexer rather than
+        // expecting a sound card (see `Protocol::streams_audio`).
+        CatFamily::TrUsdx => Box::new(trusdx::TrUsdx::new(cfg.trusdx_audio.streams_audio())),
         CatFamily::Rigctld => Box::new(rigctld::Rigctld::new()),
         CatFamily::Flrig => Box::new(flrig::Flrig::new(cfg.flrig_addr.trim().to_string())),
     }
@@ -1245,6 +1314,22 @@ pub struct CatHandle {
     /// What the serial thread has found out about the radio since — see
     /// [`Learned`].
     learned: Learned,
+    /// Receive audio the serial thread has pulled out of an in-band stream, for
+    /// a family whose [`Protocol::streams_audio`] is true. `None` on every
+    /// other family, where there is no such stream to read.
+    ///
+    /// A ring rather than a channel: only the newest audio matters to a
+    /// listener, and a queue that falls behind must drop old samples rather
+    /// than delay the live ones. Behind a `Mutex` only because the handle is
+    /// shared by `&self`; the thread pushes and the source pops, never both at
+    /// once in practice.
+    stream_rx: Option<std::sync::Mutex<rtrb::Consumer<f32>>>,
+    /// Transmit audio the source has handed to the serial thread, in the same
+    /// shape. The thread encodes and paces it out while the radio is keyed.
+    stream_tx: Option<std::sync::Mutex<rtrb::Producer<f32>>>,
+    /// Whether this rig's audio rides the CAT link, so the caller knows to read
+    /// [`Self::poll_stream_audio`] instead of a sound card.
+    streaming: bool,
     /// The serial thread, until [`CatHandle::release`] has waited for it.
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -1398,6 +1483,58 @@ impl CatHandle {
     /// [`scope_active`].
     pub fn take_scope_sweep(&self) -> Option<ScopeFrame> {
         self.scope.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
+    /// Whether this rig's receive and transmit audio arrive *inside* the CAT
+    /// link rather than over a sound card — true only for the (tr)uSDX.
+    pub fn streams_audio(&self) -> bool {
+        self.streaming
+    }
+
+    /// Drain the receive audio the serial thread has pulled out of the stream,
+    /// appending it to `out` as mono samples in `-1.0..=1.0`. A no-op on a
+    /// family with no in-band stream.
+    ///
+    /// Whatever is in the ring is taken; a caller that has been away long
+    /// enough for the ring to fill simply loses the oldest samples, which is
+    /// the right way round for live audio.
+    pub fn poll_stream_audio(&self, out: &mut Vec<f32>, max: usize) {
+        let Some(rx) = &self.stream_rx else { return };
+        let mut rx = rx.lock().unwrap_or_else(|e| e.into_inner());
+        while out.len() < max {
+            match rx.pop() {
+                Ok(s) => out.push(s),
+                Err(_) => break,
+            }
+        }
+    }
+
+    /// How many transmit samples are still waiting to go out. Used by the
+    /// source's drain to hold an unkey until the over has actually played.
+    pub fn stream_tx_pending(&self) -> usize {
+        let Some(tx) = &self.stream_tx else { return 0 };
+        let tx = tx.lock().unwrap_or_else(|e| e.into_inner());
+        tx.buffer().capacity().saturating_sub(tx.slots())
+    }
+
+    /// Hand transmit audio to the serial thread, as mono samples in
+    /// `-1.0..=1.0`. Returns how many were taken; the rest are dropped because
+    /// the ring is full, which is the backpressure an over sees — the thread
+    /// paces the stream out at the radio's rate and the caller produces ahead
+    /// of it.
+    ///
+    /// A no-op returning 0 on a family with no in-band stream.
+    pub fn push_stream_audio(&self, samples: &[f32]) -> usize {
+        let Some(tx) = &self.stream_tx else { return 0 };
+        let mut tx = tx.lock().unwrap_or_else(|e| e.into_inner());
+        let mut n = 0;
+        for &s in samples {
+            match tx.push(s) {
+                Ok(()) => n += 1,
+                Err(_) => break,
+            }
+        }
+        n
     }
 }
 
@@ -1599,10 +1736,36 @@ pub fn spawn(cfg: CatConfig) -> CatHandle {
     let learned_in = learned.clone();
     let scope = std::sync::Arc::new(std::sync::Mutex::new(None));
     let scope_in = scope.clone();
+    // The in-band audio rings, only for a family that keeps its audio on the
+    // control link. Half a second each way is ample: the thread pushes and the
+    // source pops on the same machine, and a ring that fills means somebody
+    // stopped reading, not a scheduling hiccup.
+    let streaming = make_protocol(&cfg).streams_audio();
+    let (stream_rx, stream_rx_in) = if streaming {
+        let (p, c) = rtrb::RingBuffer::<f32>::new(STREAM_RING);
+        (Some(std::sync::Mutex::new(c)), Some(p))
+    } else {
+        (None, None)
+    };
+    let (stream_tx, stream_tx_in) = if streaming {
+        let (p, c) = rtrb::RingBuffer::<f32>::new(STREAM_RING);
+        (Some(std::sync::Mutex::new(p)), Some(c))
+    } else {
+        (None, None)
+    };
     let thread = std::thread::Builder::new()
         .name("sdroxide-cat".into())
         .spawn(move || {
-            serial_thread(cfg, cmd_rx, event_tx, telem_tx, signal_tx, scope_in, learned_in)
+            serial_thread(
+                cfg,
+                cmd_rx,
+                event_tx,
+                telem_tx,
+                signal_tx,
+                scope_in,
+                learned_in,
+                Streams { rx: stream_rx_in, tx: stream_tx_in },
+            )
         })
         .expect("spawn cat thread");
     CatHandle {
@@ -1618,9 +1781,16 @@ pub fn spawn(cfg: CatConfig) -> CatHandle {
         antennas,
         commands_rig_power,
         learned,
+        stream_rx,
+        stream_tx,
+        streaming,
         thread: Some(thread),
     }
 }
+
+/// Samples a single in-band audio ring holds. At the (tr)uSDX's 7812 samples
+/// per second that is a little over half a second of receive audio.
+const STREAM_RING: usize = 4096;
 
 fn map_parity(p: Parity) -> serialport::Parity {
     match p {
@@ -1811,7 +1981,52 @@ fn write_frame(
     last_write: &mut Instant,
     io: &mut Exchange,
 ) -> bool {
+    // A family whose audio rides this link cannot be handed a control frame
+    // while its stream is running: the frame kills the stream rather than
+    // pausing it, and the stream does not come back (the (tr)uSDX). So a
+    // control frame is bracketed — suspend, command, resume — and the two
+    // bracketing frames are written raw, without being bracketed themselves.
+    if protocol.streams_audio() && protocol.stream_active() && !frame.is_empty() {
+        let pause = protocol.stream_pause();
+        let resume = protocol.stream_resume();
+        let is_bracket = frame == pause.as_slice() || frame == resume.as_slice();
+        if !is_bracket {
+            if !pause.is_empty() && write_raw(port, protocol, &pause, last_write) {
+                return true;
+            }
+            if write_frame_within(port, protocol, frame, last_write, io, REPLY_TIMEOUT) {
+                return true;
+            }
+            // A key-down leaves the stream suspended: the radio is about to
+            // transmit and the host feeds it audio, so there is nothing to
+            // resume until the unkey asks for it.
+            let key_down = frame == protocol.ptt(true).as_slice();
+            if !key_down && !resume.is_empty() {
+                return write_raw(port, protocol, &resume, last_write);
+            }
+            return false;
+        }
+    }
     write_frame_within(port, protocol, frame, last_write, io, REPLY_TIMEOUT)
+}
+
+/// Write one frame with the inter-frame gap and none of [`write_frame`]'s
+/// answer-waiting. For the stream's own pause/resume brackets, which the radio
+/// acknowledges but with which nothing is correlated.
+fn write_raw(
+    port: &mut dyn Link,
+    protocol: &mut dyn Protocol,
+    frame: &[u8],
+    last_write: &mut Instant,
+) -> bool {
+    let since = last_write.elapsed();
+    if since < FRAME_GAP {
+        std::thread::sleep(FRAME_GAP - since);
+    }
+    let failed = port.write_all(frame).is_err();
+    protocol.wrote(frame);
+    *last_write = Instant::now();
+    failed
 }
 
 /// [`write_frame`] with the caller's own patience for the answer still owed —
@@ -2064,6 +2279,19 @@ impl Link for std::net::TcpStream {
 /// write.
 const READ_TIMEOUT: Duration = Duration::from_millis(50);
 
+/// How often to re-ask for the in-band audio stream while the radio has not
+/// acknowledged it. Half a second is short enough that a rebooted radio is
+/// streaming almost as soon as it is up, and long enough not to flood a link
+/// whose `UA1;` is being refused outright.
+const STREAM_ASK_PERIOD: Duration = Duration::from_millis(500);
+
+/// How long the in-band stream may go silent before the serial thread re-arms
+/// it. The radio can stop streaming without saying so, and the `US` handshake
+/// only reports the start — so the retry is driven by the audio actually
+/// arriving, not by the handshake. A third of a second of signal is a gap
+/// nobody notices; a stream that has died is back within half a second.
+const STREAM_IDLE: Duration = Duration::from_millis(300);
+
 /// Open whichever link this configuration describes.
 fn open_link(cfg: &CatConfig) -> std::io::Result<Box<dyn Link>> {
     if cfg.family.is_network() {
@@ -2170,6 +2398,95 @@ fn commanded_mode(cfg: &CatConfig, app_mode: Mode, dial_hz: Option<f64>) -> Opti
     }
 }
 
+/// Paces the in-band transmit audio to the radio's own byte rate.
+///
+/// The (tr)uSDX takes 8-bit transmit samples at a fixed rate — the documented
+/// `TRUSDX_TX_RATE_HZ` — and does not clock them back, so the host is expected
+/// to feed them at that rate and no other. Writing as fast as the ring has data
+/// would stuff the OS serial buffer and delay the audio by however much it
+/// holds, which on a digital mode is a burst drifting out of its slot. So the
+/// thread meters its own writes against wall-clock: it may have written
+/// `elapsed × rate` bytes by now, and no more.
+#[derive(Default)]
+struct TxPace {
+    /// When the current over started, or `None` before the first key-down.
+    start: Option<Instant>,
+    /// How many audio bytes have actually gone to the port this over.
+    written: u64,
+    /// Bytes per second the radio reads at.
+    rate: u64,
+}
+
+impl TxPace {
+    /// Start timing a fresh over at `rate` bytes per second.
+    fn reset(&mut self, rate: u64) {
+        self.start = Some(Instant::now());
+        self.written = 0;
+        self.rate = rate.max(1);
+    }
+
+    /// How many more bytes may be written right now without outrunning the
+    /// radio.
+    fn allowance(&self) -> usize {
+        let Some(start) = self.start else { return 0 };
+        let due = (start.elapsed().as_secs_f64() * self.rate as f64) as u64;
+        due.saturating_sub(self.written) as usize
+    }
+}
+
+/// Write whatever transmit audio the ring holds and [`TxPace`] allows, encoded
+/// for the radio. Returns true on a write error — the caller's signal to
+/// reconnect.
+fn pump_tx_audio(
+    port: &mut dyn Link,
+    audio: Option<&mut rtrb::Consumer<f32>>,
+    protocol: &mut dyn Protocol,
+    pace: &mut TxPace,
+    scratch: &mut Vec<f32>,
+    bytes: &mut Vec<u8>,
+) -> bool {
+    let Some(audio) = audio else { return false };
+    let allowed = pace.allowance();
+    scratch.clear();
+    for _ in 0..allowed {
+        match audio.pop() {
+            Ok(s) => scratch.push(s),
+            // The source has not produced as fast as the radio reads — an
+            // underrun. Nothing to do but send what there is; the radio holds
+            // the carrier through it.
+            Err(_) => break,
+        }
+    }
+    if scratch.is_empty() {
+        return false;
+    }
+    bytes.clear();
+    protocol.encode_tx_audio(scratch, bytes);
+    if bytes.is_empty() {
+        return false;
+    }
+    let ok = port.write_all(bytes).is_ok();
+    if ok {
+        pace.written += bytes.len() as u64;
+    }
+    !ok
+}
+
+/// The in-band audio rings, one each way, handed to the serial thread for a
+/// family whose audio rides the CAT link. Both are `None` on every other
+/// family, where the audio never comes near this thread.
+struct Streams {
+    /// Samples the thread takes off the link and pushes for the source.
+    rx: Option<rtrb::Producer<f32>>,
+    /// Samples the source has queued for the radio, which the thread encodes
+    /// and paces out while the radio is keyed.
+    tx: Option<rtrb::Consumer<f32>>,
+}
+
+// The thread's whole vocabulary is channels and configuration handed in by
+// `spawn`; there is nothing here to group into a struct that would not be
+// called `SerialThreadArgs`.
+#[allow(clippy::too_many_arguments)]
 fn serial_thread(
     cfg: CatConfig,
     cmd_rx: Receiver<CatCmd>,
@@ -2178,8 +2495,23 @@ fn serial_thread(
     signal_tx: Sender<f32>,
     scope_out: std::sync::Arc<std::sync::Mutex<Option<ScopeFrame>>>,
     learned: Learned,
+    mut streams: Streams,
 ) {
     let mut protocol = make_protocol(&cfg);
+    // Whether this rig keeps its audio on the control link. Everything below
+    // that is about the in-band stream is gated on it, so every other family's
+    // hot path is exactly what it was.
+    let streaming = protocol.streams_audio();
+    // Two scratch buffers for the stream, allocated once: the receive side's
+    // bytes pulled out of `parse`, and the transmit side's samples popped from
+    // the ring to be encoded and written.
+    let mut rx_scratch: Vec<u8> = Vec::new();
+    let mut tx_scratch: Vec<f32> = Vec::new();
+    let mut tx_bytes: Vec<u8> = Vec::new();
+    // When the current over began and how many bytes have gone out, so the
+    // transmit stream is paced to the radio's own rate (`TRUSDX_TX_RATE_HZ`)
+    // rather than to however fast the machine happens to be.
+    let mut tx_pace = TxPace::default();
     let poll_period = poll_period(&cfg);
     // The meters follow the poll rate too. They used to run at a fixed 5 Hz,
     // which made the setting a half-measure: an operator turning the control
@@ -2246,8 +2578,17 @@ fn serial_thread(
         // Deassert PTT line at start.
         match cfg.ptt {
             PttMethod::Rts => port.set_rts(false),
+            // Never a DTR key-down on a family whose DTR is its reset line: the
+            // key-up would reset the radio and the key-down would hold it there.
+            PttMethod::Dtr if protocol.holds_dtr_high() => {}
             PttMethod::Dtr => port.set_dtr(false),
             _ => {}
+        }
+        // A family whose DTR is the radio's reset line gets it held high, over
+        // the top of any forced level: a `Low` is a radio held in reset for the
+        // whole session, and nothing on screen would say why it never answered.
+        if protocol.holds_dtr_high() {
+            port.set_dtr(true);
         }
         // When the last frame went out, so consecutive writes can be spaced
         // (see `FRAME_GAP`). Backdated: the first write waits for nothing.
@@ -2373,6 +2714,15 @@ fn serial_thread(
         let mut next_antenna_probe = Instant::now() + ANTENNA_PROBE_RETRY;
 
         let mut next_poll = Instant::now();
+        // When to ask again for the in-band stream if the radio has not yet
+        // acknowledged it. Backdated so the first ask of a connection follows
+        // the opening sequence immediately.
+        let mut next_stream_ask = Instant::now();
+        // When receive audio was last actually taken off the link. The stream's
+        // retry rides on this rather than on the radio's `US` handshake, which
+        // says the stream *started* and nothing about whether it is still
+        // running — and it can stop without saying so.
+        let mut last_rx_audio = Instant::now();
         // Backdated so the first poll of a connection carries the mode: the app
         // adopts the rig's mode rather than commanding one, and waiting a mode
         // period to find out what it is would leave the panel wrong meanwhile.
@@ -2574,6 +2924,11 @@ fn serial_thread(
                                 port.set_rts(on);
                                 false
                             }
+                            PttMethod::Dtr if protocol.holds_dtr_high() => {
+                                // Keying DTR would reset the radio instead.
+                                // Said once at open by the caller, not per over.
+                                false
+                            }
                             PttMethod::Dtr => {
                                 port.set_dtr(on);
                                 false
@@ -2595,6 +2950,26 @@ fn serial_thread(
                         }
                         ptt = on;
                         ptt_edge = Instant::now();
+                        // An in-band key-down starts the transmit clock: the
+                        // audio that follows is paced from here at the radio's
+                        // own rate, not from when the first sample happened to
+                        // be encoded.
+                        if streaming {
+                            // The stream is suspended for the over and comes
+                            // back at the unkey; keep the idle clock off the
+                            // retry so it does not re-arm a stream that is
+                            // simply paused for transmission.
+                            last_rx_audio = Instant::now();
+                            if on {
+                                tx_pace.reset(u64::from(sdroxide_types::TRUSDX_TX_RATE_HZ));
+                                // Anything left from the previous over is
+                                // stale; the source re-fills the ring as the
+                                // new one starts.
+                                if let Some(tx) = streams.tx.as_mut() {
+                                    while tx.pop().is_ok() {}
+                                }
+                            }
+                        }
                         // Ask the meter that belongs to the new state straight
                         // away, rather than showing the other one's last reading
                         // for the rest of the current period.
@@ -2770,6 +3145,48 @@ fn serial_thread(
                     Ok(CatCmd::Stop) => return,
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => return,
+                }
+            }
+
+            // While we are the ones keying a rig whose audio rides this link,
+            // the control loop *is* the audio pump. The poll stands down for
+            // the length of the over: the radio does not answer while it is
+            // transmitting, and a frame written into the stream is a splice in
+            // the audio, not a reading. `continue` sends the loop straight back
+            // to the command drain, so an unkey is still seen at once.
+            if streaming && ptt {
+                if pump_tx_audio(
+                    &mut *port,
+                    streams.tx.as_mut(),
+                    &mut *protocol,
+                    &mut tx_pace,
+                    &mut tx_scratch,
+                    &mut tx_bytes,
+                ) {
+                    break 'io true;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+                continue;
+            }
+
+            // Ask for the in-band stream until the radio says it is running.
+            // The enable goes out in the opening sequence, but opening the port
+            // resets the radio on the common board and a booting radio does not
+            // hear it — so without this the session would be silent, with a
+            // control link that worked perfectly.
+            // Re-arm the stream when no audio has arrived for a moment. The
+            // enable is `UA0;UA1;`, so it is safe to send over a healthy stream
+            // as well as a dead one — but the idle test is what keeps it off a
+            // healthy one, because a command written while the stream is
+            // running is what kills this firmware in the first place.
+            if streaming
+                && last_rx_audio.elapsed() > STREAM_IDLE
+                && Instant::now() >= next_stream_ask
+            {
+                next_stream_ask = Instant::now() + STREAM_ASK_PERIOD;
+                let f = protocol.stream_start();
+                if !f.is_empty() && write_raw(&mut *port, &mut *protocol, &f, &mut last_write) {
+                    break 'io true;
                 }
             }
 
@@ -3025,6 +3442,22 @@ fn serial_thread(
             // updates in the same exchange.
             if io.read_once(&mut *port, &mut *protocol).is_none() {
                 break 'io true;
+            }
+            // And hand whatever receive audio came with it to the source. The
+            // profile pulled it out of the byte stream during `parse`; all that
+            // is left is to scale it and put it in the ring. `try_push`, not
+            // push: a full ring means the consumer has stopped reading, and
+            // dropping the newest sample is the only answer that does not stall
+            // the control link behind the audio.
+            if let Some(rx) = streams.rx.as_mut() {
+                rx_scratch.clear();
+                protocol.take_stream_audio(&mut rx_scratch);
+                if !rx_scratch.is_empty() {
+                    last_rx_audio = Instant::now();
+                }
+                for &b in &rx_scratch {
+                    let _ = rx.push((b as f32 - 128.0) / 127.0);
+                }
             }
             if let Some(sweep) = protocol.take_scope_sweep() {
                 last_sweep = Instant::now();
@@ -3894,6 +4327,14 @@ mod tests {
         for f in CatFamily::ALL {
             let p = make_protocol(&CatConfig { family: f, ..CatConfig::default() });
             let (full, dial) = (p.poll_requests(), p.dial_requests());
+            // One family polls nothing at all: a (tr)uSDX cannot take a CAT
+            // frame while its audio stream is running, so its whole poll would
+            // be a stream-killer and the driver only asks for readings it was
+            // commanded to change. See `trusdx`.
+            if full.is_empty() {
+                assert!(dial.is_empty(), "{f:?}");
+                continue;
+            }
             // A family whose whole poll is the dial has nothing to split off:
             // an RS-HFIQ has no mode command at all, because it has no modes —
             // what comes off it is I/Q and the mode is sdroxide's (issue #383).

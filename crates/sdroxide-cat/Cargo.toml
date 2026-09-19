@@ -13,6 +13,11 @@ sdroxide-types.workspace = true
 # path, not USB vendor/product metadata.
 serialport = { version = "4.10", default-features = false }
 crossbeam-channel.workspace = true
+# The in-band audio ring for the (tr)uSDX's stream. The same lock-free SPSC
+# ring the sound-card paths use, for the same reason: the serial thread must
+# never block on the audio consumer, and the consumer must never wait on a lock
+# the thread holds.
+rtrb.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 # XML-RPC response parsing for the flrig profile. The same parse-only crate the

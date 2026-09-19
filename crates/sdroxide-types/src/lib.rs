@@ -202,9 +202,9 @@ pub use radio::{
     RtlTcpConfig, Rx888Config, Rx888Device, RxSite, SdrPlayAgc, SdrPlayConfig, SdrPlayDevice,
     SdrPlayDuo, SdrPlayDuoRole, SdrPlayDuoTuner, SdrPlayHdrBw, SdrPlayModel, SerialConfig,
     SmartSdrConfig, SmartSdrDevice, SoapyConfig, SoapyDeviceInfo, SoundFormat, SpyServerConfig,
-    SpyServerFormat, StopBits, TciConfig, Transverter, cat_iq_offset_max_hz, converter_preset_name,
-    diversity_cost_note, elad_cat_baud, format_freq_ranges, hackrf_serial_matches, hpsdr_alex_oc,
-    hpsdr_n2adr_oc, parse_freq_ranges,
+    SpyServerFormat, StopBits, TRUSDX_RX_RATE_HZ, TRUSDX_TX_RATE_HZ, TciConfig, TrUsdxAudio,
+    Transverter, cat_iq_offset_max_hz, converter_preset_name, diversity_cost_note, elad_cat_baud,
+    format_freq_ranges, hackrf_serial_matches, hpsdr_alex_oc, hpsdr_n2adr_oc, parse_freq_ranges,
 };
 pub use rds::{
     RdsClock, RdsData, RdsGroupLog, RdsStandard, RdsStats, RtPlus, af_code_hz, pi_callsign,

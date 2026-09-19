@@ -181,7 +181,7 @@ pub(in crate::app) fn settings_cat_tab(
         CAT_SCOPE_MIN_BAUD, CatFamily, CwKeying, DigiMode, Direction, ELAD_CAT_BAUDS,
         ELAD_DEFAULT_CAT_BAUD, EladAntenna, EladTxInput, IcomModel, IcomScopeSpan, KenwoodSend,
         LineState, ModeControl, Parity, PttMethod, QMX_IQ_OFFSET_HZ, QMX_IQ_RATE_HZ,
-        RS_HFIQ_CAT_BAUD, SoundFormat, StopBits,
+        RS_HFIQ_CAT_BAUD, SoundFormat, StopBits, TrUsdxAudio,
     };
     let Some(cfg) = radio_edit.as_mut() else {
         ui.label("Waiting for the configuration of the machine the radio is attached to.");
@@ -361,6 +361,22 @@ pub(in crate::app) fn settings_cat_tab(
             cfg.cat.iq_offset_hz = 0.0;
         }
 
+        // A (tr)uSDX is a USB serial adapter and nothing else: no sound card,
+        // so the sound format is demod audio coming down the CAT link, and PTT
+        // is a CAT command. The rate is 115200 on firmware 2.00t and up (the
+        // older 38400 is still offered below). DTR is the radio's reset line on
+        // the common board and the driver holds it high whatever is configured
+        // here, so a key-down on DTR is not offered by the profile.
+        if cfg.cat.family == CatFamily::TrUsdx && cfg.cat.family != family_before {
+            cfg.cat.format = SoundFormat::DemodAudio;
+            cfg.cat.ptt = PttMethod::Cat;
+            cfg.cat.serial.baud = 115_200;
+            cfg.cat.serial.data_bits = 8;
+            cfg.cat.serial.parity = Parity::None;
+            cfg.cat.serial.stop_bits = StopBits::One;
+            cfg.cat.serial.force_dtr = LineState::High;
+        }
+
         // A network family reaches the radio over a socket, so every serial
         // setting below is about a port nothing will open. Drawing them would
         // invite an operator to fix a connection problem by changing a baud
@@ -446,6 +462,10 @@ pub(in crate::app) fn settings_cat_tab(
             // offering a link that cannot work. See `sdroxide_cat::spawn`.
             let bauds: &[u32] = if cfg.cat.family == CatFamily::Elad {
                 &ELAD_CAT_BAUDS
+            } else if cfg.cat.family == CatFamily::TrUsdx {
+                // "38400 / 115200 (2.00t and above)" — the firmware's own two
+                // rates, and nothing else it has a setting for.
+                &[38_400, 115_200]
             } else {
                 &[4800, 9600, 19200, 38400, 57600, 115200]
             };
@@ -800,6 +820,52 @@ pub(in crate::app) fn settings_cat_tab(
                  middle of the span is the dial. Set the sample rate above to \
                  whatever your sound card is actually running at; that is what \
                  makes the panadapter as wide as it is.",
+            );
+            ui.end_row();
+        }
+
+        if cfg.cat.family == CatFamily::TrUsdx {
+            ui.label("Radio");
+            ui.label(RichText::new("(tr)uSDX · open uSDX").weak()).on_hover_text(
+                "DL2MAN/PE1NNZ's pocket QRP transceiver and the open uSDX firmware \
+                 it grew from. It emulates a Kenwood TS-480, but the subset is \
+                 thin: the dial, the mode, PTT and RIT/XIT clear are all it \
+                 answers. No S-meter, no SWR, no power control, no VFO B, no \
+                 split and no CAT keyer, so the Drive slider and the meters do \
+                 nothing over CAT — the audio level is the only transmit control \
+                 there is.\n\n\
+                 CW is keyed as audio (MCW) through the sideband, or with the \
+                 key or paddle at the radio; there is no command that takes text.",
+            );
+            ui.end_row();
+
+            ui.label("Audio").on_hover_text(
+                "A (tr)uSDX has no sound card of its own and two ways to be heard, \
+                 and which is right is a fact about your shack rather than the radio.\n\n\
+                 \"One cable\" takes the audio inside the CAT serial link itself — the \
+                 radio's own 8-bit stream, over the same USB cable as the control, with \
+                 nothing else to plug in. The catch is the firmware: it cannot take a \
+                 CAT command while its stream is running (a command sent into the stream \
+                 does not pause it, it kills it), so this mode never polls. Tuning and \
+                 mode changes are sent as you make them, each pausing the stream for a \
+                 moment and starting it again, so expect a brief gap on each change; \
+                 nothing is sent while you are simply listening. The radio's own dial \
+                 and mode are not followed either — there is no read to follow them \
+                 with — so drive it from here.\n\n\
+                 \"USB sound card\" takes the audio from an external sound card wired to \
+                 the radio's 3.5 mm speaker/mic jack, and behaves as any other CAT rig: \
+                 the dial poll runs, so the radio's own knob and mode are followed. Pick \
+                 the card under Radio audio below.\n\n\
+                 Both modes open the port with DTR held high: the serial adapter's DTR \
+                 is wired to the radio's reset, so opening the port reboots it and the \
+                 first second or two is quiet while it comes up. DTR is never used to key.",
+            );
+            enum_combo(
+                ui,
+                "trusdx_audio",
+                &mut cfg.cat.trusdx_audio,
+                &TrUsdxAudio::ALL,
+                TrUsdxAudio::label,
             );
             ui.end_row();
         }
