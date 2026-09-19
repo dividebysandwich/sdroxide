@@ -416,10 +416,36 @@ pub enum CatFamily {
     /// Appended after [`CatFamily::QrpLabs`] for the reason [`CatFamily::Flrig`]
     /// gives.
     RsHfiq,
+    /// The (tr)uSDX — DL2MAN/PE1NNZ's pocket QRP transceiver, and the open
+    /// uSDX firmware it grew from.
+    ///
+    /// A fourth Kenwood dialect. The radio emulates a TS-480 and answers `ID;`
+    /// with `020`, but the subset is thin — dial, mode, PTT, RIT/XIT and VOX,
+    /// and nothing else. No S-meter, no SWR, no power control, no VFO B, no
+    /// split, no keyer: every one of those reads earns a `?;`. Driving it as a
+    /// Kenwood is therefore not merely imprecise but noisy, so it gets a
+    /// profile that asks only what this firmware answers.
+    ///
+    /// This profile is the ordinary CAT-rig one: sdroxide commands the dial and
+    /// the mode and keys the transmitter over USB, and the audio comes from a
+    /// USB sound card wired to the radio's 3.5 mm speaker/mic jack. The radio
+    /// can also carry its audio *inside* the CAT link as an 8-bit stream, with
+    /// no sound card at all — that is a different transfer, with its own
+    /// framing and its own firmware constraints, and it is not this profile.
+    ///
+    /// One hardware fact is asserted rather than configured: opening the port
+    /// may reset the radio, and toggling DTR resets it again, because the
+    /// serial adapter's DTR is wired to the processor's reset on the common
+    /// board. DTR is therefore held high for the whole session and never
+    /// offered as a keying line.
+    ///
+    /// Appended after [`CatFamily::RsHfiq`] for the reason [`CatFamily::Flrig`]
+    /// gives.
+    TrUsdx,
 }
 
 impl CatFamily {
-    pub const ALL: [CatFamily; 10] = [
+    pub const ALL: [CatFamily; 11] = [
         CatFamily::Xiegu,
         CatFamily::Icom,
         CatFamily::Yaesu,
@@ -428,6 +454,7 @@ impl CatFamily {
         CatFamily::Elad,
         CatFamily::QrpLabs,
         CatFamily::RsHfiq,
+        CatFamily::TrUsdx,
         CatFamily::Rigctld,
         CatFamily::Flrig,
     ];
@@ -447,6 +474,7 @@ impl CatFamily {
             CatFamily::Elad => "ELAD",
             CatFamily::QrpLabs => "QRP Labs",
             CatFamily::RsHfiq => "RS-HFIQ",
+            CatFamily::TrUsdx => "(tr)uSDX",
             CatFamily::Rigctld => "Hamlib rigctld (network)",
             CatFamily::Flrig => "flrig (network)",
         }
@@ -7481,13 +7509,16 @@ mod tests {
     /// disappears from the dialog instead of failing to build.
     #[test]
     fn every_cat_family_is_offered_and_labelled() {
-        assert_eq!(CatFamily::ALL.len(), 10);
+        assert_eq!(CatFamily::ALL.len(), 11);
         for f in CatFamily::ALL {
             assert!(!f.label().is_empty(), "{f:?}");
         }
         assert!(CatFamily::ALL.contains(&CatFamily::Elad));
         assert!(CatFamily::ALL.contains(&CatFamily::QrpLabs));
         assert!(CatFamily::ALL.contains(&CatFamily::RsHfiq));
+        assert!(CatFamily::ALL.contains(&CatFamily::TrUsdx));
+        // A (tr)uSDX serves its own serial port over USB, like a QMX.
+        assert!(!CatFamily::TrUsdx.is_network());
         // An RS-HFIQ's control link is a serial port on the board itself
         // (issue #383).
         assert!(!CatFamily::RsHfiq.is_network());

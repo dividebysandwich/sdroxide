@@ -361,6 +361,22 @@ pub(in crate::app) fn settings_cat_tab(
             cfg.cat.iq_offset_hz = 0.0;
         }
 
+        // A (tr)uSDX is a USB serial adapter as far as the computer is
+        // concerned: control over the serial port, audio from a sound card
+        // wired to its 3.5 mm jack. The rate is 115200 on firmware 2.00t and up
+        // (the older 38400 is still offered below). DTR is the radio's reset
+        // line on the common board and the driver holds it high whatever is
+        // configured here, so a key-down on DTR is not offered by the profile.
+        if cfg.cat.family == CatFamily::TrUsdx && cfg.cat.family != family_before {
+            cfg.cat.format = SoundFormat::DemodAudio;
+            cfg.cat.ptt = PttMethod::Cat;
+            cfg.cat.serial.baud = 115_200;
+            cfg.cat.serial.data_bits = 8;
+            cfg.cat.serial.parity = Parity::None;
+            cfg.cat.serial.stop_bits = StopBits::One;
+            cfg.cat.serial.force_dtr = LineState::High;
+        }
+
         // A network family reaches the radio over a socket, so every serial
         // setting below is about a port nothing will open. Drawing them would
         // invite an operator to fix a connection problem by changing a baud
@@ -446,6 +462,10 @@ pub(in crate::app) fn settings_cat_tab(
             // offering a link that cannot work. See `sdroxide_cat::spawn`.
             let bauds: &[u32] = if cfg.cat.family == CatFamily::Elad {
                 &ELAD_CAT_BAUDS
+            } else if cfg.cat.family == CatFamily::TrUsdx {
+                // "38400 / 115200 (2.00t and above)" — the firmware's own two
+                // rates, and nothing else it has a setting for.
+                &[38_400, 115_200]
             } else {
                 &[4800, 9600, 19200, 38400, 57600, 115200]
             };
@@ -801,6 +821,40 @@ pub(in crate::app) fn settings_cat_tab(
                  whatever your sound card is actually running at; that is what \
                  makes the panadapter as wide as it is.",
             );
+            ui.end_row();
+        }
+
+        if cfg.cat.family == CatFamily::TrUsdx {
+            ui.label("Radio");
+            ui.label(RichText::new("(tr)uSDX · open uSDX").weak()).on_hover_text(
+                "DL2MAN/PE1NNZ's pocket QRP transceiver and the open uSDX firmware \
+                 it grew from. It emulates a Kenwood TS-480, but the subset is \
+                 thin: the dial, the mode, PTT and RIT/XIT clear are all it \
+                 answers. No S-meter, no SWR, no power control, no VFO B, no \
+                 split and no CAT keyer, so the Drive slider and the meters do \
+                 nothing over CAT — the audio level is the only transmit control \
+                 there is.\n\n\
+                 CW is keyed as audio (MCW) through the sideband, or with the \
+                 key or paddle at the radio; there is no command that takes text.",
+            );
+            ui.end_row();
+
+            ui.label("");
+            ui.label(RichText::new("Audio over a USB sound card on the radio's jack").weak())
+                .on_hover_text(
+                    "A (tr)uSDX has no sound card of its own. Wire its 3.5 mm \
+                     speaker/mic jack to a USB sound card and pick that card under \
+                     Radio audio; control goes over the USB serial port as for any \
+                     other CAT rig.\n\n\
+                     (The radio can also carry its audio inside the CAT cable as an \
+                     8-bit stream, needing no sound card at all — that is a different \
+                     transfer and is not what this profile does.)\n\n\
+                     One thing about the hardware: opening the port resets the radio \
+                     — the serial adapter's DTR is wired to its reset on the common \
+                     board — so the first second or two after connecting is quiet \
+                     while it boots. DTR is held high for the whole session and is \
+                     never used to key.",
+                );
             ui.end_row();
         }
 

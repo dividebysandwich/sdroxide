@@ -18,6 +18,7 @@ mod kenwood;
 mod qrplabs;
 mod rigctld;
 mod rshfiq;
+mod trusdx;
 mod yaesu;
 
 use std::time::{Duration, Instant};
@@ -543,6 +544,18 @@ trait Protocol: Send {
     /// dial or a mode that nobody here commanded and no broadcast announced.
     /// The rig moved and did not say so, which is the whole of the question.
     fn pushes_updates(&self) -> bool {
+        false
+    }
+
+    /// Whether the serial adapter's DTR line is wired to the radio's reset, so
+    /// it must be held high for the whole session and never used to key.
+    ///
+    /// True for the (tr)uSDX on the common CH340 board: opening the port — or
+    /// toggling DTR at any point — resets the radio. A PTT method of DTR would
+    /// therefore reboot the transceiver on every over, and a forced-low DTR
+    /// would hold it in reset. The serial thread asserts the line when this is
+    /// true and ignores a configured DTR key-down.
+    fn holds_dtr_high(&self) -> bool {
         false
     }
 
@@ -1174,6 +1187,7 @@ fn make_protocol(cfg: &CatConfig) -> Box<dyn Protocol> {
         // transmit relay: everything else about an RS-HFIQ is I/Q, and so
         // sdroxide's.
         CatFamily::RsHfiq => Box::new(rshfiq::RsHfiq::new()),
+        CatFamily::TrUsdx => Box::new(trusdx::TrUsdx::new()),
         CatFamily::Rigctld => Box::new(rigctld::Rigctld::new()),
         CatFamily::Flrig => Box::new(flrig::Flrig::new(cfg.flrig_addr.trim().to_string())),
     }
@@ -2246,8 +2260,17 @@ fn serial_thread(
         // Deassert PTT line at start.
         match cfg.ptt {
             PttMethod::Rts => port.set_rts(false),
+            // Never a DTR key-down on a family whose DTR is its reset line: the
+            // key-up would reset the radio and the key-down would hold it there.
+            PttMethod::Dtr if protocol.holds_dtr_high() => {}
             PttMethod::Dtr => port.set_dtr(false),
             _ => {}
+        }
+        // A family whose DTR is the radio's reset line gets it held high, over
+        // the top of any forced level: a `Low` is a radio held in reset for the
+        // whole session, and nothing on screen would say why it never answered.
+        if protocol.holds_dtr_high() {
+            port.set_dtr(true);
         }
         // When the last frame went out, so consecutive writes can be spaced
         // (see `FRAME_GAP`). Backdated: the first write waits for nothing.
@@ -2572,6 +2595,10 @@ fn serial_thread(
                             PttMethod::Vox => false,
                             PttMethod::Rts => {
                                 port.set_rts(on);
+                                false
+                            }
+                            PttMethod::Dtr if protocol.holds_dtr_high() => {
+                                // Keying DTR would reset the radio instead.
                                 false
                             }
                             PttMethod::Dtr => {
