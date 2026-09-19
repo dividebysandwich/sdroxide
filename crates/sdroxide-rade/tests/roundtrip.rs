@@ -12,7 +12,7 @@ use std::sync::{Mutex, MutexGuard};
 use num_complex::Complex32;
 use sdroxide_rade::{
     MODEM_RATE, RX_REAL_SCALE, Rade, RadeWorker, SPEECH_RATE, TX_REAL_SCALE, VocoderEnc,
-    f32_to_i16, vocoder,
+    f32_to_i16, text, vocoder,
 };
 
 /// Callsign carried in the End-of-Over frame. Deliberately not a real one:
@@ -41,8 +41,10 @@ fn read_wav(path: &PathBuf) -> (Vec<f32>, f64) {
     (s, spec.sample_rate as f64)
 }
 
-/// Speech -> features -> modem IQ, the same path the transmitter takes.
-fn modulate(rade: &mut Rade, speech: &[f32]) -> (Vec<f32>, Vec<Complex32>) {
+/// Speech -> features -> modem IQ, the same path the transmitter takes, with
+/// `call` in the End-of-Over frame — so a receiver of this signal has a
+/// callsign to recover, exactly as an on-air over does.
+fn modulate(rade: &mut Rade, speech: &[f32], call: &str) -> (Vec<f32>, Vec<Complex32>) {
     let mut enc = VocoderEnc::new().expect("encoder");
     let frame = enc.frame_size();
     let n_block = rade.n_features();
@@ -58,6 +60,9 @@ fn modulate(rade: &mut Rade, speech: &[f32]) -> (Vec<f32>, Vec<Complex32>) {
             sent.extend_from_slice(&block);
         }
     }
+    let mut bits = vec![0.0f32; rade.n_eoo_bits()];
+    text::encode(call, &mut bits);
+    rade.set_tx_eoo_bits(&bits).expect("set eoo bits");
     rade.tx_eoo(&mut iq).expect("eoo");
     (sent, iq)
 }
@@ -89,7 +94,7 @@ fn transmit_then_receive_recovers_the_features() {
     assert_eq!(rate, SPEECH_RATE, "sample is expected to be 16 kHz");
 
     let mut rade = Rade::open_v1().expect("open");
-    let (sent, iq) = modulate(&mut rade, &audio);
+    let (sent, iq) = modulate(&mut rade, &audio, TEST_CALL);
     assert!(!sent.is_empty() && !iq.is_empty());
     drop(rade);
 
@@ -272,7 +277,7 @@ fn worker_survives_chunk_sizes_unrelated_to_nin() {
     // can open its own.
     let modem: Vec<f32> = {
         let mut rade = Rade::open_v1().expect("open");
-        let (_, iq) = modulate(&mut rade, &audio);
+        let (_, iq) = modulate(&mut rade, &audio, TEST_CALL);
         iq.iter().map(|z| z.re * TX_REAL_SCALE).collect()
     };
 
@@ -304,14 +309,26 @@ fn worker_survives_chunk_sizes_unrelated_to_nin() {
         worker.pop_rx(&mut speech);
     }
     // Let the tail work through.
+    let mut heard: Option<String> = None;
     for _ in 0..100 {
         std::thread::sleep(std::time::Duration::from_millis(20));
         worker.pop_rx(&mut speech);
-        if worker.stats().eoo_count > 0 {
+        // The worker's own callsign channel, which is what the engine reports
+        // to FreeDV Reporter and what the panel shows. Draining it here is the
+        // coverage that was missing: the test proved an EOO was *detected* and
+        // never that its callsign came back out, so a worker-side decode bug
+        // would have passed.
+        for t in worker.poll_text() {
+            heard = heard.or(Some(t.call));
+        }
+        if worker.stats().eoo_count > 0 && heard.is_some() {
             break;
         }
     }
     worker.pop_rx(&mut speech);
+    for t in worker.poll_text() {
+        heard = heard.or(Some(t.call));
+    }
 
     let stats = worker.stats();
     eprintln!(
@@ -325,6 +342,12 @@ fn worker_survives_chunk_sizes_unrelated_to_nin() {
     );
     assert_eq!(stats.dropped, 0, "the test paced badly and lost samples");
     assert!(stats.eoo_count > 0, "end-of-over was never detected");
+    assert_eq!(
+        heard.as_deref(),
+        Some(TEST_CALL),
+        "the worker did not surface the callsign from the end-of-over frame, so \
+         FreeDV Reporter would never be told who was heard"
+    );
 
     // Roughly the input duration, allowing for acquisition and the vocoder's
     // warm-up at the start.

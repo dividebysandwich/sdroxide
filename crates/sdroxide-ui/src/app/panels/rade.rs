@@ -19,6 +19,12 @@ impl SdroxideApp {
         let status = self.digi_status.clone();
         let rade = status.as_ref().and_then(|s| s.rade).unwrap_or_default();
         let transmitting = status.as_ref().map(|s| s.transmitting).unwrap_or(false);
+        // The last callsign decoded from a remote End-of-Over frame. The
+        // controller has always carried it in `dx_call` (and reported it to
+        // FreeDV Reporter from the same place) — this is where it reaches the
+        // operator. It is `None` while transmitting: our own over is not a
+        // station being heard.
+        let dx_call = status.as_ref().and_then(|s| s.dx_call.clone());
 
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("RADE").size(11.0).strong().color(crate::theme::CYAN()));
@@ -95,6 +101,24 @@ impl SdroxideApp {
                 );
             } else {
                 ui.label(RichText::new("SNR —").size(12.0).color(dim));
+            }
+            // Who we last heard, from the End-of-Over frame that closed their
+            // over. Shown for a few seconds after the over ends, which is the
+            // only time a RADE station names itself.
+            if let Some(call) = &dx_call {
+                ui.add_space(12.0);
+                ui.label(
+                    RichText::new(format!("heard {call}"))
+                        .size(12.0)
+                        .strong()
+                        .color(crate::theme::GREEN()),
+                )
+                .on_hover_text(
+                    "The callsign the station put in its End-of-Over frame — the only \
+                     point in a RADE over at which one is sent. It is also what is \
+                     reported to FreeDV Reporter, so a station you hear appears on \
+                     qso.freedv.org as heard by you.",
+                );
             }
         });
         ui.add_space(8.0);

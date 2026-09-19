@@ -29,6 +29,12 @@ use crate::controller::DigiAction;
 /// Engine audio rate: the rate of decoded speech out and microphone audio in.
 const OUT_RATE: f64 = 48_000.0;
 
+/// How often the unidentified-reception report goes out while a RADE signal is
+/// in sync. The server rate-limits `rx_report` to once every two seconds per
+/// station, so this is comfortably inside it and still frequent enough that a
+/// calling station sees it is being heard.
+const PRESENCE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub struct RadeController {
     cfg: DigiConfig,
     /// `None` when the modem could not be opened — the mode then behaves as a
@@ -46,6 +52,10 @@ pub struct RadeController {
     /// The last callsign decoded from a remote End-of-Over frame, shown until
     /// the next over starts.
     last_dx_call: Option<String>,
+
+    /// When the "hearing something, unidentified" report was last sent, so it
+    /// is paced rather than emitted on every poll. `None` until the first one.
+    presence_at: Option<SystemTime>,
 
     last_status: DigiStatus,
     status_dirty: bool,
@@ -72,6 +82,7 @@ impl RadeController {
             tx_done: false,
             dial_hz: 0.0,
             last_dx_call: None,
+            presence_at: None,
             last_status,
             status_dirty: true,
         }
@@ -155,7 +166,7 @@ impl DigiEngine for RadeController {
         self.cfg.rade_mute_analog
     }
 
-    fn poll(&mut self, _now: SystemTime, dial_hz: f64) -> Vec<DigiAction> {
+    fn poll(&mut self, now: SystemTime, dial_hz: f64) -> Vec<DigiAction> {
         let mut actions = Vec::new();
         self.dial_hz = dial_hz;
         if self.tx_active && !self.keyed {
@@ -179,12 +190,28 @@ impl DigiEngine for RadeController {
             }
         }
 
-        let status = build_status(
-            &self.cfg,
-            self.keyed,
-            self.worker.as_ref().map(stats_of),
-            self.last_dx_call.clone(),
-        );
+        let rade = self.worker.as_ref().map(stats_of);
+        // In sync but not yet identified: report that we are hearing
+        // *something*, so the transmitting station can see it is being heard
+        // before either end knows the other's callsign. Paced, because a
+        // station in sync for a minute would otherwise send a report every
+        // poll. FreeDV GUI does the same, with an empty callsign.
+        if let Some(st) = rade {
+            if st.sync && !self.keyed {
+                let due = self
+                    .presence_at
+                    .is_none_or(|t| now.duration_since(t).unwrap_or_default() >= PRESENCE_INTERVAL);
+                if due {
+                    self.presence_at = Some(now);
+                    actions.push(DigiAction::RadePresence { snr_db: st.snr_db });
+                }
+            } else {
+                // Out of sync, or our own over: nothing is being received.
+                self.presence_at = None;
+            }
+        }
+
+        let status = build_status(&self.cfg, self.keyed, rade, self.last_dx_call.clone());
         if self.status_dirty || status.rade != self.last_status.rade {
             self.status_dirty = false;
             self.last_status = status.clone();

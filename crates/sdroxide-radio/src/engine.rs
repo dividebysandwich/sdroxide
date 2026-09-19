@@ -6336,6 +6336,12 @@ impl Engine {
                     debug!(%call, snr_db, freq_hz, "RADE callsign decoded");
                     self.spots.reporter_rx_report(call, snr_db.round().clamp(-128.0, 127.0) as i32);
                 }
+                DigiAction::RadePresence { snr_db } => {
+                    // In sync with an unidentified station: say we are hearing
+                    // *something*, so the far end can see it is being heard
+                    // before either of us knows the other's callsign.
+                    self.spots.reporter_rx_presence(snr_db.round().clamp(-128.0, 127.0) as i32);
+                }
                 DigiAction::KeyTx => {
                     // Key up via the normal PTT path so the safety rails apply.
                     self.digi_tx = true;

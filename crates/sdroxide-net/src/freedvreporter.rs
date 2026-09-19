@@ -102,6 +102,10 @@ enum Ctrl {
         call: String,
         snr: i32,
     },
+    /// A station we are receiving but have not identified yet: an `rx_report`
+    /// with an empty callsign, which the server relays so the far end can see
+    /// that somebody is hearing it. See [`Reporter::emit_rx_presence`].
+    RxPresence(i32),
     Shutdown,
 }
 
@@ -158,6 +162,10 @@ impl ReporterHandle {
     }
     pub fn rx_report(&self, call: String, snr: i32) {
         let _ = self.ctrl.send(Ctrl::RxReport { call, snr });
+    }
+    /// Report that we are receiving *something* from an unidentified station.
+    pub fn rx_presence(&self, snr: i32) {
+        let _ = self.ctrl.send(Ctrl::RxPresence(snr));
     }
 }
 
@@ -747,6 +755,7 @@ impl Reporter {
             }
             Ctrl::Visible(v) => self.set_visible(v),
             Ctrl::RxReport { call, snr } => self.emit_rx_report(&call, snr),
+            Ctrl::RxPresence(snr) => self.emit_rx_presence(snr),
             // Handled by the callers, which need to return from the loop.
             Ctrl::Shutdown => {}
         }
@@ -831,14 +840,26 @@ impl Reporter {
             return;
         }
         info!(%call, snr, "reporting RX callsign to FreeDV Reporter");
-        self.report(socketio::emit(
-            "rx_report",
-            Some(&json!({
-                "callsign": call.trim().to_uppercase(),
-                "mode": MODE_STRING,
-                "snr": snr,
-            })),
-        ));
+        let frame = rx_report_frame(call, snr);
+        self.report(frame);
+    }
+
+    /// Report an unidentified reception: an `rx_report` with an empty callsign,
+    /// which the server relays so the transmitting station can see that someone
+    /// is hearing it before either end has identified the other. FreeDV GUI
+    /// sends the same thing ("report '--' for callsign so we can at least report
+    /// that we're receiving *something*"), and our own inbound handler already
+    /// expects it.
+    ///
+    /// Deliberately never attributes the reception to a station: the empty
+    /// callsign is what tells the server (and every listener) that nobody has
+    /// been identified yet, so this can never mis-credit a decode.
+    fn emit_rx_presence(&mut self, snr: i32) {
+        if !self.fully_connected || !self.can_report() {
+            return;
+        }
+        let frame = rx_report_frame("", snr);
+        self.report(frame);
     }
 
     /// Send a frame the server treats as an update from us, and postpone the
@@ -907,6 +928,21 @@ impl Reporter {
 /// What we tell the reporter we are running.
 fn software_version() -> String {
     format!("SDRoxide {}", env!("CARGO_PKG_VERSION"))
+}
+
+/// One `rx_report` frame. An empty `callsign` is an unidentified reception
+/// ("hearing something"); a callsign is a decoded station, upper-cased for the
+/// site. Shared by [`Reporter::emit_rx_report`] and
+/// [`Reporter::emit_rx_presence`] so the two cannot drift in shape.
+fn rx_report_frame(call: &str, snr: i32) -> String {
+    socketio::emit(
+        "rx_report",
+        Some(&json!({
+            "callsign": call.trim().to_uppercase(),
+            "mode": MODE_STRING,
+            "snr": snr,
+        })),
+    )
 }
 
 /// A short host-platform string, matching what other clients report.
@@ -1232,6 +1268,24 @@ mod tests {
     #[test]
     fn software_version_is_branded() {
         assert_eq!(software_version(), format!("SDRoxide {}", env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn an_unidentified_reception_carries_an_empty_callsign() {
+        // The presence report is distinguished from a decoded one only by its
+        // empty callsign: that is what tells the server — and every listener —
+        // that nobody has been identified, so it can never mis-credit a decode.
+        let presence = rx_report_frame("", -7);
+        assert!(
+            presence.contains("\"callsign\":\"\"") && presence.contains("\"snr\":-7"),
+            "presence frame was {presence}"
+        );
+        let named = rx_report_frame("k1abc", -7);
+        assert!(
+            named.contains("\"callsign\":\"K1ABC\"") && named.contains("\"mode\":\"RADEV1\""),
+            "named frame was {named}"
+        );
+        assert_ne!(presence, named);
     }
 
     #[test]

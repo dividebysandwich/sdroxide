@@ -279,6 +279,19 @@ impl SpotManager {
         }
     }
 
+    /// Report that we are receiving *something* we have not identified yet —
+    /// a RADE signal in sync with no End-of-Over callsign decoded. This is what
+    /// makes a transmitting station see that it is being heard before either
+    /// end knows the other's callsign.
+    pub fn reporter_rx_presence(&self, snr: i32) {
+        if !self.cfg.freedv_reporter.report_rx {
+            return;
+        }
+        if let Some(h) = &self.freedv {
+            h.rx_presence(snr);
+        }
+    }
+
     /// Update the operator's dial frequency, so band-scoped feeds query the
     /// right slice.
     pub fn set_dial(&self, hz: f64) {
