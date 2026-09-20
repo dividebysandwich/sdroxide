@@ -739,10 +739,17 @@ fn phasing_skew(line: &[f32]) -> Option<u32> {
 /// A chart's own graphic can be mostly black with one bright patch, and a patch
 /// that does not move is in the same place line after line — which is the whole
 /// of what the lenient test looks for, and enough to cut a picture in two
-/// (issue #496). So the strict test also requires the line to be almost black,
-/// the patch to be nearly white, and — the discriminator a chart cannot fake
-/// without a border — the patch to sit at the *end* of the line, where a real
-/// phasing pulse belongs.
+/// (issue #496). So the strict test also requires the line to be almost black
+/// and the patch to be nearly white. A chart's bright area is usually wide —
+/// a cloud mass, a filled border, a heavy graphic — and that pushes the line's
+/// mean up and fails the test, while a real phasing pulse is a narrow 5 % strip
+/// of full white on black.
+///
+/// The pulse's *position* is deliberately not tested. Mid-picture the line
+/// buffer is cut on the old transmission's clock, so the next transmission's
+/// phasing pulse lands at an arbitrary offset (issue #276); requiring it at the
+/// end of the buffer rejected real rephases. Shape here, and the place-to-place
+/// consistency of `note_phasing_line`, are what tell phasing from picture.
 ///
 /// Used only for the mid-picture rephase. Phasing proper uses the lenient test,
 /// because there the pulse is expected and a noisy line should still align.
@@ -776,12 +783,6 @@ fn phasing_skew_with(line: &[f32], strict: bool) -> Option<u32> {
     // The window has to actually be white, or there was no pulse to find.
     let min_pulse = if strict { 0.75 } else { 0.55 };
     if best.0 / pulse as f32 <= min_pulse {
-        return None;
-    }
-    // Mid-picture, the pulse has to be where a real one is: in the last few per
-    // cent of the line. A chart's bright feature can be anywhere, and this is
-    // what tells the two apart.
-    if strict && best.1 + 2 * pulse < n {
         return None;
     }
     // The picture begins just after the pulse.
@@ -840,6 +841,26 @@ mod tests {
         modulate(&levels)
     }
 
+    /// The same, with the pulse at `frac` of the line.
+    ///
+    /// Mid-picture the line buffer is cut on the *old* transmission's clock, so
+    /// the next transmission's phasing pulse lands at an arbitrary offset
+    /// (issue #276) — never conveniently at the end.
+    fn phasing_at(lpm: Lpm, count: usize, frac: f64) -> Vec<f32> {
+        let per = (RATE * lpm.line_secs()) as usize;
+        let pulse = (per as f64 * 0.05) as usize;
+        let at = (per as f64 * frac) as usize;
+        let mut levels = Vec::new();
+        for _ in 0..count {
+            let mut line = vec![0.0f32; per];
+            for v in line.iter_mut().skip(at).take(pulse) {
+                *v = 1.0;
+            }
+            levels.extend(line);
+        }
+        modulate(&levels)
+    }
+
     /// A picture whose every line is a horizontal ramp black → white, which is
     /// the pattern that makes a misalignment obvious: a correctly phased decode
     /// is monotonic across the row and a wrapped one has a cliff in it.
@@ -854,16 +875,18 @@ mod tests {
         modulate(&levels)
     }
 
-    /// A dark chart: every line almost entirely black with one bright patch at
-    /// `x_frac` of the line — the night side of an infrared satellite image,
-    /// or any chart with one heavy graphic on an otherwise black field.
+    /// A dark chart: every line mostly black with one broad bright band at
+    /// `x_frac` of the line — the night side of an infrared satellite image, or
+    /// any chart with one heavy graphic on an otherwise black field.
     ///
-    /// This is the shape that used to cut pictures up: it passes the old
-    /// "mostly black with a white 5 %" test for a phasing line, and a patch
-    /// fixed in place does so line after line.
+    /// This is the shape that used to cut pictures up: it passes the lenient
+    /// "mostly black with a bright patch" test for a phasing line, and a band
+    /// fixed in place does so line after line. It is not a phasing pulse,
+    /// though: the band is far wider than the 5 % a pulse occupies, so it lifts
+    /// the line's mean above the strict threshold and is turned away.
     fn dark_chart(lpm: Lpm, lines: usize, x_frac: f64) -> Vec<f32> {
         let per = (RATE * lpm.line_secs()) as usize;
-        let band = (per as f64 * 0.05) as usize;
+        let band = (per as f64 * 0.25) as usize;
         let x = (per as f64 * x_frac) as usize;
         let mut levels = Vec::new();
         for _ in 0..lines {
@@ -1078,6 +1101,34 @@ mod tests {
         assert!(biggest_step < 60, "the second page wraps: biggest step {biggest_step}");
     }
 
+    /// The same #276 recovery, when the new transmission's phasing pulse does
+    /// *not* line up with the old line clock.
+    ///
+    /// Mid-picture the buffer is cut on the old transmission's clock, so the
+    /// new pulse lands at an arbitrary offset — never conveniently at the end.
+    /// A test that only ever places it at the end passes on a decoder that
+    /// happens to require that, and misses the real case (caught in review of
+    /// #500).
+    #[test]
+    fn a_new_transmission_is_found_at_an_arbitrary_line_offset() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut out = Vec::new();
+        rx.start_manual(&mut out);
+        let mut audio = phasing(lpm, 8);
+        audio.extend(ramp_picture(lpm, 6));
+        // The next transmission, its pulse a third of the way into the line as
+        // the old clock slices it.
+        audio.extend(phasing_at(lpm, 16, 0.3));
+        audio.extend(ramp_picture(lpm, 6));
+        let ev = drain(&mut rx, &audio);
+        assert!(
+            ev.iter().any(|e| matches!(e, WefaxEvent::Complete { by_tone: false, .. })),
+            "the new transmission was missed: {ev:?}"
+        );
+    }
+
     /// The same, the ordinary way round: the new transmission's *start* signal
     /// arrives while the old page is still being drawn.
     #[test]
@@ -1120,13 +1171,14 @@ mod tests {
     /// Issue #496: a chart's own high-contrast detail must not be read as the
     /// next transmission's phasing signal.
     ///
-    /// `dark_chart` is mostly black with one bright patch per line, in a fixed
-    /// place — a satellite image's night side, or a chart with a heavy graphic.
-    /// It passes the shape test for a phasing line, and a patch that does not
-    /// move passes it line after line, so the old four-line run cut the picture
-    /// into fragments. The patch is in the *middle* of the line; a real phasing
-    /// pulse is at the end, which is the extra evidence a mid-picture rephase
-    /// has to demand.
+    /// `dark_chart` is mostly black with one broad bright band per line, in a
+    /// fixed place — a satellite image's night side, or a chart with a heavy
+    /// graphic. It passes the lenient shape test for a phasing line and, being
+    /// fixed, does so line after line, so the old four-line run cut the picture
+    /// into fragments. The band is far wider than the 5 % a phasing pulse
+    /// occupies, which is what the strict shape test sees. The pulse's position
+    /// is not what tells them apart: a real rephase's pulse is at an arbitrary
+    /// offset anyway (issue #276).
     #[test]
     fn a_dark_chart_with_a_bright_feature_is_not_a_new_transmission() {
         let lpm = Lpm::L120;
