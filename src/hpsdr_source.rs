@@ -178,6 +178,12 @@ impl HpsdrSource {
                  uncorrected. Raise the sample rate to {tx_rate:.0} Hz or above."
             );
         }
+        // The IO board's receive inputs — its J9 jacks and the J10
+        // transmit-sample input PureSignal uses — exist only on a Hermes-Lite 2,
+        // which is the one HPSDR board whose front-end gain register we drive. A
+        // Metis/Hermes/ANAN has no IO board, so neither the setting nor a warning
+        // naming it belongs on that operator's screen (issue #518).
+        let io_board_rx_input = board.protocol() == 1 && board.has_lna_gain() && cfg.ddc == 0;
         if puresignal.is_some() {
             tracing::info!(
                 "HPSDR: PureSignal is on — the receiver is the feedback path, so a coupled \
@@ -188,7 +194,9 @@ impl HpsdrSource {
                 cfg.ps_bins,
                 ps_decim.as_ref().map_or(1, |d| d.factor())
             );
-            if cfg.io_rx_input != sdroxide_types::HpsdrIoRxInput::IoBoardPureSignal {
+            if io_board_rx_input
+                && cfg.io_rx_input != sdroxide_types::HpsdrIoRxInput::IoBoardPureSignal
+            {
                 tracing::warn!(
                     "HPSDR: PureSignal is on but the IO board's receive input is set to \"{}\" \
                      — unless you have wired the transmit sample in some other way, the T/R \
@@ -202,9 +210,7 @@ impl HpsdrSource {
         // setting off the radio's own input is that statement. A board with
         // nothing on J9 is deaf there, so the choice is not put on the panel of
         // an HL2 that has never used it.
-        let io_rx_input = (board.protocol() == 1
-            && board.has_lna_gain()
-            && cfg.ddc == 0
+        let io_rx_input = (io_board_rx_input
             && cfg.io_rx_input != sdroxide_types::HpsdrIoRxInput::Radio)
             .then_some(cfg.io_rx_input);
         Ok(HpsdrSource {
