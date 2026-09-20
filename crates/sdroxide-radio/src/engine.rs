@@ -25,7 +25,7 @@ use sdroxide_digi::{
 use sdroxide_drm::DrmDemod;
 use sdroxide_dsp::{
     AdcMeter, Agc, AutoNotch, Binaural, Cessb, DcBlock, Ddc, Decimator, DeepFilterNr, Demodulator,
-    Duc, Modulator, MonoResampler, Nco, NeuralNr, NoiseBlanker, ParametricEq, SpecBleachNr,
+    Duc, Modulator, MonoResampler, Nco, NeuralNr, NoiseBlanker, Nr2, ParametricEq, SpecBleachNr,
     SpectralNr, SpectrumAnalyzer, StereoResampler, SubToneGen, ToneBurst, channel_target,
     make_demod, make_modulator,
 };
@@ -699,7 +699,8 @@ fn dfnr_available(slot: &mut Option<Box<DeepFilterNr>>, failed: &mut bool) -> bo
 ///
 /// Noise reduction and the auto-notch disqualify it: every NR engine carries a
 /// latency — a frame for `SpectralNr`, an RNNoise frame for `NeuralNr`, a
-/// DeepFilterNet hop, three quarters of a 20 ms frame for `SpecBleachNr` — and
+/// DeepFilterNet hop, three quarters of a 20 ms frame for `SpecBleachNr`,
+/// three quarters of NR2's 43 ms one — and
 /// all of them would run on the sum only. An 8–10 ms delay on one side of
 /// `L = M±S` is three cycles of phase error at 1 kHz — the matrix would collapse
 /// into a comb filter with a randomly wandering image. They are HF speech tools
@@ -798,6 +799,7 @@ struct RxChain {
     nr: SpectralNr,
     /// The libspecbleach port — the other classical engine.
     sbnr: SpecBleachNr,
+    nr2: Nr2,
     /// Neural (RNNoise) noise reduction.
     nnr: NeuralNr,
     /// DeepFilterNet3. Built on first use: it unpacks an 8 MB model, which is
@@ -848,6 +850,7 @@ impl RxChain {
             notch_on: false,
             nr: SpectralNr::new(),
             sbnr: SpecBleachNr::new(),
+            nr2: Nr2::new(),
             nnr: NeuralNr::new(),
             dfnr: None,
             dfnr_failed: false,
@@ -1059,6 +1062,13 @@ impl RxChain {
                     let (db, whiten) = now.spec_params();
                     self.sbnr.set_params(db, whiten);
                 }
+                Some(NrEngine::Nr2) => {
+                    if switched {
+                        self.nr2.reset();
+                    }
+                    let (over, floor) = now.nr2_params();
+                    self.nr2.set_params(over, floor);
+                }
                 Some(NrEngine::Spectral) => {
                     if switched {
                         self.nr.reset();
@@ -1096,6 +1106,10 @@ impl RxChain {
                 Some(NrEngine::SpecBleach) => {
                     self.sbnr.set_rate(fs);
                     self.sbnr.process(&mut self.audio_buf);
+                }
+                Some(NrEngine::Nr2) => {
+                    self.nr2.set_rate(fs);
+                    self.nr2.process(&mut self.audio_buf);
                 }
                 Some(NrEngine::Spectral) => self.nr.process(&mut self.audio_buf),
                 None => {}
@@ -2473,6 +2487,7 @@ struct Engine {
     audio_notch_on: bool,
     audio_nr: SpectralNr,
     audio_sbnr: SpecBleachNr,
+    audio_nr2: Nr2,
     audio_nnr: NeuralNr,
     audio_dfnr: Option<Box<DeepFilterNr>>,
     audio_dfnr_failed: bool,
@@ -3951,6 +3966,7 @@ fn engine_thread(
         audio_notch_on: false,
         audio_nr: SpectralNr::new(),
         audio_sbnr: SpecBleachNr::new(),
+        audio_nr2: Nr2::new(),
         audio_nnr: NeuralNr::new(),
         audio_dfnr: None,
         audio_dfnr_failed: false,
@@ -5514,6 +5530,13 @@ impl Engine {
                     let (db, whiten) = nr_level.spec_params();
                     self.audio_sbnr.set_params(db, whiten);
                 }
+                Some(NrEngine::Nr2) => {
+                    if switched {
+                        self.audio_nr2.reset();
+                    }
+                    let (over, floor) = nr_level.nr2_params();
+                    self.audio_nr2.set_params(over, floor);
+                }
                 Some(NrEngine::Spectral) => {
                     if switched {
                         self.audio_nr.reset();
@@ -5547,6 +5570,10 @@ impl Engine {
                 Some(NrEngine::SpecBleach) => {
                     self.audio_sbnr.set_rate(fs);
                     self.audio_sbnr.process(&mut self.audio_re);
+                }
+                Some(NrEngine::Nr2) => {
+                    self.audio_nr2.set_rate(fs);
+                    self.audio_nr2.process(&mut self.audio_re);
                 }
                 Some(NrEngine::Spectral) => self.audio_nr.process(&mut self.audio_re),
                 None => {}

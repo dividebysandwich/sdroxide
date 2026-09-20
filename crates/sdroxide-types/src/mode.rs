@@ -1382,8 +1382,9 @@ impl std::str::FromStr for Mode {
 /// Which denoiser is running behind the NR chip.
 ///
 /// Derived from [`NrLevel`] rather than stored: the wire carries the level, so a
-/// fifth engine would cost three appended `NrLevel` variants and nothing else.
-/// This type is never serialised.
+/// further engine costs three appended `NrLevel` variants and nothing else —
+/// which is exactly what NR2 cost when it was added in v147. This type is never
+/// serialised.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NrEngine {
     /// RNNoise (`nnnoiseless`) — a recurrent per-band gain estimator.
@@ -1392,14 +1393,22 @@ pub enum NrEngine {
     DeepFilter,
     /// The spectral-bleach algorithm, ported to Rust in `sdroxide-dsp`.
     SpecBleach,
+    /// WDSP's NR2 (`emnr.c`), the Ephraim-Malah denoiser from PowerSDR and
+    /// Thetis, ported to Rust in `sdroxide-dsp`.
+    Nr2,
     /// The hand-written MCRA + log-MMSE spectral NR this program started with.
     Spectral,
 }
 
 impl NrEngine {
     /// Engine-row order in the NR picker: neural first, classical last.
-    pub const ALL: [NrEngine; 4] =
-        [NrEngine::Rnn, NrEngine::DeepFilter, NrEngine::SpecBleach, NrEngine::Spectral];
+    pub const ALL: [NrEngine; 5] = [
+        NrEngine::Rnn,
+        NrEngine::DeepFilter,
+        NrEngine::SpecBleach,
+        NrEngine::Nr2,
+        NrEngine::Spectral,
+    ];
 
     /// The tag the chips wear. The original spectral NR keeps the bare "NR" it
     /// has always had, so an operator who never opens the picker sees exactly
@@ -1409,6 +1418,7 @@ impl NrEngine {
             NrEngine::Rnn => "RNN",
             NrEngine::DeepFilter => "DFNR",
             NrEngine::SpecBleach => "SPEC",
+            NrEngine::Nr2 => "NR2",
             NrEngine::Spectral => "NR",
         }
     }
@@ -1419,6 +1429,7 @@ impl NrEngine {
             NrEngine::Rnn => "RNNoise — neural, speech-trained, cheap",
             NrEngine::DeepFilter => "DeepFilterNet3 — neural, strongest, costliest",
             NrEngine::SpecBleach => "Spectral bleach — adaptive spectral, masked",
+            NrEngine::Nr2 => "NR2 — WDSP's Ephraim-Malah, as PowerSDR and Thetis run it",
             NrEngine::Spectral => "Spectral NR — MCRA + log-MMSE",
         }
     }
@@ -1440,6 +1451,9 @@ impl NrEngine {
             (DeepFilter, Low) => NrLevel::DfLow,
             (DeepFilter, Med) => NrLevel::DfMed,
             (DeepFilter, High) => NrLevel::DfHigh,
+            (Nr2, Low) => NrLevel::Nr2Low,
+            (Nr2, Med) => NrLevel::Nr2Med,
+            (Nr2, High) => NrLevel::Nr2High,
         }
     }
 
@@ -1470,13 +1484,14 @@ impl NrStrength {
     }
 }
 
-/// Audio noise-reduction setting for the demodulated audio: one of four engines
+/// Audio noise-reduction setting for the demodulated audio: one of five engines
 /// at one of three intensities, or off. See [`NrEngine`].
 ///
 /// **The declaration order is the wire format.** postcard encodes the
 /// discriminant positionally, so variants are only ever appended — the spectral
 /// group sits where it always did (1..3), the RNNoise group where proto v10 put
-/// it (4..6), and the two engines added in v43 follow. Nothing reads the
+/// it (4..6), the two engines added in v43 follow, and NR2's three were
+/// appended in v147. Nothing reads the
 /// declaration order but the wire: [`NrLevel::ALL`] and the picker impose the
 /// display order instead.
 ///
@@ -1505,11 +1520,15 @@ pub enum NrLevel {
     DfLow,
     DfMed,
     DfHigh,
+    // WDSP NR2 (`Nr2`) — appended in v147, discriminants 13..15.
+    Nr2Low,
+    Nr2Med,
+    Nr2High,
 }
 
 impl NrLevel {
     /// Every setting, in the order the picker lists them.
-    pub const ALL: [NrLevel; 13] = [
+    pub const ALL: [NrLevel; 16] = [
         NrLevel::Off,
         NrLevel::RnnLow,
         NrLevel::RnnMed,
@@ -1520,6 +1539,9 @@ impl NrLevel {
         NrLevel::SpecLow,
         NrLevel::SpecMed,
         NrLevel::SpecHigh,
+        NrLevel::Nr2Low,
+        NrLevel::Nr2Med,
+        NrLevel::Nr2High,
         NrLevel::Low,
         NrLevel::Medium,
         NrLevel::High,
@@ -1540,6 +1562,9 @@ impl NrLevel {
             NrLevel::SpecLow => "SPEC Low",
             NrLevel::SpecMed => "SPEC Med",
             NrLevel::SpecHigh => "SPEC High",
+            NrLevel::Nr2Low => "NR2 Low",
+            NrLevel::Nr2Med => "NR2 Med",
+            NrLevel::Nr2High => "NR2 High",
             NrLevel::DfLow => "DFNR Low",
             NrLevel::DfMed => "DFNR Med",
             NrLevel::DfHigh => "DFNR High",
@@ -1558,6 +1583,7 @@ impl NrLevel {
             NrLevel::RnnLow | NrLevel::RnnMed | NrLevel::RnnHigh => NrEngine::Rnn,
             NrLevel::SpecLow | NrLevel::SpecMed | NrLevel::SpecHigh => NrEngine::SpecBleach,
             NrLevel::DfLow | NrLevel::DfMed | NrLevel::DfHigh => NrEngine::DeepFilter,
+            NrLevel::Nr2Low | NrLevel::Nr2Med | NrLevel::Nr2High => NrEngine::Nr2,
         })
     }
 
@@ -1565,13 +1591,21 @@ impl NrLevel {
     pub fn strength(self) -> Option<NrStrength> {
         Some(match self {
             NrLevel::Off => return None,
-            NrLevel::Low | NrLevel::RnnLow | NrLevel::SpecLow | NrLevel::DfLow => NrStrength::Low,
-            NrLevel::Medium | NrLevel::RnnMed | NrLevel::SpecMed | NrLevel::DfMed => {
-                NrStrength::Med
-            }
-            NrLevel::High | NrLevel::RnnHigh | NrLevel::SpecHigh | NrLevel::DfHigh => {
-                NrStrength::High
-            }
+            NrLevel::Low
+            | NrLevel::RnnLow
+            | NrLevel::SpecLow
+            | NrLevel::DfLow
+            | NrLevel::Nr2Low => NrStrength::Low,
+            NrLevel::Medium
+            | NrLevel::RnnMed
+            | NrLevel::SpecMed
+            | NrLevel::DfMed
+            | NrLevel::Nr2Med => NrStrength::Med,
+            NrLevel::High
+            | NrLevel::RnnHigh
+            | NrLevel::SpecHigh
+            | NrLevel::DfHigh
+            | NrLevel::Nr2High => NrStrength::High,
         })
     }
 
@@ -1643,6 +1677,22 @@ impl NrLevel {
         }
     }
 
+    /// NR2 tuning: `(noise over-estimation factor, minimum gain floor)`.
+    ///
+    /// NR2 has no intensity control of its own — WDSP ships one setting — so
+    /// the strength is a layer on top of the ported gain rule rather than a
+    /// change to it: the over-factor tells the rule there is more noise than
+    /// there is, and the floor limits how far any bin may be pulled down.
+    /// Neutral (unused) for Off and for every other engine.
+    pub fn nr2_params(self) -> (f32, f32) {
+        match self {
+            NrLevel::Nr2Low => (1.0, 0.30),
+            NrLevel::Nr2Med => (1.4, 0.14),
+            NrLevel::Nr2High => (2.0, 0.07),
+            _ => (1.0, 1.0),
+        }
+    }
+
     /// RNNoise wet/dry depth (0 = bypass, 1 = full RNNoise). Only meaningful for
     /// the `Rnn*` variants.
     pub fn rnn_mix(self) -> f32 {
@@ -1682,6 +1732,9 @@ impl NrLevel {
             NrLevel::DfLow => 1.0,
             NrLevel::DfMed => 1.05,
             NrLevel::DfHigh => 1.15,
+            NrLevel::Nr2Low => 1.2,
+            NrLevel::Nr2Med => 1.5,
+            NrLevel::Nr2High => 1.9,
             NrLevel::SpecLow => 1.15,
             NrLevel::SpecMed => 1.4,
             NrLevel::SpecHigh => 1.7,
@@ -1928,6 +1981,9 @@ mod tests {
         assert_eq!(NrLevel::DfLow as u8, 10);
         assert_eq!(NrLevel::DfMed as u8, 11);
         assert_eq!(NrLevel::DfHigh as u8, 12);
+        assert_eq!(NrLevel::Nr2Low as u8, 13);
+        assert_eq!(NrLevel::Nr2Med as u8, 14);
+        assert_eq!(NrLevel::Nr2High as u8, 15);
     }
 
     #[test]

@@ -535,7 +535,7 @@ mode. What is in the box never changes; only where the two rows are cut does.
   **SAM**, **WFM** or **DRM**: on broadcast audio the sustained notes of the
   programme are exactly what it cancels, so it took the station away with the
   whistle (issue #434).
-- **NR** — noise reduction on the audio, with four selectable engines. The button
+- **NR** — noise reduction on the audio, with five selectable engines. The button
   always reads just `NR` and lights when noise reduction is in circuit — that is
   all it tells you, and it never changes width under the buttons beside it. Click
   it for a picker with an **Engine** row and a **Strength** row, which is where
@@ -548,7 +548,7 @@ mode. What is in the box never changes; only where the two rows are cut does.
     spectral NR can't — babble, wind, keyboard/shack noise, fluttering hiss —
     with little of the underwater warble. Cheap, and the safe default. The three
     strengths are a wet/dry depth: High is the full effect, Low a lighter touch.
-  - **DFNR** — **DeepFilterNet3**, the strongest of the four. It adds a learned
+  - **DFNR** — **DeepFilterNet3**, the strongest of the five. It adds a learned
     complex filter over the low bins on top of a band gain, so it recovers speech
     the others have already given up on. It also costs the most CPU by a wide
     margin, and the model is loaded the first time you select it — expect a
@@ -559,12 +559,22 @@ mode. What is in the box never changes; only where the two rows are cut does.
     and a *whitened* noise floor: rather than carving the residue into birdies it
     flattens what is left into even hiss. Good on steady static where the neural
     engines sound processed.
+  - **NR2** — a Rust port of **WDSP's NR2** (`emnr.c`), the noise reduction
+    behind the NR2 button in PowerSDR and Thetis, and the one a great many
+    operators already have an ear for. Ephraim-Malah suppression driven by a
+    minimum-statistics noise estimate, with WDSP's artefact filter smoothing the
+    mask across frequency so hard settings do not ring into birdies. It runs at
+    WDSP's own settings; the three strengths are a layer on top, telling the gain
+    rule there is progressively more noise than there is and limiting how far any
+    one bin may be pulled down. Roughly 11, 17 and 23 dB off a broadband noise
+    floor. It uses a longer analysis window than the others, so it adds a little
+    more delay — about 32 ms at 48 kHz.
   - **NR** — the built-in **spectral** noise reduction, whose engine button keeps
     the bare name the button has always worn: it suppresses the stationary noise
     floor while letting the changing, speech-like parts through. Fast and
     predictable on steady static and hiss.
 
-  All four make voice quieter to listen to and easier to copy with less fatigue.
+  All five make voice quieter to listen to and easier to copy with less fatigue.
   Higher strengths remove more noise but can add faint artefacts on weak signals,
   so pick the lowest that cleans the audio; on a noisy voice signal, start with
   **DFNR Med**, and drop to **RNN Med** if the machine is struggling. (NR affects

@@ -2829,9 +2829,9 @@ impl SdroxideApp {
             }
             RxChip::Nr => {
                 // Noise reduction. The chip says only whether it is in circuit; the
-                // picker behind it chooses which of the four engines and how hard.
+                // picker behind it chooses which of the five engines and how hard.
                 // A cycling chip was fine at seven states and two engines; at
-                // thirteen and four it is a dozen clicks to cross, and which engine
+                // sixteen and five it is a dozen clicks to cross, and which engine
                 // to use is a considered choice rather than something to walk past
                 // on the way to the one you wanted.
                 if narrow {

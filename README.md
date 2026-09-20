@@ -83,9 +83,10 @@ One binary, three ways to run it:
   receive-only **ACARS** itself, the classic airband datalink, decoded from the AM
   carrier on the shared airline channels (131.550, 131.725 MHz and friends).
 - **Receiver** — hang AGC, draggable passband filter edges (on the spectrum and
-  the waterfall), noise blanker, auto-notch, **four noise-reduction engines**
-  (RNNoise, DeepFilterNet3, a libspecbleach port and the built-in spectral NR,
-  three strengths each), squelch, a second sub-receiver, RIT/XIT, VFO A/B with split,
+  the waterfall), noise blanker, auto-notch, **five noise-reduction engines**
+  (RNNoise, DeepFilterNet3, a libspecbleach port, a port of WDSP's NR2 and the
+  built-in spectral NR, three strengths each), squelch, a second sub-receiver,
+  RIT/XIT, VFO A/B with split,
   per-band band stacks, and memory channels.
 - **Winlink radio email** — a built-in client for the amateur store-and-forward
   email network, speaking B2F/FBB, LZHUF and the secure login natively (no Pat,
