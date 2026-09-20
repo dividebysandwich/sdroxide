@@ -3143,6 +3143,13 @@ impl SdroxideApp {
                 });
                 ui.add_space(6.0);
                 let target = *io.upload_tab;
+                // The service tick is meaningless with the master switch off,
+                // and leaving it live is how an operator ends up with a lit
+                // "Auto-upload each new QSO to X" and nothing ever pushed. Grey
+                // it until the master is on; the credentials below stay
+                // editable, so a service can still be set up before auto-upload
+                // is switched on.
+                let auto_on = io.net_edit.auto_upload;
                 let enable = match target {
                     UploadTarget::Eqsl => &mut io.net_edit.auto_upload_eqsl,
                     UploadTarget::QrzLogbook => &mut io.net_edit.auto_upload_qrz,
@@ -3150,16 +3157,23 @@ impl SdroxideApp {
                     UploadTarget::ClubLog => &mut io.net_edit.auto_upload_clublog,
                     UploadTarget::Wrl => &mut io.net_edit.auto_upload_wrl,
                 };
-                crate::chrome::checkbox(
-                    ui,
-                    enable,
-                    format!("Auto-upload each new QSO to {}", target.label()),
-                );
-                if !io.net_edit.auto_upload {
+                ui.add_enabled_ui(auto_on, |ui| {
+                    crate::chrome::checkbox(
+                        ui,
+                        enable,
+                        format!("Auto-upload each new QSO to {}", target.label()),
+                    )
+                    .on_disabled_hover_text(
+                        "Turn on \"Auto-upload each new QSO\" above first — a service \
+                         ticked here is not pushed until it is.",
+                    );
+                });
+                if !auto_on {
                     ui.label(
                         RichText::new(
-                            "Auto-upload is off above, so nothing is pushed automatically \
-                             yet — the per-QSO UP button in the logbook still works.",
+                            "Auto-upload is off above, so the service ticks are disabled and \
+                             nothing is pushed automatically yet — the per-QSO UP button in the \
+                             logbook still works.",
                         )
                         .size(10.5)
                         .color(crate::theme::gray(140)),
