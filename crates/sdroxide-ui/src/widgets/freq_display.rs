@@ -57,9 +57,17 @@ pub fn show(
     ink: Option<Color32>,
     digits: u32,
 ) -> Option<f64> {
+    // Double-click turns the readout into the same type-in field the compact
+    // layout opens with a tap (`show_typed`): the two share the editor, its
+    // MHz prefill and its parser.
+    let edit_id = id.with("edit");
+    if let Some(text) = ui.data(|d| d.get_temp::<String>(edit_id)) {
+        return edit_field(ui, id, edit_id, text, size, digits);
+    }
     let lit = ink.unwrap_or_else(digit_ink);
     let mut freq = hz.round().max(0.0) as i64;
     let orig = freq;
+    let mut open_edit = false;
 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 1.0;
@@ -82,7 +90,8 @@ pub fn show(
                     )
                     .sense(Sense::click()),
                 )
-                .on_hover_cursor(egui::CursorIcon::ResizeVertical);
+                .on_hover_cursor(egui::CursorIcon::ResizeVertical)
+                .on_hover_text("Double-click to type a frequency");
 
             if resp.hovered() {
                 ui.painter().hline(resp.rect.x_range(), resp.rect.bottom() - 1.0, (2.0, lit));
@@ -98,7 +107,14 @@ pub fn show(
                 freq = (freq + step * detents as i64).max(0);
             }
 
-            if resp.clicked() {
+            if resp.double_clicked() {
+                // Handled by the editor below; do not also step the digit.
+                open_edit = true;
+            } else if resp.clicked() {
+                // Remember the frequency as it was *before* this step, so a
+                // double-click can put it back when it opens the editor — the
+                // first click of the pair has already stepped a digit.
+                ui.data_mut(|d| d.insert_temp(id.with("preclick"), orig));
                 if let Some(pos) = resp.interact_pointer_pos() {
                     if pos.y < resp.rect.center().y {
                         freq += step;
@@ -119,6 +135,17 @@ pub fn show(
         ui.add(Label::new(RichText::new(" Hz").size(size * 0.3).color(crate::theme::gray(140))));
     });
 
+    if open_edit {
+        // Open on the frequency the operator double-clicked, not one digit
+        // away from it: the first click of the double has stepped a digit, and
+        // that step is undone here.
+        let back = ui.data(|d| d.get_temp::<i64>(id.with("preclick"))).unwrap_or(orig);
+        ui.data_mut(|d| {
+            d.insert_temp(edit_id, format_mhz(back as f64));
+            d.insert_temp(id.with("fresh"), true);
+        });
+        return (back != orig).then_some(back as f64);
+    }
     (freq != orig).then_some(freq as f64)
 }
 
