@@ -124,12 +124,7 @@ impl HfdlController {
                 }
             })
             .expect("spawn hfdl worker");
-        HfdlController {
-            iq_tx,
-            ctl_tx,
-            res_rx,
-            worker: Some(worker),
-        }
+        HfdlController { iq_tx, ctl_tx, res_rx, worker: Some(worker) }
     }
 
     /// Realtime path: hand a block of lane-rate I/Q to the worker. Non-blocking.
@@ -227,10 +222,7 @@ mod tests {
             .unwrap_or(0)
     }
 
-    fn wait_for(
-        c: &HfdlController,
-        pred: impl Fn(&HfdlStatus) -> bool,
-    ) -> Option<HfdlStatus> {
+    fn wait_for(c: &HfdlController, pred: impl Fn(&HfdlStatus) -> bool) -> Option<HfdlStatus> {
         let mut latest = None;
         for _ in 0..500 {
             if let Some(s) = c.poll() {
@@ -347,10 +339,12 @@ mod tests {
         let raw = std::fs::read(&path).expect("read capture");
         let samples: Vec<Complex32> = raw
             .chunks_exact(4)
-            .map(|b| Complex32::new(
-                i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0,
-                i16::from_le_bytes([b[2], b[3]]) as f32 / 32768.0,
-            ))
+            .map(|b| {
+                Complex32::new(
+                    i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0,
+                    i16::from_le_bytes([b[2], b[3]]) as f32 / 32768.0,
+                )
+            })
             .collect();
         let c = HfdlController::new(
             24_000.0,
@@ -367,5 +361,54 @@ mod tests {
         assert_eq!(sq.freq_khz, 21_931);
         assert!(sq.details.contains("\"gs_id\":4"), "Riverhead: {}", sq.details);
         assert!(sq.unix >= before, "log entry is stamped with a real time");
+    }
+
+    /// The decoder only works at the 24 000 Hz lane rate it was validated at:
+    /// the same signal at a genuine 25 000 — what an ordinary 2.0 Msps front
+    /// end's DDC produces — decodes nothing, and decodes again once it is
+    /// resampled back onto 24 000 (issue #497).
+    ///
+    /// This is why the engine carries `hfdl_rs`: the lane is resampled to
+    /// exactly [`sdroxide_types::HFDL_LANE_RATE_HZ`] before the decoder sees
+    /// it, whatever the DDC happened to output. A station on real hardware
+    /// showed a live waterfall, a noise level and no burst at all.
+    #[test]
+    #[ignore = "points at an off-air capture via SDROXIDE_HFDL_SAMPLE"]
+    fn the_decoder_needs_the_exact_lane_rate() {
+        let path = std::env::var("SDROXIDE_HFDL_SAMPLE")
+            .expect("set SDROXIDE_HFDL_SAMPLE to the i16 interleaved complex capture");
+        let raw = std::fs::read(&path).expect("read capture");
+        let base: Vec<Complex32> = raw
+            .chunks_exact(4)
+            .map(|b| {
+                Complex32::new(
+                    i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0,
+                    i16::from_le_bytes([b[2], b[3]]) as f32 / 32768.0,
+                )
+            })
+            .collect();
+
+        let events = |rate: f64, samples: &[Complex32]| {
+            let mut dec = HfdlChannelDecoder::new(rate, 0.0).expect("decoder");
+            samples.chunks(8_192).map(|c| dec.process(c).len()).sum::<usize>()
+        };
+
+        assert!(events(24_000.0, &base) >= 1, "the 24 kHz reference must decode");
+
+        // A genuine 25 kHz lane: the capture interpolated onto 25 kHz, so the
+        // sample spacing changes and the signal does not.
+        let ratio = 25_000.0 / 24_000.0;
+        let n = (base.len() as f64 / ratio) as usize;
+        let up: Vec<Complex32> = (0..n)
+            .map(|i| {
+                let x = i as f64 * ratio;
+                let i0 = x.floor() as usize;
+                let f = (x - i0 as f64) as f32;
+                let a = base[i0.min(base.len() - 1)];
+                let b = base[(i0 + 1).min(base.len() - 1)];
+                Complex32::new(a.re + (b.re - a.re) * f, a.im + (b.im - a.im) * f)
+            })
+            .collect();
+        assert_eq!(events(25_000.0, &up), 0, "a plain 25 kHz lane must not decode");
     }
 }

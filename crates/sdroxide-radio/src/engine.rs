@@ -24,10 +24,10 @@ use sdroxide_digi::{
 };
 use sdroxide_drm::DrmDemod;
 use sdroxide_dsp::{
-    AdcMeter, Agc, AutoNotch, Binaural, Cessb, DcBlock, Ddc, Decimator, DeepFilterNr, Demodulator,
-    Duc, Modulator, MonoResampler, Nco, NeuralNr, NoiseBlanker, ParametricEq, SpecBleachNr,
-    SpectralNr, SpectrumAnalyzer, StereoResampler, SubToneGen, ToneBurst, channel_target,
-    make_demod, make_modulator,
+    AdcMeter, Agc, AutoNotch, Binaural, Cessb, ComplexResampler, DcBlock, Ddc, Decimator,
+    DeepFilterNr, Demodulator, Duc, Modulator, MonoResampler, Nco, NeuralNr, NoiseBlanker,
+    ParametricEq, SpecBleachNr, SpectralNr, SpectrumAnalyzer, StereoResampler, SubToneGen,
+    ToneBurst, channel_target, make_demod, make_modulator,
 };
 use sdroxide_ism::{IsmAction, IsmController};
 use sdroxide_hfdl::HfdlController;
@@ -2695,6 +2695,17 @@ struct Engine {
     hfdl_ddc: Option<Ddc>,
     hfdl: Option<HfdlController>,
     hfdl_buf: Vec<Complex32>,
+    /// The lane resampled to exactly [`sdroxide_types::HFDL_LANE_RATE_HZ`].
+    ///
+    /// The DDC lands on 24 000 only when the device rate divides evenly into
+    /// it. A 2.000 Msps front end decimates to 25 000, and xng's channel
+    /// decoder — written for the 24 000 it was validated at — decodes nothing
+    /// from a plain 25 000 lane: a real station then shows a live waterfall, a
+    /// noise level and **no burst at all**. That was issue #497's "good
+    /// signals, no decode" on real hardware. So the lane is resampled to the
+    /// exact figure the decoder wants, whatever the DDC happened to output.
+    hfdl_rs: Option<ComplexResampler>,
+    hfdl_res_buf: Vec<Complex32>,
     /// The stream rate `hfdl_ddc` was built to decimate — the same reason
     /// `qo100_in_rate` exists.
     hfdl_in_rate: f64,
@@ -4055,6 +4066,8 @@ fn engine_thread(
         hfdl_ddc: None,
         hfdl: None,
         hfdl_buf: Vec::new(),
+        hfdl_rs: None,
+        hfdl_res_buf: Vec::new(),
         hfdl_in_rate: 0.0,
         // Session-scoped only, for the same reason as `qo100_cfg`.
         hfdl_cfg: sdroxide_types::HfdlSettings::default(),
@@ -5309,8 +5322,17 @@ impl Engine {
         if let Some(ddc) = self.hfdl_ddc.as_mut() {
             self.hfdl_buf.clear();
             ddc.process(iq, &mut self.hfdl_buf);
+            // Onto the exact lane rate the decoder was built for: a DDC that
+            // landed on 25 000 (any 2.0 Msps device) decodes nothing otherwise.
+            let lane = if let Some(rs) = self.hfdl_rs.as_mut() {
+                self.hfdl_res_buf.clear();
+                rs.push(&self.hfdl_buf, &mut self.hfdl_res_buf);
+                &self.hfdl_res_buf
+            } else {
+                &self.hfdl_buf
+            };
             if let Some(c) = self.hfdl.as_ref() {
-                c.on_rx_iq(&self.hfdl_buf);
+                c.on_rx_iq(lane);
             }
         }
         // Feed TCI clients: the same clean tap the digital decoders use (so
@@ -10253,7 +10275,13 @@ impl Engine {
                 let mut ddc = Ddc::new(self.state.sample_rate, sdroxide_types::HFDL_LANE_RATE_HZ);
                 ddc.set_offset_hz(self.state.hfdl.frequency_hz - self.state.center_hz);
                 let out_rate = ddc.out_rate();
-                self.hfdl = Some(HfdlController::new(out_rate, self.state.hfdl));
+                // The decoder only decodes its validated 24 000 Hz lane — see
+                // `hfdl_rs` — so resample whatever the DDC produced onto it.
+                self.hfdl_rs = ComplexResampler::new(out_rate, sdroxide_types::HFDL_LANE_RATE_HZ);
+                self.hfdl = Some(HfdlController::new(
+                    sdroxide_types::HFDL_LANE_RATE_HZ,
+                    self.state.hfdl,
+                ));
                 self.hfdl_ddc = Some(ddc);
                 self.hfdl_in_rate = self.state.sample_rate;
                 info!(rate = out_rate, "HFDL decoder started");
@@ -10261,7 +10289,9 @@ impl Engine {
             (false, true) => {
                 self.hfdl = None;
                 self.hfdl_ddc = None;
+                self.hfdl_rs = None;
                 self.hfdl_buf.clear();
+                self.hfdl_res_buf.clear();
                 info!("HFDL decoder stopped");
             }
             (true, true) => self.sync_hfdl_window(),
@@ -10282,9 +10312,13 @@ impl Engine {
             let mut ddc = Ddc::new(self.state.sample_rate, sdroxide_types::HFDL_LANE_RATE_HZ);
             ddc.set_offset_hz(self.state.hfdl.frequency_hz - self.state.center_hz);
             let out_rate = ddc.out_rate();
+            self.hfdl_rs = ComplexResampler::new(out_rate, sdroxide_types::HFDL_LANE_RATE_HZ);
             self.hfdl_ddc = Some(ddc);
             self.hfdl_in_rate = self.state.sample_rate;
-            self.hfdl = Some(HfdlController::new(out_rate, self.state.hfdl));
+            self.hfdl = Some(HfdlController::new(
+                sdroxide_types::HFDL_LANE_RATE_HZ,
+                self.state.hfdl,
+            ));
             info!(rate = out_rate, "HFDL window rebuilt");
             return;
         }
