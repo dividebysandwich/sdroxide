@@ -95,6 +95,25 @@ impl SdroxideApp {
             }
         });
 
+        // Selecting the mode builds the lane and lets the waterfall and the
+        // level meter run whether or not the decoder is switched on, so a
+        // station can sit on a real channel with a live picture and get nothing
+        // — and the only other clue is a small word in the status strip. Say it
+        // plainly, where the controls that fix it are (reported on issue #497:
+        // "bons signaux, aucune décode").
+        if !cfg.enabled {
+            let ink = crate::theme::HAZARD();
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("⚠").size(13.0).color(ink));
+                ui.label(
+                    RichText::new("HFDL is selected but decoding is off — press LISTEN above")
+                        .size(11.5)
+                        .color(ink),
+                );
+            });
+        }
+        ui.add_space(4.0);
+
         ui.separator();
 
         // The log keeps a draggable share of the width; the rest is the map, as
@@ -201,9 +220,17 @@ fn hfdl_status_strip(ui: &mut egui::Ui, status: Option<&HfdlStatus>, aircraft: u
         Some(s) => (s.running, Some(s.level_dbfs), s.bursts, s.decodes),
         None => (false, None, 0, 0),
     };
-    let (run_text, run_ink) =
-        if running { ("RUNNING", crate::theme::GREEN()) } else { ("OFF", crate::theme::gray(150)) };
-    slot(ui, 84.0, run_text, run_ink);
+    // "OFF" is amber, not grey: with the lane building the waterfall and the
+    // level meter regardless, an idle-looking word here was the only thing
+    // saying the decoder was not running, and it read as "nothing on the
+    // channel" instead of "not switched on" (issue #497). The word itself says
+    // which: DECODING rather than a bare RUNNING/OFF.
+    let (run_text, run_ink) = if running {
+        ("DECODING", crate::theme::GREEN())
+    } else {
+        ("DECODING OFF", crate::theme::HAZARD())
+    };
+    slot(ui, 108.0, run_text, run_ink);
     let level_text = match level {
         Some(l) if l > -90.0 => format!("{l:.0} dBFS"),
         _ => "— dBFS".to_string(),
