@@ -133,6 +133,143 @@ fn spot_row(ui: &mut egui::Ui, s: &Spot, now_utc: i64, needed: bool) -> egui::Re
     resp
 }
 
+/// One band opening as a compact row — a state tag, the path, the surge
+/// factor, the distinct caller count and how long it has held. Styled like a
+/// spot row so the OPENINGS section reads as part of the same list rather than
+/// a banner (the first version's horizontal strip left the window's
+/// non-broadcast, non-list look, which read wrong against everything else in
+/// it).
+fn opening_row(ui: &mut egui::Ui, o: &sdroxide_types::BandOpening, now: i64) {
+    let (state_tag, state_col) = match o.state {
+        sdroxide_types::OpeningState::Opening => ("OPEN", crate::theme::CYAN()),
+        sdroxide_types::OpeningState::Active => ("ACTIVE", crate::theme::GREEN()),
+        sdroxide_types::OpeningState::Closing => ("CLOSING", crate::theme::gray(170)),
+    };
+    let gray = crate::theme::gray(140);
+    let factor = o.factor.map(|f| format!("{f:.1}×")).unwrap_or_else(|| "∞×".to_string());
+    egui::Frame::new()
+        .fill(crate::theme::ROW_BG())
+        .inner_margin(egui::Margin { left: 8, right: 6, top: 3, bottom: 3 })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let col = |ui: &mut egui::Ui, w: f32, lbl: egui::Label| {
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(w, 18.0), egui::Sense::hover());
+                    ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(rect)
+                            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    )
+                    .add(lbl);
+                };
+                col(
+                    ui,
+                    56.0,
+                    egui::Label::new(RichText::new(state_tag).size(10.0).strong().color(state_col)),
+                );
+                col(
+                    ui,
+                    46.0,
+                    egui::Label::new(RichText::new(o.band.label()).size(11.0).strong().color(gray)),
+                );
+                col(
+                    ui,
+                    126.0,
+                    egui::Label::new(
+                        RichText::new(format!("{} → {}", o.from_continent, o.to_continent))
+                            .size(11.0)
+                            .strong()
+                            .color(crate::theme::TEXT_STRONG()),
+                    ),
+                );
+                col(
+                    ui,
+                    62.0,
+                    egui::Label::new(
+                        RichText::new(factor).monospace().size(11.0).color(crate::theme::YELLOW()),
+                    ),
+                );
+                col(
+                    ui,
+                    74.0,
+                    egui::Label::new(
+                        RichText::new(format!("{} calls", o.short_calls)).size(10.5).color(gray),
+                    ),
+                );
+                col(
+                    ui,
+                    52.0,
+                    egui::Label::new(
+                        RichText::new(fmt_age(now - o.since_utc))
+                            .size(10.5)
+                            .color(crate::theme::gray(120)),
+                    ),
+                );
+            })
+            .response
+            .on_hover_text(format!(
+                "{} band path from {} to {}: the last 15-minute window surged past the \
+                 path's 3-hour baseline — recent callers: {}",
+                o.band.label(),
+                o.from_continent,
+                o.to_continent,
+                if o.sample_calls.is_empty() {
+                    "none left in the window".to_string()
+                } else {
+                    o.sample_calls.join(", ")
+                },
+            ));
+        });
+}
+
+/// The SPOTS list pane: the "n of m" count once a search is active, then the
+/// rows themselves (or the understated empty message). Shared by the split
+/// layout (openings above) and the plain full-window list, so the two cannot
+/// drift apart on what a row does.
+fn spot_rows_pane(
+    ui: &mut egui::Ui,
+    rows: &[(&Spot, i32)],
+    query: &str,
+    visible: usize,
+    now: i64,
+    worked_entities: &std::collections::HashSet<String>,
+    clicked: &mut Option<Spot>,
+) {
+    if !query.is_empty() {
+        // Counted against what the chips let through, not against every spot
+        // held — "3 of 5" when three categories are off would look like the
+        // search had lost the rest.
+        let (text, colour) = match rows.len() {
+            0 => ("no match".to_string(), crate::theme::ALERT()),
+            n => (format!("{n} of {visible}"), crate::theme::YELLOW()),
+        };
+        ui.label(RichText::new(text).color(colour).size(10.0));
+    }
+    let rows: Vec<&Spot> = rows.iter().map(|(s, _)| *s).collect();
+    let any = !rows.is_empty();
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show_themed(ui, |ui| {
+        for s in rows {
+            let needed = s.kind != SpotKind::Broadcast
+                && sdroxide_types::entity_name(&s.call)
+                    .map(|n| !worked_entities.contains(n))
+                    .unwrap_or(false);
+            if spot_row(ui, s, now, needed).clicked() {
+                *clicked = Some((*s).clone());
+            }
+        }
+        if !any {
+            ui.add_space(8.0);
+            let msg = if query.is_empty() {
+                "no spots — enable a feed in ⚙ SETUP"
+            } else {
+                "nothing matches the search"
+            };
+            ui.label(RichText::new(msg).color(crate::theme::gray(120)));
+        }
+    });
+}
+
 impl SdroxideApp {
     /// Whether a spot passes the operator's filters.
     ///
@@ -316,6 +453,15 @@ impl SdroxideApp {
                     {
                         self.spot_in_view_only = !self.spot_in_view_only;
                     }
+                    if crate::chrome::chip(ui, self.view.spots_openings, "OPENINGS")
+                        .on_hover_text(
+                            "Band-opening detections: paths whose recent activity surged \
+                             past their own 3-hour baseline (adapted from OpenHamClock)",
+                        )
+                        .clicked()
+                    {
+                        self.view.spots_openings = !self.view.spots_openings;
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if crate::chrome::chip(ui, false, "⚙ SETUP")
                             .on_hover_text("Feeds, lookup & upload settings")
@@ -345,6 +491,24 @@ impl SdroxideApp {
                     ui.label(RichText::new(s).size(11.0).color(crate::theme::gray(150)));
                 }
                 ui.separator();
+                // Band-opening detections from the same feeds (adapted from
+                // OpenHamClock): a path whose recent activity surged past its
+                // own 3-hour baseline. Behind the OPENINGS chip, and split
+                // from the spot list by a draggable handle, so a band surge
+                // can be given most of the window or squeezed back to a
+                // sliver. Strongest first — opening, then active, then closing
+                // sloughing off. `avail_h` is everything left below this
+                // point, and the openings share and the handle subtract from
+                // it, leaving the rest to the spots.
+                let show_openings = self.view.spots_openings && !self.band_openings.is_empty();
+                let avail_h = ui.available_height().max(130.0);
+                const HANDLE_H: f32 = 7.0;
+                let openings_h = if show_openings {
+                    (avail_h * self.view.spots_openings_fraction)
+                        .clamp(70.0, (avail_h - HANDLE_H - 120.0).max(70.0))
+                } else {
+                    0.0
+                };
                 // Filter by the category chips, then rank by how well each row
                 // matched the query. With no query the natural frequency order
                 // is kept; with one, the best matches come first, because the
@@ -359,35 +523,60 @@ impl SdroxideApp {
                     .collect();
                 if !query.is_empty() {
                     rows.sort_by_key(|r| std::cmp::Reverse(r.1));
-                    // Counted against what the chips let through, not against
-                    // every spot held — "3 of 5" when three categories are off
-                    // would look like the search had lost the rest.
-                    let (text, colour) = match rows.len() {
-                        0 => ("no match".to_string(), crate::theme::ALERT()),
-                        n => (format!("{n} of {}", visible.len()), crate::theme::YELLOW()),
-                    };
-                    ui.label(RichText::new(text).color(colour).size(10.0));
                 }
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show_themed(ui, |ui| {
-                    for (s, _) in &rows {
-                        let needed = s.kind != SpotKind::Broadcast
-                            && sdroxide_types::entity_name(&s.call)
-                                .map(|n| !worked_entities.contains(n))
-                                .unwrap_or(false);
-                        if spot_row(ui, s, now, needed).clicked() {
-                            clicked = Some((*s).clone());
-                        }
+                if show_openings {
+                    let openings = self.band_openings.clone();
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), openings_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt("OPENINGS")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    for o in &openings {
+                                        opening_row(ui, o, now);
+                                        ui.add_space(2.0);
+                                    }
+                                });
+                        },
+                    );
+                    let h = crate::chrome::split_handle(
+                        ui,
+                        egui::vec2(ui.available_width(), HANDLE_H),
+                        None,
+                    );
+                    if h.dragged() {
+                        self.view.spots_openings_fraction =
+                            ((openings_h + h.drag_delta().y) / avail_h.max(1.0)).clamp(0.08, 0.8);
                     }
-                    if rows.is_empty() {
-                        ui.add_space(8.0);
-                        let msg = if query.is_empty() {
-                            "no spots — enable a feed in ⚙ SETUP"
-                        } else {
-                            "nothing matches the search"
-                        };
-                        ui.label(RichText::new(msg).color(crate::theme::gray(120)));
-                    }
-                });
+                    let rest = (avail_h - openings_h - HANDLE_H).max(0.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), rest),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            spot_rows_pane(
+                                ui,
+                                &rows,
+                                query,
+                                visible.len(),
+                                now,
+                                &worked_entities,
+                                &mut clicked,
+                            );
+                        },
+                    );
+                } else {
+                    spot_rows_pane(
+                        ui,
+                        &rows,
+                        query,
+                        visible.len(),
+                        now,
+                        &worked_entities,
+                        &mut clicked,
+                    );
+                }
             });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);

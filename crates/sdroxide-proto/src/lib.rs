@@ -1492,7 +1492,13 @@ use sdroxide_types::{
 /// `Command::SetDigiConfig` and `DigiStatus` whole, so a v169 peer reads the
 /// extra bytes as the start of the next field and fails to decode every
 /// digital status — the same break as v162's appended CW settings.
-pub const PROTO_VERSION: u16 = 170;
+///
+/// v171: live band-opening detections, `ServerMsg::BandOpenings` appended last
+/// on `ServerMsg`, so no surviving discriminant moves. Like every network
+/// update it is relay, not handshake, so a v170 peer simply never learns about
+/// openings — but the added variant shifts the message stream's encoding, hence
+/// the bump.
+pub const PROTO_VERSION: u16 = 171;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -1951,6 +1957,12 @@ pub enum ServerMsg {
     ///
     /// Appended last, for the usual reason.
     Pi4Spots(Vec<sdroxide_types::Pi4Spot>),
+    /// `RadioEvent::BandOpenings`: what the spot-feed surge detector has found
+    /// — a path busier than its own recent history, in the SPOTS window.
+    ///
+    /// Appended last, for the usual reason: the first cut put it after
+    /// [`ServerMsg::Spots`], which shifted every discriminant below it.
+    BandOpenings(Vec<sdroxide_types::BandOpening>),
 }
 
 /// One radio in a station's roster, as a client sees it.

@@ -10,7 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::Receiver;
 use sdroxide_types::{
-    NetworkConfig, Spot, SpotKind, UploadResult, UploadTarget, WsprSpot, grid_to_latlon,
+    Band, BandOpening, BandOpeningTracker, BandPath, NetworkConfig, Spot, SpotKind, UploadResult,
+    UploadTarget, WsprSpot, grid_to_latlon, resolve_callsign,
 };
 
 use crate::cluster::ClusterHandle;
@@ -35,6 +36,13 @@ pub struct SpotManager {
     /// Latest spots per feed kind (each feed replaces its own set).
     by_kind: HashMap<SpotKind, Vec<Spot>>,
     last_snapshot: Vec<Spot>,
+    /// Band-opening analysis over the feeds' raw spots (the 3-hour baseline is
+    /// longer than the display age, so this ingests the un-pruned sets).
+    band_openings: BandOpeningTracker,
+    last_band_openings: Vec<BandOpening>,
+    /// Callsign → continent memo, so the per-poll continent lookup over a few
+    /// thousand spots stays cheap.
+    continent_memo: HashMap<String, Option<&'static str>>,
     /// Current dial frequency (Hz) as bits, shared with the PSK feed.
     dial_bits: Arc<AtomicU64>,
 
@@ -93,6 +101,9 @@ impl SpotManager {
             event_rx,
             by_kind: HashMap::new(),
             last_snapshot: Vec::new(),
+            band_openings: BandOpeningTracker::new(),
+            last_band_openings: Vec::new(),
+            continent_memo: HashMap::new(),
             dial_bits: Arc::new(AtomicU64::new(14_074_000f64.to_bits())),
             cluster: None,
             rbn: None,
@@ -396,9 +407,41 @@ impl SpotManager {
             got_feed = true;
         }
         let mut out: Vec<NetEvent> = self.event_rx.try_iter().collect();
-        // Recompute the snapshot when feeds changed (also catches age-outs on
-        // the periodic polls, since feeds re-send their full set on each cycle).
         if got_feed || out.iter().any(|e| matches!(e, NetEvent::Status(_))) {
+            let now = now_utc();
+            // The band-opening analysis ingests the feeds' own sets — not the
+            // age-pruned snapshot — because its 3-hour baseline outlives the
+            // display age. Ids are stable, so re-sending the full set each
+            // cycle is a no-op for everything already seen.
+            let mut paths: Vec<BandPath> = Vec::new();
+            let kinds: Vec<Vec<Spot>> = self.by_kind.values().cloned().collect();
+            for spots in &kinds {
+                for s in spots {
+                    let band = Band::containing(s.freq_hz);
+                    if !band.is_amateur() || s.call.is_empty() || s.spotter.is_empty() {
+                        continue;
+                    }
+                    let from = self.continent(&s.call);
+                    let to = self.continent(&s.spotter);
+                    let (Some(from), Some(to)) = (from, to) else { continue };
+                    paths.push(BandPath {
+                        call: s.call.clone(),
+                        band,
+                        from_continent: from,
+                        to_continent: to,
+                        timestamp: s.when_utc,
+                        id: Some(s.id.to_string()),
+                    });
+                }
+            }
+            self.band_openings.ingest(&paths, now);
+            let openings = self.band_openings.analyze(now);
+            if openings != self.last_band_openings {
+                self.last_band_openings = openings.clone();
+                out.push(NetEvent::BandOpenings(openings));
+            }
+            // Recompute the snapshot when feeds changed (also catches age-outs on
+            // the periodic polls, since feeds re-send their full set on each cycle).
             let snap = self.snapshot();
             if snap != self.last_snapshot {
                 self.last_snapshot = snap.clone();
@@ -406,6 +449,16 @@ impl SpotManager {
             }
         }
         out
+    }
+
+    /// Continent code for a callsign, memoised.
+    fn continent(&mut self, call: &str) -> Option<&'static str> {
+        if let Some(c) = self.continent_memo.get(call) {
+            return *c;
+        }
+        let c = resolve_callsign(call).map(|i| i.continent);
+        self.continent_memo.insert(call.to_string(), c);
+        c
     }
 
     /// Force a fresh snapshot emit on the next poll (e.g. after age-out).
