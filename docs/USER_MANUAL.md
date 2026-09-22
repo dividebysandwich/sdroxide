@@ -14002,6 +14002,20 @@ between sessions, so a category you have no use for stays off. (**IN VIEW** is
 not: it is a way to read a crowded band for a moment, not a standing
 preference.)
 
+**Band openings (OPENINGS)** — the **OPENINGS** button adds a detector strip
+above the list: paths whose spot activity has surged past their own baseline,
+borrowed from OpenHamClock. Each row names the band, the two continents, the
+state (**OPEN**, **ACTIVE**, **CLOSING**), the surge factor, the number of
+distinct calls seen in the last fifteen minutes and how long the path has held;
+hover a row for the calls behind it. It runs on the same feeds as the list — it
+adds no network traffic — and it stays empty on a quiet band by design: it
+reports a *change*, not activity. The strip and the list trade height with the
+grip between them (drag it up for more openings, down for more spots), and that
+split is remembered per radio; turn the button off to give the list the whole
+window. The baseline warms up from launch (the feeds hand over only about
+fifteen minutes of history), so detections begin after roughly half an hour of
+uptime, and the resting rate is a full measurement only after three hours.
+
 **Search** — the **⌕** box below the buttons does a fuzzy search over everything in
 the list: callsigns, station and transmitter names, comments, park and summit
 references, and the frequency written either way, so `9420`, `9.420` and `avlis`

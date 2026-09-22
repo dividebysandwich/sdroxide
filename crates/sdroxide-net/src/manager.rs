@@ -27,6 +27,31 @@ fn now_utc() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
+/// How many callsign → continent entries the memo holds before it is dropped.
+/// The mapping never changes, so this is a memory ceiling for a session left
+/// running for days, not a cache policy: a dropped entry is resolved again.
+const MAX_CONTINENT_MEMO: usize = 8192;
+
+/// Continent code for a callsign, memoising into `memo`.
+///
+/// A free function rather than a method so the caller can hold `by_kind` by
+/// reference while it writes this one field, avoiding a clone of every spot on
+/// every poll.
+fn continent_of(
+    memo: &mut HashMap<String, Option<&'static str>>,
+    call: &str,
+) -> Option<&'static str> {
+    if let Some(c) = memo.get(call) {
+        return *c;
+    }
+    if memo.len() >= MAX_CONTINENT_MEMO {
+        memo.clear();
+    }
+    let c = resolve_callsign(call).map(|i| i.continent);
+    memo.insert(call.to_string(), c);
+    c
+}
+
 pub struct SpotManager {
     cfg: NetworkConfig,
     feed_tx: FeedTx,
@@ -414,16 +439,18 @@ impl SpotManager {
             // display age. Ids are stable, so re-sending the full set each
             // cycle is a no-op for everything already seen.
             let mut paths: Vec<BandPath> = Vec::new();
-            let kinds: Vec<Vec<Spot>> = self.by_kind.values().cloned().collect();
-            for spots in &kinds {
+            // Borrowed, not cloned: `by_kind` is read and `continent_memo` is
+            // written, two disjoint fields, so the continent lookup memoises in
+            // place instead of every feed's spot set being copied out each cycle.
+            let memo = &mut self.continent_memo;
+            for spots in self.by_kind.values() {
                 for s in spots {
                     let band = Band::containing(s.freq_hz);
                     if !band.is_amateur() || s.call.is_empty() || s.spotter.is_empty() {
                         continue;
                     }
-                    let from = self.continent(&s.call);
-                    let to = self.continent(&s.spotter);
-                    let (Some(from), Some(to)) = (from, to) else { continue };
+                    let Some(from) = continent_of(memo, &s.call) else { continue };
+                    let Some(to) = continent_of(memo, &s.spotter) else { continue };
                     paths.push(BandPath {
                         call: s.call.clone(),
                         band,
@@ -449,16 +476,6 @@ impl SpotManager {
             }
         }
         out
-    }
-
-    /// Continent code for a callsign, memoised.
-    fn continent(&mut self, call: &str) -> Option<&'static str> {
-        if let Some(c) = self.continent_memo.get(call) {
-            return *c;
-        }
-        let c = resolve_callsign(call).map(|i| i.continent);
-        self.continent_memo.insert(call.to_string(), c);
-        c
     }
 
     /// Force a fresh snapshot emit on the next poll (e.g. after age-out).
