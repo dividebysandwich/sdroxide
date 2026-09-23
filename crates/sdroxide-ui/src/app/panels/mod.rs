@@ -36,6 +36,7 @@ pub(in crate::app) mod rf_paint;
 pub(in crate::app) mod setup;
 pub(in crate::app) mod sstv;
 pub(in crate::app) mod text_modem;
+pub(in crate::app) mod uvpacket;
 pub(in crate::app) mod vdl2;
 pub(in crate::app) mod wefax;
 pub(in crate::app) mod widgets;
@@ -114,6 +115,9 @@ pub(in crate::app) fn panel_panes(mode: Mode) -> &'static [&'static str] {
         // The decode list alone: the QSO pane is FT8's sequencer, which a
         // receive-only FSK441 build has nothing to put in.
         Mode::Fsk441 => &["DECODES"],
+        // Two, because the frames are a rolling list and the selected one's
+        // payload wants reading on its own, whether it is text or binary.
+        Mode::UvPacket => &["FRAMES", "FRAME"],
         // The keyboard modes and RADE are one column already: receive above,
         // what you are sending below it.
         _ => &["PANEL"],

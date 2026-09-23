@@ -46,6 +46,7 @@ pub mod scheduler;
 pub mod squelch;
 pub mod sstv_controller;
 pub mod text_modem;
+pub mod uvpacket_controller;
 pub mod wefax_controller;
 pub mod wspr;
 pub mod wspr_controller;
@@ -65,7 +66,7 @@ pub use js8_controller::Js8Controller;
 pub use jt_controller::JtController;
 pub use modem::{
     ApHints, Ft8Modem, decode_fsk441_slot, decode_fst4_slot, decode_jt_slot, decode_msk144_slot,
-    decode_q65_slot,
+    decode_q65_slot, decode_uvpacket,
 };
 pub use msk144_controller::Msk144Controller;
 pub use navtex_controller::NavtexController;
@@ -80,6 +81,7 @@ pub use rifp_controller::RifpController;
 pub use scheduler::SlotScheduler;
 pub use sstv_controller::SstvController;
 pub use text_modem::TextModemController;
+pub use uvpacket_controller::UvPacketController;
 pub use wefax_controller::WefaxController;
 pub use wspr_controller::WsprController;
 

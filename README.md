@@ -83,7 +83,9 @@ One binary, three ways to run it:
   T/R period with a tone-spacing letter A–E for Doppler spread, the same
   77-bit message as FT8), receive-only **FSK441** (the
   original meteor-scatter mode — 4-FSK at 441 baud, decoding the brief pings a
-  meteor trail reflects in a 15/30-second period),
+  meteor trail reflects in a 15/30-second period), receive-only **UVPacket** (a
+  packet protocol for private amateur VHF/UHF groups — a short π/4-DQPSK
+  burst carrying an application byte pipe rather than a WSJT message),
   **Hellschreiber** (all seven Feld Hell / FSK Hell variants, on a scrolling
   raster), image **SSTV** (Scottie, Martin, Robot), image **RIFP**
   (draft-dulaunoy-rifp-00 — packetised, checksummed pictures over a 4800-baud
@@ -308,6 +310,26 @@ and it is receive only here.
   decode is checksummed rather than a claim.
 - On the longer sub-modes expect the list to fill in well after the period
   ends: a Q65-300 scan is tens of seconds of work over a five-minute slot.
+
+## UVPacket
+
+Selecting **UVPACKET** opens a two-pane view — **FRAMES** (the rolling list of
+frames decoded) and **FRAME** (the one selected). UVPacket is not one of the
+WSJT weak-signal modes: it is a **packet protocol** for private amateur
+VHF/UHF groups, carried as a short π/4-DQPSK burst. Where FT8 and its
+relatives carry a `<to> <from> <grid>` message, a UVPacket frame carries an
+application **byte pipe** — the sender's own data, tagged with a small
+application number and a sequence number and split into 1–32 blocks of twelve
+bytes. It is receive only here.
+
+- The sub-mode (Robust, Standard, Ultra, Express) is **detected from the
+  preamble**, so there is nothing to choose: each frame is labelled with the
+  one it arrived at.
+- Frames are **not slotted** — a frame can begin at any instant — so the
+  receiver keeps a rolling window of the last several seconds of audio and
+  re-scans it. A frame that arrives twice is shown once.
+- The FRAME pane shows every header field and the payload two ways: as text
+  when it is printable, and always as a hex dump.
 
 ## Propagation heat map
 
