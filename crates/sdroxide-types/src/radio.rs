@@ -444,10 +444,37 @@ pub enum CatFamily {
     /// Appended after [`CatFamily::RsHfiq`] for the reason [`CatFamily::Flrig`]
     /// gives.
     TrUsdx,
+    /// (tr)uSDX **nG** — DL2MAN's rewritten firmware (nG0.249 and later), which
+    /// keeps 2.00x's `UA`/`US` audio-in-the-CAT-link framing but changes three
+    /// things about the transmit side that a 2.00x driver gets wrong:
+    ///
+    /// * **The transmit rate is 4807.69 bytes/s**, not the 7812 the receive
+    ///   side runs at and not the 11520 the 2.00x profile paces at (the transmit
+    ///   slot is `20 MHz / (64 × 65)`, and the firmware takes at most one byte
+    ///   per slot — 2.00x's surplus is thrown away). Pacing at the old rate
+    ///   starves or floods the radio's ring rather than feeding it.
+    /// * **The delimiter escape is `0x3B → 0x3A`**, where 2.00x used `0x3B →
+    ///   0x3C`. A bare `;` ends the audio stream, so the forbidden sample is
+    ///   mapped down by one.
+    /// * **The stream starts on the first byte ≥ `0x80`.** Every byte below
+    ///   that before it is read as a command, so the host must open the
+    ///   transmit stream with a high sample (a leading `0x80`, which is
+    ///   silence, does this without a click).
+    ///
+    /// nG also adds a level extension the profile uses — `AG0nn;` (volume
+    /// 00–31) and `GTn;` (gain control: 0 off, 1 on, 2 DIGI), neither answered
+    /// nor stored — and accepts `UA2;`, which switches the radio's own speaker
+    /// off while it streams.
+    ///
+    /// The receive side is unchanged: 7812.5 B/s, the same `US` framing and the
+    /// same `0x3B → 0x3C` receive escape. Appended after [`CatFamily::TrUsdx`]
+    /// rather than beside it because the family's discriminants are appended as
+    /// they are added, so inserting one would move every later family's.
+    TrUsdxNg,
 }
 
 impl CatFamily {
-    pub const ALL: [CatFamily; 11] = [
+    pub const ALL: [CatFamily; 12] = [
         CatFamily::Xiegu,
         CatFamily::Icom,
         CatFamily::Yaesu,
@@ -457,6 +484,7 @@ impl CatFamily {
         CatFamily::QrpLabs,
         CatFamily::RsHfiq,
         CatFamily::TrUsdx,
+        CatFamily::TrUsdxNg,
         CatFamily::Rigctld,
         CatFamily::Flrig,
     ];
@@ -477,6 +505,7 @@ impl CatFamily {
             CatFamily::QrpLabs => "QRP Labs",
             CatFamily::RsHfiq => "RS-HFIQ",
             CatFamily::TrUsdx => "(tr)uSDX",
+            CatFamily::TrUsdxNg => "(tr)uSDX nG",
             CatFamily::Rigctld => "Hamlib rigctld (network)",
             CatFamily::Flrig => "flrig (network)",
         }
@@ -974,6 +1003,57 @@ impl TrUsdxAudio {
     }
 }
 
+/// The (tr)uSDX nG gain control, sent over the CAT link as `GTn;`.
+///
+/// nG's own notes for app developers say to put the radio in DIGI for FT8 and
+/// the other data modes: the gain control then holds its gain through the other
+/// station's transmit gaps instead of regulating up into every pause, and its
+/// gain is capped. [`TrUsdxNgAgc::Auto`] follows the mode sdroxide has set —
+/// DIGI for any digital mode, fast/on otherwise — which is the answer for an
+/// operator who never wants to think about it; the three fixed values override
+/// it. nG answers `GT` with nothing and does not store it, so the setting is
+/// re-sent whenever the link opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TrUsdxNgAgc {
+    #[default]
+    Auto,
+    Off,
+    On,
+    Digi,
+}
+
+impl TrUsdxNgAgc {
+    pub const ALL: [TrUsdxNgAgc; 4] =
+        [TrUsdxNgAgc::Auto, TrUsdxNgAgc::Off, TrUsdxNgAgc::On, TrUsdxNgAgc::Digi];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TrUsdxNgAgc::Auto => "Auto (DIGI in data modes)",
+            TrUsdxNgAgc::Off => "Off",
+            TrUsdxNgAgc::On => "On (fast)",
+            TrUsdxNgAgc::Digi => "DIGI",
+        }
+    }
+
+    /// The `GTn;` digit for this setting, resolving [`TrUsdxNgAgc::Auto`]
+    /// against whether the mode in force is a data mode.
+    pub fn digit(self, data_mode: bool) -> u8 {
+        match self {
+            TrUsdxNgAgc::Auto if data_mode => 2,
+            TrUsdxNgAgc::Auto => 1,
+            TrUsdxNgAgc::Off => 0,
+            TrUsdxNgAgc::On => 1,
+            TrUsdxNgAgc::Digi => 2,
+        }
+    }
+
+    /// Whether this setting follows the mode, so a fresh `GTn;` has to go out
+    /// when the mode changes.
+    pub fn is_auto(self) -> bool {
+        self == TrUsdxNgAgc::Auto
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CatConfig {
@@ -1164,6 +1244,24 @@ pub struct CatConfig {
     /// by every other family, which have no such choice to make.
     #[serde(default)]
     pub trusdx_audio: TrUsdxAudio,
+    /// (tr)uSDX **nG** only: the radio's volume, sent as `AG0nn;` (00–31).
+    ///
+    /// nG takes the USB audio stream *after* VOL and AGC, so this is the level
+    /// a decoder sees — the place to fix "FT8 sees too little/too much" without
+    /// touching the computer's mixer. nG answers `AG` with nothing and does not
+    /// store the value, so it is re-sent whenever the link opens.
+    pub trusdx_ng_volume: u8,
+    /// (tr)uSDX **nG** only: the radio's gain control, sent as `GTn;`. See
+    /// [`TrUsdxNgAgc`].
+    pub trusdx_ng_agc: TrUsdxNgAgc,
+    /// (tr)uSDX **nG** only: keep the radio's own speaker silent while
+    /// streaming.
+    ///
+    /// nG enables the stream with `UA1;` (speaker on) or `UA2;` (speaker off);
+    /// 2.00x had only the first. Off is for an operator who wants the audio
+    /// *only* in sdroxide — a second set of ears beside the radio, or a quiet
+    /// shack at night.
+    pub trusdx_ng_speaker: bool,
 }
 
 /// The slowest CI-V link the scope sweeps fit down. A sweep is ~500 bytes of
@@ -1244,6 +1342,35 @@ pub const TRUSDX_RX_RATE_HZ: u32 = 7812;
 /// paces the bytes out at it — the radio does not clock them.
 pub const TRUSDX_TX_RATE_HZ: u32 = 11_520;
 
+/// The rate the **(tr)uSDX nG** firmware takes transmit audio at, in bytes per
+/// second — the one number DL2MAN's nG notes for app developers single out.
+///
+/// The transmit slot is `20 MHz / (64 × 65) = 4807.69` slots per second and the
+/// firmware takes at most one byte per slot, so a host that paces at the old
+/// 7812 (or at 2.00x's 11520) is not feeding the radio at the rate it reads:
+/// the stream was always described with one rate for both directions, and for
+/// transmit the surplus is simply thrown away. nG's 256-byte ring drops the
+/// newest byte when full and interpolates, but the contract is still to feed it
+/// at 4807.69, which this rounds to 4808.
+pub const TRUSDX_NG_TX_RATE_HZ: u32 = 4808;
+
+/// The byte a **(tr)uSDX nG** transmit-audio stream must start with, if the
+/// first sample is not already high.
+///
+/// nG starts the stream on the first byte with the top bit set and reads every
+/// byte before it as a command, so the host opens the stream with a high
+/// sample. `0x80` is the stream's own silence (8-bit unsigned, mid = 128), so
+/// one leading `0x80` costs a single silent sample and cannot be heard.
+pub const TRUSDX_NG_TX_START_BYTE: u8 = 0x80;
+
+/// What **(tr)uSDX nG** maps a forbidden `0x3B` transmit sample to.
+///
+/// A bare `;` ends the audio stream, so the sample equal to it must not go out.
+/// 2.00x shifted it *up* to `0x3C`; nG shifts it *down* to `0x3A`. Both are one
+/// LSB of error and inaudible; a driver that uses the other generation's
+/// substitution corrupts one sample in 256 into a premature stream end.
+pub const TRUSDX_NG_TX_ESCAPE_TO: u8 = 0x3A;
+
 /// Whether a rig's I/Q is corrected unless the operator says otherwise. On:
 /// see [`CatConfig::iq_correction`].
 fn default_cat_iq_correction() -> bool {
@@ -1309,6 +1436,9 @@ impl Default for CatConfig {
             scope: false,
             scope_span: IcomScopeSpan::default(),
             trusdx_audio: TrUsdxAudio::default(),
+            trusdx_ng_volume: 20,
+            trusdx_ng_agc: TrUsdxNgAgc::default(),
+            trusdx_ng_speaker: true,
         }
     }
 }
@@ -7630,7 +7760,7 @@ mod tests {
     /// disappears from the dialog instead of failing to build.
     #[test]
     fn every_cat_family_is_offered_and_labelled() {
-        assert_eq!(CatFamily::ALL.len(), 11);
+        assert_eq!(CatFamily::ALL.len(), 12);
         for f in CatFamily::ALL {
             assert!(!f.label().is_empty(), "{f:?}");
         }
@@ -7638,8 +7768,10 @@ mod tests {
         assert!(CatFamily::ALL.contains(&CatFamily::QrpLabs));
         assert!(CatFamily::ALL.contains(&CatFamily::RsHfiq));
         assert!(CatFamily::ALL.contains(&CatFamily::TrUsdx));
+        assert!(CatFamily::ALL.contains(&CatFamily::TrUsdxNg));
         // A (tr)uSDX serves its own serial port over USB, like a QMX.
         assert!(!CatFamily::TrUsdx.is_network());
+        assert!(!CatFamily::TrUsdxNg.is_network());
         // An RS-HFIQ's control link is a serial port on the board itself
         // (issue #383).
         assert!(!CatFamily::RsHfiq.is_network());

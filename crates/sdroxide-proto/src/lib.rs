@@ -1442,7 +1442,13 @@ use sdroxide_types::{
 /// tail, the same shape `wspr` already has, and `DigiStatus` rides whole, so
 /// a v163 peer reads the extra bytes as the start of the next field and
 /// fails to decode every digital status.
-pub const PROTO_VERSION: u16 = 164;
+///
+/// v165: the (tr)uSDX nG CAT family. `CatFamily::TrUsdxNg` is appended to that
+/// enum, so no surviving family moves; `CatConfig` gains the nG level fields
+/// (`trusdx_ng_volume`, `trusdx_ng_agc`, `trusdx_ng_speaker`) on its tail, and
+/// `CatConfig` rides `Command::SetCatConfig` and `ServerMsg::CatConfig` whole,
+/// so a v164 peer handed one runs off the end of the struct.
+pub const PROTO_VERSION: u16 = 165;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

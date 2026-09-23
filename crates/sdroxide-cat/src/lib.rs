@@ -611,7 +611,24 @@ trait Protocol: Send {
     /// Encode a block of transmit audio — mono, `-1.0..=1.0` — as the bytes
     /// this radio takes, appending to `out`. The encoding is the family's own:
     /// the (tr)uSDX wants unsigned 8-bit with the delimiter escaped.
-    fn encode_tx_audio(&self, _samples: &[f32], _out: &mut Vec<u8>) {}
+    ///
+    /// `&mut self` because the (tr)uSDX nG stream must be *opened* correctly on
+    /// its first block (nG takes the first high byte as the first sample), and
+    /// that depends on state set at key-down.
+    fn encode_tx_audio(&mut self, _samples: &[f32], _out: &mut Vec<u8>) {}
+
+    /// Bytes per second this radio reads transmit audio at, for the serial
+    /// thread's pacer. Only consulted on a family whose [`Self::streams_audio`]
+    /// is true; the default is the (tr)uSDX 2.00x rate, the only streaming
+    /// family there has been.
+    fn tx_audio_rate_hz(&self) -> u32 {
+        sdroxide_types::TRUSDX_TX_RATE_HZ
+    }
+
+    /// A key-down has started a fresh transmit stream, before any audio has
+    /// been encoded for it. The (tr)uSDX nG profile uses it to owe an opening
+    /// byte; every other family has nothing to reset.
+    fn on_tx_stream_start(&mut self) {}
 
     /// Called with every protocol-generated frame the moment it is actually
     /// written to the link — and only then. What a profile *generates* is not
@@ -1243,6 +1260,17 @@ fn make_protocol(cfg: &CatConfig) -> Box<dyn Protocol> {
         // thread routes bytes to the profile's own demultiplexer rather than
         // expecting a sound card (see `Protocol::streams_audio`).
         CatFamily::TrUsdx => Box::new(trusdx::TrUsdx::new(cfg.trusdx_audio.streams_audio())),
+        // The nG generation shares the receive side and the `UA`/`US` framing
+        // with the profile above; only the transmit side and the level commands
+        // differ, and those hang off the `NgLevel` this carries.
+        CatFamily::TrUsdxNg => Box::new(trusdx::TrUsdx::new_ng(
+            cfg.trusdx_audio.streams_audio(),
+            trusdx::NgLevel {
+                volume: cfg.trusdx_ng_volume,
+                agc: cfg.trusdx_ng_agc,
+                speaker: cfg.trusdx_ng_speaker,
+            },
+        )),
         CatFamily::Rigctld => Box::new(rigctld::Rigctld::new()),
         CatFamily::Flrig => Box::new(flrig::Flrig::new(cfg.flrig_addr.trim().to_string())),
     }
@@ -2400,13 +2428,13 @@ fn commanded_mode(cfg: &CatConfig, app_mode: Mode, dial_hz: Option<f64>) -> Opti
 
 /// Paces the in-band transmit audio to the radio's own byte rate.
 ///
-/// The (tr)uSDX takes 8-bit transmit samples at a fixed rate — the documented
-/// `TRUSDX_TX_RATE_HZ` — and does not clock them back, so the host is expected
-/// to feed them at that rate and no other. Writing as fast as the ring has data
-/// would stuff the OS serial buffer and delay the audio by however much it
-/// holds, which on a digital mode is a burst drifting out of its slot. So the
-/// thread meters its own writes against wall-clock: it may have written
-/// `elapsed × rate` bytes by now, and no more.
+/// The (tr)uSDX takes 8-bit transmit samples at a fixed rate — the family's own
+/// [`Protocol::tx_audio_rate_hz`], 11520 on 2.00x and 4808 on nG — and does not
+/// clock them back, so the host is expected to feed them at that rate and no
+/// other. Writing as fast as the ring has data would stuff the OS serial buffer
+/// and delay the audio by however much it holds, which on a digital mode is a
+/// burst drifting out of its slot. So the thread meters its own writes against
+/// wall-clock: it may have written `elapsed × rate` bytes by now, and no more.
 #[derive(Default)]
 struct TxPace {
     /// When the current over started, or `None` before the first key-down.
@@ -2509,8 +2537,8 @@ fn serial_thread(
     let mut tx_scratch: Vec<f32> = Vec::new();
     let mut tx_bytes: Vec<u8> = Vec::new();
     // When the current over began and how many bytes have gone out, so the
-    // transmit stream is paced to the radio's own rate (`TRUSDX_TX_RATE_HZ`)
-    // rather than to however fast the machine happens to be.
+    // transmit stream is paced to the radio's own rate (its family's
+    // `tx_audio_rate_hz`) rather than to however fast the machine happens to be.
     let mut tx_pace = TxPace::default();
     let poll_period = poll_period(&cfg);
     // The meters follow the poll rate too. They used to run at a fixed 5 Hz,
@@ -2961,7 +2989,8 @@ fn serial_thread(
                             // simply paused for transmission.
                             last_rx_audio = Instant::now();
                             if on {
-                                tx_pace.reset(u64::from(sdroxide_types::TRUSDX_TX_RATE_HZ));
+                                tx_pace.reset(u64::from(protocol.tx_audio_rate_hz()));
+                                protocol.on_tx_stream_start();
                                 // Anything left from the previous over is
                                 // stale; the source re-fills the ring as the
                                 // new one starts.

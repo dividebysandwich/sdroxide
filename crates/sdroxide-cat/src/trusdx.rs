@@ -68,9 +68,37 @@
 //! transmit-audio path is DL2MAN's and is not in the open firmware, so the
 //! transmit rate and the escape are taken from the firmware's own documentation
 //! and confirmed only as far as a dummy load allows.
+//!
+//! # nG, the second generation
+//!
+//! The same profile also drives DL2MAN's rewritten **nG** firmware
+//! ([`TrUsdx::new_ng`], chosen by [`sdroxide_types::CatFamily::TrUsdxNg`]). The
+//! receive side and the `UA`/`US` framing are unchanged — 7812.5 B/s, the same
+//! receive escape — so the demultiplexer below is the same code. Three things
+//! on the transmit side differ, and each is a silent failure if got wrong:
+//!
+//! * the rate is **4807.69 B/s** (the transmit slot is `20 MHz / (64 × 65)`),
+//!   not 2.00x's 11520 — see [`sdroxide_types::TRUSDX_NG_TX_RATE_HZ`];
+//! * the delimiter escape is **`0x3B → 0x3A`**, where 2.00x shifts up to
+//!   `0x3C` — see [`sdroxide_types::TRUSDX_NG_TX_ESCAPE_TO`];
+//! * the stream opens on the first byte **≥ `0x80`**, so a leading `0x80`
+//!   (silence) is emitted when the first real sample is low — see
+//!   [`sdroxide_types::TRUSDX_NG_TX_START_BYTE`].
+//!
+//! nG also adds a level extension the profile uses: `AG0nn;` (volume 00–31)
+//! and `GTn;` (gain control 0 off / 1 on / 2 DIGI), neither answered nor
+//! stored, so they are re-asserted whenever the link opens; and it accepts
+//! `UA2;` to switch the radio's own speaker off while it streams.
+//!
+//! The nG figures come from DL2MAN's own notes for app developers and are
+//! **not** confirmed against an nG radio here — the firmware was not available
+//! on this bench. They are unit-tested structurally, and the on-air checks are
+//! named in the fork's notes.
 
 use crate::{CatUpdate, Protocol};
-use sdroxide_types::Mode;
+use sdroxide_types::{
+    Mode, TRUSDX_NG_TX_ESCAPE_TO, TRUSDX_NG_TX_RATE_HZ, TRUSDX_NG_TX_START_BYTE, TrUsdxNgAgc,
+};
 use tracing::{debug, info};
 
 /// Digits in the `FA` frequency field, fixed across the family.
@@ -82,12 +110,32 @@ const IF_TX_FLAG: usize = 26;
 /// Length of that body, `IF` and `;` excluded.
 const IF_BODY_LEN: usize = 35;
 
+/// The nG-only level settings, carried into the profile so it can re-assert
+/// them whenever it is asked to: nG answers neither `AG` nor `GT` and stores
+/// neither, so the host is the only place they live.
+#[derive(Debug, Clone, Copy)]
+pub struct NgLevel {
+    /// Volume, 0–31 (`AG0nn;`).
+    pub volume: u8,
+    /// Gain control (`GTn;`).
+    pub agc: TrUsdxNgAgc,
+    /// Whether the radio's own speaker stays on while streaming (`UA1;`) or is
+    /// switched off (`UA2;`).
+    pub speaker: bool,
+}
+
 pub struct TrUsdx {
     /// Whether the audio rides the CAT link (`TrUsdxAudio::OneCable`) rather
     /// than a sound card. Everything the profile does differently between the
     /// two modes hangs off this one flag: only the in-band mode streams, and
     /// only the in-band mode must send no polls.
     one_cable: bool,
+    /// `Some` when driving nG firmware, with the level settings it re-asserts.
+    /// `None` is the 2.00x/open-firmware generation; the receive side and the
+    /// `UA`/`US` framing are the same for both, so this flag decides only the
+    /// transmit rate, the transmit delimiter escape, the stream's opening byte
+    /// and whether the `AG`/`GT` level commands are sent.
+    ng: Option<NgLevel>,
     /// Bytes arrived and not yet split into whole CAT frames.
     buf: Vec<u8>,
     /// Whether the receive audio stream is running — true between the `US`
@@ -103,6 +151,9 @@ pub struct TrUsdx {
     /// is actually running. Until then the serial thread re-asks, because the
     /// reboot as the port opens can swallow the first `UA1;`.
     stream_on: bool,
+    /// nG: a transmit stream has just started and its opening byte has not gone
+    /// out yet, so the next encoded block must open on a byte ≥ `0x80`.
+    tx_start_pending: bool,
     /// Mode digit from the radio's last `MD;` reply.
     mode_digit: Option<char>,
     /// True once `ID;` has answered `020`, so the model is logged once.
@@ -115,16 +166,49 @@ impl TrUsdx {
     /// `one_cable` is [`sdroxide_types::TrUsdxAudio::OneCable`] — audio inside
     /// the CAT stream rather than over a sound card.
     pub fn new(one_cable: bool) -> Self {
+        Self::with_ng(one_cable, None)
+    }
+
+    /// The nG generation: the same profile, with nG's transmit rate, delimiter
+    /// escape and opening byte, and its `AG`/`GT` level commands.
+    pub fn new_ng(one_cable: bool, level: NgLevel) -> Self {
+        Self::with_ng(one_cable, Some(level))
+    }
+
+    fn with_ng(one_cable: bool, ng: Option<NgLevel>) -> Self {
         TrUsdx {
             one_cable,
+            ng,
             buf: Vec::new(),
             in_audio: false,
             audio: Vec::new(),
             stream_on: false,
+            tx_start_pending: false,
             mode_digit: None,
             identified: false,
             nak: false,
         }
+    }
+
+    fn is_ng(&self) -> bool {
+        self.ng.is_some()
+    }
+
+    /// The stream's enable for this generation and speaker choice: `UA1;` with
+    /// the radio's speaker on, `UA2;` with it off (nG only — 2.00x has no
+    /// second form).
+    fn stream_enable(&self) -> &'static [u8] {
+        if self.ng.is_some_and(|n| !n.speaker) { b"UA2;" } else { b"UA1;" }
+    }
+
+    /// The `AG0nn;` and `GTn;` frames for the current level settings, empty for
+    /// the 2.00x generation. `data_mode` resolves [`TrUsdxNgAgc::Auto`].
+    fn level_frames(&self, data_mode: bool) -> Vec<Vec<u8>> {
+        let Some(ng) = self.ng else { return Vec::new() };
+        vec![
+            format!("AG0{:02};", ng.volume.min(31)).into_bytes(),
+            format!("GT{};", ng.agc.digit(data_mode)).into_bytes(),
+        ]
     }
 
     /// The app's mode for the radio's mode digit.
@@ -219,10 +303,19 @@ fn if_transmitting(body: &str) -> Option<bool> {
 }
 
 /// Escape a transmit-audio byte for the stream: a `0x3B` would be read as a CAT
-/// terminator, so it goes out as `0x3C` — the same substitution the firmware
-/// makes on receive.
-fn escape_tx(sample: u8) -> u8 {
-    if sample == b';' { b';' + 1 } else { sample }
+/// terminator, so it must not go out as one. The two generations disagree on
+/// the substitute — 2.00x shifts it up to `0x3C` (the same value it sends in
+/// place of a delimiter on receive), nG shifts it down to `0x3A`. Getting this
+/// wrong corrupts one sample in 256, and on nG a wrong substitute of `0x3C` is
+/// harmless only by luck (it is a legal sample); a `0x3B` left unmapped ends
+/// the stream early.
+fn escape_tx(sample: u8, ng: bool) -> u8 {
+    if sample == b';' { if ng { TRUSDX_NG_TX_ESCAPE_TO } else { b';' + 1 } } else { sample }
+}
+
+/// A mono `-1.0..=1.0` sample as the radio's unsigned 8-bit value (mid = 128).
+fn sample_byte(s: f32) -> u8 {
+    ((s.clamp(-1.0, 1.0) * 127.0) as i32 + 128).clamp(0, 255) as u8
 }
 
 impl Protocol for TrUsdx {
@@ -232,7 +325,16 @@ impl Protocol for TrUsdx {
     }
 
     fn set_mode(&mut self, m: Mode) -> Vec<u8> {
-        format!("MD{};", mode_digit(m)).into_bytes()
+        let mut out = format!("MD{};", mode_digit(m)).into_bytes();
+        // nG's gain control follows the mode when it is `Auto`, and `GT` is not
+        // stored, so a mode change is the moment to re-assert it — appended to
+        // the mode frame, which the radio parses as two commands back to back.
+        if let Some(ng) = self.ng
+            && ng.agc.is_auto()
+        {
+            out.extend_from_slice(format!("GT{};", ng.agc.digit(m.is_digital())).as_bytes());
+        }
+        out
     }
 
     fn ptt(&self, on: bool) -> Vec<u8> {
@@ -282,7 +384,7 @@ impl Protocol for TrUsdx {
     }
 
     fn stream_resume(&self) -> Vec<u8> {
-        b"UA1;".to_vec()
+        self.stream_enable().to_vec()
     }
 
     /// Stop any auto-information the radio may have been left in, and switch off
@@ -296,7 +398,14 @@ impl Protocol for TrUsdx {
     /// out last from [`Self::stream_start`] on the serial thread's retry, by
     /// which time no other frame is owed.
     fn open_requests(&self) -> Vec<Vec<u8>> {
-        vec![b"AI0;".to_vec(), b"UA0;".to_vec()]
+        let mut out = vec![b"AI0;".to_vec(), b"UA0;".to_vec()];
+        // nG's level commands go out here, while the stream is stopped: it
+        // answers neither and stores neither, so the link opening is the one
+        // moment they can be set. `data_mode` is false at open — the rig's own
+        // mode is adopted, not commanded, so `Auto` starts at ON and corrects
+        // on the first mode frame we send.
+        out.extend(self.level_frames(false));
+        out
     }
 
     /// Clear the clarifier and switch RIT/XIT off. sdroxide carries RIT on the
@@ -341,7 +450,9 @@ impl Protocol for TrUsdx {
     /// call idempotent whatever state the radio is in — safe on a stream that
     /// is running, on one that never started, and on one that has died.
     fn stream_start(&self) -> Vec<u8> {
-        b"UA0;UA1;".to_vec()
+        let mut out = b"UA0;".to_vec();
+        out.extend_from_slice(self.stream_enable());
+        out
     }
 
     fn stream_active(&self) -> bool {
@@ -355,11 +466,39 @@ impl Protocol for TrUsdx {
 
     /// Encode a block of transmit audio — mono, `-1.0..=1.0` — as the unsigned
     /// 8-bit stream the radio takes, escaping the delimiter byte.
-    fn encode_tx_audio(&self, samples: &[f32], out: &mut Vec<u8>) {
-        out.reserve(samples.len());
+    ///
+    /// On the first block of an over this also opens an nG stream correctly: nG
+    /// takes the first byte with the top bit set as the first sample and reads
+    /// everything before it as commands, so if the block's own first sample is
+    /// low a single `0x80` (the stream's silence) goes out ahead of it.
+    fn encode_tx_audio(&mut self, samples: &[f32], out: &mut Vec<u8>) {
+        if samples.is_empty() {
+            return;
+        }
+        out.reserve(samples.len() + 1);
+        if std::mem::take(&mut self.tx_start_pending) && self.is_ng() {
+            let first = escape_tx(sample_byte(samples[0]), true);
+            if first < TRUSDX_NG_TX_START_BYTE {
+                out.push(TRUSDX_NG_TX_START_BYTE);
+            }
+        }
         for &s in samples {
-            let u = ((s.clamp(-1.0, 1.0) * 127.0) as i32 + 128).clamp(0, 255) as u8;
-            out.push(escape_tx(u));
+            out.push(escape_tx(sample_byte(s), self.is_ng()));
+        }
+    }
+
+    /// nG reads transmit audio at its own rate; 2.00x's is the other one. The
+    /// serial thread paces the stream by this, so a family that returns nG's
+    /// rate feeds the radio at the rate it actually reads.
+    fn tx_audio_rate_hz(&self) -> u32 {
+        if self.is_ng() { TRUSDX_NG_TX_RATE_HZ } else { sdroxide_types::TRUSDX_TX_RATE_HZ }
+    }
+
+    /// A key-down starts a fresh transmit stream, so the opening byte is owed
+    /// again on the next block.
+    fn on_tx_stream_start(&mut self) {
+        if self.is_ng() {
+            self.tx_start_pending = true;
         }
     }
 
@@ -610,7 +749,7 @@ mod tests {
     /// And the same substitution the other way on transmit.
     #[test]
     fn the_transmit_escape_is_applied() {
-        let p = TrUsdx::new(true);
+        let mut p = TrUsdx::new(true);
         // A sample that lands on 0x3B (59) must go out as 0x3C.
         let mut out = Vec::new();
         p.encode_tx_audio(&[(59.0 - 128.0) / 127.0], &mut out);
@@ -629,5 +768,104 @@ mod tests {
         let mut audio = Vec::new();
         p.take_stream_audio(&mut audio);
         assert_eq!(audio, vec![0x80, 0x81]);
+    }
+
+    // ---- nG: the generation that differs on the transmit side ----
+
+    fn ng(volume: u8, agc: TrUsdxNgAgc, speaker: bool) -> TrUsdx {
+        TrUsdx::new_ng(true, NgLevel { volume, agc, speaker })
+    }
+
+    /// nG reads transmit audio at its own rate, and the serial thread paces by
+    /// it — so the profile must report the nG figure, not 2.00x's.
+    #[test]
+    fn ng_paces_transmit_at_the_ng_rate() {
+        assert_eq!(TrUsdx::new(true).tx_audio_rate_hz(), 11_520, "2.00x is unchanged");
+        assert_eq!(ng(20, TrUsdxNgAgc::Auto, true).tx_audio_rate_hz(), 4_808);
+    }
+
+    /// The two generations disagree on which way to shift the forbidden `;`
+    /// sample on transmit: 2.00x up to `0x3C`, nG down to `0x3A`.
+    #[test]
+    fn ng_escapes_the_delimiter_down_where_legacy_escapes_up() {
+        let low = [(59.0 - 128.0) / 127.0];
+        let mut legacy = Vec::new();
+        let mut legacy_p = TrUsdx::new(true);
+        legacy_p.encode_tx_audio(&low, &mut legacy);
+        assert_eq!(legacy, vec![0x3C]);
+        let mut out = Vec::new();
+        ng(20, TrUsdxNgAgc::Auto, true).encode_tx_audio(&low, &mut out);
+        assert_eq!(out, vec![0x3A]);
+    }
+
+    /// nG starts its transmit stream on the first byte with the top bit set and
+    /// reads everything before it as a command, so a block whose first sample
+    /// is low must open with `0x80` — once, on the first block after key-down.
+    #[test]
+    fn an_ng_stream_opens_on_a_high_byte() {
+        let mut p = ng(20, TrUsdxNgAgc::Auto, true);
+        p.on_tx_stream_start();
+        let mut out = Vec::new();
+        p.encode_tx_audio(&[-1.0, 0.0], &mut out);
+        assert_eq!(out[0], 0x80, "the stream must open on a byte >= 0x80: {out:?}");
+        assert_eq!(out.len(), 3, "one leading silent sample, then the two real ones");
+        // The next block is ordinary: no second opening byte.
+        let mut more = Vec::new();
+        p.encode_tx_audio(&[-1.0], &mut more);
+        assert_eq!(more.len(), 1, "only the first block after key-down is opened");
+
+        // A block that already opens high is left alone.
+        let mut p = ng(20, TrUsdxNgAgc::Auto, true);
+        p.on_tx_stream_start();
+        let mut out = Vec::new();
+        p.encode_tx_audio(&[0.5], &mut out);
+        assert_eq!(out.len(), 1);
+        assert!(out[0] >= 0x80);
+
+        // 2.00x has no such rule and is never given a leading byte.
+        let mut p = TrUsdx::new(true);
+        p.on_tx_stream_start();
+        let mut out = Vec::new();
+        p.encode_tx_audio(&[-1.0], &mut out);
+        assert_eq!(out, vec![1], "the sample alone, no opening byte");
+    }
+
+    /// The nG level commands are re-asserted at open (nG stores neither), and
+    /// `Auto` follows the mode on the mode frame.
+    #[test]
+    fn ng_level_commands_go_out_at_open_and_follow_the_mode() {
+        let p = ng(7, TrUsdxNgAgc::Auto, true);
+        let open: Vec<String> =
+            p.open_requests().iter().map(|f| String::from_utf8_lossy(f).into_owned()).collect();
+        assert!(open.contains(&"AG007;".to_string()), "{open:?}");
+        assert!(
+            open.contains(&"GT1;".to_string()),
+            "Auto is ON until a mode says otherwise: {open:?}"
+        );
+
+        // Auto: a digital mode asks for DIGI, an SSB mode for ON.
+        let mut p = ng(7, TrUsdxNgAgc::Auto, true);
+        assert_eq!(p.set_mode(Mode::Ft8), b"MD2;GT2;".to_vec());
+        assert_eq!(p.set_mode(Mode::Usb), b"MD2;GT1;".to_vec());
+        // A fixed setting never rides the mode frame.
+        let mut p = ng(7, TrUsdxNgAgc::Digi, true);
+        assert_eq!(p.set_mode(Mode::Usb), b"MD2;".to_vec());
+        // 2.00x sends no level commands at all.
+        let p = TrUsdx::new(true);
+        assert!(
+            p.open_requests().iter().all(|f| !f.starts_with(b"AG") && !f.starts_with(b"GT")),
+            "2.00x has no AG/GT"
+        );
+    }
+
+    /// `UA2;` switches the radio's own speaker off; 2.00x had only `UA1;`.
+    #[test]
+    fn ng_can_switch_the_radios_own_speaker_off() {
+        let off = ng(20, TrUsdxNgAgc::Auto, false);
+        assert_eq!(off.stream_start(), b"UA0;UA2;".to_vec());
+        assert_eq!(off.stream_resume(), b"UA2;".to_vec());
+        let on = ng(20, TrUsdxNgAgc::Auto, true);
+        assert_eq!(on.stream_start(), b"UA0;UA1;".to_vec());
+        assert_eq!(on.stream_resume(), b"UA1;".to_vec());
     }
 }
