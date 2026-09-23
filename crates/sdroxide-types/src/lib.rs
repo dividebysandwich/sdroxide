@@ -65,6 +65,7 @@ mod tciserver;
 pub mod text;
 mod tone;
 mod ui;
+mod uvpacket;
 mod vdl2;
 mod voice;
 mod wefax;
@@ -266,6 +267,9 @@ pub use tone::{CTCSS_TONES, SubTone};
 pub use ui::{
     BandplanKind, ChromeStyle, FontSize, LayoutMode, SmeterStyle, SpectrumDetail, Speed,
     UiSettings, UiTheme,
+};
+pub use uvpacket::{
+    UVPACKET_AUDIO_CENTRE_HZ, UVPACKET_FRAME_MAX, UvPacketFrame, UvPacketMode, UvPacketStatus,
 };
 pub use vdl2::{
     VDL2_ALL_CHANNELS, VDL2_CHANNEL_LABELS, VDL2_CHANNEL_SPACING_HZ, VDL2_CHANNELS_HZ, VDL2_CSC_HZ,

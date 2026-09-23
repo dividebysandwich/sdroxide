@@ -71,7 +71,9 @@ One binary, three ways to run it:
   **WSPR** (transmit and receive, with WSPRnet reporting and optional band
   hopping), receive-only **PI4** (the "Next Generation Beacon" propagation
   mode — 4-FSK, decoded from a rate-1/2 K=32 Fano search across every beacon
-  variant and tone frequency the network uses),
+  variant and tone frequency the network uses), receive-only **UVPacket** (a
+  packet protocol for private amateur VHF/UHF groups — a short π/4-DQPSK
+  burst carrying an application byte pipe rather than a WSJT message),
   **Hellschreiber** (all seven Feld Hell / FSK Hell variants, on a scrolling
   raster), image **SSTV** (Scottie, Martin, Robot), image **RIFP**
   (draft-dulaunoy-rifp-00 — packetised, checksummed pictures over a 4800-baud
@@ -220,6 +222,26 @@ Beacon" network, not a beacon implementation.
 - Tune so the beacon's CW identification and carrier sit at 800 Hz audio —
   the network's own convention — and the four PI4 tones land where the
   decoder searches for them by default.
+
+## UVPacket
+
+Selecting **UVPACKET** opens a two-pane view — **FRAMES** (the rolling list of
+frames decoded) and **FRAME** (the one selected). UVPacket is not one of the
+WSJT weak-signal modes: it is a **packet protocol** for private amateur
+VHF/UHF groups, carried as a short π/4-DQPSK burst. Where FT8 and its
+relatives carry a `<to> <from> <grid>` message, a UVPacket frame carries an
+application **byte pipe** — the sender's own data, tagged with a small
+application number and a sequence number and split into 1–32 blocks of twelve
+bytes. It is receive only here.
+
+- The sub-mode (Robust, Standard, Ultra, Express) is **detected from the
+  preamble**, so there is nothing to choose: each frame is labelled with the
+  one it arrived at.
+- Frames are **not slotted** — a frame can begin at any instant — so the
+  receiver keeps a rolling window of the last several seconds of audio and
+  re-scans it. A frame that arrives twice is shown once.
+- The FRAME pane shows every header field and the payload two ways: as text
+  when it is printable, and always as a hex dump.
 
 ## Propagation heat map
 

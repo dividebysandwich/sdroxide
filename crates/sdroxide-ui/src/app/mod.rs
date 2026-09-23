@@ -472,6 +472,9 @@ pub struct SdroxideApp {
     /// Which NAVTEX message the reading pane is showing, or `None` for the one
     /// arriving.
     navtex_open: Option<usize>,
+    /// Which UVPacket frame the reading pane is showing, or `None` for the
+    /// newest.
+    uvpacket_open: Option<usize>,
     nr_popup_since: Option<f64>,
     rec_popup_since: Option<f64>,
     /// When the running MP3 recording should stop, Unix UTC seconds, and the
@@ -1381,6 +1384,7 @@ impl SdroxideApp {
             layers_popup_since: None,
             tone_popup_since: None,
             navtex_open: None,
+            uvpacket_open: None,
             nr_popup_since: None,
             rec_popup_since: None,
             recording_stop_at: None,

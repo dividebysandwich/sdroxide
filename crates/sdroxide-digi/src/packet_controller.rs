@@ -965,6 +965,7 @@ impl PacketController {
             packet: Some(self.packet_status()),
             navtex: None,
             acars: None,
+            uvpacket: None,
             aprs: None,
             js8: None,
             atchat: None,
