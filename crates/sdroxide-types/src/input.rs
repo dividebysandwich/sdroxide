@@ -870,6 +870,75 @@ pub struct MidiSettings {
     pub bindings: Vec<MidiBinding>,
 }
 
+// ── Icom RC-28 ──────────────────────────────────────────────────────────────
+
+/// What one of the RC-28's three buttons does.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Rc28Button {
+    pub action: Action,
+    pub button_mode: ButtonMode,
+    /// Light the LED over the button while its action is on (PTT keyed, split
+    /// set). Only meaningful for actions with a state to show.
+    pub led: bool,
+    pub enabled: bool,
+}
+
+impl Default for Rc28Button {
+    fn default() -> Self {
+        Rc28Button::toggle(Action::VfoToggle)
+    }
+}
+
+impl Rc28Button {
+    fn toggle(action: Action) -> Self {
+        Rc28Button { action, button_mode: ButtonMode::Toggle, led: true, enabled: true }
+    }
+}
+
+/// The Icom RC-28 remote encoder: a knob and three buttons, each bound to one
+/// action.
+///
+/// Fixed controls rather than a binding table like MIDI's, because the device
+/// is: there is nothing to learn, and a row per physical control is the whole
+/// editor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Rc28Settings {
+    /// Off until the operator turns it on, for the reason PTT is never a
+    /// default key binding: TRANSMIT keys the rig.
+    pub enabled: bool,
+    pub knob: Action,
+    /// Per detent — see `sdroxide_rc28::proto::COUNTS_PER_DETENT`, about 67 to
+    /// the turn.
+    pub knob_tuning: BindingTuning,
+    pub transmit: Rc28Button,
+    pub f1: Rc28Button,
+    pub f2: Rc28Button,
+}
+
+impl Default for Rc28Settings {
+    fn default() -> Self {
+        Rc28Settings {
+            enabled: false,
+            knob: Action::Tune,
+            // 10 Hz a detent is about 670 Hz a turn, a transceiver's main dial,
+            // with enough acceleration that a spin crosses a band.
+            knob_tuning: BindingTuning { step: 10.0, accel: 1.0, invert: false },
+            // Hold to talk: what the button is labelled, and the mode that
+            // cannot leave the transmitter keyed when it is let go.
+            transmit: Rc28Button {
+                action: Action::Ptt,
+                button_mode: ButtonMode::Momentary,
+                led: true,
+                enabled: true,
+            },
+            f1: Rc28Button::toggle(Action::VfoToggle),
+            f2: Rc28Button::toggle(Action::Split),
+        }
+    }
+}
+
 /// Everything client-local input control needs.
 ///
 /// Persisted as `input.json` on native and in eframe storage on wasm. It lives
@@ -885,6 +954,7 @@ pub struct InputSettings {
     /// stuck-controller backstop. 0 disables the timeout.
     pub ptt_hold_timeout_s: f32,
     pub midi: MidiSettings,
+    pub rc28: Rc28Settings,
     /// Which set of shipped defaults this file has already seen. See
     /// [`InputSettings::SCHEMA`] and [`InputSettings::migrate`].
     ///
@@ -911,6 +981,7 @@ impl Default for InputSettings {
             mouse_buttons: Vec::new(),
             ptt_hold_timeout_s: 300.0,
             midi: MidiSettings::default(),
+            rc28: Rc28Settings::default(),
             schema: InputSettings::SCHEMA,
         }
     }
@@ -989,6 +1060,18 @@ mod tests {
         assert_eq!(straight[0].chord, KeyChord::plain("Space"));
         assert!(straight[0].enabled);
         assert_eq!(old.schema, InputSettings::SCHEMA);
+    }
+
+    /// A settings file from before the RC-28 was supported loads with it off,
+    /// and with TRANSMIT as hold-to-talk for when it is turned on.
+    #[test]
+    fn a_file_without_the_rc28_leaves_it_off() {
+        let mut v: serde_json::Value = serde_json::to_value(InputSettings::default()).unwrap();
+        v.as_object_mut().unwrap().remove("rc28");
+        let cfg: InputSettings = serde_json::from_value(v).unwrap();
+        assert!(!cfg.rc28.enabled);
+        assert_eq!(cfg.rc28.transmit.action, Action::Ptt);
+        assert_eq!(cfg.rc28.transmit.button_mode, ButtonMode::Momentary);
     }
 
     /// The real path: a file on disk with no `schema` key at all.
