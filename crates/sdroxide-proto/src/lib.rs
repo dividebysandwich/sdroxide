@@ -1492,7 +1492,13 @@ use sdroxide_types::{
 /// `Command::SetDigiConfig` and `DigiStatus` whole, so a v169 peer reads the
 /// extra bytes as the start of the next field and fails to decode every
 /// digital status — the same break as v162's appended CW settings.
-pub const PROTO_VERSION: u16 = 170;
+///
+/// v171: the (tr)uSDX nG CAT family. `CatFamily::TrUsdxNg` is appended to that
+/// enum, so no surviving family moves; `CatConfig` gains the nG level fields
+/// (`trusdx_ng_volume`, `trusdx_ng_agc`, `trusdx_ng_speaker`) on its tail, and
+/// `CatConfig` rides `Command::SetCatConfig` and `ServerMsg::CatConfig` whole,
+/// so a v170 peer handed one runs off the end of the struct.
+pub const PROTO_VERSION: u16 = 171;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

@@ -181,7 +181,7 @@ pub(in crate::app) fn settings_cat_tab(
         CAT_SCOPE_MIN_BAUD, CatFamily, CwKeying, DigiMode, Direction, ELAD_CAT_BAUDS,
         ELAD_DEFAULT_CAT_BAUD, EladAntenna, EladTxInput, IcomModel, IcomScopeSpan, KenwoodSend,
         LineState, ModeControl, Parity, PttMethod, QMX_IQ_OFFSET_HZ, QMX_IQ_RATE_HZ,
-        RS_HFIQ_CAT_BAUD, SoundFormat, StopBits, TrUsdxAudio,
+        RS_HFIQ_CAT_BAUD, SoundFormat, StopBits, TrUsdxAudio, TrUsdxNgAgc,
     };
     let Some(cfg) = radio_edit.as_mut() else {
         ui.label("Waiting for the configuration of the machine the radio is attached to.");
@@ -367,7 +367,9 @@ pub(in crate::app) fn settings_cat_tab(
         // older 38400 is still offered below). DTR is the radio's reset line on
         // the common board and the driver holds it high whatever is configured
         // here, so a key-down on DTR is not offered by the profile.
-        if cfg.cat.family == CatFamily::TrUsdx && cfg.cat.family != family_before {
+        if matches!(cfg.cat.family, CatFamily::TrUsdx | CatFamily::TrUsdxNg)
+            && cfg.cat.family != family_before
+        {
             cfg.cat.format = SoundFormat::DemodAudio;
             cfg.cat.ptt = PttMethod::Cat;
             cfg.cat.serial.baud = 115_200;
@@ -462,9 +464,10 @@ pub(in crate::app) fn settings_cat_tab(
             // offering a link that cannot work. See `sdroxide_cat::spawn`.
             let bauds: &[u32] = if cfg.cat.family == CatFamily::Elad {
                 &ELAD_CAT_BAUDS
-            } else if cfg.cat.family == CatFamily::TrUsdx {
+            } else if matches!(cfg.cat.family, CatFamily::TrUsdx | CatFamily::TrUsdxNg) {
                 // "38400 / 115200 (2.00t and above)" — the firmware's own two
-                // rates, and nothing else it has a setting for.
+                // rates, and nothing else it has a setting for. nG keeps the
+                // same divisor, so the same two rates.
                 &[38_400, 115_200]
             } else {
                 &[4800, 9600, 19200, 38400, 57600, 115200]
@@ -824,7 +827,7 @@ pub(in crate::app) fn settings_cat_tab(
             ui.end_row();
         }
 
-        if cfg.cat.family == CatFamily::TrUsdx {
+        if matches!(cfg.cat.family, CatFamily::TrUsdx | CatFamily::TrUsdxNg) {
             ui.label("Radio");
             ui.label(RichText::new("(tr)uSDX · open uSDX").weak()).on_hover_text(
                 "DL2MAN/PE1NNZ's pocket QRP transceiver and the open uSDX firmware \
@@ -866,6 +869,45 @@ pub(in crate::app) fn settings_cat_tab(
                 &mut cfg.cat.trusdx_audio,
                 &TrUsdxAudio::ALL,
                 TrUsdxAudio::label,
+            );
+            ui.end_row();
+        }
+
+        if cfg.cat.family == CatFamily::TrUsdxNg {
+            ui.label("nG level").on_hover_text(
+                "nG adds two commands the 2.00x firmware does not have, and this is \
+                 the only place they can be set: nG answers neither and stores \
+                 neither, so sdroxide re-sends them whenever the link opens.\n\n\
+                 Volume is the level the radio sends down the USB stream. nG takes \
+                 that audio after VOL and AGC, so this is the right place to fix a \
+                 decoder that sees too little or too much — not the computer's \
+                 mixer.\n\n\
+                 The gain control is the radio's own AGC setting. Auto puts it in \
+                 DIGI for any digital mode and on otherwise, which is what nG's \
+                 notes ask for on FT8: the gain then holds through the other \
+                 station's transmit gaps instead of regulating up into them.",
+            );
+            ui.end_row();
+
+            ui.label("Volume");
+            ui.add(egui::DragValue::new(&mut cfg.cat.trusdx_ng_volume).range(0..=31))
+                .on_hover_text("0–31, as `AG0nn;`. The level the radio streams to the computer.");
+            ui.end_row();
+
+            ui.label("Gain control");
+            enum_combo(
+                ui,
+                "trusdx_ng_agc",
+                &mut cfg.cat.trusdx_ng_agc,
+                &TrUsdxNgAgc::ALL,
+                TrUsdxNgAgc::label,
+            );
+            ui.end_row();
+
+            ui.label("Speaker");
+            ui.checkbox(&mut cfg.cat.trusdx_ng_speaker, "On while streaming").on_hover_text(
+                "Off switches the radio's own speaker off while it streams (`UA2;`), \
+                 so the audio is heard only in sdroxide. 2.00x had no such form.",
             );
             ui.end_row();
         }
