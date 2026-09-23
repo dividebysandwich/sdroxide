@@ -20,7 +20,7 @@ use sdroxide_digi::{
     AcarsController, AprsController, AtChatController, CwController, DigiAction, DigiController,
     DigiEngine, FsqController, HellController, Js8Controller, NavtexController, PacketController,
     Pi4Controller, RadeController, RfPaintController, RifpController, SstvController,
-    TextModemController, WefaxController, WsprController,
+    TextModemController, UvPacketController, WefaxController, WsprController,
 };
 use sdroxide_drm::DrmDemod;
 use sdroxide_dsp::{
@@ -6753,6 +6753,10 @@ impl Engine {
             // PI4 is 4-FSK too, just wider and faster, so an FT8 decoder
             // handed its audio would sit there finding nothing.
             Box::new(Pi4Controller::new(self.digi_config.clone(), tap_rate))
+        } else if mode == Mode::UvPacket {
+            // UVPacket is not slotted at all: frames start anywhere, so the
+            // controller keeps a rolling window rather than a slot buffer.
+            Box::new(UvPacketController::new(self.digi_config.clone(), tap_rate))
         } else {
             Box::new(DigiController::new(mode, self.digi_config.clone(), tap_rate))
         }
@@ -17282,6 +17286,7 @@ fn rig_mode_class(m: Mode) -> u8 {
         | Mode::Js8
         | Mode::Wspr
         | Mode::Pi4
+        | Mode::UvPacket
         | Mode::Psk
         | Mode::Rtty
         | Mode::Sstv

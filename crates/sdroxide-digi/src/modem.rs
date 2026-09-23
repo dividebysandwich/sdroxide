@@ -6,7 +6,7 @@
 use mfsk_core::msg::decode_request::DecodeRequest;
 use mfsk_core::msg::hash_table::CallsignHashTable;
 use mfsk_core::msg::wsjt77;
-use sdroxide_types::{Decode, Mode};
+use sdroxide_types::{Decode, Mode, UvPacketFrame, UvPacketMode};
 
 use crate::params::{AUDIO_MAX_HZ, AUDIO_MIN_HZ};
 
@@ -788,6 +788,41 @@ fn join3(a: &str, b: &str, c: &str) -> String {
     [a, b, c].iter().filter(|t| !t.is_empty()).copied().collect::<Vec<_>>().join(" ")
 }
 
+/// Decode every UVPacket frame in a window of 12 kHz mono f32 audio.
+///
+/// UVPacket is not a slotted WSJT mode: a frame can begin anywhere, so this
+/// scans the whole window for preambles and returns whatever it finds. The
+/// sub-mode comes from the winning preamble, so nothing is selected by the
+/// caller; each frame's message fields are already unpacked by the decoder,
+/// which is why this maps straight onto [`UvPacketFrame`] rather than through
+/// the 77-bit parser.
+pub fn decode_uvpacket(audio_12k: &[f32], at: i64) -> Vec<UvPacketFrame> {
+    use mfsk_core::uvpacket::{AUDIO_CENTRE_HZ, rx};
+    rx::decode(audio_12k, AUDIO_CENTRE_HZ)
+        .into_iter()
+        .map(|f| UvPacketFrame {
+            at,
+            mode: uv_mode(f.mode),
+            app_type: f.app_type,
+            sequence: f.sequence,
+            block_count: f.block_count,
+            snr_db: f.snr_db.round() as i16,
+            payload: f.payload,
+        })
+        .collect()
+}
+
+/// Map mfsk-core's UVPacket sub-mode onto the stable [`UvPacketMode`].
+fn uv_mode(m: mfsk_core::uvpacket::puncture::Mode) -> UvPacketMode {
+    use mfsk_core::uvpacket::puncture::Mode as M;
+    match m {
+        M::Robust => UvPacketMode::Robust,
+        M::Standard => UvPacketMode::Standard,
+        M::UltraRobust => UvPacketMode::UltraRobust,
+        M::Express => UvPacketMode::Express,
+    }
+}
+
 /// Unpack 77 message bits and build a [`Decode`], or `None` if unpacking fails.
 /// `hashes` resolves the `<...>` placeholders of hashed callsigns, and
 /// `eu_hashes` the ones the EU VHF contest layout uses — see [`eu_vhf::Hashes`]
@@ -1060,6 +1095,55 @@ mod tests {
         slot.resize((slot_s * 12_000.0) as usize, 0.0);
         let i16buf: Vec<i16> = slot.iter().map(|&s| (s * 20_000.0) as i16).collect();
         (sent, modem.decode_slot(&i16buf, 0, &ApHints::default(), 1500.0))
+    }
+
+    /// A synthesized UVPacket frame decodes back at every sub-mode — the round
+    /// trip the controller makes. The sub-mode is carried by the preamble and
+    /// detected, so each frame must come back labelled with the one it was sent
+    /// at, header fields and payload whole.
+    #[test]
+    fn uvpacket_frames_round_trip_at_every_sub_mode() {
+        use mfsk_core::uvpacket::puncture::Mode as UvM;
+        use sdroxide_types::UvPacketMode;
+
+        // Exactly two 12-byte payload blocks, all printable, so the round trip
+        // checks the text reading too.
+        const PAYLOAD: &[u8] = b"UV packet test payload!!";
+        assert_eq!(PAYLOAD.len(), 24);
+
+        for (mode, uv) in [
+            (UvPacketMode::Robust, UvM::Robust),
+            (UvPacketMode::Standard, UvM::Standard),
+            (UvPacketMode::UltraRobust, UvM::UltraRobust),
+            (UvPacketMode::Express, UvM::Express),
+        ] {
+            let header = mfsk_core::uvpacket::framing::FrameHeader {
+                mode: uv,
+                block_count: 2,
+                app_type: 5,
+                sequence: 7,
+            };
+            let burst = mfsk_core::uvpacket::tx::encode(
+                &header,
+                PAYLOAD,
+                mfsk_core::uvpacket::AUDIO_CENTRE_HZ,
+            )
+            .expect("encode");
+            // Pad into a window with a second either side of the burst.
+            let mut audio = vec![0.0f32; burst.len() + 24_000];
+            audio[12_000..12_000 + burst.len()].copy_from_slice(&burst);
+
+            let frames = decode_uvpacket(&audio, 0);
+            let best = frames
+                .iter()
+                .find(|f| f.mode == mode)
+                .unwrap_or_else(|| panic!("{mode:?}: nothing decoded: {frames:?}"));
+            assert_eq!(best.app_type, 5, "{mode:?}");
+            assert_eq!(best.sequence, 7, "{mode:?}");
+            assert_eq!(best.block_count, 2, "{mode:?}");
+            assert_eq!(best.payload, PAYLOAD, "{mode:?}");
+            assert_eq!(best.as_text().as_deref(), Some("UV packet test payload!!"), "{mode:?}");
+        }
     }
 
     #[test]

@@ -18,11 +18,12 @@ or connects to a remote sdroxide server.
 2. [Basic operation](#2-basic-operation)
     - [2.20 HD Radio (NRSC-5)](#220-hd-radio-nrsc-5)
     - [2.22 QO-100 beacon plugin](#222-qo-100-beacon-plugin)
-3. [Digital modes (FT8, FT4, FT2, PSK31, RTTY, Olivia, THOR, FSQ, Hellschreiber, SSTV, RIFP, weather fax, JS8, RF Paint, WSPR, PI4, packet, APRS, ADS-B, NAVTEX, ACARS, VDL2, AIS, HFDL, AtCHAT NET)](#3-digital-modes)
+3. [Digital modes (FT8, FT4, FT2, UVPACKET, PSK31, RTTY, Olivia, THOR, FSQ, Hellschreiber, SSTV, RIFP, weather fax, JS8, RF Paint, WSPR, PI4, packet, APRS, ADS-B, NAVTEX, ACARS, VDL2, AIS, HFDL, AtCHAT NET)](#3-digital-modes)
     - [3.17 AtCHAT NET](#317-atchat-net)
     - [3.18 ACARS](#318-acars-airline-datalink-on-airband)
     - [3.19 HFDL](#319-hfdl-aircraft-on-shortwave)
     - [3.20 PI4](#320-pi4-next-generation-beacon)
+    - [3.21 UVPacket](#321-uvpacket)
 4. [Skimmers (CW, PSK, RTTY)](#4-skimmers)
 5. [ISM band decoder (315 / 345 / 433 / 868 / 915 MHz devices)](#5-ism-band-decoder)
 6. [Settings](#6-settings)
@@ -321,7 +322,7 @@ popup with three rows:
   has a standard calling frequency carry a cyan underline; see
   [§3.1](#31-general-considerations).
 - **MODE:** `LSB USB CW AM SAM NFM WFM DRM HD DIGU DIGL DSB ISB SPEC`.
-- **DIGITAL:** `FT8 FT4 PSK RTTY RTTY-FM OLIVIA THOR FSQ HELL SSTV SSTV-FM NAVTEX RIFP RFPAINT RADE` (see
+- **DIGITAL:** `FT8 FT4 UVPACKET PSK RTTY RTTY-FM OLIVIA THOR FSQ HELL SSTV SSTV-FM NAVTEX RIFP RFPAINT RADE` (see
   [Digital modes](#3-digital-modes)).
 
 ![The band and mode selector popup](images/04-band-mode-popup.jpg)
@@ -5803,6 +5804,49 @@ Generation Beacon" transmission — there are beacons on 6 m through 23 cm and
 higher. Receive only: there is no transmit half of this panel, and there
 never will be — this decoder exists to listen to the network, not to join
 it.
+
+### 3.21 UVPacket
+
+**UVPacket** is not one of the WSJT weak-signal modes: it is a **packet
+protocol** for private amateur VHF/UHF groups, carried as a short π/4-DQPSK
+burst. Where FT8 and its relatives carry a `<to> <from> <grid>` message, a
+UVPacket frame carries an application **byte pipe** — the sender's own data,
+tagged with a small application number and a sequence number and split into
+1–32 blocks of twelve bytes. What is inside is up to the group using it: a
+sentence, a short status line, or a packed binary struct.
+
+#### Where it is
+
+Anywhere a group has agreed a channel — typically on VHF/UHF, where a
+1200-baud packet burst fits a narrow FM or SSB voice channel. There is no
+calling frequency and no band plan; tune the dial to the group's channel. The
+modem's tones sit 800–2600 Hz above the dial, so the panel's decoder searches
+a fixed audio window regardless of the cursor.
+
+#### What you see
+
+Two panes. **FRAMES** is the rolling list of what has been decoded — time,
+sub-mode, application number, sequence, payload size and SNR — and **FRAME**
+is the one selected, with every header field and the payload shown two ways:
+as text when it is printable, and always as a hex dump. The sub-mode (Robust,
+Standard, Ultra, Express) is **detected from the preamble**, so there is
+nothing to choose: each frame is labelled with the one it arrived at.
+
+#### Frames are not slotted
+
+Unlike every other mode in this chapter, a UVPacket frame can begin at any
+instant, so there is no clock to watch and no turn headers. The receiver
+keeps a rolling window of the last several seconds of audio and re-scans it,
+so a frame appears a moment after it ends. A frame that arrives twice is
+shown once; a repeated transmission more than a few seconds later is a new
+frame.
+
+#### What you need
+
+Nothing beyond an SSB receiver on the group's channel. Receive only: transmit
+is not wired in this build — UVPacket is a byte pipe whose contents are the
+application's, and this program has no application to put in it. The panel
+decodes what the group is sending.
 
 ## 4. Skimmers
 

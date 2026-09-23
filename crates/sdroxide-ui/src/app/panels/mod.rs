@@ -36,6 +36,7 @@ pub(in crate::app) mod rf_paint;
 pub(in crate::app) mod setup;
 pub(in crate::app) mod sstv;
 pub(in crate::app) mod text_modem;
+pub(in crate::app) mod uvpacket;
 pub(in crate::app) mod vdl2;
 pub(in crate::app) mod wefax;
 pub(in crate::app) mod widgets;
@@ -99,6 +100,9 @@ pub(in crate::app) fn panel_panes(mode: Mode) -> &'static [&'static str] {
         Mode::Wefax => &["CHART", "SAVED"],
         Mode::Navtex => &["MESSAGES", "READING"],
         Mode::RfPaint => &["TEXT", "IMAGE"],
+        // Two, because the frames are a rolling list and the selected one's
+        // payload wants reading on its own, whether it is text or binary.
+        Mode::UvPacket => &["FRAMES", "FRAME"],
         // The keyboard modes and RADE are one column already: receive above,
         // what you are sending below it.
         _ => &["PANEL"],

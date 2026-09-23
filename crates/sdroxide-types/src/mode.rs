@@ -296,6 +296,17 @@ pub enum Mode {
     /// none of WSPR's duty-cycle or band-hopping machinery. Appended for the
     /// same reason as [`Mode::Hell`].
     Pi4,
+    /// UVPacket — a packet protocol for private amateur VHF/UHF groups,
+    /// carried as a short π/4-DQPSK burst with an application byte pipe rather
+    /// than a WSJT message.
+    ///
+    /// It is not a WSJT-X mode: the header names an `app_type`, a `sequence`
+    /// number and a payload block count, and the sub-mode
+    /// ([`crate::UvPacketMode`]) is detected from the preamble rather than
+    /// chosen, so there is no operator setting and [`Mode::slot_timing`]
+    /// answers `None` — a frame can start anywhere. Receive only in this build,
+    /// as [`Mode::Pi4`] is. Appended for the same reason as [`Mode::Hell`].
+    UvPacket,
 }
 
 /// The bands on which a mode that keeps phone practice rides the lower
@@ -316,7 +327,7 @@ const PHONE_LSB_BANDS: [(f64, f64); 3] =
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 43] = [
+    pub const ALL: [Mode; 44] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -360,6 +371,7 @@ impl Mode {
         Mode::RfPaint,
         Mode::Rade,
         Mode::Hfdl,
+        Mode::UvPacket,
     ];
 
     /// The digital modes handled by a dedicated decode/encode engine (the
@@ -367,7 +379,7 @@ impl Mode {
     /// packet, RF Paint). All are USB underneath except RIFP, VHF packet and
     /// VHF SSTV, which frequency-modulate the carrier, and ACARS, which is
     /// received in AM.
-    pub const DIGITAL: [Mode; 25] = [
+    pub const DIGITAL: [Mode; 26] = [
         Mode::Ft8,
         Mode::Ft4,
         Mode::Ft2,
@@ -393,6 +405,7 @@ impl Mode {
         Mode::Packet,
         Mode::PacketHf,
         Mode::Aprs,
+        Mode::UvPacket,
     ];
 
     /// True for modes that use a dedicated decode/QSO layer over USB.
@@ -424,6 +437,7 @@ impl Mode {
                 | Mode::Packet
                 | Mode::PacketHf
                 | Mode::Aprs
+                | Mode::UvPacket
         )
     }
 
@@ -743,6 +757,9 @@ impl Mode {
                 // A decoder for a beacon network's signal, not a beacon
                 // implementation — see `Mode::Pi4`'s own doc comment.
                 | Mode::Pi4
+                // UVPacket is not a QSO mode and has no transmit half in this
+                // build — it is a byte pipe with no application layer here.
+                | Mode::UvPacket
         )
     }
 
@@ -820,6 +837,7 @@ impl Mode {
             Mode::Ais => "AIS",
             Mode::Hfdl => "HFDL",
             Mode::AtChat => "ATCHAT",
+            Mode::UvPacket => "UVPACKET",
         }
     }
 
@@ -877,6 +895,7 @@ impl Mode {
                 | Mode::PacketHf
                 | Mode::Navtex
                 | Mode::Wefax
+                | Mode::UvPacket
         );
         crate::ModeProfile {
             agc: Some(if weak_digi { AgcMode::Slow } else { AgcMode::Med }),
@@ -949,6 +968,7 @@ impl Mode {
             | Mode::Ft4
             | Mode::Ft2
             | Mode::Js8
+            | Mode::UvPacket
             | Mode::Psk
             | Mode::Rtty
             | Mode::Sstv
@@ -1196,7 +1216,8 @@ impl Mode {
             | Mode::Rade
             | Mode::Packet
             | Mode::PacketHf
-            | Mode::Aprs => C::Data,
+            | Mode::Aprs
+            | Mode::UvPacket => C::Data,
         }
     }
 
@@ -1430,7 +1451,8 @@ impl Mode {
             | Mode::Acars
             | Mode::PacketHf
             | Mode::Rade
-            | Mode::HdRadio => &[],
+            | Mode::HdRadio
+            | Mode::UvPacket => &[],
         }
     }
 }
@@ -1968,6 +1990,8 @@ mod tests {
             (Mode::HdRadio, 39),
             (Mode::Acars, 40),
             (Mode::Hfdl, 41),
+            (Mode::Pi4, 42),
+            (Mode::UvPacket, 43),
         ];
         for (mode, index) in pinned {
             assert_eq!(mode as u8, index, "{} moved", mode.label());
@@ -2014,7 +2038,7 @@ mod tests {
         // dropped and nothing listed twice.
         // The last variant *by discriminant*, which is the one appended most
         // recently — not the one that reads last in the picker.
-        let last = Mode::Pi4 as u8;
+        let last = Mode::UvPacket as u8;
         for i in 0..=last {
             let present = Mode::ALL.iter().filter(|m| **m as u8 == i).count();
             assert_eq!(present, 1, "discriminant {i} appears {present} times in Mode::ALL");

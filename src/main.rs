@@ -85,7 +85,7 @@ struct Cli {
 
     /// Initial mode, matched without regard to case: LSB, USB, CW, AM, SAM, NFM,
     /// WFM, DRM, HD RADIO, ADS-B, VDL2, AIS, DIGU, DIGL, DSB, ISB, SPEC, FT8,
-    /// FT4, FT2, JS8, WSPR, PI4, PSK, RTTY, RTTY-FM, PACKET, PACKET-HF, APRS,
+    /// FT4, FT2, JS8, WSPR, PI4, UVPACKET, PSK, RTTY, RTTY-FM, PACKET, PACKET-HF, APRS,
     /// SSTV, SSTV-FM, RIFP, WEFAX, NAVTEX, ACARS, OLIVIA, THOR, FSQ, ATCHAT,
     /// HELL, RFPAINT, RADE, HFDL
     ///
