@@ -356,8 +356,11 @@ pub enum Mode {
     /// the short ionised-trail bursts a meteor leaves, so a decode carries the
     /// time *into* the slot it was found at. The period is an operator setting
     /// ([`crate::Fsk441Period`]), not part of the mode, so [`Mode::slot_timing`]
-    /// answers `None` and the clock comes from the chosen period. Receive only
-    /// in this build. Appended for the same reason as [`Mode::Hell`].
+    /// answers `None` and the clock comes from the chosen period.
+    ///
+    /// Transmit is the mode's own shape: the operator holds the key and the
+    /// message repeats for the length of the over. Appended for the same reason
+    /// as [`Mode::Hell`].
     Fsk441,
 }
 
@@ -862,6 +865,7 @@ impl Mode {
                 | Mode::Q65
         )
     }
+
     /// True for Hellschreiber. Forks the digi panel to the scrolling raster UI:
     /// unlike the keyboard modems there is nothing to decode into text, so it
     /// gets its own controller and panel rather than joining `is_text_modem`.
