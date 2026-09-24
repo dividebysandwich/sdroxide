@@ -35,6 +35,7 @@ pub(in crate::app) mod publicsdr;
 pub(in crate::app) mod qo100;
 pub(in crate::app) mod rds;
 pub(in crate::app) mod sat;
+pub(in crate::app) mod save_text;
 pub(in crate::app) mod scanner;
 pub(in crate::app) mod settings;
 pub(in crate::app) mod solar;

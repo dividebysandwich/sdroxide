@@ -87,6 +87,7 @@ impl SdroxideApp {
             }
             crate::chrome::row_tail(ui, |ui| {
                 self.clear_rx_chip(ui, cmds);
+                self.save_rx_chip(ui);
                 // The only route to the packet settings there is. Everything
                 // this mode needs before it can transmit at all — the station
                 // callsign above all — lives in that window, and until this

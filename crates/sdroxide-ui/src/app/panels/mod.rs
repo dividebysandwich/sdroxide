@@ -120,6 +120,35 @@ pub(in crate::app) fn panel_panes(mode: Mode) -> &'static [&'static str] {
     }
 }
 
+/// A **SAVE** chip for a log a panel holds outside [`sdroxide_types::DigiStatus`]
+/// — HFDL, VDL2, WSPR, PI4 and the skimmer. `text` is built only on click, so a
+/// long log costs nothing until the operator asks for it (issue #533).
+pub(in crate::app) fn save_text_chip(
+    ui: &mut egui::Ui,
+    ready: bool,
+    name: &str,
+    hover: &str,
+    text: impl FnOnce() -> String,
+) {
+    let resp = crate::chrome::chip_accent_enabled(
+        ui,
+        ready,
+        false,
+        " SAVE ",
+        Some(10.5),
+        crate::theme::CYAN(),
+        crate::theme::INK_ON_CYAN(),
+    );
+    let resp = if ready {
+        resp.on_hover_text(hover)
+    } else {
+        resp.on_disabled_hover_text("Nothing decoded to save")
+    };
+    if resp.clicked() {
+        crate::download::save(name, text().as_bytes());
+    }
+}
+
 impl SdroxideApp {
     /// Fold everything this frame knows into the propagation field, and hand
     /// back the texture the map should paint under itself.
@@ -774,6 +803,37 @@ impl SdroxideApp {
         };
         if resp.clicked() {
             cmds.push(Command::DigiClearRx);
+        }
+    }
+
+    /// A **SAVE** chip that writes the current mode's decoded log to a file.
+    ///
+    /// Beside [`Self::clear_rx_chip`] everywhere that is used, because the two
+    /// are a panel's "keep it" and "bin it". What is written is
+    /// [`crate::app::save_text::digi_log`]'s answer for the mode, so a mode with
+    /// nothing decoded yet greys the chip rather than opening an empty file
+    /// (issue #533).
+    pub(in crate::app) fn save_rx_chip(&self, ui: &mut egui::Ui) {
+        let ready = self.digi_status.as_ref().is_some_and(crate::app::save_text::digi_has_log);
+        let resp = crate::chrome::chip_accent_enabled(
+            ui,
+            ready,
+            false,
+            " SAVE ",
+            Some(10.5),
+            crate::theme::CYAN(),
+            crate::theme::INK_ON_CYAN(),
+        );
+        let resp = if ready {
+            resp.on_hover_text("Save what this panel has decoded to a file")
+        } else {
+            resp.on_disabled_hover_text("Nothing decoded to save")
+        };
+        if resp.clicked()
+            && let Some((name, text)) =
+                self.digi_status.as_ref().and_then(crate::app::save_text::digi_log)
+        {
+            crate::download::save(&name, text.as_bytes());
         }
     }
 

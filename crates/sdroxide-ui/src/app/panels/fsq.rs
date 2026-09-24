@@ -199,6 +199,7 @@ impl SdroxideApp {
                 }
                 self.digi_squelch_slider(ui, cmds);
                 self.clear_rx_chip(ui, cmds);
+                self.save_rx_chip(ui);
             });
         });
         ui.add_space(4.0);

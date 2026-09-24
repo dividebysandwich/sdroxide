@@ -3415,6 +3415,14 @@ The panel has two halves:
   rather than a contact, with no report sent or received; a decode that names
   no sender (free text, a hashed call not yet resolved) has no call to log and
   is left out.
+  **Saving decoded text.** Every text mode's panel carries a **SAVE** chip
+  beside its **CLEAR RX** (issue #533): CW and the keyboard modes write the
+  receive text as it stands, and the message modes — ACARS, DSC, NAVTEX, VDL2,
+  HFDL, FSQ, UVPacket, packet and JS8 — write their log, one line per message
+  with the UTC time. WSPR, PI4 and the skimmer write their spot lists. The
+  suggested name carries the mode, and the dialog is the same one the logbook
+  and the ADIF export use, so the file lands wherever you choose. A mode with
+  nothing decoded yet greys the chip rather than opening an empty file.
 - **QSO** (right) — a **⇵** frequency button listing every band's agreed FT8/FT4
   frequency ([3.1](#31-general-considerations)), a world map
   (your location, the station you are working, and

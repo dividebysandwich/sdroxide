@@ -82,6 +82,13 @@ impl SdroxideApp {
                         .size(10.0)
                         .color(crate::theme::gray(120)),
                 );
+                crate::app::panels::save_text_chip(
+                    ui,
+                    !self.pi4_spots.is_empty(),
+                    "sdroxide-pi4-spots.csv",
+                    "Save the PI4 reception list as CSV",
+                    || crate::app::save_text::pi4_spots_csv(&self.pi4_spots),
+                );
             });
         });
 

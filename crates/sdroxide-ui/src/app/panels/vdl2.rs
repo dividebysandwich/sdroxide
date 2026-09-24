@@ -157,6 +157,13 @@ impl SdroxideApp {
             {
                 self.show_vdl2_setup = !self.show_vdl2_setup;
             }
+            crate::app::panels::save_text_chip(
+                ui,
+                !st.messages.is_empty(),
+                "sdroxide-vdl2-log.txt",
+                "Save the VDL2 message log to a file",
+                || crate::app::save_text::vdl2_log_text(&st.messages),
+            );
         });
 
         // The channel strip. Fourteen of them, so a glance says which are being

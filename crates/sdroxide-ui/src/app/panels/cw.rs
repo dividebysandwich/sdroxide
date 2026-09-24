@@ -153,6 +153,7 @@ impl SdroxideApp {
                 }
                 self.cw_speed_controls(ui, cmds);
                 self.clear_chip_with_readback(ui, cmds);
+                self.save_rx_chip(ui);
             });
         });
         ui.add_space(4.0);

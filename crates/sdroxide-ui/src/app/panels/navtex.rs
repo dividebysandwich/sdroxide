@@ -85,6 +85,7 @@ impl SdroxideApp {
                 );
             }
             crate::chrome::row_tail(ui, |ui| {
+                self.save_rx_chip(ui);
                 let rev = self.digi_cfg_edit.navtex_reverse;
                 if crate::chrome::chip(ui, rev, RichText::new("REV").size(10.5))
                     .on_hover_text(

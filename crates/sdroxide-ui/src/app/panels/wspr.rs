@@ -206,6 +206,13 @@ impl SdroxideApp {
                     format!("{} rx", self.wspr_spots.len())
                 };
                 ui.label(RichText::new(label).size(10.0).color(crate::theme::gray(120)));
+                crate::app::panels::save_text_chip(
+                    ui,
+                    !self.wspr_spots.is_empty(),
+                    "sdroxide-wspr-spots.csv",
+                    "Save the WSPR reception list as CSV",
+                    || crate::app::save_text::wspr_spots_csv(&self.wspr_spots),
+                );
             });
         });
 
