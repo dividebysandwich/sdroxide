@@ -852,23 +852,16 @@ impl Mode {
                 // A decoder for a beacon network's signal, not a beacon
                 // implementation — see `Mode::Pi4`'s own doc comment.
                 | Mode::Pi4
-                // MSK144 is a QSO mode, but transmit is not wired in this
-                // build — the panel is the decode list alone.
+                // MSK144, JT65/JT9, FST4 and Q65 are QSO modes, but transmit
+                // is not wired in this build — the panel is the decode list
+                // alone. FSK441 has a transmit path now, so it is not here.
                 | Mode::Msk144
-                // JT65/JT9 are QSO modes, but transmit is not wired in this
-                // build — the panel is the decode list alone.
                 | Mode::Jt65
                 | Mode::Jt9
-                // FST4 is a QSO mode, but transmit is not wired in this
-                // build — the panel is the decode list alone.
                 | Mode::Fst4
-                // Q65 is a QSO mode, but transmit is not wired in this
-                // build — the panel is the decode list alone.
                 | Mode::Q65
-                | Mode::Fsk441
         )
     }
-
     /// True for Hellschreiber. Forks the digi panel to the scrolling raster UI:
     /// unlike the keyboard modems there is nothing to decode into text, so it
     /// gets its own controller and panel rather than joining `is_text_modem`.
