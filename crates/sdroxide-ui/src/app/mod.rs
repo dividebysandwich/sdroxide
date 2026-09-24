@@ -489,6 +489,20 @@ pub struct SdroxideApp {
     /// minutes or is most of the way through 90, and the chip that reads as
     /// armed has to be the one they pressed.
     recording_stop_at: Option<(i64, u16)>,
+    /// The silence auto-split hold, in seconds, or `None` when it is off.
+    ///
+    /// While armed, the MP3 recording follows the receiver's squelch: a file
+    /// starts when the squelch opens and the one running is closed after this
+    /// many seconds of silence, so a session of many transmissions becomes one
+    /// stamped file each rather than one file that grows all afternoon (issue
+    /// #546). UI-owned and session-only, exactly like
+    /// [`Self::recording_stop_at`], and ticked once a frame by
+    /// [`Self::poll_recording_gate`].
+    rec_gate_s: Option<u16>,
+    /// Unix UTC seconds when the current run of silence began while recording,
+    /// or `None` when there is no run to time. Carried between frames so the
+    /// hold is measured across them; see [`Self::poll_recording_gate`].
+    rec_gate_silent_since: Option<i64>,
     /// Fade clock for the receive-filter popup behind the BW chip, like
     /// `nr_popup_since`.
     bw_popup_since: Option<f64>,
@@ -1387,6 +1401,8 @@ impl SdroxideApp {
             nr_popup_since: None,
             rec_popup_since: None,
             recording_stop_at: None,
+            rec_gate_s: None,
+            rec_gate_silent_since: None,
             bw_popup_since: None,
             duplex_popup_since: None,
             rpt_tone_popup_since: None,

@@ -219,6 +219,9 @@ impl eframe::App for SdroxideApp {
         // A "stop after" deadline armed in the REC popup: stop the MP3
         // recording once it passes (issue #520).
         self.poll_recording_timer(&mut cmds);
+        // A silence auto-split armed in the REC popup: start and stop the MP3
+        // recording with the receiver's squelch (issue #546).
+        self.poll_recording_gate(&mut cmds);
         // The keyboard, the mouse buttons and the control surface belong to
         // the focused radio alone. In a split view every visible radio runs
         // this frame loop, and without the gate one arrow key would tune all

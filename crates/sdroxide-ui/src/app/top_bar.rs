@@ -2918,21 +2918,29 @@ impl SdroxideApp {
                 // decided was the default (issue #217).
                 let audio = self.state.recording;
                 let iq = self.state.iq_recording;
+                // Armed but between transmissions is not the same as recording,
+                // so the label carries it rather than the light: the chip lights
+                // while a file is actually being written.
+                let auto = self.rec_gate_s.is_some();
+                let hover = match (&self.state.recording_file, &self.state.iq_recording_file) {
+                    (Some(a), Some(q)) => format!("Recording {a} and {q}"),
+                    (Some(a), None) => format!("Recording audio to {a}"),
+                    (None, Some(q)) => format!("Recording I/Q to {q}"),
+                    (None, None) if auto => format!(
+                        "Auto-record armed: a file per transmission, closed after {} s of \
+                         silence",
+                        self.rec_gate_s.unwrap_or(0)
+                    ),
+                    (None, None) => "Record the audio, the raw I/Q, or both".to_string(),
+                };
                 let rec = crate::chrome::chip_accent(
                     ui,
                     audio || iq,
-                    "REC",
+                    if auto { "REC AUTO" } else { "REC" },
                     crate::theme::ALERT(),
                     Color32::WHITE,
                 )
-                .on_hover_text(
-                    match (&self.state.recording_file, &self.state.iq_recording_file) {
-                        (Some(a), Some(q)) => format!("Recording {a} and {q}"),
-                        (Some(a), None) => format!("Recording audio to {a}"),
-                        (None, Some(q)) => format!("Recording I/Q to {q}"),
-                        (None, None) => "Record the audio, the raw I/Q, or both".to_string(),
-                    },
-                );
+                .on_hover_text(hover);
                 self.rec_popup(ui, cmds, &rec);
             }
             RxChip::Stereo => {
@@ -3231,6 +3239,37 @@ impl SdroxideApp {
         }
     }
 
+    /// Follow the receiver's squelch while the silence auto-split is armed: a
+    /// new MP3 file begins when the squelch opens, and the one running is
+    /// closed after the armed number of seconds of silence (issue #546).
+    ///
+    /// Runs once a frame. The whole decision is [`rec_gate_tick`]'s, so that
+    /// function is the one thing that has to be right.
+    pub(in crate::app) fn poll_recording_gate(&mut self, cmds: &mut Vec<Command>) {
+        // The engine's own squelch decision, reconstructed from the meter it
+        // publishes and the setting the operator chose — `open = passband_dbfs
+        // >= squelch_db`, exactly as the receive chain computes it. A missing
+        // meter reads as no signal, which arms nothing until one arrives.
+        let signal = match (self.meters.as_ref(), self.state.rx.first()) {
+            (Some(m), Some(rx)) => m.passband_dbfs >= rx.squelch_db,
+            _ => false,
+        };
+        let (start, stop, silent_since) = rec_gate_tick(
+            crate::time::now_unix(),
+            self.rec_gate_s,
+            self.state.recording,
+            signal,
+            self.rec_gate_silent_since,
+        );
+        self.rec_gate_silent_since = silent_since;
+        if start {
+            cmds.push(Command::SetRecording(true));
+        }
+        if stop {
+            cmds.push(Command::SetRecording(false));
+        }
+    }
+
     /// What the REC chip opens: one row per thing that can be recorded.
     ///
     /// A popup rather than a toggle because there are two answers and neither
@@ -3349,6 +3388,79 @@ impl SdroxideApp {
                     }
                 }
             });
+        }
+
+        // Auto-record: follow the receiver's squelch and give each transmission
+        // its own stamped file. Session-only, ticked once a frame by
+        // `poll_recording_gate` (issue #546). The squelch is what defines
+        // silence, so with it wide open there is nothing to follow and the
+        // chips say so rather than arming a recorder that would never close.
+        crate::chrome::menu_caption(ui, "Auto-record");
+        // Two things stop it working, and both are said rather than left to a
+        // recorder that quietly never starts: the squelch is the definition of
+        // silence, so it has to be set; and the decision reads the receiver's
+        // own passband power, which only an SDR front end publishes (a CAT
+        // rig's squelch is the rig's, and its meters carry no such number).
+        let squelch_open = self.state.rx[0].squelch_db <= sdroxide_types::SQUELCH_OPEN_DB + 0.5;
+        let have_scale = self.meters.as_ref().map(|m| m.passband_dbfs.is_finite()).unwrap_or(true);
+        let block: Option<&str> = if squelch_open {
+            Some("Set a squelch — auto-record needs one to know silence")
+        } else if !have_scale {
+            Some("Auto-record needs an SDR front end with a software squelch")
+        } else {
+            None
+        };
+        let mut pick: Option<Option<u16>> = None;
+        ui.horizontal_wrapped(|ui| {
+            for (label, secs) in [
+                ("off", None),
+                ("2 s", Some(2u16)),
+                ("3 s", Some(3)),
+                ("5 s", Some(5)),
+                ("10 s", Some(10)),
+            ] {
+                let armed = self.rec_gate_s == secs;
+                let enabled = secs.is_none() || block.is_none();
+                let chip = ui
+                    .add_enabled_ui(enabled, |ui| crate::chrome::chip(ui, armed, label))
+                    .inner
+                    .on_hover_text(match secs {
+                        None => "Stop following the squelch".to_string(),
+                        Some(s) => format!(
+                            "Record each transmission to its own file, closed after {s} seconds \
+                             of silence"
+                        ),
+                    });
+                if chip.clicked() {
+                    pick = Some(secs);
+                }
+            }
+        });
+        if let Some(why) = block {
+            ui.label(RichText::new(why).size(9.5).color(crate::theme::ALERT()));
+        }
+        if let Some(secs) = pick {
+            self.rec_gate_s = secs;
+            self.rec_gate_silent_since = None;
+            // "Stop after N minutes" and "split on silence" are two answers to
+            // when a recording ends; arming one disarms the other.
+            self.recording_stop_at = None;
+        }
+        if let Some(hold) = self.rec_gate_s {
+            let line = if self.state.recording {
+                match self.rec_gate_silent_since {
+                    Some(since) => format!(
+                        "recording · {} s of silence (closes at {hold})",
+                        (crate::time::now_unix() - since).max(0)
+                    ),
+                    None => "recording".to_string(),
+                }
+            } else {
+                "waiting for a signal".to_string()
+            };
+            ui.label(RichText::new(line).size(9.5).color(crate::theme::CYAN_DIM()));
+            // The countdown and the waiting line have to keep being redrawn.
+            crate::repaint::schedule_ms(ui.ctx(), 500);
         }
 
         crate::chrome::menu_caption(ui, "Record spectrum");
@@ -5626,6 +5738,41 @@ fn rec_timer_tick(now: i64, stop_at: Option<i64>, recording: bool) -> (Option<i6
     if now >= at { (None, true) } else { (Some(at), false) }
 }
 
+/// The silence auto-split decision for one frame:
+/// `(start a recording, stop the recording, the silence run to carry)`.
+///
+/// `signal` is the receiver's squelch — true while the passband is at or above
+/// the operator's threshold. While `hold_s` is armed the MP3 recording follows
+/// it: a signal that is not already being recorded starts a file, and a file
+/// that has been silent for `hold_s` seconds is closed. `silent_since` carries
+/// the start of the current run between frames and the returned value replaces
+/// it, so a run is measured across frames rather than restarted each one.
+///
+/// Off (`hold_s == None`) is inert whatever the signal and the recording do,
+/// which is what makes disarming leave a manual recording alone.
+fn rec_gate_tick(
+    now: i64,
+    hold_s: Option<u16>,
+    recording: bool,
+    signal: bool,
+    silent_since: Option<i64>,
+) -> (bool, bool, Option<i64>) {
+    let Some(hold) = hold_s else { return (false, false, None) };
+    if signal {
+        // A signal opens a file if none is running, and ends any silence run
+        // either way.
+        return (!recording, false, None);
+    }
+    if !recording {
+        // Silence with nothing recording is just a quiet band, not a run.
+        return (false, false, None);
+    }
+    match silent_since {
+        Some(since) if now - since >= i64::from(hold) => (false, true, None),
+        other => (false, false, other.or(Some(now))),
+    }
+}
+
 fn tx_rows_w_for(ui: &egui::Ui, keyer: bool, side_col_w: f32) -> f32 {
     let (row1, row2) = tx_rows_fixed_w(ui, keyer);
     row1.max(row2)
@@ -6577,6 +6724,30 @@ mod tests {
         // so an armed stop can never kill a later recording it was not set
         // for.
         assert_eq!(rec_timer_tick(2000, Some(1060), false), (None, false));
+    }
+
+    /// The silence auto-split starts a file on a signal, closes it after the
+    /// armed hold of silence, and never touches a manual recording while off.
+    #[test]
+    fn rec_gate_splits_on_the_squelch() {
+        // Off is inert, whatever the signal and the recording do.
+        assert_eq!(rec_gate_tick(100, None, false, true, None), (false, false, None));
+        assert_eq!(rec_gate_tick(100, None, true, false, Some(90)), (false, false, None));
+        // A signal opens a file when none is running, and does not restart one.
+        assert_eq!(rec_gate_tick(100, Some(3), false, true, None), (true, false, None));
+        assert_eq!(rec_gate_tick(100, Some(3), true, true, Some(90)), (false, false, None));
+        // Silence while recording marks the run, then closes it at the hold.
+        let (start, stop, since) = rec_gate_tick(100, Some(3), true, false, None);
+        assert_eq!((start, stop), (false, false));
+        assert_eq!(since, Some(100));
+        assert_eq!(rec_gate_tick(102, Some(3), true, false, Some(100)), (false, false, Some(100)));
+        assert_eq!(rec_gate_tick(103, Some(3), true, false, Some(100)), (false, true, None));
+        // A signal returning mid-run cancels it, and a later silence restarts
+        // the count rather than resuming it.
+        assert_eq!(rec_gate_tick(101, Some(3), true, true, Some(100)), (false, false, None));
+        assert_eq!(rec_gate_tick(200, Some(3), true, false, None), (false, false, Some(200)));
+        // Silence with nothing recording is a quiet band, not a run.
+        assert_eq!(rec_gate_tick(100, Some(3), false, false, Some(90)), (false, false, None));
     }
 
     /// Walk a chip through a sequence of pointer edges, collecting the PTT
