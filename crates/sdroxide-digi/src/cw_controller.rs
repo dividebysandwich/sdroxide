@@ -544,6 +544,7 @@ impl CwController {
             tx_even: false,
             transmitting: self.on_air(now),
             tx_watchdog: self.tx_watchdog,
+            tx_refused: None,
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
             text_rx: self.rx_display(),

@@ -118,6 +118,7 @@ fn build_status(
         tx_even: false,
         transmitting: keyed,
         tx_watchdog: false,
+        tx_refused: None,
         transcript: Vec::<TranscriptLine>::new(),
         config: cfg.clone(),
         text_rx: String::new(),

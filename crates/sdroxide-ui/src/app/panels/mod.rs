@@ -1108,9 +1108,15 @@ impl SdroxideApp {
     /// held, which is how FSK441 is worked on the air.
     fn fsk441_tx_row(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let tx_on = self.digi_status.as_ref().is_some_and(|s| s.transmitting);
+        // Armed with an empty box: the key was refused, and saying so is the
+        // difference between "nothing happened" and "there is nothing to send".
+        let refused = self.digi_status.as_ref().and_then(|s| s.tx_refused.clone());
         let tx_ok = self.tx_capable();
         ui.add_space(4.0);
         ui.separator();
+        if let Some(why) = refused {
+            ui.label(RichText::new(why).size(10.0).color(crate::theme::ALERT()));
+        }
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("TX").size(10.5).strong().color(crate::theme::CYAN()));
             let field = ui.add(

@@ -93,6 +93,9 @@ pub struct Fsk441Controller {
     /// Transmit is on. Held by the operator, as the mode is worked — the message
     /// loops for as long as this stands.
     tx_active: bool,
+    /// The operator has asked to transmit and the box had nothing to send, so
+    /// the panel can say so rather than looking armed and doing nothing.
+    tx_latched: bool,
     /// The radio has been keyed for the over in progress.
     keyed: bool,
     /// A whole over has had text in it, so the end of the pass can unkey.
@@ -144,6 +147,7 @@ impl Fsk441Controller {
             tx_pass: Vec::new(),
             tx_pass_pos: 0,
             tx_active: false,
+            tx_latched: false,
             keyed: false,
             over_had_text: false,
             tx48: VecDeque::new(),
@@ -184,6 +188,10 @@ impl Fsk441Controller {
         s.audio_hz = self.audio_hz;
         s.transmitting = self.keyed;
         s.tx_pending_msg = (!self.tx_text.is_empty()).then(|| self.tx_text.clone());
+        // Armed with nothing to send: the panel shows the empty-box reason rather
+        // than a key that appears to be doing nothing.
+        s.tx_refused =
+            (self.tx_active && self.tx_latched).then(|| "type a message to transmit".to_string());
         s
     }
 }
@@ -235,11 +243,21 @@ impl DigiEngine for Fsk441Controller {
         // Key on the operator's transmit, as the keyboard modes do. FSK441 is
         // worked by sending the message continuously, so there is no slot
         // boundary to key on — the over lasts as long as the operator holds it.
-        if self.tx_active && !self.keyed && self.pass_ready() {
-            self.keyed = true;
-            self.over_had_text = true;
-            self.status_dirty = true;
-            actions.push(DigiAction::KeyTx);
+        //
+        // `tx_latched` is the moment the operator asked to transmit, kept even
+        // while the box is empty so the panel can say there is nothing to send:
+        // the key is refused, and it is not left armed to spring into life on
+        // the first keystroke.
+        if self.tx_active && !self.keyed {
+            if self.pass_ready() {
+                self.keyed = true;
+                self.over_had_text = true;
+                self.status_dirty = true;
+                actions.push(DigiAction::KeyTx);
+            } else if !self.tx_latched {
+                self.tx_latched = true;
+                self.status_dirty = true;
+            }
         }
 
         let idx = self.scheduler.slot_index(now);
@@ -267,6 +285,13 @@ impl DigiEngine for Fsk441Controller {
         actions
     }
 
+    /// FSK441's audio is generated at full scale, so `tx_peak` has to say so:
+    /// the engine scales by `1/peak`, and the default 0.5 doubled it into the
+    /// limiter, flat-topping every over.
+    fn tx_peak(&self) -> f32 {
+        1.0
+    }
+
     fn tx_burst_active(&self) -> bool {
         self.keyed
     }
@@ -277,10 +302,12 @@ impl DigiEngine for Fsk441Controller {
     /// when it appears, so the pass is played again and again with no gap — the
     /// same audio the operator would be sending on the air by hand. Returns true
     /// when there is nothing left to play and transmit can drop, which here is
-    /// only once the operator has unkeyed.
+    /// once the operator has unkeyed and the queued audio has drained.
     fn fill_tx_block(&mut self, out: &mut [f32]) -> bool {
-        // Refill the 48 kHz queue a pass-block at a time while a pass exists.
-        while self.tx48.len() < out.len() && !self.tx_pass.is_empty() {
+        // Refill the 48 kHz queue a pass-block at a time, but only while
+        // transmit is still held: an unkey must stop the repeat, not let it run
+        // on until the queue happens to land on a block boundary.
+        while self.tx_active && self.tx48.len() < out.len() && !self.tx_pass.is_empty() {
             // The pass repeats, so a block is always taken from it — from the
             // top whenever the last one ran off the end.
             self.tx_scratch11.clear();
@@ -302,8 +329,7 @@ impl DigiEngine for Fsk441Controller {
         for s in out.iter_mut() {
             *s = self.tx48.pop_front().unwrap_or(0.0);
         }
-        // The over is over only when the operator says so: FSK441 keeps
-        // repeating until they stop, so this does not end it on its own.
+        // Done once nothing is left to play and transmit has been released.
         !self.tx_active && self.tx48.is_empty()
     }
 
@@ -323,6 +349,7 @@ impl DigiEngine for Fsk441Controller {
         // again.
         self.keyed = false;
         self.tx_active = false;
+        self.tx_latched = false;
         self.tx48.clear();
         self.tx_scratch11.clear();
         self.over_had_text = false;
@@ -331,7 +358,15 @@ impl DigiEngine for Fsk441Controller {
 
     fn set_tx_text(&mut self, text: String) {
         self.tx_text = text;
-        self.rebuild_tx_pass();
+        // A keystroke while armed with an empty box must not restart a running
+        // over, so the pass is only rebuilt while nothing is keyed: once the
+        // over is on the air it loops the message it started with.
+        if !self.keyed {
+            self.rebuild_tx_pass();
+        }
+        if self.pass_ready() {
+            self.tx_latched = false;
+        }
         self.status_dirty = true;
     }
 
@@ -339,6 +374,7 @@ impl DigiEngine for Fsk441Controller {
         self.tx_active = on;
         if !on {
             self.over_had_text = false;
+            self.tx_latched = false;
         }
         self.status_dirty = true;
     }
@@ -407,9 +443,22 @@ mod tests {
         assert!(block.iter().any(|s| s.abs() > 0.01), "the repeat stopped");
 
         c.set_tx_active(false);
-        // Drain what is queued, then the block reports the over is done.
-        while !c.fill_tx_block(&mut block) {}
-        assert!(!c.tx_burst_active() || c.tx48.is_empty());
+        // The over ends as soon as the queue drains — releasing transmit stops
+        // the repeat, it does not wait for a block boundary.
+        let done = c.fill_tx_block(&mut block);
+        assert!(done, "releasing transmit must end the over once the queue drains");
+    }
+
+    /// Releasing transmit ends the over; the message does not keep looping.
+    #[test]
+    fn releasing_transmit_stops_the_repeat() {
+        let mut c = Fsk441Controller::new(cfg(), 48_000.0);
+        c.set_tx_text("W1ABC W9XYZ".into());
+        c.set_tx_active(true);
+        c.poll(SystemTime::now(), 0.0);
+        c.set_tx_active(false);
+        let mut block = vec![0.0f32; 48_000 * 8];
+        assert!(c.fill_tx_block(&mut block), "an unkeyed over must finish");
     }
 
     /// A key with an empty box must not key the radio and sit on an empty
@@ -422,6 +471,29 @@ mod tests {
             c.poll(SystemTime::now(), 0.0).into_iter().any(|a| matches!(a, DigiAction::KeyTx));
         assert!(!keyed, "nothing to send should not key");
         assert!(!c.tx_burst_active());
+        // …and the panel is told why, rather than looking armed and doing
+        // nothing.
+        assert!(c.digi_status().tx_refused.is_some(), "an empty armed box must say so");
+
+        // The first keystroke with the box still armed keys the radio — the
+        // empty arm is not left waiting to spring into life.
+        c.set_tx_text("W1ABC".into());
+        let keyed =
+            c.poll(SystemTime::now(), 0.0).into_iter().any(|a| matches!(a, DigiAction::KeyTx));
+        assert!(keyed, "arming with an empty box then typing must key on the text");
+        assert!(c.digi_status().tx_refused.is_none());
+    }
+
+    /// A keystroke during an over must not restart the message mid-flight.
+    #[test]
+    fn typing_mid_over_does_not_restart_it() {
+        let mut c = Fsk441Controller::new(cfg(), 48_000.0);
+        c.set_tx_text("W1ABC W9XYZ".into());
+        c.set_tx_active(true);
+        c.poll(SystemTime::now(), 0.0);
+        let pass_len = c.tx_pass.len();
+        c.set_tx_text("DIFFERENT MESSAGE".into());
+        assert_eq!(c.tx_pass.len(), pass_len, "the running over must keep its message");
     }
 
     /// The transmit audio decodes back through the receiver's own decoder once
