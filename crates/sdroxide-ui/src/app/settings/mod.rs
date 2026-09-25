@@ -70,6 +70,10 @@ use crate::theme::ThemedScroll as _;
 pub(in crate::app) enum SettingsTab {
     General,
     Radio,
+    /// The CW key: which key the operator uses (keyboard or a USB paddle),
+    /// what kind it is, and whether it keys the transmitter or only the local
+    /// trainer.
+    Cw,
     Ui,
     Alerts,
     Controls,
@@ -1775,6 +1779,7 @@ impl SdroxideApp {
         let mut tabs = vec![
             (SettingsTab::General, "General"),
             (SettingsTab::Radio, "Radio"),
+            (SettingsTab::Cw, "CW"),
             (SettingsTab::Ui, "UI"),
             (SettingsTab::Alerts, "Alerts"),
             (SettingsTab::Controls, "Controls"),
@@ -2651,6 +2656,80 @@ impl SdroxideApp {
                         .wrap(),
                     );
                 });
+            }
+            SettingsTab::Cw => {
+                use sdroxide_types::CwKeySource;
+                if !io.digi_seeded {
+                    ui.label(
+                        RichText::new(
+                            "Enter CW (or any digital mode) once to load the saved values.",
+                        )
+                        .weak(),
+                    );
+                } else {
+                    ui.label(RichText::new("Key").size(14.0).strong().color(crate::theme::CYAN()));
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Where from:");
+                        for (src, label) in
+                            [(CwKeySource::Keyboard, "KEYBOARD"), (CwKeySource::Usb, "USB PADDLE")]
+                        {
+                            if crate::chrome::chip(ui, io.digi_edit.cw_key_source == src, label)
+                                .clicked()
+                            {
+                                io.digi_edit.cw_key_source = src;
+                            }
+                        }
+                    });
+                    match io.digi_edit.cw_key_source {
+                        CwKeySource::Keyboard => {
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(
+                                    "The `CW straight key` binding (Space by default) is read \
+                                     while the CW panel's KEY is on. One contact, so it is a \
+                                     straight key — the app decodes the operator's timing.",
+                                )
+                                .size(10.5)
+                                .weak(),
+                            );
+                        }
+                        CwKeySource::Usb => settings_cw_usb(ui, io),
+                    }
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Speed:");
+                        let wpm = &mut io.digi_edit.cw_wpm;
+                        ui.add(
+                            egui::DragValue::new(wpm).range(5.0..=60.0).speed(0.1).suffix(" wpm"),
+                        );
+                        ui.label(RichText::new("the keyer's dit and dah length").size(10.0).weak());
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        if crate::chrome::chip(ui, io.digi_edit.cw_key_tx, "KEY THE TRANSMITTER")
+                            .on_hover_text(
+                                "Off: the key only drives the local trainer. On: it keys the radio \
+                             through the ordinary manual-key path, with the band lockout and the \
+                             watchdog around it.",
+                            )
+                            .clicked()
+                        {
+                            io.digi_edit.cw_key_tx = !io.digi_edit.cw_key_tx;
+                        }
+                        ui.label(
+                            RichText::new(
+                                "For a rig that keys itself, set Settings → Radio → CW keying to \
+                                 `Sound card (MCW)`: hand-keying is refused on the rig-keyer \
+                                 route by design.",
+                            )
+                            .size(10.0)
+                            .weak(),
+                        );
+                    });
+                }
             }
             SettingsTab::Ui => {
                 settings_ui_tab(ui, io.ui_edit, io.solar_cloud_march.as_deref_mut());
@@ -4084,6 +4163,79 @@ impl SdroxideApp {
             }
         });
     }
+}
+
+/// The USB-keyer half of the CW tab: device, key type and reverse. Linux and
+/// native only, because reading a paddle is raw evdev.
+#[cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+fn settings_cw_usb(ui: &mut egui::Ui, io: &mut SettingsIo) {
+    use sdroxide_types::CwKeyMode;
+    let names: Vec<String> = crate::app::cw_key::devices()
+        .iter()
+        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Device:");
+        let selected = if io.digi_edit.cw_key_device.is_empty() {
+            crate::app::cw_key::default_device()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "(none found)".into())
+        } else {
+            io.digi_edit.cw_key_device.clone()
+        };
+        egui::ComboBox::from_id_salt("cw-key-device").selected_text(selected).width(260.0).show_ui(
+            ui,
+            |ui| {
+                if ui
+                    .selectable_label(
+                        io.digi_edit.cw_key_device.is_empty(),
+                        "auto (first named \"key\")",
+                    )
+                    .clicked()
+                {
+                    io.digi_edit.cw_key_device.clear();
+                }
+                for n in &names {
+                    if ui.selectable_label(io.digi_edit.cw_key_device == n.as_str(), n).clicked() {
+                        io.digi_edit.cw_key_device = n.clone();
+                    }
+                }
+            },
+        );
+        if crate::chrome::chip(ui, io.digi_edit.cw_key_reverse, "REVERSE")
+            .on_hover_text("Swap dit and dah, for the switch on the paddle itself.")
+            .clicked()
+        {
+            io.digi_edit.cw_key_reverse = !io.digi_edit.cw_key_reverse;
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Key type:");
+        for (m, label) in [
+            (CwKeyMode::Straight, "STRAIGHT"),
+            (CwKeyMode::IambicA, "IAMBIC A"),
+            (CwKeyMode::IambicB, "IAMBIC B"),
+        ] {
+            if crate::chrome::chip(ui, io.digi_edit.cw_key_mode == m, label).clicked() {
+                io.digi_edit.cw_key_mode = m;
+            }
+        }
+    });
+    ui.label(
+        RichText::new(
+            "A keyer box that reports its two contacts (often as a mouse's buttons) works; \
+             one that does its own iambic and sends finished touches does not. While the key \
+             is armed the device is taken exclusively, so its contacts cannot click in other \
+             windows.",
+        )
+        .size(10.0)
+        .weak(),
+    );
+}
+
+#[cfg(not(all(not(target_arch = "wasm32"), target_os = "linux")))]
+fn settings_cw_usb(ui: &mut egui::Ui, _io: &mut SettingsIo) {
+    ui.label(RichText::new("A USB paddle needs a Linux desktop.").size(10.5).weak());
 }
 
 #[cfg(test)]

@@ -1492,7 +1492,17 @@ use sdroxide_types::{
 /// `Command::SetDigiConfig` and `DigiStatus` whole, so a v169 peer reads the
 /// extra bytes as the start of the next field and fails to decode every
 /// digital status — the same break as v162's appended CW settings.
-pub const PROTO_VERSION: u16 = 170;
+///
+/// v171: the CW key. `DigiConfig` gains `cw_key_source`, `cw_key_device`,
+/// `cw_key_mode`, `cw_key_reverse` and `cw_key_tx` on its tail — which key the
+/// operator is using, whether a USB device and which, straight or iambic, the
+/// paddle-reverse switch, and whether the key drives the transmitter or only the
+/// local trainer. `DigiConfig` rides `Command::SetDigiConfig` and `DigiStatus`
+/// whole, so a v170 peer reads the extra bytes as the start of the next field
+/// and fails to decode every digital status — the same break as v162's appended
+/// CW settings. No new wire type: the key drives the existing manual-key seam
+/// (`CwStraight`/`CwKey`).
+pub const PROTO_VERSION: u16 = 171;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

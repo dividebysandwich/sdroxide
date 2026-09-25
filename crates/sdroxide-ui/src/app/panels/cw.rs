@@ -373,13 +373,32 @@ impl SdroxideApp {
         // visible radio draws this panel, and without the gate one key would
         // key each of them that has the mode on — and put the key back down on
         // a radio the frame after losing focus had lifted it.
+        // The key: the keyboard's `CW straight key`, or a USB paddle whose
+        // contacts the software keyer turns into elements. Either way the
+        // key-down becomes `CwKey` edges here and the controller keys the rig.
         let straight_chords = self.input.cw_straight_chords();
-        if self.cw_straight && tx_ok && self.focused {
-            // The key is the operator's only when nothing on screen holds the
-            // keyboard: a caret in some other field is a typist, not a keyer.
-            let free =
-                !ui.memory(|m| m.focused().is_some()) && !ui.ctx().egui_wants_keyboard_input();
-            let down = free && ui.input(|i| straight_key_held(i, &straight_chords));
+        let use_usb = self.digi_cfg_edit.cw_key_source == sdroxide_types::CwKeySource::Usb
+            && self.digi_cfg_edit.cw_key_tx;
+        #[cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+        self.ensure_cw_key(use_usb && self.cw_straight && tx_ok);
+        if self.cw_straight && tx_ok && (use_usb || self.focused) {
+            let down = if use_usb {
+                #[cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+                {
+                    self.cw_key.as_ref().map(|s| s.key_down()).unwrap_or(false)
+                }
+                #[cfg(not(all(not(target_arch = "wasm32"), target_os = "linux")))]
+                {
+                    false
+                }
+            } else {
+                // The key is the operator's only when nothing on screen holds
+                // the keyboard: a caret in some other field is a typist, not a
+                // keyer.
+                let free =
+                    !ui.memory(|m| m.focused().is_some()) && !ui.ctx().egui_wants_keyboard_input();
+                free && ui.input(|i| straight_key_held(i, &straight_chords))
+            };
             if down != self.cw_key_down {
                 self.cw_key_down = down;
                 cmds.push(Command::CwKey(down));
@@ -392,6 +411,17 @@ impl SdroxideApp {
             // hold the frequency.
             self.cw_key_down = false;
             cmds.push(Command::CwKey(false));
+        }
+        #[cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+        if let Some(e) = self.cw_key.as_ref().and_then(|s| s.error()) {
+            self.cw_key = None;
+            self.cw_key_error = Some(e);
+        }
+        if use_usb {
+            #[cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+            if let Some(e) = &self.cw_key_error {
+                ui.label(RichText::new(e).size(10.0).color(crate::theme::ALERT()));
+            }
         }
 
         ui.horizontal(|ui| {
@@ -570,8 +600,67 @@ impl SdroxideApp {
     /// Nothing is taken while a widget holds the keyboard: a press there is
     /// text, the straight key is not reading it, and the bindings stand down on
     /// their own.
+    /// Start or stop the USB paddle for the CW panel. Idempotent: called every
+    /// frame, it only changes state when the answer does. A failed start is
+    /// left in `cw_key_error` for the panel to say.
+    #[cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+    fn ensure_cw_key(&mut self, want: bool) {
+        use sdroxide_dsp::{IambicMode, KeyerMode};
+        use sdroxide_types::CwKeyMode;
+        if !want {
+            self.cw_key = None;
+            return;
+        }
+        if self.cw_key.is_some() {
+            return;
+        }
+        let cfg = &self.digi_cfg_edit;
+        let path = if cfg.cw_key_device.is_empty() {
+            crate::app::cw_key::default_device()
+        } else {
+            let want = cfg.cw_key_device.clone();
+            crate::app::cw_key::devices()
+                .into_iter()
+                .find(|p| {
+                    p.file_name().map(|n| n.to_string_lossy() == want.as_str()).unwrap_or(false)
+                })
+                .or_else(|| {
+                    let p = std::path::PathBuf::from(&want);
+                    p.exists().then_some(p)
+                })
+        };
+        let Some(path) = path else {
+            self.cw_key_error = Some("no paddle found — pick one in Settings → CW".into());
+            return;
+        };
+        let mode = match cfg.cw_key_mode {
+            CwKeyMode::Straight => KeyerMode::Straight,
+            CwKeyMode::IambicA => KeyerMode::Iambic(IambicMode::A),
+            CwKeyMode::IambicB => KeyerMode::Iambic(IambicMode::B),
+        };
+        let setup = crate::app::cw_key::KeySetup {
+            wpm: cfg.cw_wpm,
+            pitch_hz: cfg.cw_pitch_hz,
+            reverse: cfg.cw_key_reverse,
+            mode,
+            // The rig path produces the tone (the CW panel's SIDETONE), so the
+            // paddle does not add its own.
+            monitor: false,
+        };
+        match crate::app::cw_key::CwKeySource::start(&path, setup) {
+            Ok(s) => {
+                self.cw_key_error = None;
+                self.cw_key = Some(s);
+            }
+            Err(e) => self.cw_key_error = Some(e),
+        }
+    }
+
     pub(in crate::app) fn swallow_straight_key(&self, ctx: &egui::Context) {
         if !self.cw_straight || !self.tx_capable() {
+            return;
+        }
+        if self.digi_cfg_edit.cw_key_source == sdroxide_types::CwKeySource::Usb {
             return;
         }
         if ctx.egui_wants_keyboard_input() || ctx.memory(|m| m.focused()).is_some() {
