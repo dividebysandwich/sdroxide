@@ -457,6 +457,11 @@ impl IqSource for HpsdrSource {
         self.rx.as_ref()?.pa_temp_c()
     }
 
+    fn tx_telemetry(&mut self) -> Option<sdroxide_types::TxTelemetry> {
+        let swr = self.rx.as_ref()?.swr()?;
+        Some(sdroxide_types::TxTelemetry { fwd_w: None, swr: Some(swr), alc: None, po: None })
+    }
+
     /// The board's own ADC-overflow flag — see [`IqSource::adc_overload`]. It
     /// is the one thing that can tell an operator a direct-sampling front end
     /// is in trouble, because a narrow DDC out of a converter being hammered by

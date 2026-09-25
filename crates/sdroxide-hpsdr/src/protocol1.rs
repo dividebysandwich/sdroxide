@@ -39,6 +39,10 @@ use sdroxide_types::HpsdrOcPlan;
 use sdroxide_types::{HpsdrFilterBoard, hpsdr_alex_oc as alex_oc, hpsdr_n2adr_oc as n2adr_oc};
 
 const PORT: u16 = 1024;
+
+/// Exponential moving-average coefficient for HL2 forward/reverse detector
+/// readings. 0.10 gives strong smoothing while still following real changes.
+const HL2_POWER_EMA_ALPHA: f32 = 0.10;
 /// Samples per 512-byte OZY frame for one receiver (504 data bytes / 8).
 const SAMPLES_PER_FRAME: usize = 63;
 /// Sample-pairs carried by one datagram (two frames).
@@ -325,6 +329,10 @@ struct Ep6Info {
     /// 12-bit converter count. On a Hermes-Lite 2 this input carries the
     /// board's temperature sensor — see [`hl2_temperature_c`].
     ain5: Option<u16>,
+    /// Forward-power detector ADC count from status set 1.
+    fwd_power_raw: Option<u16>,
+    /// Reverse-power detector ADC count from status set 2.
+    rev_power_raw: Option<u16>,
 }
 
 /// Rate limiter for the two Hermes-Lite transmit faults worth shouting about.
@@ -409,11 +417,13 @@ fn decode_ep6_status(cc: &[u8], info: &mut Ep6Info) {
             info.adc_overload |= cc[1] & 0x01 != 0;
             info.versions = Some((cc[1], cc[2], cc[3], cc[4]));
         }
-        // Set 1: C1/C2 are AIN5 and C3/C4 AIN1, both big-endian. AIN1 is
-        // forward power on a board that has a coupler wired to it, which the
-        // stock Hermes-Lite 2 has not — AIN5 is the one that means something on
-        // every HL2, and it is the temperature sensor (issue #333).
-        1 => info.ain5 = Some(u16::from_be_bytes([cc[1], cc[2]]) & 0x0FFF),
+        // Set 1: C1/C2 are AIN5 (temperature), C3/C4 are forward power.
+        1 => {
+            info.ain5 = Some(u16::from_be_bytes([cc[1], cc[2]]) & 0x0FFF);
+            info.fwd_power_raw = Some(u16::from_be_bytes([cc[3], cc[4]]) & 0x0FFF);
+        }
+        // Set 2: C1/C2 are reverse power on Hermes-Lite 2.
+        2 => info.rev_power_raw = Some(u16::from_be_bytes([cc[1], cc[2]]) & 0x0FFF),
         _ => {}
     }
 }
@@ -459,6 +469,8 @@ fn decode_ep6(d: &[u8], out: &mut Vec<f32>) -> Option<Ep6Info> {
         ack: None,
         versions: None,
         ain5: None,
+        fwd_power_raw: None,
+        rev_power_raw: None,
     };
     for f in 0..2 {
         let frame = &d[8 + f * 512..8 + f * 512 + 512];
@@ -524,6 +536,8 @@ pub(crate) fn run(ctx: ThreadCtx) {
         adc_overload: overload_line,
         radio_ptt: ptt_line,
         temp_centi_c,
+        fwd_power_raw,
+        rev_power_raw,
         mut tx,
         ctrl,
     } = ctx;
@@ -544,6 +558,10 @@ pub(crate) fn run(ctx: ThreadCtx) {
 
     let mut out_seq: u32 = 0;
     let mut rot = Rotation::new();
+
+    // Smoothed HL2 detector readings. First sample initializes the filter.
+    let mut fwd_ema: Option<f32> = None;
+    let mut rev_ema: Option<f32> = None;
     // Only a Hermes-Lite has the I2C tunnel this rides on. The board itself is
     // looked for on the bus rather than configured: it either answers or it
     // does not, and an operator should not have to tell us what is plugged in.
@@ -788,6 +806,25 @@ pub(crate) fn run(ctx: ThreadCtx) {
                     if hermes_lite && let Some(c) = info.ain5.and_then(hl2_temperature_c) {
                         temp_centi_c.store((c * 100.0) as i32, Ordering::Relaxed);
                     }
+                    if hermes_lite {
+                        if let Some(raw) = info.fwd_power_raw {
+                            let next = match fwd_ema {
+                                Some(old) => old + HL2_POWER_EMA_ALPHA * (f32::from(raw) - old),
+                                None => f32::from(raw),
+                            };
+                            fwd_ema = Some(next);
+                            fwd_power_raw.store(next.round() as u16, Ordering::Relaxed);
+                        }
+
+                        if let Some(raw) = info.rev_power_raw {
+                            let next = match rev_ema {
+                                Some(old) => old + HL2_POWER_EMA_ALPHA * (f32::from(raw) - old),
+                                None => f32::from(raw),
+                            };
+                            rev_ema = Some(next);
+                            rev_power_raw.store(next.round() as u16, Ordering::Relaxed);
+                        }
+                    }
                     // An overloaded ADC is the classic "the signal looks weird"
                     // fault: everything intermodulates and the noise floor
                     // jumps. Rate-limit the warning, it can fire every datagram.
@@ -1013,6 +1050,8 @@ mod tests {
             ack: None,
             versions: None,
             ain5: None,
+            fwd_power_raw: None,
+            rev_power_raw: None,
         };
         // Status set 0, PTT closed, ADC overloaded, versions in C2..C4.
         decode_ep6_status(&[0x01, 0x01, 0x11, 0x22, 0x33], &mut info);
@@ -1029,6 +1068,8 @@ mod tests {
             ack: None,
             versions: None,
             ain5: None,
+            fwd_power_raw: None,
+            rev_power_raw: None,
         };
         // Set 2 (power/voltage): not versions, and not the temperature either.
         decode_ep6_status(&[0x10, 0xFF, 0xFF, 0xFF, 0xFF], &mut other);
@@ -1050,6 +1091,8 @@ mod tests {
             ack: None,
             versions: None,
             ain5: None,
+            fwd_power_raw: None,
+            rev_power_raw: None,
         };
         decode_ep6_status(&cc, &mut info);
         assert_eq!(info.ain5, Some(0x078B));
@@ -1075,6 +1118,8 @@ mod tests {
             ack: None,
             versions: None,
             ain5: None,
+            fwd_power_raw: None,
+            rev_power_raw: None,
         };
         decode_ep6_status(&[0x00, 0x01, 0x02, 0x03, 0x04], &mut info);
         assert!(info.ain5.is_none());
