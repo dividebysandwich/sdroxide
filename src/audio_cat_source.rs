@@ -269,7 +269,7 @@ impl AudioCatSource {
         let signal_max_age = sdroxide_cat::signal_max_age(&cfg);
         // Either sound format: even an IQ-format rig transmits what arrives at
         // its sound card, so MCW rides a sideband there too.
-        let cw_mcw = cfg.cw_keying == sdroxide_types::CwKeying::Audio;
+        let cw_mcw = sdroxide_cat::effective_cw_keying(&cfg) == sdroxide_types::CwKeying::Audio;
         // The scope, asked for on a link its sweeps do not fit down, is
         // declined rather than allowed to bury the polls and the PTT — and
         // that has to be said on screen, because nothing else explains a
@@ -401,7 +401,7 @@ impl AudioCatSource {
             stream_scratch: Vec::new(),
             cat,
             scope_full_scale: 160.0,
-            cw_mcw: cfg.cw_keying == sdroxide_types::CwKeying::Audio,
+            cw_mcw: sdroxide_cat::effective_cw_keying(&cfg) == sdroxide_types::CwKeying::Audio,
             // Where the band starts, not where the radio is — nothing reads
             // the radio's dial in this mode. The first tune commands it.
             dial: Dial::at(14_074_000.0),
