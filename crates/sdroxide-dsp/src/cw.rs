@@ -1695,6 +1695,16 @@ pub enum IambicMode {
     B,
 }
 
+/// What kind of key is in the operator's hand.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KeyerMode {
+    /// Two contacts: the keyer makes the dits and dahs.
+    Iambic(IambicMode),
+    /// One contact: the keyer passes it through and decodes the operator's own
+    /// timing. The contact is the `dit` argument of [`CwKeyer::poll`].
+    Straight,
+}
+
 /// A keyed element the keyer generated.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CwElement {
@@ -1722,7 +1732,7 @@ enum Phase {
 /// `now` is a monotonic timebase in seconds; `poll` is safe to call at any rate
 /// and catches up across missed transitions.
 pub struct CwKeyer {
-    mode: IambicMode,
+    mode: KeyerMode,
     dit_s: f64,
     char_gap_s: f64,
     word_gap_s: f64,
@@ -1738,12 +1748,17 @@ pub struct CwKeyer {
     space_owed: bool,
     char_since_space: bool,
     marks: u64,
+    // Straight key: the contact was down, when the current mark started, and a
+    // running estimate of the operator's dit (they set the speed, not us).
+    contact: bool,
+    mark_start: f64,
+    dit_est: f64,
 }
 
 impl CwKeyer {
     pub fn new(wpm: f32) -> Self {
         let mut k = Self {
-            mode: IambicMode::B,
+            mode: KeyerMode::Iambic(IambicMode::B),
             dit_s: 0.0,
             char_gap_s: 0.0,
             word_gap_s: 0.0,
@@ -1759,6 +1774,9 @@ impl CwKeyer {
             space_owed: false,
             char_since_space: false,
             marks: 0,
+            contact: false,
+            mark_start: 0.0,
+            dit_est: 0.0,
         };
         k.set_wpm(wpm);
         k
@@ -1769,16 +1787,24 @@ impl CwKeyer {
         self.dit_s = 1.2 / wpm;
         self.char_gap_s = 2.5 * self.dit_s;
         self.word_gap_s = 6.0 * self.dit_s;
+        if self.dit_est == 0.0 {
+            self.dit_est = self.dit_s;
+        }
     }
 
-    pub fn set_mode(&mut self, mode: IambicMode) {
+    pub fn set_mode(&mut self, mode: KeyerMode) {
         self.mode = mode;
+        self.reset();
+        self.dit_est = self.dit_s;
     }
 
     /// Advance to `now` with the two current paddle states, and answer whether
     /// the key is down over this instant. Completed characters collect in
     /// [`Self::take_text`].
     pub fn poll(&mut self, now: f64, dit: bool, dah: bool) -> bool {
+        if self.mode == KeyerMode::Straight {
+            return self.poll_straight(now, dit);
+        }
         if dit && !self.dit {
             self.lat_dit = true;
         }
@@ -1815,6 +1841,38 @@ impl CwKeyer {
             }
         }
         matches!(self.phase, Phase::Mark { .. })
+    }
+
+    /// A straight key: pass the contact through and read the operator's timing.
+    /// Their dit length is estimated from what they send and follows slowly, so
+    /// a beginner keying much slower than the panel's WPM is still read.
+    fn poll_straight(&mut self, now: f64, contact: bool) -> bool {
+        let was = self.contact;
+        if contact && !was {
+            if let Some(prev) = self.prev_end {
+                let gap = now - prev;
+                if !self.code.is_empty() && gap >= self.char_gap_s {
+                    self.emit_char();
+                }
+            }
+            self.mark_start = now;
+            self.space_owed = false;
+        } else if !contact && was {
+            let mark = (now - self.mark_start).max(0.0);
+            let dah = mark >= 2.0 * self.dit_est;
+            self.code.push(if dah { '-' } else { '.' });
+            let unit = if dah { mark / 3.0 } else { mark };
+            // Follow the operator's speed, but slowly: one long dah should not
+            // reclassify the next dit.
+            self.dit_est = 0.7 * self.dit_est + 0.3 * unit.clamp(0.02, 0.5);
+            self.prev_end = Some(now);
+            self.marks += 1;
+        }
+        if !contact {
+            self.finalize_gaps(now);
+        }
+        self.contact = contact;
+        contact
     }
 
     /// The element a squeeze starts with when the keyer is idle, if either
@@ -1860,8 +1918,9 @@ impl CwKeyer {
     /// as it is held. Nothing follows a released paddle — that is what stops a
     /// single tap turning into a run.
     fn next_element(&mut self, el: CwElement) -> Option<CwElement> {
-        let opp_dit = self.dit || (self.mode == IambicMode::B && self.lat_dit);
-        let opp_dah = self.dah || (self.mode == IambicMode::B && self.lat_dah);
+        let mode_b = matches!(self.mode, KeyerMode::Iambic(IambicMode::B));
+        let opp_dit = self.dit || (mode_b && self.lat_dit);
+        let opp_dah = self.dah || (mode_b && self.lat_dah);
         let nxt = match el {
             CwElement::Dit => {
                 if opp_dah {
@@ -1893,15 +1952,19 @@ impl CwKeyer {
         nxt
     }
 
+    fn emit_char(&mut self) {
+        if let Some(c) = morse_decode(&self.code) {
+            self.out.push_back(c);
+        }
+        self.code.clear();
+        self.char_since_space = true;
+    }
+
     fn finalize_gaps(&mut self, now: f64) {
         let Some(prev) = self.prev_end else { return };
         let gap = now - prev;
         if !self.code.is_empty() && gap >= self.char_gap_s {
-            if let Some(c) = morse_decode(&self.code) {
-                self.out.push_back(c);
-            }
-            self.code.clear();
-            self.char_since_space = true;
+            self.emit_char();
         }
         if gap >= self.word_gap_s && self.char_since_space {
             self.space_owed = true;
@@ -1936,6 +1999,8 @@ impl CwKeyer {
         self.out.clear();
         self.space_owed = false;
         self.char_since_space = false;
+        self.contact = false;
+        self.mark_start = 0.0;
     }
 }
 
@@ -2536,7 +2601,7 @@ mod keyer_tests {
     #[test]
     fn mode_a_needs_the_opposite_paddle_held() {
         let mut k = CwKeyer::new(20.0);
-        k.set_mode(IambicMode::A);
+        k.set_mode(KeyerMode::Iambic(IambicMode::A));
         let mut t = 0.0;
         // Dit paddle down; dah tapped only while the dit is being sent.
         while k.marks() == 0 {
@@ -2559,5 +2624,32 @@ mod keyer_tests {
         run(&mut k, &mut t, 0.30, false, true);
         run(&mut k, &mut t, 0.8, false, false);
         assert_eq!(k.take_text(), "T");
+    }
+
+    #[test]
+    fn a_straight_key_sends_two_characters() {
+        let mut k = CwKeyer::new(20.0);
+        k.set_mode(KeyerMode::Straight);
+        let mut t = 0.0;
+        run(&mut k, &mut t, 0.06, true, false); // dit
+        run(&mut k, &mut t, 0.24, false, false); // inter-character space
+        run(&mut k, &mut t, 0.18, true, false); // dah
+        run(&mut k, &mut t, 0.8, false, false);
+        assert_eq!(k.take_text(), "ET");
+    }
+
+    #[test]
+    fn a_straight_key_follows_a_slower_operator() {
+        let mut k = CwKeyer::new(20.0); // 60 ms dit assumed
+        k.set_mode(KeyerMode::Straight);
+        let mut t = 0.0;
+        // Three marks of 100 ms, well slower than 20 wpm, must still read as
+        // dits (S), not dahs.
+        for _ in 0..3 {
+            run(&mut k, &mut t, 0.10, true, false);
+            run(&mut k, &mut t, 0.10, false, false);
+        }
+        run(&mut k, &mut t, 0.8, false, false);
+        assert_eq!(k.take_text(), "S");
     }
 }
