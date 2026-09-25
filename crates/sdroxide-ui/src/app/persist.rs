@@ -123,6 +123,34 @@ pub(in crate::app) fn persist_alerts_settings(_cfg: &sdroxide_types::AlertSettin
     // Written by eframe's periodic `save()` into localStorage.
 }
 
+// ── Morse trainer progress ────────────────────────────────────────────────────
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_morse_progress(
+    _storage: Option<&dyn eframe::Storage>,
+) -> sdroxide_types::MorseProgress {
+    sdroxide_config::load_morse_progress()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_morse_progress(
+    storage: Option<&dyn eframe::Storage>,
+) -> sdroxide_types::MorseProgress {
+    storage.and_then(|s| eframe::get_value(s, "morse_progress")).unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn persist_morse_progress(progress: &sdroxide_types::MorseProgress) {
+    if let Err(e) = sdroxide_config::save_morse_progress(progress) {
+        eprintln!("failed to save Morse progress: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn persist_morse_progress(_progress: &sdroxide_types::MorseProgress) {
+    // Written by eframe's periodic `save()` into localStorage.
+}
+
 // ── Remote-access credentials (native: config.toml [remote_access]) ──────────
 //
 // Who may connect to *this* machine's server. There is no browser half: these

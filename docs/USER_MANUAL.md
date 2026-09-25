@@ -2007,6 +2007,19 @@ along with the setting that changes it.
 > with the rig in CW, or the keyed tone as audio (MCW) with the rig held on a
 > sideband ([§6.2.2](#622-cat-radios-serial-control--usb-audio)).
 
+**Learning Morse (the trainer).** The **TRAINER** chip in the CW panel opens a
+learning tool, not a sending one: it plays Morse through
+this computer's speakers only and **never keys the radio**, so it works on a
+receive-only set and in SWL mode. **TRANSLATE** converts text to Morse and back
+with the same ITU alphabet the decoder and keyer use — letters, digits,
+punctuation and the common prosigns. **PRACTICE** plays a message at your own
+pace, with the tone, the character speed and **Farnsworth** spacing: the letters
+go out at full speed and the gaps are stretched, so a beginner hears the letter
+as a whole before they can send it that fast. **LEARN** is the Koch drill — it
+starts with two characters, plays each three times, and a run of ten correct
+answers adds the next; the score and how far the set has unlocked are remembered
+between sessions.
+
 ### 2.15 Band conditions
 
 ![Band Conditions](images/bandconditions.jpg)

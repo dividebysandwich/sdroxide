@@ -936,6 +936,7 @@ impl eframe::App for SdroxideApp {
         self.awards_window(&ctx);
         self.bands_window(&ctx);
         self.sat_window(&ctx, &mut cmds);
+        self.morse_window(&ctx);
         self.help.ui(&ctx);
         // Last, so it lands on top of everything else that opened this frame.
         self.oob_tx_window(&ctx);
@@ -1107,6 +1108,8 @@ impl eframe::App for SdroxideApp {
             eframe::set_value(storage, "ui_settings", &self.ui_settings);
             // Control-input bindings: authoritative on native is input.json.
             eframe::set_value(storage, "input", &self.input.cfg);
+            // The Morse trainer's progress, so it carries to the browser build.
+            eframe::set_value(storage, "morse_progress", &self.morse.progress);
         }
     }
 }
