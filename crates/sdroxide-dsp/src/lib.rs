@@ -60,8 +60,8 @@ pub use binaural::Binaural;
 pub use cessb::Cessb;
 pub use ctcss::{SubToneDetect, golay23_decode, golay23_encode};
 pub use cw::{
-    CwDecoder, CwElement, CwKeyer, CwRx, CwSelfRx, CwTx, IambicMode, morse_decode, morse_encode,
-    text_duration_s,
+    CwDecoder, CwElement, CwKeyer, CwRx, CwSelfRx, CwTx, IambicMode, KeyerMode, morse_decode,
+    morse_encode, text_duration_s,
 };
 pub use ddc::Ddc;
 pub use decim::{Decimator, FirDecim, HalfbandDecim, RealFirDecim, lowpass_taps};
