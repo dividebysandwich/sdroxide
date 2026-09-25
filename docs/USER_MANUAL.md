@@ -6635,7 +6635,7 @@ window opens the same dialog on its Spots tab). Fourteen tabs run across the top
 | **Radio** | Which rig sdroxide talks to, and how. [6.2](#62-radio-choosing-and-configuring-the-rig) |
 | **UI** | Frame rate, waterfall palette, spectrum background, spot label colours, 3D cloud rendering, and the spoken announcements. [6.3](#63-ui-display-preferences-and-voice-announcements) |
 | **Alerts** | Sounds that ring when a decode matters: a station calling you, a new DXCC entity or grid. [Audible alerts](#audible-alerts) |
-| **Controls** | Keyboard, mouse and MIDI bindings. [6.4](#64-controls-keyboard-mouse-and-midi) |
+| **Controls** | Keyboard, mouse, MIDI and Icom RC-28 bindings. [6.4](#64-controls-keyboard-mouse-and-midi) |
 | **Spots** | DX cluster, POTA, SOTA and PSK Reporter feeds, and the broadcast station list. [6.5](#65-spots-spot-feeds) |
 | **FreeDV** | FreeDV Reporter (qso.freedv.org). [6.6](#66-freedv-freedv-reporter) |
 | **Uploads** | Callsign lookup, QSL upload, confirmation download. [6.7](#67-uploads-callsign-lookup-and-qsl-services) |
@@ -11681,8 +11681,8 @@ yet.
 
 Everything sdroxide can be told to do is an **action** — tune, PTT, change band,
 cycle noise reduction, open the logbook — and the **Controls** tab binds actions
-to whatever you would rather press or turn than click. The three sections of the
-tab (keyboard, mouse, MIDI) all draw on the same list of actions.
+to whatever you would rather press or turn than click. The four sections of the
+tab (keyboard, mouse, MIDI, Icom RC-28) all draw on the same list of actions.
 
 Actions come in two kinds, and the *Step / mode* column changes to match. A
 **continuous** action (tuning, volume, filter width) takes a *step* — the amount
@@ -11783,11 +11783,50 @@ every surface likes being written to, which is why it is off by default.
 A controller unplugged mid-QSO releases anything it was holding and reconnects
 by itself when you plug it back in.
 
+#### 6.4.4 Icom RC-28
+
+Icom's USB remote encoder — a weighted knob with **TRANSMIT**, **F-1** and
+**F-2** under it, an LED over each button and a **LINK** light — needs no
+learning: it has one layout, so the section is one row per control.
+
+- **Enable** — off until you tick it, because TRANSMIT keys the rig. The line
+  beside it names the connected device and its firmware, or says why it is not
+  connected. **LINK** lights while sdroxide has the device.
+- The live line under it names the last thing the RC-28 did — proof that it is
+  being heard.
+- **Knob** — *Tune VFO* by default, at 10 Hz a detent. The knob has no real
+  detents; sdroxide counts about 67 to the turn, so 10 Hz is some 670 Hz a turn,
+  like a transceiver's main dial. **×** is the speed sensitivity (a fast spin
+  crosses a band), and **rev** reverses it. Any continuous action can go here.
+- **TRANSMIT** — *PTT*, *Hold*: the rig transmits while the button is down.
+- **F-1** and **F-2** — *VFO A/B toggle* and *Split* by default; any action.
+- **LED** — light the LED over the button while its action is on: TRANSMIT
+  while you transmit, F-2 while split is set. An action with no on/off state
+  (a band change, say) leaves its LED dark.
+
+Unlike a key, a held TRANSMIT is **not** dropped when a text field takes the
+keyboard or another window takes focus: the RC-28 says when the button comes up
+whatever has focus, and a desk PTT that let go every time you typed a callsign
+would be useless. It is dropped when the RC-28 is unplugged, when you switch
+radio tabs, and after the **Unkey a held PTT after** timeout.
+
+On Linux the RC-28 needs the packaged udev rule, `60-sdroxide-rc28.rules`,
+which the `.deb` installs; the README's *Icom RC-28 permissions* has the two
+commands for any other install.
+
+**In the browser.** The web client reaches the RC-28 through WebHID, which
+Chrome, Edge and Opera have and Firefox and Safari do not, and only over
+`https://` (or `http://localhost`). A page may only use a USB device you have
+picked from the browser's own list, so the first time, tick **Enable** and click
+**Choose device…**; the browser remembers the choice, and afterwards the RC-28
+is found again on every visit and every replug with no prompt.
+
 > **Bindings live with the client.** They are stored in `input.json` on the
 > machine running the *user interface*, not the one running the radio — so a
 > knob plugged into your laptop works just as well against a remote engine
-> (`--connect`, [8](#8-remote-operation)). Keyboard and mouse bindings work in
-> the browser client too; MIDI needs the native app.
+> (`--connect`, [8](#8-remote-operation)). Keyboard and mouse bindings, and the
+> RC-28 in Chrome or Edge, work in the browser client too; MIDI needs the
+> native app.
 
 ### 6.5 Spots: spot feeds
 
@@ -14625,7 +14664,7 @@ and not the station's.
 | `ais.json` | JSON | AIS decoder ([§3.16](#316-ais-ships-on-162-mhz)): which of the two channels to listen on, the slot threshold in dB, the two timeouts, how many minutes of trail to keep, how far ahead the vectors reach, and the ceiling on the vessel table. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `ism.json` | JSON | ISM decoder: whether it runs, which device families it listens for, the burst threshold in dB, and whether the rtl_433 decoders are on, which band they watch and how wide a window they get. Restored at startup, and — like `skimmer.json` — a narrowband (audio-mode) radio forces it off without disturbing what you picked. |
 | `rtl433_flex.conf` | text | Your own ISM decoders, in rtl_433's "flex" syntax ([§5.5](#55-adding-your-own-decoders-flex-specs)). Written with a commented example the first time the ISM decoder runs, and never rewritten afterwards — like `bandplan.json`, it is yours to edit. A specification that does not pass its check is listed in the ISM window and skipped; the rest still load. **RELOAD DECODERS** in the ISM window applies an edit without a restart. |
-| `input.json` | JSON | Control inputs: keyboard bindings, panadapter mouse behaviour, mouse-button bindings, and the MIDI controller mapping. Belongs to the machine running the user interface, not the engine. |
+| `input.json` | JSON | Control inputs: keyboard bindings, panadapter mouse behaviour, mouse-button bindings, the MIDI controller mapping, and the Icom RC-28's. Belongs to the machine running the user interface, not the engine. |
 | `remote_login.json` | JSON | A sign-in to *somebody else's* server that you asked this client to remember ([§8.3](#83-sign-in-who-may-operate-the-station)). Written only when the **Remember on this device** box is ticked, holds the password in plaintext, and deleted when you untick it or the server refuses it. Belongs to the user interface, like `input.json`; the browser client keeps the same thing in local storage instead. |
 | `satellites.json` | JSON | Satellite additions for the 3D tracker: subscribed element-set listings, element sets pasted in by hand, and frequency entries that override the built-in table. Belongs to the engine, like `net.json`: the listings are fetched and cached where the radio is, so remote and browser clients track the same satellites. |
 | `relay.json` | JSON | The station's external transmit/receive switch ([§6.11](#611-tr-switch-protecting-the-receiver-on-transmit)): which relay board or contact closure, the contact table, the sequencer's lead and hold times, what to do if it stops answering, and the transmit sense input. Belongs to the engine — the relay is bolted to the antenna — so remote and browser clients set up the real one. |

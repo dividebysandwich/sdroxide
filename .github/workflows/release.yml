@@ -359,7 +359,8 @@ jobs:
           cp packaging/linux/60-sdroxide-rtlsdr.rules packaging/linux/60-sdroxide-rx888.rules \
              packaging/linux/60-sdroxide-airspyhf.rules packaging/linux/60-sdroxide-hackrf.rules \
              packaging/linux/60-sdroxide-airspy.rules packaging/linux/60-sdroxide-elad.rules \
-             packaging/linux/60-sdroxide-limerfe.rules stage/sdroxide/
+             packaging/linux/60-sdroxide-limerfe.rules packaging/linux/60-sdroxide-rc28.rules \
+             stage/sdroxide/
           if [[ "${{ matrix.variant }}" == "cat" ]]; then
             cat > stage/sdroxide/README.txt <<'EOF'
           sdroxide — SDR transceiver (https://github.com/dividebysandwich/sdroxide)

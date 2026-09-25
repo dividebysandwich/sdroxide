@@ -132,7 +132,9 @@ One binary, three ways to run it:
   confirmed).
 - **Control inputs** — every shortcut is rebindable, and any class-compliant
   **MIDI controller** can drive the radio: a jog wheel as the VFO knob, pads as
-  PTT and band buttons, faders as gain controls, with LED/motor feedback. Mouse
+  PTT and band buttons, faders as gain controls, with LED/motor feedback. An
+  **Icom RC-28** remote encoder works as a tuning knob with TRANSMIT, F-1 and
+  F-2 — in the native app and, over WebHID, in Chrome or Edge. Mouse
   buttons take bindings too (a side button held for PTT works as a footswitch),
   and the panadapter wheel can zoom or tune.
 - **Spoken announcements** — the radio reads itself out, for operating it
@@ -1051,7 +1053,9 @@ no audio or IQ; both servers can run at once. See the user manual, §5.10.
 
 Every keyboard shortcut is a rebindable **action**, and the same action list is
 reachable from mouse buttons and from a MIDI controller — the cheapest real VFO
-knob there is. Configured on the **Controls** tab; see the user manual, §5.9.
+knob there is — and from an **Icom RC-28** remote encoder, whose knob, buttons
+and LEDs work with nothing to learn. Configured on the **Controls** tab; see the
+user manual, §6.4.
 
 Push-to-talk ships **unbound** on purpose. One click binds hold-to-talk to
 Space, and a held PTT is released on key-up, on window focus loss, on a text
@@ -1603,6 +1607,28 @@ cargo run -p sdroxide-relay --example relay -- --serial /dev/ttyUSB0 --board lcu
 HID paths on both have never been run against hardware, only compiled. If a
 board is not found or does not switch on either, the `--list --all` transcript
 above is what to attach to a bug report.
+
+### Icom RC-28 permissions
+
+The RC-28 is read through `/dev/hidraw*`, which most distributions keep
+root-only:
+
+```sh
+sudo cp packaging/linux/60-sdroxide-rc28.rules /usr/lib/udev/rules.d/
+sudo udevadm control --reload
+```
+
+then replug it. The `.deb` installs the rule for you. To check the device
+without the app — every knob step and button press is printed, and the LED over
+a held button lights:
+
+```sh
+cargo run -p sdroxide-rc28 --example rc28 -- 30
+```
+
+Windows and macOS need nothing installed. Their input-report paths have been
+compiled, not yet run against an RC-28, so that example's output is what to
+attach to a bug report if the knob does nothing there.
 
 ### SDRplay RSP prerequisites
 

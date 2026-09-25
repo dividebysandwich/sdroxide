@@ -1,5 +1,5 @@
 //! Control inputs: the runtime that turns keyboard chords, panadapter mouse
-//! gestures and MIDI messages into [`Action`]s, and the resolver that turns an
+//! gestures, MIDI messages and an Icom RC-28 into [`Action`]s, and the resolver that turns an
 //! `Action` into [`Command`]s or a local view change.
 //!
 //! This lives with the *client*, not the engine, so a knob plugged into the
@@ -67,6 +67,7 @@ pub(crate) enum HeldSource {
     Mouse(usize),
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Midi(usize),
+    Rc28(sdroxide_rc28::proto::Key),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -508,6 +509,12 @@ pub struct InputRuntime {
     /// (a step change, say) doesn't tear the connection down.
     #[cfg(not(target_arch = "wasm32"))]
     midi_sent: sdroxide_midi::MidiConfig,
+    rc28: crate::rc28::Rc28Link,
+    /// Knob counts not yet making up a whole detent.
+    rc28_detents: sdroxide_rc28::proto::Detents,
+    /// What the RC-28 last did, for the settings dialog — the same use as
+    /// [`Self::last_midi`]: proof that the device is being heard.
+    pub last_rc28: Option<String>,
 }
 
 impl InputRuntime {
@@ -529,8 +536,7 @@ impl InputRuntime {
             let ctx = ctx.clone();
             (Some(sdroxide_midi::spawn(want.clone(), move || crate::repaint::animate(&ctx))), want)
         };
-        #[cfg(target_arch = "wasm32")]
-        let _ = ctx;
+        let rc28 = crate::rc28::Rc28Link::new(cfg.rc28.enabled, ctx);
         InputRuntime {
             cfg,
             held: Vec::new(),
@@ -543,6 +549,9 @@ impl InputRuntime {
             midi,
             #[cfg(not(target_arch = "wasm32"))]
             midi_sent,
+            rc28,
+            rc28_detents: sdroxide_rc28::proto::Detents::default(),
+            last_rc28: None,
         }
     }
 
@@ -665,7 +674,13 @@ impl InputRuntime {
                 self.held
                     .iter()
                     .filter(|h| {
-                        if !focused || typing {
+                        // The RC-28 is exempt: its release comes as a report
+                        // whether or not this window has the keyboard, and a
+                        // desk PTT has to keep the rig keyed while the
+                        // operator types into the log. The timeout below still
+                        // applies to it.
+                        let reported = matches!(h.src, HeldSource::Rc28(_));
+                        if !reported && (!focused || typing) {
                             return true;
                         }
                         if timeout > 0.0 && (now - h.since) as f32 > timeout {
@@ -681,9 +696,10 @@ impl InputRuntime {
                                 .get(ix)
                                 .map(|b| !i.pointer.button_down(egui_button(b.button)))
                                 .unwrap_or(true),
-                            // MIDI releases arrive as messages, not as polled
-                            // state; only the global conditions above end them.
-                            HeldSource::Midi(_) => false,
+                            // MIDI and RC-28 releases arrive as messages, not
+                            // as polled state; only the global conditions
+                            // above end them.
+                            HeldSource::Midi(_) | HeldSource::Rc28(_) => false,
                         }
                     })
                     .map(|h| h.src)
@@ -1008,8 +1024,175 @@ impl InputRuntime {
             HeldSource::Midi(ix) => {
                 self.cfg.midi.bindings.get(ix).map(|b| (b.action, b.button_mode))
             }
+            HeldSource::Rc28(key) => {
+                let b = self.rc28_button(key);
+                b.enabled.then_some((b.action, b.button_mode))
+            }
         }
     }
+
+    fn rc28_button(&self, key: sdroxide_rc28::proto::Key) -> &sdroxide_types::Rc28Button {
+        use sdroxide_rc28::proto::Key;
+        match key {
+            Key::Transmit => &self.cfg.rc28.transmit,
+            Key::F1 => &self.cfg.rc28.f1,
+            Key::F2 => &self.cfg.rc28.f2,
+        }
+    }
+
+    /// Drain the RC-28 and apply what it did.
+    ///
+    /// The knob's counts are gathered into detents and summed over the frame,
+    /// so a spin is one command a frame, as with a MIDI jog wheel.
+    pub(crate) fn poll_rc28(
+        &mut self,
+        ctx: &eframe::egui::Context,
+        state: &mut RadioState,
+        ui: &mut UiSink<'_>,
+        cmds: &mut Vec<Command>,
+    ) {
+        use sdroxide_rc28::Rc28Event;
+        use sdroxide_rc28::proto::Input;
+
+        self.rc28.set_enabled(self.cfg.rc28.enabled);
+        let events = self.rc28.poll();
+        let now = ctx.input(|i| i.time);
+        let mut detents = 0i32;
+        for ev in events {
+            match ev {
+                Rc28Event::Input(Input::Turn(n)) => {
+                    self.last_rc28 = Some(format!("knob {n:+}"));
+                    detents += self.rc28_detents.add(n);
+                }
+                Rc28Event::Input(Input::Key { key, down }) => {
+                    self.last_rc28 = Some(format!(
+                        "{} {}",
+                        key.label(),
+                        if down { "pressed" } else { "released" }
+                    ));
+                    // Apply turns so far first, so a knob moved and a button
+                    // pressed in one frame land in the order they happened.
+                    self.rc28_turn(std::mem::take(&mut detents), now, state, ui, cmds);
+                    self.rc28_key(key, down, now, state, ui, cmds);
+                }
+                Rc28Event::Connected(_) => self.rc28_detents.reset(),
+                Rc28Event::Disconnected => {
+                    // Whatever it was holding — PTT above all — is let go.
+                    self.release_rc28_holds(state, ui, cmds);
+                    self.rc28_detents.reset();
+                }
+            }
+        }
+        self.rc28_turn(detents, now, state, ui, cmds);
+        self.send_rc28_leds(state, ui);
+    }
+
+    fn rc28_turn(
+        &mut self,
+        detents: i32,
+        now: f64,
+        state: &mut RadioState,
+        ui: &mut UiSink<'_>,
+        cmds: &mut Vec<Command>,
+    ) {
+        if detents == 0 || self.cfg.rc28.knob.kind() != ActionKind::Continuous {
+            return;
+        }
+        let (act, tuning) = (self.cfg.rc28.knob, self.cfg.rc28.knob_tuning);
+        let d = self.scaled(act, &tuning, now, detents as f32);
+        let input = ActionInput::Delta { d, step: tuning.step };
+        apply_action(act, input, ButtonMode::Momentary, state, ui, cmds);
+    }
+
+    fn rc28_key(
+        &mut self,
+        key: sdroxide_rc28::proto::Key,
+        down: bool,
+        now: f64,
+        state: &mut RadioState,
+        ui: &mut UiSink<'_>,
+        cmds: &mut Vec<Command>,
+    ) {
+        let src = HeldSource::Rc28(key);
+        if down {
+            let Some((action, mode)) = self.binding_button(src) else { return };
+            if action.kind() != ActionKind::Momentary {
+                return;
+            }
+            self.press(src, action, mode, now);
+            apply_action(action, ActionInput::Press, mode, state, ui, cmds);
+        } else {
+            // Released from what was *pressed*, not from what the binding says
+            // now: an edit mid-press must still unkey what was keyed.
+            if let Some(action) = self.release(src) {
+                apply_action(action, ActionInput::Release, ButtonMode::Momentary, state, ui, cmds);
+            }
+        }
+    }
+
+    fn release_rc28_holds(
+        &mut self,
+        state: &mut RadioState,
+        ui: &mut UiSink<'_>,
+        cmds: &mut Vec<Command>,
+    ) {
+        let stale: Vec<HeldSource> = self
+            .held
+            .iter()
+            .filter(|h| matches!(h.src, HeldSource::Rc28(_)))
+            .map(|h| h.src)
+            .collect();
+        for src in stale {
+            if let Some(action) = self.release(src) {
+                apply_action(action, ActionInput::Release, ButtonMode::Momentary, state, ui, cmds);
+            }
+        }
+    }
+
+    /// Light each button's LED while its action is on.
+    fn send_rc28_leds(&mut self, state: &RadioState, ui: &UiSink<'_>) {
+        use sdroxide_rc28::proto::Key;
+        let mut lit = 0u8;
+        for key in Key::ALL {
+            let b = self.rc28_button(key);
+            if b.enabled && b.led && indicator(b.action, state, ui.view).is_some_and(|v| v > 0) {
+                lit |= key.bit();
+            }
+        }
+        self.rc28.set_leds(lit);
+    }
+
+    /// Drop what the RC-28 queued while this radio tab was not focused. See
+    /// [`crate::rc28::Rc28Link::discard`].
+    pub fn discard_rc28(&mut self) {
+        self.rc28.discard();
+    }
+
+    /// The RC-28's connection, for the settings dialog.
+    pub fn rc28_status(&self) -> Rc28StatusView {
+        Rc28StatusView {
+            unsupported: crate::rc28::Rc28Link::unsupported_reason(),
+            status: self.rc28.status(),
+            choose: cfg!(target_arch = "wasm32"),
+        }
+    }
+
+    /// Browser only: open the device chooser. See
+    /// [`crate::rc28::Rc28Link::request_device`].
+    pub fn rc28_choose_device(&self) {
+        self.rc28.request_device();
+    }
+}
+
+/// The RC-28's state as the settings dialog needs it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Rc28StatusView {
+    /// Why this client cannot reach an RC-28 at all, if it cannot.
+    pub unsupported: Option<&'static str>,
+    pub status: sdroxide_rc28::Rc28Status,
+    /// Whether the device has to be picked by hand (the browser's chooser)
+    /// rather than found.
+    pub choose: bool,
 }
 
 /// A MIDI port as the settings dialog lists it: the stable id it reconnects
@@ -1043,7 +1226,6 @@ fn midi_config(cfg: &InputSettings) -> sdroxide_midi::MidiConfig {
 
 /// The 0..=127 value to echo back to a controller for this action, or `None`
 /// where there is nothing meaningful to show.
-#[cfg(not(target_arch = "wasm32"))]
 fn indicator(act: Action, state: &RadioState, view: &ViewState) -> Option<u8> {
     use Action::*;
     let on = |b: bool| Some(if b { 127u8 } else { 0 });

@@ -1,0 +1,22 @@
+# The Icom RC-28 remote encoder — a tuning knob with TRANSMIT, F-1 and F-2 —
+# for Settings → Controls → Icom RC-28.
+#
+# sdroxide talks to it through /dev/hidraw*, which is root-only on most
+# distributions. The same two-part arrangement as 60-sdroxide-relay.rules, for
+# the same reasons, which that file explains at length: TAG+="uaccess" gives the
+# person at the seat an ACL, and a GROUP on a line of its own is the fallback
+# for a machine with no seat (ssh, a service, WSL2). Kept on its own line
+# because a group missing on this distribution discards the whole line it is
+# on. To use the fallback:
+#
+#   sudo groupadd -f plugdev && sudo usermod -aG plugdev $USER
+#
+# Install:
+#   sudo cp 60-sdroxide-rc28.rules /usr/lib/udev/rules.d/
+#   sudo udevadm control --reload
+# then unplug and replug the RC-28.
+
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0c26", ATTRS{idProduct}=="001e", ENV{SDROXIDE_RC28}="1"
+
+ENV{SDROXIDE_RC28}=="1", MODE="0660", TAG+="uaccess"
+ENV{SDROXIDE_RC28}=="1", GROUP="plugdev"

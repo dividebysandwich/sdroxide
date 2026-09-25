@@ -1,0 +1,20 @@
+[package]
+name = "sdroxide-rc28"
+version.workspace = true
+edition.workspace = true
+
+# The Icom RC-28 remote encoder: a tuning knob, three buttons and four LEDs on
+# USB HID.
+#
+# Two halves. `proto` is the wire format and nothing else — no I/O, no clock —
+# so it builds for wasm32, where the browser client feeds it reports from
+# WebHID. The worker that finds, opens and reads the device is native-only and
+# reaches it through `sdroxide-relay`'s HID layer, which already speaks hidraw,
+# SetupAPI and IOKit without a system library; the gate below keeps that (and
+# `serialport` behind it) off the wasm dependency path.
+[dependencies]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sdroxide-relay = { path = "../sdroxide-relay" }
+crossbeam-channel.workspace = true
+tracing.workspace = true

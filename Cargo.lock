@@ -5330,6 +5330,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdroxide-rc28"
+version = "1.6.8"
+dependencies = [
+ "crossbeam-channel",
+ "sdroxide-relay",
+ "tracing",
+]
+
+[[package]]
 name = "sdroxide-relay"
 version = "1.6.9"
 dependencies = [
@@ -5547,6 +5556,7 @@ dependencies = [
  "sdroxide-config",
  "sdroxide-midi",
  "sdroxide-proto",
+ "sdroxide-rc28",
  "sdroxide-solar",
  "sdroxide-speech",
  "sdroxide-types",
