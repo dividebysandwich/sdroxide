@@ -432,6 +432,7 @@ impl RemoteController {
                 self.pending.push_back(RadioEvent::VoiceStatus(v));
             }
             ServerMsg::Spots(s) => self.pending.push_back(RadioEvent::Spots(s)),
+            ServerMsg::BandOpenings(o) => self.pending.push_back(RadioEvent::BandOpenings(o)),
             ServerMsg::NetStatus(s) => self.pending.push_back(RadioEvent::NetStatus(s)),
             ServerMsg::CallsignResult(c) => self.pending.push_back(RadioEvent::CallsignResult(c)),
             ServerMsg::Upload(r) => self.pending.push_back(RadioEvent::Upload(r)),

@@ -778,6 +778,8 @@ pub struct SdroxideApp {
     // ── Network cockpit (spots / lookup / uploads) ──
     /// Latest merged network spots (DX cluster / POTA / SOTA / PSK Reporter).
     spots: Vec<Spot>,
+    /// Live band-opening detections (band × continent path surges).
+    band_openings: Vec<sdroxide_types::BandOpening>,
     /// Latest feed/connection status line (cluster state, feed errors).
     net_status: Option<String>,
     /// Bumped whenever `spots` or `net_status` changes, so the multi-radio
@@ -1489,6 +1491,7 @@ impl SdroxideApp {
             mail: winlink::MailUi::default(),
             log_edit: None,
             spots: Vec::new(),
+            band_openings: Vec::new(),
             net_status: None,
             spots_gen: 0,
             adopted_spots_gen: None,
@@ -1662,26 +1665,32 @@ impl SdroxideApp {
 
     /// Multi-radio: the network spots and feed status this tab holds, and the
     /// generation they are at.
-    pub(crate) fn spot_feed(&self) -> (u64, &[Spot], Option<&str>) {
-        (self.spots_gen, &self.spots, self.net_status.as_deref())
+    pub(crate) fn spot_feed(
+        &self,
+    ) -> (u64, &[Spot], Option<&str>, &[sdroxide_types::BandOpening]) {
+        (self.spots_gen, &self.spots, self.net_status.as_deref(), &self.band_openings)
     }
 
-    /// Multi-radio: take the station radio's spots and feed status.
+    /// Multi-radio: take the station radio's spots, feed status and openings.
     ///
     /// Only the station radio's engine runs the feeds — a DX cluster login, an
     /// RBN socket and the reporters are things a station has one of — so every
     /// other tab's engine sends none, and a spot never reached the waterfall or
-    /// the SPOTS list of any radio but the first (issue #410). `generation` is the
-    /// station tab's own counter.
+    /// the SPOTS list of any radio but the first (issue #410). The openings ride
+    /// with the spots for the same reason: they are computed from those feeds,
+    /// so without them the OPENINGS section was empty on every tab but the
+    /// station radio. `generation` is the station tab's own counter.
     pub(crate) fn adopt_spot_feed(
         &mut self,
         generation: u64,
         spots: &[Spot],
         status: Option<&str>,
+        openings: &[sdroxide_types::BandOpening],
     ) {
         self.adopted_spots_gen = Some(generation);
         self.spots = spots.to_vec();
         self.net_status = status.map(str::to_string);
+        self.band_openings = openings.to_vec();
     }
 
     /// Whether this tab is behind the station radio's spot generation `generation`.

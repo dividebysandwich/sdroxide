@@ -155,6 +155,17 @@ pub struct ViewState {
     /// than something to leave switched on over a decode list.
     #[serde(default)]
     pub map_night: bool,
+    /// Show the band-opening detector's section in the SPOTS window. On by
+    /// default — the chip is a collapse, not a discovery step, but a listener
+    /// in front of a quiet SPOTS list may want the detections out of view.
+    #[serde(default = "spots_openings_default")]
+    pub spots_openings: bool,
+    /// Fraction of the SPOTS window's content height the OPENINGS section
+    /// takes; the handle between it and the spot list drags this. A listener
+    /// watching a big band surge wants more room for the detections and less
+    /// for the spot rows; the two trade height through this.
+    #[serde(default = "spots_openings_fraction_default")]
+    pub spots_openings_fraction: f32,
     /// Which spot kinds are shown in the SPOTS list, on the panadapter and on
     /// the world map — indexed by `SpotKind::index`, so the chip order in the
     /// SPOTS window and this array have to stay in lockstep.
@@ -567,6 +578,8 @@ impl Default for ViewState {
             prop_map_mode: prop_map_mode_default(),
             prop_map_band: prop_map_band_default(),
             map_night: false,
+            spots_openings: true,
+            spots_openings_fraction: 0.24,
             spot_kinds_shown: spot_kinds_default(),
             digi_panel_fraction: 0.46,
             digi_split_fraction: 0.52,
@@ -737,6 +750,18 @@ fn center_on_vfo_default() -> bool {
 /// a feed is enough to see its spots.
 fn spot_kinds_default() -> [bool; SPOT_KINDS] {
     [true; SPOT_KINDS]
+}
+
+/// Default for [`ViewState::spots_openings`] — on, so the detector is visible
+/// the moment its first detection lands.
+fn spots_openings_default() -> bool {
+    true
+}
+
+/// Default for [`ViewState::spots_openings_fraction`] — a shallow strip that
+/// leaves the spot list nearly a full window, until the operator pulls it up.
+fn spots_openings_fraction_default() -> f32 {
+    0.24
 }
 
 /// Default for [`ViewState::prop_map_mode`] — every band at once, which reads

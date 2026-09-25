@@ -1159,6 +1159,7 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
                 Some(ServerMsg::VoiceStatus(v))
             }
             RadioEvent::Spots(s) => Some(ServerMsg::Spots(s)),
+            RadioEvent::BandOpenings(o) => Some(ServerMsg::BandOpenings(o)),
             RadioEvent::NetStatus(s) => Some(ServerMsg::NetStatus(s)),
             RadioEvent::CallsignResult(c) => Some(ServerMsg::CallsignResult(c)),
             RadioEvent::Upload(r) => Some(ServerMsg::Upload(r)),
