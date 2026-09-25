@@ -446,6 +446,11 @@ pub struct DigiStatus {
     /// action (calling CQ, replying, picking a message).
     #[serde(default)]
     pub tx_watchdog: bool,
+    /// Why a key-up was refused or is armed with nothing to send — an empty
+    /// message box, most often. `None` when there is nothing to say. A message
+    /// rather than a flag so each mode can name its own reason.
+    #[serde(default)]
+    pub tx_refused: Option<String>,
     /// The current QSO's message exchange (empty when idle).
     pub transcript: Vec<TranscriptLine>,
     /// Current engine config (so a fresh client can populate its editor).
@@ -1034,6 +1039,7 @@ impl DigiStatus {
             tx_even: config.tx_even,
             transmitting: false,
             tx_watchdog: false,
+            tx_refused: None,
             transcript: Vec::new(),
             config,
             text_rx: String::new(),

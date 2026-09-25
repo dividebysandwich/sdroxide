@@ -1492,7 +1492,15 @@ use sdroxide_types::{
 /// `Command::SetDigiConfig` and `DigiStatus` whole, so a v169 peer reads the
 /// extra bytes as the start of the next field and fails to decode every
 /// digital status — the same break as v162's appended CW settings.
-pub const PROTO_VERSION: u16 = 170;
+///
+/// v171: FSK441's transmit half. `DigiStatus` gains `tx_refused`
+/// (`Option<String>`) on its tail, the reason a key-up was refused — an empty
+/// message box, most often — so a panel can say why rather than looking armed
+/// and doing nothing. `DigiStatus` rides whole, so a v170 peer reads the extra
+/// bytes as the start of the next field and fails to decode every digital
+/// status. No new wire type: FSK441's transmit runs through the ordinary digi
+/// engine seam (`DigiTxText`/`DigiTxActive`).
+pub const PROTO_VERSION: u16 = 171;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

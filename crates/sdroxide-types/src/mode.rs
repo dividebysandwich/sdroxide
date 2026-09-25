@@ -356,8 +356,11 @@ pub enum Mode {
     /// the short ionised-trail bursts a meteor leaves, so a decode carries the
     /// time *into* the slot it was found at. The period is an operator setting
     /// ([`crate::Fsk441Period`]), not part of the mode, so [`Mode::slot_timing`]
-    /// answers `None` and the clock comes from the chosen period. Receive only
-    /// in this build. Appended for the same reason as [`Mode::Hell`].
+    /// answers `None` and the clock comes from the chosen period.
+    ///
+    /// Transmit is the mode's own shape: the operator holds the key and the
+    /// message repeats for the length of the over. Appended for the same reason
+    /// as [`Mode::Hell`].
     Fsk441,
 }
 
@@ -852,20 +855,14 @@ impl Mode {
                 // A decoder for a beacon network's signal, not a beacon
                 // implementation — see `Mode::Pi4`'s own doc comment.
                 | Mode::Pi4
-                // MSK144 is a QSO mode, but transmit is not wired in this
-                // build — the panel is the decode list alone.
+                // MSK144, JT65/JT9, FST4 and Q65 are QSO modes, but transmit
+                // is not wired in this build — the panel is the decode list
+                // alone. FSK441 has a transmit path now, so it is not here.
                 | Mode::Msk144
-                // JT65/JT9 are QSO modes, but transmit is not wired in this
-                // build — the panel is the decode list alone.
                 | Mode::Jt65
                 | Mode::Jt9
-                // FST4 is a QSO mode, but transmit is not wired in this
-                // build — the panel is the decode list alone.
                 | Mode::Fst4
-                // Q65 is a QSO mode, but transmit is not wired in this
-                // build — the panel is the decode list alone.
                 | Mode::Q65
-                | Mode::Fsk441
         )
     }
 

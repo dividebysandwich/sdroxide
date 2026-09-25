@@ -60,7 +60,11 @@ pub fn make_modulator(mode: Mode, rate: f64, passband: (f32, f32)) -> Option<Box
         | Mode::PacketHf
         // AtChat COFDM rides the same USB path as the keyboard modes.
         | Mode::AtChat
-        | Mode::Rade => Some(Box::new(SsbMod::new(rate, lo, hi))),
+        | Mode::Rade
+        // FSK441 is four audio tones on a sideband, keyed by the digi engine's
+        // transmit path. Without this a manual PTT on an SDR sent a bare
+        // carrier under an FSK441 label.
+        | Mode::Fsk441 => Some(Box::new(SsbMod::new(rate, lo, hi))),
         Mode::Am | Mode::Sam | Mode::Dsb => Some(Box::new(AmMod::new(rate))),
         // ISB is receive only: transmitting it wants two modulators feeding
         // one linear amplifier, which is a station, not a setting. No
@@ -115,8 +119,7 @@ pub fn make_modulator(mode: Mode, rate: f64, passband: (f32, f32)) -> Option<Box
         | Mode::Jt65
         | Mode::Jt9
         | Mode::Fst4
-        | Mode::Q65
-        | Mode::Fsk441 => None,
+        | Mode::Q65 => None,
     }
 }
 

@@ -6053,8 +6053,14 @@ meteor trail appears it catches part of one. The decoder scans the whole
 period for those captures; there is no slot-aligned decode the way FT8 has,
 and a whole period may pass with nothing.
 
-**Receive only.** Transmit is not wired in this build. What the panel does is
-copy the pings that arrive.
+**Transmitting.** FSK441 is worked by sending the message over and over: you
+hold transmit and the message repeats for the length of the over, so a meteor's
+brief trail catches whatever part of it is passing. The **TX** row under the
+decode list is a single line — type the message (`W1ABC W9XYZ FN42`, or one of
+the shorthand words `R26`/`R27`/`RRR`/`73`) and press **TX**; **CALL CQ** fills
+the box with a CQ and starts it. The message loops until you unkey. There is no
+automatic sequencing and no station being called: a meteor-scatter contact is
+arranged by ear and by the shorthand, which is what the mode has always been.
 
 ## 4. Skimmers
 
@@ -16047,7 +16053,7 @@ using. Bind them under **Speech** on the Controls tab:
 | JT65 / JT9 | The classic WSJT weak-signal modes in a 60-second slot: JT65A (65-FSK, Reed–Solomon) and JT9 (9-FSK, 16 Hz wide), with the short 72-bit JT message. Receive only. See [3.22](#322-jt65-and-jt9). |
 | FST4 | The slow weak-signal mode for EME, troposcatter and LF/MF, at a chosen 15/30/60/120/300-second period, with FT8's 77-bit message. Receive only. See [3.23](#323-fst4). |
 | Q65 | WSJT-X's modern weak-signal mode for EME and scatter paths: ten sub-modes (period and tone spacing), FT8's 77-bit message and a CRC. Receive only. See [3.24](#324-q65). |
-| FSK441 | The original meteor-scatter mode on 6 m and 2 m: 4-FSK at 441 baud carrying free text and the `R26`/`R27`/`RRR`/`73` single-tone shorthand, in a 15/30-second period. The decoder hunts the period for meteor-trail pings. Receive only. See [3.25](#325-fsk441). |
+| FSK441 | The original meteor-scatter mode on 6 m and 2 m: 4-FSK at 441 baud carrying free text and the `R26`/`R27`/`RRR`/`73` single-tone shorthand, in a 15/30-second period. The decoder hunts the period for meteor-trail pings; transmit repeats the message for the length of the over. See [3.25](#325-fsk441). |
 | PSK | PSK31 keyboard mode (BPSK31 / varicode). |
 | RTTY | RTTY keyboard mode (Baudot; selectable shift and baud), on a sideband. |
 | RTTY-FM | The same modem on an FM carrier, the way a club bulletin is still sent on VHF. |

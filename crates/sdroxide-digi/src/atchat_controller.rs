@@ -151,6 +151,7 @@ fn build_status(cfg: &DigiConfig, session: &AtChatSession) -> DigiStatus {
         tx_even: false,
         transmitting: atchat.keyed,
         tx_watchdog: false,
+        tx_refused: None,
         transcript: Vec::<TranscriptLine>::new(),
         config: cfg.clone(),
         text_rx: String::new(),
