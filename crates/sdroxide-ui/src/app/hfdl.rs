@@ -73,6 +73,16 @@ impl SdroxideApp {
             if khz != old_khz {
                 cfg.frequency_hz = khz * 1e3;
             }
+            crate::chrome::row_tail(ui, |ui| {
+                let log = self.hfdl_status.as_ref().map(|s| s.log.as_slice()).unwrap_or(&[]);
+                crate::app::panels::save_text_chip(
+                    ui,
+                    !log.is_empty(),
+                    "sdroxide-hfdl-log.txt",
+                    "Save the HFDL decode log to a file",
+                    || crate::app::save_text::hfdl_log_text(log),
+                );
+            });
         });
         ui.add_space(4.0);
 

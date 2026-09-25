@@ -142,6 +142,7 @@ impl SdroxideApp {
 
             crate::chrome::row_tail(ui, |ui| {
                 self.clear_rx_chip(ui, cmds);
+                self.save_rx_chip(ui);
                 if crate::chrome::chip(
                     ui,
                     self.show_digi_settings,

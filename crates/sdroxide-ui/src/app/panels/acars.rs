@@ -62,6 +62,7 @@ impl SdroxideApp {
             )
             .on_hover_text("Blocks that framed, and blocks whose check sequence failed.");
             self.clear_rx_chip(ui, cmds);
+            self.save_rx_chip(ui);
         });
 
         ui.horizontal_wrapped(|ui| {

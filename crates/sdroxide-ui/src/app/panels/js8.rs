@@ -1105,6 +1105,7 @@ impl SdroxideApp {
             // Empties the conversation above, not the selection, and is dead
             // while there is nothing in it.
             self.clear_rx_chip_enabled(ui, cmds, !js8.messages.is_empty());
+            self.save_rx_chip(ui);
         });
 
         // The gap between the two rows. In a bottom-up layout this space sits

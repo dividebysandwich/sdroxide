@@ -4656,6 +4656,16 @@ impl SdroxideApp {
                     }
                 }
 
+                ui.add_space(2.0);
+                crate::chrome::menu_caption(ui, "Spots");
+                crate::app::panels::save_text_chip(
+                    ui,
+                    !self.skimmer_spots.is_empty(),
+                    "sdroxide-skimmer.txt",
+                    "Save the skimmer's spot list to a file",
+                    || crate::app::save_text::skimmer_text(&self.skimmer_spots),
+                );
+
                 if cfg != self.state.skimmer {
                     cmds.push(Command::SetSkimmerConfig(cfg));
                 }
