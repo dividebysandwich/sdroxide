@@ -153,6 +153,20 @@ impl SdroxideApp {
                 }
                 self.cw_speed_controls(ui, cmds);
                 self.clear_chip_with_readback(ui, cmds);
+                // A learning tool, not a sending one: it plays Morse through
+                // this computer's speakers and never keys the radio, so it sits
+                // on the receive row where SWL mode and a receive-only set can
+                // still reach it.
+                if crate::chrome::chip(ui, self.morse.show, RichText::new("TRAINER").size(10.5))
+                    .on_hover_text(
+                        "Learn Morse: read characters and words, play them at your own \
+                         speed, and a Koch drill that adds a character at a time. It plays \
+                         here, through this computer's speakers — nothing keys the radio.",
+                    )
+                    .clicked()
+                {
+                    self.morse.show = !self.morse.show;
+                }
             });
         });
         ui.add_space(4.0);
@@ -551,19 +565,6 @@ impl SdroxideApp {
                      keyer is another transmit-receive cycle.",
                 );
                 self.msg_edit_chip(ui);
-                // A learning tool, not a sending one: it plays Morse to this
-                // computer's speakers only and never keys the radio. On the CW
-                // panel because that is where a CW learner already is.
-                if crate::chrome::chip(ui, self.morse.show, RichText::new("TRAINER").size(10.5))
-                    .on_hover_text(
-                        "Learn Morse: play characters and words locally at your own speed, \
-                         and a Koch drill that adds a character at a time. Nothing here keys \
-                         the radio.",
-                    )
-                    .clicked()
-                {
-                    self.morse.show = !self.morse.show;
-                }
             });
         });
         self.cw_macro_row(ui, cmds, tx_ok, &my_call);

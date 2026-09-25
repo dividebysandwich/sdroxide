@@ -2007,8 +2007,8 @@ along with the setting that changes it.
 > with the rig in CW, or the keyed tone as audio (MCW) with the rig held on a
 > sideband ([§6.2.2](#622-cat-radios-serial-control--usb-audio)).
 
-**Learning Morse (the trainer).** The **TRAINER** chip in the CW panel's
-sending row opens a learning tool, not a sending one: it plays Morse through
+**Learning Morse (the trainer).** The **TRAINER** chip in the CW panel opens a
+learning tool, not a sending one: it plays Morse through
 this computer's speakers only and **never keys the radio**, so it works on a
 receive-only set and in SWL mode. **TRANSLATE** converts text to Morse and back
 with the same ITU alphabet the decoder and keyer use — letters, digits,
