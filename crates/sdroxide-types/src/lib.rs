@@ -37,6 +37,7 @@ mod limerfe;
 mod memory;
 mod meters;
 mod mode;
+mod morse_trainer;
 mod netcfg;
 mod pi4;
 mod pictures;
@@ -180,6 +181,7 @@ pub use limerfe::{
 pub use memory::{BandStackEntry, MemoryChannel, MemoryFolder, MemorySort, RttyMemory};
 pub use meters::{Meters, OVERLOAD_FRACTION, PsMeter, TxMeters, TxTelemetry};
 pub use mode::{AgcMode, Mode, NrEngine, NrLevel, NrStrength, SlotTiming};
+pub use morse_trainer::{ADVANCE_RUN, Answer, KOCH_ORDER, MorseProgress, START_UNLOCKED};
 pub use netcfg::{
     ClusterConfig, Credentials, FeedConfig, FreeDvReporterConfig, LookupProvider, NetworkConfig,
     PskConfig, RbnConfig, WsprNetConfig,

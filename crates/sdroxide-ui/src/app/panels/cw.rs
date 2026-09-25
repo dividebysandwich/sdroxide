@@ -551,6 +551,19 @@ impl SdroxideApp {
                      keyer is another transmit-receive cycle.",
                 );
                 self.msg_edit_chip(ui);
+                // A learning tool, not a sending one: it plays Morse to this
+                // computer's speakers only and never keys the radio. On the CW
+                // panel because that is where a CW learner already is.
+                if crate::chrome::chip(ui, self.morse.show, RichText::new("TRAINER").size(10.5))
+                    .on_hover_text(
+                        "Learn Morse: play characters and words locally at your own speed, \
+                         and a Koch drill that adds a character at a time. Nothing here keys \
+                         the radio.",
+                    )
+                    .clicked()
+                {
+                    self.morse.show = !self.morse.show;
+                }
             });
         });
         self.cw_macro_row(ui, cmds, tx_ok, &my_call);

@@ -1583,6 +1583,17 @@ pub fn save_memory_folders(folders: &[sdroxide_types::MemoryFolder]) -> Result<(
     save_json("memory_folders.json", &folders)
 }
 
+/// The Morse trainer's progress: which Koch characters are unlocked and the
+/// running score. Its own file, like the memory list, so a version without the
+/// trainer leaves it alone rather than overwriting it.
+pub fn load_morse_progress() -> sdroxide_types::MorseProgress {
+    load_json("morse.json")
+}
+
+pub fn save_morse_progress(progress: &sdroxide_types::MorseProgress) -> Result<(), ConfigError> {
+    save_json("morse.json", progress)
+}
+
 /// Radio backend config (SoapySDR vs CAT rig; serial + sound-card settings).
 /// Radio 0's config; other radios go through [`Store::load_radio_config`].
 pub fn load_radio_config() -> sdroxide_types::RadioConfig {

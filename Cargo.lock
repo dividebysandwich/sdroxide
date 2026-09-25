@@ -5545,6 +5545,7 @@ dependencies = [
  "sdroxide-aprs",
  "sdroxide-audio",
  "sdroxide-config",
+ "sdroxide-dsp",
  "sdroxide-midi",
  "sdroxide-proto",
  "sdroxide-solar",
