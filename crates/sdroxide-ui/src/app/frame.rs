@@ -222,6 +222,14 @@ impl eframe::App for SdroxideApp {
         // A silence auto-split armed in the REC popup: start and stop the MP3
         // recording with the receiver's squelch (issue #546).
         self.poll_recording_gate(&mut cmds);
+        // The gate decides once a frame, so while it is armed keep frames
+        // coming even when nothing else is animating — otherwise an unattended
+        // monitor on an idle screen would never notice a transmission. (Frames
+        // are what `logic` would give us; a fully hidden window is the engine's
+        // job and is left for a later cut.)
+        if self.rec_gate_s.is_some() {
+            crate::repaint::after_ms(&ctx, 250);
+        }
         // The keyboard, the mouse buttons and the control surface belong to
         // the focused radio alone. In a split view every visible radio runs
         // this frame loop, and without the gate one arrow key would tune all

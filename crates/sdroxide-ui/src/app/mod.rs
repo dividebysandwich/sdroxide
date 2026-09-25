@@ -499,10 +499,10 @@ pub struct SdroxideApp {
     /// [`Self::recording_stop_at`], and ticked once a frame by
     /// [`Self::poll_recording_gate`].
     rec_gate_s: Option<u16>,
-    /// Unix UTC seconds when the current run of silence began while recording,
-    /// or `None` when there is no run to time. Carried between frames so the
-    /// hold is measured across them; see [`Self::poll_recording_gate`].
-    rec_gate_silent_since: Option<i64>,
+    /// Everything the gate carries between frames — the run of silence, a start
+    /// still pending, and the two holds that stop a manual stop or a refused
+    /// start being undone every frame. See [`Self::poll_recording_gate`].
+    rec_gate: top_bar::RecGate,
     /// Fade clock for the receive-filter popup behind the BW chip, like
     /// `nr_popup_since`.
     bw_popup_since: Option<f64>,
@@ -1402,7 +1402,7 @@ impl SdroxideApp {
             rec_popup_since: None,
             recording_stop_at: None,
             rec_gate_s: None,
-            rec_gate_silent_since: None,
+            rec_gate: Default::default(),
             bw_popup_since: None,
             duplex_popup_since: None,
             rpt_tone_popup_since: None,
