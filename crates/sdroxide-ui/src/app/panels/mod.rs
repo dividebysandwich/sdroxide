@@ -130,6 +130,17 @@ pub(in crate::app) fn save_text_chip(
     hover: &str,
     text: impl FnOnce() -> String,
 ) {
+    let resp = save_chip(ui, ready, hover);
+    if resp.clicked() {
+        crate::download::save(name, text().as_bytes());
+    }
+}
+
+/// The **SAVE** chip itself, drawn the same wherever it appears; the two
+/// callers differ only in what they do when it is clicked. One place, so the
+/// chip cannot drift between a panel that holds its log in `DigiStatus` and one
+/// that holds it beside the status (issue #533).
+fn save_chip(ui: &mut egui::Ui, ready: bool, hover: &str) -> egui::Response {
     let resp = crate::chrome::chip_accent_enabled(
         ui,
         ready,
@@ -139,13 +150,10 @@ pub(in crate::app) fn save_text_chip(
         crate::theme::CYAN(),
         crate::theme::INK_ON_CYAN(),
     );
-    let resp = if ready {
+    if ready {
         resp.on_hover_text(hover)
     } else {
         resp.on_disabled_hover_text("Nothing decoded to save")
-    };
-    if resp.clicked() {
-        crate::download::save(name, text().as_bytes());
     }
 }
 
@@ -815,20 +823,7 @@ impl SdroxideApp {
     /// (issue #533).
     pub(in crate::app) fn save_rx_chip(&self, ui: &mut egui::Ui) {
         let ready = self.digi_status.as_ref().is_some_and(crate::app::save_text::digi_has_log);
-        let resp = crate::chrome::chip_accent_enabled(
-            ui,
-            ready,
-            false,
-            " SAVE ",
-            Some(10.5),
-            crate::theme::CYAN(),
-            crate::theme::INK_ON_CYAN(),
-        );
-        let resp = if ready {
-            resp.on_hover_text("Save what this panel has decoded to a file")
-        } else {
-            resp.on_disabled_hover_text("Nothing decoded to save")
-        };
+        let resp = save_chip(ui, ready, "Save what this panel has decoded to a file");
         if resp.clicked()
             && let Some((name, text)) =
                 self.digi_status.as_ref().and_then(crate::app::save_text::digi_log)
