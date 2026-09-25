@@ -6292,6 +6292,24 @@ fn stepped_hz(cur: f64, step: f64, snap: bool) -> f64 {
     hz.max(0.0)
 }
 
+/// Which run of the band list a band belongs to, for the menu's captions:
+/// `0` HF, `1` VHF, `2` UHF. Classified by the middle of the band's edges, so
+/// the military airband (225–400 MHz) reads UHF, not VHF, and the FM broadcast
+/// band (87.5–108) VHF. `GEN` — the absence of a band — is HF, the top of the
+/// list it heads; a band the region's plan gives no edges is left where the
+/// caller puts it.
+fn band_span(band: Band) -> u8 {
+    let Some((lo, hi)) = band.edges() else { return 0 };
+    let mid = (lo + hi) / 2.0;
+    if mid < 30_000_000.0 {
+        0
+    } else if mid < 300_000_000.0 {
+        1
+    } else {
+        2
+    }
+}
+
 /// The band + mode + digital chip rows: the body of the band/mode popup.
 ///
 /// A free function taking the state it draws from, rather than a method, so a
@@ -6313,77 +6331,96 @@ fn band_mode_menu(
     daylight: bool,
     cmds: &mut Vec<Command>,
 ) {
-    crate::chrome::menu_caption(ui, "Band");
     let digital = mode.is_digital();
-    ui.horizontal_wrapped(|ui| {
-        for b in Band::ALL {
-            // A band the station's own band plan does not give this region gets
-            // no button: 4 m is Region 1's alone and 1.25 m and 33 cm are the
-            // Americas', and offering an operator a button that tunes outside
-            // their own allocation — out of band, and with `tx_ham_only` set,
-            // straight into a transmit lockout — would be offering them
-            // something their licence has not got. GEN is the one bandless entry
-            // that stays: it is the absence of a band.
-            if b != Band::Gen && b.edges().is_none() {
-                continue;
-            }
-            let std_hz = if digital { digi_freq_for_band(mode, b) } else { None };
-            let digi_hz = band_chip_dial(mode, b, std_hz);
-            // A radio that publishes no tuning range keeps every band button:
-            // `may_rx_span` reads an empty range list as "the driver didn't
-            // say", and greying out the whole bar would be a worse guess than
-            // offering a band the radio turns out not to reach. Any *overlap*
-            // is enough — a receiver that reaches into the band without
-            // reaching either end of it still has the band (issue #272).
-            let enabled =
-                caps.is_none_or(|c| b.edges().is_none_or(|(lo, hi)| c.may_rx_span(lo, hi)));
-            let active = match std_hz {
-                Some(hz) => (state.active_freq_hz() - hz).abs() < 500.0,
-                None => state.band == b,
-            };
-            // The published forecast, where there is one. Colour only: the
-            // chip still says what band it is, and a band nothing is published
-            // about — 160 m, 60 m, and everything above 10 m — looks exactly
-            // as it did before rather than being given a verdict it has not
-            // got. The words, the source and the age are in the tooltip.
-            let verdict = conditions.and_then(|c| c.for_band(b, daylight));
-            let tint = verdict
-                .map(sdroxide_solar::BandRating::of)
-                .and_then(crate::app::bands::rating_color);
-            let resp = crate::chrome::chip_enabled_tinted(
-                ui,
-                enabled,
-                active,
-                b.label(),
-                tint,
-                std_hz.is_some(),
-            );
-            let resp = match verdict {
-                Some(v) => resp.on_hover_text(format!(
-                    "{}: {v} ({}) — forecast by HAMQSL.com from the solar indices, \
-                     not a measurement of your own path.",
+    // One band chip, drawn from the menu's state. A closure because the bands
+    // are drawn in several runs below — the HF allocations, the VHF and UHF
+    // ones, then the broadcast services — and every run wants exactly this chip.
+    let mut band_chip = |ui: &mut egui::Ui, b: Band| {
+        // A band the station's own band plan does not give this region gets
+        // no button: 4 m is Region 1's alone and 1.25 m and 33 cm are the
+        // Americas', and offering an operator a button that tunes outside
+        // their own allocation — out of band, and with `tx_ham_only` set,
+        // straight into a transmit lockout — would be offering them
+        // something their licence has not got. GEN is the one bandless entry
+        // that stays: it is the absence of a band.
+        if b != Band::Gen && b.edges().is_none() {
+            return;
+        }
+        let std_hz = if digital { digi_freq_for_band(mode, b) } else { None };
+        let digi_hz = band_chip_dial(mode, b, std_hz);
+        // A radio that publishes no tuning range keeps every band button:
+        // `may_rx_span` reads an empty range list as "the driver didn't
+        // say", and greying out the whole bar would be a worse guess than
+        // offering a band the radio turns out not to reach. Any *overlap*
+        // is enough — a receiver that reaches into the band without
+        // reaching either end of it still has the band (issue #272).
+        let enabled = caps.is_none_or(|c| b.edges().is_none_or(|(lo, hi)| c.may_rx_span(lo, hi)));
+        let active = match std_hz {
+            Some(hz) => (state.active_freq_hz() - hz).abs() < 500.0,
+            None => state.band == b,
+        };
+        // The published forecast, where there is one. Colour only: the
+        // chip still says what band it is, and a band nothing is published
+        // about — 160 m, 60 m, and everything above 10 m — looks exactly
+        // as it did before rather than being given a verdict it has not
+        // got. The words, the source and the age are in the tooltip.
+        let verdict = conditions.and_then(|c| c.for_band(b, daylight));
+        let tint = verdict
+            .map(sdroxide_solar::BandRating::of)
+            .and_then(crate::app::bands::rating_color);
+        let resp = crate::chrome::chip_enabled_tinted(
+            ui,
+            enabled,
+            active,
+            b.label(),
+            tint,
+            std_hz.is_some(),
+        );
+        let resp = match verdict {
+            Some(v) => {
+                let hour = if daylight { "daytime" } else { "night" };
+                resp.on_hover_text(format!(
+                    "{}: {v} ({hour}) — forecast by HAMQSL.com from the solar indices, not \
+                     a measurement of your own path.",
                     b.label(),
-                    if daylight { "daytime" } else { "night" },
-                )),
-                None => resp,
-            };
-            // A chip that cannot be pressed has to say why. A band greyed out
-            // with no explanation is what issue #272 was: an HF-plus-6 m
-            // transceiver whose receive range said HF, and one dead button with
-            // nothing on screen naming the range or where it came from.
-            let resp = if enabled {
-                resp
-            } else {
-                resp.on_disabled_hover_text(disabled_band_reason(b, caps, ranges_stated))
-            };
-            if resp.clicked() {
-                match digi_hz {
-                    Some(hz) => cmds.push(Command::SetVfo { vfo: state.active_vfo, hz }),
-                    None => cmds.push(Command::SetBand(b)),
-                }
+                ))
+            }
+            None => resp,
+        };
+        // A chip that cannot be pressed has to say why. A band greyed out
+        // with no explanation is what issue #272 was: an HF-plus-6 m
+        // transceiver whose receive range said HF, and one dead button with
+        // nothing on screen naming the range or where it came from.
+        let resp = if enabled {
+            resp
+        } else {
+            resp.on_disabled_hover_text(disabled_band_reason(b, caps, ranges_stated))
+        };
+        if resp.clicked() {
+            match digi_hz {
+                Some(hz) => cmds.push(Command::SetVfo { vfo: state.active_vfo, hz }),
+                None => cmds.push(Command::SetBand(b)),
             }
         }
-    });
+    };
+
+    // The bands in the order a radio face lists them — HF, then VHF, then UHF,
+    // then the broadcast services — each run under its own caption. One flat
+    // row of thirty-two chips gave an operator no handle on "where in the
+    // spectrum am I looking"; the captions are that handle, and they add no
+    // state and change no behaviour.
+    let mut run = |ui: &mut egui::Ui, filter: fn(Band) -> bool| {
+        ui.horizontal_wrapped(|ui| {
+            for b in Band::ALL.into_iter().filter(|b| filter(*b)) {
+                band_chip(ui, b);
+            }
+        });
+    };
+    crate::chrome::menu_caption(ui, "HF");
+    run(ui, |b| matches!(band_span(b), 0));
+    ui.add_space(4.0);
+    crate::chrome::menu_caption(ui, "VHF / UHF");
+    run(ui, |b| matches!(band_span(b), 1 | 2));
     ui.add_space(6.0);
     crate::chrome::menu_caption(ui, "Mode");
     ui.horizontal_wrapped(|ui| {
