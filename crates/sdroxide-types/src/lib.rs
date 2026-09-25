@@ -103,7 +103,7 @@ pub use awards::{
 };
 pub use band::Band;
 pub use band_openings::{
-    BandOpening, BandOpeningStats, BandOpeningTracker, BandPath, OpenOptions, OpeningState,
+    BandOpening, BandOpeningTracker, BandPath, OpenOptions, OpeningState,
 };
 pub use band_segments::{
     APRS_DIALS, DigiChannel, DigiPreset, FSQ_DIALS, FT2_DIALS, FT4_DIALS, FT8_DIALS,

@@ -136,9 +136,7 @@ fn spot_row(ui: &mut egui::Ui, s: &Spot, now_utc: i64, needed: bool) -> egui::Re
 /// One band opening as a compact row — a state tag, the path, the surge
 /// factor, the distinct caller count and how long it has held. Styled like a
 /// spot row so the OPENINGS section reads as part of the same list rather than
-/// a banner (the first version's horizontal strip left the window's
-/// non-broadcast, non-list look, which read wrong against everything else in
-/// it).
+/// as a banner of its own.
 fn opening_row(ui: &mut egui::Ui, o: &sdroxide_types::BandOpening, now: i64) {
     let (state_tag, state_col) = match o.state {
         sdroxide_types::OpeningState::Opening => ("OPEN", crate::theme::CYAN()),
@@ -456,7 +454,7 @@ impl SdroxideApp {
                     if crate::chrome::chip(ui, self.view.spots_openings, "OPENINGS")
                         .on_hover_text(
                             "Band-opening detections: paths whose recent activity surged \
-                             past their own 3-hour baseline (adapted from OpenHamClock)",
+                             past the path's own observed baseline",
                         )
                         .clicked()
                     {
@@ -491,9 +489,9 @@ impl SdroxideApp {
                     ui.label(RichText::new(s).size(11.0).color(crate::theme::gray(150)));
                 }
                 ui.separator();
-                // Band-opening detections from the same feeds (adapted from
-                // OpenHamClock): a path whose recent activity surged past its
-                // own 3-hour baseline. Behind the OPENINGS chip, and split
+                // Band-opening detections from the same feeds: a path whose
+                // recent activity surged past its own observed baseline. Behind
+                // the OPENINGS chip, and split
                 // from the spot list by a draggable handle, so a band surge
                 // can be given most of the window or squeezed back to a
                 // sliver. Strongest first — opening, then active, then closing

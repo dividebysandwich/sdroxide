@@ -1960,8 +1960,7 @@ pub enum ServerMsg {
     /// `RadioEvent::BandOpenings`: what the spot-feed surge detector has found
     /// — a path busier than its own recent history, in the SPOTS window.
     ///
-    /// Appended last, for the usual reason: the first cut put it after
-    /// [`ServerMsg::Spots`], which shifted every discriminant below it.
+    /// Appended last, for the usual reason.
     BandOpenings(Vec<sdroxide_types::BandOpening>),
 }
 
@@ -2796,6 +2795,26 @@ mod tests {
         let answer =
             ClientMsg::Auth { username: "oe1test".into(), password: "pässwörd ✓".into() };
         assert_eq!(decode::<ClientMsg>(&encode(&answer).unwrap()).unwrap(), answer);
+    }
+
+    #[test]
+    fn roundtrip_band_openings() {
+        let opening = sdroxide_types::BandOpening {
+            band: sdroxide_types::Band::M20,
+            from_continent: "EU".into(),
+            to_continent: "NA".into(),
+            state: sdroxide_types::OpeningState::Opening,
+            since_utc: 1_700_000_000,
+            short_calls: 8,
+            baseline_per_min: 0.1,
+            factor: Some(3.5),
+            sample_calls: vec!["G0AAA".into(), "DL1ABC".into()],
+        };
+        let m = ServerMsg::BandOpenings(vec![opening.clone()]);
+        assert_eq!(decode::<ServerMsg>(&encode(&m).unwrap()).unwrap(), m);
+        // A surge off a silent baseline serializes its `None` sentinel too.
+        let m = ServerMsg::BandOpenings(vec![sdroxide_types::BandOpening { factor: None, ..opening }]);
+        assert_eq!(decode::<ServerMsg>(&encode(&m).unwrap()).unwrap(), m);
     }
 
     #[test]

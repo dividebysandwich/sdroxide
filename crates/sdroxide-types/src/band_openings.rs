@@ -1,10 +1,30 @@
+// Portions of this file are adapted from OpenHamClock's
+// `server/utils/bandOpenings.js` (<https://github.com/accius/openhamclock>),
+// which carries this notice:
+//
+// MIT License
+//
+// Copyright (c) 2024-2026 OpenHamClock Contributors
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 //! Band-opening detection over recent spot activity.
-//!
-//! Adapted from OpenHamClock's `server/utils/bandOpenings.js`
-//! (<https://github.com/accius/openhamclock>, MIT). The algorithm is theirs,
-//! wholesale; what is ours is the shape it wears here — spots already carry a
-//! typed [`Band`] and the DXCC continent, so the analysis keys on those rather
-//! than the strings the JavaScript parsed.
 //!
 //! The idea: a listener watches for openings, not for spots. Most of the time
 //! the feeds produce a trickle of spots on a path; when the path *opens* the
@@ -18,15 +38,12 @@
 //! # What the rates count
 //!
 //! The caller decides what "a record" is by the stable `id` it gives each
-//! [`BandPath`]; this module only sees distinct ids. The spot manager keys on
-//! [`crate::Spot`]'s own id, which is a hash of (kind, call, 100 Hz bucket)
-//! with **no timestamp**, so a station spotted fifty times over three hours
-//! counts once, at its first appearance: the rates here are then *distinct
-//! callsign first-appearances per minute*, not raw spot rates. That is not
-//! exactly OpenHamClock's algorithm — its input was each spot — but an opening
-//! is defined by new callsigns arriving, so it is a reasonable proxy; a caller
-//! that wants raw rates can put a timestamp in the id, as the fork's 11 m
-//! WSJT-CB feed does.
+//! [`BandPath`]; this module only sees distinct ids. A station heard in two
+//! different short windows is two records, so a path that stays busy keeps
+//! contributing rather than counting its callers once ever — deduping on the id
+//! alone made a station still active three hours later count as new again as
+//! its entry aged out. The rates are therefore distinct calls per short-window
+//! bucket.
 //!
 //! # The warm-up
 //!
@@ -34,13 +51,13 @@
 //! timers and does no I/O, so it is directly unit-testable and a restart is
 //! harmless — the baseline simply warms back up. The feeds hand over only about
 //! one short window of spots (PSK Reporter's query is 15 minutes), so at launch
-//! there is nothing older to rest against; the baseline period is scaled to the
-//! history actually observed rather than the nominal 2h45m, and a silent
-//! baseline is trusted as an opening only once at least a short window of it
-//! has been seen. Until then nothing opens, which is the truth: a busy band is
-//! not yet a *change* on that band. (See [`BandOpeningTracker::has_full_baseline`]
-//! for the point at which the resting rate is a real measurement instead of a
-//! warm-up.)
+//! there is nothing older to rest against; the baseline period is scaled,
+//! **per key**, to the history actually observed rather than the nominal 2h45m,
+//! and a silent baseline is trusted as an opening only once at least a short
+//! window of it has been seen for that key. Per key and not once for the whole
+//! tracker: a feed is only polled for the band the dial is on, so a path on a
+//! band just switched to has no history of its own even when the tracker has
+//! been up for hours.
 
 use std::collections::HashMap;
 
@@ -92,9 +109,6 @@ pub enum OpeningState {
 }
 
 impl OpeningState {
-    pub const ALL: [OpeningState; 3] =
-        [OpeningState::Opening, OpeningState::Active, OpeningState::Closing];
-
     pub fn label(self) -> &'static str {
         match self {
             OpeningState::Opening => "opening",
@@ -143,14 +157,6 @@ pub struct BandOpening {
     pub sample_calls: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct BandOpeningStats {
-    pub keys: usize,
-    pub spots: usize,
-    pub ingested: u64,
-    pub tracked_states: usize,
-}
-
 type Key = (Band, &'static str, &'static str);
 
 #[derive(Debug, Clone)]
@@ -171,11 +177,12 @@ struct StateRec {
 pub struct BandOpeningTracker {
     opts: OpenOptions,
     spots: HashMap<Key, Vec<SpotRec>>,
-    /// Spot id → timestamp, for dedupe across repeated ingests.
-    seen: HashMap<String, i64>,
+    /// `(spot id, short-window bucket)` → the bucket's latest timestamp, for
+    /// dedupe across repeated ingests of the same cache snapshot. The bucket is
+    /// what lets a station still active in a later window count again instead
+    /// of being suppressed forever by its first appearance.
+    seen: HashMap<(String, i64), i64>,
     states: HashMap<Key, StateRec>,
-    oldest_ts: Option<i64>,
-    ingested: u64,
 }
 
 impl Default for BandOpeningTracker {
@@ -190,14 +197,7 @@ impl BandOpeningTracker {
     }
 
     pub fn with_options(opts: OpenOptions) -> Self {
-        BandOpeningTracker {
-            opts,
-            spots: HashMap::new(),
-            seen: HashMap::new(),
-            states: HashMap::new(),
-            oldest_ts: None,
-            ingested: 0,
-        }
+        BandOpeningTracker { opts, spots: HashMap::new(), seen: HashMap::new(), states: HashMap::new() }
     }
 
     pub fn options(&self) -> OpenOptions {
@@ -217,15 +217,15 @@ impl BandOpeningTracker {
                 continue;
             }
             let id = s.id.clone().unwrap_or_else(|| {
-                format!(
-                    "{}|{:?}|{}|{}|{}",
-                    s.call, s.band, s.from_continent, s.to_continent, s.timestamp
-                )
+                format!("{}|{:?}|{}|{}", s.call, s.band, s.from_continent, s.to_continent)
             });
-            if self.seen.contains_key(&id) {
+            // One record per (id, short-window bucket): a station heard again in
+            // a later window is fresh activity, not a repeat of its first spot.
+            let bucket = s.timestamp.div_euclid(self.opts.short_window_s);
+            if self.seen.contains_key(&(id.clone(), bucket)) {
                 continue;
             }
-            self.seen.insert(id, s.timestamp);
+            self.seen.insert((id, bucket), s.timestamp);
             let key = (s.band, s.from_continent, s.to_continent);
             let list = self.spots.entry(key).or_default();
             list.push(SpotRec { call: s.call.clone(), ts: s.timestamp });
@@ -233,11 +233,7 @@ impl BandOpeningTracker {
                 let drop = list.len() - self.opts.max_spots_per_key;
                 list.drain(..drop);
             }
-            if self.oldest_ts.is_none_or(|o| s.timestamp < o) {
-                self.oldest_ts = Some(s.timestamp);
-            }
             accepted += 1;
-            self.ingested += 1;
         }
         self.prune(now);
         accepted
@@ -249,16 +245,15 @@ impl BandOpeningTracker {
     pub fn analyze(&mut self, now: i64) -> Vec<BandOpening> {
         self.prune(now);
         let short_cutoff = now - self.opts.short_window_s;
-        // The baseline is only as long as the history actually observed. The
-        // feeds hand over about one short window of spots — PSK Reporter's
-        // query is 15 minutes — and at launch nothing older than that exists,
-        // so dividing an empty baseline by the nominal 2h45m would turn every
-        // busy path into an infinite surge the moment the app starts. Scale the
-        // period to what has been seen, and treat "no history older than the
-        // short window" as no baseline evidence at all.
+        // The baseline is only as long as the history actually observed *for
+        // this key*. The feeds hand over about one short window of spots — PSK
+        // Reporter's query is 15 minutes — and a feed is only polled for the
+        // band the dial is on, so a path just switched to has no history even
+        // when the tracker has been up for hours. Per key, dividing an empty
+        // baseline by the nominal 2h45m would turn every busy path into an
+        // infinite surge; "no history older than the short window for this key"
+        // is treated as no baseline evidence at all.
         let nominal_baseline_s = self.opts.baseline_window_s - self.opts.short_window_s;
-        let observed_baseline_s =
-            (self.data_span_s(now) - self.opts.short_window_s).clamp(0, nominal_baseline_s);
         let close_factor = self.opts.open_factor / 2.0;
         let close_distinct = std::cmp::max(2, self.opts.min_distinct_calls.div_ceil(2));
 
@@ -279,6 +274,11 @@ impl BandOpeningTracker {
             }
             let short_count = short_calls.len();
             let short_rate = short_spots as f64 / (self.opts.short_window_s as f64 / 60.0);
+            // This key's own observed baseline span: from its oldest surviving
+            // spot to the start of the short window.
+            let key_oldest = list.iter().map(|s| s.ts).min().unwrap_or(now);
+            let observed_baseline_s =
+                (now - key_oldest - self.opts.short_window_s).clamp(0, nominal_baseline_s);
             let baseline_rate = if observed_baseline_s > 0 {
                 baseline_spots as f64 / (observed_baseline_s as f64 / 60.0)
             } else {
@@ -398,27 +398,10 @@ impl BandOpeningTracker {
         results
     }
 
-    /// Seconds of history the tracker has actually observed.
-    pub fn data_span_s(&self, now: i64) -> i64 {
-        match self.oldest_ts {
-            None => 0,
-            Some(o) => (now - o).max(0),
-        }
-    }
-
-    /// True once the observed history covers the full baseline window (i.e.
-    /// the resting rate is a real measurement rather than a warm-up).
-    pub fn has_full_baseline(&self, now: i64) -> bool {
-        self.data_span_s(now) >= self.opts.baseline_window_s
-    }
-
-    pub fn stats(&self) -> BandOpeningStats {
-        BandOpeningStats {
-            keys: self.spots.len(),
-            spots: self.spots.values().map(|l| l.len()).sum(),
-            ingested: self.ingested,
-            tracked_states: self.states.len(),
-        }
+    /// Records held, for the tests' count assertions.
+    #[cfg(test)]
+    fn spot_count(&self) -> usize {
+        self.spots.values().map(|l| l.len()).sum()
     }
 
     fn prune(&mut self, now: i64) {
@@ -478,6 +461,37 @@ mod tests {
             .collect()
     }
 
+    /// Distinct baseline spots on one key, older than the short window.
+    fn key_baseline(band: Band, from: &'static str, to: &'static str) -> Vec<BandPath> {
+        let calls = ["G0AAA", "G0BBB", "G0CCC"];
+        (-175..=-20)
+            .step_by(10)
+            .enumerate()
+            .map(|(n, m)| {
+                let mut s = spot(calls[n % calls.len()], m, &[]);
+                s.band = band;
+                s.from_continent = from;
+                s.to_continent = to;
+                s.id = Some(format!("base|{band:?}|{from}|{to}|{n}"));
+                s
+            })
+            .collect()
+    }
+
+    /// A short-window burst on one key.
+    fn key_burst(band: Band, from: &'static str, to: &'static str, count: usize) -> Vec<BandPath> {
+        (0..count)
+            .map(|i| {
+                let mut s = spot(&format!("DX{i}AA"), -1 - (i as i64 % 10), &[("n", i.to_string())]);
+                s.band = band;
+                s.from_continent = from;
+                s.to_continent = to;
+                s.id = Some(format!("burst|{band:?}|{from}|{to}|{i}"));
+                s
+            })
+            .collect()
+    }
+
     /// History on another band, 40–20 minutes back: outside the short window,
     /// inside the retention. It gives the tracker an observed baseline span
     /// without touching the path under test — which is what the warm-up gate
@@ -500,7 +514,7 @@ mod tests {
     fn accepts_valid_spots_and_reports_counts() {
         let mut t = BandOpeningTracker::new();
         assert_eq!(t.ingest(&[spot("G0AAA", -5, &[])], NOW), 1);
-        assert_eq!(t.stats().spots, 1);
+        assert_eq!(t.spot_count(), 1);
     }
 
     #[test]
@@ -509,7 +523,7 @@ mod tests {
         let spots = vec![spot("G0AAA", -5, &[]), spot("G0BBB", -6, &[])];
         assert_eq!(t.ingest(&spots, NOW), 2);
         assert_eq!(t.ingest(&spots, NOW), 0, "same cache snapshot re-sampled");
-        assert_eq!(t.stats().spots, 2);
+        assert_eq!(t.spot_count(), 2);
     }
 
     #[test]
@@ -526,16 +540,16 @@ mod tests {
             NOW,
         );
         assert_eq!(accepted, 0, "every rejected spot must be refused");
-        assert_eq!(t.stats().spots, 0);
+        assert_eq!(t.spot_count(), 0);
     }
 
     #[test]
     fn prunes_spots_that_age_out_of_the_baseline_window() {
         let mut t = BandOpeningTracker::new();
         t.ingest(&[spot("G0AAA", -170, &[])], NOW);
-        assert_eq!(t.stats().spots, 1);
+        assert_eq!(t.spot_count(), 1);
         t.ingest(&[], NOW + 60 * MIN);
-        assert_eq!(t.stats().spots, 0, "1 h later the 170-min-old spot is stale");
+        assert_eq!(t.spot_count(), 0, "1 h later the 170-min-old spot is stale");
     }
 
     #[test]
@@ -574,20 +588,15 @@ mod tests {
     }
 
     #[test]
-    fn flags_a_previously_silent_path_once_the_call_floor_is_met() {
+    fn a_fresh_path_does_not_open_on_history_from_another_band() {
         let mut t = BandOpeningTracker::new();
-        // Silence is evidence only once there is a baseline to be silent in:
-        // history on another band gives the tracker an observed span, after
-        // which this path's empty baseline is Infinity, not "unknown".
+        // History on 40 m gives the *tracker* a span, but 20 m has no history of
+        // its own — a feed is only polled for the band the dial is on, so a 20 m
+        // burst is not yet a change on 20 m.
         let mut all = other_band_history(Band::M40);
-        all.extend(burst_spots(5));
+        all.extend(burst_spots(8));
         t.ingest(&all, NOW);
-        let openings = t.analyze(NOW);
-        assert_eq!(openings.len(), 1);
-        assert_eq!(openings[0].band, Band::M20, "the burst path, not the history band");
-        assert_eq!(openings[0].state, OpeningState::Opening);
-        assert_eq!(openings[0].factor, None, "no baseline on this path, so Infinity");
-        assert_eq!(openings[0].baseline_per_min, 0.0);
+        assert_eq!(t.analyze(NOW), Vec::new(), "no baseline on this path, so no opening");
     }
 
     /// The maintainer's cold-start case: at launch the feeds hand over about one
@@ -604,18 +613,15 @@ mod tests {
             .map(|i| spot(&format!("DX{i}AA"), -1 - (i as i64 % 14), &[("n", i.to_string())]))
             .collect();
         t.ingest(&spots, NOW);
-        assert!(
-            t.data_span_s(NOW) < OpenOptions::default().short_window_s,
-            "the whole history is inside the short window"
-        );
         assert_eq!(t.analyze(NOW), Vec::new(), "no baseline yet, so no opening");
-        // With history behind it the same busy path can now be judged, and the
-        // genuinely silent baseline makes it an opening.
+        // History on another band does not become this band's baseline either.
         t.ingest(&other_band_history(Band::M40), NOW);
-        assert_eq!(t.data_span_s(NOW), 40 * MIN, "history beyond the short window");
+        assert_eq!(t.analyze(NOW), Vec::new(), "another band's history is not this path's");
+        // This path's own baseline, and the same busy window is a real surge.
+        t.ingest(&baseline_spots(10, &["G0AAA", "G0BBB", "G0CCC"]), NOW);
         let openings = t.analyze(NOW);
         assert_eq!(openings.len(), 1);
-        assert_eq!(openings[0].band, Band::M20, "the burst path, judged once a baseline exists");
+        assert_eq!(openings[0].band, Band::M20, "the burst path, judged once its own baseline exists");
     }
 
     #[test]
@@ -643,20 +649,11 @@ mod tests {
     #[test]
     fn tracks_band_x_continent_pair_keys_independently() {
         let mut t = BandOpeningTracker::new();
-        let mut ten = burst_spots(6);
-        for s in &mut ten {
-            s.band = Band::M10;
-            s.from_continent = "AS";
-        }
-        let mut fifteen = burst_spots(2);
-        for s in &mut fifteen {
-            s.band = Band::M15;
-        }
-        // Ids must stay unique across the two keys (the helper keys the id on
-        // band+continents, so this is already true).
-        let mut all = other_band_history(Band::M40);
-        all.extend(ten);
-        all.extend(fifteen);
+        // The 10 m AS→NA path has its own baseline and surges; the 15 m path
+        // has only a small burst and no history, so it does not open.
+        let mut all = key_baseline(Band::M10, "AS", "NA");
+        all.extend(key_burst(Band::M10, "AS", "NA", 6));
+        all.extend(key_burst(Band::M15, "EU", "NA", 2));
         t.ingest(&all, NOW);
         let openings = t.analyze(NOW);
         assert_eq!(openings.len(), 1);
@@ -712,21 +709,18 @@ mod tests {
     #[test]
     fn sorts_opening_before_closing() {
         let mut t = BandOpeningTracker::new();
-        let mut ten = burst_spots(8);
-        for s in &mut ten {
-            s.band = Band::M10;
-        }
-        let mut all = other_band_history(Band::M40);
-        all.extend(ten);
+        // Both paths get a baseline; only the 10 m one surges now.
+        let mut all = key_baseline(Band::M10, "EU", "NA");
+        all.extend(key_baseline(Band::M15, "EU", "NA"));
+        all.extend(key_burst(Band::M10, "EU", "NA", 8));
         t.ingest(&all, NOW);
-        assert_eq!(t.analyze(NOW).len(), 1, "the 10 m path opens once a baseline is seen");
+        assert_eq!(t.analyze(NOW).len(), 1, "the 10 m path opens");
 
+        // 40 minutes on, the 10 m burst has aged out and the 15 m one arrives.
         let later = NOW + 40 * MIN;
-        let mut fifteen = burst_spots(6);
-        for (i, s) in fifteen.iter_mut().enumerate() {
-            s.band = Band::M15;
+        let mut fifteen = key_burst(Band::M15, "EU", "NA", 6);
+        for s in &mut fifteen {
             s.timestamp += 40 * MIN;
-            s.id = Some(format!("late-{i}"));
         }
         t.ingest(&fifteen, later);
         let res: Vec<(Band, OpeningState)> =
@@ -737,17 +731,15 @@ mod tests {
         );
     }
 
+    /// The warm-up is per path, not per tracker: a path with only short-window
+    /// spots has no baseline of its own however much history other paths carry.
     #[test]
-    fn reports_the_observed_span_and_full_baseline_coverage() {
+    fn the_baseline_is_per_path_not_global() {
         let mut t = BandOpeningTracker::new();
-        assert_eq!(t.data_span_s(NOW), 0);
-        assert!(!t.has_full_baseline(NOW));
-
-        t.ingest(&[spot("G0AAA", -30, &[])], NOW);
-        assert_eq!(t.data_span_s(NOW), 30 * MIN);
-        assert!(!t.has_full_baseline(NOW), "30 min of history is not a 3 h baseline");
-
-        assert!(t.has_full_baseline(NOW + 150 * MIN), "once the oldest spot is 3 h back");
+        t.ingest(&key_baseline(Band::M20, "EU", "NA"), NOW);
+        t.ingest(&key_burst(Band::M40, "EU", "NA", 8), NOW);
+        let res = t.analyze(NOW);
+        assert!(res.iter().all(|o| o.band != Band::M40), "40 m has no baseline of its own: {res:?}");
     }
 
     #[test]
@@ -766,7 +758,7 @@ mod tests {
             min_distinct_calls: 2,
             ..OpenOptions::default()
         });
-        let mut all = other_band_history(Band::M40);
+        let mut all = baseline_spots(10, &["G0AAA", "G0BBB", "G0CCC"]);
         all.extend(burst_spots(3));
         t2.ingest(&all, NOW);
         let res = t2.analyze(NOW);
