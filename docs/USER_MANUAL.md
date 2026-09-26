@@ -329,6 +329,13 @@ popup with three rows:
 - **DIGITAL:** `FT8 FT4 FT2 JS8 WSPR PI4 MSK144 JT65 JT9 FST4 Q65 FSK441 PSK RTTY RTTY-FM OLIVIA THOR FSQ ATCHAT HELL SSTV SSTV-FM RIFP WEFAX NAVTEX ACARS RFPAINT RADE PACKET PACKET-HF APRS ADS-B VDL2 AIS HFDL` (see
   [Digital modes](#3-digital-modes)).
 
+On a desktop or tablet layout the popup carries a **DOCK** chip. It moves the
+selector into a resizable column beside the waterfall so it stays open while you
+tune, instead of closing after every choice. **UNDOCK** in the column's header
+returns it to the popup, and **×** hides the column — the Band / Mode button then
+shows and hides it. Docking is desktop and tablet only; a phone-width window
+keeps the popup, because a column would leave the waterfall nothing to draw in.
+
 ![The band and mode selector popup](images/04-band-mode-popup.jpg)
 
 See the [appendix](#16-appendix) for what each mode is.
