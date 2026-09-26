@@ -46,6 +46,7 @@ mod simd;
 mod spectrum;
 mod spectrum_paint;
 mod sstv;
+mod sstv_slant;
 mod thor;
 mod tonegen;
 mod wbddc;

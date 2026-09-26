@@ -3,8 +3,11 @@
 //! Transmit builds a per-mode timing plan and synthesises tones with a
 //! continuous phase accumulator (the `psk.rs`/`rtty.rs` idiom). Receive runs an
 //! FM discriminator to recover instantaneous frequency, detects the VIS
-//! calibration header to pick the mode, then samples pixels line-by-line,
-//! re-aligning on each 1200 Hz sync pulse for slant tolerance.
+//! calibration header to pick the mode, then samples pixels line-by-line at
+//! the line starts a robust fit through the 1200 Hz sync pulses gives, and
+//! once the picture is complete decodes it again along the sync column of the
+//! whole of it (see `sstv_slant`) — so neither fading nor a sender's clock
+//! slants it.
 //!
 //! Timing follows the canonical N7CXI spec (as used by PySSTV/QSSTV). Colour
 //! maps to frequency by black = 1500 Hz, white = 2300 Hz; sync = 1200 Hz.
@@ -15,6 +18,9 @@ use sdroxide_types::SstvMode;
 
 use crate::Complex32;
 use crate::fir::{ComplexFir, bandpass_taps};
+use crate::sstv_slant::{
+    FreqTrack, Geometry, Line, LineFit, MIN_FILL, SyncMap, measure_sync, robust_line,
+};
 
 const BLACK_HZ: f64 = 1500.0;
 const WHITE_HZ: f64 = 2300.0;
@@ -625,10 +631,21 @@ pub struct SstvRx {
 
     // Image decode bookkeeping.
     line: u16,
-    // Sample index where the current line's decoding should start.
-    line_start: u64,
+    // Sample index where the current line is expected to start. Fractional:
+    // rounding it to a sample every line is itself a slant (Scottie 1's line
+    // is 20 554.56 samples at 48 kHz, and dropping the .56 every line walks
+    // the picture seven pixels sideways by the bottom).
+    line_start: f64,
     // Length of the current line, cached because `step_image` runs per sample.
-    line_samples: u64,
+    line_samples: f64,
+    // The line through this picture's sync pulses so far.
+    fit: LineFit,
+    // Where each transmitted line was actually decoded from.
+    used_starts: Vec<f64>,
+    // Lines in a row whose sync pulse was not found.
+    misses: u32,
+    // The whole picture's frequency track, for the second pass at the end.
+    track: FreqTrack,
     // Robot 4:2:0 chroma carried between lines.
     last_cr: Vec<u8>,
     last_cb: Vec<u8>,
@@ -713,8 +730,12 @@ impl SstvRx {
             vis_state: VisState::reset(),
             fsk_state: FskIdState::reset(),
             line: 0,
-            line_start: 0,
-            line_samples: 0,
+            line_start: 0.0,
+            line_samples: 0.0,
+            fit: LineFit::new(1.0, 0.0),
+            used_starts: Vec::new(),
+            misses: 0,
+            track: FreqTrack::new(),
             last_cr: Vec::new(),
             last_cb: Vec::new(),
             expected: None,
@@ -750,8 +771,11 @@ impl SstvRx {
         self.vis_state = VisState::reset();
         self.fsk_state = FskIdState::reset();
         self.line = 0;
-        self.line_start = 0;
-        self.line_samples = 0;
+        self.line_start = 0.0;
+        self.line_samples = 0.0;
+        self.used_starts.clear();
+        self.misses = 0;
+        self.track.clear();
         self.last_cr.clear();
         self.last_cb.clear();
         self.sync_run = 0;
@@ -814,6 +838,9 @@ impl SstvRx {
             self.inst_hz += 0.5 * (raw_hz - self.inst_hz);
 
             self.push_hist(self.inst_hz);
+            if self.phase == RxPhase::Image {
+                self.track.push(self.inst_hz);
+            }
             self.sample_idx += 1;
 
             match self.phase {
@@ -840,11 +867,7 @@ impl SstvRx {
     }
 
     fn hz_at(&self, idx: u64) -> f64 {
-        if idx < self.hist_base {
-            return 1900.0;
-        }
-        let i = (idx - self.hist_base) as usize;
-        self.hist.get(i).copied().unwrap_or(1900.0)
+        hz_in(&self.hist, self.hist_base, idx as i64)
     }
 
     // ── FSK ID detection ──
@@ -1180,9 +1203,25 @@ impl SstvRx {
         self.mode = mode;
         self.phase = RxPhase::Image;
         self.line = 0;
-        self.line_start = first_line_start;
-        self.line_samples = self.line_period_samples(mode, 0) as u64;
-        let (w, _) = mode.dimensions();
+        self.line_start = first_line_start as f64;
+        self.line_samples = self.line_period_samples(mode, 0);
+        let (w, h) = mode.dimensions();
+        let (_, sync_len) = self.sync_span(mode, w, 0);
+        // A pulse may sit this far off the line through the others and still
+        // be counted on it: timing noise on a real signal, not a clock error,
+        // which the line's slope takes care of.
+        self.fit = LineFit::new(self.line_samples, (0.0015 * self.rate).max(0.25 * sync_len));
+        self.used_starts.clear();
+        self.misses = 0;
+        // Everything from the oldest history on, so the second pass can look
+        // back past the first line as far as the first pass could.
+        let lines = (h / mode.rows_per_line().max(1)) as f64;
+        let cap =
+            (lines * self.line_samples) as usize + self.hist.len() + (2.0 * self.rate) as usize;
+        self.track.start(self.hist_base, cap.min(TRACK_MAX));
+        for &hz in &self.hist {
+            self.track.push(hz);
+        }
         self.last_cr = vec![128u8; (w / 2) as usize];
         self.last_cb = vec![128u8; (w / 2) as usize];
         // Reset free-run tracking so it re-locks cleanly for the next picture.
@@ -1196,37 +1235,50 @@ impl SstvRx {
         // Decode a line once its full duration of history is available. This
         // runs on every sample, so the line length comes from the cached value
         // rather than rebuilding the segment plan (and its allocation) here.
-        let line_samples = self.line_samples;
-        if self.sample_idx < self.line_start + line_samples + (0.02 * self.rate) as u64 {
+        if (self.sample_idx as f64) < self.line_start + self.line_samples + 0.02 * self.rate {
             return;
         }
 
-        // Re-align each line to its 1200 Hz sync pulse (corrects timing error
-        // and clock slant on real off-air signals).
         let (w, h) = self.mode.dimensions();
-        let start = self.realign_sync(self.line_start, self.mode, w, self.line);
+        let rpl = self.mode.rows_per_line().max(1);
+        let k = (self.line / rpl) as f64;
+        let start = self.place_line(k);
+        self.used_starts.push(start);
         // One transmitted line is two picture rows in the PD family — see
         // `SstvMode::rows_per_line` — so this hands back a row at a time and
         // the caller sees the same stream of `Line` events either way.
-        for (n, rgb) in self.decode_line(self.mode, w, self.line, start).into_iter().enumerate() {
+        let (hist, base) = (&self.hist, self.hist_base);
+        let rows = decode_line(
+            self.mode,
+            w,
+            self.line,
+            start,
+            self.rate,
+            |i| hz_in(hist, base, i),
+            &mut self.last_cr,
+            &mut self.last_cb,
+        );
+        for (n, rgb) in rows.into_iter().enumerate() {
             let y = self.line + n as u16;
             if y < h {
                 out.push(SstvEvent::Line { y, rgb });
             }
         }
 
-        self.line += self.mode.rows_per_line().max(1);
-        self.line_start = start + line_samples;
+        self.line += rpl;
         if self.line >= h {
+            self.final_pass(out);
             out.push(SstvEvent::ImageComplete);
             self.phase = RxPhase::Hunt;
             self.vis_state = VisState::reset();
+            self.track.clear();
         } else {
-            self.line_samples = self.line_period_samples(self.mode, self.line) as u64;
+            self.line_samples = self.line_period_samples(self.mode, self.line);
+            self.line_start = self.fit.predict(k + 1.0).unwrap_or(start + self.line_samples);
         }
     }
 
-    /// Offset (in samples) from a line's start to the centre of its 1200 Hz
+    /// Offset (in samples) from a line's start to the start of its 1200 Hz
     /// sync pulse, plus the pulse duration in samples.
     fn sync_span(&self, mode: SstvMode, w: u16, line: u16) -> (f64, f64) {
         let mut t = 0.0;
@@ -1245,112 +1297,258 @@ impl SstvRx {
         (0.0, 0.009 * self.rate)
     }
 
-    /// Correct the line-start sample index by locking to the line's 1200 Hz sync
-    /// pulse: find the mean position of near-1200 Hz samples in a window around
-    /// where the sync is expected, then back-compute the line start.
-    fn realign_sync(&self, nominal: u64, mode: SstvMode, w: u16, line: u16) -> u64 {
-        let (soff, sdur) = self.sync_span(mode, w, line);
+    /// Where transmitted line `k` starts.
+    ///
+    /// Its sync pulse is looked for near where the line is expected, and if it
+    /// is plainly there it joins the fit. Once the fit has enough points the
+    /// line starts where the fit says, whatever this one pulse did — which is
+    /// the point: a pulse lost to a fade, or one moved by noise, no longer
+    /// moves the line or any line after it. Until then the pulse is used as
+    /// measured, and where there is none, the line follows on from the last.
+    fn place_line(&mut self, k: f64) -> f64 {
+        let (w, _) = self.mode.dimensions();
+        let (soff, sdur) = self.sync_span(self.mode, w, self.line);
         let centre_off = soff + sdur * 0.5;
-        let expected = nominal as f64 + centre_off;
-        let win = (0.012 * self.rate) as i64;
-        let mut sum = 0.0f64;
-        let mut cnt = 0u32;
-        for d in -win..=win {
-            let idx = expected as i64 + d;
-            if idx < 0 {
-                continue;
-            }
-            if self.hz_at(idx as u64) < 1380.0 {
-                sum += idx as f64;
-                cnt += 1;
-            }
-        }
-        // Trust the correction only when a real sync pulse is present.
-        if (cnt as f64) > sdur * 0.4 {
-            let centre = sum / cnt as f64;
-            (centre - centre_off).max(0.0) as u64
+        // Wide until there is a line to go on, then close around it, where a
+        // burst of noise elsewhere cannot outbid the real pulse. Wider still
+        // for every pulse missed before then: lines that follow on at the
+        // nominal period drift by the sender's clock error each, and after a
+        // fade long enough the real pulse is no longer where a fixed window
+        // looks.
+        let half_win = if self.fit.line().is_some() {
+            2.0 * self.fit.tol
         } else {
-            nominal
+            (0.012 * self.rate * (1 + self.misses) as f64).min(self.line_samples / 2.0)
+        };
+        let (hist, base) = (&self.hist, self.hist_base);
+        let measured =
+            measure_sync(|i| hz_in(hist, base, i), self.line_start + centre_off, half_win, sdur)
+                .filter(|&(_, fill)| fill >= MIN_FILL)
+                .map(|(c, _)| c - centre_off);
+        match measured {
+            Some(m) => {
+                self.misses = 0;
+                self.fit.add(k, m);
+            }
+            None => self.misses += 1,
         }
+        self.fit.predict(k).or(measured).unwrap_or(self.line_start)
     }
 
-    /// Decode one transmitted line into its picture rows: one for every mode
-    /// but the PD family, two for that.
-    fn decode_line(&mut self, mode: SstvMode, w: u16, line: u16, start: u64) -> Vec<Vec<u8>> {
-        let mut r = vec![0u8; w as usize];
-        let mut g = vec![0u8; w as usize];
-        let mut b = vec![0u8; w as usize];
-        let mut y = vec![0u8; w as usize];
-        let mut y2 = vec![0u8; w as usize];
-        let mut cr = self.last_cr.clone();
-        let mut cb = self.last_cb.clone();
-        // A PD line's chroma is full width, so the buffers this mode's rows
-        // came in with (sized for the Robot modes' half-width chroma) are the
-        // wrong shape for it.
-        if mode.rows_per_line() > 1 {
-            cr = vec![128u8; w as usize];
-            cb = vec![128u8; w as usize];
+    /// The picture's second pass, once all of it has arrived.
+    ///
+    /// The fit placed each line knowing only the pulses before it, and only
+    /// the ones clear enough to count alone. Now the whole sync column is
+    /// there: search it for the line along which the most sync tone lies
+    /// ([`SyncMap::search`]), refine that through the pulses on it, and if it
+    /// puts the lines somewhere other than where they were decoded — by half a
+    /// pixel or more anywhere — decode every line again from the kept track
+    /// and send them all, over the first pass's, before the picture completes.
+    fn final_pass(&mut self, out: &mut Vec<SstvEvent>) {
+        let mode = self.mode;
+        let (w, h) = mode.dimensions();
+        let rpl = mode.rows_per_line().max(1);
+        let lines = self.used_starts.len();
+        if lines < 8 || self.track.full() {
+            return;
+        }
+        let (soff, sdur) = self.sync_span(mode, w, 0);
+        let period = self.line_period_samples(mode, 0);
+        let map = SyncMap::new(
+            &self.track,
+            Geometry { lines, period, sync_centre: soff + sdur * 0.5, sync_len: sdur },
+        );
+        let live = self.fit.line();
+        let around = live.unwrap_or(Line { a: self.used_starts[0], b: period });
+        let Some(found) = map.search(around) else { return };
+        // A line through nothing but picture and noise scores what every other
+        // phase does. Nothing to go on, so leave the picture as it is.
+        if found.contrast < MIN_CONTRAST {
+            return;
         }
 
-        let mut t = start as f64;
-        for seg in line_segments(mode, w, line) {
-            match seg {
-                Seg::Tone { dur, .. } => t += dur * self.rate,
-                Seg::Scan { chan, width, px } => {
-                    let step = px * self.rate;
-                    for x in 0..width as usize {
-                        // Sample the centre of each pixel window.
-                        let idx = (t + (x as f64 + 0.5) * step) as u64;
-                        let v = hz_to_value(self.hz_at(idx));
-                        let cri = x.min(cr.len().saturating_sub(1));
-                        let cbi = x.min(cb.len().saturating_sub(1));
-                        match chan {
-                            Chan::R => r[x] = v,
-                            Chan::G => g[x] = v,
-                            Chan::B => b[x] = v,
-                            Chan::Y => y[x] = v,
-                            Chan::Y2 => y2[x] = v,
-                            Chan::Cr => cr[cri] = v,
-                            Chan::Cb => cb[cbi] = v,
-                        }
-                    }
-                    t += width as f64 * step;
+        // Sharpen it on the pulses themselves, at full resolution.
+        let track = &self.track;
+        let pts: Vec<(f64, f64)> = (0..lines)
+            .filter_map(|k| {
+                let c = found.line.at(k as f64) + soff + sdur * 0.5;
+                measure_sync(|i| track.hz(i), c, self.fit.tol, sdur)
+                    .filter(|&(_, fill)| fill >= MIN_FILL)
+                    .map(|(c, _)| (k as f64, c - soff - sdur * 0.5))
+            })
+            .collect();
+        // Only with pulses on a good share of the lines, though. A handful is
+        // what heavy noise leaves, and a line through a handful is worse than
+        // the one the whole column gave.
+        let mut best = Some(&pts)
+            .filter(|p| p.len() >= lines / 4)
+            .and_then(|p| robust_line(p, period, self.fit.tol, Some(found.line)))
+            .filter(|l| map.score(*l, sdur) >= found.fill - FILL_SLACK)
+            .unwrap_or(found.line);
+        // Never trade a line the picture already fits better.
+        if let Some(l) = live
+            && map.score(l, sdur) > map.score(best, sdur) + FILL_SLACK
+        {
+            best = l;
+        }
+
+        let px = min_pixel_samples(mode, w, self.rate);
+        let moved = self
+            .used_starts
+            .iter()
+            .enumerate()
+            .map(|(k, &s)| (best.at(k as f64) - s).abs())
+            .fold(0.0, f64::max);
+        if moved < 0.5 * px {
+            return;
+        }
+
+        let mut cr = vec![128u8; (w / 2) as usize];
+        let mut cb = vec![128u8; (w / 2) as usize];
+        for k in 0..lines {
+            let line = k as u16 * rpl;
+            let rows = decode_line(
+                mode,
+                w,
+                line,
+                best.at(k as f64),
+                self.rate,
+                |i| track.hz(i),
+                &mut cr,
+                &mut cb,
+            );
+            for (n, rgb) in rows.into_iter().enumerate() {
+                let y = line + n as u16;
+                if y < h {
+                    out.push(SstvEvent::Line { y, rgb });
                 }
             }
         }
-
-        let robot = matches!(mode, SstvMode::Robot72 | SstvMode::Robot36);
-        if robot {
-            // Robot 36 sends one chroma per line and the other row's is
-            // carried over; PD sends both, every line, and has nothing to
-            // remember.
-            self.last_cr = cr.clone();
-            self.last_cb = cb.clone();
-        }
-        let pd = mode.rows_per_line() > 1;
-
-        // One row for most modes, two for PD — where the second row is the
-        // same chroma with the second luma scan over it.
-        let mut rows: Vec<Vec<u8>> = Vec::with_capacity(if pd { 2 } else { 1 });
-        for luma in [&y, &y2].into_iter().take(if pd { 2 } else { 1 }) {
-            let mut rgb = vec![0u8; w as usize * 3];
-            for x in 0..w as usize {
-                let (rr, gg, bb) = if robot {
-                    let cx = (x / 2).min(cr.len() - 1);
-                    yuv_to_rgb(y[x], cr[cx], cb[cx])
-                } else if pd {
-                    yuv_to_rgb(luma[x], cr[x], cb[x])
-                } else {
-                    (r[x], g[x], b[x])
-                };
-                rgb[x * 3] = rr;
-                rgb[x * 3 + 1] = gg;
-                rgb[x * 3 + 2] = bb;
-            }
-            rows.push(rgb);
-        }
-        rows
     }
+}
+
+/// How far a picture's sync column has to stand above the rest of it — as a
+/// fraction of a sync window filled with sync tone — before the second pass
+/// believes it found one.
+const MIN_CONTRAST: f64 = 0.15;
+
+/// Differences in fill smaller than this are noise between two lines that
+/// both run down the sync column.
+const FILL_SLACK: f64 = 0.01;
+
+/// The most samples a picture's frequency track may hold: PD290 at 96 kHz,
+/// with room. Past it the second pass is skipped rather than memory taken.
+const TRACK_MAX: usize = 32 << 20;
+
+/// Frequency at absolute sample `idx` of a history that starts at `base`; the
+/// leader tone outside it.
+fn hz_in(hist: &[f64], base: u64, idx: i64) -> f64 {
+    if idx < base as i64 {
+        return 1900.0;
+    }
+    hist.get((idx - base as i64) as usize).copied().unwrap_or(1900.0)
+}
+
+/// The shortest pixel in any of `mode`'s scans, in samples: the unit the
+/// second pass measures a correction worth making in.
+fn min_pixel_samples(mode: SstvMode, w: u16, rate: f64) -> f64 {
+    line_segments(mode, w, 0)
+        .iter()
+        .filter_map(|s| match s {
+            Seg::Scan { px, .. } => Some(px * rate),
+            Seg::Tone { .. } => None,
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Decode one transmitted line, starting at sample `start`, into its picture
+/// rows: one for every mode but the PD family, two for that. `hz` reads the
+/// frequency track; `last_cr`/`last_cb` carry the Robot modes' chroma from one
+/// line to the next.
+#[allow(clippy::too_many_arguments)]
+fn decode_line(
+    mode: SstvMode,
+    w: u16,
+    line: u16,
+    start: f64,
+    rate: f64,
+    hz: impl Fn(i64) -> f64,
+    last_cr: &mut Vec<u8>,
+    last_cb: &mut Vec<u8>,
+) -> Vec<Vec<u8>> {
+    let mut r = vec![0u8; w as usize];
+    let mut g = vec![0u8; w as usize];
+    let mut b = vec![0u8; w as usize];
+    let mut y = vec![0u8; w as usize];
+    let mut y2 = vec![0u8; w as usize];
+    let mut cr = last_cr.clone();
+    let mut cb = last_cb.clone();
+    // A PD line's chroma is full width, so the buffers this mode's rows
+    // came in with (sized for the Robot modes' half-width chroma) are the
+    // wrong shape for it.
+    if mode.rows_per_line() > 1 {
+        cr = vec![128u8; w as usize];
+        cb = vec![128u8; w as usize];
+    }
+
+    let mut t = start;
+    for seg in line_segments(mode, w, line) {
+        match seg {
+            Seg::Tone { dur, .. } => t += dur * rate,
+            Seg::Scan { chan, width, px } => {
+                let step = px * rate;
+                for x in 0..width as usize {
+                    // Sample the centre of each pixel window.
+                    let idx = (t + (x as f64 + 0.5) * step) as i64;
+                    let v = hz_to_value(hz(idx));
+                    let cri = x.min(cr.len().saturating_sub(1));
+                    let cbi = x.min(cb.len().saturating_sub(1));
+                    match chan {
+                        Chan::R => r[x] = v,
+                        Chan::G => g[x] = v,
+                        Chan::B => b[x] = v,
+                        Chan::Y => y[x] = v,
+                        Chan::Y2 => y2[x] = v,
+                        Chan::Cr => cr[cri] = v,
+                        Chan::Cb => cb[cbi] = v,
+                    }
+                }
+                t += width as f64 * step;
+            }
+        }
+    }
+
+    let robot = matches!(mode, SstvMode::Robot72 | SstvMode::Robot36);
+    if robot {
+        // Robot 36 sends one chroma per line and the other row's is
+        // carried over; PD sends both, every line, and has nothing to
+        // remember.
+        last_cr.clone_from(&cr);
+        last_cb.clone_from(&cb);
+    }
+    let pd = mode.rows_per_line() > 1;
+
+    // One row for most modes, two for PD — where the second row is the
+    // same chroma with the second luma scan over it.
+    let mut rows: Vec<Vec<u8>> = Vec::with_capacity(if pd { 2 } else { 1 });
+    for luma in [&y, &y2].into_iter().take(if pd { 2 } else { 1 }) {
+        let mut rgb = vec![0u8; w as usize * 3];
+        for x in 0..w as usize {
+            let (rr, gg, bb) = if robot {
+                let cx = (x / 2).min(cr.len() - 1);
+                yuv_to_rgb(y[x], cr[cx], cb[cx])
+            } else if pd {
+                yuv_to_rgb(luma[x], cr[x], cb[x])
+            } else {
+                (r[x], g[x], b[x])
+            };
+            rgb[x * 3] = rr;
+            rgb[x * 3 + 1] = gg;
+            rgb[x * 3 + 2] = bb;
+        }
+        rows.push(rgb);
+    }
+    rows
 }
 
 #[cfg(test)]
@@ -1815,5 +2013,143 @@ mod tests {
         }
         assert_eq!(detected, Some(mode), "free-run should lock the selected mode");
         assert!(lines > 40, "free-run should decode many lines, got {lines}");
+    }
+
+    /// A deterministic noise source, so a noisy test fails the same way twice.
+    struct Noise(u64);
+
+    impl Noise {
+        /// Roughly unit-variance Gaussian: the sum of twelve uniforms.
+        fn next(&mut self) -> f64 {
+            let mut sum = 0.0;
+            for _ in 0..12 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                sum += (self.0 >> 11) as f64 / (1u64 << 53) as f64;
+            }
+            sum - 6.0
+        }
+    }
+
+    /// Send a picture black on the left, white on the right through a channel:
+    /// the sender's clock `ppm` off the receiver's, `gain(t)` on the signal, and
+    /// noise of standard deviation `noise` once the header is over (a header
+    /// lost in the noise would test the VIS detector, not the timing). Returns
+    /// the edge's slant over the picture's height and its row-to-row jitter,
+    /// both in pixels, fitted over the rows sent while `gain` was 1.
+    fn slant_through(
+        mode: SstvMode,
+        ppm: f32,
+        noise: f64,
+        gain: impl Fn(f64) -> f64,
+    ) -> (f64, f64) {
+        let rate = 48_000.0;
+        let (w, h) = mode.dimensions();
+        let (wu, hu) = (w as usize, h as usize);
+        let mut rgb = vec![0u8; wu * hu * 3];
+        for y in 0..hu {
+            rgb[(y * wu + wu / 2) * 3..(y + 1) * wu * 3].fill(230);
+        }
+        let mut tx = SstvTx::new(mode, &rgb, w, h, rate, ppm);
+        let mut rx = SstvRx::new(rate);
+        let mut rng = Noise(0x9E37_79B9_7F4A_7C15);
+        let mut got = vec![0u8; rgb.len()];
+        let mut complete = false;
+        let mut events = Vec::new();
+        let mut block = vec![0.0f32; 4096];
+        let mut n_sent = 0usize;
+        let mut take = |events: &mut Vec<SstvEvent>, got: &mut Vec<u8>| {
+            for e in events.drain(..) {
+                match e {
+                    SstvEvent::Line { y, rgb: row } => {
+                        let at = y as usize * wu * 3;
+                        got[at..at + row.len()].copy_from_slice(&row);
+                    }
+                    SstvEvent::ImageComplete => complete = true,
+                    _ => {}
+                }
+            }
+        };
+        while !tx.done() {
+            let n = tx.next_block(&mut block);
+            for s in &mut block[..n] {
+                let t = n_sent as f64 / rate;
+                let nz = if t > 1.0 { noise * rng.next() } else { 0.0 };
+                *s = (*s as f64 * 0.3 * gain(t) + nz) as f32;
+                n_sent += 1;
+            }
+            rx.process(&block[..n], &mut events);
+            take(&mut events, &mut got);
+        }
+        let tail: Vec<f32> = (0..2 * rate as usize).map(|_| (noise * rng.next()) as f32).collect();
+        rx.process(&tail, &mut events);
+        take(&mut events, &mut got);
+        assert!(complete, "{}: the picture never completed", mode.label());
+
+        let period = rx.line_period_samples(mode, 0) / rate * (1.0 + ppm as f64 * 1e-6);
+        let rpl = mode.rows_per_line() as usize;
+        // Where the edge is: how many of the row's pixels are dark.
+        let edge = |y: usize| {
+            (0..wu)
+                .filter(|&x| {
+                    got[(y * wu + x) * 3..][..3].iter().map(|&v| v as u32).sum::<u32>() < 345
+                })
+                .count() as f64
+        };
+        let rows: Vec<(f64, f64)> = (0..hu)
+            .filter(|&y| {
+                let t = 0.92 + (y / rpl) as f64 * period;
+                [t - 0.2, t, t + period].iter().all(|&t| gain(t) == 1.0)
+            })
+            .map(|y| (y as f64, edge(y)))
+            .collect();
+        let n = rows.len() as f64;
+        let (my, me) =
+            (rows.iter().map(|r| r.0).sum::<f64>() / n, rows.iter().map(|r| r.1).sum::<f64>() / n);
+        let sxx: f64 = rows.iter().map(|r| (r.0 - my).powi(2)).sum();
+        let slope = rows.iter().map(|r| (r.0 - my) * (r.1 - me)).sum::<f64>() / sxx;
+        let jitter =
+            (rows.iter().map(|r| (r.1 - me - slope * (r.0 - my)).powi(2)).sum::<f64>() / n).sqrt();
+        (slope * hu as f64, jitter)
+    }
+
+    /// A long fade before enough sync pulses have come in to fit a line
+    /// through. The receiver used to walk on at the nominal period through
+    /// it, came out of the fade with its ±12 ms window somewhere the pulses no
+    /// longer were, and never found them again: 268 pixels of slant on Robot 36
+    /// with the sender's clock 0.25 % slow. Now the window widens for every
+    /// pulse missed, the fit forms once the signal is back, and the picture
+    /// below the fade is straight.
+    #[test]
+    fn a_fade_before_the_fit_forms_does_not_slant_the_picture() {
+        let fade = |t: f64| if t > 1.0 && t < 15.0 { 0.02 } else { 1.0 };
+        let (slant, jitter) = slant_through(SstvMode::Robot36, 2500.0, 0.05, fade);
+        assert!(slant.abs() < 1.5, "slant {slant:.1} px");
+        assert!(jitter < 1.0, "row jitter {jitter:.1} px");
+    }
+
+    /// Short deep fades every few seconds, the way HF QSB takes a signal. The
+    /// fit carries the lines through each one; a receiver that re-locked on
+    /// every pulse would come out of each one wherever the noise put it.
+    #[test]
+    fn repeated_fades_do_not_move_the_lines() {
+        let qsb = |t: f64| if t % 6.0 > 4.5 { 0.03 } else { 1.0 };
+        let (slant, jitter) = slant_through(SstvMode::Martin1, 1500.0, 0.05, qsb);
+        assert!(slant.abs() < 1.0, "slant {slant:.1} px");
+        assert!(jitter < 1.0, "row jitter {jitter:.1} px");
+    }
+
+    /// So much noise that almost no sync pulse is clear enough to count on
+    /// its own, and the running fit never forms: the lines follow on at the
+    /// nominal period, 0.3 % short, and the picture shears by dozens of
+    /// pixels. The second pass finds the sync column in the whole of the
+    /// picture at once and decodes it again along it. The bound is loose
+    /// because the edge itself is noisy here; the shear it catches is not
+    /// subtle.
+    #[test]
+    fn the_second_pass_straightens_a_picture_too_noisy_to_fit_as_it_came() {
+        let (slant, _) = slant_through(SstvMode::Pd50, 3000.0, 0.25, |_| 1.0);
+        assert!(slant.abs() < 6.0, "slant {slant:.1} px");
     }
 }

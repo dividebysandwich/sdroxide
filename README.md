@@ -375,6 +375,11 @@ left and a transmit compositor on the right:
 - **Receive** decodes incoming pictures scanline-by-scanline into the gallery;
   the VIS header sets the mode automatically (and pre-selects it for your next
   transmit). Received images are saved under `~/.config/sdroxide/sstv_rx/`.
+  Slant is corrected automatically: lines are placed along a line fitted
+  through the sync pulses, so a fade or a sender whose sound-card clock is off
+  does not shear the picture, and once the picture is complete it is decoded
+  again along the sync column of the whole image — the saved picture is the
+  straightened one.
 - **Transmit** from a strip of five image slots — click to select, double-click
   (or click an empty slot) to pick a file, which is auto-cropped/scaled to the
   mode's size. A multi-line message is overlaid on the image, **each line in a
