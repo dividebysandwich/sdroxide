@@ -689,22 +689,83 @@ impl FskIdState {
 }
 
 struct VisState {
-    // Running count of consecutive ~1900 Hz leader samples.
+    // Running count of leader samples, less three for every sample that was
+    // not — see `step_hunt`.
     leader: u32,
-    // A full (>150 ms) leader has been seen at least once.
+    // A full (>120 ms) leader has been seen recently.
     leader_seen: bool,
-    // Previous sample was ~1200 Hz (rising-edge detection).
-    was_sync: bool,
+    // Samples of the last `LEADER_WIN_S` near the leader tone, and of the
+    // last `EDGE_WIN_S` below `EDGE_SLICE_HZ`.
+    near_leader: u32,
+    low: u32,
+    // The first sample the hunt counted. Older ones leaving the windows were
+    // never added to them, so they are not taken away either.
+    from: u64,
+    // The last `EDGE_WIN_S` was mostly low (edge detection).
+    was_low: bool,
     // Candidate start-bit sample indices awaiting a decode attempt. Both the
-    // 10 ms break and the real 30 ms start bit become candidates; the break
-    // decodes to VIS code 0 (rejected), so the real start bit wins.
+    // 10 ms break and the real 30 ms start bit become candidates; the break's
+    // bit slots are up at the leader, so it is rejected and the real start
+    // bit wins.
     cands: Vec<u64>,
 }
 
 impl VisState {
-    fn reset() -> Self {
-        VisState { leader: 0, leader_seen: false, was_sync: false, cands: Vec::new() }
+    fn reset(from: u64) -> Self {
+        VisState {
+            leader: 0,
+            leader_seen: false,
+            near_leader: 0,
+            low: 0,
+            from,
+            was_low: false,
+            cands: Vec::new(),
+        }
     }
+}
+
+/// How far from a tone a sample may be and still count as on it, when a
+/// window is judged by how many of its samples are.
+const TONE_NEAR_HZ: f64 = 150.0;
+
+/// The share of a window's samples that must be near the leader for the
+/// window to be leader. Noise cannot be told from the leader by its middle —
+/// its frequencies centre on the 1900 Hz the receiver mixes down by, which is
+/// the leader's — only by its spread: it puts about a quarter of its samples
+/// within [`TONE_NEAR_HZ`] of 1900, and a leader 4 dB above it half of them.
+const LEADER_SHARE: f64 = 0.45;
+
+/// The window the leader is judged over: long enough that noise does not
+/// often put [`LEADER_SHARE`] of it near 1900 by chance, short against the
+/// 300 ms leader.
+const LEADER_WIN_S: f64 = 0.020;
+
+/// A start bit's leading edge is where the median of the last
+/// `EDGE_WIN_S` falls below `EDGE_SLICE_HZ`, midway between the leader and the
+/// sync tone — the median, not the sample, because in noise single samples
+/// cross any slice all the time. Short, because a VIS's timing is taken from
+/// this edge.
+const EDGE_WIN_S: f64 = 0.003;
+const EDGE_SLICE_HZ: f64 = 1550.0;
+
+/// A start or stop bit's median must be this close to the sync tone.
+const VIS_SYNC_TOL_HZ: f64 = 150.0;
+
+/// Start bits waiting to be decoded at once. A header produces two (the break
+/// and the start bit itself); more is noise wandering across the slice, and
+/// the list refuses more rather than dropping the oldest — which was the real
+/// start bit, every time, whenever the noise made a few more.
+const MAX_VIS_CANDS: usize = 64;
+
+/// The median of `hz` over the middle 60 % of the `len` samples from `from`:
+/// what a steady tone there reads, out of reach of the transitions either side
+/// of it and of the clicks FM noise throws, which a mean would average in.
+fn tone_median(hz: impl Fn(i64) -> f64, from: f64, len: f64) -> f64 {
+    let lo = (from + 0.2 * len).round() as i64;
+    let hi = ((from + 0.8 * len).round() as i64).max(lo + 1);
+    let mut v: Vec<f64> = (lo..hi).map(hz).collect();
+    let mid = v.len() / 2;
+    *v.select_nth_unstable_by(mid, f64::total_cmp).1
 }
 
 impl SstvRx {
@@ -727,7 +788,7 @@ impl SstvRx {
             hist_cap,
             hist_base: 0,
             sample_idx: 0,
-            vis_state: VisState::reset(),
+            vis_state: VisState::reset(0),
             fsk_state: FskIdState::reset(),
             line: 0,
             line_start: 0.0,
@@ -768,7 +829,7 @@ impl SstvRx {
     /// *not* touched: none of them is about this picture.
     pub fn restart(&mut self) {
         self.phase = RxPhase::Hunt;
-        self.vis_state = VisState::reset();
+        self.vis_state = VisState::reset(self.sample_idx);
         self.fsk_state = FskIdState::reset();
         self.line = 0;
         self.line_start = 0.0;
@@ -878,7 +939,7 @@ impl SstvRx {
     // lets a receiver tuned in late — or one whose picture decode never
     // started — still learn who is transmitting.
     fn step_fsk_id(&mut self, out: &mut Vec<SstvEvent>) {
-        let near = |a: f64, b: f64| (a - b).abs() < 80.0;
+        let near = |a: f64, b: f64| (a - b).abs() < 100.0;
         let bit_samples = FSKID_BIT_S * self.rate;
 
         // Arming: the 100 ms block on the zero tone. Two thirds of it is enough
@@ -922,22 +983,26 @@ impl SstvRx {
         let Some(start) = self.fsk_state.start else { return };
         // Bit 0 is the start bit and carries nothing, so the data begins at 1.
         let k = self.fsk_state.taken + 1;
-        // Sampled at the middle of the bit, where the transitions either side
-        // are furthest away.
-        let at = start + ((k as f64 + 0.5) * bit_samples) as u64;
-        // Strictly greater: `sample_idx` is one *past* the newest sample in the
-        // history (it is bumped before the step runs), so waiting only for
-        // equality asks `hz_at` for a sample that has not been stored yet — and
-        // its "nothing here" answer is 1900 Hz, which is a perfectly good `1`.
-        // Every bit read as one, and every ID decoded as $3F $3F $3F…
-        if self.sample_idx <= at {
+        let from = start as f64 + k as f64 * bit_samples;
+        // Read once the part of the bit that is read has arrived — no later,
+        // since the last bit is the last thing on the air. Strictly greater:
+        // `sample_idx` is one *past* the newest sample in the history (it is
+        // bumped before the step runs), so waiting only for equality asks
+        // `hz_at` for a sample that has not been stored yet — and its "nothing
+        // here" answer is 1900 Hz, which is a perfectly good `1`. Every bit
+        // read as one, and every ID decoded as $3F $3F $3F…
+        if (self.sample_idx as f64) <= from + 0.8 * bit_samples + 1.0 {
             return;
         }
         self.fsk_state.taken += 1;
-        let hz = self.hz_at(at);
-        if near(hz, FSKID_ONE_HZ) {
+        // The whole bit, not the sample at its middle, which in noise is as
+        // likely to be a click as the tone.
+        let (hist, base) = (&self.hist, self.hist_base);
+        let hz = tone_median(|i| hz_in(hist, base, i), from, bit_samples);
+        let mid = (FSKID_ONE_HZ + FSKID_ZERO_HZ) / 2.0;
+        if hz < mid && near(hz, FSKID_ONE_HZ) {
             self.fsk_state.bits.push(true);
-        } else if near(hz, FSKID_ZERO_HZ) {
+        } else if hz >= mid && near(hz, FSKID_ZERO_HZ) {
             self.fsk_state.bits.push(false);
         } else {
             // Neither tone: the stream has ended (or was never one). Give up
@@ -976,17 +1041,42 @@ impl SstvRx {
     }
 
     // ── VIS detection ──
+
+    /// Slide the hunt's two windows on by the sample just stored.
+    fn slide_vis_windows(&mut self) {
+        let lead_n = (LEADER_WIN_S * self.rate) as u64;
+        let edge_n = (EDGE_WIN_S * self.rate) as u64;
+        let near_leader = |hz: f64| (hz - VIS_LEADER_HZ).abs() < TONE_NEAR_HZ;
+        let low = |hz: f64| hz < EDGE_SLICE_HZ;
+        let newest = self.sample_idx - 1;
+        // The samples leaving each window, if they were ever counted into it.
+        let from = self.vis_state.from;
+        let leaving = |n: u64| newest.checked_sub(n).filter(|&i| i >= from).map(|i| self.hz_at(i));
+        let (left_lead, left_edge) = (leaving(lead_n), leaving(edge_n));
+        let vs = &mut self.vis_state;
+        vs.near_leader += u32::from(near_leader(self.inst_hz));
+        vs.low += u32::from(low(self.inst_hz));
+        if let Some(hz) = left_lead {
+            vs.near_leader -= u32::from(near_leader(hz));
+        }
+        if let Some(hz) = left_edge {
+            vs.low -= u32::from(low(hz));
+        }
+    }
+
     fn step_hunt(&mut self, out: &mut Vec<SstvEvent>) {
         self.step_fsk_id(out);
-        let near = |a: f64, b: f64| (a - b).abs() < 90.0;
-        let is_leader = near(self.inst_hz, VIS_LEADER_HZ);
-        let is_sync = near(self.inst_hz, SYNC_HZ);
+        self.slide_vis_windows();
+        let lead_n = (LEADER_WIN_S * self.rate) as u64 as f64;
+        let edge_n = (EDGE_WIN_S * self.rate) as u64;
+        let is_leader = self.vis_state.near_leader as f64 >= LEADER_SHARE * lead_n;
+        let is_low = 2 * self.vis_state.low as u64 >= edge_n;
         // Tolerant leader accumulator: brief noise glitches decrement rather than
         // reset the run, so a real ~300 ms leader still arms through hiss. No
         // amplitude gate — the discriminator is level-independent, so a clean but
         // quiet signal must still decode; the VIS code + parity check rejects
-        // noise. (On true silence the discriminator jitters randomly, so a stable
-        // ~1900 Hz run of 0.12 s effectively never occurs by chance.)
+        // noise. The leader is judged a window at a time (see `LEADER_SHARE`),
+        // because in noise single samples are no evidence either way.
         if is_leader {
             self.vis_state.leader = (self.vis_state.leader + 1).min((self.rate) as u32);
             if self.vis_state.leader as f64 > 0.12 * self.rate {
@@ -1006,76 +1096,94 @@ impl SstvRx {
                 self.vis_state.leader_seen = false;
             }
         }
-        // Rising edge into a 1200 Hz pulse after a leader → candidate start bit.
-        if is_sync && !self.vis_state.was_sync && self.vis_state.leader_seen {
-            self.vis_state.cands.push(self.sample_idx);
-            if self.vis_state.cands.len() > 8 {
-                self.vis_state.cands.remove(0);
+        let bit = 0.030 * self.rate;
+        // The fall from the leader into a start bit → candidate. The window
+        // is half full of low samples half a window after the edge.
+        if is_low && !self.vis_state.was_low && self.vis_state.leader_seen {
+            let at = self.sample_idx.saturating_sub(edge_n / 2);
+            // One candidate per edge: noise walking the median back and forth
+            // across the slice on the way down makes several, all the same one
+            // to a decode that reads the middle of each bit.
+            let fresh =
+                self.vis_state.cands.last().is_none_or(|&c| at as f64 >= c as f64 + 0.25 * bit);
+            if fresh && self.vis_state.cands.len() < MAX_VIS_CANDS {
+                self.vis_state.cands.push(at);
             }
         }
-        self.vis_state.was_sync = is_sync;
+        self.vis_state.was_low = is_low;
 
-        // Try the oldest candidate once its 8 VIS bits have elapsed.
-        let bit = 0.030 * self.rate;
-        if let Some(&start) = self.vis_state.cands.first() {
-            if (self.sample_idx as f64) >= start as f64 + 9.5 * bit {
-                self.vis_state.cands.remove(0);
-                let mut code = 0u8;
-                let mut parity = 0u8;
-                // Every VIS bit is 1100 or 1300 Hz. A candidate whose bit
-                // slots are up at the 1900 Hz leader is not a header at all —
-                // which is what the *break* pulse in the middle of the
-                // calibration header looks like, since it is a rising edge
-                // into 1200 Hz after a leader just like the start bit is. It
-                // used to be decoded anyway, reading the leader as eight zero
-                // bits with matching parity; harmless while an unknown code
-                // was silently dropped, and a false "unsupported mode" report
-                // the moment one is not.
-                let mut looks_like_vis = true;
-                for b in 0..7 {
-                    let centre = start as f64 + (1.5 + b as f64) * bit;
-                    let hz = self.hz_at(centre as u64);
-                    if hz > 1600.0 {
-                        looks_like_vis = false;
-                    }
-                    if hz < 1200.0 {
-                        code |= 1 << b; // 1100 Hz = 1
-                        parity ^= 1;
-                    }
-                }
-                let phz = self.hz_at((start as f64 + 8.5 * bit) as u64);
-                if phz > 1600.0 {
+        // Try the oldest candidate once its stop bit has arrived.
+        if let Some(&start) = self.vis_state.cands.first()
+            && (self.sample_idx as f64) >= start as f64 + 10.0 * bit
+        {
+            self.vis_state.cands.remove(0);
+            let (hist, base) = (&self.hist, self.hist_base);
+            // Slot `k` of the header, counting the start bit as 0: the
+            // median of its middle, see `tone_median`.
+            let slot = |k: f64| tone_median(|i| hz_in(hist, base, i), start as f64 + k * bit, bit);
+            // The start bit is the reference the data bits are read
+            // against: 1100 Hz is a one and 1300 a zero, and whatever the
+            // noise or the tuning has done to 1200 it has done to them too.
+            let reference = slot(0.0);
+            let mut code = 0u8;
+            let mut parity = 0u8;
+            // Every VIS bit is 1100 or 1300 Hz. A candidate whose bit
+            // slots are up at the 1900 Hz leader is not a header at all —
+            // which is what the *break* pulse in the middle of the
+            // calibration header looks like, since it is a fall into
+            // 1200 Hz after a leader just like the start bit is. It
+            // used to be decoded anyway, reading the leader as eight zero
+            // bits with matching parity; harmless while an unknown code
+            // was silently dropped, and a false "unsupported mode" report
+            // the moment one is not.
+            let mut looks_like_vis = (reference - SYNC_HZ).abs() < VIS_SYNC_TOL_HZ;
+            for b in 0..7 {
+                let hz = slot(1.0 + b as f64);
+                if hz > 1600.0 {
                     looks_like_vis = false;
                 }
-                let pbit = if phz < 1200.0 { 1 } else { 0 };
-                if looks_like_vis && parity == pbit {
-                    match SstvMode::from_vis(code) {
-                        Some(mode) => {
-                            // Image data begins after the stop bit (start + 10
-                            // bits); Scottie prefixes a 9 ms starting sync
-                            // before line 0.
-                            let mut first = start as f64 + 10.0 * bit;
-                            if matches!(
-                                mode,
-                                SstvMode::Scottie1 | SstvMode::Scottie2 | SstvMode::ScottieDx
-                            ) {
-                                first += 0.009 * self.rate;
-                            }
-                            self.begin_image(mode, first as u64, out);
+                if hz < reference {
+                    code |= 1 << b; // 1100 Hz = 1
+                    parity ^= 1;
+                }
+            }
+            let phz = slot(8.0);
+            if phz > 1600.0 {
+                looks_like_vis = false;
+            }
+            let pbit = if phz < reference { 1 } else { 0 };
+            // The stop bit is back at 1200 Hz. Asked only before decoding
+            // a picture, which is what a false header costs; a report of
+            // an unrecognised one is cheap, and some of those (MMSSTV's
+            // 16-bit codes) carry data where a 7-bit header has its stop.
+            let stopped = (slot(9.0) - SYNC_HZ).abs() < VIS_SYNC_TOL_HZ;
+            if looks_like_vis && parity == pbit {
+                match SstvMode::from_vis(code) {
+                    Some(mode) if stopped => {
+                        // Image data begins after the stop bit (start + 10
+                        // bits); Scottie prefixes a 9 ms starting sync
+                        // before line 0.
+                        let mut first = start as f64 + 10.0 * bit;
+                        if matches!(
+                            mode,
+                            SstvMode::Scottie1 | SstvMode::Scottie2 | SstvMode::ScottieDx
+                        ) {
+                            first += 0.009 * self.rate;
                         }
-                        // A header that checks out for a mode we cannot draw.
-                        // Said once per header rather than swallowed — see
-                        // `SstvEvent::UnsupportedMode`. Code 0 is not a mode
-                        // anyone has ever been assigned, so a candidate that
-                        // reads as one is a misread and says nothing.
-                        None if code != 0 && self.preceded_by_leader(start) => {
-                            out.push(SstvEvent::UnsupportedMode {
-                                code,
-                                name: SstvMode::unsupported_name(code),
-                            })
-                        }
-                        None => {}
+                        self.begin_image(mode, first as u64, out);
                     }
+                    // A header that checks out for a mode we cannot draw.
+                    // Said once per header rather than swallowed — see
+                    // `SstvEvent::UnsupportedMode`. Code 0 is not a mode
+                    // anyone has ever been assigned, so a candidate that
+                    // reads as one is a misread and says nothing.
+                    None if code != 0 && self.preceded_by_leader(start) => {
+                        out.push(SstvEvent::UnsupportedMode {
+                            code,
+                            name: SstvMode::unsupported_name(code),
+                        })
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1090,27 +1198,23 @@ impl SstvRx {
     /// decoding a recognised one: a missed report costs a line of explanation,
     /// and a missed decode costs the picture.
     ///
-    /// The hunt pushes a candidate at every rising edge into 1200 Hz while a
-    /// leader is anywhere in recent memory, and the VIS bits themselves sweep
-    /// through 1200 Hz on their way from 1300 to 1100 — so a header's own data
-    /// bits produce candidates of their own, a couple of which read as a code
-    /// with matching parity. They are harmless as decodes (their code is not a
-    /// mode) and actively wrong as reports, where the last one to arrive would
-    /// overwrite the real mode's name. A start bit is preceded by the leader;
-    /// a data bit is preceded by another data bit.
+    /// A candidate is any fall into sync while a leader is in recent memory,
+    /// and noise makes those too; some read as a code with matching parity.
+    /// They are harmless as decodes (their code is not a mode) and actively
+    /// wrong as reports, where the last one to arrive would overwrite the real
+    /// mode's name. A start bit is preceded by the leader.
     ///
-    /// Sampled at several points and decided by majority, so noise on one of
-    /// them does not cost the explanation.
+    /// Judged the way the hunt judges the leader, by the share of the window
+    /// near it, so noise on a few samples does not cost the explanation.
     fn preceded_by_leader(&self, start: u64) -> bool {
-        let mut near = 0u32;
-        for k in 1..=5u64 {
-            let back = (k as f64 * 0.004 * self.rate) as u64;
-            let idx = start.saturating_sub(back);
-            if (self.hz_at(idx) - VIS_LEADER_HZ).abs() < 120.0 {
-                near += 1;
-            }
-        }
-        near >= 3
+        // Ending a little short of the edge, which the candidate's timing
+        // only knows to within its own window.
+        let to = start.saturating_sub((EDGE_WIN_S * self.rate) as u64);
+        let n = (LEADER_WIN_S * self.rate) as u64;
+        let near = (to.saturating_sub(n)..to)
+            .filter(|&i| (self.hz_at(i) - VIS_LEADER_HZ).abs() < TONE_NEAR_HZ)
+            .count();
+        near as f64 >= LEADER_SHARE * n as f64
     }
 
     /// Total samples per scan line for `mode`, at line index `line` (only the
@@ -1270,7 +1374,7 @@ impl SstvRx {
             self.final_pass(out);
             out.push(SstvEvent::ImageComplete);
             self.phase = RxPhase::Hunt;
-            self.vis_state = VisState::reset();
+            self.vis_state = VisState::reset(self.sample_idx);
             self.track.clear();
         } else {
             self.line_samples = self.line_period_samples(self.mode, self.line);
@@ -2311,6 +2415,27 @@ mod tests {
             assert_eq!(r.by_vis, header, "header {header}: locked off the VIS {}", r.by_vis);
             assert!(r.rows > h as usize * 9 / 10, "header {header}: {} rows", r.rows);
             assert!(r.err < 12.0, "header {header}: error {:.1}", r.err);
+        }
+    }
+
+    /// The header read at 10 dB, where every sample of it is noisy enough to
+    /// be misread. It used to be read one sample per bit, and one sample per
+    /// sample for the edge the bits are timed from; noise wandering across
+    /// that edge filled the candidate list and pushed the real start bit off
+    /// it, and nothing below about 50 dB was ever decoded off its VIS.
+    #[test]
+    fn the_vis_is_read_through_the_noise() {
+        for mode in [SstvMode::Robot36, SstvMode::Martin1, SstvMode::Scottie1, SstvMode::Pd120] {
+            for seed in 1..=2 {
+                let r = receive_in_noise(mode, 10.0, seed, true);
+                assert!(
+                    r.mode == Some(mode) && r.by_vis,
+                    "{} seed {seed}: locked {:?}, by VIS {}",
+                    mode.label(),
+                    r.mode,
+                    r.by_vis
+                );
+            }
         }
     }
 
