@@ -2152,4 +2152,248 @@ mod tests {
         let (slant, _) = slant_through(SstvMode::Pd50, 3000.0, 0.25, |_| 1.0);
         assert!(slant.abs() < 6.0, "slant {slant:.1} px");
     }
+
+    // ── Sensitivity ──
+    //
+    // What the receiver makes of a picture in white noise, as a function of
+    // signal-to-noise ratio. The sweep below is the yardstick every change to
+    // the demodulator is measured against: a change that does not move these
+    // numbers is not a sensitivity improvement, however reasonable it looks.
+
+    /// The bandwidth the signal-to-noise ratios here are quoted in: the SSB
+    /// voice channel SSTV is received through.
+    const SNR_BANDWIDTH_HZ: f64 = 3000.0;
+
+    /// The most rows a free-run lock may number wrongly: the pulses it takes
+    /// to be sure of the cadence, and the line it came in partway through.
+    const FREERUN_MAX_ROWS_LATE: usize = 16;
+
+    /// What one reception in noise came to.
+    struct Reception {
+        /// The mode the receiver locked on to, if any.
+        mode: Option<SstvMode>,
+        /// Whether it locked before the picture began — off the VIS, that is,
+        /// rather than off the picture's sync pulses once the VIS was missed.
+        /// A free-run lock rescues the picture but not its first lines, and on
+        /// Robot 36 not always its colours.
+        by_vis: bool,
+        /// Picture rows delivered.
+        rows: usize,
+        /// Mean absolute error of the delivered rows against what was sent,
+        /// in levels (0–255) per channel.
+        err: f64,
+    }
+
+    /// A picture with something in every channel and at every scale: a ramp
+    /// across in red, a ramp down in green, and blocks in blue — so a decoder
+    /// that swaps channels, loses the timing or smears the detail cannot pass
+    /// by accident, and the colour-difference modes get edges in chroma.
+    fn test_card(w: usize, h: usize) -> Vec<u8> {
+        let mut rgb = vec![0u8; w * h * 3];
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 3;
+                rgb[i] = (x * 255 / w.max(1)) as u8;
+                rgb[i + 1] = (y * 255 / h.max(1)) as u8;
+                rgb[i + 2] = if (x / 16 + y / 16) % 2 == 0 { 40 } else { 215 };
+            }
+        }
+        rgb
+    }
+
+    /// Send `mode` through white Gaussian noise at `snr_db` (in
+    /// [`SNR_BANDWIDTH_HZ`]) and see what comes out. With `header` the whole
+    /// transmission is sent and the receiver has to find the VIS; without it
+    /// the header is cut off and it has to lock on the sync cadence alone.
+    /// Noise runs throughout, including half a second before the signal and
+    /// two seconds after it, so the hunt sees noise before it sees a picture.
+    fn receive_in_noise(mode: SstvMode, snr_db: f64, seed: u64, header: bool) -> Reception {
+        let rate = 48_000.0;
+        let (w, h) = mode.dimensions();
+        let (wu, hu) = (w as usize, h as usize);
+        let sent = test_card(wu, hu);
+        // The transmitter's tone is 0.5 peak, so 0.125 of power; white noise
+        // of variance σ² puts σ²·B/(rate/2) of it in B.
+        let noise_power = 0.125 / 10f64.powf(snr_db / 10.0);
+        let sigma = (noise_power * (rate / 2.0) / SNR_BANDWIDTH_HZ).sqrt();
+
+        let mut tx = SstvTx::new(mode, &sent, w, h, rate, 0.0);
+        let mut audio = Vec::new();
+        let mut block = vec![0.0f32; 8192];
+        while !tx.done() {
+            let n = tx.next_block(&mut block);
+            audio.extend_from_slice(&block[..n]);
+        }
+        // The calibration header and VIS are 0.94 s; past 1.1 s is picture.
+        let skip = if header { 0 } else { (1.1 * rate) as usize };
+        let lead = (0.5 * rate) as usize;
+        let tail = (2.0 * rate) as usize;
+        let mut rng = Noise(seed | 1);
+        let air: Vec<f32> = std::iter::repeat_n(0.0, lead)
+            .chain(audio[skip.min(audio.len())..].iter().copied())
+            .chain(std::iter::repeat_n(0.0, tail))
+            .map(|s| (s as f64 + sigma * rng.next()) as f32)
+            .collect();
+
+        let mut rx = SstvRx::new(rate);
+        rx.set_expected(None);
+        let mut got = vec![0u8; sent.len()];
+        let mut have = vec![false; hu];
+        let mut locked = None;
+        let mut by_vis = false;
+        // The VIS is decoded before its stop bit, 30 ms ahead of the picture;
+        // the quickest free-run lock takes two whole lines.
+        let picture = lead as f64 + if header { 0.94 * rate } else { 0.0 };
+        let mut fed = 0usize;
+        let mut events = Vec::new();
+        // Fed in small blocks so a lock is timed to within one of them.
+        for chunk in air.chunks(512) {
+            rx.process(chunk, &mut events);
+            fed += chunk.len();
+            for e in events.drain(..) {
+                match e {
+                    // The first lock is the one that counts: a receiver that
+                    // locks on noise first has missed the picture.
+                    SstvEvent::ModeDetected(m) if locked.is_none() => {
+                        locked = Some(m);
+                        by_vis = header && (fed as f64) < picture + 0.05 * rate;
+                    }
+                    SstvEvent::Line { y, rgb } if locked == Some(mode) => {
+                        let at = y as usize * wu * 3;
+                        if at + rgb.len() <= got.len() {
+                            got[at..at + rgb.len()].copy_from_slice(&rgb);
+                            have[y as usize] = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let rows = have.iter().filter(|&&b| b).count();
+        // Error of the delivered rows against the rows sent `off` further
+        // down. A receiver that locks on the sync cadence cannot know which
+        // line it came in on, and numbers the first one it decodes row 0 — so
+        // without the header the picture is compared where it fits best. With
+        // it the rows are where they are.
+        let err_at = |off: usize| {
+            let (mut total, mut n) = (0u64, 0u64);
+            for y in (0..hu.saturating_sub(off)).filter(|&y| have[y]) {
+                let (g, s) = (&got[y * wu * 3..][..wu * 3], &sent[(y + off) * wu * 3..][..wu * 3]);
+                total += g.iter().zip(s).map(|(&a, &b)| a.abs_diff(b) as u64).sum::<u64>();
+                n += (wu * 3) as u64;
+            }
+            if n == 0 { f64::NAN } else { total as f64 / n as f64 }
+        };
+        let err = if header {
+            err_at(0)
+        } else {
+            (0..=FREERUN_MAX_ROWS_LATE)
+                .map(err_at)
+                .filter(|e| e.is_finite())
+                .fold(f64::NAN, f64::min)
+        };
+        Reception { mode: locked, by_vis, rows, err }
+    }
+
+    /// The harness itself, on a signal far above the noise: every row comes
+    /// back, close to what was sent, by either route in. (Close, not exact:
+    /// Robot 36 halves its chroma, and the blocks' colour edges cost it about
+    /// 8 levels with no noise at all.) If this fails the
+    /// sweep below is measuring the harness, not the receiver.
+    #[test]
+    fn a_strong_signal_comes_through_the_noise_harness_intact() {
+        let mode = SstvMode::Robot36;
+        let (_, h) = mode.dimensions();
+        for header in [true, false] {
+            let r = receive_in_noise(mode, 60.0, 1, header);
+            assert_eq!(r.mode, Some(mode), "header {header}: locked {:?}", r.mode);
+            assert_eq!(r.by_vis, header, "header {header}: locked off the VIS {}", r.by_vis);
+            assert!(r.rows > h as usize * 9 / 10, "header {header}: {} rows", r.rows);
+            assert!(r.err < 12.0, "header {header}: error {:.1}", r.err);
+        }
+    }
+
+    /// One signal-to-noise ratio of a sweep, and every reception at it.
+    type SweepPoint = (f64, Vec<Reception>);
+
+    /// The sensitivity sweep: for a few representative modes, by each route
+    /// in, the share of receptions that locked on the right mode, the rows
+    /// they delivered and how far those rows were from what was sent, from
+    /// well below the point where anything decodes to well above it.
+    ///
+    /// Slow, so not part of the ordinary run:
+    ///
+    /// ```text
+    /// cargo test --release -p sdroxide-dsp sstv::tests::sensitivity_sweep -- --ignored --nocapture
+    /// ```
+    ///
+    /// `SSTV_SWEEP_MODES` (labels, comma-separated) and `SSTV_SWEEP_SEEDS`
+    /// narrow or widen it.
+    #[test]
+    #[ignore = "slow: a sensitivity measurement, run by hand"]
+    fn sensitivity_sweep() {
+        let modes: Vec<SstvMode> = match std::env::var("SSTV_SWEEP_MODES") {
+            Ok(list) => SstvMode::ALL
+                .into_iter()
+                .filter(|m| list.split(',').any(|l| l.trim().eq_ignore_ascii_case(m.label())))
+                .collect(),
+            Err(_) => {
+                vec![SstvMode::Robot36, SstvMode::Martin1, SstvMode::Scottie1, SstvMode::Pd120]
+            }
+        };
+        let seeds: u64 =
+            std::env::var("SSTV_SWEEP_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(4);
+        let snrs: Vec<f64> = (0..=20).map(|k| k as f64 * 2.0).collect();
+
+        let jobs: Vec<(SstvMode, bool)> =
+            modes.iter().flat_map(|&m| [(m, true), (m, false)]).collect();
+        let results: Vec<(SstvMode, bool, Vec<SweepPoint>)> = std::thread::scope(|s| {
+            let handles: Vec<_> = jobs
+                .iter()
+                .map(|&(mode, header)| {
+                    let snrs = &snrs;
+                    s.spawn(move || {
+                        let rows = snrs
+                            .iter()
+                            .map(|&snr| {
+                                let runs = (0..seeds)
+                                    .map(|k| receive_in_noise(mode, snr, 0x5EED + 7919 * k, header))
+                                    .collect();
+                                (snr, runs)
+                            })
+                            .collect();
+                        (mode, header, rows)
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+
+        for (mode, header, rows) in results {
+            let (_, h) = mode.dimensions();
+            let route = if header { "VIS" } else { "free-run" };
+            println!("\n{} via {route}  (SNR in {SNR_BANDWIDTH_HZ} Hz)", mode.label());
+            println!("  SNR dB   locked   by VIS   rows %   error");
+            for (snr, runs) in rows {
+                let n = runs.len() as f64;
+                let locked = runs.iter().filter(|r| r.mode == Some(mode)).count();
+                let by_vis = runs.iter().filter(|r| r.mode == Some(mode) && r.by_vis).count();
+                let rows_pct =
+                    runs.iter().map(|r| r.rows as f64).sum::<f64>() / n / h as f64 * 100.0;
+                let errs: Vec<f64> = runs.iter().map(|r| r.err).filter(|e| e.is_finite()).collect();
+                let err = if errs.is_empty() {
+                    "    -".to_string()
+                } else {
+                    format!("{:5.1}", errs.iter().sum::<f64>() / errs.len() as f64)
+                };
+                let vis =
+                    if header { format!("{by_vis:>2}/{:<2}", runs.len()) } else { "-".into() };
+                println!(
+                    "  {snr:6.1}   {locked:>2}/{:<2}    {vis:>6}   {rows_pct:5.1}   {err}",
+                    runs.len()
+                );
+            }
+        }
+    }
 }
