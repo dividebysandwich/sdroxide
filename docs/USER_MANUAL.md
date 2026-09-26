@@ -2900,7 +2900,9 @@ after**, not a stored preference, and arming one clears the other — they are t
 answers to when a recording ends. It needs a front end whose squelch the program
 itself applies (an SDR); a CAT radio's squelch belongs to the radio and its
 meters carry no passband level to follow, so the row says that rather than
-arming a recorder that would never close.
+arming a recorder that would never close. The REC chip shows the difference:
+armed but waiting is a steady red outline, while a file actually being written
+fills the chip red and the fill breathes.
 
 #### Recording the spectrum
 

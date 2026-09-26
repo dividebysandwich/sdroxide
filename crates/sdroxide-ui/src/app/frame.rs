@@ -228,7 +228,11 @@ impl eframe::App for SdroxideApp {
         // are what `logic` would give us; a fully hidden window is the engine's
         // job and is left for a later cut.)
         if self.rec_gate_s.is_some() {
-            crate::repaint::after_ms(&ctx, 250);
+            // While a file is actually being written the REC chip breathes, so
+            // it wants a smoother clock than the gate's own once-a-frame
+            // decision does.
+            let ms = if self.state.recording || self.state.iq_recording { 120 } else { 250 };
+            crate::repaint::after_ms(&ctx, ms);
         }
         // The keyboard, the mouse buttons and the control surface belong to
         // the focused radio alone. In a split view every visible radio runs

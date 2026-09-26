@@ -2936,17 +2936,14 @@ impl SdroxideApp {
                 // The label stays "REC": the chip's width is reserved for it
                 // ([`RxChip::width_label`]) and "REC AUTO" pushed the RX strip
                 // off the screen. Armed but between transmissions is said with
-                // an accent outline instead — the fill still means a file is
-                // being written *right now*.
+                // a steady accent outline; a file actually being written fills
+                // the chip and the fill *breathes*, so "armed, waiting" and
+                // "recording now" are told apart at a glance without the label.
                 let lit = audio || iq;
-                let rec = crate::chrome::chip_accent(
-                    ui,
-                    lit,
-                    "REC",
-                    crate::theme::ALERT(),
-                    Color32::WHITE,
-                )
-                .on_hover_text(hover);
+                let fill =
+                    if lit { rec_chip_fill(ui.input(|i| i.time)) } else { crate::theme::ALERT() };
+                let rec = crate::chrome::chip_accent(ui, lit, "REC", fill, Color32::WHITE)
+                    .on_hover_text(hover);
                 if auto && !lit {
                     ui.painter().rect_stroke(
                         rec.rect.shrink(0.5),
@@ -5796,6 +5793,26 @@ pub(in crate::app) struct RecGate {
 /// recorder that will not start is not re-asked every frame.
 const REC_START_TIMEOUT_S: i64 = 3;
 
+/// The REC chip's fill while a file is being written: the alert red breathing
+/// between full and a little under two thirds, once every 1.6 s.
+///
+/// Armed is a steady outline and recording is a moving light, so the two are
+/// told apart at a glance without spelling it out on the chip, whose width the
+/// strip has reserved for the four letters `REC`. The top of the breath is the
+/// plain alert red, so the brightest instant matches every other alert in the
+/// program and only the off-beat is dimmer.
+fn rec_chip_fill(now: f64) -> Color32 {
+    const PERIOD_S: f64 = 1.6;
+    let phase = (now / PERIOD_S * std::f64::consts::TAU).sin() as f32 * 0.5 + 0.5;
+    let k = 0.6 + 0.4 * phase.clamp(0.0, 1.0);
+    let c = crate::theme::ALERT();
+    Color32::from_rgb(
+        (c.r() as f32 * k).round() as u8,
+        (c.g() as f32 * k).round() as u8,
+        (c.b() as f32 * k).round() as u8,
+    )
+}
+
 fn rec_gate_tick(
     now: i64,
     hold_s: Option<u16>,
@@ -5827,37 +5844,35 @@ fn rec_gate_tick(
             // Quiet again: re-arm, ready for the next transmission.
             return (RecGate::default(), false, false);
         }
-        return (RecGate { was_recording: recording, hold_off: true, ..RecGate::default() }, false, false);
+        return (
+            RecGate { was_recording: recording, hold_off: true, ..RecGate::default() },
+            false,
+            false,
+        );
     }
 
     if signal {
         if recording {
             // Written, and the signal ended any silence run there was.
-            return (
-                RecGate { was_recording: true, ..RecGate::default() },
-                false,
-                false,
-            );
+            return (RecGate { was_recording: true, ..RecGate::default() }, false, false);
         }
         // Not recording with a signal present: ask to start, once.
         match st.start_pending {
-            Some(at) => {
-                (RecGate { start_pending: Some(at), ..RecGate::default() }, false, false)
-            }
-            None => {
-                (RecGate { start_pending: Some(now), ..RecGate::default() }, true, false)
-            }
+            Some(at) => (RecGate { start_pending: Some(at), ..RecGate::default() }, false, false),
+            None => (RecGate { start_pending: Some(now), ..RecGate::default() }, true, false),
         }
     } else if !recording {
         // Silence with nothing recording is just a quiet band, not a run.
         (RecGate::default(), false, false)
     } else {
         match st.silent_since {
-            Some(since) if now - since >= i64::from(hold) => {
-                (RecGate::default(), false, true)
-            }
+            Some(since) if now - since >= i64::from(hold) => (RecGate::default(), false, true),
             other => (
-                RecGate { silent_since: other.or(Some(now)), was_recording: true, ..RecGate::default() },
+                RecGate {
+                    silent_since: other.or(Some(now)),
+                    was_recording: true,
+                    ..RecGate::default()
+                },
                 false,
                 false,
             ),
@@ -6869,6 +6884,22 @@ mod tests {
 
         // Silence with nothing recording is a quiet band, not a run.
         assert_eq!(rec_gate_tick(100, Some(3), false, false, off), (off, false, false));
+    }
+
+    /// The REC chip's recording fill breathes: the top of the breath is the
+    /// plain alert red — so the brightest instant matches every other alert in
+    /// the program — the rest of the cycle is dimmer, and it never goes
+    /// brighter than the alert.
+    #[test]
+    fn the_recording_fill_breathes_the_alert_red() {
+        let full = crate::theme::ALERT();
+        assert_eq!(rec_chip_fill(0.4), full, "the peak is the plain alert red");
+        let dim = rec_chip_fill(1.2);
+        assert_ne!(dim, full, "the trough is dimmer");
+        assert!(
+            dim.r() <= full.r() && dim.g() <= full.g() && dim.b() <= full.b(),
+            "the breath never goes brighter than the alert red: {dim:?} vs {full:?}"
+        );
     }
 
     /// Walk a chip through a sequence of pointer edges, collecting the PTT
