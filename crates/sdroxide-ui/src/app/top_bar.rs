@@ -2339,6 +2339,21 @@ impl SdroxideApp {
             size,
         );
 
+        let can_dock = band_dock_allowed(crate::layout::tier(ui.ctx()));
+        if self.band_docked && can_dock {
+            if btn
+                .on_hover_text(if self.band_dock_visible {
+                    "Hide the docked band selector — click again to bring it back"
+                } else {
+                    "Show the docked band selector"
+                })
+                .clicked()
+            {
+                self.band_dock_visible = !self.band_dock_visible;
+            }
+            return;
+        }
+
         // The same scrolled, viewport-sized popup the menu chips use. This is
         // the longest menu in the program — three sections and forty chips —
         // and it opens on every layout, so it is the one that has to be held
@@ -2346,9 +2361,94 @@ impl SdroxideApp {
         let (state, caps) = (&self.state, &self.caps);
         let stated = self.radio_cfg.as_ref().is_some_and(|c| !c.freq_ranges_rx.is_empty());
         let (conditions, daylight) = (self.band_conditions.as_ref(), self.daylight);
+        let popup_id = egui::Popup::default_response_id(&btn);
+        let mut dock = false;
         crate::chrome::fading_menu_popup(ui, &btn, &mut self.mode_popup_since, |ui| {
+            if can_dock
+                && crate::chrome::chip(ui, false, "DOCK")
+                    .on_hover_text(
+                        "Keep the band and mode selector open beside the waterfall instead of \
+                         closing this popup every time",
+                    )
+                    .clicked()
+            {
+                dock = true;
+            }
+            ui.add_space(2.0);
             band_mode_menu(ui, mode, state, caps.as_ref(), stated, conditions, daylight, cmds);
         });
+        if dock {
+            self.band_docked = true;
+            self.band_dock_visible = true;
+            egui::Popup::close_id(ui.ctx(), popup_id);
+        }
+    }
+
+    /// The band/mode selector docked as a column beside the panadapter: the
+    /// same [`band_mode_menu`] the popup draws, with its own UNDOCK and hide.
+    pub(in crate::app) fn band_dock_panel(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        if !band_dock_allowed(crate::layout::tier(ui.ctx())) {
+            self.band_docked = false;
+            self.band_dock_visible = false;
+            return;
+        }
+        let mut visible = true;
+        egui::Panel::right(crate::layout::salted_id(ui.ctx(), "band-dock"))
+            .resizable(true)
+            .default_size((ui.available_width() * 0.4).clamp(180.0, 280.0))
+            .frame(
+                egui::Frame::new()
+                    .fill(crate::theme::PANEL())
+                    .inner_margin(egui::Margin::symmetric(9, 7)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("BAND & MODE")
+                            .size(11.0)
+                            .strong()
+                            .color(crate::theme::CYAN()),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if crate::chrome::chip(ui, false, "×")
+                            .on_hover_text("Hide — the band chip brings it back")
+                            .clicked()
+                        {
+                            visible = false;
+                        }
+                        if crate::chrome::chip(ui, false, "UNDOCK")
+                            .on_hover_text("Return the selector to the top-bar popup")
+                            .clicked()
+                        {
+                            self.band_docked = false;
+                        }
+                    });
+                });
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .id_salt("band-dock-scroll")
+                    .show(ui, |ui| {
+                        let mode = self.state.rx[0].mode;
+                        let stated = self
+                            .radio_cfg
+                            .as_ref()
+                            .is_some_and(|c| !c.freq_ranges_rx.is_empty());
+                        band_mode_menu(
+                            ui,
+                            mode,
+                            &self.state,
+                            self.caps.as_ref(),
+                            stated,
+                            self.band_conditions.as_ref(),
+                            self.daylight,
+                            cmds,
+                        );
+                    });
+            });
+        if !visible {
+            self.band_dock_visible = false;
+        }
     }
 
     /// [`rx_rows`] against this radio: what the front end offers, what the
@@ -6038,6 +6138,15 @@ fn vfo_offsets_w(ui: &egui::Ui, tx_capable: bool) -> f32 {
     }
 }
 
+/// Whether the band/mode selector may dock as a column beside the panadapter.
+///
+/// Desktop and tablet only: a column beside a phone's waterfall would leave the
+/// picture nothing to draw in, and the phone's chip keeps its popup. A window
+/// shrunk to a phone undocks on the same rule.
+fn band_dock_allowed(tier: crate::layout::Tier) -> bool {
+    tier != crate::layout::Tier::Phone
+}
+
 /// How tall the band/mode chip is drawn: a plain chip plus
 /// [`BAND_MODE_EXTRA_H`], or as much of it as the row it stands in can spare.
 /// The compact strips cut their rows to the point — a phone's frequency box is
@@ -8207,6 +8316,17 @@ mod tests {
                 "{screen:?}: the band menu spans {r:?}"
             );
         }
+    }
+
+    /// The band selector docks as a column beside the waterfall on desktop and
+    /// tablet layouts, and never on a phone — where the column would leave the
+    /// picture nowhere to draw, and the chip keeps its popup instead.
+    #[test]
+    fn the_band_selector_docks_on_desktop_layouts_only() {
+        use crate::layout::Tier;
+        assert!(band_dock_allowed(Tier::Desktop));
+        assert!(band_dock_allowed(Tier::Tablet));
+        assert!(!band_dock_allowed(Tier::Phone));
     }
 
     /// Lay the condensed RX box's two rows out with the real widgets at

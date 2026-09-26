@@ -496,6 +496,14 @@ pub struct SdroxideApp {
     /// and the TONE encoder — like `tone_popup_since`.
     duplex_popup_since: Option<f64>,
     rpt_tone_popup_since: Option<f64>,
+    /// Whether the band/mode selector is docked beside the panadapter rather
+    /// than opened from the top-bar chip, and whether the docked column is
+    /// currently shown. Session UI state: hiding the column leaves it docked,
+    /// so the band chip brings it straight back. `band_docked` is also cleared
+    /// when the window narrows to a phone, where a column would leave the
+    /// waterfall nothing to draw in.
+    band_docked: bool,
+    band_dock_visible: bool,
     /// The layout in force last frame, so a change can re-apply the style
     /// metrics (chip padding, text sizes) exactly once instead of every frame.
     tier: crate::layout::Tier,
@@ -1390,6 +1398,8 @@ impl SdroxideApp {
             bw_popup_since: None,
             duplex_popup_since: None,
             rpt_tone_popup_since: None,
+            band_docked: false,
+            band_dock_visible: false,
             // Corrected on the first frame, once the viewport size is known.
             tier: crate::layout::Tier::Desktop,
             ptt: Default::default(),
