@@ -2918,21 +2918,40 @@ impl SdroxideApp {
                 // decided was the default (issue #217).
                 let audio = self.state.recording;
                 let iq = self.state.iq_recording;
-                let rec = crate::chrome::chip_accent(
-                    ui,
-                    audio || iq,
-                    "REC",
-                    crate::theme::ALERT(),
-                    Color32::WHITE,
-                )
-                .on_hover_text(
-                    match (&self.state.recording_file, &self.state.iq_recording_file) {
-                        (Some(a), Some(q)) => format!("Recording {a} and {q}"),
-                        (Some(a), None) => format!("Recording audio to {a}"),
-                        (None, Some(q)) => format!("Recording I/Q to {q}"),
-                        (None, None) => "Record the audio, the raw I/Q, or both".to_string(),
-                    },
-                );
+                // Armed but between transmissions is not the same as recording,
+                // so the label carries it rather than the light: the chip lights
+                // while a file is actually being written.
+                let auto = self.rec_gate_s.is_some();
+                let hover = match (&self.state.recording_file, &self.state.iq_recording_file) {
+                    (Some(a), Some(q)) => format!("Recording {a} and {q}"),
+                    (Some(a), None) => format!("Recording audio to {a}"),
+                    (None, Some(q)) => format!("Recording I/Q to {q}"),
+                    (None, None) if auto => format!(
+                        "Auto-record armed: a file per transmission, closed after {} s of \
+                         silence",
+                        self.rec_gate_s.unwrap_or(0)
+                    ),
+                    (None, None) => "Record the audio, the raw I/Q, or both".to_string(),
+                };
+                // The label stays "REC": the chip's width is reserved for it
+                // ([`RxChip::width_label`]) and "REC AUTO" pushed the RX strip
+                // off the screen. Armed but between transmissions is said with
+                // a steady accent outline; a file actually being written fills
+                // the chip and the fill *breathes*, so "armed, waiting" and
+                // "recording now" are told apart at a glance without the label.
+                let lit = audio || iq;
+                let fill =
+                    if lit { rec_chip_fill(ui.input(|i| i.time)) } else { crate::theme::ALERT() };
+                let rec = crate::chrome::chip_accent(ui, lit, "REC", fill, Color32::WHITE)
+                    .on_hover_text(hover);
+                if auto && !lit {
+                    ui.painter().rect_stroke(
+                        rec.rect.shrink(0.5),
+                        0.0,
+                        egui::Stroke::new(1.2, crate::theme::ALERT()),
+                        egui::StrokeKind::Inside,
+                    );
+                }
                 self.rec_popup(ui, cmds, &rec);
             }
             RxChip::Stereo => {
@@ -3231,6 +3250,44 @@ impl SdroxideApp {
         }
     }
 
+    /// Follow the receiver's squelch while the silence auto-split is armed: a
+    /// new MP3 file begins when the squelch opens, and the one running is
+    /// closed after the armed number of seconds of silence (issue #546).
+    ///
+    /// Runs once a frame. The whole decision is [`rec_gate_tick`]'s, so that
+    /// function is the one thing that has to be right.
+    pub(in crate::app) fn poll_recording_gate(&mut self, cmds: &mut Vec<Command>) {
+        // The engine's own squelch decision, reconstructed from the meter it
+        // publishes and the settings the operator chose, exactly as the receive
+        // chain computes it: the passband power over the threshold *and* the
+        // tone squelch matching where one is set, or the transmitter keyed —
+        // the MP3 records our own over, and the meter reads −∞ during it, so
+        // counting `tx` as signal is what keeps a file open through one. A
+        // missing meter reads as no signal, which arms nothing until one
+        // arrives.
+        let signal = match (self.meters.as_ref(), self.state.rx.first()) {
+            (Some(m), Some(rx)) => {
+                let tone_ok = rx.tone_sql.is_none_or(|want| m.tone == Some(want));
+                (m.passband_dbfs >= rx.squelch_db && tone_ok) || m.tx.is_some()
+            }
+            _ => false,
+        };
+        let (gate, start, stop) = rec_gate_tick(
+            crate::time::now_unix(),
+            self.rec_gate_s,
+            self.state.recording,
+            signal,
+            self.rec_gate,
+        );
+        self.rec_gate = gate;
+        if start {
+            cmds.push(Command::SetRecording(true));
+        }
+        if stop {
+            cmds.push(Command::SetRecording(false));
+        }
+    }
+
     /// What the REC chip opens: one row per thing that can be recorded.
     ///
     /// A popup rather than a toggle because there are two answers and neither
@@ -3332,6 +3389,10 @@ impl SdroxideApp {
                 }
                 if let Some(armed) = arm {
                     self.recording_stop_at = Some(armed);
+                    // Arming one is disarming the other — the caption below says
+                    // so, and it was leaving the silence gate armed.
+                    self.rec_gate_s = None;
+                    self.rec_gate = Default::default();
                     // The countdown label below has to keep being redrawn.
                     crate::repaint::schedule_ms(ui.ctx(), 1_000);
                 } else if cancel {
@@ -3349,6 +3410,79 @@ impl SdroxideApp {
                     }
                 }
             });
+        }
+
+        // Auto-record: follow the receiver's squelch and give each transmission
+        // its own stamped file. Session-only, ticked once a frame by
+        // `poll_recording_gate` (issue #546). The squelch is what defines
+        // silence, so with it wide open there is nothing to follow and the
+        // chips say so rather than arming a recorder that would never close.
+        crate::chrome::menu_caption(ui, "Auto-record");
+        // Two things stop it working, and both are said rather than left to a
+        // recorder that quietly never starts: the squelch is the definition of
+        // silence, so it has to be set; and the decision reads the receiver's
+        // own passband power, which only an SDR front end publishes (a CAT
+        // rig's squelch is the rig's, and its meters carry no such number).
+        let squelch_open = self.state.rx[0].squelch_db <= sdroxide_types::SQUELCH_OPEN_DB + 0.5;
+        let have_scale = self.meters.as_ref().map(|m| m.passband_dbfs.is_finite()).unwrap_or(true);
+        let block: Option<&str> = if squelch_open {
+            Some("Set a squelch — auto-record needs one to know silence")
+        } else if !have_scale {
+            Some("Auto-record needs an SDR front end with a software squelch")
+        } else {
+            None
+        };
+        let mut pick: Option<Option<u16>> = None;
+        ui.horizontal_wrapped(|ui| {
+            for (label, secs) in [
+                ("off", None),
+                ("2 s", Some(2u16)),
+                ("3 s", Some(3)),
+                ("5 s", Some(5)),
+                ("10 s", Some(10)),
+            ] {
+                let armed = self.rec_gate_s == secs;
+                let enabled = secs.is_none() || block.is_none();
+                let chip = ui
+                    .add_enabled_ui(enabled, |ui| crate::chrome::chip(ui, armed, label))
+                    .inner
+                    .on_hover_text(match secs {
+                        None => "Stop following the squelch".to_string(),
+                        Some(s) => format!(
+                            "Record each transmission to its own file, closed after {s} seconds \
+                             of silence"
+                        ),
+                    });
+                if chip.clicked() {
+                    pick = Some(secs);
+                }
+            }
+        });
+        if let Some(why) = block {
+            ui.label(RichText::new(why).size(9.5).color(crate::theme::ALERT()));
+        }
+        if let Some(secs) = pick {
+            self.rec_gate_s = secs;
+            self.rec_gate = Default::default();
+            // "Stop after N minutes" and "split on silence" are two answers to
+            // when a recording ends; arming one disarms the other.
+            self.recording_stop_at = None;
+        }
+        if let Some(hold) = self.rec_gate_s {
+            let line = if self.state.recording {
+                match self.rec_gate.silent_since {
+                    Some(since) => format!(
+                        "recording · {} s of silence (closes at {hold})",
+                        (crate::time::now_unix() - since).max(0)
+                    ),
+                    None => "recording".to_string(),
+                }
+            } else {
+                "waiting for a signal".to_string()
+            };
+            ui.label(RichText::new(line).size(9.5).color(crate::theme::CYAN_DIM()));
+            // The countdown and the waiting line have to keep being redrawn.
+            crate::repaint::schedule_ms(ui.ctx(), 500);
         }
 
         crate::chrome::menu_caption(ui, "Record spectrum");
@@ -5626,6 +5760,126 @@ fn rec_timer_tick(now: i64, stop_at: Option<i64>, recording: bool) -> (Option<i6
     if now >= at { (None, true) } else { (Some(at), false) }
 }
 
+/// The silence auto-split decision for one frame:
+/// `(start a recording, stop the recording, the silence run to carry)`.
+///
+/// `signal` is the receiver's squelch — true while the passband is at or above
+/// the operator's threshold. While `hold_s` is armed the MP3 recording follows
+/// it: a signal that is not already being recorded starts a file, and a file
+/// that has been silent for `hold_s` seconds is closed. `silent_since` carries
+/// the start of the current run between frames and the returned value replaces
+/// it, so a run is measured across frames rather than restarted each one.
+///
+/// Off (`hold_s == None`) is inert whatever the signal and the recording do,
+/// which is what makes disarming leave a manual recording alone.
+///
+/// The state is carried in one value rather than a handful of fields so the
+/// whole decision stays in one place and one test can drive it frame by frame.
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+pub(in crate::app) struct RecGate {
+    /// When the current run of silence inside a recording began.
+    pub silent_since: Option<i64>,
+    /// When a start was asked for and has not yet been seen to take.
+    pub start_pending: Option<i64>,
+    /// Whether a file was being written on the previous frame, so a stop the
+    /// gate did not order can be told from one it did.
+    pub was_recording: bool,
+    /// A stop the gate did not order, or a start that never took, holds the next
+    /// start off until the band goes quiet again.
+    pub hold_off: bool,
+}
+
+/// How long a requested start is waited for before it is judged failed, so a
+/// recorder that will not start is not re-asked every frame.
+const REC_START_TIMEOUT_S: i64 = 3;
+
+/// The REC chip's fill while a file is being written: the alert red breathing
+/// between full and a little under two thirds, once every 1.6 s.
+///
+/// Armed is a steady outline and recording is a moving light, so the two are
+/// told apart at a glance without spelling it out on the chip, whose width the
+/// strip has reserved for the four letters `REC`. The top of the breath is the
+/// plain alert red, so the brightest instant matches every other alert in the
+/// program and only the off-beat is dimmer.
+fn rec_chip_fill(now: f64) -> Color32 {
+    const PERIOD_S: f64 = 1.6;
+    let phase = (now / PERIOD_S * std::f64::consts::TAU).sin() as f32 * 0.5 + 0.5;
+    let k = 0.6 + 0.4 * phase.clamp(0.0, 1.0);
+    let c = crate::theme::ALERT();
+    Color32::from_rgb(
+        (c.r() as f32 * k).round() as u8,
+        (c.g() as f32 * k).round() as u8,
+        (c.b() as f32 * k).round() as u8,
+    )
+}
+
+fn rec_gate_tick(
+    now: i64,
+    hold_s: Option<u16>,
+    recording: bool,
+    signal: bool,
+    st: RecGate,
+) -> (RecGate, bool, bool) {
+    let Some(hold) = hold_s else { return (RecGate::default(), false, false) };
+
+    // A start that never took (the recorder refused, or something else owns
+    // it): stop asking until the band goes quiet, rather than re-sending the
+    // command every frame.
+    if !recording
+        && let Some(at) = st.start_pending
+        && now - at >= REC_START_TIMEOUT_S
+    {
+        return (RecGate { hold_off: true, ..RecGate::default() }, false, false);
+    }
+
+    // A recording that stopped while a signal was present was stopped by hand:
+    // the gate's own stop only ever fires after the hold of silence. Hold off
+    // until the band goes quiet, so a manual stop is not undone next frame.
+    if st.was_recording && !recording && signal && st.start_pending.is_none() {
+        return (RecGate { hold_off: true, ..RecGate::default() }, false, false);
+    }
+
+    if st.hold_off {
+        if !signal {
+            // Quiet again: re-arm, ready for the next transmission.
+            return (RecGate::default(), false, false);
+        }
+        return (
+            RecGate { was_recording: recording, hold_off: true, ..RecGate::default() },
+            false,
+            false,
+        );
+    }
+
+    if signal {
+        if recording {
+            // Written, and the signal ended any silence run there was.
+            return (RecGate { was_recording: true, ..RecGate::default() }, false, false);
+        }
+        // Not recording with a signal present: ask to start, once.
+        match st.start_pending {
+            Some(at) => (RecGate { start_pending: Some(at), ..RecGate::default() }, false, false),
+            None => (RecGate { start_pending: Some(now), ..RecGate::default() }, true, false),
+        }
+    } else if !recording {
+        // Silence with nothing recording is just a quiet band, not a run.
+        (RecGate::default(), false, false)
+    } else {
+        match st.silent_since {
+            Some(since) if now - since >= i64::from(hold) => (RecGate::default(), false, true),
+            other => (
+                RecGate {
+                    silent_since: other.or(Some(now)),
+                    was_recording: true,
+                    ..RecGate::default()
+                },
+                false,
+                false,
+            ),
+        }
+    }
+}
+
 fn tx_rows_w_for(ui: &egui::Ui, keyer: bool, side_col_w: f32) -> f32 {
     let (row1, row2) = tx_rows_fixed_w(ui, keyer);
     row1.max(row2)
@@ -6577,6 +6831,75 @@ mod tests {
         // so an armed stop can never kill a later recording it was not set
         // for.
         assert_eq!(rec_timer_tick(2000, Some(1060), false), (None, false));
+    }
+
+    /// The silence auto-split starts a file on a signal, closes it after the
+    /// armed hold of silence, and never touches a manual recording while off.
+    #[test]
+    fn rec_gate_splits_on_the_squelch() {
+        let off = RecGate::default();
+        // Off is inert, whatever the signal and the recording do.
+        assert_eq!(rec_gate_tick(100, None, false, true, off), (off, false, false));
+        assert_eq!(rec_gate_tick(100, None, true, false, off), (off, false, false));
+
+        // A signal opens a file when none is running, and asks only once while
+        // the start is still taking.
+        let (st, start, stop) = rec_gate_tick(100, Some(3), false, true, off);
+        assert!(start && !stop);
+        assert_eq!(st.start_pending, Some(100));
+        let (st, start, stop) = rec_gate_tick(101, Some(3), true, true, st);
+        assert!(!start && !stop, "a start already asked for is not asked again");
+        assert_eq!(st.start_pending, None);
+
+        // Silence while recording marks the run, then closes it at the hold.
+        let (st, start, stop) = rec_gate_tick(200, Some(3), true, false, st);
+        assert!(!start && !stop);
+        assert_eq!(st.silent_since, Some(200));
+        let (st2, _, stop) = rec_gate_tick(202, Some(3), true, false, st);
+        assert!(!stop);
+        assert_eq!(st2.silent_since, Some(200));
+        let (st3, _, stop) = rec_gate_tick(203, Some(3), true, false, st2);
+        assert!(stop);
+        assert_eq!(st3, RecGate::default());
+
+        // A signal returning mid-run cancels it.
+        let (st4, _, _) = rec_gate_tick(201, Some(3), true, true, st);
+        assert_eq!(st4.silent_since, None);
+
+        // A manual stop while a signal is present holds off until the band goes
+        // quiet, rather than being undone on the next frame.
+        let manual = RecGate { was_recording: true, ..RecGate::default() };
+        let (held, start, stop) = rec_gate_tick(300, Some(3), false, true, manual);
+        assert!(!start && !stop && held.hold_off);
+        let (rearmed, _, _) = rec_gate_tick(301, Some(3), false, false, held);
+        assert_eq!(rearmed, RecGate::default(), "quiet re-arms the gate");
+
+        // A start that never takes is not re-asked every frame, and then holds
+        // off too.
+        let pending = RecGate { start_pending: Some(100), ..RecGate::default() };
+        let (waiting, start, _) = rec_gate_tick(101, Some(3), false, true, pending);
+        assert!(!start);
+        let (gaveup, start, _) = rec_gate_tick(104, Some(3), false, true, waiting);
+        assert!(!start && gaveup.hold_off);
+
+        // Silence with nothing recording is a quiet band, not a run.
+        assert_eq!(rec_gate_tick(100, Some(3), false, false, off), (off, false, false));
+    }
+
+    /// The REC chip's recording fill breathes: the top of the breath is the
+    /// plain alert red — so the brightest instant matches every other alert in
+    /// the program — the rest of the cycle is dimmer, and it never goes
+    /// brighter than the alert.
+    #[test]
+    fn the_recording_fill_breathes_the_alert_red() {
+        let full = crate::theme::ALERT();
+        assert_eq!(rec_chip_fill(0.4), full, "the peak is the plain alert red");
+        let dim = rec_chip_fill(1.2);
+        assert_ne!(dim, full, "the trough is dimmer");
+        assert!(
+            dim.r() <= full.r() && dim.g() <= full.g() && dim.b() <= full.b(),
+            "the breath never goes brighter than the alert red: {dim:?} vs {full:?}"
+        );
     }
 
     /// Walk a chip through a sequence of pointer edges, collecting the PTT
