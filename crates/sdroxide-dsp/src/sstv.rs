@@ -598,6 +598,21 @@ enum RxPhase {
     Image,
 }
 
+/// The band the discriminator hears, Hz, and the taps of the filter that
+/// keeps it to it.
+///
+/// Everything SSTV sends is between the VIS's 1100 Hz and white at 2300; this
+/// is that, with 150 Hz below and 200 above for a receiver tuned off it. It
+/// was 800–3000 Hz through 129 taps, whose skirts let through most of another
+/// kilohertz besides — all of it noise, and a discriminator's output is only
+/// as quiet as what it is given. Measured across the modes, the narrower band
+/// takes a fifth to a third off a picture's error from 2 to 12 dB and locks
+/// no worse; it softens the sharpest edges by a level or two at 40 dB, and
+/// holds up as well as the wide one with the signal tuned 100 Hz off either
+/// way.
+const DEMOD_BAND_HZ: (f64, f64) = (950.0, 2500.0);
+const DEMOD_TAPS: usize = 257;
+
 /// SSTV receiver. Feed audio with [`SstvRx::process`]; it emits [`SstvEvent`]s.
 pub struct SstvRx {
     rate: f64,
@@ -758,18 +773,25 @@ const EDGE_WIN_S: f64 = 0.003;
 const EDGE_SLICE_HZ: f64 = 1550.0;
 
 /// The free-run hunt's sync detector: a window `SYNC_WIN_S` long is in a sync
-/// pulse while at least `SYNC_SHARE` of it is below `SYNC_SLICE_HZ`.
+/// pulse while at least `SYNC_SHARE` of it is below `SYNC_SLICE_HZ` — while
+/// its median is, that is, which keeps a pulse's measured length its real one.
 ///
-/// Neither a single sample nor the median. In noise the discriminator's
-/// readings of a tone are pulled towards the 1900 Hz the receiver mixes down
-/// by, so at 0 dB the median of the 1200 Hz sync sits above any slice that
-/// black (1500 Hz) does not reach too; but its lower readings stay low, and
-/// 40 % of a 4 ms window below 1400 Hz holds on sync two thirds of the time at
-/// 0 dB and nine in ten at 2 dB, on black one in twenty and on noise never.
-/// Every one of the previous detector's samples had to be within 150 Hz of
-/// 1200, and one that was not ended the pulse.
-const SYNC_WIN_S: f64 = 0.004;
-const SYNC_SHARE: f64 = 0.4;
+/// Not a single sample: in noise one of them is always somewhere else, and
+/// every one of the previous detector's had to be within 150 Hz of 1200, so a
+/// pulse ended at the first that was not. Noise pulls the discriminator's
+/// readings of a tone towards the middle of the band it hears (`DEMOD_BAND_HZ`),
+/// but not so far that the median of the 1200 Hz sync leaves 1400 Hz at 0 dB
+/// for more than a quarter of the time, and not one time in ten at 2 dB; black
+/// (1500 Hz) and noise alone do not get below it for long enough to count.
+///
+/// Tuned against false locks as much as against weak pulses. Noise makes a
+/// pulse-length run below the slice every so often, and four of them on a
+/// mode's cadence (see `cadence_chain`) lock the receiver for a picture's
+/// length; with 40 % of a 4 ms window the narrow demodulator band made that
+/// happen every three minutes. As it is: none in two hours of noise, and all
+/// the same pictures locked from 2 dB up.
+const SYNC_WIN_S: f64 = 0.005;
+const SYNC_SHARE: f64 = 0.5;
 const SYNC_SLICE_HZ: f64 = 1400.0;
 
 /// How far a gap between two sync pulses may be off a whole number of lines:
@@ -838,7 +860,12 @@ impl SstvRx {
             rate,
             mix_ph: 0.0,
             mix_inc: (TAU as f32) * mix_hz / rate as f32,
-            lpf: ComplexFir::new(bandpass_taps(129, -1100.0, 1100.0, rate)),
+            lpf: ComplexFir::new(bandpass_taps(
+                DEMOD_TAPS,
+                DEMOD_BAND_HZ.0 - mix_hz as f64,
+                DEMOD_BAND_HZ.1 - mix_hz as f64,
+                rate,
+            )),
             prev: Complex32::new(0.0, 0.0),
             inst_hz: 1900.0,
             in_level: 0.0,
@@ -2448,6 +2475,27 @@ mod tests {
         err: f64,
     }
 
+    /// `audio` with every frequency in it moved up by `hz`, the way a
+    /// receiver tuned that far off an SSB signal hears it: the positive
+    /// frequencies alone (a complex band-pass over the voice channel), turned
+    /// by `hz`, and back to real.
+    fn shift(audio: &[f32], hz: f64, rate: f64) -> Vec<f32> {
+        let mut fir = ComplexFir::new(bandpass_taps(255, 300.0, 3500.0, rate));
+        let input: Vec<Complex32> = audio.iter().map(|&a| Complex32::new(a, 0.0)).collect();
+        let mut analytic = Vec::with_capacity(input.len());
+        fir.process(&input, &mut analytic);
+        analytic
+            .iter()
+            .enumerate()
+            .map(|(n, z)| {
+                let ph = TAU * hz * n as f64 / rate;
+                // The band-pass keeps half of a real tone; the real part of
+                // the half, turned, is half of the tone moved.
+                2.0 * (z.re * ph.cos() as f32 - z.im * ph.sin() as f32)
+            })
+            .collect()
+    }
+
     /// A picture with something in every channel and at every scale: a ramp
     /// across in red, a ramp down in green, and blocks in blue — so a decoder
     /// that swaps channels, loses the timing or smears the detail cannot pass
@@ -2473,12 +2521,19 @@ mod tests {
     /// two seconds after it, so the hunt sees noise before it sees a picture.
     fn receive_in_noise(mode: SstvMode, snr_db: f64, seed: u64, header: bool) -> Reception {
         // The calibration header and VIS are 0.94 s; past 1.1 s is picture.
-        receive_joining(mode, snr_db, seed, if header { 0.0 } else { 1.1 })
+        receive_joining(mode, snr_db, seed, if header { 0.0 } else { 1.1 }, 0.0)
     }
 
-    /// [`receive_in_noise`], joining the transmission `skip_s` seconds in:
-    /// with the header if that is none of it, without it otherwise.
-    fn receive_joining(mode: SstvMode, snr_db: f64, seed: u64, skip_s: f64) -> Reception {
+    /// [`receive_in_noise`], joining the transmission `skip_s` seconds in —
+    /// with the header if that is none of it, without it otherwise — and
+    /// tuned `offset_hz` off it, every tone that much higher.
+    fn receive_joining(
+        mode: SstvMode,
+        snr_db: f64,
+        seed: u64,
+        skip_s: f64,
+        offset_hz: f64,
+    ) -> Reception {
         let header = skip_s == 0.0;
         let rate = 48_000.0;
         let (w, h) = mode.dimensions();
@@ -2495,6 +2550,9 @@ mod tests {
         while !tx.done() {
             let n = tx.next_block(&mut block);
             audio.extend_from_slice(&block[..n]);
+        }
+        if offset_hz != 0.0 {
+            audio = shift(&audio, offset_hz, rate);
         }
         let skip = (skip_s * rate) as usize;
         let lead = (0.5 * rate) as usize;
@@ -2638,7 +2696,7 @@ mod tests {
     fn robot36_joined_on_either_line_has_its_colours() {
         let line_s = 0.150;
         for extra in 0..4 {
-            let r = receive_joining(SstvMode::Robot36, 40.0, 1, 1.1 + extra as f64 * line_s);
+            let r = receive_joining(SstvMode::Robot36, 40.0, 1, 1.1 + extra as f64 * line_s, 0.0);
             assert_eq!(r.mode, Some(SstvMode::Robot36), "joined {extra} lines later");
             assert!(r.err < 12.0, "joined {extra} lines later: error {:.1}", r.err);
         }
@@ -2656,6 +2714,66 @@ mod tests {
         }
     }
 
+    /// The demodulator hears only the band SSTV uses. PD120's pixels are too
+    /// short for averaging within one to do much (see `pixel_hz`); what
+    /// quietens them is less noise going in. At 8 dB its picture was 50
+    /// levels off through the old 800–3000 Hz filter, and is about 38 now.
+    #[test]
+    fn the_demodulator_hears_only_the_band_sstv_uses() {
+        for seed in 1..=2 {
+            let r = receive_in_noise(SstvMode::Pd120, 8.0, seed, true);
+            assert_eq!(r.mode, Some(SstvMode::Pd120), "seed {seed}");
+            assert!(r.err < 43.0, "seed {seed}: error {:.1}", r.err);
+        }
+    }
+
+    /// Two hours of noise and nothing else: no picture starts. Every false
+    /// lock costs a picture's length of receiver time, and each loosening of
+    /// the hunt for weak signals has to be checked against it — twice now one
+    /// that decoded more pictures also locked on noise every few minutes.
+    ///
+    /// Slow, so not part of the ordinary run:
+    ///
+    /// ```text
+    /// cargo test --release -p sdroxide-dsp sstv::tests::noise_alone_never_starts_a_picture -- --ignored
+    /// ```
+    #[test]
+    #[ignore = "slow: two hours of noise, run by hand"]
+    fn noise_alone_never_starts_a_picture() {
+        let rate = 48_000.0;
+        let locks: Vec<String> = std::thread::scope(|s| {
+            let runs: Vec<_> = (1..=4u64)
+                .map(|seed| {
+                    s.spawn(move || {
+                        let mut rng = Noise(0x9E37_79B9_7F4A_7C15 ^ seed);
+                        let mut rx = SstvRx::new(rate);
+                        let mut events = Vec::new();
+                        let mut block = vec![0.0f32; 4800];
+                        let mut locks = Vec::new();
+                        // Half an hour each.
+                        for k in 0..18_000 {
+                            block.iter_mut().for_each(|s| *s = (0.3 * rng.next()) as f32);
+                            rx.process(&block, &mut events);
+                            for e in events.drain(..) {
+                                if let SstvEvent::ModeDetected(m) = e {
+                                    locks.push(format!(
+                                        "{} at {:.1} s",
+                                        m.label(),
+                                        k as f64 / 10.0
+                                    ));
+                                    rx.restart();
+                                }
+                            }
+                        }
+                        locks
+                    })
+                })
+                .collect();
+            runs.into_iter().flat_map(|r| r.join().unwrap()).collect()
+        });
+        assert!(locks.is_empty(), "locked on noise: {locks:?}");
+    }
+
     /// One signal-to-noise ratio of a sweep, and every reception at it.
     type SweepPoint = (f64, Vec<Reception>);
 
@@ -2671,7 +2789,7 @@ mod tests {
     /// ```
     ///
     /// `SSTV_SWEEP_MODES` (labels, comma-separated) and `SSTV_SWEEP_SEEDS`
-    /// narrow or widen it.
+    /// narrow or widen it; `SSTV_SWEEP_OFFSET` tunes that many hertz off.
     #[test]
     #[ignore = "slow: a sensitivity measurement, run by hand"]
     fn sensitivity_sweep() {
@@ -2684,6 +2802,9 @@ mod tests {
                 vec![SstvMode::Robot36, SstvMode::Martin1, SstvMode::Scottie1, SstvMode::Pd120]
             }
         };
+        // How far off the signal to tune, as a real SSB receiver often is.
+        let offset: f64 =
+            std::env::var("SSTV_SWEEP_OFFSET").ok().and_then(|s| s.parse().ok()).unwrap_or(0.0);
         let seeds: u64 =
             std::env::var("SSTV_SWEEP_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(4);
         let snrs: Vec<f64> = (0..=20).map(|k| k as f64 * 2.0).collect();
@@ -2700,7 +2821,10 @@ mod tests {
                             .iter()
                             .map(|&snr| {
                                 let runs = (0..seeds)
-                                    .map(|k| receive_in_noise(mode, snr, 0x5EED + 7919 * k, header))
+                                    .map(|k| {
+                                        let skip = if header { 0.0 } else { 1.1 };
+                                        receive_joining(mode, snr, 0x5EED + 7919 * k, skip, offset)
+                                    })
                                     .collect();
                                 (snr, runs)
                             })
@@ -2715,7 +2839,10 @@ mod tests {
         for (mode, header, rows) in results {
             let (_, h) = mode.dimensions();
             let route = if header { "VIS" } else { "free-run" };
-            println!("\n{} via {route}  (SNR in {SNR_BANDWIDTH_HZ} Hz)", mode.label());
+            println!(
+                "\n{} via {route}  (SNR in {SNR_BANDWIDTH_HZ} Hz, tuned {offset:+} Hz off)",
+                mode.label()
+            );
             println!("  SNR dB   locked   by VIS   rows %   error");
             for (snr, runs) in rows {
                 let n = runs.len() as f64;
