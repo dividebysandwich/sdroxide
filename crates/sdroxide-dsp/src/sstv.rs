@@ -1704,6 +1704,29 @@ fn min_pixel_samples(mode: SstvMode, w: u16, rate: f64) -> f64 {
         .fold(f64::INFINITY, f64::min)
 }
 
+/// Readings further outside the picture's 1500–2300 Hz than this are FM
+/// clicks, not picture, and are brought back to it before a pixel is averaged
+/// — a click is thousands of hertz, and a mean takes all of it.
+const PIXEL_CLAMP_HZ: (f64, f64) = (1300.0, 2500.0);
+
+/// What the pixel `len` samples long from `from` reads: the mean over all of
+/// it, not the sample at its middle, which is what this receiver used to take
+/// and every sample of which is as noisy as the next.
+///
+/// How much that buys depends on the mode. The discriminator's noise is only
+/// independent from one sample to the next over the width of the filter ahead
+/// of it, about half a millisecond, so a pixel of that length or longer —
+/// Martin 1, Scottie 1 — averages out a fifth of its error at 4–12 dB, and one
+/// much shorter — Robot 36, PD120 — little. The whole pixel rather than its
+/// middle: the filter has already smeared the edges more than averaging them
+/// does, and measured, the whole pixel came out ahead everywhere below 40 dB.
+fn pixel_hz(hz: &impl Fn(i64) -> f64, from: f64, len: f64) -> f64 {
+    let lo = from.round() as i64;
+    let hi = ((from + len).round() as i64).max(lo + 1);
+    let (floor, ceil) = PIXEL_CLAMP_HZ;
+    (lo..hi).map(|i| hz(i).clamp(floor, ceil)).sum::<f64>() / (hi - lo) as f64
+}
+
 /// Decode one transmitted line, starting at sample `start`, into its picture
 /// rows: one for every mode but the PD family, two for that. `hz` reads the
 /// frequency track; `last_cr`/`last_cb` carry the Robot modes' chroma from one
@@ -1741,9 +1764,7 @@ fn decode_line(
             Seg::Scan { chan, width, px } => {
                 let step = px * rate;
                 for x in 0..width as usize {
-                    // Sample the centre of each pixel window.
-                    let idx = (t + (x as f64 + 0.5) * step) as i64;
-                    let v = hz_to_value(hz(idx));
+                    let v = hz_to_value(pixel_hz(&hz, t + x as f64 * step, step));
                     let cri = x.min(cr.len().saturating_sub(1));
                     let cbi = x.min(cb.len().saturating_sub(1));
                     match chan {
@@ -2620,6 +2641,18 @@ mod tests {
             let r = receive_joining(SstvMode::Robot36, 40.0, 1, 1.1 + extra as f64 * line_s);
             assert_eq!(r.mode, Some(SstvMode::Robot36), "joined {extra} lines later");
             assert!(r.err < 12.0, "joined {extra} lines later: error {:.1}", r.err);
+        }
+    }
+
+    /// A pixel is read from all of itself. Martin 1's are long enough for that
+    /// to tell: at 8 dB its picture came out 31 levels off on average when
+    /// each pixel was one sample, and is about 24 now.
+    #[test]
+    fn a_pixel_is_read_from_all_of_it() {
+        for seed in 1..=2 {
+            let r = receive_in_noise(SstvMode::Martin1, 8.0, seed, true);
+            assert_eq!(r.mode, Some(SstvMode::Martin1), "seed {seed}");
+            assert!(r.err < 27.0, "seed {seed}: error {:.1}", r.err);
         }
     }
 
