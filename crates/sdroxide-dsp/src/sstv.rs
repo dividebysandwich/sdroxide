@@ -678,6 +678,9 @@ pub struct SstvRx {
     // The picture being decoded was locked on its header, so its line
     // numbering is the sender's. A free-run lock guesses it.
     numbered: bool,
+    // Its sync pulses have been seen a line apart, as the mode it is being
+    // decoded as has them (see `check_mode`).
+    confirmed: bool,
 }
 
 /// The hunt for an FSK ID: what has been seen of one so far.
@@ -913,6 +916,7 @@ impl SstvRx {
             expected: None,
             sync_hist: Vec::new(),
             numbered: false,
+            confirmed: false,
         }
     }
 
@@ -1019,7 +1023,13 @@ impl SstvRx {
 
             match self.phase {
                 RxPhase::Hunt => self.step_hunt(out),
-                RxPhase::Image => self.step_image(out),
+                RxPhase::Image => {
+                    self.slide_vis_windows();
+                    self.check_mode(out);
+                    if self.phase == RxPhase::Image {
+                        self.step_image(out);
+                    }
+                }
             }
         }
     }
@@ -1166,6 +1176,35 @@ impl SstvRx {
         self.inst_hz -= delta;
         self.hist.iter_mut().for_each(|hz| *hz -= delta);
         self.track.shift(delta);
+        // The hunt's windows were counted from the readings as they were;
+        // counted on, they would take away samples as the new tuning reads
+        // them, which is not how they went in — and a count that runs below
+        // zero wraps, and reads as a sync pulse that never ends.
+        self.recount_vis_windows();
+    }
+
+    /// Count the hunt's windows afresh from the history: see `retune`.
+    fn recount_vis_windows(&mut self) {
+        let newest = self.sample_idx.saturating_sub(1);
+        let from = self.vis_state.from;
+        let span = |secs: f64| {
+            let n = (secs * self.rate) as u64;
+            (newest + 1).saturating_sub(n).max(from)..=newest
+        };
+        let count = |secs: f64, is: &dyn Fn(f64) -> bool| {
+            span(secs).filter(|&i| is(self.hz_at(i))).count() as u32
+        };
+        let mut near_leader = [0; LEADER_OFFSETS_HZ.len()];
+        for (n, &off) in near_leader.iter_mut().zip(&LEADER_OFFSETS_HZ) {
+            *n = count(LEADER_WIN_S, &|hz| (hz - VIS_LEADER_HZ - off).abs() < TONE_NEAR_HZ);
+        }
+        let low = count(EDGE_WIN_S, &|hz| hz < EDGE_SLICE_HZ);
+        let sync_low = count(SYNC_WIN_S, &|hz| hz < SYNC_SLICE_HZ);
+        let vs = &mut self.vis_state;
+        (vs.near_leader, vs.low, vs.sync_low) = (near_leader, low, sync_low);
+        // A pulse the old tuning was in the middle of is not one the new
+        // tuning can vouch for.
+        vs.run = None;
     }
 
     /// What a steady tone in the `spans` of the history reads: the mean of its
@@ -1463,16 +1502,25 @@ impl SstvRx {
     /// progress). With a fixed `expected` mode it locks to that; in auto it picks
     /// the mode whose line period *and* sync length best fit the cadence.
     fn try_freerun(&mut self, out: &mut Vec<SstvEvent>) {
+        let Some((center, run)) = self.next_sync_pulse() else { return };
+        if let Some(mode) = self.cadence_mode(run, self.expected) {
+            self.lock_freerun(mode, center, out);
+        }
+    }
+
+    /// Follow the sync detector's window through one more sample, and when a
+    /// pulse it was in has ended, keep it and return its centre and length.
+    fn next_sync_pulse(&mut self) -> Option<(u64, f64)> {
         let n = (SYNC_WIN_S * self.rate) as u64;
         let newest = self.sample_idx - 1;
         if self.vis_state.sync_low as f64 >= SYNC_SHARE * n as f64 {
             let first = self.vis_state.run.map_or(newest, |(first, _)| first);
             self.vis_state.run = Some((first, newest));
-            return;
+            return None;
         }
-        let Some((first, last)) = self.vis_state.run else { return };
+        let (first, last) = self.vis_state.run?;
         if (newest - last) as f64 <= SYNC_MERGE_S * self.rate {
-            return;
+            return None;
         }
         self.vis_state.run = None;
         // The window is in a pulse from when `SYNC_SHARE` of it has come in
@@ -1486,19 +1534,23 @@ impl SstvRx {
         // PD mode — so a PD picture tuned into mid-transmission could never
         // free-run lock however long it ran (issue #421).
         if run < 0.003 * self.rate || run > 0.028 * self.rate {
-            return;
+            return None;
         }
         self.sync_hist.push((center, run as u32));
         if self.sync_hist.len() > SYNC_HIST_LEN {
             self.sync_hist.remove(0);
         }
+        Some((center, run))
+    }
 
-        // Pick the mode to lock: the fixed one, or the best auto match —
-        // the one whose chain took the most single lines (Robot 72's line is
-        // two of Robot 36's, so a Robot 72 picture is a Robot 36 chain too,
-        // of doubles), then the one whose sync is nearest this pulse's length
-        // (Scottie against Martin).
-        let locked = match self.expected {
+    /// The mode the recent sync pulses are the cadence of, if any, the newest
+    /// of them `run` samples long: `expected` if one is, or the best match —
+    /// the one whose chain took the most single lines (Robot 72's line is two
+    /// of Robot 36's, so a Robot 72 picture is a Robot 36 chain too, of
+    /// doubles), then the one whose sync is nearest this pulse's length
+    /// (Scottie against Martin).
+    fn cadence_mode(&self, run: f64, expected: Option<SstvMode>) -> Option<SstvMode> {
+        match expected {
             Some(m) => (self.cadence_chain(m).0 >= FREERUN_LINKS).then_some(m),
             None => SstvMode::ALL
                 .into_iter()
@@ -1509,31 +1561,65 @@ impl SstvRx {
                 })
                 .min_by(|a, b| b.1.cmp(&a.1).then(a.2.total_cmp(&b.2)))
                 .map(|(m, ..)| m),
-        };
-        if let Some(mode) = locked {
-            let (soff, sdur) = self.sync_span(mode, mode.dimensions().0, 0);
-            let line_start = (center as f64 - (soff + sdur * 0.5)).max(0.0) as u64;
-            // How far off tune the station is, from the middle of the pulses
-            // the lock was made on.
-            let pulses: Vec<(f64, f64)> = self
-                .cadence_chain(mode)
-                .2
-                .iter()
-                .map(|&(c, len)| (c as f64 - 0.3 * len as f64, c as f64 + 0.3 * len as f64))
-                .collect();
-            // Only where the pulses are clean enough to believe, though. In
-            // noise the readings of a tone are pulled towards the middle of
-            // the band, and the sync, 500 Hz below it, furthest: by 30–50 Hz
-            // at 8 dB and 100 at 4, which is more than it corrects. The
-            // readings' spread says how far that has gone.
-            if let Some((hz, spread)) = self.tone_hz(&pulses) {
-                let off = hz - SYNC_HZ;
-                if spread <= AFC_MAX_SPREAD_HZ && (self.afc_hz + off).abs() <= AFC_MAX_HZ {
-                    self.retune(off);
-                }
+        }
+    }
+
+    /// Start decoding `mode` from the sync pulse centred on `center`, tuned
+    /// by the pulses the lock was made on.
+    fn lock_freerun(&mut self, mode: SstvMode, center: u64, out: &mut Vec<SstvEvent>) {
+        let (soff, sdur) = self.sync_span(mode, mode.dimensions().0, 0);
+        let line_start = (center as f64 - (soff + sdur * 0.5)).max(0.0) as u64;
+        // How far off tune the station is, from the middle of the pulses
+        // the lock was made on.
+        let pulses: Vec<(f64, f64)> = self
+            .cadence_chain(mode)
+            .2
+            .iter()
+            .map(|&(c, len)| (c as f64 - 0.3 * len as f64, c as f64 + 0.3 * len as f64))
+            .collect();
+        // Only where the pulses are clean enough to believe, though. In
+        // noise the readings of a tone are pulled towards the middle of
+        // the band, and the sync, 500 Hz below it, furthest: by 30–50 Hz
+        // at 8 dB and 100 at 4, which is more than it corrects. The
+        // readings' spread says how far that has gone.
+        if let Some((hz, spread)) = self.tone_hz(&pulses) {
+            let off = hz - SYNC_HZ;
+            if spread <= AFC_MAX_SPREAD_HZ && (self.afc_hz + off).abs() <= AFC_MAX_HZ {
+                self.retune(off);
             }
-            self.sync_hist.clear();
-            self.begin_image(mode, line_start, false, out);
+        }
+        self.sync_hist.clear();
+        self.begin_image(mode, line_start, false, out);
+    }
+
+    /// Whether the picture being decoded is the mode it is being decoded as.
+    ///
+    /// A header is a single parity bit's worth of sure: two bits misread in
+    /// noise make another mode's code as often as not, and the receiver then
+    /// spends that mode's whole length drawing nothing. So the sync pulses go
+    /// on being watched while a picture is decoded, by the same detector that
+    /// locks without a header, until two of them a line apart bear the header
+    /// out. If before then they form another mode's cadence, the picture is
+    /// that mode, joined where it has got to. Every mode is considered,
+    /// whatever the operator last pinned the receiver to: what pinned it may
+    /// be the very header that was misread.
+    ///
+    /// Settled once and for all, and on a single line's gap, not two: in heavy
+    /// noise pulses go missing, and a picture that went on being judged was
+    /// thrown between modes whose lines are multiples of each other's — Robot
+    /// 72's is two of Robot 36's, Martin 1's within a few milliseconds of
+    /// three — every time the chain of the right one broke.
+    fn check_mode(&mut self, out: &mut Vec<SstvEvent>) {
+        let Some((center, run)) = self.next_sync_pulse() else { return };
+        if self.confirmed {
+            return;
+        }
+        if self.cadence_chain(self.mode).1 > 0 {
+            self.confirmed = true;
+            return;
+        }
+        if let Some(mode) = self.cadence_mode(run, None).filter(|&m| m != self.mode) {
+            self.lock_freerun(mode, center, out);
         }
     }
 
@@ -1551,6 +1637,9 @@ impl SstvRx {
         self.phase = RxPhase::Image;
         self.line = 0;
         self.numbered = numbered;
+        // A free-run lock was made on the mode's own cadence; a header's
+        // word has yet to be borne out.
+        self.confirmed = !numbered;
         self.line_start = first_line_start as f64;
         self.line_samples = self.line_period_samples(mode, 0);
         let (w, h) = mode.dimensions();
@@ -1625,6 +1714,10 @@ impl SstvRx {
             self.phase = RxPhase::Hunt;
             self.vis_state = VisState::reset(self.sample_idx);
             self.track.clear();
+            // The picture's own sync pulses, kept while it was checked (see
+            // `check_mode`). Left for the hunt, the next pulse noise makes
+            // could fall on their cadence and start the picture over again.
+            self.sync_hist.clear();
         } else {
             self.line_samples = self.line_period_samples(self.mode, self.line);
             self.line_start = self.fit.predict(k + 1.0).unwrap_or(start + self.line_samples);
@@ -2896,6 +2989,105 @@ mod tests {
             assert_eq!(r.by_vis, skip == 0.0, "{offset:+} Hz by {route}: by VIS {}", r.by_vis);
             assert!(r.err < 10.0, "{offset:+} Hz by {route}: error {:.1}", r.err);
         }
+    }
+
+    /// The callsign after a picture from a station tuned off. The ID's two
+    /// tones are 200 Hz apart and read to within 100 Hz, so a station 100 Hz
+    /// off would have had its ones read as nothing at all; the tuning measured
+    /// on the picture's header is still in force when the ID follows it.
+    #[test]
+    fn the_id_of_a_station_tuned_off_comes_back() {
+        let rate = 48_000.0;
+        let mode = SstvMode::Robot36;
+        let (w, h) = mode.dimensions();
+        let rgb = vec![128u8; w as usize * h as usize * 3];
+        let mut tx = SstvTx::new(mode, &rgb, w, h, rate, 0.0).with_fsk_id("OE1XYZ");
+        let mut clean = Vec::new();
+        let mut block = vec![0.0f32; 8192];
+        while !tx.done() {
+            let n = tx.next_block(&mut block);
+            clean.extend_from_slice(&block[..n]);
+        }
+        clean.extend(std::iter::repeat_n(0.0, (0.5 * rate) as usize));
+        // 20 dB in 3 kHz: the tone's 0.125 of power over σ²·3000/(rate/2).
+        let sigma = (0.125 / 100.0 * (rate / 2.0) / SNR_BANDWIDTH_HZ).sqrt();
+        for offset in [-150.0, -100.0, 100.0, 150.0] {
+            let mut rng = Noise(7);
+            let air: Vec<f32> = shift(&clean, offset, rate)
+                .into_iter()
+                .map(|s| (s as f64 + sigma * rng.next()) as f32)
+                .collect();
+            let mut rx = SstvRx::new(rate);
+            let mut events = Vec::new();
+            let mut heard = None;
+            for chunk in air.chunks(4096) {
+                rx.process(chunk, &mut events);
+                for e in events.drain(..) {
+                    if let SstvEvent::FskId(id) = e {
+                        heard = Some(id);
+                    }
+                }
+            }
+            assert_eq!(heard.as_deref(), Some("OE1XYZ"), "{offset:+} Hz off");
+        }
+    }
+
+    /// A header that says one mode ahead of a picture in another — what two
+    /// bits misread in noise make of one, since a single parity bit is all a
+    /// header has to catch that with. The receiver used to take its word and
+    /// draw nothing for the header's mode's whole length. It now watches the
+    /// sync pulses as it decodes, and when they are the cadence of another
+    /// mode and not of this one, it goes over to that one.
+    #[test]
+    fn a_misread_header_is_put_right_by_the_picture() {
+        let rate = 48_000.0;
+        let render = |mode: SstvMode, rgb: &[u8]| {
+            let (w, h) = mode.dimensions();
+            let mut tx = SstvTx::new(mode, rgb, w, h, rate, 0.0);
+            let mut audio = Vec::new();
+            let mut block = vec![0.0f32; 8192];
+            while !tx.done() {
+                let n = tx.next_block(&mut block);
+                audio.extend_from_slice(&block[..n]);
+            }
+            audio
+        };
+        // Leader, break, leader, start bit, seven bits, parity, stop.
+        let header = (0.910 * rate) as usize;
+        let (w, h) = SstvMode::Martin1.dimensions();
+        let sent = test_card(w as usize, h as usize);
+        let said = render(SstvMode::Robot36, &test_card(320, 240));
+        let sent_audio = render(SstvMode::Martin1, &sent);
+        let mut rng = Noise(3);
+        // 6 dB in 3 kHz, the noise such a misreading comes out of.
+        let sigma = (0.125 / 10f64.powf(0.6) * (rate / 2.0) / SNR_BANDWIDTH_HZ).sqrt();
+        let air: Vec<f32> = said[..header]
+            .iter()
+            .chain(&sent_audio[header..])
+            .chain(&vec![0.0; 2 * rate as usize])
+            .map(|&s| (s as f64 + sigma * rng.next()) as f32)
+            .collect();
+
+        let mut rx = SstvRx::new(rate);
+        let mut events = Vec::new();
+        let mut modes = Vec::new();
+        let mut rows = 0;
+        for chunk in air.chunks(4096) {
+            rx.process(chunk, &mut events);
+            for e in events.drain(..) {
+                match e {
+                    SstvEvent::ModeDetected(m) => {
+                        modes.push(m);
+                        rows = 0;
+                    }
+                    SstvEvent::Line { .. } => rows += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(modes.first(), Some(&SstvMode::Robot36), "the header is read as it says");
+        assert_eq!(modes.last(), Some(&SstvMode::Martin1), "modes {modes:?}");
+        assert!(rows > h as usize * 9 / 10, "{rows} rows of Martin 1");
     }
 
     /// One signal-to-noise ratio of a sweep, and every reception at it.
