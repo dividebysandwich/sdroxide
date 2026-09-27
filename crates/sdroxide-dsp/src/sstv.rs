@@ -621,8 +621,12 @@ pub struct SstvRx {
     mix_inc: f32,
     lpf: ComplexFir,
     prev: Complex32,
-    // Instantaneous frequency (Hz), lightly smoothed.
+    // Instantaneous frequency (Hz), lightly smoothed, less `afc_hz`.
     inst_hz: f64,
+    // How far the station is tuned off, Hz, as measured on its header or its
+    // sync pulses (see `retune`): taken off every frequency read, so a picture
+    // tuned 100 Hz high is not a picture 32 levels too bright.
+    afc_hz: f64,
     // Smoothed raw-input level (mean |audio|) for the UI activity meter.
     in_level: f32,
     have_prev: bool,
@@ -711,9 +715,10 @@ struct VisState {
     leader: u32,
     // A full (>120 ms) leader has been seen recently.
     leader_seen: bool,
-    // Samples of the last `LEADER_WIN_S` near the leader tone, and of the
-    // last `EDGE_WIN_S` below `EDGE_SLICE_HZ`.
-    near_leader: u32,
+    // Samples of the last `LEADER_WIN_S` near the leader tone (tuned each of
+    // `LEADER_OFFSETS_HZ` off), and of the last `EDGE_WIN_S` below
+    // `EDGE_SLICE_HZ`.
+    near_leader: [u32; LEADER_OFFSETS_HZ.len()],
     low: u32,
     // Samples of the last `SYNC_WIN_S` below `SYNC_SLICE_HZ`, and the sync
     // pulse that window is in, if it is in one: the first and the latest
@@ -737,7 +742,7 @@ impl VisState {
         VisState {
             leader: 0,
             leader_seen: false,
-            near_leader: 0,
+            near_leader: [0; LEADER_OFFSETS_HZ.len()],
             low: 0,
             sync_low: 0,
             run: None,
@@ -821,6 +826,23 @@ const SYNC_MERGE_S: f64 = 0.001;
 /// not been seen to misread one more.
 const VIS_QUANTILE: f64 = 0.3;
 
+/// Leader windows, as offsets from 1900 Hz: one for every 100 Hz a station
+/// may be tuned off, so a leader 150 Hz low is not lost for being outside the
+/// window of a leader on frequency.
+const LEADER_OFFSETS_HZ: [f64; 5] = [-200.0, -100.0, 0.0, 100.0, 200.0];
+
+/// The furthest off tune the receiver will correct for, and the spread about a
+/// tone's median its reading is averaged over (see `tone_hz`).
+const AFC_MAX_HZ: f64 = 250.0;
+const AFC_SPAN_HZ: f64 = 150.0;
+
+/// The most the readings of a free-run lock's sync pulses may spread (see
+/// `tone_hz`) for the tuning they give to be taken: about 12 dB, where noise
+/// has moved them by a few hertz. Below it the picture is left as tuned. The
+/// leader, nearer the middle of the band, is moved much less — 5–20 Hz at
+/// 4–8 dB — and is taken to half as much spread again.
+const AFC_MAX_SPREAD_HZ: f64 = 80.0;
+
 /// A start or stop bit's reading must be this close to the sync tone.
 const VIS_SYNC_TOL_HZ: f64 = 150.0;
 
@@ -868,6 +890,7 @@ impl SstvRx {
             )),
             prev: Complex32::new(0.0, 0.0),
             inst_hz: 1900.0,
+            afc_hz: 0.0,
             in_level: 0.0,
             have_prev: false,
             phase: RxPhase::Hunt,
@@ -930,6 +953,9 @@ impl SstvRx {
         self.sync_hist.clear();
         self.hist.clear();
         self.hist_base = self.sample_idx;
+        // Whatever station was being received, it is not being any more.
+        self.inst_hz += self.afc_hz;
+        self.afc_hz = 0.0;
     }
 
     /// The mode currently being decoded (or last detected).
@@ -983,7 +1009,7 @@ impl SstvRx {
             };
             self.prev = z;
             self.have_prev = true;
-            self.inst_hz += 0.5 * (raw_hz - self.inst_hz);
+            self.inst_hz += 0.5 * (raw_hz - self.afc_hz - self.inst_hz);
 
             self.push_hist(self.inst_hz);
             if self.phase == RxPhase::Image {
@@ -1127,13 +1153,52 @@ impl SstvRx {
         }
     }
 
+    // ── Tuning ──
+
+    /// Take a further `delta` Hz off every frequency: the ones to come, and
+    /// the ones already kept, so that what the receiver reads from either side
+    /// of the moment the offset was measured agrees.
+    fn retune(&mut self, delta: f64) {
+        if delta == 0.0 {
+            return;
+        }
+        self.afc_hz += delta;
+        self.inst_hz -= delta;
+        self.hist.iter_mut().for_each(|hz| *hz -= delta);
+        self.track.shift(delta);
+    }
+
+    /// What a steady tone in the `spans` of the history reads: the mean of its
+    /// readings within `AFC_SPAN_HZ` of their median, so the clicks noise
+    /// throws do not drag it and the tone's own spread does not trim it. With
+    /// it, the spread: the median distance of the readings from their median.
+    /// Spans, or the parts of them, no longer in the history are left out.
+    fn tone_hz(&self, spans: &[(f64, f64)]) -> Option<(f64, f64)> {
+        let first = self.hist_base as i64;
+        let mut v: Vec<f64> = spans
+            .iter()
+            .flat_map(|&(from, to)| (from.round() as i64).max(first)..to.round() as i64)
+            .map(|i| hz_in(&self.hist, self.hist_base, i))
+            .collect();
+        if v.is_empty() {
+            return None;
+        }
+        let mid = v.len() / 2;
+        let median = *v.select_nth_unstable_by(mid, f64::total_cmp).1;
+        let mut dev: Vec<f64> = v.iter().map(|hz| (hz - median).abs()).collect();
+        let spread = *dev.select_nth_unstable_by(mid, f64::total_cmp).1;
+        let near: Vec<f64> =
+            v.into_iter().filter(|&hz| (hz - median).abs() < AFC_SPAN_HZ).collect();
+        Some((near.iter().sum::<f64>() / near.len().max(1) as f64, spread))
+    }
+
     // ── VIS detection ──
 
     /// Slide the hunt's windows on by the sample just stored.
     fn slide_vis_windows(&mut self) {
         let lead_n = (LEADER_WIN_S * self.rate) as u64;
         let edge_n = (EDGE_WIN_S * self.rate) as u64;
-        let near_leader = |hz: f64| (hz - VIS_LEADER_HZ).abs() < TONE_NEAR_HZ;
+        let near_leader = |hz: f64, off: f64| (hz - VIS_LEADER_HZ - off).abs() < TONE_NEAR_HZ;
         let low = |hz: f64| hz < EDGE_SLICE_HZ;
         let newest = self.sample_idx - 1;
         // The samples leaving each window, if they were ever counted into it.
@@ -1143,14 +1208,18 @@ impl SstvRx {
         let sync_low = |hz: f64| hz < SYNC_SLICE_HZ;
         let (left_lead, left_edge, left_sync) = (leaving(lead_n), leaving(edge_n), leaving(sync_n));
         let vs = &mut self.vis_state;
-        vs.near_leader += u32::from(near_leader(self.inst_hz));
+        for (count, &off) in vs.near_leader.iter_mut().zip(&LEADER_OFFSETS_HZ) {
+            *count += u32::from(near_leader(self.inst_hz, off));
+        }
         vs.low += u32::from(low(self.inst_hz));
         vs.sync_low += u32::from(sync_low(self.inst_hz));
         if let Some(hz) = left_sync {
             vs.sync_low -= u32::from(sync_low(hz));
         }
         if let Some(hz) = left_lead {
-            vs.near_leader -= u32::from(near_leader(hz));
+            for (count, &off) in vs.near_leader.iter_mut().zip(&LEADER_OFFSETS_HZ) {
+                *count -= u32::from(near_leader(hz, off));
+            }
         }
         if let Some(hz) = left_edge {
             vs.low -= u32::from(low(hz));
@@ -1162,7 +1231,8 @@ impl SstvRx {
         self.slide_vis_windows();
         let lead_n = (LEADER_WIN_S * self.rate) as u64 as f64;
         let edge_n = (EDGE_WIN_S * self.rate) as u64;
-        let is_leader = self.vis_state.near_leader as f64 >= LEADER_SHARE * lead_n;
+        let is_leader =
+            self.vis_state.near_leader.iter().any(|&n| n as f64 >= LEADER_SHARE * lead_n);
         let is_low = 2 * self.vis_state.low as u64 >= edge_n;
         // Tolerant leader accumulator: brief noise glitches decrement rather than
         // reset the run, so a real ~300 ms leader still arms through hiss. No
@@ -1216,10 +1286,22 @@ impl SstvRx {
             let slot = |k: f64| {
                 tone_quantile(|i| hz_in(hist, base, i), start as f64 + k * bit, bit, VIS_QUANTILE)
             };
+            // How far off tune the station is, from the 300 ms of leader
+            // before the start bit — every tone below is where it would be
+            // that much higher.
+            let leader = (start as f64 - 0.28 * self.rate, start as f64 - 0.02 * self.rate);
+            // Taken only from something steady enough to be a leader: noise,
+            // or a picture's content, read as one spreads three times as far
+            // as a real leader does at 4 dB.
+            let off = self
+                .tone_hz(&[leader])
+                .filter(|&(_, spread)| spread <= AFC_MAX_SPREAD_HZ * 1.5)
+                .map_or(0.0, |(hz, _)| hz - VIS_LEADER_HZ);
             // The start bit is the reference the data bits are read
             // against: 1100 Hz is a one and 1300 a zero, and whatever the
             // noise or the tuning has done to 1200 it has done to them too.
             let reference = slot(0.0);
+            let sync = SYNC_HZ + off;
             let mut code = 0u8;
             let mut parity = 0u8;
             // Every VIS bit is 1100 or 1300 Hz. A candidate whose bit
@@ -1231,10 +1313,11 @@ impl SstvRx {
             // bits with matching parity; harmless while an unknown code
             // was silently dropped, and a false "unsupported mode" report
             // the moment one is not.
-            let mut looks_like_vis = (reference - SYNC_HZ).abs() < VIS_SYNC_TOL_HZ;
+            let mut looks_like_vis = (reference - sync).abs() < VIS_SYNC_TOL_HZ
+                && (self.afc_hz + off).abs() <= AFC_MAX_HZ;
             for b in 0..7 {
                 let hz = slot(1.0 + b as f64);
-                if hz > 1600.0 {
+                if hz > 1600.0 + off {
                     looks_like_vis = false;
                 }
                 if hz < reference {
@@ -1243,7 +1326,7 @@ impl SstvRx {
                 }
             }
             let phz = slot(8.0);
-            if phz > 1600.0 {
+            if phz > 1600.0 + off {
                 looks_like_vis = false;
             }
             let pbit = if phz < reference { 1 } else { 0 };
@@ -1251,7 +1334,7 @@ impl SstvRx {
             // a picture, which is what a false header costs; a report of
             // an unrecognised one is cheap, and some of those (MMSSTV's
             // 16-bit codes) carry data where a 7-bit header has its stop.
-            let stopped = (slot(9.0) - SYNC_HZ).abs() < VIS_SYNC_TOL_HZ;
+            let stopped = (slot(9.0) - sync).abs() < VIS_SYNC_TOL_HZ;
             if looks_like_vis && parity == pbit {
                 match SstvMode::from_vis(code) {
                     Some(mode) if stopped => {
@@ -1265,6 +1348,7 @@ impl SstvRx {
                         ) {
                             first += 0.009 * self.rate;
                         }
+                        self.retune(off);
                         self.begin_image(mode, first as u64, true, out);
                     }
                     // A header that checks out for a mode we cannot draw.
@@ -1272,7 +1356,7 @@ impl SstvRx {
                     // `SstvEvent::UnsupportedMode`. Code 0 is not a mode
                     // anyone has ever been assigned, so a candidate that
                     // reads as one is a misread and says nothing.
-                    None if code != 0 && self.preceded_by_leader(start) => {
+                    None if code != 0 && self.preceded_by_leader(start, off) => {
                         out.push(SstvEvent::UnsupportedMode {
                             code,
                             name: SstvMode::unsupported_name(code),
@@ -1287,7 +1371,8 @@ impl SstvRx {
         self.try_freerun(out);
     }
 
-    /// Whether the 20 ms before `start` really is the 1900 Hz leader.
+    /// Whether the 20 ms before `start` really is the 1900 Hz leader, tuned
+    /// `off` Hz off.
     ///
     /// Only asked before *reporting* an unrecognised code, never before
     /// decoding a recognised one: a missed report costs a line of explanation,
@@ -1301,13 +1386,13 @@ impl SstvRx {
     ///
     /// Judged the way the hunt judges the leader, by the share of the window
     /// near it, so noise on a few samples does not cost the explanation.
-    fn preceded_by_leader(&self, start: u64) -> bool {
+    fn preceded_by_leader(&self, start: u64, off: f64) -> bool {
         // Ending a little short of the edge, which the candidate's timing
         // only knows to within its own window.
         let to = start.saturating_sub((EDGE_WIN_S * self.rate) as u64);
         let n = (LEADER_WIN_S * self.rate) as u64;
         let near = (to.saturating_sub(n)..to)
-            .filter(|&i| (self.hz_at(i) - VIS_LEADER_HZ).abs() < TONE_NEAR_HZ)
+            .filter(|&i| (self.hz_at(i) - VIS_LEADER_HZ - off).abs() < TONE_NEAR_HZ)
             .count();
         near as f64 >= LEADER_SHARE * n as f64
     }
@@ -1329,8 +1414,8 @@ impl SstvRx {
     /// How well the recent sync pulses fit `mode`'s cadence: the chain of
     /// them back from the newest, each a line — or two, one having been lost —
     /// before the one after it and as long as `mode`'s sync, with anything
-    /// else between them passed over. Returns the chain's links, and how many
-    /// of those were a single line.
+    /// else between them passed over. Returns the chain's links, how many of
+    /// those were a single line, and the pulses on it, newest first.
     ///
     /// A chain, not a count of gaps anywhere in the list that are some whole
     /// number of lines: noise makes a pulse of a few milliseconds about once a
@@ -1343,15 +1428,16 @@ impl SstvRx {
     /// make of the gap between them. It was 4 % of a line, which is room for
     /// a different mode: two of Martin 2's lines are within 1.6 % of one of
     /// Martin 1's.
-    fn cadence_chain(&self, mode: SstvMode) -> (u32, u32) {
+    fn cadence_chain(&self, mode: SstvMode) -> (u32, u32, Vec<(u64, u32)>) {
         let period = self.line_period_samples(mode, 0);
         let (_, sdur) = self.sync_span(mode, mode.dimensions().0, 0);
         let fits = |len: u32| (len as f64 - sdur).abs() / sdur <= SYNC_LEN_TOL;
-        let Some(&(mut at, len)) = self.sync_hist.last() else { return (0, 0) };
+        let Some(&(mut at, len)) = self.sync_hist.last() else { return (0, 0, Vec::new()) };
         if !fits(len) {
-            return (0, 0);
+            return (0, 0, Vec::new());
         }
         let (mut links, mut singles) = (0, 0);
+        let mut pulses = vec![(at, len)];
         'chain: loop {
             for &(c, l) in self.sync_hist.iter().rev().filter(|p| p.0 < at) {
                 let gap = (at - c) as f64;
@@ -1363,11 +1449,12 @@ impl SstvRx {
                 if (1.0..=2.0).contains(&k) && (gap - k * period).abs() < tol && fits(l) {
                     links += 1;
                     singles += u32::from(k == 1.0);
+                    pulses.push((c, l));
                     at = c;
                     continue 'chain;
                 }
             }
-            return (links, singles);
+            return (links, singles, pulses);
         }
     }
 
@@ -1416,7 +1503,7 @@ impl SstvRx {
             None => SstvMode::ALL
                 .into_iter()
                 .filter_map(|m| {
-                    let (links, singles) = self.cadence_chain(m);
+                    let (links, singles, _) = self.cadence_chain(m);
                     let (_, sdur) = self.sync_span(m, m.dimensions().0, 0);
                     (links >= FREERUN_LINKS).then_some((m, singles, (run - sdur).abs() / sdur))
                 })
@@ -1426,6 +1513,25 @@ impl SstvRx {
         if let Some(mode) = locked {
             let (soff, sdur) = self.sync_span(mode, mode.dimensions().0, 0);
             let line_start = (center as f64 - (soff + sdur * 0.5)).max(0.0) as u64;
+            // How far off tune the station is, from the middle of the pulses
+            // the lock was made on.
+            let pulses: Vec<(f64, f64)> = self
+                .cadence_chain(mode)
+                .2
+                .iter()
+                .map(|&(c, len)| (c as f64 - 0.3 * len as f64, c as f64 + 0.3 * len as f64))
+                .collect();
+            // Only where the pulses are clean enough to believe, though. In
+            // noise the readings of a tone are pulled towards the middle of
+            // the band, and the sync, 500 Hz below it, furthest: by 30–50 Hz
+            // at 8 dB and 100 at 4, which is more than it corrects. The
+            // readings' spread says how far that has gone.
+            if let Some((hz, spread)) = self.tone_hz(&pulses) {
+                let off = hz - SYNC_HZ;
+                if spread <= AFC_MAX_SPREAD_HZ && (self.afc_hz + off).abs() <= AFC_MAX_HZ {
+                    self.retune(off);
+                }
+            }
             self.sync_hist.clear();
             self.begin_image(mode, line_start, false, out);
         }
@@ -2772,6 +2878,24 @@ mod tests {
             runs.into_iter().flat_map(|r| r.join().unwrap()).collect()
         });
         assert!(locks.is_empty(), "locked on noise: {locks:?}");
+    }
+
+    /// A station tuned 100 Hz off, either way, by either route in. Every tone
+    /// is 100 Hz out, which is 32 levels of brightness: at 20 dB such a picture
+    /// came out 30 levels off, the whole of it too bright or too dark — and
+    /// 100 Hz low, the leader fell outside the one window it was looked for in
+    /// and the header was never read at all. The receiver now measures the
+    /// offset, on the leader or on the sync pulses it locked on, and takes it
+    /// off everything it reads.
+    #[test]
+    fn a_station_tuned_off_is_tuned_in() {
+        for (offset, skip) in [(-100.0, 0.0), (100.0, 0.0), (-100.0, 1.1), (100.0, 1.1)] {
+            let r = receive_joining(SstvMode::Martin1, 20.0, 1, skip, offset);
+            let route = if skip == 0.0 { "header" } else { "free-run" };
+            assert_eq!(r.mode, Some(SstvMode::Martin1), "{offset:+} Hz by {route}");
+            assert_eq!(r.by_vis, skip == 0.0, "{offset:+} Hz by {route}: by VIS {}", r.by_vis);
+            assert!(r.err < 10.0, "{offset:+} Hz by {route}: error {:.1}", r.err);
+        }
     }
 
     /// One signal-to-noise ratio of a sweep, and every reception at it.

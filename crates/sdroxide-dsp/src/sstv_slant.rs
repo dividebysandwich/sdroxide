@@ -252,6 +252,14 @@ impl FreqTrack {
         self.q.reserve(cap.saturating_sub(self.q.capacity()));
     }
 
+    /// Take `delta` Hz off every frequency kept so far.
+    pub fn shift(&mut self, delta: f64) {
+        let d = (delta * 8.0).round() as i32;
+        for v in &mut self.q {
+            *v = (*v as i32 - d).clamp(0, u16::MAX as i32) as u16;
+        }
+    }
+
     pub fn clear(&mut self) {
         self.q.clear();
         self.cap = 0;
