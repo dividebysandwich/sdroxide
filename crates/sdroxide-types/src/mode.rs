@@ -359,6 +359,17 @@ pub enum Mode {
     /// answers `None` and the clock comes from the chosen period. Receive only
     /// in this build. Appended for the same reason as [`Mode::Hell`].
     Fsk441,
+    /// UVPacket — a packet protocol for private amateur VHF/UHF groups,
+    /// carried as a short π/4-DQPSK burst with an application byte pipe rather
+    /// than a WSJT message.
+    ///
+    /// It is not a WSJT-X mode: the header names an `app_type`, a `sequence`
+    /// number and a payload block count, and the sub-mode
+    /// ([`crate::UvPacketMode`]) is detected from the preamble rather than
+    /// chosen, so there is no operator setting and [`Mode::slot_timing`]
+    /// answers `None` — a frame can start anywhere. Receive only in this build,
+    /// as [`Mode::Pi4`] is. Appended for the same reason as [`Mode::Hell`].
+    UvPacket,
 }
 
 /// The bands on which a mode that keeps phone practice rides the lower
@@ -379,7 +390,7 @@ const PHONE_LSB_BANDS: [(f64, f64); 3] =
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 49] = [
+    pub const ALL: [Mode; 50] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -429,6 +440,7 @@ impl Mode {
         Mode::Fst4,
         Mode::Q65,
         Mode::Fsk441,
+        Mode::UvPacket,
     ];
 
     /// The digital modes handled by a dedicated decode/encode engine (the
@@ -436,7 +448,7 @@ impl Mode {
     /// packet, RF Paint). All are USB underneath except RIFP, VHF packet and
     /// VHF SSTV, which frequency-modulate the carrier, and ACARS, which is
     /// received in AM.
-    pub const DIGITAL: [Mode; 31] = [
+    pub const DIGITAL: [Mode; 32] = [
         Mode::Ft8,
         Mode::Ft4,
         Mode::Ft2,
@@ -468,6 +480,7 @@ impl Mode {
         Mode::Packet,
         Mode::PacketHf,
         Mode::Aprs,
+        Mode::UvPacket,
     ];
 
     /// True for modes that use a dedicated decode/QSO layer over USB.
@@ -505,6 +518,7 @@ impl Mode {
                 | Mode::Fst4
                 | Mode::Q65
                 | Mode::Fsk441
+                | Mode::UvPacket
         )
     }
 
@@ -866,6 +880,9 @@ impl Mode {
                 // build — the panel is the decode list alone.
                 | Mode::Q65
                 | Mode::Fsk441
+                // UVPacket is not a QSO mode and has no transmit half in this
+                // build — it is a byte pipe with no application layer here.
+                | Mode::UvPacket
         )
     }
 
@@ -949,6 +966,7 @@ impl Mode {
             Mode::Fst4 => "FST4",
             Mode::Q65 => "Q65",
             Mode::Fsk441 => "FSK441",
+            Mode::UvPacket => "UVPACKET",
         }
     }
 
@@ -1012,6 +1030,7 @@ impl Mode {
                 | Mode::Fst4
                 | Mode::Q65
                 | Mode::Fsk441
+                | Mode::UvPacket
         );
         crate::ModeProfile {
             agc: Some(if weak_digi { AgcMode::Slow } else { AgcMode::Med }),
@@ -1093,6 +1112,7 @@ impl Mode {
             | Mode::Jt9
             | Mode::Fst4
             | Mode::Q65
+            | Mode::UvPacket
             | Mode::Psk
             | Mode::Rtty
             | Mode::Sstv
@@ -1347,7 +1367,8 @@ impl Mode {
             | Mode::Jt9
             | Mode::Fst4
             | Mode::Q65
-            | Mode::Fsk441 => C::Data,
+            | Mode::Fsk441
+            | Mode::UvPacket => C::Data,
         }
     }
 
@@ -1587,7 +1608,8 @@ impl Mode {
             | Mode::Jt9
             | Mode::Fst4
             | Mode::Q65
-            | Mode::Fsk441 => &[],
+            | Mode::Fsk441
+            | Mode::UvPacket => &[],
         }
     }
 }
@@ -2132,6 +2154,7 @@ mod tests {
             (Mode::Fst4, 46),
             (Mode::Q65, 47),
             (Mode::Fsk441, 48),
+            (Mode::UvPacket, 49),
         ];
         for (mode, index) in pinned {
             assert_eq!(mode as u8, index, "{} moved", mode.label());
@@ -2178,7 +2201,7 @@ mod tests {
         // dropped and nothing listed twice.
         // The last variant *by discriminant*, which is the one appended most
         // recently — not the one that reads last in the picker.
-        let last = Mode::Fsk441 as u8;
+        let last = Mode::UvPacket as u8;
         for i in 0..=last {
             let present = Mode::ALL.iter().filter(|m| **m as u8 == i).count();
             assert_eq!(present, 1, "discriminant {i} appears {present} times in Mode::ALL");

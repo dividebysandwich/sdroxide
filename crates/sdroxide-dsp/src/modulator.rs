@@ -101,6 +101,8 @@ pub fn make_modulator(mode: Mode, rate: f64, passband: (f32, f32)) -> Option<Box
         // Q65 is receive-only in this build too: transmit needs a
         // sequencer, so there is no modulator rather than one that would put
         // an unsequenced burst on the air under a Q65 label.
+        // UVPacket is receive-only in this build too: it is a byte pipe
+        // with no application layer here, so there is nothing to put in it.
         Mode::Pi4
         | Mode::Cw
         | Mode::Wfm
@@ -116,7 +118,8 @@ pub fn make_modulator(mode: Mode, rate: f64, passband: (f32, f32)) -> Option<Box
         | Mode::Jt9
         | Mode::Fst4
         | Mode::Q65
-        | Mode::Fsk441 => None,
+        | Mode::Fsk441
+        | Mode::UvPacket => None,
     }
 }
 

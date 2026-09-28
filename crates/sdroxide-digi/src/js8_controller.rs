@@ -1172,6 +1172,7 @@ impl DigiEngine for Js8Controller {
             packet: None,
             navtex: None,
             acars: None,
+            uvpacket: None,
             aprs: None,
             js8: Some(Js8Status {
                 speed: self.speed,

@@ -532,6 +532,11 @@ pub struct DigiStatus {
     /// peer that matches the protocol version but not this build.
     #[serde(default)]
     pub acars: Option<AcarsStatus>,
+    /// UVPacket status, when that mode is selected. `None` in every other
+    /// mode, as the rest of these are. Last in the struct, after `acars`, for
+    /// the same positional reason.
+    #[serde(default)]
+    pub uvpacket: Option<crate::UvPacketStatus>,
 }
 
 /// The running detail of the contact in progress: when it started and what has
@@ -1044,6 +1049,7 @@ impl DigiStatus {
             packet: None,
             navtex: None,
             acars: None,
+            uvpacket: None,
             aprs: None,
             js8: None,
             atchat: None,

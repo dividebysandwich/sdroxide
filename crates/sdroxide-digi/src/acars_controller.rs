@@ -80,6 +80,7 @@ impl AcarsController {
             packet: None,
             navtex: None,
             acars: Some(self.acars_status()),
+            uvpacket: None,
             aprs: None,
             js8: None,
             atchat: None,

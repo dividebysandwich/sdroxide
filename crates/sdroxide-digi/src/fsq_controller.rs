@@ -212,6 +212,7 @@ impl FsqController {
             packet: None,
             navtex: None,
             acars: None,
+            uvpacket: None,
             aprs: None,
             js8: None,
             atchat: None,

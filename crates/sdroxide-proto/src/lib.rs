@@ -1492,6 +1492,13 @@ use sdroxide_types::{
 /// `Command::SetDigiConfig` and `DigiStatus` whole, so a v169 peer reads the
 /// extra bytes as the start of the next field and fails to decode every
 /// digital status — the same break as v162's appended CW settings.
+///
+/// v166: UVPacket, the packet byte-pipe protocol. `Mode::UvPacket` is appended
+/// to that enum, so no surviving discriminant moves, and `DigiStatus` gains
+/// `uvpacket` (`Option<UvPacketStatus>`) on its tail, since a decoded frame
+/// carries an application tag and raw payload rather than a WSJT message.
+/// `DigiStatus` rides `RadioState` whole, so a v165 peer reads the extra bytes
+/// as the start of the next field and fails to decode every digital status.
 pub const PROTO_VERSION: u16 = 170;
 const VERSION_BYTE: u8 = 0x12;
 
