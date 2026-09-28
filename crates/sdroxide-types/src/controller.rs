@@ -130,6 +130,9 @@ pub enum RadioEvent {
     /// Latest set of network spots (DX cluster / POTA / SOTA / PSK Reporter),
     /// merged and de-duplicated by the spot manager.
     Spots(Vec<Spot>),
+    /// Live band-opening detections (band × continent path surges), analysed
+    /// by the spot manager from the same feeds that produce [`RadioEvent::Spots`].
+    BandOpenings(Vec<crate::BandOpening>),
     /// A human-readable status line for the spot feeds (cluster connection
     /// state, feed errors). `None` clears it.
     NetStatus(Option<String>),

@@ -1532,6 +1532,11 @@ impl SdroxideApp {
                     self.spots_gen += 1;
                     self.adopted_spots_gen = None;
                 }
+                RadioEvent::BandOpenings(o) => {
+                    self.band_openings = o;
+                    self.spots_gen += 1;
+                    self.adopted_spots_gen = None;
+                }
                 RadioEvent::NetStatus(s) => {
                     self.net_status = s;
                     self.spots_gen += 1;

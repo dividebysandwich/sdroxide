@@ -12636,6 +12636,7 @@ impl Engine {
         for ev in self.spots.poll() {
             let re = match ev {
                 sdroxide_net::NetEvent::Spots(s) => RadioEvent::Spots(s),
+                sdroxide_net::NetEvent::BandOpenings(o) => RadioEvent::BandOpenings(o),
                 sdroxide_net::NetEvent::Status(s) => RadioEvent::NetStatus(s),
                 sdroxide_net::NetEvent::Callsign(c) => RadioEvent::CallsignResult(c),
                 sdroxide_net::NetEvent::Upload(r) => RadioEvent::Upload(r),

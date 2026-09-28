@@ -10,6 +10,11 @@ use sdroxide_types::{CallsignInfo, QsoRecord, Spot, SpotKind, UploadResult};
 pub enum NetEvent {
     /// The merged, de-duplicated, age-pruned spot set (manager → engine).
     Spots(Vec<Spot>),
+    /// Live band-opening detections from the same feeds that produce
+    /// [`NetEvent::Spots`]: band × continent paths whose recent activity has
+    /// surged past its own 3-hour baseline. Replaced wholesale whenever the
+    /// analysis result changes.
+    BandOpenings(Vec<sdroxide_types::BandOpening>),
     /// Human-readable feed/connection status (`None` clears it).
     Status(Option<String>),
     /// A callsign-lookup result.
