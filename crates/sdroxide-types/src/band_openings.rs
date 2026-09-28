@@ -177,11 +177,22 @@ struct StateRec {
 pub struct BandOpeningTracker {
     opts: OpenOptions,
     spots: HashMap<Key, Vec<SpotRec>>,
-    /// `(spot id, short-window bucket)` → the bucket's latest timestamp, for
-    /// dedupe across repeated ingests of the same cache snapshot. The bucket is
-    /// what lets a station still active in a later window count again instead
-    /// of being suppressed forever by its first appearance.
-    seen: HashMap<(String, i64), i64>,
+    /// Dedupe across repeated ingests: the last timestamp accepted for a spot
+    /// id. A feed re-sends its whole set each cycle with stable ids, so the
+    /// same id at the same timestamp is a re-send and is dropped; the same id
+    /// at a *later* timestamp is a fresh observation and counts.
+    ///
+    /// Deliberately not keyed on an absolute time bucket: a fixed bucket
+    /// boundary split one station's observations across two buckets and made a
+    /// steady path's rate jump at the boundary, which is what flickered a real
+    /// opening between OPEN and its next state under PSK Reporter's 300 s poll.
+    seen: HashMap<String, i64>,
+    /// Per key, when the tracker first ingested anything for it — the path's
+    /// warm-up clock. This is what "how long has this path been watched" means,
+    /// and it is *not* derivable from the spots: a band just switched to, or a
+    /// genuinely quiet path, may have no spots at all, yet it has still been
+    /// watched since the moment its feed started arriving.
+    first_watched: HashMap<Key, i64>,
     states: HashMap<Key, StateRec>,
 }
 
@@ -197,11 +208,49 @@ impl BandOpeningTracker {
     }
 
     pub fn with_options(opts: OpenOptions) -> Self {
-        BandOpeningTracker { opts, spots: HashMap::new(), seen: HashMap::new(), states: HashMap::new() }
+        BandOpeningTracker {
+            opts,
+            spots: HashMap::new(),
+            seen: HashMap::new(),
+            first_watched: HashMap::new(),
+            states: HashMap::new(),
+        }
     }
 
     pub fn options(&self) -> OpenOptions {
         self.opts
+    }
+
+    /// Mark a path as watched since `since`, without needing a spot.
+    ///
+    /// The warm-up clock is "how long has this path been observed", and a
+    /// path is observed from the moment its feed starts arriving — which for a
+    /// quiet band or a band just switched to may be before it produces any
+    /// spots, or with none at all. The caller calls this when a band's feed
+    /// comes up; `ingest` also sets it, so a caller that does not call this
+    /// still gets a clock from its first ingest.
+    pub fn watch(
+        &mut self,
+        band: Band,
+        from_continent: &'static str,
+        to_continent: &'static str,
+        since: i64,
+    ) {
+        let key = (band, from_continent, to_continent);
+        // Earliest wins: `watch` may backdate a clock that `ingest` already set
+        // to its own `now`, which is what lets a caller say "this feed has been
+        // up since X" after the first spots have already arrived.
+        self.first_watched.entry(key).and_modify(|w| *w = (*w).min(since)).or_insert(since);
+    }
+
+    /// The warm-up clock for a path: when it was first watched, if known.
+    pub fn watched_since(
+        &self,
+        band: Band,
+        from_continent: &'static str,
+        to_continent: &'static str,
+    ) -> Option<i64> {
+        self.first_watched.get(&(band, from_continent, to_continent)).copied()
     }
 
     /// Feed spots; returns how many were actually accepted (new, valid, and
@@ -219,14 +268,22 @@ impl BandOpeningTracker {
             let id = s.id.clone().unwrap_or_else(|| {
                 format!("{}|{:?}|{}|{}", s.call, s.band, s.from_continent, s.to_continent)
             });
-            // One record per (id, short-window bucket): a station heard again in
-            // a later window is fresh activity, not a repeat of its first spot.
-            let bucket = s.timestamp.div_euclid(self.opts.short_window_s);
-            if self.seen.contains_key(&(id.clone(), bucket)) {
-                continue;
-            }
-            self.seen.insert((id, bucket), s.timestamp);
             let key = (s.band, s.from_continent, s.to_continent);
+            // This key has now been watched since `now` at the latest. Set on
+            // every ingest, before dedupe, so the warm-up clock starts even for
+            // a path that is producing no spots — a quiet band is still being
+            // watched, and that is what lets it open once its baseline span is
+            // real rather than being stuck at "never" forever.
+            self.first_watched.entry(key).or_insert(now);
+            // A re-send of the same observation is dropped; a later timestamp
+            // for the same id is a fresh observation and counts. Keying on the
+            // timestamp rather than an absolute bucket keeps a station's rate
+            // steady across poll boundaries.
+            match self.seen.get(&id) {
+                Some(&last) if last >= s.timestamp => continue,
+                _ => {}
+            }
+            self.seen.insert(id, s.timestamp);
             let list = self.spots.entry(key).or_default();
             list.push(SpotRec { call: s.call.clone(), ts: s.timestamp });
             if list.len() > self.opts.max_spots_per_key {
@@ -274,11 +331,17 @@ impl BandOpeningTracker {
             }
             let short_count = short_calls.len();
             let short_rate = short_spots as f64 / (self.opts.short_window_s as f64 / 60.0);
-            // This key's own observed baseline span: from its oldest surviving
-            // spot to the start of the short window.
-            let key_oldest = list.iter().map(|s| s.ts).min().unwrap_or(now);
+            // This key's own observed baseline span: from when the tracker
+            // first watched the path to the start of the short window. The
+            // warm-up clock, not the oldest surviving spot — using the oldest
+            // spot read "time since the first spot" as "time watched", so a
+            // band switched to (whose feed hands over only a short window of
+            // spots) looked freshly warmed and opened at 5–40×, and a genuinely
+            // silent path could never reach the ∞ case because it had no spots
+            // to measure from at all.
+            let watched_since = self.first_watched.get(key).copied().unwrap_or(now);
             let observed_baseline_s =
-                (now - key_oldest - self.opts.short_window_s).clamp(0, nominal_baseline_s);
+                (now - watched_since - self.opts.short_window_s).clamp(0, nominal_baseline_s);
             let baseline_rate = if observed_baseline_s > 0 {
                 baseline_spots as f64 / (observed_baseline_s as f64 / 60.0)
             } else {
@@ -311,8 +374,11 @@ impl BandOpeningTracker {
                         // same) but report the entry as `opening`. A path that
                         // closed and comes back is a new event, so its age starts
                         // here rather than inheriting the previous event's.
-                        let rec =
-                            StateRec { state: OpeningState::Active, since: now, closing_since: None };
+                        let rec = StateRec {
+                            state: OpeningState::Active,
+                            since: now,
+                            closing_since: None,
+                        };
                         self.states.insert(*key, rec);
                         state = Some((OpeningState::Opening, rec));
                     } else if let Some(p) = prev {
@@ -443,6 +509,14 @@ mod tests {
         }
     }
 
+    /// Establish that the default path (20 m, EU→NA) has been watched for the
+    /// full baseline span, as the app has been running. Tests that ingest only
+    /// historical spots at `NOW` need this: a single ingest is not a watched
+    /// span, which is the whole point of the warm-up clock.
+    fn watched_default(t: &mut BandOpeningTracker) {
+        t.watch(Band::M20, "EU", "NA", NOW - 180 * MIN);
+    }
+
     fn baseline_spots(every_min: i64, calls: &[&str]) -> Vec<BandPath> {
         let mut out = Vec::new();
         let mut n = 0;
@@ -482,7 +556,8 @@ mod tests {
     fn key_burst(band: Band, from: &'static str, to: &'static str, count: usize) -> Vec<BandPath> {
         (0..count)
             .map(|i| {
-                let mut s = spot(&format!("DX{i}AA"), -1 - (i as i64 % 10), &[("n", i.to_string())]);
+                let mut s =
+                    spot(&format!("DX{i}AA"), -1 - (i as i64 % 10), &[("n", i.to_string())]);
                 s.band = band;
                 s.from_continent = from;
                 s.to_continent = to;
@@ -562,6 +637,7 @@ mod tests {
     #[test]
     fn flags_an_opening_when_the_short_window_surges_past_baseline() {
         let mut t = BandOpeningTracker::new();
+        watched_default(&mut t);
         let mut all = baseline_spots(10, &["G0AAA", "G0BBB", "G0CCC"]);
         all.extend(burst_spots(8));
         t.ingest(&all, NOW);
@@ -572,9 +648,9 @@ mod tests {
         assert_eq!(openings[0].to_continent, "NA");
         assert_eq!(openings[0].short_calls, 8);
         assert!(openings[0].factor.unwrap() >= OpenOptions::default().open_factor);
-        // 16 baseline spots over the *observed* 160-minute span, not the nominal
-        // 165: the baseline is only as long as the history seen.
-        assert_eq!(openings[0].baseline_per_min, round(16.0 / 160.0, 3));
+        // 16 baseline spots over the watched span less the short window: the
+        // watched clock is NOW−180min, so the baseline span is 165 minutes.
+        assert_eq!(openings[0].baseline_per_min, round(16.0 / 165.0, 3));
         assert!(openings[0].sample_calls.len() <= 3);
         assert!(openings[0].sample_calls.iter().all(|c| c.starts_with("DX")));
     }
@@ -617,11 +693,17 @@ mod tests {
         // History on another band does not become this band's baseline either.
         t.ingest(&other_band_history(Band::M40), NOW);
         assert_eq!(t.analyze(NOW), Vec::new(), "another band's history is not this path's");
-        // This path's own baseline, and the same busy window is a real surge.
+        // This path's own baseline, and the same busy window is a real surge —
+        // once the path has actually been watched long enough to have one.
+        watched_default(&mut t);
         t.ingest(&baseline_spots(10, &["G0AAA", "G0BBB", "G0CCC"]), NOW);
         let openings = t.analyze(NOW);
         assert_eq!(openings.len(), 1);
-        assert_eq!(openings[0].band, Band::M20, "the burst path, judged once its own baseline exists");
+        assert_eq!(
+            openings[0].band,
+            Band::M20,
+            "the burst path, judged once its own baseline exists"
+        );
     }
 
     #[test]
@@ -649,6 +731,7 @@ mod tests {
     #[test]
     fn tracks_band_x_continent_pair_keys_independently() {
         let mut t = BandOpeningTracker::new();
+        t.watch(Band::M10, "AS", "NA", NOW - 180 * MIN);
         // The 10 m AS→NA path has its own baseline and surges; the 15 m path
         // has only a small burst and no history, so it does not open.
         let mut all = key_baseline(Band::M10, "AS", "NA");
@@ -663,6 +746,7 @@ mod tests {
     #[test]
     fn transitions_opening_to_active_while_criteria_hold() {
         let mut t = BandOpeningTracker::new();
+        watched_default(&mut t);
         let mut all = baseline_spots(10, &["G0AAA", "G0BBB", "G0CCC"]);
         all.extend(burst_spots(8));
         t.ingest(&all, NOW);
@@ -673,6 +757,7 @@ mod tests {
     #[test]
     fn transitions_active_to_closing_then_disappears_after_the_linger() {
         let mut t = BandOpeningTracker::new();
+        watched_default(&mut t);
         let mut all = baseline_spots(10, &["G0AAA", "G0BBB", "G0CCC"]);
         all.extend(burst_spots(8));
         t.ingest(&all, NOW);
@@ -692,6 +777,7 @@ mod tests {
     #[test]
     fn applies_hysteresis_between_the_close_and_open_thresholds() {
         let mut t = BandOpeningTracker::new();
+        watched_default(&mut t);
         let mut all = baseline_spots(10, &["G0AAA", "G0BBB", "G0CCC"]);
         all.extend(burst_spots(8));
         t.ingest(&all, NOW);
@@ -709,6 +795,8 @@ mod tests {
     #[test]
     fn sorts_opening_before_closing() {
         let mut t = BandOpeningTracker::new();
+        t.watch(Band::M10, "EU", "NA", NOW - 180 * MIN);
+        t.watch(Band::M15, "EU", "NA", NOW - 180 * MIN);
         // Both paths get a baseline; only the 10 m one surges now.
         let mut all = key_baseline(Band::M10, "EU", "NA");
         all.extend(key_baseline(Band::M15, "EU", "NA"));
@@ -739,7 +827,66 @@ mod tests {
         t.ingest(&key_baseline(Band::M20, "EU", "NA"), NOW);
         t.ingest(&key_burst(Band::M40, "EU", "NA", 8), NOW);
         let res = t.analyze(NOW);
-        assert!(res.iter().all(|o| o.band != Band::M40), "40 m has no baseline of its own: {res:?}");
+        assert!(
+            res.iter().all(|o| o.band != Band::M40),
+            "40 m has no baseline of its own: {res:?}"
+        );
+    }
+
+    /// The band-switch case the review named: a path whose feed has only just
+    /// come up (a band just switched to, or a sparse DX-cluster trickle) has no
+    /// watched span of its own, so a busy window cannot open it at 5–40×.
+    #[test]
+    fn a_band_just_switched_to_does_not_open_on_its_first_spots() {
+        let mut t = BandOpeningTracker::new();
+        // The dial moves to 10 m: its feed arrives with a busy window and no
+        // history, and the path is watched only from now.
+        t.watch(Band::M10, "EU", "NA", NOW);
+        t.ingest(&key_burst(Band::M10, "EU", "NA", 12), NOW);
+        assert!(
+            t.analyze(NOW).is_empty(),
+            "a path watched for seconds has no baseline to have surged against"
+        );
+    }
+
+    /// The other half of the same flaw: a path that was watched and is
+    /// genuinely silent *can* open, because the warm-up clock advances with the
+    /// watching, not with the spots. Under the old "oldest spot" rule a silent
+    /// baseline had no span to measure from, so the ∞ case was unreachable.
+    #[test]
+    fn a_watched_but_silent_path_can_still_open() {
+        let mut t = BandOpeningTracker::new();
+        // Watched for the whole baseline span, with no baseline spots at all.
+        t.watch(Band::M20, "EU", "NA", NOW - 180 * MIN);
+        t.ingest(&burst_spots(8), NOW);
+        let openings = t.analyze(NOW);
+        assert_eq!(openings.len(), 1, "a silent baseline that comes alive is an opening");
+        assert_eq!(openings[0].factor, None, "a silent baseline is the ∞ case");
+    }
+
+    /// A 300 s poll does not flicker an opening: the same observation is not
+    /// counted twice across poll boundaries, so the rate — and the state — stay
+    /// steady. The old absolute-bucket dedupe split one station across buckets
+    /// and made the sequence jump.
+    #[test]
+    fn a_slow_poll_does_not_flicker_an_opening() {
+        let mut t = BandOpeningTracker::new();
+        t.watch(Band::M20, "EU", "NA", NOW - 180 * MIN);
+        let mut all = baseline_spots(10, &["G0AAA", "G0BBB", "G0CCC"]);
+        all.extend(burst_spots(8));
+        t.ingest(&all, NOW);
+        assert_eq!(t.analyze(NOW)[0].state, OpeningState::Opening);
+
+        // The feed re-polls 5 minutes later with the *same* observations (same
+        // ids, same timestamps) plus one new call. Nothing already seen counts
+        // again, so the state holds instead of restarting.
+        let mut repoll: Vec<BandPath> =
+            all.iter().filter(|s| s.timestamp > NOW - 15 * MIN).cloned().collect();
+        repoll.push(spot("DX8AA", -1, &[("n", "99".to_string())]));
+        t.ingest(&repoll, NOW + 5 * MIN);
+        let res = t.analyze(NOW + 5 * MIN);
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].state, OpeningState::Active, "the poll did not restart the opening");
     }
 
     #[test]
@@ -748,6 +895,7 @@ mod tests {
             open_factor: 10.0,
             ..OpenOptions::default()
         });
+        watched_default(&mut t);
         let mut all = baseline_spots(10, &["G0AAA", "G0BBB", "G0CCC"]);
         all.extend(burst_spots(8));
         t.ingest(&all, NOW);
@@ -758,6 +906,7 @@ mod tests {
             min_distinct_calls: 2,
             ..OpenOptions::default()
         });
+        watched_default(&mut t2);
         let mut all = baseline_spots(10, &["G0AAA", "G0BBB", "G0CCC"]);
         all.extend(burst_spots(3));
         t2.ingest(&all, NOW);
