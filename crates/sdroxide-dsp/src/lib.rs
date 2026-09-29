@@ -2,6 +2,8 @@ pub mod acars;
 mod adc;
 pub mod afsk;
 mod agc;
+pub mod ale;
+mod ale_tables;
 mod binaural;
 mod cessb;
 mod ctcss;
