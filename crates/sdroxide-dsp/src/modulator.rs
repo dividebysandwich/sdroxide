@@ -60,7 +60,10 @@ pub fn make_modulator(mode: Mode, rate: f64, passband: (f32, f32)) -> Option<Box
         | Mode::PacketHf
         // AtChat COFDM rides the same USB path as the keyboard modes.
         | Mode::AtChat
-        | Mode::Rade => Some(Box::new(SsbMod::new(rate, lo, hi))),
+        | Mode::Rade
+        // JTTY's narrow 4-GFSK tones are audio on a sideband, keyed by the digi
+        // engine's asynchronous transmit path.
+        | Mode::Jtty => Some(Box::new(SsbMod::new(rate, lo, hi))),
         Mode::Am | Mode::Sam | Mode::Dsb => Some(Box::new(AmMod::new(rate))),
         // ISB is receive only: transmitting it wants two modulators feeding
         // one linear amplifier, which is a station, not a setting. No

@@ -762,6 +762,8 @@ impl eframe::App for SdroxideApp {
                                     self.q65_panel(ui, &mut cmds);
                                 } else if mode == Mode::Fsk441 {
                                     self.fsk441_panel(ui, &mut cmds);
+                                } else if mode == Mode::Jtty {
+                                    self.jtty_panel(ui, &mut cmds, panel_h);
                                 } else {
                                     self.digi_panel(ui, &mut cmds);
                                 }

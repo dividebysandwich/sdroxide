@@ -198,6 +198,7 @@ impl RifpController {
             tx_watchdog: false,
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
+            jtty: None,
             text_rx: String::new(),
             tx_sent: 0,
             fsq_heard: Vec::new(),

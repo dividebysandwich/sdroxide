@@ -532,6 +532,11 @@ pub struct DigiStatus {
     /// peer that matches the protocol version but not this build.
     #[serde(default)]
     pub acars: Option<AcarsStatus>,
+    /// JTTY: the asynchronous text messages received and the smoothed audio
+    /// level. `None` in every other mode, as the rest of these are. Appended
+    /// after `acars` for the same positional reason.
+    #[serde(default)]
+    pub jtty: Option<crate::JttyStatus>,
 }
 
 /// The running detail of the contact in progress: when it started and what has
@@ -1044,6 +1049,7 @@ impl DigiStatus {
             packet: None,
             navtex: None,
             acars: None,
+            jtty: None,
             aprs: None,
             js8: None,
             atchat: None,

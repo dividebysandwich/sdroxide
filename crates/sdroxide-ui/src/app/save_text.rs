@@ -12,7 +12,8 @@
 //! [`crate::download::save`] the ADIF export uses.
 
 use sdroxide_types::{
-    AcarsStatus, DigiStatus, HfdlDecode, NavtexStatus, Pi4Spot, SkimmerSpot, Vdl2Message, WsprSpot,
+    AcarsStatus, DigiStatus, HfdlDecode, JttyStatus, NavtexStatus, Pi4Spot, SkimmerSpot,
+    Vdl2Message, WsprSpot,
 };
 
 /// A UTC timestamp as a log line wants it.
@@ -49,6 +50,7 @@ pub fn digi_has_log(status: &DigiStatus) -> bool {
     !status.text_rx.trim().is_empty()
         || status.acars.as_ref().is_some_and(|a| !a.messages.is_empty())
         || status.navtex.as_ref().is_some_and(|n| !n.messages.is_empty())
+        || status.jtty.as_ref().is_some_and(|j| !j.messages.is_empty())
         || !status.fsq_messages.is_empty()
         || status.packet.as_ref().is_some_and(|p| !p.heard.is_empty())
         || status.js8.as_ref().is_some_and(|j| !j.messages.is_empty())
@@ -94,6 +96,11 @@ pub fn digi_log(status: &DigiStatus) -> Option<(String, String)> {
     }
     if let Some(n) = &status.navtex {
         return Some((format!("sdroxide-{}-log.txt", slug(status)), navtex_text(n)));
+    }
+    if let Some(j) = &status.jtty
+        && !j.messages.is_empty()
+    {
+        return Some((format!("sdroxide-{}-log.txt", slug(status)), jtty_text(j)));
     }
     if let Some(p) = &status.packet
         && !p.heard.is_empty()
@@ -181,6 +188,21 @@ fn navtex_text(n: &NavtexStatus) -> String {
             m.kind,
             m.serial,
             m.lost,
+            tsv(&m.text)
+        ));
+    }
+    out
+}
+
+fn jtty_text(j: &JttyStatus) -> String {
+    let mut out = String::from("utc\taudio_hz\tsnr_db\tcomplete\ttext\n");
+    for m in &j.messages {
+        out.push_str(&format!(
+            "{}\t{:.0}\t{}\t{}\t{}\n",
+            stamp(m.at_unix),
+            m.audio_hz,
+            m.snr_db,
+            if m.complete { "yes" } else { "no" },
             tsv(&m.text)
         ));
     }

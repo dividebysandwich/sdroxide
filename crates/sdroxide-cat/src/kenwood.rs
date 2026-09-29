@@ -382,7 +382,7 @@ fn mode_digit(m: Mode) -> (char, bool) {
         | Mode::PacketHf
         | Mode::AtChat
         | Mode::Rade => ('2', true),
-        Mode::Usb | Mode::Spec | Mode::Sstv | Mode::Wefax | Mode::Navtex | Mode::RfPaint => {
+        Mode::Usb | Mode::Spec | Mode::Sstv | Mode::Wefax | Mode::Navtex | Mode::RfPaint | Mode::Jtty => {
             ('2', false)
         }
     }
