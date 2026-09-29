@@ -237,6 +237,135 @@ pub fn demodulate(audio: &[f32]) -> Vec<u8> {
     out
 }
 
+/// The eight tone energies of one 64-sample window.
+fn window_energies(win: &[f32]) -> [f64; 8] {
+    let mut e = [0.0f64; 8];
+    for (k, &f) in TONES.iter().enumerate() {
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (i, &s) in win.iter().enumerate() {
+            let ph = -2.0 * std::f64::consts::PI * f * i as f64 / ALE_RATE;
+            re += f64::from(s) * ph.cos();
+            im += f64::from(s) * ph.sin();
+        }
+        e[k] = re * re + im * im;
+    }
+    e
+}
+
+/// Demodulate starting at sample `phase`, one ALE symbol per window.
+pub fn demodulate_from(audio: &[f32], phase: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut p = phase;
+    while p + SAMPLES_PER_SYMBOL <= audio.len() {
+        let e = window_energies(&audio[p..p + SAMPLES_PER_SYMBOL]);
+        let mut best = 0usize;
+        for k in 1..8 {
+            if e[k] > e[best] {
+                best = k;
+            }
+        }
+        out.push(best as u8);
+        p += SAMPLES_PER_SYMBOL;
+    }
+    out
+}
+
+/// The symbol-timing metric for a phase: the average, over windows, of how
+/// concentrated the tone energy is on the strongest tone. Peaks when the
+/// windows line up with the symbols; a straddling window splits its energy
+/// across two tones and scores lower. Cheap and FEC-free, so all 64 phases can
+/// be tried.
+pub fn timing_metric(audio: &[f32], phase: usize) -> f64 {
+    let (mut score, mut n) = (0.0f64, 0u32);
+    let mut p = phase;
+    while p + SAMPLES_PER_SYMBOL <= audio.len() {
+        let e = window_energies(&audio[p..p + SAMPLES_PER_SYMBOL]);
+        let total: f64 = e.iter().sum();
+        if total > 1e-9 {
+            let mx = e.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            score += mx / total;
+            n += 1;
+        }
+        p += SAMPLES_PER_SYMBOL;
+    }
+    if n == 0 { 0.0 } else { score / f64::from(n) }
+}
+
+/// The phase whose windows best line up with the symbols.
+pub fn best_phase(audio: &[f32]) -> usize {
+    (0..SAMPLES_PER_SYMBOL)
+        .max_by(|&a, &b| {
+            timing_metric(audio, a)
+                .partial_cmp(&timing_metric(audio, b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or(0)
+}
+
+/// Decode a burst of 8 kHz audio into the ALE words it carries, collapsing the
+/// three repetitions each word is sent with.
+///
+/// Finds the symbol clock, runs the FEC, and keeps only words that (a) parse to
+/// the ALE-64 set and (b) were heard at least twice in a row — which is what
+/// separates a real word from FEC noise in the gaps.
+pub fn decode_burst(audio: &[f32]) -> Vec<AleWord> {
+    // A recording is a run of bursts separated by silence, and the symbol clock
+    // phase is measured per burst — averaging it over the whole file lets the
+    // silent spans choose the phase. Walk it in overlapping segments, decode
+    // each on its own clock, and merge the words.
+    let seg = 2 * ALE_RATE as usize;
+    let hop = seg / 2;
+    let mut out: Vec<AleWord> = Vec::new();
+    if audio.len() < SAMPLES_PER_SYMBOL * 49 {
+        return out;
+    }
+    let mut at = 0usize;
+    loop {
+        let end = (at + seg).min(audio.len());
+        for w in decode_segment(&audio[at..end]) {
+            if !out.contains(&w) {
+                out.push(w);
+            }
+        }
+        if end == audio.len() {
+            break;
+        }
+        at += hop;
+    }
+    out
+}
+
+/// Decode one segment on its own best clock phase, keeping only words heard at
+/// least twice in a row (a real word is sent three times; FEC noise is not).
+fn decode_segment(audio: &[f32]) -> Vec<AleWord> {
+    let phase = best_phase(audio);
+    let mut rx = AleRx::new();
+    let mut run: Option<u32> = None;
+    let mut count = 0u32;
+    let mut out = Vec::new();
+    fn flush(run: &mut Option<u32>, count: &mut u32, out: &mut Vec<AleWord>) {
+        if *count >= 2
+            && let Some(w) = *run
+            && let Some(word) = parse_word(w)
+        {
+            out.push(word);
+        }
+    }
+    for s in demodulate_from(audio, phase) {
+        if let Some(w) = rx.push(s) {
+            if run == Some(w) {
+                count += 1;
+            } else {
+                flush(&mut run, &mut count, &mut out);
+                run = Some(w);
+                count = 1;
+            }
+        }
+    }
+    flush(&mut run, &mut count, &mut out);
+    out
+}
+
 /// Encode a 24-bit word into its 49 transmitted symbols. Used by the tests and
 /// mirrors the standard transmitter.
 pub fn transmit_symbols(w: u32) -> [u8; 49] {
@@ -337,5 +466,61 @@ mod tests {
             }
         }
         assert!(got.contains(&word), "demod+fec failed: {got:x?}");
+    }
+
+    fn from_abc() -> u32 {
+        4 | (u32::from(b'A') << 3) | (u32::from(b'B') << 10) | (u32::from(b'C') << 17)
+    }
+
+    fn synth(word: u32, copies: usize, offset: usize, amp: f32, noise: f32) -> Vec<f32> {
+        let mut audio = vec![0.0f32; offset];
+        for c in 0..copies {
+            for &s in &transmit_symbols(word) {
+                let f = TONES[s as usize];
+                for i in 0..SAMPLES_PER_SYMBOL {
+                    let t = i as f64 / ALE_RATE;
+                    audio.push(amp * (2.0 * std::f64::consts::PI * f * t).cos() as f32);
+                }
+            }
+            let _ = c;
+        }
+        let mut seed = 0x1234_5678u32;
+        for a in audio.iter_mut() {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *a += ((seed >> 8) as f32 / 16_777_215.0 - 0.5) * 2.0 * noise;
+        }
+        audio
+    }
+
+    #[test]
+    fn the_front_end_finds_the_clock_offset_and_decodes_a_noisy_burst() {
+        // A clock offset (the burst does not start on a window boundary) and
+        // noise, which the fixed-phase test does not exercise.
+        let words = decode_burst(&synth(from_abc(), 3, 23, 0.5, 0.1));
+        assert!(
+            words.iter().any(|w| w.kind == WordKind::From && w.address() == "ABC"),
+            "front end failed: {words:?}"
+        );
+    }
+
+    /// Off the air, behind an ignored test: point `SDROXIDE_ALE_SAMPLE` at a
+    /// raw little-endian `f32` mono 8 kHz file and it must yield words.
+    #[test]
+    #[ignore]
+    fn an_off_air_recording_decodes() {
+        let Ok(path) = std::env::var("SDROXIDE_ALE_SAMPLE") else {
+            return;
+        };
+        let bytes = std::fs::read(path).expect("read sample");
+        let audio: Vec<f32> = bytes
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
+        let words = decode_burst(&audio);
+        eprintln!("decoded {} words", words.len());
+        for w in &words {
+            eprintln!("{} {}", w.kind.label(), w.address());
+        }
+        assert!(!words.is_empty(), "no words decoded from the recording");
     }
 }
