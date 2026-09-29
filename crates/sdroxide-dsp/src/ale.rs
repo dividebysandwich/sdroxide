@@ -366,6 +366,25 @@ fn decode_segment(audio: &[f32]) -> Vec<AleWord> {
     out
 }
 
+/// Synthesize `copies` copies of a word's 8-FSK tones at [`ALE_RATE`], at
+/// amplitude `amp`. This is the transmit half: feed it to the engine's 8 kHz
+/// TX seam (resampled to whatever the radio plays).
+///
+/// On the air a word is sent three times, so callers pass `copies = 3`.
+pub fn synthesize_word(word: u32, copies: usize, amp: f32) -> Vec<f32> {
+    let mut out = Vec::with_capacity(copies * 49 * SAMPLES_PER_SYMBOL);
+    for _ in 0..copies {
+        for s in transmit_symbols(word) {
+            let f = TONES[s as usize];
+            for i in 0..SAMPLES_PER_SYMBOL {
+                let t = i as f64 / ALE_RATE;
+                out.push(amp * (2.0 * std::f64::consts::PI * f * t).cos() as f32);
+            }
+        }
+    }
+    out
+}
+
 /// Encode a 24-bit word into its 49 transmitted symbols. Used by the tests and
 /// mirrors the standard transmitter.
 pub fn transmit_symbols(w: u32) -> [u8; 49] {
@@ -500,6 +519,17 @@ mod tests {
         assert!(
             words.iter().any(|w| w.kind == WordKind::From && w.address() == "ABC"),
             "front end failed: {words:?}"
+        );
+    }
+
+    #[test]
+    fn a_synthesized_word_decodes_back() {
+        // The transmit primitive: 3 copies of a word's tones decode back to it.
+        let w = from_abc();
+        let words = decode_burst(&synthesize_word(w, 3, 0.6));
+        assert!(
+            words.iter().any(|x| x.kind == WordKind::From && x.address() == "ABC"),
+            "tx->rx failed: {words:?}"
         );
     }
 
