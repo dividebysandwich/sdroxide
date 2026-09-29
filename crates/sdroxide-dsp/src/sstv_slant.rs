@@ -197,32 +197,173 @@ pub(super) fn robust_line(
         .then_some(line)
 }
 
+/// Where every line of a picture starts: a clock, and the jumps in time the
+/// audio took on the way.
+///
+/// The sender's clock is constant for the length of a picture, but the audio
+/// path is not always: a sound card underrun or a lost network packet drops a
+/// few milliseconds, and every line after it arrives that much early. That is
+/// a step, not a slope, and a single straight line through both sides of it
+/// fits neither — it shears the whole picture, including the part that was
+/// received perfectly. So the line holds for the first lines, and from line
+/// `k` of each step on, the lines start `shift` samples later than it says.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct LineTiming {
+    pub line: Line,
+    /// `(k, shift)`, in order of `k`.
+    pub steps: Vec<(f64, f64)>,
+}
+
+impl LineTiming {
+    /// How far the jumps before line `k` have moved it.
+    pub fn offset(&self, k: f64) -> f64 {
+        offset_at(&self.steps, k)
+    }
+
+    pub fn at(&self, k: f64) -> f64 {
+        self.line.at(k) + self.offset(k)
+    }
+}
+
+fn offset_at(steps: &[(f64, f64)], k: f64) -> f64 {
+    steps.iter().take_while(|s| s.0 <= k).map(|s| s.1).sum()
+}
+
+/// Pulses in a row that have to agree on a new place, off the line, before
+/// the timing is taken to have jumped there. One or two could be noise that
+/// happened to look like a pulse; three that agree to within the fit's
+/// tolerance are not.
+const JUMP_PULSES: usize = 3;
+
+/// The most lines those pulses may be spread over: a jump is believed from
+/// pulses close together, not from strays collected over half a picture.
+const JUMP_SPAN: f64 = 8.0;
+
+/// A [`LineTiming`] through `pts` — (line, start) of the pulses measured along
+/// `around` — that ignores the ones not on it: the clock by [`robust_line`]
+/// through all of them with the jumps taken off, then each jump by where the
+/// pulses after it sit against that. `None` where no line is, as for
+/// [`robust_line`].
+pub(super) fn robust_timing(
+    pts: &[(f64, f64)],
+    around: &LineTiming,
+    nominal: f64,
+    tol: f64,
+) -> Option<LineTiming> {
+    let mut t = around.clone();
+    for _ in 0..2 {
+        let flat: Vec<(f64, f64)> = pts.iter().map(|&(k, m)| (k, m - t.offset(k))).collect();
+        t.line = robust_line(&flat, nominal, tol, Some(t.line))?;
+        for j in 0..t.steps.len() {
+            let (from, to) = (t.steps[j].0, t.steps.get(j + 1).map_or(f64::INFINITY, |s| s.0));
+            let mut r: Vec<f64> = pts
+                .iter()
+                .filter(|p| p.0 >= from && p.0 < to)
+                .map(|&(k, m)| m - t.at(k))
+                .filter(|r| r.abs() <= tol)
+                .collect();
+            if r.len() >= JUMP_PULSES {
+                let mid = r.len() / 2;
+                t.steps[j].1 += *r.select_nth_unstable_by(mid, f64::total_cmp).1;
+            }
+        }
+    }
+    Some(t)
+}
+
 /// The running line-start estimate for the picture being received.
 pub(super) struct LineFit {
     nominal: f64,
     /// How far from the line a sync pulse may sit and still be on it.
     pub tol: f64,
+    /// Every pulse measured, as (line, start) with the jumps before it taken
+    /// off — so all of them, from either side of a jump, measure the same
+    /// clock.
     pts: Vec<(f64, f64)>,
     line: Option<Line>,
+    steps: Vec<(f64, f64)>,
+    /// The pulses since the last one on the line, all off it.
+    off: Vec<(f64, f64)>,
 }
+
+/// The fewest lines the pulses on the line must span before pulses off it
+/// are taken for a jump. A line through the first few pulses of a noisy
+/// picture can have the wrong period, and pulses then drift off it steadily;
+/// that is for the fit to put right, by the pulses outvoting it, and a jump
+/// declared every few lines would only follow the error.
+const JUMP_MIN_SPAN: f64 = 16.0;
 
 impl LineFit {
     pub fn new(nominal: f64, tol: f64) -> Self {
-        LineFit { nominal, tol, pts: Vec::new(), line: None }
+        LineFit { nominal, tol, pts: Vec::new(), line: None, steps: Vec::new(), off: Vec::new() }
     }
 
     /// Line `k`'s sync put its start at sample `m`.
+    ///
+    /// Every pulse goes to the fit, which leaves out the ones off the line —
+    /// noise, or a fade's smear. Those are also kept aside: when
+    /// [`JUMP_PULSES`] of them in a row agree on somewhere else, that is where
+    /// the lines are now, and the timing steps there.
     pub fn add(&mut self, k: f64, m: f64) {
-        self.pts.push((k, m));
-        self.line = robust_line(&self.pts, self.nominal, self.tol, self.line);
+        self.pts.push((k, m - offset_at(&self.steps, k)));
+        match self.timing() {
+            Some(t) if (m - t.at(k)).abs() > self.tol => {
+                self.off.push((k, m));
+                self.try_jump(&t);
+            }
+            _ => self.off.clear(),
+        }
+        self.refit();
     }
 
-    pub fn line(&self) -> Option<Line> {
-        self.line
+    fn try_jump(&mut self, t: &LineTiming) {
+        let n = self.off.len();
+        if n < JUMP_PULSES || self.span() < JUMP_MIN_SPAN {
+            return;
+        }
+        let recent = &self.off[n - JUMP_PULSES..];
+        if recent[JUMP_PULSES - 1].0 - recent[0].0 > JUMP_SPAN {
+            return;
+        }
+        let mut r: Vec<f64> = recent.iter().map(|&(k, m)| m - t.at(k)).collect();
+        r.sort_by(f64::total_cmp);
+        if r[JUMP_PULSES - 1] - r[0] > self.tol {
+            return;
+        }
+        let first = recent[0].0;
+        self.steps.push((first, r[JUMP_PULSES / 2]));
+        // They went in without it; they are the newest points.
+        let moved: Vec<(f64, f64)> =
+            recent.iter().map(|&(k, m)| (k, m - offset_at(&self.steps, k))).collect();
+        self.pts.retain(|p| p.0 < first);
+        self.pts.extend(moved);
+        self.off.clear();
+    }
+
+    fn refit(&mut self) {
+        // Once there is a line, a set of points that happens not to make one
+        // (too few, too close together after a jump) keeps it rather than
+        // losing it.
+        self.line = robust_line(&self.pts, self.nominal, self.tol, self.line).or(self.line);
+    }
+
+    pub fn timing(&self) -> Option<LineTiming> {
+        self.line.map(|line| LineTiming { line, steps: self.steps.clone() })
     }
 
     pub fn predict(&self, k: f64) -> Option<f64> {
-        self.line.map(|l| l.at(k))
+        self.line.map(|l| l.at(k) + offset_at(&self.steps, k))
+    }
+
+    /// How many lines the pulses on the line span: what its period can be
+    /// trusted to, since each of them is only within `tol` of it.
+    pub fn span(&self) -> f64 {
+        let Some(line) = self.line else { return 0.0 };
+        let (lo, hi) = inliers(&self.pts, line, self.tol)
+            .0
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| (lo.min(p.0), hi.max(p.0)));
+        (hi - lo).max(0.0)
     }
 }
 
@@ -232,24 +373,48 @@ impl LineFit {
 /// An eighth of a hertz in a `u16`: plenty for a pixel (the whole black-white
 /// swing is 800 Hz) at half the memory of an `f32`. PD290, the longest mode,
 /// is under five minutes — 28 MB at 48 kHz.
+///
+/// Its sync tone is counted as it comes in, for [`SyncMap`]: counting it
+/// once the picture is over meant reading every sample of it again, on the
+/// thread that runs the radio, at the moment the next picture may be starting.
 pub(super) struct FreqTrack {
     base: u64,
     q: Vec<u16>,
     cap: usize,
+    /// Samples per block of the count.
+    block: usize,
+    /// Sync-tone samples so far.
+    run: u32,
+    /// `cum[j]`: sync-tone samples before block `j`; the last entry is `run`.
+    cum: Vec<u32>,
+}
+
+/// The track's `u16` for a frequency, and back.
+fn quantize(hz: f64) -> u16 {
+    (hz * 8.0).round().clamp(0.0, u16::MAX as f64) as u16
+}
+
+fn unquantize(v: u16) -> f64 {
+    v as f64 / 8.0
 }
 
 impl FreqTrack {
     pub fn new() -> Self {
-        FreqTrack { base: 0, q: Vec::new(), cap: 0 }
+        FreqTrack { base: 0, q: Vec::new(), cap: 0, block: 1, run: 0, cum: vec![0] }
     }
 
     /// Start a new track at absolute sample `base`, holding at most `cap`
-    /// samples. The allocation of the last one is reused.
-    pub fn start(&mut self, base: u64, cap: usize) {
+    /// samples, for a mode whose sync pulse is `sync_len` samples. The
+    /// allocation of the last one is reused.
+    pub fn start(&mut self, base: u64, cap: usize, sync_len: f64) {
         self.base = base;
         self.q.clear();
         self.cap = cap;
         self.q.reserve(cap.saturating_sub(self.q.capacity()));
+        // Blocks of a sixteenth of a sync pulse: fine enough to place one, and
+        // small enough in memory next to the track itself.
+        self.block = ((sync_len / 16.0).floor() as usize).max(1);
+        self.recount();
     }
 
     /// Take `delta` Hz off every frequency kept so far.
@@ -258,16 +423,41 @@ impl FreqTrack {
         for v in &mut self.q {
             *v = (*v as i32 - d).clamp(0, u16::MAX as i32) as u16;
         }
+        self.recount();
+    }
+
+    fn recount(&mut self) {
+        self.cum.clear();
+        self.cum.push(0);
+        self.run = 0;
+        for (i, &v) in self.q.iter().enumerate() {
+            self.run += sync_like(unquantize(v)) as u32;
+            if i.is_multiple_of(self.block) {
+                self.cum.push(self.run);
+            } else {
+                *self.cum.last_mut().expect("never empty") = self.run;
+            }
+        }
     }
 
     pub fn clear(&mut self) {
         self.q.clear();
         self.cap = 0;
+        self.recount();
     }
 
     pub fn push(&mut self, hz: f64) {
-        if self.q.len() < self.cap {
-            self.q.push((hz * 8.0).round().clamp(0.0, u16::MAX as f64) as u16);
+        if self.q.len() >= self.cap {
+            return;
+        }
+        let v = quantize(hz);
+        let first_of_block = self.q.len().is_multiple_of(self.block);
+        self.q.push(v);
+        self.run += sync_like(unquantize(v)) as u32;
+        if first_of_block {
+            self.cum.push(self.run);
+        } else {
+            *self.cum.last_mut().expect("never empty") = self.run;
         }
     }
 
@@ -283,14 +473,6 @@ impl FreqTrack {
 
     pub fn full(&self) -> bool {
         self.q.len() >= self.cap
-    }
-
-    fn start_idx(&self) -> i64 {
-        self.base as i64
-    }
-
-    fn len(&self) -> usize {
-        self.q.len()
     }
 }
 
@@ -320,54 +502,55 @@ pub(super) struct Found {
 
 /// A whole picture's sync tone, as a cumulative count, for scoring candidate
 /// lines against all of it at once.
-pub(super) struct SyncMap {
-    /// `cum[j]`: sync-tone samples before block `j`.
-    cum: Vec<u32>,
-    block: usize,
-    origin: i64,
+///
+/// Lines are scored with the jumps in `steps` (see [`LineTiming`]) on them: the
+/// search is for the clock, and a jump the running fit found is not the
+/// clock's doing.
+pub(super) struct SyncMap<'a> {
+    track: &'a FreqTrack,
     g: Geometry,
+    /// Per line, how far the jumps before it have moved it.
+    offs: Vec<f64>,
 }
 
-impl SyncMap {
-    pub fn new(track: &FreqTrack, g: Geometry) -> Self {
-        // Blocks of a sixteenth of a sync pulse: fine enough to place one, and
-        // small enough in memory next to the track itself.
-        let block = ((g.sync_len / 16.0).floor() as usize).max(1);
-        let n = track.len();
-        let mut cum = Vec::with_capacity(n / block + 2);
-        cum.push(0u32);
-        let mut acc = 0u32;
-        for j in 0..n.div_ceil(block) {
-            for i in j * block..((j + 1) * block).min(n) {
-                acc += sync_like(track.hz(track.start_idx() + i as i64)) as u32;
-            }
-            cum.push(acc);
-        }
-        SyncMap { cum, block, origin: track.start_idx(), g }
+impl<'a> SyncMap<'a> {
+    pub fn new(track: &'a FreqTrack, g: Geometry, steps: &[(f64, f64)]) -> Self {
+        let offs = (0..g.lines).map(|k| offset_at(steps, k as f64)).collect();
+        SyncMap { track, g, offs }
     }
 
     /// Sync-tone samples before absolute sample `x`, interpolated within a
     /// block.
     fn cum_at(&self, x: f64) -> f64 {
-        let rel = (x - self.origin as f64) / self.block as f64;
-        let last = (self.cum.len() - 1) as f64;
+        let cum = &self.track.cum;
+        let rel = (x - self.track.base as f64) / self.track.block as f64;
+        let last = (cum.len() - 1) as f64;
         if rel <= 0.0 {
             return 0.0;
         }
         if rel >= last {
-            return self.cum[self.cum.len() - 1] as f64;
+            return cum[cum.len() - 1] as f64;
         }
         let j = rel.floor() as usize;
         let f = rel - j as f64;
-        self.cum[j] as f64 + f * (self.cum[j + 1] as f64 - self.cum[j] as f64)
+        cum[j] as f64 + f * (cum[j + 1] as f64 - cum[j] as f64)
     }
 
     /// Mean sync-tone fill of a `len`-sample window on every line's sync
-    /// position, if the lines start where `line` says.
+    /// position, if the lines start where `line` and the jumps say.
     pub fn score(&self, line: Line, len: f64) -> f64 {
+        self.fill(|k| line.at(k as f64) + self.offs[k], len)
+    }
+
+    /// The same, if the lines start where `t` says.
+    pub fn score_timing(&self, t: &LineTiming, len: f64) -> f64 {
+        self.fill(|k| t.at(k as f64), len)
+    }
+
+    fn fill(&self, start: impl Fn(usize) -> f64, len: f64) -> f64 {
         let mut s = 0.0;
         for k in 0..self.g.lines {
-            let c = line.at(k as f64) + self.g.sync_centre;
+            let c = start(k) + self.g.sync_centre;
             s += self.cum_at(c + len / 2.0) - self.cum_at(c - len / 2.0);
         }
         s / (self.g.lines.max(1) as f64 * len)
@@ -375,14 +558,19 @@ impl SyncMap {
 
     /// The line along which the picture's sync tone lies.
     ///
-    /// Searched over every start phase and every period within [`MAX_DRIFT`]
-    /// of the nominal, first with a window four sync pulses wide (so the
-    /// period can be stepped coarsely without the far lines falling off it),
-    /// then again around the best of those with a pulse-wide one. Each period
-    /// step is small enough that the lines at the picture's ends move by a
-    /// quarter of a window at most. `around` only sets where the phase search
-    /// is centred; every phase is tried.
-    pub fn search(&self, around: Line) -> Option<Found> {
+    /// Searched over every start phase and every period within `b_half` of
+    /// `around`'s (and within [`MAX_DRIFT`] of the nominal), first with a
+    /// window four sync pulses wide (so the period can be stepped coarsely
+    /// without the far lines falling off it), then again around the best of
+    /// those with a pulse-wide one. Each period step is small enough that the
+    /// lines at the picture's ends move by a quarter of a window at most.
+    /// `around` only sets where the phase search is centred; every phase is
+    /// tried.
+    ///
+    /// Every period is `None` for `b_half`, and costs a few tens of
+    /// milliseconds on a long mode, which is why a receiver that already knows
+    /// the period near enough narrows it.
+    pub fn search(&self, around: Line, b_half: Option<f64>) -> Option<Found> {
         let g = &self.g;
         let k_n = g.lines.max(1) as f64;
         let k_mid = (k_n - 1.0) / 2.0;
@@ -393,12 +581,16 @@ impl SyncMap {
         let wide = (4.0 * g.sync_len).min(g.period / 4.0);
         let c_step = wide / 4.0;
         let b_step = wide / (2.0 * k_n);
-        let b_half = MAX_DRIFT * g.period;
+        let widest = MAX_DRIFT * g.period;
+        let (b0, b_half) = match b_half {
+            Some(h) if h < widest => (around.b, h),
+            _ => (g.period, widest),
+        };
         let c_n = (g.period / 2.0 / c_step).ceil() as i64;
         let b_n = (b_half / b_step).ceil() as i64;
         let mut best: Option<(f64, f64, f64)> = None; // (score, c, b)
         for bi in -b_n..=b_n {
-            let b = g.period + bi as f64 * b_step;
+            let b = b0 + bi as f64 * b_step;
             for ci in -c_n..=c_n {
                 let c = c0 + ci as f64 * c_step;
                 let s = self.score(at_mid(c, b), wide);
@@ -512,7 +704,7 @@ mod tests {
         let truth = Line { a: 5_000.0, b: nominal * 1.0023 };
         let mut track = FreqTrack::new();
         let total = (truth.at(lines as f64) + nominal) as usize;
-        track.start(0, total);
+        track.start(0, total, len);
         let mut x = 0x2545_F491_4F6C_DD1Du64;
         let mut coin = || {
             x ^= x << 13;
@@ -536,8 +728,10 @@ mod tests {
         let map = SyncMap::new(
             &track,
             Geometry { lines, period: nominal, sync_centre: len / 2.0, sync_len: len },
+            &[],
         );
-        let found = map.search(Line { a: truth.a + nominal / 6.0, b: nominal }).expect("a line");
+        let found =
+            map.search(Line { a: truth.a + nominal / 6.0, b: nominal }, None).expect("a line");
         let ppm = (found.line.b / truth.b - 1.0) * 1e6;
         assert!(ppm.abs() < 5.0, "period out by {ppm:.1} ppm");
         assert!((found.line.at(0.0) - truth.a).abs() < len / 8.0, "start {}", found.line.a);

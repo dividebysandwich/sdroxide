@@ -19,7 +19,7 @@ use sdroxide_types::SstvMode;
 use crate::Complex32;
 use crate::fir::{ComplexFir, bandpass_taps};
 use crate::sstv_slant::{
-    FreqTrack, Geometry, Line, LineFit, MIN_FILL, SyncMap, measure_sync, robust_line,
+    FreqTrack, Geometry, Line, LineFit, LineTiming, MIN_FILL, SyncMap, measure_sync, robust_timing,
 };
 
 const BLACK_HZ: f64 = 1500.0;
@@ -627,6 +627,9 @@ pub struct SstvRx {
     // sync pulses (see `retune`): taken off every frequency read, so a picture
     // tuned 100 Hz high is not a picture 32 levels too bright.
     afc_hz: f64,
+    // When to let go of `afc_hz` after a picture: once the station's FSK ID,
+    // which follows it, has had its chance. See `AFC_HOLD_S`.
+    afc_hold: Option<u64>,
     // Smoothed raw-input level (mean |audio|) for the UI activity meter.
     in_level: f32,
     have_prev: bool,
@@ -659,8 +662,8 @@ pub struct SstvRx {
     line_samples: f64,
     // The line through this picture's sync pulses so far.
     fit: LineFit,
-    // Where each transmitted line was actually decoded from.
-    used_starts: Vec<f64>,
+    // Where each transmitted line was actually decoded from, as (line, start).
+    used_starts: Vec<(f64, f64)>,
     // Lines in a row whose sync pulse was not found.
     misses: u32,
     // The whole picture's frequency track, for the second pass at the end.
@@ -846,6 +849,12 @@ const AFC_SPAN_HZ: f64 = 150.0;
 /// 4–8 dB — and is taken to half as much spread again.
 const AFC_MAX_SPREAD_HZ: f64 = 80.0;
 
+/// How long after a picture its station's tuning is kept: long enough for
+/// the FSK ID that follows it — 400 ms of lead-in, armed on the last 100 ms of
+/// it — to start, and it is kept until the ID is over. The ID's two tones are
+/// 200 Hz apart, and a station 100 Hz off would have them read as neither.
+const AFC_HOLD_S: f64 = 1.0;
+
 /// A start or stop bit's reading must be this close to the sync tone.
 const VIS_SYNC_TOL_HZ: f64 = 150.0;
 
@@ -894,6 +903,7 @@ impl SstvRx {
             prev: Complex32::new(0.0, 0.0),
             inst_hz: 1900.0,
             afc_hz: 0.0,
+            afc_hold: None,
             in_level: 0.0,
             have_prev: false,
             phase: RxPhase::Hunt,
@@ -960,6 +970,7 @@ impl SstvRx {
         // Whatever station was being received, it is not being any more.
         self.inst_hz += self.afc_hz;
         self.afc_hz = 0.0;
+        self.afc_hold = None;
     }
 
     /// The mode currently being decoded (or last detected).
@@ -1183,6 +1194,19 @@ impl SstvRx {
         self.recount_vis_windows();
     }
 
+    /// Back to the receiver's own tuning, once the last picture's station has
+    /// had time to send its ID: the next station is somewhere else, and one
+    /// whose tuning cannot be measured — a free-run lock in heavy noise — was
+    /// decoded as far off as the last one.
+    fn release_afc(&mut self) {
+        let Some(until) = self.afc_hold else { return };
+        let id_under_way = self.fsk_state.armed || self.fsk_state.start.is_some();
+        if self.sample_idx >= until && !id_under_way {
+            self.afc_hold = None;
+            self.retune(-self.afc_hz);
+        }
+    }
+
     /// Count the hunt's windows afresh from the history: see `retune`.
     fn recount_vis_windows(&mut self) {
         let newest = self.sample_idx.saturating_sub(1);
@@ -1267,6 +1291,7 @@ impl SstvRx {
 
     fn step_hunt(&mut self, out: &mut Vec<SstvEvent>) {
         self.step_fsk_id(out);
+        self.release_afc();
         self.slide_vis_windows();
         let lead_n = (LEADER_WIN_S * self.rate) as u64 as f64;
         let edge_n = (EDGE_WIN_S * self.rate) as u64;
@@ -1635,6 +1660,7 @@ impl SstvRx {
     ) {
         self.mode = mode;
         self.phase = RxPhase::Image;
+        self.afc_hold = None;
         self.line = 0;
         self.numbered = numbered;
         // A free-run lock was made on the mode's own cadence; a header's
@@ -1655,7 +1681,7 @@ impl SstvRx {
         let lines = (h / mode.rows_per_line().max(1)) as f64;
         let cap =
             (lines * self.line_samples) as usize + self.hist.len() + (2.0 * self.rate) as usize;
-        self.track.start(self.hist_base, cap.min(TRACK_MAX));
+        self.track.start(self.hist_base, cap.min(TRACK_MAX), sync_len);
         for &hz in &self.hist {
             self.track.push(hz);
         }
@@ -1685,7 +1711,7 @@ impl SstvRx {
         let rpl = self.mode.rows_per_line().max(1);
         let k = (self.line / rpl) as f64;
         let start = self.place_line(k);
-        self.used_starts.push(start);
+        self.used_starts.push((k, start));
         // One transmitted line is two picture rows in the PD family — see
         // `SstvMode::rows_per_line` — so this hands back a row at a time and
         // the caller sees the same stream of `Line` events either way.
@@ -1714,6 +1740,7 @@ impl SstvRx {
             self.phase = RxPhase::Hunt;
             self.vis_state = VisState::reset(self.sample_idx);
             self.track.clear();
+            self.afc_hold = Some(self.sample_idx + (AFC_HOLD_S * self.rate) as u64);
             // The picture's own sync pulses, kept while it was checked (see
             // `check_mode`). Left for the hunt, the next pulse noise makes
             // could fall on their cadence and start the picture over again.
@@ -1769,7 +1796,7 @@ impl SstvRx {
     /// Where transmitted line `k` starts.
     ///
     /// Its sync pulse is looked for near where the line is expected, and if it
-    /// is plainly there it joins the fit. Once the fit has enough points the
+    /// is plainly there it goes to the fit. Once the fit has enough points the
     /// line starts where the fit says, whatever this one pulse did — which is
     /// the point: a pulse lost to a fade, or one moved by noise, no longer
     /// moves the line or any line after it. Until then the pulse is used as
@@ -1778,22 +1805,28 @@ impl SstvRx {
         let (w, _) = self.mode.dimensions();
         let (soff, sdur) = self.sync_span(self.mode, w, self.line);
         let centre_off = soff + sdur * 0.5;
-        // Wide until there is a line to go on, then close around it, where a
-        // burst of noise elsewhere cannot outbid the real pulse. Wider still
-        // for every pulse missed before then: lines that follow on at the
-        // nominal period drift by the sender's clock error each, and after a
-        // fade long enough the real pulse is no longer where a fixed window
-        // looks.
-        let half_win = if self.fit.line().is_some() {
-            2.0 * self.fit.tol
-        } else {
-            (0.012 * self.rate * (1 + self.misses) as f64).min(self.line_samples / 2.0)
-        };
+        // Wide until there is a line to go on. Wider still for every pulse
+        // missed: lines that follow on at the nominal period drift by the
+        // sender's clock error each, and after a fade long enough the real
+        // pulse is no longer where a fixed window looks.
+        let wide = (0.012 * self.rate * (1 + self.misses) as f64).min(self.line_samples / 2.0);
         let (hist, base) = (&self.hist, self.hist_base);
-        let measured =
-            measure_sync(|i| hz_in(hist, base, i), self.line_start + centre_off, half_win, sdur)
+        let expected = self.line_start + centre_off;
+        let measure = |half_win: f64| {
+            measure_sync(|i| hz_in(hist, base, i), expected, half_win, sdur)
                 .filter(|&(_, fill)| fill >= MIN_FILL)
-                .map(|(c, _)| c - centre_off);
+                .map(|(c, _)| c - centre_off)
+        };
+        // With a line, close around it first, where a burst of noise elsewhere
+        // cannot outbid the real pulse. Only when the pulse is not on it, as
+        // wide as before: the timing may have jumped — audio lost on the way —
+        // and the fit decides from the pulses after this one whether it has.
+        let measured = match self.fit.predict(k) {
+            Some(p) => measure(2.0 * self.fit.tol)
+                .filter(|m| (m - p).abs() <= self.fit.tol)
+                .or_else(|| measure(wide)),
+            None => measure(wide),
+        };
         match measured {
             Some(m) => {
                 self.misses = 0;
@@ -1809,41 +1842,58 @@ impl SstvRx {
     /// The fit placed each line knowing only the pulses before it, and only
     /// the ones clear enough to count alone. Now the whole sync column is
     /// there: search it for the line along which the most sync tone lies
-    /// ([`SyncMap::search`]), refine that through the pulses on it, and if it
-    /// puts the lines somewhere other than where they were decoded — by half a
-    /// pixel or more anywhere — decode every line again from the kept track
-    /// and send them all, over the first pass's, before the picture completes.
+    /// ([`SyncMap::search`]), with the jumps the fit found on it, refine that
+    /// through the pulses on it, and decode again from the kept track every
+    /// line that puts half a pixel or more from where it was decoded, sending
+    /// them over the first pass's before the picture completes.
+    ///
+    /// It runs on the thread that runs the radio, so it is kept cheap: the
+    /// sync tone was counted as the picture came in, a period the fit has
+    /// already pinned down is only looked for near it, and a line that has
+    /// not moved is not decoded again.
     fn final_pass(&mut self, out: &mut Vec<SstvEvent>) {
         let mode = self.mode;
         let (w, h) = mode.dimensions();
         let rpl = mode.rows_per_line().max(1);
-        let lines = self.used_starts.len();
-        if lines < 8 || self.track.full() {
+        let Some(&(last_k, _)) = self.used_starts.last() else { return };
+        if self.used_starts.len() < 8 || self.track.full() {
             return;
         }
+        let lines = last_k as usize + 1;
         let (soff, sdur) = self.sync_span(mode, w, 0);
+        let centre = soff + sdur * 0.5;
         let period = self.line_period_samples(mode, 0);
+        let tol = self.fit.tol;
+        let live = self.fit.timing();
+        let steps = live.as_ref().map_or_else(Vec::new, |t| t.steps.clone());
         let map = SyncMap::new(
             &self.track,
-            Geometry { lines, period, sync_centre: soff + sdur * 0.5, sync_len: sdur },
+            Geometry { lines, period, sync_centre: centre, sync_len: sdur },
+            &steps,
         );
-        let live = self.fit.line();
-        let around = live.unwrap_or(Line { a: self.used_starts[0], b: period });
-        let Some(found) = map.search(around) else { return };
+        // A period the fit has from pulses over a good part of the picture is
+        // good to about 2·tol over the lines they span; look only a little
+        // wider than that around it.
+        let span = self.fit.span();
+        let b_half = live.as_ref().filter(|_| span >= lines as f64 / 4.0).map(|_| 4.0 * tol / span);
+        let (k0, s0) = self.used_starts[0];
+        let around = live.as_ref().map_or(Line { a: s0 - period * k0, b: period }, |t| t.line);
+        let Some(found) = map.search(around, b_half) else { return };
         // A line through nothing but picture and noise scores what every other
         // phase does. Nothing to go on, so leave the picture as it is.
         if found.contrast < MIN_CONTRAST {
             return;
         }
+        let timing = LineTiming { line: found.line, steps };
 
         // Sharpen it on the pulses themselves, at full resolution.
         let track = &self.track;
         let pts: Vec<(f64, f64)> = (0..lines)
             .filter_map(|k| {
-                let c = found.line.at(k as f64) + soff + sdur * 0.5;
-                measure_sync(|i| track.hz(i), c, self.fit.tol, sdur)
+                let k = k as f64;
+                measure_sync(|i| track.hz(i), timing.at(k) + centre, tol, sdur)
                     .filter(|&(_, fill)| fill >= MIN_FILL)
-                    .map(|(c, _)| (k as f64, c - soff - sdur * 0.5))
+                    .map(|(c, _)| (k, c - centre))
             })
             .collect();
         // Only with pulses on a good share of the lines, though. A handful is
@@ -1851,47 +1901,41 @@ impl SstvRx {
         // the one the whole column gave.
         let mut best = Some(&pts)
             .filter(|p| p.len() >= lines / 4)
-            .and_then(|p| robust_line(p, period, self.fit.tol, Some(found.line)))
-            .filter(|l| map.score(*l, sdur) >= found.fill - FILL_SLACK)
-            .unwrap_or(found.line);
-        // Never trade a line the picture already fits better.
+            .and_then(|p| robust_timing(p, &timing, period, tol))
+            .filter(|t| map.score_timing(t, sdur) >= found.fill - FILL_SLACK)
+            .unwrap_or(timing);
+        // Never trade a timing the picture already fits better.
         if let Some(l) = live
-            && map.score(l, sdur) > map.score(best, sdur) + FILL_SLACK
+            && map.score_timing(&l, sdur) > map.score_timing(&best, sdur) + FILL_SLACK
         {
             best = l;
         }
 
         let px = min_pixel_samples(mode, w, self.rate);
-        let moved = self
-            .used_starts
-            .iter()
-            .enumerate()
-            .map(|(k, &s)| (best.at(k as f64) - s).abs())
-            .fold(0.0, f64::max);
-        if moved < 0.5 * px {
-            return;
-        }
-
+        // The Robot modes carry chroma from one line to the next, so every
+        // line is decoded to have it, and a line is sent again if it or the
+        // one before it moved.
+        let robot = matches!(mode, SstvMode::Robot72 | SstvMode::Robot36);
         let mut cr = vec![128u8; (w / 2) as usize];
         let mut cb = vec![128u8; (w / 2) as usize];
-        for k in 0..lines {
-            let line = k as u16 * rpl;
-            let rows = decode_line(
-                mode,
-                w,
-                line,
-                best.at(k as f64),
-                self.rate,
-                |i| track.hz(i),
-                &mut cr,
-                &mut cb,
-            );
-            for (n, rgb) in rows.into_iter().enumerate() {
-                let y = line + n as u16;
-                if y < h {
-                    out.push(SstvEvent::Line { y, rgb });
+        let mut prev_moved = false;
+        for &(k, s) in &self.used_starts {
+            let start = best.at(k);
+            let moved = (start - s).abs() >= 0.5 * px;
+            if moved || robot {
+                let line = k as u16 * rpl;
+                let rows =
+                    decode_line(mode, w, line, start, self.rate, |i| track.hz(i), &mut cr, &mut cb);
+                if moved || prev_moved {
+                    for (n, rgb) in rows.into_iter().enumerate() {
+                        let y = line + n as u16;
+                        if y < h {
+                            out.push(SstvEvent::Line { y, rgb });
+                        }
+                    }
                 }
             }
+            prev_moved = moved;
         }
     }
 }
@@ -2534,6 +2578,53 @@ mod tests {
         noise: f64,
         gain: impl Fn(f64) -> f64,
     ) -> (f64, f64) {
+        let got = edges_through(mode, ppm, noise, &gain, None);
+        let rows: Vec<(f64, f64)> = (0..got.edge.len())
+            .filter(|&y| {
+                let t = got.row_time(y);
+                [t - 0.2, t, t + got.period].iter().all(|&t| gain(t) == 1.0)
+            })
+            .map(|y| (y as f64, got.edge[y]))
+            .collect();
+        let hu = got.edge.len();
+        let n = rows.len() as f64;
+        let (my, me) =
+            (rows.iter().map(|r| r.0).sum::<f64>() / n, rows.iter().map(|r| r.1).sum::<f64>() / n);
+        let sxx: f64 = rows.iter().map(|r| (r.0 - my).powi(2)).sum();
+        let slope = rows.iter().map(|r| (r.0 - my) * (r.1 - me)).sum::<f64>() / sxx;
+        let jitter =
+            (rows.iter().map(|r| (r.1 - me - slope * (r.0 - my)).powi(2)).sum::<f64>() / n).sqrt();
+        (slope * hu as f64, jitter)
+    }
+
+    /// What the receiver drew of a picture black on the left and white on the
+    /// right — see `slant_through` for the channel — with `dropout`, if given,
+    /// the (start, length) in seconds of the sender's audio that never reaches
+    /// the receiver.
+    struct Edges {
+        /// Per row, the dark pixels left of the edge; half the width is right.
+        edge: Vec<f64>,
+        /// The sender's line period, seconds.
+        period: f64,
+        rows_per_line: usize,
+        /// The longest a single call into the receiver took.
+        worst_call: std::time::Duration,
+    }
+
+    impl Edges {
+        /// About when row `y` was sent, seconds from the start.
+        fn row_time(&self, y: usize) -> f64 {
+            0.92 + (y / self.rows_per_line) as f64 * self.period
+        }
+    }
+
+    fn edges_through(
+        mode: SstvMode,
+        ppm: f32,
+        noise: f64,
+        gain: &dyn Fn(f64) -> f64,
+        dropout: Option<(f64, f64)>,
+    ) -> Edges {
         let rate = 48_000.0;
         let (w, h) = mode.dimensions();
         let (wu, hu) = (w as usize, h as usize);
@@ -2549,6 +2640,7 @@ mod tests {
         let mut events = Vec::new();
         let mut block = vec![0.0f32; 4096];
         let mut n_sent = 0usize;
+        let mut worst_call = std::time::Duration::ZERO;
         let mut take = |events: &mut Vec<SstvEvent>, got: &mut Vec<u8>| {
             for e in events.drain(..) {
                 match e {
@@ -2561,47 +2653,100 @@ mod tests {
                 }
             }
         };
+        let lost = |t: f64| dropout.is_some_and(|(at, len)| t >= at && t < at + len);
+        let mut air = Vec::with_capacity(block.len());
         while !tx.done() {
             let n = tx.next_block(&mut block);
-            for s in &mut block[..n] {
+            air.clear();
+            for &s in &block[..n] {
                 let t = n_sent as f64 / rate;
-                let nz = if t > 1.0 { noise * rng.next() } else { 0.0 };
-                *s = (*s as f64 * 0.3 * gain(t) + nz) as f32;
                 n_sent += 1;
+                if lost(t) {
+                    continue;
+                }
+                let nz = if t > 1.0 { noise * rng.next() } else { 0.0 };
+                air.push((s as f64 * 0.3 * gain(t) + nz) as f32);
             }
-            rx.process(&block[..n], &mut events);
+            let t0 = std::time::Instant::now();
+            rx.process(&air, &mut events);
+            worst_call = worst_call.max(t0.elapsed());
             take(&mut events, &mut got);
         }
         let tail: Vec<f32> = (0..2 * rate as usize).map(|_| (noise * rng.next()) as f32).collect();
-        rx.process(&tail, &mut events);
-        take(&mut events, &mut got);
+        for chunk in tail.chunks(block.len()) {
+            let t0 = std::time::Instant::now();
+            rx.process(chunk, &mut events);
+            worst_call = worst_call.max(t0.elapsed());
+            take(&mut events, &mut got);
+        }
         assert!(complete, "{}: the picture never completed", mode.label());
 
         let period = rx.line_period_samples(mode, 0) / rate * (1.0 + ppm as f64 * 1e-6);
-        let rpl = mode.rows_per_line() as usize;
         // Where the edge is: how many of the row's pixels are dark.
-        let edge = |y: usize| {
-            (0..wu)
-                .filter(|&x| {
-                    got[(y * wu + x) * 3..][..3].iter().map(|&v| v as u32).sum::<u32>() < 345
-                })
-                .count() as f64
-        };
-        let rows: Vec<(f64, f64)> = (0..hu)
-            .filter(|&y| {
-                let t = 0.92 + (y / rpl) as f64 * period;
-                [t - 0.2, t, t + period].iter().all(|&t| gain(t) == 1.0)
+        let edge = (0..hu)
+            .map(|y| {
+                (0..wu)
+                    .filter(|&x| {
+                        got[(y * wu + x) * 3..][..3].iter().map(|&v| v as u32).sum::<u32>() < 345
+                    })
+                    .count() as f64
             })
-            .map(|y| (y as f64, edge(y)))
             .collect();
-        let n = rows.len() as f64;
-        let (my, me) =
-            (rows.iter().map(|r| r.0).sum::<f64>() / n, rows.iter().map(|r| r.1).sum::<f64>() / n);
-        let sxx: f64 = rows.iter().map(|r| (r.0 - my).powi(2)).sum();
-        let slope = rows.iter().map(|r| (r.0 - my) * (r.1 - me)).sum::<f64>() / sxx;
-        let jitter =
-            (rows.iter().map(|r| (r.1 - me - slope * (r.0 - my)).powi(2)).sum::<f64>() / n).sqrt();
-        (slope * hu as f64, jitter)
+        Edges { edge, period, rows_per_line: mode.rows_per_line() as usize, worst_call }
+    }
+
+    /// Ten milliseconds of the sender's audio lost — a sound card underrun,
+    /// a dropped network packet — mid-picture. Every line after it arrives
+    /// that much early: a jump in the timing, not a change in the clock. The
+    /// lines after it have to follow it, and the ones before it must not be
+    /// moved by it: a single straight line through both halves puts neither
+    /// where it belongs, and left every line after the jump 22 pixels out.
+    /// Measured against the same picture received whole, so what is left is
+    /// only what the dropout did.
+    #[test]
+    fn a_dropout_moves_only_the_lines_after_it() {
+        for (mode, ppm, at) in [
+            (SstvMode::Martin1, 0.0, 60.0),
+            (SstvMode::Martin1, 1500.0, 20.0),
+            (SstvMode::Scottie1, -800.0, 90.0),
+            (SstvMode::Robot36, 1000.0, 10.0),
+            (SstvMode::Pd120, 0.0, 70.0),
+        ] {
+            let whole = edges_through(mode, ppm, 0.05, &|_| 1.0, None);
+            let got = edges_through(mode, ppm, 0.05, &|_| 1.0, Some((at, 0.010)));
+            let label = format!("{} at {ppm} ppm, lost at {at} s", mode.label());
+            let out = |y: usize| got.edge[y] - whole.edge[y];
+            // The line the audio was lost in is torn, whatever is done.
+            let (before, after): (Vec<usize>, Vec<usize>) = (0..got.edge.len())
+                .filter(|&y| (got.row_time(y) - at).abs() > 1.5 * got.period)
+                .partition(|&y| got.row_time(y) < at);
+            for (side, rows) in [("before", before), ("after", after)] {
+                // Row by row, noise on the edge moves it a pixel or two — the
+                // noise meets the picture at different places after the loss.
+                for &y in &rows {
+                    assert!(out(y).abs() <= 2.0, "{label}: row {y} is {:.0} px out", out(y));
+                }
+                // On average, either side of the loss, nothing.
+                let mean = rows.iter().map(|&y| out(y)).sum::<f64>() / rows.len() as f64;
+                assert!(mean.abs() <= 0.5, "{label}: the rows {side} it are {mean:.1} px out");
+            }
+        }
+    }
+
+    /// The second pass runs on the thread that runs the radio, at the end of
+    /// every picture. It used to read the whole picture again and search
+    /// every period from scratch: up to a quarter of a second, with the audio
+    /// stalled behind it. Generous against a debug build on a slow machine;
+    /// it takes a few milliseconds in release.
+    #[test]
+    fn the_second_pass_does_not_stall_the_receiver() {
+        let got = edges_through(SstvMode::Martin1, 800.0, 0.05, &|_| 1.0, Some((60.0, 0.010)));
+        let limit = if cfg!(debug_assertions) { 500 } else { 40 };
+        assert!(
+            got.worst_call < std::time::Duration::from_millis(limit),
+            "a call into the receiver took {:?}",
+            got.worst_call
+        );
     }
 
     /// A long fade before enough sync pulses have come in to fit a line
@@ -3030,6 +3175,88 @@ mod tests {
             }
             assert_eq!(heard.as_deref(), Some("OE1XYZ"), "{offset:+} Hz off");
         }
+    }
+
+    /// Two stations one after the other: the first tuned 150 Hz high and
+    /// clear, the second on frequency, joined after its header and at 6 dB,
+    /// where its tuning cannot be measured on its sync pulses. The first
+    /// one's tuning is the receiver's only until its ID has had time to follow
+    /// it; carried on, the second picture was decoded 150 Hz off — the whole
+    /// of it 50 levels too dark.
+    #[test]
+    fn the_next_station_is_not_tuned_like_the_last() {
+        let rate = 48_000.0;
+        let mode = SstvMode::Robot36;
+        let (w, h) = mode.dimensions();
+        let (wu, hu) = (w as usize, h as usize);
+        let sent = test_card(wu, hu);
+        let mut tx = SstvTx::new(mode, &sent, w, h, rate, 0.0).with_fsk_id("OE1XYZ");
+        let mut clean = Vec::new();
+        let mut block = vec![0.0f32; 8192];
+        while !tx.done() {
+            let n = tx.next_block(&mut block);
+            clean.extend_from_slice(&block[..n]);
+        }
+        let sigma = |snr_db: f64| {
+            (0.125 / 10f64.powf(snr_db / 10.0) * (rate / 2.0) / SNR_BANDWIDTH_HZ).sqrt()
+        };
+        let mut rng = Noise(11);
+        let mut air: Vec<f32> = shift(&clean, 150.0, rate)
+            .into_iter()
+            .chain(std::iter::repeat_n(0.0, (3.0 * rate) as usize))
+            .map(|s| (s as f64 + sigma(30.0) * rng.next()) as f32)
+            .collect();
+        let second_at = air.len();
+        let skip = (1.1 * rate) as usize;
+        air.extend(
+            clean[skip..]
+                .iter()
+                .chain(&vec![0.0; (2.0 * rate) as usize])
+                .map(|&s| (s as f64 + sigma(6.0) * rng.next()) as f32),
+        );
+
+        let mut rx = SstvRx::new(rate);
+        let (mut locks, mut fed) = (0, 0usize);
+        let mut got = vec![0u8; sent.len()];
+        let mut have = vec![false; hu];
+        let mut events = Vec::new();
+        for chunk in air.chunks(4096) {
+            rx.process(chunk, &mut events);
+            fed += chunk.len();
+            for e in events.drain(..) {
+                match e {
+                    SstvEvent::ModeDetected(m) => {
+                        assert_eq!(m, mode);
+                        locks += 1;
+                    }
+                    SstvEvent::Line { y, rgb } if locks == 2 && fed > second_at => {
+                        let at = y as usize * wu * 3;
+                        got[at..at + rgb.len()].copy_from_slice(&rgb);
+                        have[y as usize] = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(locks, 2, "pictures locked");
+        // The free-run lock numbers its rows from wherever it came in: compare
+        // them with the rows sent where they fit best.
+        let err = (0..FREERUN_MAX_ROWS_LATE)
+            .map(|late| {
+                let (mut total, mut n) = (0.0, 0.0);
+                for y in (0..hu - late).filter(|&y| have[y]) {
+                    let (a, b) =
+                        (&got[y * wu * 3..][..wu * 3], &sent[(y + late) * wu * 3..][..wu * 3]);
+                    total +=
+                        a.iter().zip(b).map(|(&a, &b)| (a as f64 - b as f64).abs()).sum::<f64>();
+                    n += (wu * 3) as f64;
+                }
+                total / n.max(1.0)
+            })
+            .fold(f64::INFINITY, f64::min);
+        // As good as the same picture heard on its own.
+        let alone = receive_joining(mode, 6.0, 11, 1.1, 0.0).err;
+        assert!(err < alone + 3.0, "the second picture is {err:.1} levels out, not {alone:.1}");
     }
 
     /// A header that says one mode ahead of a picture in another — what two
