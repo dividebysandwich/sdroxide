@@ -33,6 +33,7 @@ mod ibp;
 mod input;
 mod ism;
 mod js8;
+mod jtty;
 mod limerfe;
 mod memory;
 mod meters;
@@ -172,6 +173,7 @@ pub use js8::{
     HB_BAND_HI_HZ, HB_BAND_LO_HZ, HB_SLOT_HZ, Js8FrameInfo, Js8FrameKind, Js8Heard, Js8Msg,
     Js8Speed, Js8Status,
 };
+pub use jtty::{JTTY_MESSAGE_MAX, JttyMessage, JttyStatus};
 pub use limerfe::{
     LimeRfeConfig, RFE_ATTEN_MAX_STEPS, RFE_ATTEN_STEP_DB, RFE_BAUD, RFE_BUFFER_SIZE,
     RFE_I2C_ADDRESS, RfeChannel, RfeLink, RfeMode, RfeModeControl, RfePort, channel_for,

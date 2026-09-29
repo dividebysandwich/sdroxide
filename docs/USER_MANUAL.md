@@ -18,7 +18,7 @@ or connects to a remote sdroxide server.
 2. [Basic operation](#2-basic-operation)
     - [2.20 HD Radio (NRSC-5)](#220-hd-radio-nrsc-5)
     - [2.22 QO-100 beacon plugin](#222-qo-100-beacon-plugin)
-3. [Digital modes (FT8, FT4, FT2, MSK144, JT65, JT9, FST4, Q65, FSK441, PSK31, RTTY, Olivia, THOR, FSQ, Hellschreiber, SSTV, RIFP, weather fax, JS8, RF Paint, WSPR, PI4, packet, APRS, ADS-B, NAVTEX, ACARS, VDL2, AIS, HFDL, AtCHAT NET)](#3-digital-modes)
+3. [Digital modes (FT8, FT4, FT2, MSK144, JT65, JT9, FST4, Q65, FSK441, JTTY, PSK31, RTTY, Olivia, THOR, FSQ, Hellschreiber, SSTV, RIFP, weather fax, JS8, RF Paint, WSPR, PI4, packet, APRS, ADS-B, NAVTEX, ACARS, VDL2, AIS, HFDL, AtCHAT NET)](#3-digital-modes)
     - [3.17 AtCHAT NET](#317-atchat-net)
     - [3.18 ACARS](#318-acars-airline-datalink-on-airband)
     - [3.19 HFDL](#319-hfdl-aircraft-on-shortwave)
@@ -28,6 +28,7 @@ or connects to a remote sdroxide server.
     - [3.23 FST4](#323-fst4)
     - [3.24 Q65](#324-q65)
     - [3.25 FSK441](#325-fsk441)
+    - [3.26 JTTY](#326-jtty)
 4. [Skimmers (CW, PSK, RTTY)](#4-skimmers)
 5. [ISM band decoder (315 / 345 / 433 / 868 / 915 MHz devices)](#5-ism-band-decoder)
 6. [Settings](#6-settings)
@@ -326,7 +327,7 @@ popup with three rows:
   has a standard calling frequency carry a cyan underline; see
   [§3.1](#31-general-considerations).
 - **MODE:** `LSB USB CW AM SAM NFM WFM DRM HD DIGU DIGL DSB ISB SPEC`.
-- **DIGITAL:** `FT8 FT4 FT2 JS8 WSPR PI4 MSK144 JT65 JT9 FST4 Q65 FSK441 PSK RTTY RTTY-FM OLIVIA THOR FSQ ATCHAT HELL SSTV SSTV-FM RIFP WEFAX NAVTEX ACARS RFPAINT RADE PACKET PACKET-HF APRS ADS-B VDL2 AIS HFDL` (see
+- **DIGITAL:** `FT8 FT4 FT2 JS8 WSPR PI4 MSK144 JT65 JT9 FST4 Q65 FSK441 JTTY PSK RTTY RTTY-FM OLIVIA THOR FSQ ATCHAT HELL SSTV SSTV-FM RIFP WEFAX NAVTEX ACARS RFPAINT RADE PACKET PACKET-HF APRS ADS-B VDL2 AIS HFDL` (see
   [Digital modes](#3-digital-modes)).
 
 On a desktop or tablet layout the popup carries a **DOCK** chip. It moves the
@@ -6097,6 +6098,43 @@ and a whole period may pass with nothing.
 
 **Receive only.** Transmit is not wired in this build. What the panel does is
 copy the pings that arrive.
+
+### 3.26 JTTY
+
+> **Experimental.** JTTY is new — it arrived in the WSJT-X 3.2 release — and
+> this implementation has been checked against the reference encoder and
+> decoder, bit for bit on its vectors, but **not yet decoded off the air**.
+> Treat a decode as worth a second look and a first contact as a test.
+
+Choose **JTTY** from the DIGITAL row. JTTY is the **asynchronous keyboard
+mode** from the WSJT-X 3.2 release: it is worked like RTTY — either side types
+and sends whenever it likes — but carries forward error correction, so a signal
+that would be marginal and error-prone as 45.45-baud RTTY still copies. It is
+about 125 Hz wide, small enough to tuck into a gap in a crowded band.
+
+**It is not slotted.** Unlike FT8/FT4 there is no even/odd turn and no period to
+agree on: a transmission starts at any instant and lasts a few seconds, so there
+is no clock to watch and nothing to synchronise. A message appears in the list a
+moment after it is heard.
+
+**What you see.** A rolling log of the messages heard, each with its UTC time,
+audio frequency and SNR. The text is what was decoded: a CQ (`CQ K1ABC CQ`), a
+call, a contest exchange (`599 123`, `1D EMA`, `599 FN42`), or a control phrase
+such as `AGN?` or `TU`. A partial message — one whose end was not heard — is
+shown dimmed, so a run cut off by the next transmission reads as incomplete.
+
+**Transmitting.** The **TX** row under the log is a single line: type the
+message (`W1ABC W9XYZ FN42`, or one of the exchange forms above) and press
+**TX**; **CALL CQ** fills the box with `CQ <your call> CQ` and sends it. The
+message is sent **once** — JTTY is asynchronous, so there is no period to wait
+for and nothing repeats; the over ends when the burst is done. The message is
+packed for the air automatically: a callsign, a contest exchange or a control
+phrase is sent as its compact typed form, and anything else is sent as plain
+text.
+
+**Where to find it.** There is no calling frequency and the mode is very new;
+tune where the station you want says it will be, and leave the audio cursor
+where the signals are — the decoder searches the passband itself.
 
 ## 4. Skimmers
 
@@ -16106,6 +16144,7 @@ using. Bind them under **Speech** on the Controls tab:
 | FST4 | The slow weak-signal mode for EME, troposcatter and LF/MF, at a chosen 15/30/60/120/300-second period, with FT8's 77-bit message. Receive only. See [3.23](#323-fst4). |
 | Q65 | WSJT-X's modern weak-signal mode for EME and scatter paths: ten sub-modes (period and tone spacing), FT8's 77-bit message and a CRC. Receive only. See [3.24](#324-q65). |
 | FSK441 | The original meteor-scatter mode on 6 m and 2 m: 4-FSK at 441 baud carrying free text and the `R26`/`R27`/`RRR`/`73` single-tone shorthand, in a 15/30-second period. The decoder hunts the period for meteor-trail pings. Receive only. See [3.25](#325-fsk441). |
+| JTTY | **Experimental.** The WSJT-X 3.2 asynchronous RTTY-like text mode: no T/R slots, ~1.888-second frames of 4-GFSK about 125 Hz wide carrying free text or typed contest atoms behind a tail-biting convolutional code. Sends a message once. Checked against the reference encoder, not yet off-air. See [3.26](#326-jtty). |
 | PSK | PSK31 keyboard mode (BPSK31 / varicode). |
 | RTTY | RTTY keyboard mode (Baudot; selectable shift and baud), on a sideband. |
 | RTTY-FM | The same modem on an FM carrier, the way a club bulletin is still sent on VHF. |

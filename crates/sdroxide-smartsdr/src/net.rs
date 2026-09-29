@@ -1668,7 +1668,7 @@ fn mode_to_flex(m: Mode) -> &'static str {
         | Mode::PacketHf
         | Mode::AtChat
         | Mode::Rade => "DIGU",
-        Mode::Usb | Mode::Sstv | Mode::Wefax | Mode::Navtex | Mode::RfPaint | Mode::Spec => "USB",
+        Mode::Usb | Mode::Sstv | Mode::Wefax | Mode::Navtex | Mode::RfPaint | Mode::Spec | Mode::Jtty => "USB",
     }
 }
 

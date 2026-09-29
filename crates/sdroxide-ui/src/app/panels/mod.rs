@@ -28,6 +28,7 @@ pub(in crate::app) mod cw;
 pub(in crate::app) mod decodes;
 pub(in crate::app) mod fsq;
 pub(in crate::app) mod js8;
+pub(in crate::app) mod jtty;
 mod navtex;
 pub(in crate::app) mod packet;
 pub(in crate::app) mod pi4;
@@ -99,6 +100,9 @@ pub(in crate::app) fn panel_panes(mode: Mode) -> &'static [&'static str] {
         Mode::Wefax => &["CHART", "SAVED"],
         Mode::Navtex => &["MESSAGES", "READING"],
         Mode::RfPaint => &["TEXT", "IMAGE"],
+        // JTTY is keyboard text, so its panel is a single rolling log of the
+        // messages heard, like the CW and text-modem receive panes.
+        Mode::Jtty => &["MESSAGES"],
         // The decode list alone: the QSO pane is FT8's sequencer, which a
         // receive-only MSK144 build has nothing to put in.
         Mode::Msk144 => &["DECODES"],
