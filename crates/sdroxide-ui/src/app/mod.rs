@@ -22,6 +22,7 @@
 pub(in crate::app) mod alerts;
 pub(in crate::app) mod awards;
 pub(in crate::app) mod bands;
+pub(in crate::app) mod contest;
 pub(in crate::app) mod drm;
 pub(in crate::app) mod frame;
 pub(in crate::app) mod hd;
@@ -797,6 +798,14 @@ pub struct SdroxideApp {
     flags: crate::flags::Flags,
     /// Logbook overlay open state, and the in-progress new/edit entry (if any).
     show_logbook: bool,
+    /// The contest logger: its window, the running session (`None` until
+    /// START), the contest picked in setup, our own exchange and the entry
+    /// being typed. Session-only; the QSOs it logs go to `qso_log`.
+    show_contest: bool,
+    contest: Option<sdroxide_types::ContestSession>,
+    contest_pick: sdroxide_types::ContestId,
+    contest_my_exchange: String,
+    contest_entry: crate::app::contest::ContestEntry,
     /// The Winlink mail window. Holds its own view state; the mailbox itself
     /// lives engine-side and is read a page at a time.
     pub(in crate::app) mail: winlink::MailUi,
@@ -1516,6 +1525,11 @@ impl SdroxideApp {
             digi_free_text: String::new(),
             flags: Default::default(),
             show_logbook: false,
+            show_contest: false,
+            contest: None,
+            contest_pick: sdroxide_types::ContestId::CqWpx,
+            contest_my_exchange: String::new(),
+            contest_entry: Default::default(),
             mail: winlink::MailUi::default(),
             log_edit: None,
             spots: Vec::new(),
