@@ -26,6 +26,13 @@ env:
   # CMake 4.x on the macOS/Windows runners refuses to configure it without
   # this override (CMake 3.x ignores the variable).
   CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+  # The compiler every Linux build and the web client are built with. Pinned
+  # rather than `stable` so a -compat binary can be rebuilt bit for bit later
+  # (see reproducible.yml): a new rustc changes the output even when the source
+  # has not. Bump it deliberately, like any other dependency. Windows and macOS
+  # stay on `stable` — their toolchains are not pinned anyway, and the Windows
+  # build relies on the windows-gnu target the runner image has for `stable`.
+  LINUX_RUST_TOOLCHAIN: "1.98.1"
 
 jobs:
   # Which build combinations this run wants. A tag or a manual run builds all
@@ -59,12 +66,17 @@ jobs:
           # retires that runner image on 2027-04-17 with brownouts from
           # 2026-09-17, while a container image keeps working on any runner.
           # Every other entry carries no `container` key, which `build` reads
-          # as the empty string and GitHub as "no container".
+          # as the empty string and GitHub as "no container". The image is
+          # pinned by digest (a multi-arch index, so the same digest serves
+          # both architectures): `ubuntu:22.04` is re-pushed every few weeks,
+          # and a rebuild from a different base cannot match the release.
+          # reproducible.yml reads the digest from here, as it does the
+          # toolchain, so there is one place to bump either.
           platforms='[
             {"label": "linux-x86_64",         "os": "ubuntu-latest"},
             {"label": "linux-aarch64",        "os": "ubuntu-24.04-arm"},
-            {"label": "linux-x86_64-compat",  "os": "ubuntu-latest",    "container": "ubuntu:22.04"},
-            {"label": "linux-aarch64-compat", "os": "ubuntu-24.04-arm", "container": "ubuntu:22.04"},
+            {"label": "linux-x86_64-compat",  "os": "ubuntu-latest",    "container": "ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02"},
+            {"label": "linux-aarch64-compat", "os": "ubuntu-24.04-arm", "container": "ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02"},
             {"label": "windows-x86_64",       "os": "windows-latest"},
             {"label": "macos-aarch64",        "os": "macos-latest"},
             {"label": "macos-x86_64",         "os": "macos-15-intel"}
@@ -130,12 +142,17 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned, like the Linux builds: every native binary embeds this dist, so
+      # a -compat binary can only be rebuilt bit for bit if the dist can be too.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.LINUX_RUST_TOOLCHAIN }}
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           key: web-dist
+      - name: Reproducible build settings
+        run: packaging/linux/reproducible-env.sh >> "$GITHUB_ENV"
       - name: Install trunk
         run: |
           mkdir -p "$HOME/.local/bin"
@@ -172,27 +189,16 @@ jobs:
     steps:
       # The -compat jobs start from a bare Ubuntu 22.04 image rather than the
       # runner image, so everything the runner normally provides is installed
-      # here (as root — the image has no sudo). This must run BEFORE checkout:
-      # without git in the container, actions/checkout silently falls back to
-      # the REST API download, which cannot fetch the vendor/ submodules.
-      # curl is for rustup, wget for the Opus model download that RADE's
-      # autogen.sh does, zstd for the cache archives, and build-essential also
-      # brings binutils (strip) and dpkg-dev (dpkg-shlibdeps, which cargo-deb
-      # runs to compute the .deb's Depends).
-      - name: Install build environment (compat container)
+      # here (as root — the image has no sudo). git must be in place BEFORE
+      # checkout: without it in the container, actions/checkout silently falls
+      # back to the REST API download, which cannot fetch the vendor/
+      # submodules. The rest comes from the checkout, just below.
+      - name: Install git (compat container)
         if: matrix.container
         run: |
           apt-get update
-          # build-essential also carries the C++ compiler the vendored DRM
-          # receiver needs; nothing about DRM is a *system* dependency, because
-          # Dream, faad2 and the FFT are all built from source in-tree.
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            git ca-certificates curl wget zstd build-essential \
-            libasound2-dev pkg-config cmake autoconf automake libtool libclang-dev \
-            file desktop-file-utils
-          if [[ "${{ matrix.variant }}" == "soapy" ]]; then
-            apt-get install -y --no-install-recommends libsoapysdr-dev
-          fi
+            git ca-certificates
 
       # `submodules` pulls vendor/rade_c (the RADE codec), vendor/faad2 (the AAC
       # decoder the DRM receiver is built with), vendor/rtl_433 and vendor/xng
@@ -202,6 +208,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
+
+      # From a script rather than inline so reproducible.yml installs exactly
+      # the same set.
+      - name: Install build environment (compat container)
+        if: matrix.container
+        run: packaging/linux/install-compat-deps.sh ${{ matrix.variant }}
 
       - name: Compute version
         run: |
@@ -284,10 +296,19 @@ jobs:
         if: runner.os == 'macOS' && matrix.variant == 'soapy'
         run: brew install pkg-config soapysdr
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ runner.os == 'Linux' && env.LINUX_RUST_TOOLCHAIN || 'stable' }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.label }}-${{ matrix.variant }}
+
+      # Every Linux build, not only -compat: it costs nothing, and it keeps the
+      # checkout's path out of the regular binaries too. Only -compat is
+      # expected to rebuild bit for bit, since only it has a pinned image.
+      - name: Reproducible build settings (Linux)
+        if: runner.os == 'Linux'
+        run: packaging/linux/reproducible-env.sh >> "$GITHUB_ENV"
 
       # The embed-web feature bakes these files into the binary via rust-embed.
       - name: Fetch web client
@@ -453,8 +474,15 @@ jobs:
           its section 13 applies: if you run sdroxide as a server and let other
           people use it over a network, you have to offer them the source.
           EOF
-          tar czf "out/$PKG.tar.gz" -C stage sdroxide
-          cargo install cargo-deb --locked
+          # Sorted, owned by root, stamped with the commit's time and without
+          # gzip's own name-and-time header, so the archive depends on nothing
+          # but the files in it.
+          tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
+              --owner=0 --group=0 --numeric-owner --mode=u+rwX,go+rX,go-w \
+              -cf - -C stage sdroxide | gzip -n > "out/$PKG.tar.gz"
+          # Pinned for the same reason as the compiler; it also takes its file
+          # times from SOURCE_DATE_EPOCH.
+          cargo install cargo-deb --locked --version 3.8.0
           # The SoapySDR build uses the `soapysdr` deb variant (package
           # sdroxide-soapysdr, recommends the driver modules); the default build
           # uses the base metadata (package sdroxide, no SoapySDR recommendation).
@@ -799,6 +827,35 @@ jobs:
             rm -f rw.dmg
           fi
 
+      # What a rebuild needs besides the source: the image and compiler are
+      # pinned above, but `apt-get install` takes whatever jammy-updates has
+      # that day, so the exact package set is recorded here, in a form
+      # snapshot.ubuntu.com can serve again. The checksums are of the files
+      # beside it, as built. packaging/linux/reproducible-env.sh has the rest.
+      - name: Record build environment (compat container)
+        if: matrix.container
+        run: |
+          {
+            echo "package: $PKG"
+            echo "source: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$GITHUB_SHA"
+            echo "image: ${{ matrix.container }}"
+            echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH"
+            echo "SDROXIDE_BUILD: ${SDROXIDE_BUILD:-<unset>}"
+            echo
+            echo "## rustc -vV"
+            rustc -vV
+            echo
+            echo "## sha256"
+            (cd out && sha256sum -- *)
+            echo
+            echo "## dpkg -l"
+            dpkg-query -W -f '${Package}:${Architecture}=${Version}\n' | sort
+          } > buildinfo
+          # Written aside and moved in, or it would be among the files it sums.
+          mv buildinfo "out/$PKG.buildinfo"
+          cat "out/$PKG.buildinfo"
+
       - uses: actions/upload-artifact@v7
         with:
           name: pkg-${{ matrix.label }}-${{ matrix.variant }}
@@ -827,6 +884,13 @@ jobs:
         run: |
           cd web-dist
           zip -r "../dist/sdroxide-web-$GITHUB_REF_NAME.zip" .
+      # One file to check a download against, and the thing a rebuild of a
+      # -compat package compares with.
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}

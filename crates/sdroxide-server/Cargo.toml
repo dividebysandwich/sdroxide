@@ -10,7 +10,11 @@ futures-util = "0.3.34"
 mime_guess = "2.0.5"
 opus = "0.4.0"
 rtrb.workspace = true
-rust-embed = { version = "8.12.0", features = ["interpolate-folder-path"], optional = true }
+# `deterministic-timestamps` records every embedded file's mtime and ctime as 0
+# instead of whatever the checkout happened to leave on disk, which would
+# otherwise make two builds of the same commit differ. Nothing reads them: the
+# server keys its ETag on the content hash (`serve_embedded` in lib.rs).
+rust-embed = { version = "8.12.0", features = ["interpolate-folder-path", "deterministic-timestamps"], optional = true }
 sdroxide-proto = { path = "../sdroxide-proto" }
 # The space-weather feed behind /solar-ws (src/solar.rs), including its
 # native-only network and cache half — which the server always is.
