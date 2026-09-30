@@ -421,6 +421,14 @@ impl SdroxideApp {
                         let mode = self.state.rx[0].mode.label();
                         self.log_edit = Some(LogEditForm::new_entry(now_unix(), freq, mode));
                     }
+                    if crate::chrome::chip(ui, self.show_contest, "CONTEST")
+                        .on_hover_text(
+                            "Contest logger — a session, dupes, a live score and Cabrillo",
+                        )
+                        .clicked()
+                    {
+                        self.show_contest = !self.show_contest;
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let have = !self.qso_log.is_empty();
                         ui.add_enabled_ui(have, |ui| {
