@@ -1571,10 +1571,35 @@ impl CwTx {
     /// renders at the rate its caller asked for and reads the key once per
     /// sample instead, leaving the resolution at the engine's own block.
     pub fn next_manual_block(&mut self, out: &mut [f32], out_rate: f64) {
+        let held = self.held;
+        self.next_manual_block_timed(out, out_rate, &[]);
+        self.held = held;
+    }
+
+    /// Manual keying from an explicit per-sample key state, one `bool` per
+    /// sample of `out`.
+    ///
+    /// **This is what makes a keyer possible.** `next_manual_block` reads a
+    /// single `held` flag for the whole block, so anything that generated its
+    /// elements *outside* the transmit loop would have every element quantised
+    /// to the block boundary — a 60 ms dit rendered as the whole 50 ms chunk it
+    /// happened to land in, which at speed is ragged sending rather than a keyer.
+    /// A caller with a timeline of its own (an iambic keyer polled per sample)
+    /// passes it here and gets the shape, the phase and the ramp exactly where
+    /// the element actually is.
+    ///
+    /// A `keys` slice shorter than `out` **holds its last value** for the
+    /// remainder, so a caller that renders in smaller pieces than it polls can
+    /// still hand over one block.
+    pub fn next_manual_block_timed(&mut self, out: &mut [f32], out_rate: f64, keys: &[bool]) {
         let inc = std::f64::consts::TAU * self.pitch / out_rate;
         let step = 1.0 / (SHAPE_MS * 1e-3 * out_rate as f32).max(1.0);
-        for s in out.iter_mut() {
-            let target = if self.held { 1.0 } else { 0.0 };
+        let mut down = self.held;
+        for (i, s) in out.iter_mut().enumerate() {
+            if let Some(&k) = keys.get(i) {
+                down = k;
+            }
+            let target = if down { 1.0 } else { 0.0 };
             self.shape = if self.shape < target {
                 (self.shape + step).min(target)
             } else {
@@ -1587,6 +1612,7 @@ impl CwTx {
             }
             *s = amp * self.ph.sin() as f32;
         }
+        self.held = down;
     }
 
     /// Samples of keying still to go out, the element in progress included.
@@ -1771,7 +1797,7 @@ impl CwKeyer {
         self.word_gap_s = 6.0 * self.dit_s;
     }
 
-    pub fn set_mode(&mut self, mode: IambicMode) {
+    pub fn set_iambic(&mut self, mode: IambicMode) {
         self.mode = mode;
     }
 
@@ -2536,7 +2562,7 @@ mod keyer_tests {
     #[test]
     fn mode_a_needs_the_opposite_paddle_held() {
         let mut k = CwKeyer::new(20.0);
-        k.set_mode(IambicMode::A);
+        k.set_iambic(IambicMode::A);
         let mut t = 0.0;
         // Dit paddle down; dah tapped only while the dit is being sent.
         while k.marks() == 0 {
@@ -2559,5 +2585,103 @@ mod keyer_tests {
         run(&mut k, &mut t, 0.30, false, true);
         run(&mut k, &mut t, 0.8, false, false);
         assert_eq!(k.take_text(), "T");
+    }
+}
+#[cfg(test)]
+mod manual_timeline_tests {
+    use super::*;
+
+    /// The transmit block length: 50 ms at 48 kHz. A dit at 20 wpm is 60 ms and
+    /// a dah three times that, so one whole element spans at least one of
+    /// these — which is exactly why the key cannot be read once per block.
+    const OUT_RATE: f64 = 48_000.0;
+    const BLOCK: usize = 2400;
+
+    /// The tone is a shaped sine: a 5 ms raised-cosine ramp and a zero crossing
+    /// every half period. Neither says anything about whether the key was down,
+    /// so measure the envelope — the peak over a window comfortably longer than
+    /// a crossing and shorter than an element.
+    fn envelope(out: &[f32]) -> Vec<f32> {
+        out.chunks(128).map(|c| c.iter().fold(0.0f32, |m, s| m.max(s.abs()))).collect()
+    }
+
+    const TONE: f32 = 0.05;
+    const SILENT: f32 = 1e-3;
+
+    #[test]
+    fn the_key_timeline_is_followed_per_sample() {
+        let mut tx = CwTx::new(OUT_RATE, 700.0, 20.0);
+        tx.set_manual(true);
+
+        // 30 ms down then 30 ms up, in one 50 ms block: a key that goes down
+        // and comes back inside a single block. Read once per block this is one
+        // solid 50 ms tone and the element is lost; the timeline is the fix.
+        let gap = BLOCK * 3 / 5;
+        let mut keys = vec![true; gap];
+        keys.resize(BLOCK, false);
+        let mut out = vec![0.0f32; BLOCK];
+        tx.next_manual_block_timed(&mut out, OUT_RATE, &keys);
+
+        let env = envelope(&out);
+        let voiced = env.iter().filter(|p| **p > TONE).count();
+        let silent = env.iter().filter(|p| **p < SILENT).count();
+        assert!(voiced > 0 && silent > 0, "the tone starts and stops inside one block: {env:?}");
+        // *Where* the silence starts is the claim, not how much of it there
+        // is: the ramp is 5 ms either side of the edge, so the tone must go
+        // quiet within a chunk or two of the key going up. Read once per block
+        // it could not go quiet at all inside one — the block would be a single
+        // solid tone, which is the ragged sending this whole path exists to fix.
+        let first_quiet = env.iter().position(|p| *p < SILENT).expect("never went quiet");
+        let edge = gap.div_ceil(128);
+        assert!(
+            first_quiet <= edge + 3,
+            "the tone ran on well past the key-up at chunk {edge}: quiet only from {first_quiet}"
+        );
+        assert!(voiced > 0, "the key-down was not followed either");
+        assert_eq!(tx.held(), false, "the transmitter's key state ends where the key ended");
+    }
+
+    #[test]
+    fn a_short_timeline_holds_its_last_state_for_the_rest_of_the_block() {
+        let mut tx = CwTx::new(OUT_RATE, 700.0, 20.0);
+        tx.set_manual(true);
+
+        // 10 samples of key asked about, out of a 2400-sample block.
+        let mut out = vec![0.0f32; BLOCK];
+        tx.next_manual_block_timed(&mut out, OUT_RATE, &[true]);
+        assert!(
+            envelope(&out)[2..].iter().all(|p| *p > TONE),
+            "a key that was down when the samples ran out stays down for the block"
+        );
+        assert_eq!(tx.held(), true, "and the transmitter's own key state follows it");
+
+        // The other direction: released, and silence follows.
+        let mut tx = CwTx::new(OUT_RATE, 700.0, 20.0);
+        tx.set_manual(true);
+        let mut out = vec![0.0f32; BLOCK];
+        tx.next_manual_block_timed(&mut out, OUT_RATE, &[false]);
+        assert!(
+            envelope(&out).iter().all(|p| *p < SILENT),
+            "nothing keys when the caller says the key is up"
+        );
+        assert_eq!(tx.held(), false);
+    }
+
+    #[test]
+    fn the_plain_manual_block_still_keys_for_its_whole_length() {
+        // The straight-key path must be untouched by all of this: a hand is down
+        // or up, and it stays that way for the block.
+        let mut tx = CwTx::new(OUT_RATE, 700.0, 20.0);
+        tx.set_manual(true);
+        tx.set_held(true);
+
+        let mut out = vec![0.0f32; BLOCK];
+        tx.next_manual_block(&mut out, OUT_RATE);
+        // The 5 ms ramp is the only quiet part; past it a held key is solid.
+        assert!(
+            envelope(&out)[2..].iter().all(|p| *p > TONE),
+            "a held straight key tones throughout"
+        );
+        assert_eq!(tx.held(), true, "and the caller's own key state is left alone");
     }
 }
