@@ -2914,6 +2914,26 @@ configured it says so rather than recording silence. It stops by itself if the
 audio output device is changed under it, and one still running when you quit is
 closed properly, so there is never a half-written file to repair.
 
+**Auto-record.** The **Auto-record** row of the picker follows the receiver's
+squelch and gives each transmission its own file: a recording starts when the
+squelch opens, and closes after the number of seconds of silence you pick —
+**2 s**, **3 s**, **5 s**, **10 s**, or **off**. A monitoring session then
+becomes one stamped file per transmission rather than a single file that grows
+all afternoon through the gaps. The squelch is what defines silence here, so
+the chips are only offered when one is set; with the squelch wide open there is
+nothing to follow and the row says so. It is a session setting like **Stop
+after**, not a stored preference, and arming one clears the other — they are two
+answers to when a recording ends. Setting this row to **off** only stops
+following the squelch; a **Stop after** timer or a quick clip already running is
+left alone. It keeps running for a radio whose tab is not the one on screen, so
+a monitor can be left in the background. It needs a front end whose squelch the
+program
+itself applies (an SDR); a CAT radio's squelch belongs to the radio and its
+meters carry no passband level to follow, so the row says that rather than
+arming a recorder that would never close. The REC chip shows the difference:
+armed but waiting is a steady red outline, while a file actually being written
+fills the chip red and the fill breathes.
+
 **Quick clip.** The **Quick clip** row is for a short sample rather than a
 session: press **30 s** or **1 min** and the recording starts by itself and
 stops at the end of that span — small enough to attach to a reception report,

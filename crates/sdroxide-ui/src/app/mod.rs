@@ -493,17 +493,22 @@ pub struct SdroxideApp {
     /// armed has to be the one they pressed. Seconds rather than minutes
     /// because a quick clip is 30 s long.
     recording_stop_at: Option<(i64, u16)>,
-    /// A quick clip asked for while no recording was running, `(asked_at,
-    /// secs)`, waiting for the recorder to actually start.
-    ///
-    /// A clip's deadline cannot be armed at the press: the timer tick drops
-    /// any deadline whose recording is not running, so an early deadline
-    /// would be cleared on the next frame before the start took. The request
-    /// rides here instead and is armed the first frame the recording is seen
-    /// running — measured from that frame, so the clip is a full span — or
-    /// dropped if the start never takes. See
-    /// [`Self::poll_recording_timer`].
     rec_clip: Option<(i64, u16)>,
+    /// The silence auto-split hold, in seconds, or `None` when it is off.
+    ///
+    /// While armed, the MP3 recording follows the receiver's squelch: a file
+    /// starts when the squelch opens and the one running is closed after this
+    /// many seconds of silence, so a session of many transmissions becomes one
+    /// stamped file each rather than one file that grows all afternoon (issue
+    /// #546). UI-owned and session-only, exactly like
+    /// [`Self::recording_stop_at`], and ticked once a frame by
+    /// [`Self::poll_recording_gate`] — for a tab that is not on screen as well
+    /// as the one that is, so a monitor left in the background still splits.
+    rec_gate_s: Option<u16>,
+    /// Everything the gate carries between frames — the run of silence, a start
+    /// still pending, and the holds that stop a manual stop or a refused
+    /// start being undone every frame. See [`Self::poll_recording_gate`].
+    rec_gate: top_bar::RecGate,
     /// Fade clock for the receive-filter popup behind the BW chip, like
     /// `nr_popup_since`.
     bw_popup_since: Option<f64>,
@@ -1424,6 +1429,8 @@ impl SdroxideApp {
             rec_popup_since: None,
             recording_stop_at: None,
             rec_clip: None,
+            rec_gate_s: None,
+            rec_gate: Default::default(),
             bw_popup_since: None,
             duplex_popup_since: None,
             rpt_tone_popup_since: None,

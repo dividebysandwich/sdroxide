@@ -1239,6 +1239,13 @@ impl eframe::App for MultiApp {
                 if tab.app.poll_auth() {
                     crate::repaint::after_ms(&ctx, 120);
                 }
+                // A silence auto-split armed on this radio is a recording
+                // decision, not a drawing one: it has to keep running while the
+                // tab is behind another, or the files are split only for
+                // whichever radio the operator happens to be looking at. Armed,
+                // the gate asks for its own frames, so a monitor left on a
+                // hidden tab still records a file per transmission.
+                tab.app.poll_recording_gate(&ctx);
             }
         }
         self.share_spot_feed();
