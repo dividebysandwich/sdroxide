@@ -55,6 +55,10 @@ bytemuck = { version = "1", features = ["derive"] }
 # and no I/O, and so builds for wasm32 alongside everything else here. The
 # native target block below adds the synthesizer on top.
 sdroxide-speech = { path = "../sdroxide-speech", default-features = false }
+# The Icom RC-28 knob. On every target: its report parser is pure and the
+# browser build feeds it from WebHID, while its HID worker (and the relay
+# crate's HID layer beneath it) is gated off wasm inside the crate itself.
+sdroxide-rc28 = { path = "../sdroxide-rc28" }
 
 [features]
 # WebSocket RemoteController for the browser (and native remote) client.

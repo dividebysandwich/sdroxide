@@ -111,6 +111,7 @@ sdroxide-config = { path = "crates/sdroxide-config" }
 sdroxide-ui = { path = "crates/sdroxide-ui" }
 sdroxide-cat = { path = "crates/sdroxide-cat" }
 sdroxide-midi = { path = "crates/sdroxide-midi" }
+sdroxide-rc28 = { path = "crates/sdroxide-rc28" }
 sdroxide-rigctld = { path = "crates/sdroxide-rigctld" }
 sdroxide-rotator = { path = "crates/sdroxide-rotator" }
 sdroxide-hpsdr = { path = "crates/sdroxide-hpsdr" }
@@ -281,6 +282,7 @@ assets = [
     ["packaging/linux/60-sdroxide-elad.rules", "usr/lib/udev/rules.d/", "644"],
     ["packaging/linux/60-sdroxide-limerfe.rules", "usr/lib/udev/rules.d/", "644"],
     ["packaging/linux/60-sdroxide-relay.rules", "usr/lib/udev/rules.d/", "644"],
+    ["packaging/linux/60-sdroxide-rc28.rules", "usr/lib/udev/rules.d/", "644"],
     ["packaging/icons/sdroxide.svg", "usr/share/icons/hicolor/scalable/apps/sdroxide.svg", "644"],
     ["packaging/icons/sdroxide-16.png", "usr/share/icons/hicolor/16x16/apps/sdroxide.png", "644"],
     ["packaging/icons/sdroxide-24.png", "usr/share/icons/hicolor/24x24/apps/sdroxide.png", "644"],

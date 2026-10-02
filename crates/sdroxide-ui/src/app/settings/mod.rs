@@ -292,6 +292,8 @@ pub(in crate::app) struct SettingsIo<'a> {
     key_capture: &'a mut Option<usize>,
     midi_learn: &'a mut Option<crate::input::MidiLearn>,
     midi_rescan: &'a mut bool,
+    /// The RC-28's "Choose device…" chip was clicked (browser only).
+    rc28_choose: &'a mut bool,
     /// The operator's satellite additions, and the transient state of the
     /// dialog that edits them. Sent to the engine on change, like the input
     /// bindings are written on change: there is no APPLY step to hang it off.
@@ -1099,6 +1101,7 @@ impl SdroxideApp {
         let mut key_capture = self.input.key_capture;
         let mut midi_learn = self.input.midi_learn;
         let mut midi_rescan = false;
+        let mut rc28_choose = false;
         let mut sat_edit = self.sat_cfg_edit.clone();
         let mut sat_ui = std::mem::take(&mut self.sat_ui);
         let mut sat_sub_refresh = false;
@@ -1268,6 +1271,7 @@ impl SdroxideApp {
                             key_capture: &mut key_capture,
                             midi_learn: &mut midi_learn,
                             midi_rescan: &mut midi_rescan,
+                            rc28_choose: &mut rc28_choose,
                             sat_edit: &mut sat_edit,
                             sat_seeded: self.sat_cfg_seeded,
                             sat_ui: &mut sat_ui,
@@ -1332,6 +1336,11 @@ impl SdroxideApp {
         self.input.midi_learn = midi_learn;
         if midi_rescan {
             (self.midi_in_ports, self.midi_out_ports) = self.input.midi_ports();
+        }
+        if rc28_choose {
+            // Straight from the click's frame, while the browser still counts
+            // it as a user gesture — WebHID refuses the chooser otherwise.
+            self.input.rc28_choose_device();
         }
         if input_edit != self.input.cfg {
             // Bindings take effect on the next frame and are written straight
@@ -3302,6 +3311,8 @@ impl SdroxideApp {
                 &self.midi_out_ports,
                 &self.input.midi_status(),
                 self.input.last_midi,
+                &self.input.rc28_status(),
+                self.input.last_rc28.as_deref(),
             ),
             SettingsTab::Servers => {
                 settings_rigctld_tab(

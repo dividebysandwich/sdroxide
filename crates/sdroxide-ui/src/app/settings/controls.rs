@@ -1,4 +1,4 @@
-//! The Controls tab: keyboard, mouse and MIDI bindings.
+//! The Controls tab: keyboard, mouse, MIDI and Icom RC-28 bindings.
 //!
 //! A rebind has no APPLY step — it takes effect on the next frame and is
 //! written straight out, because a binding the operator cannot see saved is
@@ -58,6 +58,8 @@ pub(in crate::app) fn settings_controls_tab(
     midi_out: &[(String, String)],
     midi_status: &crate::input::MidiStatusView,
     last_midi: Option<(sdroxide_types::MidiMsg, u8)>,
+    rc28_status: &crate::input::Rc28StatusView,
+    last_rc28: Option<&str>,
 ) {
     use sdroxide_types::{
         Action, ActionKind, ButtonMode, KeyBinding, MouseButton, MouseButtonBinding, WheelAction,
@@ -311,6 +313,157 @@ pub(in crate::app) fn settings_controls_tab(
         midi_out,
         midi_status,
         last_midi,
+    );
+
+    ui.add_space(10.0);
+    ui.separator();
+    ui.add_space(6.0);
+    settings_rc28_section(ui, cfg, io.rc28_choose, memories, rc28_status, last_rc28);
+}
+
+/// The Icom RC-28: on/off, the connection, and one row per physical control.
+fn settings_rc28_section(
+    ui: &mut egui::Ui,
+    cfg: &mut sdroxide_types::InputSettings,
+    choose: &mut bool,
+    memories: &[MemoryChannel],
+    status: &crate::input::Rc28StatusView,
+    last: Option<&str>,
+) {
+    use sdroxide_types::{ActionKind, ButtonMode};
+
+    ui.label(RichText::new("Icom RC-28").size(14.0).strong().color(crate::theme::CYAN()));
+    ui.add_space(4.0);
+    if let Some(why) = status.unsupported {
+        ui.label(RichText::new(why).weak());
+        return;
+    }
+    ui.label(
+        RichText::new(
+            "Icom's USB remote encoder: the knob tunes, TRANSMIT keys the rig while held, and \
+             F-1 and F-2 do whatever is chosen below. The LED over a button lights while its \
+             action is on; LINK lights while sdroxide has the device.",
+        )
+        .weak(),
+    );
+    ui.add_space(6.0);
+    let rc = &mut cfg.rc28;
+    ui.horizontal(|ui| {
+        crate::chrome::checkbox(ui, &mut rc.enabled, "Enable");
+        if rc.enabled
+            && status.choose
+            && crate::chrome::chip(ui, false, "Choose device…")
+                .on_hover_text(
+                    "The browser only lets a page use a USB device picked here. It remembers \
+                     the choice, so this is needed once.",
+                )
+                .clicked()
+        {
+            *choose = true;
+        }
+    });
+    // On a line of its own, where it can wrap: the USB product name is long,
+    // and beside the checkbox the firmware version fell off the window's edge.
+    let s = &status.status;
+    if rc.enabled {
+        ui.add_space(4.0);
+        if s.connected {
+            let fw = if s.firmware.is_empty() {
+                String::new()
+            } else {
+                format!(", firmware {}", s.firmware)
+            };
+            ui.label(
+                RichText::new(format!("● {}{fw}", s.name)).color(Color32::from_rgb(90, 200, 110)),
+            );
+        } else if let Some(e) = &s.error {
+            ui.label(RichText::new(e).color(Color32::from_rgb(230, 90, 80)));
+        } else if status.choose {
+            ui.label(RichText::new("Not connected — choose the device once.").weak());
+        } else {
+            ui.label(RichText::new("Not connected — plug it in.").weak());
+        }
+    }
+    if rc.enabled {
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(last.map_or("Turn the knob or press a button to see it here.", |l| l))
+                .weak(),
+        );
+    }
+    ui.add_space(6.0);
+
+    ui.add_enabled_ui(rc.enabled, |ui| {
+        egui::Grid::new("rc28-grid").num_columns(5).spacing([10.0, 6.0]).striped(true).show(
+            ui,
+            |ui| {
+                ui.label(RichText::new("Control").small().weak());
+                ui.label(RichText::new("Does").small().weak());
+                ui.label(RichText::new("Step / mode").small().weak());
+                ui.label(RichText::new("LED").small().weak());
+                ui.label(RichText::new("On").small().weak());
+                ui.end_row();
+
+                ui.label(RichText::new("Knob").monospace());
+                if action_combo(ui, "rc28-knob", &mut rc.knob, memories) {
+                    rc.knob_tuning.step = rc.knob.default_step();
+                }
+                if rc.knob.kind() == ActionKind::Continuous {
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut rc.knob_tuning.step)
+                                .speed(1.0)
+                                .range(0.0001..=1_000_000.0),
+                        )
+                        .on_hover_text("Per detent — about 67 to the turn");
+                        ui.add(
+                            egui::DragValue::new(&mut rc.knob_tuning.accel)
+                                .speed(0.05)
+                                .range(0.0..=4.0)
+                                .prefix("×"),
+                        )
+                        .on_hover_text("Speed sensitivity: spin faster to tune faster");
+                        crate::chrome::checkbox(ui, &mut rc.knob_tuning.invert, "rev");
+                    });
+                } else {
+                    ui.label(RichText::new("pick a knob action").weak());
+                }
+                ui.label("");
+                ui.label("");
+                ui.end_row();
+
+                for (label, b) in
+                    [("TRANSMIT", &mut rc.transmit), ("F-1", &mut rc.f1), ("F-2", &mut rc.f2)]
+                {
+                    ui.label(RichText::new(label).monospace());
+                    action_combo(ui, ("rc28-btn", label), &mut b.action, memories);
+                    if b.action.kind() == ActionKind::Momentary {
+                        ui.horizontal(|ui| {
+                            for m in ButtonMode::ALL {
+                                if crate::chrome::chip(ui, b.button_mode == m, m.label()).clicked()
+                                {
+                                    b.button_mode = m;
+                                }
+                            }
+                        });
+                    } else {
+                        ui.label(RichText::new("pick a button action").weak());
+                    }
+                    crate::chrome::checkbox(ui, &mut b.led, "")
+                        .on_hover_text("Light the LED over the button while its action is on");
+                    crate::chrome::checkbox(ui, &mut b.enabled, "");
+                    ui.end_row();
+                }
+            },
+        );
+    });
+    ui.add_space(8.0);
+    ui.label(
+        RichText::new(
+            "TRANSMIT keeps the rig keyed while you type in another window, and lets go if the \
+             RC-28 is unplugged. Leave it on Hold unless you mean to latch the transmitter.",
+        )
+        .weak(),
     );
 }
 

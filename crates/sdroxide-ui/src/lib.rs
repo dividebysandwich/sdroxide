@@ -37,6 +37,7 @@ mod login_globe;
 /// browser client drives a single (remote) radio.
 mod multi;
 mod prop_map;
+mod rc28;
 #[cfg(feature = "remote")]
 mod remote;
 /// Asking egui for the next frame at the rate actually asked for.
