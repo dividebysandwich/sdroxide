@@ -9023,6 +9023,11 @@ impl Engine {
                     d.key_down(down);
                 }
             }
+            CwContacts { dot, dah } => {
+                if let Some(d) = self.digi.as_mut() {
+                    d.set_cw_contacts(dot, dah);
+                }
+            }
             SstvSetMode(mode) => {
                 if let Some(d) = self.digi.as_mut() {
                     d.set_sstv_mode(mode);

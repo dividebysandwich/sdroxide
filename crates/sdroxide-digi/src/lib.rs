@@ -205,6 +205,11 @@ pub trait DigiEngine: Send {
     /// sidetone while set and hands the key's position to it directly. Nothing
     /// else implements either: a straight key only exists on the CW panel.
     fn set_straight(&mut self, _on: bool) {}
+    /// CW: the operator's two **paddle contacts** (issue #569). The client
+    /// sends the contacts, never the edges it would make of them, so the
+    /// iambic timing is generated on this side — next to the transmitter it
+    /// has to reach. A no-op for a mode with no keyer.
+    fn set_cw_contacts(&mut self, _dot: bool, _dah: bool) {}
     fn key_down(&mut self, _down: bool) {}
     /// Throw away what has been copied so far, so the operator can start a
     /// fresh page. Only the received text goes: the decoder keeps running, an

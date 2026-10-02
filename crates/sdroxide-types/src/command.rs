@@ -1146,4 +1146,26 @@ pub enum Command {
     ResetModeDefaults {
         mode: Option<Mode>,
     },
+
+    /// CW: the operator's two **paddle contacts**, changed (issue #569).
+    ///
+    /// **Contacts, not edges** — that is the whole point. The client has a
+    /// paddle and the engine has the transmitter, so what crosses the wire is
+    /// *which contacts are closed*, once per change, and the keyer makes the
+    /// dits and dahs next to the audio. A client that generated the edges would
+    /// quantise every element to whatever its own thread sampled — at 20 wpm a
+    /// dit is 60 ms, inside one 50 ms transmit block — and could not reach a rig
+    /// that keys itself at all, because on that route the sidetone is never
+    /// transmitted.
+    ///
+    /// Straight keying does **not** come through here: [`Self::CwKey`] already
+    /// carries the down edge and the engine reads it directly, so keying it
+    /// through the keyer as well would be a second implementation of the same
+    /// path. Its read-back is `CwSelfRx` either way.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    CwContacts {
+        dot: bool,
+        dah: bool,
+    },
 }
