@@ -1508,7 +1508,25 @@ use sdroxide_types::{
 /// whole, so a v171 peer reads the extra bytes as the start of the next field
 /// and fails to decode every digital status — the same break as v170's appended
 /// FSK441 period.
-pub const PROTO_VERSION: u16 = 172;
+///
+/// v173: the CW **paddle contacts** travel, so the iambic keyer can live on the
+/// engine (issue #569). New `Command::CwContacts { dot, dah }`, **appended
+/// last**, and `DigiConfig` gains `cw_key_mode` (`CwKeyMode`) on its tail — the
+/// same appended-field break as v170/v171/v172.
+///
+/// The unit is deliberate: the client has a paddle and the engine has the
+/// transmitter, so what crosses the wire is *which contacts are closed*, once
+/// per change — not the edges a client would make of them. A client-side keyer
+/// quantises every element to whatever the UI thread sampled (a 20 wpm dit is
+/// 60 ms, inside one 50 ms transmit block), and cannot reach a rig that keys
+/// itself at all, since on that route the sidetone is never transmitted. With
+/// the keyer here it keys through every route, and the operator's only remaining
+/// choice is where the tone goes.
+///
+/// Straight keying does **not** come through this: `Command::CwKey` already
+/// carries the down edge and the engine reads it directly, so a keyer on this
+/// side for straight keying would be a second implementation of the same path.
+pub const PROTO_VERSION: u16 = 173;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -2737,6 +2755,49 @@ mod tests {
         assert_eq!(back, m);
         let ServerMsg::Capabilities(c) = back else { panic!("not capabilities") };
         assert!(c.cw_audio_keyed);
+    }
+
+    /// The CW paddle contacts, all four states, and the appended config field.
+    ///
+    /// Both closed at once is the case that matters: it is the one where two
+    /// contacts share an element, so a slip in the encoding would show up as a
+    /// paddle that reads as a straight key rather than as a failed decode.
+    #[test]
+    fn roundtrip_cw_paddle_contacts() {
+        for (dot, dah) in [(false, false), (true, false), (false, true), (true, true)] {
+            let contacts = Command::CwContacts { dot, dah };
+            assert_eq!(decode::<Command>(&encode(&contacts).unwrap()).unwrap(), contacts);
+        }
+        let mut cfg = sdroxide_types::DigiConfig::default();
+        cfg.cw_key_mode = sdroxide_types::CwKeyMode::IambicA;
+        let m = ClientMsg::Command(Command::SetDigiConfig(cfg));
+        let back = decode::<ClientMsg>(&encode(&m).unwrap()).unwrap();
+        let ClientMsg::Command(Command::SetDigiConfig(got)) = back else {
+            panic!("not a digi config")
+        };
+        assert_eq!(got.cw_key_mode, sdroxide_types::CwKeyMode::IambicA);
+    }
+
+    /// The framing byte is frozen, and pinning it is the point of this test.
+    ///
+    /// The byte tracked `PROTO_VERSION` exactly through v18 and has been `0x12`
+    /// ever since, while `PROTO_VERSION` has run on to 172+ — the module doc
+    /// calls it a fast sanity check, with the real negotiation in
+    /// `Hello`/`HelloAck`. So the reflex to "keep the byte in step with the
+    /// version" is wrong here: `decode` rejects any byte that is not this exact
+    /// one, so changing it for an appended field breaks **every connection**
+    /// rather than one feature, and the failure looks like a dead handshake
+    /// rather than a bad bump.
+    #[test]
+    fn the_framing_byte_is_still_the_frozen_one() {
+        let m = ClientMsg::Command(Command::SetAudioDuck(0.5));
+        assert_eq!(encode(&m).unwrap()[0], 0x12);
+        // A v172 peer frames with the same byte, so what an appended v173 field
+        // costs is a visible decode error — the break we actually intend, and
+        // the one the register claims. (`rejects_wrong_version_byte` below
+        // already covers the other half: a wrong byte is refused outright.)
+        let err = decode::<ClientMsg>(&[0x12, 0xff, 0xff]).unwrap_err();
+        assert!(matches!(err, ProtoError::Decode(_)), "got {err:?}");
     }
 
     /// Device questions and their answers, both ways.
