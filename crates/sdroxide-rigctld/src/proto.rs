@@ -626,10 +626,26 @@ fn dispatch(
 /// that literally would switch a running FT8 session to plain DIGU — killing
 /// the decoder — on a timer. So a request for the mode we already *report* is
 /// a success that changes nothing.
+///
+/// **Except the passband, where the name is the mode itself.** `M USB 2400`
+/// while in USB is how a rigctl client narrows the filter — Hamlib has no
+/// other way to say it — so a new width is applied, the mode left alone.
+/// Only where the name round-trips to the mode actually running (USB, LSB,
+/// CW, AM ...), never a `PKT` name, so a digital session still ignores
+/// WSJT-X's periodic write whatever width it carries.
 fn set_mode(args: &[&str], st: &RigState, cmds: &mut Vec<Command>, out: Out) -> Reply {
     let Some(name) = args.first() else { return out.finish(EINVAL, false) };
     let Some(mode) = from_hamlib_mode(name) else { return out.finish(EINVAL, false) };
     if name.eq_ignore_ascii_case(to_hamlib_mode(st.mode)) {
+        if mode == st.mode
+            && !name.to_ascii_uppercase().starts_with("PKT")
+            && let Some(w) = args.get(1).and_then(|s| s.parse::<i32>().ok())
+            && w > 0
+            && w != st.passband_hz()
+        {
+            let (lo, hi) = filter_for(mode, w);
+            cmds.push(Command::SetFilter { rx: RxId::Main, lo, hi });
+        }
         return out.finish(OK, false);
     }
     cmds.push(Command::SetMode { rx: RxId::Main, mode });
@@ -855,6 +871,22 @@ mod tests {
         let (_, cmds) = run("M CW 500");
         assert_eq!(cmds[0], Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
         assert!(matches!(cmds[1], Command::SetFilter { .. }));
+    }
+
+    /// A new width in the mode already running narrows or widens the filter
+    /// and leaves the mode alone — how a rigctl client changes the passband.
+    #[test]
+    fn a_new_width_in_the_same_mode_sets_only_the_filter() {
+        let (reply, cmds) = run("M USB 2400");
+        assert_eq!(reply, "RPRT 0\n");
+        assert_eq!(cmds, vec![Command::SetFilter { rx: RxId::Main, lo: 150.0, hi: 2550.0 }]);
+    }
+
+    /// The width already set, re-sent with the mode, still changes nothing.
+    #[test]
+    fn the_same_mode_and_width_change_nothing() {
+        assert!(run("M USB 2700").1.is_empty());
+        assert!(run("M USB 0").1.is_empty());
     }
 
     /// Width 0 is how a client says "mode only, leave my filter alone".
