@@ -4977,6 +4977,9 @@ struct RigDigest {
     noise_blanker: bool,
     noise_reduction: bool,
     auto_notch: bool,
+    nr_level: sdroxide_types::NrLevel,
+    squelch: u32,
+    agc: sdroxide_types::AgcMode,
     ranges: (usize, usize),
 }
 
@@ -5003,6 +5006,9 @@ impl RigDigest {
             noise_blanker: s.noise_blanker,
             noise_reduction: s.noise_reduction,
             auto_notch: s.auto_notch,
+            nr_level: s.nr_level,
+            squelch: s.squelch_db.to_bits(),
+            agc: s.agc,
             ranges: (s.rx_ranges.len(), s.tx_ranges.len()),
         }
     }
@@ -11380,7 +11386,10 @@ impl Engine {
             strength_dbm: self.last_s_dbm.round() as i32,
             noise_blanker: self.state.noise_blanker,
             noise_reduction: rx.noise_reduction.is_on(),
+            nr_level: rx.noise_reduction,
             auto_notch: rx.auto_notch,
+            squelch_db: rx.squelch_db,
+            agc: rx.agc,
             can_tx: self.caps.is_transmit_capable(),
             rx_ranges: self.caps.freq_ranges_rx.clone(),
             tx_ranges: self.caps.freq_ranges_tx.clone(),
@@ -11441,6 +11450,9 @@ impl Engine {
             noise_blanker: self.state.noise_blanker,
             noise_reduction: rx.noise_reduction.is_on(),
             auto_notch: rx.auto_notch,
+            nr_level: rx.noise_reduction,
+            squelch: rx.squelch_db.to_bits(),
+            agc: rx.agc,
             ranges: (self.caps.freq_ranges_rx.len(), self.caps.freq_ranges_tx.len()),
         }
     }
