@@ -11,9 +11,12 @@
 //! a leading punctuation character — the command is echoed with its long name,
 //! every value is labelled, and the block always ends `RPRT n`.
 
-use sdroxide_types::{Command, RigctldConfig, RxId, Vfo};
+use sdroxide_types::{Command, Direction, NrLevel, NrStrength, RigctldConfig, RxId, Vfo};
 
-use crate::state::{RigState, filter_for, from_hamlib_mode, to_hamlib_mode};
+use crate::state::{
+    RigState, agc_from_hamlib, agc_to_hamlib, filter_for, from_hamlib_mode, nr_engine_for,
+    nr_on_level, nr_strength_for, nr_to_hamlib, squelch_db_for, to_hamlib_mode,
+};
 
 /// Hamlib error codes (`rig.h`), returned negated in `RPRT`.
 const OK: i32 = 0;
@@ -70,8 +73,12 @@ const VFO_MASK: u32 = 0x3;
 /// level it thinks we lack.
 mod rig_level {
     pub const AF: u64 = 1 << 3;
+    pub const RF: u64 = 1 << 4;
+    pub const SQL: u64 = 1 << 5;
+    pub const NR: u64 = 1 << 8;
     pub const RFPOWER: u64 = 1 << 12;
     pub const MICGAIN: u64 = 1 << 13;
+    pub const AGC: u64 = 1 << 17;
     pub const STRENGTH: u64 = 1 << 30;
 }
 
@@ -103,9 +110,19 @@ const VFO_OPS: u32 = rig_op::CPY
     | rig_op::TOGGLE;
 
 /// Levels we can report. `STRENGTH` is a meter, so it is get-only.
-const LEVEL_GET: u64 =
-    rig_level::AF | rig_level::RFPOWER | rig_level::MICGAIN | rig_level::STRENGTH;
-const LEVEL_SET: u64 = rig_level::AF | rig_level::RFPOWER | rig_level::MICGAIN;
+const LEVEL_GET: u64 = rig_level::AF
+    | rig_level::SQL
+    | rig_level::NR
+    | rig_level::RFPOWER
+    | rig_level::MICGAIN
+    | rig_level::AGC
+    | rig_level::STRENGTH;
+const LEVEL_SET: u64 = rig_level::AF
+    | rig_level::SQL
+    | rig_level::NR
+    | rig_level::RFPOWER
+    | rig_level::MICGAIN
+    | rig_level::AGC;
 const FUNC_MASK: u64 = rig_func::NB | rig_func::ANF | rig_func::NR | rig_func::MUTE;
 
 /// What one connection needs to remember between commands.
@@ -113,6 +130,10 @@ const FUNC_MASK: u64 = rig_func::NB | rig_func::ANF | rig_func::NR | rig_func::M
 pub struct Session {
     /// Set by `\set_vfo_opt 1`: every command then carries a VFO argument.
     pub vfo_opt: bool,
+    /// The NR engine and strength last seen on, so `U NR 1` brings back the
+    /// one the operator chose rather than a fixed default, and an `L NR`
+    /// while NR is off is kept for when it comes on.
+    pub nr_last: Option<NrLevel>,
 }
 
 /// What the caller should do after handling a line.
@@ -310,6 +331,9 @@ fn dispatch(
     cmds: &mut Vec<Command>,
 ) -> Reply {
     let mut out = Out::new(fmt, long, echo);
+    if st.nr_level.is_on() {
+        sess.nr_last = Some(st.nr_level);
+    }
     let num = |i: usize| args.get(i).and_then(|s| s.parse::<f64>().ok());
     let int = |i: usize| args.get(i).and_then(|s| s.parse::<i32>().ok());
 
@@ -436,6 +460,31 @@ fn dispatch(
                 out.value("Level Value", format!("{:.6}", st.mic_gain));
                 out.finish(OK, true)
             }
+            Some(l) if l == "SQL" => {
+                out.value("Level Value", format!("{:.6}", st.sql_level()));
+                out.finish(OK, true)
+            }
+            // The strength running, or the one NR comes back on at.
+            Some(l) if l == "NR" => {
+                let level = if st.nr_level.is_on() { Some(st.nr_level) } else { sess.nr_last };
+                let strength = level.and_then(|x| x.strength()).unwrap_or(NrStrength::Med);
+                out.value("Level Value", format!("{:.6}", nr_to_hamlib(strength)));
+                out.finish(OK, true)
+            }
+            // An integer, as Hamlib's AGC level is: a `RIG_AGC_*` value.
+            Some(l) if l == "AGC" => {
+                out.value("Level Value", agc_to_hamlib(st.agc));
+                out.finish(OK, true)
+            }
+            // The front-end gain, where the radio has one: 0.0..=1.0 over the
+            // stage's range.
+            Some(l) if l == "RF" => match &st.rf_gain {
+                Some(g) => {
+                    out.value("Level Value", format!("{:.6}", g.level()));
+                    out.finish(OK, true)
+                }
+                None => out.finish(ENAVAIL, true),
+            },
             Some(l) if l == "STRENGTH" => {
                 // Hamlib's STRENGTH is S-units above S9, in dB: S9 = -73 dBm.
                 out.value("Level Value", st.strength_dbm + 73);
@@ -459,6 +508,39 @@ fn dispatch(
                     cmds.push(Command::SetMicGain(v.clamp(0.0, 1.0) as f32));
                     out.finish(OK, false)
                 }
+                ("SQL", Some(v)) => {
+                    cmds.push(Command::SetSquelch { rx: RxId::Main, db: squelch_db_for(v) });
+                    out.finish(OK, false)
+                }
+                // The strength only: the engine stays the one chosen. While
+                // NR is off it is kept for when it comes on, not switched on.
+                ("NR", Some(v)) => {
+                    let level = nr_engine_for(st, sess.nr_last).at(nr_strength_for(v));
+                    if st.nr_level.is_on() {
+                        cmds.push(Command::SetNoiseReduction { rx: RxId::Main, level });
+                    } else {
+                        sess.nr_last = Some(level);
+                    }
+                    out.finish(OK, false)
+                }
+                ("AGC", Some(v)) => match agc_from_hamlib(v.round() as i32) {
+                    Some(agc) => {
+                        cmds.push(Command::SetAgc { rx: RxId::Main, agc });
+                        out.finish(OK, false)
+                    }
+                    None => out.finish(EINVAL, false),
+                },
+                ("RF", Some(v)) => match &st.rf_gain {
+                    Some(g) => {
+                        cmds.push(Command::SetGain {
+                            dir: Direction::Rx,
+                            element: g.element.clone(),
+                            db: g.value_for(v),
+                        });
+                        out.finish(OK, false)
+                    }
+                    None => out.finish(ENAVAIL, false),
+                },
                 ("", _) => out.finish(EINVAL, false),
                 (_, None) => out.finish(EINVAL, false),
                 _ => out.finish(ENAVAIL, false),
@@ -484,13 +566,11 @@ fn dispatch(
             let rx = RxId::Main;
             match name.as_str() {
                 "NB" => cmds.push(Command::SetNoiseBlanker(on)),
+                // On: the engine and strength last seen on, not always the
+                // spectral NR at medium, which undid the operator's choice.
                 "NR" => cmds.push(Command::SetNoiseReduction {
                     rx,
-                    level: if on {
-                        sdroxide_types::NrLevel::Medium
-                    } else {
-                        sdroxide_types::NrLevel::Off
-                    },
+                    level: if on { nr_on_level(sess.nr_last) } else { NrLevel::Off },
                 }),
                 "ANF" => cmds.push(Command::SetAutoNotch { rx, on }),
                 "MUTE" => cmds.push(Command::SetMute { rx, muted: on }),
@@ -725,7 +805,10 @@ fn dump_state(st: &RigState, cfg: &RigctldConfig) -> String {
 
     // get_func, set_func, get_level, set_level, get_parm, set_parm.
     s.push_str(&format!("0x{FUNC_MASK:x}\n0x{FUNC_MASK:x}\n"));
-    s.push_str(&format!("0x{LEVEL_GET:x}\n0x{LEVEL_SET:x}\n"));
+    // RF only where there is a gain stage to set: a client that sees it
+    // advertised offers the control, and one refused every time looks broken.
+    let rf = if st.rf_gain.is_some() { rig_level::RF } else { 0 };
+    s.push_str(&format!("0x{:x}\n0x{:x}\n", LEVEL_GET | rf, LEVEL_SET | rf));
     s.push_str("0x0\n0x0\n"); // get/set parm
 
     // The trailing key=value block.
@@ -757,7 +840,7 @@ fn dump_state(st: &RigState, cfg: &RigctldConfig) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sdroxide_types::Mode;
+    use sdroxide_types::{AgcMode, Mode};
 
     fn st() -> RigState {
         RigState {
@@ -943,6 +1026,152 @@ mod tests {
         assert_eq!(run_with("u NB", &s, &cfg).0, "1\n");
         assert_eq!(run_with("L RFPOWER 0.8", &s, &cfg).1, vec![Command::SetTxDrive(0.8)]);
         assert_eq!(run_with("U NB 0", &s, &cfg).1, vec![Command::SetNoiseBlanker(false)]);
+    }
+
+    /// SQL is the squelch across its own rail — 0 open, 1 closed — and AGC a
+    /// `RIG_AGC_*` integer, both readable and settable.
+    #[test]
+    fn squelch_and_agc_round_trip() {
+        let s = RigState { squelch_db: -75.0, agc: AgcMode::Slow, ..st() };
+        let cfg = RigctldConfig::default();
+        assert_eq!(run_with("l SQL", &s, &cfg).0, "0.500000\n");
+        assert_eq!(run_with("l AGC", &s, &cfg).0, "3\n");
+        assert_eq!(
+            run_with("L SQL 0", &s, &cfg).1,
+            vec![Command::SetSquelch { rx: RxId::Main, db: sdroxide_types::SQUELCH_OPEN_DB }]
+        );
+        assert_eq!(
+            run_with("L SQL 1", &s, &cfg).1,
+            vec![Command::SetSquelch { rx: RxId::Main, db: sdroxide_types::SQUELCH_CLOSED_DB }]
+        );
+        assert_eq!(
+            run_with("L AGC 0", &s, &cfg).1,
+            vec![Command::SetAgc { rx: RxId::Main, agc: AgcMode::Off }]
+        );
+        assert_eq!(
+            run_with("L AGC 5", &s, &cfg).1,
+            vec![Command::SetAgc { rx: RxId::Main, agc: AgcMode::Med }]
+        );
+        assert_eq!(run_with("L AGC 9", &s, &cfg).0, "RPRT -1\n");
+    }
+
+    /// An RTL-SDR's tuner stage: 0..=49.6 dB in 0.1 dB steps, set at 29.7.
+    fn with_gain() -> RigState {
+        RigState {
+            rf_gain: Some(crate::state::RfGain {
+                element: "TUNER".into(),
+                min: 0.0,
+                max: 49.6,
+                step: 0.1,
+                value: 29.7,
+            }),
+            ..st()
+        }
+    }
+
+    /// The level mask lines of `\dump_state`: get, then set.
+    fn level_masks(d: &str) -> (u64, u64) {
+        let lines: Vec<&str> = d.lines().collect();
+        let ops = lines.iter().position(|l| l.starts_with("vfo_ops=")).expect("vfo_ops");
+        let hex = |l: &str| u64::from_str_radix(l.trim_start_matches("0x"), 16).expect("hex");
+        (hex(lines[ops - 4]), hex(lines[ops - 3]))
+    }
+
+    /// RF is the front-end gain across the stage's own range, read and set on
+    /// its own steps.
+    #[test]
+    fn rf_gain_round_trips_over_the_stage_range() {
+        let s = with_gain();
+        let cfg = RigctldConfig::default();
+        assert_eq!(run_with("l RF", &s, &cfg).0, "0.598790\n");
+        let set = |line: &str| run_with(line, &s, &cfg).1;
+        let gain =
+            |db: f64| vec![Command::SetGain { dir: Direction::Rx, element: "TUNER".into(), db }];
+        assert_eq!(set("L RF 0"), gain(0.0));
+        assert_eq!(set("L RF 1"), gain(49.6));
+        assert_eq!(set("L RF 7"), gain(49.6), "clamped to the top of the range");
+        // Half of 49.6 is 24.8, a whole step already.
+        let (_, cmds) = run_with("L RF 0.5", &s, &cfg);
+        let Command::SetGain { db, .. } = &cmds[0] else { panic!("{cmds:?}") };
+        assert!((db - 24.8).abs() < 1e-9, "{db}");
+        // Between steps it lands on one.
+        let (_, cmds) = run_with("L RF 0.3333", &s, &cfg);
+        let Command::SetGain { db, .. } = &cmds[0] else { panic!("{cmds:?}") };
+        assert!((db * 10.0 - (db * 10.0).round()).abs() < 1e-6, "{db} is not on a 0.1 dB step");
+    }
+
+    /// No gain stage, no RF level: refused, and not advertised either.
+    #[test]
+    fn rf_gain_is_absent_without_a_gain_stage() {
+        let cfg = RigctldConfig::default();
+        assert_eq!(run("l RF").0, "RPRT -11\n");
+        assert_eq!(run("L RF 0.5"), ("RPRT -11\n".to_string(), Vec::new()));
+        let rf = 1u64 << 4;
+        let (get, set) = level_masks(&run("\\dump_state").0);
+        assert_eq!((get & rf, set & rf), (0, 0));
+        let (get, set) = level_masks(&run_with("\\dump_state", &with_gain(), &cfg).0);
+        assert_eq!((get & rf, set & rf), (rf, rf));
+    }
+
+    /// NR's strength is Hamlib's `NR` level; the engine stays the one chosen.
+    #[test]
+    fn nr_strength_keeps_the_engine() {
+        let s = RigState { noise_reduction: true, nr_level: NrLevel::DfMed, ..st() };
+        let cfg = RigctldConfig::default();
+        assert_eq!(run_with("l NR", &s, &cfg).0, "0.666667\n");
+        assert_eq!(
+            run_with("L NR 1", &s, &cfg).1,
+            vec![Command::SetNoiseReduction { rx: RxId::Main, level: NrLevel::DfHigh }]
+        );
+        assert_eq!(
+            run_with("L NR 0.2", &s, &cfg).1,
+            vec![Command::SetNoiseReduction { rx: RxId::Main, level: NrLevel::DfLow }]
+        );
+    }
+
+    /// Off and on again over rigctl brings back the engine and strength the
+    /// operator had, and a strength set while off waits for NR to come on.
+    #[test]
+    fn nr_comes_back_as_it_was() {
+        let cfg = RigctldConfig::default();
+        let mut sess = Session::default();
+        let mut send = |line: &str, s: &RigState| {
+            let mut cmds = Vec::new();
+            handle(line, s, &cfg, &mut sess, &mut cmds);
+            cmds
+        };
+        let on = RigState { noise_reduction: true, nr_level: NrLevel::RnnHigh, ..st() };
+        let off = RigState { noise_reduction: false, nr_level: NrLevel::Off, ..st() };
+        assert_eq!(
+            send("U NR 0", &on),
+            vec![Command::SetNoiseReduction { rx: RxId::Main, level: NrLevel::Off }]
+        );
+        assert_eq!(
+            send("U NR 1", &off),
+            vec![Command::SetNoiseReduction { rx: RxId::Main, level: NrLevel::RnnHigh }]
+        );
+        assert!(send("L NR 0.3", &off).is_empty(), "a strength set while off is kept, not applied");
+        assert_eq!(
+            send("U NR 1", &off),
+            vec![Command::SetNoiseReduction { rx: RxId::Main, level: NrLevel::RnnLow }]
+        );
+    }
+
+    /// A client that never saw NR on still gets what `U NR 1` always gave.
+    #[test]
+    fn nr_on_from_nothing_is_the_old_default() {
+        assert_eq!(
+            run("U NR 1").1,
+            vec![Command::SetNoiseReduction { rx: RxId::Main, level: NrLevel::Medium }]
+        );
+    }
+
+    /// Every AGC setting we have survives the trip through Hamlib's numbers.
+    #[test]
+    fn agc_maps_both_ways() {
+        for agc in AgcMode::ALL {
+            assert_eq!(agc_from_hamlib(agc_to_hamlib(agc)), Some(agc));
+        }
     }
 
     #[test]

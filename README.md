@@ -1039,8 +1039,11 @@ Most amateur software reaches a radio through **Hamlib**, over the network
 protocol its `rigctld` daemon speaks. sdroxide serves that protocol directly, so
 **WSJT-X, fldigi, JS8Call, N1MM, Log4OM, GPredict and CQRLOG** can drive it with
 no extra daemon, no serial cable and no virtual COM port pair — frequency, mode
-and passband, PTT, VFO A/B and split, RIT/XIT, power and volume levels, the
-NB/NR/ANF/MUTE functions, and the VFO operations.
+and passband, PTT, VFO A/B and split, RIT/XIT, power, volume, RF gain,
+squelch, AGC and NR-strength levels, the NB/NR/ANF/MUTE functions, and the VFO
+operations. NR over rigctl keeps the engine chosen in the NR panel: `U NR 1`
+brings back the engine and strength last on, and the `NR` level sets only the
+strength. RF gain is the stage the Gain slider moves, 0 to 1 across its range.
 
 It is **off by default** — port 4532 is often already held by a real `rigctld`,
 and the protocol has no authentication — and lives on the **Servers** tab next

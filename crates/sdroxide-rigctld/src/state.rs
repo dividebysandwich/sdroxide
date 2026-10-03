@@ -1,7 +1,9 @@
 //! The slice of radio state rigctld clients can see, plus the Hamlib mode
 //! vocabulary it is reported in.
 
-use sdroxide_types::{Band, Mode, Vfo};
+use sdroxide_types::{
+    AgcMode, Band, Mode, NrEngine, NrLevel, NrStrength, SQUELCH_CLOSED_DB, SQUELCH_OPEN_DB, Vfo,
+};
 
 /// What the protocol layer needs to answer a query. Refreshed by the engine on
 /// every state change; client threads only ever read it.
@@ -32,7 +34,19 @@ pub struct RigState {
     pub strength_dbm: i32,
     pub noise_blanker: bool,
     pub noise_reduction: bool,
+    /// Which NR engine and how hard, `Off` when off. Its strength is reported
+    /// as Hamlib's `NR` level — see [`nr_to_hamlib`].
+    pub nr_level: NrLevel,
     pub auto_notch: bool,
+    /// Squelch threshold in dBFS, reported as Hamlib's `SQL` (0.0 open ..=
+    /// 1.0 closed) — see [`RigState::sql_level`].
+    pub squelch_db: f32,
+    /// AGC setting, reported as Hamlib's `AGC` — see [`agc_to_hamlib`].
+    pub agc: AgcMode,
+    /// The receiver's front-end gain — the stage the top bar's Gain slider
+    /// moves — reported as Hamlib's `RF` level. `None` on a radio with no RX
+    /// gain the software can set, which then has no `RF` level at all.
+    pub rf_gain: Option<RfGain>,
     /// Whether this radio can transmit at all. False empties the TX range list
     /// in `\dump_state`, which makes Hamlib itself refuse to key.
     pub can_tx: bool,
@@ -63,7 +77,11 @@ impl Default for RigState {
             strength_dbm: -73,
             noise_blanker: false,
             noise_reduction: false,
+            nr_level: NrLevel::Off,
             auto_notch: false,
+            squelch_db: SQUELCH_OPEN_DB,
+            agc: AgcMode::Med,
+            rf_gain: None,
             can_tx: false,
             rx_ranges: Vec::new(),
             tx_ranges: Vec::new(),
@@ -94,6 +112,111 @@ impl RigState {
     pub fn passband_hz(&self) -> i32 {
         (self.filter_hi - self.filter_lo).abs().round() as i32
     }
+
+    /// The squelch as Hamlib's `SQL` level: 0.0 fully open, 1.0 fully closed,
+    /// linear in dB across the slider's own rail.
+    pub fn sql_level(&self) -> f32 {
+        ((self.squelch_db - SQUELCH_OPEN_DB) / (SQUELCH_CLOSED_DB - SQUELCH_OPEN_DB))
+            .clamp(0.0, 1.0)
+    }
+}
+
+/// The front-end RX gain stage, and where it is set.
+///
+/// Hamlib's `RF` level is 0.0..=1.0; this spreads it linearly over the stage's
+/// own range, in whatever the stage counts in (dB, or a hardware ladder's
+/// steps), which is what the Gain slider does too.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RfGain {
+    /// The device's name for the stage, as `Command::SetGain` wants it.
+    pub element: String,
+    pub min: f64,
+    pub max: f64,
+    /// The stage's increment; 0 when it has none.
+    pub step: f64,
+    /// Where it is set now.
+    pub value: f64,
+}
+
+impl RfGain {
+    /// Where the stage is set, as Hamlib's `RF` level.
+    pub fn level(&self) -> f64 {
+        if self.max <= self.min {
+            return 0.0;
+        }
+        ((self.value - self.min) / (self.max - self.min)).clamp(0.0, 1.0)
+    }
+
+    /// A Hamlib `RF` level as a setting of the stage, on its own steps.
+    pub fn value_for(&self, level: f64) -> f64 {
+        let raw = self.min + level.clamp(0.0, 1.0) * (self.max - self.min);
+        let snapped = if self.step > 0.0 {
+            self.min + ((raw - self.min) / self.step).round() * self.step
+        } else {
+            raw
+        };
+        snapped.clamp(self.min, self.max)
+    }
+}
+
+/// An NR strength as Hamlib's `NR` level: thirds of 0.0..=1.0.
+pub fn nr_to_hamlib(s: NrStrength) -> f32 {
+    match s {
+        NrStrength::Low => 1.0 / 3.0,
+        NrStrength::Med => 2.0 / 3.0,
+        NrStrength::High => 1.0,
+    }
+}
+
+/// A Hamlib `NR` level as the nearest strength we have.
+pub fn nr_strength_for(level: f64) -> NrStrength {
+    if level < 0.5 {
+        NrStrength::Low
+    } else if level < 5.0 / 6.0 {
+        NrStrength::Med
+    } else {
+        NrStrength::High
+    }
+}
+
+/// The NR setting `U NR 1` turns on: the last one seen on for this client,
+/// else the spectral NR at medium — what it always turned on before.
+pub fn nr_on_level(last: Option<NrLevel>) -> NrLevel {
+    last.filter(|l| l.is_on()).unwrap_or(NrLevel::Medium)
+}
+
+/// The engine a strength change applies to: the one running, else the last
+/// one seen on, else the spectral NR.
+pub fn nr_engine_for(st: &RigState, last: Option<NrLevel>) -> NrEngine {
+    st.nr_level.engine().or_else(|| last.and_then(|l| l.engine())).unwrap_or(NrEngine::Spectral)
+}
+
+/// A Hamlib `SQL` level (0.0 open ..= 1.0 closed) as a threshold in dBFS.
+pub fn squelch_db_for(level: f64) -> f32 {
+    let l = level.clamp(0.0, 1.0) as f32;
+    SQUELCH_OPEN_DB + l * (SQUELCH_CLOSED_DB - SQUELCH_OPEN_DB)
+}
+
+/// Our AGC as Hamlib's `RIG_AGC_*` value: OFF 0, FAST 2, SLOW 3, MEDIUM 5.
+pub fn agc_to_hamlib(agc: AgcMode) -> i32 {
+    match agc {
+        AgcMode::Off => 0,
+        AgcMode::Fast => 2,
+        AgcMode::Slow => 3,
+        AgcMode::Med => 5,
+    }
+}
+
+/// A Hamlib `RIG_AGC_*` value as ours, the nearest where we have no exact
+/// match: SUPERFAST is Fast, USER and AUTO are Med. `None` outside 0..=6.
+pub fn agc_from_hamlib(v: i32) -> Option<AgcMode> {
+    Some(match v {
+        0 => AgcMode::Off,
+        1 | 2 => AgcMode::Fast,
+        3 => AgcMode::Slow,
+        4..=6 => AgcMode::Med,
+        _ => return None,
+    })
 }
 
 /// The Hamlib mode string we report for one of ours.
