@@ -1442,8 +1442,22 @@ impl Mode {
     /// sustained and full of low notes — is the programme itself. On AM it
     /// took the audio away with the whistle (issue #434), and DRM's decoded
     /// audio is the same material.
+    ///
+    /// **Not on the image and tone modes either.** SSTV, WEFAX, Hell and RF
+    /// Paint are *made* of steady tones — the sync pulses, the subcarrier, the
+    /// low video frequencies — so a canceller that removes anything persistent
+    /// removes the picture. An operator in SSTV with the notch on saw the low
+    /// end (around 200–290 Hz, where the sync and the dark video sit) eaten
+    /// away to a dead band in the waterfall and the spectrum. The same argument
+    /// covers the receive-only image lanes: their content is tone, not voice.
     pub fn auto_notch_applies(self) -> bool {
-        !matches!(self, Mode::Am | Mode::Sam | Mode::Wfm | Mode::Drm | Mode::HdRadio)
+        if matches!(self, Mode::Am | Mode::Sam | Mode::Wfm | Mode::Drm | Mode::HdRadio) {
+            return false;
+        }
+        if self.is_image() || self.is_wefax() || self.is_hell() || self.is_rf_paint() {
+            return false;
+        }
+        true
     }
 
     /// Furthest a filter edge may be dragged from the carrier — bounded by
