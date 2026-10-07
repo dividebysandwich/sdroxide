@@ -642,13 +642,13 @@ fn card(
     // and keeps a copy of the password instead.
     #[cfg(target_arch = "wasm32")]
     {
-        ui.label(
-            RichText::new("Remember this station")
-                .size(11.5)
-                .weak(),
-        );
-        ui.horizontal(|ui| {
-            for (hours, label) in [(DEFAULT_DWELL_H, "12 HOURS"), (LONG_DWELL_H, "1 DAY")] {
+        ui.label(RichText::new("Remember this station").size(11.5).weak());
+        // Wrapped rather than one row: on a phone these three do not fit, and a
+        // chip pushed off the right edge is a choice the operator cannot make.
+        ui.horizontal_wrapped(|ui| {
+            for (hours, label) in
+                [(DEFAULT_DWELL_H, "12 HOURS"), (LONG_DWELL_H, "1 DAY"), (0, "NOT THIS TIME")]
+            {
                 let chip = crate::chrome::chip(
                     ui,
                     form.dwell == hours,
@@ -660,11 +660,18 @@ fn card(
             }
         });
         ui.label(
-            RichText::new("This station keeps your sign-in, not this page — nothing to fill in on \
-                          the other radios, and nothing to forget when you leave. A day is still a \
-                          day.")
-                .size(10.5)
-                .color(crate::theme::gray(140)),
+            RichText::new(match form.dwell {
+                0 => {
+                    "This station will not remember you: you are asked again on the next \
+                       connection, and nothing about this sign-in is kept on the device."
+                }
+                _ => {
+                    "This station keeps your sign-in, not this page — nothing to fill in on the \
+                      other radios, and nothing to forget when you leave. A day is still a day."
+                }
+            })
+            .size(10.5)
+            .color(crate::theme::gray(140)),
         );
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -796,8 +803,12 @@ fn remember_with_cookie(station: &str, username: &str, password: &str, hours: u3
         keep_the_promise();
         return;
     };
-    let body =
-        format!(r#"{{"username":{},"password":{},"hours":{}}}"#, json_string(username), json_string(password), hours);
+    let body = format!(
+        r#"{{"username":{},"password":{},"hours":{}}}"#,
+        json_string(username),
+        json_string(password),
+        hours
+    );
     wasm_bindgen_futures::spawn_local(async move {
         if !post_json(&url, body).await {
             // A station too old to answer `/signin`, or a network that refused.
@@ -858,10 +869,7 @@ async fn post_json(url: &str, body: String) -> bool {
         // 200 from this one are told apart.
         Ok(response) => {
             use wasm_bindgen::JsCast;
-            response
-                .dyn_into::<web_sys::Response>()
-                .map(|r| r.status() == 200)
-                .unwrap_or(false)
+            response.dyn_into::<web_sys::Response>().map(|r| r.status() == 200).unwrap_or(false)
         }
         Err(_) => false,
     }
@@ -1220,7 +1228,10 @@ mod tests {
     /// a port that only ever speaks WebSocket.
     #[test]
     fn the_cookie_is_asked_of_the_station_over_http() {
-        assert_eq!(signin_url("ws://shack.test:4950").as_deref(), Some("http://shack.test:4950/signin"));
+        assert_eq!(
+            signin_url("ws://shack.test:4950").as_deref(),
+            Some("http://shack.test:4950/signin")
+        );
         assert_eq!(signin_url("wss://shack.test").as_deref(), Some("https://shack.test/signin"));
         // Behind a reverse proxy the station's address carries a path prefix —
         // `https://host/shack` — and the sign-in has to go to the same prefixed
@@ -1258,6 +1269,26 @@ mod tests {
         // old one carried over.
         form.settle(&AuthPhase::Prompt(None), "ws://another.test:4950");
         assert_eq!(form.dwell, DEFAULT_DWELL_H);
+    }
+
+    /// Saying no has to be as easy as saying yes. The card's dwell is a *choice*
+    /// and `0` is one of its values, so a browser cannot be left unable to refuse
+    /// a station the cookie — which is what a two-chip card with no third does to
+    /// a shared machine.
+    #[test]
+    fn not_this_time_asks_again_and_keeps_nothing() {
+        let station = "ws://refuse.test:4950";
+        let mut form = LoginForm::default();
+        form.settle(&AuthPhase::Prompt(None), station);
+        form.dwell = 0;
+        form.settle(&AuthPhase::Prompt(None), station);
+        assert_eq!(form.dwell, 0, "the refusal was overwritten by a default");
+
+        // ...and the refusal survives the next frame, which is the whole reason it
+        // is a value of the same field rather than a separate flag.
+        form.settle(&AuthPhase::Checking, station);
+        form.settle(&AuthPhase::Open, station);
+        assert_eq!(form.dwell, 0);
     }
 
     /// The long dwell is a wasm-only constant, and the test above needs it on a
