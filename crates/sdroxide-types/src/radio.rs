@@ -806,6 +806,25 @@ impl LineState {
     }
 }
 
+/// Whether this radio's own PTT (mic, foot switch, front panel) is followed:
+/// reported over CAT or seen on the T/R switch's transmit sense input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ExternalPtt {
+    #[default]
+    Allow,
+    Disable,
+}
+
+impl ExternalPtt {
+    pub const ALL: [ExternalPtt; 2] = [ExternalPtt::Allow, ExternalPtt::Disable];
+    pub fn label(self) -> &'static str {
+        match self {
+            ExternalPtt::Allow => "Allow",
+            ExternalPtt::Disable => "Disable",
+        }
+    }
+}
+
 /// How to key the transmitter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PttMethod {
@@ -1189,6 +1208,8 @@ pub struct CatConfig {
     /// by every other family, which have no such choice to make.
     #[serde(default)]
     pub trusdx_audio: TrUsdxAudio,
+    /// Follow the radio's own PTT, or ignore it.
+    pub external_ptt: ExternalPtt,
 }
 
 /// The slowest CI-V link the scope sweeps fit down. A sweep is ~500 bytes of
@@ -1323,6 +1344,7 @@ impl Default for CatConfig {
             family: CatFamily::default(),
             serial: SerialConfig::default(),
             ptt: PttMethod::default(),
+            external_ptt: ExternalPtt::default(),
             poll_hz: 2.0,
             mode_control: ModeControl::default(),
             digi_mode: DigiMode::default(),

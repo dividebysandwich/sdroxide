@@ -11796,6 +11796,27 @@ reconnects by itself when you plug it back in — no need to press Apply.
 
 #### 6.2.10 Icom LAN (network radios)
 
+**Local microphone PTT.** sdroxide reads the radio's CI-V `1C 00` transmit state
+every 200 ms over the network, including on the IC-705. A microphone, foot switch,
+VOX, or keyer transmission is reported to the engine and any configured T/R relay,
+without sending a PTT command back to the radio. In USB, LSB, AM, and FM voice
+modes, local PTT also feeds computer microphone audio when the radio's **DATA-OFF
+MOD input is LAN**. With the radio microphone selected it only observes the over.
+The input is read back periodically, so changing it on the radio stops or starts
+the host voice feed without changing PTT ownership. If **Set modulation input to
+LAN on connect** is off, sdroxide leaves the operator's choice untouched.
+Digital bursts and CW are not started by this local voice-PTT path. The meter
+follows the over and the scope watchdog waits until receive resumes.
+The PTT indicator and radio-tab TX badge light for detected local PTT on native
+and remote screens, and go idle on release. This indication does not transfer
+key/unkey control from the radio to sdroxide.
+Replies around sdroxide's own PTT commands are suppressed to avoid false local
+key-downs. If transmit-state replies stop for two seconds, sdroxide logs a warning
+and clears the observed state, matching serial CAT behavior.
+Detection takes a poll interval plus network latency: it cannot protect the SDR
+before RF starts. Use hardware RF protection or a wired transmit sense input
+where that timing is critical.
+
 The **Icom LAN (network)** interface drives an Icom over the Ethernet or WiFi
 port on the radio itself, using the same IP-remote protocol Icom's own RS-BA1
 software speaks. No licence for RS-BA1 is needed, and no computer at the radio

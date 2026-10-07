@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use sdroxide_radio::{
-    Complex32, EngineConfig, IqSource, RadioError, Result, TrSwitch, start_engine,
+    Complex32, ControlUpdate, EngineConfig, IqSource, RadioError, Result, TrSwitch, start_engine,
 };
 use sdroxide_relay::{ChannelMask, RelayTransport};
 use sdroxide_types::{
@@ -94,6 +94,7 @@ impl RelayTransport for FakeBoard {
 struct RigLog {
     keyed: Vec<Instant>,
     unkeyed: Vec<Instant>,
+    local_ptt: Option<bool>,
     /// Whether `tx_begin` should refuse — a radio that will not key.
     refuse: bool,
 }
@@ -120,6 +121,9 @@ impl IqSource for MockTrx {
     }
     fn describe(&self) -> String {
         "mock transceiver".into()
+    }
+    fn poll_control(&mut self) -> Vec<ControlUpdate> {
+        self.log.lock().unwrap().local_ptt.take().map(ControlUpdate::RigTx).into_iter().collect()
     }
     fn tx_begin(&mut self, _center_hz: f64, rate: f64) -> Result<f64> {
         let mut l = self.log.lock().unwrap();
@@ -333,6 +337,25 @@ fn the_contacts_lead_the_rf_and_trail_it() {
         hold >= Duration::from_millis(u64::from(HOLD_MS) - SLACK_MS),
         "the contacts trailed the RF by only {hold:?}, not the {HOLD_MS} ms asked for"
     );
+    st.shutdown();
+}
+
+#[test]
+fn local_microphone_ptt_switches_the_relay_without_keying_the_radio() {
+    let st = station(1);
+    st.wait_state(0);
+    st.rigs[0].lock().unwrap().local_ptt = Some(true);
+    st.wait_state(1);
+    assert_eq!(st.changes().last().map(|(_, m)| *m), Some(1), "local PTT did not close the relay");
+    assert!(st.rigs[0].lock().unwrap().keyed.is_empty(), "local PTT commanded radio key-down");
+    st.rigs[0].lock().unwrap().local_ptt = Some(false);
+    st.wait_state(0);
+    assert_eq!(
+        st.changes().last().map(|(_, m)| *m),
+        Some(0),
+        "local release did not open the relay"
+    );
+    assert!(st.rigs[0].lock().unwrap().unkeyed.is_empty(), "local release commanded radio unkey");
     st.shutdown();
 }
 

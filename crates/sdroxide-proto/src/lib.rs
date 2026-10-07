@@ -1783,7 +1783,14 @@ use sdroxide_types::{
 /// v225: the Hermes-Lite 2's PA switch per band. `RadioState` gains
 /// `pa_enable` on its tail, which changes every state frame, and `Command`
 /// gains a trailing `SetPa`.
-pub const PROTO_VERSION: u16 = 225;
+///
+/// v226: each radio chooses whether to follow its own PTT. `CatConfig` gains
+/// `external_ptt` (`ExternalPtt`) on its tail, and `TxState.external_ptt`
+/// reports the radio's own PTT independently of commanded PTT, so native and
+/// remote transmit indicators follow it. `TxState` rides `RadioState` whole and
+/// the radio configuration rides whole in a command and an event, so a v225
+/// peer reads the extra bytes out of step.
+pub const PROTO_VERSION: u16 = 226;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -2362,6 +2369,18 @@ pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, ProtoError> 
 mod tests {
     use super::*;
     use sdroxide_types::ImageSlotInfo;
+
+    #[test]
+    fn external_ptt_status_roundtrips_independently_of_commanded_ptt() {
+        let mut state = RadioState::default();
+        state.tx.external_ptt = true;
+        let message = ServerMsg::State(state);
+        let decoded: ServerMsg = decode(&encode(&message).unwrap()).unwrap();
+        assert_eq!(decoded, message);
+        let ServerMsg::State(state) = decoded else { panic!("expected radio state") };
+        assert!(state.tx.ptt_on());
+        assert!(!state.tx.ptt);
+    }
 
     #[test]
     fn roundtrip_client_and_server_msgs() {

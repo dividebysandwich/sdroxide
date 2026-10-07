@@ -33,6 +33,21 @@ const NO_ANSWER_YET: &str = "Waiting for the machine the radio is attached to: t
 /// PlutoSDR, in dB — see where it is used (#525).
 const PLUTO_PS_RX2_START_DB: f64 = 0.0;
 
+/// The row that decides whether the radio's own PTT is followed. Shared by
+/// every interface whose radio can report it.
+fn external_ptt_row(ui: &mut egui::Ui, value: &mut sdroxide_types::ExternalPtt) {
+    ui.label(tr!("settings-radio-external-ptt"))
+        .on_hover_text(tr!("settings-radio-external-ptt-hint"));
+    enum_combo(
+        ui,
+        "extptt",
+        value,
+        &sdroxide_types::ExternalPtt::ALL,
+        sdroxide_types::ExternalPtt::tr,
+    );
+    ui.end_row();
+}
+
 fn probe_only<R>(ui: &mut egui::Ui, can_probe: bool, add: impl FnOnce(&mut egui::Ui) -> R) {
     let group = ui.add_enabled_ui(can_probe, add);
     if !can_probe {
@@ -443,6 +458,8 @@ pub(in crate::app) fn settings_cat_tab(
         });
         enum_combo(ui, "ptt", &mut cfg.cat.ptt, &PttMethod::ALL, PttMethod::label);
         ui.end_row();
+
+        external_ptt_row(ui, &mut cfg.cat.external_ptt);
 
         ui.label(tr!("settings-radio-mode-control"));
         enum_combo(ui, "modectl", &mut cfg.cat.mode_control, &ModeControl::ALL, ModeControl::tr);
@@ -2314,6 +2331,7 @@ pub(in crate::app) fn settings_icomnet_tab(
             ui.end_row();
         }
 
+        external_ptt_row(ui, &mut cfg.cat.external_ptt);
         ui.label(tr!("settings-radio-cw-keying"))
             .on_hover_text(tr!("settings-radio-how-cw-panel-s-keyer-2"));
         ComboBox::from_id_salt("icomnet_cw").selected_text(net.cw_keying.tr()).show_styled(
@@ -3098,6 +3116,7 @@ pub(in crate::app) fn settings_smartsdr_tab(
         }
         ui.end_row();
 
+        external_ptt_row(ui, &mut cfg.cat.external_ptt);
         ui.label("");
         // Both run here: the test opens its own connection from this machine,
         // and the trace is of this process's own session.
@@ -4149,6 +4168,8 @@ pub(in crate::app) fn settings_elad_tab(
             .on_hover_text(tr!("settings-radio-how-transmit-keyed-cat-sends"));
         enum_combo(ui, "elad_ptt", &mut cfg.cat.ptt, &PttMethod::ALL, PttMethod::label);
         ui.end_row();
+
+        external_ptt_row(ui, &mut cfg.cat.external_ptt);
 
         ui.label(tr!("settings-radio-transmit-input"))
             .on_hover_text(tr!("settings-radio-where-radio-takes-transmit-audio-2"));
