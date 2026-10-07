@@ -53,6 +53,63 @@ pub(in crate::app) fn device_combo(
     });
 }
 
+/// Which station this client is signed in to, and the way back out of it.
+///
+/// The other half of the sign-in cookie, and it lives here because a cookie
+/// outlives a reload: an operator who signed in for a day has no reason to
+/// think about it again until they want to, and "somebody else's browser" is
+/// exactly the case where being signed in matters. A native client has no
+/// cookie — it keeps a copy of the password instead — so the same button clears
+/// that, and says which it is doing rather than showing a control that quietly
+/// does the wrong half.
+pub(in crate::app) fn signed_in_station(ui: &mut egui::Ui, station: &str) {
+    let station_key = crate::login::station_key(station);
+    ui.label(RichText::new("Signed-in station").size(14.0).strong().color(crate::theme::CYAN()));
+    ui.add_space(6.0);
+    ui.label(RichText::new(station_key.clone()).size(11.5).weak());
+    ui.add_space(8.0);
+
+    let mut sign_out = false;
+    ui.horizontal(|ui| {
+        sign_out = crate::chrome::chip_accent(
+            ui,
+            false,
+            RichText::new(" SIGN OUT ").strong().size(12.0),
+            crate::theme::ALERT(),
+            crate::theme::INK_ON_CYAN(),
+        )
+        .clicked();
+    });
+    sign_out.then(|| crate::login::sign_out(&station_key));
+
+    let fallback = crate::login::cookie_fallback_stations();
+    if fallback.is_empty() {
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(
+                "Forgets this device's sign-in. The station has to ask again on the next \
+                 connection; this one stays up until you close it.",
+            )
+            .size(11.0)
+            .weak(),
+        );
+    } else {
+        // The cookie could not be taken, so a password is being kept in the page
+        // instead. Said here because the alternative is a browser holding a
+        // station's password that the operator believes it does not.
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(format!(
+                "Remembering a password in this browser for {}, because it answered no sign-in \
+                 cookie. Older stations do this; it is not the same thing.",
+                fallback.join(", ")
+            ))
+            .size(11.0)
+            .color(crate::theme::gray(140)),
+        );
+    }
+}
+
 /// Who may connect to this machine's server (`[remote_access]` in
 /// `config.toml`).
 ///

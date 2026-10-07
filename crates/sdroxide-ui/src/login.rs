@@ -37,6 +37,8 @@
 
 use crate::i18n::tr;
 use std::collections::BTreeMap;
+#[cfg(target_arch = "wasm32")]
+use std::collections::BTreeSet;
 use std::sync::{LazyLock, Mutex};
 
 use eframe::egui::{self, RichText};
@@ -99,7 +101,15 @@ pub struct LoginForm {
     /// Whether to keep this sign-in on this device. Off by default: it writes
     /// a password to disk (or to the browser's local storage), which is the
     /// operator's call to make, not ours to make for them.
+    ///
+    /// Native only. In the browser the card offers [`Self::dwell`] instead,
+    /// because what it can offer there is better than a copy of the password
+    /// in the page: the station's own signed cookie.
     remember: bool,
+    /// How long the station should remember this sign-in, in hours — `12` or
+    /// `24`, which is what the card's chips offer, and `0` for "ask again next
+    /// time". Browser only; see [`Self::remember`].
+    dwell: u32,
     /// Whether a stored sign-in has already been offered on this connection.
     /// Once only, so a stored password the server no longer accepts asks the
     /// operator instead of being posted back for ever.
@@ -186,8 +196,14 @@ impl LoginForm {
     /// storing what the operator typed before the server has agreed with it
     /// would leave a wrong password behind to be offered again next time.
     pub fn settle(&mut self, phase: &AuthPhase, station: &str) {
-        if !station.is_empty() {
+        if !station.is_empty() && station != self.station {
+            // First sight of *this* station, so the card's default is the short
+            // dwell — remembering for a day is the operator's second choice to
+            // make, not ours to make for them. Guarded on the station changing,
+            // or it would put the default back over the operator's own pick on
+            // the very next frame.
             self.station = station.to_string();
+            self.dwell = DEFAULT_DWELL_H;
         }
         // The claim on the station's gate is held for exactly as long as an
         // answer is with the server, which is what `Checking` means. Anything
@@ -235,6 +251,17 @@ impl LoginForm {
                 RemoteAccess { username: self.username.clone(), password: self.password.clone() },
             );
         }
+        #[cfg(target_arch = "wasm32")]
+        // On a browser the answer the station just accepted is worth more than
+        // a copy of the password sitting in the page: ask the station to
+        // remember *it* for a while, so every other radio's connection — and
+        // every reload — is let in without a field to fill. Where the station
+        // cannot (one too old to answer `/signin`) the old store stands in and
+        // says so, rather than quietly not remembering.
+        if self.dwell != 0 {
+            remember_with_cookie(&self.station, &self.username, &self.password, self.dwell);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         if self.remember {
             store(&RemoteAccess {
                 username: self.username.clone(),
@@ -243,6 +270,10 @@ impl LoginForm {
         } else if self.answered_by_hand {
             // Unticking it is an instruction, not an omission — but only from
             // somebody who was shown the box. See [`Self::answered_by_hand`].
+            forget();
+        }
+        #[cfg(target_arch = "wasm32")]
+        if self.dwell == 0 && self.answered_by_hand {
             forget();
         }
         self.manual = None;
@@ -605,17 +636,50 @@ fn card(
     });
 
     ui.add_space(10.0);
-    // The wording is the hint on a touched layout: there is no pointer to hover
-    // with, so a tooltip there is a sentence nobody will ever read.
-    let remember = crate::chrome::checkbox(ui, &mut form.remember, tr!("login-remember-device"));
-    if !touch {
-        remember.on_hover_text(tr!("login-signs-without-asking-next-time"));
-    } else {
+    // What the card offers differs by client, and the difference is the whole
+    // point: a browser can be given the station's signed cookie, which is the
+    // password's own answer, while the native client has nothing to hold one
+    // and keeps a copy of the password instead.
+    #[cfg(target_arch = "wasm32")]
+    {
         ui.label(
-            RichText::new(tr!("login-keeps-password-device-clear"))
+            RichText::new("Remember this station")
+                .size(11.5)
+                .weak(),
+        );
+        ui.horizontal(|ui| {
+            for (hours, label) in [(DEFAULT_DWELL_H, "12 HOURS"), (LONG_DWELL_H, "1 DAY")] {
+                let chip = crate::chrome::chip(
+                    ui,
+                    form.dwell == hours,
+                    RichText::new(label).size(if touch { 13.0 } else { 11.5 }),
+                );
+                if chip.clicked() {
+                    form.dwell = hours;
+                }
+            }
+        });
+        ui.label(
+            RichText::new("This station keeps your sign-in, not this page — nothing to fill in on \
+                          the other radios, and nothing to forget when you leave. A day is still a \
+                          day.")
                 .size(10.5)
                 .color(crate::theme::gray(140)),
         );
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let remember =
+            crate::chrome::checkbox(ui, &mut form.remember, tr!("login-remember-device"));
+        if !touch {
+            remember.on_hover_text(tr!("login-signs-without-asking-next-time"));
+        } else {
+            ui.label(
+                RichText::new(tr!("login-keeps-password-device-clear"))
+                    .size(10.5)
+                    .color(crate::theme::gray(140)),
+            );
+        }
     }
 
     ui.add_space(12.0);
@@ -642,6 +706,189 @@ fn card(
                 .color(crate::theme::gray(140)),
         );
     }
+}
+
+// ── The sign-in cookie ───────────────────────────────────────────────────────
+//
+// What the card's chips mean on a browser: the station keeps the sign-in, this
+// page keeps nothing. Four moving parts, and each one is a decision somebody
+// has to be told about:
+//
+// * **`/signin` over plain HTTP**, not a message on the socket — a cookie is a
+//   response header, and the WebSocket handshake's headers are spent before the
+//   sign-in conversation has started. See `sdroxide-server`'s `signin`.
+// * **A fallback to the old store**, because a station too old to answer
+//   `/signin` must still work, and because a promise of "you will not be asked
+//   again for twelve hours" cannot be kept by doing nothing. When that happens
+//   the station is remembered in [`cookie_fallback_stations`] and the settings
+//   panel says so, rather than a password being kept quietly.
+// * **A sign-out**, because the cookie is `HttpOnly` and a page cannot clear one
+//   it is not allowed to read. A button that silently does nothing is this
+//   fork's standing bug, so that is one of the reasons this exists at all.
+
+/// The dwell the card offers first, and the one it defaults to.
+pub(crate) const DEFAULT_DWELL_H: u32 = 12;
+/// The longer of the two, and never a default: a day is a long time to leave a
+/// station signed in on somebody else's browser. Browser only — the card is the
+/// only thing that offers it.
+#[cfg(target_arch = "wasm32")]
+pub(crate) const LONG_DWELL_H: u32 = 24;
+
+/// Stations that could not be asked for a cookie and were given the old store
+/// instead, so the operator can be told which of their stations are holding a
+/// password rather than a cookie. Always empty on a native client.
+#[cfg(target_arch = "wasm32")]
+static COOKIE_FALLBACK: LazyLock<Mutex<BTreeSet<String>>> =
+    LazyLock::new(|| Mutex::new(BTreeSet::new()));
+
+/// The stations whose password this browser is holding because they had no
+/// `/signin` to answer. Empty on a native client, which never asks for one.
+pub fn cookie_fallback_stations() -> Vec<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return COOKIE_FALLBACK.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect();
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    Vec::new()
+}
+
+/// The station's own address in HTTP terms: `wss://host/ws/2` → `https://host`.
+///
+/// The two schemes come apart here rather than further down. A WebSocket is
+/// `ws`/`wss` and the sign-in is `http`/`https`, and getting that backwards
+/// would send the password to a port that only ever speaks the upgrade.
+///
+/// `dead_code` on a native build is not an oversight: the only caller is the
+/// browser path, and the tests at the bottom of this file pin both of these
+/// here rather than letting them be written blind and shipped untested.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn http_base(station: &str) -> Option<String> {
+    for (ws, http) in [("wss://", "https://"), ("ws://", "http://")] {
+        if let Some(rest) = station.strip_prefix(ws) {
+            return Some(format!("{http}{rest}"));
+        }
+    }
+    None
+}
+
+/// Where this station is asked to remember a sign-in.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn signin_url(station: &str) -> Option<String> {
+    Some(format!("{}/signin", http_base(station)?))
+}
+
+/// Ask the station to remember this sign-in for `hours`.
+#[cfg(target_arch = "wasm32")]
+fn remember_with_cookie(station: &str, username: &str, password: &str, hours: u32) {
+    // Everything the fallback needs is taken by value: the fetch outlives this
+    // frame, and a closure over the caller's borrows is exactly what would stop
+    // it being spawned.
+    let station = station.to_string();
+    let kept = RemoteAccess { username: username.to_string(), password: password.to_string() };
+    let url = signin_url(&station);
+    let keep_the_promise = move || {
+        store(&kept);
+        COOKIE_FALLBACK.lock().unwrap_or_else(|e| e.into_inner()).insert(station);
+    };
+    let Some(url) = url else {
+        // No address means no `/signin`, and the card has already promised the
+        // station would remember. Do the old thing rather than break it.
+        keep_the_promise();
+        return;
+    };
+    let body =
+        format!(r#"{{"username":{},"password":{},"hours":{}}}"#, json_string(username), json_string(password), hours);
+    wasm_bindgen_futures::spawn_local(async move {
+        if !post_json(&url, body).await {
+            // A station too old to answer `/signin`, or a network that refused.
+            // Either way the operator was promised, so keep the promise the old
+            // way and say in the settings panel which stations are doing it.
+            eprintln!("{url} would not take a sign-in cookie; remembering the password instead");
+            keep_the_promise();
+        }
+    });
+}
+
+/// A JSON string literal, which for these two fields is quotes and escapes. A
+/// username or password that broke the request would be reported by the
+/// station as a correct password it had refused.
+#[cfg(target_arch = "wasm32")]
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// `POST` a JSON body, and say whether the station took it. `200` and nothing
+/// else: a 404 from an older station and a refused connection are the same
+/// thing to a caller, which is "no cookie".
+#[cfg(target_arch = "wasm32")]
+async fn post_json(url: &str, body: String) -> bool {
+    let Some(window) = web_sys::window() else { return false };
+    let Ok(headers) = web_sys::Headers::new() else { return false };
+    if headers.append("content-type", "application/json").is_err() {
+        return false;
+    }
+    let init = web_sys::RequestInit::new();
+    init.set_method("POST");
+    // Same-origin, and the default credentials: the cookie the station is about
+    // to hand out, and the one it may already hold, only travel if the fetch is
+    // allowed to carry them.
+    init.set_mode(web_sys::RequestMode::SameOrigin);
+    init.set_headers(&headers);
+    init.set_body(&wasm_bindgen::JsValue::from_str(&body));
+    let Ok(request) = web_sys::Request::new_with_str_and_init(url, &init) else { return false };
+    match window.fetch_with_request(&request).await {
+        // `fetch` hands back a `JsValue`; the status is on it through the
+        // `Response` interface, which is where a 404 from an older station and a
+        // 200 from this one are told apart.
+        Ok(response) => {
+            use wasm_bindgen::JsCast;
+            response
+                .dyn_into::<web_sys::Response>()
+                .map(|r| r.status() == 200)
+                .unwrap_or(false)
+        }
+        Err(_) => false,
+    }
+}
+
+/// Forget this browser's sign-in.
+///
+/// The cookie is the station's to take back, so that is what is asked for, and
+/// any copy of the password this browser is holding goes with it — leaving it
+/// behind after a sign-out would miss the whole point of one. The connection
+/// you are already signed in on stays up: a sign-out that also dropped the
+/// radio would be a second and quieter thing to do, and it is not what the
+/// button says it does.
+pub fn sign_out(station: &str) {
+    // Native has no cookie to ask a station to take back; the store is the whole
+    // of what it keeps, and `forget` below clears it.
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = station;
+    #[cfg(target_arch = "wasm32")]
+    if let Some(base) = http_base(station) {
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = post_json(&format!("{base}/signout"), String::new()).await;
+            forget();
+        });
+        return;
+    }
+    forget();
 }
 
 // ── Where a remembered sign-in lives ─────────────────────────────────────────
@@ -966,6 +1213,57 @@ mod tests {
             ..tab(station)
         }
     }
+
+    /// The sign-in has to be asked of the station over plain HTTP, and the two
+    /// schemes are not the same word: `ws`/`wss` is the upgrade and `http`/
+    /// `https` is the fetch. Getting this backwards would put the password on
+    /// a port that only ever speaks WebSocket.
+    #[test]
+    fn the_cookie_is_asked_of_the_station_over_http() {
+        assert_eq!(signin_url("ws://shack.test:4950").as_deref(), Some("http://shack.test:4950/signin"));
+        assert_eq!(signin_url("wss://shack.test").as_deref(), Some("https://shack.test/signin"));
+        // Behind a reverse proxy the station's address carries a path prefix —
+        // `https://host/shack` — and the sign-in has to go to the same prefixed
+        // endpoint the sockets were reached on. Dropping it would post the
+        // password to the proxy's root, which is a 404 that reads as a station
+        // that refused a correct password.
+        assert_eq!(
+            signin_url("wss://host.test/shack").as_deref(),
+            Some("https://host.test/shack/signin")
+        );
+        // A secure station must not have its password asked for over plain HTTP
+        // "as a fallback", so nothing here quietly rewrites one to the other.
+        assert!(signin_url("https://shack.test").is_none());
+        assert!(signin_url("").is_none());
+    }
+
+    /// The card's default dwell, and — the half that is easy to get wrong — it
+    /// must be the *default*, not an override: `settle` runs every frame, so
+    /// setting it unconditionally would put the short dwell back over an
+    /// operator who had just picked the long one and they would get twelve
+    /// hours while the card said a day.
+    #[test]
+    fn the_short_dwell_is_the_default_and_the_pick_survives_the_next_frame() {
+        let station = "ws://dwell.test:4950";
+        let mut form = LoginForm::default();
+        form.settle(&AuthPhase::Prompt(None), station);
+        assert_eq!(form.dwell, DEFAULT_DWELL_H);
+
+        form.dwell = LONG_DWELL_H_TEST;
+        // Every frame again, as the shell does.
+        form.settle(&AuthPhase::Prompt(None), station);
+        assert_eq!(form.dwell, LONG_DWELL_H_TEST, "the card's own pick was overwritten");
+
+        // ...and arriving at a *different* station is a fresh choice, not the
+        // old one carried over.
+        form.settle(&AuthPhase::Prompt(None), "ws://another.test:4950");
+        assert_eq!(form.dwell, DEFAULT_DWELL_H);
+    }
+
+    /// The long dwell is a wasm-only constant, and the test above needs it on a
+    /// native build — which is the one place a value crossing a target boundary
+    /// can quietly disagree with itself.
+    const LONG_DWELL_H_TEST: u32 = 24;
 
     /// Issue #188: the operator's own answer takes the station's turn like
     /// every other one. It used to go straight out, so a tab letting itself in

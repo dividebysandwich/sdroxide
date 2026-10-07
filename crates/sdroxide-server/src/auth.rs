@@ -128,8 +128,18 @@ pub(crate) struct Frames<'a> {
 /// and accepted its protocol version, so a client on the wrong protocol is told
 /// *that* rather than being asked to sign in to a server it could not have
 /// talked to anyway.
-pub(crate) async fn challenge(socket: &mut WebSocket, gate: &AuthGate, frames: Frames<'_>) -> bool {
-    if gate.required().is_none() {
+pub(crate) async fn challenge(
+    socket: &mut WebSocket,
+    gate: &AuthGate,
+    frames: Frames<'_>,
+    already: bool,
+) -> bool {
+    // A cookie the station itself signed, still inside its dwell and still
+    // matching the password this server is configured with today. The sign-in
+    // card on this connection is then not needed, and asking for it anyway
+    // would be the bug the cookie exists to remove: a station of three radios
+    // gives an answer here and then asks for the same answer on the next two.
+    if already || gate.required().is_none() {
         return true;
     }
     if socket.send(Message::Binary(frames.required.into())).await.is_err() {

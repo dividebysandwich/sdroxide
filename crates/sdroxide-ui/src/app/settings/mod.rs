@@ -38,7 +38,7 @@ use sdroxide_types::{Command, LoginTarget, LookupProvider, NetworkConfig, Upload
 
 use self::alerts::alerts_settings;
 use self::controls::settings_controls_tab;
-use self::general::{device_combo, region_combo, remote_access_settings};
+use self::general::{device_combo, region_combo, remote_access_settings, signed_in_station};
 use self::net::{
     broadcast_stations_settings, net_heading, net_row, net_secret, operator_identity_note,
     settings_freedv_tab,
@@ -1872,6 +1872,18 @@ impl SdroxideApp {
                 // pair of pickers on a shared page could only describe one of
                 // them (issue #474).
                 self.settings_user_audio(ui, io.audio_pick, io.routing_pick);
+
+                // Which station this client is signed in to, and the way out of
+                // it. Above the server-side blocks below, because those are drawn
+                // only for a station in this process while this is drawn for a
+                // client of one anywhere else — which is the browser, where the
+                // sign-in cookie is the whole mechanism.
+                if let Some(url) = self.ctrl.peer_url() {
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    signed_in_station(ui, &url);
+                }
 
                 if let Some(access) = io.access_edit.as_deref_mut() {
                     ui.add_space(10.0);
