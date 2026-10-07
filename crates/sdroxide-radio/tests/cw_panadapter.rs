@@ -13,7 +13,7 @@
 
 use std::time::Duration;
 
-use sdroxide_radio::{Complex32, EngineConfig, IqSource, Result, start_engine};
+use sdroxide_radio::{AudioParams, Complex32, EngineConfig, IqSource, Result, rtrb, start_engine};
 use sdroxide_types::{Command, DeviceCaps, Mode, RxId, SpectrumFrame};
 
 const RATE: f64 = 2_400_000.0;
@@ -59,11 +59,31 @@ fn caps() -> DeviceCaps {
 }
 
 /// Run `cmds`, then return the last spectrum frame the engine published.
+///
+/// **With an audio chain, which is the whole point.** `EngineConfig::default()`
+/// has no audio, and **no audio means no `main` chain at all** (`Engine::new`'s
+/// `None => (None, None, …)`), so this harness used to run the one
+/// configuration the channel analyzer cannot work in: the analyzer is fed from
+/// the main DDC's output, and with no main it is created, never fed, and — since
+/// frame selection prefers it — holds the display frozen for ever.
+///
+/// That is upstream issue #640, and every test in this file was silently
+/// exercising it while claiming to test an ordinary station. The ring below
+/// nothing reads is the same one `skim_window` uses: the chain needs somewhere
+/// to play, not an audience.
 fn last_frame(cmds: &[Command]) -> SpectrumFrame {
+    last_frame_audio(cmds, true)
+}
+
+/// [`last_frame`], told whether the engine has an audio chain — the two
+/// configurations behave differently and both are worth pinning.
+fn last_frame_audio(cmds: &[Command], with_audio: bool) -> SpectrumFrame {
+    let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(48_000);
+    let audio = with_audio.then_some(AudioParams { producer, out_rate: 48_000.0 });
     let mut h = start_engine(
         Box::new(MockSource { center: CENTER }),
         caps(),
-        EngineConfig { tx_ham_only: false, ..Default::default() },
+        EngineConfig { tx_ham_only: false, audio, ..Default::default() },
     );
     let thread = h.thread.take();
 
@@ -123,6 +143,26 @@ fn the_digital_modes_keep_their_channel_view() {
     assert!(
         (frame.span_hz - CHANNEL_SPAN_HZ).abs() < 200.0,
         "FT8 should show the sub-band, got {:.0} Hz",
+        frame.span_hz
+    );
+}
+
+/// **#640: with no audio chain there is nothing to feed the analyzer, so it
+/// must not be chosen.**
+///
+/// A station with an attached receiver painting the picture and its audio from
+/// the transceiver has no `main` at all. The analyzer used to be created anyway
+/// for a digital mode, never fed, and preferred by frame selection — so FT8
+/// showed a frozen 3.7 kHz window instead of the live wide view the panadapter
+/// was producing. Reported from a TS-440 + RTL-SDR IF setup with a patch, and
+/// the same shape here.
+#[test]
+fn a_digital_mode_without_an_audio_chain_shows_the_live_wide_view() {
+    let frame = last_frame_audio(&[set_mode(Mode::Ft8)], false);
+    assert!(
+        frame.span_hz > CHANNEL_SPAN_HZ * 10.0,
+        "FT8 with no audio chain is showing {:.0} Hz — the never-fed channel \
+         analyzer was chosen again",
         frame.span_hz
     );
 }

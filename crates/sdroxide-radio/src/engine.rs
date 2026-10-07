@@ -5047,21 +5047,27 @@ impl Engine {
         let want_rec_main = self.recorder.is_some() && !self.caps.rx_audio_external;
         let rx0 = self.state.rx[0];
         self.refresh_channel_rate();
-        let Some(main) = self.main.as_mut() else { return };
-        // Four disjoint fields, so the chain's own borrow and the buffers its
-        // output is copied into can be live at once.
-        run_chain_block(
-            main,
-            &rx0,
-            iq,
-            want_rec_main,
-            (
-                &mut self.main_play,
-                &mut self.main_play_r,
-                &mut self.main_play_rec,
-                &mut self.main_play_r_rec,
-            ),
-        );
+        // **Only the chain needs a main.** `finish_audio` is where a
+        // transceiver's own audio is taken and handed to the decoders, and a
+        // station with an attached receiver painting the picture has no main at
+        // all — so returning here skipped the one thing that had to happen and
+        // the digital modes heard silence. See the note on `finish_audio`.
+        if let Some(main) = self.main.as_mut() {
+            // Four disjoint fields, so the chain's own borrow and the buffers
+            // its output is copied into can be live at once.
+            run_chain_block(
+                main,
+                &rx0,
+                iq,
+                want_rec_main,
+                (
+                    &mut self.main_play,
+                    &mut self.main_play_r,
+                    &mut self.main_play_rec,
+                    &mut self.main_play_r_rec,
+                ),
+            );
+        }
         self.finish_audio(iq);
     }
 
@@ -5140,9 +5146,11 @@ impl Engine {
             self.row_samples = 0;
             self.push_row();
         }
-        if self.main.is_some() {
-            self.finish_audio(iq);
-        }
+        // Unconditional, for the same reason as `run_audio`'s: with no main
+        // chain this is still where a transceiver's audio is taken and handed
+        // to the decoders. Gating it on `main` meant a panadapter station's
+        // digital modes received nothing at all.
+        self.finish_audio(iq);
     }
 
     /// Write the raw block to whichever captures are running.
@@ -5194,7 +5202,15 @@ impl Engine {
         // so its speaker and recorder taps are dropped and the transceiver's
         // audio takes their place below.
         let ext = self.caps.rx_audio_external;
-        let Some(out_rate) = self.main.as_ref().map(|m| m.out_rate) else { return };
+        // **A rate, not a requirement.** This used to return when there was no
+        // main chain, which is precisely the configuration that needs the rest
+        // of this function: an attached receiver paints the picture, the
+        // transceiver supplies the audio, and there is no main to take an
+        // `out_rate` from. The engine's configured output rate is the right
+        // answer there — the audio still has to reach the decoders, the
+        // recorder and the speakers at *some* rate, and that is the one every
+        // other consumer is already working in.
+        let out_rate = self.main.as_ref().map_or(self.audio_out_rate, |m| m.out_rate);
 
         if ext {
             // Everything the operator hears is the transceiver's: the speaker,
@@ -7124,7 +7140,14 @@ impl Engine {
         // choosing where to call. Narrowing the display to the passband would
         // take the band away and leave pan and zoom with nothing to move over,
         // because the frame itself would no longer contain it.
-        let want_channel = want && mode.is_digital() && !self.audio_mode;
+        // …and it needs a **main chain to be fed from.** Its input is the main
+        // DDC's output (`main.channel_iq()`), so without one it is created and
+        // never fed: the analyzer exists, frame selection prefers it because the
+        // viewport fits, and the digital mode's display is seeded once and then
+        // frozen for ever — while the wide panadapter it should have fallen back
+        // to is live and hidden. A station whose audio comes from a transceiver
+        // is exactly that case.
+        let want_channel = want && mode.is_digital() && !self.audio_mode && self.main.is_some();
         match (want_channel, self.channel_analyzer.is_some()) {
             (true, false) => {
                 let ch_rate = self.channel_rate_hz;
