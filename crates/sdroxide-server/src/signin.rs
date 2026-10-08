@@ -28,23 +28,27 @@ use sdroxide_types::{AUTH_BUSY, AUTH_REFUSED};
 
 use crate::{Station, auth, session_cookie};
 
-/// What a browser posts: the credentials, and how long it would like them
-/// remembered for.
+/// What a browser posts: the credentials, and whether this device should keep
+/// the sign-in.
 #[derive(Deserialize)]
 pub(crate) struct SignIn {
     pub username: String,
     pub password: String,
-    /// Hours, so the card can say "12" or "24" rather than a duration in
-    /// seconds an operator has to translate. Anything else is clamped to the
-    /// nearer of the two the card offers.
+    /// The card's one question: keep this sign-in on the device. Unticked is a
+    /// **session** cookie, dropped by the browser when it closes.
     #[serde(default)]
-    pub hours: u32,
+    pub remember: bool,
+    /// Hours, from a client built before the checkbox. Still read so that one
+    /// of those is not silently downgraded to a session cookie — a day there
+    /// meant "remember me", which is what the box now says.
+    #[serde(default)]
+    pub hours: Option<u32>,
 }
 
 #[derive(Serialize)]
 struct SignedIn {
     username: String,
-    hours: u32,
+    remembered: bool,
 }
 
 /// Hand back a cookie for these credentials, if they are the right ones.
@@ -90,13 +94,21 @@ pub(crate) async fn signin(
         }
     }
 
-    let hours = session_cookie::dwell_hours(want.hours);
-    let token = session_cookie::mint(&key, &want.username, hours);
-    let cookie = session_cookie::set_cookie(&token, hours, session_cookie::arrived_secure(&headers));
-    info!("signed in as {:?} for {hours}h", want.username);
+    // A client built before the checkbox asked in hours, and asked for a day
+    // when it meant "remember me" — so a day is still read as a ticked box
+    // rather than silently downgrading it to a session cookie.
+    let remember = want.remember || want.hours.unwrap_or(0) >= 24;
+    let token = session_cookie::mint(&key, &want.username, remember);
+    let cookie =
+        session_cookie::set_cookie(&token, remember, session_cookie::arrived_secure(&headers));
+    info!(
+        "signed in as {:?}, remembered for {}s",
+        want.username,
+        session_cookie::lifetime(remember)
+    );
     (
         [(axum::http::header::SET_COOKIE, cookie)],
-        Json(SignedIn { username: want.username, hours }),
+        Json(SignedIn { username: want.username, remembered: remember }),
     )
         .into_response()
 }
@@ -113,7 +125,7 @@ pub(crate) async fn signout(headers: HeaderMap) -> Response {
             axum::http::header::SET_COOKIE,
             session_cookie::clear_cookie(session_cookie::arrived_secure(&headers)),
         )],
-        Json(SignedIn { username: String::new(), hours: 0 }),
+        Json(SignedIn { username: String::new(), remembered: false }),
     )
         .into_response()
 }

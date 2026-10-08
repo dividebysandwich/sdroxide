@@ -14370,13 +14370,18 @@ let in on the strength of it — its other radios, the 3D solar view, and the
 browser after a reload or a restart. Another station is another door, and asks
 for itself, once.
 
-**In the browser the choice is how long: 12 hours or a day.** The card offers
-both, and the station — not the page — keeps the result: a signed cookie the
-page itself cannot read. That is why there is no copy of your password in the
-browser's storage any more, and why every other radio of the station opens
-without a field to fill. A cookie is a bearer token, so treat the day as a day:
-on somebody else's browser, **12 hours** is the tidier answer. The station signs
-it with its own configured password, so **changing the password signs every
+**In the browser there is one question: tick REMEMBER ME, or don't.** It starts
+ticked, because being asked again every twelve hours on a station with three
+radios was the complaint that produced the box. Ticked, the station — not the
+page — keeps the result for a month: a signed cookie the page itself cannot
+read. That is why there is no copy of your password in the browser's storage any
+more, and why every other radio of the station opens without a field to fill.
+**Unticked is a real answer and it is the tidier one on somebody else's browser:**
+the cookie then lasts only as long as the browser is open and is dropped when it
+closes, so nothing is left behind on a shared machine. How long a cookie is
+honoured is the station's business, not a number you have to pick — and because
+the station signs the cookie with its own configured password, **changing the
+password signs every
 browser out at once**, and a station with no password configured has no cookie
 to give.
 

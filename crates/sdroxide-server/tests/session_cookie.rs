@@ -24,7 +24,8 @@ use sdroxide_types::{DeviceCaps, RemoteAccess};
 
 const USER: &str = "f6kim";
 const PASS: &str = "correct horse battery staple";
-const DWELL_24H: u64 = 24 * 3600;
+const REMEMBERED: u64 = 30 * 24 * 3600;
+const SESSION: u64 = 12 * 3600;
 
 /// A station of three radios — the shape in the report — behind one configured
 /// password.
@@ -84,8 +85,8 @@ fn hello() -> ClientMsg {
 }
 
 /// POST the credentials and hand back the `Set-Cookie` value, if there is one.
-fn sign_in(port: u16, username: &str, password: &str, hours: u32) -> Option<String> {
-    let body = serde_json::json!({ "username": username, "password": password, "hours": hours });
+fn sign_in(port: u16, username: &str, password: &str, remember: bool) -> Option<String> {
+    let body = serde_json::json!({ "username": username, "password": password, "remember": remember });
     match ureq::post(&format!("http://127.0.0.1:{port}/signin"))
         .header("content-type", "application/json")
         .send(body.to_string())
@@ -136,7 +137,7 @@ async fn one_sign_in_covers_every_radio_on_the_station() {
     let port = 39481;
     spawn_station(port).await;
 
-    let cookie = sign_in(port, USER, PASS, 12).expect("the right password gets a cookie");
+    let cookie = sign_in(port, USER, PASS, true).expect("the right password gets a cookie");
 
     for path in ["/ws", "/ws/1", "/ws/2"] {
         match first_answer(port, path, Some(&cookie)).await {
@@ -169,23 +170,37 @@ async fn a_wrong_password_buys_no_cookie() {
     let port = 39483;
     spawn_station(port).await;
 
-    assert!(sign_in(port, USER, "not the password", 12).is_none(), "issued a cookie anyway");
+    assert!(sign_in(port, USER, "not the password", true).is_none(), "issued a cookie anyway");
     assert!(matches!(first_answer(port, "/ws", None).await, ServerMsg::AuthRequired));
 }
 
-/// The dwell is the operator's choice and the cookie has to carry the one that
-/// was asked for — a card offering 12 and 24 cannot tell a shortened cookie
-/// from a granted one.
+/// One answer, and the cookie has to carry the one that was given: a ticked box
+/// is kept for as long as the box says, and an **unticked** one is both short
+/// *and* carries no `Max-Age`, so the browser drops it when it closes. The two
+/// halves are different mechanisms and a test that only checked the token would
+/// pass on a cookie that sat in the store for twelve hours.
 #[tokio::test(flavor = "multi_thread")]
-async fn the_cookie_carries_the_dwell_that_was_asked_for() {
+async fn the_cookie_carries_the_answer_that_was_given() {
     let port = 39484;
     spawn_station(port).await;
 
-    let cookie = sign_in(port, USER, PASS, 24).expect("a cookie");
-    let expiry: u64 = cookie.rsplit(':').nth(1).expect("hex payload:expiry:mac").parse().expect("expiry");
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let lifetime = expiry - now;
-    assert!((DWELL_24H - 5..=DWELL_24H).contains(&lifetime), "asked for a day, got {lifetime}s");
+
+    let kept = sign_in(port, USER, PASS, true).expect("a cookie");
+    let expiry: u64 = kept.rsplit(':').nth(1).expect("hex payload:expiry:mac").parse().expect("expiry");
+    assert!(
+        (REMEMBERED - 5..=REMEMBERED).contains(&(expiry - now)),
+        "a ticked box asked to be remembered, got {}s",
+        expiry - now
+    );
+
+    let session = sign_in(port, USER, PASS, false).expect("a cookie");
+    let expiry: u64 = session.rsplit(':').nth(1).expect("hex payload:expiry:mac").parse().expect("expiry");
+    assert!(
+        (SESSION - 5..=SESSION).contains(&(expiry - now)),
+        "an unticked box asked not to be, got {}s",
+        expiry - now
+    );
 }
 
 /// Signing out has to reach the cookie, and `HttpOnly` means the page cannot
@@ -196,7 +211,7 @@ async fn signing_out_expires_the_cookie() {
     let port = 39485;
     spawn_station(port).await;
 
-    sign_in(port, USER, PASS, 12).expect("a cookie");
+    sign_in(port, USER, PASS, true).expect("a cookie");
     let cleared = ureq::post(&format!("http://127.0.0.1:{port}/signout"))
         .send_empty()
         .expect("signout answers")

@@ -102,14 +102,14 @@ pub struct LoginForm {
     /// a password to disk (or to the browser's local storage), which is the
     /// operator's call to make, not ours to make for them.
     ///
-    /// Native only. In the browser the card offers [`Self::dwell`] instead,
+    /// Native only. In the browser the card offers [`Self::remember_cookie`] instead,
     /// because what it can offer there is better than a copy of the password
     /// in the page: the station's own signed cookie.
     remember: bool,
     /// How long the station should remember this sign-in, in hours — `12` or
     /// `24`, which is what the card's chips offer, and `0` for "ask again next
     /// time". Browser only; see [`Self::remember`].
-    dwell: u32,
+    remember_cookie: bool,
     /// Whether a stored sign-in has already been offered on this connection.
     /// Once only, so a stored password the server no longer accepts asks the
     /// operator instead of being posted back for ever.
@@ -197,13 +197,14 @@ impl LoginForm {
     /// would leave a wrong password behind to be offered again next time.
     pub fn settle(&mut self, phase: &AuthPhase, station: &str) {
         if !station.is_empty() && station != self.station {
-            // First sight of *this* station, so the card's default is the short
-            // dwell — remembering for a day is the operator's second choice to
-            // make, not ours to make for them. Guarded on the station changing,
-            // or it would put the default back over the operator's own pick on
-            // the very next frame.
+            // First sight of *this* station. Ticked by default, because the
+            // complaint that produced the box was being asked to choose between
+            // twelve hours and a day for a station with three radios — and an
+            // unticked box is still a session cookie, so nobody is worse off if
+            // they do untick it. Guarded on the station changing, or it would
+            // put the default back over the operator's own pick on the next frame.
             self.station = station.to_string();
-            self.dwell = DEFAULT_DWELL_H;
+            self.remember_cookie = REMEMBER_COOKIE_DEFAULT;
         }
         // The claim on the station's gate is held for exactly as long as an
         // answer is with the server, which is what `Checking` means. Anything
@@ -258,9 +259,7 @@ impl LoginForm {
         // every reload — is let in without a field to fill. Where the station
         // cannot (one too old to answer `/signin`) the old store stands in and
         // says so, rather than quietly not remembering.
-        if self.dwell != 0 {
-            remember_with_cookie(&self.station, &self.username, &self.password, self.dwell);
-        }
+        remember_with_cookie(&self.station, &self.username, &self.password, self.remember_cookie);
         #[cfg(not(target_arch = "wasm32"))]
         if self.remember {
             store(&RemoteAccess {
@@ -273,7 +272,7 @@ impl LoginForm {
             forget();
         }
         #[cfg(target_arch = "wasm32")]
-        if self.dwell == 0 && self.answered_by_hand {
+        if !self.remember_cookie && self.answered_by_hand {
             forget();
         }
         self.manual = None;
@@ -643,32 +642,29 @@ fn card(
     #[cfg(target_arch = "wasm32")]
     {
         ui.label(RichText::new("Remember this station").size(11.5).weak());
-        // Wrapped rather than one row: on a phone these three do not fit, and a
-        // chip pushed off the right edge is a choice the operator cannot make.
+        // One box rather than a choice of clock arithmetic. "Do not ask me
+        // again" is a single decision, and how long it lasts is the station's
+        // business; making the operator translate a duration into one of two
+        // numbers is what put them back on this card every twelve hours.
         ui.horizontal_wrapped(|ui| {
-            for (hours, label) in
-                [(DEFAULT_DWELL_H, "12 HOURS"), (LONG_DWELL_H, "1 DAY"), (0, "NOT THIS TIME")]
+            let mut remember = form.remember_cookie;
+            if ui
+                .checkbox(
+                    &mut remember,
+                    RichText::new("REMEMBER ME").size(if touch { 13.0 } else { 11.5 }).strong(),
+                )
+                .changed()
             {
-                let chip = crate::chrome::chip(
-                    ui,
-                    form.dwell == hours,
-                    RichText::new(label).size(if touch { 13.0 } else { 11.5 }),
-                );
-                if chip.clicked() {
-                    form.dwell = hours;
-                }
+                form.remember_cookie = remember;
             }
         });
         ui.label(
-            RichText::new(match form.dwell {
-                0 => {
-                    "This station will not remember you: you are asked again on the next \
-                       connection, and nothing about this sign-in is kept on the device."
-                }
-                _ => {
-                    "This station keeps your sign-in, not this page — nothing to fill in on the \
-                      other radios, and nothing to forget when you leave. A day is still a day."
-                }
+            RichText::new(if form.remember_cookie {
+                "This station keeps your sign-in, not this page — nothing to fill in on the \
+                 other radios, and nothing to forget when you leave."
+            } else {
+                "Not this time: this browser forgets it when it closes, so you are asked again \
+                 next session and nothing about this sign-in is left on the device."
             })
             .size(10.5)
             .color(crate::theme::gray(140)),
@@ -733,8 +729,9 @@ fn card(
 //   it is not allowed to read. A button that silently does nothing is this
 //   fork's standing bug, so that is one of the reasons this exists at all.
 
-/// The dwell the card offers first, and the one it defaults to.
-pub(crate) const DEFAULT_DWELL_H: u32 = 12;
+/// Whether the browser card's box starts ticked. See [`LoginForm::settle`]
+/// for why that is the default rather than a choice pushed onto the operator.
+pub(crate) const REMEMBER_COOKIE_DEFAULT: bool = true;
 /// The longer of the two, and never a default: a day is a long time to leave a
 /// station signed in on somebody else's browser. Browser only — the card is the
 /// only thing that offers it.
@@ -1248,53 +1245,50 @@ mod tests {
         assert!(signin_url("").is_none());
     }
 
-    /// The card's default dwell, and — the half that is easy to get wrong — it
-    /// must be the *default*, not an override: `settle` runs every frame, so
-    /// setting it unconditionally would put the short dwell back over an
-    /// operator who had just picked the long one and they would get twelve
-    /// hours while the card said a day.
+    /// The card's box starts ticked, and — the half that is easy to get wrong —
+    /// it must be the *default*, not an override: `settle` runs every frame, so
+    /// setting it unconditionally would put the tick back over an operator who
+    /// had just unticked it, and a shared machine would be left remembered.
     #[test]
-    fn the_short_dwell_is_the_default_and_the_pick_survives_the_next_frame() {
-        let station = "ws://dwell.test:4950";
+    fn the_box_is_ticked_by_default_and_the_untick_survives_the_next_frame() {
+        let station = "ws://remember.test:4950";
         let mut form = LoginForm::default();
         form.settle(&AuthPhase::Prompt(None), station);
-        assert_eq!(form.dwell, DEFAULT_DWELL_H);
+        assert!(form.remember_cookie);
 
-        form.dwell = LONG_DWELL_H_TEST;
+        form.remember_cookie = false;
         // Every frame again, as the shell does.
         form.settle(&AuthPhase::Prompt(None), station);
-        assert_eq!(form.dwell, LONG_DWELL_H_TEST, "the card's own pick was overwritten");
+        assert!(!form.remember_cookie, "the card's own untick was overwritten");
 
         // ...and arriving at a *different* station is a fresh choice, not the
         // old one carried over.
         form.settle(&AuthPhase::Prompt(None), "ws://another.test:4950");
-        assert_eq!(form.dwell, DEFAULT_DWELL_H);
+        assert!(form.remember_cookie);
     }
 
-    /// Saying no has to be as easy as saying yes. The card's dwell is a *choice*
-    /// and `0` is one of its values, so a browser cannot be left unable to refuse
-    /// a station the cookie — which is what a two-chip card with no third does to
-    /// a shared machine.
+    /// Saying no has to be as easy as saying yes, so unticking has to be a real
+    /// state of the real field — not a separate flag, and not something the
+    /// per-frame `settle` puts back. A browser must be able to refuse a station
+    /// the cookie, which is what it needs on a shared machine.
     #[test]
-    fn not_this_time_asks_again_and_keeps_nothing() {
+    fn unticking_is_a_real_answer_and_the_station_is_told_it() {
         let station = "ws://refuse.test:4950";
         let mut form = LoginForm::default();
         form.settle(&AuthPhase::Prompt(None), station);
-        form.dwell = 0;
+        form.remember_cookie = false;
         form.settle(&AuthPhase::Prompt(None), station);
-        assert_eq!(form.dwell, 0, "the refusal was overwritten by a default");
+        assert!(!form.remember_cookie, "the refusal was overwritten by a default");
 
-        // ...and the refusal survives the next frame, which is the whole reason it
-        // is a value of the same field rather than a separate flag.
+        // ...and it survives the next frame and the sign-in that follows, which is
+        // the whole reason it is a value of the same field.
         form.settle(&AuthPhase::Checking, station);
         form.settle(&AuthPhase::Open, station);
-        assert_eq!(form.dwell, 0);
+        assert!(!form.remember_cookie);
     }
 
     /// The long dwell is a wasm-only constant, and the test above needs it on a
     /// native build — which is the one place a value crossing a target boundary
-    /// can quietly disagree with itself.
-    const LONG_DWELL_H_TEST: u32 = 24;
 
     /// Issue #188: the operator's own answer takes the station's turn like
     /// every other one. It used to go straight out, so a tab letting itself in
