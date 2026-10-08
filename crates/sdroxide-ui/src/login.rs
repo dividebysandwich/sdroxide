@@ -106,9 +106,10 @@ pub struct LoginForm {
     /// because what it can offer there is better than a copy of the password
     /// in the page: the station's own signed cookie.
     remember: bool,
-    /// How long the station should remember this sign-in, in hours — `12` or
-    /// `24`, which is what the card's chips offer, and `0` for "ask again next
-    /// time". Browser only; see [`Self::remember`].
+    /// Whether the station should remember this sign-in (the card's
+    /// **REMEMBER ME** box). Unticked, the station still answers with a cookie,
+    /// but a session one the browser drops when it closes. Browser only; see
+    /// [`Self::remember`].
     remember_cookie: bool,
     /// Whether a stored sign-in has already been offered on this connection.
     /// Once only, so a stored password the server no longer accepts asks the
@@ -732,11 +733,6 @@ fn card(
 /// Whether the browser card's box starts ticked. See [`LoginForm::settle`]
 /// for why that is the default rather than a choice pushed onto the operator.
 pub(crate) const REMEMBER_COOKIE_DEFAULT: bool = true;
-/// The longer of the two, and never a default: a day is a long time to leave a
-/// station signed in on somebody else's browser. Browser only — the card is the
-/// only thing that offers it.
-#[cfg(target_arch = "wasm32")]
-pub(crate) const LONG_DWELL_H: u32 = 24;
 
 /// Stations that could not be asked for a cookie and were given the old store
 /// instead, so the operator can be told which of their stations are holding a
@@ -781,9 +777,10 @@ fn signin_url(station: &str) -> Option<String> {
     Some(format!("{}/signin", http_base(station)?))
 }
 
-/// Ask the station to remember this sign-in for `hours`.
+/// Ask the station for a sign-in cookie: a remembered one when `remember` is
+/// set, a session one otherwise. The station decides how long "remembered" is.
 #[cfg(target_arch = "wasm32")]
-fn remember_with_cookie(station: &str, username: &str, password: &str, hours: u32) {
+fn remember_with_cookie(station: &str, username: &str, password: &str, remember: bool) {
     // Everything the fallback needs is taken by value: the fetch outlives this
     // frame, and a closure over the caller's borrows is exactly what would stop
     // it being spawned.
@@ -801,10 +798,10 @@ fn remember_with_cookie(station: &str, username: &str, password: &str, hours: u3
         return;
     };
     let body = format!(
-        r#"{{"username":{},"password":{},"hours":{}}}"#,
+        r#"{{"username":{},"password":{},"remember":{}}}"#,
         json_string(username),
         json_string(password),
-        hours
+        remember
     );
     wasm_bindgen_futures::spawn_local(async move {
         if !post_json(&url, body).await {
