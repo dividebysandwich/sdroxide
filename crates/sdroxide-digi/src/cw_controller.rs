@@ -36,8 +36,10 @@ use std::collections::VecDeque;
 use std::time::SystemTime;
 
 use sdroxide_deepcw::{Tuner, Worker};
-use sdroxide_dsp::{CwRx, CwSelfRx, CwTx, MonoResampler};
-use sdroxide_types::{CwEngine, CwStatus, DigiConfig, DigiStatus, Mode, QsoStep, TranscriptLine};
+use sdroxide_dsp::{CwKeyer, CwRx, CwSelfRx, CwTx, IambicMode, MonoResampler};
+use sdroxide_types::{
+    CwEngine, CwKeyMode, CwStatus, DigiConfig, DigiStatus, Mode, QsoStep, TranscriptLine,
+};
 
 use crate::DigiEngine;
 use crate::controller::DigiAction;
@@ -250,6 +252,24 @@ pub struct CwController {
     /// way to hear a hand keyed into its sound card, and can only send the
     /// timed text a message commits to. Such a radio never enters the mode.
     straight: bool,
+    /// The iambic keyer, when a paddle is driving the transmitter.
+    ///
+    /// **Engine-side on purpose.** The client sends *contacts*, never the edges
+    /// it would make of them: a keyer run on the far side of the wire would
+    /// quantise a dit to whatever the UI thread happened to sample, and would
+    /// not reach the transmitter at all on a rig that keys itself. Owning the
+    /// timing here means a paddle keys through every route, and the operator's
+    /// only remaining choice is where the tone goes.
+    keyer: Option<CwKeyer>,
+    /// The two paddle contacts as the client last reported them.
+    keyer_dot: bool,
+    keyer_dah: bool,
+    /// Monotonic seconds. Not the wall clock and not a per-block counter: the
+    /// elements are generated per *sample*, so the keyer must not see time jump
+    /// or go backwards between blocks.
+    keyer_t: f64,
+    /// The key state for each sample of the block being rendered.
+    keyer_keys: Vec<bool>,
     /// Output samples the straight key has been continuously down for, so a
     /// lost key-up can be capped (see [`STRAIGHT_MAX_HOLD_S`]).
     straight_held_samples: usize,
@@ -278,6 +298,63 @@ pub struct CwController {
     /// than on every poll — the speed readout moves by a tenth of a WPM
     /// constantly and the panel does not need to hear about it.
     last_cw: CwStatus,
+}
+
+impl CwController {
+    /// Build the keyer for the operator's chosen iambic scheme, and engage the
+    /// hand-key path it drives.
+    ///
+    /// The keyer and the straight key share one path on purpose: both are the
+    /// operator's hand deciding the envelope, and both go out as the program's
+    /// own tone. Only the *timing* differs — a keyer generates it, a straight
+    /// key is measured.
+    fn arm_keyer_impl(&mut self) {
+        let mode = match self.cfg.cw_key_mode {
+            CwKeyMode::IambicA => IambicMode::A,
+            _ => IambicMode::B,
+        };
+        let mut keyer = CwKeyer::new(self.cfg.cw_wpm);
+        keyer.set_iambic(mode);
+        self.keyer = Some(keyer);
+        // A fresh key session starts its clock over, or the first element is
+        // generated against however long the key had been armed.
+        self.keyer_t = 0.0;
+        self.keyer_keys.clear();
+        self.set_straight(true);
+    }
+
+    /// Put the iambic keyer down: drop it, and let go of both contacts.
+    ///
+    /// Used where the operator or the engine has said hand-keying is over — the
+    /// KEY chip going off, a config change — and **not** on an abort, which
+    /// releases the contacts but leaves the keyer standing. See `abort_tx` for
+    /// why that distinction matters.
+    fn disarm_keyer(&mut self) {
+        self.keyer = None;
+        self.keyer_dot = false;
+        self.keyer_dah = false;
+        self.keyer_keys.clear();
+    }
+
+    /// Poll the keyer once per sample of the block about to be rendered, and
+    /// answer whether the key was already down at its first sample — which is
+    /// what starts the over.
+    ///
+    /// Per *sample*, not per block: the whole point of the keyer is that its
+    /// elements are shorter than the 50 ms block the transmit path renders in,
+    /// so one poll per block would quantise every dit and dah to it.
+    fn keyer_timeline(&mut self, out_len: usize) -> bool {
+        let step = 1.0 / OUT_RATE as f64;
+        self.keyer_keys.clear();
+        self.keyer_keys.reserve(out_len);
+        if let Some(keyer) = self.keyer.as_mut() {
+            for _ in 0..out_len {
+                self.keyer_keys.push(keyer.poll(self.keyer_t, self.keyer_dot, self.keyer_dah));
+                self.keyer_t += step;
+            }
+        }
+        self.keyer_keys.first().copied().unwrap_or(false)
+    }
 }
 
 impl CwController {
@@ -328,6 +405,11 @@ impl CwController {
             tx_active: false,
             keyed: false,
             straight: false,
+            keyer: None,
+            keyer_dot: false,
+            keyer_dah: false,
+            keyer_t: 0.0,
+            keyer_keys: Vec::new(),
             straight_held_samples: 0,
             tx_watchdog: false,
             last_sent: 0,
@@ -716,20 +798,32 @@ impl DigiEngine for CwController {
             // straight at the output rate instead of in `TX_CHUNK` pieces of
             // 8 kHz — a chunk is 50 ms, and reading the key once per chunk
             // would quantise every element to it (issue #322).
-            if self.tx.held() {
-                self.straight_held_samples += out.len();
-                if self.straight_held_samples as f32 > STRAIGHT_MAX_HOLD_S * OUT_RATE as f32 {
-                    // A lost key-up, not a hand: drop the key and end the over,
-                    // and say so through the watchdog flag.
-                    self.tx.set_held(false);
-                    self.tx_active = false;
-                    self.tx_watchdog = true;
-                    self.status_dirty = true;
+            if self.keyer.is_some() {
+                // A keyer's elements are bounded and it always comes back up,
+                // so the lost-key-up cap below does not apply: holding a
+                // paddle *should* send indefinitely, and that is what a real
+                // keyer does. The over is started by the keyer going down.
+                let down = self.keyer_timeline(out.len());
+                if down && !self.tx_active {
+                    self.set_tx_active(true);
                 }
+                self.tx.next_manual_block_timed(out, OUT_RATE, &self.keyer_keys);
             } else {
-                self.straight_held_samples = 0;
+                if self.tx.held() {
+                    self.straight_held_samples += out.len();
+                    if self.straight_held_samples as f32 > STRAIGHT_MAX_HOLD_S * OUT_RATE as f32 {
+                        // A lost key-up, not a hand: drop the key and end the over,
+                        // and say so through the watchdog flag.
+                        self.tx.set_held(false);
+                        self.tx_active = false;
+                        self.tx_watchdog = true;
+                        self.status_dirty = true;
+                    }
+                } else {
+                    self.straight_held_samples = 0;
+                }
+                self.tx.next_manual_block(out, OUT_RATE);
             }
-            self.tx.next_manual_block(out, OUT_RATE);
             self.feed_sent_decode(out);
         } else {
             while self.tx48.len() < out.len() && self.producing() {
@@ -808,6 +902,27 @@ impl DigiEngine for CwController {
             self.straight_held_samples = 0;
             self.tx_watchdog = false;
         }
+        // …and it must also let go of the **paddle**. Lifting the transmitter's
+        // key is not the same thing: the keyer generates its elements from
+        // `keyer_dot`/`keyer_dah`, so a paddle left closed after an abort kept
+        // the keyer running — it would start the next over by itself, with no
+        // press, and on a rig where the lost-key-up cap does not apply that is
+        // an endless keyed carrier. An abort is the operator stopping, so the
+        // contacts go with it.
+        //
+        // The keyer itself stays armed: it is a setting, not a transmission, and
+        // a real iambic keyer is never "disarmed" between words. Disengaging it
+        // is what left the chip lit and the transmit box locked the note above
+        // describes.
+        if self.keyer_dot || self.keyer_dah {
+            self.keyer_dot = false;
+            self.keyer_dah = false;
+            if let Some(keyer) = self.keyer.as_mut() {
+                keyer.reset();
+            }
+            self.keyer_keys.clear();
+            self.status_dirty = true;
+        }
         if let Some(cat) = self.cat.as_mut() {
             let sending = cat.sending_since.is_some();
             cat.clear();
@@ -825,8 +940,18 @@ impl DigiEngine for CwController {
         }
         self.rx.set_speed_lock(cfg.cw_speed_lock.then_some(cfg.cw_wpm));
         self.tx.set_params(cfg.cw_pitch_hz as f64, cfg.cw_wpm, cfg.cw_farnsworth_wpm);
+        // Anything that changes how the keyer sends has to put the keyer down
+        // with it. A keyer is built with the speed and the iambic mode it was
+        // armed at, so a config change that alters either leaves the old one
+        // running — the operator changes the speed and the paddle still sends
+        // at the old one, with nothing on screen saying so. Speed and
+        // `cw_key_mode` are the two that change what it generates.
+        let keyer_moved = cfg.cw_wpm != self.cfg.cw_wpm || cfg.cw_key_mode != self.cfg.cw_key_mode;
         let engine_moved = cfg.cw_engine != self.cfg.cw_engine;
         self.cfg = cfg;
+        if keyer_moved {
+            self.disarm_keyer();
+        }
         if engine_moved {
             self.set_engine();
         }
@@ -920,6 +1045,20 @@ impl DigiEngine for CwController {
         if self.cat.is_some() || on == self.straight {
             return;
         }
+        // Turning the hand-key path **off** disarms the keyer with it. The
+        // keyer is not a separate mode: it is driven from inside this one, so
+        // leaving it armed here stranded every hand-key route. `key_down`
+        // returns early when `straight` is false, and the transmit path takes
+        // the keyer branch whenever a keyer exists — so a keyer left standing
+        // with `straight` off meant **no** hand-keying at all, and the operator
+        // had to change mode and back to get their straight key out again.
+        //
+        // This is the deliberate disarm, and it is a different thing from an
+        // abort: an abort stops a transmission, this is the operator saying
+        // they are done hand-keying altogether.
+        if !on {
+            self.disarm_keyer();
+        }
         self.straight = on;
         self.straight_held_samples = 0;
         self.tx_watchdog = false;
@@ -930,6 +1069,74 @@ impl DigiEngine for CwController {
         if on {
             self.sent_text.clear();
             self.sent_rx.reset(self.cfg.cw_wpm);
+        }
+        self.status_dirty = true;
+    }
+
+    /// CW: the operator's two **paddle contacts**, changed (issue #569).
+    ///
+    /// The keyer is built here rather than on the client so its elements are
+    /// generated at the output rate, next to the transmitter that has to carry
+    /// them, and so the same timing works on every route out of the program.
+    /// The client reports a *contact*, once per change, and never an edge.
+    fn set_cw_contacts(&mut self, dot: bool, dah: bool) {
+        // No keyer and no contact: nothing to arm for, and arming one on the
+        // way past would leave a keyer running on a panel that is not sending.
+        if self.keyer.is_none() && !dot && !dah {
+            return;
+        }
+        if dot == self.keyer_dot && dah == self.keyer_dah && self.keyer.is_some() {
+            return;
+        }
+        self.keyer_dot = dot;
+        self.keyer_dah = dah;
+        if self.keyer.is_none() {
+            // A rig that keys itself refuses the hand-key path, and the panel
+            // says so rather than leaving a dead KEY chip. The refusal is
+            // decided **before** the keyer is built, not after: arming first
+            // left a keyer standing on a rig that will never key it, held down
+            // by whatever contact arrived, with the only code that releases a
+            // key being the straight path this rig just refused. Nothing could
+            // ever free it.
+            //
+            // `set_straight` refuses on exactly this condition, so it is the
+            // same decision, asked first.
+            if self.cat.is_some() {
+                self.status_dirty = true;
+                return;
+            }
+            self.arm_keyer_impl();
+        }
+        // Latch the edges **here**, where a change of contact is an event, rather
+        // than leaving it to the next per-sample poll: the transmit path polls
+        // about every millisecond, so a tap whose press and release both arrive
+        // inside one engine loop would be sampled only in its released state and
+        // lost. It goes after the arming above because on a first press there
+        // was no keyer to latch into until that line ran.
+        if let Some(keyer) = self.keyer.as_mut() {
+            keyer.contact(dot, dah);
+        }
+        // A paddle press from idle starts the over, exactly as `key_down` does
+        // for a straight key — and it cannot wait for the transmit path to
+        // notice, because the keyer branch that starts an over runs only while
+        // `fill_tx_block` is already being filled. Without this, a first press
+        // from idle never keyed at all: the over was one event late, so the
+        // keyer's first element was generated but nothing was there to carry it.
+        if (dot || dah) && !self.tx_active {
+            self.set_tx_active(true);
+        }
+        if dot || dah {
+            // A fresh press is the operator keying again, so it restarts the
+            // idle countdown and clears the watchdog from a key that was dropped
+            // before — the same two lines `key_down` sets, and for the same
+            // reason: this is an operator action, not a decode.
+            self.idle_samples = 0;
+            self.tx_watchdog = false;
+        }
+        // Releasing both contacts ends the over's keying without switching the
+        // keyer off: the operator has lifted the paddle, not disarmed the key.
+        if !dot && !dah && !self.tx_active {
+            self.tx.set_held(false);
         }
         self.status_dirty = true;
     }
@@ -983,6 +1190,88 @@ mod tests {
         DigiConfig { my_call: "W1AW".into(), cw_wpm: 25.0, ..Default::default() }
     }
 
+    /// Render `n` blocks and hand back the audio, so a test can look at what
+    /// actually went out rather than at what the controller believes.
+    fn render(c: &mut CwController, blocks: usize) -> Vec<f32> {
+        let mut out = Vec::new();
+        for _ in 0..blocks {
+            let mut blk = [0.0f32; 480];
+            c.fill_tx_block(&mut blk);
+            out.extend_from_slice(&blk);
+        }
+        out
+    }
+
+    /// Envelope peak per 5 ms, so a test can tell tone from silence without
+    /// caring where the sine's zero crossings fell inside the window.
+    fn envelope(a: &[f32]) -> Vec<f32> {
+        a.chunks(240).map(|c| c.iter().fold(0.0f32, |m, s| m.max(s.abs()))).collect()
+    }
+
+    /// A closed contact is the instruction to transmit, and a keyer generates
+    /// the elements from it (issue #569).
+    ///
+    /// The claim is not that the controller holds a key down — that is the
+    /// straight path and it is tested elsewhere — but that **two contacts** build
+    /// a keyer and that the audio follows the elements it generates. So the test
+    /// is on the envelope: holding one paddle must produce an alternation of
+    /// tone and silence at the element rate, not one held tone and not silence.
+    #[test]
+    fn a_held_paddle_contact_generates_keyed_audio() {
+        let mut c = CwController::new(cfg(), 48_000.0, None);
+        // Nothing closed: no keyer, no carrier, and no over started.
+        assert!(render(&mut c, 4).iter().all(|s| *s == 0.0));
+
+        c.set_cw_contacts(true, false); // dit paddle held
+        let audio = render(&mut c, 60); // 600 ms — several elements at 25 wpm
+        let env = envelope(&audio);
+        let voiced = env.iter().filter(|p| **p > 0.05).count();
+        let silent = env.iter().filter(|p| **p < 1e-3).count();
+        assert!(voiced > 0, "a closed contact produced no tone at all: {env:?}");
+        assert!(silent > 0, "a held paddle never came back up between elements: {env:?}");
+
+        // Both contacts open ends the over's keying. The keyer stays built — the
+        // operator lifted the paddle, they did not disarm the key.
+        c.set_cw_contacts(false, false);
+        let tail = render(&mut c, 40);
+        // The element already under the operator's hand finishes first — a dit
+        // cannot be cut short, and a real keyer lets it out — so the claim is
+        // that the tone ends within one element, not that it ends instantly.
+        // 25 wpm puts a dit at 48 ms, and the envelope window is 5 ms.
+        let quiet_at = envelope(&tail).iter().position(|p| *p < 1e-3);
+        assert!(
+            quiet_at.is_some_and(|i| i <= 12),
+            "the paddle was released and the tone went on: quiet only at {quiet_at:?}"
+        );
+    }
+
+    /// The client reports a contact once per change and never an edge, so the
+    /// same pair sent twice must not rebuild the keyer.
+    ///
+    /// What a rebuild would cost is the keyer's clock: `arm_keyer_impl` zeroes
+    /// `keyer_t` so a fresh session's first element is not generated against
+    /// however long the key had been armed. A duplicate contact is not a fresh
+    /// session, so the clock must keep running through it — assert that directly
+    /// rather than trying to hear the difference in the envelope, which is a
+    /// weaker claim than it looks.
+    #[test]
+    fn a_repeated_contact_does_not_restart_the_keyer_clock() {
+        let mut c = CwController::new(cfg(), 48_000.0, None);
+        c.set_cw_contacts(true, false);
+        render(&mut c, 20);
+        let before = c.keyer_t;
+        assert!(before > 0.0, "the keyer's clock never ran");
+        // A duplicate of the state the engine already holds, which is what a
+        // client that re-sent on a timer rather than on a change would do.
+        c.set_cw_contacts(true, false);
+        render(&mut c, 4);
+        assert!(
+            c.keyer_t > before,
+            "the keyer's clock was reset to {} by a duplicate contact",
+            c.keyer_t
+        );
+    }
+
     /// A refused key-up must not cost every later one.
     ///
     /// The engine calls `abort_tx` when a rail denies the key-up — the station
@@ -992,6 +1281,150 @@ mod tests {
     /// until the operator changed mode and back and rebuilt the controller.
     /// Reported from the field against CW on a HackRF, where a half-duplex
     /// key-up is refused often enough to hit within a couple of overs.
+    ///
+    /// A paddle press **from idle** must start the over.
+    ///
+    /// The keyer branch in `fill_tx_block` does start an over — but only while
+    /// the transmit path is already being filled, which never happens on the
+    /// first press. The maintainer found this on #626 and the reason it hid is
+    /// the reason this test exists: every keyer test drove `fill_tx_block`
+    /// directly, so the one event that starts an over, a *command* arriving,
+    /// was never exercised. This drives `set_cw_contacts` and nothing else.
+    #[test]
+    fn a_paddle_press_from_idle_starts_an_over() {
+        let mut c = CwController::new(cfg(), 48_000.0, None);
+        fn keys(c: &mut CwController) -> bool {
+            c.poll(SystemTime::now(), 14_030_000.0).iter().any(|a| matches!(a, DigiAction::KeyTx))
+        }
+        assert!(!c.tx_active, "starts idle");
+        c.set_cw_contacts(true, false);
+        assert!(c.tx_active, "a first paddle press must start the over");
+        assert!(keys(&mut c), "and the transmitter must key");
+    }
+
+    /// The same press must restart a stopped over, or the second paddle press
+    /// in a session would do nothing at all.
+    #[test]
+    fn a_paddle_press_starts_every_over_not_only_the_first() {
+        let mut c = CwController::new(cfg(), 48_000.0, None);
+        c.set_cw_contacts(true, false);
+        assert!(c.tx_active);
+        c.set_cw_contacts(false, false);
+        c.set_tx_active(false);
+        assert!(!c.tx_active, "released and stopped");
+        c.set_cw_contacts(false, true);
+        assert!(c.tx_active, "a later press must start a new over");
+    }
+
+    /// An abort must **let go of the paddle**, not only of the transmitter's key.
+    ///
+    /// The keyer generates from `keyer_dot`/`keyer_dah`, so a contact left
+    /// closed after an abort kept it running: it would begin the next over with
+    /// no press at all. And the lost-key-up cap deliberately does not apply to a
+    /// keyer — holding a paddle *should* send indefinitely — so that is an
+    /// endless keyed carrier, not a truncated one.
+    #[test]
+    fn an_abort_releases_the_paddle_it_was_holding() {
+        let mut c = CwController::new(cfg(), 48_000.0, None);
+        c.set_cw_contacts(true, false);
+        assert!(c.tx_active);
+        c.abort_tx();
+        assert!(!c.keyer_dot && !c.keyer_dah, "abort must release both contacts");
+        // And nothing may re-key without a fresh press.
+        let mut out = [0.0f32; 2048];
+        c.fill_tx_block(&mut out);
+        assert!(!c.tx_active, "nothing must restart the over on its own");
+    }
+
+    /// A rig that keys itself must refuse **before** the keyer is built.
+    ///
+    /// Arming first left a keyer standing on a rig that will never key it, held
+    /// by whatever contact arrived, and the only code that releases a key is the
+    /// straight path this rig has just refused — so nothing could ever free it.
+    #[test]
+    fn a_self_keying_rig_never_gets_a_keyer_built() {
+        let mut c = CwController::new(cfg(), 48_000.0, Some(50));
+        c.set_cw_contacts(true, false);
+        assert!(c.keyer.is_none(), "the keyer must not be armed on a refusing rig");
+        assert!(!c.straight, "and the hand-key path stays refused");
+        assert!(!c.tx_active, "a refused rig must not be keyed");
+    }
+
+    /// A tap must not be lost when press and release arrive between two polls.
+    ///
+    /// The transmit path polls the keyer about every millisecond, so a tap
+    /// whose two commands land inside one engine loop is sampled only in its
+    /// released state. The latch is what carries the edge to a poll that does
+    /// happen — and the edge has to be latched where the change is an *event*,
+    /// not where it is sampled.
+    #[test]
+    fn a_tap_survives_press_and_release_between_two_polls() {
+        let mut c = CwController::new(cfg(), 48_000.0, None);
+        // Press and release with nothing rendered in between: no poll can ever
+        // see the contact closed.
+        c.set_cw_contacts(true, false);
+        c.set_cw_contacts(false, false);
+        // Enough audio for the element *and* its gap: at 20 wpm a dit is 60 ms,
+        // and the read-back only prints a character once the gap that ends it
+        // has been seen.
+        let mut out = [0.0f32; 2048];
+        for _ in 0..16 {
+            c.fill_tx_block(&mut out);
+        }
+        assert!(
+            c.sent_text.contains('E'),
+            "a tap is one dit and must send its character: got {:?}",
+            c.sent_text
+        );
+    }
+
+    /// The straight key must still work after a paddle has been used.
+    ///
+    /// The keyer is driven from inside the hand-key path, so it is not a mode of
+    /// its own: `key_down` returns early when `straight` is false, and the
+    /// transmit path takes the keyer branch whenever a keyer exists. Leaving a
+    /// keyer standing with `straight` off therefore meant **no** hand-keying at
+    /// all, and the only cure was changing mode and back — the same dead end the
+    /// refused-key-up test above records for the transmitter latch.
+    #[test]
+    fn the_straight_key_survives_a_paddle_having_been_used() {
+        let mut c = CwController::new(cfg(), 48_000.0, None);
+        c.set_cw_contacts(true, false);
+        assert!(c.keyer.is_some(), "a paddle press arms the keyer");
+
+        // KEY chip off, then on again: the straight key's own path.
+        c.set_straight(false);
+        c.set_straight(true);
+        assert!(c.keyer.is_none(), "turning hand-keying off must disarm the keyer");
+
+        c.key_down(true);
+        assert!(c.tx.held(), "the straight key must key again afterwards");
+    }
+
+    /// A config change that alters what the keyer sends must put it down with
+    /// the old setting. A keyer is built with the speed and iambic mode it was
+    /// armed at, so without this the operator changes the speed and the paddle
+    /// goes on sending at the old one, with nothing on screen saying so.
+    #[test]
+    fn a_config_change_puts_the_keyer_down_with_the_old_setting() {
+        let mut c = CwController::new(cfg(), 48_000.0, None);
+        c.set_cw_contacts(true, false);
+        assert!(c.keyer.is_some());
+
+        let mut faster = c.cfg.clone();
+        faster.cw_wpm += 5.0;
+        c.set_config(faster);
+        assert!(c.keyer.is_none(), "a speed change must disarm the keyer");
+
+        // And one that changes nothing the keyer sends must leave it alone.
+        c.set_cw_contacts(true, false);
+        assert!(c.keyer.is_some());
+        let mut same = c.cfg.clone();
+        same.cw_pitch_hz += 10.0;
+        c.set_config(same);
+        assert!(c.keyer.is_some(), "a pitch change does not alter what the keyer sends");
+    }
+
     #[test]
     fn a_refused_key_up_does_not_wedge_the_transmitter() {
         let mut c = CwController::new(cfg(), 48_000.0, None);

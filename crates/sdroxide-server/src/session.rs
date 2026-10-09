@@ -69,17 +69,36 @@ async fn session(mut socket: WebSocket, shared: Arc<Shared>, station: Arc<Statio
     }
     run_session(&mut socket, &shared, &station, audio_caps).await;
 
-    // Cleanup — whatever happened, release the slot and drop the key.
+    // Cleanup — whatever happened, release the slot and drop the keys.
     *shared.session.lock().unwrap() = None;
     shared.busy.store(false, Ordering::SeqCst);
-    let _ = shared.cmd_tx.send(Command::SetPtt(false));
-    let _ = shared.cmd_tx.send(Command::SetTune(false));
-    // The CW straight key is a key of its own, held apart from PTT: a client
-    // that went away with the Space bar down would otherwise leave the carrier
-    // on until the keyer's hold cap ran out, half a minute later. Inert on
-    // any radio that is not being hand-keyed.
-    let _ = shared.cmd_tx.send(Command::CwKey(false));
+    release_held_controls(&shared.cmd_tx);
     info!(radio = shared.id, "remote session ended");
+}
+
+/// Everything a departing client may have been holding down, released.
+///
+/// Split out from the socket teardown so the list is one reviewable thing and
+/// can be tested: a `Shared` is too much to build to assert four sends, and the
+/// send is the whole point of this function.
+///
+/// The straight key is a key of its own, held apart from PTT: a client that
+/// went away with the Space bar down would otherwise leave the carrier on until
+/// the keyer's hold cap ran out, half a minute later.
+///
+/// **The paddle is not the straight key, and forgetting that keys a carrier by
+/// itself.** `CwKey` is a down *edge*; the iambic keyer is driven by which
+/// contacts are closed. Sending only `CwKey(false)` left `keyer_dot`/`keyer_dah`
+/// set on a client that disconnected mid-press, so the keyer went on generating
+/// elements with nobody holding anything — and the lost-key-up cap deliberately
+/// does not apply to a keyer, because holding a paddle *should* send
+/// indefinitely. That is not a truncated over; it is a carrier keyed by a client
+/// that no longer exists.
+fn release_held_controls(cmd: &crossbeam_channel::Sender<Command>) {
+    let _ = cmd.send(Command::SetPtt(false));
+    let _ = cmd.send(Command::SetTune(false));
+    let _ = cmd.send(Command::CwKey(false));
+    let _ = cmd.send(Command::CwContacts { dot: false, dah: false });
 }
 
 /// `Hello`, then the sign-in challenge if this server has one. `None` means the
@@ -482,5 +501,31 @@ async fn run_session(
     tokio::select! {
         _ = sender => {}
         _ = receiver => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A client that disconnects mid-press must not leave the transmitter keyed.
+    ///
+    /// The straight key and the paddle are two different things and only one of
+    /// them was released: `CwKey` carries a down *edge*, while the iambic keyer
+    /// is driven by which contacts are closed. A client that vanished holding a
+    /// paddle therefore left the keyer generating elements with nobody holding
+    /// anything — and the lost-key-up cap deliberately does not apply to a
+    /// keyer, so nothing downstream would ever stop it.
+    #[test]
+    fn a_departing_client_releases_the_paddle_and_not_only_the_key() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        release_held_controls(&tx);
+        let sent: Vec<Command> = rx.try_iter().collect();
+        assert!(
+            sent.contains(&Command::CwContacts { dot: false, dah: false }),
+            "the paddle must be released, not only the key edge: got {sent:?}"
+        );
+        assert!(sent.contains(&Command::CwKey(false)), "and the straight key");
+        assert!(sent.contains(&Command::SetPtt(false)), "and the PTT");
     }
 }

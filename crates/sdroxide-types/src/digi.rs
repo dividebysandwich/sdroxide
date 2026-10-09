@@ -2192,6 +2192,27 @@ pub struct DigiConfig {
     /// so it governs only the extra, subtracting batch.
     #[serde(default)]
     pub ft8_depth: Ft8Depth,
+    /// CW: which iambic scheme the software keyer generates elements with. See
+    /// [`CwKeyMode`]. Appended, so an older `digi.json` still loads and a newer
+    /// one read by an older build fails loudly rather than silently.
+    #[serde(default)]
+    pub cw_key_mode: CwKeyMode,
+}
+
+/// What kind of key the operator has in hand, as far as the engine can tell.
+///
+/// Straight is here only so the keying path can be shared: a straight key has no
+/// elements to generate, so it does not need the keyer at all and its timing is
+/// the operator's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CwKeyMode {
+    /// One contact, the operator's own timing.
+    Straight,
+    /// Two contacts; element memory only while the opposite paddle is held.
+    IambicA,
+    /// Two contacts; the modern default, remembers a released paddle.
+    #[default]
+    IambicB,
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2435,6 +2456,7 @@ impl Default for DigiConfig {
             q65_mode: crate::Q65Mode::A30,
             fsk441_period: crate::Fsk441Period::P30,
             ft8_depth: Ft8Depth::default(),
+            cw_key_mode: CwKeyMode::IambicB,
         }
     }
 }

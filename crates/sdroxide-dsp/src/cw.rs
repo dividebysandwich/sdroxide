@@ -1571,10 +1571,35 @@ impl CwTx {
     /// renders at the rate its caller asked for and reads the key once per
     /// sample instead, leaving the resolution at the engine's own block.
     pub fn next_manual_block(&mut self, out: &mut [f32], out_rate: f64) {
+        let held = self.held;
+        self.next_manual_block_timed(out, out_rate, &[]);
+        self.held = held;
+    }
+
+    /// Manual keying from an explicit per-sample key state, one `bool` per
+    /// sample of `out`.
+    ///
+    /// **This is what makes a keyer possible.** `next_manual_block` reads a
+    /// single `held` flag for the whole block, so anything that generated its
+    /// elements *outside* the transmit loop would have every element quantised
+    /// to the block boundary — a 60 ms dit rendered as the whole 50 ms chunk it
+    /// happened to land in, which at speed is ragged sending rather than a keyer.
+    /// A caller with a timeline of its own (an iambic keyer polled per sample)
+    /// passes it here and gets the shape, the phase and the ramp exactly where
+    /// the element actually is.
+    ///
+    /// A `keys` slice shorter than `out` **holds its last value** for the
+    /// remainder, so a caller that renders in smaller pieces than it polls can
+    /// still hand over one block.
+    pub fn next_manual_block_timed(&mut self, out: &mut [f32], out_rate: f64, keys: &[bool]) {
         let inc = std::f64::consts::TAU * self.pitch / out_rate;
         let step = 1.0 / (SHAPE_MS * 1e-3 * out_rate as f32).max(1.0);
-        for s in out.iter_mut() {
-            let target = if self.held { 1.0 } else { 0.0 };
+        let mut down = self.held;
+        for (i, s) in out.iter_mut().enumerate() {
+            if let Some(&k) = keys.get(i) {
+                down = k;
+            }
+            let target = if down { 1.0 } else { 0.0 };
             self.shape = if self.shape < target {
                 (self.shape + step).min(target)
             } else {
@@ -1587,6 +1612,7 @@ impl CwTx {
             }
             *s = amp * self.ph.sin() as f32;
         }
+        self.held = down;
     }
 
     /// Samples of keying still to go out, the element in progress included.
@@ -1682,6 +1708,329 @@ pub fn text_duration_s(text: &str, wpm: f32, farnsworth_wpm: f32) -> f32 {
     tx.set_params(600.0, wpm, farnsworth_wpm);
     tx.push_text(text);
     tx.queued_samples() as f32 / RATE as f32
+}
+
+// ─── software iambic keyer ───────────────────────────────────────────────────
+
+/// Which iambic scheme the keyer follows. [`IambicMode::A`] needs the opposite
+/// paddle held as the element ends; [`IambicMode::B`] also remembers a press
+/// that was released before the element finished, which is the modern default.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IambicMode {
+    A,
+    B,
+}
+
+/// A keyed element the keyer generated.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CwElement {
+    Dit,
+    Dah,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Phase {
+    Idle,
+    Mark { el: CwElement, end: f64 },
+    Space { end: f64 },
+}
+
+/// A software iambic keyer: two paddle contacts in, a key-down timeline and the
+/// characters decoded from it out.
+///
+/// A paddle whose USB interface only reports the two contacts — which is what a
+/// "HID keyer" box does, however it presents itself to the host — has no keyer
+/// of its own, so the dit/dah timing is made here. The operator chooses the
+/// paddles and the spacing; the elements are always clean, so a learner's
+/// rhythm cannot turn a dah into a dit. This is deliberately not the radio's
+/// keyer: the trainer that uses it never keys the radio.
+///
+/// `now` is a monotonic timebase in seconds; `poll` is safe to call at any rate
+/// and catches up across missed transitions.
+/// Bound on the keyer's decoded-character queue. Comfortably longer than any
+/// word, so nothing real is dropped in normal use; a keyer left armed with
+/// nobody reading cannot grow without end.
+const OUT_CAP: usize = 256;
+
+pub struct CwKeyer {
+    mode: IambicMode,
+    dit_s: f64,
+    char_gap_s: f64,
+    word_gap_s: f64,
+    dit: bool,
+    dah: bool,
+    lat_dit: bool,
+    lat_dah: bool,
+    phase: Phase,
+    pending: Option<CwElement>,
+    prev_end: Option<f64>,
+    code: String,
+    out: VecDeque<char>,
+    space_owed: bool,
+    char_since_space: bool,
+    marks: u64,
+}
+
+impl CwKeyer {
+    pub fn new(wpm: f32) -> Self {
+        let mut k = Self {
+            mode: IambicMode::B,
+            dit_s: 0.0,
+            char_gap_s: 0.0,
+            word_gap_s: 0.0,
+            dit: false,
+            dah: false,
+            lat_dit: false,
+            lat_dah: false,
+            phase: Phase::Idle,
+            pending: None,
+            prev_end: None,
+            code: String::new(),
+            out: VecDeque::new(),
+            space_owed: false,
+            char_since_space: false,
+            marks: 0,
+        };
+        k.set_wpm(wpm);
+        k
+    }
+
+    pub fn set_wpm(&mut self, wpm: f32) {
+        let wpm = wpm.clamp(5.0, 60.0) as f64;
+        self.dit_s = 1.2 / wpm;
+        self.char_gap_s = 2.5 * self.dit_s;
+        self.word_gap_s = 6.0 * self.dit_s;
+    }
+
+    pub fn set_iambic(&mut self, mode: IambicMode) {
+        self.mode = mode;
+    }
+
+    /// Advance to `now` with the two current paddle states, and answer whether
+    /// the key is down over this instant. Completed characters collect in
+    /// [`Self::take_text`].
+    /// Record a change of the two contacts, latching the edges.
+    ///
+    /// Separate from [`Self::poll`] because a paddle press is an *event* and
+    /// `poll` is a sampler: the transmit path polls once per output sample, so
+    /// a press and release that both arrive between two polls — a quick tap, or
+    /// two commands inside one engine loop — would leave `poll` seeing only the
+    /// released state, and the tap would vanish. The latch is what survives to
+    /// the poll that does happen, so a caller that learns of a change from a
+    /// command says so here immediately rather than waiting to be sampled.
+    ///
+    /// `poll` calls this too, so the per-sample path is unchanged.
+    pub fn contact(&mut self, dit: bool, dah: bool) {
+        // **Mode B is full squeeze memory**, and that is a statement about
+        // *falling* edges, not rising ones. Squeezing and then letting go of one
+        // paddle while the other stays down has to leave that paddle remembered,
+        // or the squeeze quietly degenerates: without this, releasing the dah
+        // mid-element leaves `lat_dah` false, so after the next dit the keyer
+        // finds neither paddle available and sends dits for ever, and the trailing
+        // dah the operator squeezed for is simply not there.
+        //
+        // The condition is "released *while the other is still down*", which is
+        // what makes it a squeeze rather than an ordinary release — releasing
+        // both ends the squeeze and must not latch anything. Mode A is
+        // deliberately excluded: its memory lasts only while the opposite
+        // paddle is held, which is the whole difference between A and B.
+        if self.mode == IambicMode::B {
+            if self.dit && !dit && dah {
+                self.lat_dit = true;
+            }
+            if self.dah && !dah && dit {
+                self.lat_dah = true;
+            }
+        }
+        if dit && !self.dit {
+            self.lat_dit = true;
+        }
+        if dah && !self.dah {
+            self.lat_dah = true;
+        }
+        self.dit = dit;
+        self.dah = dah;
+    }
+
+    pub fn poll(&mut self, now: f64, dit: bool, dah: bool) -> bool {
+        self.contact(dit, dah);
+
+        loop {
+            match self.phase {
+                Phase::Mark { el, end } if now >= end => {
+                    self.prev_end = Some(end);
+                    match self.next_element(el) {
+                        Some(n) => {
+                            self.phase = Phase::Space { end: end + self.dit_s };
+                            self.pending = Some(n);
+                        }
+                        None => self.phase = Phase::Idle,
+                    }
+                }
+                Phase::Space { end } if now >= end => match self.pending.take() {
+                    Some(n) => self.start_mark(end, n),
+                    None => self.phase = Phase::Idle,
+                },
+                _ => break,
+            }
+        }
+
+        if self.phase == Phase::Idle {
+            self.finalize_gaps(now);
+            if let Some(el) = self.starting_element() {
+                self.start_mark(now, el);
+            }
+        }
+        matches!(self.phase, Phase::Mark { .. })
+    }
+
+    /// The element a squeeze starts with when the keyer is idle, if either
+    /// paddle is down. A squeeze starts with a dit, as it does on a real keyer.
+    fn starting_element(&self) -> Option<CwElement> {
+        // The **latch** counts as well as the current contact. A tap is the
+        // press and release both having happened between two polls, so by the
+        // time a poll runs, both contacts read released and only the latch can
+        // say an element is owed.
+        if self.dit || self.lat_dit {
+            Some(CwElement::Dit)
+        } else if self.dah || self.lat_dah {
+            Some(CwElement::Dah)
+        } else {
+            None
+        }
+    }
+
+    /// Queue a decoded character, keeping the queue bounded.
+    ///
+    /// `out` is a read-back convenience, not the keyer's output — the elements
+    /// go out through [`CwKeyer::poll`] whether or not anybody ever reads this.
+    /// So a caller that keys for hours without calling [`Self::take_text`] used
+    /// to grow it without limit, **on the audio thread**, which is the one place
+    /// a slow allocation cannot be tolerated. The cap drops from the front, the
+    /// same way the transmit read-back does, so what survives is the most recent
+    /// text rather than the oldest.
+    fn push_out(&mut self, c: char) {
+        self.out.push_back(c);
+        if self.out.len() > OUT_CAP {
+            let drop = self.out.len() - OUT_CAP;
+            self.out.drain(..drop);
+        }
+    }
+
+    fn start_mark(&mut self, start: f64, el: CwElement) {
+        // A word break is owed only once the next character actually begins, so
+        // the text does not end in a dangling space.
+        if self.space_owed {
+            self.push_out(' ');
+            self.space_owed = false;
+            self.char_since_space = false;
+        }
+        match el {
+            CwElement::Dit => {
+                self.lat_dit = false;
+                self.code.push('.');
+            }
+            CwElement::Dah => {
+                self.lat_dah = false;
+                self.code.push('-');
+            }
+        }
+        let dur = match el {
+            CwElement::Dit => self.dit_s,
+            CwElement::Dah => 3.0 * self.dit_s,
+        };
+        self.phase = Phase::Mark { el, end: start + dur };
+        self.marks += 1;
+    }
+
+    /// What, if anything, follows `el`. The opposite paddle wins (held, and in
+    /// mode B also remembered), otherwise the same paddle repeats for as long
+    /// as it is held. Nothing follows a released paddle — that is what stops a
+    /// single tap turning into a run.
+    fn next_element(&mut self, el: CwElement) -> Option<CwElement> {
+        let opp_dit = self.dit || (self.mode == IambicMode::B && self.lat_dit);
+        let opp_dah = self.dah || (self.mode == IambicMode::B && self.lat_dah);
+        let nxt = match el {
+            CwElement::Dit => {
+                if opp_dah {
+                    Some(CwElement::Dah)
+                } else if self.dit {
+                    Some(CwElement::Dit)
+                } else {
+                    None
+                }
+            }
+            CwElement::Dah => {
+                if opp_dit {
+                    Some(CwElement::Dit)
+                } else if self.dah {
+                    Some(CwElement::Dah)
+                } else {
+                    None
+                }
+            }
+        };
+        match nxt {
+            Some(CwElement::Dit) => self.lat_dit = false,
+            Some(CwElement::Dah) => self.lat_dah = false,
+            None => {
+                self.lat_dit = false;
+                self.lat_dah = false;
+            }
+        }
+        nxt
+    }
+
+    fn finalize_gaps(&mut self, now: f64) {
+        let Some(prev) = self.prev_end else { return };
+        let gap = now - prev;
+        if !self.code.is_empty() && gap >= self.char_gap_s {
+            if let Some(c) = morse_decode(&self.code) {
+                self.push_out(c);
+            }
+            self.code.clear();
+            self.char_since_space = true;
+        }
+        if gap >= self.word_gap_s && self.char_since_space {
+            self.space_owed = true;
+        }
+    }
+
+    /// Characters and spaces completed since the last call, in order.
+    pub fn take_text(&mut self) -> String {
+        self.out.drain(..).collect()
+    }
+
+    /// The next completed character, if one is waiting.
+    pub fn take_char(&mut self) -> Option<char> {
+        self.out.pop_front()
+    }
+
+    /// The elements of the character being keyed right now, for a display.
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    /// Elements generated since the last reset, for a display or a test.
+    pub fn marks(&self) -> u64 {
+        self.marks
+    }
+
+    pub fn reset(&mut self) {
+        self.phase = Phase::Idle;
+        self.pending = None;
+        self.prev_end = None;
+        self.code.clear();
+        self.out.clear();
+        self.space_owed = false;
+        self.char_since_space = false;
+        // The latches too. They are a record of a press that has *not* been
+        // sent yet, so leaving them set across a reset made the keyer start an
+        // element out of a contact the caller had already released — an abort
+        // would re-key the transmitter it had just released.
+        self.lat_dit = false;
+        self.lat_dah = false;
+    }
 }
 
 #[cfg(test)]
@@ -2206,5 +2555,246 @@ mod tests {
             println!();
         }
         println!();
+    }
+}
+
+#[cfg(test)]
+mod keyer_tests {
+    use super::*;
+
+    /// Drive the keyer from a script of (duration, dit, dah) segments, stepping
+    /// at 1 ms the way an audio worker would.
+    fn run(k: &mut CwKeyer, t: &mut f64, secs: f64, dit: bool, dah: bool) {
+        let end = *t + secs;
+        while *t < end {
+            k.poll(*t, dit, dah);
+            *t += 0.001;
+        }
+    }
+
+    /// Squeezing and then letting go of one paddle mid-element: mode B must
+    /// still send the element that paddle was squeezed for, mode A must not.
+    ///
+    /// This is the whole difference between the two modes, and it is a claim
+    /// about the **release**, not the press — which is why it is easy to get
+    /// backwards. The maintainer asked for exactly this test on #626, and it
+    /// fails without the falling-edge latch in [`CwKeyer::contact`]: mode B
+    /// degenerated into dits for ever and the trailing dah was never sent.
+    #[test]
+    fn mode_b_remembers_a_paddle_released_mid_squeeze_and_mode_a_does_not() {
+        // Dit at 20 wpm is 60 ms, dah 180 ms. Squeeze, let the leading element
+        // start, then drop the dah while the dit stays down.
+        fn sends(mode: IambicMode) -> String {
+            let mut k = CwKeyer::new(20.0);
+            k.set_iambic(mode);
+            let mut t = 0.0;
+            // A dah on its own first, so that the latch the squeeze would
+            // otherwise leave set is **consumed** by sending it. Squeeze from
+            // idle cannot tell the two modes apart: the press has latched the
+            // dah either way, so the trailing dah goes out even without memory,
+            // and the test passes for the wrong reason.
+            run(&mut k, &mut t, 0.250, false, true);
+            // Long enough for a character gap, so the dah is flushed as its own
+            // character and its latch really is cleared before the squeeze.
+            run(&mut k, &mut t, 0.600, false, false);
+            run(&mut k, &mut t, 0.250, true, true); // squeeze: dit against dah
+            run(&mut k, &mut t, 0.200, true, false); // release dah, keep dit
+            run(&mut k, &mut t, 1.200, false, false); // let it settle
+            k.take_text()
+        }
+        let a = sends(IambicMode::A);
+        let b = sends(IambicMode::B);
+        // The claim is about *elements*, and `take_text` hands back decoded
+        // characters, so re-encode: what matters is whether a dah went out.
+        let elements = |t: &str| -> String { t.chars().filter_map(morse_encode).collect() };
+        let (ae, be) = (elements(&a), elements(&b));
+        assert_ne!(ae, be, "the two modes must differ, or the test says nothing");
+        assert_eq!(
+            be.matches('-').count(),
+            ae.matches('-').count() + 1,
+            "mode B must send exactly one more dah than mode A — the one it \
+             remembered: A {ae:?}, B {be:?}"
+        );
+    }
+
+    #[test]
+    fn a_tap_sends_one_dit() {
+        let mut k = CwKeyer::new(20.0);
+        let mut t = 0.0;
+        run(&mut k, &mut t, 0.010, true, false);
+        run(&mut k, &mut t, 0.5, false, false);
+        assert_eq!(k.take_text(), "E");
+        assert_eq!(k.marks(), 1);
+    }
+
+    #[test]
+    fn a_held_paddle_repeats() {
+        let mut k = CwKeyer::new(20.0);
+        let mut t = 0.0;
+        run(&mut k, &mut t, 0.20, true, false);
+        run(&mut k, &mut t, 0.5, false, false);
+        assert_eq!(k.take_text(), "S", "three dits are S");
+    }
+
+    #[test]
+    fn releasing_a_paddle_leaves_nothing_behind() {
+        let mut k = CwKeyer::new(20.0);
+        let mut t = 0.0;
+        run(&mut k, &mut t, 0.010, true, false);
+        run(&mut k, &mut t, 2.0, false, false);
+        assert_eq!(k.take_text(), "E", "a tap is one character, not a run");
+        assert_eq!(k.marks(), 1);
+    }
+
+    #[test]
+    fn a_squeeze_alternates() {
+        let mut k = CwKeyer::new(20.0);
+        let mut t = 0.0;
+        while k.marks() < 3 {
+            k.poll(t, true, true);
+            t += 0.001;
+            assert!(t < 5.0, "the squeeze never produced three elements");
+        }
+        assert_eq!(k.code(), ".-.", "a squeeze starts with a dit and alternates");
+        run(&mut k, &mut t, 0.5, false, false);
+        assert_eq!(k.take_text(), "R", ".-. is R");
+    }
+
+    #[test]
+    fn a_word_break_waits_for_the_next_character() {
+        let mut k = CwKeyer::new(20.0);
+        let mut t = 0.0;
+        run(&mut k, &mut t, 0.010, true, false);
+        run(&mut k, &mut t, 0.6, false, false);
+        assert_eq!(k.take_text(), "E", "no dangling space after the last word");
+        run(&mut k, &mut t, 0.010, true, false);
+        run(&mut k, &mut t, 0.5, false, false);
+        assert_eq!(k.take_text(), " E", "the space lands when the next word starts");
+    }
+
+    #[test]
+    fn mode_a_needs_the_opposite_paddle_held() {
+        let mut k = CwKeyer::new(20.0);
+        k.set_iambic(IambicMode::A);
+        let mut t = 0.0;
+        // Dit paddle down; dah tapped only while the dit is being sent.
+        while k.marks() == 0 {
+            k.poll(t, true, false);
+            t += 0.001;
+        }
+        k.poll(t, true, true); // dah pressed mid-element...
+        k.poll(t, true, false); // ...and released before it ends
+        while k.marks() < 2 && t < 0.5 {
+            k.poll(t, true, false);
+            t += 0.001;
+        }
+        assert_eq!(k.code(), "..", "mode A forgets a released opposite paddle");
+    }
+
+    #[test]
+    fn a_straight_single_dah_is_t() {
+        let mut k = CwKeyer::new(12.0);
+        let mut t = 0.0;
+        run(&mut k, &mut t, 0.30, false, true);
+        run(&mut k, &mut t, 0.8, false, false);
+        assert_eq!(k.take_text(), "T");
+    }
+}
+#[cfg(test)]
+mod manual_timeline_tests {
+    use super::*;
+
+    /// The transmit block length: 50 ms at 48 kHz. A dit at 20 wpm is 60 ms and
+    /// a dah three times that, so one whole element spans at least one of
+    /// these — which is exactly why the key cannot be read once per block.
+    const OUT_RATE: f64 = 48_000.0;
+    const BLOCK: usize = 2400;
+
+    /// The tone is a shaped sine: a 5 ms raised-cosine ramp and a zero crossing
+    /// every half period. Neither says anything about whether the key was down,
+    /// so measure the envelope — the peak over a window comfortably longer than
+    /// a crossing and shorter than an element.
+    fn envelope(out: &[f32]) -> Vec<f32> {
+        out.chunks(128).map(|c| c.iter().fold(0.0f32, |m, s| m.max(s.abs()))).collect()
+    }
+
+    const TONE: f32 = 0.05;
+    const SILENT: f32 = 1e-3;
+
+    #[test]
+    fn the_key_timeline_is_followed_per_sample() {
+        let mut tx = CwTx::new(OUT_RATE, 700.0, 20.0);
+        tx.set_manual(true);
+
+        // 30 ms down then 30 ms up, in one 50 ms block: a key that goes down
+        // and comes back inside a single block. Read once per block this is one
+        // solid 50 ms tone and the element is lost; the timeline is the fix.
+        let gap = BLOCK * 3 / 5;
+        let mut keys = vec![true; gap];
+        keys.resize(BLOCK, false);
+        let mut out = vec![0.0f32; BLOCK];
+        tx.next_manual_block_timed(&mut out, OUT_RATE, &keys);
+
+        let env = envelope(&out);
+        let voiced = env.iter().filter(|p| **p > TONE).count();
+        let silent = env.iter().filter(|p| **p < SILENT).count();
+        assert!(voiced > 0 && silent > 0, "the tone starts and stops inside one block: {env:?}");
+        // *Where* the silence starts is the claim, not how much of it there
+        // is: the ramp is 5 ms either side of the edge, so the tone must go
+        // quiet within a chunk or two of the key going up. Read once per block
+        // it could not go quiet at all inside one — the block would be a single
+        // solid tone, which is the ragged sending this whole path exists to fix.
+        let first_quiet = env.iter().position(|p| *p < SILENT).expect("never went quiet");
+        let edge = gap.div_ceil(128);
+        assert!(
+            first_quiet <= edge + 3,
+            "the tone ran on well past the key-up at chunk {edge}: quiet only from {first_quiet}"
+        );
+        assert!(voiced > 0, "the key-down was not followed either");
+        assert_eq!(tx.held(), false, "the transmitter's key state ends where the key ended");
+    }
+
+    #[test]
+    fn a_short_timeline_holds_its_last_state_for_the_rest_of_the_block() {
+        let mut tx = CwTx::new(OUT_RATE, 700.0, 20.0);
+        tx.set_manual(true);
+
+        // 10 samples of key asked about, out of a 2400-sample block.
+        let mut out = vec![0.0f32; BLOCK];
+        tx.next_manual_block_timed(&mut out, OUT_RATE, &[true]);
+        assert!(
+            envelope(&out)[2..].iter().all(|p| *p > TONE),
+            "a key that was down when the samples ran out stays down for the block"
+        );
+        assert_eq!(tx.held(), true, "and the transmitter's own key state follows it");
+
+        // The other direction: released, and silence follows.
+        let mut tx = CwTx::new(OUT_RATE, 700.0, 20.0);
+        tx.set_manual(true);
+        let mut out = vec![0.0f32; BLOCK];
+        tx.next_manual_block_timed(&mut out, OUT_RATE, &[false]);
+        assert!(
+            envelope(&out).iter().all(|p| *p < SILENT),
+            "nothing keys when the caller says the key is up"
+        );
+        assert_eq!(tx.held(), false);
+    }
+
+    #[test]
+    fn the_plain_manual_block_still_keys_for_its_whole_length() {
+        // The straight-key path must be untouched by all of this: a hand is down
+        // or up, and it stays that way for the block.
+        let mut tx = CwTx::new(OUT_RATE, 700.0, 20.0);
+        tx.set_manual(true);
+        tx.set_held(true);
+
+        let mut out = vec![0.0f32; BLOCK];
+        tx.next_manual_block(&mut out, OUT_RATE);
+        // The 5 ms ramp is the only quiet part; past it a held key is solid.
+        assert!(
+            envelope(&out)[2..].iter().all(|p| *p > TONE),
+            "a held straight key tones throughout"
+        );
+        assert_eq!(tx.held(), true, "and the caller's own key state is left alone");
     }
 }
