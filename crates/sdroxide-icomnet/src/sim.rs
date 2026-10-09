@@ -68,6 +68,8 @@ pub struct SimOptions {
     /// side: acknowledged by nothing, refused by nothing, and still on the old
     /// frequency. This is the shape of issue #297.
     pub ignore_tunes: u32,
+    /// Keep reporting USB despite mode writes, to exercise stale/refused modes.
+    pub ignore_modes: bool,
     /// What every Set-mode menu item holds before the client writes anything
     /// (`1A 05`). `0x00` is MIC on an IC-7300MK2's modulation inputs, and on no
     /// model is it the value that means LAN — so a test can tell "the client
@@ -92,6 +94,7 @@ impl Default for SimOptions {
             bind: Ipv4Addr::LOCALHOST,
             mute_data_ports: false,
             ignore_tunes: 0,
+            ignore_modes: false,
             menu_default: 0x00,
         }
     }
@@ -99,6 +102,7 @@ impl Default for SimOptions {
 
 #[derive(Debug, Default)]
 struct Recorded {
+    mode: u8,
     /// PCM the client transmitted, decoded to mono.
     tx_audio: Vec<f32>,
     /// CI-V frames the client sent.
@@ -135,6 +139,7 @@ pub struct Sim {
     /// Whether the scope is streaming — `27 11` sets it, and a test can clear
     /// it. See [`Sim::stall_scope`].
     scope_out: Arc<AtomicBool>,
+    ptt: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -149,10 +154,11 @@ impl Sim {
         let civ = bind_on(opts.bind, 0)?;
         let audio = bind_on(opts.bind, 0)?;
         let alive = Arc::new(AtomicBool::new(true));
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let recorded = Arc::new(Mutex::new(Recorded { mode: 0x01, ..Default::default() }));
         // Off until the client asks for it, as on a real radio: a scope running
         // on the radio's own display streams nothing until `27 11`.
         let scope_out = Arc::new(AtomicBool::new(false));
+        let ptt = Arc::new(AtomicBool::new(false));
 
         let menu_default = opts.menu_default;
         let start_dial = opts.freq_hz;
@@ -169,6 +175,7 @@ impl Sim {
             alive: alive.clone(),
             recorded: recorded.clone(),
             scope_out: scope_out.clone(),
+            ptt: ptt.clone(),
             token: 0x1234_5678,
             token_request: 0,
             civ_open: false,
@@ -189,6 +196,7 @@ impl Sim {
             menu_default,
             start_dial,
             scope_out,
+            ptt,
             join: Some(join),
         })
     }
@@ -212,6 +220,11 @@ impl Sim {
     /// the frequency it was started on.
     pub fn dial(&self) -> f64 {
         self.recorded.lock().unwrap_or_else(|e| e.into_inner()).dial.unwrap_or(self.start_dial)
+    }
+
+    /// Key the radio locally, without a client CI-V PTT command.
+    pub fn set_local_ptt(&self, on: bool) {
+        self.ptt.store(on, Ordering::Relaxed);
     }
 
     /// Whether the client got as far as opening the streams.
@@ -247,6 +260,11 @@ impl Sim {
             .get(&item)
             .copied()
             .unwrap_or(self.menu_default)
+    }
+
+    /// Change a menu item from the radio's front panel.
+    pub fn set_menu_item(&self, item: u16, value: u8) {
+        self.recorded.lock().unwrap_or_else(|e| e.into_inner()).menu.insert(item, value);
     }
 
     /// Whether the client has pinged the audio stream.
@@ -456,6 +474,7 @@ struct SimRadio {
     token_request: u16,
     civ_open: bool,
     scope_out: Arc<AtomicBool>,
+    ptt: Arc<AtomicBool>,
     audio_started: Option<Instant>,
     audio_sent: u64,
     next_scope: Instant,
@@ -649,8 +668,16 @@ impl SimRadio {
                 }
                 Some(vec![0xfe, 0xfe, 0xe0, addr, 0xfb, 0xfd])
             }
-            // Read mode: USB, wide.
-            0x04 => Some(reply(vec![0x04, 0x01, 0x01])),
+            0x04 => {
+                let mode = self.recorded.lock().unwrap_or_else(|e| e.into_inner()).mode;
+                Some(reply(vec![0x04, mode, 0x01]))
+            }
+            0x06 if frame.len() >= 7 => {
+                if !self.opts.ignore_modes {
+                    self.recorded.lock().unwrap_or_else(|e| e.into_inner()).mode = frame[5];
+                }
+                Some(vec![0xfe, 0xfe, 0xe0, addr, 0xfb, 0xfd])
+            }
             0x15 => match frame.get(5) {
                 // S-meter, mid scale.
                 Some(0x02) => Some(reply(vec![0x15, 0x02, 0x01, 0x20])),
@@ -662,10 +689,29 @@ impl SimRadio {
                 Some(0x11) => Some(reply(vec![0x15, 0x11, 0x02, 0x13])),
                 _ => None,
             },
+            0x1c if frame.get(5) == Some(&0x00) && frame.len() >= 7 => {
+                match &frame[6..frame.len() - 1] {
+                    [] => Some(reply(vec![0x1c, 0x00, u8::from(self.ptt.load(Ordering::Relaxed))])),
+                    [on @ (0 | 1)] => {
+                        self.ptt.store(*on != 0, Ordering::Relaxed);
+                        Some(vec![0xfe, 0xfe, 0xe0, addr, 0xfb, 0xfd])
+                    }
+                    _ => None,
+                }
+            }
             // The Set-mode menu, `1A 05 <hi> <lo> [value]`. A bare item number
             // is a question and is answered with what the item holds; anything
             // after it is a write, and the radio keeps it — which is what lets
             // a test see what state the client left the rig in (issue #252).
+            0x1a if frame.get(5) == Some(&0x06) && frame.len() >= 7 => {
+                let mut recorded = self.recorded.lock().unwrap_or_else(|e| e.into_inner());
+                if frame.len() == 7 {
+                    Some(reply(vec![0x1a, 0x06, recorded.mode, 0x01]))
+                } else {
+                    recorded.mode = frame[6];
+                    Some(vec![0xfe, 0xfe, 0xe0, addr, 0xfb, 0xfd])
+                }
+            }
             0x1a if frame.get(5) == Some(&0x05) && frame.len() >= 9 => {
                 let item = (u16::from(frame[6]) << 8) | u16::from(frame[7]);
                 let value = &frame[8..frame.len() - 1];

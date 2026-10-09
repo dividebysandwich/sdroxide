@@ -15,6 +15,19 @@
 
 use std::path::PathBuf;
 
+/// On Windows `canonicalize` returns a verbatim `\\?\D:\...` path. libclang
+/// cannot resolve a header's relative `#include`s against one (rade_api.h's
+/// `rade_tx.h` goes missing), so a plain drive path is handed on instead.
+/// UNC shares (`\\?\UNC\...`) are left as they are.
+fn strip_verbatim(p: PathBuf) -> PathBuf {
+    let plain = p
+        .to_str()
+        .and_then(|s| s.strip_prefix(r"\\?\"))
+        .filter(|rest| !rest.starts_with("UNC\\"))
+        .map(PathBuf::from);
+    plain.unwrap_or(p)
+}
+
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
@@ -27,7 +40,7 @@ fn main() {
             rade_c.display()
         );
     }
-    let rade_c = rade_c.canonicalize().expect("canonicalize vendor/rade_c");
+    let rade_c = strip_verbatim(rade_c.canonicalize().expect("canonicalize vendor/rade_c"));
 
     let wrapper = write_wrapper_project(&out, &rade_c);
 

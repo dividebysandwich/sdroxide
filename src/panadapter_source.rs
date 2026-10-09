@@ -384,6 +384,33 @@ impl PanadapterSource {
 impl IqSource for PanadapterSource {
     // ── Receive: the attached receiver ──────────────────────────────────────
 
+    fn prepare_receive_mode(&mut self, mode: Mode) -> Result<Option<bool>> {
+        let old_rate = self.ctrl.sample_rate();
+        self.ctrl.prepare_receive_mode(mode)?;
+        if self.ctrl.sample_rate() != old_rate {
+            self.audio_q.clear();
+            self.last_audio_pull = None;
+        }
+        self.rx.prepare_receive_mode(mode)
+    }
+
+    fn mode_unavailable(&self, mode: Mode) -> Option<&'static str> {
+        if let Some(why) = self.rx.mode_unavailable(mode) {
+            return Some(why);
+        }
+        if mode == Mode::HdRadio {
+            let hd = if sdroxide_dsp::hd_radio_is_am(self.center_hz()) {
+                sdroxide_nrsc5::Mode::Am
+            } else {
+                sdroxide_nrsc5::Mode::Fm
+            };
+            if self.rx.sample_rate() < hd.min_channel_rate_hz() {
+                return Some("The attached panadapter receiver is too narrow for HD Radio");
+            }
+        }
+        None
+    }
+
     fn sample_rate(&self) -> f64 {
         self.rx.sample_rate()
     }
@@ -688,6 +715,14 @@ impl IqSource for PanadapterSource {
 
     fn set_tune_drive(&mut self, frac: f64) {
         self.ctrl.set_tune_drive(frac);
+    }
+
+    fn onboard_pa(&self) -> Option<bool> {
+        self.ctrl.onboard_pa()
+    }
+
+    fn set_onboard_pa(&mut self, enabled: bool) -> Result<()> {
+        self.ctrl.set_onboard_pa(enabled)
     }
 
     fn commands_tx_power(&self) -> bool {

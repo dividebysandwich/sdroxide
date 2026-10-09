@@ -108,7 +108,9 @@ pub enum ControlUpdate {
     /// them off mid-word.
     ///
     /// So the engine *observes* it: the meter follows the over and shows its
-    /// SWR, and sdroxide will not key on top of it. It does not transmit.
+    /// SWR, and sdroxide will not key on top of it. An explicitly opted-in
+    /// source may accept host voice audio while locally keyed, without CAT
+    /// key/unkey commands — see [`IqSource::feeds_audio_on_rig_tx`].
     RigTx(bool),
 }
 
@@ -126,6 +128,17 @@ pub enum ControlUpdate {
 /// default for anyone running a frequency converter. Add the forward at the
 /// same time.
 pub trait IqSource: Send {
+    /// Select a mode-dependent receive path. `Some` reports whether the
+    /// resulting stream is demodulated audio; `None` leaves capabilities alone.
+    fn prepare_receive_mode(&mut self, _mode: Mode) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
+    /// Hardware-specific reason a modulation mode cannot be received.
+    fn mode_unavailable(&self, _mode: Mode) -> Option<&'static str> {
+        None
+    }
+
     fn sample_rate(&self) -> f64;
     fn center_hz(&self) -> f64;
     fn set_center_hz(&mut self, hz: f64) -> Result<()>;
@@ -311,6 +324,11 @@ pub trait IqSource: Send {
     fn tx_end(&mut self) -> Result<()> {
         Ok(())
     }
+    /// The radio is already keyed locally and its selected input accepts host
+    /// voice audio. Enables audio feeding only, never `tx_begin` or `tx_end`.
+    fn feeds_audio_on_rig_tx(&self) -> bool {
+        false
+    }
     /// Discard any RX samples buffered while transmitting, so the first read
     /// after [`Self::tx_end`] returns fresh data instead of a stale backlog.
     /// Default no-op: most sources have no such buffer.
@@ -384,6 +402,13 @@ pub trait IqSource: Send {
     fn set_dial_hz(&mut self, _hz: f64) {}
     /// Set the TUNE drive as a `0..1` fraction (see [`Self::set_tx_drive`]).
     fn set_tune_drive(&mut self, _frac: f64) {}
+    /// The commanded onboard PA setting; `None` means unsupported.
+    fn onboard_pa(&self) -> Option<bool> {
+        None
+    }
+    fn set_onboard_pa(&mut self, _enabled: bool) -> Result<()> {
+        Err(crate::RadioError::Msg("This radio has no onboard PA control".into()))
+    }
     /// Whether [`Self::set_tx_drive`] actually commands the rig's output power
     /// (TCI). On such a rig the audio we send is just the modulating signal and
     /// must go out at full scale — the power level is the rig's job, and
@@ -967,6 +992,8 @@ impl ConvertedSource {
     }
 
     /// A station with more than one box in front of it — see [`ConverterPlan`].
+    /// When the requested dial is known, use [`Self::with_plan_at_dial`] instead
+    /// of guessing which converter produced the hardware frequency.
     pub fn with_plan(inner: Box<dyn IqSource>, plan: ConverterPlan) -> Self {
         // Seeded by working *backwards* from where the front end already is.
         // Nothing has told us a dial yet, and the first thing the engine does
@@ -974,6 +1001,20 @@ impl ConvertedSource {
         // I.F. has to say so, or the radio comes up on 28 MHz having been
         // opened for 144.
         let step = plan.step_from_hardware(inner.center_hz());
+        Self::with_step(inner, plan, step)
+    }
+
+    /// Use the requested dial to disambiguate converters sharing an I.F.
+    /// The reported centre still comes from the hardware that actually opened.
+    pub fn with_plan_at_dial(inner: Box<dyn IqSource>, plan: ConverterPlan, dial_hz: f64) -> Self {
+        let step = plan.step_for(dial_hz);
+        Self::with_step(inner, plan, step)
+    }
+
+    fn with_step(mut inner: Box<dyn IqSource>, plan: ConverterPlan, step: ConverterStep) -> Self {
+        // Opening does not retune, but accessory band decoders need the same
+        // on-air frequency they receive on every subsequent retune.
+        inner.set_dial_hz(inner.center_hz() - step.rx_offset_hz);
         ConvertedSource { inner, plan, step }
     }
 
@@ -1369,6 +1410,14 @@ impl IqSource for ConvertedSource {
 
     // --- forwarded verbatim -------------------------------------------------
 
+    fn prepare_receive_mode(&mut self, mode: Mode) -> Result<Option<bool>> {
+        self.inner.prepare_receive_mode(mode)
+    }
+
+    fn mode_unavailable(&self, mode: Mode) -> Option<&'static str> {
+        self.inner.mode_unavailable(mode)
+    }
+
     fn sample_rate(&self) -> f64 {
         self.inner.sample_rate()
     }
@@ -1486,6 +1535,10 @@ impl IqSource for ConvertedSource {
         self.inner.tx_end()
     }
 
+    fn feeds_audio_on_rig_tx(&self) -> bool {
+        self.inner.feeds_audio_on_rig_tx()
+    }
+
     /// Both of these are about the receiver behind the converter, which is the
     /// one doing the buffering — a converter shifts frequencies and holds no
     /// samples of its own. Forwarded rather than left to the trait defaults
@@ -1522,6 +1575,14 @@ impl IqSource for ConvertedSource {
 
     fn set_tune_drive(&mut self, frac: f64) {
         self.inner.set_tune_drive(frac);
+    }
+
+    fn onboard_pa(&self) -> Option<bool> {
+        self.inner.onboard_pa()
+    }
+
+    fn set_onboard_pa(&mut self, enabled: bool) -> Result<()> {
+        self.inner.set_onboard_pa(enabled)
     }
 
     fn commands_tx_power(&self) -> bool {

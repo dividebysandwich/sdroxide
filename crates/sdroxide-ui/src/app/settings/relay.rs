@@ -1,5 +1,5 @@
 //! The external transmit/receive switch: the relay that gets the SDR out of the
-//! way while the station transmits.
+//! way while this radio transmits.
 //!
 //! A tab of its own rather than another section under Servers, where the
 //! rotator lives. The panel is large — a channel table, the sequencer's
@@ -44,16 +44,25 @@ pub(in crate::app) fn settings_relay_tab(
     );
     ui.add_space(4.0);
     if !seeded {
-        ui.label(RichText::new("Waiting for the station's T/R switch configuration…").weak());
+        ui.label(RichText::new("Waiting for this radio's T/R switch configuration…").weak());
         return;
     }
     ui.label(
         RichText::new(
-            "Closes a contact while this station transmits — to disconnect and ground the SDR's \
+            "Closes a contact while this radio transmits — to disconnect and ground the SDR's \
              antenna input, and to key an amplifier or an outboard T/R relay in sequence with it. \
              Works with the cheap USB relay boards (LCUS, KMtronic, Numato), with a serial \
              RTS/DTR line into any interface that wants a PTT closure, and with anything else \
              through a command hook.",
+        )
+        .weak(),
+    );
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new(
+            "This switch belongs to this radio only: its band decoder follows this radio's \
+             dials, and only this radio's transmissions throw it. Each radio can have its own \
+             relay module, but a module can be assigned to only one radio.",
         )
         .weak(),
     );
@@ -348,7 +357,7 @@ pub(in crate::app) fn settings_relay_tab(
                     crate::theme::INK_ON_CYAN(),
                 )
                 .on_hover_text(if busy {
-                    "Not while the station is on the air"
+                    "Not while this radio is on the air"
                 } else {
                     "Close this contact for half a second, so you can hear the relay and check \
                      the wiring with the transmitter cold"
@@ -464,18 +473,6 @@ pub(in crate::app) fn settings_relay_tab(
                     cfg.sense.active_high = high;
                 }
                 ui.end_row();
-
-                ui.label("Belongs to radio");
-                ui.add(
-                    egui::DragValue::new(&mut cfg.sense.radio)
-                        .range(0..=15)
-                        .custom_formatter(|n, _| format!("{}", n as u32 + 1)),
-                )
-                .on_hover_text(
-                    "Which radio tab the sensed transceiver is. On a station with one radio this \
-                     is 1 and nothing depends on it.",
-                );
-                ui.end_row();
             }
         });
     });
@@ -536,7 +533,7 @@ pub(in crate::app) fn settings_relay_tab(
     ui.add_space(8.0);
     if busy {
         ui.label(
-            RichText::new("The station is on the air — APPLY will take effect after this over.")
+            RichText::new("This radio is on the air — APPLY will take effect after this over.")
                 .color(WARN),
         );
         ui.add_space(4.0);

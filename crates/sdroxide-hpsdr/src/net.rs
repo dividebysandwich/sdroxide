@@ -455,6 +455,8 @@ pub(crate) enum Ctrl {
     /// — changed while running, because the antenna memory keeps it per band
     /// (issue #292). Protocol 1 only; there is no accessory bus on Protocol 2.
     IoRxInput(HpsdrIoRxInput),
+    /// Hermes-Lite onboard PA and associated T/R relay routing.
+    OnboardPa(bool),
     /// Where the radio *would* transmit, sent while receiving so an accessory
     /// board can switch bands before the operator keys. Loads the TX NCO
     /// register too, which is harmless: it does nothing until MOX.
@@ -658,6 +660,8 @@ pub(crate) struct ThreadCtx {
     pub adc_overload: Arc<AtomicBool>,
     /// The radio's own PTT line, published for [`HpsdrRx::radio_ptt`].
     pub radio_ptt: Arc<AtomicBool>,
+    /// Set after the accessory's hardware-version probe succeeds.
+    pub io_board_present: Arc<AtomicBool>,
     /// The board's temperature in hundredths of a degree Celsius, published for
     /// [`HpsdrRx::pa_temp_c`]. [`TEMP_UNKNOWN`] until the board reports one —
     /// which most of them never do.
@@ -725,6 +729,7 @@ struct DevInner {
     /// last saw it reported. A *level*, so a poll can never miss an edge by
     /// arriving late.
     radio_ptt: Arc<AtomicBool>,
+    io_board_present: Arc<AtomicBool>,
     /// The board's own temperature, hundredths of a degree — see
     /// [`TEMP_UNKNOWN`].
     temp_centi_c: Arc<AtomicI32>,
@@ -879,6 +884,7 @@ impl HpsdrBoard {
         // drops it a moment from now it will leave the stream alone.
         let conn_id = claim_connection(IpAddr::V4(ip));
         let radio_ptt = Arc::new(AtomicBool::new(false));
+        let io_board_present = Arc::new(AtomicBool::new(false));
         let temp_centi_c = Arc::new(AtomicI32::new(TEMP_UNKNOWN));
         let fwd_power_raw = Arc::new(AtomicU16::new(POWER_UNKNOWN));
         let rev_power_raw = Arc::new(AtomicU16::new(POWER_UNKNOWN));
@@ -911,6 +917,7 @@ impl HpsdrBoard {
             lna_gain_centi_db: Arc::clone(&lna_gain_centi_db),
             adc_overload: Arc::clone(&adc_overload),
             radio_ptt: Arc::clone(&radio_ptt),
+            io_board_present: Arc::clone(&io_board_present),
             temp_centi_c: Arc::clone(&temp_centi_c),
             fwd_power_raw: Arc::clone(&fwd_power_raw),
             rev_power_raw: Arc::clone(&rev_power_raw),
@@ -948,6 +955,7 @@ impl HpsdrBoard {
                 opened_at,
                 transmitting: Arc::new(AtomicBool::new(false)),
                 radio_ptt,
+                io_board_present,
                 temp_centi_c,
                 fwd_power_raw,
                 rev_power_raw,
@@ -1018,6 +1026,12 @@ impl HpsdrBoard {
     /// Whether this board can have an N2ADR HL2IOBoard on it.
     pub fn has_io_board(&self) -> bool {
         board_has_io_board(&self.inner.board)
+    }
+
+    /// Whether an HL2IOBoard has actually answered the accessory-bus probe.
+    /// Unlike `has_io_board`, this reports detection, not model eligibility.
+    pub fn io_board_present(&self) -> bool {
+        self.inner.io_board_present.load(Ordering::Relaxed)
     }
 
     /// Attach DDC `ddc` and start its stream. Refused beyond
@@ -1195,6 +1209,12 @@ impl HpsdrRx {
     pub fn set_io_rx_input(&self, input: HpsdrIoRxInput) {
         if self.ddc == 0 {
             let _ = self.dev.ctrl.send(Ctrl::IoRxInput(input));
+        }
+    }
+
+    pub fn set_onboard_pa(&self, enabled: bool) {
+        if self.ddc == 0 && self.dev.protocol == 1 && board_is_hermes_lite(&self.dev.board) {
+            let _ = self.dev.ctrl.send(Ctrl::OnboardPa(enabled));
         }
     }
 

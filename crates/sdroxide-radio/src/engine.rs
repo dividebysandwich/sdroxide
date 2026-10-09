@@ -591,13 +591,13 @@ pub struct EngineConfig {
     /// Which radio is on FreeDV, shared like `tx_gate`. `None` (the default,
     /// and every single-radio start): this engine's own mode is the answer.
     pub rade_watch: Option<Arc<crate::RadeWatch>>,
-    /// The station's external T/R switch, shared like `tx_gate` — the relay
-    /// that grounds the SDR's antenna while anything in this process is on the
-    /// air. `None` (the default) switches nothing.
+    /// This radio's external T/R switch — the relay module that grounds its
+    /// SDR's antenna and switches its band filters while it transmits. `None`
+    /// (the default) switches nothing.
     ///
-    /// Shared rather than per-engine because the relay is in the antenna line,
-    /// not in a front end: whichever radio keys, the same contacts have to
-    /// throw, and they must not open while another one is still transmitting.
+    /// One per radio, never shared: a module belongs to exactly one radio and
+    /// follows only that radio's dials and key-downs (see
+    /// [`crate::tr_switch::RelayClaim`]).
     pub tr_switch: Option<Arc<crate::TrSwitch>>,
 }
 
@@ -2410,8 +2410,10 @@ struct Engine {
     /// The transceiver in front of us is transmitting on its own — someone has
     /// their hand on its microphone. See [`ControlUpdate::RigTx`]: this engine
     /// is not driving that over and must not try to, so nothing here keys, and
-    /// nothing here modulates. It only watches.
+    /// no CAT key/unkey is sent. Host voice is fed only if the source confirms
+    /// its selected modulation input accepts it.
     rig_tx: bool,
+    rig_audio_active: bool,
     /// The transmit frequency the source has already been told, so
     /// [`Self::push_tx_freq`] only speaks when it moves.
     tx_freq_told: Option<f64>,
@@ -2879,6 +2881,7 @@ struct Engine {
     /// audio, so the DDC/demod/skimmer path is bypassed for a narrow
     /// audio-band panadapter mapped to RF.
     audio_mode: bool,
+    receive_mode_seen: Option<Mode>,
     /// Sound-card sample rate feeding `analyzer` in audio mode.
     radio_fs: f64,
     /// Front-end decimation, when the operator has asked for any: the raw IQ
@@ -2975,14 +2978,15 @@ struct Engine {
     /// connection transitions bypass the throttle, movement does not.
     rot_last_status: Option<sdroxide_rotator::RotStatus>,
     next_rot_emit: Instant,
-    /// The external T/R switch's config as persisted (`relay.json`), announced
-    /// in the station bundle the way the rotator's is.
+    /// This radio's T/R switch config as persisted (its scope's `relay.json`),
+    /// announced in the station bundle the way the rotator's is.
     relay_cfg: sdroxide_types::RelayConfig,
-    /// The switch itself, shared with every other engine. The driver behind it
-    /// is built by the primary engine only — one station, one antenna line —
-    /// but every engine publishes into it, because any of them keying is the
-    /// station being on the air.
+    /// This radio's own switch. Every radio has one; the module behind it is
+    /// this radio's alone (see `relay_claim`).
     tr_switch: Option<Arc<crate::TrSwitch>>,
+    /// This radio's hold on the module it drives, so no other radio can open
+    /// it. Released when replaced or when the engine goes away.
+    relay_claim: Option<crate::tr_switch::RelayClaim>,
     /// What was last told to the clients, so a status only goes out when it
     /// changed.
     relay_last_status: Option<sdroxide_types::RelayStatus>,
@@ -3031,6 +3035,9 @@ struct Engine {
     /// [`sdroxide_config::Session::band_antenna`] and
     /// [`Engine::follow_band_antenna`].
     band_antenna: sdroxide_config::BandAntennas,
+    band_tx: sdroxide_config::BandTransmitSettings,
+    tx_band_seen: Option<Band>,
+    onboard_pa_default: Option<bool>,
     /// The front-end gain stages the operator has set, RX then TX, as
     /// `(element, dB)` — held for the same reason [`Self::want_antenna`] is,
     /// and applied by [`Engine::restore_gains`] after every open.
@@ -3623,7 +3630,10 @@ fn engine_thread(
     // Whether this machine has an nrsc5 to decode HD Radio with. Asked here, on
     // the machine the decoder would run on, so a remote client greys the mode
     // out for the station's reason rather than its own.
-    state.hd_radio_unavailable = sdroxide_nrsc5::unavailable_reason().map(str::to_string);
+    state.hd_radio_unavailable = source
+        .mode_unavailable(Mode::HdRadio)
+        .or_else(sdroxide_nrsc5::unavailable_reason)
+        .map(str::to_string);
     // Seeded here, next to the other config-derived state, so the very first
     // broadcast carries the real guard settings and no client ever renders the
     // 0.0 that `TxState::default()` would give it.
@@ -3964,6 +3974,21 @@ fn engine_thread(
     let want_gains =
         session.as_ref().map(|s| (s.gains.clone(), s.tx_gains.clone())).unwrap_or_default();
     let band_antenna = session.as_ref().map(|s| s.band_antenna.clone()).unwrap_or_default();
+    let mut band_tx = session.as_ref().map(|s| s.band_tx.clone()).unwrap_or_default();
+    // Preserve the last operating band's levels when upgrading an old session.
+    if band_tx.is_empty()
+        && let Some(s) = session.as_ref()
+    {
+        band_tx.insert(
+            Band::containing(state.tx_freq_hz()),
+            sdroxide_config::BandTransmit {
+                drive: Some(s.drive),
+                tune_drive: Some(s.tune_drive),
+                onboard_pa: None,
+            },
+        );
+    }
+    let onboard_pa_default = source.onboard_pa();
     // Taken before the state is moved into the engine. Both VFOs open on the
     // mode the receiver came up in — the command line's, the session's, or the
     // default — and the *inactive* one is then given back the mode it was
@@ -4011,6 +4036,7 @@ fn engine_thread(
         voice_blocks: 0,
         hw_ptt: false,
         rig_tx: false,
+        rig_audio_active: false,
         tx_freq_told: None,
         drive_trim_db: 0.0,
         drive_trim: radio_cfg.tx_drive_trim.clone(),
@@ -4180,6 +4206,7 @@ fn engine_thread(
         tci_tx_drain: false,
         tci_last_snap: None,
         audio_mode,
+        receive_mode_seen: None,
         radio_fs,
         decim,
         audio_bw,
@@ -4211,6 +4238,7 @@ fn engine_thread(
         rot_cfg: sdroxide_types::RotatorConfig::default(),
         relay_cfg: sdroxide_types::RelayConfig::default(),
         tr_switch: engine_cfg.tr_switch.clone(),
+        relay_claim: None,
         relay_last_status: None,
         relay_pending: false,
         relay_lead_capped: false,
@@ -4221,6 +4249,9 @@ fn engine_thread(
         session,
         want_antenna,
         band_antenna,
+        band_tx,
+        tx_band_seen: None,
+        onboard_pa_default,
         want_gains,
         want_decimation,
         store: engine_cfg.store,
@@ -4239,6 +4270,7 @@ fn engine_thread(
     // the same path a reconnect uses, so both land on the same port.
     engine.restore_antennas();
     engine.restore_gains();
+    engine.push_tx_freq();
     // The opening state goes out here rather than with the capabilities above,
     // so the first thing every UI sees is the port the radio is actually on.
     let _ = engine.event_tx.send(RadioEvent::State(engine.state.clone()));
@@ -4319,12 +4351,9 @@ fn engine_thread(
     if engine.primary {
         engine.sync_rotator();
     }
-    engine.relay_cfg = sdroxide_config::load_relay_config();
-    // One station, one antenna line: only the primary engine opens the switch.
-    // Every engine still publishes into it — see `Engine::poll_tr_switch`.
-    if engine.primary {
-        engine.sync_relay();
-    }
+    engine.relay_cfg = engine.store.load_relay_config();
+    // Every radio opens its own switch, if it has one configured.
+    engine.sync_relay();
     // Seed clients with the whole station configuration up front, for the same
     // reason as the operator config above: a settings dialog that has not been
     // told what the station is set to would show defaults, and applying those
@@ -4371,6 +4400,7 @@ fn engine_thread(
         engine.vfo_memory[idle].antenna_rx = rx;
         engine.vfo_memory[idle].antenna_tx = tx;
     }
+    engine.refresh_receive_path();
     engine.push_rx_mode();
     engine.keep_vfo_in_span();
     engine.update_tuning();
@@ -4492,6 +4522,7 @@ fn engine_thread(
         // answers once its control link has been open a round trip.
         engine.refresh_antennas();
         engine.refresh_rx_antenna();
+        engine.refresh_receive_path();
 
         // Drive the FT8/FT4 slot machine (runs in both RX and TX). Returns
         // owned actions to avoid borrowing `engine.digi` and `engine` at once.
@@ -4521,9 +4552,12 @@ fn engine_thread(
         // front-end is only a stand-in — no trip through Settings.
         engine.poll_reconnect();
 
-        if engine.tx_active {
+        engine.sync_rig_tx_audio();
+        if engine.tx_active || engine.rig_audio_active {
             // Blocking TX write paces this loop at ~10 ms per block.
-            if let Err(e) = engine.tx_block() {
+            let written =
+                if engine.rig_audio_active { engine.tx_block_audio() } else { engine.tx_block() };
+            if let Err(e) = written {
                 let _ = engine.event_tx.send(RadioEvent::ConnectionLost(e.to_string()));
                 // Unkey on the way out. This thread is the only thing that ever
                 // calls `tx_end`, so returning without it leaves the
@@ -4534,8 +4568,10 @@ fn engine_thread(
                 // no `tx_write`) turned a refused over into a stuck one.
                 // Best-effort by necessity: the failure being reported may well
                 // be the same link this has to travel over.
-                if let Err(e) = engine.source.tx_end() {
-                    warn!("could not unkey after a transmit failure: {e}");
+                if engine.tx_active {
+                    if let Err(e) = engine.source.tx_end() {
+                        warn!("could not unkey after a transmit failure: {e}");
+                    }
                 }
                 // Same as the controller-gone exit: a dead engine must not
                 // keep the station interlock, nor the T/R switch.
@@ -5912,6 +5948,8 @@ impl Engine {
                 let frac = frac.clamp(0.0, 1.0);
                 if self.state.tx.drive != frac {
                     self.state.tx.drive = frac;
+                    self.band_tx.entry(Band::containing(self.tx_target_hz())).or_default().drive =
+                        Some(frac);
                     let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
                 }
             }
@@ -5919,6 +5957,10 @@ impl Engine {
                 let frac = frac.clamp(0.0, 1.0);
                 if self.state.tx.tune_drive != frac {
                     self.state.tx.tune_drive = frac;
+                    self.band_tx
+                        .entry(Band::containing(self.tx_target_hz()))
+                        .or_default()
+                        .tune_drive = Some(frac);
                     let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
                 }
             }
@@ -8348,7 +8390,10 @@ impl Engine {
                 }
             }
             SetTxDrive(v) => {
+                self.push_tx_freq();
                 self.state.tx.drive = v.clamp(0.0, 1.0);
+                self.band_tx.entry(Band::containing(self.tx_target_hz())).or_default().drive =
+                    Some(self.state.tx.drive);
                 // CAT/TCI rigs command output power directly; IQ sources ignore
                 // this and scale the modulated samples instead. While tuning the
                 // rig is holding the tune level, so leave it alone until unkey.
@@ -8358,7 +8403,10 @@ impl Engine {
                 }
             }
             SetTuneDrive(v) => {
+                self.push_tx_freq();
                 self.state.tx.tune_drive = v.clamp(0.0, 1.0);
+                self.band_tx.entry(Band::containing(self.tx_target_hz())).or_default().tune_drive =
+                    Some(self.state.tx.tune_drive);
                 self.source.set_tune_drive(self.tx_tune_level() as f64);
                 // Tuning right now: the rig's power is the tune level, so the
                 // slider takes effect without unkeying.
@@ -8367,6 +8415,31 @@ impl Engine {
                 }
             }
             SetMicGain(v) => self.state.tx.mic_gain = v.clamp(0.0, 1.0),
+            SetOnboardPa(enabled) => {
+                if self.source.onboard_pa().is_none() {
+                    self.notice("This radio has no onboard PA control");
+                    return;
+                }
+                if self.tx_active || self.state.tx.external_ptt {
+                    self.notice("Release PTT and TUNE before changing the onboard PA");
+                    return;
+                }
+                self.push_tx_freq();
+                match self.source.set_onboard_pa(enabled) {
+                    Ok(()) => {
+                        self.state.tx.onboard_pa = self.source.onboard_pa();
+                        self.band_tx
+                            .entry(Band::containing(self.tx_target_hz()))
+                            .or_default()
+                            .onboard_pa = Some(enabled);
+                    }
+                    Err(e) => {
+                        warn!("setting onboard PA: {e}");
+                        self.notice(&format!("Could not set onboard PA: {e}"));
+                    }
+                }
+                self.emit_state();
+            }
             SetTxEq(eq) => self.state.tx.eq = eq.clamped(),
 
             // ── Voice keyer ─────────────────────────────────────────────────
@@ -9621,21 +9694,12 @@ impl Engine {
                 return;
             }
             SetRelayConfig(cfg) => {
-                if let Err(e) = sdroxide_config::save_relay_config(&cfg) {
+                if let Err(e) = self.store.save_relay_config(&cfg) {
                     warn!("saving T/R switch config: {e}");
                 }
                 self.relay_cfg = *cfg;
-                // Whichever engine is told opens the hardware and becomes the
-                // switch's owner — *not* only the primary one.
-                //
-                // The primary opens it at startup because somebody has to and
-                // one of them has to be chosen. But a remote client is attached
-                // to one radio's session, so its `SetRelayConfig` reaches that
-                // radio and no other: gating this on `primary` would mean an
-                // operator who set the switch up from their second radio's tab
-                // saved a configuration that never opened anything. The hub
-                // holds a single driver either way, and `sync_relay` closes the
-                // old one before opening the new.
+                // This radio's own module: the configuration is saved in its
+                // scope and opened on its switch, whichever radio is primary.
                 self.sync_relay();
                 self.emit_station_config();
                 return;
@@ -12203,26 +12267,50 @@ impl Engine {
         }
         self.relay_pending = false;
         self.relay_last_status = None;
+        // The sense line is wired to this radio's transceiver: the module is
+        // this radio's, so whatever tab number a configuration carried over
+        // from the shared-switch days says, the edge is this engine's.
+        let mut cfg = self.relay_cfg.clone();
+        cfg.sense.radio = self.instance;
         // Close the old one *first*. Its thread owns a serial port or a device
         // node, and the new configuration is very often the same one with a
         // number changed — so opening before closing would have this engine
         // race itself for its own hardware. Also the moment the contacts are
         // put back to receive, which is why this is refused while on the air.
-        hub.install(None, &self.relay_cfg);
-        match sdroxide_relay::open(&self.relay_cfg) {
+        hub.install(None, &cfg);
+        self.relay_claim = None;
+        if cfg.enabled() {
+            match crate::tr_switch::RelayClaim::take(&cfg, self.instance) {
+                Ok(claim) => self.relay_claim = Some(claim),
+                Err(owner) => {
+                    let why = format!(
+                        "this relay module is already assigned to another radio (radio id \
+                         {owner}); a module can belong to only one radio"
+                    );
+                    warn!("T/R switch: {why}");
+                    hub.set_open_error(Some(why));
+                    self.emit_relay_status();
+                    return;
+                }
+            }
+        }
+        match sdroxide_relay::open(&cfg) {
             Ok(handle) => {
                 if let Some(h) = handle.as_ref() {
-                    info!("T/R switch: {}. {}", h.describe(), self.relay_cfg.sequence_note());
+                    info!("T/R switch: {}. {}", h.describe(), cfg.sequence_note());
                 }
                 hub.set_open_error(None);
-                hub.install(handle, &self.relay_cfg);
+                hub.install(handle, &cfg);
             }
             Err(e) => {
                 warn!("T/R switch: {e}");
-                hub.install(None, &self.relay_cfg);
+                hub.install(None, &cfg);
                 hub.set_open_error(Some(e.to_string()));
             }
         }
+        // The band decoder starts from this radio's current dials, not from
+        // whatever was told to the driver that was just closed.
+        self.relay_bands_told = None;
         self.emit_relay_status();
     }
 
@@ -12310,19 +12398,16 @@ impl Engine {
             self.sync_relay();
         }
 
-        if self.primary {
-            let st = hub.status();
-            if self.relay_last_status.as_ref() != Some(&st) {
-                self.relay_last_status = Some(st.clone());
-                let _ = self.event_tx.send(RadioEvent::RelayStatus(Box::new(st)));
-            }
+        let st = hub.status();
+        if self.relay_last_status.as_ref() != Some(&st) {
+            self.relay_last_status = Some(st.clone());
+            let _ = self.event_tx.send(RadioEvent::RelayStatus(Box::new(st)));
         }
     }
 
-    /// Tell the T/R switch's band decoder (issue #442) which bands this
-    /// radio's dials are in: every engine its transmit band, since whichever
-    /// radio keys brings its own; the primary its receive band too, since the
-    /// bank belongs to the station and not to any one receiver.
+    /// Tell this radio's T/R switch band decoder (issue #442) which bands its
+    /// dials are in. The module is this radio's alone, so both words follow
+    /// this radio: its receive dial between overs, its transmit dial during.
     ///
     /// Bands only. Which word a contact follows, and when it swaps its RX
     /// word for its TX word, is the relay worker's decision, made from the
@@ -12338,7 +12423,7 @@ impl Engine {
         }
         let rx = sdroxide_types::Band::containing(rx_hz);
         let tx = sdroxide_types::Band::containing(tx_hz);
-        if self.primary && told.map(|t| t.2) != Some(rx) {
+        if told.map(|t| t.2) != Some(rx) {
             hub.set_rx_band(rx);
         }
         if told.map(|t| t.3) != Some(tx) {
@@ -12365,6 +12450,7 @@ impl Engine {
             return;
         }
         self.rig_tx = on;
+        self.state.tx.external_ptt = on;
         info!(
             "the radio is {} under {how}",
             match on {
@@ -12382,6 +12468,7 @@ impl Engine {
         if let Some(hub) = self.tr_switch.as_ref() {
             hub.publish(self.instance, self.on_air());
         }
+        let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
     }
 
     /// The receive Doppler correction currently in force, Hz — zero unless a
@@ -12912,6 +12999,17 @@ impl Engine {
     }
 
     fn set_rx_mode(&mut self, rx: RxId, mode: Mode) {
+        if let Some(why) = self.source.mode_unavailable(mode) {
+            self.notice(why);
+            return;
+        }
+        if rx == RxId::Main
+            && let Err(e) = self.prepare_receive_path(mode)
+        {
+            warn!("changing receive path: {e}");
+            self.notice(&format!("Could not change receive path: {e}"));
+            return;
+        }
         // APRS is a channel, not a band, and which channel is a property of
         // the operator's region: 144.800 in Region 1, 144.390 in the Americas,
         // 145.175 in Australia and New Zealand. A receiver anywhere else is
@@ -13924,6 +14022,8 @@ impl Engine {
     /// Called on every source that reaches this engine — the one it started
     /// with, and every one a reconnect or an interface switch brings in — because
     /// a freshly opened device is on whatever port its driver defaults to.
+    /// Assert the RX preference even if the source's cached name matches: a
+    /// cached setting is not confirmation of the relay's position.
     ///
     /// A name the device does not list is skipped rather than attempted: after
     /// an interface switch the preference usually belongs to the *other* radio,
@@ -13937,9 +14037,7 @@ impl Engine {
         // a port some earlier run happened to record would put it back on an
         // empty connector at every start — see [`IqSource::owns_rx_antenna`].
         let want_rx = want_rx.filter(|_| !self.source.owns_rx_antenna());
-        if let Some(name) = want_rx.filter(|n| self.caps.antennas_rx.contains(n))
-            && self.state.antenna_rx != name
-        {
+        if let Some(name) = want_rx.filter(|n| self.caps.antennas_rx.contains(n)) {
             if let Err(e) = self.source.set_antenna(&name) {
                 warn!("restoring RX antenna {name}: {e}");
             }
@@ -14270,6 +14368,7 @@ impl Engine {
             tx_gains: self.want_gains.1.clone(),
             recording_mono: self.state.recording_mono,
             band_antenna: self.band_antenna.clone(),
+            band_tx: self.band_tx.clone(),
             // The shelf again, with the live socket written into the active
             // slot on the way past for the same reason the modes are.
             vfo_antennas: Some({
@@ -14401,6 +14500,19 @@ impl Engine {
         // that offers it and is ignored by one that does not.
         self.want_antenna = (s.antenna_rx.clone(), s.antenna_tx.clone());
         self.band_antenna = s.band_antenna.clone();
+        self.band_tx = s.band_tx.clone();
+        if self.band_tx.is_empty() {
+            self.band_tx.insert(
+                Band::containing(self.tx_target_hz()),
+                sdroxide_config::BandTransmit {
+                    drive: Some(s.drive),
+                    tune_drive: Some(s.tune_drive),
+                    onboard_pa: None,
+                },
+            );
+        }
+        self.tx_band_seen = None;
+        self.push_tx_freq();
         self.restore_antennas();
         self.follow_band_antenna(self.state.band);
         self.want_gains = (s.gains.clone(), s.tx_gains.clone());
@@ -14677,25 +14789,80 @@ impl Engine {
         if factor == self.state.decimation {
             return;
         }
+        self.rebuild_receive_path(factor);
+        info!(factor, rate = self.state.sample_rate, "front-end decimation");
+        self.save_session();
+    }
+
+    fn refresh_receive_path(&mut self) {
+        let hd_unavailable =
+            self.source.mode_unavailable(Mode::HdRadio).or_else(sdroxide_nrsc5::unavailable_reason);
+        if self.state.hd_radio_unavailable.as_deref() != hd_unavailable {
+            self.state.hd_radio_unavailable = hd_unavailable.map(str::to_string);
+            self.emit_state();
+        }
+        let mode = self.state.rx[0].mode;
+        if self.receive_mode_seen == Some(mode) {
+            return;
+        }
+        self.receive_mode_seen = Some(mode);
+        if let Err(e) = self.prepare_receive_path(mode) {
+            warn!("restoring receive path: {e}");
+            self.notice(&format!("Could not restore receive path: {e}"));
+        }
+    }
+
+    fn prepare_receive_path(&mut self, mode: Mode) -> crate::Result<()> {
+        let Some(audio_mode) = self.source.prepare_receive_mode(mode)? else { return Ok(()) };
+        let rate = self.source.sample_rate();
+        if self.audio_mode == audio_mode && self.radio_fs == rate {
+            return Ok(());
+        }
+        self.audio_mode = audio_mode;
+        self.caps.audio_mode = audio_mode;
+        self.caps.label = self.source.describe();
+        self.radio_fs = rate;
+        self.audio_bw = self.source.display_bandwidth().unwrap_or(rate / 2.0);
+        self.center_trail.clear();
+        self.stream_center_hz = self.source.center_hz();
+        self.state.center_hz = self.stream_center_hz;
+        self.rebuild_receive_path(decimation_for(self.want_decimation, rate, audio_mode));
+        let _ = self.event_tx.send(RadioEvent::CapabilitiesUpdated(self.caps.clone()));
+        Ok(())
+    }
+
+    fn rebuild_receive_path(&mut self, factor: u32) {
+        self.zoom = None;
+        self.main_play.clear();
+        self.main_play_r.clear();
+        self.audio_re.clear();
+        self.audio_play.clear();
         self.state.decimation = factor;
         self.decim = (factor > 1).then(|| Decimator::new(factor));
         self.state.sample_rate = self.radio_fs / factor as f64;
 
         self.analyzer = build_analyzer(
             self.cfg.fft_size as usize,
-            self.state.sample_rate,
+            if self.audio_mode { self.radio_fs } else { self.state.sample_rate },
             self.cfg.avg_tc,
             f64::from(self.cfg.rows()),
             self.analyzer_view_span(),
         );
         if self.mixer.is_some() {
-            self.main = Some(RxChain::new(
-                self.state.sample_rate,
-                &self.state.rx[0],
-                self.audio_out_rate,
-                self.state.rx_freq_hz(),
-            ));
-            self.sub = self.state.sub_rx_enabled.then(|| {
+            self.main = (!self.audio_mode).then(|| {
+                RxChain::new(
+                    self.state.sample_rate,
+                    &self.state.rx[0],
+                    self.audio_out_rate,
+                    self.state.rx_freq_hz(),
+                )
+            });
+            self.audio_resampler = if self.audio_mode {
+                MonoResampler::new(self.radio_fs, self.audio_out_rate)
+            } else {
+                None
+            };
+            self.sub = (self.state.sub_rx_enabled && !self.audio_mode).then(|| {
                 RxChain::new(
                     self.state.sample_rate,
                     &self.state.rx[1],
@@ -14755,7 +14922,6 @@ impl Engine {
         self.sync_qo100();
         self.sync_audio_tap();
         self.sync_tci_iq();
-        info!(factor, rate = self.state.sample_rate, "front-end decimation");
 
         // A narrower span may not reach where the sub receiver was parked, and
         // a zero-IF front end's LO offset shrinks with the span (see
@@ -14765,7 +14931,6 @@ impl Engine {
         self.keep_vfo_in_span();
         self.update_tuning();
         self.emit_state();
-        self.save_session();
     }
 
     /// Rebuild the IQ front-end at runtime (backend / CAT audio / HPSDR-TCI
@@ -14941,10 +15106,17 @@ impl Engine {
             let _ = self.source.tx_end();
         }
         self.source = source;
+        self.onboard_pa_default = self.source.onboard_pa();
+        self.tx_band_seen = None;
         // The old front end's pipeline went with it.
         self.center_trail.clear();
         self.stream_center_hz = self.source.center_hz();
         self.caps = caps;
+        self.state.hd_radio_unavailable = self
+            .source
+            .mode_unavailable(Mode::HdRadio)
+            .or_else(sdroxide_nrsc5::unavailable_reason)
+            .map(str::to_string);
         self.caps.center_is_dial = self.source.center_is_dial();
         self.caps.cw_audio_keyed = self.source.cw_audio_keyed();
         self.caps.commands_squelch = self.source.commands_squelch();
@@ -15050,6 +15222,9 @@ impl Engine {
         // Drop rate-dependent / stateful DSP so it rebuilds for the new source.
         self.tx = None;
         self.tx_active = false;
+        self.rig_tx = false;
+        self.rig_audio_active = false;
+        self.state.tx.external_ptt = false;
         // The new front end has its own PTT line and reports it from scratch.
         // Carrying "still held" across the swap would swallow the next press,
         // since only an edge keys.
@@ -15106,6 +15281,7 @@ impl Engine {
             self.audio_resampler = None;
         }
 
+        self.push_tx_freq();
         info!(source = %self.source.describe(), audio_mode = self.audio_mode, "radio source swapped at runtime");
         let _ = self.event_tx.send(RadioEvent::Capabilities(self.caps.clone()));
         let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
@@ -15135,6 +15311,7 @@ impl Engine {
         self.broadcast_tci_state();
         // Same as a cold start: the fresh VFO sits on the new front end's LO,
         // which is where zero-IF hardware must not be tuned.
+        self.refresh_receive_path();
         self.push_rx_mode();
         self.keep_vfo_in_span();
         self.update_tuning();
@@ -15290,7 +15467,33 @@ impl Engine {
             // derived here rather than pushed from the dozen places that move
             // the transmit frequency.
             self.refresh_drive_trim(hz);
+            self.follow_band_tx(Band::containing(hz));
+        } else if self.tx_band_seen.is_none() {
+            self.follow_band_tx(Band::containing(hz));
         }
+    }
+
+    fn follow_band_tx(&mut self, band: Band) {
+        if self.tx_band_seen == Some(band) {
+            return;
+        }
+        self.tx_band_seen = Some(band);
+        let saved = self.band_tx.get(&band).copied().unwrap_or_default();
+        let defaults = RadioState::default().tx;
+        self.state.tx.drive = saved.drive.unwrap_or(defaults.drive).clamp(0.0, 1.0);
+        self.state.tx.tune_drive = saved.tune_drive.unwrap_or(defaults.tune_drive).clamp(0.0, 1.0);
+        self.state.tx.onboard_pa = self.source.onboard_pa();
+        if let Some(default) = self.onboard_pa_default {
+            let enabled = saved.onboard_pa.unwrap_or(default);
+            if let Err(e) = self.source.set_onboard_pa(enabled) {
+                warn!("restoring onboard PA for {band:?}: {e}");
+                self.notice(&format!("Could not restore onboard PA for {}: {e}", band.label()));
+            }
+            self.state.tx.onboard_pa = self.source.onboard_pa();
+        }
+        self.source.set_tune_drive(self.tx_tune_level() as f64);
+        self.source.set_tx_drive(self.tx_power_level() as f64);
+        self.emit_state();
     }
 
     // ── Repeater operation ──────────────────────────────────────────────────
@@ -15606,6 +15809,40 @@ impl Engine {
         }
     }
 
+    fn sync_rig_tx_audio(&mut self) {
+        let voice = matches!(self.state.rx[0].mode, Mode::Usb | Mode::Lsb | Mode::Am | Mode::Nfm);
+        let active = self.rig_tx
+            && !self.tx_active
+            && !self.digi_tx
+            && !self.voice_tx
+            && !self.tci_tx
+            && !self.state.tx.tune
+            && voice
+            && self.source.feeds_audio_on_rig_tx();
+        if active == self.rig_audio_active {
+            return;
+        }
+        self.rig_audio_active = active;
+        self.tx_pace = None;
+        self.mic_fifo.clear();
+        self.tx_eq.reset();
+        self.tx_analyzer.reset();
+        self.voice_peak = 0.0;
+        self.voice_blocks = 0;
+        if let Some(mic) = self.mic.as_mut() {
+            while mic.consumer.pop().is_ok() {}
+        }
+        if active {
+            if self.voice.is_recording() {
+                self.voice.stop_record();
+                self.emit_voice_status();
+            }
+            self.stop_voice_preview();
+            self.rebuild_sub_tone();
+        }
+        info!(active, "host voice audio following the radio's local PTT (no CAT key/unkey)");
+    }
+
     /// The radio's own PTT line changed state — a foot switch, a mic button, or
     /// whatever is wired to the board's PTT input.
     ///
@@ -15633,6 +15870,9 @@ impl Engine {
     /// Reconcile the TX hardware state with `ptt || tune`, enforcing the
     /// safety rails on key-down.
     fn sync_tx_state(&mut self) {
+        // Commands may tune and key within one tick; restore before key-down,
+        // not just at the next loop's frequency poll.
+        self.push_tx_freq();
         let want_tx = self.state.tx.ptt || self.state.tx.tune;
         if want_tx == self.tx_active {
             return;

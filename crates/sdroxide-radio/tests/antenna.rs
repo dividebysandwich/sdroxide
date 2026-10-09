@@ -9,6 +9,86 @@ use std::time::{Duration, Instant};
 use sdroxide_radio::{Complex32, ControlUpdate, EngineConfig, IqSource, Result, start_engine};
 use sdroxide_types::{Command, DeviceCaps, Direction, RadioEvent};
 
+struct DetectedIoRig {
+    detected: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl IqSource for DetectedIoRig {
+    fn sample_rate(&self) -> f64 {
+        RATE
+    }
+    fn center_hz(&self) -> f64 {
+        CENTER
+    }
+    fn set_center_hz(&mut self, _hz: f64) -> Result<()> {
+        Ok(())
+    }
+    fn read(&mut self, buf: &mut [Complex32]) -> Result<usize> {
+        std::thread::sleep(Duration::from_millis(5));
+        buf.fill(Complex32::new(0.0, 0.0));
+        Ok(buf.len())
+    }
+    fn describe(&self) -> String {
+        "HL2 with a detected IO board".into()
+    }
+    fn current_antenna(&self) -> String {
+        sdroxide_types::HpsdrIoRxInput::Radio.label().into()
+    }
+    fn onboard_pa(&self) -> Option<bool> {
+        Some(true)
+    }
+    fn set_onboard_pa(&mut self, _enabled: bool) -> Result<()> {
+        Ok(())
+    }
+    fn learned_antennas(&self) -> Option<&'static [&'static str]> {
+        static INPUTS: std::sync::LazyLock<[&'static str; 3]> =
+            std::sync::LazyLock::new(|| sdroxide_types::HpsdrIoRxInput::ALL.map(|i| i.label()));
+        Some(if self.detected.load(std::sync::atomic::Ordering::Relaxed) {
+            INPUTS.as_slice()
+        } else {
+            &[]
+        })
+    }
+}
+
+#[test]
+fn a_detected_io_board_publishes_the_radios_own_input_without_settings_changes() {
+    let detected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut c = caps();
+    c.antennas_rx.clear();
+    let mut h = start_engine(
+        Box::new(DetectedIoRig { detected: Arc::clone(&detected) }),
+        c,
+        EngineConfig::default(),
+    );
+    let thread = h.thread.take().unwrap();
+    assert!(
+        wait_for_state(&h.event_rx, |s| s.tx.onboard_pa == Some(true)),
+        "PA is published before any IO board is detected"
+    );
+    detected.store(true, std::sync::atomic::Ordering::Relaxed);
+    let expected: Vec<String> =
+        sdroxide_types::HpsdrIoRxInput::ALL.map(|i| i.label().to_string()).into();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut published = false;
+    while Instant::now() < deadline {
+        if let Ok(RadioEvent::CapabilitiesUpdated(c)) =
+            h.event_rx.recv_timeout(Duration::from_millis(100))
+            && c.antennas_rx == expected
+        {
+            published = true;
+            break;
+        }
+    }
+    assert!(published, "detection must publish all three input choices");
+    assert!(wait_for_state(&h.event_rx, |s| {
+        s.antenna_rx == sdroxide_types::HpsdrIoRxInput::Radio.label()
+            && s.tx.onboard_pa == Some(true)
+    }));
+    drop(h);
+    thread.join().unwrap();
+}
+
 const RATE: f64 = 48_000.0;
 const CENTER: f64 = 14_100_000.0;
 
@@ -245,6 +325,39 @@ fn the_startup_antenna_is_selected_on_the_front_end() {
 
     drop(h);
     let _ = thread.map(|t| t.join());
+}
+
+#[test]
+fn a_matching_cached_rx_antenna_is_asserted_at_startup_and_reopen() {
+    let before = Ports::fresh();
+    let after = Ports::fresh();
+    let handed = after.clone();
+    let reopen: sdroxide_radio::ReopenFn = Box::new(move |_| {
+        Ok((Box::new(Rig { ports: handed.clone() }) as Box<dyn IqSource>, caps()))
+    });
+    let mut h = start_engine(
+        Box::new(Rig { ports: before.clone() }),
+        caps(),
+        EngineConfig {
+            initial_antenna: (Some("LNAH".into()), None),
+            reopen: Some(reopen),
+            ..Default::default()
+        },
+    );
+    let thread = h.thread.take();
+    assert!(wait_for_state(&h.event_rx, |s| s.antenna_rx == "LNAH"));
+    assert_eq!(before.asked(), vec![(Direction::Rx, "LNAH".into())]);
+
+    h.swap_tx.send(sdroxide_radio::EngineSwap::ReopenSource).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while after.asked().is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(after.asked(), vec![(Direction::Rx, "LNAH".into())]);
+    assert_eq!(after.rx(), "LNAH");
+
+    drop(h);
+    thread.unwrap().join().unwrap();
 }
 
 /// A port the front end does not have is somebody else's radio — the preference

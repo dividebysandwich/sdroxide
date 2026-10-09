@@ -61,6 +61,8 @@ fn p1_loopback_rx() {
     // I2C tunnel, in order.
     let i2c_seen: Arc<Mutex<Vec<(u8, u8)>>> = Arc::new(Mutex::new(Vec::new()));
     let i2c_radio = Arc::clone(&i2c_seen);
+    let io_present = Arc::new(AtomicBool::new(false));
+    let io_radio = Arc::clone(&io_present);
 
     // Fake radio: reply to discovery as an HL2 (Protocol 1), and once it has seen
     // the host's streaming socket, stream EP6 frames carrying I=0.5, Q=-0.25.
@@ -104,7 +106,9 @@ fn p1_loopback_rx() {
                             if cc[0] & !0x01 == I2C2_RQST {
                                 pending_ack = Some(match (cc[1], cc[2]) {
                                     // The IO board's hardware-version register.
-                                    (I2C_READ, IOB_VERSION_ADDR) => {
+                                    (I2C_READ, IOB_VERSION_ADDR)
+                                        if io_radio.load(Ordering::Relaxed) =>
+                                    {
                                         [ACK_I2C2, IOB_VERSION, 0, 0, 0]
                                     }
                                     // A one-byte write to the Pico; the
@@ -173,6 +177,7 @@ fn p1_loopback_rx() {
     assert_eq!(board.board(), "Hermes-Lite 2");
     // An HL2 is a board whose front-end gain we can command.
     assert!(board.has_lna_gain());
+    assert!(!board.io_board_present(), "model eligibility is not accessory detection");
     // Protocol 1 carries exactly one receiver here; a second is refused with
     // a message that says so.
     assert_eq!(board.ddc_count(), 1);
@@ -212,6 +217,48 @@ fn p1_loopback_rx() {
         assert_eq!(cc[2] & 0x04, 0, "T/R relay left free to switch in {cc:02X?}");
         assert_eq!(cc[1], 255, "full drive level in {cc:02X?}");
     }
+
+    for (enabled, bits) in [(false, 0x04), (true, 0x08)] {
+        cc_seen.lock().unwrap().clear();
+        handle.set_onboard_pa(enabled);
+        let arrived = (0..300).any(|_| {
+            thread::sleep(Duration::from_millis(10));
+            cc_seen
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|cc| cc[0] & 0xFE == 0x12)
+                .is_some_and(|cc| cc[2] & 0x0C == bits)
+        });
+        assert!(arrived, "PA {enabled} must update register 0x09 and T/R routing");
+    }
+
+    cc_seen.lock().unwrap().clear();
+    handle.set_onboard_pa(false);
+    handle.tx_begin(28_174_000.0);
+    let keyed = (0..300).any(|_| {
+        thread::sleep(Duration::from_millis(10));
+        cc_seen.lock().unwrap().iter().any(|cc| cc[0] & 1 != 0)
+    });
+    assert!(keyed, "key-down must reach the simulated board");
+    {
+        let seen = cc_seen.lock().unwrap();
+        let first_mox = seen.iter().position(|cc| cc[0] & 1 != 0).unwrap();
+        assert!(
+            seen[..first_mox].iter().any(|cc| cc[0] & 0xFE == 0x12 && cc[2] & 0x0C == 0x04),
+            "PA off and receive-only T/R routing must arrive before MOX"
+        );
+    }
+    handle.tx_end();
+    handle.set_onboard_pa(true);
+    assert!(!board.io_board_present(), "PA switching does not require an IO board");
+    io_present.store(true, Ordering::Relaxed);
+    let detected = (0..300).any(|_| {
+        thread::sleep(Duration::from_millis(10));
+        board.io_board_present()
+    });
+    assert!(detected, "the accessory probe must publish IO board presence");
 
     // The radio's own PTT line reaches the handle, which is what carries a foot
     // switch or mic button up to the engine. Reported as a level, so a poll

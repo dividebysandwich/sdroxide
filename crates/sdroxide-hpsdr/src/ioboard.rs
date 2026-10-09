@@ -187,6 +187,10 @@ pub(crate) struct IoBoard {
 }
 
 impl IoBoard {
+    pub(crate) fn is_present(&self) -> bool {
+        self.presence == Presence::Present
+    }
+
     pub(crate) fn new(rx_input: HpsdrIoRxInput) -> IoBoard {
         IoBoard {
             presence: Presence::Probing(PROBE_TRIES),
@@ -205,10 +209,8 @@ impl IoBoard {
     /// A board already found is told straight away; one still being probed
     /// picks it up with the rest of its start-up writes, after the reset that
     /// would otherwise undo it.
+    /// A matching choice is still asserted; the cache is not relay readback.
     pub(crate) fn set_rx_input(&mut self, input: HpsdrIoRxInput) {
-        if self.rx_input == input {
-            return;
-        }
         self.rx_input = input;
         if self.presence == Presence::Present {
             self.queue.push_back(Op::write(REG_RF_INPUTS, input.code()));
@@ -523,9 +525,12 @@ mod tests {
             }
         }
         assert_eq!(wrote, Some(0), "the radio's own input is mode 0");
-        // Setting what it already is costs nothing.
+        // A band recall asserts the relay even if the cached choice matches:
+        // another controller or a board reset may have changed the hardware.
         board.set_rx_input(HpsdrIoRxInput::Radio);
-        assert!(board.queue.iter().all(|op| op.reg != REG_RF_INPUTS));
+        let sel = board.next_request(now, RX_HZ, RX_HZ, 0).expect("reassert the input");
+        ack(&mut board, now, [0; 4]);
+        assert_eq!((sel[3], sel[4]), (REG_RF_INPUTS, 0));
 
         // Before the board is found, the choice waits for the start-up writes.
         let mut board = IoBoard::new(HpsdrIoRxInput::Radio);

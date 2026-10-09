@@ -1656,6 +1656,7 @@ pub struct HpsdrConfig {
     /// amplifier from the low-power RF1 output, which also parks the T/R relay
     /// in receive (register `0x09` bit 18) so the antenna connector stays on
     /// the receiver.
+    /// This is the default for bands without a saved main-panel PA selection.
     #[serde(default = "HpsdrConfig::default_pa_enable")]
     pub pa_enable: bool,
     /// Where an HL2IOBoard on the accessory bus takes its receive signal from.

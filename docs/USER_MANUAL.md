@@ -1355,13 +1355,19 @@ On a TX-capable rig the **Transmit** module appears:
 
 - **PTT** — key the transmitter.
 - **TUNE** — send a carrier at the tune-drive level for tuning an ATU.
-- **Drive** — transmit drive (0–100%). One number for every band; if your
-  amplifier makes a different power on each, calibrate it once in **Transmit
-  drive by band** (Settings → Radio,
-  [6.2](#62-radio-choosing-and-configuring-the-rig)) rather than resetting this
-  on every band change.
-- **Tune** — the (lower) drive level used by TUNE.
+- **Drive** — transmit drive (0–100%), remembered per **transmit band**.
+  A band without a saved setting starts at **10%**. The separate **Transmit
+  drive by band** calibration (Settings → Radio,
+  [6.2](#62-radio-choosing-and-configuring-the-rig)) still applies to the
+  selected level, as do the radio and transverter drive ceilings.
+- **Tune** — the drive level used by TUNE, also remembered per transmit band.
+  A band without a saved setting starts at **5%**.
 - **Mic** — microphone gain.
+- **PA** in the **RIG** module — on a Hermes-Lite Protocol 1 transmitter,
+  enable the onboard PA (**ON**, transmit on ANT) or disable it (**OFF**,
+  low-power RF1 with the T/R relay held in receive). This choice is remembered
+  per transmit band; bands without an override use the HPSDR Settings default.
+  Release PTT and TUNE before changing PA.
 - **TX audio** — how loud a digital mode is handed to a radio that modulates it
   itself, in dB below full scale. It stands **in the Mic rail's place**, and
   only in the modes where the microphone is not what goes on the air: select
@@ -1394,6 +1400,12 @@ On a TX-capable rig the **Transmit** module appears:
   On a radio sdroxide modulates itself — a Pluto, an HPSDR board, an SDR — none
   of this applies and the rail does not appear: there the modulator and Drive
   own the level.
+
+Drive, Tune and PA follow the **transmit** frequency, including split, XIT and
+satellite uplinks, not the receiver's band or the transverter's IF. They are
+restored at startup, on Apply/reconnect, and when the transmit band changes.
+An older session's last-used drive and tune levels are retained on its starting
+band when first upgrading; other unsaved bands use the defaults above.
 
 **Transmit EQ** (Settings → Radio, above the per-interface section, since it
 applies the same way whichever radio interface is selected) is a 3-band
@@ -7244,9 +7256,11 @@ on the air, not the intermediate frequency the radio is sitting on, on both
 protocols.
 
 Two things the table does not do, on purpose. It does not switch the radio's own
-PA off or hold its T/R relay in receive — on a Hermes-Lite that is the **PA
-enable** switch on the HPSDR page ([6.2.3](#623-hpsdr-network-radios)),
-which turns the onboard amplifier off and leaves transmit at the low-power RF1
+PA off or hold its T/R relay in receive — on a Hermes-Lite use the main
+**RIG → PA** control to remember that choice per transmit band. The **PA
+enable** switch on the HPSDR page ([6.2.3](#623-hpsdr-network-radios))
+is the default for bands without an override. Disabling PA
+turns the onboard amplifier off and leaves transmit at the low-power RF1
 output, which is how an external amplifier or a transverter is driven. And it
 does not choose the receive port: that is remembered **per band** already, so
 selecting the transverter's antenna once on the band leaves it there
@@ -8646,11 +8660,17 @@ going out.
   you have wired the IO board's own SMA jacks: J9 can replace the radio's receive
   input, and J10 is a PureSignal (transmit sample) input. Selecting **IO board
   J9** with nothing connected to it leaves the receiver deaf. Takes effect on
-  *Apply / reconnect*. Once it is set to one of the J9 choices, the three inputs
-  also appear on the receiver's **ANT** control and are remembered **per band**
+  *Apply / reconnect*. Once the IO board is detected, the three inputs
+  appear on the receiver's **ANT** control and are remembered **per band**
   like any other receiving antenna — so a transverter band can listen on J9
-  while HF stays on the radio's own jack. Left at *Radio's own input*, no ANT
-  control is shown, because an HL2 that has never used J9 has nothing there.
+  while HF stays on the radio's own jack. The control also appears when
+  *Radio's own input* is selected; opening Settings is not required. No IO
+  input control is shown without a detected board. The Hermes-Lite **PA**
+  control is independent of IO board detection.
+  A remembered ANT choice is reapplied to the relay at startup, on
+  *Apply / reconnect*, and on band recall, even if the displayed choice has
+  not changed. With a transverter selected, the IO board receives the on-air
+  dial frequency immediately; no band change is needed to initialize it.
 
 > **Help wanted — the HPSDR backend is not fully tested yet.** 
 > If you own an HPSDR board, you can help by running with diagnostic logging 
@@ -9714,6 +9734,27 @@ reconnects by itself when you plug it back in — no need to press Apply.
 
 #### 6.2.10 Icom LAN (network radios)
 
+**Local microphone PTT.** sdroxide reads the radio's CI-V `1C 00` transmit state
+every 200 ms over the network, including on the IC-705. A microphone, foot switch,
+VOX, or keyer transmission is reported to the engine and any configured T/R relay,
+without sending a PTT command back to the radio. In USB, LSB, AM, and FM voice
+modes, local PTT also feeds computer microphone audio when the radio's **DATA-OFF
+MOD input is LAN**. With the radio microphone selected it only observes the over.
+The input is read back periodically, so changing it on the radio stops or starts
+the host voice feed without changing PTT ownership. If **Set modulation input to
+LAN on connect** is off, sdroxide leaves the operator's choice untouched.
+Digital bursts and CW are not started by this local voice-PTT path. The meter
+follows the over and the scope watchdog waits until receive resumes.
+The PTT indicator and radio-tab TX badge light for detected local PTT on native
+and remote screens, and go idle on release. This indication does not transfer
+key/unkey control from the radio to sdroxide.
+Replies around sdroxide's own PTT commands are suppressed to avoid false local
+key-downs. If transmit-state replies stop for two seconds, sdroxide logs a warning
+and clears the observed state, matching serial CAT behavior.
+Detection takes a poll interval plus network latency: it cannot protect the SDR
+before RF starts. Use hardware RF protection or a wired transmit sense input
+where that timing is critical.
+
 The **Icom LAN (network)** interface drives an Icom over the Ethernet or WiFi
 port on the radio itself, using the same IP-remote protocol Icom's own RS-BA1
 software speaks. No licence for RS-BA1 is needed, and no computer at the radio
@@ -9902,6 +9943,22 @@ Select`), which decides who does the demodulating:
   a 12 kHz IF and sdroxide falls back to AF and says so. How much of that
   ±12 kHz is genuinely usable is not documented by Icom and has not been
   measured here, so treat the width as approximate.
+
+The choice is remembered separately for each configured radio. With **12 kHz
+IF** selected, choosing a mode whose default passband extends beyond the IF's
+roughly ±12 kHz window (for example **WFM**) temporarily switches the LAN output
+to **AF**. Returning to a compatible mode restores **IF**, including its spectrum
+orientation. This does not overwrite the saved **Receive from** preference.
+If the preference is **AF**, mode changes leave it on AF.
+
+**HD Radio** is greyed out on Icom LAN connections: neither the narrow IF nor
+demodulated AF supplies the wideband I/Q needed to decode its digital sidebands.
+The radio's wide scope picture cannot substitute for those samples.
+An attached panadapter receiver is an exception: HD Radio is available when
+that receiver supplies sufficient I/Q bandwidth (400 kHz for FM HD, 30 kHz
+for AM HD) and the station has the decoder library. The Icom's own IF limit
+does not restrict the attached receiver. Mode-dependent AF/IF switching still
+applies to the Icom, without changing the panadapter's receive stream.
 
 Transmit is unaffected by the choice: it is always audio the radio modulates.
 
@@ -12684,6 +12741,12 @@ J16 open-collector outputs; see [6.2.3](#623-hpsdr-network-radios).
   replug. `cargo run -p sdroxide-relay --example relay -- --list --all` prints
   every HID device the machine can see, which separates "not permitted" from
   "not recognised".
+  Discovery includes both standard `USBRelay` boards (`16c0:05df`) and Noyito
+  modules (`5131:2007`); the latter do not need a `USBRelay` product string.
+  Noyito switching and read-back still need hardware verification.
+  The permission rule must cover the HID node, not just the USB bus node.
+  Linux `/dev/hidraw*` numbers can change after reconnecting or rebooting:
+  reselect the relay rather than retaining a path now assigned to another device.
 - **A CM108 card that is listed and does nothing.** Several clones carry a
   genuine C-Media id and ignore the GPIO report entirely. Nothing but listening
   for the click tells them apart.

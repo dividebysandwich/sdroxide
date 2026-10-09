@@ -1224,7 +1224,7 @@ fn open_converted_source(
     // mean the dial rather than the I.F.
     let caps = sdroxide_radio::plan_caps(caps, &plan, &radio.freq_ranges_rx, &radio.freq_ranges_tx);
     log_stated_ranges(radio, &caps);
-    Ok((Box::new(ConvertedSource::with_plan(source, plan)), caps))
+    Ok((Box::new(ConvertedSource::with_plan_at_dial(source, plan, cli.center_hz())), caps))
 }
 
 /// What is in front of this radio, band by band: the transverter table first,

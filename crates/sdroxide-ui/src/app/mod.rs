@@ -1735,7 +1735,7 @@ impl SdroxideApp {
 
     /// Whether this radio is on the air — the tab strip's TX badge.
     pub(crate) fn tab_tx_on(&self) -> bool {
-        self.state.tx.ptt || self.state.tx.tune
+        self.state.tx.ptt_on() || self.state.tx.tune
     }
 
     /// Whether this radio's engine reported a lost connection — the tab

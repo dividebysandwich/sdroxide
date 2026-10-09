@@ -37,10 +37,6 @@ pub fn run(
     let gate = Arc::new(TxGate::new());
     let sync = Arc::new(StoreSync::new());
     let rade = Arc::new(RadeWatch::new());
-    // The external T/R switch, shared for the same reason — and needed here
-    // more than in the shack, not less: nobody is standing next to the antenna
-    // relay to hear whether it threw.
-    let tr = Arc::new(TrSwitch::new());
 
     let mut params = Vec::with_capacity(radios.len());
     for (i, boot) in radios.into_iter().enumerate() {
@@ -84,7 +80,9 @@ pub fn run(
                 tx_gate: Some(gate.clone()),
                 store_sync: Some(sync.clone()),
                 rade_watch: Some(rade.clone()),
-                tr_switch: Some(tr.clone()),
+                // Each radio has its own T/R switch: a relay module belongs to
+                // one radio and follows only that radio.
+                tr_switch: Some(Arc::new(TrSwitch::new())),
             },
         );
 
@@ -113,7 +111,6 @@ pub fn run(
     let add_gate = gate.clone();
     let add_sync = sync.clone();
     let add_rade = rade.clone();
-    let add_tr = tr.clone();
     let add_radio: sdroxide_server::AddRadioFn = Box::new(move |name: &str| {
         let slot = sdroxide_config::create_radio(name).map_err(|e| e.to_string())?;
         // Read fresh: this is minutes or days after startup, and the operator
@@ -158,7 +155,7 @@ pub fn run(
                 tx_gate: Some(add_gate.clone()),
                 store_sync: Some(add_sync.clone()),
                 rade_watch: Some(add_rade.clone()),
-                tr_switch: Some(add_tr.clone()),
+                tr_switch: Some(Arc::new(TrSwitch::new())),
             },
         );
         Ok(RadioParams {

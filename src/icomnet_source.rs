@@ -52,7 +52,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use sdroxide_cat::{DUPLEX_FLOOR_HZ, civ};
-use sdroxide_dsp::Ddc;
+use sdroxide_dsp::{Ddc, MonoResampler};
 use sdroxide_icomnet::{IcomNetDevice, IcomNetOptions};
 use sdroxide_radio::rtrb;
 use sdroxide_radio::{Complex32, ControlUpdate, IqSource, Result};
@@ -108,6 +108,10 @@ const METER_MAX_AGE: Duration = Duration::from_millis(1500);
 
 /// How often to ask the radio where it is tuned and what its meter reads.
 const POLL_PERIOD: Duration = Duration::from_millis(200);
+
+/// Match serial CAT's guards against stale PTT replies and a silent radio.
+const PTT_SETTLE: Duration = Duration::from_millis(600);
+const RIG_TX_MAX_AGE: Duration = Duration::from_secs(2);
 
 /// How long a mode we have commanded outranks the mode the radio reports.
 ///
@@ -175,6 +179,9 @@ pub struct IcomNetSource {
     tx: Option<rtrb::Producer<f32>>,
     rate: f64,
     rx_source: IcomRxSource,
+    /// Per-radio configured preference, never overwritten by a temporary AF fallback.
+    preferred_rx_source: IcomRxSource,
+    invert_if: bool,
     audio_bw: f64,
     cw_keying: CwKeying,
     civ_addr: u8,
@@ -218,6 +225,12 @@ pub struct IcomNetSource {
     last_signal: Option<(Instant, f32)>,
     last_telem: Option<TxTelemetry>,
     transmitting: bool,
+    rig_tx: bool,
+    last_tx_reply: Instant,
+    ptt_edge: Option<Instant>,
+    lan_voice_input: Option<(Instant, bool)>,
+    data_mode: Option<(Instant, u8)>,
+    local_voice_resampler: Option<MonoResampler>,
     /// Whether the squelch level has been settled — by the radio answering the
     /// opening read, or by this end setting one. What it suppresses is an
     /// answer that crossed a command on the wire, which would otherwise put the
@@ -340,18 +353,12 @@ impl IcomNetSource {
                 IcomRxSource::If12k => IF_OUT_RATE,
             },
             rx_source,
+            preferred_rx_source: rx_source,
+            invert_if,
             audio_bw: cfg.audio_bw_hz,
             cw_keying: cfg.cw_keying,
             civ_addr,
-            label: format!(
-                "{} over LAN at {} ({})",
-                info.radio_name,
-                cfg.address,
-                match rx_source {
-                    IcomRxSource::Af => "AF",
-                    IcomRxSource::If12k => "12 kHz IF",
-                }
-            ),
+            label: format!("{} over LAN at {}", info.radio_name, cfg.address),
             status: None,
             dial: Dial::default(),
             civ_buf: Vec::with_capacity(1024),
@@ -382,6 +389,12 @@ impl IcomNetSource {
             last_signal: None,
             last_telem: None,
             transmitting: false,
+            rig_tx: false,
+            last_tx_reply: Instant::now(),
+            ptt_edge: None,
+            lan_voice_input: None,
+            data_mode: None,
+            local_voice_resampler: None,
             squelch_set: false,
             break_in: None,
             socket: None,
@@ -436,13 +449,19 @@ impl IcomNetSource {
         // `send_cw` asserts it — but read so an operator running full break-in
         // is not knocked down to semi by their own first message (issue #282).
         self.send(civ::read_break_in_frame(self.civ_addr));
+        if let Some((items, _)) = model.lan_mod_input
+            && let Some(item) = items.first()
+            && self.can_transmit()
+        {
+            self.send(civ::read_menu_frame(self.civ_addr, *item));
+        }
 
         // Which Set-mode menu items this session has to put its own value in,
         // collected before any of them is written: they are read back first,
         // and a read has to go out ahead of every write, not just its own.
         let mut writes: Vec<(u16, u8)> = Vec::new();
         match model.lan_afif_select {
-            Some(item) => writes.push((item, cfg.rx_source.menu_value())),
+            Some(item) => writes.push((item, self.rx_source.menu_value())),
             None if cfg.rx_source == IcomRxSource::If12k => notes.push(
                 "sdroxide does not know this model's menu numbering, so it cannot switch the \
                  LAN output to IF — set SET > Connectors > LAN AF/IF Output > Output Select \
@@ -473,6 +492,9 @@ impl IcomNetSource {
             }
         }
         self.claim_menu_items(&writes);
+        if cfg.set_mod_input_on_open && self.can_transmit() && model.lan_mod_input.is_some() {
+            self.lan_voice_input = Some((Instant::now(), true));
+        }
 
         if cfg.scope {
             self.scope_wanted = true;
@@ -650,7 +672,7 @@ impl IcomNetSource {
         }
         // A radio does not sweep while it transmits, and an over is not a fault:
         // hold the clock rather than nudging through every transmission.
-        if self.transmitting {
+        if self.on_air() {
             self.last_sweep = Instant::now();
             return;
         }
@@ -689,6 +711,12 @@ impl IcomNetSource {
             // drops the ones we sent.
             self.on_reply(reply);
         }
+        if self.rig_tx && self.last_tx_reply.elapsed() > RIG_TX_MAX_AGE {
+            tracing::warn!(
+                "Icom LAN: the radio stopped answering the transmit read; assuming it is receiving"
+            );
+            self.report_rig_tx(false);
+        }
 
         // The radio's own repeater shift, put back to simplex whenever the dial
         // has moved. A band stacking register restores whatever duplex that
@@ -699,7 +727,7 @@ impl IcomNetSource {
         // one band puts it back without crossing a band edge at all (issue
         // #233). Not while keyed: the transmit frequency went out with the
         // key-down, and mid-over the link belongs to the meters.
-        if !self.transmitting && self.dial.vfo > 0.0 {
+        if !self.on_air() && self.dial.vfo > 0.0 {
             self.assert_simplex(self.dial.vfo);
         }
 
@@ -721,7 +749,7 @@ impl IcomNetSource {
         // link is a UDP datagram, and one lost on the way is a band change that
         // never happened and that nothing here would otherwise notice — see
         // [`Dial::retry`], and issue #297.
-        if !self.transmitting
+        if !self.on_air()
             && let Some(f) = self.dial.retry()
         {
             self.send(civ::set_freq_frame(self.civ_addr, f));
@@ -741,8 +769,40 @@ impl IcomNetSource {
             } else {
                 self.send(civ::read_smeter_frame(self.civ_addr));
             }
+            if !self.transmitting {
+                if let Some(sub) = self.dev.info().model.data_mode_sub {
+                    self.send(civ::frame(self.civ_addr, 0x1A, &[sub]));
+                }
+                if let Some((items, _)) = self.dev.info().model.lan_mod_input
+                    && let Some(item) = items.first()
+                    && self.can_transmit()
+                {
+                    self.send(civ::read_menu_frame(self.civ_addr, *item));
+                }
+                self.send(civ::read_ptt_frame(self.civ_addr));
+            }
         }
         self.watch_scope();
+    }
+
+    fn on_air(&self) -> bool {
+        self.transmitting || self.rig_tx
+    }
+
+    fn report_rig_tx(&mut self, on: bool) {
+        if self.rig_tx == on {
+            return;
+        }
+        self.rig_tx = on;
+        self.local_voice_resampler = if on {
+            MonoResampler::new(48_000.0, f64::from(self.dev.info().tx_sample_rate))
+        } else {
+            None
+        };
+        if !on {
+            self.last_telem = None;
+        }
+        self.pending.push(ControlUpdate::RigTx(on));
     }
 
     /// Put the radio's own repeater shift back to simplex for `dial_hz`, unless
@@ -877,11 +937,34 @@ impl IcomNetSource {
             // what a menu says later in a session is the operator's business,
             // not this session's to hand back.
             0x1A => {
+                if reply.from == self.civ_addr
+                    && let [sub, value, ..] = reply.data.as_slice()
+                    && Some(*sub) == self.dev.info().model.data_mode_sub
+                {
+                    self.data_mode = Some((Instant::now(), *value));
+                }
+                if reply.from == self.civ_addr
+                    && let Some((item, [value])) = civ::parse_menu_reply(&reply.data)
+                    && let Some((items, lan)) = self.dev.info().model.lan_mod_input
+                    && items.first() == Some(&item)
+                {
+                    self.lan_voice_input = Some((Instant::now(), *value == lan));
+                }
                 if let Some((item, value)) = civ::parse_menu_reply(&reply.data)
                     && let Some(slot) =
                         self.menu_read.iter_mut().find(|(i, v)| *i == item && v.is_none())
                 {
                     slot.1 = Some(value.to_vec());
+                }
+            }
+            0x1C if reply.from == self.civ_addr => {
+                if let Some(on) = civ::parse_ptt_reply(&reply.data) {
+                    self.last_tx_reply = Instant::now();
+                    if !self.transmitting
+                        && !self.ptt_edge.is_some_and(|at| at.elapsed() < PTT_SETTLE)
+                    {
+                        self.report_rig_tx(on);
+                    }
                 }
             }
             0x27 => {
@@ -963,6 +1046,50 @@ impl IcomNetSource {
 }
 
 impl IqSource for IcomNetSource {
+    fn mode_unavailable(&self, mode: Mode) -> Option<&'static str> {
+        (mode == Mode::HdRadio)
+            .then_some("Icom LAN provides only AF or a 12 kHz IF; HD Radio requires wideband I/Q")
+    }
+
+    fn prepare_receive_mode(&mut self, mode: Mode) -> Result<Option<bool>> {
+        let (lo, hi) = mode.default_filter();
+        let fits_if = f64::from(lo) >= -IF_OUT_RATE / 2.0 && f64::from(hi) <= IF_OUT_RATE / 2.0;
+        let wanted = if self.preferred_rx_source == IcomRxSource::If12k && fits_if {
+            IcomRxSource::If12k
+        } else {
+            IcomRxSource::Af
+        };
+        if wanted != self.rx_source {
+            let item = self.dev.info().model.lan_afif_select.ok_or_else(|| {
+                sdroxide_radio::RadioError::Msg(
+                    "This Icom model has no known LAN AF/IF menu command; cannot switch receive path"
+                        .into(),
+                )
+            })?;
+            // configure only remembers items it changed. A session opened
+            // with the desired IF already selected must still restore it.
+            if !self.menu_restore.iter().any(|(saved, _)| *saved == item) {
+                self.menu_restore.push((item, vec![self.rx_source.menu_value()]));
+            }
+            self.send(civ::set_menu_frame(self.civ_addr, item, &[wanted.menu_value()]));
+            while self.audio.pop().is_ok() {}
+            self.if_in.clear();
+            self.if_out.clear();
+            self.ddc = (wanted == IcomRxSource::If12k).then(|| {
+                let mut d = Ddc::new(f64::from(self.dev.info().rx_sample_rate), IF_OUT_RATE);
+                d.set_offset_hz(if self.invert_if { -IF_CENTER_HZ } else { IF_CENTER_HZ });
+                d
+            });
+            self.rx_source = wanted;
+            self.rate = match wanted {
+                IcomRxSource::Af => f64::from(self.dev.info().rx_sample_rate),
+                IcomRxSource::If12k => IF_OUT_RATE,
+            };
+            tracing::info!(mode = %mode.label(), path = %wanted.label(), "Icom LAN receive path");
+        }
+        Ok(Some(self.rx_source == IcomRxSource::Af))
+    }
+
     fn sample_rate(&self) -> f64 {
         self.rate
     }
@@ -1008,7 +1135,11 @@ impl IqSource for IcomNetSource {
     }
 
     fn describe(&self) -> String {
-        self.label.clone()
+        let path = match self.rx_source {
+            IcomRxSource::Af => "AF",
+            IcomRxSource::If12k => "12 kHz IF",
+        };
+        format!("{} ({path})", self.label)
     }
 
     fn open_status(&self) -> Option<String> {
@@ -1242,12 +1373,22 @@ impl IqSource for IcomNetSource {
         }
         self.send(civ::ptt_frame(self.civ_addr, true));
         self.transmitting = true;
+        self.ptt_edge = Some(Instant::now());
         // Transmit audio is always plain AF at the negotiated rate, whatever
         // the receive stream happens to be carrying.
         Ok(f64::from(self.dev.info().tx_sample_rate))
     }
 
     fn tx_write_audio(&mut self, audio: &[f32]) -> Result<()> {
+        let mut resampled = Vec::new();
+        let audio = if !self.transmitting
+            && let Some(rs) = self.local_voice_resampler.as_mut()
+        {
+            rs.push(audio, &mut resampled);
+            resampled.as_slice()
+        } else {
+            audio
+        };
         let Some(tx) = self.tx.as_mut() else {
             return Ok(()); // receive-only radio; PTT still keyed it
         };
@@ -1263,10 +1404,17 @@ impl IqSource for IcomNetSource {
                 if tries > 200 {
                     break; // the link stalled — drop rather than hang transmit
                 }
+
                 std::thread::sleep(Duration::from_millis(1));
             }
         }
         Ok(())
+    }
+
+    fn feeds_audio_on_rig_tx(&self) -> bool {
+        self.can_transmit()
+            && self.data_mode.is_some_and(|(at, mode)| mode == 0 && at.elapsed() < RIG_TX_MAX_AGE)
+            && self.lan_voice_input.is_some_and(|(at, lan)| lan && at.elapsed() < RIG_TX_MAX_AGE)
     }
 
     fn tx_drain(&mut self) {
@@ -1285,6 +1433,7 @@ impl IqSource for IcomNetSource {
     fn tx_end(&mut self) -> Result<()> {
         self.send(civ::ptt_frame(self.civ_addr, false));
         self.transmitting = false;
+        self.ptt_edge = Some(Instant::now());
         if let Some(f) = self.dial.end_tx() {
             self.send(civ::set_freq_frame(self.civ_addr, f));
         }
@@ -1501,6 +1650,217 @@ mod tests {
         // imaginary one.
         assert!(got.iter().all(|c| c.im == 0.0));
         assert!(got.iter().any(|c| c.re.abs() > 0.4));
+    }
+
+    #[test]
+    fn wide_modes_temporarily_use_af_without_changing_each_radios_preference() {
+        let a = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let b = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut c = cfg(&a);
+        c.rx_source = IcomRxSource::If12k;
+        c.invert_if = Some(true);
+        let mut if_src = IcomNetSource::open(&c).unwrap();
+        let mut af_src = IcomNetSource::open(&cfg(&b)).unwrap();
+        let item = if_src.dev.info().model.lan_afif_select.unwrap();
+        for mode in [Mode::Wfm, Mode::Rifp, Mode::Ais, Mode::Vdl2, Mode::Adsb] {
+            assert_eq!(if_src.prepare_receive_mode(mode).unwrap(), Some(true));
+            assert_eq!(if_src.sample_rate(), 48_000.0);
+            assert!(if_src.ddc.is_none());
+            wait_for("AF menu selection", || a.menu_item(item) == IcomRxSource::Af.menu_value());
+            assert_eq!(af_src.prepare_receive_mode(mode).unwrap(), Some(true));
+            assert_eq!(af_src.prepare_receive_mode(Mode::Usb).unwrap(), Some(true));
+            for compatible in [Mode::Usb, Mode::Am, Mode::Nfm, Mode::Drm, Mode::Hfdl] {
+                assert_eq!(if_src.prepare_receive_mode(compatible).unwrap(), Some(false));
+                assert_eq!(if_src.sample_rate(), IF_OUT_RATE);
+                assert!(if_src.ddc.is_some());
+            }
+            wait_for("restored IF menu selection", || {
+                a.menu_item(item) == IcomRxSource::If12k.menu_value()
+            });
+        }
+        assert_eq!(c.rx_source, IcomRxSource::If12k);
+        assert!(if_src.mode_unavailable(Mode::HdRadio).unwrap().contains("wideband I/Q"));
+        assert!(af_src.mode_unavailable(Mode::HdRadio).is_some());
+        assert!(af_src.mode_unavailable(Mode::Wfm).is_none());
+    }
+
+    #[test]
+    fn temporary_af_restores_an_original_if_menu_on_disconnect() {
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut c = cfg(&sim);
+        c.rx_source = IcomRxSource::If12k;
+        let item = sdroxide_icomnet::protocol::model_for(0xB6).lan_afif_select.unwrap();
+        sim.set_menu_item(item, IcomRxSource::If12k.menu_value());
+        let mut src = IcomNetSource::open(&c).unwrap();
+        assert!(!src.menu_restore.iter().any(|(i, _)| *i == item));
+        src.prepare_receive_mode(Mode::Wfm).unwrap();
+        wait_for("temporary AF", || sim.menu_item(item) == IcomRxSource::Af.menu_value());
+        src.release();
+        assert_eq!(sim.menu_item(item), IcomRxSource::If12k.menu_value());
+        let mut reopened = IcomNetSource::open(&c).unwrap();
+        assert_eq!(reopened.prepare_receive_mode(Mode::Usb).unwrap(), Some(false));
+        assert_eq!(reopened.sample_rate(), IF_OUT_RATE);
+    }
+
+    #[test]
+    fn an_unknown_menu_cannot_silently_switch_the_receive_path() {
+        let sim = Sim::start(SimOptions {
+            civ_address: 0x7F,
+            radio_name: "Unknown Icom".into(),
+            scope: false,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut c = cfg(&sim);
+        c.rx_source = IcomRxSource::If12k;
+        let mut src = IcomNetSource::open(&c).unwrap();
+        let err = src.prepare_receive_mode(Mode::Wfm).unwrap_err().to_string();
+        assert!(err.contains("cannot switch receive path"), "{err}");
+        assert_eq!(src.sample_rate(), IF_OUT_RATE);
+        assert_eq!(src.rx_source, IcomRxSource::If12k);
+    }
+
+    #[test]
+    fn engine_switches_receive_pipeline_and_blocks_hd_radio() {
+        use sdroxide_types::{Command, RadioEvent, RxId};
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut c = cfg(&sim);
+        c.rx_source = IcomRxSource::If12k;
+        let src = IcomNetSource::open(&c).unwrap();
+        let caps = crate::icomnet_caps(&c, &src);
+        let mut h = sdroxide_radio::start_engine(
+            Box::new(src),
+            caps,
+            sdroxide_radio::EngineConfig::default(),
+        );
+        let thread = h.thread.take().unwrap();
+        let mut audio_mode = None;
+        let mut mode = None;
+        let mut rate = None;
+        let mut hd_blocked = false;
+        let mut receive = |expected: Mode, expected_audio: bool, expected_rate: f64| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                while let Ok(event) = h.event_rx.try_recv() {
+                    match event {
+                        RadioEvent::Capabilities(c) | RadioEvent::CapabilitiesUpdated(c) => {
+                            audio_mode = Some(c.audio_mode);
+                        }
+                        RadioEvent::State(s) => {
+                            mode = Some(s.rx[0].mode);
+                            rate = Some(s.sample_rate);
+                            hd_blocked = s
+                                .mode_unavailable(Mode::HdRadio)
+                                .is_some_and(|why| why.contains("Icom LAN"));
+                        }
+                        _ => {}
+                    }
+                }
+                if mode == Some(expected)
+                    && audio_mode == Some(expected_audio)
+                    && rate == Some(expected_rate)
+                    && hd_blocked
+                {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "expected {expected:?}/{expected_audio}/{expected_rate}; got \
+                     {mode:?}/{audio_mode:?}/{rate:?}, HD blocked: {hd_blocked}"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        receive(Mode::Usb, false, IF_OUT_RATE);
+        h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::Wfm }).unwrap();
+        receive(Mode::Wfm, true, c.audio_bw_hz);
+        h.cmd_tx.send(Command::SelectVfo(sdroxide_types::Vfo::B)).unwrap();
+        receive(Mode::Usb, false, IF_OUT_RATE);
+        h.cmd_tx.send(Command::SelectVfo(sdroxide_types::Vfo::A)).unwrap();
+        receive(Mode::Wfm, true, c.audio_bw_hz);
+        h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::Usb }).unwrap();
+        receive(Mode::Usb, false, IF_OUT_RATE);
+        h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::HdRadio }).unwrap();
+        let mut refused = false;
+        wait_for("HD refusal notice", || {
+            while let Ok(event) = h.event_rx.try_recv() {
+                if let RadioEvent::Notice(Some(why)) = event
+                    && why.contains("HD Radio")
+                {
+                    refused = true;
+                }
+            }
+            refused
+        });
+        drop(h);
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn a_wide_panadapter_supplies_hd_iq_while_the_icom_switches_af_and_if() {
+        use crate::panadapter_source::PanadapterSource;
+        use sdroxide_types::{DeviceCaps, PanadapterConfig};
+
+        struct Receiver(f64, f64);
+        impl IqSource for Receiver {
+            fn sample_rate(&self) -> f64 {
+                self.0
+            }
+            fn center_hz(&self) -> f64 {
+                self.1
+            }
+            fn set_center_hz(&mut self, _hz: f64) -> Result<()> {
+                Ok(())
+            }
+            fn read(&mut self, _buf: &mut [Complex32]) -> Result<usize> {
+                Ok(0)
+            }
+            fn describe(&self) -> String {
+                "wideband receiver".into()
+            }
+        }
+
+        for (rate, frequency, hd_allowed) in [
+            (24_000.0, 100_000_000.0, false),
+            (399_999.0, 100_000_000.0, false),
+            (400_000.0, 100_000_000.0, true),
+            (2_000_000.0, 100_000_000.0, true),
+            (29_999.0, 1_000_000.0, false),
+            (30_000.0, 1_000_000.0, true),
+        ] {
+            let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+            let mut c = cfg(&sim);
+            c.rx_source = IcomRxSource::If12k;
+            let ctrl = IcomNetSource::open(&c).unwrap();
+            let item = ctrl.dev.info().model.lan_afif_select.unwrap();
+            let config = PanadapterConfig { source_radio: Some(1), ..Default::default() };
+            let caps = PanadapterSource::merge_caps(
+                &DeviceCaps::default(),
+                &crate::icomnet_caps(&c, &ctrl),
+                &config,
+            );
+            assert!(!caps.audio_mode);
+            let mut paired = PanadapterSource::new(
+                Box::new(Receiver(rate, frequency)),
+                Box::new(ctrl),
+                config,
+                Some(Mode::Usb),
+            );
+            assert_eq!(paired.mode_unavailable(Mode::HdRadio).is_none(), hd_allowed);
+            for mode in [Mode::Wfm, Mode::HdRadio] {
+                assert_eq!(paired.prepare_receive_mode(mode).unwrap(), None);
+                paired.set_control_mode(mode).unwrap();
+                wait_for("paired Icom uses AF", || {
+                    sim.menu_item(item) == IcomRxSource::Af.menu_value()
+                });
+                assert_eq!(paired.sample_rate(), rate, "the receiver's IQ rate must not change");
+                assert_eq!(paired.prepare_receive_mode(Mode::Usb).unwrap(), None);
+                paired.set_control_mode(Mode::Usb).unwrap();
+                wait_for("paired Icom restores IF", || {
+                    sim.menu_item(item) == IcomRxSource::If12k.menu_value()
+                });
+            }
+        }
     }
 
     #[test]
@@ -1763,11 +2123,12 @@ mod tests {
     #[test]
     fn a_poll_already_in_flight_does_not_drag_the_mode_back() {
         // The mode is polled every 200 ms, so a read issued just before the
-        // operator switched comes back carrying the old mode. The simulator
-        // never actually changes mode — it answers every read with USB — which
+        // operator switched comes back carrying the old mode. This simulator
+        // refuses mode changes and answers every read with USB, which
         // is the worst case: without the guard the app would be pulled straight
         // back off the LSB it had just been put in.
-        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let sim = Sim::start(SimOptions { scope: false, ignore_modes: true, ..Default::default() })
+            .unwrap();
         let mut src = IcomNetSource::open(&cfg(&sim)).expect("open");
         // Let the opening read of the mode go by first.
         wait_for("the radio's opening mode report", || {
@@ -2156,6 +2517,150 @@ mod tests {
         let src = IcomNetSource::open(&c).expect("open");
         assert_eq!(src.sample_rate(), 24_000.0);
         assert!(src.open_status().unwrap().contains("12 kHz IF needs a 48 kHz"));
+    }
+
+    #[test]
+    fn ic705_local_microphone_ptt_is_polled_without_keying_the_radio() {
+        let sim = Sim::start(SimOptions {
+            civ_address: 0xA4,
+            radio_name: "IC-705".into(),
+            scope: false,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut src = IcomNetSource::open(&cfg(&sim)).expect("open");
+        src.pending.clear();
+        sim.set_local_ptt(true);
+        wait_for("local microphone key-down", || {
+            src.poll_control().iter().any(|u| matches!(u, ControlUpdate::RigTx(true)))
+        });
+        assert!(!src.transmitting, "external PTT must not start our transmit path");
+        assert!(src.on_air());
+        wait_for("SWR polling during local PTT", || {
+            src.pump();
+            sim.civ_frames().iter().any(|f| f.get(4..6) == Some(&[0x15, 0x12]))
+        });
+        sim.set_local_ptt(false);
+        wait_for("local microphone release", || {
+            src.poll_control().iter().any(|u| matches!(u, ControlUpdate::RigTx(false)))
+        });
+        assert!(!src.on_air());
+        assert!(src.last_telem.is_none());
+        assert!(
+            sim.civ_frames().iter().all(|f| { f.get(4..6) != Some(&[0x1C, 0x00]) || f.len() == 7 }),
+            "observing local PTT must only read state, never command PTT"
+        );
+    }
+
+    fn ptt_reply(src: &mut IcomNetSource, data: &[u8]) {
+        src.on_reply(civ::CivReply {
+            from: src.civ_addr,
+            to: 0xE0,
+            cmd: 0x1C,
+            data: data.to_vec(),
+        });
+    }
+
+    #[test]
+    fn local_ptt_replies_are_deduplicated_and_invalid_replies_are_ignored() {
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut src = IcomNetSource::open(&cfg(&sim)).expect("open");
+        src.pending.clear();
+        for data in [&[0x00][..], &[0x01, 0x01], &[0x00, 0x01, 0x00]] {
+            ptt_reply(&mut src, data);
+        }
+        src.on_reply(civ::CivReply {
+            from: src.civ_addr.wrapping_add(1),
+            to: 0xE0,
+            cmd: 0x1C,
+            data: vec![0x00, 0x01],
+        });
+        assert!(src.pending.is_empty());
+        ptt_reply(&mut src, &[0x00, 0x01]);
+        ptt_reply(&mut src, &[0x00, 0x01]);
+        ptt_reply(&mut src, &[0x00, 0x00]);
+        assert_eq!(src.pending.len(), 2);
+        assert!(matches!(src.pending[0], ControlUpdate::RigTx(true)));
+        assert!(matches!(src.pending[1], ControlUpdate::RigTx(false)));
+        src.on_reply(civ::CivReply {
+            from: src.civ_addr,
+            to: 0xE0,
+            cmd: 0x15,
+            data: vec![0x12, 0x00, 0x00],
+        });
+        assert!(src.last_telem.is_none(), "a late SWR reply must not revive the over's meter");
+    }
+
+    #[test]
+    fn ic705_local_voice_follows_the_selected_modulation_input() {
+        let sim = Sim::start(SimOptions {
+            civ_address: 0xA4,
+            radio_name: "IC-705".into(),
+            scope: false,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut c = cfg(&sim);
+        c.set_mod_input_on_open = false;
+        let mut src = IcomNetSource::open(&c).expect("open");
+        wait_for("the radio mic input to be read", || {
+            src.pump();
+            src.lan_voice_input.is_some()
+        });
+        assert!(!src.feeds_audio_on_rig_tx());
+        sim.set_menu_item(0x0118, 0x03);
+        wait_for("LAN modulation selected at the radio", || {
+            src.pump();
+            src.feeds_audio_on_rig_tx()
+        });
+        sim.set_menu_item(0x0118, 0x00);
+        wait_for("radio microphone selected again", || {
+            src.pump();
+            !src.feeds_audio_on_rig_tx()
+        });
+        assert_eq!(sim.menu_item(0x0118), 0x00, "following PTT overwrote the audio selection");
+    }
+
+    #[test]
+    fn our_own_ptt_and_stale_unkey_replies_are_not_external_ptt() {
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut src = IcomNetSource::open(&cfg(&sim)).expect("open");
+        src.pending.clear();
+        src.tx_begin(src.center_hz(), 48_000.0).unwrap();
+        ptt_reply(&mut src, &[0x00, 0x01]);
+        assert!(!src.rig_tx);
+        src.tx_end().unwrap();
+        ptt_reply(&mut src, &[0x00, 0x01]);
+        assert!(!src.rig_tx);
+        assert!(src.pending.is_empty());
+        src.ptt_edge = Some(Instant::now() - PTT_SETTLE);
+        ptt_reply(&mut src, &[0x00, 0x01]);
+        assert!(matches!(src.pending.last(), Some(ControlUpdate::RigTx(true))));
+    }
+
+    #[test]
+    fn a_silent_radio_does_not_leave_local_ptt_latched() {
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut src = IcomNetSource::open(&cfg(&sim)).expect("open");
+        ptt_reply(&mut src, &[0x00, 0x01]);
+        src.pending.clear();
+        src.last_tx_reply = Instant::now() - RIG_TX_MAX_AGE - POLL_PERIOD;
+        src.pump();
+        assert!(!src.rig_tx);
+        assert!(src.pending.iter().any(|u| matches!(u, ControlUpdate::RigTx(false))));
+    }
+
+    #[test]
+    fn local_ptt_holds_off_the_scope_watchdog() {
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut src = IcomNetSource::open(&cfg(&sim)).expect("open");
+        src.scope_wanted = true;
+        ptt_reply(&mut src, &[0x00, 0x01]);
+        src.last_sweep = Instant::now() - SCOPE_STALL * 4;
+        src.last_scope_nudge = Instant::now() - SCOPE_RETRY_MAX;
+        src.watch_scope();
+        assert!(!src.scope_stalled);
+        assert!(src.last_sweep.elapsed() < SCOPE_STALL);
     }
 
     #[test]

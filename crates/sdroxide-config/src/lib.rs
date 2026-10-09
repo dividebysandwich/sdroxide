@@ -601,6 +601,7 @@ pub fn config_dir() -> Result<PathBuf, ConfigError> {
 ///
 /// Only the files that describe *a radio* are scoped: `radio.json`,
 /// `session.json`, `scanner.json`, `modeprofiles.json`, `tciserver.json`, `rigctld.json`,
+/// `wsjtx.json`, `relay.json`. Everything the operator shares across radios — memories,
 /// `wsjtx.json`, `wspr.json`. Everything the operator shares across radios — memories,
 /// band stacks, the logbook, `config.toml` — stays on the root free functions.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -853,6 +854,20 @@ impl Store {
         cfg: &sdroxide_types::RigctldConfig,
     ) -> Result<(), ConfigError> {
         self.save("rigctld.json", cfg)
+    }
+
+    /// This radio's external transmit/receive switch — the relay module that
+    /// grounds its SDR's antenna and switches its band filters. Per radio: each
+    /// module belongs to exactly one radio and follows only that radio's dials
+    /// and key-downs. Radio 0's is the legacy root `relay.json`, so a station
+    /// configured before switches were per radio keeps its module on its first
+    /// radio.
+    pub fn load_relay_config(&self) -> sdroxide_types::RelayConfig {
+        self.load("relay.json")
+    }
+
+    pub fn save_relay_config(&self, cfg: &sdroxide_types::RelayConfig) -> Result<(), ConfigError> {
+        self.save("relay.json", cfg)
     }
 
     pub fn load_wsjtx_config(&self) -> sdroxide_types::WsjtxConfig {
@@ -1327,6 +1342,9 @@ pub struct Session {
     /// Absent in a session written before this existed.
     #[serde(default)]
     pub band_antenna: BandAntennas,
+    /// Operator levels and optional onboard-PA override, by transmit band.
+    #[serde(default)]
+    pub band_tx: BandTransmitSettings,
     /// The antenna sockets each VFO was left on, `[A, B]`, as `(RX, TX)`.
     ///
     /// The companion to [`Self::vfo_modes`], and there for the same reason: a
@@ -1348,6 +1366,18 @@ pub struct Session {
 /// direction has no port to choose.
 pub type BandAntennas =
     std::collections::HashMap<sdroxide_types::Band, (Option<String>, Option<String>)>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct BandTransmit {
+    #[serde(default)]
+    pub drive: Option<f32>,
+    #[serde(default)]
+    pub tune_drive: Option<f32>,
+    #[serde(default)]
+    pub onboard_pa: Option<bool>,
+}
+
+pub type BandTransmitSettings = std::collections::HashMap<sdroxide_types::Band, BandTransmit>;
 
 impl Default for Session {
     fn default() -> Self {
@@ -1389,6 +1419,7 @@ impl Default for Session {
             tx_gains: Vec::new(),
             recording_mono: radio.recording_mono,
             band_antenna: BandAntennas::new(),
+            band_tx: BandTransmitSettings::new(),
             // And no socket of its own for either VFO until one has been
             // chosen on it — nothing moves a relay before the operator has
             // said what belongs where.
@@ -1872,19 +1903,6 @@ pub fn save_rotator_config(cfg: &sdroxide_types::RotatorConfig) -> Result<(), Co
     save_json("rotator.json", cfg)
 }
 
-/// The external transmit/receive switch — the relay board or contact closure
-/// that grounds the SDR's antenna while the station transmits. Owned by the
-/// engine, like the rotator above, and for the same reason: it is a fact about
-/// the machine the antenna is attached to, not about the screen in front of the
-/// operator.
-pub fn load_relay_config() -> sdroxide_types::RelayConfig {
-    load_json("relay.json")
-}
-
-pub fn save_relay_config(cfg: &sdroxide_types::RelayConfig) -> Result<(), ConfigError> {
-    save_json("relay.json", cfg)
-}
-
 // ── Broadcast station schedules ──────────────────────────────────────────────
 //
 // Three layers, in the order they win:
@@ -2362,6 +2380,10 @@ mod tests {
                 (sdroxide_types::Band::M40, (Some("ANT1".into()), None)),
                 (sdroxide_types::Band::M2, (Some("ANT2".into()), Some("ANT2".into()))),
             ]),
+            band_tx: BandTransmitSettings::from([(
+                sdroxide_types::Band::M6,
+                BandTransmit { drive: Some(0.02), tune_drive: Some(0.01), onboard_pa: Some(false) },
+            )]),
             // Both VFOs on 40 m, one on each socket — what the band map above
             // cannot express on its own.
             vfo_antennas: Some([

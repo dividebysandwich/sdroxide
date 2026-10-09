@@ -1366,14 +1366,15 @@ pub(in crate::app) fn settings_hpsdr_tab(
             });
         ui.end_row();
 
-        ui.label("Power amplifier");
+        ui.label("Power amplifier default");
         crate::chrome::checkbox(ui, &mut cfg.hpsdr.pa_enable, "Use the Hermes-Lite 2's onboard PA")
             .on_hover_text(
                 "On by default, and what you want unless an external amplifier is driven from the \
              board's low-power RF1 output. With it off the radio still keys — the T/R relay \
              throws and any accessory board follows — but the antenna jack makes no power at \
              all, and the relay is deliberately held in receive. Ignored on boards other than a \
-             Hermes-Lite.",
+             Hermes-Lite. This is the default for bands without a saved PA choice. \
+             Use the main RIG panel's PA control to save a choice for the transmit band.",
             );
         ui.end_row();
 
@@ -2914,7 +2915,9 @@ pub(in crate::app) fn settings_icomnet_tab(
              12 kHz IF: the radio sends its DRM intermediate frequency instead and \
              sdroxide demodulates, which brings its own filters, noise reduction and \
              decoders to bear over about ±12 kHz. Either way the wide waterfall is the \
-             radio's own scope — no Icom outputs I/Q.",
+             radio's own scope — no Icom outputs I/Q. An IF preference temporarily uses AF \
+             for wider modes such as WFM, then restores IF for compatible modes. \
+             An AF preference stays AF. HD Radio is unavailable on this connection.",
         );
         ComboBox::from_id_salt("icomnet_rx_source")
             .selected_text(net.rx_source.label())

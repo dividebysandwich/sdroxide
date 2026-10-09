@@ -535,6 +535,7 @@ pub(crate) fn run(ctx: ThreadCtx) {
         lna_gain_centi_db,
         adc_overload: overload_line,
         radio_ptt: ptt_line,
+        io_board_present,
         temp_centi_c,
         fwd_power_raw,
         rev_power_raw,
@@ -697,6 +698,29 @@ pub(crate) fn run(ctx: ThreadCtx) {
                         b.set_rx_input(input);
                     }
                 }
+                Ctrl::OnboardPa(enabled) => {
+                    if regs.pa.is_some() {
+                        regs.pa = Some(enabled);
+                        // A band change and key-down may be queued together.
+                        // Load PA/T/R routing before processing the next MOX,
+                        // rather than waiting for the rotating slot after it.
+                        if !regs.ptt {
+                            let d = build_ep2(
+                                &mut out_seq,
+                                speed,
+                                0,
+                                regs.oc(),
+                                regs.cc(Slot::Drive),
+                                &[],
+                            );
+                            if let Err(e) = socket.send_to(&d, dest) {
+                                tracing::warn!("HPSDR P1: sending onboard PA setting: {e}");
+                            }
+                        }
+                        rot.urge(Slot::Drive);
+                        tracing::info!("HPSDR P1: onboard PA -> {enabled}");
+                    }
+                }
                 Ctrl::RxGain(db) => {
                     if has_lna {
                         regs.lna_gain = Some(db);
@@ -784,6 +808,7 @@ pub(crate) fn run(ctx: ThreadCtx) {
                         && let Some(b) = io_board.as_mut()
                     {
                         b.on_ack(raddr, data, Instant::now());
+                        io_board_present.store(b.is_present(), Ordering::Relaxed);
                     }
                     // The radio's own PTT input (a Hermes-Lite's CN4 ring, a
                     // foot switch, a mic button). Published as a level for

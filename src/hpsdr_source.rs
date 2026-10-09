@@ -88,10 +88,10 @@ pub struct HpsdrSource {
     /// complaint has already been made this session.
     ps_warned_offset: bool,
 
-    /// Where the HL2IOBoard takes its receive signal from, when that is offered
-    /// as the receive antenna — see [`HpsdrSource::io_inputs_offered`]. `None`
-    /// on every other board and configuration.
+    /// Selected IO input on a Hermes-Lite DDC 0, retained while probing.
+    /// `None` on other boards or receivers.
     io_rx_input: Option<sdroxide_types::HpsdrIoRxInput>,
+    onboard_pa: Option<bool>,
 }
 
 impl HpsdrSource {
@@ -133,6 +133,11 @@ impl HpsdrSource {
             .map_err(anyhow::Error::msg)?;
         let rx = board.rx(cfg.ddc).map_err(|e| anyhow::Error::msg(e.to_string()))?;
         rx.set_rx_freq(sdroxide_types::HpsdrConfig::apply_ppm(center_hz, cfg.ppm));
+        // A shared connection can retain the previous DDC 0's accessory state.
+        // The converter wrapper and remembered ANT choice override these next.
+        rx.set_band_dial(None);
+        rx.set_io_rx_input(cfg.io_rx_input);
+        rx.set_onboard_pa(cfg.pa_enable);
         let label = if cfg.ddc == 0 {
             format!("HPSDR {} @ {ip} ({:.3} Msps)", board.board(), board.sample_rate_hz() / 1e6)
         } else {
@@ -214,15 +219,14 @@ impl HpsdrSource {
                 );
             }
         }
-        // Offered only where an operator has said J9 is wired — moving the
-        // setting off the radio's own input is that statement. A board with
-        // nothing on J9 is deaf there, so the choice is not put on the panel of
-        // an HL2 that has never used it.
-        let io_rx_input = (board.protocol() == 1
-            && board.has_io_board()
-            && cfg.ddc == 0
-            && cfg.io_rx_input != sdroxide_types::HpsdrIoRxInput::Radio)
+        // Keep the selected input even before the accessory probe completes.
+        // learned_antennas publishes the choices once the IO board answers.
+        let io_rx_input = (board.protocol() == 1 && board.has_io_board() && cfg.ddc == 0)
             .then_some(cfg.io_rx_input);
+        let onboard_pa = (board.protocol() == 1
+            && sdroxide_hpsdr::board_is_hermes_lite(board.board())
+            && cfg.ddc == 0)
+            .then_some(cfg.pa_enable);
         Ok(HpsdrSource {
             rate,
             center: center_hz,
@@ -257,13 +261,14 @@ impl HpsdrSource {
             ps_log_at: Instant::now(),
             ps_warned_offset: false,
             io_rx_input,
+            onboard_pa,
         })
     }
 
-    /// Whether the HL2IOBoard's receive inputs are offered as receive antennas,
-    /// so the band memory keeps one per band (issue #292).
+    /// Whether the IO board has been detected on this controlling receiver,
+    /// so its inputs can be offered as per-band receive antennas.
     pub fn io_inputs_offered(&self) -> bool {
-        self.io_rx_input.is_some()
+        self.io_rx_input.is_some() && self.board.as_ref().is_some_and(|b| b.io_board_present())
     }
 
     /// The connection's rate, remembered rather than asked for: it is fixed
@@ -437,17 +442,41 @@ impl IqSource for HpsdrSource {
         else {
             return Ok(());
         };
-        if *current != input {
-            *current = input;
-            if let Some(rx) = self.rx.as_ref() {
-                rx.set_io_rx_input(input);
-            }
+        *current = input;
+        // The cached label is not relay readback, particularly when reopening
+        // a connection another DDC still holds. Assert every band recall.
+        if let Some(rx) = self.rx.as_ref() {
+            rx.set_io_rx_input(input);
         }
         Ok(())
     }
 
     fn current_antenna(&self) -> String {
         self.io_rx_input.map_or_else(String::new, |i| i.label().to_string())
+    }
+
+    fn learned_antennas(&self) -> Option<&'static [&'static str]> {
+        static INPUTS: std::sync::LazyLock<[&'static str; 3]> =
+            std::sync::LazyLock::new(|| sdroxide_types::HpsdrIoRxInput::ALL.map(|i| i.label()));
+        self.io_rx_input.map(|_| if self.io_inputs_offered() { INPUTS.as_slice() } else { &[] })
+    }
+
+    fn onboard_pa(&self) -> Option<bool> {
+        self.onboard_pa
+    }
+
+    fn set_onboard_pa(&mut self, enabled: bool) -> Result<()> {
+        if self.onboard_pa.is_none() {
+            return Err(sdroxide_radio::RadioError::Msg(
+                "Onboard PA control requires Hermes-Lite Protocol 1 DDC 0".into(),
+            ));
+        }
+        let rx = self.rx.as_ref().ok_or_else(|| {
+            sdroxide_radio::RadioError::Msg("The HPSDR connection is released".into())
+        })?;
+        rx.set_onboard_pa(enabled);
+        self.onboard_pa = Some(enabled);
+        Ok(())
     }
 
     /// The board's own temperature sensor, which on this family means a

@@ -1063,7 +1063,7 @@ fn indicator(act: Action, state: &RadioState, view: &ViewState) -> Option<u8> {
     let on = |b: bool| Some(if b { 127u8 } else { 0 });
     let frac = |v: f32| Some((v.clamp(0.0, 1.0) * 127.0).round() as u8);
     match act {
-        Ptt => on(state.tx.ptt),
+        Ptt => on(state.tx.ptt_on()),
         TuneCarrier => on(state.tx.tune),
         Mute => on(state.rx[0].muted),
         NoiseBlanker => on(state.noise_blanker),
@@ -1136,6 +1136,21 @@ pub fn step_on_grid(hz: f64, steps: f64, grid: f64) -> f64 {
 mod tests {
     use super::*;
     use sdroxide_types::{Band, Mode};
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn ptt_indicator_follows_external_ptt_without_changing_commanded_state() {
+        let mut state = RadioState::default();
+        let view = ViewState::default();
+        assert_eq!(indicator(Action::Ptt, &state, &view), Some(0));
+        state.tx.external_ptt = true;
+        assert_eq!(indicator(Action::Ptt, &state, &view), Some(127));
+        assert!(!state.tx.ptt);
+        state.tx.external_ptt = false;
+        assert_eq!(indicator(Action::Ptt, &state, &view), Some(0));
+        state.tx.ptt = true;
+        assert_eq!(indicator(Action::Ptt, &state, &view), Some(127));
+    }
 
     fn sink<'a>(
         view: &'a mut ViewState,

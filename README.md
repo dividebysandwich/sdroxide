@@ -1588,6 +1588,12 @@ additionally filters on the product string (`USBRelay…`), so it does not offer
 you somebody's keyboard as an antenna relay — but udev cannot make that
 distinction.
 
+Discovery also includes Noyito USB HID relay modules (`5131:2007`) alongside
+the standard `16c0:05df` boards. Noyito discovery does not require a `USBRelay`
+product string; switching and read-back still need to be verified on the module.
+Linux permissions must apply to `/dev/hidraw*`, not just `/dev/bus/usb/*`.
+After replugging or rebooting, reselect the relay if its saved HID path changed.
+
 **Serial relay boards** (LCUS, KMtronic, Numato) and **RTS/DTR lines** need
 nothing from this file: they are serial ports, so add yourself to `dialout` as
 you would for a CAT cable.

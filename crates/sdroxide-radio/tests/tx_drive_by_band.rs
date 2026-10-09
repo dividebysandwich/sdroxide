@@ -1,4 +1,4 @@
-//! One Drive setting, one output power, on every band (issue #295).
+//! Equal chosen Drive settings, calibrated output power on every band (issue #295).
 //!
 //! Real amplifiers have noticeably different gain per band — 10 m typically
 //! wants several decibels more drive than 40 m for the same watts out — so a
@@ -125,9 +125,11 @@ fn the_drive_that_reaches_the_rig_follows_the_bands_calibration() {
         "6 dB off a power setting is a quarter of it, got {on_40}"
     );
 
-    // …and 20 m, which the operator never touched the slider for.
+    // …and 20 m, at the same chosen drive, to isolate calibration from the
+    // independent per-band slider memory.
     drive.lock().unwrap().clear();
     h.cmd_tx.send(Command::SetVfo { vfo: Vfo::A, hz: 14_074_000.0 }).unwrap();
+    h.cmd_tx.send(Command::SetTxDrive(1.0)).unwrap();
     std::thread::sleep(Duration::from_millis(250));
     let on_20 = *drive
         .lock()
@@ -136,8 +138,7 @@ fn the_drive_that_reaches_the_rig_follows_the_bands_calibration() {
         .expect("moving to an uncalibrated band should hand the rig its power back");
     assert!((on_20 - 1.0).abs() < 1e-3, "20 m has no trim, so full drive is full, got {on_20}");
 
-    // The slider itself never moved: the calibration is a property of the
-    // station, not of the setting, and an operator who set 100% still reads
+    // Calibration does not move the slider: an operator who set 100% reads
     // 100% on the band that is transmitting at a quarter of it.
     let mut last: Option<RadioState> = None;
     while let Ok(ev) = h.event_rx.try_recv() {
@@ -240,6 +241,7 @@ fn the_samples_a_lime_transmits_follow_the_bands_calibration() {
     // modulation, one amplitude.
     let tune_peak = |hz: f64| -> f32 {
         h.cmd_tx.send(Command::SetVfo { vfo: Vfo::A, hz }).unwrap();
+        h.cmd_tx.send(Command::SetTuneDrive(1.0)).unwrap();
         std::thread::sleep(Duration::from_millis(250));
         *peak.lock().unwrap() = 0.0;
         h.cmd_tx.send(Command::SetTune(true)).unwrap();

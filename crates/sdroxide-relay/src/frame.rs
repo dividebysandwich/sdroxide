@@ -163,9 +163,15 @@ pub mod dcttech {
     /// has to be checked too.
     pub const USB_ID: (u16, u16) = (0x16c0, 0x05df);
 
+    /// Noyito USB HID relay modules.
+    pub const NOYITO_USB_ID: (u16, u16) = (0x5131, 0x2007);
+
+    pub const USB_IDS: &[(u16, u16)] = &[USB_ID, NOYITO_USB_ID];
+
     /// What the product string starts with. The only thing distinguishing these
     /// boards from everything else on the shared id.
     pub const PRODUCT_PREFIX: &str = "USBRelay";
+    pub const NOYITO_PRODUCT_PREFIX: &str = "HIDRelay";
 
     pub const REPORT_LEN: usize = 8;
 

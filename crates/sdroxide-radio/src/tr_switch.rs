@@ -1,12 +1,16 @@
-//! The station's external transmit/receive switch, as the engines see it.
+//! A radio's external transmit/receive switch, as its engine sees it.
 //!
-//! One shared [`TrSwitch`] is handed to every engine in the process, the way
-//! [`crate::TxGate`] is, and for a related reason: the relay that grounds the
-//! SDR's antenna belongs to the *station*, not to any one radio. Several
-//! engines may be running, any of them may key, and the contacts must follow
-//! all of them — so each engine publishes whether it is on the air and the
-//! switch follows the OR. The last radio to unkey is what releases it; a radio
-//! that never keyed cannot.
+//! Each radio has a [`TrSwitch`] of its own, driving at most one relay module —
+//! the box that grounds that radio's SDR antenna, keys its amplifier and
+//! switches its band filters. A module belongs to exactly one radio (see
+//! [`RelayClaim`]) and follows only that radio: its receive dial, its transmit
+//! dial, its key-downs. Another radio keying does not touch it; a station whose
+//! other receivers need protecting wires that from the owning radio's contacts.
+//!
+//! Inside, the hub still keeps its on-air state as one bit per radio and its
+//! transmit bands by radio id — the arbitration it was built with when one
+//! switch was shared by every radio — and with a single radio publishing into
+//! it that collapses to exactly "this radio's over".
 //!
 //! The hardware itself lives behind `sdroxide_relay::RelayHandle`, which is a
 //! thread and a port. This type is the arbitration in front of it, and it is
@@ -26,15 +30,13 @@
 //! * [`TrSwitch::publish`] every tick, for the overs sdroxide does not drive:
 //!   a transceiver keyed at its own microphone, or a rig sending CW from its
 //!   own keyer.
-//! * [`TrSwitch::set_tx_band`] whenever its transmit dial changes band, and
-//!   the primary engine [`TrSwitch::set_rx_band`] whenever its receive dial
-//!   does, for a station whose relay bank also switches external filters or
-//!   a transverter by band (`sdroxide_types::RelayRole::BandDecoder`, issue
+//! * [`TrSwitch::set_tx_band`] and [`TrSwitch::set_rx_band`] whenever its
+//!   dials change band, for a relay bank that also switches external filters
+//!   or a transverter by band (`sdroxide_types::RelayRole::BandDecoder`, issue
 //!   #442). Bands, not output words: the worker resolves them against its
-//!   own configuration and decides RX word or TX word from the station's
-//!   on-air ramp, so a band-decoder contact moves inside its lead like every
-//!   other one. The TX band that counts is the keying radio's — [`TrSwitch::key`]
-//!   sends it ahead of the key-down itself.
+//!   own configuration and decides RX word or TX word from the on-air ramp,
+//!   so a band-decoder contact moves inside its lead like every other one.
+//!   [`TrSwitch::key`] sends the TX band ahead of the key-down itself.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
@@ -74,7 +76,7 @@ pub struct TrSwitch {
 /// See [`TrSwitch::bands`].
 #[derive(Default)]
 struct Bands {
-    /// The primary radio's receive band.
+    /// The owning radio's receive band.
     rx: Option<Band>,
     /// Each radio's transmit band, by radio id.
     tx: std::collections::HashMap<u32, Band>,
@@ -288,8 +290,7 @@ impl TrSwitch {
         d.as_ref()?.take_sense_edge()
     }
 
-    /// The band the station's receiver is on — the primary radio's, since
-    /// the bank belongs to the station. See `sdroxide_relay::Sequencer::set_rx_band`.
+    /// The owning radio's receive band. See `sdroxide_relay::Sequencer::set_rx_band`.
     pub fn set_rx_band(&self, band: Band) {
         self.bands.lock().unwrap_or_else(|e| e.into_inner()).rx = Some(band);
         if let Ok(d) = self.driver.lock()
@@ -353,9 +354,102 @@ fn bit(radio: u32) -> u64 {
     1u64 << (radio.min(63))
 }
 
+/// Which radio owns which relay module, process-wide.
+///
+/// Every radio has a switch of its own, and a module belongs to exactly one of
+/// them: two radios driving the same board would each throw the other's
+/// contacts and put the other's band filters in line. The hardware would
+/// usually refuse the second open anyway — a serial port is exclusive — but a
+/// HID device or a GPIO chip often is not, and "the band filters follow
+/// whichever tab moved last" is a much worse failure than an error that names
+/// the radio that already has it.
+static RELAY_CLAIMS: std::sync::Mutex<Vec<(String, u32)>> = std::sync::Mutex::new(Vec::new());
+
+/// What identifies the hardware `cfg` would open. Empty for a configuration
+/// that opens nothing exclusive: no switch, or a command hook (whose script is
+/// the operator's to arbitrate). A GPIO chip is claimed line by line, since
+/// two radios can each have their own pins on one header.
+pub fn relay_module_keys(cfg: &RelayConfig) -> Vec<String> {
+    use sdroxide_types::RelayLink;
+    let norm = |s: &str| {
+        let s = s.trim();
+        if cfg!(windows) { s.to_ascii_lowercase() } else { s.to_string() }
+    };
+    match cfg.link {
+        RelayLink::Off | RelayLink::Command => Vec::new(),
+        RelayLink::Serial | RelayLink::SerialLines => {
+            vec![format!("serial:{}", norm(&cfg.serial.path))]
+        }
+        RelayLink::Hid => vec![format!("hid:{}", norm(&cfg.device))],
+        RelayLink::Cm108 => vec![format!("cm108:{}:{}", norm(&cfg.device), cfg.cm108_pin)],
+        RelayLink::Gpio => {
+            let chip = norm(&cfg.device);
+            cfg.gpio_lines.iter().map(|l| format!("gpio:{chip}:{l}")).collect()
+        }
+    }
+}
+
+/// A radio's hold on its relay module. Released when dropped — when the radio
+/// is reconfigured, switched to another module, or closed.
+#[derive(Debug)]
+pub struct RelayClaim {
+    radio: u32,
+    keys: Vec<String>,
+}
+
+impl RelayClaim {
+    /// Claim the module `cfg` names for `radio`. Refused, with the id of the
+    /// radio that already has it, when another radio owns any part of it.
+    pub fn take(cfg: &RelayConfig, radio: u32) -> Result<RelayClaim, u32> {
+        let keys = relay_module_keys(cfg);
+        let mut claims = RELAY_CLAIMS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, owner)) =
+            claims.iter().find(|(k, owner)| *owner != radio && keys.contains(k))
+        {
+            return Err(*owner);
+        }
+        for k in &keys {
+            if !claims.iter().any(|(c, o)| c == k && *o == radio) {
+                claims.push((k.clone(), radio));
+            }
+        }
+        Ok(RelayClaim { radio, keys })
+    }
+}
+
+impl Drop for RelayClaim {
+    fn drop(&mut self) {
+        let mut claims = RELAY_CLAIMS.lock().unwrap_or_else(|e| e.into_inner());
+        claims.retain(|(k, o)| !(*o == self.radio && self.keys.contains(k)));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A module belongs to one radio. The second radio to ask is told whose it
+    /// is, and gets it once the first lets go.
+    #[test]
+    fn a_relay_module_is_owned_by_one_radio_at_a_time() {
+        use sdroxide_types::RelayLink;
+        let cfg = RelayConfig {
+            link: RelayLink::Hid,
+            device: "test-claim-hid-0001".into(),
+            ..RelayConfig::default()
+        };
+        let first = RelayClaim::take(&cfg, 100).expect("the first radio is refused");
+        assert_eq!(RelayClaim::take(&cfg, 101).unwrap_err(), 100);
+        // The owner re-applying its own configuration is not a conflict.
+        let again = RelayClaim::take(&cfg, 100).expect("the owner is refused its own module");
+        drop(first);
+        drop(again);
+        let second = RelayClaim::take(&cfg, 101).expect("a released module stayed claimed");
+        // A different board is somebody else's business entirely.
+        let other = RelayConfig { device: "test-claim-hid-0002".into(), ..cfg.clone() };
+        let _third = RelayClaim::take(&other, 100).expect("an unrelated board was refused");
+        drop(second);
+    }
 
     /// The case this type exists for. Two radios, one antenna relay: it must
     /// not open when the first one unkeys while the second is still on the air.

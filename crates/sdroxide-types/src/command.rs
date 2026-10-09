@@ -1146,4 +1146,6 @@ pub enum Command {
     ResetModeDefaults {
         mode: Option<Mode>,
     },
+    /// Select the HL2 onboard PA for the current transmit band.
+    SetOnboardPa(bool),
 }

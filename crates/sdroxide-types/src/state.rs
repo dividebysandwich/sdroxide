@@ -136,6 +136,7 @@ impl RxState {
 /// Transmit-side settings and status.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct TxState {
+    /// PTT commanded by sdroxide, distinct from the radio's own PTT.
     pub ptt: bool,
     pub tune: bool,
     /// 0.0..=1.0 fraction of maximum drive.
@@ -182,6 +183,19 @@ pub struct TxState {
     /// sends a wild figure gets a sane one back.
     #[serde(default)]
     pub cessb_db: f32,
+    /// Observed local radio PTT; status only, never a request to key.
+    #[serde(default)]
+    pub external_ptt: bool,
+    /// Commanded onboard PA state, or `None` when the source has no switch.
+    #[serde(default)]
+    pub onboard_pa: Option<bool>,
+}
+
+impl TxState {
+    /// PTT indication, regardless of who owns the transmission.
+    pub fn ptt_on(&self) -> bool {
+        self.ptt || self.external_ptt
+    }
 }
 
 /// The most controlled-envelope compression the control offers, in decibels.

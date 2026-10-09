@@ -4808,6 +4808,7 @@ dependencies = [
  "sdroxide-lime",
  "sdroxide-limerfe",
  "sdroxide-net",
+ "sdroxide-nrsc5",
  "sdroxide-pluto",
  "sdroxide-proto",
  "sdroxide-radio",

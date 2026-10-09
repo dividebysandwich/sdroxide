@@ -904,7 +904,7 @@ impl SdroxideApp {
                             let busy_elsewhere = (recording.is_some() && !is_rec)
                                 || playing.is_some()
                                 || previewing.is_some()
-                                || self.state.tx.ptt
+                                || self.state.tx.ptt_on()
                                 || tuning;
                             let rec = ui
                                 .add_enabled_ui(!busy_elsewhere, |ui| {
@@ -935,7 +935,7 @@ impl SdroxideApp {
                             // receiver is running.
                             let can_prev = !slot.is_empty()
                                 && recording.is_none()
-                                && !self.state.tx.ptt
+                                && !self.state.tx.ptt_on()
                                 && !tuning
                                 && (is_prev || previewing.is_none());
                             let prev = ui
@@ -952,7 +952,7 @@ impl SdroxideApp {
                                     "Stop listening"
                                 } else if slot.is_empty() {
                                     "Nothing recorded in this slot"
-                                } else if self.state.tx.ptt || tuning {
+                                } else if self.state.tx.ptt_on() || tuning {
                                     "Not while transmitting"
                                 } else {
                                     "Listen to this message — nothing is transmitted"

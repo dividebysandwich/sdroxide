@@ -194,6 +194,7 @@ sdroxide-types.workspace = true
 sdroxide-version.workspace = true
 sdroxide-proto.workspace = true
 sdroxide-dsp.workspace = true
+sdroxide-nrsc5.workspace = true
 sdroxide-radio = { path = "crates/sdroxide-radio", default-features = false }
 sdroxide-config.workspace = true
 sdroxide-net.workspace = true
