@@ -346,6 +346,19 @@ const MAX_BAD_RUN: u32 = 24;
 /// through at the spacing the standard requires.
 const CONFIRM_BLOCKS: u32 = 8;
 
+/// Blocks in a row that only the corrector could pass, with no clean one among
+/// them, before a confirmed lock is taken to be a false one and abandoned.
+///
+/// The offset words are not far enough apart for the corrector: received A reads
+/// as B with a two-bit burst, B as C′, C as D with one bit and D as A — a whole
+/// cycle. So a lock that lands one block out of step does not see bad blocks, it
+/// sees every block "corrected" into the wrong place, and [`MAX_BAD_RUN`] never
+/// fires. A real lock on even a marginal signal still passes most blocks clean:
+/// on the noisiest test signal that decodes, about one block in five needs the
+/// corrector, so ten in a row is a few in a million. On a false lock it is every
+/// block.
+const MAX_CORRECTED_RUN: u32 = 10;
+
 #[derive(Clone, Copy, PartialEq)]
 enum SyncState {
     Hunting,
@@ -365,6 +378,9 @@ struct BlockSync {
     corrected: u8,
     bad_run: u32,
     good_run: u32,
+    /// Blocks passed only by the corrector since the last clean one — see
+    /// [`MAX_CORRECTED_RUN`]. A bad block neither adds to it nor clears it.
+    corrected_run: u32,
     /// This lock has once run [`CONFIRM_BLOCKS`] good blocks in a row. Unlike
     /// [`BlockSync::synced`] it survives an isolated bad block, and is only
     /// cleared when sync is abandoned.
@@ -384,6 +400,7 @@ impl BlockSync {
             corrected: 0,
             bad_run: 0,
             good_run: 0,
+            corrected_run: 0,
             confirmed: false,
         }
     }
@@ -422,6 +439,7 @@ impl BlockSync {
                 self.valid = 1 << pos;
                 self.good_run = 1;
                 self.bad_run = 0;
+                self.corrected_run = 0;
                 self.confirmed = false;
                 self.finish_block(pos, emit);
             }
@@ -432,11 +450,29 @@ impl BlockSync {
                 }
                 let pos = self.pos;
                 match check_block(self.reg, expected(pos)) {
+                    // Until the lock is confirmed, only a clean block counts.
+                    // The lock was taken on one exact offset word, which a single
+                    // bit error turns C into D, and a lock one block out of step
+                    // gets every block after it through the corrector — so a
+                    // corrected block here is as likely the sign of a wrong
+                    // position as of a noisy right one. Hunt again: a real block
+                    // boundary comes back round within a group.
+                    Some((_, true)) if !self.confirmed => {
+                        self.reset();
+                        return;
+                    }
                     Some((info, fixed)) => {
                         self.group[pos] = info;
                         self.valid |= 1 << pos;
                         if fixed {
                             self.corrected |= 1 << pos;
+                            self.corrected_run += 1;
+                            if self.corrected_run >= MAX_CORRECTED_RUN {
+                                self.reset();
+                                return;
+                            }
+                        } else {
+                            self.corrected_run = 0;
                         }
                         self.good_run = self.good_run.saturating_add(1);
                         self.bad_run = 0;
@@ -1251,6 +1287,52 @@ mod tests {
         assert_eq!(hunt(encode(0x1234, OFFSET_CP)), Some(2));
         // A block with no offset word at all is not a block.
         assert_eq!(hunt(encode(0x1234, 0)), None);
+    }
+
+    #[test]
+    fn a_lock_one_block_out_of_step_is_abandoned() {
+        // The field report behind this: a medium station stuck at NO SYNC with
+        // 99.5 % of its blocks in error, nearly all of them "corrected", until
+        // the operator tuned away and back. One bit error turns block C's offset
+        // into D's, the hunt takes it at its word, and from there every real
+        // block reaches the corrector one position early — A read as B, B as C′,
+        // C as D, D as A, each a burst it accepts. Nothing ever fails, so the old
+        // lock never let go and handed on nothing but rubbish.
+        const PI: u16 = 0xD3C2;
+        let groups: Vec<[u16; 4]> =
+            (0..20u16).map(|i| [PI, 0x0540 | (i & 3), 0x1234 ^ i, 0x5678 ^ i]).collect();
+        let c_as_d = *burst_table().get(&(OFFSET_C ^ OFFSET_D)).expect("one bit apart");
+        let mut words = Vec::new();
+        for (g, blocks) in groups.iter().enumerate() {
+            for (pos, &info) in blocks.iter().enumerate() {
+                let off = [OFFSET_A, OFFSET_B, OFFSET_C, OFFSET_D][pos];
+                // Start the stream at the first group's block C, with the bit
+                // error that makes it read as D.
+                match (g, pos) {
+                    (0, 0 | 1) => {}
+                    (0, 2) => words.push(encode(info, off) ^ c_as_d),
+                    _ => words.push(encode(info, off)),
+                }
+            }
+        }
+
+        let mut sync = BlockSync::new();
+        let mut confirmed = Vec::new();
+        for w in words {
+            for k in (0..26).rev() {
+                sync.push(((w >> k) & 1) as u8, &mut |g, valid, corrected, ok| {
+                    if ok {
+                        confirmed.push((g, valid, corrected));
+                    }
+                });
+            }
+        }
+        assert!(!confirmed.is_empty(), "never confirmed a lock on a clean stream");
+        for (g, valid, corrected) in &confirmed {
+            assert_eq!(*valid, 0b1111);
+            assert_eq!(*corrected, 0, "a confirmed group needed the corrector: {g:04X?}");
+            assert_eq!(g[0], PI, "a confirmed group is out of step: {g:04X?}");
+        }
     }
 
     #[test]
