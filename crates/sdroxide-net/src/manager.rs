@@ -78,6 +78,13 @@ pub struct SpotManager {
     /// a matter of simply not calling [`SpotManager::set_config`]: settings
     /// applied from a second radio's window have to reach it too.
     station: bool,
+
+    /// The Wavelog upload worker, started by the first QSO sent there.
+    wavelog: std::sync::OnceLock<crate::wavelog::UploadQueue>,
+    /// A Wavelog download is running; another asked for meanwhile is dropped.
+    wavelog_syncing: Arc<std::sync::atomic::AtomicBool>,
+    /// Wavelog's live radio status, started once it is first switched on.
+    wavelog_radio: Option<crate::wavelog::RadioReporter>,
 }
 
 impl SpotManager {
@@ -109,6 +116,9 @@ impl SpotManager {
             rep_tx: false,
             rep_visible: false,
             station: true,
+            wavelog: std::sync::OnceLock::new(),
+            wavelog_syncing: Arc::default(),
+            wavelog_radio: None,
         }
     }
 
@@ -318,7 +328,27 @@ impl SpotManager {
     }
 
     /// Upload one QSO's ADIF to the given targets; results arrive via `poll`.
-    pub fn upload(&self, qso_id: u64, adif: String, targets: Vec<UploadTarget>) {
+    ///
+    /// `wavelog_station` is the operating profile's Wavelog location (0 for
+    /// the configured default). Wavelog is queued rather than given a thread
+    /// of its own — see [`crate::wavelog::UploadQueue`].
+    pub fn upload(
+        &self,
+        qso_id: u64,
+        adif: String,
+        mut targets: Vec<UploadTarget>,
+        wavelog_station: u32,
+    ) {
+        if let Some(i) = targets.iter().position(|t| *t == UploadTarget::Wavelog) {
+            targets.remove(i);
+            let station = self.cfg.wavelog.station_for(wavelog_station);
+            self.wavelog
+                .get_or_init(|| crate::wavelog::UploadQueue::start(self.event_tx.clone()))
+                .push(&self.cfg.wavelog, station, qso_id, adif.clone());
+        }
+        if targets.is_empty() {
+            return;
+        }
         let cfg = self.cfg.clone();
         let my_call = self.op_call.clone();
         let tx = self.event_tx.clone();
@@ -330,7 +360,13 @@ impl SpotManager {
                         Ok(m) => (true, m),
                         Err(e) => (false, e),
                     };
-                    let _ = tx.send(NetEvent::Upload(UploadResult { qso_id, target, ok, message }));
+                    let _ = tx.send(NetEvent::Upload(UploadResult {
+                        qso_id,
+                        target,
+                        ok,
+                        message,
+                        retryable: false,
+                    }));
                 }
             })
             .ok();
@@ -355,6 +391,19 @@ impl SpotManager {
         std::thread::Builder::new()
             .name("sdroxide-login".into())
             .spawn(move || {
+                // Wavelog's check knows more than pass or fail — the station
+                // locations to choose from, the certificate to trust — so it
+                // is run here and both halves of the answer sent.
+                if target == sdroxide_types::LoginTarget::Wavelog {
+                    let probe = crate::wavelog::probe(&cfg.wavelog);
+                    let _ = tx.send(NetEvent::LoginTest(sdroxide_types::LoginTestResult {
+                        target,
+                        ok: probe.ok,
+                        message: probe.message.clone(),
+                    }));
+                    let _ = tx.send(NetEvent::WavelogProbe(probe));
+                    return;
+                }
                 let (ok, message) = match crate::upload::test_login(&cfg, &my_call, target) {
                     Ok(m) => (true, m),
                     Err(e) => (false, e),
@@ -366,6 +415,67 @@ impl SpotManager {
                 }));
             })
             .ok();
+    }
+
+    /// Download Wavelog QSOs for each `(station location, cursor)`; every page
+    /// arrives via `poll` as a [`NetEvent::WavelogBatch`], and the last one is
+    /// marked `done` — with the reason, if it stopped early.
+    ///
+    /// One at a time: a sync asked for while one runs is dropped, since the
+    /// next timer tick asks again from wherever the first one got to. With
+    /// `full`, every location is read from the beginning.
+    pub fn wavelog_sync(&self, stations: Vec<(u32, u64)>, full: bool) {
+        if self.wavelog_syncing.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let cfg = self.cfg.wavelog.clone();
+        let busy = self.wavelog_syncing.clone();
+        let tx = self.event_tx.clone();
+        let spawned =
+            std::thread::Builder::new().name("sdroxide-wavelog-sync".into()).spawn(move || {
+                let mut error = None;
+                for (station, from) in stations {
+                    let from = if full { 0 } else { from };
+                    let sent = crate::wavelog::download(&cfg, station, from, full, |b| {
+                        let _ = tx.send(NetEvent::WavelogBatch(b));
+                    });
+                    if let Err(e) = sent {
+                        error = Some(e);
+                        break;
+                    }
+                }
+                busy.store(false, Ordering::Release);
+                let end =
+                    sdroxide_types::WavelogBatch { full, done: true, error, ..Default::default() };
+                let _ = tx.send(NetEvent::WavelogBatch(end));
+            });
+        if spawned.is_err() {
+            self.wavelog_syncing.store(false, Ordering::Release);
+        }
+    }
+
+    /// The radio's transmit and receive frequencies and mode, for Wavelog's
+    /// live radio status. Called every engine tick; deciding whether anything
+    /// is sent is the reporter's. The station's main radio only — the others
+    /// would each claim the one radio name.
+    pub fn wavelog_radio(&mut self, tx_hz: f64, rx_hz: f64, mode: sdroxide_types::Mode) {
+        if !self.station {
+            return;
+        }
+        if self.wavelog_radio.is_none() {
+            if !self.cfg.wavelog.radio_status {
+                return;
+            }
+            self.wavelog_radio = Some(crate::wavelog::RadioReporter::start(self.event_tx.clone()));
+        }
+        let now = crate::wavelog::RadioNow {
+            tx_hz: tx_hz.round().max(0.0) as u64,
+            rx_hz: rx_hz.round().max(0.0) as u64,
+            mode: crate::wavelog::radio_mode(mode),
+        };
+        if let Some(r) = &self.wavelog_radio {
+            r.update(&self.cfg.wavelog, now);
+        }
     }
 
     /// Download QSL confirmations; results arrive via `poll`.

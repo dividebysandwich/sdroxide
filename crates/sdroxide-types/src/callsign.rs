@@ -68,6 +68,10 @@ pub enum UploadTarget {
     /// The World Radio League logbook, via its developer API (issue #337).
     /// Appended for the reason [`UploadTarget::HamQth`] gives.
     Wrl,
+    /// The operator's own Wavelog server, to the station location the
+    /// operating profile names. Appended for the reason
+    /// [`UploadTarget::HamQth`] gives.
+    Wavelog,
 }
 
 impl UploadTarget {
@@ -78,6 +82,7 @@ impl UploadTarget {
             UploadTarget::ClubLog => "Club Log",
             UploadTarget::HamQth => "HamQTH",
             UploadTarget::Wrl => "WRL",
+            UploadTarget::Wavelog => "Wavelog",
         }
     }
 
@@ -95,13 +100,15 @@ impl UploadTarget {
             UploadTarget::ClubLog => LoginTarget::ClubLog,
             UploadTarget::HamQth => LoginTarget::HamQth,
             UploadTarget::Wrl => LoginTarget::Wrl,
+            UploadTarget::Wavelog => LoginTarget::Wavelog,
         }
     }
 
     /// Display order, which is deliberately not the declaration order above:
     /// the variants are numbered by the wire and appended to, while this is
     /// what the operator reads along a tab strip.
-    pub const ALL: [UploadTarget; 5] = [
+    pub const ALL: [UploadTarget; 6] = [
+        UploadTarget::Wavelog,
         UploadTarget::QrzLogbook,
         UploadTarget::Eqsl,
         UploadTarget::HamQth,
@@ -129,6 +136,9 @@ pub enum LoginTarget {
     /// The World Radio League developer API key (issue #337). Appended for the
     /// reason [`UploadTarget::HamQth`] gives.
     Wrl,
+    /// The Wavelog server and its API key. Appended for the reason
+    /// [`UploadTarget::HamQth`] gives.
+    Wavelog,
 }
 
 impl LoginTarget {
@@ -140,10 +150,12 @@ impl LoginTarget {
             LoginTarget::Lotw => "LoTW",
             LoginTarget::HamQth => "HamQTH",
             LoginTarget::Wrl => "World Radio League",
+            LoginTarget::Wavelog => "Wavelog",
         }
     }
 
-    pub const ALL: [LoginTarget; 6] = [
+    pub const ALL: [LoginTarget; 7] = [
+        LoginTarget::Wavelog,
         LoginTarget::Eqsl,
         LoginTarget::QrzLogbook,
         LoginTarget::HamQth,
@@ -171,4 +183,10 @@ pub struct UploadResult {
     pub ok: bool,
     /// Server message or error detail.
     pub message: String,
+    /// On a failure, whether trying again later could succeed: the server was
+    /// unreachable or busy, not refusing this QSO. Only Wavelog says, since
+    /// only Wavelog keeps a retry queue; the other services leave it false.
+    /// Appended last, as the wire requires.
+    #[serde(default)]
+    pub retryable: bool,
 }

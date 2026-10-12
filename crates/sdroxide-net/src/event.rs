@@ -22,6 +22,12 @@ pub enum NetEvent {
     LoginTest(sdroxide_types::LoginTestResult),
     /// Parsed confirmation records downloaded from LoTW/eQSL.
     Confirmations(Vec<QsoRecord>),
+    /// What a Wavelog connection check found: the station locations to choose
+    /// from, the key's rights, and a certificate fingerprint when TLS was the
+    /// problem. Sent alongside the [`NetEvent::LoginTest`] for the same check.
+    WavelogProbe(sdroxide_types::WavelogProbe),
+    /// One page of a Wavelog download, or the end of one.
+    WavelogBatch(sdroxide_types::WavelogBatch),
     /// WSPR reception reports fetched from WSPRnet — normally reports of *our*
     /// own transmissions, which is the only feedback a beacon ever gets.
     ///

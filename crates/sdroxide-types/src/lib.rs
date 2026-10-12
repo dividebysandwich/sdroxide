@@ -72,6 +72,7 @@ mod tone;
 mod ui;
 mod vdl2;
 mod voice;
+mod wavelog;
 mod wefax;
 mod winlink;
 mod wsjtx;
@@ -289,6 +290,11 @@ pub use vdl2::{
     Vdl2Payload, Vdl2Settings, Vdl2Station, Vdl2Status, Vdl2Xid,
 };
 pub use voice::{VOICE_MAX_LEN_S, VOICE_SLOTS, VoiceSlotInfo, VoiceStatus, slot_label};
+pub use wavelog::{
+    WavelogBatch, WavelogConfig, WavelogMerge, WavelogProbe, WavelogResync, WavelogStation,
+    WavelogSyncState, apply_resync, fingerprint_display, merge_from_wavelog, plan_resync,
+    same_contact,
+};
 pub use wefax::{
     WEFAX_STATIONS, WefaxChartMeta, WefaxIoc, WefaxLpm, WefaxStation, WefaxStatus, shift_fax_rows,
 };

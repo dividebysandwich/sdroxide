@@ -804,6 +804,7 @@ impl SdroxideApp {
                         || r.qrz_sent
                         || r.hamqth_sent
                         || r.clublog_sent
+                        || r.wavelog_sent
                     {
                         ("↑", crate::theme::gray(140))
                     } else {
@@ -819,6 +820,7 @@ impl SdroxideApp {
                         (r.qrz_sent, "QRZ ↑"),
                         (r.hamqth_sent, "HamQTH ↑"),
                         (r.clublog_sent, "Club Log ↑"),
+                        (r.wavelog_sent, "Wavelog ↑"),
                     ] {
                         if on {
                             if !qsl_tip.is_empty() {

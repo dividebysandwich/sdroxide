@@ -1242,6 +1242,9 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             // client's, and it is only ever asked for from the machine the
             // credentials live on. Same treatment as `RadioEvent::Notice`.
             RadioEvent::LoginTest(_) => None,
+            // The rest of the same answer, kept local for the same reason.
+            RadioEvent::WavelogProbe(_) => None,
+            RadioEvent::WavelogBatch(_) => None,
             RadioEvent::Profiles(p) => {
                 latest.profiles = p.clone();
                 Some(ServerMsg::Profiles(p))

@@ -1773,6 +1773,19 @@ pub fn save_qso_log(log: &[sdroxide_types::QsoRecord]) -> Result<(), ConfigError
     save_json("qso_log.json", &log)
 }
 
+/// How far each Wavelog station location has been downloaded into the
+/// logbook. Kept beside the logbook, not in the settings, because it is a fact
+/// about the log: replace or empty the log and these are wrong. A missing or
+/// unreadable file means "from the beginning", which costs one full download
+/// and nothing else, since a download never duplicates a contact.
+pub fn load_wavelog_sync() -> sdroxide_types::WavelogSyncState {
+    load_json("wavelog_sync.json")
+}
+
+pub fn save_wavelog_sync(state: &sdroxide_types::WavelogSyncState) -> Result<(), ConfigError> {
+    save_json("wavelog_sync.json", state)
+}
+
 /// Network cockpit config (spot feeds, callsign lookup, uploads; credentials).
 pub fn load_network_config() -> sdroxide_types::NetworkConfig {
     load_json("net.json")

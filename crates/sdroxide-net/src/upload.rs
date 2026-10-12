@@ -22,6 +22,11 @@ pub fn upload(
         UploadTarget::ClubLog => upload_clublog(cfg, my_call, adif),
         UploadTarget::HamQth => upload_hamqth(cfg, my_call, adif),
         UploadTarget::Wrl => upload_wrl(cfg, my_call, adif),
+        // The default station location: a caller of this function has no
+        // operating profile to take one from. The engine's own uploads go
+        // through `SpotManager`, which does, and queues them.
+        UploadTarget::Wavelog => crate::wavelog::upload(&cfg.wavelog, cfg.wavelog.station_id, adif)
+            .map_err(|f| f.message),
     }
 }
 
@@ -490,6 +495,10 @@ pub fn test_login(
         LoginTarget::Lotw => test_lotw(cfg),
         LoginTarget::HamQth => test_hamqth(cfg),
         LoginTarget::Wrl => test_wrl(cfg),
+        LoginTarget::Wavelog => {
+            let probe = crate::wavelog::probe(&cfg.wavelog);
+            if probe.ok { Ok(probe.message) } else { Err(probe.message) }
+        }
     }
 }
 

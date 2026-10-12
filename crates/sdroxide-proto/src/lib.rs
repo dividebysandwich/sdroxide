@@ -1516,7 +1516,32 @@ use sdroxide_types::{
 /// `DigiStatus` whole, so a v172 peer reads the extra byte as the start of the
 /// next field and fails to decode every config — the same break as v172's
 /// appended message buttons.
-pub const PROTO_VERSION: u16 = 173;
+///
+/// v174: Wavelog, the operator's own web logbook, as a logging service built
+/// in rather than reached through WaveLogGate. All of it appended, none of it
+/// separable — a v173 peer handed any one of these reads the tail of the
+/// message carrying it out of step.
+///
+/// * [`sdroxide_types::NetworkConfig`] gains `wavelog`
+///   ([`sdroxide_types::WavelogConfig`]: address, key, pinned certificate,
+///   default station location, auto-upload, which locations to download and
+///   how often, and the live radio status). It rides whole inside
+///   `Command::SetNetworkConfig`.
+/// * [`sdroxide_types::DigiConfig`] gains `wavelog_station_id` on its tail —
+///   the location is part of the operating identity, since Wavelog refuses a
+///   QSO whose station callsign is not the location's. It rides
+///   `Command::SetDigiConfig` and `DigiStatus` whole.
+/// * [`sdroxide_types::QsoRecord`] gains `wavelog_sent` and `wavelog_origin`
+///   (the location a downloaded contact came from), and
+///   [`sdroxide_types::UploadResult`] gains `retryable`, which drives the
+///   Wavelog retry queue. Both ride inside `RadioEvent`s that cross the link.
+/// * `UploadTarget` and `LoginTarget` each gain `Wavelog`, appended, so no
+///   surviving discriminant moved — but a v173 peer handed one has nowhere to
+///   put it.
+/// * [`sdroxide_types::Command`] gains `WavelogSync`, appended. Its answers,
+///   `RadioEvent::WavelogBatch` and `RadioEvent::WavelogProbe`, stay on the
+///   machine the engine runs on and have no `ServerMsg`.
+pub const PROTO_VERSION: u16 = 174;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

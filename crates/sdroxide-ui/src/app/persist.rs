@@ -30,6 +30,32 @@ pub(in crate::app) fn persist_qso_log(_log: &[QsoRecord]) {
     // Written by eframe's periodic `save()` into localStorage.
 }
 
+// ── Wavelog download cursors (native only) ───────────────────────────────────
+//
+// Beside the logbook they describe. Downloading needs the engine in this
+// process, and a browser client never has it, so there is no browser half:
+// it starts from nothing and never writes.
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_wavelog_sync() -> sdroxide_types::WavelogSyncState {
+    sdroxide_config::load_wavelog_sync()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_wavelog_sync() -> sdroxide_types::WavelogSyncState {
+    sdroxide_types::WavelogSyncState::default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn persist_wavelog_sync(state: &sdroxide_types::WavelogSyncState) {
+    if let Err(e) = sdroxide_config::save_wavelog_sync(state) {
+        eprintln!("failed to save the Wavelog sync position: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn persist_wavelog_sync(_state: &sdroxide_types::WavelogSyncState) {}
+
 // ── UI/display preferences (native: config.toml [ui]; wasm: eframe storage) ──
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn load_ui_settings(

@@ -1182,6 +1182,18 @@ pub struct QsoRecord {
     /// the reason [`Self::hamqth_sent`] gives.
     #[serde(default)]
     pub wrl_sent: bool,
+    /// In the operator's Wavelog: uploaded from here and acknowledged, or
+    /// downloaded from it in the first place. Appended for the reason
+    /// [`Self::hamqth_sent`] gives.
+    #[serde(default)]
+    pub wavelog_sent: bool,
+    /// The Wavelog station location this contact was downloaded from, or 0
+    /// for one logged here or imported from a file. A full resync may update
+    /// or remove a downloaded contact to match Wavelog; it never touches one
+    /// with no origin, which is the operator's own. Appended for the reason
+    /// [`Self::hamqth_sent`] gives.
+    #[serde(default)]
+    pub wavelog_origin: u32,
 }
 
 impl QsoRecord {
@@ -2192,6 +2204,16 @@ pub struct DigiConfig {
     /// so it governs only the extra, subtracting batch.
     #[serde(default)]
     pub ft8_depth: Ft8Depth,
+    /// The Wavelog station location this identity logs to, or 0 for the
+    /// default in [`crate::WavelogConfig::station_id`].
+    ///
+    /// Here, with the callsign and grid, rather than with the server: Wavelog
+    /// refuses a QSO whose station callsign is not the location's, so the
+    /// location is part of the identity a profile switches — a portable
+    /// profile's call goes to the portable location without anyone having to
+    /// remember to change it.
+    #[serde(default)]
+    pub wavelog_station_id: u32,
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2435,6 +2457,7 @@ impl Default for DigiConfig {
             q65_mode: crate::Q65Mode::A30,
             fsk441_period: crate::Fsk441Period::P30,
             ft8_depth: Ft8Depth::default(),
+            wavelog_station_id: 0,
         }
     }
 }
@@ -2927,6 +2950,15 @@ fn record_from_fields(fields: &[(String, String)]) -> QsoRecord {
         r.freq_hz = f * 1e6;
     }
     r.mode = get("MODE").unwrap_or_default().to_ascii_uppercase();
+    // ADIF files FT4, JS8, Q65 and the like as SUBMODE under the MFSK
+    // umbrella, which is how Wavelog, LoTW and most loggers export them. The
+    // submode is the name an operator knows the mode by, and the one sdroxide
+    // logs its own contacts under.
+    if r.mode == "MFSK"
+        && let Some(sub) = get("SUBMODE").filter(|s| !s.is_empty())
+    {
+        r.mode = sub.to_ascii_uppercase();
+    }
     r.band = get("BAND").map(|b| b.to_ascii_lowercase()).unwrap_or_else(|| {
         if r.freq_hz > 0.0 { adif_band(r.freq_hz).to_string() } else { String::new() }
     });
@@ -3628,6 +3660,16 @@ mod tests {
         assert_eq!(back[0].name, "Владимир");
         assert_eq!(back[0].qth, "Москва");
         assert_eq!(back[0].country, "Ålesund");
+    }
+
+    #[test]
+    fn adif_import_reads_an_mfsk_submode_as_the_mode() {
+        // How Wavelog, LoTW and most loggers file an FT4 contact.
+        let recs = adif_to_qso_log("<call:5>EA1AB <mode:4>MFSK <submode:3>FT4 <band:3>20m <eor>");
+        assert_eq!(recs[0].mode, "FT4");
+        // A submode under any other mode is a refinement, not the name.
+        let recs = adif_to_qso_log("<call:5>EA1AB <mode:3>SSB <submode:3>USB <band:3>20m <eor>");
+        assert_eq!(recs[0].mode, "SSB");
     }
 
     #[test]

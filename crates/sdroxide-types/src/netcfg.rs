@@ -322,6 +322,12 @@ pub struct NetworkConfig {
     /// wire requires.
     #[serde(default)]
     pub auto_upload_wrl: bool,
+
+    // ── Wavelog ──
+    /// The operator's own Wavelog server: where it is, the key, and whether
+    /// each new QSO goes to it. Appended last, as the wire requires.
+    #[serde(default)]
+    pub wavelog: crate::WavelogConfig,
 }
 
 impl Default for NetworkConfig {
@@ -353,6 +359,7 @@ impl Default for NetworkConfig {
             auto_upload_hamqth: false,
             wrl_api_key: String::new(),
             auto_upload_wrl: false,
+            wavelog: crate::WavelogConfig::default(),
         }
     }
 }

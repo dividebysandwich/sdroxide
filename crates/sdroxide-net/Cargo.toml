@@ -11,6 +11,12 @@ crossbeam-channel.workspace = true
 serde.workspace = true
 serde_json = "1"
 ureq = "3.4.0"
+# The TLS library and digest ureq already builds on, named directly for the
+# Wavelog certificate pin (`tls_pin.rs`): a custom verifier needs rustls's own
+# types, and the pin is a SHA-256. `ring` only, as ureq uses — rustls's default
+# would pull in aws-lc as a second crypto backend.
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+ring = "0.17"
 roxmltree = "0.21.1"
 # Blocking WebSocket client for the FreeDV Reporter Socket.IO session
 # (ws:// only — `handshake` for the client, no TLS).

@@ -889,6 +889,44 @@ pub struct SdroxideApp {
     login_tests:
         std::collections::HashMap<sdroxide_types::LoginTarget, sdroxide_types::LoginTestResult>,
     login_tests_pending: std::collections::HashSet<sdroxide_types::LoginTarget>,
+    /// What the last Wavelog connection check found — the station locations
+    /// the settings offer, and a certificate waiting to be trusted. Not
+    /// persisted, for the reason `login_tests` is not.
+    wavelog_probe: Option<sdroxide_types::WavelogProbe>,
+    /// When (egui time) the Wavelog retry queue is next looked at. See
+    /// `SdroxideApp::wavelog_retry_tick`.
+    wavelog_retry_at: f64,
+    /// QSOs Wavelog refused outright this session — a callsign that is not
+    /// the location's, say. Left out of the automatic retry, which would only
+    /// be refused again every few minutes until the settings change; the
+    /// "send unsent" button still includes them, and a restart forgets.
+    wavelog_refused: std::collections::HashSet<u64>,
+    /// How far each Wavelog station location has been downloaded into the
+    /// logbook — see [`sdroxide_types::WavelogSyncState`].
+    wavelog_sync: sdroxide_types::WavelogSyncState,
+    /// When (egui time) the next Wavelog download is due. 0 until the first
+    /// look, which schedules one shortly after start.
+    wavelog_sync_at: f64,
+    /// When the running download was asked for (egui time); `None` when none
+    /// is. Lets a download whose end never arrived — an engine restarted
+    /// under it — stop blocking the next one.
+    wavelog_sync_running: Option<f64>,
+    /// What the running download has done so far, for the line it ends with.
+    wavelog_sync_tally: sdroxide_types::WavelogMerge,
+    /// The last download's outcome, for the settings tab.
+    wavelog_sync_status: Option<String>,
+    /// A download the settings tab asked for (`Some(full)`), picked up by the
+    /// frame's tick. A cell because the settings are drawn through `&self`.
+    wavelog_sync_request: std::cell::Cell<Option<bool>>,
+    /// A full resync's download as it arrives: the contacts, and the highest
+    /// record id seen per location.
+    wavelog_resync_rx: Option<(Vec<QsoRecord>, std::collections::BTreeMap<u32, u64>)>,
+    /// A full resync worked out and waiting for the operator to approve or
+    /// discard it in the settings tab, with the cursors it leaves behind.
+    wavelog_resync: Option<(sdroxide_types::WavelogResync, std::collections::BTreeMap<u32, u64>)>,
+    /// The operator's answer to `wavelog_resync` — apply (`true`) or discard —
+    /// carried out by the frame's tick, for the reason the request is a cell.
+    wavelog_resync_answer: std::cell::Cell<Option<bool>>,
     /// Inbox for an ADIF file chosen via the native "Import" dialog (a picker
     /// thread writes; the UI drains it each frame).
     adif_import_inbox: crate::download::LoadInbox,
@@ -1575,6 +1613,18 @@ impl SdroxideApp {
             net_log: Vec::new(),
             login_tests: std::collections::HashMap::new(),
             login_tests_pending: std::collections::HashSet::new(),
+            wavelog_probe: None,
+            wavelog_retry_at: 0.0,
+            wavelog_refused: std::collections::HashSet::new(),
+            wavelog_sync: crate::app::persist::load_wavelog_sync(),
+            wavelog_sync_at: 0.0,
+            wavelog_sync_running: None,
+            wavelog_sync_tally: Default::default(),
+            wavelog_sync_status: None,
+            wavelog_sync_request: std::cell::Cell::new(None),
+            wavelog_resync_rx: None,
+            wavelog_resync: None,
+            wavelog_resync_answer: std::cell::Cell::new(None),
             adif_import_inbox: Arc::new(Mutex::new(None)),
             settings_import_inbox: Arc::new(Mutex::new(None)),
             settings_transfer_note: None,

@@ -1047,6 +1047,8 @@ impl eframe::App for SdroxideApp {
             }
         }
 
+        self.wavelog_retry_tick(now);
+        self.wavelog_sync_tick(now, &mut cmds);
         // Flush queued lookups / uploads accumulated during window rendering.
         for call in std::mem::take(&mut self.pending_lookups) {
             cmds.push(Command::LookupCallsign { call });
@@ -1307,6 +1309,8 @@ impl SdroxideApp {
                     ));
                     self.login_tests.insert(r.target, r);
                 }
+                RadioEvent::WavelogProbe(p) => self.wavelog_probe = Some(*p),
+                RadioEvent::WavelogBatch(b) => self.on_wavelog_batch(*b),
                 RadioEvent::Notice(n) => {
                     if self.focused {
                         self.speech.announcer.on_notice(n.as_deref(), now);

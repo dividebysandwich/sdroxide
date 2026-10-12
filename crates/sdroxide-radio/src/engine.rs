@@ -9268,11 +9268,18 @@ impl Engine {
                 return;
             }
             UploadQso { qso_id, adif, targets } => {
-                self.spots.upload(qso_id, adif, targets);
+                // The Wavelog location goes with the identity the QSO is
+                // logged under, which is the operating profile's.
+                let station = self.digi_config.wavelog_station_id;
+                self.spots.upload(qso_id, adif, targets, station);
                 return;
             }
             SyncConfirmations => {
                 self.spots.sync_confirmations();
+                return;
+            }
+            WavelogSync { stations, full } => {
+                self.spots.wavelog_sync(stations, full);
                 return;
             }
 
@@ -12648,6 +12655,10 @@ impl Engine {
         self.spots.set_reporter_freq(freq);
         self.spots.set_reporter_visible(visible);
         self.spots.set_reporter_tx(tx);
+        // Wavelog's live radio status: deduplicated and paced on its own
+        // thread, like the reporter above, so pushing every tick costs nothing.
+        let (rx_freq, mode) = (self.state.rx_freq_hz(), self.state.rx[0].mode);
+        self.spots.wavelog_radio(self.state.tx_freq_hz(), rx_freq, mode);
 
         for ev in self.spots.poll() {
             let re = match ev {
@@ -12656,6 +12667,8 @@ impl Engine {
                 sdroxide_net::NetEvent::Callsign(c) => RadioEvent::CallsignResult(c),
                 sdroxide_net::NetEvent::Upload(r) => RadioEvent::Upload(r),
                 sdroxide_net::NetEvent::LoginTest(r) => RadioEvent::LoginTest(r),
+                sdroxide_net::NetEvent::WavelogProbe(p) => RadioEvent::WavelogProbe(Box::new(p)),
+                sdroxide_net::NetEvent::WavelogBatch(b) => RadioEvent::WavelogBatch(Box::new(b)),
                 sdroxide_net::NetEvent::Confirmations(r) => RadioEvent::Confirmations(r),
                 sdroxide_net::NetEvent::WsprSpots(s) => RadioEvent::WsprSpots(s),
                 sdroxide_net::NetEvent::PropPaths(p) => RadioEvent::PropPaths(p),

@@ -26,6 +26,7 @@ pub(in crate::app) mod remote;
 pub(in crate::app) mod servers;
 pub(in crate::app) mod tle;
 pub(in crate::app) mod ui_tab;
+pub(in crate::app) mod wavelog;
 
 pub(in crate::app) mod alerts;
 
@@ -3151,12 +3152,14 @@ impl SdroxideApp {
                 // editable, so a service can still be set up before auto-upload
                 // is switched on.
                 let auto_on = io.net_edit.auto_upload;
+                let wavelog_was_on = io.net_edit.wavelog.auto_upload;
                 let enable = match target {
                     UploadTarget::Eqsl => &mut io.net_edit.auto_upload_eqsl,
                     UploadTarget::QrzLogbook => &mut io.net_edit.auto_upload_qrz,
                     UploadTarget::HamQth => &mut io.net_edit.auto_upload_hamqth,
                     UploadTarget::ClubLog => &mut io.net_edit.auto_upload_clublog,
                     UploadTarget::Wrl => &mut io.net_edit.auto_upload_wrl,
+                    UploadTarget::Wavelog => &mut io.net_edit.wavelog.auto_upload,
                 };
                 ui.add_enabled_ui(auto_on, |ui| {
                     crate::chrome::checkbox(
@@ -3169,6 +3172,13 @@ impl SdroxideApp {
                          ticked here is not pushed until it is.",
                     );
                 });
+                // The moment Wavelog auto-upload goes on is where its retry
+                // queue starts: what is logged from now on is owed until the
+                // server has it, and what came before is the backlog, sent
+                // only when asked. See `WavelogConfig::auto_upload_since`.
+                if !wavelog_was_on && io.net_edit.wavelog.auto_upload {
+                    io.net_edit.wavelog.auto_upload_since = crate::time::now_unix();
+                }
                 if !auto_on {
                     ui.label(
                         RichText::new(
@@ -3223,6 +3233,9 @@ impl SdroxideApp {
                         net_secret(ui, "Club Log pass", &mut io.net_edit.clublog.password, 140.0);
                         net_secret(ui, "Club Log key", &mut io.net_edit.clublog_api_key, 200.0);
                     }
+                    // Its own test row, placed between the server and the
+                    // station locations the test lists.
+                    UploadTarget::Wavelog => self.wavelog_settings(ui, io, cmds),
                     UploadTarget::Wrl => {
                         net_secret(ui, "WRL API key", &mut io.net_edit.wrl_api_key, 240.0);
                         ui.label(
@@ -3240,7 +3253,7 @@ impl SdroxideApp {
 
                 // Only where the engine is in this process: the result is not
                 // sent to remote clients, so a button there would spin for ever.
-                if !self.ctrl.engine_is_remote() {
+                if !self.ctrl.engine_is_remote() && target != UploadTarget::Wavelog {
                     self.login_test_row(ui, cmds, io.net_edit, target.login_target());
                 }
 

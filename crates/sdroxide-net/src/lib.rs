@@ -20,7 +20,9 @@ mod pskupload;
 mod rbn;
 mod socketio;
 mod sota;
+mod tls_pin;
 mod upload;
+mod wavelog;
 mod wsprnet;
 
 pub use event::NetEvent;
@@ -33,3 +35,7 @@ pub use wsprnet::{Item as WsprItem, Query as WsprQuery, Reporter as WsprReporter
 pub use freedvreporter::{ProbeStation, ProbeSummary, probe as freedv_reporter_probe};
 pub use lookup::lookup as lookup_callsign;
 pub use upload::{sync_confirmations, upload as upload_qso};
+pub use wavelog::{
+    Failure as WavelogFailure, RadioNow as WavelogRadioNow, download as wavelog_download,
+    probe as wavelog_probe, send_radio as wavelog_send_radio, upload as wavelog_upload,
+};

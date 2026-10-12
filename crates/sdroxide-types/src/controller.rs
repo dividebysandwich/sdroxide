@@ -389,6 +389,20 @@ pub enum RadioEvent {
     ///
     /// Appended last, for the usual reason.
     Pi4Spots(Vec<crate::Pi4Spot>),
+    /// What a Wavelog connection check found, beyond its pass or fail: the
+    /// station locations to offer, the key's rights, and the fingerprint of a
+    /// certificate the operator is being asked to trust. Follows the
+    /// [`RadioEvent::LoginTest`] for the same check, and like it is local:
+    /// never forwarded to remote clients.
+    ///
+    /// Boxed for the reason [`RadioEvent::AisStatus`] is. Appended last, for
+    /// the usual reason.
+    WavelogProbe(Box<crate::WavelogProbe>),
+    /// One page of a Wavelog download, answering [`crate::Command::WavelogSync`].
+    /// Local like the probe: the logbook it feeds is this screen's, and the
+    /// contacts in it are the station owner's business. Boxed and appended for
+    /// the reasons the probe gives.
+    WavelogBatch(Box<crate::WavelogBatch>),
 }
 
 /// Snapshot of the frontend's switchable sound devices (native clients).

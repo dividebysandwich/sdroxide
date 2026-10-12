@@ -50,6 +50,9 @@ fn auto_upload_targets(cfg: &NetworkConfig) -> Vec<UploadTarget> {
     if cfg.auto_upload_wrl {
         t.push(UploadTarget::Wrl);
     }
+    if cfg.wavelog.auto_upload && cfg.wavelog.is_configured() {
+        t.push(UploadTarget::Wavelog);
+    }
     t
 }
 
@@ -73,6 +76,9 @@ pub(in crate::app) fn configured_upload_targets(cfg: &NetworkConfig) -> Vec<Uplo
     }
     if !cfg.wrl_api_key.trim().is_empty() {
         t.push(UploadTarget::Wrl);
+    }
+    if cfg.wavelog.is_configured() {
+        t.push(UploadTarget::Wavelog);
     }
     t
 }
@@ -201,7 +207,11 @@ impl SdroxideApp {
     /// Record an upload result and mark the QSO's sent flag on success.
     pub(in crate::app) fn on_upload_result(&mut self, r: UploadResult) {
         let status = if r.ok { "OK" } else { "FAIL" };
-        self.push_net_log(format!("{} → {}: {}", r.target.label(), status, r.message));
+        let retry = if r.retryable { " (will retry)" } else { "" };
+        self.push_net_log(format!("{} → {}: {}{retry}", r.target.label(), status, r.message));
+        if r.target == UploadTarget::Wavelog && !r.ok && !r.retryable {
+            self.wavelog_refused.insert(r.qso_id);
+        }
         if r.ok {
             if let Some(rec) = self.qso_log.iter_mut().find(|q| q.id == r.qso_id) {
                 match r.target {
@@ -210,10 +220,241 @@ impl SdroxideApp {
                     UploadTarget::ClubLog => rec.clublog_sent = true,
                     UploadTarget::HamQth => rec.hamqth_sent = true,
                     UploadTarget::Wrl => rec.wrl_sent = true,
+                    UploadTarget::Wavelog => rec.wavelog_sent = true,
                 }
                 persist_qso_log(&self.qso_log);
             }
         }
+    }
+
+    /// The QSOs owed to Wavelog: logged since auto-upload to it was switched
+    /// on, and not yet acknowledged.
+    ///
+    /// Read off the logbook rather than kept as a queue, so a QSO logged while
+    /// the server was down is still owed after a restart — the logbook is
+    /// already saved, and a second record of what is pending could only
+    /// disagree with it.
+    pub(in crate::app) fn wavelog_owed(&self) -> impl Iterator<Item = &QsoRecord> {
+        let cfg = &self.net_cfg_edit;
+        let on = cfg.auto_upload && cfg.wavelog.auto_upload && cfg.wavelog.is_configured();
+        let since = cfg.wavelog.auto_upload_since;
+        self.qso_log.iter().filter(move |q| {
+            on && !q.wavelog_sent && q.start_utc >= since && !self.wavelog_refused.contains(&q.id)
+        })
+    }
+
+    /// Every QSO not in Wavelog, for the operator's "send them all" button —
+    /// the backlog from before auto-upload, and anything refused this session
+    /// that they may since have fixed.
+    pub(in crate::app) fn wavelog_unsent(&self) -> impl Iterator<Item = &QsoRecord> {
+        self.qso_log.iter().filter(|q| !q.wavelog_sent && !q.call.trim().is_empty())
+    }
+
+    /// Send whatever is owed to Wavelog again, every few minutes.
+    ///
+    /// The first look is a short while after start, once the network settings
+    /// have arrived, which is what carries a QSO logged with the server down
+    /// across a restart. A QSO already on its way is not sent twice: the
+    /// engine's queue drops a repeat of one it is still holding.
+    ///
+    /// One tab only. Every radio tab holds a copy of the shared logbook, and
+    /// two of them retrying the same QSOs would double the traffic for
+    /// nothing; the station writer is the tab there is exactly one of.
+    pub(in crate::app) fn wavelog_retry_tick(&mut self, now: f64) {
+        const FIRST_S: f64 = 15.0;
+        const EVERY_S: f64 = 300.0;
+        // A batch at a time: the queue sends them in order anyway, and the
+        // rest are still owed at the next look.
+        const BATCH: usize = 200;
+        if !self.net_cfg_seeded || !self.station_writer {
+            return;
+        }
+        if self.wavelog_retry_at == 0.0 {
+            self.wavelog_retry_at = now + FIRST_S;
+            return;
+        }
+        if now < self.wavelog_retry_at {
+            return;
+        }
+        self.wavelog_retry_at = now + EVERY_S;
+        let owed: Vec<(u64, String, Vec<UploadTarget>)> = self
+            .wavelog_owed()
+            .take(BATCH)
+            .map(|q| {
+                let adif = sdroxide_types::qso_log_to_adif(std::slice::from_ref(q));
+                (q.id, adif, vec![UploadTarget::Wavelog])
+            })
+            .collect();
+        self.pending_uploads.extend(owed);
+    }
+
+    /// Start a Wavelog download when one is due: shortly after start, every
+    /// `sync_interval_min` after that, or when the settings tab asks. Also
+    /// carries out the operator's answer to a full resync.
+    ///
+    /// Only where the engine runs in this process — the pages are not sent to
+    /// remote clients — and only in the station-writer tab, for the reason
+    /// the upload retry gives.
+    pub(in crate::app) fn wavelog_sync_tick(&mut self, now: f64, cmds: &mut Vec<Command>) {
+        const FIRST_S: f64 = 5.0;
+        // A download whose end never came (the engine restarted under it) is
+        // given up on after this long, so it cannot block every later one.
+        const STUCK_S: f64 = 1800.0;
+        if let Some(apply) = self.wavelog_resync_answer.take() {
+            self.answer_wavelog_resync(apply);
+        }
+        if !self.net_cfg_seeded || !self.station_writer || self.ctrl.engine_is_remote() {
+            return;
+        }
+        let asked = self.wavelog_sync_request.take();
+        if self.wavelog_sync_running.is_some_and(|t| now - t < STUCK_S) {
+            return;
+        }
+        let cfg = &self.net_cfg_edit.wavelog;
+        let ready = cfg.is_configured() && !cfg.download_station_ids.is_empty();
+        if self.wavelog_sync_at == 0.0 {
+            self.wavelog_sync_at = now + FIRST_S;
+        }
+        let due = cfg.download && now >= self.wavelog_sync_at;
+        let full = match asked {
+            Some(full) => full,
+            None if due => false,
+            None => return,
+        };
+        self.wavelog_sync_at = now + f64::from(cfg.sync_interval_min.max(5)) * 60.0;
+        if !ready {
+            return;
+        }
+        let stations = self.wavelog_sync.starts(&cfg.url, &cfg.download_station_ids);
+        self.wavelog_sync_running = Some(now);
+        self.wavelog_sync_tally = Default::default();
+        if full {
+            self.wavelog_resync_rx = Some(Default::default());
+            self.wavelog_resync = None;
+            self.wavelog_sync_status = Some("Full resync: downloading…".into());
+        } else {
+            self.wavelog_sync_status = Some("Downloading…".into());
+        }
+        cmds.push(Command::WavelogSync { stations, full });
+    }
+
+    /// One page of a Wavelog download.
+    pub(in crate::app) fn on_wavelog_batch(&mut self, b: sdroxide_types::WavelogBatch) {
+        if b.full {
+            self.on_wavelog_resync_batch(b);
+            return;
+        }
+        if !b.records.is_empty() {
+            // Another tab may have logged since this copy was read.
+            if self.shared_log {
+                self.qso_log = crate::app::persist::load_qso_log(None);
+            }
+            let next = self.next_log_id();
+            let m = sdroxide_types::merge_from_wavelog(&mut self.qso_log, b.records, next);
+            self.wavelog_sync_tally.added += m.added;
+            self.wavelog_sync_tally.matched += m.matched;
+            if m.changed {
+                persist_qso_log(&self.qso_log);
+                self.log_content_changed();
+            }
+        }
+        if !b.done {
+            // Saved per page, after the log it describes: an interrupted
+            // download resumes from the last page that reached the log.
+            self.wavelog_sync.advance(b.station_id, b.last_id);
+            crate::app::persist::persist_wavelog_sync(&self.wavelog_sync);
+            return;
+        }
+        self.wavelog_sync_running = None;
+        let when = crate::app::util::time_str(crate::time::now_unix());
+        let t = self.wavelog_sync_tally;
+        let failed = b.error.is_some();
+        let line = match b.error {
+            Some(e) => format!("{when}Z: {}", e.trim_start_matches("Wavelog: ")),
+            None => {
+                self.wavelog_sync.last_sync_utc = crate::time::now_unix();
+                crate::app::persist::persist_wavelog_sync(&self.wavelog_sync);
+                format!("Synced {when}Z: {} new, {} already in the log", t.added, t.matched)
+            }
+        };
+        // The net log hears about a download that brought something or
+        // failed; one that found nothing new every quarter of an hour is not
+        // news.
+        if t.added > 0 || failed {
+            self.push_net_log(format!("Wavelog: {line}"));
+        }
+        self.wavelog_sync_status = Some(line);
+    }
+
+    /// A page of a full resync: collected, and worked out when the last one
+    /// arrives, for the operator to approve.
+    fn on_wavelog_resync_batch(&mut self, b: sdroxide_types::WavelogBatch) {
+        let Some((records, last)) = self.wavelog_resync_rx.as_mut() else {
+            // Nothing is collecting — the app restarted mid-resync, say — but
+            // the end still means nothing is running any more.
+            if b.done {
+                self.wavelog_sync_running = None;
+            }
+            return;
+        };
+        if !b.done {
+            records.extend(b.records);
+            let l = last.entry(b.station_id).or_insert(0);
+            *l = (*l).max(b.last_id);
+            return;
+        }
+        self.wavelog_sync_running = None;
+        let (records, last) = self.wavelog_resync_rx.take().unwrap_or_default();
+        if let Some(e) = b.error {
+            self.wavelog_sync_status = Some(format!("Full resync stopped, nothing changed: {e}"));
+            return;
+        }
+        if self.shared_log {
+            self.qso_log = crate::app::persist::load_qso_log(None);
+        }
+        let plan = sdroxide_types::plan_resync(&self.qso_log, records);
+        if plan.is_empty() {
+            for (station, id) in &last {
+                self.wavelog_sync.advance(*station, *id);
+            }
+            crate::app::persist::persist_wavelog_sync(&self.wavelog_sync);
+            self.wavelog_sync_status = Some("Full resync: the log already matches Wavelog".into());
+        } else {
+            self.wavelog_sync_status = Some("Full resync: review the changes below".into());
+            self.wavelog_resync = Some((plan, last));
+        }
+    }
+
+    /// Carry out — or drop — the resync the operator was shown.
+    fn answer_wavelog_resync(&mut self, apply: bool) {
+        let Some((plan, last)) = self.wavelog_resync.take() else { return };
+        if !apply {
+            self.wavelog_sync_status = Some("Full resync discarded; nothing changed".into());
+            return;
+        }
+        // Another tab may have appended to the shared log while the plan sat
+        // waiting for an answer, and writing this copy back would lose its
+        // QSOs. Re-reading is safe: tabs only append, and a plan names
+        // existing records by id and adds new ones under fresh ids.
+        if self.shared_log {
+            self.qso_log = crate::app::persist::load_qso_log(None);
+        }
+        let (add, update, remove, mark) =
+            (plan.add.len(), plan.update.len(), plan.remove.len(), plan.mark.len());
+        let next = self.next_log_id();
+        sdroxide_types::apply_resync(&mut self.qso_log, plan, next);
+        persist_qso_log(&self.qso_log);
+        self.log_content_changed();
+        for (station, id) in &last {
+            self.wavelog_sync.advance(*station, *id);
+        }
+        crate::app::persist::persist_wavelog_sync(&self.wavelog_sync);
+        let line = format!(
+            "Full resync applied: {add} added, {update} updated, {remove} removed, \
+             {mark} of yours marked as in Wavelog"
+        );
+        self.push_net_log(format!("Wavelog: {line}"));
+        self.wavelog_sync_status = Some(line);
     }
 
     pub(in crate::app) fn push_net_log(&mut self, line: String) {
