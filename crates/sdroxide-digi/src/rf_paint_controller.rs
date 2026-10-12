@@ -62,6 +62,7 @@ impl RfPaintController {
             tx_refused: None,
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
+            jtty: None,
             text_rx: String::new(),
             // Reuse the "sent" cursor as a permille progress readout (0..1000) so
             // the panel can show a real transmit-progress bar without new types.

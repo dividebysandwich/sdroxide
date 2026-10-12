@@ -1546,7 +1546,14 @@ use sdroxide_types::{
 /// ([`sdroxide_types::RotatorProtocol`], a unit enum) on its tail — rotctld or
 /// PSTRotator's UDP control (issue #638). It rides `Command::SetRotatorConfig`
 /// and `StationConfig::rotator` whole, so a v178 peer reads it out of step.
-pub const PROTO_VERSION: u16 = 179;
+/// v180: JTTY, the WSJT-X 3.2 asynchronous RTTY-like text mode. `Mode::Jtty`
+/// is appended to that enum, so no surviving discriminant moves, and
+/// `DigiStatus` gains `jtty` (`Option<JttyStatus>`) on its tail — the messages
+/// decoded and the smoothed audio level. `DigiStatus` rides `RadioState` whole,
+/// so a v179 peer reads the extra bytes as the start of the next field and
+/// fails to decode every digital status, the same break as every appended field
+/// before it.
+pub const PROTO_VERSION: u16 = 180;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

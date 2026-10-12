@@ -1165,6 +1165,7 @@ impl DigiEngine for Js8Controller {
             tx_refused: None,
             transcript: Vec::new(),
             config: self.cfg.clone(),
+            jtty: None,
             text_rx: String::new(),
             tx_sent: 0,
             fsq_heard: Vec::new(),
