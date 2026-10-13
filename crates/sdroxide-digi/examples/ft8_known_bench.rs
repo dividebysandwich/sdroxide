@@ -21,11 +21,7 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use mfsk_core::msg::decode_request::DecodeRequest;
-use sdroxide_digi::params::{AUDIO_MAX_HZ, AUDIO_MIN_HZ};
-
-// The modem's own values (`modem.rs`).
-const SYNC_MIN: f32 = 1.5;
-const MAX_CAND: usize = 600;
+use sdroxide_digi::params::{AUDIO_MAX_HZ, AUDIO_MIN_HZ, MAX_CAND, SYNC_MIN};
 
 type Results = Vec<mfsk_core::ft8::decode::DecodeResult>;
 

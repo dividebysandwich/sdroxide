@@ -175,6 +175,9 @@ struct DecodeJob {
     /// [`sdroxide_types::Ft8Depth`]. Read off the config here rather than held
     /// on the worker's modem, which the job is the only thing that updates.
     ft8_depth: sdroxide_types::Ft8Depth,
+    /// An early decode of a slot still being received: the quick pass only,
+    /// on the audio so far. See [`FT8_EARLY_DECODE_S`].
+    early: bool,
 }
 
 pub struct DigiController {
@@ -197,6 +200,8 @@ pub struct DigiController {
     /// (issues #363, #367). `i64::MAX` until the first boundary says which slot
     /// that is.
     first_whole_slot: i64,
+    /// The last slot an early decode was dispatched for, so each gets one.
+    early_slot: i64,
     /// Receive periods that arrived short of a full slot — see
     /// [`DigiController::check_slot_arrived_whole`].
     short_slots: u64,
@@ -263,6 +268,23 @@ pub struct BurstPlayer {
     pub samples: Vec<f32>,
     pub pos: usize,
 }
+
+/// How far into an FT8 slot the early decode runs, in seconds.
+///
+/// A transmission keyed on time ends 13.14 s in, but nothing was decoded until
+/// the boundary at 15 s, and the reply to it keys 0.5 s after that. On a
+/// machine whose quick pass takes longer than that half second, the sequencer
+/// had not seen the answer when its turn came and sent the last message again
+/// (issue #667). So a quick pass runs on what has arrived by this point, and
+/// the boundary decode adds whatever it missed.
+///
+/// Measured with `examples/ft8_early_bench.rs` on ft8_lib's 58 off-air slots,
+/// moved to put their median DT at 0: cutting the audio here the quick pass
+/// still finds 99.2% of what it finds in the whole slot, against 97.7% at
+/// 13.2 s and 92.7% at WSJT-X's 11.8 s early pass. Of the seven decodes the cut
+/// produced that the whole slot did not, five are in WSJT-X's own decodes of
+/// the same slots and the other two read as real stations.
+const FT8_EARLY_DECODE_S: f64 = 13.5;
 
 /// The widest stretch of the passband [`clearest_tx_hz`] will choose from, and
 /// the grid it searches on. Kept inside the usual SSB filter with room for the
@@ -331,19 +353,57 @@ impl DigiController {
             .spawn(move || {
                 use std::sync::atomic::Ordering::Relaxed;
                 let mut modem = Ft8Modem::new(worker_mode);
+                // What the latest early decode reported, and for which slot, so
+                // the boundary decode of that slot does not report it again.
+                let mut reported: (i64, Vec<Decode>) = (i64::MIN, Vec::new());
                 while let Ok(job) = job_rx.recv() {
                     worker_queued.fetch_sub(1, Relaxed);
-                    modem.set_ft8_depth(job.ft8_depth);
+                    let slot_idx = job.slot_idx;
                     modem.seed_hashes(&job.ap.calls());
+                    if job.early {
+                        // Worth running only while it is still early: a worker
+                        // that is behind already holds the boundary decode of
+                        // this slot, which will find all of it anyway. The
+                        // quick pass alone, as `Fast`: the boundary decode runs
+                        // the subtraction pass on the whole slot.
+                        if worker_queued.load(Relaxed) == 0 {
+                            modem.set_ft8_depth(sdroxide_types::Ft8Depth::Fast);
+                            let found = std::sync::Mutex::new(Vec::new());
+                            modem.decode_slot_streaming(
+                                &job.audio,
+                                job.slot_utc,
+                                &job.ap,
+                                job.audio_hz,
+                                &|| false,
+                                &|batch| {
+                                    if !batch.is_empty() {
+                                        found.lock().unwrap().extend(batch.iter().cloned());
+                                        let _ = res_tx.send((slot_idx, batch, false));
+                                    }
+                                },
+                            );
+                            reported = (slot_idx, found.into_inner().unwrap());
+                        }
+                        if res_tx.send((slot_idx, Vec::new(), true)).is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+                    let already: &[Decode] = if reported.0 == slot_idx { &reported.1 } else { &[] };
+                    modem.set_ft8_depth(job.ft8_depth);
                     // Streamed: the quick single pass first, so an
                     // auto-sequenced reply can be decided inside the transmit
                     // offset, then each slower find as it lands, so a slow
                     // machine fills the list in rather than all at once (#667).
-                    // The final, empty batch says the slot is done.
-                    let slot_idx = job.slot_idx;
+                    // The final, empty batch says the slot is done. What the
+                    // early decode already reported is left out.
                     let tx = res_tx.clone();
                     let tx = std::sync::Mutex::new(tx);
                     let emit = |d: Vec<Decode>| {
+                        let d: Vec<Decode> = d
+                            .into_iter()
+                            .filter(|d| !already.iter().any(|r| crate::modem::same_signal(r, d)))
+                            .collect();
                         if !d.is_empty() {
                             let _ = tx.lock().unwrap().send((slot_idx, d, false));
                         }
@@ -389,6 +449,7 @@ impl DigiController {
             audio_hz: 1500.0,
             tx_even,
             first_whole_slot: i64::MAX,
+            early_slot: i64::MIN,
             tx_fired_slot: i64::MIN,
             last_heard: std::collections::HashMap::new(),
             recent_activity: Vec::new(),
@@ -905,28 +966,7 @@ impl DigiController {
                 let min_samples = (self.params.slot_s * DECODE_RATE * 0.5) as usize;
                 if self.slot_buf.len() >= min_samples {
                     let audio = std::mem::take(&mut self.slot_buf);
-                    let slot_idx = self.last_slot_idx;
-                    let slot_utc = self.scheduler.slot_start_unix(slot_idx) as i64;
-                    let ap = ApHints {
-                        my_call: self.qso.my_call().to_string(),
-                        dx_call: self.qso.dx_call().map(str::to_string),
-                        eu_vhf: self.qso.contest_selected(),
-                    };
-                    self.queued.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if self
-                        .job_tx
-                        .send(DecodeJob {
-                            audio,
-                            slot_idx,
-                            slot_utc,
-                            ap,
-                            audio_hz: self.audio_hz,
-                            ft8_depth: self.modem.ft8_depth(),
-                        })
-                        .is_ok()
-                    {
-                        self.decoding += 1;
-                    }
+                    self.dispatch(audio, self.last_slot_idx, false);
                 }
             }
             if self.last_slot_idx == i64::MIN {
@@ -939,6 +979,24 @@ impl DigiController {
             }
             self.slot_buf.clear();
             self.last_slot_idx = idx;
+        }
+
+        // 2b. Early decode of the slot still being received — see
+        // [`FT8_EARLY_DECODE_S`]. Not in a slot we transmitted in, whose
+        // receive audio is our own over or nothing, and not in the slot the
+        // mode was selected in, whose buffer does not start at its start.
+        if let Some(at) = self.early_decode_s()
+            && self.early_slot != idx
+            && self.tx_fired_slot != idx
+            && idx >= self.first_whole_slot
+            && self.scheduler.secs_into_slot(now) >= at
+            && self.slot_buf.len() >= (at * DECODE_RATE * SLOT_COMPLETE_FRAC) as usize
+        {
+            self.early_slot = idx;
+            // Padded to a whole slot with silence: the rest has not arrived.
+            let mut audio = self.slot_buf.clone();
+            audio.resize(self.params.slot_samples(), 0);
+            self.dispatch(audio, idx, true);
         }
 
         // 3. Transmit scheduling: when it's our period and we're past the TX
@@ -988,6 +1046,37 @@ impl DigiController {
         }
 
         actions
+    }
+
+    /// Hand a slot's audio to the decode worker.
+    fn dispatch(&mut self, audio: Vec<i16>, slot_idx: i64, early: bool) {
+        let job = DecodeJob {
+            audio,
+            slot_idx,
+            slot_utc: self.scheduler.slot_start_unix(slot_idx) as i64,
+            ap: ApHints {
+                my_call: self.qso.my_call().to_string(),
+                dx_call: self.qso.dx_call().map(str::to_string),
+                eu_vhf: self.qso.contest_selected(),
+            },
+            audio_hz: self.audio_hz,
+            ft8_depth: self.modem.ft8_depth(),
+            early,
+        };
+        self.queued.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if self.job_tx.send(job).is_ok() {
+            self.decoding += 1;
+        } else {
+            self.queued.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// When into a slot its early decode runs, for the modes that have one.
+    ///
+    /// FT8 alone for now: it is the mode the timing was measured on. FT4's
+    /// half-second reply offset in a 7.5 s slot is the same problem tighter.
+    fn early_decode_s(&self) -> Option<f64> {
+        (self.params.mode == Mode::Ft8).then_some(FT8_EARLY_DECODE_S)
     }
 
     pub fn status(&self) -> DigiStatus {
