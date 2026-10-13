@@ -260,7 +260,9 @@ impl Ft8Modem {
             // The quick pass, whole: a single pass reports from many threads
             // before it deduplicates, so it is taken as its result.
             let mut quick: Vec<Decode> = Vec::new();
-            for r in request().decode().results {
+            // Its raw results too, for the `Deep` pass to start from.
+            let quick_raw = request().decode().results;
+            for r in &quick_raw {
                 let Ok(bits) = <[u8; 77]>::try_from(r.message77()) else { continue };
                 if let Some(d) =
                     build_decode(&bits, r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
@@ -273,6 +275,18 @@ impl Ft8Modem {
             emit(quick);
 
             // The subtraction pass, one decode at a time as it is accepted.
+            //
+            // `Deep` is handed the quick pass's results as `known`, so it
+            // subtracts those signals up front instead of finding them all over
+            // again. Measured on 60 of ft8_lib's off-air test slots, 58 of them
+            // scored against WSJT-X's own decodes (`examples/ft8_known_bench.rs`):
+            // the pass takes about 20% less time, single-threaded or not, and
+            // finds the same reference decodes to within one (1094 → 1093 of
+            // 1241), with six more that WSJT-X did not report (242 → 248).
+            // `Normal` is left alone: there the up-front subtraction makes the
+            // pass about half as slow again, two thirds of what it adds are
+            // decodes WSJT-X did not report (20 more hits, 43 more of those), and
+            // the operator choosing `Normal` is choosing speed.
             if self.ft8_depth != Ft8Depth::Fast && !stop() {
                 let on_result = |r: &mfsk_core::ft8::decode::DecodeResult| {
                     let Ok(bits) = <[u8; 77]>::try_from(r.message77()) else { return };
@@ -291,7 +305,7 @@ impl Ft8Modem {
                 let req = request();
                 let req = match self.ft8_depth {
                     Ft8Depth::Normal => req.sic_rounds(2),
-                    _ => req.sic_early(),
+                    _ => req.sic_early().known(&quick_raw),
                 };
                 let _ = req.on_result(&on_result).decode();
             }
