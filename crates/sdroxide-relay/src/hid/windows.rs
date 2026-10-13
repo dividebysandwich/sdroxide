@@ -18,6 +18,15 @@
 //! declare for a feature report, which for these devices is the report plus the
 //! id byte. So the sizes here are `body.len() + 1` throughout, and the answer
 //! is read from byte 1.
+//!
+//! # Input reports
+//!
+//! `ReadFile` on a HID handle blocks until the device sends something, which a
+//! knob left alone never does. So the read goes through a *second* handle,
+//! opened overlapped, with the read left pending across a timeout rather than
+//! cancelled — cancelling and reissuing would drop a report that lands in the
+//! gap. The first handle stays synchronous so the feature and output paths
+//! above are untouched.
 
 use std::os::windows::ffi::OsStrExt;
 
@@ -25,10 +34,16 @@ use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
     DIGCF_DEVICEINTERFACE, DIGCF_PRESENT, SP_DEVICE_INTERFACE_DATA, SetupDiDestroyDeviceInfoList,
     SetupDiEnumDeviceInterfaces, SetupDiGetClassDevsW, SetupDiGetDeviceInterfaceDetailW,
 };
-use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE};
-use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, WriteFile,
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_IO_PENDING, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE,
+    WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_FLAG_OVERLAPPED, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, OPEN_EXISTING, ReadFile, WriteFile,
+};
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
+use windows_sys::Win32::System::Threading::{CreateEventW, ResetEvent, WaitForSingleObject};
 use windows_sys::core::GUID;
 
 use crate::error::{Error, Result};
@@ -52,7 +67,26 @@ unsafe extern "system" {
     fn HidD_GetSerialNumberString(device: HANDLE, buffer: *mut u16, len: u32) -> i32;
     fn HidD_SetFeature(device: HANDLE, buffer: *const u8, len: u32) -> i32;
     fn HidD_GetFeature(device: HANDLE, buffer: *mut u8, len: u32) -> i32;
+    fn HidD_GetPreparsedData(device: HANDLE, preparsed: *mut isize) -> i32;
+    fn HidD_FreePreparsedData(preparsed: isize) -> i32;
+    fn HidP_GetCaps(preparsed: isize, caps: *mut HidpCaps) -> i32;
 }
+
+/// `HIDP_CAPS`. Only the report lengths are read; the rest is the usage and
+/// the counts of every kind of control, none of which matter here.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct HidpCaps {
+    usage: u16,
+    usage_page: u16,
+    input_report_byte_length: u16,
+    output_report_byte_length: u16,
+    feature_report_byte_length: u16,
+    rest: [u16; 27],
+}
+
+/// `HIDP_STATUS_SUCCESS`.
+const HIDP_STATUS_SUCCESS: i32 = 0x0011_0000;
 
 /// An owned device handle. A `Drop` rather than a bare `HANDLE` because every
 /// path out of `enumerate` opens one and most of them throw it away.
@@ -72,6 +106,54 @@ unsafe impl Send for Handle {}
 pub struct WinHid {
     handle: Handle,
     path: String,
+    /// The overlapped handle input reports are read through, opened on the
+    /// first read — a relay is never read, and should not hold a second one.
+    reader: Option<Reader>,
+}
+
+/// An overlapped read that may still be in flight.
+///
+/// Boxed so the `OVERLAPPED` and the buffer the kernel is writing into keep
+/// their addresses for as long as the read is pending, whatever happens to
+/// the `WinHid` around them.
+struct Reader {
+    handle: Handle,
+    event: Handle,
+    ov: Box<OVERLAPPED>,
+    buf: Box<[u8]>,
+    pending: bool,
+}
+
+// `OVERLAPPED` holds raw pointers; the reader is only ever touched from the
+// thread that owns the device, as the `Handle` above is.
+unsafe impl Send for Reader {}
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        if self.pending {
+            // The kernel still owns `ov` and `buf`: cancel, and wait for it to
+            // let go of them before they are freed.
+            let mut n = 0u32;
+            unsafe {
+                CancelIoEx(self.handle.0, &*self.ov);
+                GetOverlappedResult(self.handle.0, &*self.ov, &mut n, 1);
+            }
+        }
+    }
+}
+
+/// The length Windows insists an input-report read buffer has: the device's
+/// longest input report plus the id byte.
+fn input_report_len(h: HANDLE) -> Option<usize> {
+    let mut pp: isize = 0;
+    if unsafe { HidD_GetPreparsedData(h, &mut pp) } == 0 {
+        return None;
+    }
+    let mut caps: HidpCaps = unsafe { std::mem::zeroed() };
+    let rc = unsafe { HidP_GetCaps(pp, &mut caps) };
+    unsafe { HidD_FreePreparsedData(pp) };
+    (rc == HIDP_STATUS_SUCCESS && caps.input_report_byte_length > 0)
+        .then_some(usize::from(caps.input_report_byte_length))
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -84,6 +166,10 @@ fn from_wide(buf: &[u16]) -> String {
 }
 
 fn open_path(path: &str) -> Result<Handle> {
+    open_path_with(path, 0)
+}
+
+fn open_path_with(path: &str, flags: FILE_FLAGS_AND_ATTRIBUTES) -> Result<Handle> {
     let w = wide(path);
     // Shared: a CM108 is a sound card the rig is also using, and opening it
     // exclusively would take the audio away from whatever is playing it.
@@ -94,7 +180,7 @@ fn open_path(path: &str) -> Result<Handle> {
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             std::ptr::null(),
             OPEN_EXISTING,
-            0,
+            flags,
             std::ptr::null_mut(),
         )
     };
@@ -147,11 +233,88 @@ impl HidDev for WinHid {
         }
         Ok(())
     }
+
+    fn read_input(
+        &mut self,
+        body: &mut [u8],
+        timeout: std::time::Duration,
+    ) -> Result<Option<usize>> {
+        if self.reader.is_none() {
+            let handle = open_path_with(&self.path, FILE_FLAG_OVERLAPPED)?;
+            let len = input_report_len(handle.0).unwrap_or(body.len() + 1);
+            // Manual-reset, so the wait below and `GetOverlappedResult` agree
+            // about whether the read has finished.
+            let event = Handle(unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) });
+            if event.0.is_null() {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            self.reader = Some(Reader {
+                handle,
+                event,
+                ov: Box::new(unsafe { std::mem::zeroed() }),
+                buf: vec![0u8; len].into_boxed_slice(),
+                pending: false,
+            });
+        }
+        let Some(r) = self.reader.as_mut() else { return Ok(None) };
+
+        if !r.pending {
+            *r.ov = unsafe { std::mem::zeroed() };
+            r.ov.hEvent = r.event.0;
+            unsafe { ResetEvent(r.event.0) };
+            let ok = unsafe {
+                ReadFile(
+                    r.handle.0,
+                    r.buf.as_mut_ptr(),
+                    r.buf.len() as u32,
+                    std::ptr::null_mut(),
+                    &mut *r.ov,
+                )
+            };
+            if ok == 0 {
+                let err = unsafe { GetLastError() };
+                if err != ERROR_IO_PENDING {
+                    self.reader = None;
+                    return Err(std::io::Error::from_raw_os_error(err as i32).into());
+                }
+            }
+            r.pending = true;
+        }
+
+        let ms = timeout.as_millis().min(u128::from(u32::MAX - 1)) as u32;
+        match unsafe { WaitForSingleObject(r.event.0, ms) } {
+            WAIT_TIMEOUT => return Ok(None),
+            WAIT_OBJECT_0 => {}
+            _ => {
+                let e = std::io::Error::last_os_error();
+                self.reader = None;
+                return Err(e.into());
+            }
+        }
+        let mut n = 0u32;
+        let ok = unsafe { GetOverlappedResult(r.handle.0, &*r.ov, &mut n, 0) };
+        r.pending = false;
+        if ok == 0 {
+            // Unplugged: ERROR_DEVICE_NOT_CONNECTED, or the handle is dead.
+            let e = std::io::Error::last_os_error();
+            self.reader = None;
+            return Err(e.into());
+        }
+        // Byte 0 is the report id, 0 for a device with no numbered reports.
+        let n = n as usize;
+        if n == 0 {
+            return Ok(None);
+        }
+        let got = &r.buf[1..n];
+        let k = got.len().min(body.len());
+        body[..k].copy_from_slice(&got[..k]);
+        Ok(Some(k))
+    }
 }
 
 pub fn open(key: &str) -> Result<Box<dyn HidDev>> {
     let handle = open_path(key)?;
-    Ok(Box::new(WinHid { handle, path: key.to_string() }))
+    Ok(Box::new(WinHid { handle, path: key.to_string(), reader: None }))
 }
 
 pub fn enumerate(ids: &[(u16, u16)]) -> Vec<HidEntry> {

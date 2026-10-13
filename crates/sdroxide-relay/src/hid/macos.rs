@@ -16,6 +16,13 @@
 //! and the id separately, which is the shape this module's own trait uses — so
 //! this is the one platform where nothing has to be shifted.
 //!
+//! # Input reports
+//!
+//! IOKit delivers these by callback, on a run loop. The device is scheduled on
+//! the run loop of whichever thread first reads it, and each read runs that
+//! loop for up to the timeout — so the callback fires on the reading thread,
+//! into a queue that thread then drains, and nothing here needs a lock.
+//!
 //! # The key
 //!
 //! A device is named by its IOKit registry entry id, printed as decimal. Stable
@@ -38,6 +45,18 @@ type CFAllocatorRef = *const c_void;
 type IOHIDManagerRef = *const c_void;
 type IOHIDDeviceRef = *const c_void;
 type IOReturn = i32;
+type CFRunLoopRef = *const c_void;
+type IOHIDReportCallback = unsafe extern "C" fn(
+    context: *mut c_void,
+    result: IOReturn,
+    sender: *mut c_void,
+    report_type: u32,
+    report_id: u32,
+    report: *mut u8,
+    report_length: CFIndex,
+);
+type IOHIDCallback =
+    unsafe extern "C" fn(context: *mut c_void, result: IOReturn, sender: *mut c_void);
 
 const KERN_SUCCESS: IOReturn = 0;
 const K_IOHID_REPORT_TYPE_OUTPUT: u32 = 1;
@@ -62,6 +81,9 @@ unsafe extern "C" {
     fn CFNumberGetValue(n: CFTypeRef, the_type: CFIndex, value_ptr: *mut c_void) -> u8;
     fn CFSetGetCount(s: CFSetRef) -> CFIndex;
     fn CFSetGetValues(s: CFSetRef, values: *mut CFTypeRef);
+    static kCFRunLoopDefaultMode: CFStringRef;
+    fn CFRunLoopGetCurrent() -> CFRunLoopRef;
+    fn CFRunLoopRunInMode(mode: CFStringRef, seconds: f64, return_after_source: u8) -> i32;
 }
 
 #[link(name = "IOKit", kind = "framework")]
@@ -88,6 +110,28 @@ unsafe extern "C" {
         report_length: *mut CFIndex,
     ) -> IOReturn;
     fn CFRetain(cf: CFTypeRef) -> CFTypeRef;
+    fn IOHIDDeviceScheduleWithRunLoop(
+        device: IOHIDDeviceRef,
+        run_loop: CFRunLoopRef,
+        mode: CFStringRef,
+    );
+    fn IOHIDDeviceUnscheduleFromRunLoop(
+        device: IOHIDDeviceRef,
+        run_loop: CFRunLoopRef,
+        mode: CFStringRef,
+    );
+    fn IOHIDDeviceRegisterInputReportCallback(
+        device: IOHIDDeviceRef,
+        report: *mut u8,
+        report_length: CFIndex,
+        callback: Option<IOHIDReportCallback>,
+        context: *mut c_void,
+    );
+    fn IOHIDDeviceRegisterRemovalCallback(
+        device: IOHIDDeviceRef,
+        callback: Option<IOHIDCallback>,
+        context: *mut c_void,
+    );
 }
 
 fn cfstr(s: &str) -> CFStringRef {
@@ -158,6 +202,46 @@ fn with_devices<T>(f: impl FnOnce(&[IOHIDDeviceRef]) -> T) -> Option<T> {
 pub struct MacHid {
     device: IOHIDDeviceRef,
     key: String,
+    /// Where the input-report callback puts what it receives, once a read has
+    /// scheduled the device. Boxed: IOKit holds a pointer to it.
+    inbox: Option<Box<Inbox>>,
+}
+
+/// Input reports received and not yet read, and whether the device has gone.
+struct Inbox {
+    run_loop: CFRunLoopRef,
+    /// The buffer IOKit writes each report into before calling back.
+    buf: Vec<u8>,
+    reports: std::collections::VecDeque<Vec<u8>>,
+    removed: bool,
+}
+
+/// Enough to ride out a slow reader without growing without bound.
+const INBOX_MAX: usize = 256;
+
+unsafe extern "C" fn on_report(
+    context: *mut c_void,
+    _result: IOReturn,
+    _sender: *mut c_void,
+    _report_type: u32,
+    _report_id: u32,
+    report: *mut u8,
+    report_length: CFIndex,
+) {
+    let inbox = unsafe { &mut *context.cast::<Inbox>() };
+    if report.is_null() || report_length <= 0 {
+        return;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(report, report_length as usize) };
+    if inbox.reports.len() >= INBOX_MAX {
+        inbox.reports.pop_front();
+    }
+    inbox.reports.push_back(bytes.to_vec());
+}
+
+unsafe extern "C" fn on_removal(context: *mut c_void, _result: IOReturn, _sender: *mut c_void) {
+    let inbox = unsafe { &mut *context.cast::<Inbox>() };
+    inbox.removed = true;
 }
 
 // The reference is retained for the struct's lifetime and only touched from
@@ -166,6 +250,25 @@ unsafe impl Send for MacHid {}
 
 impl Drop for MacHid {
     fn drop(&mut self) {
+        if let Some(inbox) = self.inbox.as_mut() {
+            // Detach the callbacks before the inbox they point at is freed.
+            let ctx: *mut Inbox = &mut **inbox;
+            unsafe {
+                IOHIDDeviceRegisterInputReportCallback(
+                    self.device,
+                    inbox.buf.as_mut_ptr(),
+                    inbox.buf.len() as CFIndex,
+                    None,
+                    ctx.cast(),
+                );
+                IOHIDDeviceRegisterRemovalCallback(self.device, None, ctx.cast());
+                IOHIDDeviceUnscheduleFromRunLoop(
+                    self.device,
+                    inbox.run_loop,
+                    kCFRunLoopDefaultMode,
+                );
+            }
+        }
         unsafe {
             IOHIDDeviceClose(self.device, K_IOHID_OPTIONS_TYPE_NONE);
             CFRelease(self.device);
@@ -231,6 +334,59 @@ impl HidDev for MacHid {
         }
         Ok(())
     }
+
+    fn read_input(
+        &mut self,
+        body: &mut [u8],
+        timeout: std::time::Duration,
+    ) -> Result<Option<usize>> {
+        if self.inbox.is_none() {
+            let mut inbox = Box::new(Inbox {
+                run_loop: unsafe { CFRunLoopGetCurrent() },
+                // Far longer than any report a device supported here sends.
+                buf: vec![0u8; 1024],
+                reports: std::collections::VecDeque::new(),
+                removed: false,
+            });
+            let ctx: *mut Inbox = &mut *inbox;
+            unsafe {
+                IOHIDDeviceRegisterInputReportCallback(
+                    self.device,
+                    inbox.buf.as_mut_ptr(),
+                    inbox.buf.len() as CFIndex,
+                    Some(on_report),
+                    ctx.cast(),
+                );
+                IOHIDDeviceRegisterRemovalCallback(self.device, Some(on_removal), ctx.cast());
+                IOHIDDeviceScheduleWithRunLoop(self.device, inbox.run_loop, kCFRunLoopDefaultMode);
+            }
+            self.inbox = Some(inbox);
+        }
+        let take = |inbox: &mut Inbox, body: &mut [u8]| {
+            inbox.reports.pop_front().map(|r| {
+                let k = r.len().min(body.len());
+                body[..k].copy_from_slice(&r[..k]);
+                k
+            })
+        };
+        let Some(inbox) = self.inbox.as_mut() else { return Ok(None) };
+        if let Some(k) = take(inbox, body) {
+            return Ok(Some(k));
+        }
+        if !inbox.removed {
+            // Returns after the first source handled, so a report is picked up
+            // as soon as it lands rather than at the end of the timeout.
+            unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout.as_secs_f64(), 1) };
+        }
+        let Some(inbox) = self.inbox.as_mut() else { return Ok(None) };
+        if let Some(k) = take(inbox, body) {
+            return Ok(Some(k));
+        }
+        if inbox.removed {
+            return Err(Error::NotFound { key: self.key.clone() });
+        }
+        Ok(None)
+    }
 }
 
 pub fn open(key: &str) -> Result<Box<dyn HidDev>> {
@@ -252,7 +408,7 @@ pub fn open(key: &str) -> Result<Box<dyn HidDev>> {
             source: std::io::Error::other(format!("IOKit refused to open it: {rc:#010x}")),
         });
     }
-    Ok(Box::new(MacHid { device, key: key.to_string() }))
+    Ok(Box::new(MacHid { device, key: key.to_string(), inbox: None }))
 }
 
 pub fn enumerate(ids: &[(u16, u16)]) -> Vec<HidEntry> {
