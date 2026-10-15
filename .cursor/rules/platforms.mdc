@@ -1,0 +1,40 @@
+---
+description: How to build and run SDRoxide on desktop targets and as a browser client
+globs: Cargo.toml,crates/**/Cargo.toml,.github/workflows/**,crates/sdroxide-web/**,src/main.rs
+alwaysApply: false
+---
+
+# Platforms
+
+Edition 2024 (Rust 1.85+ via rustup). Workspace members are `crates/*`. Vendored trees are patched, not members. Format named packages (`cargo fmt -p sdroxide-ui`); `cargo fmt --all` rewrites `vendor/xng`.
+
+## Native desktop
+
+One binary, three launches:
+
+```sh
+cargo run -- --siggen                  # UI, no hardware
+cargo run --release -- --probe         # list devices
+cargo run -- --server --web-root crates/sdroxide-web/dist
+cargo run -- --connect host:4950
+```
+
+Default features: `soapy` (links libSoapySDR) and `rtl433` (CMake + submodules). `cargo build --no-default-features` is the CAT/native-USB build CI ships. Release CI (`.github/workflows/release.yml`) builds linux x86_64, linux aarch64, glibc-2.35 `-compat` of both, windows x86_64 (MinGW gnu, not MSVC), macOS aarch64, macOS x86_64 — each as `soapy` and `cat`.
+
+Linux needs a C toolchain, CMake, pkg-config, ALSA, and optionally `libopus-dev` (else export `CMAKE_POLICY_VERSION_MINIMUM=3.5`). macOS: `brew install pkg-config cmake autoconf automake libtool opus`. First build wants network for the RADE Opus fetch. `git submodule update --init --recursive` before a default build.
+
+DSP-hot crates are `opt-level = 2` even in dev. A UI-only change: `cargo run -p sdroxide -- --siggen`. A types/dsp change: `cargo test -p <crate>`.
+
+## Browser
+
+Separate crate, Trunk 0.21+ (`cargo install --locked trunk`), target `wasm32-unknown-unknown`.
+
+```sh
+cd crates/sdroxide-web && trunk build          # debug → dist/
+# from repo root, native server already built:
+cargo run --release -- --server --web-root crates/sdroxide-web/dist
+```
+
+`trunk build --release` then `cargo build --release --features embed-web` bakes `dist/` into the binary. `embed-web` fails if `dist/` is missing. Debug `embed-web` reads that directory at runtime; release embeds the bytes. `Trunk.toml` sets `public_url = "./"` so a reverse-proxy prefix works.
+
+There is no Android or iOS target. Phone and tablet are the wasm client plus `layout::Tier`.

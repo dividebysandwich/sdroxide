@@ -1,0 +1,30 @@
+---
+description: How the egui UI is built and how panels, chrome, and layout tiers fit together
+globs: crates/sdroxide-ui/**/*.rs
+alwaysApply: false
+---
+
+# UI
+
+Immediate-mode egui (eframe 0.36, wgpu). `SdroxideApp` (`app/mod.rs`) is one struct per radio. Behaviour is split into `impl SdroxideApp` modules; fields stay on the struct. Cross-module visibility is `pub(in crate::app)`.
+
+Each frame (`app/frame.rs`): drain `poll_event()`, draw, collect `Vec<Command>`, then `ctrl.send` each command after the layout pass. Settings cannot borrow `ctrl` while drawing — edits go through `SettingsIo` and apply after the closure (`app/settings/mod.rs`).
+
+## What draws where
+
+- `app/top_bar.rs` — VFO, mode, filter, TX, display strip.
+- `app/spectrum.rs` + `widgets/spectrum_view.rs` + `waterfall_gpu.rs` — panadapter. GPU waterfall is shared with the browser: fragment shaders, sampled textures, uniforms, inside WebGL2 limits. `solar3d` is the exception and renders in its own offscreen pass.
+- `app/frame.rs` mode chain (~line 748) — bottom operating panel. One submodule under `app/panels/` per mode. Phone panes are declared in `panels/mod.rs` `panel_panes`.
+- `chrome.rs` — cut-corner frames, chips, module boxes. Use these, plus `theme::CYAN()` accessors, so a new control matches the cyberpunk chrome.
+- `theme.rs` — palette functions (atomics, so the solar viewport sees the same look). `layout.rs` `Tier` — Desktop / Tablet / Phone. Sizes are CSS pixels on the web (`eframe` zoom is 1). Call `layout::tighten` inside a panel.
+
+`MultiApp` owns one `SdroxideApp` per tab and drains hidden tabs every frame so background radios keep decoding.
+
+## Adding a panel
+
+1. `impl SdroxideApp` method in `app/panels/<mode>.rs`, signature `(ui, cmds, …)`.
+2. Arm in the `frame.rs` mode chain and a `panel_panes` entry.
+3. Push `Command`s into `cmds`. Read results from `RadioState` / `DigiStatus` / `RadioEvent` already drained this frame.
+4. Gate transmit controls with `tx_gated` / `rx_only_hint`.
+
+Wgpu types come from `sdroxide_ui::egui_wgpu`, and windows use `wgpu_options()`.

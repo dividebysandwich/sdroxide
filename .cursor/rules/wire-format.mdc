@@ -1,0 +1,17 @@
+---
+description: Postcard wire and on-disk enums — append variants, bump PROTO_VERSION when layout changes
+globs: crates/sdroxide-types/**/*.rs,crates/sdroxide-proto/**/*.rs
+alwaysApply: false
+---
+
+# Wire format
+
+`Command`, `RadioEvent`, `Mode`, `ServerMsg`, and the structs they carry are postcard-encoded. Postcard stores enum discriminants by **declaration index** and structs by **field order**. It is not self-describing.
+
+- Append enum variants. Inserting or reordering one renumbers every later discriminant and breaks remote clients and `session.json` / `radio.json`.
+- Display order is a separate `ALL` const (`Mode::ALL`, `Backend` picker). Declaration order is the wire.
+- Adding or reordering a field on a struct that already rides the wire (`DigiConfig`, `DigiStatus`, `RadioState`, `QsoRecord`, …) changes every message that contains it. Bump `PROTO_VERSION` in `crates/sdroxide-proto/src/lib.rs` and add a one-line note beside the existing version history.
+- `Backend` and `Mode` also appear in JSON config. Renaming a variant needs a serde alias so old files still load.
+- A new `Mode` is appended, then listed in `Mode::ALL` where the picker should show it. Update the `--mode` clap help in `src/main.rs` when the CLI must accept the name.
+
+Native and browser clients must agree on this layout. The wasm client links `sdroxide-types` and `sdroxide-proto` only.

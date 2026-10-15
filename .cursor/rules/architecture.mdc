@@ -1,0 +1,35 @@
+---
+description: How SDRoxide crates connect — UI, engine, protocol, and the native/wasm split
+alwaysApply: true
+---
+
+# Architecture
+
+One egui UI (`sdroxide-ui`) drives every radio through `RadioController` in `sdroxide-types`. The UI sends `Command` and drains `RadioEvent`. It never talks to hardware.
+
+Three hosts implement that trait:
+
+- **Native desktop** — `src/local_controller.rs` wraps an in-process engine. `src/gui_main.rs` starts one engine plus cpal streams per radio and puts each in a `MultiApp` tab (`crates/sdroxide-ui/src/multi.rs`).
+- **Server** — `sdroxide --server`. DSP stays on the machine with the radio. `sdroxide-server` bridges engine channels to WebSocket (`sdroxide-proto`).
+- **Remote UI** — the same `SdroxideApp`, with `RemoteController`. Native: `sdroxide --connect host:4950`. Browser: `crates/sdroxide-web` (wasm) over `/ws` or `/ws/<id>`.
+
+Decode and encode run in the native engine. The browser paints status the server already computed.
+
+## Crate boundaries
+
+| Crate | Role | wasm |
+| --- | --- | --- |
+| `sdroxide-types` | `Command`, `RadioEvent`, `Mode`, `RadioState`, `Backend`. No I/O, threads, or native deps. | yes |
+| `sdroxide-proto` | WebSocket framing: `[version byte][postcard]`. `PROTO_VERSION` in `lib.rs`. | yes |
+| `sdroxide-ui` | egui app. Native-only deps live under `cfg(not(target_arch = "wasm32"))`. | yes |
+| `sdroxide-dsp` | Demod, spectrum, modulators. | no |
+| `sdroxide-digi` | Digital-mode controllers (FT8, JS8, WSPR, …). Links GPL `mfsk-core`. | no |
+| `sdroxide-radio` | `RadioCore` engine thread: IQ source, DSP, authoritative `RadioState`. | no |
+| `sdroxide-config` | `~/.config/sdroxide/` persistence. | native |
+| `sdroxide-server` | HTTP + one WebSocket session per radio. | no |
+| `sdroxide` (root `src/`) | Binary: CLI, backend openers (`*_source.rs`), `devices::probe`. | no |
+| `sdroxide-<device>` | One hardware protocol (rtlsdr, hackrf, hpsdr, …). | no |
+
+`sdroxide-deepcw` is the only AGPL crate. Keep it out of the wasm graph, same as `sdroxide-digi`.
+
+A new radio backend is a native crate plus a `src/<name>_source.rs` opener, a `Backend` variant, a probe arm in `src/devices.rs`, and a settings tab. The engine stays free of process globals; shared multi-radio devices go through `src/device_registry.rs`.
