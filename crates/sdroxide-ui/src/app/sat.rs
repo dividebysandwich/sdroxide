@@ -649,10 +649,8 @@ impl SdroxideApp {
             return;
         }
         let mut open = self.show_sat;
-        let size = egui::vec2(
-            crate::layout::window_w(ctx, 480.0),
-            crate::layout::window_h(ctx, 520.0),
-        );
+        let size =
+            egui::vec2(crate::layout::window_w(ctx, 480.0), crate::layout::window_h(ctx, 520.0));
         let pending = self.system_center_pending.sat;
         let resp = crate::layout::center_on_open(
             egui::Window::new("SATELLITE")
@@ -674,10 +672,7 @@ impl SdroxideApp {
             crate::chrome::paint_window_border(ctx, &r.response);
             self.system_center_pending.sat = false;
         }
-        if resp
-            .as_ref()
-            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
-        {
+        if resp.as_ref().is_some_and(|r| self.system_title_pin(ctx, &r.response)) {
             self.dock_system(crate::app::SystemDock::Sat);
         }
         self.show_sat = open;

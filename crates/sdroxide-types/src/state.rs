@@ -581,6 +581,14 @@ pub struct RadioState {
     /// postcard numbers fields by position.
     #[serde(default)]
     pub hfdl: crate::HfdlSettings,
+    /// How the RS41 radiosonde decoder behaves, and whether it can run at all.
+    ///
+    /// Here rather than only in `rs41.json` for the reason [`Self::adsb`] is: a
+    /// remote client edits it, and the engine's reply is this field coming back
+    /// changed. Live status (sonde table) is [`crate::Rs41Status`], sent
+    /// separately. Appended last: postcard numbers fields by position.
+    #[serde(default)]
+    pub rs41: crate::Rs41Settings,
 }
 
 impl Default for RadioState {
@@ -631,6 +639,7 @@ impl Default for RadioState {
             // knows, and it says so in the first state it sends.
             hd_radio_unavailable: None,
             hfdl: crate::HfdlSettings::default(),
+            rs41: crate::Rs41Settings::default(),
         }
     }
 }

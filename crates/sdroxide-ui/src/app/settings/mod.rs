@@ -1144,7 +1144,8 @@ impl SdroxideApp {
         let docked = self.system_docked_as(crate::app::SystemDock::Settings);
         let pending = self.system_center_pending.settings;
         let win = if docked {
-            self.system_dock_host("Settings", id, crate::app::SystemDock::Settings).map(|w| w.vscroll(true))
+            self.system_dock_host("Settings", id, crate::app::SystemDock::Settings)
+                .map(|w| w.vscroll(true))
         } else {
             Some(crate::layout::center_on_open(
                 egui::Window::new("Settings")
@@ -1320,11 +1321,7 @@ impl SdroxideApp {
             crate::chrome::paint_window_border(ctx, &r.response);
             self.system_center_pending.settings = false;
         }
-        if !docked
-            && resp
-                .as_ref()
-                .is_some_and(|r| self.system_title_pin(ctx, &r.response))
-        {
+        if !docked && resp.as_ref().is_some_and(|r| self.system_title_pin(ctx, &r.response)) {
             self.dock_system(crate::app::SystemDock::Settings);
         }
         if !docked {
@@ -2930,6 +2927,36 @@ impl SdroxideApp {
                         );
                     });
                 }
+
+                net_heading(ui, "SondeHub");
+                crate::chrome::checkbox(
+                    ui,
+                    &mut io.net_edit.sondehub.upload,
+                    "Upload radiosonde receptions to SondeHub",
+                )
+                .on_hover_text(
+                    "Send every radiosonde package with a GPS fix (RS41, DFM, \
+                     M10/M20, MTS01) to SondeHub. Uses My callsign and My grid \
+                     from the digimode identity — the same reporter record \
+                     WSPRnet uses. Also uploads a /listeners heartbeat every \
+                     6 hours. Off by default until you opt in.",
+                );
+                ui.horizontal(|ui| {
+                    ui.add_sized([96.0, 22.0], egui::Label::new("Endpoint"));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut io.net_edit.sondehub.endpoint)
+                            .hint_text("https://api.v2.sondehub.org")
+                            .desired_width(280.0),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.add_sized([96.0, 22.0], egui::Label::new("Antenna"));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut io.net_edit.sondehub.antenna)
+                            .hint_text("optional, for /listeners")
+                            .desired_width(280.0),
+                    );
+                });
 
                 ui.add_space(8.0);
                 if crate::chrome::chip_accent(

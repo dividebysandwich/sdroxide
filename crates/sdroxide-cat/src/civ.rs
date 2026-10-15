@@ -101,6 +101,7 @@ pub fn mode_to_civ(m: Mode) -> u8 {
         | Mode::Adsb
         | Mode::Vdl2
         | Mode::Ais
+        | Mode::Rs41
         | Mode::HdRadio => 0x05,
         // Wide FM has a mode byte of its own on CI-V, and it is not the same
         // one as narrow FM. Sending `0x05` for a broadcast station left the rig

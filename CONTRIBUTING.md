@@ -210,6 +210,34 @@ browser needs step 6, or a build with `--features embed-web` after that step.
 Dev profiles already optimize the DSP crates, so a UI-only rebuild stays
 usable. A clean release build is much slower than `cargo run`.
 
+### Radiosonde decode (`sonde` Cargo feature)
+
+SONDE mode shells out to rs1729 `*mod` helpers (OpenWebRX style). With the
+default feature set, `cargo build` compiles them from `vendor/rs1729` into
+`target/sonde-mod/<profile>/`, and release packages copy them **beside** the
+`sdroxide` binary so no manual PATH install is needed.
+
+```sh
+git submodule update --init --recursive   # pulls vendor/rs1729
+cargo build --release                     # includes --features sonde (default)
+# helpers appear in target/sonde-mod/release/ and are found via
+# current_exe(), SDROXIDE_SONDE_MOD_DIR, or PATH
+```
+
+This repo does **not** use OpenWebRX’s `--enable-modulation` flag. The Cargo
+equivalent is:
+
+| Goal | Command |
+| --- | --- |
+| With sonde helpers (default) | `cargo build --release` |
+| Without building/shipping `*mod` | `cargo build --release --no-default-features --features soapy,rtl433` |
+| Explicit | `cargo build --release --features sonde` |
+
+Needs a C compiler (`cc` crate drives clang/gcc/MinGW). Without the matching
+helper the panel shows an unavailable message; the rest of SDRoxide still runs.
+Release packages (Linux tarball/deb/AppImage, macOS tarball/app, Windows
+zip/MSI) ship the helpers beside `sdroxide`.
+
 ## 6. Browser client (optional)
 
 Same UI, compiled to WebAssembly and served by the native server. One-time

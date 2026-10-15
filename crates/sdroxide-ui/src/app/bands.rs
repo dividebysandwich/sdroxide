@@ -78,10 +78,8 @@ impl SdroxideApp {
             return;
         }
         let mut open = self.show_bands;
-        let size = egui::vec2(
-            crate::layout::window_w(ctx, 520.0),
-            crate::layout::window_h(ctx, 460.0),
-        );
+        let size =
+            egui::vec2(crate::layout::window_w(ctx, 520.0), crate::layout::window_h(ctx, 460.0));
         let pending = self.system_center_pending.bands;
         let resp = crate::layout::center_on_open(
             egui::Window::new("BANDS")
@@ -103,10 +101,7 @@ impl SdroxideApp {
             crate::chrome::paint_window_border(ctx, &r.response);
             self.system_center_pending.bands = false;
         }
-        if resp
-            .as_ref()
-            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
-        {
+        if resp.as_ref().is_some_and(|r| self.system_title_pin(ctx, &r.response)) {
             self.dock_system(crate::app::SystemDock::Bands);
         }
         self.show_bands = open;

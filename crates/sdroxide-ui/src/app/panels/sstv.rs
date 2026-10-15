@@ -64,10 +64,7 @@ mod fit_two_cols_tests {
         for total in [200.0, 400.0, 607.0, 900.0, 1200.0] {
             for frac in [0.22, 0.4, 0.5, 0.6] {
                 let (a, b) = fit_two_cols(total, 7.0, frac, 300.0, 300.0);
-                assert!(
-                    a + b + 7.0 <= total + 0.01,
-                    "a={a} b={b} total={total} frac={frac}"
-                );
+                assert!(a + b + 7.0 <= total + 0.01, "a={a} b={b} total={total} frac={frac}");
                 assert!(a >= 0.0 && b >= 0.0);
             }
         }
@@ -739,8 +736,7 @@ impl SdroxideApp {
             Some(0) => avail.x,
             Some(_) => 0.0,
             None => {
-                let w =
-                    fit_two_cols(avail.x, handle_w, self.view.sstv_tx_fraction, 300.0, 300.0).0;
+                let w = fit_two_cols(avail.x, handle_w, self.view.sstv_tx_fraction, 300.0, 300.0).0;
                 w.min((avail.x - handle_w).max(0.0))
             }
         };

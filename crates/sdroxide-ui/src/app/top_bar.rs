@@ -7033,7 +7033,13 @@ fn band_mode_menu(
         // decodes and transmits, and none of these is — each has its own lane,
         // no QSO and no transmitter. They are digital signals all the same, and
         // this is where an operator looks for one.
-        for m in Mode::DIGITAL.into_iter().chain([Mode::Adsb, Mode::Vdl2, Mode::Ais, Mode::Hfdl]) {
+        for m in Mode::DIGITAL.into_iter().chain([
+            Mode::Adsb,
+            Mode::Vdl2,
+            Mode::Ais,
+            Mode::Hfdl,
+            Mode::Rs41,
+        ]) {
             if crate::chrome::chip(ui, mode == m, m.label()).clicked() {
                 cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
             }

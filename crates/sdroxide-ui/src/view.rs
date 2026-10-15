@@ -188,6 +188,13 @@ pub struct ViewState {
     /// ...and of its height given to the detail card, while one is open.
     #[serde(default = "ais_card_default")]
     pub ais_card_fraction: f32,
+    /// Fraction of the RS41 panel's width given to the sonde list; the rest is
+    /// the map.
+    #[serde(default = "rs41_split_default")]
+    pub rs41_split_fraction: f32,
+    /// ...and of its height given to the detail card, while one is open.
+    #[serde(default = "rs41_card_default")]
+    pub rs41_card_fraction: f32,
     /// Fraction of the HFDL window's width given to the decode log; the rest is
     /// the aircraft map. User-draggable.
     #[serde(default = "hfdl_split_default")]
@@ -575,6 +582,8 @@ impl Default for ViewState {
             adsb_card_fraction: adsb_card_default(),
             ais_split_fraction: ais_split_default(),
             ais_card_fraction: ais_card_default(),
+            rs41_split_fraction: rs41_split_default(),
+            rs41_card_fraction: rs41_card_default(),
             hfdl_split_fraction: hfdl_split_default(),
             digi_map_fraction: 0.6,
             digi_pane: 0,
@@ -784,6 +793,14 @@ fn ais_split_default() -> f32 {
 /// sign, an IMO number, dimensions, a draught, a destination and an ETA.
 fn ais_card_default() -> f32 {
     0.45
+}
+
+fn rs41_split_default() -> f32 {
+    0.42
+}
+
+fn rs41_card_default() -> f32 {
+    0.40
 }
 
 /// Default for [`ViewState::hfdl_split_fraction`]. The decode log has the room

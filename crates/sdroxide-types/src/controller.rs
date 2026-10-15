@@ -389,6 +389,13 @@ pub enum RadioEvent {
     ///
     /// Appended last, for the usual reason.
     Pi4Spots(Vec<crate::Pi4Spot>),
+    /// Live RS41 radiosonde table — every sonde still on the list, plus
+    /// demod counters. Boxed for the same reason [`RadioEvent::AisStatus`] is:
+    /// a busy launch day's sonde table with tracks is far larger than anything
+    /// else in this enum.
+    ///
+    /// Appended last, for the usual reason.
+    Rs41Status(Box<crate::Rs41Status>),
 }
 
 /// Snapshot of the frontend's switchable sound devices (native clients).

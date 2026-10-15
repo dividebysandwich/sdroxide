@@ -309,7 +309,7 @@ pub fn mode_to_tci(mode: Mode) -> &'static str {
         Mode::Nfm | Mode::Rifp | Mode::Packet | Mode::Aprs | Mode::SstvFm | Mode::RttyFm => "nfm",
         // ExpertSDR has no ADS-B mode either; wide FM is the nearest thing a
         // client can be told without inventing a name it would reject.
-        Mode::Wfm | Mode::Adsb | Mode::Vdl2 | Mode::Ais | Mode::HdRadio => "wfm",
+        Mode::Wfm | Mode::Adsb | Mode::Vdl2 | Mode::Ais | Mode::Rs41 | Mode::HdRadio => "wfm",
         Mode::Digu
         | Mode::Ft8
         | Mode::Js8

@@ -362,6 +362,15 @@ pub enum Mode {
     /// message repeats for the length of the over. Appended for the same reason
     /// as [`Mode::Hell`].
     Fsk441,
+    /// Vaisala RS41 radiosonde — GFSK telemetry near 400–406 MHz carrying
+    /// serial, GPS position, altitude, temperature and humidity.
+    ///
+    /// A receive-only lane like [`Mode::Adsb`], [`Mode::Ais`] and
+    /// [`Mode::Hfdl`]: it is a thing to point the receiver at, owns its own
+    /// demod lane, has neither a QSO sequencer nor transmit, and shares none of
+    /// the digital modes' DigiConfig. Appended for the same reason as
+    /// [`Mode::Hell`].
+    Rs41,
 }
 
 /// The bands on which a mode that keeps phone practice rides the lower
@@ -382,7 +391,7 @@ const PHONE_LSB_BANDS: [(f64, f64); 3] =
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 49] = [
+    pub const ALL: [Mode; 50] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -395,6 +404,7 @@ impl Mode {
         Mode::Adsb,
         Mode::Vdl2,
         Mode::Ais,
+        Mode::Rs41,
         Mode::Digu,
         Mode::Digl,
         Mode::Dsb,
@@ -572,6 +582,15 @@ impl Mode {
         matches!(self, Mode::Hfdl)
     }
 
+    /// Vaisala RS41 radiosonde telemetry lane.
+    ///
+    /// Not [`Mode::is_digital`], for the reason [`Mode::is_adsb`] is not: it is
+    /// a receive-only surveillance decoder with its own panel and settings,
+    /// not a digi-audio modem driven by DigiConfig.
+    pub fn is_rs41(self) -> bool {
+        matches!(self, Mode::Rs41)
+    }
+
     /// True for the modes that own the bottom panel.
     ///
     /// [`Mode::is_digital`] used to answer this on its own, which was true
@@ -579,7 +598,12 @@ impl Mode {
     /// questions are separate: this one decides whether the panadapter shares
     /// the window, and that one decides who is being handed audio.
     pub fn has_bottom_panel(self) -> bool {
-        self.is_digital() || self.is_adsb() || self.is_vdl2() || self.is_ais() || self.is_hfdl()
+        self.is_digital()
+            || self.is_adsb()
+            || self.is_vdl2()
+            || self.is_ais()
+            || self.is_hfdl()
+            || self.is_rs41()
     }
 
     /// True for the modes decoded by a wideband engine lane off the raw I/Q
@@ -877,6 +901,7 @@ impl Mode {
                 | Mode::Jt9
                 | Mode::Fst4
                 | Mode::Q65
+                | Mode::Rs41
         )
     }
 
@@ -960,6 +985,7 @@ impl Mode {
             Mode::Fst4 => "FST4",
             Mode::Q65 => "Q65",
             Mode::Fsk441 => "FSK441",
+            Mode::Rs41 => "SONDE",
         }
     }
 
@@ -1065,6 +1091,9 @@ impl Mode {
             // bandwidth, drawn on the panadapter so an operator can see that
             // the whole channel is being read rather than some slice of it.
             Mode::Adsb => (-1_000_000.0, 1_000_000.0),
+            // RS41 GFSK occupies a few kilohertz; shade a comfortable window
+            // around the dial so the operator can see the sonde in the span.
+            Mode::Rs41 => (-12_000.0, 12_000.0),
             // Likewise not a receive filter: the decoder reads seven
             // channels spread over 325 kHz, and this is the whole plan
             // drawn on the panadapter so an operator can see that all of
@@ -1324,6 +1353,7 @@ impl Mode {
             | Mode::Vdl2
             | Mode::Ais
             | Mode::Hfdl
+            | Mode::Rs41
             | Mode::HdRadio => C::Fm,
             // Everything a rig would be put into DATA (or DIGI) for, on either
             // sideband — including RIFP and VHF packet, which the rig carries
@@ -1384,6 +1414,7 @@ impl Mode {
                 | Mode::Vdl2
                 | Mode::Ais
                 | Mode::Hfdl
+                | Mode::Rs41
                 | Mode::HdRadio
         )
     }
@@ -1552,6 +1583,7 @@ impl Mode {
             // The lane's own width, and nothing narrower: the demod reads the
             // whole 24 kHz channel, so this only shades what is read.
             Mode::Hfdl => &[("24k", -12_000.0, 12_000.0)],
+            Mode::Rs41 => &[("24k", -12_000.0, 12_000.0)],
             // The one digital mode with a real filter choice: 1200 Bell 202
             // occupies about 10 kHz and 9600 G3RUH about 16 kHz, so the
             // operator wants the narrower one when running 1200 on a busy
@@ -1641,6 +1673,11 @@ impl std::str::FromStr for Mode {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // `SONDE` is the chip label; `RS41` remains accepted for CLI / bookmarks
+        // written before the multi-type radiosonde work.
+        if s.eq_ignore_ascii_case("rs41") {
+            return Ok(Mode::Rs41);
+        }
         Mode::ALL
             .into_iter()
             .find(|m| m.label().eq_ignore_ascii_case(s))
@@ -2076,7 +2113,8 @@ mod tests {
                         || m == Mode::Adsb
                         || m == Mode::Vdl2
                         || m == Mode::Ais
-                        || m == Mode::Hfdl,
+                        || m == Mode::Hfdl
+                        || m == Mode::Rs41,
                     "{m:?} has only symmetric presets — should its edges mirror?"
                 );
             }
@@ -2143,6 +2181,7 @@ mod tests {
             (Mode::Fst4, 46),
             (Mode::Q65, 47),
             (Mode::Fsk441, 48),
+            (Mode::Rs41, 49),
         ];
         for (mode, index) in pinned {
             assert_eq!(mode as u8, index, "{} moved", mode.label());
@@ -2189,7 +2228,7 @@ mod tests {
         // dropped and nothing listed twice.
         // The last variant *by discriminant*, which is the one appended most
         // recently — not the one that reads last in the picker.
-        let last = Mode::Fsk441 as u8;
+        let last = Mode::Rs41 as u8;
         for i in 0..=last {
             let present = Mode::ALL.iter().filter(|m| **m as u8 == i).count();
             assert_eq!(present, 1, "discriminant {i} appears {present} times in Mode::ALL");

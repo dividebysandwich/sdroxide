@@ -154,10 +154,8 @@ impl crate::app::SdroxideApp {
             return;
         }
         let mut open = self.mail.open;
-        let size = egui::vec2(
-            crate::layout::window_w(ctx, 860.0),
-            crate::layout::window_h(ctx, 640.0),
-        );
+        let size =
+            egui::vec2(crate::layout::window_w(ctx, 860.0), crate::layout::window_h(ctx, 640.0));
         let pending = self.mail.center_pending;
         let resp = crate::layout::center_on_open(
             egui::Window::new("MAIL")
@@ -182,10 +180,7 @@ impl crate::app::SdroxideApp {
             crate::chrome::paint_window_border(ctx, &r.response);
             self.mail.center_pending = false;
         }
-        if resp
-            .as_ref()
-            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
-        {
+        if resp.as_ref().is_some_and(|r| self.system_title_pin(ctx, &r.response)) {
             self.dock_system(crate::app::SystemDock::Mail);
         }
         self.mail.open = open;

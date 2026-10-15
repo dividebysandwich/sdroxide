@@ -768,6 +768,18 @@ pub struct SdroxideApp {
     show_ais_setup: bool,
     ais_sort: panels::ais::AisSort,
     ais_sort_desc: bool,
+    /// RS41: the sonde table as the engine last sent it.
+    rs41_status: Option<Box<sdroxide_types::Rs41Status>>,
+    /// RS41: the map's pan/zoom and which sonde is selected.
+    rs41_map: crate::rs41_map::Rs41MapState,
+    /// RS41: filter for the sonde list (serial).
+    rs41_filter: String,
+    /// RS41: the decoder's own settings window is open.
+    show_rs41_setup: bool,
+    /// RS41 setup: open on the previous frame (rising-edge for centering).
+    rs41_setup_was_open: bool,
+    /// RS41 setup: keep forcing a centered position until `.show()` draws.
+    rs41_setup_center_pending: bool,
     /// VDL2: everything the decoder has, as the engine last sent it. Boxed
     /// because it carries a whole message log and is far larger than anything
     /// else held here.
@@ -1553,6 +1565,12 @@ impl SdroxideApp {
             show_ais_setup: false,
             ais_sort: panels::ais::AisSort::default(),
             ais_sort_desc: true,
+            rs41_status: None,
+            rs41_map: crate::rs41_map::Rs41MapState::default(),
+            rs41_filter: String::new(),
+            show_rs41_setup: false,
+            rs41_setup_was_open: false,
+            rs41_setup_center_pending: false,
             vdl2_status: None,
             vdl2_filter: String::new(),
             vdl2_selected: None,

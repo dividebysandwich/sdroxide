@@ -19,6 +19,7 @@ mod pskreporter;
 mod pskupload;
 mod rbn;
 mod socketio;
+mod sondehub;
 mod sota;
 mod upload;
 mod wsprnet;
@@ -27,6 +28,7 @@ pub use event::NetEvent;
 pub use manager::SpotManager;
 pub use pskupload::MAX_REPORT_HZ as MAX_PSK_REPORT_HZ;
 pub use pskupload::Report as PskReport;
+pub use sondehub::{Item as SondeHubItem, Reporter as SondeHubReporter};
 pub use wsprnet::{Item as WsprItem, Query as WsprQuery, Reporter as WsprReporter};
 
 // On-demand blocking helpers, exposed for tests / direct use.

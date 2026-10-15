@@ -85,6 +85,11 @@ opt-level = 2
 [profile.dev.package.sdroxide-ais]
 opt-level = 2
 
+# RS41 GFSK correlator runs over a 48 kS/s lane every block; unoptimized it
+# costs more than the rest of the receive chain put together.
+[profile.dev.package.sdroxide-rs41]
+opt-level = 2
+
 # RADE's per-frame buffer shuffling sits between two C libraries that are
 # always built optimized; leaving the Rust glue slow would stall the worker.
 [profile.dev.package.sdroxide-rade]
@@ -150,6 +155,7 @@ sdroxide-aprs = { path = "crates/sdroxide-aprs" }
 sdroxide-adsb = { path = "crates/sdroxide-adsb" }
 sdroxide-vdl2 = { path = "crates/sdroxide-vdl2" }
 sdroxide-ais = { path = "crates/sdroxide-ais" }
+sdroxide-rs41 = { path = "crates/sdroxide-rs41" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -248,7 +254,7 @@ num-complex.workspace = true
 rtrb.workspace = true
 
 [features]
-default = ["soapy", "rtl433"]
+default = ["soapy", "rtl433", "sonde"]
 # SoapySDR device support. Turn off (`--no-default-features`) for a CAT-only
 # binary that builds and runs without libSoapySDR installed.
 soapy = ["sdroxide-radio/soapy"]
@@ -256,6 +262,12 @@ soapy = ["sdroxide-radio/soapy"]
 # compiler, CMake, and `git submodule update --init --recursive`. Turn off for a
 # build with only sdroxide's own ISM decoders.
 rtl433 = ["sdroxide-radio/rtl433"]
+# Radiosonde decode helpers (`rs41mod`, `dfm09mod`, … from vendor/rs1729).
+# Default on: builds the `*mod` binaries and release packages ship them beside
+# `sdroxide`. Omit for a build that only uses tools already on PATH:
+#   cargo build --release --no-default-features --features soapy,rtl433
+# (OpenWebRX's `--enable-modulation` flag is not used here — Cargo features are.)
+sonde = ["sdroxide-radio/sonde"]
 # Bundle the trunk-built web client into the binary (run `trunk build
 # --release` in crates/sdroxide-web first).
 embed-web = ["sdroxide-server/embed-web"]
@@ -318,6 +330,19 @@ assets = [
     # notice ships too — and unlike the ones above it constrains the package
     # rather than merely crediting a part of it.
     ["crates/sdroxide-deepcw/LICENSE", "usr/share/doc/sdroxide/LICENSE-deepcw.txt", "644"],
+    # Radiosonde *mod helpers (feature `sonde`). Staged under target/sonde-mod
+    # at build time; the release workflow copies them into target/release/
+    # before `cargo deb --no-build` (cargo-deb only accepts that path prefix
+    # for built products). Installed beside sdroxide in /usr/bin. GPL-3.0
+    # (rs1729).
+    ["target/release/rs41mod", "usr/bin/", "755"],
+    ["target/release/dfm09mod", "usr/bin/", "755"],
+    ["target/release/m10mod", "usr/bin/", "755"],
+    ["target/release/m10m20mod", "usr/bin/", "755"],
+    ["target/release/m20mod", "usr/bin/", "755"],
+    ["target/release/mts01mod", "usr/bin/", "755"],
+    ["vendor/rs1729/LICENSE", "usr/share/doc/sdroxide/LICENSE-rs1729.txt", "644"],
+    ["crates/sdroxide-rs41/PROVENANCE.md", "usr/share/doc/sdroxide/PROVENANCE-rs1729.md", "644"],
 ]
 
 # SoapySDR .deb: links libSoapySDR, so recommend the driver modules (apt

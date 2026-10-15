@@ -5204,6 +5204,7 @@ name = "sdroxide-net"
 version = "1.6.10"
 dependencies = [
  "crossbeam-channel",
+ "flate2",
  "roxmltree",
  "sdroxide-types",
  "serde",
@@ -5317,6 +5318,7 @@ dependencies = [
  "sdroxide-relay",
  "sdroxide-rigctld",
  "sdroxide-rotator",
+ "sdroxide-rs41",
  "sdroxide-skimmer",
  "sdroxide-solar",
  "sdroxide-tci",
@@ -5360,6 +5362,18 @@ version = "1.6.10"
 dependencies = [
  "crossbeam-channel",
  "sdroxide-types",
+ "tracing",
+]
+
+[[package]]
+name = "sdroxide-rs41"
+version = "1.6.10"
+dependencies = [
+ "cc",
+ "crossbeam-channel",
+ "sdroxide-dsp",
+ "sdroxide-types",
+ "serde_json",
  "tracing",
 ]
 

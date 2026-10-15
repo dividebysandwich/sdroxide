@@ -1,0 +1,33 @@
+[package]
+name = "sdroxide-rs41"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+# Native-only: radiosonde decode via rs1729 `*mod` subprocesses (OpenWebRX
+# style). Runs server-side in the engine off a dedicated DDC lane. Not linked
+# by the wasm client; wire types live in `sdroxide-types`.
+#
+# Feature `sonde` (on by default through the workspace binary) builds the
+# helpers from `vendor/rs1729` and stages them under `target/sonde-mod/`.
+# Without it, only PATH / `SDROXIDE_SONDE_MOD_DIR` tools are used.
+
+[features]
+default = ["sonde"]
+# Compile and stage rs1729 `*mod` binaries next to the build (and for release
+# packages, beside `sdroxide`). Needs a C compiler, `make`, and the
+# `vendor/rs1729` submodule.
+sonde = []
+
+[dependencies]
+sdroxide-types.workspace = true
+sdroxide-dsp.workspace = true
+crossbeam-channel.workspace = true
+serde_json = "1"
+tracing.workspace = true
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]

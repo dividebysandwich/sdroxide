@@ -10,3 +10,6 @@
 [submodule "vendor/xng"]
 	path = vendor/xng
 	url = https://github.com/airframesio/xng.git
+[submodule "vendor/rs1729"]
+	path = vendor/rs1729
+	url = https://github.com/rs1729/RS.git

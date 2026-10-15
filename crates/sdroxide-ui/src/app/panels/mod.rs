@@ -34,6 +34,7 @@ pub(in crate::app) mod packet;
 pub(in crate::app) mod pi4;
 pub(in crate::app) mod rade;
 pub(in crate::app) mod rf_paint;
+pub(in crate::app) mod rs41;
 pub(in crate::app) mod setup;
 pub(in crate::app) mod sstv;
 pub(in crate::app) mod text_modem;
@@ -97,6 +98,7 @@ pub(in crate::app) fn panel_panes(mode: Mode) -> &'static [&'static str] {
         // Two, for the reason ADS-B has two: the decode log and the aircraft
         // the network has located, which move independently.
         Mode::Hfdl => &["DECODES", "MAP"],
+        Mode::Rs41 => &["SONDES", "MAP"],
         Mode::Wefax => &["CHART", "SAVED"],
         Mode::Navtex => &["MESSAGES", "READING"],
         Mode::RfPaint => &["TEXT", "IMAGE"],

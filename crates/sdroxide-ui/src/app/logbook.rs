@@ -407,7 +407,8 @@ impl SdroxideApp {
         );
         let id = crate::layout::salted_id(ctx, "LOGBOOK");
         if self.system_docked_as(crate::app::SystemDock::Logbook) {
-            if let Some(win) = self.system_dock_host("LOGBOOK", id, crate::app::SystemDock::Logbook) {
+            if let Some(win) = self.system_dock_host("LOGBOOK", id, crate::app::SystemDock::Logbook)
+            {
                 win.show(ctx, |ui| {
                     crate::chrome::window_body_bg(ui);
                     self.clip_system_dock_body(ui, crate::app::SystemDock::Logbook);
@@ -417,10 +418,8 @@ impl SdroxideApp {
             return;
         }
         let mut open = self.show_logbook;
-        let size = egui::vec2(
-            crate::layout::window_w(ctx, 720.0),
-            crate::layout::window_h(ctx, 560.0),
-        );
+        let size =
+            egui::vec2(crate::layout::window_w(ctx, 720.0), crate::layout::window_h(ctx, 560.0));
         let pending = self.system_center_pending.logbook;
         let resp = crate::layout::center_on_open(
             egui::Window::new("LOGBOOK")
@@ -435,17 +434,14 @@ impl SdroxideApp {
             size,
         )
         .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.logbook_body(ui, cmds);
-            });
+            crate::chrome::window_body_bg(ui);
+            self.logbook_body(ui, cmds);
+        });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
             self.system_center_pending.logbook = false;
         }
-        if resp
-            .as_ref()
-            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
-        {
+        if resp.as_ref().is_some_and(|r| self.system_title_pin(ctx, &r.response)) {
             self.dock_system(crate::app::SystemDock::Logbook);
         }
         self.show_logbook = open;

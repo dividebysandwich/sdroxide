@@ -63,7 +63,8 @@ impl SdroxideApp {
         let mut cfg = self.state.ism;
         let id = crate::layout::salted_id(ctx, "Ism");
         if self.system_docked_as(crate::app::SystemDock::Ism) {
-            if let Some(win) = self.system_dock_host("ISM DEVICES", id, crate::app::SystemDock::Ism) {
+            if let Some(win) = self.system_dock_host("ISM DEVICES", id, crate::app::SystemDock::Ism)
+            {
                 win.show(ctx, |ui| {
                     crate::chrome::window_body_bg(ui);
                     self.clip_system_dock_body(ui, crate::app::SystemDock::Ism);
@@ -76,10 +77,8 @@ impl SdroxideApp {
             return;
         }
         let mut open = self.show_ism;
-        let size = egui::vec2(
-            crate::layout::window_w(ctx, 760.0),
-            crate::layout::window_h(ctx, 480.0),
-        );
+        let size =
+            egui::vec2(crate::layout::window_w(ctx, 760.0), crate::layout::window_h(ctx, 480.0));
         let pending = self.system_center_pending.ism;
         let resp = crate::layout::center_on_open(
             egui::Window::new("ISM DEVICES")
@@ -102,10 +101,7 @@ impl SdroxideApp {
             crate::chrome::paint_window_border(ctx, &r.response);
             self.system_center_pending.ism = false;
         }
-        if resp
-            .as_ref()
-            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
-        {
+        if resp.as_ref().is_some_and(|r| self.system_title_pin(ctx, &r.response)) {
             self.dock_system(crate::app::SystemDock::Ism);
         }
         if cfg != self.state.ism {

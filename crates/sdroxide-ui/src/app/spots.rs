@@ -294,10 +294,8 @@ impl SdroxideApp {
             (SpotKind::FreeDv, "FREEDV"),
             (SpotKind::Broadcast, "BC"),
         ];
-        let size = egui::vec2(
-            crate::layout::window_w(ctx, 580.0),
-            crate::layout::window_h(ctx, 480.0),
-        );
+        let size =
+            egui::vec2(crate::layout::window_w(ctx, 580.0), crate::layout::window_h(ctx, 480.0));
         let id = crate::layout::salted_id(ctx, "SPOTS");
         if self.system_docked_as(crate::app::SystemDock::Spots) {
             if let Some(win) = self.system_dock_host("SPOTS", id, crate::app::SystemDock::Spots) {
@@ -339,25 +337,22 @@ impl SdroxideApp {
             size,
         )
         .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.spots_body(
-                    ui,
-                    &labels,
-                    &spots,
-                    &worked_entities,
-                    now,
-                    &mut clicked,
-                    &mut open_setup,
-                );
-            });
+            crate::chrome::window_body_bg(ui);
+            self.spots_body(
+                ui,
+                &labels,
+                &spots,
+                &worked_entities,
+                now,
+                &mut clicked,
+                &mut open_setup,
+            );
+        });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
             self.system_center_pending.spots = false;
         }
-        if resp
-            .as_ref()
-            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
-        {
+        if resp.as_ref().is_some_and(|r| self.system_title_pin(ctx, &r.response)) {
             self.dock_system(crate::app::SystemDock::Spots);
         }
         self.show_spots = open;
@@ -436,9 +431,7 @@ impl SdroxideApp {
         let visible: Vec<&Spot> = spots.iter().filter(|s| self.spot_visible(s)).collect();
         let mut rows: Vec<(&Spot, i32)> = visible
             .iter()
-            .filter_map(|s| {
-                crate::fuzzy::score_terms(&spot_haystack(s), query).map(|sc| (*s, sc))
-            })
+            .filter_map(|s| crate::fuzzy::score_terms(&spot_haystack(s), query).map(|sc| (*s, sc)))
             .collect();
         if !query.is_empty() {
             rows.sort_by_key(|r| std::cmp::Reverse(r.1));

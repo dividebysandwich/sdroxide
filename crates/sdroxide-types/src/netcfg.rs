@@ -246,6 +246,29 @@ impl Default for WsprNetConfig {
     }
 }
 
+/// Upload of decoded radiosonde frames to SondeHub.
+///
+/// Callsign and grid come from [`crate::DigiConfig`], the same way WSPRnet
+/// does — this struct holds the feeder switch, optional endpoint, and the
+/// antenna string used for `/listeners` heartbeats.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SondeHubConfig {
+    /// Upload receptions decoded here to SondeHub.
+    pub upload: bool,
+    /// API base URL. Empty means the public `https://api.v2.sondehub.org`.
+    pub endpoint: String,
+    /// Optional antenna description for SondeHub `/listeners` (e.g. "colinear").
+    #[serde(default)]
+    pub antenna: String,
+}
+
+impl Default for SondeHubConfig {
+    fn default() -> Self {
+        SondeHubConfig { upload: false, endpoint: String::new(), antenna: String::new() }
+    }
+}
+
 /// The whole network-feature configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -330,6 +353,10 @@ pub struct NetworkConfig {
     /// Appended last, as the wire requires.
     #[serde(default)]
     pub eqsl_qth_nickname: String,
+
+    /// SondeHub radiosonde feeder. Appended last, as the wire requires.
+    #[serde(default)]
+    pub sondehub: SondeHubConfig,
 }
 
 impl Default for NetworkConfig {
@@ -362,6 +389,7 @@ impl Default for NetworkConfig {
             wrl_api_key: String::new(),
             auto_upload_wrl: false,
             eqsl_qth_nickname: String::new(),
+            sondehub: SondeHubConfig::default(),
         }
     }
 }

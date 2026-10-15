@@ -126,11 +126,11 @@ jobs:
           name: web-dist
           path: crates/sdroxide-web/dist
 
-      # --no-default-features drops `soapy`; `rtl433` is a default too and is
-      # named explicitly, so the .msi carries the same ISM decoders as the
-      # release workflow's standard build.
+      # --no-default-features drops `soapy`; `rtl433` and `sonde` are defaults
+      # too and are named explicitly so the .msi matches the release workflow's
+      # standard (cat) build — ISM + radiosonde *mod helpers.
       - name: Build
-        run: cargo build --release --locked -p sdroxide --no-default-features --features embed-web,rtl433
+        run: cargo build --release --locked -p sdroxide --no-default-features --features embed-web,rtl433,sonde
 
       # MinGW links libstdc++/libgcc/libwinpthread as DLLs by default, and
       # those exist only on a machine with MSYS2 or PothosSDR installed — a
@@ -156,6 +156,7 @@ jobs:
           # cargo write to a target-specific directory rather than
           # target/release.
           BIN_DIR="target/$CARGO_BUILD_TARGET/release"
+          REQUIRE_SONDE=1 bash packaging/copy-sonde-mods.sh "$BIN_DIR"
           dotnet tool install --global wix --version 5.0.2
           wix build packaging/windows/main.wxs -arch x64 \
             -d Version="$CARGO_VERSION" -d BinDir="$BIN_DIR" \

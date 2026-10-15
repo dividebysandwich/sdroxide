@@ -366,10 +366,8 @@ impl SdroxideApp {
         let blurb = self.public_sdr_confirm.as_deref().map(|e| self.replace_blurb(e));
         let mut answer: Option<Confirm> = None;
 
-        let size = egui::vec2(
-            crate::layout::window_w(ctx, 980.0),
-            crate::layout::window_h(ctx, 520.0),
-        );
+        let size =
+            egui::vec2(crate::layout::window_w(ctx, 980.0), crate::layout::window_h(ctx, 520.0));
         let id = crate::layout::salted_id(ctx, "PUBLIC SDRS");
         let docked = self.system_docked_as(crate::app::SystemDock::PublicSdrs);
         let pending = self.system_center_pending.public_sdrs;
@@ -544,11 +542,7 @@ impl SdroxideApp {
             crate::chrome::paint_window_border(ctx, &r.response);
             self.system_center_pending.public_sdrs = false;
         }
-        if !docked
-            && resp
-                .as_ref()
-                .is_some_and(|r| self.system_title_pin(ctx, &r.response))
-        {
+        if !docked && resp.as_ref().is_some_and(|r| self.system_title_pin(ctx, &r.response)) {
             self.dock_system(crate::app::SystemDock::PublicSdrs);
         }
         if !docked {

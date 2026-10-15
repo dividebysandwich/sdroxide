@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::Receiver;
 use sdroxide_types::{
-    NetworkConfig, Spot, SpotKind, UploadResult, UploadTarget, WsprSpot, grid_to_latlon,
+    NetworkConfig, Rs41Sonde, Spot, SpotKind, UploadResult, UploadTarget, WsprSpot, grid_to_latlon,
 };
 
 use crate::cluster::ClusterHandle;
@@ -18,6 +18,7 @@ use crate::event::{EventTx, FeedBatch, FeedTx, NetEvent};
 use crate::freedvreporter::ReporterHandle;
 use crate::poll::{self, PollHandle};
 use crate::rbn::RbnHandle;
+use crate::sondehub::{self, SondeHubUploadHandle};
 use crate::wsprnet::{self, WsprPollHandle, WsprUploadHandle};
 use crate::{pota, pskreporter, sota};
 
@@ -60,6 +61,8 @@ pub struct SpotManager {
     wspr_upload: Option<WsprUploadHandle>,
     /// WSPRnet download poller: who heard us.
     wspr_heard_us: Option<WsprPollHandle>,
+    /// SondeHub upload worker for RS41 receptions.
+    sondehub_upload: Option<SondeHubUploadHandle>,
 
     freedv: Option<ReporterHandle>,
     /// What we last told the reporter. Replayed into a freshly rebuilt session
@@ -102,6 +105,7 @@ impl SpotManager {
             psk_upload: None,
             wspr_upload: None,
             wspr_heard_us: None,
+            sondehub_upload: None,
             op_call: String::new(),
             op_grid: String::new(),
             freedv: None,
@@ -144,6 +148,9 @@ impl SpotManager {
         }
         if old.wspr != self.cfg.wspr {
             self.rebuild_wspr();
+        }
+        if old.sondehub != self.cfg.sondehub {
+            self.rebuild_sondehub();
         }
         // The reporter sends its settings at connect, so a change to them has
         // to restart the session. The status message is the one field that can
@@ -190,6 +197,7 @@ impl SpotManager {
         // And they are the whole of WSPRnet's identity: the callsign in the
         // query is the account.
         self.rebuild_wspr();
+        self.rebuild_sondehub();
     }
 
     // The engine pushes these on every tick of its ~100 Hz loop, so each one
@@ -266,6 +274,52 @@ impl SpotManager {
                 continue;
             }
             h.report(wsprnet::Item::Spot(s.clone()));
+        }
+    }
+
+    /// Report RS41 sondes with a fix to SondeHub.
+    pub fn sondehub_report(&self, sondes: &[Rs41Sonde]) {
+        // Keep these on `sdroxide_net::sondehub` so `RUST_LOG=…sondehub=debug`
+        // shows why a `fresh>0` consider-upload never becomes an HTTP PUT.
+        let Some(h) = &self.sondehub_upload else {
+            tracing::debug!(
+                target: "sdroxide_net::sondehub",
+                n = sondes.len(),
+                upload_cfg = self.cfg.sondehub.upload,
+                call_empty = self.op_call.is_empty(),
+                grid_empty = self.op_grid.is_empty(),
+                station = self.station,
+                "SondeHub report skipped — uploader not running (enable UPLOAD, set call+grid)"
+            );
+            return;
+        };
+        let mut sent = 0usize;
+        for s in sondes {
+            if s.has_position() {
+                tracing::debug!(
+                    target: "sdroxide_net::sondehub",
+                    serial = %s.serial,
+                    lat = ?s.lat,
+                    lon = ?s.lon,
+                    alt = ?s.altitude_m,
+                    "SondeHub report → queue"
+                );
+                h.report(sondehub::Item { sonde: s.clone() });
+                sent += 1;
+            } else {
+                tracing::debug!(
+                    target: "sdroxide_net::sondehub",
+                    serial = %s.serial,
+                    "SondeHub report skipped — no GPS fix yet"
+                );
+            }
+        }
+        if sent == 0 && !sondes.is_empty() {
+            tracing::debug!(
+                target: "sdroxide_net::sondehub",
+                n = sondes.len(),
+                "SondeHub: decoded sondes have no lat/lon — waiting for a position frame"
+            );
         }
     }
 
@@ -596,6 +650,40 @@ impl SpotManager {
         }
     }
 
+    fn rebuild_sondehub(&mut self) {
+        // Unlike DX cluster / FreeDV Reporter, SondeHub is not a single station
+        // login — each radio uploads what *it* heard. Standing a secondary
+        // engine down must not leave UPLOAD+call+grid set with no worker
+        // (that was the "uploader not running" trap with upload_cfg=true).
+        self.sondehub_upload = None;
+        if self.op_call.is_empty() || self.op_grid.is_empty() {
+            tracing::info!(
+                target: "sdroxide_net::sondehub",
+                call_empty = self.op_call.is_empty(),
+                grid_empty = self.op_grid.is_empty(),
+                "SondeHub upload idle — set My callsign and My grid"
+            );
+            return;
+        }
+        if self.cfg.sondehub.upload {
+            let rx = sondehub::Reporter {
+                call: self.op_call.clone(),
+                grid: self.op_grid.clone(),
+                antenna: self.cfg.sondehub.antenna.clone(),
+            };
+            self.sondehub_upload = Some(sondehub::spawn_upload(
+                rx,
+                self.cfg.sondehub.endpoint.clone(),
+                self.event_tx.clone(),
+            ));
+        } else {
+            tracing::info!(
+                target: "sdroxide_net::sondehub",
+                "SondeHub upload disabled (Network → SondeHub → Upload off)"
+            );
+        }
+    }
+
     fn rebuild_freedv(&mut self) {
         if !self.station {
             return;
@@ -689,11 +777,16 @@ mod tests {
         cfg.cluster.host = "cluster.example".into();
         cfg.freedv_reporter.enabled = true;
         cfg.qrz.user = "OE1TEST".into();
+        cfg.sondehub.upload = true;
         m.set_config(cfg);
 
         assert!(m.rbn.is_none(), "a second radio must not open its own RBN reader");
         assert!(m.cluster.is_none(), "nor a second DX cluster login");
         assert!(m.freedv.is_none(), "nor a second FreeDV Reporter session");
+        assert!(
+            m.sondehub_upload.is_some(),
+            "SondeHub uploads what this radio heard — secondary radios need a worker"
+        );
         assert_eq!(m.cfg.qrz.user, "OE1TEST", "but the credentials must still have landed");
         assert!(m.cfg.cluster.enabled, "and the config is what a settings window reads back");
     }

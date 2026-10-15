@@ -1546,7 +1546,19 @@ use sdroxide_types::{
 /// ([`sdroxide_types::RotatorProtocol`], a unit enum) on its tail — rotctld or
 /// PSTRotator's UDP control (issue #638). It rides `Command::SetRotatorConfig`
 /// and `StationConfig::rotator` whole, so a v178 peer reads it out of step.
-pub const PROTO_VERSION: u16 = 179;
+///
+/// v180: Radiosonde RS41 — `Mode::Rs41` appended; `RadioState.rs41` /
+/// `Command::SetRs41Config` / `RadioEvent::Rs41Status` / `ServerMsg::Rs41Status`;
+/// `NetworkConfig.sondehub` for the SondeHub feeder. Same break as v176: any
+/// append to a postcard enum or struct that rides the wire.
+///
+/// v181: Multi-type sonde via rs1729 `*mod` — `SondeKind` on `Rs41Settings` /
+/// `Rs41Sonde`; richer sonde fields (subtype, manufacturer, frame, vel_h,
+/// heading, sats); `SondeHubConfig.antenna` for `/listeners`; Mode label
+/// `SONDE`. Wire break vs v180 peers that still expect the old shapes.
+///
+/// v182: `Rs41Sonde.datetime` — sonde-reported timestamp for SondeHub uploads.
+pub const PROTO_VERSION: u16 = 182;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -2005,6 +2017,11 @@ pub enum ServerMsg {
     ///
     /// Appended last, for the usual reason.
     Pi4Spots(Vec<sdroxide_types::Pi4Spot>),
+    /// Every radiosonde the RS41 decoder is tracking. A whole snapshot — see
+    /// [`sdroxide_types::Rs41Status`].
+    ///
+    /// Appended last, for the usual reason.
+    Rs41Status(Box<sdroxide_types::Rs41Status>),
 }
 
 /// One radio in a station's roster, as a client sees it.

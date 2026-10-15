@@ -57,6 +57,7 @@ mod repeater;
 mod rifp;
 mod rigctld;
 mod rotator;
+mod rs41;
 mod satcfg;
 mod satlock;
 mod scanner;
@@ -186,7 +187,7 @@ pub use mode::{AgcMode, Mode, NrEngine, NrLevel, NrStrength, SlotTiming};
 pub use morse_trainer::{ADVANCE_RUN, Answer, KOCH_ORDER, MorseProgress, START_UNLOCKED};
 pub use netcfg::{
     ClusterConfig, Credentials, FeedConfig, FreeDvReporterConfig, LookupProvider, NetworkConfig,
-    PskConfig, RbnConfig, WsprNetConfig,
+    PskConfig, RbnConfig, SondeHubConfig, WsprNetConfig,
 };
 pub use pi4::{BURST_S as PI4_BURST_S, Pi4Spot, Pi4Status, SLOT_S as PI4_SLOT_S};
 pub use pictures::{
@@ -249,6 +250,11 @@ pub use rifp::{
 };
 pub use rigctld::RigctldConfig;
 pub use rotator::{RotatorConfig, RotatorProtocol};
+pub use rs41::{
+    RS41_BAND_HI_HZ, RS41_BAND_LO_HZ, RS41_DEFAULT_HZ, RS41_DROP_LIST_S, RS41_DROP_MAP_S,
+    RS41_HISTORY_POINTS, RS41_LANE_RATE_HZ, RS41_MAX_SONDES, Rs41Settings, Rs41Sonde, Rs41Status,
+    SONDE_M10_LANE_RATE_HZ, SondeKind,
+};
 pub use satcfg::{
     CELESTRAK_GROUPS, CelestrakGroup, CustomTle, OrbitRings, Passband, SatConfig, SatFreqs,
     SatLink, TleSubStatus, TleSubscription, fmt_mhz as fmt_sat_mhz, parse_tle_block,

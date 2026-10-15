@@ -258,7 +258,7 @@ pub fn to_hamlib_mode(m: Mode) -> &'static str {
         Mode::Rifp | Mode::Packet | Mode::Aprs | Mode::SstvFm | Mode::RttyFm => "PKTFM",
         // No rig has an ADS-B mode; a remote hamlib client asking is told the
         // widest FM there is, which is at least the right kind of receiver.
-        Mode::Wfm | Mode::Adsb | Mode::Vdl2 | Mode::Ais | Mode::HdRadio => "WFM",
+        Mode::Wfm | Mode::Adsb | Mode::Vdl2 | Mode::Ais | Mode::Rs41 | Mode::HdRadio => "WFM",
         Mode::Digu => "PKTUSB",
         Mode::Digl => "PKTLSB",
         Mode::Dsb => "DSB",

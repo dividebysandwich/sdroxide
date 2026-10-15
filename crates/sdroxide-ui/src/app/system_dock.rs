@@ -230,11 +230,8 @@ impl SdroxideApp {
             return out;
         }
 
-        let weight_sum: f32 = expanded
-            .iter()
-            .map(|k| self.system_dock_weight(*k))
-            .sum::<f32>()
-            .max(0.05);
+        let weight_sum: f32 =
+            expanded.iter().map(|k| self.system_dock_weight(*k)).sum::<f32>().max(0.05);
         let mut heights: Vec<(SystemDock, f32)> = expanded
             .iter()
             .map(|&k| {
@@ -258,11 +255,8 @@ impl SdroxideApp {
                 .filter(|(_, (_, h))| *h > body_min + 0.5)
                 .map(|(i, _)| i)
                 .collect();
-            let donor_extra: f32 = donors
-                .iter()
-                .map(|&i| heights[i].1 - body_min)
-                .sum::<f32>()
-                .max(0.05);
+            let donor_extra: f32 =
+                donors.iter().map(|&i| heights[i].1 - body_min).sum::<f32>().max(0.05);
             for i in donors {
                 let take = deficit * ((heights[i].1 - body_min) / donor_extra);
                 heights[i].1 = (heights[i].1 - take).max(body_min);
@@ -339,10 +333,7 @@ impl SdroxideApp {
                     font,
                     crate::theme::TEXT_STRONG(),
                 );
-                if resp
-                    .on_hover_text("Snap into the right panel beside the waterfall")
-                    .clicked()
-                {
+                if resp.on_hover_text("Snap into the right panel beside the waterfall").clicked() {
                     clicked = true;
                 }
             });
@@ -439,8 +430,7 @@ impl SdroxideApp {
             docked.iter().copied().filter(|k| !collapsed.contains(k)).collect();
         let body_min = Self::system_dock_body_min();
         // Chrome inside an expanded slot: header + separator + row grip.
-        let expand_chrome =
-            SYSTEM_DOCK_COLLAPSED_H + SYSTEM_DOCK_SEP_H + SYSTEM_DOCK_ROW_HANDLE_H;
+        let expand_chrome = SYSTEM_DOCK_COLLAPSED_H + SYSTEM_DOCK_SEP_H + SYSTEM_DOCK_ROW_HANDLE_H;
 
         // Handle sits inside the panel on the inner (main-facing) edge — egui's
         // own Panel resize separator is a plain line, not the three-dash chrome
@@ -835,8 +825,7 @@ impl SdroxideApp {
                 // prior equal-share `1.0` does not sit next to pixel heights
                 // and collapse the rest of the stack.
                 for (k, rect) in &body_rects {
-                    self.system_dock_weights
-                        .insert(*k, rect.height().max(0.05));
+                    self.system_dock_weights.insert(*k, rect.height().max(0.05));
                 }
                 // Trade body pixels 1:1 — same feel as digi / waterfall splits.
                 let ha = body_rects.get(&a).map(|r| r.height()).unwrap_or(body_min);

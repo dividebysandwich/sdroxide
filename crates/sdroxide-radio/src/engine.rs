@@ -35,6 +35,7 @@ use sdroxide_ism::{IsmAction, IsmController};
 use sdroxide_nrsc5::{HdDemod, Mode as HdMode};
 use sdroxide_qo100::Qo100Controller;
 use sdroxide_rigctld::{RigState, RigctldController};
+use sdroxide_rs41::{Rs41Action, Rs41Controller};
 use sdroxide_skimmer::{SkimmerAction, SkimmerController};
 use sdroxide_tci::server::{ServerRequest, TciServerController, TciStateSnapshot};
 use sdroxide_types::{
@@ -2816,6 +2817,19 @@ struct Engine {
     /// `state.hfdl` for symmetry with `qo100_cfg`. Nothing reads it back yet,
     /// and it is not persisted — the same convention `qo100_cfg` follows.
     hfdl_cfg: sdroxide_types::HfdlSettings,
+    /// RS41 radiosonde decoder: a 48 kS/s downconversion centred on the dial
+    /// plus a worker-thread GFSK demodulator, present while the mode is RS41
+    /// and the front end can feed IQ. Same shape as the AIS lane.
+    rs41_ddc: Option<Ddc>,
+    rs41: Option<Rs41Controller>,
+    rs41_buf: Vec<Complex32>,
+    rs41_center_hz: f64,
+    rs41_in_rate: f64,
+    rs41_cfg: sdroxide_types::Rs41Settings,
+    rs41_idle_sent: Option<Option<String>>,
+    /// Last `last_at` uploaded to SondeHub per serial, so a status tick does
+    /// not re-post the same package.
+    rs41_uploaded: std::collections::HashMap<String, i64>,
     /// Open capture file for `--record-iq`, and the interleaving scratch it is
     /// written from.
     iq_rec: Option<std::io::BufWriter<std::fs::File>>,
@@ -3773,6 +3787,19 @@ fn engine_thread(
             }
             state.band = Band::containing(hz);
         }
+        // RS41 lives in 400–406 MHz; park mid-band when starting the mode cold.
+        if mode.is_rs41() {
+            let dial = state.active_freq_hz();
+            if dial < sdroxide_types::RS41_BAND_LO_HZ || dial > sdroxide_types::RS41_BAND_HI_HZ {
+                let hz = sdroxide_types::RS41_DEFAULT_HZ;
+                info!(from = dial, to = hz, "SONDE is in 400–406 MHz; tuning to mid-band");
+                match state.active_vfo {
+                    Vfo::A => state.vfo_a_hz = hz,
+                    Vfo::B => state.vfo_b_hz = hz,
+                }
+                state.band = Band::containing(hz);
+            }
+        }
         // ...and HFDL, whose channel is chosen in its panel rather than by the
         // dial: there is a plan of assigned frequencies, so the mode brings the
         // dial onto the chosen one and the panadapter shows the signal the lane
@@ -3836,6 +3863,12 @@ fn engine_thread(
         sdroxide_types::AisSettings::OFF // wideband-only, like the rest of the lanes
     } else {
         ais_cfg
+    };
+    let rs41_cfg = sdroxide_config::load_rs41_config();
+    state.rs41 = if audio_mode {
+        sdroxide_types::Rs41Settings::OFF // wideband-only, like the rest of the lanes
+    } else {
+        rs41_cfg
     };
 
     // Read before the DSP below rather than with the rest of the session
@@ -4201,6 +4234,14 @@ fn engine_thread(
         ais_in_rate: 0.0,
         ais_cfg,
         ais_idle_sent: None,
+        rs41_ddc: None,
+        rs41: None,
+        rs41_buf: Vec::new(),
+        rs41_center_hz: 0.0,
+        rs41_in_rate: 0.0,
+        rs41_cfg,
+        rs41_idle_sent: None,
+        rs41_uploaded: std::collections::HashMap::new(),
         qo100_ddc: None,
         qo100: None,
         qo100_buf: Vec::new(),
@@ -4349,6 +4390,7 @@ fn engine_thread(
         engine.sync_adsb(); // and the aircraft lane, if the mode is already ADS-B
         engine.sync_vdl2(); // ...and the datalink lane, likewise
         engine.sync_ais(); // ...and the shipping lane, likewise
+        engine.sync_rs41(); // ...and the radiosonde lane, likewise
         engine.sync_qo100(); // a no-op today: `qo100_cfg` starts disabled and is never loaded
         engine.sync_hfdl(); // a no-op today: `hfdl_cfg` starts disabled too
     }
@@ -4589,6 +4631,7 @@ fn engine_thread(
         engine.poll_adsb();
         engine.poll_vdl2();
         engine.poll_ais();
+        engine.poll_rs41();
         engine.poll_qo100();
         engine.poll_hfdl();
         engine.poll_scanner();
@@ -5511,6 +5554,14 @@ impl Engine {
                 c.on_rx_iq(&self.hfdl_buf);
             }
         }
+        // ...and the RS41 radiosonde decoder from a 48 kS/s lane on the dial.
+        if let Some(ddc) = self.rs41_ddc.as_mut() {
+            self.rs41_buf.clear();
+            ddc.process(iq, &mut self.rs41_buf);
+            if let Some(c) = self.rs41.as_ref() {
+                c.on_rx_iq(&self.rs41_buf);
+            }
+        }
         // Feed TCI clients: the same clean tap the digital decoders use (so
         // muting or turning down sdroxide can't silence somebody's decoder),
         // resampled to the 48 kHz TCI mandates.
@@ -6009,6 +6060,7 @@ impl Engine {
                 self.sync_adsb_window();
                 self.sync_vdl2_window();
                 self.sync_ais_window();
+                self.sync_rs41_window();
                 self.sync_qo100_window();
                 self.sync_hfdl_window();
                 self.update_tuning();
@@ -6266,6 +6318,9 @@ impl Engine {
         // channels 50 kHz apart, and a span that reaches only one of them still
         // hears every ship, at half its reporting rate.
         self.sync_ais_window();
+        // The RS41 window follows the dial: the sonde being copied is wherever
+        // the operator parked the VFO inside 400–406 MHz.
+        self.sync_rs41_window();
         // The QO-100 window, unlike the ISM one, *does* follow the hardware
         // centre — its one target frequency never moves, so re-seating the
         // mixer is all a retune ever needs.
@@ -8090,6 +8145,11 @@ impl Engine {
                         // channel.
                         self.sync_hfdl_window();
                     }
+                    // RS41's lane is centred on the dial: a retune inside the
+                    // span must re-seat the mixer the same way HFDL does.
+                    if self.state.rx[0].mode.is_rs41() {
+                        self.sync_rs41_window();
+                    }
                 }
                 self.update_tuning();
             }
@@ -9334,6 +9394,20 @@ impl Engine {
                 }
                 self.sync_ais();
                 if let Some(d) = self.ais.as_ref() {
+                    d.set_config(cfg);
+                }
+            }
+
+            // RS41 radiosonde decoder.
+            SetRs41Config(cfg) => {
+                let cfg = cfg.sane();
+                self.state.rs41 = cfg;
+                self.rs41_cfg = cfg;
+                if let Err(e) = sdroxide_config::save_rs41_config(&cfg) {
+                    warn!("saving RS41 config: {e}");
+                }
+                self.sync_rs41();
+                if let Some(d) = self.rs41.as_ref() {
                     d.set_config(cfg);
                 }
             }
@@ -11461,6 +11535,161 @@ impl Engine {
         }
     }
 
+    /// Why the sonde decoder cannot run, or `None` when it can.
+    fn rs41_unavailable(&self) -> Option<String> {
+        if self.audio_mode {
+            return Some("SONDE needs I/Q — this front end hands over demodulated audio".into());
+        }
+        let dial = self.state.rx_freq_hz();
+        if !self.caps.may_rx_hz(sdroxide_types::RS41_DEFAULT_HZ) {
+            return Some("this radio cannot reach the 400–406 MHz radiosonde band".into());
+        }
+        if dial < sdroxide_types::RS41_BAND_LO_HZ - 50_000.0
+            || dial > sdroxide_types::RS41_BAND_HI_HZ + 50_000.0
+        {
+            return Some(format!(
+                "tune into {:.0}–{:.0} MHz — radiosondes transmit there",
+                sdroxide_types::RS41_BAND_LO_HZ / 1e6,
+                sdroxide_types::RS41_BAND_HI_HZ / 1e6
+            ));
+        }
+        None
+    }
+
+    fn build_rs41_window(&mut self) -> (Ddc, f64) {
+        let lane = self.rs41_cfg.kind.lane_rate_hz();
+        let mut ddc = Ddc::new(self.state.sample_rate, lane);
+        let center = self.state.rx_freq_hz();
+        ddc.set_offset_hz(center - self.state.center_hz);
+        self.rs41_in_rate = self.state.sample_rate;
+        (ddc, center)
+    }
+
+    /// Start or stop the sonde lane to match the mode and the front end.
+    fn sync_rs41(&mut self) {
+        if self.audio_mode {
+            self.state.rs41 = sdroxide_types::Rs41Settings::OFF;
+        } else {
+            self.state.rs41 = self.rs41_cfg;
+        }
+        let want = self.state.rx[0].mode.is_rs41()
+            && self.rs41_cfg.enabled
+            && self.rs41_unavailable().is_none();
+        // Kind / lane-rate change needs a full restart so the DDC and *mod
+        // process match the new family.
+        let lane_mismatch = self
+            .rs41_ddc
+            .as_ref()
+            .is_some_and(|ddc| (ddc.out_rate() - self.rs41_cfg.kind.lane_rate_hz()).abs() >= 1.0);
+        if want && self.rs41.is_some() && lane_mismatch {
+            self.rs41 = None;
+            self.rs41_ddc = None;
+            self.rs41_buf.clear();
+        }
+        match (want, self.rs41.is_some()) {
+            (true, false) => {
+                let (ddc, center) = self.build_rs41_window();
+                let out_rate = ddc.out_rate();
+                self.rs41 = Some(Rs41Controller::new(center, out_rate, self.state.rs41));
+                self.rs41_ddc = Some(ddc);
+                self.rs41_center_hz = center;
+                info!(
+                    rate = out_rate,
+                    center,
+                    kind = ?self.rs41_cfg.kind,
+                    "sonde decoder started"
+                );
+            }
+            (false, true) => {
+                self.rs41 = None;
+                self.rs41_ddc = None;
+                self.rs41_buf.clear();
+                info!("sonde decoder stopped");
+            }
+            (true, true) => self.sync_rs41_window(),
+            _ => {}
+        }
+    }
+
+    fn sync_rs41_window(&mut self) {
+        if self.rs41_ddc.is_none() {
+            return;
+        }
+        let want_lane = self.rs41_cfg.kind.lane_rate_hz();
+        let rebuild = (self.state.sample_rate - self.rs41_in_rate).abs() >= 1.0
+            || self.rs41_ddc.as_ref().is_some_and(|ddc| (ddc.out_rate() - want_lane).abs() >= 1.0);
+        if rebuild {
+            let (ddc, center) = self.build_rs41_window();
+            let rate = ddc.out_rate();
+            self.rs41_ddc = Some(ddc);
+            self.rs41_center_hz = center;
+            if let Some(d) = self.rs41.as_ref() {
+                d.set_window(center, rate);
+            }
+            info!(rate, center, "sonde window rebuilt");
+            return;
+        }
+        let center = self.state.rx_freq_hz();
+        let Some(ddc) = self.rs41_ddc.as_mut() else { return };
+        ddc.set_offset_hz(center - self.state.center_hz);
+        if (center - self.rs41_center_hz).abs() < 1.0 {
+            return;
+        }
+        self.rs41_center_hz = center;
+        let rate = ddc.out_rate();
+        if let Some(d) = self.rs41.as_ref() {
+            d.set_window(center, rate);
+        }
+    }
+
+    fn poll_rs41(&mut self) {
+        let unavailable = self.rs41_unavailable();
+        let Some(d) = self.rs41.as_ref() else {
+            if self.state.rx[0].mode.is_rs41() && self.rs41_idle_sent.as_ref() != Some(&unavailable)
+            {
+                self.rs41_idle_sent = Some(unavailable.clone());
+                let st = sdroxide_types::Rs41Status {
+                    unavailable,
+                    suggest_center_hz: Some(sdroxide_types::RS41_DEFAULT_HZ),
+                    ..Default::default()
+                };
+                let _ = self.event_tx.send(RadioEvent::Rs41Status(Box::new(st)));
+            }
+            return;
+        };
+        self.rs41_idle_sent = None;
+        if let Some(Rs41Action::Status(mut st)) = d.poll() {
+            st.unavailable = unavailable.clone();
+            st.suggest_center_hz = unavailable.is_some().then_some(sdroxide_types::RS41_DEFAULT_HZ);
+            let with_pos = st.sondes.iter().filter(|s| s.has_position()).count();
+            let fresh: Vec<_> = st
+                .sondes
+                .iter()
+                .filter(|s| {
+                    s.has_position()
+                        && self.rs41_uploaded.get(&s.serial).copied().unwrap_or(0) < s.last_at
+                })
+                .cloned()
+                .collect();
+            // Only when something would be handed to the uploader — the 2 Hz
+            // status poll otherwise drowns the useful PUT / skip lines.
+            if !fresh.is_empty() {
+                tracing::debug!(
+                    target: "sdroxide_net::sondehub",
+                    sondes = st.sondes.len(),
+                    with_pos,
+                    fresh = fresh.len(),
+                    "SondeHub consider upload"
+                );
+                for s in &fresh {
+                    self.rs41_uploaded.insert(s.serial.clone(), s.last_at);
+                }
+                self.spots.sondehub_report(&fresh);
+            }
+            let _ = self.event_tx.send(RadioEvent::Rs41Status(st));
+        }
+    }
+
     /// The main receiver's clean audio tap is shared: the digital-mode engine
     /// and the TCI server's RX-audio stream both read `tap_out`. Whoever wants
     /// it turns it on; it switches off only when nobody does. Every decision to
@@ -13231,6 +13460,24 @@ impl Engine {
             // See the APRS block above for why `follow_dial` is not enough.
             self.update_tuning();
         }
+        // RS41: into the meteorological band when the dial is elsewhere.
+        if rx == RxId::Main
+            && mode.is_rs41()
+            && !self.state.rx[0].mode.is_rs41()
+            && self.caps.may_rx_hz(sdroxide_types::RS41_DEFAULT_HZ)
+        {
+            let dial = self.state.active_freq_hz();
+            if dial < sdroxide_types::RS41_BAND_LO_HZ || dial > sdroxide_types::RS41_BAND_HI_HZ {
+                let hz = sdroxide_types::RS41_DEFAULT_HZ;
+                match self.state.active_vfo {
+                    Vfo::A => self.state.vfo_a_hz = hz,
+                    Vfo::B => self.state.vfo_b_hz = hz,
+                }
+                self.state.band = Band::containing(hz);
+                self.follow_dial();
+                self.update_tuning();
+            }
+        }
         // Changing modes under a running keyer message would leave it playing
         // into a transmit chain that has just been rebuilt (or into a digital
         // mode that has no use for it).
@@ -13296,6 +13543,7 @@ impl Engine {
             self.sync_adsb();
             self.sync_vdl2();
             self.sync_ais();
+            self.sync_rs41();
             self.emit_digi_status();
             // A wider channel needs a wider berth from the LO: switching a
             // narrow mode that was happily sitting 30 kHz off the LO into WFM
@@ -15081,6 +15329,9 @@ impl Engine {
         self.ais_ddc = None;
         self.ais = None;
         self.ais_buf.clear();
+        self.rs41_ddc = None;
+        self.rs41 = None;
+        self.rs41_buf.clear();
         // Dropped outright rather than left to `sync_tci_iq`'s own comparison:
         // two device rates can snap to the same client rate, and it would then
         // keep a decimation chain built for the rate we have just left.
@@ -15093,6 +15344,7 @@ impl Engine {
         self.sync_adsb();
         self.sync_vdl2();
         self.sync_ais();
+        self.sync_rs41();
         self.sync_qo100();
         self.sync_audio_tap();
         self.sync_tci_iq();
@@ -15474,6 +15726,7 @@ impl Engine {
             self.sync_adsb();
             self.sync_vdl2();
             self.sync_ais();
+            self.sync_rs41();
             self.sync_qo100();
             self.sync_hfdl();
         }
@@ -17606,6 +17859,7 @@ impl Engine {
                 self.sync_adsb_window();
                 self.sync_vdl2_window();
                 self.sync_ais_window();
+                self.sync_rs41_window();
                 self.sync_qo100_window();
                 self.sync_hfdl_window();
                 true
@@ -17767,6 +18021,7 @@ fn rig_mode_class(m: Mode) -> u8 {
         | Mode::Adsb
         | Mode::Vdl2
         | Mode::Ais
+        | Mode::Rs41
         | Mode::HdRadio => 5,
     }
 }

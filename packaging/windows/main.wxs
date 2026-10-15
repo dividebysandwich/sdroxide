@@ -30,6 +30,33 @@
                 <Component Id="MainExe" Guid="AE3DD3A4-EB4B-4921-BF67-60089CA6230E">
                     <File Id="SdroxideExe" Source="$(var.BinDir)/sdroxide.exe" KeyPath="yes" />
                 </Component>
+                <!-- Radiosonde *mod helpers (Cargo feature `sonde`). The release
+                     workflow copies them into BinDir beside sdroxide.exe before
+                     `wix build`, so they install next to the main binary and
+                     are found via current_exe() / PATH. -->
+                <Component Id="SondeRs41Mod" Guid="A1B2C3D4-E5F6-4789-A012-3456789ABC01">
+                    <File Id="Rs41ModExe" Source="$(var.BinDir)/rs41mod.exe" KeyPath="yes" />
+                </Component>
+                <Component Id="SondeDfm09Mod" Guid="A1B2C3D4-E5F6-4789-A012-3456789ABC02">
+                    <File Id="Dfm09ModExe" Source="$(var.BinDir)/dfm09mod.exe" KeyPath="yes" />
+                </Component>
+                <Component Id="SondeM10Mod" Guid="A1B2C3D4-E5F6-4789-A012-3456789ABC03">
+                    <File Id="M10ModExe" Source="$(var.BinDir)/m10mod.exe" KeyPath="yes" />
+                </Component>
+                <Component Id="SondeM10M20Mod" Guid="A1B2C3D4-E5F6-4789-A012-3456789ABC04">
+                    <File Id="M10M20ModExe" Source="$(var.BinDir)/m10m20mod.exe" KeyPath="yes" />
+                </Component>
+                <Component Id="SondeM20Mod" Guid="A1B2C3D4-E5F6-4789-A012-3456789ABC05">
+                    <File Id="M20ModExe" Source="$(var.BinDir)/m20mod.exe" KeyPath="yes" />
+                </Component>
+                <Component Id="SondeMts01Mod" Guid="A1B2C3D4-E5F6-4789-A012-3456789ABC06">
+                    <File Id="Mts01ModExe" Source="$(var.BinDir)/mts01mod.exe" KeyPath="yes" />
+                </Component>
+                <Component Id="SondeRs1729License" Guid="A1B2C3D4-E5F6-4789-A012-3456789ABC07">
+                    <File Id="Rs1729LicenseTxt"
+                          Source="vendor/rs1729/LICENSE"
+                          Name="LICENSE-rs1729.txt" KeyPath="yes" />
+                </Component>
                 <Component Id="LicenseFile" Guid="8D0E1A6B-4C2F-4B7A-9E3D-51A9C7F0B2D4">
                     <File Id="LicenseTxt" Source="LICENSE" Name="LICENSE.txt" KeyPath="yes" />
                 </Component>
@@ -104,6 +131,13 @@
 
         <Feature Id="Main">
             <ComponentRef Id="MainExe" />
+            <ComponentRef Id="SondeRs41Mod" />
+            <ComponentRef Id="SondeDfm09Mod" />
+            <ComponentRef Id="SondeM10Mod" />
+            <ComponentRef Id="SondeM10M20Mod" />
+            <ComponentRef Id="SondeM20Mod" />
+            <ComponentRef Id="SondeMts01Mod" />
+            <ComponentRef Id="SondeRs1729License" />
             <ComponentRef Id="LicenseFile" />
             <ComponentRef Id="Rx888FirmwareLicenseFile" />
             <ComponentRef Id="VoiceLicenseFile" />

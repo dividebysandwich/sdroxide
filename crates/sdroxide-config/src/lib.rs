@@ -1765,6 +1765,19 @@ pub fn save_ais_config(cfg: &sdroxide_types::AisSettings) -> Result<(), ConfigEr
     save_json("ais.json", cfg)
 }
 
+/// RS41 radiosonde decoder preferences.
+///
+/// Kept apart from the live `RadioState.rs41` for the same reason the AIS
+/// config is: the engine forces the live one off on a front end that cannot
+/// feed it, and that must not overwrite what the operator chose.
+pub fn load_rs41_config() -> sdroxide_types::Rs41Settings {
+    load_json::<sdroxide_types::Rs41Settings>("rs41.json").sane()
+}
+
+pub fn save_rs41_config(cfg: &sdroxide_types::Rs41Settings) -> Result<(), ConfigError> {
+    save_json("rs41.json", cfg)
+}
+
 pub fn load_vdl2_config() -> sdroxide_types::Vdl2Settings {
     load_json::<sdroxide_types::Vdl2Settings>("vdl2.json").sane()
 }

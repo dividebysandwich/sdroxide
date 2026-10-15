@@ -1146,4 +1146,15 @@ pub enum Command {
     ResetModeDefaults {
         mode: Option<Mode>,
     },
+
+    /// Set how the RS41 radiosonde decoder behaves: whether it runs, how long
+    /// a silent sonde stays on the list and the map, and how long a track is.
+    ///
+    /// The engine persists it to `rs41.json` and echoes it back in
+    /// [`crate::RadioState::rs41`], so there is no apply step and no way for the
+    /// panel's copy and the engine's to drift apart — the same bargain
+    /// [`Command::SetAdsbConfig`] strikes.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    SetRs41Config(crate::Rs41Settings),
 }

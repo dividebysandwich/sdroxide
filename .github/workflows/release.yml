@@ -303,10 +303,13 @@ jobs:
           # linked C, so it costs the SoapySDR-free artifact nothing at run time
           # and the release notes' "everything above" stays true. Both embed the
           # web client.
+          # `sonde` (default) builds rs1729 *mod helpers into target/sonde-mod/release
+          # and the package steps copy them beside sdroxide. Omit it only for a
+          # deliberately PATH-only sonde build.
           if [[ "${{ matrix.variant }}" == "cat" ]]; then
-            cargo build --release --locked -p sdroxide --no-default-features --features embed-web,rtl433
+            cargo build --release --locked -p sdroxide --no-default-features --features embed-web,rtl433,sonde
           else
-            cargo build --release --locked -p sdroxide --features embed-web
+            cargo build --release --locked -p sdroxide --features embed-web,sonde
           fi
 
       # MinGW links libstdc++/libgcc/libwinpthread as DLLs by default, and
@@ -333,6 +336,7 @@ jobs:
           strip target/release/sdroxide
           mkdir -p out stage/sdroxide
           cp target/release/sdroxide LICENSE stage/sdroxide/
+          REQUIRE_SONDE=1 bash packaging/copy-sonde-mods.sh stage/sdroxide
           # Every binary embeds the RX-888's FX3 firmware image, which is MIT
           # licensed: the notice has to travel with the binary, not just live
           # in the source tree.
@@ -454,6 +458,10 @@ jobs:
           people use it over a network, you have to offer them the source.
           EOF
           tar czf "out/$PKG.tar.gz" -C stage sdroxide
+          # cargo-deb only accepts `target/release/...` for built products, so
+          # stage the *mod helpers next to sdroxide before packaging the .deb
+          # (they were built into target/sonde-mod/release/).
+          REQUIRE_SONDE=1 bash packaging/copy-sonde-mods.sh target/release
           cargo install cargo-deb --locked
           # The SoapySDR build uses the `soapysdr` deb variant (package
           # sdroxide-soapysdr, recommends the driver modules); the default build
@@ -505,6 +513,7 @@ jobs:
                    AppDir/usr/share/icons/hicolor/scalable/apps \
                    AppDir/usr/share/doc/sdroxide
           cp target/release/sdroxide AppDir/usr/bin/
+          REQUIRE_SONDE=1 bash packaging/copy-sonde-mods.sh AppDir/usr/bin
           cp -r stage/sdroxide/voices AppDir/usr/bin/
           cp stage/sdroxide/*.txt stage/sdroxide/LICENSE stage/sdroxide/*.rules \
              AppDir/usr/share/doc/sdroxide/
@@ -550,6 +559,7 @@ jobs:
           BIN_DIR="target/$CARGO_BUILD_TARGET/release"
           cp "$BIN_DIR/sdroxide.exe" stage/sdroxide/
           cp LICENSE stage/sdroxide/LICENSE.txt
+          REQUIRE_SONDE=1 bash packaging/copy-sonde-mods.sh stage/sdroxide
           # MIT notice for the FX3 firmware image embedded in the binary.
           cp crates/sdroxide-rx888/firmware/LICENSE.txt stage/sdroxide/LICENSE-rx888-firmware.txt
           cp crates/sdroxide-speech/assets/LICENSE-cmudict.txt stage/sdroxide/
@@ -644,6 +654,8 @@ jobs:
           # The MSI (fixed product identity) is only built for the default
           # (non-SoapySDR) variant; SoapySDR users take the portable .zip.
           if [[ "${{ matrix.variant }}" == "cat" ]]; then
+            # WiX reads *mod helpers from BinDir (same folder as sdroxide.exe).
+            REQUIRE_SONDE=1 bash packaging/copy-sonde-mods.sh "$BIN_DIR"
             dotnet tool install --global wix --version 5.0.2
             wix build packaging/windows/main.wxs -arch x64 \
               -d Version="$CARGO_VERSION" -d BinDir="$BIN_DIR" \
@@ -660,6 +672,7 @@ jobs:
           ls -lh target/release/sdroxide
           # Portable tarball (both variants)
           cp target/release/sdroxide LICENSE stage/sdroxide/
+          REQUIRE_SONDE=1 bash packaging/copy-sonde-mods.sh stage/sdroxide
           # MIT notice for the FX3 firmware image embedded in the binary.
           cp crates/sdroxide-rx888/firmware/LICENSE.txt stage/sdroxide/LICENSE-rx888-firmware.txt
           cp crates/sdroxide-speech/assets/LICENSE-cmudict.txt stage/sdroxide/
@@ -747,6 +760,14 @@ jobs:
             mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
             sed "s/@VERSION@/$CARGO_VERSION/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
             cp target/release/sdroxide "$APP/Contents/MacOS/sdroxide"
+            REQUIRE_SONDE=1 bash packaging/copy-sonde-mods.sh "$APP/Contents/MacOS"
+            # Docs must not live in Contents/MacOS — codesign treats non-Mach-O
+            # siblings as unsigned nested code and refuses to seal the binary.
+            for doc in LICENSE-rs1729.txt PROVENANCE-rs1729.md; do
+              if [[ -f "$APP/Contents/MacOS/$doc" ]]; then
+                mv "$APP/Contents/MacOS/$doc" "$APP/Contents/Resources/$doc"
+              fi
+            done
             # CFBundleIconFile=sdroxide resolves to this; without it Launchpad
             # and the Dock fall back to the blank generic-application icon.
             cp packaging/macos/sdroxide.icns "$APP/Contents/Resources/sdroxide.icns"
@@ -765,6 +786,11 @@ jobs:
                assets/voices/en_US-hfc_female-medium.onnx.json \
                assets/voices/en_US-hfc_female-medium.MODEL_CARD "$APP/Contents/Resources/voices/"
             cp assets/voices/LICENSE-voice.txt "$APP/Contents/Resources/"
+            # Nested *mod helpers need their own ad-hoc signatures before the
+            # bundle seal, or codesign --verify --strict fails.
+            for f in "$APP/Contents/MacOS/"*mod; do
+              [[ -f "$f" ]] && codesign --force -s - "$f"
+            done
             codesign --force -s - "$APP/Contents/MacOS/sdroxide"
             codesign --force -s - "$APP"
             cp LICENSE stage-dmg/

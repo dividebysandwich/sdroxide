@@ -110,10 +110,8 @@ impl SdroxideApp {
         let mut open = self.show_awards;
         let mut new_band: Option<String> = None;
         let awards = self.awards_cache.as_ref().map(|(_, _, a)| a.clone()).unwrap_or_default();
-        let size = egui::vec2(
-            crate::layout::window_w(ctx, 540.0),
-            crate::layout::window_h(ctx, 560.0),
-        );
+        let size =
+            egui::vec2(crate::layout::window_w(ctx, 540.0), crate::layout::window_h(ctx, 560.0));
         let id = crate::layout::salted_id(ctx, "AWARDS");
         if self.system_docked_as(crate::app::SystemDock::Awards) {
             if let Some(win) = self.system_dock_host("AWARDS", id, crate::app::SystemDock::Awards) {
@@ -149,10 +147,7 @@ impl SdroxideApp {
             crate::chrome::paint_window_border(ctx, &r.response);
             self.system_center_pending.awards = false;
         }
-        if resp
-            .as_ref()
-            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
-        {
+        if resp.as_ref().is_some_and(|r| self.system_title_pin(ctx, &r.response)) {
             self.dock_system(crate::app::SystemDock::Awards);
         }
         self.show_awards = open;
@@ -188,54 +183,37 @@ impl SdroxideApp {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show_themed(ui, |ui| {
             // WAS state grid.
             ui.label(
-                RichText::new("Worked All States")
-                    .size(12.0)
-                    .strong()
-                    .color(crate::theme::CYAN()),
+                RichText::new("Worked All States").size(12.0).strong().color(crate::theme::CYAN()),
             );
             award_cell_grid(
                 ui,
-                sdroxide_types::US_STATES.iter().map(|s| {
-                    (s.to_string(), awards.was.get(*s).copied().unwrap_or_default())
-                }),
+                sdroxide_types::US_STATES
+                    .iter()
+                    .map(|s| (s.to_string(), awards.was.get(*s).copied().unwrap_or_default())),
                 44.0,
             );
             ui.add_space(8.0);
             // WAZ zone grid (1..40).
             ui.label(
-                RichText::new("CQ Zones (WAZ)")
-                    .size(12.0)
-                    .strong()
-                    .color(crate::theme::CYAN()),
+                RichText::new("CQ Zones (WAZ)").size(12.0).strong().color(crate::theme::CYAN()),
             );
             award_cell_grid(
                 ui,
-                (1u8..=40).map(|z| {
-                    (format!("{z:02}"), awards.waz.get(&z).copied().unwrap_or_default())
-                }),
+                (1u8..=40)
+                    .map(|z| (format!("{z:02}"), awards.waz.get(&z).copied().unwrap_or_default())),
                 34.0,
             );
             ui.add_space(8.0);
             // DXCC worked list (confirmed marked).
             ui.label(
-                RichText::new("DXCC entities")
-                    .size(12.0)
-                    .strong()
-                    .color(crate::theme::CYAN()),
+                RichText::new("DXCC entities").size(12.0).strong().color(crate::theme::CYAN()),
             );
             for (name, st) in &awards.dxcc {
-                let col = if st.confirmed {
-                    crate::theme::GREEN()
-                } else {
-                    crate::theme::YELLOW()
-                };
+                let col = if st.confirmed { crate::theme::GREEN() } else { crate::theme::YELLOW() };
                 ui.label(
-                    RichText::new(format!(
-                        "{} {name}",
-                        if st.confirmed { "✓" } else { "•" }
-                    ))
-                    .size(11.5)
-                    .color(col),
+                    RichText::new(format!("{} {name}", if st.confirmed { "✓" } else { "•" }))
+                        .size(11.5)
+                        .color(col),
                 );
             }
         });

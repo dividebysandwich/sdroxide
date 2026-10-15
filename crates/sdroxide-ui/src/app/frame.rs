@@ -480,6 +480,10 @@ impl eframe::App for SdroxideApp {
                 // not this view — the window is only so the operator can see
                 // the signal they are decoding.
                 (dial - 15_000.0, dial + 15_000.0)
+            } else if mode.is_rs41() {
+                // GFSK at 4800 baud is a few kilohertz wide; frame a comfortable
+                // slice around the dial so neighbouring sondes stay visible.
+                (dial - 25_000.0, dial + 25_000.0)
             } else if mode.is_aprs() {
                 // APRS is deliberately *not* framed on its own channel.
                 // Every other digital mode is worked inside a sub-band, so
@@ -776,6 +780,8 @@ impl eframe::App for SdroxideApp {
                                     self.ais_panel(ui, &mut cmds, panel_h);
                                 } else if mode.is_hfdl() {
                                     self.hfdl_panel(ui, &mut cmds, panel_h);
+                                } else if mode.is_rs41() {
+                                    self.rs41_panel(ui, &mut cmds, panel_h);
                                 } else if mode.is_aprs() {
                                     self.aprs_panel(ui, &mut cmds, panel_h);
                                 } else if mode.is_packet() {
@@ -975,6 +981,7 @@ impl eframe::App for SdroxideApp {
         self.cw_macro_window(&ctx, &mut cmds);
         self.text_macro_window(&ctx, &mut cmds);
         self.ais_setup_window(&ctx, &mut cmds);
+        self.rs41_setup_window(&ctx, &mut cmds);
         self.vdl2_setup_window(&ctx, &mut cmds);
         self.rds_window(&ctx);
         self.drm_window(&ctx, &mut cmds);
@@ -1543,6 +1550,7 @@ impl SdroxideApp {
                 RadioEvent::AdsbStatus(st) => self.adsb_status = Some(st),
                 RadioEvent::Vdl2Status(st) => self.vdl2_status = Some(st),
                 RadioEvent::AisStatus(st) => self.ais_status = Some(st),
+                RadioEvent::Rs41Status(st) => self.rs41_status = Some(st),
                 RadioEvent::Qo100Status(st) => self.qo100_status = Some(st),
                 RadioEvent::HfdlStatus(st) => {
                     // Feed the map's plot table before the log scrolls anything

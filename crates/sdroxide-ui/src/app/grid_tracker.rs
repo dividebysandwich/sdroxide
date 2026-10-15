@@ -220,24 +220,17 @@ impl SdroxideApp {
             sdroxide_types::grid_to_latlon(&g)
         };
 
-        let size = egui::vec2(
-            crate::layout::window_w(ctx, 760.0),
-            crate::layout::window_h(ctx, 560.0),
-        );
+        let size =
+            egui::vec2(crate::layout::window_w(ctx, 760.0), crate::layout::window_h(ctx, 560.0));
         let id = crate::layout::salted_id(ctx, "GRID TRACKER");
         if self.system_docked_as(crate::app::SystemDock::Grid) {
-            if let Some(win) = self.system_dock_host("GRID TRACKER", id, crate::app::SystemDock::Grid) {
+            if let Some(win) =
+                self.system_dock_host("GRID TRACKER", id, crate::app::SystemDock::Grid)
+            {
                 win.show(ctx, |ui| {
                     crate::chrome::window_body_bg(ui);
                     self.clip_system_dock_body(ui, crate::app::SystemDock::Grid);
-                    grid_tracker_body(
-                        ui,
-                        &mut self.grid_tracker,
-                        &worked,
-                        confirmed,
-                        &heard,
-                        home,
-                    );
+                    grid_tracker_body(ui, &mut self.grid_tracker, &worked, confirmed, &heard, home);
                 });
             }
             return;
@@ -264,10 +257,7 @@ impl SdroxideApp {
             crate::chrome::paint_window_border(ctx, &r.response);
             self.system_center_pending.grid = false;
         }
-        if resp
-            .as_ref()
-            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
-        {
+        if resp.as_ref().is_some_and(|r| self.system_title_pin(ctx, &r.response)) {
             self.dock_system(crate::app::SystemDock::Grid);
         }
         self.show_grid = open;
@@ -289,9 +279,7 @@ fn grid_tracker_body(
                 .monospace(),
         );
         ui.label(
-            egui::RichText::new(format!("{confirmed} confirmed"))
-                .color(theme::GREEN())
-                .monospace(),
+            egui::RichText::new(format!("{confirmed} confirmed")).color(theme::GREEN()).monospace(),
         );
         if ui
             .selectable_label(

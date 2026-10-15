@@ -5,11 +5,14 @@ edition.workspace = true
 
 [features]
 # SoapySDR is optional so a CAT-only build needs no libSoapySDR installed.
-default = ["soapy", "rtl433"]
+default = ["soapy", "rtl433", "sonde"]
 soapy = ["dep:soapysdr"]
 # The embedded rtl_433 ISM decoders. Needs a C compiler, CMake and the
 # vendor/rtl_433 submodule; turn off for a build without them.
 rtl433 = ["sdroxide-ism/rtl433"]
+# Radiosonde `*mod` helpers (rs1729). Needs a C compiler, `make`, and the
+# vendor/rs1729 submodule. Turn off to skip building/shipping those binaries.
+sonde = ["sdroxide-rs41/sonde"]
 
 [dependencies]
 sdroxide-types.workspace = true
@@ -43,6 +46,10 @@ sdroxide-qo100 = { path = "../sdroxide-qo100" }
 # Native-only, like the rest of the `on_rx_iq` lanes: the HFDL decoder runs
 # in the engine off a dedicated downconversion of the raw IQ.
 sdroxide-hfdl = { path = "../sdroxide-hfdl" }
+# Radiosonde lane via rs1729 *mod subprocesses — same native-only bargain.
+# default-features = false so workspace `--features sonde` actually controls
+# whether the C helpers are built (rs41's own default would always turn them on).
+sdroxide-rs41 = { path = "../sdroxide-rs41", default-features = false }
 sdroxide-net = { path = "../sdroxide-net" }
 sdroxide-winlink = { path = "../sdroxide-winlink" }
 # Only for `tlesub`: the engine persists the satellite subscriptions and, being
