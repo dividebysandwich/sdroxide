@@ -471,28 +471,61 @@ fn memory_repeater_rows(ui: &mut egui::Ui, e: &mut MemoryEdit) {
 
 impl SdroxideApp {
     pub(in crate::app) fn memories_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
+        crate::layout::arm_center_on_open(
+            self.show_memories,
+            &mut self.system_was_open.memories,
+            &mut self.system_center_pending.memories,
+        );
+        let id = crate::layout::salted_id(ctx, "Memories");
+        if self.system_docked_as(crate::app::SystemDock::Memories) {
+            if let Some(win) = self.system_dock_host("Memories", id, crate::app::SystemDock::Memories) {
+                win.show(ctx, |ui| {
+                    crate::chrome::window_body_bg(ui);
+                    self.clip_system_dock_body(ui, crate::app::SystemDock::Memories);
+                    self.memories_ui(ui, cmds);
+                });
+            }
+            return;
+        }
         let mut open = self.show_memories;
-        let resp = egui::Window::new("Memories")
-            .id(crate::layout::salted_id(ctx, "Memories"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            // Wide enough for a row: the recall button, a name, a dial to the
-            // Hz, a mode, and the edit and delete buttons. Narrower than this
-            // and every name is drawn with an ellipsis on it.
-            .default_width(crate::layout::window_w(ctx, 460.0))
-            // A real starting height, and a floor under what egui remembers:
-            // the window used to hug its (often short) list and come up a few
-            // rows tall. See the voice keyer below for why the minimum matters
-            // as much as the default.
-            .default_height(crate::layout::window_h(ctx, 460.0))
-            .min_height(crate::layout::window_h(ctx, 280.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.memories_ui(ui, cmds)
-            });
+        let size = egui::vec2(
+            crate::layout::window_w(ctx, 460.0),
+            crate::layout::window_h(ctx, 460.0),
+        );
+        let pending = self.system_center_pending.memories;
+        let resp = crate::layout::center_on_open(
+            egui::Window::new("Memories")
+                .id(id)
+                .open(&mut open)
+                .frame(crate::chrome::window_frame())
+                .resizable(true)
+                // Wide enough for a row: the recall button, a name, a dial to the
+                // Hz, a mode, and the edit and delete buttons. Narrower than this
+                // and every name is drawn with an ellipsis on it.
+                .default_width(size.x)
+                // A real starting height, and a floor under what egui remembers:
+                // the window used to hug its (often short) list and come up a few
+                // rows tall. See the voice keyer below for why the minimum matters
+                // as much as the default.
+                .default_height(size.y)
+                .min_height(crate::layout::window_h(ctx, 280.0)),
+            ctx,
+            pending,
+            size,
+        )
+        .show(ctx, |ui| {
+            crate::chrome::window_body_bg(ui);
+            self.memories_ui(ui, cmds)
+        });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
+            self.system_center_pending.memories = false;
+        }
+        if resp
+            .as_ref()
+            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
+        {
+            self.dock_system(crate::app::SystemDock::Memories);
         }
         self.show_memories = open;
     }

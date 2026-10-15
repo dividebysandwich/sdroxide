@@ -189,7 +189,12 @@ fn cell_rect(
 
 impl SdroxideApp {
     pub(in crate::app) fn grid_tracker_window(&mut self, ctx: &egui::Context) {
-        if !self.show_grid {
+        crate::layout::arm_center_on_open(
+            self.show_grid,
+            &mut self.system_was_open.grid,
+            &mut self.system_center_pending.grid,
+        );
+        if !self.show_grid && !self.system_docked_as(crate::app::SystemDock::Grid) {
             return;
         }
         // Every band, whatever the AWARDS window's filter is set to: the map
@@ -215,62 +220,110 @@ impl SdroxideApp {
             sdroxide_types::grid_to_latlon(&g)
         };
 
-        let mut open = self.show_grid;
-        let tracker = &mut self.grid_tracker;
-        egui::Window::new("GRID TRACKER")
-            .id(crate::layout::salted_id(ctx, "GRID TRACKER"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 760.0))
-            .default_height(crate::layout::window_h(ctx, 560.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(format!("{} worked", worked.len()))
-                            .color(theme::YELLOW())
-                            .monospace(),
+        let size = egui::vec2(
+            crate::layout::window_w(ctx, 760.0),
+            crate::layout::window_h(ctx, 560.0),
+        );
+        let id = crate::layout::salted_id(ctx, "GRID TRACKER");
+        if self.system_docked_as(crate::app::SystemDock::Grid) {
+            if let Some(win) = self.system_dock_host("GRID TRACKER", id, crate::app::SystemDock::Grid) {
+                win.show(ctx, |ui| {
+                    crate::chrome::window_body_bg(ui);
+                    self.clip_system_dock_body(ui, crate::app::SystemDock::Grid);
+                    grid_tracker_body(
+                        ui,
+                        &mut self.grid_tracker,
+                        &worked,
+                        confirmed,
+                        &heard,
+                        home,
                     );
-                    ui.label(
-                        egui::RichText::new(format!("{confirmed} confirmed"))
-                            .color(theme::GREEN())
-                            .monospace(),
-                    );
-                    if ui
-                        .selectable_label(
-                            tracker.show_heard,
-                            egui::RichText::new(format!("{} heard", heard.len()))
-                                .color(theme::CYAN())
-                                .monospace(),
-                        )
-                        .on_hover_text(
-                            "Shade the squares heard on the live decode list, not only the \
-                             ones in the log — what is on the air now, in cyan under the \
-                             worked squares.",
-                        )
-                        .clicked()
-                    {
-                        tracker.show_heard = !tracker.show_heard;
-                    }
                 });
-                ui.separator();
-                let h = ui.available_height();
-                let none = HashSet::new();
-                let shade = if tracker.show_heard { &heard } else { &none };
-                draw(ui, tracker, &worked, shade, home, h);
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(
-                        "Drag to pan, wheel to zoom. Amber = worked, green = confirmed, \
-                         cyan = heard.",
-                    )
-                    .size(10.0)
-                    .color(theme::gray(150)),
-                );
-            });
+            }
+            return;
+        }
+        let mut open = self.show_grid;
+        let pending = self.system_center_pending.grid;
+        let resp = crate::layout::center_on_open(
+            egui::Window::new("GRID TRACKER")
+                .id(id)
+                .open(&mut open)
+                .frame(crate::chrome::window_frame())
+                .resizable(true)
+                .default_width(size.x)
+                .default_height(size.y),
+            ctx,
+            pending,
+            size,
+        )
+        .show(ctx, |ui| {
+            crate::chrome::window_body_bg(ui);
+            grid_tracker_body(ui, &mut self.grid_tracker, &worked, confirmed, &heard, home);
+        });
+        if let Some(r) = &resp {
+            crate::chrome::paint_window_border(ctx, &r.response);
+            self.system_center_pending.grid = false;
+        }
+        if resp
+            .as_ref()
+            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
+        {
+            self.dock_system(crate::app::SystemDock::Grid);
+        }
         self.show_grid = open;
     }
+}
+
+fn grid_tracker_body(
+    ui: &mut egui::Ui,
+    tracker: &mut GridTracker,
+    worked: &[(String, bool)],
+    confirmed: usize,
+    heard: &HashSet<String>,
+    home: Option<(f64, f64)>,
+) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(format!("{} worked", worked.len()))
+                .color(theme::YELLOW())
+                .monospace(),
+        );
+        ui.label(
+            egui::RichText::new(format!("{confirmed} confirmed"))
+                .color(theme::GREEN())
+                .monospace(),
+        );
+        if ui
+            .selectable_label(
+                tracker.show_heard,
+                egui::RichText::new(format!("{} heard", heard.len()))
+                    .color(theme::CYAN())
+                    .monospace(),
+            )
+            .on_hover_text(
+                "Shade the squares heard on the live decode list, not only the \
+                 ones in the log — what is on the air now, in cyan under the \
+                 worked squares.",
+            )
+            .clicked()
+        {
+            tracker.show_heard = !tracker.show_heard;
+        }
+    });
+    ui.separator();
+    let h = ui.available_height();
+    let none = HashSet::new();
+    let shade = if tracker.show_heard { heard } else { &none };
+    draw(ui, tracker, worked, shade, home, h);
+    ui.separator();
+    ui.label(
+        egui::RichText::new(
+            "Drag to pan, wheel to zoom. Amber = worked, green = confirmed, \
+             cyan = heard.",
+        )
+        .size(10.0)
+        .color(theme::gray(150)),
+    );
 }
 
 #[cfg(test)]

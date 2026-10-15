@@ -11,25 +11,62 @@ use crate::chrome::StyledCombo;
 
 impl SdroxideApp {
     pub(in crate::app) fn scanner_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
-        if !self.show_scanner {
+        crate::layout::arm_center_on_open(
+            self.show_scanner,
+            &mut self.system_was_open.scanner,
+            &mut self.system_center_pending.scanner,
+        );
+        if !self.show_scanner && !self.system_docked_as(crate::app::SystemDock::Scanner) {
             return;
         }
-        let mut open = self.show_scanner;
         // Edited in place and sent whole on any change, the way the skimmer's
         // settings are; the engine persists it and echoes it back.
         let mut cfg = self.scanner.clone();
-        let resp = egui::Window::new("Scanner")
-            .id(crate::layout::salted_id(ctx, "Scanner"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 420.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.scanner_body(ui, &mut cfg, cmds)
-            });
+        let id = crate::layout::salted_id(ctx, "Scanner");
+        if self.system_docked_as(crate::app::SystemDock::Scanner) {
+            if let Some(win) = self.system_dock_host("Scanner", id, crate::app::SystemDock::Scanner) {
+                win.show(ctx, |ui| {
+                    crate::chrome::window_body_bg(ui);
+                    self.clip_system_dock_body(ui, crate::app::SystemDock::Scanner);
+                    self.scanner_body(ui, &mut cfg, cmds);
+                });
+            }
+            if cfg != self.scanner {
+                self.scanner = cfg.clone();
+                cmds.push(Command::SetScannerConfig(cfg));
+            }
+            return;
+        }
+        let mut open = self.show_scanner;
+        let size = egui::vec2(
+            crate::layout::window_w(ctx, 420.0),
+            crate::layout::window_h(ctx, 420.0),
+        );
+        let pending = self.system_center_pending.scanner;
+        let resp = crate::layout::center_on_open(
+            egui::Window::new("Scanner")
+                .id(id)
+                .open(&mut open)
+                .frame(crate::chrome::window_frame())
+                .resizable(true)
+                .default_width(size.x),
+            ctx,
+            pending,
+            size,
+        )
+        .show(ctx, |ui| {
+            crate::chrome::window_body_bg(ui);
+            self.scanner_body(ui, &mut cfg, cmds)
+        });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
+            self.system_center_pending.scanner = false;
+        }
+        if resp
+            .as_ref()
+            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
+        {
+            self.dock_system(crate::app::SystemDock::Scanner);
         }
         if cfg != self.scanner {
             self.scanner = cfg.clone();

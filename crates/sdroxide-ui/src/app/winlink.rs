@@ -49,7 +49,10 @@ pub struct MailUi {
     /// Last frame's `open`, so the listing can be asked for on the rising edge.
     /// Without this the window opens showing "loading…" for ever: nothing else
     /// sets `dirty`, so the request is never made.
-    was_open: bool,
+    pub(in crate::app) was_open: bool,
+    /// Keep forcing a centered position until `.show()` actually draws — see
+    /// [`crate::layout::arm_center_on_open`].
+    pub(in crate::app) center_pending: bool,
 }
 
 impl MailUi {
@@ -109,15 +112,19 @@ impl MailUi {
 
 impl crate::app::SdroxideApp {
     pub(in crate::app) fn mail_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
-        // Opening the window is itself a reason to (re)list: the mailbox may
-        // have changed since it was last closed, and on the very first open
-        // there is nothing to show at all.
-        if self.mail.open && !self.mail.was_open {
+        // Rising edge: re-list the mailbox (it may have changed while closed)
+        // and re-center the window in the main content area.
+        let was = self.mail.was_open;
+        crate::layout::arm_center_on_open(
+            self.mail.open,
+            &mut self.mail.was_open,
+            &mut self.mail.center_pending,
+        );
+        if self.mail.open && !was {
             self.mail.dirty = true;
         }
-        self.mail.was_open = self.mail.open;
 
-        if !self.mail.open {
+        if !self.mail.open && !self.system_docked_as(crate::app::SystemDock::Mail) {
             return;
         }
 
@@ -134,21 +141,53 @@ impl crate::app::SdroxideApp {
         // for the room — without that the window collapses again the moment a
         // folder is empty.
         let min_h = crate::layout::window_h(ctx, 520.0);
+        let id = crate::layout::salted_id(ctx, "MAIL");
+        if self.system_docked_as(crate::app::SystemDock::Mail) {
+            if let Some(win) = self.system_dock_host("MAIL", id, crate::app::SystemDock::Mail) {
+                win.show(ctx, |ui| {
+                    crate::chrome::window_body_bg(ui);
+                    self.clip_system_dock_body(ui, crate::app::SystemDock::Mail);
+                    ui.set_min_height(min_h);
+                    self.mail_body(ui, cmds);
+                });
+            }
+            return;
+        }
         let mut open = self.mail.open;
-        egui::Window::new("MAIL")
-            .id(crate::layout::salted_id(ctx, "MAIL"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 860.0))
-            .default_height(crate::layout::window_h(ctx, 640.0))
-            .min_width(crate::layout::window_w(ctx, 420.0))
-            .min_height(min_h)
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                ui.set_min_height(min_h);
-                self.mail_body(ui, cmds);
-            });
+        let size = egui::vec2(
+            crate::layout::window_w(ctx, 860.0),
+            crate::layout::window_h(ctx, 640.0),
+        );
+        let pending = self.mail.center_pending;
+        let resp = crate::layout::center_on_open(
+            egui::Window::new("MAIL")
+                .id(id)
+                .open(&mut open)
+                .frame(crate::chrome::window_frame())
+                .resizable(true)
+                .default_width(size.x)
+                .default_height(size.y)
+                .min_width(crate::layout::window_w(ctx, 420.0))
+                .min_height(min_h),
+            ctx,
+            pending,
+            size,
+        )
+        .show(ctx, |ui| {
+            crate::chrome::window_body_bg(ui);
+            ui.set_min_height(min_h);
+            self.mail_body(ui, cmds);
+        });
+        if let Some(r) = &resp {
+            crate::chrome::paint_window_border(ctx, &r.response);
+            self.mail.center_pending = false;
+        }
+        if resp
+            .as_ref()
+            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
+        {
+            self.dock_system(crate::app::SystemDock::Mail);
+        }
         self.mail.open = open;
     }
 

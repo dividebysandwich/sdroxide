@@ -44,6 +44,8 @@ pub(in crate::app) mod solar;
 pub(in crate::app) mod spectrum;
 pub(in crate::app) mod speech;
 pub(in crate::app) mod spots;
+pub(in crate::app) mod system_dock;
+pub(in crate::app) use system_dock::SystemDock;
 pub(in crate::app) mod top_bar;
 pub(crate) mod util;
 pub(in crate::app) mod windows;
@@ -114,6 +116,27 @@ pub(in crate::app) fn tx_gated(
     add: impl FnOnce(&mut egui::Ui) -> egui::Response,
 ) -> egui::Response {
     rx_only_hint(ui.add_enabled_ui(tx_ok, add).inner, tx_ok)
+}
+
+/// Per-window open-edge / center-pending bits for System-strip overlays.
+///
+/// Used twice on [`SdroxideApp`]: once as last-frame open (`system_was_open`),
+/// once as "keep forcing center until `.show()` draws" (`system_center_pending`).
+/// MAIL keeps the same pair on [`winlink::MailUi`]. HELP already repositions
+/// itself on open.
+#[derive(Debug, Default, Clone, Copy)]
+pub(in crate::app) struct SystemWasOpen {
+    pub logbook: bool,
+    pub spots: bool,
+    pub awards: bool,
+    pub bands: bool,
+    pub sat: bool,
+    pub ism: bool,
+    pub public_sdrs: bool,
+    pub memories: bool,
+    pub scanner: bool,
+    pub grid: bool,
+    pub settings: bool,
 }
 
 pub struct SdroxideApp {
@@ -459,6 +482,10 @@ pub struct SdroxideApp {
     /// one-click chips beside it in the HFDL panel.
     hfdl_channels: Vec<u32>,
     show_settings: bool,
+    /// Rising-edge memory for System-strip windows — see [`SystemWasOpen`].
+    system_was_open: SystemWasOpen,
+    /// Re-center until the window actually draws — see [`SystemWasOpen`].
+    system_center_pending: SystemWasOpen,
     /// Scroll the Settings window back to its tab bar on the frame it opens.
     /// The window's scroll offset is egui memory, which outlives both the
     /// dialog and the process — without this, a restart shows wherever the
@@ -545,8 +572,23 @@ pub struct SdroxideApp {
     /// How wide the docked column may be this frame, or `None` where it cannot
     /// dock — see [`top_bar::band_dock_room`]. Settled at the top of the frame
     /// from this app's own column, before the top bar draws the chip that
-    /// shows and hides it.
+    /// shows and hides it. Shared by the band/mode dock and System-strip dock.
     band_dock_room: Option<f32>,
+    /// System-strip overlays snapped into the right panel, in stack order.
+    system_dock: Vec<system_dock::SystemDock>,
+    /// Body rects reserved by [`Self::system_dock_panel`] for each docked
+    /// overlay's late-frame window host. Empty when nothing is docked or the
+    /// layout has no room for a column this frame.
+    system_dock_body_rects: std::collections::HashMap<system_dock::SystemDock, egui::Rect>,
+    /// Share of the content width the System dock column takes (body only —
+    /// the split handle is extra). Clamped to ≤ 50% each frame.
+    system_dock_fraction: f32,
+    /// Docked overlays whose body is folded to a header row. Expanded again
+    /// with the triangle on that row; undock / close clears the entry.
+    system_dock_collapsed: std::collections::HashSet<system_dock::SystemDock>,
+    /// Relative height weights for expanded docked bodies (default 1.0). The
+    /// horizontal split handle under each item trades weight with its neighbour.
+    system_dock_weights: std::collections::HashMap<system_dock::SystemDock, f32>,
     /// The layout in force last frame, so a change can re-apply the style
     /// metrics (chip padding, text sizes) exactly once instead of every frame.
     tier: crate::layout::Tier,
@@ -1435,6 +1477,8 @@ impl SdroxideApp {
             hfdl_filter: String::new(),
             hfdl_channels: load_hfdl_channels(storage),
             show_settings: false,
+            system_was_open: SystemWasOpen::default(),
+            system_center_pending: SystemWasOpen::default(),
             settings_scroll_top: true,
             voice: sdroxide_types::VoiceStatus::default(),
             show_voice: false,
@@ -1457,6 +1501,11 @@ impl SdroxideApp {
             band_docked: false,
             band_dock_visible: false,
             band_dock_room: None,
+            system_dock: Vec::new(),
+            system_dock_body_rects: std::collections::HashMap::new(),
+            system_dock_fraction: 0.35,
+            system_dock_collapsed: std::collections::HashSet::new(),
+            system_dock_weights: std::collections::HashMap::new(),
             // Corrected on the first frame, once the viewport size is known.
             tier: crate::layout::Tier::Desktop,
             ptt: Default::default(),

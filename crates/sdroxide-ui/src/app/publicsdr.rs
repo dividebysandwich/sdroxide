@@ -337,7 +337,12 @@ impl SdroxideApp {
         ctx: &egui::Context,
         _cmds: &mut [Command],
     ) {
-        if !self.show_public_sdrs {
+        crate::layout::arm_center_on_open(
+            self.show_public_sdrs,
+            &mut self.system_was_open.public_sdrs,
+            &mut self.system_center_pending.public_sdrs,
+        );
+        if !self.show_public_sdrs && !self.system_docked_as(crate::app::SystemDock::PublicSdrs) {
             // Asked again the next time it opens, so a window reopened after an
             // hour is not showing an hour-old list.
             self.public_sdrs_asked = false;
@@ -361,15 +366,35 @@ impl SdroxideApp {
         let blurb = self.public_sdr_confirm.as_deref().map(|e| self.replace_blurb(e));
         let mut answer: Option<Confirm> = None;
 
-        let resp = egui::Window::new("PUBLIC SDRS")
-            .id(crate::layout::salted_id(ctx, "PUBLIC SDRS"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 980.0))
-            .default_height(crate::layout::window_h(ctx, 520.0))
-            .show(ctx, |ui| {
+        let size = egui::vec2(
+            crate::layout::window_w(ctx, 980.0),
+            crate::layout::window_h(ctx, 520.0),
+        );
+        let id = crate::layout::salted_id(ctx, "PUBLIC SDRS");
+        let docked = self.system_docked_as(crate::app::SystemDock::PublicSdrs);
+        let pending = self.system_center_pending.public_sdrs;
+        let win = if docked {
+            self.system_dock_host("PUBLIC SDRS", id, crate::app::SystemDock::PublicSdrs)
+        } else {
+            Some(crate::layout::center_on_open(
+                egui::Window::new("PUBLIC SDRS")
+                    .id(id)
+                    .open(&mut open)
+                    .frame(crate::chrome::window_frame())
+                    .resizable(true)
+                    .default_width(size.x)
+                    .default_height(size.y),
+                ctx,
+                pending,
+                size,
+            ))
+        };
+        let resp = win.and_then(|win| {
+            win.show(ctx, |ui| {
                 crate::chrome::window_body_bg(ui);
+                if docked {
+                    self.clip_system_dock_body(ui, crate::app::SystemDock::PublicSdrs);
+                }
                 if let Some(blurb) = &blurb {
                     answer = confirm_panel(ui, blurb);
                     ui.add_space(6.0);
@@ -511,11 +536,24 @@ impl SdroxideApp {
                         );
                     }
                 });
-            });
-        if let Some(r) = &resp {
+            })
+        });
+        if docked {
+            self.system_center_pending.public_sdrs = false;
+        } else if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
+            self.system_center_pending.public_sdrs = false;
         }
-        self.show_public_sdrs = open;
+        if !docked
+            && resp
+                .as_ref()
+                .is_some_and(|r| self.system_title_pin(ctx, &r.response))
+        {
+            self.dock_system(crate::app::SystemDock::PublicSdrs);
+        }
+        if !docked {
+            self.show_public_sdrs = open;
+        }
 
         if refresh {
             self.public_sdrs = None;
@@ -524,7 +562,7 @@ impl SdroxideApp {
         // The question, then the answer to it. Closing the window is a "no":
         // an armed confirmation that outlived the list it was raised from
         // would fire on whatever radio the operator had moved to by then.
-        if !open {
+        if !self.show_public_sdrs {
             self.public_sdr_confirm = None;
         }
         if let Some(choice) = answer {

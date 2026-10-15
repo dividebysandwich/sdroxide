@@ -325,10 +325,100 @@ pub fn window_h(ctx: &egui::Context, want: f32) -> f32 {
     want.min(ctx.content_rect().height() - 16.0).max(120.0)
 }
 
+/// Top-left so a window of `size` sits in the middle of the egui content area.
+///
+/// The size is clamped to the content rect first, so a phone that cannot fit
+/// the desktop default still gets a window that starts fully on screen.
+pub fn centered_window_pos(ctx: &egui::Context, size: egui::Vec2) -> egui::Pos2 {
+    let area = ctx.content_rect();
+    let size = egui::vec2(size.x.min(area.width()).max(0.0), size.y.min(area.height()).max(0.0));
+    let mut pos = area.center() - size * 0.5;
+    pos.x = pos.x.clamp(area.left(), (area.right() - size.x).max(area.left()));
+    pos.y = pos.y.clamp(area.top(), (area.bottom() - size.y).max(area.top()));
+    pos
+}
+
+/// Rising edge of an open flag. Updates `was_open` to match `open`.
+///
+/// System-strip windows call this so a reopen can re-center: `true` only on
+/// the frame the flag went from closed to open.
+pub fn take_just_opened(open: bool, was_open: &mut bool) -> bool {
+    let just = open && !*was_open;
+    *was_open = open;
+    just
+}
+
+/// Arm / clear the "re-center this window" flag for a System-strip overlay.
+///
+/// egui's window fade-out can make `.show()` return `None` for one or more
+/// frames after open flips to true — before `Area` ever runs. If we only
+/// applied `current_pos` on that first frame, the position never stuck and the
+/// next visible frame fell back to the persisted (often off-centre) spot. Keep
+/// `pending` set until a frame actually draws the window.
+pub fn arm_center_on_open(open: bool, was_open: &mut bool, pending: &mut bool) {
+    if take_just_opened(open, was_open) {
+        *pending = true;
+    }
+    if !open {
+        *pending = false;
+    }
+}
+
+/// Center a System-strip window while `pending` is set; otherwise only supply a
+/// default for egui's first-ever placement.
+///
+/// Call [`arm_center_on_open`] before this, then clear `pending` when `.show()`
+/// returns `Some` (the window actually drew).
+///
+/// egui 0.36's default [`egui::WindowDrag::OnTouch`] resolves to
+/// [`egui::WindowDrag::TitleBar`] on desktop. In that mode `Window::show`
+/// saves the area's pivot *before* `Area::begin` (where `current_pos` is
+/// applied) and then restores it afterward — so a plain `current_pos` is
+/// silently undone whenever the window already has persisted area state
+/// (every reopen). Switching to [`egui::WindowDrag::Anywhere`] for the
+/// pending frame skips that restore and lets the centered position stick.
+pub fn center_on_open<'a>(
+    win: egui::Window<'a>,
+    ctx: &egui::Context,
+    pending: bool,
+    size: egui::Vec2,
+) -> egui::Window<'a> {
+    let pos = centered_window_pos(ctx, size);
+    if pending {
+        win.current_pos(pos).drag_area(egui::WindowDrag::Anywhere)
+    } else {
+        win.default_pos(pos)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use eframe::egui::vec2;
+
+    #[test]
+    fn take_just_opened_is_only_the_rising_edge() {
+        let mut was = false;
+        assert!(take_just_opened(true, &mut was));
+        assert!(was);
+        assert!(!take_just_opened(true, &mut was));
+        assert!(!take_just_opened(false, &mut was));
+        assert!(!was);
+        assert!(take_just_opened(true, &mut was));
+    }
+
+    #[test]
+    fn arm_center_stays_pending_until_cleared_or_closed() {
+        let mut was = false;
+        let mut pending = false;
+        arm_center_on_open(true, &mut was, &mut pending);
+        assert!(pending);
+        // Still open: pending must survive frames where `.show()` returned None.
+        arm_center_on_open(true, &mut was, &mut pending);
+        assert!(pending);
+        arm_center_on_open(false, &mut was, &mut pending);
+        assert!(!pending);
+    }
 
     /// Issue #234: on Windows a first start came up bigger than the screen and
     /// the controls along the right-hand edge — the Setup gear among them —

@@ -60,20 +60,54 @@ pub(in crate::app) fn conditions_age(app: &SdroxideApp) -> Option<String> {
 impl SdroxideApp {
     /// The BANDS window: one row per band, forecast beside evidence.
     pub(in crate::app) fn bands_window(&mut self, ctx: &egui::Context) {
+        crate::layout::arm_center_on_open(
+            self.show_bands,
+            &mut self.system_was_open.bands,
+            &mut self.system_center_pending.bands,
+        );
+        let id = crate::layout::salted_id(ctx, "BANDS");
+        if self.system_docked_as(crate::app::SystemDock::Bands) {
+            if let Some(win) = self.system_dock_host("BANDS", id, crate::app::SystemDock::Bands) {
+                win.show(ctx, |ui| {
+                    crate::chrome::window_body_bg(ui);
+                    self.clip_system_dock_body(ui, crate::app::SystemDock::Bands);
+                    self.bands_body(ui);
+                });
+            }
+            crate::repaint::after_ms(ctx, 1000);
+            return;
+        }
         let mut open = self.show_bands;
-        let resp = egui::Window::new("BANDS")
-            .id(crate::layout::salted_id(ctx, "BANDS"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 520.0))
-            .default_height(crate::layout::window_h(ctx, 460.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.bands_body(ui)
-            });
+        let size = egui::vec2(
+            crate::layout::window_w(ctx, 520.0),
+            crate::layout::window_h(ctx, 460.0),
+        );
+        let pending = self.system_center_pending.bands;
+        let resp = crate::layout::center_on_open(
+            egui::Window::new("BANDS")
+                .id(id)
+                .open(&mut open)
+                .frame(crate::chrome::window_frame())
+                .resizable(true)
+                .default_width(size.x)
+                .default_height(size.y),
+            ctx,
+            pending,
+            size,
+        )
+        .show(ctx, |ui| {
+            crate::chrome::window_body_bg(ui);
+            self.bands_body(ui)
+        });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
+            self.system_center_pending.bands = false;
+        }
+        if resp
+            .as_ref()
+            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
+        {
+            self.dock_system(crate::app::SystemDock::Bands);
         }
         self.show_bands = open;
         if self.show_bands {

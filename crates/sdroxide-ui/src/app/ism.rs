@@ -49,28 +49,64 @@ const NARROW_W: f32 = 560.0;
 
 impl SdroxideApp {
     pub(in crate::app) fn ism_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
-        if !self.show_ism {
+        crate::layout::arm_center_on_open(
+            self.show_ism,
+            &mut self.system_was_open.ism,
+            &mut self.system_center_pending.ism,
+        );
+        if !self.show_ism && !self.system_docked_as(crate::app::SystemDock::Ism) {
             return;
         }
-        let mut open = self.show_ism;
         // Edited in place and sent whole on any change, as the skimmer's and the
         // scanner's are; the engine persists it and echoes it back, so there is
         // no apply step to get wrong.
         let mut cfg = self.state.ism;
-        let resp = egui::Window::new("ISM DEVICES")
-            .id(crate::layout::salted_id(ctx, "Ism"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            // Wide enough that a full weather station's readings fold onto two
-            // lines rather than five. It is resizable either way.
-            .default_width(crate::layout::window_w(ctx, 760.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.ism_body(ui, &mut cfg, cmds)
-            });
+        let id = crate::layout::salted_id(ctx, "Ism");
+        if self.system_docked_as(crate::app::SystemDock::Ism) {
+            if let Some(win) = self.system_dock_host("ISM DEVICES", id, crate::app::SystemDock::Ism) {
+                win.show(ctx, |ui| {
+                    crate::chrome::window_body_bg(ui);
+                    self.clip_system_dock_body(ui, crate::app::SystemDock::Ism);
+                    self.ism_body(ui, &mut cfg, cmds);
+                });
+            }
+            if cfg != self.state.ism {
+                cmds.push(Command::SetIsmConfig(cfg));
+            }
+            return;
+        }
+        let mut open = self.show_ism;
+        let size = egui::vec2(
+            crate::layout::window_w(ctx, 760.0),
+            crate::layout::window_h(ctx, 480.0),
+        );
+        let pending = self.system_center_pending.ism;
+        let resp = crate::layout::center_on_open(
+            egui::Window::new("ISM DEVICES")
+                .id(id)
+                .open(&mut open)
+                .frame(crate::chrome::window_frame())
+                .resizable(true)
+                // Wide enough that a full weather station's readings fold onto two
+                // lines rather than five. It is resizable either way.
+                .default_width(size.x),
+            ctx,
+            pending,
+            size,
+        )
+        .show(ctx, |ui| {
+            crate::chrome::window_body_bg(ui);
+            self.ism_body(ui, &mut cfg, cmds)
+        });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
+            self.system_center_pending.ism = false;
+        }
+        if resp
+            .as_ref()
+            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
+        {
+            self.dock_system(crate::app::SystemDock::Ism);
         }
         if cfg != self.state.ism {
             cmds.push(Command::SetIsmConfig(cfg));

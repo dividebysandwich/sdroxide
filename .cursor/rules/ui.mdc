@@ -20,6 +20,10 @@ Each frame (`app/frame.rs`): drain `poll_event()`, draw, collect `Vec<Command>`,
 
 `MultiApp` owns one `SdroxideApp` per tab and drains hidden tabs every frame so background radios keep decoding.
 
+System-strip windows (LOG, MEM, MAIL, SCAN, …) re-center on every reopen via `layout::arm_center_on_open` + `layout::center_on_open`. Keep the pending flag until `.show()` returns `Some` (egui fade can skip the first frame). On the pending frame, `center_on_open` also sets `WindowDrag::Anywhere` — egui 0.36 TitleBar mode restores the pre-`begin` pivot and would otherwise undo `current_pos`. Do not use `.anchor(CENTER_CENTER)` — that fights dragging while open.
+
+A 📌 control in each floating System window's title bar (beside the collapse triangle) snaps it into the right panel (`system_dock_panel` + `system_dock_host`). Docking is gated by `band_dock_room` (wide enough / not phone), but the System column's resize max is half the content width — not the band dock's 320 pt cap. Several overlays may be pinned at once — they stack in the column. Each docked header has a collapse triangle, 📌 (lit) to undock, and × to close. Drag a docked header to reorder the stack (⠿ + grab cursor on hover; collapse / 📌 / × exclude the drag sense; cyan insert line on drop). A vertical `chrome::split_handle` on the dock's inner edge resizes column width (item spacing must stay 0 so the strip is not stolen). Expanded slots are at least 3× the header height; a horizontal three-dash grip under each body (when another expanded item sits below) trades body pixels 1:1 with that neighbour.
+
 ## Adding a panel
 
 1. `impl SdroxideApp` method in `app/panels/<mode>.rs`, signature `(ui, cmds, …)`.

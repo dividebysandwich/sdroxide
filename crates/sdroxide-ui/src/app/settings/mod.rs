@@ -929,9 +929,14 @@ impl SdroxideApp {
     }
 
     pub(in crate::app) fn settings_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
+        crate::layout::arm_center_on_open(
+            self.show_settings,
+            &mut self.system_was_open.settings,
+            &mut self.system_center_pending.settings,
+        );
         // Query slow lists (cpal devices, serial ports, radio config) once per
         // dialog-open; a pick invalidates so the selection refreshes.
-        if !self.show_settings {
+        if !self.show_settings && !self.system_docked_as(crate::app::SystemDock::Settings) {
             self.audio_devices = None;
             self.audio_devices_queried = false;
             // Drop an uncommitted converter offset rather than carry it to the
@@ -1135,22 +1140,37 @@ impl SdroxideApp {
         // the display was.
         let want =
             egui::vec2(crate::layout::window_w(ctx, 900.0), crate::layout::window_h(ctx, 760.0));
-        let resp = egui::Window::new("Settings")
-            // Pinned id, versioned: egui persists the remembered size and
-            // position under it, and the suffix drops the stale (often very
-            // wide, always 420 pt tall) geometry left by the builds before this
-            // one. Position is centred on first use because it goes with it.
-            .id(crate::layout::salted_id(ctx, "settings-window-v2"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_pos(ctx.content_rect().center() - want * 0.5)
-            .default_size(want)
-            .min_width(crate::layout::window_w(ctx, 380.0))
-            .min_height(crate::layout::window_h(ctx, 300.0))
-            .vscroll(true)
-            .show(ctx, |ui| {
+        let id = crate::layout::salted_id(ctx, "settings-window-v2");
+        let docked = self.system_docked_as(crate::app::SystemDock::Settings);
+        let pending = self.system_center_pending.settings;
+        let win = if docked {
+            self.system_dock_host("Settings", id, crate::app::SystemDock::Settings).map(|w| w.vscroll(true))
+        } else {
+            Some(crate::layout::center_on_open(
+                egui::Window::new("Settings")
+                    // Pinned id, versioned: egui persists the remembered size and
+                    // position under it, and the suffix drops the stale (often very
+                    // wide, always 420 pt tall) geometry left by the builds before this
+                    // one. Reopen re-centers; drag still works while it stays open.
+                    .id(id)
+                    .open(&mut open)
+                    .frame(crate::chrome::window_frame())
+                    .resizable(true)
+                    .default_size(want)
+                    .min_width(crate::layout::window_w(ctx, 380.0))
+                    .min_height(crate::layout::window_h(ctx, 300.0))
+                    .vscroll(true),
+                ctx,
+                pending,
+                want,
+            ))
+        };
+        let resp = win.and_then(|win| {
+            win.show(ctx, |ui| {
                 crate::chrome::window_body_bg(ui);
+                if docked {
+                    self.clip_system_dock_body(ui, crate::app::SystemDock::Settings);
+                }
                 bars.restore(ui);
                 // On the frame the dialog opens, jump back to the origin so
                 // the tab bar is on screen. Instant, not animated: a leftover
@@ -1291,12 +1311,25 @@ impl SdroxideApp {
                         },
                     );
                 });
-            });
+            })
+        });
         bars.pop(ctx);
-        if let Some(r) = &resp {
+        if docked {
+            self.system_center_pending.settings = false;
+        } else if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
+            self.system_center_pending.settings = false;
         }
-        self.show_settings = open;
+        if !docked
+            && resp
+                .as_ref()
+                .is_some_and(|r| self.system_title_pin(ctx, &r.response))
+        {
+            self.dock_system(crate::app::SystemDock::Settings);
+        }
+        if !docked {
+            self.show_settings = open;
+        }
         self.settings_tab = tab;
         self.settings_upload_tab = upload_tab;
         self.profile_name_edit = profile_name;

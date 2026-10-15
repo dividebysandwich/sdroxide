@@ -621,7 +621,12 @@ fn in_words(s: i64) -> String {
 
 impl SdroxideApp {
     pub(in crate::app) fn sat_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
-        if !self.show_sat {
+        crate::layout::arm_center_on_open(
+            self.show_sat,
+            &mut self.system_was_open.sat,
+            &mut self.system_center_pending.sat,
+        );
+        if !self.show_sat && !self.system_docked_as(crate::app::SystemDock::Sat) {
             return;
         }
         let mut win = std::mem::take(&mut self.sat_win);
@@ -630,20 +635,50 @@ impl SdroxideApp {
         // rather than inside the tab arm because `qo100_body` needs `&mut self`
         // and the state lives on `self`.
         let mut qo100 = std::mem::take(&mut self.qo100_win);
+        let id = crate::layout::salted_id(ctx, "SATELLITE");
+        if self.system_docked_as(crate::app::SystemDock::Sat) {
+            if let Some(w) = self.system_dock_host("SATELLITE", id, crate::app::SystemDock::Sat) {
+                w.show(ctx, |ui| {
+                    crate::chrome::window_body_bg(ui);
+                    self.clip_system_dock_body(ui, crate::app::SystemDock::Sat);
+                    self.sat_body(ui, &mut win, &mut qo100, cmds);
+                });
+            }
+            self.sat_win = win;
+            self.qo100_win = qo100;
+            return;
+        }
         let mut open = self.show_sat;
-        let resp = egui::Window::new("SATELLITE")
-            .id(crate::layout::salted_id(ctx, "SATELLITE"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 480.0))
-            .default_height(crate::layout::window_h(ctx, 520.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.sat_body(ui, &mut win, &mut qo100, cmds)
-            });
+        let size = egui::vec2(
+            crate::layout::window_w(ctx, 480.0),
+            crate::layout::window_h(ctx, 520.0),
+        );
+        let pending = self.system_center_pending.sat;
+        let resp = crate::layout::center_on_open(
+            egui::Window::new("SATELLITE")
+                .id(id)
+                .open(&mut open)
+                .frame(crate::chrome::window_frame())
+                .resizable(true)
+                .default_width(size.x)
+                .default_height(size.y),
+            ctx,
+            pending,
+            size,
+        )
+        .show(ctx, |ui| {
+            crate::chrome::window_body_bg(ui);
+            self.sat_body(ui, &mut win, &mut qo100, cmds)
+        });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
+            self.system_center_pending.sat = false;
+        }
+        if resp
+            .as_ref()
+            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
+        {
+            self.dock_system(crate::app::SystemDock::Sat);
         }
         self.show_sat = open;
         self.sat_win = win;

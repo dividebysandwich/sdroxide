@@ -31,14 +31,22 @@ pub fn angled_frame<R>(ui: &mut Ui, accent: Color32, add: impl FnOnce(&mut Ui) -
     // `horizontal_wrapped` inside that pass never wraps (nothing to wrap
     // against). Capture the panel's real width here, before the frame, and
     // pin the content to it so wrapping happens at the visible edge.
+    //
+    // Prefer the parent's available width (already shrunk by a system / band
+    // dock) over the full window `content_rect` — a floor of 120 pt used to
+    // force the frame wider than a dock-narrowed column on Windows / web /
+    // scaled displays and paint over the dock grip.
+    let parent_w = ui.available_width();
     let avail = {
-        // Never wider than the window itself, whatever the parent reports. A
-        // `Frame`'s outer rect is its content plus its margins, so a child that
-        // took all the width there was leaves the parent expanded past the
-        // screen edge — and every row measured against *that* wraps too late
-        // and has whatever crossed the edge clipped away.
-        let a = ui.available_width().min(ui.ctx().content_rect().width());
-        if a.is_finite() && a > 50.0 { a } else { ui.ctx().content_rect().width() - 24.0 }
+        let window_w = ui.ctx().content_rect().width();
+        let a = parent_w.min(window_w);
+        if a.is_finite() && a > 1.0 {
+            a
+        } else if window_w.is_finite() {
+            (window_w - 24.0).max(1.0)
+        } else {
+            parent_w.max(1.0)
+        }
     };
     let margin = 10i8;
     // The Gradient style needs a fill sized to the frame's final rect, which
@@ -55,9 +63,11 @@ pub fn angled_frame<R>(ui: &mut Ui, accent: Color32, add: impl FnOnce(&mut Ui) -
             // Pin to the panel width (both min and max) so wrapping happens at
             // the visible edge AND the frame — and its cut-corner border — spans
             // the full width even when the last row of content is short.
-            let w = (avail - 2.0 * margin as f32).max(120.0);
-            ui.set_min_width(w);
+            // Never ask for more than the parent still has (dock-safe).
+            let inner_cap = ui.available_width().max(0.0);
+            let w = (avail - 2.0 * margin as f32).clamp(1.0, inner_cap.max(1.0));
             ui.set_max_width(w);
+            ui.set_min_width(w.min(ui.available_width().max(0.0)));
             add(ui)
         });
     if let Some(slot) = grad_slot {

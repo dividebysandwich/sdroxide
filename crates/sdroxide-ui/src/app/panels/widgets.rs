@@ -443,14 +443,19 @@ pub(in crate::app) fn sstv_section<R>(
     // Force a top-down layout: `allocate_ui` would otherwise inherit the parent's
     // horizontal layout (we're inside a `horizontal_top`), laying the section's
     // contents out side by side instead of stacked.
+    let size = egui::vec2(size.x.max(0.0), size.y.max(0.0));
     ui.allocate_ui_with_layout(size, egui::Layout::top_down(egui::Align::Min), |ui| {
+        // Intersect with the parent clip (operating column beside the dock)
+        // so a section never paints over the system-dock grip on any host.
+        ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
         egui::Frame::new()
             .fill(crate::theme::ROW_BG())
             .stroke(egui::Stroke::new(1.0, crate::theme::LINE_LIT()))
             .inner_margin(egui::Margin { left: 8, right: 8, top: 5, bottom: 7 })
             .show(ui, |ui| {
-                ui.set_min_size(egui::vec2(size.x - 16.0, size.y - 12.0));
-                ui.set_max_width(size.x - 16.0);
+                let inner = egui::vec2((size.x - 16.0).max(0.0), (size.y - 12.0).max(0.0));
+                ui.set_max_size(inner);
+                ui.set_min_width(inner.x.min(ui.available_width().max(0.0)));
                 ui.label(RichText::new(title).size(9.5).strong().color(crate::theme::CYAN_DIM()));
                 ui.add_space(3.0);
                 add(ui)

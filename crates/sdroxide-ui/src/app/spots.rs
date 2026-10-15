@@ -271,6 +271,11 @@ impl SdroxideApp {
     /// click-to-tune list of current DX-cluster / POTA / SOTA / PSK-Reporter
     /// spots and broadcast stations, and the feed status line.
     pub(in crate::app) fn spots_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
+        crate::layout::arm_center_on_open(
+            self.show_spots,
+            &mut self.system_was_open.spots,
+            &mut self.system_center_pending.spots,
+        );
         let worked_entities = self.worked_entities().clone();
         let mut open = self.show_spots;
         let mut clicked: Option<Spot> = None;
@@ -289,108 +294,71 @@ impl SdroxideApp {
             (SpotKind::FreeDv, "FREEDV"),
             (SpotKind::Broadcast, "BC"),
         ];
-        let resp = egui::Window::new("SPOTS")
-            .id(crate::layout::salted_id(ctx, "SPOTS"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 580.0))
-            .default_height(crate::layout::window_h(ctx, 480.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                ui.horizontal(|ui| {
-                    for (i, (kind, label)) in labels.iter().enumerate() {
-                        let chip = crate::chrome::chip(ui, self.view.spot_kinds_shown[i], *label);
-                        let chip = if *kind == SpotKind::Broadcast {
-                            chip.on_hover_text("Longwave & shortwave broadcast stations on air now")
-                        } else {
-                            chip
-                        };
-                        if chip.clicked() {
-                            self.view.spot_kinds_shown[i] = !self.view.spot_kinds_shown[i];
-                        }
-                    }
-                    if crate::chrome::chip(ui, self.spot_in_view_only, "IN VIEW")
-                        .on_hover_text("Only spots inside the panadapter span")
-                        .clicked()
-                    {
-                        self.spot_in_view_only = !self.spot_in_view_only;
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if crate::chrome::chip(ui, false, "⚙ SETUP")
-                            .on_hover_text("Feeds, lookup & upload settings")
-                            .clicked()
-                        {
-                            open_setup = true;
-                        }
-                    });
-                });
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 5.0;
-                    ui.label(RichText::new("⌕").color(crate::theme::CYAN_DIM()).size(14.0));
-                    crate::chrome::field(
+        let size = egui::vec2(
+            crate::layout::window_w(ctx, 580.0),
+            crate::layout::window_h(ctx, 480.0),
+        );
+        let id = crate::layout::salted_id(ctx, "SPOTS");
+        if self.system_docked_as(crate::app::SystemDock::Spots) {
+            if let Some(win) = self.system_dock_host("SPOTS", id, crate::app::SystemDock::Spots) {
+                win.show(ctx, |ui| {
+                    crate::chrome::window_body_bg(ui);
+                    self.clip_system_dock_body(ui, crate::app::SystemDock::Spots);
+                    self.spots_body(
                         ui,
-                        egui::TextEdit::singleline(&mut self.spot_search)
-                            .desired_width(200.0)
-                            .hint_text("call, station, site, frequency")
-                            .text_color(crate::theme::TEXT_STRONG()),
+                        &labels,
+                        &spots,
+                        &worked_entities,
+                        now,
+                        &mut clicked,
+                        &mut open_setup,
                     );
-                    if !self.spot_search.trim().is_empty()
-                        && ui.button("✕").on_hover_text("Clear the search").clicked()
-                    {
-                        self.spot_search.clear();
-                    }
                 });
-                if let Some(s) = &self.net_status {
-                    ui.label(RichText::new(s).size(11.0).color(crate::theme::gray(150)));
-                }
-                ui.separator();
-                // Filter by the category chips, then rank by how well each row
-                // matched the query. With no query the natural frequency order
-                // is kept; with one, the best matches come first, because the
-                // whole point of typing is to get the wanted row to the top.
-                let query = self.spot_search.trim();
-                let visible: Vec<&Spot> = spots.iter().filter(|s| self.spot_visible(s)).collect();
-                let mut rows: Vec<(&Spot, i32)> = visible
-                    .iter()
-                    .filter_map(|s| {
-                        crate::fuzzy::score_terms(&spot_haystack(s), query).map(|sc| (*s, sc))
-                    })
-                    .collect();
-                if !query.is_empty() {
-                    rows.sort_by_key(|r| std::cmp::Reverse(r.1));
-                    // Counted against what the chips let through, not against
-                    // every spot held — "3 of 5" when three categories are off
-                    // would look like the search had lost the rest.
-                    let (text, colour) = match rows.len() {
-                        0 => ("no match".to_string(), crate::theme::ALERT()),
-                        n => (format!("{n} of {}", visible.len()), crate::theme::YELLOW()),
-                    };
-                    ui.label(RichText::new(text).color(colour).size(10.0));
-                }
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show_themed(ui, |ui| {
-                    for (s, _) in &rows {
-                        let needed = s.kind != SpotKind::Broadcast
-                            && sdroxide_types::entity_name(&s.call)
-                                .map(|n| !worked_entities.contains(n))
-                                .unwrap_or(false);
-                        if spot_row(ui, s, now, needed).clicked() {
-                            clicked = Some((*s).clone());
-                        }
-                    }
-                    if rows.is_empty() {
-                        ui.add_space(8.0);
-                        let msg = if query.is_empty() {
-                            "no spots — enable a feed in ⚙ SETUP"
-                        } else {
-                            "nothing matches the search"
-                        };
-                        ui.label(RichText::new(msg).color(crate::theme::gray(120)));
-                    }
-                });
+            }
+            self.show_spots = true;
+            if open_setup {
+                self.show_settings = true;
+                self.settings_tab = SettingsTab::Spots;
+            }
+            if let Some(s) = clicked {
+                self.select_spot(&s, cmds);
+            }
+            return;
+        }
+        let pending = self.system_center_pending.spots;
+        let resp = crate::layout::center_on_open(
+            egui::Window::new("SPOTS")
+                .id(id)
+                .open(&mut open)
+                .frame(crate::chrome::window_frame())
+                .resizable(true)
+                .default_width(size.x)
+                .default_height(size.y),
+            ctx,
+            pending,
+            size,
+        )
+        .show(ctx, |ui| {
+                crate::chrome::window_body_bg(ui);
+                self.spots_body(
+                    ui,
+                    &labels,
+                    &spots,
+                    &worked_entities,
+                    now,
+                    &mut clicked,
+                    &mut open_setup,
+                );
             });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
+            self.system_center_pending.spots = false;
+        }
+        if resp
+            .as_ref()
+            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
+        {
+            self.dock_system(crate::app::SystemDock::Spots);
         }
         self.show_spots = open;
         if open_setup {
@@ -401,5 +369,107 @@ impl SdroxideApp {
         if let Some(s) = clicked {
             self.select_spot(&s, cmds);
         }
+    }
+
+    fn spots_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        labels: &[(SpotKind, &str)],
+        spots: &[Spot],
+        worked_entities: &std::collections::HashSet<String>,
+        now: i64,
+        clicked: &mut Option<Spot>,
+        open_setup: &mut bool,
+    ) {
+        ui.horizontal(|ui| {
+            for (i, (kind, label)) in labels.iter().enumerate() {
+                let chip = crate::chrome::chip(ui, self.view.spot_kinds_shown[i], *label);
+                let chip = if *kind == SpotKind::Broadcast {
+                    chip.on_hover_text("Longwave & shortwave broadcast stations on air now")
+                } else {
+                    chip
+                };
+                if chip.clicked() {
+                    self.view.spot_kinds_shown[i] = !self.view.spot_kinds_shown[i];
+                }
+            }
+            if crate::chrome::chip(ui, self.spot_in_view_only, "IN VIEW")
+                .on_hover_text("Only spots inside the panadapter span")
+                .clicked()
+            {
+                self.spot_in_view_only = !self.spot_in_view_only;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if crate::chrome::chip(ui, false, "⚙ SETUP")
+                    .on_hover_text("Feeds, lookup & upload settings")
+                    .clicked()
+                {
+                    *open_setup = true;
+                }
+            });
+        });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 5.0;
+            ui.label(RichText::new("⌕").color(crate::theme::CYAN_DIM()).size(14.0));
+            crate::chrome::field(
+                ui,
+                egui::TextEdit::singleline(&mut self.spot_search)
+                    .desired_width(200.0)
+                    .hint_text("call, station, site, frequency")
+                    .text_color(crate::theme::TEXT_STRONG()),
+            );
+            if !self.spot_search.trim().is_empty()
+                && ui.button("✕").on_hover_text("Clear the search").clicked()
+            {
+                self.spot_search.clear();
+            }
+        });
+        if let Some(s) = &self.net_status {
+            ui.label(RichText::new(s).size(11.0).color(crate::theme::gray(150)));
+        }
+        ui.separator();
+        // Filter by the category chips, then rank by how well each row
+        // matched the query. With no query the natural frequency order
+        // is kept; with one, the best matches come first, because the
+        // whole point of typing is to get the wanted row to the top.
+        let query = self.spot_search.trim();
+        let visible: Vec<&Spot> = spots.iter().filter(|s| self.spot_visible(s)).collect();
+        let mut rows: Vec<(&Spot, i32)> = visible
+            .iter()
+            .filter_map(|s| {
+                crate::fuzzy::score_terms(&spot_haystack(s), query).map(|sc| (*s, sc))
+            })
+            .collect();
+        if !query.is_empty() {
+            rows.sort_by_key(|r| std::cmp::Reverse(r.1));
+            // Counted against what the chips let through, not against
+            // every spot held — "3 of 5" when three categories are off
+            // would look like the search had lost the rest.
+            let (text, colour) = match rows.len() {
+                0 => ("no match".to_string(), crate::theme::ALERT()),
+                n => (format!("{n} of {}", visible.len()), crate::theme::YELLOW()),
+            };
+            ui.label(RichText::new(text).color(colour).size(10.0));
+        }
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show_themed(ui, |ui| {
+            for (s, _) in &rows {
+                let needed = s.kind != SpotKind::Broadcast
+                    && sdroxide_types::entity_name(&s.call)
+                        .map(|n| !worked_entities.contains(n))
+                        .unwrap_or(false);
+                if spot_row(ui, s, now, needed).clicked() {
+                    *clicked = Some((*s).clone());
+                }
+            }
+            if rows.is_empty() {
+                ui.add_space(8.0);
+                let msg = if query.is_empty() {
+                    "no spots — enable a feed in ⚙ SETUP"
+                } else {
+                    "nothing matches the search"
+                };
+                ui.label(RichText::new(msg).color(crate::theme::gray(120)));
+            }
+        });
     }
 }

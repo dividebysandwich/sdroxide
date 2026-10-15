@@ -297,9 +297,21 @@ impl SdroxideApp {
                 Some(0) => (total_w, 0.0),
                 Some(_) => (0.0, total_w),
                 None => {
+                    // Preferred floors scale down when the operating panel is
+                    // narrowed (system dock open) so chart + gallery never
+                    // overflow into the dock grip.
+                    let usable = (total_w - handle_w - 2.0 * gap).max(0.0);
+                    let prefer_img = 200.0_f32;
+                    let prefer_g = 120.0_f32;
+                    let sum = prefer_img + prefer_g;
+                    let (min_img, min_g) = if sum > usable && sum > 0.0 {
+                        (prefer_img * usable / sum, prefer_g * usable / sum)
+                    } else {
+                        (prefer_img.min(usable), prefer_g.min(usable))
+                    };
                     let g = (total_w * self.view.wefax_gallery_fraction)
-                        .clamp(120.0, (total_w - handle_w - 2.0 * gap - 200.0).max(120.0));
-                    ((total_w - g - handle_w - 2.0 * gap).max(120.0), g)
+                        .clamp(min_g, (usable - min_img).max(min_g));
+                    ((usable - g).max(0.0), g)
                 }
             };
             // Both columns are explicitly top-down: `allocate_ui` inherits the

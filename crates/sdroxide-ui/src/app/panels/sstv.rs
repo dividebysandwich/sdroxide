@@ -27,6 +27,66 @@ use crate::app::panels::widgets::{pick_image, sstv_section};
 use crate::app::util::shorten;
 use crate::app::{SdroxideApp, rx_only_hint};
 
+/// Split `total` into `(a, b)` with a handle between them.
+///
+/// `fraction_b` is b's preferred share of the usable width. Preferred column
+/// floors shrink together when the parent is narrower than both, so the sum
+/// never exceeds `total` (needed beside a resized system dock).
+fn fit_two_cols(
+    total: f32,
+    handle: f32,
+    fraction_b: f32,
+    prefer_min_a: f32,
+    prefer_min_b: f32,
+) -> (f32, f32) {
+    let usable = (total - handle).max(0.0);
+    if usable <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let sum = prefer_min_a + prefer_min_b;
+    let (min_a, min_b) = if sum > usable && sum > 0.0 {
+        (prefer_min_a * usable / sum, prefer_min_b * usable / sum)
+    } else {
+        (prefer_min_a.min(usable), prefer_min_b.min(usable))
+    };
+    let max_b = (usable - min_a).max(min_b);
+    let b = (usable * fraction_b).clamp(min_b, max_b);
+    let a = (usable - b).max(0.0);
+    (a, b)
+}
+
+#[cfg(test)]
+mod fit_two_cols_tests {
+    use super::fit_two_cols;
+
+    #[test]
+    fn columns_never_exceed_total() {
+        for total in [200.0, 400.0, 607.0, 900.0, 1200.0] {
+            for frac in [0.22, 0.4, 0.5, 0.6] {
+                let (a, b) = fit_two_cols(total, 7.0, frac, 300.0, 300.0);
+                assert!(
+                    a + b + 7.0 <= total + 0.01,
+                    "a={a} b={b} total={total} frac={frac}"
+                );
+                assert!(a >= 0.0 && b >= 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_parent_scales_mins() {
+        let (a, b) = fit_two_cols(400.0, 7.0, 0.4, 300.0, 300.0);
+        assert!((a + b - 393.0).abs() < 0.1);
+        assert!(a < 300.0 && b < 300.0);
+    }
+
+    #[test]
+    fn degenerate_total() {
+        assert_eq!(fit_two_cols(0.0, 7.0, 0.5, 300.0, 300.0), (0.0, 0.0));
+        assert_eq!(fit_two_cols(5.0, 7.0, 0.5, 300.0, 300.0), (0.0, 0.0));
+    }
+}
+
 // ───────────────────────────── SSTV panel ──────────────────────────────
 
 /// A fetched transmit source: the picture the compositor works from, and which
@@ -656,32 +716,45 @@ impl SdroxideApp {
         // on the left above LIVE + RECEIVED; the transmit compositor spans the
         // full height on the right, reclaiming the space the old full-width
         // control rows used to leave empty at the top.
+        //
+        // Pin + clip to the operating column: FT8's right pane takes whatever
+        // width remains after the left split, while SSTV used to allocate two
+        // fixed columns (plus item_spacing, plus a 5×70 slot strip) and paint
+        // over the system dock. Match the digi panel: left is sized, right
+        // eats the leftover, and nothing draws past `avail.x`.
         let avail = ui.available_size();
-        let full_h = avail.y;
+        let full_h = avail.y.max(0.0);
         let handle_w = 7.0;
-        // TRANSMIT (send) column takes a user-draggable fraction of the width; the
-        // receive side (LIVE + RECEIVED) gets the rest. Each keeps a usable minimum.
-        // A phone takes the receive side and the compositor in turns: each has a
-        // 300 pt floor of its own, so together they want twice a phone's width
-        // before either has drawn a picture.
+        // Points are CSS pixels on web and logical points on every native host
+        // (eframe zoom is 1) — size math must not assume a macOS retina scale.
+        let panel_rect = egui::Rect::from_min_size(ui.max_rect().min, avail);
+        ui.set_max_size(avail);
+        ui.set_clip_rect(ui.clip_rect().intersect(panel_rect));
         let pane = self.phone_pane(ui, self.state.rx[0].mode);
-        let (left_w, tx_w) = match pane {
-            // Whichever one is up takes the row.
-            Some(0) => (avail.x, 0.0),
-            Some(_) => (0.0, avail.x),
+        // Left (receive) width only — TRANSMIT is `ui.available_width()` after
+        // the handle, same as digi_panel's QSO column. When both columns show,
+        // leave room for the handle so leftover width stays non-negative on
+        // every DPI.
+        let left_w = match pane {
+            Some(0) => avail.x,
+            Some(_) => 0.0,
             None => {
-                let tx = (avail.x * self.view.sstv_tx_fraction)
-                    .clamp(300.0, (avail.x - handle_w - 300.0).max(300.0));
-                ((avail.x - tx - handle_w).max(300.0), tx)
+                let w =
+                    fit_two_cols(avail.x, handle_w, self.view.sstv_tx_fraction, 300.0, 300.0).0;
+                w.min((avail.x - handle_w).max(0.0))
             }
         };
-        // LIVE takes the rest of the receive side; the RECEIVED gallery width is a
-        // user-draggable fraction of it (min one thumbnail column).
-        let gallery_w = (left_w * self.view.sstv_gallery_fraction)
-            .clamp(150.0, (left_w - handle_w - 160.0).max(150.0));
-        let live_w = (left_w - gallery_w - handle_w).max(160.0);
+        let (live_w, _gallery_w) = if left_w <= 0.0 {
+            (0.0, 0.0)
+        } else {
+            fit_two_cols(left_w, handle_w, self.view.sstv_gallery_fraction, 160.0, 150.0)
+        };
 
         ui.horizontal_top(|ui| {
+            // No gap between columns — spacing used to push left+handle+tx
+            // past `avail.x` and under the system dock.
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.set_clip_rect(ui.clip_rect().intersect(panel_rect));
             // A received thumbnail was clicked → enlarge it (applied after the row).
             let mut enlarge: Option<usize> = None;
             // The gallery asked for the next page.
@@ -693,17 +766,21 @@ impl SdroxideApp {
 
             // ── LEFT: boxed controls, then LIVE + RECEIVED ──
             if pane.is_none_or(|p| p == 0) {
+            // Re-clamp against this row's live available width (DPI / rounding).
+            let left_w = left_w.min(ui.available_width()).max(0.0);
             ui.allocate_ui_with_layout(
                 egui::vec2(left_w, full_h),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
+                    ui.set_clip_rect(ui.max_rect());
+                    ui.set_max_width(left_w);
                     egui::Frame::new()
                         .fill(crate::theme::ROW_BG())
                         .stroke(egui::Stroke::new(1.0, crate::theme::LINE_LIT()))
                         .inner_margin(egui::Margin { left: 8, right: 8, top: 6, bottom: 7 })
                         .show(ui, |ui| {
-                            ui.set_min_width(left_w - 16.0);
-                            ui.set_max_width(left_w - 16.0);
+                            let inner_w = ui.available_width().max(0.0);
+                            ui.set_max_width(inner_w);
                             if rifp {
                                 self.rifp_controls(ui, cmds);
                                 return;
@@ -922,12 +999,13 @@ impl SdroxideApp {
                     // points leaves two columns too narrow to show a picture in,
                     // and a received picture is the whole point of the mode.
                     let stack = pane.is_some();
-                    let row_h = ui.available_height().max(160.0);
-                    let (row_h, live_w, gallery_w) = if stack {
+                    let row_h = ui.available_height().max(0.0);
+                    let (row_h, live_w) = if stack {
                         let w = ui.available_width();
-                        ((row_h / 2.0).max(120.0), w, w)
+                        ((row_h / 2.0).max(0.0), w)
                     } else {
-                        (row_h, live_w, gallery_w)
+                        // live_w from the split above; RECEIVED takes leftover.
+                        (row_h, live_w.min(ui.available_width()))
                     };
                     let lay = if stack {
                         egui::Layout::top_down(egui::Align::Min)
@@ -935,14 +1013,15 @@ impl SdroxideApp {
                         egui::Layout::left_to_right(egui::Align::Min)
                     };
                     ui.with_layout(lay, |ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
                         // LIVE: the picture currently decoding, shown large.
                         sstv_section(ui, "LIVE", egui::vec2(live_w, row_h), |ui| {
                             ui.centered_and_justified(|ui| {
                                 if let Some(tex) = &self.sstv.rx_tex {
                                     ui.add(
                                         egui::Image::new(tex)
-                                            .max_height(row_h - 34.0)
-                                            .max_width(live_w - 16.0),
+                                            .max_height((row_h - 34.0).max(1.0))
+                                            .max_width((live_w - 16.0).max(1.0)),
                                     );
                                 } else {
                                     let msg = if rifp {
@@ -970,10 +1049,12 @@ impl SdroxideApp {
                             }
                         }
 
-                        // RECEIVED: narrow multi-column gallery of decoded
-                        // pictures, thumbnailed by the engine out of its own
-                        // store — so it is the same gallery here, on a browser
-                        // tab, and on a client dialled in from anywhere else.
+                        // RECEIVED: leftover width (stacked = full width).
+                        let gallery_w = if stack {
+                            ui.available_width()
+                        } else {
+                            ui.available_width().max(0.0)
+                        };
                         sstv_section(ui, "RECEIVED", egui::vec2(gallery_w, row_h), |ui| {
                             if self.sstv.received.is_empty() {
                                 let msg = if self.sstv.page_pending {
@@ -989,14 +1070,21 @@ impl SdroxideApp {
                                 ui.label(RichText::new(msg).size(11.0).weak());
                                 return;
                             }
-                            let thumb = egui::vec2(112.0, 90.0);
+                            let gallery_inner = ui.available_width().max(0.0);
+                            // Thumb width scales down in a narrow docked column
+                            // so a single 112 pt cell cannot force the wrap
+                            // width past the system dock on Windows / web.
+                            let thumb_w = 112.0_f32.min(gallery_inner.max(24.0));
+                            let thumb = egui::vec2(thumb_w, thumb_w * (90.0 / 112.0));
                             let shown = self.sstv.received.len() as u32;
                             let older = self.sstv.total.saturating_sub(shown);
                             egui::ScrollArea::vertical()
                                 .id_salt("sstv-gallery")
-                                .max_height(row_h - 24.0)
-                                .auto_shrink([false, false])
+                                .max_height((row_h - 24.0).max(0.0))
+                                .max_width(gallery_inner)
+                                .auto_shrink([true, false])
                                 .show_themed(ui, |ui| {
+                                    ui.set_max_width(gallery_inner);
                                     ui.horizontal_wrapped(|ui| {
                                         ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
                                         for (i, r) in self.sstv.received.iter().enumerate() {
@@ -1077,7 +1165,11 @@ impl SdroxideApp {
 
             // ── RIGHT: transmit compositor, full height ──
             if pane.is_none_or(|p| p != 0) {
+            // Leftover width after the receive column + handle (FT8 style).
+            let tx_w = ui.available_width().max(0.0);
             ui.allocate_ui(egui::vec2(tx_w, full_h), |ui| {
+                ui.set_clip_rect(ui.max_rect());
+                ui.set_max_width(tx_w);
                 sstv_section(ui, "TRANSMIT", egui::vec2(tx_w, full_h), |ui| {
                     // The compositor is a fixed stack — the five slots, the
                     // load buttons, the preview, the message box and the
@@ -1089,15 +1181,24 @@ impl SdroxideApp {
                     // never appears.
                     egui::ScrollArea::vertical()
                         .id_salt("sstv-transmit")
-                        .auto_shrink([false, false])
+                        .auto_shrink([false, true])
+                        .max_width(tx_w)
                         .show_themed(ui, |ui| {
-                        let inner_w = tx_w - 16.0;
+                        let inner_w = ui.available_width().max(0.0);
+                        ui.set_max_width(inner_w);
 
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 5.0;
+                            // Shrink slots so five of them fit the column —
+                            // fixed 70 pt thumbs used to force the TRANSMIT
+                            // strip wider than the dock-shrunk parent.
+                            let n = IMAGE_SLOTS as f32;
+                            let gap = 5.0;
+                            let slot_w =
+                                ((inner_w - gap * (n - 1.0)) / n).clamp(24.0, 70.0);
+                            let size = egui::vec2(slot_w, slot_w * (54.0 / 70.0));
                             for i in 0..IMAGE_SLOTS {
                                 let sel = self.sstv.selected_slot == i;
-                                let size = egui::vec2(70.0, 54.0);
                                 let resp = if let Some(tex) =
                                     self.sstv.slot_thumbs.get(i).and_then(|t| t.as_ref())
                                 {
@@ -1218,14 +1319,14 @@ impl SdroxideApp {
                             .stroke(egui::Stroke::new(1.0, crate::theme::LINE_LIT()))
                             .inner_margin(2.0)
                             .show(ui, |ui| {
-                                ui.set_min_size(egui::vec2(inner_w, preview_h));
-                                ui.set_max_size(egui::vec2(inner_w, preview_h));
+                                let pw = ui.available_width().min(inner_w).max(0.0);
+                                ui.set_max_size(egui::vec2(pw, preview_h));
                                 ui.centered_and_justified(|ui| {
                                     if let Some(tex) = &self.sstv.preview_tex {
                                         ui.add(
                                             egui::Image::new(tex)
-                                                .max_height(preview_h - 4.0)
-                                                .max_width(inner_w - 4.0),
+                                                .max_height((preview_h - 4.0).max(1.0))
+                                                .max_width((pw - 4.0).max(1.0)),
                                         );
                                     } else {
                                         let waiting =

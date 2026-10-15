@@ -96,7 +96,12 @@ impl SdroxideApp {
     }
 
     pub(in crate::app) fn awards_window(&mut self, ctx: &egui::Context) {
-        if !self.show_awards {
+        crate::layout::arm_center_on_open(
+            self.show_awards,
+            &mut self.system_was_open.awards,
+            &mut self.system_center_pending.awards,
+        );
+        if !self.show_awards && !self.system_docked_as(crate::app::SystemDock::Awards) {
             return;
         }
         self.ensure_awards();
@@ -105,93 +110,134 @@ impl SdroxideApp {
         let mut open = self.show_awards;
         let mut new_band: Option<String> = None;
         let awards = self.awards_cache.as_ref().map(|(_, _, a)| a.clone()).unwrap_or_default();
-        let resp = egui::Window::new("AWARDS")
-            .id(crate::layout::salted_id(ctx, "AWARDS"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 540.0))
-            .default_height(crate::layout::window_h(ctx, 560.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Band").size(11.0).color(crate::theme::gray(150)));
-                    for b in bands {
-                        let label = if b.is_empty() { "All" } else { b };
-                        if crate::chrome::chip(ui, self.awards_band == b, label).clicked() {
-                            new_band = Some(b.to_string());
-                        }
-                    }
+        let size = egui::vec2(
+            crate::layout::window_w(ctx, 540.0),
+            crate::layout::window_h(ctx, 560.0),
+        );
+        let id = crate::layout::salted_id(ctx, "AWARDS");
+        if self.system_docked_as(crate::app::SystemDock::Awards) {
+            if let Some(win) = self.system_dock_host("AWARDS", id, crate::app::SystemDock::Awards) {
+                win.show(ctx, |ui| {
+                    crate::chrome::window_body_bg(ui);
+                    self.clip_system_dock_body(ui, crate::app::SystemDock::Awards);
+                    self.awards_body(ui, &bands, &awards, &mut new_band);
                 });
-                ui.separator();
-                // Summary counts.
-                award_summary(ui, "DXCC", &awards.dxcc);
-                award_summary(ui, "WAZ", &awards.waz);
-                award_summary(ui, "WAS", &awards.was);
-                award_summary(ui, "Grids", &awards.grids);
-                ui.add_space(6.0);
-
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show_themed(ui, |ui| {
-                    // WAS state grid.
-                    ui.label(
-                        RichText::new("Worked All States")
-                            .size(12.0)
-                            .strong()
-                            .color(crate::theme::CYAN()),
-                    );
-                    award_cell_grid(
-                        ui,
-                        sdroxide_types::US_STATES.iter().map(|s| {
-                            (s.to_string(), awards.was.get(*s).copied().unwrap_or_default())
-                        }),
-                        44.0,
-                    );
-                    ui.add_space(8.0);
-                    // WAZ zone grid (1..40).
-                    ui.label(
-                        RichText::new("CQ Zones (WAZ)")
-                            .size(12.0)
-                            .strong()
-                            .color(crate::theme::CYAN()),
-                    );
-                    award_cell_grid(
-                        ui,
-                        (1u8..=40).map(|z| {
-                            (format!("{z:02}"), awards.waz.get(&z).copied().unwrap_or_default())
-                        }),
-                        34.0,
-                    );
-                    ui.add_space(8.0);
-                    // DXCC worked list (confirmed marked).
-                    ui.label(
-                        RichText::new("DXCC entities")
-                            .size(12.0)
-                            .strong()
-                            .color(crate::theme::CYAN()),
-                    );
-                    for (name, st) in &awards.dxcc {
-                        let col = if st.confirmed {
-                            crate::theme::GREEN()
-                        } else {
-                            crate::theme::YELLOW()
-                        };
-                        ui.label(
-                            RichText::new(format!(
-                                "{} {name}",
-                                if st.confirmed { "✓" } else { "•" }
-                            ))
-                            .size(11.5)
-                            .color(col),
-                        );
-                    }
-                });
-            });
+            }
+            if let Some(b) = new_band {
+                self.awards_band = b;
+            }
+            return;
+        }
+        let pending = self.system_center_pending.awards;
+        let resp = crate::layout::center_on_open(
+            egui::Window::new("AWARDS")
+                .id(id)
+                .open(&mut open)
+                .frame(crate::chrome::window_frame())
+                .resizable(true)
+                .default_width(size.x)
+                .default_height(size.y),
+            ctx,
+            pending,
+            size,
+        )
+        .show(ctx, |ui| {
+            crate::chrome::window_body_bg(ui);
+            self.awards_body(ui, &bands, &awards, &mut new_band);
+        });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
+            self.system_center_pending.awards = false;
+        }
+        if resp
+            .as_ref()
+            .is_some_and(|r| self.system_title_pin(ctx, &r.response))
+        {
+            self.dock_system(crate::app::SystemDock::Awards);
         }
         self.show_awards = open;
         if let Some(b) = new_band {
             self.awards_band = b;
         }
+    }
+
+    fn awards_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        bands: &[&str],
+        awards: &sdroxide_types::Awards,
+        new_band: &mut Option<String>,
+    ) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Band").size(11.0).color(crate::theme::gray(150)));
+            for b in bands {
+                let label = if b.is_empty() { "All" } else { b };
+                if crate::chrome::chip(ui, self.awards_band == *b, label).clicked() {
+                    *new_band = Some((*b).to_string());
+                }
+            }
+        });
+        ui.separator();
+        // Summary counts.
+        award_summary(ui, "DXCC", &awards.dxcc);
+        award_summary(ui, "WAZ", &awards.waz);
+        award_summary(ui, "WAS", &awards.was);
+        award_summary(ui, "Grids", &awards.grids);
+        ui.add_space(6.0);
+
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show_themed(ui, |ui| {
+            // WAS state grid.
+            ui.label(
+                RichText::new("Worked All States")
+                    .size(12.0)
+                    .strong()
+                    .color(crate::theme::CYAN()),
+            );
+            award_cell_grid(
+                ui,
+                sdroxide_types::US_STATES.iter().map(|s| {
+                    (s.to_string(), awards.was.get(*s).copied().unwrap_or_default())
+                }),
+                44.0,
+            );
+            ui.add_space(8.0);
+            // WAZ zone grid (1..40).
+            ui.label(
+                RichText::new("CQ Zones (WAZ)")
+                    .size(12.0)
+                    .strong()
+                    .color(crate::theme::CYAN()),
+            );
+            award_cell_grid(
+                ui,
+                (1u8..=40).map(|z| {
+                    (format!("{z:02}"), awards.waz.get(&z).copied().unwrap_or_default())
+                }),
+                34.0,
+            );
+            ui.add_space(8.0);
+            // DXCC worked list (confirmed marked).
+            ui.label(
+                RichText::new("DXCC entities")
+                    .size(12.0)
+                    .strong()
+                    .color(crate::theme::CYAN()),
+            );
+            for (name, st) in &awards.dxcc {
+                let col = if st.confirmed {
+                    crate::theme::GREEN()
+                } else {
+                    crate::theme::YELLOW()
+                };
+                ui.label(
+                    RichText::new(format!(
+                        "{} {name}",
+                        if st.confirmed { "✓" } else { "•" }
+                    ))
+                    .size(11.5)
+                    .color(col),
+                );
+            }
+        });
     }
 }

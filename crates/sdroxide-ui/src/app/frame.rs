@@ -400,10 +400,11 @@ impl eframe::App for SdroxideApp {
         let ism_labels = self.ism_overlay();
         // Likewise the memory marks along the bottom of the waterfall.
         let mem_marks = self.memory_overlay();
-        // A docked band/mode selector takes a column off the right of the
-        // panadapter before either draws. Shown here, after the top bar and the
-        // notices, so the column sits beside the waterfall rather than under the
+        // System-strip dock first (outer right), then the band/mode column —
+        // both shrink the panadapter before either draws. After the top bar
+        // and notices so the columns sit beside the waterfall, not under the
         // chrome.
+        self.system_dock_panel(ui);
         if self.band_docked && self.band_dock_visible {
             self.band_dock_panel(ui, &mut cmds);
         }
@@ -645,6 +646,9 @@ impl eframe::App for SdroxideApp {
             let wf_tuning = self.wf_tick(live, ui.ctx().pixels_per_point());
             if show_wf {
                 ui.allocate_ui(egui::vec2(width, wf_h), |ui| {
+                    // Stay inside the column left of the system / band dock —
+                    // panel children must not paint over the dock resize grip.
+                    ui.set_clip_rect(ui.max_rect());
                     let pan =
                         spectrum_view::WindowPan::of(self.caps.as_ref(), self.state.center_hz)
                             .with_outer(Some(self.zoom_out_window()), self.state.sample_rate);
@@ -737,6 +741,11 @@ impl eframe::App for SdroxideApp {
             }
             if show_panel {
                 ui.allocate_ui(egui::vec2(width, panel_h), |ui| {
+                    // Clip to the column beside the dock so SSTV (and any
+                    // other wide operating panel) cannot cover the dock grip
+                    // — same on macOS, Windows, Linux, and wasm (points, not
+                    // device pixels).
+                    ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
                     // The operating panels, pulled in on a small screen — one
                     // call for all of them, see `layout::tighten`.
                     crate::layout::tighten(ui);
@@ -885,6 +894,7 @@ impl eframe::App for SdroxideApp {
             });
             if show_wf {
                 ui.allocate_ui(egui::vec2(width, wf_h), |ui| {
+                    ui.set_clip_rect(ui.max_rect());
                     let pan =
                         spectrum_view::WindowPan::of(self.caps.as_ref(), self.state.center_hz)
                             .with_outer(Some(self.zoom_out_window()), self.state.sample_rate);
@@ -936,6 +946,7 @@ impl eframe::App for SdroxideApp {
                     }
                 }
                 ui.allocate_ui(egui::vec2(width, panel_h), |ui| {
+                    ui.set_clip_rect(ui.max_rect());
                     // The operating panels, pulled in on a small screen — one
                     // call for all of them, see `layout::tighten`.
                     crate::layout::tighten(ui);
