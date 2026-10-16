@@ -42,6 +42,7 @@ mod morse_trainer;
 mod netcfg;
 mod pi4;
 mod pictures;
+mod picupload;
 mod probe;
 mod profile;
 mod prop_store;
@@ -193,6 +194,10 @@ pub use pictures::{
     IMAGE_NAME_MAX, IMAGE_PAGE_MAX, IMAGE_SLOT_THUMB_EDGE, IMAGE_SLOTS, IMAGE_SOURCE_MAX_EDGE,
     IMAGE_THUMB_EDGE, IMAGE_UPLOAD_MAX, ImageEntry, ImageKind, ImageListing, ImagePresets,
     ImageSlotInfo, received_at, safe_name,
+};
+pub use picupload::{
+    FtpSecurity, PictureUploadConfig, PictureUploadStatus, TlsVerify, UploadFormat, UploadNaming,
+    format_fingerprint, normalize_fingerprint,
 };
 pub use probe::{DeviceProbe, ProbeAnswer, ProbeTest, ReportKind, TestKind};
 pub use profile::{ModeProfile, ModeProfiles};

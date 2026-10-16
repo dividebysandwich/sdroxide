@@ -1246,6 +1246,9 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
                 latest.profiles = p.clone();
                 Some(ServerMsg::Profiles(p))
             }
+            // Not cached: it is an answer to a test or news of one upload, and
+            // a screen attaching later has asked nothing.
+            RadioEvent::PictureUpload(st) => Some(ServerMsg::PictureUpload(st)),
         }
     };
     // The satellite half of the station config also drives this machine's own

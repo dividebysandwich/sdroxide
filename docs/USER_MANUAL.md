@@ -4335,6 +4335,10 @@ one of the two.
   up if a WebSDR or OpenWebRX on the far end hears your transmission but shows no
   image; turn it down to 0 on an SDR that keys in milliseconds.
 
+Received pictures can also be put on a web server as they arrive, the way
+QSSTV does it — see [Received pictures → FTP](#received-pictures--ftp) on the
+**Uploads** settings tab.
+
 > **Note:** SSTV decode/encode runs in the server engine, so the panel works the
 > same in the native app and the browser client. RX quality depends on signal
 > conditions — clean signals decode well; weak or drifting signals may slant or
@@ -6787,7 +6791,7 @@ window opens the same dialog on its Spots tab). Fourteen tabs run across the top
 | **Controls** | Keyboard, mouse and MIDI bindings. [6.4](#64-controls-keyboard-mouse-and-midi) |
 | **Spots** | DX cluster, POTA, SOTA and PSK Reporter feeds, and the broadcast station list. [6.5](#65-spots-spot-feeds) |
 | **FreeDV** | FreeDV Reporter (qso.freedv.org). [6.6](#66-freedv-freedv-reporter) |
-| **Uploads** | Callsign lookup, QSL upload, confirmation download. [6.7](#67-uploads-callsign-lookup-and-qsl-services) |
+| **Uploads** | Callsign lookup, QSL upload, confirmation download, and received pictures to an FTP server. [6.7](#67-uploads-callsign-lookup-and-qsl-services) |
 | **Winlink** | The radio-email account, and whether it forwards over the internet or on the air. [6.8](#68-winlink-radio-email-account) |
 | **Servers** | Hamlib rigctld, the built-in TCI server, and the WSJT-X UDP broadcast. [6.9](#69-servers-letting-other-programs-drive-the-radio) |
 | **T/R switch** | The relay that grounds the SDR's antenna while the station transmits, and the sequencer around it. [6.11](#611-tr-switch-protecting-the-receiver-on-transmit) |
@@ -12200,6 +12204,72 @@ find out.
 - The buttons appear only when the radio is attached to *this* machine. The
   credentials, and the answer naming the account they belong to, live on the
   station computer; a remote client is not shown either.
+
+#### Received pictures → FTP
+
+At the bottom of the tab, **Received pictures → FTP** puts every SSTV picture
+you receive on a web server as soon as it is saved — and, if you tick it, every
+weather chart too. The files are laid out the way QSSTV lays them out, so a web
+page written for QSSTV's FTP upload shows sdroxide's pictures unchanged.
+
+The station does the uploading, wherever you edit the settings from: a remote
+client or the browser sets them up exactly as the console does, and the pictures
+go from the machine the radio is attached to.
+
+| Setting | What it does |
+|---|---|
+| **Server**, **Port** | The FTP server. 21 is usual; implicit FTPS uses 990, and changing **Security** moves the port between the two unless you have typed another. |
+| **Security** | **FTP** sends everything, the password included, unencrypted. **FTPS explicit (AUTH TLS)** connects on the normal port and switches to TLS before logging in — what nearly every server that offers TLS at all supports. **FTPS implicit** is TLS from the first byte. |
+| **User**, **Password** | The account. Empty user logs in as `anonymous`. Stored, like every other credential in the station settings, in the clear. |
+| **Certificate** | How the server's certificate is judged — see below. Shown for the two FTPS choices. |
+| **SSTV** / **SSTV dir** | Upload SSTV pictures (RIFP pictures included — they share the store), into this directory. Empty is the directory you land in when you log in. |
+| **Weather fax** / **WEFAX dir** | The same for weather charts. Give them their own directory: a chart would otherwise push a picture out of the rotation. |
+| **File names** | **image1 … imageN (rotate)**: the newest picture is always `image1`, the one before it `image2`, and so on; **keep** says how many (30, as in QSSTV). **Original file name** keeps the name sdroxide filed it under, so the server keeps everything. |
+| **Format**, **add extension** | PNG or JPEG (quality 85). QSSTV names the rotated files bare (`image1`); **add extension** makes them `image1.png`, which web servers serve with the right type. |
+| **Caption bar** | QSSTV's black bar across the top: time, frequency, mode, and the sender's callsign when an FSK ID or a RIFP manifest gave one — `22:45 Tue Nov 14, 2023 UTC  14230 kHz  Martin 1 de EA4XYZ`. Only the uploaded copy is marked; the picture in your gallery is untouched. |
+| **Fit 960 × 768** | Shrinks anything larger, as QSSTV does. |
+| **checknew.jpg** | QSSTV's heartbeat: a tiny black picture, uploaded beside every one, whose height is the current minute. A web page polls its size to notice a new picture without downloading it. When the program closes it is made two pixels wide — the "station offline" sign the same pages look for. |
+| **NAT workaround** | Ignore a private address in the server's passive-mode reply and connect to the server's own address instead — what a server behind NAT that does not know its public address needs. Harmless otherwise. |
+
+An SSTV picture is held for up to four seconds after its last line, because the
+FSK ID that names its sender is sent *after* the picture; the caption can then
+say who sent it. Each upload goes up under a temporary name and is renamed into
+place, so a page never shows half a picture.
+
+**Certificates (FTPS).** Three choices:
+
+- **System trust store** — the default. The certificate is trusted exactly when
+  the operating system of the station computer trusts it, the way a browser on
+  that machine would: macOS's keychain, Windows' certificate store, or the
+  distribution's CA bundle on Linux. A certificate from a public CA (Let's
+  Encrypt and the like) just works. If the server uses a private CA of your
+  own, paste its certificate (PEM, `-----BEGIN CERTIFICATE-----` …) into
+  **Extra CA**: it is trusted *in addition to* the system's, for this upload
+  only.
+- **Pinned fingerprint** — trusts one certificate, named by its SHA-256
+  fingerprint, and nothing else. This is the way to use a self-signed
+  certificate on a home server without switching checks off: names and expiry
+  dates are not looked at, but no other certificate — and nobody who does not
+  hold that server's key — gets in. Colons, spaces and case in the fingerprint
+  do not matter.
+- **Don't verify** — accepts any certificate. The connection is still
+  encrypted, but anyone in the path can present a certificate of their own,
+  pose as the server and read your password. Use it to get going, not to stay.
+
+**TEST** tries the settings as they are in the dialog, applied or not: it
+connects, logs in, and in each upload directory writes and deletes a small file
+(`sdroxide-test.txt`) — the same rights an upload needs, without touching any
+picture. The answer shows the server's certificate fingerprint whenever the
+connection got that far, even if the certificate was refused. **Trust this
+certificate** then pins it in one click. Compare it with the server first (for
+example `openssl x509 -in cert.pem -noout -fingerprint -sha256` on the server):
+the button pins what the server *said*, which is only proof of identity if you
+have checked it. Then **APPLY**.
+
+Below the buttons, **Last upload** says how the most recent picture went. When
+uploads start failing, sdroxide also says so in the status line — once every ten
+minutes at most, so a server that is down does not repeat it with every picture.
+
 
 ### 6.8 Winlink: radio email account
 

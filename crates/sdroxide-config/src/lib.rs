@@ -1901,6 +1901,18 @@ pub fn save_rotator_config(cfg: &sdroxide_types::RotatorConfig) -> Result<(), Co
     save_json("rotator.json", cfg)
 }
 
+/// Uploading received pictures to an FTP server. One server for the whole
+/// station, like the rotator, so it lives at the root rather than per radio.
+pub fn load_picture_upload_config() -> sdroxide_types::PictureUploadConfig {
+    load_json("picupload.json")
+}
+
+pub fn save_picture_upload_config(
+    cfg: &sdroxide_types::PictureUploadConfig,
+) -> Result<(), ConfigError> {
+    save_json("picupload.json", cfg)
+}
+
 /// The external transmit/receive switch — the relay board or contact closure
 /// that grounds the SDR's antenna while the station transmits. Owned by the
 /// engine, like the rotator above, and for the same reason: it is a fact about

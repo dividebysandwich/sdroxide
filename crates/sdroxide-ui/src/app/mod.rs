@@ -894,6 +894,17 @@ pub struct SdroxideApp {
     /// UI-owned editable copy, seeded from the engine like the configs above.
     wsjtx_edit: sdroxide_types::WsjtxConfig,
     wsjtx_seeded: bool,
+    // ── Received pictures → FTP ──
+    /// UI-owned editable copy, seeded from the engine like the configs above.
+    picup_edit: sdroxide_types::PictureUploadConfig,
+    picup_seeded: bool,
+    /// When a TEST went out, while its answer is awaited. Cleared by the
+    /// answer, or after a while if none comes (the station may have gone).
+    picup_test_pending: Option<f64>,
+    /// The last TEST's answer, with the certificate the server presented.
+    picup_test: Option<sdroxide_types::PictureUploadStatus>,
+    /// How the most recent picture upload went.
+    picup_last: Option<sdroxide_types::PictureUploadStatus>,
     /// Live status from `RadioEvent::RigctldStatus`. Same shape as the TCI
     /// server's, so the two share one status type.
     rigctld_status: Option<TciServerStatus>,
@@ -1593,6 +1604,11 @@ impl SdroxideApp {
             rigctld_seeded: false,
             wsjtx_edit: sdroxide_types::WsjtxConfig::default(),
             wsjtx_seeded: false,
+            picup_edit: sdroxide_types::PictureUploadConfig::default(),
+            picup_seeded: false,
+            picup_test_pending: None,
+            picup_test: None,
+            picup_last: None,
             rigctld_status: None,
             tci_srv_edit: sdroxide_types::TciServerConfig::default(),
             tci_srv_seeded: false,

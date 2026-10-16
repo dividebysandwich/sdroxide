@@ -18,6 +18,7 @@
 pub(in crate::app) mod controls;
 pub(in crate::app) mod general;
 pub(in crate::app) mod net;
+pub(in crate::app) mod picup;
 pub(in crate::app) mod profiles;
 pub(in crate::app) mod radio;
 pub(in crate::app) mod relay;
@@ -282,6 +283,9 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// GridTracker, JTAlert, N1MM+ and Log4OM.
     wsjtx_edit: &'a mut sdroxide_types::WsjtxConfig,
     wsjtx_apply: &'a mut bool,
+    /// Received pictures → FTP: the dialog's copy, and whether to send it.
+    picup_edit: &'a mut sdroxide_types::PictureUploadConfig,
+    picup_apply: &'a mut bool,
     /// The rotctld *client* — the satellite lock steering a motorized antenna.
     rot_edit: &'a mut sdroxide_types::RotatorConfig,
     rot_apply: &'a mut bool,
@@ -1094,6 +1098,8 @@ impl SdroxideApp {
         let mut rigctld_apply = false;
         let mut wsjtx_edit = self.wsjtx_edit.clone();
         let mut wsjtx_apply = false;
+        let mut picup_edit = self.picup_edit.clone();
+        let mut picup_apply = false;
         let mut rot_edit = self.rot_cfg_edit.clone();
         let mut rot_apply = false;
         let mut relay_edit = self.relay_edit.clone();
@@ -1264,6 +1270,8 @@ impl SdroxideApp {
                             rigctld_apply: &mut rigctld_apply,
                             wsjtx_edit: &mut wsjtx_edit,
                             wsjtx_apply: &mut wsjtx_apply,
+                            picup_edit: &mut picup_edit,
+                            picup_apply: &mut picup_apply,
                             rot_edit: &mut rot_edit,
                             rot_apply: &mut rot_apply,
                             relay_edit: &mut relay_edit,
@@ -1359,6 +1367,11 @@ impl SdroxideApp {
         if wsjtx_apply {
             // The engine persists wsjtx.json when it opens the socket.
             cmds.push(Command::SetWsjtxConfig(self.wsjtx_edit.clone()));
+        }
+        self.picup_edit = picup_edit;
+        if picup_apply {
+            // The engine persists picupload.json and announces it back.
+            cmds.push(Command::SetPictureUploadConfig(Box::new(self.picup_edit.clone())));
         }
         self.rot_cfg_edit = rot_edit;
         if rot_apply {
@@ -3372,6 +3385,10 @@ impl SdroxideApp {
                         *io.net_sync = true;
                     }
                 });
+
+                ui.add_space(10.0);
+                ui.separator();
+                self.picup_section(ui, cmds, io.picup_edit, io.picup_apply);
             }
             SettingsTab::FreeDv => {
                 if !net_seeded_note(ui, io.net_seeded) {

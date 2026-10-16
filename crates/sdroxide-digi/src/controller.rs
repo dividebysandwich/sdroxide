@@ -54,6 +54,11 @@ pub enum DigiAction {
     SstvImage { image_id: u32, mode: SstvMode, w: u16, h: u16, rgb: Vec<u8> },
     /// SSTV: engine status change (tx/rx active, detected mode, progress).
     SstvStatus(SstvStatus),
+    /// SSTV: a station's FSK ID, the moment it was heard. The status carries
+    /// the same callsign, but only as "the last one": a station that sends two
+    /// pictures leaves it unchanged, and this is what says the ID was sent
+    /// again — what an upload holding a picture back for its sender waits on.
+    SstvId(String),
     /// Weather fax: a freshly decoded scan line, one byte per pixel.
     WefaxLine { image_id: u32, y: u16, gray: Vec<u8> },
     /// Weather fax: a finished chart (grayscale) — the engine encodes and

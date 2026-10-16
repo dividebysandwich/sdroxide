@@ -61,6 +61,9 @@ sdroxide-rotator = { path = "../sdroxide-rotator" }
 # than from a source, because it follows the whole station and not one front end.
 sdroxide-relay = { path = "../sdroxide-relay" }
 sdroxide-wsjtx = { path = "../sdroxide-wsjtx" }
+# Received pictures to an FTP/FTPS server, the QSSTV way. Native-only, like
+# everything else the engine talks to the network with.
+sdroxide-picup = { path = "../sdroxide-picup" }
 # SSTV: encode received images to PNG for the config store, decode composed
 # TX images (PNG) back to RGB. Minimal formats to keep the build lean.
 # JPEG as well as PNG: the transmit-preset store normalises whatever the

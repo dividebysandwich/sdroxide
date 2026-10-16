@@ -316,6 +316,27 @@ fn lane_pool() -> Option<rayon::ThreadPool> {
 /// See [`sdroxide_dsp::SpectrumAnalyzer::with_hop_div`].
 const MAX_HOP_DIV: usize = 8;
 
+/// How long a received SSTV picture is held for the FSK ID that follows it, so
+/// the uploaded copy can say who sent it. The ID is sent a fraction of a second
+/// after the last line; this leaves room for a slow one without making the web
+/// page wait noticeably.
+const PICUP_ID_WAIT: Duration = Duration::from_secs(4);
+
+/// How often a failing picture upload may raise a notice.
+const PICUP_NOTICE_EVERY: Duration = Duration::from_secs(600);
+
+/// An SSTV picture waiting for its sender's FSK ID before it is uploaded.
+struct PendingUpload {
+    png: Vec<u8>,
+    name: String,
+    caption: sdroxide_picup::Caption,
+    at: Instant,
+}
+
+fn unix_now() -> i64 {
+    SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+}
+
 /// Where the decoder's tap is levelled to, as an RMS of full scale.
 ///
 /// The controller that reads it scales to sixteen-bit at 28000 and clips at
@@ -3028,6 +3049,17 @@ struct Engine {
     /// The rotctld client's config as persisted (`rotator.json`), announced in
     /// the station bundle the way the servers' are.
     rot_cfg: sdroxide_types::RotatorConfig,
+    /// Uploading received pictures to an FTP server (`picupload.json`),
+    /// announced in the station bundle like the rotator's.
+    picup_cfg: sdroxide_types::PictureUploadConfig,
+    /// The upload thread. Always there; it does nothing until enabled.
+    picup: sdroxide_picup::PictureUploader,
+    /// An SSTV picture held back for the FSK ID that follows it — see
+    /// [`PICUP_ID_WAIT`].
+    picup_pending: Option<PendingUpload>,
+    /// When a failed upload last raised a notice, so a dead server says so
+    /// once rather than with every picture.
+    picup_noticed: Option<Instant>,
     /// The rotctld client itself, when enabled. `poll_sat_track` feeds it;
     /// `poll_rotator_status` reads its health back for the clients.
     rotator: Option<sdroxide_rotator::RotctldClient>,
@@ -4291,6 +4323,10 @@ fn engine_thread(
         tle_refresh: None,
         sat_lock: None,
         rot_cfg: sdroxide_types::RotatorConfig::default(),
+        picup_cfg: sdroxide_types::PictureUploadConfig::default(),
+        picup: sdroxide_picup::PictureUploader::new(),
+        picup_pending: None,
+        picup_noticed: None,
         relay_cfg: sdroxide_types::RelayConfig::default(),
         tr_switch: engine_cfg.tr_switch.clone(),
         relay_last_status: None,
@@ -4405,6 +4441,10 @@ fn engine_thread(
         engine.sync_rotator();
     }
     engine.relay_cfg = sdroxide_config::load_relay_config();
+    // Received pictures to an FTP server. Every engine uploads what it
+    // receives itself; the settings are the station's.
+    engine.picup_cfg = sdroxide_config::load_picture_upload_config();
+    engine.picup.set_config(engine.picup_cfg.clone());
     // One station, one antenna line: only the primary engine opens the switch.
     // Every engine still publishes into it — see `Engine::poll_tr_switch`.
     if engine.primary {
@@ -4601,6 +4641,7 @@ fn engine_thread(
         engine.poll_winlink();
         engine.poll_kiss_server();
         engine.poll_images();
+        engine.poll_picup();
         engine.poll_tle_refresh();
         engine.poll_sat_track();
         engine.poll_rotator_status();
@@ -5121,6 +5162,11 @@ impl RigDigest {
 
 impl Drop for Engine {
     fn drop(&mut self) {
+        // A picture held for its FSK ID goes now rather than not at all, and
+        // the web page is told the station has gone (QSSTV's offline marker).
+        // Bounded: closing never waits more than a few seconds on a server.
+        self.picup_flush();
+        self.picup.offline();
         // Where the radio was left, for the next start. Here as well as on the
         // periodic tick because a clean quit is the common case, and it would
         // otherwise lose up to one tick's worth of tuning.
@@ -6690,12 +6736,14 @@ impl Engine {
                         // immediately; the gallery entry follows from the
                         // worker, carrying the name it was filed under.
                         if let Some(name) = save_sstv_rx(&png) {
-                            self.gallery.entry(ImageKind::Sstv, name, None);
+                            self.gallery.entry(ImageKind::Sstv, name.clone(), None);
+                            self.picup_hold(&png, name, mode.label(), dial);
                         }
                         let _ =
                             self.event_tx.send(RadioEvent::SstvImage { image_id, mode, w, h, png });
                     }
                 }
+                DigiAction::SstvId(call) => self.picup_identified(call),
                 DigiAction::SstvStatus(s) => {
                     let _ = self.event_tx.send(RadioEvent::SstvStatus(s));
                 }
@@ -6708,7 +6756,8 @@ impl Engine {
                     // a two-megapixel PNG for nothing.
                     if let Some(png) = encode_png_gray(&gray, w, h) {
                         if let Some(name) = save_wefax_rx(&png, dial) {
-                            self.gallery.entry(ImageKind::Wefax, name, None);
+                            self.gallery.entry(ImageKind::Wefax, name.clone(), None);
+                            self.picup_send(ImageKind::Wefax, &png, name, "WEFAX", dial, None);
                         }
                         let _ = self.event_tx.send(RadioEvent::WefaxImage { image_id, w, h, png });
                     }
@@ -6728,7 +6777,9 @@ impl Engine {
                         // is the only chance the gallery has to record who sent
                         // the picture and how it was carried.
                         if let Some(name) = save_sstv_rx(&png) {
-                            self.gallery.entry(ImageKind::Sstv, name, Some(meta.clone()));
+                            self.gallery.entry(ImageKind::Sstv, name.clone(), Some(meta.clone()));
+                            let sender = meta.sender.clone();
+                            self.picup_send(ImageKind::Sstv, &png, name, "RIFP", dial, sender);
                         }
                         let _ = self.event_tx.send(RadioEvent::RifpImage { image_id, meta, png });
                     }
@@ -9767,6 +9818,21 @@ impl Engine {
                 self.emit_station_config();
                 return;
             }
+            SetPictureUploadConfig(cfg) => {
+                if let Err(e) = sdroxide_config::save_picture_upload_config(&cfg) {
+                    warn!("saving picture upload config: {e}");
+                }
+                self.picup_cfg = *cfg;
+                self.picup.set_config(self.picup_cfg.clone());
+                // A server that failed before may well be fixed now.
+                self.picup_noticed = None;
+                self.emit_station_config();
+                return;
+            }
+            TestPictureUpload(cfg) => {
+                self.picup.test(*cfg);
+                return;
+            }
             SetRelayConfig(cfg) => {
                 if let Err(e) = sdroxide_config::save_relay_config(&cfg) {
                     warn!("saving T/R switch config: {e}");
@@ -12034,6 +12100,7 @@ impl Engine {
                 region: sdroxide_types::region(),
                 band_plan: sdroxide_types::band_plan().clone(),
                 digi_presets: sdroxide_types::digi_presets().to_vec(),
+                picture_upload: self.picup_cfg.clone(),
             },
         )));
     }
@@ -12818,6 +12885,78 @@ impl Engine {
         if let Some(wl) = self.winlink.as_ref() {
             let _ = self.event_tx.send(RadioEvent::WinlinkStatus(wl.status().clone()));
         }
+    }
+
+    /// Hand the uploader an SSTV picture once its FSK ID has had time to
+    /// arrive, and pass on how uploads went.
+    fn poll_picup(&mut self) {
+        if self.picup_pending.as_ref().is_some_and(|p| p.at.elapsed() >= PICUP_ID_WAIT) {
+            self.picup_flush();
+        }
+        for st in self.picup.poll() {
+            if !st.ok && !st.is_test {
+                let due = self.picup_noticed.is_none_or(|t| t.elapsed() >= PICUP_NOTICE_EVERY);
+                if due {
+                    self.picup_noticed = Some(Instant::now());
+                    self.notice(&format!("picture upload failed — {}", st.message));
+                }
+            }
+            let _ = self.event_tx.send(RadioEvent::PictureUpload(st));
+        }
+    }
+
+    /// Hold a just-saved SSTV picture for the FSK ID that may follow it.
+    fn picup_hold(&mut self, png: &[u8], name: String, mode: &str, dial: f64) {
+        if !self.picup.wants(ImageKind::Sstv) {
+            return;
+        }
+        // A picture still waiting has had its chance: the ID belongs to the
+        // newer one.
+        self.picup_flush();
+        let caption = sdroxide_picup::Caption {
+            unix: unix_now(),
+            dial_hz: dial,
+            mode: mode.to_string(),
+            call: None,
+        };
+        self.picup_pending =
+            Some(PendingUpload { png: png.to_vec(), name, caption, at: Instant::now() });
+    }
+
+    /// An FSK ID was heard: it names the picture being held, if there is one.
+    fn picup_identified(&mut self, call: String) {
+        if let Some(p) = self.picup_pending.as_mut() {
+            p.caption.call = Some(call);
+            self.picup_flush();
+        }
+    }
+
+    fn picup_flush(&mut self) {
+        if let Some(p) = self.picup_pending.take() {
+            self.picup.picture(ImageKind::Sstv, p.png, p.name, p.caption);
+        }
+    }
+
+    /// Queue a picture whose sender, if any, is already known.
+    fn picup_send(
+        &mut self,
+        kind: ImageKind,
+        png: &[u8],
+        name: String,
+        mode: &str,
+        dial: f64,
+        call: Option<String>,
+    ) {
+        if !self.picup.wants(kind) {
+            return;
+        }
+        let caption = sdroxide_picup::Caption {
+            unix: unix_now(),
+            dial_hz: dial,
+            mode: mode.to_string(),
+            call,
+        };
+        self.picup.picture(kind, png.to_vec(), name, caption);
     }
 
     fn poll_spots(&mut self) {

@@ -1,0 +1,19 @@
+[package]
+name = "sdroxide-picup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Uploads received SSTV/WEFAX pictures to an FTP or FTPS server, the QSSTV way."
+
+[dependencies]
+sdroxide-types.workspace = true
+crossbeam-channel.workspace = true
+tracing.workspace = true
+suppaftp = { version = "12", default-features = false, features = ["rustls-ring", "deprecated"] }
+# The caption's date, as QSSTV writes it.
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-platform-verifier = "0.7"
+sha2 = "0.10"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+ab_glyph = "0.2"

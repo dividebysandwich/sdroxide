@@ -389,6 +389,10 @@ pub enum RadioEvent {
     ///
     /// Appended last, for the usual reason.
     Pi4Spots(Vec<crate::Pi4Spot>),
+    /// How a received-picture FTP upload, or a test of the settings, went.
+    ///
+    /// Appended last, for the usual reason.
+    PictureUpload(crate::PictureUploadStatus),
 }
 
 /// Snapshot of the frontend's switchable sound devices (native clients).

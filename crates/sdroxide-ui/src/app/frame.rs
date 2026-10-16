@@ -1077,6 +1077,13 @@ impl eframe::App for SdroxideApp {
             }
         }
 
+        // A picture-upload TEST whose answer never came: the station went
+        // away, or dropped it. Give the button back rather than spin for ever.
+        // Past the connect, login and transfer timeouts the station applies.
+        if self.picup_test_pending.is_some_and(|t| crate::time::now_unix_f64() - t > 75.0) {
+            self.picup_test_pending = None;
+        }
+
         // Flush queued lookups / uploads accumulated during window rendering.
         for call in std::mem::take(&mut self.pending_lookups) {
             cmds.push(Command::LookupCallsign { call });
@@ -1106,6 +1113,10 @@ impl eframe::App for SdroxideApp {
             if let Command::TestLogin(t) = &c {
                 self.login_tests_pending.insert(*t);
                 self.login_tests.remove(t);
+            }
+            if let Command::TestPictureUpload(_) = &c {
+                self.picup_test_pending = Some(crate::time::now_unix_f64());
+                self.picup_test = None;
             }
             self.ctrl.send(c);
         }
@@ -1330,6 +1341,14 @@ impl SdroxideApp {
                     }
                     self.error = Some(e);
                     self.arm_retry(now);
+                }
+                RadioEvent::PictureUpload(st) => {
+                    if st.is_test {
+                        self.picup_test_pending = None;
+                        self.picup_test = Some(st);
+                    } else {
+                        self.picup_last = Some(st);
+                    }
                 }
                 RadioEvent::LoginTest(r) => {
                     self.login_tests_pending.remove(&r.target);
@@ -1632,6 +1651,10 @@ impl SdroxideApp {
                     if !self.wsjtx_seeded {
                         self.wsjtx_edit = c.wsjtx.clone();
                         self.wsjtx_seeded = true;
+                    }
+                    if !self.picup_seeded {
+                        self.picup_edit = c.picture_upload.clone();
+                        self.picup_seeded = true;
                     }
                     if !self.sat_cfg_seeded {
                         self.sat_cfg_edit = c.sat.clone();

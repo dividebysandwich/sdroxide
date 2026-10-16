@@ -88,4 +88,11 @@ pub struct StationConfig {
     ///
     /// Appended last, for the usual reason.
     pub digi_presets: Vec<crate::DigiPreset>,
+    /// Pushing received pictures to an FTP server — `picupload.json`.
+    ///
+    /// Station-side because the pictures are decoded and saved there, so that
+    /// is where they are sent from; a remote screen only edits the settings.
+    ///
+    /// Appended last, for the usual reason.
+    pub picture_upload: crate::PictureUploadConfig,
 }
