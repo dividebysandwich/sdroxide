@@ -26,8 +26,8 @@ use sdroxide_digi::{
 use sdroxide_drm::DrmDemod;
 use sdroxide_dsp::{
     AdcMeter, Agc, AutoNotch, Binaural, Cessb, DcBlock, Ddc, Decimator, DeepFilterNr, Demodulator,
-    Duc, Modulator, MonoResampler, Nco, NeuralNr, NoiseBlanker, Nr2, ParametricEq, SpecBleachNr,
-    SpectralNr, SpectrumAnalyzer, StereoResampler, SubToneGen, ToneBurst, channel_target_at,
+    Duc, Modulator, MonoResampler, Nco, NeuralNr, NoiseBlanker, Nr2, SpecBleachNr, SpectralNr,
+    SpectrumAnalyzer, StereoResampler, SubToneGen, ToneBurst, VoiceChain, channel_target_at,
     hd_radio_is_am, make_demod, make_modulator,
 };
 use sdroxide_hfdl::HfdlController;
@@ -41,7 +41,8 @@ use sdroxide_types::{
     AgcMode, Band, BandStackEntry, Command, DeviceCaps, DigiConfig, Direction, ImageKind,
     MemoryChannel, MemoryFolder, Meters, Mode, NrEngine, NrLevel, RadioEvent, RadioState,
     RepeaterState, RigctldConfig, RxId, RxState, ScanKind, ScanResume, SpectrumConfig,
-    SpectrumFrame, TciServerConfig, TxEqState, TxMeters, Vfo,
+    SpectrumFrame, TX_VOICE_TEST_MAX_S, TciServerConfig, TxMeters, TxVoiceLive, TxVoiceState,
+    TxVoiceTest, Vfo,
 };
 use sdroxide_vdl2::{Vdl2Action, Vdl2Controller};
 
@@ -1694,9 +1695,9 @@ impl StereoMixer {
 
 /// The transmit chain: mic 48 k → EQ → modulator → drive → DUC → device.
 ///
-/// The EQ is not in here — it lives on the [`Engine`], because a rig that
-/// modulates its own audio has no `TxChain` at all and still wants it. See
-/// [`apply_tx_eq`].
+/// The voice chain is not in here — it lives on the [`Engine`], because a rig
+/// that modulates its own audio has no `TxChain` at all and still wants it. See
+/// [`apply_tx_voice`].
 struct TxChain {
     modulator: Option<Box<dyn Modulator>>,
     /// Controlled-envelope SSB, present only on the two voice sidebands.
@@ -1898,30 +1899,254 @@ fn pace_tx_block(tx_pace: &mut Option<(Instant, u64)>, cushion_ms: f64) {
     }
 }
 
-/// Shape one block of microphone audio with the transmit EQ, retuning `eq`
-/// first if the operator has moved a band since the last block.
+/// Run one block of microphone audio through the transmit voice chain,
+/// retuning `chain` first if the operator has changed it since the last block.
 ///
-/// Voice only: every caller is a voice branch. A digital-mode burst and a CW
-/// keyer's sidetone are synthesised at exactly the shape they need to land on
-/// the air with, and colouring them would only cost decodes.
+/// Voice only: every caller is a voice branch, and none of them calls this for
+/// a TCI client's audio. A digital-mode burst and a CW keyer's sidetone are
+/// synthesised at exactly the shape they need to land on the air with, and a
+/// TCI client — WSJT-X, fldigi — has done the same; gating or compressing any
+/// of them would only cost decodes.
 ///
 /// A free function, like [`pace_tx_block`], so it can be called from a branch
 /// that is already holding a `&mut` borrow of the [`TxChain`] — these are
 /// disjoint fields of the engine, and a method taking `&mut self` would not be.
-fn apply_tx_eq(
-    eq: &mut ParametricEq,
-    built_from: &mut TxEqState,
-    want: &TxEqState,
-    audio: &mut [f32],
-) {
-    if built_from != want {
-        eq.configure(want, TX_MONITOR_RATE);
-        *built_from = *want;
+fn apply_tx_voice(chain: &mut VoiceChain, want: &TxVoiceState, audio: &mut [f32]) {
+    // Retuned even while switched out, so switching it in mid-over starts from
+    // the operator's real settings rather than a block of whatever was there
+    // last. `configure` is cheap but not free, hence only on a change.
+    if chain.config() != want {
+        chain.configure(want);
     }
-    // Retuned even while disabled, so switching it on mid-over starts from the
-    // operator's real settings rather than a block of whatever was there last.
-    if want.enabled {
-        eq.process(audio);
+    chain.process(audio);
+}
+
+/// The TX Audio window's test phrase: up to [`TX_VOICE_TEST_MAX_S`] of
+/// microphone, recorded raw and played back to the speakers through the voice
+/// chain as it is set *now* — or the live microphone through the same chain,
+/// for the meters and optionally the speakers.
+///
+/// Raw, so the same phrase can be heard again after every adjustment — the
+/// point of the thing is comparing one setting with the next on identical
+/// input. Through a chain of its own, so a playback never disturbs the
+/// detectors and filters of the one on the air path. Never keys anything.
+struct TxVoiceTester {
+    clip: Vec<f32>,
+    recording: Option<Vec<f32>>,
+    play: Option<usize>,
+    chain: VoiceChain,
+    /// The live microphone going through `chain`: `Some(true)` with the result
+    /// on the speakers, `Some(false)` for the meters alone.
+    live: Option<bool>,
+    /// Processed live audio waiting for the speakers, at 48 kHz.
+    live_out: Vec<f32>,
+    live_scratch: Vec<f32>,
+}
+
+/// The most processed live audio held for the speakers, should nothing be
+/// taking it. Only a bound: keeping the delay short while the speakers are
+/// listening is [`LivePacer`]'s job.
+const TX_VOICE_LIVE_MAX: usize = (TX_MONITOR_RATE * 0.5) as usize;
+
+/// Pacing for the live monitor on the speakers.
+///
+/// The microphone delivers in chunks on its own clock, and the speaker takes
+/// one receive block at a time on another. Handing each sample on the moment
+/// it arrives leaves the speaker short whenever a block falls due before the
+/// next chunk, and the shortfall plays as silence — a gap in nearly every
+/// block, heard as stutter. So a block and a chunk's worth are held in hand
+/// before playing starts, and again after any underrun; and because the two
+/// clocks never agree exactly, a backlog grown well past that is cut back, so
+/// the delay cannot creep up while the operator talks.
+#[derive(Default)]
+struct LivePacer {
+    /// Whether enough is in hand to be playing.
+    primed: bool,
+    /// The largest speaker block seen.
+    block: usize,
+    /// The most microphone audio seen arriving between two speaker blocks.
+    chunk: usize,
+}
+
+/// Held in hand beyond a block and a chunk, for timing jitter.
+const LIVE_PACE_MARGIN_S: f64 = 0.01;
+
+impl LivePacer {
+    /// One speaker block of `n` samples at `rate` from `q`, into `out` scaled
+    /// by `vol`: silence while there is not enough in hand. `arrived` is how
+    /// much reached `q` since the last block.
+    fn take(
+        &mut self,
+        q: &mut Vec<f32>,
+        arrived: usize,
+        n: usize,
+        rate: f64,
+        vol: f32,
+        out: &mut Vec<f32>,
+    ) {
+        self.block = self.block.max(n);
+        self.chunk = self.chunk.max(arrived);
+        let target = self.block + self.chunk + (rate * LIVE_PACE_MARGIN_S) as usize;
+        if q.len() > 2 * target {
+            q.drain(..q.len() - target);
+        }
+        if !self.primed && q.len() >= target {
+            self.primed = true;
+        }
+        out.clear();
+        if self.primed {
+            let take = q.len().min(n);
+            out.extend(q.drain(..take).map(|s| s * vol));
+            if take < n {
+                self.primed = false;
+            }
+        }
+        out.resize(n, 0.0);
+    }
+}
+
+impl TxVoiceTester {
+    fn new() -> Self {
+        let mut chain = VoiceChain::new();
+        // The input meter is how a level gets set before any stage is on.
+        chain.set_meter_idle(true);
+        TxVoiceTester {
+            clip: Vec::new(),
+            recording: None,
+            play: None,
+            chain,
+            live: None,
+            live_out: Vec::new(),
+            live_scratch: Vec::new(),
+        }
+    }
+
+    fn status(&self) -> (TxVoiceTest, f32) {
+        let state = if self.recording.is_some() {
+            TxVoiceTest::Recording
+        } else if self.play.is_some() {
+            TxVoiceTest::Playing
+        } else {
+            match self.live {
+                Some(true) => TxVoiceTest::Monitoring,
+                Some(false) => TxVoiceTest::Metering,
+                None => TxVoiceTest::Idle,
+            }
+        };
+        (state, self.clip.len() as f32 / TX_MONITOR_RATE as f32)
+    }
+
+    fn is_recording(&self) -> bool {
+        self.recording.is_some()
+    }
+
+    fn is_playing(&self) -> bool {
+        self.play.is_some()
+    }
+
+    fn is_live(&self) -> bool {
+        self.live.is_some()
+    }
+
+    /// Whether this has audio for the speakers: the phrase playing, or the
+    /// live microphone being monitored.
+    fn is_previewing(&self) -> bool {
+        self.play.is_some() || self.live == Some(true)
+    }
+
+    fn start_record(&mut self) {
+        self.play = None;
+        self.live = None;
+        self.recording = Some(Vec::new());
+    }
+
+    fn start_live(&mut self, audio: bool) {
+        self.recording = None;
+        self.play = None;
+        self.chain.reset();
+        self.live_out.clear();
+        self.live = Some(audio);
+    }
+
+    /// Live microphone audio at 48 kHz: through mic gain and the chain, the
+    /// same way it goes to the air, then held for the speakers when they are
+    /// listening. The meters come from `chain` either way.
+    fn push_live(&mut self, pcm: &[f32], mic_gain: f32, want: &TxVoiceState) {
+        let Some(audio) = self.live else { return };
+        self.live_scratch.clear();
+        self.live_scratch.extend(pcm.iter().map(|s| s * mic_gain));
+        apply_tx_voice(&mut self.chain, want, &mut self.live_scratch);
+        if !audio {
+            return;
+        }
+        self.live_out.extend(self.live_scratch.iter().map(|s| s.clamp(-1.0, 1.0)));
+        if self.live_out.len() > TX_VOICE_LIVE_MAX {
+            let cut = self.live_out.len() - TX_VOICE_LIVE_MAX;
+            self.live_out.drain(..cut);
+        }
+    }
+
+    /// Microphone audio at 48 kHz, while recording. False once the length cap
+    /// is reached, so the caller can stop and keep the phrase.
+    fn push_mic(&mut self, pcm: &[f32]) -> bool {
+        let Some(buf) = self.recording.as_mut() else { return true };
+        let cap = (TX_VOICE_TEST_MAX_S as f64 * TX_MONITOR_RATE) as usize;
+        let room = cap.saturating_sub(buf.len());
+        buf.extend_from_slice(&pcm[..pcm.len().min(room)]);
+        buf.len() < cap
+    }
+
+    /// Stop recording. A take under half a second is a mis-click and leaves
+    /// the previous phrase in place.
+    fn stop_record(&mut self) {
+        if let Some(buf) = self.recording.take() {
+            if buf.len() >= (TX_MONITOR_RATE / 2.0) as usize {
+                self.clip = buf;
+            }
+        }
+    }
+
+    fn start_play(&mut self) -> bool {
+        if self.clip.is_empty() {
+            return false;
+        }
+        self.recording = None;
+        self.live = None;
+        self.chain.reset();
+        self.play = Some(0);
+        true
+    }
+
+    fn stop(&mut self) {
+        self.recording = None;
+        self.play = None;
+        self.live = None;
+        self.live_out.clear();
+    }
+
+    /// The next block of the phrase, put through mic gain and the chain the
+    /// same way a live microphone is on the air path — or, while live, as much
+    /// of the processed microphone as has arrived. Returns how many samples
+    /// were written; zero once the phrase has played out or the live audio has
+    /// caught up.
+    fn fill(&mut self, out: &mut [f32], mic_gain: f32, want: &TxVoiceState) -> usize {
+        if self.live.is_some() {
+            let take = self.live_out.len().min(out.len());
+            out[..take].copy_from_slice(&self.live_out[..take]);
+            self.live_out.drain(..take);
+            return take;
+        }
+        let Some(pos) = self.play.as_mut() else { return 0 };
+        let take = self.clip.len().saturating_sub(*pos).min(out.len());
+        for (o, &s) in out[..take].iter_mut().zip(&self.clip[*pos..]) {
+            *o = s * mic_gain;
+        }
+        *pos += take;
+        apply_tx_voice(&mut self.chain, want, &mut out[..take]);
+        for o in &mut out[..take] {
+            *o = o.clamp(-1.0, 1.0);
+        }
+        take
     }
 }
 
@@ -1933,7 +2158,7 @@ fn apply_tx_eq(
 /// channel's deviation budget and means nothing on a sideband, where the same
 /// 88.5 Hz would simply be an audible hum on the operator's audio.
 ///
-/// A free function, like [`apply_tx_eq`] and for the same reason: both callers
+/// A free function, like [`apply_tx_voice`] and for the same reason: both callers
 /// are already holding a `&mut` borrow of the [`TxChain`], and a method taking
 /// `&mut self` could not be called from there.
 fn apply_tx_signalling(
@@ -2439,17 +2664,19 @@ struct Engine {
     digi_tx_scratch: Vec<f32>,
     digi_tx_done: bool,
     mic_fifo: Vec<f32>,
-    /// Voice-only parametric EQ on the microphone audio, ahead of whatever
-    /// modulates it. Here rather than in [`TxChain`] because a rig that
-    /// modulates its own audio (a CAT rig's sound card, TCI, Icom LAN, a FLEX)
-    /// never builds one, and the EQ applies to those exactly as it does to a
-    /// radio we modulate ourselves — it is the last point at which this
-    /// program still owns the audio either way. See [`apply_tx_eq`].
-    tx_eq: ParametricEq,
-    /// The [`TxEqState`] `tx_eq`'s coefficients were last built from, so a
-    /// block that hasn't changed the EQ skips recomputing them. Same idea as
-    /// how `RxChain::run` reconfigures NR/notch only on change.
-    tx_eq_cfg: TxEqState,
+    /// The transmit voice chain on the microphone audio — gate, EQ,
+    /// de-esser, compressor, limiter — ahead of whatever modulates it. Here
+    /// rather than in [`TxChain`] because a rig that modulates its own audio (a
+    /// CAT rig's sound card, Icom LAN, a FLEX) never builds one, and the chain
+    /// applies to those exactly as it does to a radio we modulate ourselves —
+    /// it is the last point at which this program still owns the audio either
+    /// way. See [`apply_tx_voice`].
+    tx_voice: VoiceChain,
+    /// The TX Audio window's test phrase and its playback — see
+    /// [`TxVoiceTester`].
+    tx_test: TxVoiceTester,
+    /// Pacing for `tx_test`'s live monitor on the speakers.
+    tx_live_pace: LivePacer,
     tx: Option<TxChain>,
     tx_active: bool,
     /// The loudest the microphone got this over, and how many blocks of it were
@@ -3977,7 +4204,7 @@ fn engine_thread(
         state.tx.cessb_db = s.cessb_db.clamp(0.0, sdroxide_types::CESSB_MAX_DB);
         // Clamped on the way in: `session.json` is a file, and an out-of-range
         // corner frequency or Q from a hand edit would reach the filter design.
-        state.tx.eq = s.tx_eq.clamped();
+        state.tx.voice = s.tx_voice().clamped();
         // Clamped for the same reason, and with more at stake: this one decides
         // a transmit frequency.
         state.repeater = s.repeater.clamped();
@@ -4073,11 +4300,12 @@ fn engine_thread(
         digi_tx_scratch: Vec::new(),
         digi_tx_done: false,
         mic_fifo: Vec::new(),
-        tx_eq: ParametricEq::new(),
-        // Deliberately not the restored EQ state: `apply_tx_eq` compares this
-        // against `state.tx.eq` and retunes on any difference, so a default
-        // here just means the first block of the first over retunes once.
-        tx_eq_cfg: TxEqState::default(),
+        // Deliberately not built from the restored state: `apply_tx_voice`
+        // compares what the chain holds against `state.tx.voice` and retunes on
+        // any difference, so the first block of the first over retunes once.
+        tx_voice: VoiceChain::new(),
+        tx_test: TxVoiceTester::new(),
+        tx_live_pace: LivePacer::default(),
         tx: None,
         tx_active: false,
         voice_peak: 0.0,
@@ -4584,6 +4812,7 @@ fn engine_thread(
         // owned actions to avoid borrowing `engine.digi` and `engine` at once.
         engine.poll_digi();
         engine.poll_voice();
+        engine.poll_tx_test();
         engine.poll_skimmer();
         engine.poll_ism();
         engine.poll_adsb();
@@ -4977,6 +5206,7 @@ fn engine_thread(
                     // chain last measured belongs to a moment that has passed.
                     passband_dbfs: f32::NEG_INFINITY,
                     puresignal,
+                    voice: engine.tx_voice.take_meters(),
                 })
             } else {
                 // Not transmitting: both SWR counters belong to an over, so they
@@ -4998,6 +5228,9 @@ fn engine_thread(
                 // `Meters::passband_dbfs` for why they are two numbers.
                 let passband_dbfs =
                     engine.main.as_ref().and_then(|c| c.power_dbfs()).unwrap_or(f32::NEG_INFINITY);
+                // The TX Audio window's test phrase, while it plays. Taken
+                // whether or not a reading is published, like the ADC window.
+                let voice = engine.tx_test.chain.take_meters();
                 engine.rx_signal_dbm().map(|s_dbm| Meters {
                     s_dbm,
                     pa_temp_c,
@@ -5009,6 +5242,7 @@ fn engine_thread(
                     tone,
                     passband_dbfs,
                     puresignal,
+                    voice,
                 })
             };
             if let Some(m) = meters {
@@ -8512,7 +8746,26 @@ impl Engine {
                 }
             }
             SetMicGain(v) => self.state.tx.mic_gain = v.clamp(0.0, 1.0),
-            SetTxEq(eq) => self.state.tx.eq = eq.clamped(),
+            SetTxVoice(v) => self.state.tx.voice = v.clamped(),
+            TxVoiceTestRecord(true) => self.start_tx_test_record(),
+            TxVoiceTestRecord(false) => {
+                if self.tx_test.is_recording() {
+                    self.stop_tx_test();
+                }
+            }
+            TxVoiceTestPlay(true) => self.start_tx_test_play(),
+            TxVoiceTestPlay(false) => {
+                if self.tx_test.is_playing() {
+                    self.stop_tx_test();
+                }
+            }
+            TxVoiceTestLive(TxVoiceLive::Off) => {
+                if self.tx_test.is_live() {
+                    self.stop_tx_test();
+                }
+            }
+            TxVoiceTestLive(TxVoiceLive::Meters) => self.start_tx_test_live(false),
+            TxVoiceTestLive(TxVoiceLive::Audio) => self.start_tx_test_live(true),
 
             // ── Voice keyer ─────────────────────────────────────────────────
             VoiceRecord(Some(slot)) => {
@@ -8528,6 +8781,11 @@ impl Engine {
                 }
                 if !self.voice.start_record(slot as usize) {
                     return;
+                }
+                // The TX Audio window's test recording or live monitor would
+                // be draining the same microphone.
+                if self.tx_test.is_recording() || self.tx_test.is_live() {
+                    self.stop_tx_test();
                 }
                 // Whatever accumulated in the capture ring while nothing was
                 // draining it is stale; the recording starts from now.
@@ -14534,7 +14792,8 @@ impl Engine {
             tune_drive: self.state.tx.tune_drive,
             mic_gain: self.state.tx.mic_gain,
             cessb_db: self.state.tx.cessb_db,
-            tx_eq: self.state.tx.eq,
+            tx_eq: self.state.tx.voice.eq,
+            tx_voice: Some(self.state.tx.voice),
             squelch_db: self.state.rx[0].squelch_db,
             noise_reduction: self.state.rx[0].noise_reduction,
             binaural: self.state.rx[0].binaural,
@@ -14661,7 +14920,7 @@ impl Engine {
         self.state.tx.tune_drive = s.tune_drive;
         self.state.tx.mic_gain = s.mic_gain;
         self.state.tx.cessb_db = s.cessb_db.clamp(0.0, sdroxide_types::CESSB_MAX_DB);
-        self.state.tx.eq = s.tx_eq.clamped();
+        self.state.tx.voice = s.tx_voice().clamped();
         self.state.repeater = s.repeater.clamped();
         // The per-mode ones among those levels are now what this mode is being
         // worked with, so they are its own values from here on — the same thing
@@ -16257,9 +16516,19 @@ impl Engine {
                     self.tx_analyzer.reset();
                     self.tx_pace = None;
                     self.mic_fifo.clear();
-                    // Same reason: the EQ's delay line still holds the last
-                    // over's audio, and an over should not open on its ring-out.
-                    self.tx_eq.reset();
+                    // Same reason: the voice chain's filters and detectors
+                    // still hold the last over's audio, and an over should not
+                    // open on its ring-out.
+                    self.tx_voice.reset();
+                    // The test phrase reads the same microphone and plays
+                    // through the speakers the over silences; so does the
+                    // live monitor.
+                    if self.tx_test.is_recording()
+                        || self.tx_test.is_playing()
+                        || self.tx_test.is_live()
+                    {
+                        self.stop_tx_test();
+                    }
                     // The repeater's signalling starts clean with the over: a
                     // tone generator carries the phase of the tone it was
                     // part-way through, and a DCS word its place in the word.
@@ -16361,18 +16630,59 @@ impl Engine {
     /// trick the digital-voice substitution uses. Returns true when
     /// `voice_prev_out` holds the block to play, false when nothing is being
     /// monitored or the message has just played out.
+    ///
+    /// The TX Audio window's test phrase plays through here as well — it is the
+    /// same thing, a recording monitored on the speakers, only put through the
+    /// voice chain on its way.
     fn take_preview_audio(&mut self, out_rate: f64, n: usize) -> bool {
-        if !self.voice.is_previewing() || n == 0 {
+        let test = self.tx_test.is_previewing();
+        if !(self.voice.is_previewing() || test) || n == 0 {
             return false;
         }
         if (out_rate - self.voice_prev_rate).abs() > 0.01 {
             self.voice_prev_rate = out_rate;
             self.voice_prev_rs = MonoResampler::new(crate::voice::VOICE_RATE, out_rate);
             self.voice_prev_q.clear();
+            self.tx_live_pace = LivePacer::default();
+        }
+        if self.tx_test.is_live() {
+            // Everything the microphone has delivered, so the pacer sees how
+            // much is in hand. Silence rather than the band while it fills: the
+            // operator asked to hear themselves, and the receiver popping in
+            // between words is not that.
+            let before = self.voice_prev_q.len();
+            loop {
+                let mut block = [0.0f32; TX_AUDIO_BLOCK];
+                let got = self.tx_test.fill(&mut block, 1.0, &self.state.tx.voice);
+                if got == 0 {
+                    break;
+                }
+                match self.voice_prev_rs.as_mut() {
+                    Some(r) => r.push(&block[..got], &mut self.voice_prev_q),
+                    None => self.voice_prev_q.extend_from_slice(&block[..got]),
+                }
+            }
+            let arrived = self.voice_prev_q.len() - before;
+            let rx0 = &self.state.rx[0];
+            let vol = if rx0.muted { 0.0 } else { rx0.volume * rx0.volume };
+            self.tx_live_pace.take(
+                &mut self.voice_prev_q,
+                arrived,
+                n,
+                out_rate,
+                vol,
+                &mut self.voice_prev_out,
+            );
+            return true;
         }
         while self.voice_prev_q.len() < n {
             let mut block = [0.0f32; TX_AUDIO_BLOCK];
-            let got = self.voice.fill_preview(&mut block);
+            let got = if test {
+                let gain = self.state.tx.mic_gain * 2.0 * self.state.tx.voice.input_gain();
+                self.tx_test.fill(&mut block, gain, &self.state.tx.voice)
+            } else {
+                self.voice.fill_preview(&mut block)
+            };
             if got == 0 {
                 break; // end of the message
             }
@@ -16382,7 +16692,11 @@ impl Engine {
             }
         }
         if self.voice_prev_q.is_empty() {
-            self.stop_voice_preview();
+            if test {
+                self.stop_tx_test();
+            } else {
+                self.stop_voice_preview();
+            }
             return false;
         }
         let rx0 = &self.state.rx[0];
@@ -16404,6 +16718,125 @@ impl Engine {
         self.voice_prev_q.clear();
         self.voice_tick = None;
         self.emit_voice_status();
+    }
+
+    // ── TX Audio test phrase ────────────────────────────────────────────────
+
+    /// Put the test phrase's status into the broadcast state, and broadcast it
+    /// if it moved.
+    fn sync_tx_test(&mut self) {
+        let (state, len) = self.tx_test.status();
+        if (state, len) != (self.state.tx.voice_test, self.state.tx.voice_test_len_s) {
+            self.state.tx.voice_test = state;
+            self.state.tx.voice_test_len_s = len;
+            self.emit_state();
+        }
+    }
+
+    fn start_tx_test_record(&mut self) {
+        // The same microphone the transmitter and the voice keyer read, so
+        // only one of them at a time.
+        if self.tx_active || self.digi_tx {
+            warn!("TX audio test: cannot record while transmitting");
+            return;
+        }
+        if self.mic.is_none() {
+            self.notice("TX audio test: there is no microphone open.");
+            return;
+        }
+        if self.voice.is_recording() {
+            warn!("TX audio test: the voice keyer is recording");
+            return;
+        }
+        self.stop_voice_preview();
+        self.voice_prev_q.clear();
+        // Whatever sat in the capture ring while nothing drained it is stale.
+        if let Some(mic) = self.mic.as_mut() {
+            while mic.consumer.pop().is_ok() {}
+        }
+        self.tx_test.start_record();
+        self.sync_tx_test();
+    }
+
+    fn start_tx_test_play(&mut self) {
+        if self.tx_active || self.digi_tx {
+            warn!("TX audio test: cannot play back while transmitting");
+            return;
+        }
+        if self.mixer.is_none() {
+            warn!("TX audio test: no audio output to play through");
+            return;
+        }
+        self.stop_voice_preview();
+        self.voice_prev_q.clear();
+        if self.tx_test.start_play() {
+            self.sync_tx_test();
+        }
+    }
+
+    /// Stop whatever the test phrase is doing, keeping a recording in
+    /// progress as the new phrase.
+    fn stop_tx_test(&mut self) {
+        if self.tx_test.is_recording() {
+            self.tx_test.stop_record();
+        }
+        if self.tx_test.is_previewing() {
+            self.voice_prev_q.clear();
+        }
+        self.tx_test.stop();
+        self.sync_tx_test();
+    }
+
+    /// Put the live microphone through the test chain: for the meters, and
+    /// for the speakers too when `audio`.
+    fn start_tx_test_live(&mut self, audio: bool) {
+        if self.tx_active || self.digi_tx {
+            warn!("TX audio test: cannot monitor while transmitting");
+            return;
+        }
+        if self.mic.is_none() {
+            self.notice("TX audio test: there is no microphone open.");
+            return;
+        }
+        if self.voice.is_recording() {
+            warn!("TX audio test: the voice keyer is recording");
+            return;
+        }
+        if audio && self.mixer.is_none() {
+            warn!("TX audio test: no audio output to monitor on");
+            return;
+        }
+        self.stop_voice_preview();
+        self.stop_tx_test();
+        // Stale audio in the capture ring would be heard as a delay.
+        if let Some(mic) = self.mic.as_mut() {
+            while mic.consumer.pop().is_ok() {}
+        }
+        self.voice_prev_q.clear();
+        self.tx_live_pace = LivePacer::default();
+        self.tx_test.start_live(audio);
+        self.sync_tx_test();
+    }
+
+    /// Feed a test recording, or the live monitor, from the microphone. Called
+    /// once per engine iteration.
+    fn poll_tx_test(&mut self) {
+        if !(self.tx_test.is_recording() || self.tx_test.is_live()) {
+            return;
+        }
+        self.drain_mic_48k();
+        if self.voice_rec_buf.is_empty() {
+            return;
+        }
+        if self.tx_test.is_live() {
+            let gain = self.state.tx.mic_gain * 2.0 * self.state.tx.voice.input_gain();
+            self.tx_test.push_live(&self.voice_rec_buf, gain, &self.state.tx.voice);
+            return;
+        }
+        if !self.tx_test.push_mic(&self.voice_rec_buf) {
+            info!("TX audio test: length cap reached; phrase kept");
+            self.stop_tx_test();
+        }
     }
 
     /// Drain the queued CW sidetone into `cw_monitor_out`, resampling from the
@@ -16547,17 +16980,7 @@ impl Engine {
 
     /// Drain the microphone into the running recording, stopping at the cap.
     fn record_voice_block(&mut self) {
-        self.voice_rec_buf.clear();
-        if let Some(mic) = self.mic.as_mut() {
-            let mut raw = Vec::with_capacity(mic.consumer.slots());
-            while let Ok(s) = mic.consumer.pop() {
-                raw.push(s);
-            }
-            match &mut self.mic_resampler {
-                Some(r) => r.push(&raw, &mut self.voice_rec_buf),
-                None => self.voice_rec_buf.extend_from_slice(&raw),
-            }
-        }
+        self.drain_mic_48k();
         if self.voice_rec_buf.is_empty() {
             return;
         }
@@ -16568,6 +16991,23 @@ impl Engine {
             info!("voice keyer: length cap reached; recording stored");
             self.voice.stop_record();
             self.emit_voice_status();
+        }
+    }
+
+    /// Whatever the microphone has delivered since the last call, at 48 kHz,
+    /// into `voice_rec_buf` — for the two recorders, which read the microphone
+    /// while nothing is transmitting.
+    fn drain_mic_48k(&mut self) {
+        self.voice_rec_buf.clear();
+        if let Some(mic) = self.mic.as_mut() {
+            let mut raw = Vec::with_capacity(mic.consumer.slots());
+            while let Ok(s) = mic.consumer.pop() {
+                raw.push(s);
+            }
+            match &mut self.mic_resampler {
+                Some(r) => r.push(&raw, &mut self.voice_rec_buf),
+                None => self.voice_rec_buf.extend_from_slice(&raw),
+            }
         }
     }
 
@@ -16907,10 +17347,23 @@ impl Engine {
                 // fed whatever the sound card delivered. Same 50 %-is-unity
                 // convention as the voice paths, so one setting means one thing
                 // whichever mode is transmitting.
-                let gain = self.state.tx.mic_gain * 2.0;
+                // Input gain with it, whether or not the rest of the chain
+                // runs here: it is the level this microphone needs, not
+                // processing.
+                let gain = self.state.tx.mic_gain * 2.0 * self.state.tx.voice.input_gain();
                 if (gain - 1.0).abs() > f32::EPSILON {
                     for a in self.mic_fifo.iter_mut() {
                         *a = (*a * gain).clamp(-1.0, 1.0);
+                    }
+                }
+                // The voice chain only when the operator has asked for it here:
+                // a vocoder is trained on natural speech, and whether it
+                // decodes a processed voice better or worse is something to
+                // find out on the air, not to decide for them.
+                if self.state.tx.voice.digital_voice {
+                    apply_tx_voice(&mut self.tx_voice, &self.state.tx.voice, &mut self.mic_fifo);
+                    for a in self.mic_fifo.iter_mut() {
+                        *a = a.clamp(-1.0, 1.0);
                     }
                 }
                 if let Some(d) = self.digi.as_mut() {
@@ -17008,12 +17461,20 @@ impl Engine {
 
                 // Mic gain is the operator's microphone control; a TCI client sets
                 // its own level and uses `drive` for power, so it is left alone.
-                let mic_gain = if tci_tx { 1.0 } else { self.state.tx.mic_gain * 2.0 };
+                let mic_gain = if tci_tx {
+                    1.0
+                } else {
+                    self.state.tx.mic_gain * 2.0 * self.state.tx.voice.input_gain()
+                };
                 for a in &mut audio {
                     *a = tx.dc.run(*a) * mic_gain;
                 }
-                // Voice-only parametric EQ, ahead of the modulator.
-                apply_tx_eq(&mut self.tx_eq, &mut self.tx_eq_cfg, &self.state.tx.eq, &mut audio);
+                // The voice chain, ahead of the modulator — but not for a TCI
+                // client, whose audio is a modem's and already the shape it
+                // has to go out in.
+                if !tci_tx {
+                    apply_tx_voice(&mut self.tx_voice, &self.state.tx.voice, &mut audio);
+                }
             }
             // The repeater's own signalling, last of all: the tone has to reach
             // the modulator at the level it was built at, and the EQ above
@@ -17276,16 +17737,23 @@ impl Engine {
             self.voice_blocks += 1;
             // A TCI client sets its own audio level; the mic-gain control is for
             // the operator's microphone and would double-scale it.
-            let gain = if self.tci_tx { 1.0 } else { self.state.tx.mic_gain * 2.0 };
+            let gain = if self.tci_tx {
+                1.0
+            } else {
+                self.state.tx.mic_gain * 2.0 * self.state.tx.voice.input_gain()
+            };
             for a in &mut audio {
                 *a *= gain;
             }
-            // Voice-only parametric EQ. The rig modulates this audio itself, so
-            // handing it to the sound card is the same point in the chain that
-            // handing it to the modulator is on the I/Q path — the last one we
-            // own. Before the clamp, so a boosted band is held to full scale
-            // rather than leaving here above it.
-            apply_tx_eq(&mut self.tx_eq, &mut self.tx_eq_cfg, &self.state.tx.eq, &mut audio);
+            // The voice chain. The rig modulates this audio itself, so handing
+            // it to the sound card is the same point in the chain that handing
+            // it to the modulator is on the I/Q path — the last one we own.
+            // Before the clamp, so a boosted band is held to full scale rather
+            // than leaving here above it. Never a TCI client's audio: see
+            // `apply_tx_voice`.
+            if !self.tci_tx {
+                apply_tx_voice(&mut self.tx_voice, &self.state.tx.voice, &mut audio);
+            }
             for a in &mut audio {
                 *a = a.clamp(-1.0, 1.0);
             }
@@ -19979,5 +20447,118 @@ mod cw_monitor_tests {
         }
         assert_eq!(ready.len(), CW_MONITOR_CAP);
         assert_eq!(*ready.back().unwrap(), (400 * 480 - 1) as f32, "the newest is kept");
+    }
+}
+
+#[cfg(test)]
+mod tx_voice_tester_tests {
+    use super::*;
+
+    fn tone(n: usize, amp: f32) -> Vec<f32> {
+        (0..n).map(|i| amp * (i as f32 * 0.1).sin()).collect()
+    }
+
+    /// Monitoring hands the speakers the microphone after mic gain, and the
+    /// meters see the same thing.
+    #[test]
+    fn live_audio_reaches_the_speakers_and_the_meters() {
+        let mut t = TxVoiceTester::new();
+        t.start_live(true);
+        assert_eq!(t.status().0, TxVoiceTest::Monitoring);
+        let mic = tone(480, 0.25);
+        t.push_live(&mic, 2.0, &TxVoiceState::default());
+        let mut out = [0.0f32; 480];
+        assert_eq!(t.fill(&mut out, 2.0, &TxVoiceState::default()), 480);
+        for (o, m) in out.iter().zip(&mic) {
+            assert!((o - m * 2.0).abs() < 1e-6);
+        }
+        let m = t.chain.take_meters().expect("an idle test chain still meters");
+        assert!((m.input_db - 20.0 * 0.5f32.log10()).abs() < 0.1);
+        // Caught up: nothing more until the microphone delivers again.
+        assert_eq!(t.fill(&mut out, 2.0, &TxVoiceState::default()), 0);
+    }
+
+    /// Meters only: the chain runs, nothing is queued for the speakers.
+    #[test]
+    fn metering_queues_no_audio() {
+        let mut t = TxVoiceTester::new();
+        t.start_live(false);
+        assert_eq!(t.status().0, TxVoiceTest::Metering);
+        assert!(!t.is_previewing());
+        t.push_live(&tone(480, 0.5), 1.0, &TxVoiceState::default());
+        assert!(t.live_out.is_empty());
+        assert!(t.chain.take_meters().is_some());
+    }
+
+    /// A microphone running ahead of the speaker cannot build up a delay.
+    #[test]
+    fn live_backlog_is_capped() {
+        let mut t = TxVoiceTester::new();
+        t.start_live(true);
+        for _ in 0..100 {
+            t.push_live(&tone(480, 0.1), 1.0, &TxVoiceState::default());
+        }
+        assert_eq!(t.live_out.len(), TX_VOICE_LIVE_MAX);
+    }
+
+    /// The microphone arriving in chunks that do not line up with the
+    /// speaker's blocks still plays without a gap once primed.
+    #[test]
+    fn live_pacer_rides_over_misaligned_chunks() {
+        let mut p = LivePacer::default();
+        let mut q = Vec::new();
+        let mut out = Vec::new();
+        let mut next = 0.0f32;
+        let mut played = Vec::new();
+        // 10 ms microphone chunks against 20 ms speaker blocks, the same
+        // rate on average but bunched unevenly, as the engine loop sees them.
+        for i in 0..200 {
+            let chunks = [1, 3, 2, 0, 4, 2][i % 6];
+            let mut arrived = 0;
+            for _ in 0..chunks {
+                for _ in 0..480 {
+                    next += 1.0;
+                    q.push(next);
+                    arrived += 1;
+                }
+            }
+            p.take(&mut q, arrived, 960, 48_000.0, 1.0, &mut out);
+            assert_eq!(out.len(), 960);
+            played.extend_from_slice(&out);
+        }
+        let first = played.iter().position(|&s| s != 0.0).expect("it started");
+        assert!(first < 6 * 960, "primed within a few blocks");
+        for w in played[first..].windows(2) {
+            assert_eq!(w[1], w[0] + 1.0, "no gap and no drop once playing");
+        }
+    }
+
+    /// A microphone clock running ahead of the speaker's is cut back rather
+    /// than left to grow into a delay.
+    #[test]
+    fn live_pacer_bounds_the_delay() {
+        let mut p = LivePacer::default();
+        let mut q = Vec::new();
+        let mut out = Vec::new();
+        for _ in 0..500 {
+            q.extend(std::iter::repeat_n(0.5, 1100));
+            p.take(&mut q, 1100, 1024, 48_000.0, 1.0, &mut out);
+            assert!(q.len() <= 2 * (1024 + 1100 + 480));
+        }
+    }
+
+    /// Recording or playing takes over from the live monitor, and stopping
+    /// clears it.
+    #[test]
+    fn the_modes_exclude_each_other() {
+        let mut t = TxVoiceTester::new();
+        t.start_live(true);
+        t.start_record();
+        assert!(!t.is_live());
+        assert_eq!(t.status().0, TxVoiceTest::Recording);
+        t.start_live(false);
+        assert!(!t.is_recording());
+        t.stop();
+        assert_eq!(t.status().0, TxVoiceTest::Idle);
     }
 }

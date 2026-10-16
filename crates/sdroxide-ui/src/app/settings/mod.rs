@@ -350,11 +350,9 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// there is no APPLY step on the General tab, and the whole point of it is
     /// that the band plan follows immediately.
     region_edit: &'a mut sdroxide_types::Region,
-    /// The transmit parametric EQ (voice modes only). Same contract as
-    /// `region_edit`: no APPLY step, sent the moment a band changes. This is
-    /// live `RadioState`, not a per-backend `RadioConfig`, so it applies
-    /// regardless of which radio interface is selected.
-    tx_eq_edit: &'a mut sdroxide_types::TxEqState,
+    /// Set when the operator asks for the TX Audio window, which took over
+    /// the transmit EQ that used to sit in this tab.
+    open_tx_audio: &'a mut bool,
     tab: &'a mut SettingsTab,
     /// Which logging service the Uploads tab's own strip is showing. Its own
     /// field rather than state inside the tab's body, because the body is drawn
@@ -684,29 +682,6 @@ fn drive_trim_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
             .weak(),
         );
     });
-}
-
-/// One row of the transmit-EQ grid: a band's frequency, gain and Q/slope.
-/// `q_range` doubles as the shelf-slope range for the two shelf bands, see
-/// [`sdroxide_types::TxEqBand::q`].
-fn tx_eq_band_row(
-    ui: &mut egui::Ui,
-    label: &str,
-    band: &mut sdroxide_types::TxEqBand,
-    freq_range: std::ops::RangeInclusive<f32>,
-    q_range: std::ops::RangeInclusive<f32>,
-    hover: &str,
-) {
-    ui.label(label).on_hover_text(hover);
-    ui.add(egui::DragValue::new(&mut band.freq_hz).range(freq_range).suffix(" Hz").speed(5.0));
-    ui.add(
-        egui::DragValue::new(&mut band.gain_db)
-            .range(sdroxide_types::TxEqState::GAIN_DB_RANGE)
-            .suffix(" dB")
-            .speed(0.2),
-    );
-    ui.add(egui::DragValue::new(&mut band.q).range(q_range).speed(0.02));
-    ui.end_row();
 }
 
 pub(in crate::app) fn enum_combo<T: PartialEq + Copy>(
@@ -1082,7 +1057,7 @@ impl SdroxideApp {
         let mut digi_edit = self.digi_cfg_edit.clone();
         let digi_seeded = self.digi_cfg_seeded;
         let mut region_edit = self.region_edit;
-        let mut tx_eq_edit = self.state.tx.eq;
+        let mut open_tx_audio = false;
         let mut net_edit = self.net_cfg_edit.clone();
         let mut net_cmds = self.net_cluster_cmds.clone();
         let mut rbn_cmds = self.net_rbn_cmds.clone();
@@ -1285,7 +1260,7 @@ impl SdroxideApp {
                             radio_tabs: &mut radio_tab_reqs,
                             radio_name_edit: &mut radio_name_edit,
                             region_edit: &mut region_edit,
-                            tx_eq_edit: &mut tx_eq_edit,
+                            open_tx_audio: &mut open_tx_audio,
                             tab: &mut tab,
                             upload_tab: &mut upload_tab,
                         },
@@ -1756,12 +1731,8 @@ impl SdroxideApp {
             sdroxide_types::set_region(region_edit);
             cmds.push(Command::SetRegion(region_edit));
         }
-        // The transmit EQ: live `RadioState`, applied the moment a band
-        // changes, same as the region above. There is no per-backend config
-        // to wait on, so no APPLY step either.
-        if tx_eq_edit != self.state.tx.eq {
-            self.state.tx.eq = tx_eq_edit;
-            cmds.push(Command::SetTxEq(tx_eq_edit));
+        if open_tx_audio {
+            self.tx_audio.open = true;
         }
     }
 
@@ -2396,55 +2367,35 @@ impl SdroxideApp {
                     drive_trim_table(ui, cfg);
                     ui.separator();
                     ui.label(
-                        RichText::new("Transmit EQ")
+                        RichText::new("Transmit audio")
                             .size(14.0)
                             .strong()
                             .color(crate::theme::CYAN()),
                     );
                     ui.add_space(4.0);
-                    crate::chrome::checkbox(ui, &mut io.tx_eq_edit.enabled, "Enabled").on_hover_text(
-                        "A 3-band parametric EQ on the microphone audio, ahead of the modulator. \
-                         Voice modes only (SSB/AM/FM); digital modes and CW carry synthesized or \
-                         keyed audio that never reaches it. Off by default and flat when turned \
-                         on, so enabling it changes nothing on the air until a band below is \
-                         actually moved. Applies immediately.",
-                    );
-                    ui.add_space(4.0);
-                    egui::Grid::new("tx-eq-grid").num_columns(4).spacing([10.0, 6.0]).show(
-                        ui,
-                        |ui| {
-                            ui.label("");
-                            ui.label(RichText::new("Freq").weak());
-                            ui.label(RichText::new("Gain").weak());
-                            ui.label(RichText::new("Q / Slope").weak());
-                            ui.end_row();
-
-                            tx_eq_band_row(
-                                ui,
-                                "Low shelf",
-                                &mut io.tx_eq_edit.low,
-                                sdroxide_types::TxEqState::LOW_FREQ_HZ_RANGE,
-                                sdroxide_types::TxEqState::SHELF_SLOPE_RANGE,
-                                "Cuts/boosts rumble and handling noise.",
-                            );
-                            tx_eq_band_row(
-                                ui,
-                                "Mid peak",
-                                &mut io.tx_eq_edit.mid,
-                                sdroxide_types::TxEqState::MID_FREQ_HZ_RANGE,
-                                sdroxide_types::TxEqState::MID_Q_RANGE,
-                                "Presence: a narrow bump or dip somewhere in the voice band.",
-                            );
-                            tx_eq_band_row(
-                                ui,
-                                "High shelf",
-                                &mut io.tx_eq_edit.high,
-                                sdroxide_types::TxEqState::HIGH_FREQ_HZ_RANGE,
-                                sdroxide_types::TxEqState::SHELF_SLOPE_RANGE,
-                                "Brightness/de-ess.",
-                            );
-                        },
-                    );
+                    ui.horizontal_wrapped(|ui| {
+                        let voice = &self.state.tx.voice;
+                        let on = if voice.bypass {
+                            "bypassed".to_string()
+                        } else if voice.active() {
+                            "in use".to_string()
+                        } else {
+                            "every stage off".to_string()
+                        };
+                        if ui
+                            .button("Open TX Audio…")
+                            .on_hover_text(
+                                "The microphone processing chain — gate, EQ, de-esser, \
+                                 compressor and limiter — with a test recording to tune it \
+                                 by ear without transmitting. Voice modes only. Also opened \
+                                 by clicking Mic in the TX box.",
+                            )
+                            .clicked()
+                        {
+                            *io.open_tx_audio = true;
+                        }
+                        ui.label(RichText::new(format!("Chain {on}.")).weak());
+                    });
                 }
                 ui.separator();
 

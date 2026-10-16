@@ -45,6 +45,7 @@ pub(in crate::app) mod spectrum;
 pub(in crate::app) mod speech;
 pub(in crate::app) mod spots;
 pub(in crate::app) mod top_bar;
+pub(in crate::app) mod tx_audio;
 pub(crate) mod util;
 pub(in crate::app) mod windows;
 pub(in crate::app) mod winlink;
@@ -470,6 +471,8 @@ pub struct SdroxideApp {
     voice: sdroxide_types::VoiceStatus,
     show_voice: bool,
     voice_name_edit: Option<(usize, String)>,
+    /// The TX Audio window (the transmit voice chain) and its own state.
+    tx_audio: tx_audio::TxAudioUi,
     /// When the band/mode, FFT and skimmer popups opened (egui time), for their
     /// auto-fade.
     mode_popup_since: Option<f64>,
@@ -1439,6 +1442,7 @@ impl SdroxideApp {
             voice: sdroxide_types::VoiceStatus::default(),
             show_voice: false,
             voice_name_edit: None,
+            tx_audio: tx_audio::TxAudioUi::new(storage),
             mode_popup_since: None,
             fft_popup_since: None,
             skimmer_popup_since: None,

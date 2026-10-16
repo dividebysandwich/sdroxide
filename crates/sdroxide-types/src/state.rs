@@ -144,8 +144,13 @@ pub struct TxState {
     pub tune_drive: f32,
     /// 0.0..=1.0
     pub mic_gain: f32,
-    /// Parametric EQ on the mic/modulator audio (voice modes only).
-    pub eq: TxEqState,
+    /// The microphone processing chain — gate, EQ, de-esser, compressor,
+    /// limiter (voice modes only). See [`crate::TxVoiceState`].
+    pub voice: crate::TxVoiceState,
+    /// The TX Audio window's test phrase: what it is doing, and how long the
+    /// stored phrase is in seconds (`0.0` when there is none).
+    pub voice_test: crate::TxVoiceTest,
+    pub voice_test_len_s: f32,
     /// Whether the SWR guard is armed, and the ratio it trips at.
     ///
     /// Carried in the broadcast state rather than read from `config.toml` by
@@ -225,81 +230,6 @@ pub const SWR_TUNE_LIMIT_SCALE: f32 = 2.0;
 /// it works out to, and two copies of this formula would drift.
 pub fn swr_tune_limit(limit: f32) -> f32 {
     (limit * SWR_TUNE_LIMIT_SCALE).min(SWR_LIMIT_MAX)
-}
-
-/// One band of [`TxEqState`]: corner/center frequency and gain, plus either Q
-/// (the mid peaking band, where higher is narrower) or shelf slope (the
-/// low/high shelf bands, the RBJ cookbook's `S`, `0.1..=1.0`; `1.0` is the
-/// steepest shelf that stays monotonic).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct TxEqBand {
-    pub freq_hz: f32,
-    pub gain_db: f32,
-    pub q: f32,
-}
-
-/// Transmit parametric EQ on the microphone/modulator audio path. Voice
-/// modes only (SSB/AM/FM); digital and CW carry synthesized/keyed audio that
-/// never passes through it. Off by default and flat when turned on, so
-/// enabling it changes nothing on the air until a band is actually moved.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct TxEqState {
-    pub enabled: bool,
-    /// Low shelf: cuts/boosts rumble and handling noise.
-    pub low: TxEqBand,
-    /// Mid peak: presence/proximity shaping.
-    pub mid: TxEqBand,
-    /// High shelf: brightness/de-ess.
-    pub high: TxEqBand,
-}
-
-impl Default for TxEqState {
-    fn default() -> Self {
-        TxEqState {
-            enabled: false,
-            low: TxEqBand { freq_hz: 300.0, gain_db: 0.0, q: 0.7 },
-            mid: TxEqBand { freq_hz: 1500.0, gain_db: 0.0, q: 1.0 },
-            high: TxEqBand { freq_hz: 2800.0, gain_db: 0.0, q: 0.7 },
-        }
-    }
-}
-
-impl TxEqState {
-    /// UI range for every band's gain.
-    pub const GAIN_DB_RANGE: std::ops::RangeInclusive<f32> = -15.0..=15.0;
-    pub const LOW_FREQ_HZ_RANGE: std::ops::RangeInclusive<f32> = 100.0..=1000.0;
-    pub const MID_FREQ_HZ_RANGE: std::ops::RangeInclusive<f32> = 300.0..=3000.0;
-    pub const HIGH_FREQ_HZ_RANGE: std::ops::RangeInclusive<f32> = 1000.0..=4000.0;
-    /// Q range for the mid (peaking) band only.
-    pub const MID_Q_RANGE: std::ops::RangeInclusive<f32> = 0.3..=5.0;
-    /// Shelf-slope range for the low/high (shelving) bands.
-    pub const SHELF_SLOPE_RANGE: std::ops::RangeInclusive<f32> = 0.1..=1.0;
-
-    /// This state with every field forced into the range the UI offers.
-    ///
-    /// The controls cannot leave these ranges, but two other doors into this
-    /// type can: a `SetTxEq` from a WebSocket client, and the `session.json`
-    /// restored at startup, which is a file an operator may have edited. Both
-    /// go through here, so the coefficient maths in `sdroxide-dsp` only ever
-    /// sees corner frequencies inside the voice band and a Q it was designed
-    /// for.
-    pub fn clamped(self) -> Self {
-        let band = |b: TxEqBand,
-                    freq: std::ops::RangeInclusive<f32>,
-                    q: std::ops::RangeInclusive<f32>| {
-            TxEqBand {
-                freq_hz: b.freq_hz.clamp(*freq.start(), *freq.end()),
-                gain_db: b.gain_db.clamp(*Self::GAIN_DB_RANGE.start(), *Self::GAIN_DB_RANGE.end()),
-                q: b.q.clamp(*q.start(), *q.end()),
-            }
-        };
-        TxEqState {
-            enabled: self.enabled,
-            low: band(self.low, Self::LOW_FREQ_HZ_RANGE, Self::SHELF_SLOPE_RANGE),
-            mid: band(self.mid, Self::MID_FREQ_HZ_RANGE, Self::MID_Q_RANGE),
-            high: band(self.high, Self::HIGH_FREQ_HZ_RANGE, Self::SHELF_SLOPE_RANGE),
-        }
-    }
 }
 
 /// Decimation off — the receiver runs at the device's own rate.

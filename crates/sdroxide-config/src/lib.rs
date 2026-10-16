@@ -491,6 +491,19 @@ pub fn save_band_plan(plan: &sdroxide_types::BandPlan) -> Result<(), ConfigError
 /// assigned frequencies that are not in the published plan, kept as one-click
 /// chips beside it. Per machine rather than per station: a channel a listener
 /// found busy is theirs, not everybody else's.
+/// The TX Audio window's profile library (`tx_audio_profiles.json`). A
+/// client-side file: profiles are this operator's settings for their own
+/// microphone, kept on the machine they sit at.
+pub fn load_tx_voice_profiles() -> Vec<sdroxide_types::TxVoiceProfile> {
+    load_json_list("tx_audio_profiles.json")
+}
+
+pub fn save_tx_voice_profiles(
+    profiles: &[sdroxide_types::TxVoiceProfile],
+) -> Result<(), ConfigError> {
+    save_json("tx_audio_profiles.json", &profiles)
+}
+
 pub fn load_hfdl_channels() -> Vec<u32> {
     load_json_list("hfdl_channels.json")
 }
@@ -1279,7 +1292,16 @@ pub struct Session {
     /// Transmit parametric EQ (voice modes only). Absent in a session written
     /// before this existed, in which case `#[serde(default)]` above gives it
     /// [`sdroxide_types::TxEqState::default`], disabled and flat.
+    ///
+    /// Still written beside `tx_voice`, which carries the same EQ as one of
+    /// its stages: it is what a session from before the voice chain restores
+    /// the EQ from, and what an older build reading this file falls back to.
     pub tx_eq: sdroxide_types::TxEqState,
+    /// The transmit voice chain — gate, EQ, de-esser, compressor, limiter.
+    /// `None` in a session written before it existed; [`Self::tx_voice`]
+    /// builds one around `tx_eq` then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_voice: Option<sdroxide_types::TxVoiceState>,
     /// Main receiver's squelch threshold, in dBFS.
     /// [`sdroxide_types::SQUELCH_OPEN_DB`] = always open.
     pub squelch_db: f32,
@@ -1407,7 +1429,8 @@ impl Default for Session {
             tune_drive: radio.tx.tune_drive,
             mic_gain: radio.tx.mic_gain,
             cessb_db: radio.tx.cessb_db,
-            tx_eq: radio.tx.eq,
+            tx_eq: radio.tx.voice.eq,
+            tx_voice: None,
             squelch_db: radio.rx[0].squelch_db,
             noise_reduction: radio.rx[0].noise_reduction,
             binaural: radio.rx[0].binaural,
@@ -1446,6 +1469,22 @@ impl Session {
     fn sanitized(mut self) -> Session {
         self.vfo_b_hz = self.vfo_b_hz.filter(|hz| Self::usable_dial(*hz));
         self
+    }
+
+    /// The transmit voice chain this session restores: its own record when it
+    /// has one, otherwise a chain with every other stage off around the EQ a
+    /// pre-chain session stored. Not clamped — the engine does that, as it
+    /// does for everything that comes off the wire.
+    pub fn tx_voice(&self) -> sdroxide_types::TxVoiceState {
+        self.tx_voice
+            .unwrap_or(sdroxide_types::TxVoiceState { eq: self.tx_eq, ..Default::default() })
+    }
+
+    /// Record `voice` — in `tx_voice`, and its EQ in `tx_eq` as well; see
+    /// [`Self::tx_eq`].
+    pub fn set_tx_voice(&mut self, voice: sdroxide_types::TxVoiceState) {
+        self.tx_eq = voice.eq;
+        self.tx_voice = Some(voice);
     }
 
     /// The dial the radio was actually being worked on — what the front end
@@ -2368,7 +2407,17 @@ mod tests {
                 low: sdroxide_types::TxEqBand { freq_hz: 250.0, gain_db: -3.0, q: 0.8 },
                 mid: sdroxide_types::TxEqBand { freq_hz: 1800.0, gain_db: 4.0, q: 1.2 },
                 high: sdroxide_types::TxEqBand { freq_hz: 3000.0, gain_db: 2.0, q: 0.6 },
+                ..Default::default()
             },
+            tx_voice: Some(sdroxide_types::TxVoiceState {
+                denoise: true,
+                comp: sdroxide_types::TxCompState {
+                    enabled: true,
+                    phase_stages: 4,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
             squelch_db: -70.0,
             noise_reduction: sdroxide_types::NrLevel::RnnMed,
             binaural: true,
@@ -2421,7 +2470,7 @@ mod tests {
         assert_eq!(old.drive, radio.tx.drive);
         assert_eq!(old.tune_drive, radio.tx.tune_drive);
         assert_eq!(old.mic_gain, radio.tx.mic_gain);
-        assert_eq!(old.tx_eq, radio.tx.eq);
+        assert_eq!(old.tx_voice(), radio.tx.voice);
         assert_eq!(old.recording_mono, radio.recording_mono);
         // Likewise the receive settings added after those: an operator upgrading
         // into this comes up squelch-open with NR off, exactly as they always

@@ -1,5 +1,7 @@
-//! Transmit-audio parametric EQ: three cascaded biquads (low shelf, mid peak,
-//! high shelf) shaping the microphone signal ahead of the modulator.
+//! Transmit-audio parametric EQ: cascaded biquads (high-pass, low shelf, two
+//! peaks, high shelf, low-pass) shaping the microphone signal ahead of the
+//! modulator. One stage of the voice chain in [`crate::txvoice`], which also
+//! borrows [`Biquad`] and [`Coeffs`] from here for its own filters.
 //!
 //! Coefficients follow the RBJ Audio EQ Cookbook, computed in `f64` and stored
 //! as `f32`, the same precision split `DcBlock` uses. That's safe here because
@@ -11,109 +13,16 @@
 //! this workspace, and this stays consistent with that (see `DcBlock` in
 //! `demod.rs`).
 
-use sdroxide_types::{TxEqBand, TxEqState};
+#[cfg(test)]
+use sdroxide_types::TxEqBand;
+use sdroxide_types::TxEqState;
 
-/// The five normalized coefficients of one second-order section — the filter's
-/// *shape*, with none of its memory. Kept apart from [`Biquad`] so that
-/// retuning a band swaps only this and leaves the delay line alone; see
-/// [`Biquad::set`].
-#[derive(Clone, Copy)]
-struct Coeffs {
-    b0: f32,
-    b1: f32,
-    b2: f32,
-    a1: f32,
-    a2: f32,
-}
-
-impl Coeffs {
-    /// The identity filter, used for a band whose gain is 0 dB, so a flat
-    /// band costs no more than passing samples through unchanged.
-    fn identity() -> Self {
-        Coeffs { b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0 }
-    }
-
-    fn normalized(b0: f64, b1: f64, b2: f64, a0: f64, a1: f64, a2: f64) -> Self {
-        Coeffs {
-            b0: (b0 / a0) as f32,
-            b1: (b1 / a0) as f32,
-            b2: (b2 / a0) as f32,
-            a1: (a1 / a0) as f32,
-            a2: (a2 / a0) as f32,
-        }
-    }
-
-    /// Peaking (bell) filter: boost/cut `gain_db` around `freq_hz`, `q` sets
-    /// how narrow the bell is (higher = narrower).
-    fn peaking(freq_hz: f64, gain_db: f64, q: f64, rate: f64) -> Self {
-        if gain_db == 0.0 || freq_hz <= 0.0 || rate <= 0.0 {
-            return Self::identity();
-        }
-        let a = 10f64.powf(gain_db / 40.0);
-        let w0 = std::f64::consts::TAU * freq_hz / rate;
-        let (sin_w0, cos_w0) = w0.sin_cos();
-        let alpha = sin_w0 / (2.0 * q.max(0.05));
-
-        let b0 = 1.0 + alpha * a;
-        let b1 = -2.0 * cos_w0;
-        let b2 = 1.0 - alpha * a;
-        let a0 = 1.0 + alpha / a;
-        let a1 = -2.0 * cos_w0;
-        let a2 = 1.0 - alpha / a;
-        Self::normalized(b0, b1, b2, a0, a1, a2)
-    }
-
-    /// Low shelf: boost/cut `gain_db` below `freq_hz`. `slope` is the RBJ
-    /// cookbook's `S` (0 < S <= 1; 1 is the steepest monotonic shelf). That's
-    /// what [`TxEqBand::q`] means on a shelf band, distinct from a peaking
-    /// band's Q.
-    fn low_shelf(freq_hz: f64, gain_db: f64, slope: f64, rate: f64) -> Self {
-        if gain_db == 0.0 || freq_hz <= 0.0 || rate <= 0.0 {
-            return Self::identity();
-        }
-        let a = 10f64.powf(gain_db / 40.0);
-        let w0 = std::f64::consts::TAU * freq_hz / rate;
-        let (sin_w0, cos_w0) = w0.sin_cos();
-        let s = slope.clamp(0.1, 1.0);
-        let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / s - 1.0) + 2.0).sqrt();
-        let sqrt_a_2alpha = 2.0 * a.sqrt() * alpha;
-
-        let b0 = a * ((a + 1.0) - (a - 1.0) * cos_w0 + sqrt_a_2alpha);
-        let b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0);
-        let b2 = a * ((a + 1.0) - (a - 1.0) * cos_w0 - sqrt_a_2alpha);
-        let a0 = (a + 1.0) + (a - 1.0) * cos_w0 + sqrt_a_2alpha;
-        let a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0);
-        let a2 = (a + 1.0) + (a - 1.0) * cos_w0 - sqrt_a_2alpha;
-        Self::normalized(b0, b1, b2, a0, a1, a2)
-    }
-
-    /// High shelf: boost/cut `gain_db` above `freq_hz`. See [`Self::low_shelf`]
-    /// for what `slope` means.
-    fn high_shelf(freq_hz: f64, gain_db: f64, slope: f64, rate: f64) -> Self {
-        if gain_db == 0.0 || freq_hz <= 0.0 || rate <= 0.0 {
-            return Self::identity();
-        }
-        let a = 10f64.powf(gain_db / 40.0);
-        let w0 = std::f64::consts::TAU * freq_hz / rate;
-        let (sin_w0, cos_w0) = w0.sin_cos();
-        let s = slope.clamp(0.1, 1.0);
-        let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / s - 1.0) + 2.0).sqrt();
-        let sqrt_a_2alpha = 2.0 * a.sqrt() * alpha;
-
-        let b0 = a * ((a + 1.0) + (a - 1.0) * cos_w0 + sqrt_a_2alpha);
-        let b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0);
-        let b2 = a * ((a + 1.0) + (a - 1.0) * cos_w0 - sqrt_a_2alpha);
-        let a0 = (a + 1.0) - (a - 1.0) * cos_w0 + sqrt_a_2alpha;
-        let a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w0);
-        let a2 = (a + 1.0) - (a - 1.0) * cos_w0 - sqrt_a_2alpha;
-        Self::normalized(b0, b1, b2, a0, a1, a2)
-    }
-}
+pub(crate) use sdroxide_types::BiquadCoeffs as Coeffs;
 
 /// One second-order section (Direct Form I): a set of [`Coeffs`] plus the two
 /// input and two output samples they are applied to. Private to this module:
 /// [`ParametricEq`] is the public surface.
-struct Biquad {
+pub(crate) struct Biquad {
     c: Coeffs,
     x1: f32,
     x2: f32,
@@ -122,7 +31,7 @@ struct Biquad {
 }
 
 impl Biquad {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Biquad { c: Coeffs::identity(), x1: 0.0, x2: 0.0, y1: 0.0, y2: 0.0 }
     }
 
@@ -136,13 +45,13 @@ impl Biquad {
     /// resumes from nothing: a step discontinuity in the output, which is a
     /// click on the air, once per frame for as long as the drag lasts. Keeping
     /// the history means the new response simply takes over from the old one.
-    fn set(&mut self, c: Coeffs) {
+    pub(crate) fn set(&mut self, c: Coeffs) {
         self.c = c;
     }
 
     /// Forget the delay line, leaving the coefficients as they are. Used at
     /// key-down so an over never opens on the tail of the previous one.
-    fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.x1 = 0.0;
         self.x2 = 0.0;
         self.y1 = 0.0;
@@ -150,7 +59,7 @@ impl Biquad {
     }
 
     #[inline]
-    fn process(&mut self, x: f32) -> f32 {
+    pub(crate) fn process(&mut self, x: f32) -> f32 {
         let y = self.c.b0 * x + self.c.b1 * self.x1 + self.c.b2 * self.x2
             - self.c.a1 * self.y1
             - self.c.a2 * self.y2;
@@ -162,48 +71,40 @@ impl Biquad {
     }
 }
 
-/// Three-band parametric EQ on the mic-to-modulator path: low shelf, mid
-/// peak, high shelf, cascaded in that order.
+/// Parametric EQ on the mic-to-modulator path: high-pass, low shelf, two
+/// peaks, high shelf, low-pass, cascaded in that order.
 pub struct ParametricEq {
-    low: Biquad,
-    mid: Biquad,
-    high: Biquad,
+    sections: [Biquad; 8],
 }
 
 impl ParametricEq {
     pub fn new() -> Self {
-        ParametricEq { low: Biquad::new(), mid: Biquad::new(), high: Biquad::new() }
+        ParametricEq { sections: std::array::from_fn(|_| Biquad::new()) }
     }
 
-    /// Retune all three bands from `cfg` at `rate` Hz. Cheap, but still only
+    /// Retune every section from `cfg` at `rate` Hz. Cheap, but still only
     /// call it when `cfg` has actually changed since the last call.
     ///
     /// Safe to call mid-transmission: only the coefficients are replaced, and
     /// each band goes on filtering from the samples it has already seen (see
     /// [`Biquad::set`]).
     pub fn configure(&mut self, cfg: &TxEqState, rate: f64) {
-        let band = |b: &TxEqBand| (b.freq_hz as f64, b.gain_db as f64, b.q as f64);
-        let (lf, lg, lq) = band(&cfg.low);
-        let (mf, mg, mq) = band(&cfg.mid);
-        let (hf, hg, hq) = band(&cfg.high);
-        self.low.set(Coeffs::low_shelf(lf, lg, lq, rate));
-        self.mid.set(Coeffs::peaking(mf, mg, mq, rate));
-        self.high.set(Coeffs::high_shelf(hf, hg, hq, rate));
+        for (b, c) in self.sections.iter_mut().zip(cfg.sections(rate)) {
+            b.set(c);
+        }
     }
 
     /// Drop the filter history, keeping the operator's settings. Called at
     /// key-down so the first block of an over is not coloured by the ring-out
     /// of the last one.
     pub fn reset(&mut self) {
-        self.low.reset();
-        self.mid.reset();
-        self.high.reset();
+        self.sections.iter_mut().for_each(Biquad::reset);
     }
 
-    /// Run `audio` through all three bands in place.
+    /// Run `audio` through every section in place.
     pub fn process(&mut self, audio: &mut [f32]) {
         for s in audio.iter_mut() {
-            *s = self.high.process(self.mid.process(self.low.process(*s)));
+            *s = self.sections.iter_mut().fold(*s, |x, b| b.process(x));
         }
     }
 }

@@ -14,6 +14,7 @@ mod awards;
 mod band;
 mod band_segments;
 mod bandplan;
+mod biquad;
 pub mod broadcast;
 mod callsign;
 mod caps;
@@ -70,6 +71,7 @@ mod station;
 mod tciserver;
 pub mod text;
 mod tone;
+mod tx_voice;
 mod ui;
 mod vdl2;
 mod voice;
@@ -116,6 +118,7 @@ pub use band_segments::{
     span_within_segment, span_within_segment_in, sstv_dials_in,
 };
 pub use bandplan::{BandPlan, BandPlanError, RegionPlan, band_plan, set_band_plan};
+pub use biquad::BiquadCoeffs;
 pub use broadcast::{BroadcastStation, BroadcastStations};
 pub use callsign::{CallsignInfo, LoginTarget, LoginTestResult, UploadResult, UploadTarget};
 pub use caps::{DeviceCaps, DeviceSetting, Direction, GainElement, GainUnit, SettingKind};
@@ -273,12 +276,17 @@ pub use sstv::{SstvMode, SstvStatus};
 pub use state::{
     CESSB_MAX_DB, MAX_DECIMATION, MAX_MANUAL_GAIN_DB, MIN_DECIMATED_RATE_HZ, OffsetState,
     RadioState, RxId, RxState, SQUELCH_CLOSED_DB, SQUELCH_OPEN_DB, SWR_LIMIT_MAX, SWR_LIMIT_MIN,
-    SWR_TUNE_LIMIT_SCALE, TxEqBand, TxEqState, TxState, Vfo, ZOOM_LANE_MARGIN, max_decimation,
-    panadapter_fft_ceiling, swr_tune_limit, zoom_lane_decimation,
+    SWR_TUNE_LIMIT_SCALE, TxState, Vfo, ZOOM_LANE_MARGIN, max_decimation, panadapter_fft_ceiling,
+    swr_tune_limit, zoom_lane_decimation,
 };
 pub use station::StationConfig;
 pub use tciserver::TciServerConfig;
 pub use tone::{CTCSS_TONES, SubTone};
+pub use tx_voice::{
+    TX_VOICE_TEST_MAX_S, TxCompState, TxDeEssState, TxEqBand, TxEqEdge, TxEqState, TxGateState,
+    TxOutputState, TxVoiceLive, TxVoiceMeters, TxVoiceProfile, TxVoiceStage, TxVoiceState,
+    TxVoiceTest,
+};
 pub use ui::{
     BandplanKind, ChromeStyle, FontSize, LayoutMode, SmeterStyle, Solar3dWindow, SpectrumDetail,
     Speed, UiSettings, UiTheme,

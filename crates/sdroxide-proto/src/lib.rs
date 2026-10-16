@@ -1546,7 +1546,16 @@ use sdroxide_types::{
 /// ([`sdroxide_types::RotatorProtocol`], a unit enum) on its tail — rotctld or
 /// PSTRotator's UDP control (issue #638). It rides `Command::SetRotatorConfig`
 /// and `StationConfig::rotator` whole, so a v178 peer reads it out of step.
-pub const PROTO_VERSION: u16 = 179;
+///
+/// v180: the transmit voice chain. `TxState::eq` became `TxState::voice`
+/// ([`sdroxide_types::TxVoiceState`]: gate, EQ, de-esser, compressor, output),
+/// with the EQ itself gaining a high-pass, a second peak and a low-pass, and
+/// `TxState` gaining `voice_test` and `voice_test_len_s`. `Command::SetTxEq`
+/// became `Command::SetTxVoice` in the same position, carrying the whole
+/// chain; `Command::TxVoiceTestRecord`, `Command::TxVoiceTestPlay` and
+/// `Command::TxVoiceTestLive` are appended. `Meters` gains `voice` on its tail. Every state broadcast and
+/// every meter frame changes layout, so both ends have to agree.
+pub const PROTO_VERSION: u16 = 180;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

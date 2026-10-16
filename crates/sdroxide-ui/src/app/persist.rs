@@ -123,6 +123,34 @@ pub(in crate::app) fn persist_alerts_settings(_cfg: &sdroxide_types::AlertSettin
     // Written by eframe's periodic `save()` into localStorage.
 }
 
+// ── TX Audio profiles ─────────────────────────────────────────────────────────
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_tx_voice_profiles(
+    _storage: Option<&dyn eframe::Storage>,
+) -> Vec<sdroxide_types::TxVoiceProfile> {
+    sdroxide_config::load_tx_voice_profiles()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_tx_voice_profiles(
+    storage: Option<&dyn eframe::Storage>,
+) -> Vec<sdroxide_types::TxVoiceProfile> {
+    storage.and_then(|s| eframe::get_value(s, "tx_voice_profiles")).unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn persist_tx_voice_profiles(profiles: &[sdroxide_types::TxVoiceProfile]) {
+    if let Err(e) = sdroxide_config::save_tx_voice_profiles(profiles) {
+        eprintln!("failed to save TX audio profiles: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn persist_tx_voice_profiles(_profiles: &[sdroxide_types::TxVoiceProfile]) {
+    // Written by eframe's periodic `save()` into localStorage.
+}
+
 // ── Morse trainer progress ────────────────────────────────────────────────────
 
 /// The trainer's progress is the operator's, not a radio's. Every tab holds a

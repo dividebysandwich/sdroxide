@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AgcMode, Band, DigiConfig, Direction, ImageKind, LoginTarget, Mode, NetworkConfig, NrLevel,
     QsoStep, RadioConfig, RigctldConfig, RotatorConfig, RxId, SatConfig, SatLockConfig,
-    SkimmerSettings, SpectrumConfig, SstvMode, TciServerConfig, TxEqState, UploadTarget, Vfo,
+    SkimmerSettings, SpectrumConfig, SstvMode, TciServerConfig, TxVoiceState, UploadTarget, Vfo,
     WsjtxConfig,
 };
 
@@ -128,11 +128,11 @@ pub enum Command {
     SetTxDrive(f32),
     SetTuneDrive(f32),
     SetMicGain(f32),
-    /// Whole new state for the transmit parametric EQ (voice modes only),
-    /// sent as a full snapshot on every band/enable change, the same
-    /// "always whole, never a delta" way [`crate::RadioState`] itself is
-    /// broadcast.
-    SetTxEq(TxEqState),
+    /// Whole new state for the transmit voice chain (voice modes only), sent
+    /// as a full snapshot on every change, the same "always whole, never a
+    /// delta" way [`crate::RadioState`] itself is broadcast. Took the place of
+    /// `SetTxEq` when the EQ became one stage of the chain.
+    SetTxVoice(TxVoiceState),
 
     // Voice keyer (10 recorded messages; see [`crate::VoiceStatus`])
     /// Start recording the microphone into a slot (`Some`), or stop and store
@@ -1146,4 +1146,25 @@ pub enum Command {
     ResetModeDefaults {
         mode: Option<Mode>,
     },
+
+    /// Record a test phrase from the microphone for the TX Audio window
+    /// (`true`), or stop and keep it (`false`). Stored raw, before any
+    /// processing, so it can be played back through the chain again and again
+    /// while the operator adjusts it. Never keys the transmitter; refused while
+    /// transmitting.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    TxVoiceTestRecord(bool),
+    /// Play the test phrase through the voice chain as it is set *now*, to
+    /// the speakers (`true`), or stop (`false`). Refused while transmitting.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    TxVoiceTestPlay(bool),
+    /// Put the live microphone through the voice chain without keying: for
+    /// the meters alone, or for the meters and the speakers. Stops a test
+    /// recording or playback; refused while transmitting, and stopped by the
+    /// next key-down, because the transmitter needs the microphone.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    TxVoiceTestLive(crate::TxVoiceLive),
 }

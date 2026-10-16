@@ -969,6 +969,7 @@ impl eframe::App for SdroxideApp {
         self.drm_window(&ctx, &mut cmds);
         self.hd_window(&ctx, &mut cmds);
         self.voice_window(&ctx, &mut cmds);
+        self.tx_audio_window(&ctx, &mut cmds);
         self.settings_window(&ctx, &mut cmds);
         self.digi_settings_window(&ctx, &mut cmds);
         self.logbook_window(&ctx, &mut cmds);
@@ -1170,6 +1171,10 @@ impl eframe::App for SdroxideApp {
             // hfdl_channels.json, written on change.
             #[cfg(target_arch = "wasm32")]
             eframe::set_value(storage, "hfdl_channels", &self.hfdl_channels);
+            // Likewise the TX Audio profile library: tx_audio_profiles.json
+            // natively.
+            #[cfg(target_arch = "wasm32")]
+            eframe::set_value(storage, "tx_voice_profiles", self.tx_audio.profiles());
         }
     }
 }

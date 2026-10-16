@@ -4517,10 +4517,31 @@ impl SdroxideApp {
         }
     }
 
+    /// The "Mic" caption over or beside the mic-gain rail, which is also the
+    /// way into the TX Audio window — the microphone's processing belongs with
+    /// the microphone's level. Drawn in the accent colour while the chain is
+    /// doing something, so a processed voice never goes out unannounced.
+    ///
+    /// A label that takes clicks rather than a chip, so it costs the TX box
+    /// exactly the width the plain caption did.
+    fn tx_mic_caption(&mut self, ui: &mut egui::Ui, text: RichText) {
+        let active = self.state.tx.voice.active();
+        let text = if active { text.color(crate::theme::CYAN()) } else { text };
+        let hover = if active {
+            "TX Audio is processing the microphone — click to open it"
+        } else {
+            "Click to open TX Audio: gate, EQ, compressor and limiter for the microphone"
+        };
+        if ui.add(egui::Label::new(text).sense(egui::Sense::click())).on_hover_text(hover).clicked()
+        {
+            self.tx_audio.open = !self.tx_audio.open;
+        }
+    }
+
     /// The Mic gain: label + rail, no readout.
     fn tx_mic(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let mut mic = self.state.tx.mic_gain;
-        ui.label("Mic");
+        self.tx_mic_caption(ui, RichText::new("Mic"));
         if crate::chrome::slider(ui, Slider::new(&mut mic, 0.0..=1.0).show_value(false)).changed() {
             cmds.push(Command::SetMicGain(mic));
         }
@@ -4623,7 +4644,7 @@ impl SdroxideApp {
     fn tx_mic_vertical(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.label(RichText::new("Mic").size(10.5));
+            self.tx_mic_caption(ui, RichText::new("Mic").size(10.5));
             let mut mic = self.state.tx.mic_gain;
             // The rail takes whatever height the label left it.
             ui.spacing_mut().slider_width = (ui.available_height() - 2.0).max(24.0);

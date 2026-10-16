@@ -19,6 +19,8 @@ tracing.workspace = true
 # no I/O and no clock, so it builds for wasm32 alongside everything else here.
 sdroxide-aprs = { path = "../sdroxide-aprs" }
 serde.workspace = true
+# TX Audio profiles are exported and imported as JSON files.
+serde_json.workspace = true
 # `accesskit` is one of eframe's defaults, and turning the defaults off
 # silently switched it back off: without it the whole widget tree is
 # invisible to NVDA, Orca and VoiceOver. It is native-only (it maps to

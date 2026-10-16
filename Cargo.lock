@@ -5555,6 +5555,7 @@ dependencies = [
  "sdroxide-types",
  "sdroxide-version",
  "serde",
+ "serde_json",
  "tracing",
  "wasm-bindgen",
  "wasm-bindgen-futures",

@@ -167,6 +167,11 @@ pub struct Meters {
     /// `None` on every other — see [`PsMeter`].
     #[serde(default)]
     pub puresignal: Option<PsMeter>,
+    /// What the transmit voice chain did over this meter window — while a
+    /// voice over or the TX Audio window's test playback is running through
+    /// it, and `None` otherwise.
+    #[serde(default)]
+    pub voice: Option<crate::TxVoiceMeters>,
 }
 
 fn minus_infinity() -> f32 {

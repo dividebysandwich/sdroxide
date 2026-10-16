@@ -1397,29 +1397,130 @@ On a TX-capable rig the **Transmit** module appears:
   of this applies and the rail does not appear: there the modulator and Drive
   own the level.
 
-**Transmit EQ** (Settings → Radio, above the per-interface section, since it
-applies the same way whichever radio interface is selected) is a 3-band
-parametric equalizer on the microphone audio, ahead of the modulator: **Low
-shelf** (cuts/boosts rumble and handling noise), **Mid peak** (presence, a
-narrow bump or dip somewhere in the voice band), and **High shelf**
-(brightness/de-ess). Each band has its own frequency and gain (dB), and the
-mid band also has a **Q** (how narrow the bump is) while the two shelves have
-a **Slope** instead (how sharply they roll off). Off by default, and flat
-(0 dB every band) the first time you turn it on, so enabling it changes
-nothing until you actually move a slider. Voice modes only (SSB/AM/FM);
-digital modes and CW carry synthesized or keyed audio that never reaches it.
-Applies immediately, like the IARU region setting: there is no Apply step —
-including while you are transmitting, so you can set it by ear against the
-transmit monitor.
+**Transmit audio** is the microphone processing chain: a noise gate, an
+equalizer, a de-esser, a compressor and an output limiter, all between **Mic**
+gain (plus the chain's own **Input** gain) and the modulator. Open the **TX Audio** window by clicking the **Mic**
+label in the transmit box (it turns cyan while the chain is doing something),
+or from Settings → Radio → **Open TX Audio…**. Everything is off the first time,
+and with everything off the chain is a straight wire: the audio leaves exactly
+as it arrived. Every change applies at once, including while you are
+transmitting, so you can set it by ear against the transmit monitor.
 
-It sits after **Mic** gain and before whatever modulates the audio, on every
-interface: a radio sdroxide modulates itself, and a rig that modulates its own
-audio (a CAT rig over its sound card, TCI, Icom LAN, SmartSDR) alike. Boosting
-a band therefore raises the level going into the transmitter, and there is
-nothing behind it but a limiter at full scale — on a transmitter, clipping is
-splatter on your neighbours' frequencies. **After boosting anything, watch the
-ALC/TX meter and take the same amount back off Mic gain.** Cutting is free; a
-cut band and a little more mic gain gets the same tone with none of the risk.
+The left of the window is the chain, in the order the audio meets its stages.
+Tick a stage to switch it on, use ▲▼ to move it earlier or later, and click
+its name to see its settings. **Output** is always last. Across the top:
+
+- **BYPASS** takes the whole chain out without forgetting how it is set, for
+  an A/B comparison.
+- **DENOISE** runs the neural noise reduction (RNNoise) over the microphone
+  ahead of everything else. It removes fans and room hum well, but it pulls the
+  level down a little; give it back with the compressor's makeup or the output
+  trim.
+- **DIGITAL VOICE** decides whether FreeDV and RADE go through the chain too.
+  Off by default: a codec built for speech usually does best with the
+  microphone as it is.
+- **⏺ REC / ▶ PLAY** record up to 30 seconds of your voice and play it back
+  through the chain as it is set now, without transmitting. What is recorded is
+  the raw microphone, so you can change a setting and play the same phrase
+  again to hear what the change did.
+- **🎧 LIVE** puts your microphone through the chain as you talk and plays it
+  to you, without transmitting. **Use headphones**: through speakers it feeds
+  back into the microphone. You hear yourself a few tens of milliseconds late,
+  which makes talking awkward, so use LIVE for a quick check and REC / PLAY to
+  judge the sound. Receive audio is replaced while it runs.
+- **METERS** does the same for the meters only: nothing on the speakers, so no
+  delay to talk against and nothing to feed back. This is the way to set your
+  levels, the gate threshold and how hard the compressor works. Receive audio
+  carries on.
+
+  LIVE and METERS stop when you press PTT (the transmitter needs the
+  microphone), and are not available while transmitting.
+
+Under that is the **Level** row:
+
+- **Mic** is the same control as the Mic rail in the transmit box, shown here in
+  dB: 0 dB at the middle, +6 dB at the top. It is shared by every profile.
+- **Input** is extra gain for this microphone, from −12 to +24 dB, and it is
+  saved with the profile. Use it when Mic at the top is still not enough. It is
+  level setting, not processing, so BYPASS leaves it in, and it applies to
+  FreeDV/RADE even when DIGITAL VOICE is off.
+- **Auto-set** listens for six seconds while you talk as you would on the air,
+  then sets Input so your voice peaks around −10 dBFS on the IN meter. It
+  switches METERS on for the measurement if it is not already on. The presets'
+  gate and compressor thresholds assume that level, so run Auto-set before
+  loading one.
+
+The stages:
+
+- **Gate** silences the microphone between words, so the station's room noise
+  is not on the air in the gaps. **Threshold** is the level that opens it,
+  **Return** how far below that it has to fall to close again (so it does not
+  chatter on a word's tail), and **Hold** and **Release** how long it waits and
+  how gently it closes. **Floor** is how far it turns down while closed: −15 dB
+  is gentler than true silence. **EXPANDER** swaps the closed/open switch for a
+  ratio, which turns quiet sounds down progressively and is less noticeable.
+  The gate looks a moment ahead, so it is already open when a word starts.
+- **EQ** is a high-pass, a low shelf, two peaks, a high shelf and a low-pass.
+  Drag the points on the curve or type the figures. The high-pass and low-pass
+  have a 12 or 24 dB/octave slope; click the slope to switch. The yellow line at
+  2.7 kHz is where a typical SSB transmit filter stops, so anything above it is
+  boosted for nothing. **FLAT** puts every band back to 0 dB.
+- **De-esser** turns down only the "s" and "sh" band (around 6 kHz by default)
+  when it gets louder than **Threshold**, by at most **Amount**, and leaves the
+  rest of the voice alone.
+- **Compressor** brings loud syllables down towards the quiet ones, so the
+  average power rises without the peaks rising. **Threshold**, **Ratio**,
+  **Knee**, **Attack**, **Release** and **Makeup** work as on any compressor,
+  and the curve shows what it does to each input level. **Drive** pushes the
+  voice into the compressor harder. **Phase** shifts the timing of the low
+  frequencies against the high ones, which makes a voice's waveform more
+  symmetrical, so the peaks are lower for the same sound and the same peak
+  level carries more average power.
+- **Output** is a **Trim** in dB and a **Limiter** with a **Ceiling**. The
+  limiter looks ahead, so no peak ever gets past the ceiling.
+
+The meters show the level going in and coming out, and how much each stage is
+turning the audio down right now. They move while you transmit, play the test
+phrase, or run LIVE or METERS.
+
+**Profiles** save the chain, including its Input gain, under a name and load it
+back. **Export** and **Import** carry a profile across as a JSON file. A profile
+does not change the DIGITAL VOICE switch.
+
+The **Starting points** are named for what you are doing, not for a
+microphone (Input gain takes care of the microphone). Loading one keeps your
+Input gain. They are only starting points: record a phrase and tune from them.
+
+| Preset | For | What it does |
+|---|---|---|
+| **Natural** | Ragchews, local contacts | Denoise, 80 Hz high-pass, gentle expander, light 2:1 compression, limiter |
+| **SSB everyday** | Normal SSB | 100 Hz – 2.9 kHz, a little presence at 2 kHz, 3:1 compression, limiter |
+| **SSB punch / DX** | Weak signals, pileups | Narrow 300 Hz – 2.7 kHz, strong presence lift, Drive into a fast 6:1 compressor with Phase, limiter. Most talk power, not hi-fi. |
+| **Contest** | Long sessions in a noisy station | SSB punch plus denoise, a hard gate and harder compression |
+| **ESSB / hi-fi** | Wide SSB, AM | 50 Hz – 4 kHz with the low end kept, de-esser, gentle compression. Needs a transmit filter that wide. |
+| **FM / repeater** | FM | Steep 300 Hz high-pass to keep the voice clear of the CTCSS tone (67–254 Hz), stops at 3 kHz for the channel, limiter at −2 dB to hold deviation |
+| **Mobile / noisy shack** | Fans, engine, traffic | Denoise, steep 150 Hz high-pass, hard gate, 4:1 compression |
+| **Digital voice** | FreeDV / RADE | Denoise and gentle levelling only, no EQ. Also turns DIGITAL VOICE on. |
+
+Your saved profiles live in
+`tx_audio_profiles.json` on the machine the window runs on. The chain as it is
+set now is part of the radio state, so it comes back after a restart and is
+saved in station profiles.
+
+Which audio goes through it: voice in SSB, AM and FM from the microphone, and
+FreeDV/RADE only when DIGITAL VOICE is on. Audio from a **TCI client** never
+does: a program that sends its own audio has already shaped it. Digital modes
+and CW carry synthesized or keyed audio that never reaches it. On a rig that
+modulates its own audio (a CAT rig over its sound card, TCI, Icom LAN,
+SmartSDR) the chain runs before the audio leaves for the rig, so the rig's own
+speech processor still follows it; use one or the other, not both.
+
+Boosting an EQ band, Makeup, Drive or Trim raises the level going into the
+transmitter, and on a transmitter clipping is splatter on your neighbours'
+frequencies. **After raising anything, watch the ALC/TX meter, and take the
+same amount back off Mic gain or switch the output limiter on.** Cutting is
+free; a cut band and a little more mic gain gets the same tone with none of
+the risk.
 
 > **Transmit safety:** by default sdroxide refuses to transmit outside the
 > amateur bands (`tx_ham_only`), and stops the transmission if the radio reports
@@ -2884,7 +2985,7 @@ replaces what you hear rather than filtering it — decoded FreeDV/RADE speech, 
 a voice-keyer message you are monitoring — the recording follows the speaker.
 
 On transmit, it takes the audio sdroxide sends: the microphone after mic gain
-and the transmit EQ, with any CTCSS tone or 1750 Hz burst that goes under it; a
+and the transmit audio chain, with any CTCSS tone or 1750 Hz burst that goes under it; a
 digital mode's burst; the CW keyer's sidetone; and, for a tune-up, a 1 kHz tone
 at the tune level standing in for the unmodulated carrier — without which the
 file would go quiet for the tune and drift out of step with real time, a little
@@ -12899,7 +13000,7 @@ What a profile holds:
   its own is told which one before it is retuned.
 - **The receiver and transmitter levels** — AF volume and mute, RF gain, AGC,
   squelch, noise reduction, binaural, drive, tune drive, mic gain, CESSB and the
-  transmit EQ, and the repeater settings.
+  transmit audio chain, and the repeater settings.
 - **The antennas and gain stages**, including the antenna kept per band — applied
   the same way a restart restores them, so a port or a stage the radio does not
   have is skipped rather than refused.
