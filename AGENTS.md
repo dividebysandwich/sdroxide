@@ -6828,6 +6828,15 @@ operator's screen and all worth knowing before the next arrangement:
   captions go through `gutter_label`; `the_column_fits_the_width_it_is_given`
   now asserts a heading and a control are in the left gutter, and that nothing
   hangs out of the left edge either.
+- **`RichText::strong()` is a colour, not a weight.** A heading that says
+  `strong()` is exactly as thin as the text beside it, which is why the operator
+  asked twice for bold; the section headings name the family the theme installs
+  for `TextStyle::Heading` (`chakra-bold`) explicitly. And **a heading bar should
+  be the fold's control**: a click on it opens or closes the section (the fold's
+  own arrow is a small target on a bar the width of the column), which egui tells
+  apart from a drag by the distance travelled, so the same widget still moves the
+  section. The click has to be applied to the fold *before* its body is drawn or
+  the section answers a frame late.
 - **egui clips a too-long *right-aligned* text at its left.** The Source rows
   right-aligned their values, so at 250 points `SDRplay RSP1 (serial 0000000001)
   @ 3.000 Msps` read `RSP1 (serial 0000000001) @ 3.000 Msps` — the wrong end
@@ -6844,6 +6853,14 @@ for the same reason — one that allocates takes its width off every row it appe
 beside, which he saw as *"it takes a lot of realestate and the padding is non
 existent with the chips"*: one complaint, not two, and the fix is one setting
 (`spacing.scroll.floating`) plus a content margin.
+
+**The shipped order leads with Windows & tools, then Receiver** — the operator's
+(*"default the Windows and Tools to the top and the Radio 2nd or 3rd"*), open by
+default with the band panel. It is `ClassicSection::ALL`: what a *fresh* column
+opens in, and the order anything missing from a stored list is appended in. **A
+list he has arranged himself is never re-ordered by it** — which also means a
+change to the default reaches an operator who already has an arrangement only if
+they clear `classic_sections` from `config.toml`.
 
 **It opens at 300 points**, and changing that needed the panel's id bumped:
 egui remembers a panel's width, so a new default is hidden behind whatever the
