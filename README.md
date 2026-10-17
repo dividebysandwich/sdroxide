@@ -235,6 +235,10 @@ client — are in [`docs/images/`](docs/images).
   compass showing the hardware's own bearing against the one you asked for,
   drag or click to point, a DX-country lookup, and STOP / PARK / AUTO. Point the
   beam from a **right-click** on the map or a decode row's **BEAM** chip.
+- **Classic UI** — the SDR++-style arrangement, if you want it: every control in
+  one column down the left, each section folding away, **drag the headings to
+  order them** and the picture takes everything else. Off by default; Settings →
+  UI ([manual §6.3](docs/USER_MANUAL.md#63-ui-display-preferences-and-voice-announcements)).
 - **Persistence** — device, rates, gains, memories, band stacks, network/QSL
   credentials, control bindings and the logbook under `~/.config/sdroxide-brown/`,
   plus named **station profiles**.
@@ -256,6 +260,12 @@ below works on all of them and is the supported route there.
 
 Windows gets an `.msi` and a portable `.zip`, macOS a `.dmg`. Or build it
 yourself.
+
+**Installing a club's worth of machines?** [`packaging/headless/`](packaging/headless/)
+has a script — bash and Python, Linux/macOS/Windows — that installs the package
+and a **station's configuration** with no questions asked: set one machine up
+properly, copy its config directory in beside the script, and every other machine
+is one command.
 
 **On an Apple Silicon Mac, one thing first.** The tree pins its toolchain in
 `rust-toolchain.toml`, and you should let it: `rustup toolchain install 1.98.1`.
