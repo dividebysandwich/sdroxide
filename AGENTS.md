@@ -6851,6 +6851,43 @@ last drag left there. The **section order** is not egui memory — it is
 `UiSettings::classic_sections` in `config.toml`, written on every drop, so it
 survives a restart.
 
+**Two more egui facts this column paid for**, both worth knowing before the next
+one is built:
+
+- **`Ui::dnd_drop_zone` overrides the frame it is given** — its own doc says "the
+  color is ignored" — so a `Frame::new()` around a drop zone does not mean "no
+  box": every section came out filled and bordered (*"the sections have their own
+  border too, ditch them, they look warped in the layout"*). A drop target has to
+  be drawn by hand: the section's rect is kept in egui's temp store,
+  `DragAndDrop::has_payload_of_type` plus `pointer_interact_pos` decide whether it
+  is under the cursor, the heading bar brightens, and `DragAndDrop::take_payload`
+  on release is the drop. The rect is the *previous* frame's — a section can only
+  be known to be under the pointer once it has been drawn, and one frame behind on
+  a drag is invisible.
+- **The order panels are shown in decides what "centred" means.** A panel takes
+  its space off what is left, so the strip has to be shown *after* the classic
+  column for the bar to span the picture rather than the window — which is the
+  only way "centre the readout" can mean "over the waterfall". Shown after the
+  strip, the readout is centred in the window and looks right in a screenshot,
+  which is why this took two attempts: *"can you make the frequency center above
+  the waterfall?"* The column also takes the window's full height, so its heading
+  is level with the bar beside it.
+
+**Open, unreproduced, and recorded so nobody repeats the search** — the operator
+saw the **Settings menu's list of page names** drawn in the accent colour with the
+current page as that same accent on a selection fill of that colour, so the
+current page's name disappeared into its own highlight (*"the accent in the
+settings menu column is wrong, active text is unreadable"*). Three causes were
+*measured* and all three were wrong: egui's selection ink (a scratch test draws
+the selected label in `ink_on_cyan`, readable, under every chrome style),
+`theme::scroll_palette` (**the plausible one, and the trap to warn about** — it
+sets `widgets.*.fg_stroke.color`, which egui uses for the scroll *handle* and is
+also every widget's text ink, but `ThemedScroll::show_themed` **restores the
+normal visuals before the content draws**, so it cannot reach a label; do not
+"fix" it there, it is the scrollbar's colour), and the theme's `visuals` in
+general. It needs a reproduction — the detached Settings window is a child
+viewport, which the headless harness does not draw.
+
 **Left to do**: a skinned section header rather than egui's default, SDR++'s
 vertical Zoom/Max/Min rails beside the waterfall, and splitting the Receiver
 section — it currently carries the passband presets and the noise-reduction
