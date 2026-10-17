@@ -5438,11 +5438,24 @@ taken.
 - **The gesture is said where the name is read** (`draw_hover_label` adds the
   line, only for the stations that can be tuned): a mark that answers a
   double-click has to look like one.
-- Plain double-click tunes the **dial in use**, Shift the **other** one — the A/B
-  pair he is describing. Tests: `the_hover_carries_the_frequency_a_station_can_be_tuned_to`
-  (verified failing with the frequency set to `None` — "the hover did not carry
-  the frequency its own text names") and
-  `a_tuned_station_goes_to_the_active_dial_unless_shift_is_held`.
+- **The click always takes the *other* dial, switches to it, and puts AM on it.**
+  This started as "the active dial, Shift for the other one" and the operator
+  corrected it, having traced it himself: *"the mode is ADS-B so it wants to
+  switch back to the ADS-B frequency… in that mode you cannot set frequency A
+  because the mode dictates"* — and *"if you want to click a frequency it always
+  has to go to B"*. The engine agrees in its own log ("ADS-B is on 1090 MHz;
+  tuning there", from three places), so a frequency written to a dial its mode
+  owns is overwritten the moment that VFO is recalled. AM because an aid is
+  amplitude modulated and a lane mode cannot carry it: a station parked on a dial
+  still in ADS-B would be silence and then a retune. **The rule is general — for
+  any mode with a fixed frequency, a tune goes to the dial that mode does not
+  hold** — and the ADS-B map is the only tuner of that kind today (the ADS-B
+  panel's own frequency chips keep aiming at the active dial: they are the
+  channel's control, not a station picked off a map). Tests:
+  `the_hover_carries_the_frequency_a_station_can_be_tuned_to` (verified failing
+  with the frequency set to `None` — "the hover did not carry the frequency its
+  own text names") and
+  `a_tuned_station_goes_to_the_dial_the_mode_does_not_own`.
 
 ## The signal-identification guide (fork-only, 2026-09-25)
 
