@@ -171,6 +171,22 @@ fn centroid(pts: &[(f64, f64)]) -> Option<(f64, f64)> {
 /// auto-fit. Returns true while the user is actually moving it, so the caller
 /// can keep the frames coming.
 pub(crate) fn interact(ui: &Ui, view: &mut MapView, resp: &Response, aspect: f64) -> bool {
+    interact_with(ui, view, resp, aspect, true)
+}
+
+/// [`interact`], but **the double-click may already belong to something else**.
+///
+/// A double-click is `false` here where a host has claimed it — the ADS-B map
+/// tunes the station under the pointer — and handing the view back to the
+/// auto-fit at the same time would undo the zoom the operator had just used to
+/// find that station.
+pub(crate) fn interact_with(
+    ui: &Ui,
+    view: &mut MapView,
+    resp: &Response,
+    aspect: f64,
+    reframe: bool,
+) -> bool {
     let rect = resp.rect;
     let mut touched = false;
     let frac = |p: Pos2| {
@@ -227,7 +243,7 @@ pub(crate) fn interact(ui: &Ui, view: &mut MapView, resp: &Response, aspect: f64
     }
     // Double-click hands the view back: the auto-fit resumes and eases home
     // from wherever the user left it.
-    if resp.double_clicked() {
+    if reframe && resp.double_clicked() {
         view.manual = false;
     }
     if resp.dragged() {

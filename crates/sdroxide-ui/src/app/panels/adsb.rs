@@ -102,7 +102,7 @@ impl SdroxideApp {
                 }
             }
             if pane.is_none_or(|p| p == 1) {
-                ui.vertical(|ui| self.adsb_map_pane(ui, &st, now, avail_h));
+                ui.vertical(|ui| self.adsb_map_pane(ui, cmds, &st, now, avail_h));
             }
         });
     }
@@ -391,7 +391,14 @@ impl SdroxideApp {
     }
 
     /// The map pane's own row: NIGHT, and the ground it is drawn on.
-    fn adsb_map_pane(&mut self, ui: &mut egui::Ui, st: &AdsbStatus, now: i64, h: f32) {
+    fn adsb_map_pane(
+        &mut self,
+        ui: &mut egui::Ui,
+        cmds: &mut Vec<Command>,
+        st: &AdsbStatus,
+        now: i64,
+        h: f32,
+    ) {
         ui.horizontal(|ui| {
             self.night_chip(ui);
             self.map_style_chip(ui);
@@ -425,7 +432,10 @@ impl SdroxideApp {
         let cfg = self.state.adsb;
         let night = self.night_texture(ui.ctx());
         let state = &mut self.adsb_map;
-        crate::adsb_map::show(
+        // **A double-click on a station tunes it.** The active dial by default
+        // and the other one with Shift held, so an A/B pair can hold a ground
+        // station and whatever else the operator is listening to.
+        if let Some(t) = crate::adsb_map::show(
             ui,
             state,
             &st.aircraft,
@@ -435,7 +445,10 @@ impl SdroxideApp {
             night,
             self.ui_settings.survey_map_style,
             h,
-        );
+            self.state.active_vfo,
+        ) {
+            cmds.push(Command::SetVfo { vfo: t.vfo, hz: t.hz });
+        }
     }
 
     /// The operator's own position, from the grid in the digital-mode setup.

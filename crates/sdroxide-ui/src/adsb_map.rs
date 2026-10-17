@@ -34,11 +34,13 @@
 use eframe::egui::{
     Align2, Color32, FontId, Painter, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2,
 };
-use sdroxide_types::{AdsbAircraft, AdsbSettings};
+use sdroxide_types::{AdsbAircraft, AdsbSettings, Vfo};
 
 use crate::theme;
 use crate::widgets::map_labels::{self, MapLabel};
-use crate::widgets::worldmap::{MapView, alpha, draw_painted_base, interact, paint_night, wrap180};
+use crate::widgets::worldmap::{
+    MapView, alpha, draw_painted_base, interact_with, paint_night, wrap180,
+};
 
 /// Below this height the map is not worth drawing.
 pub const MIN_HEIGHT: f32 = 90.0;
@@ -195,7 +197,7 @@ fn block_rank(a: &AdsbAircraft) -> u8 {
 /// something you could point an aerial at — which is also the zoom at which the
 /// **MF ones become useful to a listener**, because those are receivable.
 fn draw_nav_layer(
-    p: &Painter,
+    p: Option<&Painter>,
     map: &theme::MapPalette,
     layers: MapLayers,
     clat: f64,
@@ -217,37 +219,41 @@ fn draw_nav_layer(
     // Only what is *drawn* can be hovered — see the note on the filter above.
     // A name for something invisible would be a map that answers questions
     // about things that are not on it.
-    let mut hit: Option<(f32, Pos2, String)> = None;
+    let mut hit: Option<(f32, Pos2, String, Option<u32>)> = None;
 
     for a in crate::airdata::airports() {
         if (!a.large && !zoom.medium_airports) || !in_view(a.lat, a.lon) {
             continue;
         }
         let c = project(a.lat, a.lon);
-        p.circle_stroke(c, 2.6, Stroke::new(1.0, alpha(map.border, 150.0)));
-        if a.large {
-            p.circle_filled(c, 1.2, alpha(map.city_label, 200.0));
-        }
-        if zoom.airport_labels && a.large {
-            let name = if a.iata.is_empty() { a.ident.as_str() } else { a.iata.as_str() };
-            p.text(
-                c + vec2(5.0, 3.0),
-                Align2::LEFT_TOP,
-                name,
-                font.clone(),
-                alpha(map.city_label, 190.0),
-            );
+        if let Some(p) = p {
+            p.circle_stroke(c, 2.6, Stroke::new(1.0, alpha(map.border, 150.0)));
+            if a.large {
+                p.circle_filled(c, 1.2, alpha(map.city_label, 200.0));
+            }
+            if zoom.airport_labels && a.large {
+                let name = if a.iata.is_empty() { a.ident.as_str() } else { a.iata.as_str() };
+                p.text(
+                    c + vec2(5.0, 3.0),
+                    Align2::LEFT_TOP,
+                    name,
+                    font.clone(),
+                    alpha(map.city_label, 190.0),
+                );
+            }
         }
         if let Some(m) = pointer {
             let d = c.distance(m);
-            if d <= NAV_HIT_RADIUS && hit.as_ref().is_none_or(|(best, _, _)| d < *best) {
-                hit = Some((d, c, airport_hover_text(a)));
+            if d <= NAV_HIT_RADIUS && hit.as_ref().is_none_or(|(best, _, _, _)| d < *best) {
+                // An airport carries no frequency in the source table: what is
+                // tuned is the *aid* — a VOR or an NDB — which is the row below.
+                hit = Some((d, c, airport_hover_text(a), None));
             }
         }
     }
 
     if !zoom.navaids {
-        return hit.map(|(_, at, text)| NavHover { at, text });
+        return hit.map(|(_, at, text, freq_khz)| NavHover { at, text, freq_khz });
     }
     for n in crate::airdata::navaids() {
         if !in_view(n.lat, n.lon) {
@@ -258,22 +264,27 @@ fn draw_nav_layer(
         // medium wave and can be *heard*, and that is the half of this table
         // this fork cares most about.
         let ink = if n.kind.is_audible_on_mf() { map.home } else { map.river };
-        if n.kind.is_audible_on_mf() {
-            p.circle_filled(c, 1.5, alpha(ink, 210.0));
-        } else {
-            // The triangle a chart draws for a VOR family aid.
-            p.add(Shape::closed_line(
-                vec![c + vec2(0.0, -2.8), c + vec2(2.4, 1.7), c + vec2(-2.4, 1.7)],
-                Stroke::new(1.0, alpha(ink, 210.0)),
-            ));
+        if let Some(p) = p {
+            if n.kind.is_audible_on_mf() {
+                p.circle_filled(c, 1.5, alpha(ink, 210.0));
+            } else {
+                // The triangle a chart draws for a VOR family aid.
+                p.add(Shape::closed_line(
+                    vec![c + vec2(0.0, -2.8), c + vec2(2.4, 1.7), c + vec2(-2.4, 1.7)],
+                    Stroke::new(1.0, alpha(ink, 210.0)),
+                ));
+            }
         }
         if let Some(m) = pointer {
             let d = c.distance(m);
-            if d <= NAV_HIT_RADIUS && hit.as_ref().is_none_or(|(best, _, _)| d < *best) {
-                hit = Some((d, c, navaid_hover_text(n)));
+            if d <= NAV_HIT_RADIUS && hit.as_ref().is_none_or(|(best, _, _, _)| d < *best) {
+                hit = Some((d, c, navaid_hover_text(n), (n.freq_khz != 0).then_some(n.freq_khz)));
             }
         }
-        if zoom.navaid_labels && !n.ident.is_empty() {
+        if let Some(p) = p
+            && zoom.navaid_labels
+            && !n.ident.is_empty()
+        {
             p.text(
                 c + vec2(4.5, 3.0),
                 Align2::LEFT_TOP,
@@ -283,7 +294,26 @@ fn draw_nav_layer(
             );
         }
     }
-    hit.map(|(_, at, text)| NavHover { at, text })
+    hit.map(|(_, at, text, freq_khz)| NavHover { at, text, freq_khz })
+}
+
+/// Where a coordinate lands on the map, for a view and a rect. One function:
+/// the hover pick, the drawing and the pre-pick that decides whether a
+/// double-click is a tune or a reframe all have to agree about it.
+fn project_at(
+    rect: Rect,
+    clat: f64,
+    clon: f64,
+    lon_span: f64,
+    lat_span: f64,
+    lat: f64,
+    lon: f64,
+) -> Pos2 {
+    let dlon = wrap180(lon - clon);
+    pos2(
+        rect.left() + (0.5 + (dlon / lon_span) as f32) * rect.width(),
+        rect.top() + (0.5 - ((lat - clat) / lat_span) as f32) * rect.height(),
+    )
 }
 
 /// The name of whatever the pointer is over, drawn at it.
@@ -292,10 +322,19 @@ fn draw_nav_layer(
 /// tooltip could only say "somewhere on the map", and what the operator wants
 /// is the name beside the symbol they are pointing at.
 fn draw_hover_label(p: &Painter, rect: Rect, map: &theme::MapPalette, hover: &NavHover) {
+    // The gesture is *said*, where the station's name is read: a station that can
+    // be tuned has to look like one, or the feature is invisible. Only the ones
+    // that are on a frequency say it.
+    let hint =
+        hover.freq_khz.is_some().then_some("double-click to tune · shift for the other dial");
     let galley =
         p.layout_no_wrap(hover.text.clone(), FontId::monospace(10.0), alpha(map.city_label, 255.0));
+    let hint_galley = hint.map(|h| {
+        p.layout_no_wrap(h.to_owned(), FontId::proportional(9.0), alpha(map.city_label, 190.0))
+    });
     let pad = vec2(6.0, 4.0);
-    let size = galley.size() + pad * 2.0;
+    let hint_h = hint_galley.as_ref().map_or(0.0, |g| g.size().y + 2.0);
+    let size = galley.size() + pad * 2.0 + vec2(0.0, hint_h);
     let mut at = hover.at + vec2(11.0, -size.y - 7.0);
     // Kept on the map: a name for something at the edge is the one that most
     // needs to move, because the auto-fit leaves the outermost targets close to
@@ -310,7 +349,11 @@ fn draw_hover_label(p: &Painter, rect: Rect, map: &theme::MapPalette, hover: &Na
         Stroke::new(1.0, alpha(map.border, 210.0)),
         eframe::egui::StrokeKind::Inside,
     );
+    let text_h = galley.size().y;
     p.galley(box_.min + pad, galley, map.city_label);
+    if let Some(g) = hint_galley {
+        p.galley(box_.min + pad + vec2(0.0, text_h + 2.0), g, map.city_label);
+    }
     // A ring on the symbol itself, so the name is attached to a mark.
     p.circle_stroke(hover.at, 4.5, Stroke::new(1.3, alpha(map.city_label, 220.0)));
 }
@@ -342,10 +385,45 @@ fn navaid_hover_text(n: &crate::airdata::Navaid) -> String {
     }
 }
 
-/// A feature the pointer is over, and what to say about it.
+/// A feature the pointer is over, what to say about it, and — for the stations
+/// that are on a radio frequency — where to tune to hear it.
 struct NavHover {
     at: Pos2,
     text: String,
+    freq_khz: Option<u32>,
+}
+
+/// **Where a double-clicked station goes.** The active dial by default, the
+/// other one with Shift held: two stations on two frequencies is what an A/B
+/// pair is for, and the operator asked for exactly that — *"so I can switch
+/// between the plane and the ground station"*.
+#[must_use]
+pub fn tune_vfo(active: Vfo, shift: bool) -> Vfo {
+    if !shift {
+        return active;
+    }
+    match active {
+        Vfo::A => Vfo::B,
+        Vfo::B => Vfo::A,
+    }
+}
+
+/// The dial's frequency for a station's published one.
+///
+/// The tables are in **kHz** (`airdata::Navaid::freq_khz` — "the unit both kinds
+/// are published in") and a dial is in Hz, which is the conversion this fork has
+/// got wrong before in the other direction.
+#[must_use]
+pub fn tune_hz(freq_khz: u32) -> f64 {
+    freq_khz as f64 * 1000.0
+}
+
+/// What a double-click on the map asked for.
+pub struct MapTune {
+    /// Where to tune, in Hz.
+    pub hz: f64,
+    /// The dial to put it on.
+    pub vfo: Vfo,
 }
 
 /// How close the pointer has to be to a symbol to name it. Wider than the
@@ -392,7 +470,8 @@ pub fn show(
     night: Option<eframe::egui::TextureId>,
     style: sdroxide_types::MapStyle,
     max_h: f32,
-) -> Option<u32> {
+    active_vfo: Vfo,
+) -> Option<MapTune> {
     let avail_w = ui.available_width();
     if avail_w < MIN_HEIGHT {
         return None;
@@ -435,7 +514,29 @@ pub fn show(
             crate::repaint::after_ms(ui.ctx(), 16);
         }
     }
-    if interact(ui, view, &resp, aspect) {
+    // **Is the double-click for a station, or for the view?** Asked from the
+    // view as it stands *before* the interaction, because a double-click never
+    // pans — the coordinates are the ones the pick will use a moment later.
+    // Painting nothing: the same function, asked a question.
+    let station_under_pointer = {
+        let pre = |lat: f64, lon: f64| {
+            project_at(rect, view.clat, view.clon, view.lon_span, view.lon_span * aspect, lat, lon)
+        };
+        draw_nav_layer(
+            None,
+            map,
+            state.layers,
+            view.clat,
+            view.clon,
+            view.lon_span,
+            view.lon_span * aspect,
+            &pre,
+            resp.hover_pos(),
+        )
+        .and_then(|h| h.freq_khz)
+        .is_some()
+    };
+    if interact_with(ui, view, &resp, aspect, !(resp.double_clicked() && station_under_pointer)) {
         crate::repaint::animate(ui.ctx());
     }
     let (clat, clon, lon_span) = (view.clat, view.clon, view.lon_span);
@@ -460,13 +561,7 @@ pub fn show(
     // marks drawn below stay lit.
     paint_night(&p, rect, clat, clon, lon_span, lat_span, night);
 
-    let project = |lat: f64, lon: f64| {
-        let dlon = wrap180(lon - clon);
-        pos2(
-            rect.left() + (0.5 + (dlon / lon_span) as f32) * rect.width(),
-            rect.top() + (0.5 - ((lat - clat) / lat_span) as f32) * rect.height(),
-        )
-    };
+    let project = |lat: f64, lon: f64| project_at(rect, clat, clon, lon_span, lat_span, lat, lon);
 
     // Which target the pointer is over, decided before anything is drawn so the
     // hovered one can be drawn last and on top.
@@ -489,8 +584,29 @@ pub fn show(
     }
 
     // ── airports and navaids, at the very bottom ──
-    let nav_hover =
-        draw_nav_layer(&p, map, state.layers, clat, clon, lon_span, lat_span, &project, pointer);
+    let nav_hover = draw_nav_layer(
+        Some(&p),
+        map,
+        state.layers,
+        clat,
+        clon,
+        lon_span,
+        lat_span,
+        &project,
+        pointer,
+    );
+
+    // **A double-click on a station tunes it.** The map is where the stations
+    // are *seen*; without this the operator reads a frequency off the hover text
+    // and types it into a box. Shift puts it on the other dial, which is the A/B
+    // pair an operator listening to two stations at once is already using.
+    let mut tune: Option<MapTune> = None;
+    if resp.double_clicked()
+        && let Some(khz) = nav_hover.as_ref().and_then(|h| h.freq_khz)
+    {
+        let shift = ui.input(|i| i.modifiers.shift);
+        tune = Some(MapTune { hz: tune_hz(khz), vfo: tune_vfo(active_vfo, shift) });
+    }
 
     // ── history, under everything else ──
     for a in &live {
@@ -634,7 +750,6 @@ pub fn show(
     }
 
     // ── interaction ──
-    let mut clicked = None;
     if let Some(i) = hover {
         let a = live[i];
         let mut tip = a.label();
@@ -658,14 +773,15 @@ pub fn show(
         }
         resp.clone().on_hover_text(tip);
         if resp.clicked() {
-            clicked = Some(a.icao);
-            state.selected = clicked;
+            state.selected = Some(a.icao);
         }
     } else if resp.clicked() {
         state.selected = None;
     }
 
-    if manual && resp.hovered() {
+    // Only where it is true: over a station the double-click tunes instead, and a
+    // hint that promises the wrong gesture is worse than none.
+    if manual && resp.hovered() && !station_under_pointer {
         p.text(
             rect.right_bottom() + vec2(-6.0, -4.0),
             Align2::RIGHT_BOTTOM,
@@ -674,7 +790,10 @@ pub fn show(
             alpha(Color32::WHITE, 110.0),
         );
     }
-    clicked
+    // A **tune wins over the aircraft pick**: a double-click on a station is a
+    // request for a frequency, and the click that selected an aircraft under it
+    // is the lesser answer.
+    tune
 }
 
 #[cfg(test)]
@@ -764,7 +883,15 @@ mod tests {
                 (MapLayers { paths: true, nav: false }, Some(at)),
             ] {
                 asked.push(draw_nav_layer(
-                    &p, &map, layers, clat, clon, lon_span, lat_span, &project, pointer,
+                    Some(&p),
+                    &map,
+                    layers,
+                    clat,
+                    clon,
+                    lon_span,
+                    lat_span,
+                    &project,
+                    pointer,
                 ));
             }
         });
@@ -781,6 +908,66 @@ mod tests {
             asked[2].is_none(),
             "the layer is off and the hover still answered — a name for a mark that is not drawn"
         );
+    }
+
+    /// **A station with a frequency says so, and one without does not.** The
+    /// hover is what offers the gesture, and the frequency it carries is what a
+    /// double-click tunes to — so this is the whole feature's data path, read
+    /// from an aid the table actually has.
+    #[test]
+    fn the_hover_carries_the_frequency_a_station_can_be_tuned_to() {
+        let ctx = eframe::egui::Context::default();
+        let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 400.0));
+        let map = theme::map_styled(sdroxide_types::MapStyle::Radar);
+        // An aid that is on a frequency, and the view tight enough for the
+        // navaids to be drawn at all.
+        let ndb = crate::airdata::navaids()
+            .iter()
+            .find(|n| n.freq_khz > 0)
+            .expect("a navaid with a frequency");
+        let (clat, clon) = (ndb.lat, ndb.lon);
+        let lon_span = 0.5;
+        let lat_span = lon_span * 0.66;
+        let project =
+            |lat: f64, lon: f64| project_at(rect, clat, clon, lon_span, lat_span, lat, lon);
+        let at = project(ndb.lat, ndb.lon);
+        let input = eframe::egui::RawInput { screen_rect: Some(rect), ..Default::default() };
+        let mut hover = None;
+        let full = ctx.run_ui(input, |ui| {
+            let p = ui.painter().clone();
+            hover = draw_nav_layer(
+                Some(&p),
+                &map,
+                MapLayers { paths: false, nav: true },
+                clat,
+                clon,
+                lon_span,
+                lat_span,
+                &project,
+                Some(at),
+            );
+        });
+        full.drop_without_applying_deltas();
+        let hover = hover.expect("the pointer is on the aid and nothing was named");
+        assert_eq!(
+            hover.freq_khz,
+            Some(ndb.freq_khz),
+            "the hover did not carry the frequency its own text names"
+        );
+        assert!(hover.text.contains(&ndb.ident), "named the wrong thing: {:?}", hover.text);
+        // And the conversion the dial is given: kHz in the table, Hz on the dial.
+        assert!((tune_hz(108_400) - 108_400_000.0).abs() < 1.0, "108 400 kHz is 108.4 MHz");
+    }
+
+    /// **A station goes to the dial in use; Shift sends it to the other one.**
+    /// That A/B pair is the operator's own reason for the gesture — two stations
+    /// on two dials, switched between with the VFO key.
+    #[test]
+    fn a_tuned_station_goes_to_the_active_dial_unless_shift_is_held() {
+        assert_eq!(tune_vfo(Vfo::A, false), Vfo::A);
+        assert_eq!(tune_vfo(Vfo::B, false), Vfo::B);
+        assert_eq!(tune_vfo(Vfo::A, true), Vfo::B, "shift sends it to the other dial");
+        assert_eq!(tune_vfo(Vfo::B, true), Vfo::A);
     }
 
     /// **The filter is the feature, and it only opens.** Zooming in must never
