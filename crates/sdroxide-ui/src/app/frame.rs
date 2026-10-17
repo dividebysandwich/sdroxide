@@ -782,6 +782,91 @@ impl eframe::App for SdroxideApp {
             }
         }
 
+        // **Classic UI**: every control in a column down the left, SDR++-style.
+        //
+        // Drawn **before the strip**, and that order is the point: a panel takes
+        // its space off what is left, so drawing the column first leaves the top
+        // panel only the picture's width — which is what lets the frequency
+        // readout be centred *over the waterfall* rather than over the window.
+        // Drawn after it (as this was), the strip spans the whole window and the
+        // readout sits above the column it has nothing to do with. The operator
+        // asked for this twice.
+        //
+        // The column also takes the window's full height, which is what a column
+        // of controls wants: its heading is level with the bar beside it.
+        //
+        // Left out entirely where there is no room, and the strip behaves as it
+        // always has: the two arrangements are the same program.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.ui_settings.classic_ui
+            && tier != crate::layout::Tier::Phone
+            && let super::classic::ClassicSurface::Column(min, max) =
+                super::classic::classic_surface(tier, ui.available_width(), self.classic_collapsed)
+        {
+            // A **new id**, so the one-time change of starting width is actually
+            // seen: the panel's width is remembered by egui (in its persisted
+            // memory), so 300 would be hidden behind whatever an earlier drag
+            // left there. The section order and every fold's open-or-closed
+            // state are keyed separately and are untouched by this.
+            egui::Panel::left(crate::layout::salted_id(&ctx, "classic-column-panel-2"))
+                .resizable(true)
+                .default_size(super::classic::CLASSIC_DEFAULT_W.clamp(min, max))
+                // Re-applied every frame, as the band dock's range is: a column
+                // dragged wide on a big window gives the width back when the
+                // window narrows.
+                .size_range(min..=max)
+                // A small margin and no fill of its own: the column draws
+                // itself with `chrome::angled_frame`, which is what gives the
+                // waterfall and the operating panel their cut-corner outline.
+                // The panel is the space; the frame is the panel's look.
+                .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(4, 4)))
+                .show(ui, |ui| {
+                    // **What makes the handle work.** egui's own note: a
+                    // resizable panel needs its ui to *use* the space it was
+                    // given, or the content's own minimum becomes the panel's
+                    // width and the handle stops moving — which is exactly what
+                    // the first version did, with a drag that looked live and
+                    // did nothing.
+                    ui.take_available_space();
+                    self.classic_column(ui, &mut cmds);
+                });
+        }
+        // **The folded column**, which is a rail and not nothing: the chip that
+        // opens it again has to be on screen, and the operator's own idea — leave
+        // it a few points wide — is what keeps the fold and the unfold in the
+        // same place. Not resizable: a rail has one width.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.ui_settings.classic_ui
+            && tier != crate::layout::Tier::Phone
+            && self.classic_collapsed
+        {
+            // Its **own id**, not the column's: a panel stores its width, and a
+            // rail that wrote 22 points into the column's state would bring the
+            // column back 22 points wide.
+            egui::Panel::left(crate::layout::salted_id(&ctx, "classic-rail-panel"))
+                .resizable(false)
+                .exact_size(super::classic::CLASSIC_RAIL_W)
+                // Outlined on its right edge like the panels beside it, so the
+                // rail reads as the column folded rather than as a strip of the
+                // window left over.
+                .frame(egui::Frame::new().fill(crate::theme::PANEL()).inner_margin(egui::Margin {
+                    left: 4,
+                    right: 0,
+                    top: 4,
+                    bottom: 4,
+                }))
+                .show(ui, |ui| {
+                    self.classic_rail(ui, &mut cmds);
+                    let r = ui.max_rect();
+                    ui.painter().line_segment(
+                        [
+                            r.right_top() + egui::vec2(3.0, 0.0),
+                            r.right_bottom() + egui::vec2(3.0, 0.0),
+                        ],
+                        egui::Stroke::new(1.0, crate::theme::LINE()),
+                    );
+                });
+        }
         // The strip is drawn here unless the operator has undocked it into its
         // own window; when they have, this window is the spectrum and the
         // decoders, and the strip lives in the control window (SDRuno's split
@@ -1001,82 +1086,6 @@ impl eframe::App for SdroxideApp {
         // it (`band_menu_fill`), and the narrow dock is not also drawn.
         let cur_mode = self.state.rx[0].mode;
         let center_empty = !self.center_has_content(cur_mode);
-        // **Classic UI**: every control in a column down the left, SDR++-style.
-        // Drawn here — after the top bar and the notices, before the operating
-        // panel and before the right dock — so the column takes its width off
-        // the waterfall and nothing else has to know about it. Left out entirely
-        // where there is no room, and the strip behaves as it always has: the
-        // two arrangements are the same program.
-        #[cfg(not(target_arch = "wasm32"))]
-        if self.ui_settings.classic_ui
-            && tier != crate::layout::Tier::Phone
-            && let super::classic::ClassicSurface::Column(min, max) =
-                super::classic::classic_surface(tier, ui.available_width(), self.classic_collapsed)
-        {
-            // A **new id**, so the one-time change of starting width is actually
-            // seen: the panel's width is remembered by egui (in its persisted
-            // memory), so 300 would be hidden behind whatever an earlier drag
-            // left there. The section order and every fold's open-or-closed
-            // state are keyed separately and are untouched by this.
-            egui::Panel::left(crate::layout::salted_id(&ctx, "classic-column-panel-2"))
-                .resizable(true)
-                .default_size(super::classic::CLASSIC_DEFAULT_W.clamp(min, max))
-                // Re-applied every frame, as the band dock's range is: a column
-                // dragged wide on a big window gives the width back when the
-                // window narrows.
-                .size_range(min..=max)
-                // A small margin and no fill of its own: the column draws
-                // itself with `chrome::angled_frame`, which is what gives the
-                // waterfall and the operating panel their cut-corner outline.
-                // The panel is the space; the frame is the panel's look.
-                .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(4, 4)))
-                .show(ui, |ui| {
-                    // **What makes the handle work.** egui's own note: a
-                    // resizable panel needs its ui to *use* the space it was
-                    // given, or the content's own minimum becomes the panel's
-                    // width and the handle stops moving — which is exactly what
-                    // the first version did, with a drag that looked live and
-                    // did nothing.
-                    ui.take_available_space();
-                    self.classic_column(ui, &mut cmds);
-                });
-        }
-        // **The folded column**, which is a rail and not nothing: the chip that
-        // opens it again has to be on screen, and the operator's own idea — leave
-        // it a few points wide — is what keeps the fold and the unfold in the
-        // same place. Not resizable: a rail has one width.
-        #[cfg(not(target_arch = "wasm32"))]
-        if self.ui_settings.classic_ui
-            && tier != crate::layout::Tier::Phone
-            && self.classic_collapsed
-        {
-            // Its **own id**, not the column's: a panel stores its width, and a
-            // rail that wrote 22 points into the column's state would bring the
-            // column back 22 points wide.
-            egui::Panel::left(crate::layout::salted_id(&ctx, "classic-rail-panel"))
-                .resizable(false)
-                .exact_size(super::classic::CLASSIC_RAIL_W)
-                // Outlined on its right edge like the panels beside it, so the
-                // rail reads as the column folded rather than as a strip of the
-                // window left over.
-                .frame(egui::Frame::new().fill(crate::theme::PANEL()).inner_margin(egui::Margin {
-                    left: 4,
-                    right: 0,
-                    top: 4,
-                    bottom: 4,
-                }))
-                .show(ui, |ui| {
-                    self.classic_rail(ui, &mut cmds);
-                    let r = ui.max_rect();
-                    ui.painter().line_segment(
-                        [
-                            r.right_top() + egui::vec2(3.0, 0.0),
-                            r.right_bottom() + egui::vec2(3.0, 0.0),
-                        ],
-                        egui::Stroke::new(1.0, crate::theme::LINE()),
-                    );
-                });
-        }
         // A docked band/mode selector takes a column off the right of the
         // panadapter before either draws. Shown here, after the top bar and the
         // notices, so the column sits beside the waterfall rather than under the

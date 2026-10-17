@@ -231,52 +231,83 @@ impl super::SdroxideApp {
             sec.default_open(),
         );
         let id_drag = ui.make_persistent_id(("classic-drag", sec.key()));
-        let (_, dropped) = ui.dnd_drop_zone::<ClassicSection, _>(egui::Frame::new(), |ui| {
-            state
-                .show_header(ui, |ui| {
-                    // **An accent bar behind the heading**, so where a section
-                    // starts is visible without reading: the operator's ask, and
-                    // the thing a column of folds needs more than a strip of
-                    // boxes does — a fold's own arrow is a small mark.
-                    //
-                    // The bar is reserved as a paint slot before the text is
-                    // drawn and filled in afterwards, so it lands *under* the
-                    // words — the same trick `angled_frame` uses for its gradient.
-                    let slot = ui.painter().add(egui::Shape::Noop);
-                    ui.dnd_drag_source(id_drag, sec, |ui| {
-                        // The whole bar is the handle — SDR++'s headings are the
-                        // same — and the label sits at its left rather than
-                        // centred: `add_sized` centres what it is given, which put
-                        // every section's name in the middle of its own bar.
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(ui.available_width(), 16.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.add_space(2.0);
-                                ui.label(
-                                    RichText::new(sec.label())
-                                        .strong()
-                                        .size(11.0)
-                                        .color(crate::theme::TEXT_STRONG()),
-                                );
-                            },
+        // **`dnd_drop_zone` is deliberately not used**, and the reason is
+        // visible: it *overrides* the frame it is given with the widget style's
+        // fill and stroke (`egui::Ui::dnd_drop_zone`, "the color is ignored"), so
+        // every section came out as a filled, bordered box — the operator's
+        // "the sections have their own border too, ditch them, they look warped
+        // in the layout". The drop target is this section's own heading bar,
+        // brightened while a section is being dragged over it, which is a mark
+        // that belongs to the column rather than a box around it.
+        //
+        // The rect is the *previous* frame's, because a section can only be
+        // known to be under the pointer once it has been drawn: one frame behind
+        // on a drag nobody can see, and it costs no state but egui's own temp
+        // store.
+        let rect_id = id.with("drop-rect");
+        let dragging = egui::DragAndDrop::has_payload_of_type::<ClassicSection>(ui.ctx());
+        let pointer = ui.ctx().pointer_interact_pos();
+        let last: Option<egui::Rect> = ui.ctx().data(|d| d.get_temp(rect_id));
+        let over = dragging && pointer.is_some_and(|p| last.is_some_and(|r| r.contains(p)));
+
+        let inner = ui
+            .scope(|ui| {
+                state
+                    .show_header(ui, |ui| {
+                        // **An accent bar behind the heading**, so where a section
+                        // starts is visible without reading: the operator's ask,
+                        // and the thing a column of folds needs more than a strip
+                        // of boxes does — a fold's own arrow is a small mark.
+                        //
+                        // The bar is reserved as a paint slot before the text is
+                        // drawn and filled in afterwards, so it lands *under* the
+                        // words — the same trick `angled_frame` uses for its
+                        // gradient.
+                        let slot = ui.painter().add(egui::Shape::Noop);
+                        ui.dnd_drag_source(id_drag, sec, |ui| {
+                            // The whole bar is the handle — SDR++'s headings are
+                            // the same — and the label sits at its left rather
+                            // than centred: `add_sized` centres what it is given,
+                            // which put every section's name in the middle of its
+                            // own bar.
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), 16.0),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.add_space(2.0);
+                                    ui.label(
+                                        RichText::new(sec.label())
+                                            .strong()
+                                            .size(11.0)
+                                            .color(crate::theme::TEXT_STRONG()),
+                                    );
+                                },
+                            );
+                        })
+                        .response
+                        .on_hover_text(
+                            "Drag this heading onto another section to move it up or down. \
+                             The order is remembered.",
                         );
+                        let row = ui.min_rect();
+                        let bar = egui::Rect::from_min_max(
+                            egui::pos2(ui.max_rect().left(), row.top() - 2.0),
+                            egui::pos2(ui.max_rect().right(), row.bottom() + 2.0),
+                        );
+                        ui.painter()
+                            .set(slot, egui::Shape::rect_filled(bar, 2.0, header_fill(over)));
                     })
-                    .response
-                    .on_hover_text(
-                        "Drag this heading onto another section to move it up or down. The \
-                         order is remembered.",
-                    );
-                    let row = ui.min_rect();
-                    let bar = egui::Rect::from_min_max(
-                        egui::pos2(ui.max_rect().left(), row.top() - 2.0),
-                        egui::pos2(ui.max_rect().right(), row.bottom() + 2.0),
-                    );
-                    ui.painter().set(slot, egui::Shape::rect_filled(bar, 2.0, header_fill()));
-                })
-                .body(|ui| self.classic_section_body(sec, ui, cmds));
-        });
-        let payload = dropped?;
+                    .body(|ui| self.classic_section_body(sec, ui, cmds));
+            })
+            .response;
+        ui.ctx().data_mut(|d| d.insert_temp(rect_id, inner.rect));
+
+        let wrapped = if over && ui.input(|i| i.pointer.any_released()) {
+            egui::DragAndDrop::take_payload::<ClassicSection>(ui.ctx())
+        } else {
+            None
+        };
+        let payload = wrapped?;
         let from = order.iter().position(|s| *s == *payload)?;
         let to = order.iter().position(|s| *s == sec)?;
         (from != to).then_some((from, to))
@@ -631,8 +662,10 @@ impl super::SdroxideApp {
 /// The same 0.14 the notice bars use ([`crate::chrome::ribbon`]): a colour at
 /// that strength reads as a bar with the heading's own ink on it, where a solid
 /// accent would fight the words and a plain `ROW_BG` would not be found at all.
-fn header_fill() -> egui::Color32 {
-    crate::theme::CYAN().gamma_multiply(0.16)
+fn header_fill(over: bool) -> egui::Color32 {
+    // Brighter while a section is being dragged over this one: the drop target
+    // is the heading itself, not a box around the section.
+    crate::theme::CYAN().gamma_multiply(if over { 0.34 } else { 0.16 })
 }
 
 /// A full-width row: a caption in the column's left gutter, its controls in the
