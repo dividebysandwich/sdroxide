@@ -6890,20 +6890,36 @@ one is built:
   the waterfall?"* The column also takes the window's full height, so its heading
   is level with the bar beside it.
 
-**Open, unreproduced, and recorded so nobody repeats the search** — the operator
-saw the **Settings menu's list of page names** drawn in the accent colour with the
-current page as that same accent on a selection fill of that colour, so the
-current page's name disappeared into its own highlight (*"the accent in the
-settings menu column is wrong, active text is unreadable"*). Three causes were
-*measured* and all three were wrong: egui's selection ink (a scratch test draws
-the selected label in `ink_on_cyan`, readable, under every chrome style),
-`theme::scroll_palette` (**the plausible one, and the trap to warn about** — it
-sets `widgets.*.fg_stroke.color`, which egui uses for the scroll *handle* and is
-also every widget's text ink, but `ThemedScroll::show_themed` **restores the
-normal visuals before the content draws**, so it cannot reach a label; do not
-"fix" it there, it is the scrollbar's colour), and the theme's `visuals` in
-general. It needs a reproduction — the detached Settings window is a child
-viewport, which the headless harness does not draw.
+**The Settings menu's page names, and the one rule that fixes them** — reported
+three times (*"the accent in the settings menu column is wrong, active text is
+unreadable"*, then *"the active chip is unreadable in every theme"*), and there
+was **already a comment in that code from an earlier attempt at the same fault**,
+which is the tell: it is not one colour, it is the *resolution*.
+
+**`RichText::strong()` is not a weight.** It selects
+`Visuals::strong_text_color()`, which is `widgets.active.fg_stroke.color` — and
+the accent is what every palette here sets that to. So a `strong()` page name is
+drawn in the accent, and the *current* page is that accent on a selection fill of
+the same accent. The rule that ends the class: **name both colours explicitly**.
+egui checks an explicit colour before `strong`, before the widget's state and
+before the theme (`WidgetText::get_text_color`), so the name cannot come out as
+its own fill whatever a theme or a state does; the weight comes from the bold
+*face* (`chakra-bold`) instead. Two tests hold what is measurable:
+`every_palette_has_an_ink_for_its_selection` (no palette fills its selection with
+the colour it writes on it) and `an_explicit_label_colour_is_not_overridden`.
+
+**Three causes were measured and all three were wrong** before that, recorded so
+nobody repeats the search: egui's selection ink (a scratch test draws the selected
+label in `ink_on_cyan`, readable, under every chrome style), `theme::scroll_palette`
+(**the plausible one, and the trap to warn about** — it sets
+`widgets.*.fg_stroke.color`, which egui uses for the scroll *handle* and is also
+every widget's text ink, but `ThemedScroll::show_themed` **restores the normal
+visuals before the content draws**, so it cannot reach a label; do not "fix" it
+there, it is the scrollbar's colour), and the theme's `visuals` in general.
+**The invisible-name half was never reproduced headlessly** — in every theme and
+chrome style, with and without `strong()`, those labels draw — so the detached
+Settings window (a child viewport the harness does not draw) is where to look if
+it is still missing.
 
 **Left to do**: a skinned section header rather than egui's default, SDR++'s
 vertical Zoom/Max/Min rails beside the waterfall, and splitting the Receiver
