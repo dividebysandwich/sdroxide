@@ -5952,6 +5952,33 @@ something:
 Drag to pan, scroll to zoom, double-click to reframe. Your own position is
 marked once **My grid** is set.
 
+**The ground under the picture.** **NAV** draws what is on the ground while the
+aircraft are in the air: the large airports always, the medium ones as you come
+in closer, and the radio navigation aids — the **VORs** and the **NDBs** —
+once the view is tight enough for a station to be a place. An NDB is drawn in
+its own colour, because an NDB is on medium wave and can actually be *heard* on
+a receiver like the one running this panel; a VOR is a triangle, as a chart
+draws it. **PATHS** draws each flight's history as one line through where it has
+been and into where it is going, rather than as a trail of dots. The chip beside
+them picks the ground itself — **Radar**, **Terrain** or **Chart** — which is
+purely a matter of taste; nothing about the picture's meaning changes with it.
+
+Hover a station and it names itself, with its published frequency — `108.400
+MHz` for a VOR, `373 kHz (medium wave)` for an NDB.
+
+**Double-click a station to listen to it.** It goes to **the other VFO**, in
+AM, and the receiver switches to it; press **A/B** to go back and forth between
+the aircraft and the ground. It never goes to the dial in use, and that is not a
+preference: ADS-B *is* a channel, so the program keeps the dial it is using on
+1090 MHz and puts it back there every time that VFO is recalled — a frequency
+written there would be overwritten a moment later. AM because that is what an
+aid transmits, and an aid parked on a dial still in a lane mode would be silence
+and then a retune. The same rule holds for every mode whose frequency is fixed:
+a click that tunes goes to the dial that mode is not using.
+
+**An airport cannot be tuned** — no frequency is published for one. What is
+tunable is the aid beside it.
+
 **A target with a stale position is not drawn at all.** Past the timeout it
 comes off the map — square, dots and block together — while staying on the list,
 greyed. It is deliberately not faded instead: a dim square at a half-minute-old
@@ -12531,6 +12558,35 @@ spoken announcements below them under `[speech]`:
   running off the edge. The divider between the waterfall and the panel is
   draggable in every mode: put the pointer on the `— — —` handle between them
   and drag to give either one more of the window.
+- **Classic UI** — tick **controls in a left column** and every control moves
+  into one column down the left, each group folding away, with the picture
+  taking everything else (stored as `classic_ui` under `[ui]`, off by default).
+  It is the arrangement SDR++ and SDR++Brown use, for the short-wave listener who
+  already has that layout in their hands. **It is the same program either way**:
+  the same controls, the same settings, the same transmit rules — the column
+  draws the strip's own bodies rather than copies of them, and it is on the
+  desktop only.
+
+  What is left of the strip is what belongs beside the picture: the frequency
+  readout, centred over the waterfall, and the S-meter. The column's sections
+  are **Source**, **Band & mode**, **Receiver**, **Tuning**, **Transmit**,
+  **Recorder**, **Display** and **Windows & tools**, in that order the first
+  time. **Click a heading to open or close it, drag a heading onto another
+  section to move it** — the order is yours and is remembered (as
+  `classic_sections` under `[ui]`). The **◀** in the column's own heading folds
+  the whole thing away to a narrow rail with a **▶** on it, which brings it
+  back: the picture then has the window, and the fold is one click away.
+
+  **A Transmit section that cannot be used says so** rather than disappearing.
+  A radio whose link is closed has not reported what it can do yet, and a
+  receive-only device has no transmitter to key; each case is named in the
+  column with the way to fix it. The one case where the section is not drawn at
+  all is a **listening screen** ([SWL mode](#63-ui-display-preferences-and-voice-announcements)),
+  where transmit has no business being.
+
+  The column's width is dragged from its right edge and remembered. Below about
+  592 points of window it is left out altogether and the ordinary strip is
+  drawn, because there would be no room left for the picture.
 - **Theme** — the colour scheme for the whole UI: **Default** (the navy, cyan
   and hot pink every screenshot in this manual shows), **Light** (white panels
   and near-black text, for a bright shack or a screen read in daylight),
