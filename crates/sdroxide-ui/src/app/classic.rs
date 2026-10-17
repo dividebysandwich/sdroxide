@@ -184,13 +184,18 @@ impl super::SdroxideApp {
                 let order = ClassicSection::order(&self.ui_settings.classic_sections);
                 let mut moved: Option<(usize, usize)> = None;
                 for sec in order.iter().copied() {
-                    // **A section with nothing under it is worse than no
-                    // section**, so a control that does not apply takes its
-                    // heading with it: a listening screen (SWL mode, or a radio
-                    // that cannot transmit) has no Transmit fold at all. The
-                    // gating question is asked once, of the app, so the column
-                    // and the strip's own Transmit box cannot disagree.
-                    if sec == ClassicSection::Transmit && !self.tx_capable() {
+                    // **A listening screen has no Transmit fold at all** — the
+                    // operator's own rule (*"in SWL transmit has nothing to do
+                    // in that menu"*), heading and controls together.
+                    //
+                    // A radio that simply has not *said* it can transmit keeps
+                    // its fold, and the fold says so: hiding it left the
+                    // operator asking where his transmit controls had gone (his
+                    // SS9900v, with its link closed, reports no capabilities at
+                    // all — and the strip's own transmit box has always been
+                    // hidden in that state, so "gone from both screens" was the
+                    // honest reading of a control that never said anything).
+                    if sec == ClassicSection::Transmit && self.swl_mode() {
                         continue;
                     }
                     if let Some(m) = self.classic_section_at(ui, cmds, sec, &order) {
@@ -572,6 +577,32 @@ impl super::SdroxideApp {
     /// that keys itself, a station that cannot transmit at all — are the same
     /// refusals with the same hover text saying why.
     fn classic_tx_body(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        // **Where the transmit controls went, said out loud.** `tx_capable` is
+        // the radio's own answer (`caps.tx_channels > 0`), so a link that is not
+        // open reports nothing and a receive-only device reports none — two
+        // different facts, and each gets its own sentence rather than an empty
+        // fold.
+        if !self.tx_capable() {
+            let (why, fix) = match self.caps.as_ref().map(|c| c.tx_channels) {
+                None => (
+                    "This radio has not reported what it can do yet — its link is closed, or \
+                     it has not answered.",
+                    "Open the link in the radio strip, and the transmit controls appear here.",
+                ),
+                Some(0) => (
+                    "This device receives only: it has no transmitter for this program to key.",
+                    "Transmit is offered by a rig with a control or audio path — Settings → Radio.",
+                ),
+                Some(_) => (
+                    "Transmit is off for this radio's screen.",
+                    "Settings → Radio → \"Show transmit controls\" brings it back.",
+                ),
+            };
+            ui.label(egui::RichText::new(why).size(10.5).color(crate::theme::gray(170)));
+            ui.add_space(3.0);
+            ui.label(egui::RichText::new(fix).size(10.0).color(crate::theme::CYAN_DIM()));
+            return;
+        }
         classic_row(ui, "Key", |ui| {
             self.tx_ptt_chip(ui, cmds);
             self.tx_keyer_chip(ui);
