@@ -432,9 +432,14 @@ impl SdroxideApp {
         let cfg = self.state.adsb;
         let night = self.night_texture(ui.ctx());
         let state = &mut self.adsb_map;
-        // **A double-click on a station tunes it.** The active dial by default
-        // and the other one with Shift held, so an A/B pair can hold a ground
-        // station and whatever else the operator is listening to.
+        // **A double-click on a station tunes it, on the other dial.** Never the
+        // one in use: ADS-B owns that one — it is a channel, and the engine puts
+        // the dial back on 1090 MHz every time that VFO is recalled — so a
+        // station written there is overwritten (the operator traced that
+        // himself). It goes to the free dial, **switches to it**, and puts AM on
+        // it: an aid is amplitude modulated and a lane mode cannot carry it, so a
+        // station parked on a dial still in ADS-B would be silence and then
+        // retuned. A/B is the switch between the plane and the ground station.
         if let Some(t) = crate::adsb_map::show(
             ui,
             state,
@@ -447,7 +452,12 @@ impl SdroxideApp {
             h,
             self.state.active_vfo,
         ) {
+            cmds.push(Command::SelectVfo(t.vfo));
             cmds.push(Command::SetVfo { vfo: t.vfo, hz: t.hz });
+            cmds.push(Command::SetModeListen {
+                rx: sdroxide_types::RxId::Main,
+                mode: sdroxide_types::Mode::Am,
+            });
         }
     }
 

@@ -393,15 +393,20 @@ struct NavHover {
     freq_khz: Option<u32>,
 }
 
-/// **Where a double-clicked station goes.** The active dial by default, the
-/// other one with Shift held: two stations on two frequencies is what an A/B
-/// pair is for, and the operator asked for exactly that — *"so I can switch
-/// between the plane and the ground station"*.
+/// **Where a double-clicked station goes: the *other* dial, always.**
+///
+/// Never the one in use, and that is a property of the mode rather than a
+/// preference. This map is the ADS-B panel, and ADS-B is a channel: entering it
+/// tunes the active VFO to 1090 MHz and switching back to that VFO puts it there
+/// again — *"ADS-B is on 1090 MHz; tuning there"*, in the engine's own words. A
+/// frequency written to that dial is overwritten the moment the VFO is recalled,
+/// which is exactly the fault the operator reported before he traced it himself:
+/// *"the mode is ADS-B so it wants to switch back to the ADS-B frequency… in that
+/// mode you cannot set frequency A because the mode dictates"*. His conclusion,
+/// and his rule for this gesture: *"if you want to click a frequency it always
+/// has to go to B"*.
 #[must_use]
-pub fn tune_vfo(active: Vfo, shift: bool) -> Vfo {
-    if !shift {
-        return active;
-    }
+pub fn other_dial(active: Vfo) -> Vfo {
     match active {
         Vfo::A => Vfo::B,
         Vfo::B => Vfo::A,
@@ -418,7 +423,8 @@ pub fn tune_hz(freq_khz: u32) -> f64 {
     freq_khz as f64 * 1000.0
 }
 
-/// What a double-click on the map asked for.
+/// What a double-click on the map asked for: a station to listen to, on the dial
+/// the current mode does not own (see [`other_dial`]).
 pub struct MapTune {
     /// Where to tune, in Hz.
     pub hz: f64,
@@ -604,8 +610,7 @@ pub fn show(
     if resp.double_clicked()
         && let Some(khz) = nav_hover.as_ref().and_then(|h| h.freq_khz)
     {
-        let shift = ui.input(|i| i.modifiers.shift);
-        tune = Some(MapTune { hz: tune_hz(khz), vfo: tune_vfo(active_vfo, shift) });
+        tune = Some(MapTune { hz: tune_hz(khz), vfo: other_dial(active_vfo) });
     }
 
     // ── history, under everything else ──
@@ -959,15 +964,13 @@ mod tests {
         assert!((tune_hz(108_400) - 108_400_000.0).abs() < 1.0, "108 400 kHz is 108.4 MHz");
     }
 
-    /// **A station goes to the dial in use; Shift sends it to the other one.**
-    /// That A/B pair is the operator's own reason for the gesture — two stations
-    /// on two dials, switched between with the VFO key.
+    /// **A station goes to the dial the mode is not using**, and that A/B pair is
+    /// the operator's own reason for the gesture — the plane on one dial, the
+    /// ground station on the other, switched between with the VFO key.
     #[test]
-    fn a_tuned_station_goes_to_the_active_dial_unless_shift_is_held() {
-        assert_eq!(tune_vfo(Vfo::A, false), Vfo::A);
-        assert_eq!(tune_vfo(Vfo::B, false), Vfo::B);
-        assert_eq!(tune_vfo(Vfo::A, true), Vfo::B, "shift sends it to the other dial");
-        assert_eq!(tune_vfo(Vfo::B, true), Vfo::A);
+    fn a_tuned_station_goes_to_the_dial_the_mode_does_not_own() {
+        assert_eq!(other_dial(Vfo::A), Vfo::B, "ADS-B holds A, so the station takes B");
+        assert_eq!(other_dial(Vfo::B), Vfo::A);
     }
 
     /// **The filter is the feature, and it only opens.** Zooming in must never
