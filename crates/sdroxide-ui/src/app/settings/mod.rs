@@ -2156,15 +2156,26 @@ impl SdroxideApp {
             );
             for (tab, label) in *entries {
                 // A plain selectable row, **not** a row that paints its own
-                // highlight. Painting the frame and then drawing the label with
-                // `selected` false left the label in the ordinary text colour
-                // over the selection colour, which on the station's own theme
-                // made the current page's name invisible — a highlighted box with
-                // nothing written on it. egui draws the two together.
-                if ui
-                    .selectable_label(*io.tab == *tab, egui::RichText::new(*label).strong())
-                    .clicked()
-                {
+                // highlight — and **with both colours named**, which is the part
+                // that took three reports. egui resolves a label's ink through
+                // `strong`, then the widget's state, then the theme; one of those
+                // put this row's name in the same colour as the selection fill it
+                // sits on, so the current page was a solid pill with nothing
+                // written on it. An earlier attempt at the same fault is the
+                // comment that used to be here, and the operator's *"the active
+                // chip is unreadable in every theme"* is the same fault again.
+                //
+                // An explicit colour is checked **before** all of those
+                // (`WidgetText::get_text_color`), so the name is the colour this
+                // code says it is, in every theme and every state — and the
+                // unselected pages stop being drawn in the accent, which they
+                // were for the same reason.
+                let selected = *io.tab == *tab;
+                let ink = if selected { crate::theme::INK_ON_CYAN() } else { crate::theme::TEXT() };
+                let label = egui::RichText::new(*label)
+                    .family(egui::FontFamily::Name("chakra-bold".into()))
+                    .color(ink);
+                if ui.selectable_label(selected, label).clicked() {
                     *io.tab = *tab;
                 }
             }

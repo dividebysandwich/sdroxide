@@ -2350,6 +2350,81 @@ mod tests {
     use super::*;
     use crate::layout::Tier;
 
+    /// **Every palette has an ink that reads on its own selection.** The Settings
+    /// menu draws its current page as a filled row with the page's name on it, so
+    /// the two colours must differ in every theme — this is the invariant behind
+    /// *"the active chip is unreadable in every theme"*.
+    #[test]
+    fn every_palette_has_an_ink_for_its_selection() {
+        for p in PALETTES.iter() {
+            assert_ne!(
+                p.ink_on_cyan, p.cyan,
+                "a palette fills its selection with the colour it writes on it"
+            );
+        }
+    }
+
+    /// **An explicit colour wins.** egui resolves a label's ink through `strong`,
+    /// then the widget's state, then the theme — so the Settings menu names both
+    /// of its tab inks, and this pins the property that fix rests on.
+    ///
+    /// One theme, and the process-wide look is put back: `set_look` is global and
+    /// these tests run in parallel (see `the_grey_scale_is_mirrored_not_reused`).
+    #[test]
+    fn an_explicit_label_colour_is_not_overridden() {
+        let (theme, buttons, windows) =
+            (sdroxide_types::UiTheme::Calm, ChromeStyle::Rounded, ChromeStyle::Rounded);
+        for selected in [false, true] {
+            for strong in [false, true] {
+                let ctx = egui::Context::default();
+                set_look(theme, buttons, windows);
+                apply_visuals(&ctx);
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(200.0, 60.0),
+                    )),
+                    ..Default::default()
+                };
+                let want = if selected { palette().ink_on_cyan } else { palette().text };
+                let full = ctx.run_ui(input, |ui| {
+                    let mut text = egui::RichText::new("UI").color(want);
+                    if strong {
+                        text = text.strong();
+                    }
+                    let _ = ui.selectable_label(selected, text);
+                });
+                let mut inks = Vec::new();
+                fn walk(s: &egui::Shape, out: &mut Vec<Color32>) {
+                    match s {
+                        egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                        egui::Shape::Text(t) => out.push(t.fallback_color),
+                        _ => {}
+                    }
+                }
+                for cs in &full.shapes {
+                    walk(&cs.shape, &mut inks);
+                }
+                assert!(
+                    inks.iter().any(|i| *i == want),
+                    "selected={selected} strong={strong}: the label was not drawn in the colour \
+                     it was given ({want:?}); it drew {inks:?}"
+                );
+                assert!(
+                    !inks.iter().any(|i| *i == palette().cyan),
+                    "selected={selected} strong={strong}: the label came out in the accent, \
+                     which is the selection fill's colour too"
+                );
+            }
+        }
+        // Put the look back the way the rest of the suite expects to find it.
+        set_look(
+            sdroxide_types::UiTheme::default(),
+            ChromeStyle::default(),
+            ChromeStyle::default(),
+        );
+    }
+
     /// Every metric [`apply_metrics`] sets has to be set in *both* directions.
     ///
     /// It runs again whenever the window crosses a breakpoint, so a value
