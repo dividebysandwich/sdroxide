@@ -4023,9 +4023,11 @@ mod tests {
                 .unwrap_or(-1.0);
             (texts(&full.shapes), left, big)
         };
-        // `PUBLIC SDR` is the System box's own chip, drawn on the strip and only
-        // on the strip: the column keeps that fold shut.
-        for _ in 0..6 {
+        // `PUBLIC SDR` is the System box's own chip. With the arrangement off it is
+        // the strip's; with it on it is the column's — and the count is the point
+        // either way, because drawing it in both places at once is the
+        // duplication this arrangement exists to remove.
+        for _ in 0..12 {
             frame(&mut app);
         }
         let (before, left_before, big_before) = frame(&mut app);
@@ -4034,17 +4036,25 @@ mod tests {
             "the picture starts at the left edge to begin with (it starts at {left_before}; \
              the big rects were {big_before:?})"
         );
-        assert!(
-            before.contains("PUBLIC SDR"),
-            "the strip draws its System box to begin with; it drew: {before}"
+        // **`SCHEDULE` is drawn exactly once, either way.** With the arrangement
+        // off it is the strip's own chip; with it on it is the column's — and if
+        // both drew it, the operator would have the controls in two places at
+        // once, which is the duplication this arrangement exists to remove.
+        assert_eq!(
+            before.matches("PUBLIC SDR").count(),
+            1,
+            "the strip draws the tools once to begin with; it drew: {before}"
         );
+        assert!(!before.contains("CONTROLS"), "no column while the setting is off");
         app.ui_settings.classic_ui = true;
         frame(&mut app);
         let (during, left_during, big_during) = frame(&mut app);
-        assert!(
-            !during.contains("PUBLIC SDR"),
-            "the strip's System box left with the setting; it drew: {during}"
+        assert_eq!(
+            during.matches("PUBLIC SDR").count(),
+            1,
+            "the tools moved to the column rather than being drawn in both places: {during}"
         );
+        assert!(during.contains("CONTROLS"), "the column is drawn; it drew: {during}");
         assert!(
             during.contains('◀'),
             "the column carries the fold, on its own right edge; it drew: {during}"
@@ -4074,10 +4084,11 @@ mod tests {
             "the rail takes a few points, not the column's width ({left_folded}; the big \
              rects were {big_folded:?})"
         );
-        assert!(
-            !folded.contains("PUBLIC SDR"),
-            "the strip's own boxes stay away while the column is folded — the rail is the \
-             controls, one click away; it drew: {folded}"
+        assert_eq!(
+            folded.matches("PUBLIC SDR").count(),
+            0,
+            "the folded column draws no controls at all — the rail is one chip, and the \
+             section is a click away: {folded}"
         );
         app.classic_collapsed = false;
         // A fold animates open over a few frames, and a header drawn on its
@@ -4152,9 +4163,10 @@ mod tests {
         app.ui_settings.classic_ui = false;
         frame(&mut app);
         let (after, left_after, big_after) = frame(&mut app);
-        assert!(
-            after.contains("PUBLIC SDR"),
-            "the strip's System box did not come back when the setting was cleared"
+        assert_eq!(
+            after.matches("PUBLIC SDR").count(),
+            1,
+            "the tools are back on the strip, once, when the setting is cleared: {after}"
         );
         assert!(
             (left_after - left_before).abs() < 1.0,
@@ -4184,9 +4196,10 @@ mod tests {
             overridden.contains('◀'),
             "the column is drawn even with the strip folded to Small"
         );
-        assert!(
-            !overridden.contains("PUBLIC SDR"),
-            "the compact strip's own boxes are not drawn beside the column: {overridden}"
+        assert_eq!(
+            overridden.matches("PUBLIC SDR").count(),
+            1,
+            "the compact strip's boxes are not drawn beside the column: {overridden}"
         );
     }
 
@@ -4280,10 +4293,12 @@ mod tests {
                 }
                 if w >= 400.0 {
                     // Every control in the column is at the *left* gutter of its
-                    // row: the heading in its bar, and the first control under it.
-                    for (text, what) in
-                        [("Source", "a section heading"), ("RADIO SETTINGS", "a control")]
-                    {
+                    // row: the leading heading in its bar, and a control under it.
+                    // The heading is read from the shipped order rather than
+                    // written out, so changing which section leads cannot leave
+                    // this probe asking for one that is below the fold.
+                    let first = sdroxide_types::ClassicSection::ALL[0].label();
+                    for (text, what) in [(first, "a section heading"), ("LOG", "a control")] {
                         let left = words
                             .iter()
                             .find(|(s, _)| s == text)

@@ -1209,14 +1209,22 @@ impl ClassicSection {
     /// Every section, in the order the column ships with — SDR++'s order top to
     /// bottom, and the order anything missing from a stored list comes back in.
     pub const ALL: [Self; 8] = [
-        Self::Source,
-        Self::Bands,
+        // **The operator's order, and it is not the obvious one.** SDR++ puts the
+        // front end first because that is where its device picker lives; here the
+        // tools and the receiver are what a listener reaches for, so they lead and
+        // the device readout follows. He asked for it in as many words: *"default
+        // the Windows and Tools to the top and the Radio 2nd or 3rd"*. A stored
+        // arrangement is his own and is never re-ordered by this — `ALL` is the
+        // order a *fresh* column opens in, and the order anything missing from a
+        // stored list is appended in.
+        Self::Tools,
         Self::Receiver,
+        Self::Bands,
+        Self::Source,
         Self::Tuning,
         Self::Transmit,
         Self::Recorder,
         Self::Display,
-        Self::Tools,
     ];
 
     /// What the heading says.
@@ -1252,7 +1260,9 @@ impl ClassicSection {
     /// Open when the column is new? The three a newcomer reaches for first; the
     /// rest start folded away.
     pub fn default_open(&self) -> bool {
-        matches!(self, Self::Source | Self::Bands | Self::Receiver)
+        // What a listener reaches for first, and the two the operator put at the
+        // top of the column: everything else opens folded.
+        matches!(self, Self::Tools | Self::Receiver | Self::Bands)
     }
 
     /// **Read a stored order.** Unknown names are dropped, repeats are dropped,
@@ -2119,18 +2129,17 @@ mod tests {
         assert_eq!(ClassicSection::order(""), ClassicSection::ALL.to_vec());
         // His own arrangement, kept as it is.
         let mine = "recorder,source,tuning";
+        let mut expect =
+            vec![ClassicSection::Recorder, ClassicSection::Source, ClassicSection::Tuning];
+        // The rest follow in the shipped order — read from `ALL` rather than
+        // written out, so changing the default cannot leave this assertion
+        // agreeing with a stale copy of it.
+        let rest: Vec<_> =
+            ClassicSection::ALL.iter().copied().filter(|s| !expect.contains(s)).collect();
+        expect.extend(rest);
         assert_eq!(
             ClassicSection::order(mine),
-            vec![
-                ClassicSection::Recorder,
-                ClassicSection::Source,
-                ClassicSection::Tuning,
-                ClassicSection::Bands,
-                ClassicSection::Receiver,
-                ClassicSection::Transmit,
-                ClassicSection::Display,
-                ClassicSection::Tools,
-            ],
+            expect,
             "what he placed keeps its place, and the rest follow in the shipped order"
         );
         // A name this build does not have is dropped, not a heading with nothing

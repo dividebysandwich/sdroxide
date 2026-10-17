@@ -252,52 +252,68 @@ impl super::SdroxideApp {
 
         let inner = ui
             .scope(|ui| {
-                state
-                    .show_header(ui, |ui| {
-                        // **An accent bar behind the heading**, so where a section
-                        // starts is visible without reading: the operator's ask,
-                        // and the thing a column of folds needs more than a strip
-                        // of boxes does — a fold's own arrow is a small mark.
-                        //
-                        // The bar is reserved as a paint slot before the text is
-                        // drawn and filled in afterwards, so it lands *under* the
-                        // words — the same trick `angled_frame` uses for its
-                        // gradient.
-                        let slot = ui.painter().add(egui::Shape::Noop);
-                        ui.dnd_drag_source(id_drag, sec, |ui| {
-                            // The whole bar is the handle — SDR++'s headings are
-                            // the same — and the label sits at its left rather
-                            // than centred: `add_sized` centres what it is given,
-                            // which put every section's name in the middle of its
-                            // own bar.
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(ui.available_width(), 16.0),
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| {
-                                    ui.add_space(2.0);
-                                    ui.label(
-                                        RichText::new(sec.label())
-                                            .strong()
-                                            .size(11.0)
-                                            .color(crate::theme::TEXT_STRONG()),
-                                    );
-                                },
+                let was_open = state.is_open();
+                let mut toggled = false;
+                let mut header = state.show_header(ui, |ui| {
+                    // **An accent bar behind the heading**, so where a section
+                    // starts is visible without reading: the operator's ask,
+                    // and the thing a column of folds needs more than a strip
+                    // of boxes does — a fold's own arrow is a small mark.
+                    //
+                    // The bar is reserved as a paint slot before the text is
+                    // drawn and filled in afterwards, so it lands *under* the
+                    // words — the same trick `angled_frame` uses for its
+                    // gradient.
+                    let slot = ui.painter().add(egui::Shape::Noop);
+                    let row = ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), 16.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.add_space(2.0);
+                            // **The bold face, asked for by name.** egui's
+                            // `strong()` is a *colour*, not a weight, so a
+                            // heading that says `strong()` is exactly as thin
+                            // as the text beside it; `chakra-bold` is the
+                            // family the theme already installs for headings.
+                            ui.label(
+                                RichText::new(sec.label())
+                                    .size(11.5)
+                                    .family(bold_family())
+                                    .color(crate::theme::TEXT_STRONG()),
                             );
-                        })
-                        .response
-                        .on_hover_text(
-                            "Drag this heading onto another section to move it up or down. \
-                             The order is remembered.",
-                        );
-                        let row = ui.min_rect();
-                        let bar = egui::Rect::from_min_max(
-                            egui::pos2(ui.max_rect().left(), row.top() - 2.0),
-                            egui::pos2(ui.max_rect().right(), row.bottom() + 2.0),
-                        );
-                        ui.painter()
-                            .set(slot, egui::Shape::rect_filled(bar, 2.0, header_fill(over)));
-                    })
-                    .body(|ui| self.classic_section_body(sec, ui, cmds));
+                        },
+                    );
+                    // **The whole bar is the control.** A click folds the
+                    // section — the fold's own arrow is a small target on a
+                    // heading that is the width of the column, and the
+                    // operator asked for the bar itself to work — and a
+                    // *drag* moves it, which egui tells apart from a click by
+                    // the distance travelled.
+                    let bar =
+                        ui.interact(row.response.rect, id_drag, egui::Sense::click_and_drag());
+                    if bar.clicked() {
+                        toggled = true;
+                    }
+                    if bar.dragged() {
+                        egui::DragAndDrop::set_payload(ui.ctx(), sec);
+                    }
+                    bar.on_hover_text(
+                        "Click to open or close this section. Drag it onto another \
+                             section to move it — the order is remembered.",
+                    );
+                    let bar_rect = egui::Rect::from_min_max(
+                        egui::pos2(ui.max_rect().left(), row.response.rect.top() - 2.0),
+                        egui::pos2(ui.max_rect().right(), row.response.rect.bottom() + 2.0),
+                    );
+                    ui.painter()
+                        .set(slot, egui::Shape::rect_filled(bar_rect, 2.0, header_fill(over)));
+                });
+                // The click is applied *before* the body is drawn, or the fold
+                // would answer a frame late.
+                if toggled {
+                    header.set_open(!was_open);
+                }
+                header.body(|ui| self.classic_section_body(sec, ui, cmds));
             })
             .response;
         ui.ctx().data_mut(|d| d.insert_temp(rect_id, inner.rect));
@@ -662,6 +678,14 @@ impl super::SdroxideApp {
 /// The same 0.14 the notice bars use ([`crate::chrome::ribbon`]): a colour at
 /// that strength reads as a bar with the heading's own ink on it, where a solid
 /// accent would fight the words and a plain `ROW_BG` would not be found at all.
+/// The theme's bold face, by the name it is installed under
+/// (`theme::install_fonts`). egui's `RichText::strong()` is a *colour*, not a
+/// weight: a heading that says `strong()` is exactly as thin as the text beside
+/// it, which is why the operator asked for bold by name.
+fn bold_family() -> egui::FontFamily {
+    egui::FontFamily::Name("chakra-bold".into())
+}
+
 fn header_fill(over: bool) -> egui::Color32 {
     // Brighter while a section is being dragged over this one: the drop target
     // is the heading itself, not a box around the section.
