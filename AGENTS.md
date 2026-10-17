@@ -5411,6 +5411,39 @@ claim — and answering it first could shrink this from a feature to a button.
 **Fit for this fork: total.** Upstream has no recording replay and no audience
 for it; this is the listener asking for the tool their own receiver should have.
 
+## The ADS-B map's stations are tunable (2026-10-18)
+
+The operator: *"in the ADS-B you have those stations on the map with a frequency,
+why can't I double-click on them and they become tuned or tuned under B in the
+frequency window so I can switch between the plane and the ground station"*. Right
+on both counts — the frequency was only ever *text* (the hover named a VOR or an
+NDB and the operator typed it into a box), and the gesture he wanted was already
+taken.
+
+- **The hover carries the frequency**, and it is the **navaids** that have one:
+  `airdata::Airport` publishes no frequency, so a double-click on an airport tunes
+  nothing and says nothing about tuning. `NavHover::freq_khz` is `Option<u32>`,
+  the table's kHz, and `tune_hz` is the one conversion to the dial's Hz (this fork
+  has had kHz and Hz the wrong way round before).
+- **The double-click had a prior owner**: `worldmap::interact` hands the map's
+  view back to the auto-fit on a double-click. Answering both would undo the zoom
+  the operator had just used to *find* the station — so it is
+  `interact_with(..., reframe)` now, and the ADS-B map passes `false` when the
+  pointer is over a station with a frequency. The check runs *before* the
+  interaction, which is safe because a double-click never pans, and it reuses
+  `draw_nav_layer` **with its painter as an `Option`** — the picking rule stays in
+  one place instead of getting a second copy for the question. The bottom-right
+  "double-click to reframe" hint is withheld over a station for the same reason:
+  a hint that promises the wrong gesture is worse than none.
+- **The gesture is said where the name is read** (`draw_hover_label` adds the
+  line, only for the stations that can be tuned): a mark that answers a
+  double-click has to look like one.
+- Plain double-click tunes the **dial in use**, Shift the **other** one — the A/B
+  pair he is describing. Tests: `the_hover_carries_the_frequency_a_station_can_be_tuned_to`
+  (verified failing with the frequency set to `None` — "the hover did not carry
+  the frequency its own text names") and
+  `a_tuned_station_goes_to_the_active_dial_unless_shift_is_held`.
+
 ## The signal-identification guide (fork-only, 2026-09-25)
 
 A listener tool, opened by the **SIG ID** chip in the LISTEN window — and, in
