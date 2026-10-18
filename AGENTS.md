@@ -6291,13 +6291,15 @@ Two things worth keeping:
     it is transmitting, the meters move, and the radio stays silent — check
     `amixer -c <card> sget 'PCM'` before touching anything in the program.**
     ALSA restores this level at login, so it survives a reboot.
-  - **The FT8 CB CQ fix is confirmed on the air — by loopback (2026-10-18).**
-    `ac9183fe` (`.also_accept` put back on the streaming decode request) was
-    proven offline first: pull the hook out and the guard loses **exactly** the
-    four CQ forms while the three report forms still arrive. It was then proven
-    end to end the same evening, with no propagation needed — **the RSP1 on
-    27.265 receiving the CRT's own CQ**. That is the technique to reach for when
-    a decode fix cannot wait for the band: two radios in one program, one
+  - **The FT8 CB CQ fix is confirmed on the air — by loopback, and then by a
+    real station (2026-10-18).** `ac9183fe` (`.also_accept` put back on the
+    streaming decode request) was proven offline first: pull the hook out and
+    the guard loses **exactly** the four CQ forms while the three report forms
+    still arrive. It was then proven end to end the same evening, with no
+    propagation needed — **the RSP1 on 27.265 receiving the CRT's own CQ** — and
+    a real station on the band was copied in the same session, so it is not only
+    the bench talking to itself. That loopback is the technique to reach for
+    when a decode fix cannot wait for the band: two radios in one program, one
     keying, one decoding, no ionosphere in the path. Worth keeping, because the
     alternative is an evening lost to a dead band.
   - **This corrects an earlier note here, which was wrong twice.** The rig is
