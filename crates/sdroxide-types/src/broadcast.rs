@@ -86,11 +86,26 @@ pub fn codes() -> &'static BroadcastCodes {
     })
 }
 
-/// Whether a schedule row names something an AM receiver can listen to.
+/// Whether a schedule row names something a listener here can use.
 ///
-/// Jammers exist only to sit on top of a broadcast, numbers stations are not
-/// addressed to a listener, and the fax and DRM rows carry nothing an envelope
-/// detector can recover.
+/// Jammers exist only to sit on top of a broadcast, and numbers stations are
+/// not addressed to a listener, so neither earns a row.
+///
+/// **DRM rows are kept, and they used to be dropped.** They went out with the
+/// fax rows on the grounds that "the fax and DRM rows carry nothing an envelope
+/// detector can recover" — true of the AM-only schedule this started as, and
+/// untrue since this build got a DRM decoder. EiBi has no emission column: it
+/// spells a DRM transmission out in the name (`BBC DIGITAL`, `CNR1 DIGITAL`,
+/// `KCBS DIGITAL`, thirteen distinct names in the August 2026 file), so the word
+/// that dropped them was `digital`. That is also why a search for "Digital"
+/// found nothing at all — every row carrying the word had been thrown away
+/// before the query ever ran. Kept rows say what they are through
+/// [`mode_from_name`], or they would be tuned as AM.
+///
+/// The **fax** rows stay out, and for a different reason: a chart service is
+/// not a broadcast programme, and the WEFAX stations already have a table of
+/// their own ([`crate::WefaxStation`]), which is where a listener looks for
+/// them.
 fn is_listenable(station: &str) -> bool {
     let lower = station.to_ascii_lowercase();
     for phrase in ["jammer", "firedrake", "spy numbers"] {
@@ -98,11 +113,23 @@ fn is_listenable(station: &str) -> bool {
             return false;
         }
     }
-    // Whole words only: a station is not disqualified for having "drm" or "fax"
-    // buried inside a place name.
-    !lower
+    // Whole words only: a station is not disqualified for having "fax" buried
+    // inside a place name — `VCS Halifax Radio` is a coast station, not a chart.
+    !lower.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| w == "fax")
+}
+
+/// The emission mode a schedule's own name implies, where it implies one.
+///
+/// Only DRM, because only DRM is spelled out in a name rather than carried in a
+/// column, and only for the two spellings EiBi and Aoki use. A row left at `AM`
+/// would be tuned as an envelope signal, which is worse than the row being
+/// missing: the operator would hear noise and conclude the station was off.
+fn mode_from_name(station: &str) -> Option<String> {
+    let lower = station.to_ascii_lowercase();
+    lower
         .split(|c: char| !c.is_ascii_alphanumeric())
-        .any(|w| matches!(w, "fax" | "drm" | "digital"))
+        .any(|w| w == "digital" || w == "drm")
+        .then(|| "DRM".to_string())
 }
 
 /// Decode an EiBi file, which is published as latin-1.
@@ -259,7 +286,7 @@ pub fn parse_schedule(csv: &str) -> Vec<BroadcastStation> {
             power_kw: None,
             lang,
             target: target.to_string(),
-            mode: None,
+            mode: mode_from_name(station),
             start_utc,
             end_utc,
             days: parse_days(f[2].trim()),
@@ -1538,9 +1565,11 @@ mod tests {
         let digest = eibi_digest(&stations);
         println!("EiBi: {} stations, digest {digest:#018x}", stations.len());
         assert_eq!(
-            digest, 0xad42_0e0d_17ba_48bf,
+            digest, 0xe6fe_c537_410d_8cde,
             "the EiBi parse changed — see SWL-HANDOVER.md; a count alone would not \
-             have caught a station that lost a field"
+             have caught a station that lost a field. Last moved deliberately on \
+             2026-10-18, when the 114 DRM rows came back: the delta was measured \
+             row by row against the fixture before this number was touched."
         );
     }
 
@@ -1853,9 +1882,16 @@ mod tests {
         // The Python tool that used to do this conversion at build time turned
         // the A-26 file into 4,629 transmissions, plus 23 hand-kept entries.
         // Pinning the totals is what catches the parser silently losing rows.
+        //
+        // **4,743 since 2026-10-18**: the DRM rows came back (see
+        // `is_listenable`), which is 114 more. The fixture carries 118 rows
+        // naming a DRM station; four of them fail a gate that has nothing to do
+        // with this — one at 1557 kHz and two at 9975 kHz, both outside the
+        // broadcast bands, and one marked inactive — so 114 is the whole of the
+        // change and nothing else moved with it.
         assert_eq!(seed().len(), 23);
-        assert_eq!(parse_schedule(FALLBACK_SKED).len(), 4629);
-        assert_eq!(builtin().len(), 4652);
+        assert_eq!(parse_schedule(FALLBACK_SKED).len(), 4743);
+        assert_eq!(builtin().len(), 4766);
     }
 
     #[test]
@@ -1908,22 +1944,33 @@ mod tests {
         assert!(got[0].email.is_empty() && got[0].address.is_empty());
     }
 
+    /// Jammers and numbers stations are not for a listener; DRM is, and it used
+    /// to be dropped with the fax rows.
     #[test]
-    fn the_parser_drops_what_an_am_receiver_cannot_use() {
+    fn the_parser_drops_jammers_and_numbers_stations_and_keeps_drm() {
         let row = |f: &str, station: &str, lng: &str, p: &str| {
             format!("{f};0000-2400;;CHN;{station};{lng};As;;{p};;\n")
         };
         let csv = String::from("header\n")
-            + &row("9420", "Good Station", "E", "1")     // kept
-            + &row("9420", "CNR1 Jammer", "E", "1")      // jammer
-            + &row("9420", "E06 Spy Numbers", "E", "1")  // numbers station
-            + &row("9420", "CRI DIGITAL", "E", "1")      // DRM, no envelope
-            + &row("9420", "Retired Service", "E", "8")  // inactive
-            + &row("9420", "Coast Radio", "-CW", "1")    // not voice
+            + &row("9420", "Good Station", "E", "1") // kept
+            + &row("9420", "CNR1 Jammer", "E", "1") // jammer
+            + &row("9420", "E06 Spy Numbers", "E", "1") // numbers station
+            + &row("9420", "CRI DIGITAL", "E", "1") // DRM — kept, and says so
+            + &row("9420", "VCS Halifax Radio", "E", "1") // "fax" in a place name
+            + &row("9420", "NOJ Fax Kodiak", "E", "1") // a chart, not a programme
+            + &row("9420", "Retired Service", "E", "8") // inactive
+            + &row("9420", "Coast Radio", "-CW", "1") // not voice
             + &row("8000", "Out Of Band", "E", "1"); // not a broadcast band
         let got = parse_schedule(&csv);
-        assert_eq!(got.len(), 1, "kept {:?}", got.iter().map(|s| &s.name).collect::<Vec<_>>());
-        assert_eq!(got[0].name, "Good Station");
+        let names: Vec<&str> = got.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["Good Station", "CRI DIGITAL", "VCS Halifax Radio"], "kept {names:?}");
+        // Kept *and* labelled. EiBi has no emission column, so a DRM row is only
+        // DRM because its name says so — tuned as AM it would be noise, which is
+        // worse for the operator than the row being absent.
+        let drm = got.iter().find(|s| s.name == "CRI DIGITAL").expect("the DRM row");
+        assert_eq!(drm.mode(), crate::Mode::Drm, "the DRM row says what to tune");
+        let plain = got.iter().find(|s| s.name == "Good Station").expect("the AM row");
+        assert_eq!(plain.mode(), crate::Mode::Am, "and an ordinary row is untouched");
     }
 
     #[test]
@@ -2358,7 +2405,7 @@ pub fn parse_aoki(text: &str) -> Vec<BroadcastStation> {
             // covers one publisher.
             lang: lang.trim().to_string(),
             target: remarks.trim().to_string(),
-            mode: None,
+            mode: mode_from_name(station),
             start_utc,
             end_utc,
             days: aoki_days(&days),
