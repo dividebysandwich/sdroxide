@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>sdroxide web audio recovery harness</title>
+<script>
+    // The page's own bookkeeping, done before the bridge loads: a wrapper
+    // around AudioContext, so the harness can see every context the bridge
+    // builds, and whether a dead one is ever replaced. Asking only the bridge
+    // about itself would be asking the thing under test.
+    window.__contexts = [];
+    (function () {
+        // Nothing is silent: if the bridge or the harness throws while the
+        // page is loading, that is the answer to the question, and it has to
+        // reach the runner.
+        function report(line) {
+            try {
+                fetch("/result?line=" + encodeURIComponent(line));
+            } catch (e) {}
+        }
+        window.addEventListener("error", (e) =>
+            report("FAIL script error: " + (e.message || e.error))
+        );
+        window.addEventListener("unhandledrejection", (e) =>
+            report("FAIL script rejection: " + (e.reason && e.reason.message ? e.reason.message : e.reason))
+        );
+        window.__report = report;
+
+        const Real = window.AudioContext;
+        function Observed(...args) {
+            const c = new Real(...args);
+            window.__contexts.push(c);
+            return c;
+        }
+        Observed.prototype = Real.prototype;
+        window.AudioContext = Observed;
+        // No Sound welcome layer over the page: it swallows the first gesture
+        // by design, and this harness needs the bridge's ordinary path.
+        try {
+            localStorage.setItem("sdroxide-sound-welcome", "0");
+        } catch (e) {}
+        report("note page loading " + location.href);
+    })();
+</script>
+<script src="audio_bridge.js"></script>
+<script src="harness.js"></script>
+</head>
+<body></body>
+</html>
