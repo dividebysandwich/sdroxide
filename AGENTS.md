@@ -6266,6 +6266,40 @@ Two things worth keeping:
     `radio-2`…`radio-6` are stale leftovers from earlier experiments
     (`next_id: 7`); the `SpyServer`, `Cat`/TrUsdx, `KiwiSdr` and `AtsMini`
     configs in them are not live hardware.
+  - **The CRT's own audio drops out, and it is the radio's fault, not ours
+    (operator, 2026-10-18).** On the SS9900v the waterfall is streaked where the
+    RSP1's is smooth, **the sound drops at the same time as a black line in the
+    waterfall**, and FT8 decodes nothing there while the RSP1 on the same
+    machine decodes 300 in a session. The drops are **the rig** — the operator
+    traced it to the radio itself. Do not go looking for a buffer underrun in
+    the engine: a demod-audio rig's slot is only as whole as the audio the rig
+    sends, so a rig gating its own audio is a station fault with a decode
+    symptom. `cat.ptt`/`mode_control`/`cw_keying` on `radio-1` are inert — the
+    `UsbAudio` path reads none of `radio.cat` (it keys by VOX off the audio it
+    plays), so a `'Cat'` in those fields is a leftover, not a broken link.
+  - **A wireless mouse radiates into the SS9900v (operator, 2026-10-18).** Moving
+    it swings the S-meter hard; the trackpad does not. It is the mouse's own
+    transmitter, not the USB link — worth knowing before reading an S-meter on
+    that rig, and before blaming the app for a level that moves on its own.
+  - **The rig's USB card has two independent levels, and only one is in the
+    app (2026-10-18).** `amixer -c 2` on the AB13X: `Mic` is the *capture*
+    switch and `PCM` is the *playback* volume, and they are the receive and
+    transmit halves of the same chip. `PCM` had been left at **2% (−44 dB)**, so
+    CQ transmitted, the panel said so, and the rig never keyed — VOX had nothing
+    to hear. Nothing in Settings → Radio can show or fix that, which is what
+    made it look like an app fault. **The symptom to remember: the program says
+    it is transmitting, the meters move, and the radio stays silent — check
+    `amixer -c <card> sget 'PCM'` before touching anything in the program.**
+    ALSA restores this level at login, so it survives a reboot.
+  - **The FT8 CB CQ fix is confirmed on the air — by loopback (2026-10-18).**
+    `ac9183fe` (`.also_accept` put back on the streaming decode request) was
+    proven offline first: pull the hook out and the guard loses **exactly** the
+    four CQ forms while the three report forms still arrive. It was then proven
+    end to end the same evening, with no propagation needed — **the RSP1 on
+    27.265 receiving the CRT's own CQ**. That is the technique to reach for when
+    a decode fix cannot wait for the band: two radios in one program, one
+    keying, one decoding, no ionosphere in the path. Worth keeping, because the
+    alternative is an evening lost to a dead band.
   - **This corrects an earlier note here, which was wrong twice.** The rig is
     **not** unusable as a radio: `Backend::UsbAudio` is
     "USB audio radio (sound card)" — the same audio machinery as a demod-audio
