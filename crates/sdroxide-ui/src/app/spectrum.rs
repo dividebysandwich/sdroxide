@@ -1008,6 +1008,19 @@ impl SdroxideApp {
         }
     }
 
+    /// Open WEFAX with the tuned frequency at the centre of the view, as wide as
+    /// [`WEFAX_VIEW_SPAN_HZ`]. Called when the mode *becomes* WEFAX, never per
+    /// frame, so the operator's own zoom and centring afterwards stand.
+    pub(in crate::app) fn fit_wefax_view(&mut self) {
+        if let Some((centre, span)) = wefax_open_window(
+            self.state.rx[0].mode,
+            self.state.active_freq_hz(),
+            self.state.sample_rate,
+        ) {
+            self.view.fit(centre, span);
+        }
+    }
+
     /// Center the view on the tuned frequency after big jumps (band change,
     /// memory recall, startup) — i.e. whenever the tuning changed AND left
     /// the visible span. Deliberate pans away from the VFO are never
@@ -1254,6 +1267,22 @@ fn sstv_audio_window(mode: Mode, dial_hz: f64) -> Option<(f64, f64)> {
     Some((centre, SSTV_VIEW_SPAN_HZ))
 }
 
+/// The width WEFAX opens at, in Hz, centred on the tuned frequency. It is
+/// clamped to the sample rate where one is known, as SSTV's is.
+const WEFAX_VIEW_SPAN_HZ: f64 = 16_000.0;
+
+/// Where to put the view for WEFAX — `None` for every other mode, so the caller
+/// keeps its own answer. The centre is the tuned frequency: the dial is not
+/// moved, only the view is.
+fn wefax_open_window(mode: Mode, dial_hz: f64, sample_rate: f64) -> Option<(f64, f64)> {
+    if !mode.is_wefax() {
+        return None;
+    }
+    let span =
+        if sample_rate > 0.0 { WEFAX_VIEW_SPAN_HZ.min(sample_rate) } else { WEFAX_VIEW_SPAN_HZ };
+    Some((dial_hz, span))
+}
+
 #[cfg(test)]
 mod tests {
     use super::Mode;
@@ -1262,6 +1291,7 @@ mod tests {
         AutoFit, FIT_ARRIVED_DB, FIT_MIN_GAP_S, FIT_SETTLE_S, FIT_STEP_S, average_in,
         base_fft_for_rate, fit_due, focus_hz, glide_step, levels_drifted, pick_levels,
         refit_on_window_growth, saturated_bins, slack_viewport, sstv_audio_window,
+        wefax_open_window,
     };
 
     /// The SSTV view on a demod-audio front end. The picture is 1200-2300 Hz of
@@ -1294,6 +1324,22 @@ mod tests {
         // about as much again either side for the neighbours.
         let (_, s) = sstv_audio_window(Mode::Sstv, 3_730_000.0).expect("SSTV answers");
         assert_eq!(s, 3_000.0);
+    }
+
+    /// WEFAX opens 16 kHz wide with the tuned frequency at its centre, and the
+    /// dial is never the view's business. A narrower front end clamps the span
+    /// to its sample rate; every other mode keeps its own answer.
+    #[test]
+    fn wefax_opens_16_khz_wide_on_the_tuned_frequency() {
+        assert_eq!(
+            wefax_open_window(Mode::Wefax, 7_000_000.0, 2_400_000.0),
+            Some((7_000_000.0, 16_000.0)),
+        );
+        assert_eq!(
+            wefax_open_window(Mode::Wefax, 7_000_000.0, 12_000.0),
+            Some((7_000_000.0, 12_000.0)),
+        );
+        assert!(wefax_open_window(Mode::Ft8, 14_074_000.0, 2_400_000.0).is_none());
     }
 
     /// The "levels are hiding everything" test: a slice that is *all* at one
