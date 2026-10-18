@@ -7005,3 +7005,51 @@ stuck handle, the unwrapped rows, the chip past the edge, the misplaced fold and
 the doubled mode were all found — and nothing has been rendered here: there is no
 probe that draws the column to an image, so every reading is arithmetic and every
 look is the operator's.
+
+## WEFAX: the rephase rule was cutting pages inside their own phasing signal (2026-10-18)
+
+Found while working fork issue **#91** ("WEEFAX PB", **F4NRM** — Kevin), which
+reported a picture that stopped after 322 lines. The decoder is **unchanged
+between 2.0.12 and 2.0.13** (diffed, decoder + controller + station table), so
+the report had nothing to bisect; the way in was to point the decoder at *public*
+recordings instead. `crates/sdroxide-dsp/examples/wefax_probe.rs` (committed)
+decodes a WAV and prints the decoder's own account — start tone, phasing skew,
+lines, how each page ended — writing **one PGM per page**, because the page
+*count* is the diagnostic a screenshot cannot give.
+
+**The fault, measured.** `Sigidwiki`'s *WFax_IntroNORTHWOOD* (a start tone, its
+phasing signal, six seconds of chart) came out as **four** pages of 8–11 lines,
+cut every seven seconds. A trace at both cut sites named the path: every cut was
+`note_phasing_line`, every one of them *inside the phasing*. The lock is taken on
+the transmission's **first** phasing pulse and the standard signal runs thirty
+seconds after it, so the opening of every page is black lines with a white pulse —
+exactly the shape the rephase rule looks for. `PHASING_SIGNAL_S` (30 s) now gates
+it (`9bbc7a25`). The same recording is now **one page of 69 lines**.
+
+**The gate is time, not content, and that was measured rather than assumed.** The
+obvious test — wait until the strict shape test *rejects* a line (i.e. until chart
+content has been drawn) — does not work: the strict test turns away some of the
+phasing signal's **own** lines (the partial line the lock leaves at the head of the
+page, and others a few seconds in), so the gate opens while the signal is still
+running. The trace that showed it, on a fixture that is nothing but phasing:
+`not-phasing line at y=0`, then `y=28…32`.
+
+**Two details that cost a round each.** The run counter must keep being fed while
+the guard is in force — `if auto_start && since >= GUARD && note_phasing_line(…)`
+short-circuits, so the count is zero when the guard lifts and the cut then lands
+eight lines late. And the two #276 fixtures modelled a page as ~7 s, *shorter than
+the phasing signal a page has to outlive*; they now run past it, their subject
+(finding the next transmission mid-picture, at an arbitrary line offset) unchanged.
+
+**Guard:** `the_pages_own_phasing_signal_does_not_cut_the_page`, verified failing
+without the guard with *"the page's own phasing signal ended it"*. Off-air gate:
+`an_off_air_recording_decodes` (`SDROXIDE_WEFAX_SAMPLE`, `_LPM`, `_IOC`), the same
+shape the other modes carry.
+
+**Not proven, and the honest state of #91.** Nothing was received live here and the
+recording is a public sample. **Kevin's picture is 322 lines and cleanly phased,
+which is not what this fault produces** (fragments of 8–11 lines), so it is *not*
+claimed as his bug — it is a real fault found on the way to it. He asked for no
+reply until his next instruction ("Jarvis. Kevin (F4NRM) make correction. wait new
+instruction."), so nothing was posted; the probe is what settles his report once a
+recording exists.
