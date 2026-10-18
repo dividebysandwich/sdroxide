@@ -307,11 +307,7 @@ impl sdroxide_ui::AudioBridge for CpalBridge {
     }
     fn play(&mut self, pcm: &[f32]) {
         if let Some(out) = self.out.as_mut() {
-            for &s in pcm {
-                if out.push(s).is_err() || out.push(s).is_err() {
-                    break; // ring full
-                }
-            }
+            sdroxide_audio::queue_mono(out, pcm, sdroxide_audio::PLAYOUT_BACKLOG);
         }
     }
     fn pull_mic(&mut self, out_vec: &mut Vec<f32>) {

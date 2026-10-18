@@ -1162,7 +1162,7 @@ fn open_source(cli: &Cli, settings: &Settings) -> anyhow::Result<(Box<dyn IqSour
     if cli.siggen {
         return Ok((
             Box::new(SigGenSource::demo(rate, cli.center_hz())),
-            synthetic_caps("Signal generator"),
+            DeviceCaps { freq_ranges_rx: vec![(0.0, 6e9)], ..synthetic_caps("Signal generator") },
         ));
     }
     if let Some(path) = &cli.file {
@@ -1178,7 +1178,7 @@ fn open_source(cli: &Cli, settings: &Settings) -> anyhow::Result<(Box<dyn IqSour
                 )
                 .with_context(|| format!("opening IQ file {}", path.display()))?,
             ),
-            synthetic_caps(&label),
+            DeviceCaps { freq_ranges_rx: vec![(0.0, 6e9)], ..synthetic_caps(&label) },
         ));
     }
 
@@ -2956,14 +2956,20 @@ fn usb_audio_caps() -> DeviceCaps {
     }
 }
 
-/// Capabilities for non-hardware sources (RX-only, unlimited tuning).
+/// Capabilities for a stand-in that is not a device: a switched-off radio, or one
+/// whose interface has not come up yet.
+///
+/// It publishes no tuning range. A range here is a claim about hardware that is
+/// not there, and a claim the dial is then measured against: the engine moved a
+/// switched-off radio's dial to 6000 MHz for being "outside" a range it had
+/// invented (#72). No range reads as "taken at its word", so the dial stays where
+/// the operator left it.
 fn synthetic_caps(label: &str) -> DeviceCaps {
     DeviceCaps {
         driver: "none".into(),
         label: label.into(),
         rx_channels: 1,
         tx_channels: 0,
-        freq_ranges_rx: vec![(0.0, 6e9)],
         ..DeviceCaps::default()
     }
 }
