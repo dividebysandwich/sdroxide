@@ -272,12 +272,20 @@ pub struct WefaxRx {
     /// [`WefaxRx::note_phasing_line`].
     rephase_lines: u32,
     rephase_skew: f64,
+    /// Whether any line of the picture in progress was not blank, and the
+    /// white lines in a row since, tolerating short fades. See
+    /// [`BLANK_END_S`].
+    had_content: bool,
+    blank_run: u32,
+    blank_gap: u32,
 
     start_det: ToneDetect,
     stop_det: ToneDetect,
     /// Consecutive matching windows, for start and stop respectively.
     start_run: u32,
     stop_run: u32,
+    /// Windows missed in a row since the last stop-tone match.
+    stop_miss: u32,
     /// Which IOC the start tone that armed us implied.
     start_ioc: Ioc,
 }
@@ -297,6 +305,19 @@ const AUTO_PHASE_TIMEOUT_S: f64 = 20.0;
 /// five seconds long; requiring most of it keeps a noise burst or a fade from
 /// ending a chart whose signal is merely dipping (issue #496).
 const STOP_RUN: u32 = 7;
+/// Windows in a row a stop tone may miss before the run starts over, so a fade
+/// or a noise burst inside the tone does not throw away the windows already
+/// matched.
+const STOP_MISS_TOL: u32 = 2;
+/// How long an automatically begun page may carry nothing but a white carrier,
+/// after chart content, before it is ended. Stations keep a white carrier up
+/// after a chart; if the stop tone was missed it is the only way out of the
+/// picture, and it would otherwise hide every later start tone.
+const BLANK_END_S: f64 = 60.0;
+/// Brightness a line's mean must reach to count as blank (white carrier).
+const BLANK_MEAN: f32 = 0.9;
+/// Non-blank lines in a row (fading) that restart the blank count.
+const BLANK_GAP_LINES: u32 = 6;
 /// How far a measured crossing rate may be from the nominal one, as a fraction.
 const TONE_TOL: f64 = 0.18;
 /// Give up looking for the phasing pulse after this long and start the picture
@@ -369,6 +390,10 @@ impl WefaxRx {
             stop_det: ToneDetect::default(),
             start_run: 0,
             stop_run: 0,
+            stop_miss: 0,
+            had_content: false,
+            blank_run: 0,
+            blank_gap: 0,
             start_ioc: Ioc::default(),
         }
     }
@@ -480,10 +505,14 @@ impl WefaxRx {
         self.phase_samples = 0;
         self.auto_begun = auto;
         self.rephase_lines = 0;
+        self.had_content = false;
+        self.blank_run = 0;
+        self.blank_gap = 0;
         self.start_det.reset();
         self.start_run = 0;
         self.stop_det.reset();
         self.stop_run = 0;
+        self.stop_miss = 0;
         out.push(WefaxEvent::Start { ioc, lpm: self.lpm, auto });
     }
 
@@ -499,6 +528,7 @@ impl WefaxRx {
         self.stop_det.reset();
         self.start_run = 0;
         self.stop_run = 0;
+        self.stop_miss = 0;
         out.push(WefaxEvent::Complete { lines, by_tone });
     }
 
@@ -635,6 +665,26 @@ impl WefaxRx {
         self.rephase_lines >= REPHASE_LINES
     }
 
+    /// Track a white carrier after the chart. Returns true once an automatic
+    /// page has had nothing but white for [`BLANK_END_S`]. Only white *after*
+    /// content counts, so a chart's own white margin never ends it, and a fade
+    /// shorter than [`BLANK_GAP_LINES`] does not restart the count.
+    fn note_blank_line(&mut self, line: &[f32]) -> bool {
+        let mean = line.iter().sum::<f32>() / line.len().max(1) as f32;
+        if mean >= BLANK_MEAN {
+            self.blank_gap = 0;
+            self.blank_run += 1;
+        } else {
+            self.had_content = true;
+            self.blank_gap += 1;
+            if self.blank_gap > BLANK_GAP_LINES {
+                self.blank_run = 0;
+            }
+        }
+        let blank_s = f64::from(self.blank_run) * self.samples_per_line() / self.rate;
+        self.had_content && blank_s >= BLANK_END_S
+    }
+
     /// Receiving: accumulate the line, watch for the stop tone — and for the
     /// next transmission arriving on top of this one.
     fn step_receiving(&mut self, level: f32, out: &mut Vec<WefaxEvent>) {
@@ -646,6 +696,7 @@ impl WefaxRx {
                 let alt_hz = rate / TONE_WINDOW_S / 2.0;
                 if (alt_hz - STOP_TONE_HZ).abs() <= STOP_TONE_HZ * TONE_TOL {
                     self.stop_run += 1;
+                    self.stop_miss = 0;
                     if self.stop_run >= STOP_RUN {
                         // The stop tone is already in the last line or two;
                         // they are dropped rather than left as a barcode at the
@@ -654,8 +705,12 @@ impl WefaxRx {
                         self.finish(true, out);
                         return;
                     }
-                } else {
-                    self.stop_run = 0;
+                } else if self.stop_run > 0 {
+                    self.stop_miss += 1;
+                    if self.stop_miss > STOP_MISS_TOL {
+                        self.stop_run = 0;
+                        self.stop_miss = 0;
+                    }
                 }
             }
         }
@@ -720,6 +775,13 @@ impl WefaxRx {
                 {
                     self.finish(false, out);
                     self.begin(self.ioc, true, out);
+                    return;
+                }
+                if self.auto_begun && self.note_blank_line(&line) {
+                    let gray = resample_line(&line, self.ioc.width() as usize);
+                    out.push(WefaxEvent::Line { y: self.line_no, gray });
+                    self.line_no = self.line_no.saturating_add(1);
+                    self.finish(false, out);
                     return;
                 }
                 let gray = resample_line(&line, self.ioc.width() as usize);
@@ -1244,6 +1306,101 @@ mod tests {
             "the page should have ended on the next transmission: {ev:?}"
         );
         assert!(rx.receiving(), "and the next one should be under way");
+    }
+
+    /// A white carrier of `secs`, with `dips` of black (a fade) of 1.5 s every
+    /// 10 s when asked.
+    fn white_carrier(secs: f64, fade: bool) -> Vec<f32> {
+        let n = (RATE * secs) as usize;
+        let levels: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f64 / RATE;
+                if fade && t % 10.0 > 8.5 { 0.0 } else { 1.0 }
+            })
+            .collect();
+        modulate(&levels)
+    }
+
+    /// An automatic page: start tone, phasing, then `chart` lines of picture.
+    fn auto_page(rx: &mut WefaxRx, lpm: Lpm, chart: usize) -> Vec<WefaxEvent> {
+        let mut audio = tone(Ioc::I576.start_tone_hz(), 5.0);
+        audio.extend(phasing(lpm, 40));
+        audio.extend(ramp_picture(lpm, chart));
+        drain(rx, &audio)
+    }
+
+    fn completes(ev: &[WefaxEvent]) -> usize {
+        ev.iter().filter(|e| matches!(e, WefaxEvent::Complete { .. })).count()
+    }
+
+    /// The station keeps a white carrier up after the chart and the stop tone
+    /// was missed: the page ends, and the next start tone begins another.
+    #[test]
+    fn a_white_carrier_after_the_chart_ends_an_automatic_page() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut ev = auto_page(&mut rx, lpm, 20);
+        assert!(rx.receiving(), "the page should be under way: {ev:?}");
+        ev.extend(drain(&mut rx, &white_carrier(70.0, false)));
+        assert_eq!(completes(&ev), 1, "the white carrier should end the page: {ev:?}");
+        assert!(!rx.receiving());
+        let next = auto_page(&mut rx, lpm, 6);
+        assert!(rx.receiving(), "a new start tone should begin a page: {next:?}");
+    }
+
+    /// Fades in the carrier do not restart the count.
+    #[test]
+    fn a_fading_white_carrier_still_ends_the_page() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut ev = auto_page(&mut rx, lpm, 20);
+        ev.extend(drain(&mut rx, &white_carrier(90.0, true)));
+        assert_eq!(completes(&ev), 1, "the fading carrier should end the page: {ev:?}");
+    }
+
+    /// A white stretch shorter than the limit is chart, not an ending.
+    #[test]
+    fn a_white_margin_shorter_than_the_limit_does_not_cut_the_page() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut ev = auto_page(&mut rx, lpm, 20);
+        ev.extend(drain(&mut rx, &white_carrier(40.0, false)));
+        ev.extend(drain(&mut rx, &ramp_picture(lpm, 10)));
+        assert_eq!(completes(&ev), 0, "a short white margin ended the page: {ev:?}");
+        assert!(rx.receiving());
+    }
+
+    /// The operator's own START is theirs to stop: no white-carrier ending.
+    #[test]
+    fn a_manual_page_is_not_ended_by_a_white_carrier() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut ev = into_image(&mut rx, lpm);
+        ev.extend(drain(&mut rx, &ramp_picture(lpm, 20)));
+        ev.extend(drain(&mut rx, &white_carrier(90.0, false)));
+        assert_eq!(completes(&ev), 0, "a manual page was ended: {ev:?}");
+    }
+
+    /// A stop tone with a hole in it still ends the page.
+    #[test]
+    fn a_stop_tone_with_a_fade_in_it_still_ends_the_page() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut ev = into_image(&mut rx, lpm);
+        ev.extend(drain(&mut rx, &ramp_picture(lpm, 6)));
+        let mut audio = tone(STOP_TONE_HZ, 3.0);
+        audio.extend(white_carrier(0.5, false));
+        audio.extend(tone(STOP_TONE_HZ, 3.0));
+        ev.extend(drain(&mut rx, &audio));
+        assert!(
+            ev.iter().any(|e| matches!(e, WefaxEvent::Complete { by_tone: true, .. })),
+            "the stop tone with a fade in it was missed: {ev:?}"
+        );
     }
 
     /// A start tone mid-picture with no phasing behind it is the chart's own
