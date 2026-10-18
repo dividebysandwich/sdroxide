@@ -7053,3 +7053,25 @@ claimed as his bug — it is a real fault found on the way to it. He asked for n
 reply until his next instruction ("Jarvis. Kevin (F4NRM) make correction. wait new
 instruction."), so nothing was posted; the probe is what settles his report once a
 recording exists.
+
+### Kevin fixed the other half of the same symptom, in parallel (PR #101)
+
+`b1add00c` — **"WEFAX: a start tone mid-picture no longer restarts the page"** —
+came in *while this work was in flight*, was merged as **#101**, and is in
+**v2.0.13.3 / v2.0.13.4**. It is the same symptom from the other path, and the two
+are complementary rather than overlapping:
+
+- **His:** a chart's own periodic detail (dotted graticule, hatching) alternates at
+  the start tone's rate, so the **start-tone** path cut healthy pictures; a start
+  tone mid-picture is now ignored, and the next transmission is found by its
+  phasing signal — which makes the rephase rule the *only* mid-picture page-break.
+  Plus `auto_begun` / `AUTO_PHASE_TIMEOUT_S` (20 s): an automatic start that is
+  never phased yields no picture instead of one drawn on no phase at all.
+- **Ours:** the **rephase** rule firing on the page's own phasing signal.
+
+**Verified, and this is the reason both are needed:** with his change and without
+this guard, the *same* public recording still comes out as **four pages of 8–11
+lines**. His fix removes the start-tone path; nothing in it touches the rephase
+one. The merge was clean, and his new test's fixture needed the same extension as
+the two #276 ones (a page of ~7 s cannot outlive the phasing signal the guard
+protects) — `d485e3c8`.
