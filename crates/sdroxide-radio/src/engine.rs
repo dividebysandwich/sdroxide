@@ -16700,6 +16700,20 @@ impl Engine {
         self.retry_at = None;
         self.retry_every = RETRY_FIRST;
         match opened {
+            Ok((source, caps)) if source.needs_reopen() => {
+                // A stand-in, not an open: the factory answered a refused open
+                // with the reconnecting placeholder (#72). Its centre is the
+                // frequency that was refused, so it must not be recorded as one
+                // that tuned.
+                let first_refusal = self.refused_center_hz.is_none();
+                self.note_open_refused(asked);
+                self.adopt_source(source, caps);
+                self.retry_at = if first_refusal {
+                    Some(Instant::now())
+                } else {
+                    Some(Instant::now() + self.retry_every)
+                };
+            }
             Ok((source, caps)) => {
                 // Where it came up is the record; the dial follows it in
                 // `adopt_source`, so both are moved by the front end's own
@@ -16764,6 +16778,21 @@ impl Engine {
                 let _ = j.join(); // it has answered; this returns at once
             }
             match outcome {
+                Ok(Ok((source, caps))) if source.needs_reopen() => {
+                    // A stand-in, not an open: the front end refused the
+                    // frequency it was asked for (#72), so it is not recorded as
+                    // one that tuned, and the next attempt goes to the fallback.
+                    let first_refusal = self.refused_center_hz.is_none();
+                    self.note_open_refused(self.retry_asked_hz);
+                    self.retry_fell_back_to = None;
+                    self.adopt_source(source, caps);
+                    self.retry_at = if first_refusal {
+                        Some(Instant::now())
+                    } else {
+                        self.retry_every = (self.retry_every * 2).min(RETRY_MAX);
+                        Some(Instant::now() + self.retry_every)
+                    };
+                }
                 Ok(Ok((source, caps))) => {
                     self.retry_every = RETRY_FIRST;
                     self.retry_at = None;

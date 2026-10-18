@@ -164,6 +164,46 @@ fn fresh_tail(pcm: &[f32]) -> &[f32] {
     &pcm[pcm.len().saturating_sub(RX_PLAYOUT_MAX)..]
 }
 
+/// How many receive audio packets went missing between the last one seen and
+/// `seq`. The server numbers its packets consecutively, so the next one is
+/// `prev + 1`; anything skipped was dropped on the way. A repeat or a number
+/// that went backwards is not a loss — it is a reorder or a server that started
+/// again — and counts as nothing.
+fn packets_skipped(prev: Option<u32>, seq: u32) -> u32 {
+    let Some(prev) = prev else { return 0 };
+    let gap = seq.wrapping_sub(prev).wrapping_sub(1);
+    // A forward gap is a small number; a backwards step wraps to a large one.
+    if gap < u32::MAX / 2 { gap } else { 0 }
+}
+
+#[cfg(test)]
+mod rx_seq_tests {
+    use super::packets_skipped;
+
+    #[test]
+    fn the_next_packet_is_not_a_loss() {
+        assert_eq!(packets_skipped(Some(41), 42), 0);
+        assert_eq!(packets_skipped(None, 9_000), 0, "the first packet has no predecessor");
+    }
+
+    #[test]
+    fn packets_between_two_numbers_are_counted() {
+        assert_eq!(packets_skipped(Some(41), 44), 2, "42 and 43 did not arrive");
+    }
+
+    #[test]
+    fn a_repeat_or_a_step_backwards_is_not_a_loss() {
+        assert_eq!(packets_skipped(Some(41), 41), 0);
+        assert_eq!(packets_skipped(Some(41), 3), 0, "a restarted server");
+    }
+
+    #[test]
+    fn a_wrap_of_the_counter_is_not_a_loss() {
+        assert_eq!(packets_skipped(Some(u32::MAX), 0), 0);
+        assert_eq!(packets_skipped(Some(u32::MAX - 1), 1), 2);
+    }
+}
+
 pub struct RemoteController {
     sender: WsSender,
     receiver: WsReceiver,
@@ -180,6 +220,10 @@ pub struct RemoteController {
     /// Receive audio decoded in this poll, played in one go at its end — see
     /// [`fresh_tail`].
     rx_pcm: Vec<f32>,
+    /// The number of the last receive audio packet seen, and how many the
+    /// server numbered that never arrived — see [`packets_skipped`].
+    rx_seq: Option<u32>,
+    rx_lost: u64,
     pending: VecDeque<RadioEvent>,
     tx_codec: Option<AudioCodec>,
     /// When the current over started, and how many microphone samples have
@@ -321,6 +365,8 @@ impl RemoteController {
             auth: AuthPhase::Open,
             audio,
             rx_pcm: Vec::new(),
+            rx_seq: None,
+            rx_lost: 0,
             pending: VecDeque::new(),
             tx_codec: None,
             mic_over_started: None,
@@ -359,6 +405,20 @@ impl RemoteController {
     }
 
     fn on_server_msg(&mut self, msg: ServerMsg) {
+        // Before the arms below: the audio they drop while muted or on the air
+        // is dropped on purpose, and is not a packet the network lost.
+        if let ServerMsg::RxAudio { seq, .. } = &msg {
+            let skipped = packets_skipped(self.rx_seq, *seq);
+            self.rx_seq = Some(*seq);
+            if skipped > 0 {
+                self.rx_lost += u64::from(skipped);
+                tracing::warn!(
+                    skipped,
+                    lost_total = self.rx_lost,
+                    "receive audio: packets did not arrive from the server"
+                );
+            }
+        }
         match msg {
             ServerMsg::HelloAck { caps, state, tx_codec, .. } => {
                 self.tx_codec = Some(tx_codec);

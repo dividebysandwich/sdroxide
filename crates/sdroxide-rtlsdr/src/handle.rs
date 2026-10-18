@@ -342,6 +342,12 @@ impl RtlSdrHandle {
     /// the invariant in [`crate::usb`]. This call blocks until that has either
     /// succeeded or failed.
     pub fn open(cfg: &RtlSdrConfig, center_hz: f64) -> Result<RtlSdrHandle> {
+        // Refused before the stream thread takes the dongle: the range check
+        // is the first thing `Device::set_center` does, and by then the USB
+        // interface has been claimed and the tuner initialised for nothing.
+        // Each refused open of an unreachable start frequency paid that cost
+        // again, which is part of the delay before a radio came up (#72).
+        crate::device::check_tunable_hz(center_hz)?;
         crate::stream::spawn(cfg, center_hz)
     }
 
