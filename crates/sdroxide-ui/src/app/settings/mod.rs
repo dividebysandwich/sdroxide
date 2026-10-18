@@ -2338,7 +2338,15 @@ impl SdroxideApp {
                     // gaps. A page laid out to a width computed before them runs
                     // past the window's edge, and the clipping shows up as
                     // paragraphs cut mid-word.
-                    ui.set_max_height(avail_h);
+                    //
+                    // **And no `set_max_height` either.** The page is taller than
+                    // the window whenever it has more settings than fit, and a
+                    // finite cap makes `separator()` — which clamps its own rect
+                    // to the region — move the cursor *backwards* past it. Every
+                    // row after a separator is then drawn over the rows before
+                    // it: the page reads as a pile, and only once it is long
+                    // enough to overflow. The scroll area above already bounds
+                    // the view; the page is free to be as tall as its contents.
                     self.settings_page(ui, cmds, io);
                 });
             });
@@ -3272,18 +3280,14 @@ impl SdroxideApp {
                         });
                 }
                 ui.separator();
-
                 ui.end_row();
 
                 // Read out before the match: the arms below hand `io.radio_edit`
                 // to a tab function, which cannot happen while `cfg` — a borrow
                 // of that same field — is still alive.
                 let backend = cfg.backend;
-                // **A backend section is a vertical stack, not a row.** A nested
-                // `Grid` inside a cell of the page grid reports no height, so the outer
-                // row collapsed to its minimum and the section's content was drawn over
-                // the rows below it — two sections at the same y, each compressed.
-                // One `ui.vertical` makes the section a single cell the grid can measure.
+                // One container per backend, so a section's rows are laid out by
+                // the section: it is a vertical stack, not a row of the page.
                 ui.vertical(|ui| {
                     match backend {
                         Backend::Soapy => {
