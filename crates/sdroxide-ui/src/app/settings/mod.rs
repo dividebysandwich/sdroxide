@@ -211,6 +211,20 @@ pub(in crate::app) fn note_small(ui: &mut egui::Ui, text: &str) -> egui::Respons
     note_at(ui, text, Some(10.5))
 }
 
+/// The same, for a label that carries its own styling — a size, a colour, the
+/// small style. The styling is kept; the elision and the hover are what is
+/// shared.
+///
+/// **Not for warnings.** A yellow `⚠` line is a hazard, and a hazard elided to
+/// one line is a hidden hazard — those keep their whole sentence on screen and
+/// are left alone deliberately. This is for the explanations.
+pub(in crate::app) fn note_rich(ui: &mut egui::Ui, rich: RichText) -> egui::Response {
+    let full = rich.text().to_string();
+    let r = ui.add(egui::Label::new(rich).truncate()).on_hover_text(full);
+    ui.end_row();
+    r
+}
+
 /// The same again, at a size the page asked for. A page that chose its own size
 /// keeps it; the elision and the hover are the part that is shared.
 pub(in crate::app) fn note_at(ui: &mut egui::Ui, text: &str, size: Option<f32>) -> egui::Response {
@@ -2266,7 +2280,8 @@ impl SdroxideApp {
                 // Settings to see which build this is knows it is not the
                 // upstream one — without the name saying what is inside it,
                 // which is the point of calling it Brown.
-                ui.label(
+                note_rich(
+                    ui,
                     RichText::new(
                         "The Brown build of sdroxide: upstream's program, plus the 11 m \
                          citizens' band, shortwave listening and decoding. Runs as an ordinary \
@@ -4020,7 +4035,8 @@ impl SdroxideApp {
                     );
                 });
                 if !auto_on {
-                    ui.label(
+                    note_rich(
+                        ui,
                         RichText::new(
                             "Auto-upload is off above, so the service ticks are disabled and \
                              nothing is pushed automatically yet — the per-QSO UP button in the \
@@ -4047,7 +4063,8 @@ impl SdroxideApp {
                         net_row(ui, "eQSL user", &mut io.net_edit.eqsl.user, 140.0);
                         net_secret(ui, "eQSL pass", &mut io.net_edit.eqsl.password, 140.0);
                         net_row(ui, "eQSL QTH", &mut io.net_edit.eqsl_qth_nickname, 140.0);
-                        ui.label(
+                        note_rich(
+                            ui,
                             RichText::new(
                                 "Which QTH profile an upload is filed into — needed only \
                                  when the account owns more than one, and left blank \
@@ -4085,7 +4102,8 @@ impl SdroxideApp {
                     }
                     UploadTarget::Wrl => {
                         net_secret(ui, "WRL API key", &mut io.net_edit.wrl_api_key, 240.0);
-                        ui.label(
+                        note_rich(
+                            ui,
                             RichText::new(
                                 "The developer API key from World Radio League → Integrations → \
                                  Developer API. It is shown once when you generate it, so copy \
@@ -4099,7 +4117,8 @@ impl SdroxideApp {
                     UploadTarget::Log11Dx => {
                         net_row(ui, "API URL", &mut io.net_edit.log11dx_api_url, 320.0);
                         net_secret(ui, "API token", &mut io.net_edit.log11dx_api_token, 240.0);
-                        ui.label(
+                        note_rich(
+                            ui,
                             RichText::new(
                                 "Both come from your LOG11DX profile page. Its own WSJT-X \
                                  bridge is not needed: sdroxide logs the QSO and posts it \
@@ -4125,7 +4144,8 @@ impl SdroxideApp {
                 if !self.ctrl.engine_is_remote() {
                     self.login_test_row(ui, cmds, io.net_edit, LoginTarget::Lotw);
                 }
-                ui.label(
+                note_rich(
+                    ui,
                     RichText::new(
                         "LoTW upload uses TQSL — export ADIF from the logbook and sign it. \
                          LoTW/eQSL confirmations are downloaded here to mark worked-vs-confirmed.",

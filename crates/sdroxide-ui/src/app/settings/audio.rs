@@ -335,7 +335,8 @@ impl SdroxideApp {
             .map(|(inputs, outputs)| (inputs.as_slice(), outputs.as_slice()));
 
         if cards.is_none() {
-            ui.label(
+            super::note_rich(
+                ui,
                 RichText::new(
                     "This machine has not reported its sound cards yet. The names can still be \
                      typed below; a list appears once the devices have been asked for.",

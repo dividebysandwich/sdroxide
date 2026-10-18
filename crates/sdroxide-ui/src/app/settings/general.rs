@@ -659,7 +659,8 @@ impl SdroxideApp {
         });
 
         ui.add_space(6.0);
-        ui.label(
+        super::note_rich(
+            ui,
             RichText::new(
                 "Stops the transmission when the radio reports an SWR at or above this figure, and \
                  keeps transmit locked out until you acknowledge it. Catches a disconnected \
@@ -711,7 +712,8 @@ impl SdroxideApp {
             }
         });
         ui.add_space(4.0);
-        ui.label(
+        super::note_rich(
+            ui,
             RichText::new(
                 "Selecting a mode lays that mode's own starting values for AGC, squelch, noise \
                  reduction, the notch and the stereo switches on the receiver, and changing one \

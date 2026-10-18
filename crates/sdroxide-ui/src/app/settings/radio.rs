@@ -3933,7 +3933,8 @@ pub(in crate::app) fn settings_smartsdr_tab(
         "Wideband IQ receive over DAX, audio transmit the radio modulates. Press \
             \"Apply / reconnect\" to switch without a restart.",
     );
-    ui.label(
+    super::note_rich(
+        ui,
         RichText::new(
             "Not yet verified against real hardware. If it misbehaves, please send the \
              diagnostic report — it contains every protocol line exchanged with the radio.",
@@ -4014,7 +4015,8 @@ pub(in crate::app) fn settings_soapy_devices(
     // The sound-card trap: named, with the reason and the way out.
     if devices.iter().any(SoapyDeviceInfo::is_pseudo) {
         ui.add_space(4.0);
-        ui.label(
+        super::note_rich(
+            ui,
             RichText::new(
                 "A sound card is listed above as if it were an SDR. It accepts any \
                  frequency and ignores it, so opening it shows the sound card's input \
@@ -7428,7 +7430,8 @@ pub(in crate::app) fn settings_sdrplay_tab(
         // dual-tuner mode, and both are equally undone by a board that has
         // only one tuner — so these two say so wherever the setting is on.
         if cfg.sdrplay.duo.enabled {
-            ui.label(
+            super::note_rich(
+                ui,
                 RichText::new(
                     "Not yet verified against an RSPduo: dual-tuner operation here is \
                      written from SDRplay's API rather than measured on the hardware.",
@@ -8152,7 +8155,8 @@ pub(in crate::app) fn settings_lime_tab(
                 .color(egui::Color32::from_rgb(220, 170, 70)),
             );
         }
-        ui.label(
+        super::note_rich(
+            ui,
             egui::RichText::new(
                 "A LimeSDR transmits from about 100 kHz to 3.8 GHz with no filtering of its \
                  own. Use a low-pass filter, an appropriate LimeRFE channel, or a dummy load.",
