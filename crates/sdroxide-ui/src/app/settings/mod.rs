@@ -181,29 +181,62 @@ impl ApplyInterface {
     }
 }
 
-/// **A settings note: one elided line, the whole text on the hover.**
+/// How much of a settings note stays on screen, in characters.
+///
+/// The rest is on the hover, which is where somebody who wants the explanation
+/// is already pointing. The operator, 2026-10-18: *"I'd rather not have the
+/// webserver explain too much.. just a very short pointer would be fine"* — and
+/// one rule for both clients, so there is one thing to keep right rather than
+/// two that drift.
+const NOTE_POINTER_CHARS: usize = 64;
+
+/// The pointer: the first [`NOTE_POINTER_CHARS`] characters, cut at a word so
+/// it does not end mid-word, with an ellipsis to say there is more.
+///
+/// A note already shorter than the pointer is returned unchanged, which is what
+/// keeps the short ones — "Changing either reopens the radio." — reading exactly
+/// as they did.
+fn pointer(text: &str) -> String {
+    if text.chars().count() <= NOTE_POINTER_CHARS {
+        return text.to_string();
+    }
+    let cut = text
+        .char_indices()
+        .take(NOTE_POINTER_CHARS)
+        .last()
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(0);
+    let head = &text[..cut];
+    // Cut at the last space, unless that would throw away most of the pointer.
+    let head = match head.rfind(char::is_whitespace) {
+        Some(i) if i >= NOTE_POINTER_CHARS / 2 => &head[..i],
+        _ => head,
+    };
+    format!("{}…", head.trim_end())
+}
+
+/// **A settings note: a short pointer, the whole sentence on the hover.**
 ///
 /// These used to be wrapped, so a page carrying thirty of them was a wall of
 /// grey paragraphs between the controls — the operator, 2026-10-18: *"the
 /// descriptive text in settings is way too long.. we need to help them but it's
 /// very disturbing in the UI so we need to truncate those pieces of text."*
 ///
-/// Nothing is lost. The full sentence is on the hover, which is where somebody
-/// who wants the explanation is already pointing, and the line that stays on
-/// screen is the beginning of it — enough to say what the row is about. A note
-/// short enough to fit is drawn exactly as it was.
+/// Nothing is lost. The full sentence is on the hover, and what stays on screen
+/// is the pointer to it — enough to say what the row is about.
 ///
-/// One place, so a note written tomorrow is elided like the rest and the two
-/// cannot drift apart.
+/// **Not for warnings.** A yellow `⚠` line is a hazard and is drawn as a plain
+/// label, not through here: a hazard cut to 64 characters is a hidden hazard.
+///
+/// One place, so a note written tomorrow is a pointer like the rest.
 pub(in crate::app) fn note(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    let r = ui.add(egui::Label::new(RichText::new(text).weak()).truncate()).on_hover_text(text);
+    let r = ui.add(egui::Label::new(RichText::new(pointer(text)).weak()).truncate());
     // A note is full width, so it ends the row it is in. These pages are drawn
     // inside a two-column `Grid` (`iface-grid`), and a widget that does not end
     // its row leaves the next one in the *second* column — which is how a page
     // ends up with its sections shifted a column and its rows piled up.
-    // Outside a Grid this is what every other call site here already does.
     ui.end_row();
-    r
+    r.on_hover_text(text)
 }
 
 /// The same, a half point smaller — the few notes that asked for it.
@@ -211,30 +244,79 @@ pub(in crate::app) fn note_small(ui: &mut egui::Ui, text: &str) -> egui::Respons
     note_at(ui, text, Some(10.5))
 }
 
-/// The same, for a label that carries its own styling — a size, a colour, the
-/// small style. The styling is kept; the elision and the hover are what is
-/// shared.
-///
-/// **Not for warnings.** A yellow `⚠` line is a hazard, and a hazard elided to
-/// one line is a hidden hazard — those keep their whole sentence on screen and
-/// are left alone deliberately. This is for the explanations.
-pub(in crate::app) fn note_rich(ui: &mut egui::Ui, rich: RichText) -> egui::Response {
-    let full = rich.text().to_string();
-    let r = ui.add(egui::Label::new(rich).truncate()).on_hover_text(full);
-    ui.end_row();
-    r
-}
-
 /// The same again, at a size the page asked for. A page that chose its own size
-/// keeps it; the elision and the hover are the part that is shared.
+/// keeps it; the pointer and the hover are the part that is shared.
 pub(in crate::app) fn note_at(ui: &mut egui::Ui, text: &str, size: Option<f32>) -> egui::Response {
     let rich = match size {
-        Some(size) => RichText::new(text).size(size),
-        None => RichText::new(text),
+        Some(size) => RichText::new(pointer(text)).size(size),
+        None => RichText::new(pointer(text)),
     };
-    let r = ui.add(egui::Label::new(rich.weak()).truncate()).on_hover_text(text);
+    let r = ui.add(egui::Label::new(rich.weak()).truncate());
     ui.end_row();
-    r
+    r.on_hover_text(text)
+}
+
+/// The same, for a note that carries its own styling — a size, a colour.
+///
+/// The styling is kept; the pointer and the hover are what is shared. The
+/// caller passes the text and the styling separately because `RichText`'s own
+/// text cannot be swapped once it is built.
+pub(in crate::app) fn note_rich(
+    ui: &mut egui::Ui,
+    text: &str,
+    size: Option<f32>,
+    color: Option<Color32>,
+) -> egui::Response {
+    let mut rich = RichText::new(pointer(text));
+    if let Some(size) = size {
+        rich = rich.size(size);
+    }
+    if let Some(color) = color {
+        rich = rich.color(color);
+    }
+    let r = ui.add(egui::Label::new(rich).truncate());
+    ui.end_row();
+    r.on_hover_text(text)
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::{NOTE_POINTER_CHARS, pointer};
+
+    /// A note short enough to read is left alone; a long one becomes a pointer
+    /// — cut at a word, with an ellipsis, and never longer than the rule.
+    #[test]
+    fn a_note_is_a_pointer_and_the_rest_goes_to_the_hover() {
+        let short = "Changing either reopens the radio.";
+        assert_eq!(pointer(short), short, "a short note was shortened");
+
+        let long = "Ranges are in MHz, low-high, separated by commas: 144-146, 430-440 — \
+                   that is 144000000-1460000000 Hz and 430000000-440000000 Hz. They are dial \
+                   frequencies; a converter offsets them.";
+        let p = pointer(long);
+        assert!(p.ends_with('…'), "no ellipsis to say there is more: {p:?}");
+        assert!(
+            p.chars().count() <= NOTE_POINTER_CHARS + 1,
+            "the pointer is {} characters, past the rule: {p:?}",
+            p.chars().count()
+        );
+        assert!(
+            long.starts_with(p.trim_end_matches('…')),
+            "the pointer is not the start of the note: {p:?}"
+        );
+        assert!(!p.trim_end_matches('…').ends_with(' '), "it ends on a space: {p:?}");
+        assert!(!p.trim_end_matches('…').ends_with('-'), "it ends mid-word: {p:?}");
+    }
+
+    /// A word longer than the whole pointer must not be lost or split at a
+    /// byte boundary — the cut is by character, and UTF-8 must survive it.
+    #[test]
+    fn a_long_word_is_not_split_at_a_byte_boundary() {
+        let text = "Überspannungsableiter—".repeat(6);
+        let p = pointer(&text);
+        assert!(p.ends_with('…'), "{p:?}");
+        assert!(text.starts_with(p.trim_end_matches('…')), "{p:?}");
+    }
 }
 
 /// Whether a window this wide gets the menu or the strip.
@@ -2282,13 +2364,11 @@ impl SdroxideApp {
                 // which is the point of calling it Brown.
                 note_rich(
                     ui,
-                    RichText::new(
-                        "The Brown build of sdroxide: upstream's program, plus the 11 m \
+                    "The Brown build of sdroxide: upstream's program, plus the 11 m \
                          citizens' band, shortwave listening and decoding. Runs as an ordinary \
                          amateur station with those bands and tools added.",
-                    )
-                    .size(11.0)
-                    .color(crate::theme::gray(150)),
+                    Some(11.0),
+                    None,
                 );
                 ui.add_space(10.0);
                 ui.separator();
@@ -3389,21 +3469,19 @@ impl SdroxideApp {
                     {
                         io.apply_iface.request();
                     }
-                    // Labels in a horizontal row default to Extend; wrap so a
-                    // narrow window doesn't push this under the scrollbar.
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(if io.local_engine {
-                                "Switches the live radio without restarting."
-                            } else {
-                                "Everything above is the server's own configuration, and \
-                                 changes are saved there. Most settings apply as you change \
-                                 them; the ones fixed when the device is opened — the sample \
-                                 rate, an address, the interface itself — need this button."
-                            })
-                            .weak(),
-                        )
-                        .wrap(),
+                    // The pointer, with the whole sentence on the hover: it
+                    // wrapped to three lines in the browser, which is the
+                    // amount of text this is for.
+                    note(
+                        ui,
+                        if io.local_engine {
+                            "Switches the live radio without restarting."
+                        } else {
+                            "Everything above is the server's own configuration, and \
+                             changes are saved there. Most settings apply as you change \
+                             them; the ones fixed when the device is opened — the sample \
+                             rate, an address, the interface itself — need this button."
+                        },
                     );
                 });
             }
@@ -4037,13 +4115,11 @@ impl SdroxideApp {
                 if !auto_on {
                     note_rich(
                         ui,
-                        RichText::new(
-                            "Auto-upload is off above, so the service ticks are disabled and \
+                        "Auto-upload is off above, so the service ticks are disabled and \
                              nothing is pushed automatically yet — the per-QSO UP button in the \
                              logbook still works.",
-                        )
-                        .size(10.5)
-                        .color(crate::theme::gray(140)),
+                        Some(10.5),
+                        None,
                     );
                 }
                 ui.add_space(4.0);
@@ -4065,13 +4141,11 @@ impl SdroxideApp {
                         net_row(ui, "eQSL QTH", &mut io.net_edit.eqsl_qth_nickname, 140.0);
                         note_rich(
                             ui,
-                            RichText::new(
-                                "Which QTH profile an upload is filed into — needed only \
+                            "Which QTH profile an upload is filed into — needed only \
                                  when the account owns more than one, and left blank \
                                  otherwise.",
-                            )
-                            .size(10.5)
-                            .color(crate::theme::gray(140)),
+                            Some(10.5),
+                            None,
                         );
                     }
                     UploadTarget::HamQth => {
@@ -4104,14 +4178,12 @@ impl SdroxideApp {
                         net_secret(ui, "WRL API key", &mut io.net_edit.wrl_api_key, 240.0);
                         note_rich(
                             ui,
-                            RichText::new(
-                                "The developer API key from World Radio League → Integrations → \
+                            "The developer API key from World Radio League → Integrations → \
                                  Developer API. It is shown once when you generate it, so copy \
                                  it then. Contacts go to your default logbook — set one in WRL \
                                  if you keep more than one.",
-                            )
-                            .size(10.5)
-                            .color(crate::theme::gray(140)),
+                            Some(10.5),
+                            None,
                         );
                     }
                     UploadTarget::Log11Dx => {
@@ -4119,15 +4191,13 @@ impl SdroxideApp {
                         net_secret(ui, "API token", &mut io.net_edit.log11dx_api_token, 240.0);
                         note_rich(
                             ui,
-                            RichText::new(
-                                "Both come from your LOG11DX profile page. Its own WSJT-X \
+                            "Both come from your LOG11DX profile page. Its own WSJT-X \
                                  bridge is not needed: sdroxide logs the QSO and posts it \
                                  straight there. The site masks the token, so copy it when you \
                                  generate it — it is stored in net.json like the other \
                                  credentials.",
-                            )
-                            .size(10.5)
-                            .color(crate::theme::gray(140)),
+                            Some(10.5),
+                            None,
                         );
                     }
                 }
@@ -4146,12 +4216,10 @@ impl SdroxideApp {
                 }
                 note_rich(
                     ui,
-                    RichText::new(
-                        "LoTW upload uses TQSL — export ADIF from the logbook and sign it. \
+                    "LoTW upload uses TQSL — export ADIF from the logbook and sign it. \
                          LoTW/eQSL confirmations are downloaded here to mark worked-vs-confirmed.",
-                    )
-                    .size(10.5)
-                    .color(crate::theme::gray(140)),
+                    Some(10.5),
+                    None,
                 );
 
                 ui.add_space(8.0);

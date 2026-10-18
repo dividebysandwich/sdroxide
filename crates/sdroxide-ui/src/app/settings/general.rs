@@ -661,8 +661,7 @@ impl SdroxideApp {
         ui.add_space(6.0);
         super::note_rich(
             ui,
-            RichText::new(
-                "Stops the transmission when the radio reports an SWR at or above this figure, and \
+            "Stops the transmission when the radio reports an SWR at or above this figure, and \
                  keeps transmit locked out until you acknowledge it. Catches a disconnected \
                  antenna, a failed feeder, or a switch left on the wrong port.\n\n\
                  Tuning is treated differently, because feeding a mismatch is the point of it: an \
@@ -671,9 +670,8 @@ impl SdroxideApp {
                  switched off for the session.\n\n\
                  Needs a rig that reports SWR over CAT. Ignores the first fifth of a second of \
                  each transmission, and does not wait for high power.",
-            )
-            .size(10.5)
-            .color(crate::theme::gray(140)),
+            Some(10.5),
+            None,
         );
         if let Some(swr) = self.state.tx.swr_tripped {
             ui.add_space(4.0);
@@ -714,15 +712,13 @@ impl SdroxideApp {
         ui.add_space(4.0);
         super::note_rich(
             ui,
-            RichText::new(
-                "Selecting a mode lays that mode's own starting values for AGC, squelch, noise \
+            "Selecting a mode lays that mode's own starting values for AGC, squelch, noise \
                  reduction, the notch and the stereo switches on the receiver, and changing one \
                  remembers it for that mode alone. The circular-arrow chip at the end of the \
                  receiver's filter/noise row lists what has been changed and puts the current \
                  mode back.",
-            )
-            .size(10.5)
-            .color(crate::theme::gray(140)),
+            Some(10.5),
+            None,
         );
     }
 }

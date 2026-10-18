@@ -3935,11 +3935,10 @@ pub(in crate::app) fn settings_smartsdr_tab(
     );
     super::note_rich(
         ui,
-        RichText::new(
-            "Not yet verified against real hardware. If it misbehaves, please send the \
+        "Not yet verified against real hardware. If it misbehaves, please send the \
              diagnostic report — it contains every protocol line exchanged with the radio.",
-        )
-        .color(Color32::from_rgb(220, 170, 70)),
+        None,
+        None,
     );
 }
 
@@ -4017,13 +4016,12 @@ pub(in crate::app) fn settings_soapy_devices(
         ui.add_space(4.0);
         super::note_rich(
             ui,
-            RichText::new(
-                "A sound card is listed above as if it were an SDR. It accepts any \
+            "A sound card is listed above as if it were an SDR. It accepts any \
                  frequency and ignores it, so opening it shows the sound card's input \
                  instead of the band. sdroxide does not pick those automatically — but \
                  a device_args line naming one is still obeyed.",
-            )
-            .color(Color32::from_rgb(220, 170, 70)),
+            None,
+            None,
         );
     }
 
@@ -4041,13 +4039,15 @@ pub(in crate::app) fn settings_soapy_devices(
     if !native.is_empty() {
         ui.add_space(4.0);
         let names = native.iter().map(|b| b.label()).collect::<Vec<_>>().join(", ");
-        ui.label(
-            RichText::new(format!(
+        super::note_rich(
+            ui,
+            &format!(
                 "Hardware above is supported directly by sdroxide: {names}. Selecting that \
                  interface above gives you its own settings — gain stages, filters and \
                  notches SoapySDR cannot express — and needs no SoapySDR module.",
-            ))
-            .color(crate::theme::CYAN()),
+            ),
+            None,
+            Some(crate::theme::CYAN()),
         );
     }
 
@@ -4072,7 +4072,7 @@ impl SdroxideApp {
             super::note(ui, "This rig has no software-adjustable gains.");
         }
         ui.label(RichText::new("RX gains").strong());
-        egui::Grid::new("gains").num_columns(2).show(ui, |ui| {
+        egui::Grid::new("gains").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             for g in caps.gains.iter().filter(|g| g.direction == Direction::Rx) {
                 ui.label(&g.name);
                 let mut db = self
@@ -4230,7 +4230,7 @@ pub(in crate::app) fn settings_soapy_tab(
 
     if !caps.sample_rates.is_empty() || !caps.rate_ranges.is_empty() {
         ui.label(RichText::new("Stream").strong());
-        egui::Grid::new("soapy-stream").num_columns(2).show(ui, |ui| {
+        egui::Grid::new("soapy-stream").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             ui.label("Sample rate");
             let shown = if cfg.soapy.sample_rate_hz > 0.0 {
                 rate_label(cfg.soapy.sample_rate_hz)
@@ -4315,7 +4315,7 @@ pub(in crate::app) fn settings_soapy_tab(
     ui.separator();
     ui.end_row();
     ui.label(RichText::new(format!("{} settings", caps.driver)).strong());
-    egui::Grid::new("soapy-settings").num_columns(2).show(ui, |ui| {
+    egui::Grid::new("soapy-settings").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
         for st in &caps.settings {
             let label = ui.label(&st.name);
             if !st.description.is_empty() {
@@ -7432,11 +7432,10 @@ pub(in crate::app) fn settings_sdrplay_tab(
         if cfg.sdrplay.duo.enabled {
             super::note_rich(
                 ui,
-                RichText::new(
-                    "Not yet verified against an RSPduo: dual-tuner operation here is \
+                "Not yet verified against an RSPduo: dual-tuner operation here is \
                      written from SDRplay's API rather than measured on the hardware.",
-                )
-                .color(Color32::from_rgb(220, 170, 70)),
+                None,
+                None,
             );
             if !maybe_duo {
                 ui.label(
@@ -8157,11 +8156,10 @@ pub(in crate::app) fn settings_lime_tab(
         }
         super::note_rich(
             ui,
-            egui::RichText::new(
-                "A LimeSDR transmits from about 100 kHz to 3.8 GHz with no filtering of its \
+            "A LimeSDR transmits from about 100 kHz to 3.8 GHz with no filtering of its \
                  own. Use a low-pass filter, an appropriate LimeRFE channel, or a dummy load.",
-            )
-            .color(egui::Color32::from_rgb(220, 170, 70)),
+            None,
+            None,
         );
     }
 

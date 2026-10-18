@@ -337,12 +337,10 @@ impl SdroxideApp {
         if cards.is_none() {
             super::note_rich(
                 ui,
-                RichText::new(
-                    "This machine has not reported its sound cards yet. The names can still be \
+                "This machine has not reported its sound cards yet. The names can still be \
                      typed below; a list appears once the devices have been asked for.",
-                )
-                .size(10.5)
-                .color(gray(140)),
+                Some(10.5),
+                None,
             );
         }
         let (inputs, outputs) = cards.unwrap_or((&[], &[]));
