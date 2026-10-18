@@ -150,13 +150,11 @@ pub(in crate::app) fn signed_in_station(ui: &mut egui::Ui, station: &str) {
     let fallback = crate::login::cookie_fallback_stations();
     if fallback.is_empty() {
         ui.add_space(4.0);
-        ui.label(
-            RichText::new(
-                "Forgets this device's sign-in. The station has to ask again on the next \
+        super::note_at(
+            ui,
+            "Forgets this device's sign-in. The station has to ask again on the next \
                  connection; this one stays up until you close it.",
-            )
-            .size(11.0)
-            .weak(),
+            Some(11.0),
         );
     } else {
         // The cookie could not be taken, so a password is being kept in the page
@@ -190,14 +188,12 @@ pub(in crate::app) fn signed_in_station(ui: &mut egui::Ui, station: &str) {
 pub(in crate::app) fn remote_access_settings(ui: &mut egui::Ui, access: &mut RemoteAccess) {
     ui.label(RichText::new("Remote access").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(6.0);
-    ui.label(
-        RichText::new(
-            "What a remote client — the browser page, or another sdroxide started with \
+    super::note_at(
+        ui,
+        "What a remote client — the browser page, or another sdroxide started with \
              --connect — has to give before this station will let it operate. Applies in server \
              mode (--server); the next sign-in picks up a change, with no restart.",
-        )
-        .size(11.5)
-        .weak(),
+        Some(11.5),
     );
     ui.add_space(8.0);
     egui::Grid::new("remote-access-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {

@@ -37,18 +37,16 @@ pub(in crate::app) fn settings_tle_tab(ui: &mut egui::Ui, io: &mut SettingsIo) {
     );
     ui.add_space(4.0);
     if !io.sat_seeded {
-        ui.label(RichText::new("Waiting for the station's satellite configuration…").weak());
+        super::note(ui, "Waiting for the station's satellite configuration…");
         return;
     }
-    ui.label(
-        RichText::new(
-            "The tracker already fetches CelesTrak's amateur group on its own. This is for \
+    super::note(
+        ui,
+        "The tracker already fetches CelesTrak's amateur group on its own. This is for \
              everything else: the NOAA weather birds, a cubesat too new to be in the group, or \
              a fresher element set than the one that arrived. The listings are fetched — and \
              kept — where the radio engine runs, so this is the same set of satellites wherever \
              the app is open.",
-        )
-        .weak(),
     );
     if !io.sat_ui.note.is_empty() {
         ui.add_space(4.0);
@@ -72,13 +70,11 @@ fn settings_tle_subscriptions(ui: &mut egui::Ui, io: &mut SettingsIo) {
     use crate::theme;
 
     ui.label(RichText::new("Subscriptions").strong());
-    ui.label(
-        RichText::new(
-            "Listings fetched and kept current, on the same six-hourly cadence as the amateur \
+    super::note_at(
+        ui,
+        "Listings fetched and kept current, on the same six-hourly cadence as the amateur \
              set. Refreshed while the solar window is open, and by UPDATE NOW here.",
-        )
-        .weak()
-        .size(11.0),
+        Some(11.0),
     );
     ui.add_space(6.0);
 
@@ -211,14 +207,12 @@ fn settings_tle_pasted(ui: &mut egui::Ui, io: &mut SettingsIo) {
     use crate::theme;
 
     ui.label(RichText::new("Pasted element sets").strong());
-    ui.label(
-        RichText::new(
-            "For a one-off. These do not update themselves, and SGP4 stops propagating an \
+    super::note_at(
+        ui,
+        "For a one-off. These do not update themselves, and SGP4 stops propagating an \
              element set once it is a fortnight past its epoch — subscribe instead for anything \
              you mean to keep.",
-        )
-        .weak()
-        .size(11.0),
+        Some(11.0),
     );
     ui.add_space(6.0);
 
@@ -375,14 +369,12 @@ fn settings_tle_freqs(ui: &mut egui::Ui, io: &mut SettingsIo) {
     use crate::theme;
 
     ui.label(RichText::new("Frequencies").strong());
-    ui.label(
-        RichText::new(
-            "Shown under the pass table in the solar window. An entry here replaces the \
+    super::note_at(
+        ui,
+        "Shown under the pass table in the solar window. An entry here replaces the \
              built-in one for that catalogue number outright, so start from a copy of it unless \
              you mean to drop the rest.",
-        )
-        .weak()
-        .size(11.0),
+        Some(11.0),
     );
     ui.add_space(6.0);
 
@@ -469,13 +461,11 @@ fn settings_tle_freqs(ui: &mut egui::Ui, io: &mut SettingsIo) {
                 }
             });
             ui.add_space(4.0);
-            ui.label(
-                RichText::new(
-                    "A frequency is either one number (145.800) or a transponder passband \
+            super::note_at(
+                ui,
+                "A frequency is either one number (145.800) or a transponder passband \
                      written 145.950-145.970. Leave a direction blank for a beacon.",
-                )
-                .weak()
-                .size(10.0),
+                Some(10.0),
             );
         });
         ui.add_space(2.0);

@@ -181,6 +181,39 @@ impl ApplyInterface {
     }
 }
 
+/// **A settings note: one elided line, the whole text on the hover.**
+///
+/// These used to be wrapped, so a page carrying thirty of them was a wall of
+/// grey paragraphs between the controls — the operator, 2026-10-18: *"the
+/// descriptive text in settings is way too long.. we need to help them but it's
+/// very disturbing in the UI so we need to truncate those pieces of text."*
+///
+/// Nothing is lost. The full sentence is on the hover, which is where somebody
+/// who wants the explanation is already pointing, and the line that stays on
+/// screen is the beginning of it — enough to say what the row is about. A note
+/// short enough to fit is drawn exactly as it was.
+///
+/// One place, so a note written tomorrow is elided like the rest and the two
+/// cannot drift apart.
+pub(in crate::app) fn note(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.add(egui::Label::new(RichText::new(text).weak()).truncate()).on_hover_text(text)
+}
+
+/// The same, a half point smaller — the few notes that asked for it.
+pub(in crate::app) fn note_small(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    note_at(ui, text, Some(10.5))
+}
+
+/// The same again, at a size the page asked for. A page that chose its own size
+/// keeps it; the elision and the hover are the part that is shared.
+pub(in crate::app) fn note_at(ui: &mut egui::Ui, text: &str, size: Option<f32>) -> egui::Response {
+    let rich = match size {
+        Some(size) => RichText::new(text).size(size),
+        None => RichText::new(text),
+    };
+    ui.add(egui::Label::new(rich.weak()).truncate()).on_hover_text(text)
+}
+
 /// Whether a window this wide gets the menu or the strip.
 ///
 /// A free function so the threshold is testable: the number that decides it is
@@ -504,7 +537,7 @@ pub(in crate::app) struct SettingsIo<'a> {
 /// machine, and one the operator could act on by typing over it.
 fn net_seeded_note(ui: &mut egui::Ui, seeded: bool) -> bool {
     if !seeded {
-        ui.label(RichText::new("Waiting for the station's network configuration…").weak());
+        note(ui, "Waiting for the station's network configuration…");
     }
     seeded
 }
@@ -593,13 +626,11 @@ fn transverter_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
     ui.add_space(4.0);
     ui.label(RichText::new("Transverters").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(2.0);
-    ui.label(
-        RichText::new(
-            "One row per box. While the dial is inside a row's band the radio is tuned to \
+    note(
+        ui,
+        "One row per box. While the dial is inside a row's band the radio is tuned to \
              dial + offset and that row's transmit rule and drive limit apply; outside every \
              row the radio is on its own bands. Rows are tried top to bottom.",
-        )
-        .weak(),
     );
     ui.add_space(6.0);
 
@@ -704,10 +735,7 @@ fn transverter_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
         {
             cfg.transverters.push(Transverter { tx: Tx::Transverter, ..Transverter::default() });
         }
-        ui.label(
-            RichText::new("Takes effect on Apply / reconnect, like the converter offset above.")
-                .weak(),
-        );
+        note(ui, "Takes effect on Apply / reconnect, like the converter offset above.");
     });
 }
 
@@ -727,11 +755,9 @@ fn drive_ceiling_row(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
         RichText::new("Maximum transmit drive").size(14.0).strong().color(crate::theme::CYAN()),
     );
     ui.add_space(2.0);
-    ui.label(
-        RichText::new(
-            "A hard limit the Drive and TUNE controls cannot be taken past, applied after the              band calibration below so nothing can lift the drive back over it. Set it where              the radio makes its rated power and the whole of the Drive control becomes usable              — on a transmitter that modulates its own samples (HPSDR, LimeSDR, PlutoSDR,              HackRF) full drive is the transmitter wide open, which on a high-gain amplifier is              well past what its finals are rated for. Off means the controls reach full drive.",
-        )
-        .weak(),
+    note(
+        ui,
+        "A hard limit the Drive and TUNE controls cannot be taken past, applied after the              band calibration below so nothing can lift the drive back over it. Set it where              the radio makes its rated power and the whole of the Drive control becomes usable              — on a transmitter that modulates its own samples (HPSDR, LimeSDR, PlutoSDR,              HackRF) full drive is the transmitter wide open, which on a high-gain amplifier is              well past what its finals are rated for. Off means the controls reach full drive.",
     );
     ui.add_space(6.0);
     ui.horizontal(|ui| {
@@ -756,7 +782,7 @@ fn drive_ceiling_row(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
         {
             cfg.tx_drive_max = Some((pct / 100.0).clamp(0.01, 1.0));
         }
-        ui.label(RichText::new("Applies immediately, on every band and to TUNE as well.").weak());
+        note(ui, "Applies immediately, on every band and to TUNE as well.");
     });
 }
 
@@ -776,16 +802,14 @@ fn drive_trim_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
         RichText::new("Transmit drive by band").size(14.0).strong().color(crate::theme::CYAN()),
     );
     ui.add_space(2.0);
-    ui.label(
-        RichText::new(
-            "Every amplifier has a different gain on every band, so one Drive setting makes a \
+    note(
+        ui,
+        "Every amplifier has a different gain on every band, so one Drive setting makes a \
              different power on each. Measure the output on each band, then trim the bands \
              that come out high until they all match: set Drive for the band that needs the \
              most (usually the highest), and take the others down to it. Decibels of output \
              power, applied to voice, digital and TUNE alike. Zero everywhere — the default — \
              changes nothing.",
-        )
-        .weak(),
     );
     ui.add_space(6.0);
 
@@ -836,13 +860,11 @@ fn drive_trim_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
         {
             cfg.tx_drive_trim.clear();
         }
-        ui.label(
-            RichText::new(
-                "Applies immediately, and to the band you would transmit on — behind a \
+        note(
+            ui,
+            "Applies immediately, and to the band you would transmit on — behind a \
                  transverter that is the band on the dial, and the transverter's own drive \
                  limit still wins over anything set here.",
-            )
-            .weak(),
         );
     });
 }
@@ -2230,11 +2252,9 @@ impl SdroxideApp {
                 ui.label(RichText::new("Station").size(14.0).strong().color(crate::theme::CYAN()));
                 ui.add_space(6.0);
                 if !io.digi_seeded {
-                    ui.label(
-                        RichText::new(
-                            "Enter a digital mode (FT8 / SSTV / …) once to load the saved values.",
-                        )
-                        .weak(),
+                    note(
+                        ui,
+                        "Enter a digital mode (FT8 / SSTV / …) once to load the saved values.",
                     );
                 }
                 ui.add_enabled_ui(io.digi_seeded, |ui| {
@@ -2309,16 +2329,14 @@ impl SdroxideApp {
                         cmds.push(Command::SetGainByBand(on));
                     }
                 }
-                ui.label(
-                    RichText::new(
-                        "Your callsign and grid, shared across FT8/FT4/FT2, SSTV image headers, \
+                note(
+                    ui,
+                    "Your callsign and grid, shared across FT8/FT4/FT2, SSTV image headers, \
                          the CB digital modes and the logbook. This is the identity that \
                          **transmits** — a CB callsign if you work 11 m, an amateur callsign \
                          otherwise. For what a **reception report** is signed with, see the \
                          **Report as (SWL)** box on the Spots tab. Also editable from the \
                          FT8 / SSTV setup dialog.",
-                    )
-                    .weak(),
                 );
 
                 ui.add_space(10.0);
@@ -2346,15 +2364,13 @@ impl SdroxideApp {
                     {
                         io.digi_edit.cb_wide_callsigns = !io.digi_edit.cb_wide_callsigns;
                     }
-                    ui.label(
-                        RichText::new(
-                            "Turn on if your 11 m community uses three-letter groups or \
+                    note(
+                        ui,
+                        "Turn on if your 11 m community uses three-letter groups or \
                              four-digit unit numbers. Applies to the CB digital modes' decode \
                              and transmit. Either way an 11 m call may not exceed **11 \
                              characters**, suffix included — 19DC3733/P fits, 19TST1001/QRP \
                              does not.",
-                        )
-                        .weak(),
                     );
                 });
 
@@ -2421,13 +2437,11 @@ impl SdroxideApp {
                          receive-only. You will be asked to confirm it the first time.",
                     );
                 ui.add_space(4.0);
-                ui.label(
-                    RichText::new(
-                        "CB is licence-free in many countries, but not all, and the allowed \
+                note(
+                    ui,
+                    "CB is licence-free in many countries, but not all, and the allowed \
                          channels, modes and power differ. Using the band is subject to the rules \
                          of the country you are in.",
-                    )
-                    .weak(),
                 );
                 ui.add_space(6.0);
                 self.settings_band_plan_file(ui, cmds);
@@ -2533,12 +2547,10 @@ impl SdroxideApp {
                     // still swap to the beam or wind the LNA back.
                     self.settings_device_tab(ui, cmds);
                     ui.add_space(6.0);
-                    ui.label(
-                        RichText::new(
-                            "Which radio interface the server uses is set on the machine it \
+                    note(
+                        ui,
+                        "Which radio interface the server uses is set on the machine it \
                              runs on.",
-                        )
-                        .weak(),
                     );
                     return;
                 };
@@ -2935,16 +2947,14 @@ impl SdroxideApp {
                 // The two range boxes are the only megahertz on a tab whose
                 // other frequency field is hertz, so the example says the same
                 // range both ways rather than leaving anyone to count zeros.
-                ui.label(
-                    RichText::new(
-                        "Ranges are in MHz, low-high, separated by commas: 144-146, 430-440 — \
+                note(
+                    ui,
+                    "Ranges are in MHz, low-high, separated by commas: 144-146, 430-440 — \
                          that is 144000000-146000000 Hz and 430000000-440000000 Hz. They are \
                          dial frequencies: a converter offset does not move them. The \
                          converter offset above is the field in hertz. Leave a range empty to \
                          use whatever the device reports about itself; a device that reports \
                          nothing is taken at its word.",
-                    )
-                    .weak(),
                 );
                 if *converter != 0.0 {
                     // What the two rows above add up to, in one sentence: the
@@ -2969,13 +2979,11 @@ impl SdroxideApp {
                     };
                     ui.label(RichText::new(tx).weak());
                     if backend == Backend::RtlSdr && *converter < 0.0 {
-                        ui.label(
-                            RichText::new(
-                                "Careful on an RTL-SDR: the Blog V4 upconverts on its own below \
+                        note(
+                            ui,
+                            "Careful on an RTL-SDR: the Blog V4 upconverts on its own below \
                                  28.8 MHz, so a negative offset that lands the hardware there \
                                  shifts twice.",
-                            )
-                            .weak(),
                         );
                     }
                 }
@@ -3011,9 +3019,9 @@ impl SdroxideApp {
                         ui,
                         |ui| {
                             ui.label("");
-                            ui.label(RichText::new("Freq").weak());
-                            ui.label(RichText::new("Gain").weak());
-                            ui.label(RichText::new("Q / Slope").weak());
+                            note(ui, "Freq");
+                            note(ui, "Gain");
+                            note(ui, "Q / Slope");
                             ui.end_row();
 
                             tx_eq_band_row(
@@ -3344,12 +3352,7 @@ impl SdroxideApp {
             SettingsTab::Cw => {
                 use sdroxide_types::CwKeySource;
                 if !io.digi_seeded {
-                    ui.label(
-                        RichText::new(
-                            "Enter CW (or any digital mode) once to load the saved values.",
-                        )
-                        .weak(),
-                    );
+                    note(ui, "Enter CW (or any digital mode) once to load the saved values.");
                 } else {
                     ui.label(RichText::new("Key").size(14.0).strong().color(crate::theme::CYAN()));
                     ui.add_space(6.0);
@@ -3368,14 +3371,12 @@ impl SdroxideApp {
                     match io.digi_edit.cw_key_source {
                         CwKeySource::Keyboard => {
                             ui.add_space(4.0);
-                            ui.label(
-                                RichText::new(
-                                    "The `CW straight key` binding (Space by default) is read \
+                            note_at(
+                                ui,
+                                "The `CW straight key` binding (Space by default) is read \
                                      while the CW panel's KEY is on. One contact, so it is a \
                                      straight key — the app decodes the operator's own timing.",
-                                )
-                                .size(10.5)
-                                .weak(),
+                                Some(10.5),
                             );
                         }
                         CwKeySource::Usb => {
@@ -3391,7 +3392,7 @@ impl SdroxideApp {
                         ui.add(
                             egui::DragValue::new(wpm).range(5.0..=60.0).speed(0.1).suffix(" wpm"),
                         );
-                        ui.label(RichText::new("the keyer's dit and dah length").size(10.0).weak());
+                        note_small(ui, "the keyer's dit and dah length");
                     });
                     ui.add_space(8.0);
                     ui.horizontal_wrapped(|ui| {
@@ -3405,14 +3406,12 @@ impl SdroxideApp {
                         {
                             io.digi_edit.cw_key_tx = !io.digi_edit.cw_key_tx;
                         }
-                        ui.label(
-                            RichText::new(
-                                "For a rig that keys itself, set Settings → Radio → CW keying to \
+                        note_at(
+                            ui,
+                            "For a rig that keys itself, set Settings → Radio → CW keying to \
                                  `Sound card (MCW)`: hand-keying is refused on the rig-keyer \
                                  route by design.",
-                            )
-                            .size(10.0)
-                            .weak(),
+                            Some(10.0),
                         );
                     });
                 }
@@ -3659,12 +3658,10 @@ impl SdroxideApp {
                 net_heading(ui, "Winlink account");
                 net_row(ui, "Callsign", &mut wl.callsign, 140.0);
                 net_secret(ui, "Password", &mut wl.password, 140.0);
-                ui.label(
-                    RichText::new(
-                        "The Winlink account password, not the gateway password. It is \
+                note(
+                    ui,
+                    "The Winlink account password, not the gateway password. It is \
                          case-sensitive — enter it exactly as it was issued.",
-                    )
-                    .weak(),
                 );
                 net_row(ui, "Locator", &mut wl.locator, 100.0);
 
@@ -3706,13 +3703,11 @@ impl SdroxideApp {
                                 via.split_whitespace().map(|s| s.to_uppercase()).collect();
                         }
                     });
-                    ui.label(
-                        RichText::new(
-                            "Digipeaters, in order, separated by spaces. Usually empty — a \
+                    note(
+                        ui,
+                        "Digipeaters, in order, separated by spaces. Usually empty — a \
                              gateway you can hear directly is a gateway you should call \
                              directly.",
-                        )
-                        .weak(),
                     );
 
                     // The gateway's speed, not the operator's: it belongs
@@ -3729,14 +3724,12 @@ impl SdroxideApp {
                             ui.selectable_value(&mut wl.gateway_baud, b, b.label());
                         }
                     });
-                    ui.label(
-                        RichText::new(
-                            "Most RMS gateways answer at 1200. Calling a 1200 gateway at 9600 \
+                    note(
+                        ui,
+                        "Most RMS gateways answer at 1200. Calling a 1200 gateway at 9600 \
                              sounds exactly like a gateway that is off the air, so set this \
                              from what the gateway's owner publishes rather than guessing. \
                              9600 also needs the radio's data port at both ends. 300 is HF.",
-                        )
-                        .weak(),
                     );
 
                     let mut mhz = wl.gateway_freq_hz / 1e6;
@@ -3758,24 +3751,20 @@ impl SdroxideApp {
                             wl.gateway_freq_hz = 0.0;
                         }
                     });
-                    ui.label(
-                        RichText::new(
-                            "Zero leaves the dial alone, which is what you want when you park \
+                    note(
+                        ui,
+                        "Zero leaves the dial alone, which is what you want when you park \
                              on one channel. Anything else tunes the radio when the session \
                              starts.",
-                        )
-                        .weak(),
                     );
 
                     ui.add_space(6.0);
                     net_heading(ui, "My gateways");
-                    ui.label(
-                        RichText::new(
-                            "Winlink's published gateway list needs an API key sdroxide does \
+                    note(
+                        ui,
+                        "Winlink's published gateway list needs an API key sdroxide does \
                              not have, so keep your own. The two or three gateways reachable \
                              from one location are learned by trying, and they rarely change.",
-                        )
-                        .weak(),
                     );
 
                     let mut remove = None;
@@ -3841,14 +3830,12 @@ impl SdroxideApp {
                 net_heading(ui, "Internet gateway");
                 net_row(ui, "CMS address", &mut wl.cms_address, 220.0);
                 net_row(ui, "Client name", &mut wl.app_name, 140.0);
-                ui.label(
-                    RichText::new(
-                        "Winlink's production servers only accept client names they know, and \
+                note(
+                    ui,
+                    "Winlink's production servers only accept client names they know, and \
                          answer an unknown one with \"Unknown client types are not allowed on \
                          production servers\". Until sdroxide is registered with the Winlink \
                          Development Team, connecting needs a name they recognise.",
-                    )
-                    .weak(),
                 );
 
                 ui.add_space(6.0);
@@ -4271,15 +4258,13 @@ impl SdroxideApp {
                 .color(crate::theme::CYAN()),
             );
             ui.add_space(4.0);
-            ui.label(
-                RichText::new(
-                    "Its spectrum, its waterfall and everything read off them are on that \
+            note(
+                ui,
+                "Its spectrum, its waterfall and everything read off them are on that \
                      radio's tab, which is why it has none of its own. The interface settings \
                      above are still this radio's and still apply — press Apply / reconnect \
                      after changing them and both radios come back up together.\n\nTo use it on \
                      its own again, clear the Panadapter receiver box on that radio's page.",
-                )
-                .weak(),
             );
             return;
         }
@@ -4314,15 +4299,13 @@ impl SdroxideApp {
         ui.add_space(6.0);
         ui.label(RichText::new("Panadapter").size(14.0).strong().color(crate::theme::CYAN()));
         ui.add_space(4.0);
-        ui.label(
-            RichText::new(
-                "Give this radio a wideband panadapter by borrowing another radio's receiver — \
+        note(
+            ui,
+            "Give this radio a wideband panadapter by borrowing another radio's receiver — \
                  an SDR on the same antenna, or one fed from this radio's I.F. output. The \
                  spectrum, the waterfall, the sub receiver, the digital modes and the skimmer \
                  all come from that receiver; the dial, the mode, the filter and the \
                  transmitter stay here.",
-            )
-            .weak(),
         );
         ui.add_space(6.0);
 
@@ -4437,12 +4420,10 @@ impl SdroxideApp {
 
         if pan.is_attached() && pan.tap == PanadapterTap::IfOutput {
             ui.add_space(6.0);
-            ui.label(
-                RichText::new(
-                    "Per-mode offsets, for a radio whose I.F. moves with the mode. A mode left \
+            note(
+                ui,
+                "Per-mode offsets, for a radio whose I.F. moves with the mode. A mode left \
                      empty uses the offset above.",
-                )
-                .weak(),
             );
             ui.add_space(4.0);
             egui::Grid::new("pan-mode-offsets").num_columns(3).spacing([10.0, 4.0]).show(
@@ -4973,21 +4954,19 @@ fn settings_cw_usb(ui: &mut egui::Ui, io: &mut SettingsIo) {
             }
         }
     });
-    ui.label(
-        RichText::new(
-            "A keyer box that reports its two contacts (often as a mouse's buttons) works; \
+    note_at(
+        ui,
+        "A keyer box that reports its two contacts (often as a mouse's buttons) works; \
              one that does its own iambic and sends finished touches does not. While the key \
              is armed the device is taken exclusively, so its contacts cannot click in other \
              windows.",
-        )
-        .size(10.0)
-        .weak(),
+        Some(10.0),
     );
 }
 
 #[cfg(not(all(not(target_arch = "wasm32"), target_os = "linux")))]
 fn settings_cw_usb(ui: &mut egui::Ui, _io: &mut SettingsIo) {
-    ui.label(RichText::new("A USB paddle needs a Linux desktop.").size(10.5).weak());
+    note_small(ui, "A USB paddle needs a Linux desktop.");
 }
 
 /// The label one S-meter calibration step is offered under.

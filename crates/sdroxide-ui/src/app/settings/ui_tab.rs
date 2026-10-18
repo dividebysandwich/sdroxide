@@ -72,13 +72,11 @@ pub(in crate::app) fn settings_ui_tab(
     // who remembers them will come looking. They moved to the panadapter's own
     // button, beside the picture they change — see
     // `SdroxideApp::panadapter_controls`.
-    ui.label(
-        RichText::new(
-            "Panadapter detail, the spectrum's reaction and the waterfall's scroll speed are \
+    super::note_at(
+        ui,
+        "Panadapter detail, the spectrum's reaction and the waterfall's scroll speed are \
              set from the SPEC button on the display strip — the DISP menu on a narrow window.",
-        )
-        .size(11.0)
-        .weak(),
+        Some(11.0),
     );
     ui.add_space(6.0);
     egui::Grid::new("ui-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
@@ -739,15 +737,13 @@ pub(in crate::app) fn settings_ui_tab(
         ui.end_row();
     });
     ui.add_space(8.0);
-    ui.label(
-        RichText::new(
-            "How the CLOUDS layer in the 3D view draws the weather. Layered stacks \
+    super::note(
+        ui,
+        "How the CLOUDS layer in the 3D view draws the weather. Layered stacks \
              slices through the troposphere and is the cheap option. Volumetric walks \
              a ray through it instead, so the Sun casts the cloud tops onto the deck \
              below and lightning glows out through the storm making it rather than \
              only brightening its outside — at several times the cost per pixel.",
-        )
-        .weak(),
     );
 }
 
@@ -914,13 +910,11 @@ pub(in crate::app) fn speech_settings(
                 "CW only while the decoder is locked",
             )
             .on_hover_text("Reading an unlocked decoder's output is worse than silence");
-            ui.label(
-                RichText::new(
-                    "Both are off by default. A decoder produces text faster than speech reads \
+            super::note(
+                ui,
+                "Both are off by default. A decoder produces text faster than speech reads \
                      it, so anything that falls too far behind the live audio is dropped rather \
                      than queued.",
-                )
-                .weak(),
             );
 
             ui.add_space(8.0);
@@ -985,13 +979,11 @@ pub(in crate::app) fn speech_settings(
     });
 
     ui.add_space(8.0);
-    ui.label(
-        RichText::new(
-            "Announcements play on their own sound device, so they are never recorded and never \
+    super::note(
+        ui,
+        "Announcements play on their own sound device, so they are never recorded and never \
              sent to anyone listening remotely. Keys for speaking the status, repeating the last \
              announcement and stopping mid-sentence are on the Controls tab.",
-        )
-        .weak(),
     );
 }
 
@@ -1049,18 +1041,16 @@ pub(in crate::app) fn workspaces_section(
     use sdroxide_types::{WORKSPACE_MAX, Workspace};
     ui.label(RichText::new("Workspaces").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(2.0);
-    ui.label(
-        RichText::new(
-            "A named window arrangement — which modules are in their own windows and where \
+    super::note_at(
+        ui,
+        "A named window arrangement — which modules are in their own windows and where \
              those windows are. Save the one you have, or put a saved one back. Up to ten.",
-        )
-        .size(11.0)
-        .weak(),
+        Some(11.0),
     );
     ui.add_space(6.0);
 
     if workspaces.is_empty() {
-        ui.label(RichText::new("No workspaces saved yet.").size(11.0).weak());
+        super::note_at(ui, "No workspaces saved yet.", Some(11.0));
     }
     let mut apply: Option<usize> = None;
     let mut delete: Option<usize> = None;

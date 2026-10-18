@@ -68,12 +68,10 @@ pub(in crate::app) fn settings_controls_tab(
 
     ui.label(RichText::new("Keyboard").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(4.0);
-    ui.label(
-        RichText::new(
-            "Click a shortcut to rebind it, then press the key combination (Esc cancels). \
+    super::note(
+        ui,
+        "Click a shortcut to rebind it, then press the key combination (Esc cancels). \
              Bindings are ignored while you are typing in a text field.",
-        )
-        .weak(),
     );
     ui.add_space(6.0);
 
@@ -244,12 +242,10 @@ pub(in crate::app) fn settings_controls_tab(
     ui.add_space(6.0);
     ui.label(RichText::new("Mouse buttons").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(4.0);
-    ui.label(
-        RichText::new(
-            "The left and right buttons are reserved for tuning and panning; the middle and \
+    super::note(
+        ui,
+        "The left and right buttons are reserved for tuning and panning; the middle and \
              extra buttons are free. A side button held for PTT behaves like a footswitch.",
-        )
-        .weak(),
     );
     ui.add_space(6.0);
 
@@ -293,10 +289,7 @@ pub(in crate::app) fn settings_controls_tab(
     }
 
     ui.add_space(8.0);
-    ui.label(
-        RichText::new("F1 always opens this manual, even while typing, so it is not rebindable.")
-            .weak(),
-    );
+    super::note(ui, "F1 always opens this manual, even while typing, so it is not rebindable.");
 
     ui.add_space(10.0);
     ui.separator();
@@ -333,19 +326,15 @@ fn settings_midi_section(
     ui.label(RichText::new("MIDI controller").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(4.0);
     if !status.supported {
-        ui.label(
-            RichText::new(
-                "MIDI controllers need the native app — the browser client has no MIDI access.",
-            )
-            .weak(),
+        super::note(
+            ui,
+            "MIDI controllers need the native app — the browser client has no MIDI access.",
         );
         return;
     }
-    ui.label(
-        RichText::new(
-            "Any class-compliant MIDI surface works: a DJ controller's jog wheel makes a fine              VFO knob, its pads make PTT and band buttons, its faders make gain controls.",
-        )
-        .weak(),
+    super::note(
+        ui,
+        "Any class-compliant MIDI surface works: a DJ controller's jog wheel makes a fine              VFO knob, its pads make PTT and band buttons, its faders make gain controls.",
     );
     ui.add_space(6.0);
     crate::chrome::checkbox(ui, &mut cfg.midi.enabled, "Enable");
@@ -386,7 +375,7 @@ fn settings_midi_section(
             } else if let Some(e) = &status.error {
                 ui.label(RichText::new(e).color(Color32::from_rgb(230, 90, 80)));
             } else {
-                ui.label(RichText::new("Not connected.").weak());
+                super::note(ui, "Not connected.");
             }
         });
         ui.add_space(4.0);
@@ -396,7 +385,7 @@ fn settings_midi_section(
             Some((msg, v)) => {
                 ui.label(RichText::new(format!("Last message: {}  value {v}", msg.label())).weak())
             }
-            None => ui.label(RichText::new("Move a control to see it here.").weak()),
+            None => super::note(ui, "Move a control to see it here."),
         };
     });
 
@@ -498,11 +487,9 @@ fn settings_midi_section(
     });
 
     ui.add_space(8.0);
-    ui.label(
-        RichText::new(
-            "Endless (jog) encoders send a relative step rather than a position, in one of three              encodings that look alike from small movements. LEARN guesses from a clockwise turn;              if the knob then tunes the wrong way, tick \u{201c}rev\u{201d}.",
-        )
-        .weak(),
+    super::note(
+        ui,
+        "Endless (jog) encoders send a relative step rather than a position, in one of three              encodings that look alike from small movements. LEARN guesses from a clockwise turn;              if the knob then tunes the wrong way, tick \u{201c}rev\u{201d}.",
     );
 }
 

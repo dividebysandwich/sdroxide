@@ -44,18 +44,16 @@ pub(in crate::app) fn settings_relay_tab(
     );
     ui.add_space(4.0);
     if !seeded {
-        ui.label(RichText::new("Waiting for the station's T/R switch configuration…").weak());
+        super::note(ui, "Waiting for the station's T/R switch configuration…");
         return;
     }
-    ui.label(
-        RichText::new(
-            "Closes a contact while this station transmits — to disconnect and ground the SDR's \
+    super::note(
+        ui,
+        "Closes a contact while this station transmits — to disconnect and ground the SDR's \
              antenna input, and to key an amplifier or an outboard T/R relay in sequence with it. \
              Works with the cheap USB relay boards (LCUS, KMtronic, Numato), with a serial \
              RTS/DTR line into any interface that wants a PTT closure, and with anything else \
              through a command hook.",
-        )
-        .weak(),
     );
     ui.add_space(8.0);
 
@@ -194,7 +192,7 @@ pub(in crate::app) fn settings_relay_tab(
 
     if cfg.link == RelayLink::Off {
         ui.add_space(8.0);
-        ui.label(RichText::new("Nothing is switched.").weak());
+        super::note(ui, "Nothing is switched.");
         ui.add_space(8.0);
         apply_button(ui, apply);
         return;
@@ -202,14 +200,12 @@ pub(in crate::app) fn settings_relay_tab(
 
     if cfg.link == RelayLink::Command {
         ui.add_space(4.0);
-        ui.label(
-            RichText::new(
-                "Starting a program costs an unpredictable amount of time, and none of it is \
+        super::note(
+            ui,
+            "Starting a program costs an unpredictable amount of time, and none of it is \
                  counted in the lead — so leave a wider margin here than you would for a relay \
                  board. The contact table's numbers mean nothing for this link: your commands \
                  are run once on key-down and once on key-up.",
-            )
-            .weak(),
         );
     }
 
@@ -218,7 +214,7 @@ pub(in crate::app) fn settings_relay_tab(
     ui.label(RichText::new("Contacts").strong());
     ui.add_space(4.0);
     if cfg.link == RelayLink::SerialLines {
-        ui.label(RichText::new("Contact 1 is RTS and contact 2 is DTR.").weak());
+        super::note(ui, "Contact 1 is RTS and contact 2 is DTR.");
         ui.add_space(4.0);
     }
     let busy = status.keyed;
@@ -239,15 +235,15 @@ pub(in crate::app) fn settings_relay_tab(
     let mut remove: Option<usize> = None;
     let cols = if gpio { 8 } else { 7 };
     egui::Grid::new("relay-channels").num_columns(cols).spacing([10.0, 6.0]).show(ui, |ui| {
-        ui.label(RichText::new("No.").weak());
+        super::note(ui, "No.");
         if gpio {
-            ui.label(RichText::new("GPIO").weak());
+            super::note(ui, "GPIO");
         }
-        ui.label(RichText::new("Name").weak());
-        ui.label(RichText::new("Job").weak());
-        ui.label(RichText::new("TX closes").weak());
-        ui.label(RichText::new("Lead").weak());
-        ui.label(RichText::new("Hold").weak());
+        super::note(ui, "Name");
+        super::note(ui, "Job");
+        super::note(ui, "TX closes");
+        super::note(ui, "Lead");
+        super::note(ui, "Hold");
         ui.label("");
         ui.end_row();
 
@@ -408,14 +404,12 @@ pub(in crate::app) fn settings_relay_tab(
     ui.add_space(10.0);
     ui.label(RichText::new(cfg.sequence_note()).color(crate::theme::CYAN()));
     ui.add_space(4.0);
-    ui.label(
-        RichText::new(
-            "The order is the timings: the longest lead closes first, and the longest hold opens \
+    super::note(
+        ui,
+        "The order is the timings: the longest lead closes first, and the longest hold opens \
              last. So give the antenna relay the longer lead and the longer hold, and the \
              amplifier the shorter of each — then the antenna is always switched before the \
              amplifier is keyed, and the amplifier always unkeys before the antenna comes back.",
-        )
-        .weak(),
     );
 
     relay_band_table(ui, cfg);
@@ -424,15 +418,13 @@ pub(in crate::app) fn settings_relay_tab(
     ui.add_space(12.0);
     ui.label(RichText::new("Transmit sense input").strong());
     ui.add_space(4.0);
-    ui.label(
-        RichText::new(
-            "When a transceiver keys itself — its own microphone button, foot switch, VOX or \
+    super::note(
+        ui,
+        "When a transceiver keys itself — its own microphone button, foot switch, VOX or \
              keyer — sdroxide finds out by asking over CAT, and that answer arrives a few \
              hundred milliseconds into the over. Wire the rig's SEND line, through an \
              opto-isolator, into a handshake input on this same port and it is seen in a few \
              milliseconds instead. The meter and the transmit interlock get faster with it.",
-        )
-        .weak(),
     );
     ui.add_space(6.0);
     ui.add_enabled_ui(cfg.link.uses_serial_port(), |ui| {
@@ -480,7 +472,7 @@ pub(in crate::app) fn settings_relay_tab(
         });
     });
     if !cfg.link.uses_serial_port() {
-        ui.label(RichText::new("Needs a serial port — the handshake lines are on it.").weak());
+        super::note(ui, "Needs a serial port — the handshake lines are on it.");
     }
 
     // ── the two things that are not settings ────────────────────────────────
@@ -490,26 +482,22 @@ pub(in crate::app) fn settings_relay_tab(
             .strong()
             .color(WARN),
     );
-    ui.label(
-        RichText::new(
-            "Choose “TX closes” so that the *de-energised* contact is the state you want when \
+    super::note(
+        ui,
+        "Choose “TX closes” so that the *de-energised* contact is the state you want when \
              the board is unplugged, the computer is off, or sdroxide is not running. Wired so \
              that de-energised means grounded, a dead relay leaves the SDR deaf — annoying, and \
              safe. Wired the other way, a dead relay plus one transmission is a dead front end. \
              With a real amplifier behind it, take the first.",
-        )
-        .weak(),
     );
     ui.add_space(6.0);
-    ui.label(
-        RichText::new(
-            "This cannot protect the first instant of an over you start at the radio. Key the \
+    super::note(
+        ui,
+        "This cannot protect the first instant of an over you start at the radio. Key the \
              rig from sdroxide and the contacts always lead the RF; wire the sense input above \
              and they follow within milliseconds. For a front end genuinely worth protecting, \
              use an RF-sensed hardware T/R switch as well — no program on a computer can be the \
              whole answer.",
-        )
-        .weak(),
     );
 
     // ── status and apply ────────────────────────────────────────────────────
@@ -528,9 +516,9 @@ pub(in crate::app) fn settings_relay_tab(
             .color(GOOD),
         );
     } else if status.configured {
-        ui.label(RichText::new("Not open.").weak());
+        super::note(ui, "Not open.");
     } else {
-        ui.label(RichText::new("Status unknown — press APPLY.").weak());
+        super::note(ui, "Status unknown — press APPLY.");
     }
 
     ui.add_space(8.0);
@@ -568,16 +556,14 @@ fn relay_band_table(ui: &mut egui::Ui, cfg: &mut RelayConfig) {
     ui.add_space(4.0);
     ui.label(RichText::new("Band decoder outputs").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(2.0);
-    ui.label(
-        RichText::new(
-            "One control word per band: bit 0 is contact 1, bit 1 contact 2 and so on, matching \
+    super::note(
+        ui,
+        "One control word per band: bit 0 is contact 1, bit 1 contact 2 and so on, matching \
              the numbering above. RX follows the receive dial's band; TX the band of whichever \
              radio keyed, switched in on each contact's lead before RF and back after its hold \
              — give them the same value for a filter that does not care which way the RF is \
              going, and different ones for a receive-only preamp bypass or a transmit-only LPF \
              bank. Bands left at 0 assert nothing. Applies on Apply / reconnect.",
-        )
-        .weak(),
     );
     ui.add_space(6.0);
 

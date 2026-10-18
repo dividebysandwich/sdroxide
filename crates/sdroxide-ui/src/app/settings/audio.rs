@@ -143,9 +143,11 @@ fn field(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
 /// cut it off mid-name, so a list of four devices looked like one.
 pub(super) const DEVICE_WIDTH: f32 = 460.0;
 
-/// A wrapped note, in the same grey as the section explanations.
+/// The audio page's notes, drawn by the shared helper so every settings page
+/// shows its explanations the same way — one elided line, the rest on the
+/// hover. See [`super::note`].
 fn note(ui: &mut egui::Ui, text: &str) {
-    ui.add(egui::Label::new(RichText::new(text).size(10.5).color(gray(140))).wrap());
+    super::note_small(ui, text);
 }
 
 impl SdroxideApp {

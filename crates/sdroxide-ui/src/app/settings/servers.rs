@@ -32,16 +32,14 @@ pub(in crate::app) fn settings_wsjtx_tab(
     ui.label(RichText::new("WSJT-X UDP broadcast").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(4.0);
     if !seeded {
-        ui.label(RichText::new("Waiting for the station's WSJT-X broadcast configuration…").weak());
+        super::note(ui, "Waiting for the station's WSJT-X broadcast configuration…");
         return;
     }
-    ui.label(
-        RichText::new(
-            "Sends decodes, station status and logged QSOs the way WSJT-X does, so GridTracker, \
+    super::note(
+        ui,
+        "Sends decodes, station status and logged QSOs the way WSJT-X does, so GridTracker, \
              JTAlert, N1MM+ and Log4OM work with sdroxide unchanged. Output only — nothing on \
              this socket can touch the radio.",
-        )
-        .weak(),
     );
     ui.add_space(6.0);
     crate::chrome::checkbox(ui, &mut cfg.enabled, "Enable");
@@ -87,14 +85,12 @@ pub(in crate::app) fn settings_wsjtx_tab(
             .color(crate::theme::CYAN()),
     );
     ui.add_space(4.0);
-    ui.label(
-        RichText::new(
-            "The same news in N1MM's words: one XML datagram per logged contact, for the loggers \
+    super::note(
+        ui,
+        "The same news in N1MM's words: one XML datagram per logged contact, for the loggers \
              that listen for N1MM rather than for WSJT-X — the World Radio League's bridge takes \
              either. Contacts only; there is no decode stream in this protocol. Its own switch \
              and its own port, because a station may want both.",
-        )
-        .weak(),
     );
     ui.add_space(6.0);
     crate::chrome::checkbox(ui, &mut cfg.n1mm.enabled, "Enable");
@@ -162,7 +158,7 @@ pub(in crate::app) fn settings_rigctld_tab(
     );
     ui.add_space(4.0);
     if !seeded {
-        ui.label(RichText::new("Waiting for the station's rigctld configuration…").weak());
+        super::note(ui, "Waiting for the station's rigctld configuration…");
         return;
     }
     ui.add_space(2.0);
@@ -242,11 +238,11 @@ pub(in crate::app) fn settings_rigctld_tab(
                 );
             }
             None => {
-                ui.label(RichText::new("Not running.").weak());
+                super::note(ui, "Not running.");
             }
         },
         None => {
-            ui.label(RichText::new("Status unknown — press APPLY.").weak());
+            super::note(ui, "Status unknown — press APPLY.");
         }
     }
 
@@ -265,14 +261,12 @@ pub(in crate::app) fn settings_rigctld_tab(
     }
 
     ui.add_space(8.0);
-    ui.label(
-        RichText::new(
-            "Lets any Hamlib-capable program drive this radio: frequency, mode, PTT, split, RIT \
+    super::note(
+        ui,
+        "Lets any Hamlib-capable program drive this radio: frequency, mode, PTT, split, RIT \
              and power. In WSJT-X, fldigi or CQRLOG choose the rig \u{201c}Hamlib NET rigctl\u{201d} \
              (model 2) and point it at this address; in GPredict and N1MM enter the host and port \
              directly. Unlike the TCI server it carries control only \u{2014} no audio, no IQ.",
-        )
-        .weak(),
     );
 }
 
@@ -291,18 +285,16 @@ pub(in crate::app) fn settings_rotator_tab(
     ui.label(RichText::new("Antenna rotator").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(4.0);
     if !seeded {
-        ui.label(RichText::new("Waiting for the station's rotator configuration…").weak());
+        super::note(ui, "Waiting for the station's rotator configuration…");
         return;
     }
-    ui.label(
-        RichText::new(
-            "Points a motorized antenna at the satellite you are locked onto, or by hand from \
+    super::note(
+        ui,
+        "Points a motorized antenna at the satellite you are locked onto, or by hand from \
              the ROTATOR window and the maps. The default is a Hamlib rotctld daemon (run e.g. \
              \u{201c}rotctld -m 603 -r /dev/ttyUSB0\u{201d} for a GS-232B rotator, or \
              \u{201c}rotctld -m 1\u{201d} to try it without hardware) — one daemon covers every \
              rotator Hamlib drives. A controller on a serial port can also be driven directly.",
-        )
-        .weak(),
     );
     ui.add_space(6.0);
     crate::chrome::checkbox(ui, &mut cfg.enabled, "Enable");
@@ -425,10 +417,10 @@ pub(in crate::app) fn settings_rotator_tab(
             ui.label(RichText::new(format!("Failed: {e}")).color(Color32::from_rgb(230, 90, 80)));
         }
         Some((false, _, _, None)) => {
-            ui.label(RichText::new("Not connected.").weak());
+            super::note(ui, "Not connected.");
         }
         None if cfg.enabled => {
-            ui.label(RichText::new("Status unknown — press APPLY.").weak());
+            super::note(ui, "Status unknown — press APPLY.");
         }
         None => {}
     }
@@ -458,7 +450,7 @@ pub(in crate::app) fn settings_tci_server_tab(
     use sdroxide_types::TciServerConfig;
 
     if !seeded {
-        ui.label(RichText::new("Waiting for the station's TCI server configuration…").weak());
+        super::note(ui, "Waiting for the station's TCI server configuration…");
         return;
     }
 
@@ -539,11 +531,11 @@ pub(in crate::app) fn settings_tci_server_tab(
                 ui.label(msg.color(Color32::from_rgb(230, 90, 80)));
             }
             None => {
-                ui.label(RichText::new("Not running.").weak());
+                super::note(ui, "Not running.");
             }
         },
         None => {
-            ui.label(RichText::new("Status unknown — press APPLY.").weak());
+            super::note(ui, "Status unknown — press APPLY.");
         }
     }
 
@@ -562,12 +554,10 @@ pub(in crate::app) fn settings_tci_server_tab(
     }
 
     ui.add_space(8.0);
-    ui.label(
-        RichText::new(
-            "Lets TCI-capable programs drive this radio: frequency and mode control, wideband IQ, \
+    super::note(
+        ui,
+        "Lets TCI-capable programs drive this radio: frequency and mode control, wideband IQ, \
              receive audio, and transmit audio. In WSJT-X choose the SunSDR (TCI) rig type, point \
              it at this address, and set PTT to TCI.",
-        )
-        .weak(),
     );
 }

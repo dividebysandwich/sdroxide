@@ -80,7 +80,7 @@ pub(in crate::app) fn operator_identity_note(
 ) {
     net_heading(ui, "Operator");
     if !seeded {
-        ui.label(RichText::new("Callsign and grid are set on the General tab.").weak());
+        super::note(ui, "Callsign and grid are set on the General tab.");
         return;
     }
     let (call, grid) = (digi.my_call.trim(), digi.my_grid.trim());
@@ -167,7 +167,7 @@ pub(in crate::app) fn settings_freedv_tab(
             ))
             .weak(),
         );
-        ui.label(RichText::new("Callsign and grid are set on the General tab.").weak());
+        super::note(ui, "Callsign and grid are set on the General tab.");
     }
     // The status line is shared by every network feed, so only show it here
     // when it is actually ours.
@@ -205,14 +205,12 @@ pub(in crate::app) fn broadcast_stations_settings(
     status: Option<&Result<String, String>>,
 ) {
     let (season, cached) = sdroxide_config::broadcast_schedule_status();
-    ui.label(
-        RichText::new(
-            "The longwave and shortwave stations labelled on the waterfall. Every source \
+    super::note(
+        ui,
+        "The longwave and shortwave stations labelled on the waterfall. Every source \
              below is downloaded for the current broadcasting season and re-downloaded when \
              the season turns. They all go into **one store**, so the SCHEDULE window's \
              Source filter shows one of them or all of them.",
-        )
-        .weak(),
     );
     ui.horizontal(|ui| {
         ui.label(RichText::new("Season").size(11.0).color(crate::theme::gray(150)));
@@ -242,12 +240,10 @@ pub(in crate::app) fn broadcast_stations_settings(
     }
 
     ui.add_space(4.0);
-    ui.label(
-        RichText::new(
-            "Your own stations and corrections go in this file. sdroxide never writes it, and \
+    super::note(
+        ui,
+        "Your own stations and corrections go in this file. sdroxide never writes it, and \
              an entry here replaces a scheduled one with the same name and frequency.",
-        )
-        .weak(),
     );
     if let Ok(p) = sdroxide_config::broadcast_stations_path() {
         ui.add(
@@ -319,13 +315,11 @@ pub(in crate::app) fn broadcast_stations_settings(
             *refetch = true;
         }
     });
-    ui.label(
-        RichText::new(
-            "Your own list is a **schedule** — what you expect to hear — not the reception \
+    super::note_at(
+        ui,
+        "Your own list is a **schedule** — what you expect to hear — not the reception \
              log, which records what you actually did hear. Import it below, or edit the file.",
-        )
-        .weak()
-        .size(11.0),
+        Some(11.0),
     );
     ui.horizontal(|ui| {
         if ui
@@ -369,12 +363,10 @@ pub(in crate::app) fn broadcast_stations_settings(
     _fetching: bool,
     _status: Option<&Result<String, String>>,
 ) {
-    ui.label(
-        RichText::new(
-            "The broadcast stations labelled on the waterfall come from the list built into \
+    super::note(
+        ui,
+        "The broadcast stations labelled on the waterfall come from the list built into \
              this build. Editing them needs the desktop app.",
-        )
-        .weak(),
     );
 }
 
@@ -418,7 +410,7 @@ impl crate::app::SdroxideApp {
                 cmds.push(sdroxide_types::Command::TestLogin(target));
             }
             if pending {
-                ui.label(RichText::new("checking…").size(11.0).weak());
+                super::note_at(ui, "checking…", Some(11.0));
             } else if let Some(r) = self.login_tests.get(&target) {
                 let (mark, colour) = if r.ok {
                     ("✔", crate::theme::GREEN())

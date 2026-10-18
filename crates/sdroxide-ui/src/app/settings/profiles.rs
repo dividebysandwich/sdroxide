@@ -33,15 +33,13 @@ pub(in crate::app) fn settings_profiles_tab(
             .color(theme::CYAN()),
     );
     ui.add_space(4.0);
-    ui.label(
-        RichText::new(
-            "A profile captures the whole working setup — the dials and VFOs, the mode \
+    super::note(
+        ui,
+        "A profile captures the whole working setup — the dials and VFOs, the mode \
              and filters, the gains, drive and antennas, your callsign and message \
              templates, and the per-band registers — and applies it back in one click. \
              The hardware (back end, audio devices, converters) is deliberately left \
              alone: a profile is the way you work the station, not the radio it runs on.",
-        )
-        .weak(),
     );
     ui.add_space(10.0);
 
@@ -56,18 +54,16 @@ pub(in crate::app) fn settings_profiles_tab(
             io.profile_name.clear();
         }
     });
-    ui.label(
-        RichText::new(
-            "Applies to whatever sdroxide is attached to: dials and VFOs, mode and \
+    super::note(
+        ui,
+        "Applies to whatever sdroxide is attached to: dials and VFOs, mode and \
              filters, levels, gains, drive, antennas, the digital identity and the band \
              stacks.",
-        )
-        .weak(),
     );
     ui.add_space(12.0);
 
     if profiles.is_empty() {
-        ui.label(RichText::new("No profiles saved yet — name one above and press Save.").weak());
+        super::note(ui, "No profiles saved yet — name one above and press Save.");
         return;
     }
 

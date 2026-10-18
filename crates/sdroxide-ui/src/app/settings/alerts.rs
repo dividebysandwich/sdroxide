@@ -110,21 +110,16 @@ pub(in crate::app) fn alerts_settings(
                 });
                 // The words it will speak, so the choice is not a guess.
                 if speaks {
-                    ui.label(
-                        RichText::new(format!("speaks: {}", spoken_example(event))).weak().small(),
-                    );
+                    super::note_small(ui, &format!("speaks: {}", spoken_example(event)));
                 }
                 ui.add_space(2.0);
             }
             ui.add_space(4.0);
-            ui.label(
-                RichText::new(
-                    "Each station is quiet for a while after an alert, so a busy band \
+            super::note_small(
+                ui,
+                "Each station is quiet for a while after an alert, so a busy band \
                          does not ring every slot. Voice and Tone + voice are read by the \
                          spoken-announcement voice — switch it on in Settings → UI.",
-                )
-                .weak()
-                .small(),
             );
         });
     });
