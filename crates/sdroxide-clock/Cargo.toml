@@ -1,0 +1,26 @@
+[package]
+name = "sdroxide-clock"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The station's clock: the time a receiver measured, served over NTP, and the operating system's clock set from it."
+
+# Native-only, like the other crates that touch the machine rather than the
+# radio. Three jobs, all station-wide rather than per radio:
+#
+# * holding the latest measurement any radio made of how far the computer's
+#   clock is out (`TimeHub`);
+# * serving the corrected time over NTP to whoever asks;
+# * setting the operating system's clock — directly where the process may,
+#   and otherwise through the system's own administrator prompt, which runs
+#   this same binary as root for exactly one call (`helper_main`).
+#
+# No NTP crate: the server half of SNTP is one 48-byte packet answered, and
+# RFC 5905 describes it completely.
+
+[dependencies]
+sdroxide-types.workspace = true
+tracing.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

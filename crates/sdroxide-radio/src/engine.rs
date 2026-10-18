@@ -21,7 +21,7 @@ use sdroxide_digi::{
     DigiEngine, Fsk441Controller, FsqController, Fst4Controller, HellController, Js8Controller,
     JtController, Msk144Controller, NavtexController, PacketController, Pi4Controller,
     Q65Controller, RadeController, RfPaintController, RifpController, SstvController,
-    TextModemController, WefaxController, WsprController,
+    TextModemController, TimeSigController, WefaxController, WsprController,
 };
 use sdroxide_drm::DrmDemod;
 use sdroxide_dsp::{
@@ -616,6 +616,12 @@ pub struct EngineConfig {
     /// not in a front end: whichever radio keys, the same contacts have to
     /// throw, and they must not open while another one is still transmitting.
     pub tr_switch: Option<Arc<crate::TrSwitch>>,
+    /// The station's clock: the latest time any radio received, the NTP
+    /// server that serves it, and the one way to set the computer's clock from
+    /// it. Shared like `tx_gate` — the computer has one clock however many
+    /// radios it drives. `None` (the default) gives this engine one of its
+    /// own, which is right for a single radio.
+    pub time_hub: Option<Arc<sdroxide_clock::TimeHub>>,
 }
 
 impl Default for EngineConfig {
@@ -638,6 +644,7 @@ impl Default for EngineConfig {
             store_sync: None,
             rade_watch: None,
             tr_switch: None,
+            time_hub: None,
             record_iq: None,
         }
     }
@@ -3043,6 +3050,23 @@ struct Engine {
     /// but every engine publishes into it, because any of them keying is the
     /// station being on the air.
     tr_switch: Option<Arc<crate::TrSwitch>>,
+    /// The station's clock — see [`EngineConfig::time_hub`].
+    time_hub: Arc<sdroxide_clock::TimeHub>,
+    /// The built-in NTP server's settings as persisted (`ntpserver.json`).
+    ntp_cfg: sdroxide_types::NtpServerConfig,
+    /// The computer's clock the moment the block being processed came back
+    /// from the receiver — what the time-signal receiver measures the clock
+    /// against. Read straight after the read returns, before any of the
+    /// receive chain runs, so the chain's own time is not counted as the
+    /// signal's.
+    block_wall: SystemTime,
+    /// How many clock steps this engine has passed on to its decoder. Any
+    /// radio may ask for one, and every radio's measurements are made stale
+    /// by it.
+    clock_steps_seen: u64,
+    /// When the clock was last corrected without being asked, so the
+    /// automatic correction cannot chase its own tail.
+    last_auto_step: Option<Instant>,
     /// What was last told to the clients, so a status only goes out when it
     /// changed.
     relay_last_status: Option<sdroxide_types::RelayStatus>,
@@ -4293,6 +4317,11 @@ fn engine_thread(
         rot_cfg: sdroxide_types::RotatorConfig::default(),
         relay_cfg: sdroxide_types::RelayConfig::default(),
         tr_switch: engine_cfg.tr_switch.clone(),
+        time_hub: engine_cfg.time_hub.clone().unwrap_or_else(sdroxide_clock::TimeHub::new),
+        ntp_cfg: sdroxide_types::NtpServerConfig::default(),
+        block_wall: SystemTime::now(),
+        clock_steps_seen: 0,
+        last_auto_step: None,
         relay_last_status: None,
         relay_pending: false,
         relay_lead_capped: false,
@@ -4409,6 +4438,11 @@ fn engine_thread(
     // Every engine still publishes into it — see `Engine::poll_tr_switch`.
     if engine.primary {
         engine.sync_relay();
+    }
+    // The NTP server is the station's, like the switch: one port 123.
+    engine.ntp_cfg = sdroxide_config::load_ntp_server_config();
+    if engine.primary {
+        engine.time_hub.configure_ntp(&engine.ntp_cfg);
     }
     // Seed clients with the whole station configuration up front, for the same
     // reason as the operator config above: a settings dialog that has not been
@@ -4605,6 +4639,7 @@ fn engine_thread(
         engine.poll_sat_track();
         engine.poll_rotator_status();
         engine.poll_tr_switch();
+        engine.poll_time_hub();
         // Attach (or re-attach) the configured radio on its own when the
         // front-end is only a stand-in — no trip through Settings.
         engine.poll_reconnect();
@@ -4641,6 +4676,7 @@ fn engine_thread(
             // over on the air as chirps. See `IqSource::read_available`.
             if engine.rx_drawn_during_tx() {
                 if let Ok(n @ 1..) = engine.source.read_available(&mut buf) {
+                    engine.block_wall = SystemTime::now();
                     lane_samples += n as u64;
                     engine.samples_read += n as u64;
                     engine.last_block = n as u64;
@@ -4656,7 +4692,9 @@ fn engine_thread(
                 }
             }
         } else {
-            match engine.source.read(&mut buf) {
+            let read = engine.source.read(&mut buf);
+            engine.block_wall = SystemTime::now();
+            match read {
                 Ok(0) => continue, // timeout
                 Ok(n) if engine.audio_mode => {
                     lane_samples += n as u64;
@@ -5344,7 +5382,7 @@ impl Engine {
             // possibly-muted output).
             if let (Some(digi), Some(main)) = (self.digi.as_mut(), self.main.as_ref()) {
                 if main.tap_enabled {
-                    digi.on_rx_audio(&main.tap_out);
+                    digi.on_rx_audio_at(&main.tap_out, self.block_wall);
                 }
             }
             // Digital voice: play the decoded speech instead of the demodulated
@@ -5720,7 +5758,7 @@ impl Engine {
         // FT8/FT4 run directly on the radio audio (before NR, so the decoder
         // always sees the raw signal).
         if let Some(digi) = self.digi.as_mut() {
-            digi.on_rx_audio(&self.audio_re);
+            digi.on_rx_audio_at(&self.audio_re, self.block_wall);
         }
 
         // Auto-notch (constant tones) then spectral noise reduction.
@@ -6605,9 +6643,23 @@ impl Engine {
                     self.wsjtx_decodes(&d);
                     let _ = self.event_tx.send(RadioEvent::Ft8Decodes(d));
                 }
-                DigiAction::Status(s) => {
+                DigiAction::Status(mut s) => {
                     self.wsjtx_status(&s);
+                    // The receiver knows the radio; the host's clock and NTP
+                    // server are the hub's to describe.
+                    if let Some(ts) = s.timesig.as_mut() {
+                        ts.clock = self.time_hub.status();
+                    }
                     let _ = self.event_tx.send(RadioEvent::Ft8Status(s));
+                }
+                DigiAction::TimeFix { offset_ns, jitter_ns, at, refid } => {
+                    self.time_hub.publish(sdroxide_clock::Fix {
+                        offset_ns,
+                        jitter_ns,
+                        at_ns: sdroxide_clock::os::system_time_ns(at),
+                        refid,
+                    });
+                    self.auto_set_clock();
                 }
                 DigiAction::QsoLogged(r) => {
                     // A contact logged with a serial we sent is the one thing
@@ -6854,6 +6906,11 @@ impl Engine {
             // nothing further down would notice it had been handed an airline
             // datalink rather than a radio amateur's text.
             Box::new(AcarsController::new(self.digi_config.clone(), tap_rate))
+        } else if mode == Mode::TimeSignal {
+            // Ahead of the fall-through for NAVTEX's reason: it has a digital
+            // mode's shape and none of its behaviour — no callsign, no
+            // transmitter, and the only thing it decodes is the time.
+            Box::new(TimeSigController::new(self.digi_config.clone(), tap_rate))
         } else if mode.is_rifp() {
             Box::new(RifpController::new(self.digi_config.clone(), tap_rate))
         } else if mode.is_aprs() {
@@ -9718,6 +9775,25 @@ impl Engine {
                 return;
             }
 
+            // The station's clock (no RadioState change → return before the
+            // State emit below).
+            SetSystemClock { force } => {
+                self.set_system_clock(force);
+                return;
+            }
+            SetNtpServerConfig(cfg) => {
+                if let Err(e) = sdroxide_config::save_ntp_server_config(&cfg) {
+                    warn!("saving NTP server config: {e}");
+                }
+                self.ntp_cfg = cfg;
+                self.time_hub.configure_ntp(&self.ntp_cfg);
+                if let Some(e) = self.time_hub.status().ntp.error {
+                    self.notice(&format!("NTP server: {e}"));
+                }
+                self.emit_station_config();
+                return;
+            }
+
             // Built-in TCI server (no RadioState change → return before the
             // State emit below).
             SetTciServerConfig(cfg) => {
@@ -12021,6 +12097,75 @@ impl Engine {
     /// Sent at startup and after every change rather than answered on request:
     /// the settings dialog may be running on another machine, and the files
     /// these describe are only reachable from this one.
+    /// Sets the computer's clock from the latest time received, if the hub
+    /// agrees it is fit to set from. The result arrives later, through
+    /// [`Engine::poll_time_hub`]: the administrator prompt waits on the
+    /// operator, and this thread waits on nobody.
+    fn set_system_clock(&mut self, force: bool) {
+        if self.on_air() {
+            self.notice("not setting the clock while transmitting");
+            return;
+        }
+        match self.time_hub.request_step(force) {
+            Ok(()) => {
+                if self.time_hub.authority() == sdroxide_types::ClockAuthority::Prompt {
+                    self.notice(
+                        "setting the clock — the system will ask for an administrator password",
+                    );
+                }
+            }
+            Err(why) => self.notice(&format!("clock not set: {why}")),
+        }
+    }
+
+    /// The operator's "keep the clock right" switch: a step without asking,
+    /// when the clock is further out than they said to tolerate, no more than
+    /// once in ten minutes, and only where no password would be asked for — a
+    /// prompt nobody requested is not something to put on a screen.
+    fn auto_set_clock(&mut self) {
+        let ts = &self.digi_config.timesig;
+        if !ts.auto_set || self.time_hub.authority() != sdroxide_types::ClockAuthority::Direct {
+            return;
+        }
+        if self.last_auto_step.is_some_and(|t| t.elapsed() < Duration::from_secs(600)) {
+            return;
+        }
+        let Some(fix) = self.time_hub.latest() else { return };
+        if (fix.offset_ns.abs() as f64) < ts.auto_threshold_ms * 1e6 || self.on_air() {
+            return;
+        }
+        // Never forced: a step big enough to need confirming waits for one.
+        if self.time_hub.request_step(false).is_ok() {
+            self.last_auto_step = Some(Instant::now());
+            info!(
+                offset_ms = fix.offset_ns as f64 / 1e6,
+                "correcting the clock from the time signal"
+            );
+        }
+    }
+
+    /// Reports a finished clock step, and tells this radio's decoder about any
+    /// step — this engine's or another's — so it forgets measurements made
+    /// against the clock as it was.
+    fn poll_time_hub(&mut self) {
+        match self.time_hub.poll_step() {
+            Some(sdroxide_clock::StepOutcome::Stepped { by_ns }) => {
+                self.notice(&format!("clock set: moved {:+.3} s", by_ns as f64 / 1e9));
+            }
+            Some(sdroxide_clock::StepOutcome::Failed(e)) => {
+                self.notice(&format!("clock not set: {e}"));
+            }
+            None => {}
+        }
+        let (steps, by_ns) = self.time_hub.steps();
+        if steps != self.clock_steps_seen {
+            self.clock_steps_seen = steps;
+            if let Some(d) = self.digi.as_mut() {
+                d.clock_stepped(by_ns);
+            }
+        }
+    }
+
     fn emit_station_config(&self) {
         let _ = self.event_tx.send(RadioEvent::StationConfig(Box::new(
             sdroxide_types::StationConfig {
@@ -12034,6 +12179,7 @@ impl Engine {
                 region: sdroxide_types::region(),
                 band_plan: sdroxide_types::band_plan().clone(),
                 digi_presets: sdroxide_types::digi_presets().to_vec(),
+                ntp_server: self.ntp_cfg.clone(),
             },
         )));
     }
@@ -17737,6 +17883,7 @@ fn rig_mode_class(m: Mode) -> u8 {
         | Mode::Sstv
         | Mode::Wefax
         | Mode::Navtex
+        | Mode::TimeSignal
         | Mode::Olivia
         | Mode::Thor
         | Mode::Fsq

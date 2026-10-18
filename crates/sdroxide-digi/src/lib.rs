@@ -46,6 +46,7 @@ pub mod scheduler;
 pub mod squelch;
 pub mod sstv_controller;
 pub mod text_modem;
+pub mod timesig_controller;
 pub mod wefax_controller;
 pub mod wspr;
 pub mod wspr_controller;
@@ -80,6 +81,7 @@ pub use rifp_controller::RifpController;
 pub use scheduler::SlotScheduler;
 pub use sstv_controller::SstvController;
 pub use text_modem::TextModemController;
+pub use timesig_controller::TimeSigController;
 pub use wefax_controller::WefaxController;
 pub use wspr_controller::WsprController;
 
@@ -96,6 +98,21 @@ use sdroxide_types::{DigiConfig, DigiStatus, Mode, SstvMode};
 pub trait DigiEngine: Send {
     fn mode(&self) -> Mode;
     fn on_rx_audio(&mut self, tap: &[f32]);
+
+    /// [`on_rx_audio`](Self::on_rx_audio), with the computer's clock as it
+    /// read the moment this block arrived from the receiver.
+    ///
+    /// Only the time-signal receiver asks: it is measuring that clock, and a
+    /// reading taken when the block was later handed over — after the receive
+    /// chain had run — would be late by however long that took. Everyone else
+    /// is handed the audio alone.
+    fn on_rx_audio_at(&mut self, tap: &[f32], _arrived: SystemTime) {
+        self.on_rx_audio(tap);
+    }
+
+    /// The computer's clock was just moved by `by_ns` (positive: forward).
+    /// Anything measured against it before is now that far out.
+    fn clock_stepped(&mut self, _by_ns: i64) {}
     fn poll(&mut self, now: SystemTime, dial_hz: f64) -> Vec<DigiAction>;
     fn tx_burst_active(&self) -> bool;
     fn fill_tx_block(&mut self, out: &mut [f32]) -> bool;
@@ -355,6 +372,8 @@ mod dispatch_tests {
             "navtex"
         } else if mode == Mode::Acars {
             "acars"
+        } else if mode == Mode::TimeSignal {
+            "timesig"
         } else if mode.is_rifp() {
             "rifp"
         } else if mode.is_aprs() {

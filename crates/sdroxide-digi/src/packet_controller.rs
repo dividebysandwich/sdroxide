@@ -956,6 +956,7 @@ impl PacketController {
             transmitting: self.ch.keyed,
             tx_watchdog: false,
             tx_refused: None,
+            timesig: None,
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
             text_rx: String::new(),

@@ -1,12 +1,13 @@
-//! The Servers tab: the three interfaces this app offers to other software.
+//! The Servers tab: the interfaces this app offers to other software.
 //!
 //! Hamlib rigctld and the TCI server are control surfaces third-party clients
 //! connect to; the WSJT-X UDP broadcast is one-way, feeding decodes, status
-//! and logged QSOs to GridTracker, JTAlert, N1MM+ and Log4OM. All three are
+//! and logged QSOs to GridTracker, JTAlert, N1MM+ and Log4OM; the NTP server
+//! hands on the time the time-signal receiver measured. All of them are
 //! bound by the engine, which is also what persists their configuration and
 //! reports back whether the bind succeeded.
 //!
-//! That makes these three settings the *station's*, not the screen's: the
+//! That makes these settings the *station's*, not the screen's: the
 //! engine announces what it has, and this tab edits that. `seeded` is whether
 //! the announcement has arrived yet — a client that has not been told cannot
 //! be allowed to apply defaults over the real thing.
@@ -580,4 +581,105 @@ pub(in crate::app) fn settings_tci_server_tab(
         )
         .weak(),
     );
+}
+
+/// The built-in NTP server: the time the time-signal receiver measured,
+/// served to this machine's own time service or to the network.
+///
+/// `status` is the server's state as last reported, which travels with the
+/// time-signal receiver's status and so is only known while that mode is up.
+pub(in crate::app) fn settings_ntp_server_tab(
+    ui: &mut egui::Ui,
+    cfg: &mut sdroxide_types::NtpServerConfig,
+    seeded: bool,
+    status: Option<&sdroxide_types::NtpServerStatus>,
+    apply: &mut bool,
+) {
+    use sdroxide_types::NtpServerConfig;
+
+    if !seeded {
+        ui.label(RichText::new("Waiting for the station's NTP server configuration…").weak());
+        return;
+    }
+
+    ui.label(RichText::new("Built-in NTP server").size(14.0).strong().color(crate::theme::CYAN()));
+    ui.label(
+        RichText::new(
+            "Serves the time received from the time-signal station (mode TIME) as a stratum 1 \
+             server, so other computers — or this one's own time service — can keep radio time. \
+             Without a recent reception it answers as unsynchronised, and clients ignore it.",
+        )
+        .size(11.0)
+        .weak(),
+    );
+    ui.add_space(6.0);
+    crate::chrome::checkbox(ui, &mut cfg.enabled, "Enable");
+    ui.add_space(6.0);
+
+    ui.add_enabled_ui(cfg.enabled, |ui| {
+        egui::Grid::new("ntp-srv-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+            ui.label("Listen on");
+            ComboBox::from_id_salt("ntp_srv_bind").selected_text(&cfg.bind).show_styled(ui, |ui| {
+                for b in NtpServerConfig::BINDS {
+                    let label = if b == "127.0.0.1" {
+                        "127.0.0.1 (this machine)"
+                    } else {
+                        "0.0.0.0 (whole network)"
+                    };
+                    if ui.selectable_label(cfg.bind == b, label).clicked() {
+                        cfg.bind = b.to_string();
+                    }
+                }
+            });
+            ui.end_row();
+
+            ui.label("Port");
+            ui.add(egui::DragValue::new(&mut cfg.port).range(1..=65535)).on_hover_text(
+                "123 is what every NTP client expects. On Linux a port below 1024 needs \
+                 privilege; chrony and ntpd can use another (server 127.0.0.1 port 1123 iburst).",
+            );
+            ui.end_row();
+        });
+    });
+
+    ui.add_space(8.0);
+    match status {
+        Some(s) if s.running => {
+            let state = if s.synced { "serving radio time" } else { "unsynchronised" };
+            ui.label(
+                RichText::new(format!(
+                    "● Listening on {} — {state}, {} answered",
+                    s.addr, s.requests
+                ))
+                .color(Color32::from_rgb(90, 200, 110)),
+            );
+        }
+        Some(s) => match &s.error {
+            Some(e) => {
+                ui.label(
+                    RichText::new(format!("Failed: {e}")).color(Color32::from_rgb(230, 90, 80)),
+                );
+            }
+            None => {
+                ui.label(RichText::new("Not running.").weak());
+            }
+        },
+        None => {
+            ui.label(RichText::new("Status is shown here while the TIME mode is selected.").weak());
+        }
+    }
+
+    ui.add_space(8.0);
+    if crate::chrome::chip_accent(
+        ui,
+        false,
+        RichText::new(" APPLY ").strong(),
+        crate::theme::GREEN(),
+        crate::theme::INK_ON_CYAN(),
+    )
+    .on_hover_text("Persist and (re)bind the server")
+    .clicked()
+    {
+        *apply = true;
+    }
 }

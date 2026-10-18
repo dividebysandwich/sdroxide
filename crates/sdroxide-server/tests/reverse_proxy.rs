@@ -68,6 +68,7 @@ async fn spawn_server(port: u16) {
         remove_radio: None,
         rename_radio: None,
         radio_power: None,
+        remote_clock_set: None,
     }));
     tokio::time::sleep(Duration::from_millis(400)).await;
 }

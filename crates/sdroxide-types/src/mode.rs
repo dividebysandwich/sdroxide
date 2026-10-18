@@ -362,6 +362,17 @@ pub enum Mode {
     /// message repeats for the length of the over. Appended for the same reason
     /// as [`Mode::Hell`].
     Fsk441,
+    /// A standard time-signal station — DCF77, MSF, WWVB or JJY — decoded to
+    /// the time it sends, which can then set the computer's clock or be served
+    /// to the network over NTP. Which station is a setting
+    /// ([`crate::TimeSigConfig::station`]), not part of the mode, as FST4's
+    /// period is.
+    ///
+    /// Received in USB with the carrier at [`crate::TIMESIG_TONE_HZ`], so the
+    /// dial sits a kilohertz below the station — [`Mode::standard_tone_offset_hz`]
+    /// does that arithmetic, as it does for NAVTEX. Receive only: these are
+    /// national time services. Appended for the same reason as [`Mode::Hell`].
+    TimeSignal,
 }
 
 /// The bands on which a mode that keeps phone practice rides the lower
@@ -382,7 +393,7 @@ const PHONE_LSB_BANDS: [(f64, f64); 3] =
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 49] = [
+    pub const ALL: [Mode; 50] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -418,6 +429,7 @@ impl Mode {
         Mode::Wefax,
         Mode::Navtex,
         Mode::Acars,
+        Mode::TimeSignal,
         Mode::Olivia,
         Mode::Thor,
         Mode::Fsq,
@@ -439,7 +451,7 @@ impl Mode {
     /// packet, RF Paint). All are USB underneath except RIFP, VHF packet and
     /// VHF SSTV, which frequency-modulate the carrier, and ACARS, which is
     /// received in AM.
-    pub const DIGITAL: [Mode; 31] = [
+    pub const DIGITAL: [Mode; 32] = [
         Mode::Ft8,
         Mode::Ft4,
         Mode::Ft2,
@@ -466,6 +478,7 @@ impl Mode {
         Mode::Wefax,
         Mode::Navtex,
         Mode::Acars,
+        Mode::TimeSignal,
         Mode::RfPaint,
         Mode::Rade,
         Mode::Packet,
@@ -508,6 +521,7 @@ impl Mode {
                 | Mode::Fst4
                 | Mode::Q65
                 | Mode::Fsk441
+                | Mode::TimeSignal
         )
     }
 
@@ -877,6 +891,8 @@ impl Mode {
                 | Mode::Jt9
                 | Mode::Fst4
                 | Mode::Q65
+                // A national time service's broadcast: nothing to send back.
+                | Mode::TimeSignal
         )
     }
 
@@ -960,6 +976,7 @@ impl Mode {
             Mode::Fst4 => "FST4",
             Mode::Q65 => "Q65",
             Mode::Fsk441 => "FSK441",
+            Mode::TimeSignal => "TIME",
         }
     }
 
@@ -1124,6 +1141,13 @@ impl Mode {
             // ACARS' MSK sits at 1200 and 2400 Hz on the AM carrier, so the
             // passband has to keep both tones and the carrier between them.
             Mode::Acars => (-3000.0, 3000.0),
+            // The carrier sits at the tone; the decoder searches this far
+            // either side of it for a receiver whose reference is a few ppm
+            // out, and nothing beyond that is anything it wants to hear.
+            Mode::TimeSignal => (
+                crate::TIMESIG_TONE_HZ - crate::TIMESIG_SEARCH_HZ,
+                crate::TIMESIG_TONE_HZ + crate::TIMESIG_SEARCH_HZ,
+            ),
             // WSPR lives in one 200 Hz window, 1400–1600 Hz above the dial, and
             // the decoder searches nowhere else. Narrow rather than the usual
             // digital 100–3300 on purpose: the QRSS beacons just below the
@@ -1262,6 +1286,10 @@ impl Mode {
             // is 1700 Hz below the channel, and a decode logged at the dial
             // would be logged 1.7 kHz low.
             Mode::Navtex => Some(crate::NAVTEX_TONE_HZ),
+            // The station list gives the carrier frequency; the dial is a
+            // kilohertz below it, so a carrier read off the dial would be a
+            // kilohertz low.
+            Mode::TimeSignal => Some(crate::TIMESIG_TONE_HZ),
             _ => None,
         }
     }
@@ -1358,7 +1386,8 @@ impl Mode {
             | Mode::Jt9
             | Mode::Fst4
             | Mode::Q65
-            | Mode::Fsk441 => C::Data,
+            | Mode::Fsk441
+            | Mode::TimeSignal => C::Data,
         }
     }
 
@@ -1598,7 +1627,8 @@ impl Mode {
             | Mode::Jt9
             | Mode::Fst4
             | Mode::Q65
-            | Mode::Fsk441 => &[],
+            | Mode::Fsk441
+            | Mode::TimeSignal => &[],
         }
     }
 }
@@ -2143,6 +2173,7 @@ mod tests {
             (Mode::Fst4, 46),
             (Mode::Q65, 47),
             (Mode::Fsk441, 48),
+            (Mode::TimeSignal, 49),
         ];
         for (mode, index) in pinned {
             assert_eq!(mode as u8, index, "{} moved", mode.label());
@@ -2189,7 +2220,7 @@ mod tests {
         // dropped and nothing listed twice.
         // The last variant *by discriminant*, which is the one appended most
         // recently — not the one that reads last in the picker.
-        let last = Mode::Fsk441 as u8;
+        let last = Mode::TimeSignal as u8;
         for i in 0..=last {
             let present = Mode::ALL.iter().filter(|m| **m as u8 == i).count();
             assert_eq!(present, 1, "discriminant {i} appears {present} times in Mode::ALL");

@@ -384,6 +384,17 @@ async fn run_session(
                 continue;
             };
             match decode::<ClientMsg>(&bytes) {
+                Ok(ClientMsg::Command(Command::SetSystemClock { .. }))
+                    if !shared.station.upgrade().is_some_and(|s| s.remote_clock_set_allowed()) =>
+                {
+                    // Operating the radio is not administering the computer
+                    // it is plugged into — see `ServerParams::remote_clock_set`.
+                    let note = "this station does not let remote clients set its clock \
+                                (allow_remote_clock_set in its config.toml)";
+                    if let Some(s) = shared.session.lock().unwrap().as_ref() {
+                        let _ = s.reliable.try_send(ServerMsg::Notice(Some(note.into())));
+                    }
+                }
                 Ok(ClientMsg::Command(cmd)) => {
                     let _ = shared.cmd_tx.send(cmd);
                 }

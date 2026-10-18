@@ -131,6 +131,7 @@ async fn every_radio_in_the_roster_is_served_and_separately_addressable() {
         remove_radio: None,
         rename_radio: None,
         radio_power: None,
+        remote_clock_set: None,
     }));
     tokio::time::sleep(Duration::from_millis(400)).await;
 

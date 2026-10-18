@@ -563,6 +563,14 @@ pub struct DigiStatus {
     /// rather than a flag so each mode can name its own reason.
     #[serde(default)]
     pub tx_refused: Option<String>,
+    /// The time-signal receiver: the carrier, the keying, the minute being
+    /// read and how far the computer's clock is from it. `None` in every other
+    /// mode, as the rest of these are. Boxed because it carries the symbol
+    /// ribbon and the scope trace, and is present for one mode only.
+    ///
+    /// Last in the struct for the reason [`DigiStatus::acars`] gives.
+    #[serde(default)]
+    pub timesig: Option<Box<crate::TimeSigStatus>>,
 }
 
 /// The running detail of the contact in progress: when it started and what has
@@ -1066,6 +1074,7 @@ impl DigiStatus {
             transmitting: false,
             tx_watchdog: false,
             tx_refused: None,
+            timesig: None,
             transcript: Vec::new(),
             config,
             text_rx: String::new(),
@@ -2192,6 +2201,10 @@ pub struct DigiConfig {
     /// so it governs only the extra, subtracting batch.
     #[serde(default)]
     pub ft8_depth: Ft8Depth,
+    /// The time-signal receiver's station and calibration — see
+    /// [`crate::TimeSigConfig`]. Appended last, for the usual reason.
+    #[serde(default)]
+    pub timesig: crate::TimeSigConfig,
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2435,6 +2448,7 @@ impl Default for DigiConfig {
             q65_mode: crate::Q65Mode::A30,
             fsk441_period: crate::Fsk441Period::P30,
             ft8_depth: Ft8Depth::default(),
+            timesig: crate::TimeSigConfig::default(),
         }
     }
 }

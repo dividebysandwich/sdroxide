@@ -1146,4 +1146,25 @@ pub enum Command {
     ResetModeDefaults {
         mode: Option<Mode>,
     },
+
+    /// Set the engine host's clock from the time the time-signal receiver
+    /// measured.
+    ///
+    /// Refused — with a notice saying why — while no believed time is in hand,
+    /// while the station is transmitting, or when the clock is already right.
+    /// A step of more than ten minutes is refused unless `force` is set: that
+    /// is the operator having confirmed it, because a clock that far out is
+    /// either one that was never set or a measurement that is wrong, and only
+    /// the operator can tell which.
+    ///
+    /// A remote client may send this only if the server allows it
+    /// (`allow_remote_clock_set` in its `config.toml`); otherwise the server
+    /// drops it. Appended for the usual reason.
+    SetSystemClock {
+        force: bool,
+    },
+
+    /// Configure the station's built-in NTP server (`ntpserver.json`).
+    /// Appended for the usual reason.
+    SetNtpServerConfig(crate::NtpServerConfig),
 }

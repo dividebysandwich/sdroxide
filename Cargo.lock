@@ -4796,6 +4796,7 @@ dependencies = [
  "sdroxide-airspyhf",
  "sdroxide-audio",
  "sdroxide-cat",
+ "sdroxide-clock",
  "sdroxide-config",
  "sdroxide-dsp",
  "sdroxide-elad",
@@ -4943,6 +4944,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdroxide-clock"
+version = "1.6.10"
+dependencies = [
+ "libc",
+ "sdroxide-types",
+ "tracing",
+]
+
+[[package]]
 name = "sdroxide-config"
 version = "1.6.10"
 dependencies = [
@@ -4988,6 +4998,7 @@ dependencies = [
  "sdroxide-deepcw",
  "sdroxide-dsp",
  "sdroxide-rade",
+ "sdroxide-timesig",
  "sdroxide-types",
  "serde",
  "serde_json",
@@ -5304,6 +5315,7 @@ dependencies = [
  "sdroxide-ais",
  "sdroxide-aprs",
  "sdroxide-ax25",
+ "sdroxide-clock",
  "sdroxide-config",
  "sdroxide-digi",
  "sdroxide-drm",
@@ -5320,6 +5332,7 @@ dependencies = [
  "sdroxide-skimmer",
  "sdroxide-solar",
  "sdroxide-tci",
+ "sdroxide-timesig",
  "sdroxide-types",
  "sdroxide-vdl2",
  "sdroxide-winlink",
@@ -5517,6 +5530,15 @@ dependencies = [
  "thiserror 2.0.20",
  "tracing",
  "tungstenite 0.30.0",
+]
+
+[[package]]
+name = "sdroxide-timesig"
+version = "1.6.10"
+dependencies = [
+ "num-complex",
+ "rustfft",
+ "sdroxide-types",
 ]
 
 [[package]]

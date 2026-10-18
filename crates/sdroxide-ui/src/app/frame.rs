@@ -755,6 +755,8 @@ impl eframe::App for SdroxideApp {
                                     self.navtex_panel(ui, &mut cmds, panel_h);
                                 } else if mode == Mode::Acars {
                                     self.acars_panel(ui, &mut cmds, panel_h);
+                                } else if mode == Mode::TimeSignal {
+                                    self.timesig_panel(ui, &mut cmds, panel_h);
                                 } else if mode.is_image() {
                                     self.image_panel(ui, &mut cmds, mode);
                                 } else if mode.is_rf_paint() {
@@ -1628,6 +1630,10 @@ impl SdroxideApp {
                     if !self.tci_srv_seeded {
                         self.tci_srv_edit = c.tci_server.clone();
                         self.tci_srv_seeded = true;
+                    }
+                    if !self.ntp_srv_seeded {
+                        self.ntp_srv_edit = c.ntp_server.clone();
+                        self.ntp_srv_seeded = true;
                     }
                     if !self.wsjtx_seeded {
                         self.wsjtx_edit = c.wsjtx.clone();

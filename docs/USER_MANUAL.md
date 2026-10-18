@@ -28,6 +28,7 @@ or connects to a remote sdroxide server.
     - [3.23 FST4](#323-fst4)
     - [3.24 Q65](#324-q65)
     - [3.25 FSK441](#325-fsk441)
+    - [3.26 Time signals](#326-time-signals-dcf77-msf-wwvb-jjy)
 4. [Skimmers (CW, PSK, RTTY)](#4-skimmers)
 5. [ISM band decoder (315 / 345 / 433 / 868 / 915 MHz devices)](#5-ism-band-decoder)
 6. [Settings](#6-settings)
@@ -6204,6 +6205,76 @@ sent between repeats so one pass' last word does not run into the next one's
 first. There is no automatic sequencing and no station being called: a
 meteor-scatter contact is arranged by ear and by the shorthand, which is what
 the mode has always been.
+
+### 3.26 Time signals (DCF77, MSF, WWVB, JJY)
+
+The national long-wave time stations send the date and time once a minute by keying their carrier: every second the carrier is reduced for a moment, and how long it stays reduced is the bit. The **TIME** mode decodes them and measures how far the clock of the computer running sdroxide is from the received time. It can then **set that clock** from the radio, and the built-in **NTP server** can hand the received time to other machines on your network.
+
+| Station | Frequency | Where | Heard |
+| --- | --- | --- | --- |
+| **DCF77** | 77.5 kHz | Mainflingen, Germany (PTB) | Most of Europe, by ground wave |
+| **MSF** | 60 kHz | Anthorn, United Kingdom (NPL) | The UK and north-west Europe |
+| **WWVB** | 60 kHz | Fort Collins, Colorado (NIST) | Most of North America, best at night |
+| **JJY 40** | 40 kHz | Mt. Ōtakadoya, Fukushima (NICT) | Eastern Japan |
+| **JJY 60** | 60 kHz | Mt. Hagane, Kyushu (NICT) | Western Japan |
+
+**What you need.** A receiver that tunes to 40–80 kHz, and an antenna for it. That rules out an RTL-SDR on its own; the usual routes are direct sampling, an up-converter, a receiver built for the low bands (Airspy HF+, RX888, SDRplay, KiwiSDR), or a transceiver with a general-coverage receiver. A ferrite rod, a small loop or an active whip all work. Long-wave noise from switch-mode supplies is the usual enemy, so keep the antenna away from the computer. The stations are strongest at night.
+
+**Tuning.** Pick **TIME** in the mode picker (or start with `--mode TIME`), then press the station's chip in the panel. That chooses the decoder and puts the dial 1 kHz below the carrier in USB, so the carrier sounds as a 1 kHz tone. The decoder finds the carrier itself anywhere within ±300 Hz of that tone, which covers a receiver whose reference is a few ppm out — and an up-converter's, which can be out by much more. The panel shows **carrier** with the frequency it found.
+
+**What the panel shows.**
+
+- **LOCK** once the start of each second has been found, which takes 10–30 seconds. The figure after it is how cleanly the keying reads. Below about 10 dB, minutes begin to fail their checks.
+- The **scope** on the left is the average second: the carrier through one second, averaged over the last fifteen or so. A good signal draws a sharp step at the left edge and the keying after it.
+- The **ribbon** is the current minute, one cell a second: dim for a 0, green for a 1, cyan for a marker, red for a second that could not be read. One red cell costs that minute, and the next minute starts again.
+- Under it, the last minute decoded, in UTC and in the station's own civil time. A minute is only *believed* once two consecutive ones decode and agree with each other (**2 minutes agree**). Single minutes can pass their parity checks and still be wrong, especially WWVB's, which has no parity at all.
+
+**How far the clock is out.** Once the time is believed, every second's edge is a measurement, and the panel shows the median of the last minute of them: *"This computer's clock is 12.4 ms slow"*, with the scatter beside it. Two corrections are made before that figure is shown:
+
+- **Travel time.** The signal takes about 3.3 ms per 1000 km to reach you. With your grid square set (**Settings → General**) the panel shows the distance and the delay, and adds it in. Without a locator, **no locator** is shown in yellow and the figure is late by that much.
+- **Receiver latency.** Every receiver delays its samples a little: USB buffers, the driver, the receive filters. On a local SDR that comes to around 10 ms, most of it the receive filters; on a network receiver it is much more. Measure it once by pressing **CALIBRATE** *while the computer's clock is known to be right*, for example while it is kept by NTP from the internet. Whatever offset is still shown at that moment is taken to be the receiver's latency and subtracted from then on. The calibrated value appears as a chip (**latency 6.2 ms ✕**); press it to forget it. It is remembered per radio.
+
+**Setting the clock.** **SET CLOCK** moves the computer's clock by the measured offset. It is refused, with a notice saying why, in these cases:
+- no believed time yet, or the last one is more than two minutes old;
+- the measurements scatter by more than ±50 ms;
+- the clock is already within a millisecond;
+- the station is transmitting.
+
+A move of more than ten minutes needs a second press (**CONFIRM SET CLOCK**). A clock that far out is either one that was never set or a decode gone wrong, and only you can tell which.
+
+Setting a clock needs administrator rights, and sdroxide asks for them only for that one step:
+
+- **Linux.** If sdroxide runs as root or has `CAP_SYS_TIME`, it sets the clock itself. Otherwise the desktop's own password dialog appears (`pkexec`). It runs the sdroxide binary as root with nothing but the offset to apply, and that process exits straight away.
+- **macOS.** The system's administrator dialog appears ("sdroxide wants to set the clock…"), with the same one-step helper behind it.
+- **Headless**, without root: there is nobody to type a password, so **SET CLOCK** is disabled. Use the NTP server instead (below).
+
+The step is made as an *offset*, so the time you spend typing the password makes no difference to the result.
+
+If something else keeps the clock — systemd-timesyncd, chrony or ntpd on Linux, or macOS's own "Set time and date automatically" — it may move the clock back to its own source afterwards. The panel names what it found. To keep radio time, switch that service off, or better, point it at sdroxide's NTP server.
+
+**AUTO** corrects the clock without being asked whenever it is more than 100 ms out, at most once every ten minutes, and never by a step that would need confirming. It is only available where no password is needed (root, or `CAP_SYS_TIME`), because a password dialog nobody asked for is not something to put on a screen.
+
+**Remote clients.** A client connected to a server ([§8](#8-remote-operation)) sees the panel, and the panel says that **SET CLOCK** acts on the *station's* computer. By default the server refuses it from a remote client and says so: operating the radio from elsewhere is not administering the machine it is plugged into. To allow it, the station's operator adds this line to that machine's `config.toml`:
+
+```toml
+allow_remote_clock_set = true
+```
+
+It must go among the plain settings at the top of the file, above the first `[section]`. The setting is read again on every attempt, so no restart is needed.
+
+**The NTP server.** **Settings → Servers → Built-in NTP server** serves the received time as a stratum 1 NTP server. While a recent reception is in hand it announces itself as synchronised, with the station named as its reference (`DCF`, `MSF`, `WWVB`, `JJY`). For two hours after the last reception it keeps serving, with an error estimate that grows with the time since. After that, or before the first reception, it answers as unsynchronised, and clients ignore it.
+
+It serves the computer's clock *corrected by the latest measurement*, so it gives radio time even if this computer's own clock is never set. The usual arrangement is to point this machine's own time service at it, which keeps the clock on radio time continuously with no password at all. For chrony:
+
+```
+server 127.0.0.1 port 1123 iburst
+```
+
+Port 123 is what every client expects, but on Linux, and on older macOS, a port below 1024 needs privilege. The server reports **permission denied** if it could not bind, and 1123 is the usual choice instead. Bind to `127.0.0.1` to serve only this machine, or to `0.0.0.0` to serve the network. The server only answers time requests and gives nothing else away; the settings are kept in `ntpserver.json` and belong to the station.
+
+**Accuracy.** On a clean long-wave signal the measurement is good to about a millisecond, once the travel time and the receiver's latency are accounted for. The desktop's own scheduling is the larger part of what is left, and the median over a minute takes most of that out. A receiver reached over the network (KiwiSDR, SpyServer, a remote sdroxide server) adds that network's delay and its jitter. The decode still works, but calibrating the latency only helps as far as that delay holds steady.
+
+**Not yet.** WWVB's phase-modulated code (since 2012), the short-wave stations (WWV, WWVH, CHU, BPM), BPC and RBU are not decoded yet. Neither is more than one station at a time.
 
 ## 4. Skimmers
 
@@ -14869,7 +14940,7 @@ and not the station's.
 
 | File | Format | Contents |
 | --- | --- | --- |
-| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `dismissed_update` (the published release whose update banner was dismissed, [§6.3](#63-ui-display-preferences-and-voice-announcements)), `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **Remote** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
+| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `dismissed_update` (the published release whose update banner was dismissed, [§6.3](#63-ui-display-preferences-and-voice-announcements)), `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), `allow_remote_clock_set` (whether a remote client may set this machine's clock from the time signal, [§3.26](#326-time-signals-dcf77-msf-wwvb-jjy)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **Remote** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
 | `radio.json` | JSON | Which radio interface is selected and everything that configures it — the CAT/HPSDR/TCI/SmartSDR/RTL-SDR/rtl_tcp/SpyServer/RX-888/Airspy HF+/SDRplay/PlutoSDR sections, the converter offset and stated tuning ranges, and the radio's sound-card device names. |
 | `digi.json` | JSON | Digital-mode operator settings: your callsign and grid, FT8/FT4/FT2 TX period, auto-sequence and message templates, the transmit-frequency hold (`hold_tx_freq`) and the per-band transmit offsets it pins (`tx_audio_hz`), the per-mode transmit-audio levels (`tx_audio_levels`, with `tx_audio_level_fm` / `tx_audio_level_ssb` as the level a mode with no entry of its own inherits), and the WSPR beacon's duty cycle, power and band-hop list. |
 | `memories.json` | JSON | Saved memory channels. |
@@ -14882,6 +14953,7 @@ and not the station's.
 | `net.json` | JSON | Network cockpit: DX cluster / POTA / SOTA / PSK / FreeDV Reporter / WSPRnet feed settings, and callsign-lookup / eQSL / QRZ / HamQTH / Club Log / LoTW credentials (stored in plaintext). |
 | `winlink/` | directory | The Winlink mailbox: `inbox/`, `outbox/`, `sent/` and `archive/`, one `.b2f` file per message holding it exactly as it rides the wire ([§11](#11-winlink-radio-email)). The account settings live in `net.json`, password included, in plaintext. |
 | `tciserver.json` | JSON | Built-in TCI server: enabled, bind address, port, advertised device name, whether clients may transmit, and the client limit. |
+| `ntpserver.json` | JSON | Built-in NTP server ([§3.26](#326-time-signals-dcf77-msf-wwvb-jjy)): enabled, bind address and port. Belongs to the engine's machine, like the other servers. |
 | `rigctld.json` | JSON | Built-in Hamlib rigctld server: enabled, bind address, port, reported rig name, whether clients may transmit, and the client limit. |
 | `wsjtx.json` | JSON | WSJT-X UDP broadcast: enabled, destination host and port, and the name clients see. |
 | `scanner.json` | JSON | The scanner: memories or a range, the range and channel step, the level that counts as busy, the dwell, how it resumes, and which memories to skip. |
@@ -16320,6 +16392,7 @@ using. Bind them under **Speech** on the Controls tab:
 | RTTY | RTTY keyboard mode (Baudot; selectable shift and baud), on a sideband. |
 | RTTY-FM | The same modem on an FM carrier, the way a club bulletin is still sent on VHF. |
 | NAVTEX | The maritime safety broadcast on 518, 490 and 4209.5 kHz: navigational and meteorological warnings, search-and-rescue bulletins and ice reports, framed into messages. Receive only. |
+| TIME | The long-wave time stations DCF77, MSF, WWVB and JJY: the minute decoded, how far the computer's clock is from it, setting that clock, and an NTP server serving the received time. Receive only. See [3.26](#326-time-signals-dcf77-msf-wwvb-jjy). |
 | OLIVIA | Robust MFSK keyboard mode (selectable tones/bandwidth). |
 | THOR | DominoEX-family IFK keyboard mode with FEC (THOR4…THOR32). |
 | FSQ | Fast Simple QSO — 33-tone IFK with directed (FSQCALL) messaging and images. |

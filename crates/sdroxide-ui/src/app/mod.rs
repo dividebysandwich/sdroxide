@@ -886,6 +886,11 @@ pub struct SdroxideApp {
     /// Live server status (bound address, connected clients, bind error) from
     /// `RadioEvent::TciServerStatus`.
     tci_srv_status: Option<TciServerStatus>,
+    // ── Built-in NTP server ──
+    /// UI-owned editable copy of the NTP server config, seeded from the
+    /// engine's station config like the TCI server's.
+    ntp_srv_edit: sdroxide_types::NtpServerConfig,
+    ntp_srv_seeded: bool,
     // ── Built-in rigctld server ──
     /// UI-owned editable copy of the rigctld config, seeded from the engine.
     rigctld_edit: sdroxide_types::RigctldConfig,
@@ -1597,6 +1602,8 @@ impl SdroxideApp {
             tci_srv_edit: sdroxide_types::TciServerConfig::default(),
             tci_srv_seeded: false,
             tci_srv_status: None,
+            ntp_srv_edit: sdroxide_types::NtpServerConfig::default(),
+            ntp_srv_seeded: false,
             net_cluster_cmds: String::new(),
             net_rbn_cmds: String::new(),
             net_log: Vec::new(),

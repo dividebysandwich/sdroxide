@@ -23,6 +23,7 @@ sdroxide-ax25.workspace = true
 sdroxide-aprs.workspace = true
 sdroxide-deepcw.workspace = true
 sdroxide-rade.workspace = true
+sdroxide-timesig.workspace = true
 # The JS8 candidate loop hands complex baseband between mfsk-core primitives.
 num-complex.workspace = true
 mfsk-core = { version = "0.10.0", default-features = false, features = ["std", "ft8", "ft4", "wspr", "msk144", "jt65", "jt9", "fst4", "q65", "parallel", "fft-rustfft"] }

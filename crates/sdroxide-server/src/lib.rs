@@ -60,6 +60,14 @@ pub enum ServerError {
 /// empty, leaves the server open to anyone who can reach the port.
 pub type AccessFn = Box<dyn Fn() -> sdroxide_types::RemoteAccess + Send + Sync>;
 
+/// Whether a remote client may set the station computer's clock
+/// (`Command::SetSystemClock`), asked each time one tries.
+///
+/// A question rather than a flag for [`AccessFn`]'s reason: the answer is a
+/// line in a file on this machine, and changing it should not mean restarting
+/// the server under whoever is connected.
+pub type ClockSetFn = Box<dyn Fn() -> bool + Send + Sync>;
+
 pub use probe::ProbeFn;
 
 /// How this station puts another radio in its roster: create the radio's
@@ -161,6 +169,14 @@ pub struct ServerParams {
     /// every client's, which for a headless station means nobody has one at
     /// all. See [`RadioPowerFn`].
     pub radio_power: Option<RadioPowerFn>,
+    /// Whether remote clients may set this computer's clock from the time the
+    /// receiver decoded. `None` — the default — refuses them all.
+    ///
+    /// Setting a computer's clock is an administrator's act on *this* machine:
+    /// it moves every log, certificate check and scheduled job on it. The
+    /// sign-in gate decides who may operate the radio; it says nothing about
+    /// who administers the box, so this is a separate opt-in, made here.
+    pub remote_clock_set: Option<ClockSetFn>,
 }
 
 pub(crate) struct SessionTx {
@@ -306,9 +322,16 @@ pub(crate) struct Station {
     /// one at a time by itself (it awaits each one); this is what makes two
     /// sessions do the same.
     edit: Mutex<()>,
+    /// See [`ServerParams::remote_clock_set`].
+    clock_set: Option<ClockSetFn>,
 }
 
 impl Station {
+    /// Whether a remote client may set this computer's clock right now.
+    pub(crate) fn remote_clock_set_allowed(&self) -> bool {
+        self.clock_set.as_ref().is_some_and(|f| f())
+    }
+
     /// The radio a client asked for by id, or `None` — which the route turns
     /// into a 404 rather than quietly handing over a different radio.
     pub(crate) fn radio(&self, id: u32) -> Option<Arc<Shared>> {
@@ -639,6 +662,7 @@ pub async fn serve(params: ServerParams) -> Result<(), ServerError> {
         rename: params.rename_radio,
         power: params.radio_power,
         edit: Mutex::new(()),
+        clock_set: params.remote_clock_set,
     });
 
     // The roster the station started with, through the same path a radio added

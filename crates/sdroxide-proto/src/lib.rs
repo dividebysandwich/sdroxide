@@ -1546,7 +1546,15 @@ use sdroxide_types::{
 /// ([`sdroxide_types::RotatorProtocol`], a unit enum) on its tail — rotctld or
 /// PSTRotator's UDP control (issue #638). It rides `Command::SetRotatorConfig`
 /// and `StationConfig::rotator` whole, so a v178 peer reads it out of step.
-pub const PROTO_VERSION: u16 = 179;
+///
+/// v180: time signals. `Mode::TimeSignal` is appended to
+/// [`sdroxide_types::Mode`]; [`sdroxide_types::DigiConfig`] gains `timesig`
+/// ([`sdroxide_types::TimeSigConfig`]) and [`sdroxide_types::DigiStatus`] gains
+/// `timesig` on their tails; [`sdroxide_types::StationConfig`] gains
+/// `ntp_server`; and `Command::SetSystemClock` and
+/// `Command::SetNtpServerConfig` are appended. A v179 peer would read every
+/// digital status and config out of step.
+pub const PROTO_VERSION: u16 = 180;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

@@ -1,12 +1,13 @@
 //! The persisted configuration that belongs to the *station* rather than to
 //! the screen in front of it.
 //!
-//! Seven files, all written next to each other in the config directory and all
+//! Eight files, all written next to each other in the config directory and all
 //! owned by the engine: the network cockpit (`net.json`), the two built-in
 //! control servers (`rigctld.json`, `tciserver.json`), the WSJT-X UDP
 //! broadcast (`wsjtx.json`), the operator's satellite additions
-//! (`satellites.json`), the antenna-rotator client (`rotator.json`) and the
-//! external transmit/receive switch (`relay.json`).
+//! (`satellites.json`), the antenna-rotator client (`rotator.json`), the
+//! external transmit/receive switch (`relay.json`) and the NTP server
+//! (`ntpserver.json`).
 //!
 //! They are bundled into one announcement because they answer one question —
 //! "what is this station set up to do?" — and because a remote client has to
@@ -88,4 +89,11 @@ pub struct StationConfig {
     ///
     /// Appended last, for the usual reason.
     pub digi_presets: Vec<crate::DigiPreset>,
+    /// The built-in NTP server, which serves the time the time-signal
+    /// receiver measured (`ntpserver.json`). The engine host's, like the
+    /// other servers here: a remote client's settings dialog has to edit the
+    /// station's copy, not one on its own disk.
+    ///
+    /// Appended last, for the usual reason.
+    pub ntp_server: crate::NtpServerConfig,
 }

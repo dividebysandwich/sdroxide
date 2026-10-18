@@ -192,6 +192,7 @@ async fn a_client_adds_renames_switches_and_closes_the_stations_radios() {
             }
             Ok(sdroxide_config::load_radios().is_enabled(id))
         })),
+        remote_clock_set: None,
     }));
     tokio::time::sleep(Duration::from_millis(400)).await;
 

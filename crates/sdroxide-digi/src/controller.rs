@@ -146,6 +146,19 @@ pub enum DigiAction {
     /// Not `Decodes`, for the same reason [`DigiAction::WsprSpots`] is not: a
     /// beacon reception is a measurement, not a message addressed to anyone.
     Pi4Spots(Vec<sdroxide_types::Pi4Spot>),
+    /// The time-signal receiver's measurement of the computer's clock, for the
+    /// station's clock hub (and through it the NTP server). Sent about once a
+    /// second while the received time is believed.
+    TimeFix {
+        /// How far the clock is behind the received time, ns.
+        offset_ns: i64,
+        /// The scatter of the measurements behind it, ns.
+        jitter_ns: i64,
+        /// The computer's clock when the newest of them was made.
+        at: SystemTime,
+        /// The station's NTP reference identifier.
+        refid: [u8; 4],
+    },
 }
 
 struct DecodeJob {

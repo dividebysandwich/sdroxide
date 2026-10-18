@@ -213,6 +213,11 @@ pub struct Settings {
     pub swr_guard: bool,
     /// The SWR ratio the guard trips at, e.g. `2.5` = 2.5:1.
     pub swr_limit: f32,
+    /// Let remote clients set this computer's clock from the time the
+    /// receiver decoded. Off by default: operating the radio from somewhere
+    /// else is not administering this machine, and only someone who can edit
+    /// this file — the machine's own operator — can grant it.
+    pub allow_remote_clock_set: bool,
     /// Preferred audio output device name; `None` = system default.
     pub audio_output: Option<String>,
     /// Which speaker channel(s) the received audio reaches (#654). `Both` is
@@ -281,6 +286,7 @@ impl Default for Settings {
             // disconnected feeder or a stuck relay.
             swr_guard: true,
             swr_limit: 2.5,
+            allow_remote_clock_set: false,
             audio_output: None,
             audio_routing: sdroxide_types::AudioRouting::default(),
             audio_input: None,
@@ -1912,6 +1918,17 @@ pub fn load_relay_config() -> sdroxide_types::RelayConfig {
 
 pub fn save_relay_config(cfg: &sdroxide_types::RelayConfig) -> Result<(), ConfigError> {
     save_json("relay.json", cfg)
+}
+
+/// The built-in NTP server, which serves the time the time-signal receiver
+/// measured. Station-wide and owned by the engine, like the relay above: the
+/// computer has one clock and one port 123, however many radios it drives.
+pub fn load_ntp_server_config() -> sdroxide_types::NtpServerConfig {
+    load_json("ntpserver.json")
+}
+
+pub fn save_ntp_server_config(cfg: &sdroxide_types::NtpServerConfig) -> Result<(), ConfigError> {
+    save_json("ntpserver.json", cfg)
 }
 
 // ── Broadcast station schedules ──────────────────────────────────────────────

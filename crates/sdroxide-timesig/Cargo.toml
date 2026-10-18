@@ -1,0 +1,21 @@
+[package]
+name = "sdroxide-timesig"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Standard time-signal decoder: DCF77, MSF, WWVB and JJY from receive audio, to a UTC instant tied to a sample."
+
+# Pure signal processing: no I/O, no threads, and no clock of its own. Audio
+# goes in and what comes out names a *sample* — "the minute that starts here is
+# 14:37 UTC" — so the question of what the computer's clock said when that
+# sample arrived belongs to whoever is holding the clock (the digi controller),
+# and every test here can run on synthetic audio at any speed.
+#
+# Every time code is written from the broadcaster's own published description,
+# cited in the module that decodes it. Nothing is ported from an existing
+# decoder.
+
+[dependencies]
+sdroxide-types.workspace = true
+num-complex.workspace = true
+rustfft.workspace = true
