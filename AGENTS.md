@@ -2626,6 +2626,33 @@ reaches for `Foreground` in a window again, and it names both chips when it does
 an open PR**, per the house rule, and `claude/funny-wright-aujoii`, which holds
 an unmerged DAB probe and is the operator's to decide on.
 
+**2026-10-18, and the disk was the story rather than `.git`.** The operator asked
+for the SDRuno branches out and "what else can go", so: `fork/sdruno-clone` and
+`fork/sdruno-look` deleted (local and remote), the three `claude/*` branches whose
+PRs are merged (#94, #96, #97), the stale `wt537` worktree pruned, reflogs expired
+and `gc --prune=now` run — **`.git` 362 MB → 333 MB**. The remaining 209 MB of it
+is `.git/modules`, the vendored submodules' own histories, which are left alone.
+
+**`target/` was 999 GB** — `debug/` alone 615 GB of it, and `release/deps` held
+**2839 linked executables at 266 GB**, most of them stale test binaries from older
+builds that cargo never prunes. Deleted: `target/debug`, the extensionless
+executables in `release/deps` (never the `.rlib`s or the shared libraries),
+`release/examples`, `wasm32-unknown-unknown`, `doc`. **`target/` is now 106 GB**,
+the gate is still silent, and the test binaries *relink* rather than recompile —
+34 seconds for a package's tests. **What is left is `target/release`: 374 GB → 43
+GB of rlibs + 38 GB of vendored-C build output.** The lesson for next time: the
+number that grows is not the repository, it is the linked test binaries, and they
+are the cheap thing to delete because relinking is seconds.
+
+**Two branches are deliberately kept, and neither is an oversight.**
+`fork/antenna-tool` holds **18 commits of an unmerged antenna-analysis tool** (a
+NEC-style solver validated against a published OWA Yagi design, ground models, an
+SVG pattern preview) — it has no AGENTS record at all, which is exactly why it
+must not be deleted on a housekeeping pass: it is work, not history.
+`claude/funny-wright-aujoii` is remote-only, one commit (a probe that lists a DAB
+capture's FIC data services) on a base 25,000 lines behind `main`, and it is the
+seed of the deferred MOT-slideshow work. Both are the operator's to call.
+
 ### An issue template that cannot be ignored
 
 We **had** a version field and it failed three ways: last in a list of six,
