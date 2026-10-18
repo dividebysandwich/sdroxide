@@ -14,6 +14,7 @@ and the [README](https://github.com/madmedicnl/sdroxide-brown#readme).
 ## [Unreleased]
 
 ### Fixed
+- **The browser client gets its sound back after a long spell in the background.** A playback context the browser had stopped was never replaced, so the page stayed silent for the rest of the session with nothing on screen to say why.
 - **DAB plays at the other modes' level**, 9 dB down from where it was, and its VU meter swings with the music instead of sitting between 0 and +4.
 
 ### Added
