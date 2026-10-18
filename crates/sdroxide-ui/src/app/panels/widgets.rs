@@ -355,6 +355,15 @@ pub(in crate::app) fn slot_phase_heard_s(now: f64, slot_s: f64, offset_s: Option
     slot_phase_s(now - offset_s.unwrap_or(0.0) as f64, slot_s, 0)
 }
 
+/// Where the closing stretch of an FT8 cycle begins, as a fraction of the slot.
+///
+/// The bar turns green from the end of the 12.64 s burst to the end of the 15 s
+/// slot. It marks the end of the cycle and says nothing about how long a decode
+/// takes. Only FT8's slot has it: the other slotted modes keep one colour.
+pub(in crate::app) fn slot_green_start_frac(t: SlotTiming) -> Option<f32> {
+    (t.slot_s == 15.0 && t.burst_s == 12.64).then(|| (t.burst_s / t.slot_s) as f32)
+}
+
 /// The slot clock: how far through its turn this station is, whichever way
 /// round it is spending it.
 ///
@@ -387,8 +396,12 @@ pub(in crate::app) fn slot_bar(
     p.rect_filled(bar, 0.0, crate::theme::gray(24));
 
     let frac = (into_slot / t.slot_s).clamp(0.0, 1.0) as f32;
+    let tail_from = slot_green_start_frac(t);
+    // The part already drawn keeps the state's colour; the bar goes on from
+    // there in green once the cycle enters its closing stretch.
+    let head = tail_from.map_or(frac, |g| frac.min(g));
     let mut fill = bar;
-    fill.set_width(bar.width() * frac);
+    fill.set_width(bar.width() * head);
     p.rect_filled(
         fill,
         0.0,
@@ -398,6 +411,15 @@ pub(in crate::app) fn slot_bar(
             SlotState::Listening => crate::theme::CYAN_DIM(),
         },
     );
+    if let Some(g) = tail_from.filter(|g| frac > *g) {
+        let x0 = bar.left() + bar.width() * g;
+        let x1 = bar.left() + bar.width() * frac;
+        p.rect_filled(
+            egui::Rect::from_min_max(egui::pos2(x0, bar.top()), egui::pos2(x1, bar.bottom())),
+            0.0,
+            crate::theme::GREEN(),
+        );
+    }
 
     // While keyed, a mark where the carrier stops. FT8 stops 13.1 s into its
     // 15, WSPR 111.6 s into its 120; without the mark the rest of the bar reads
@@ -577,6 +599,64 @@ mod tests {
             let p = slot_phase_s(SLOT as f64 + 3.7, t.slot_s, 0);
             assert!((0.0..t.slot_s).contains(&p), "{}: {p}", speed.label());
         }
+    }
+
+    fn bar_fills(into_s: f64, t: SlotTiming) -> Vec<(egui::Rect, Color32)> {
+        let ctx = egui::Context::default();
+        let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            slot_bar(ui, t, into_s, SlotState::Listening);
+        });
+        let mut fills: Vec<_> = out
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Rect(r) if r.rect.height() == 5.0 => Some((r.rect, r.fill)),
+                _ => None,
+            })
+            .collect();
+        fills.remove(0); // the track
+        fills.retain(|f| f.0.width() > 0.0);
+        fills
+    }
+
+    #[test]
+    fn only_the_ft8_slot_has_a_green_tail() {
+        let ft8 = Mode::Ft8.slot_timing().unwrap();
+        assert!((slot_green_start_frac(ft8).unwrap() - 12.64 / 15.0).abs() < 1e-6);
+        assert_eq!(slot_green_start_frac(Mode::Ft4.slot_timing().unwrap()), None);
+        assert_eq!(slot_green_start_frac(Mode::Ft2.slot_timing().unwrap()), None);
+        assert_eq!(slot_green_start_frac(wspr()), None);
+    }
+
+    #[test]
+    fn the_ft8_bar_continues_in_green_after_12_64_s() {
+        let t = Mode::Ft8.slot_timing().unwrap();
+        let before = bar_fills(12.0, t);
+        assert_eq!(before.len(), 1, "no green before 12.64 s");
+        assert_eq!(before[0].1, crate::theme::CYAN_DIM());
+
+        let after = bar_fills(14.0, t);
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[0].1, crate::theme::CYAN_DIM(), "drawn part keeps its colour");
+        assert_eq!(after[1].1, crate::theme::GREEN());
+        let (a, b) = (after[0].0, after[1].0);
+        assert!((a.width() / (a.width() + b.width()) - 12.64 / 14.0).abs() < 1e-3);
+        assert!((a.right() - b.left()).abs() < 1e-3, "no gap between the two");
+
+        let end = bar_fills(15.0, t);
+        assert_eq!(end.len(), 2);
+        assert!(
+            (end[1].0.right() - end[0].0.left() - 1.0 * (end[0].0.width() + end[1].0.width()))
+                .abs()
+                < 1e-3
+        );
+        assert!(bar_fills(0.0, t).is_empty());
+    }
+
+    #[test]
+    fn other_slots_stay_one_colour() {
+        let t = Mode::Ft4.slot_timing().unwrap();
+        assert_eq!(bar_fills(t.slot_s * 0.95, t).len(), 1);
     }
 }
 
