@@ -184,6 +184,7 @@ pub(in crate::app) fn settings_controls_tab(
 
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(6.0);
     ui.label(RichText::new("Panadapter mouse").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(6.0);
@@ -239,6 +240,7 @@ pub(in crate::app) fn settings_controls_tab(
 
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(6.0);
     ui.label(RichText::new("Mouse buttons").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(4.0);
@@ -293,6 +295,7 @@ pub(in crate::app) fn settings_controls_tab(
 
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(6.0);
     settings_midi_section(
         ui,

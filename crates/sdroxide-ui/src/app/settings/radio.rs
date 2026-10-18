@@ -1025,6 +1025,7 @@ fn cat_radio_audio(ui: &mut egui::Ui) {
     // radio's sit together. What is left here is what only this tab knows.
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(6.0);
     ui.label(RichText::new("Radio audio (sound card)").strong());
     super::note(
@@ -1044,6 +1045,7 @@ pub(in crate::app) fn settings_usb_audio_tab(ui: &mut egui::Ui) {
     // radio's sit together. What is left here is what only this tab knows.
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(6.0);
     ui.label(RichText::new("Radio audio (sound card)").strong());
     super::note(
@@ -1111,6 +1113,7 @@ pub(in crate::app) fn settings_atsmini_tab(
     // radio's sit together. What is left here is what only this tab knows.
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(6.0);
     ui.label(RichText::new("Radio audio (sound card)").strong());
     super::note(
@@ -1142,6 +1145,7 @@ pub(in crate::app) fn settings_atsmini_tab(
     // own is a panel that adds a second one.
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(6.0);
     ui.label(RichText::new("Live controls").strong());
     ui.horizontal_wrapped(|ui| {
@@ -1174,6 +1178,7 @@ pub(in crate::app) fn settings_atsmini_tab(
     );
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.label(RichText::new("Memories").strong());
@@ -1630,6 +1635,7 @@ fn hpsdr_oc_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
     }
     ui.add_space(8.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(4.0);
     ui.label(
         RichText::new("Open-collector outputs by band")
@@ -2197,6 +2203,7 @@ pub(in crate::app) fn settings_rtltcp_tab(
 
     ui.add_space(8.0);
     ui.separator();
+    ui.end_row();
     ui.label(RichText::new("SDRplay server (rsp_tcp)").strong());
     super::note(
         ui,
@@ -4087,6 +4094,7 @@ impl SdroxideApp {
         });
         if caps.gains.iter().any(|g| g.direction == Direction::Tx) {
             ui.separator();
+            ui.end_row();
             ui.label(RichText::new("TX gains").strong().color(Color32::from_rgb(240, 90, 60)));
             egui::Grid::new("tx-gains").num_columns(2).show(ui, |ui| {
                 for g in caps.gains.iter().filter(|g| g.direction == Direction::Tx) {
@@ -4121,6 +4129,7 @@ impl SdroxideApp {
         let tx_ports = caps.antennas_tx.len() > 1;
         if rx_ports || tx_ports {
             ui.separator();
+            ui.end_row();
             ui.label(RichText::new("Antennas").strong());
             egui::Grid::new("antennas").num_columns(2).show(ui, |ui| {
                 if rx_ports {
@@ -4302,6 +4311,7 @@ pub(in crate::app) fn settings_soapy_tab(
     }
 
     ui.separator();
+    ui.end_row();
     ui.label(RichText::new(format!("{} settings", caps.driver)).strong());
     egui::Grid::new("soapy-settings").num_columns(2).show(ui, |ui| {
         for st in &caps.settings {
@@ -6527,6 +6537,7 @@ pub(in crate::app) fn settings_hackrf_tab(
 
     ui.add_space(8.0);
     ui.separator();
+    ui.end_row();
     ui.label(RichText::new("Transmit").strong());
     ui.add_space(4.0);
 
@@ -7193,6 +7204,7 @@ pub(in crate::app) fn settings_sdrplay_tab(
 
         ui.add_space(6.0);
         ui.separator();
+        ui.end_row();
         ui.label(RichText::new("Second tuner").strong());
         super::note(
             ui,
@@ -7756,6 +7768,7 @@ pub(in crate::app) fn settings_lime_tab(
     if chains > 1 || cfg.lime.aux.role != LimeAuxRole::Off {
         ui.add_space(6.0);
         ui.separator();
+        ui.end_row();
         ui.label(egui::RichText::new("Second aerial").strong());
         ui.add(
             egui::Label::new(
@@ -8057,6 +8070,7 @@ pub(in crate::app) fn settings_lime_tab(
 
     ui.add_space(6.0);
     ui.separator();
+    ui.end_row();
     ui.label(egui::RichText::new("Transmit").strong());
     crate::chrome::checkbox(ui, &mut cfg.lime.tx_enabled, "Enabled").on_hover_text(
         "With this off the interface publishes no transmit channel at all, so nothing can key \
@@ -8149,6 +8163,7 @@ pub(in crate::app) fn settings_lime_tab(
 
     ui.add_space(6.0);
     ui.separator();
+    ui.end_row();
     ui.label(egui::RichText::new("LimeRFE front end").strong());
 
     // Everything below reaches an open board through one setting rather than a

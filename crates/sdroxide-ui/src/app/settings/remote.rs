@@ -139,6 +139,7 @@ pub(in crate::app) fn settings_remote_tab(
 
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(6.0);
     super::note(
         ui,

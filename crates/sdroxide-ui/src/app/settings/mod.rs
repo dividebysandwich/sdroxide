@@ -196,7 +196,14 @@ impl ApplyInterface {
 /// One place, so a note written tomorrow is elided like the rest and the two
 /// cannot drift apart.
 pub(in crate::app) fn note(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    ui.add(egui::Label::new(RichText::new(text).weak()).truncate()).on_hover_text(text)
+    let r = ui.add(egui::Label::new(RichText::new(text).weak()).truncate()).on_hover_text(text);
+    // A note is full width, so it ends the row it is in. These pages are drawn
+    // inside a two-column `Grid` (`iface-grid`), and a widget that does not end
+    // its row leaves the next one in the *second* column — which is how a page
+    // ends up with its sections shifted a column and its rows piled up.
+    // Outside a Grid this is what every other call site here already does.
+    ui.end_row();
+    r
 }
 
 /// The same, a half point smaller — the few notes that asked for it.
@@ -211,7 +218,9 @@ pub(in crate::app) fn note_at(ui: &mut egui::Ui, text: &str, size: Option<f32>) 
         Some(size) => RichText::new(text).size(size),
         None => RichText::new(text),
     };
-    ui.add(egui::Label::new(rich.weak()).truncate()).on_hover_text(text)
+    let r = ui.add(egui::Label::new(rich.weak()).truncate()).on_hover_text(text);
+    ui.end_row();
+    r
 }
 
 /// Whether a window this wide gets the menu or the strip.
@@ -623,6 +632,7 @@ fn transverter_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
 
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(4.0);
     ui.label(RichText::new("Transverters").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(2.0);
@@ -750,6 +760,7 @@ fn transverter_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
 fn drive_ceiling_row(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(4.0);
     ui.label(
         RichText::new("Maximum transmit drive").size(14.0).strong().color(crate::theme::CYAN()),
@@ -797,6 +808,7 @@ fn drive_trim_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
 
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(4.0);
     ui.label(
         RichText::new("Transmit drive by band").size(14.0).strong().color(crate::theme::CYAN()),
@@ -2150,6 +2162,7 @@ impl SdroxideApp {
                 });
                 ui.add_space(6.0);
                 ui.separator();
+                ui.end_row();
                 ui.add_space(6.0);
                 ui.vertical(|ui| {
                     // No width set: the page takes whatever the menu left, which
@@ -2264,6 +2277,7 @@ impl SdroxideApp {
                 );
                 ui.add_space(10.0);
                 ui.separator();
+                ui.end_row();
                 ui.add_space(6.0);
 
                 ui.label(RichText::new("Station").size(14.0).strong().color(crate::theme::CYAN()));
@@ -2465,25 +2479,30 @@ impl SdroxideApp {
 
                 ui.add_space(10.0);
                 ui.separator();
+                ui.end_row();
                 ui.add_space(6.0);
                 self.settings_transfer(ui, io.settings_export, io.settings_import);
 
                 ui.add_space(10.0);
                 ui.separator();
+                ui.end_row();
                 ui.add_space(6.0);
 
                 ui.add_space(10.0);
                 ui.separator();
+                ui.end_row();
                 ui.add_space(6.0);
                 self.settings_swr_guard(ui, cmds);
 
                 ui.add_space(10.0);
                 ui.separator();
+                ui.end_row();
                 ui.add_space(6.0);
                 self.settings_mode_defaults(ui, cmds);
 
                 ui.add_space(10.0);
                 ui.separator();
+                ui.end_row();
                 ui.add_space(6.0);
                 // This screen's own speaker and microphone, and nothing else.
                 // The *radio's* sound card and the gain on what comes back off
@@ -2501,6 +2520,7 @@ impl SdroxideApp {
                 if let Some(url) = self.ctrl.peer_url() {
                     ui.add_space(10.0);
                     ui.separator();
+                    ui.end_row();
                     ui.add_space(6.0);
                     signed_in_station(ui, &url);
                 }
@@ -2508,6 +2528,7 @@ impl SdroxideApp {
                 if let Some(access) = io.access_edit.as_deref_mut() {
                     ui.add_space(10.0);
                     ui.separator();
+                    ui.end_row();
                     ui.add_space(6.0);
                     remote_access_settings(ui, access);
                 }
@@ -2521,6 +2542,7 @@ impl SdroxideApp {
                 {
                     ui.add_space(10.0);
                     ui.separator();
+                    ui.end_row();
                     ui.add_space(6.0);
                     settings_remote_tab(
                         ui,
@@ -3017,6 +3039,7 @@ impl SdroxideApp {
                     drive_ceiling_row(ui, cfg);
                     drive_trim_table(ui, cfg);
                     ui.separator();
+                    ui.end_row();
                     ui.label(
                         RichText::new("Transmit EQ")
                             .size(14.0)
@@ -3069,6 +3092,8 @@ impl SdroxideApp {
                     );
                 }
                 ui.separator();
+
+                ui.end_row();
 
                 // Read out before the match: the arms below hand `io.radio_edit`
                 // to a tab function, which cannot happen while `cfg` — a borrow
@@ -3330,6 +3355,7 @@ impl SdroxideApp {
                 // the panel above has not finished reporting.
                 ui.add_space(10.0);
                 ui.separator();
+                ui.end_row();
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     // The same button either way: it reopens whichever radio
@@ -3402,6 +3428,7 @@ impl SdroxideApp {
                     }
                     ui.add_space(10.0);
                     ui.separator();
+                    ui.end_row();
                     ui.add_space(6.0);
                     ui.horizontal_wrapped(|ui| {
                         ui.label("Speed:");
@@ -3451,11 +3478,13 @@ impl SdroxideApp {
                 {
                     ui.add_space(10.0);
                     ui.separator();
+                    ui.end_row();
                     ui.add_space(6.0);
                     ui_tab::workspaces_section(ui, io.ui_edit, io.workspaces, io.workspace_name);
                 }
                 ui.add_space(10.0);
                 ui.separator();
+                ui.end_row();
                 ui.add_space(6.0);
                 ui_tab::speech_settings(
                     ui,
@@ -4159,6 +4188,7 @@ impl SdroxideApp {
                 );
                 ui.add_space(12.0);
                 ui.separator();
+                ui.end_row();
                 ui.add_space(8.0);
                 settings_tci_server_tab(
                     ui,
@@ -4169,10 +4199,12 @@ impl SdroxideApp {
                 );
                 ui.add_space(12.0);
                 ui.separator();
+                ui.end_row();
                 ui.add_space(8.0);
                 settings_wsjtx_tab(ui, io.wsjtx_edit, self.wsjtx_seeded, io.wsjtx_apply);
                 ui.add_space(12.0);
                 ui.separator();
+                ui.end_row();
                 ui.add_space(8.0);
                 settings_rotator_tab(
                     ui,
@@ -4264,6 +4296,7 @@ impl SdroxideApp {
         if let Some(owner) = self.lent_to() {
             ui.add_space(8.0);
             ui.separator();
+            ui.end_row();
             ui.add_space(6.0);
             ui.label(
                 RichText::new(format!(
@@ -4313,6 +4346,7 @@ impl SdroxideApp {
         let pan = &mut cfg.panadapter;
         ui.add_space(8.0);
         ui.separator();
+        ui.end_row();
         ui.add_space(6.0);
         ui.label(RichText::new("Panadapter").size(14.0).strong().color(crate::theme::CYAN()));
         ui.add_space(4.0);
@@ -4861,6 +4895,7 @@ impl SdroxideApp {
         }
         ui.add_space(4.0);
         ui.separator();
+        ui.end_row();
         ui.add_space(6.0);
     }
 
@@ -4899,6 +4934,7 @@ impl SdroxideApp {
                 return;
             }
             ui.separator();
+            ui.end_row();
             ui.label(
                 RichText::new(format!(
                     "Close {} on {where_}? Its configuration stays on that machine; the tab here \

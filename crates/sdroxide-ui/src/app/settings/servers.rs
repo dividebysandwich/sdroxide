@@ -77,6 +77,7 @@ pub(in crate::app) fn settings_wsjtx_tab(
     // ── N1MM+, the other dialect ──
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(6.0);
     ui.label(
         RichText::new("N1MM+ contactinfo broadcast")

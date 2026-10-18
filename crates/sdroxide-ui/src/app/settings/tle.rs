@@ -57,10 +57,12 @@ pub(in crate::app) fn settings_tle_tab(ui: &mut egui::Ui, io: &mut SettingsIo) {
     settings_tle_subscriptions(ui, io);
     ui.add_space(12.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(8.0);
     settings_tle_pasted(ui, io);
     ui.add_space(12.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(8.0);
     settings_tle_freqs(ui, io);
 }

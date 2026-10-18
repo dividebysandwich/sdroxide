@@ -553,6 +553,7 @@ fn relay_band_table(ui: &mut egui::Ui, cfg: &mut RelayConfig) {
     }
     ui.add_space(10.0);
     ui.separator();
+    ui.end_row();
     ui.add_space(4.0);
     ui.label(RichText::new("Band decoder outputs").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(2.0);
