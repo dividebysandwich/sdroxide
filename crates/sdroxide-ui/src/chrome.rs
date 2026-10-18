@@ -1588,7 +1588,13 @@ impl StyledCombo for egui::ComboBox {
             ChromeStyle::Terminal => self.icon(terminal_arrow),
             _ => self,
         };
-        reskin(ui, Skin::Frame, Depth::Raised, move |ui| combo.show_ui(ui, menu_contents))
+        let out =
+            reskin(ui, Skin::Frame, Depth::Raised, move |ui| combo.show_ui(ui, menu_contents));
+        // A combo's y is traced like a chip's and a slider's. It was the one
+        // skinned widget without a number beside it, which is why the rows that
+        // hold combos could pile while the numbers said nothing about them.
+        trace_row(ui, out.response.rect, "cmb");
+        out
     }
 }
 

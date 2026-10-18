@@ -3279,251 +3279,258 @@ impl SdroxideApp {
                 // to a tab function, which cannot happen while `cfg` — a borrow
                 // of that same field — is still alive.
                 let backend = cfg.backend;
-                match backend {
-                    Backend::Soapy => {
-                        self.settings_device_tab(ui, cmds);
-                        ui.add_space(4.0);
-                        settings_soapy_tab(
+                // **A backend section is a vertical stack, not a row.** A nested
+                // `Grid` inside a cell of the page grid reports no height, so the outer
+                // row collapsed to its minimum and the section's content was drawn over
+                // the rows below it — two sections at the same y, each compressed.
+                // One `ui.vertical` makes the section a single cell the grid can measure.
+                ui.vertical(|ui| {
+                    match backend {
+                        Backend::Soapy => {
+                            self.settings_device_tab(ui, cmds);
+                            ui.add_space(4.0);
+                            settings_soapy_tab(
+                                ui,
+                                self.caps.as_ref(),
+                                io.radio_edit,
+                                io.apply_iface,
+                                cmds,
+                            );
+                            ui.add_space(4.0);
+                            settings_soapy_devices(
+                                ui,
+                                self.soapy_devices.as_deref(),
+                                io.soapy_rescan,
+                                io.can_probe,
+                            );
+                        }
+                        Backend::Hpsdr => settings_hpsdr_tab(
                             ui,
+                            &self.hpsdr_devices,
+                            io.radio_edit,
+                            io.hpsdr_discover,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        Backend::Cat => settings_cat_tab(
+                            ui,
+                            &self.serial_ports,
+                            io.radio_edit,
+                            self.caps.as_ref(),
+                            &self.state.antenna_rx,
+                            self.state.rx_antenna,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        Backend::UsbAudio => settings_usb_audio_tab(ui),
+                        // No `apply_iface`: this panel does not draw an Apply row,
+                        // because the shared one below does it for every backend.
+                        Backend::AtsMini => settings_atsmini_tab(
+                            ui,
+                            self.atsmini_memories.as_deref(),
+                            io.radio_edit,
+                            cmds,
+                        ),
+                        Backend::Tci => settings_tci_tab(
+                            ui,
+                            io.radio_edit,
+                            io.tci_test,
+                            &self.tci_test_result,
+                            io.can_probe,
+                        ),
+                        Backend::IcomNet => settings_icomnet_tab(
+                            ui,
+                            io.radio_edit,
+                            self.caps.as_ref(),
+                            &self.state.antenna_rx,
+                            self.state.rx_antenna,
+                            io.icomnet_test,
+                            io.icomnet_copy_report,
+                            &self.icomnet_test_result,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        Backend::SmartSdr => settings_smartsdr_tab(
+                            ui,
+                            &self.smartsdr_devices,
+                            io.radio_edit,
+                            io.smartsdr_discover,
+                            io.smartsdr_test,
+                            io.smartsdr_copy_report,
+                            &self.smartsdr_test_result,
+                            io.can_probe,
+                        ),
+                        Backend::Pluto => settings_pluto_tab(
+                            ui,
+                            &self.pluto_devices,
+                            io.radio_edit,
+                            io.pluto_discover,
+                            io.pluto_test,
+                            io.pluto_copy_report,
+                            &self.pluto_test_result,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        Backend::RtlSdr => settings_rtlsdr_tab(
+                            ui,
+                            &self.rtlsdr_devices,
+                            io.radio_edit,
+                            io.rtlsdr_rescan,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        // No device list: the dongle is the server's, and the
+                        // protocol has no enumeration — there is nothing to rescan
+                        // and nothing to pick from.
+                        Backend::RtlTcp => settings_rtltcp_tab(ui, io.radio_edit, cmds),
+                        // Likewise no device list: the receiver is the server's,
+                        // and the protocol has no enumeration. What it does have
+                        // is an answer — the Test button reads it back.
+                        Backend::SpyServer | Backend::SpyServerVfo => settings_spyserver_tab(
+                            ui,
+                            io.radio_edit,
+                            backend == Backend::SpyServerVfo,
+                            io.spyserver_test,
+                            &self.spyserver_test_result,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        Backend::KiwiSdr => settings_kiwisdr_tab(
+                            ui,
+                            io.radio_edit,
+                            io.kiwi_test,
+                            &self.kiwi_test_result,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        Backend::Rx888 => settings_rx888_tab(
+                            ui,
+                            &self.rx888_devices,
+                            io.radio_edit,
+                            io.rx888_rescan,
+                            io.apply_iface,
+                            io.can_probe,
+                            self.state.rx_freq_hz(),
+                            cmds,
+                        ),
+                        Backend::Elad => settings_elad_tab(
+                            ui,
+                            &self.elad_devices,
+                            &self.serial_ports,
+                            &self.state.antenna_rx,
+                            io.radio_edit,
+                            io.elad_rescan,
+                            io.elad_copy_report,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        Backend::Lime => settings_lime_tab(
+                            ui,
+                            &self.lime_devices,
+                            &self.serial_ports,
+                            io.radio_edit,
+                            io.lime_rescan,
+                            io.lime_copy_report,
+                            io.apply_iface,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        Backend::AirspyHf => settings_airspyhf_tab(
+                            ui,
+                            &self.airspyhf_devices,
                             self.caps.as_ref(),
                             io.radio_edit,
+                            io.airspyhf_rescan,
+                            io.airspyhf_copy_report,
                             io.apply_iface,
-                            cmds,
-                        );
-                        ui.add_space(4.0);
-                        settings_soapy_devices(
-                            ui,
-                            self.soapy_devices.as_deref(),
-                            io.soapy_rescan,
                             io.can_probe,
-                        );
+                            cmds,
+                        ),
+                        Backend::Airspy => settings_airspy_tab(
+                            ui,
+                            &self.airspy_devices,
+                            self.caps.as_ref(),
+                            io.radio_edit,
+                            io.airspy_rescan,
+                            io.airspy_copy_report,
+                            io.apply_iface,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        Backend::HydraSdr => settings_hydrasdr_tab(
+                            ui,
+                            &self.hydrasdr_devices,
+                            self.caps.as_ref(),
+                            io.radio_edit,
+                            io.hydrasdr_rescan,
+                            io.hydrasdr_copy_report,
+                            io.apply_iface,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        Backend::HackRf => settings_hackrf_tab(
+                            ui,
+                            &self.hackrf_devices,
+                            io.radio_edit,
+                            io.hackrf_rescan,
+                            io.hackrf_copy_report,
+                            io.apply_iface,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        Backend::SdrPlay => settings_sdrplay_tab(
+                            ui,
+                            &self.sdrplay_devices,
+                            self.caps.as_ref(),
+                            io.radio_edit,
+                            io.sdrplay_rescan,
+                            io.apply_iface,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        Backend::Fobos => settings_fobos_tab(
+                            ui,
+                            &self.fobos_devices,
+                            self.caps.as_ref(),
+                            io.radio_edit,
+                            io.fobos_rescan,
+                            io.apply_iface,
+                            io.can_probe,
+                            cmds,
+                        ),
+                        // Legacy configs may still carry the removed auto-detect
+                        // backend; prompt the user to pick a concrete interface.
+                        // Which nobody can do from a remote client — the row above
+                        // is a label there — so say who has to.
+                        Backend::Auto => {
+                            ui.label(
+                                RichText::new(if io.can_probe {
+                                    "Pick a radio interface above (this configuration used the \
+                                     removed auto-detect mode)."
+                                } else {
+                                    "This configuration used the removed auto-detect mode. Pick an \
+                                     interface above once the machine the radio is attached to has \
+                                     answered."
+                                })
+                                .weak(),
+                            );
+                        }
+                        // A freshly added radio tab: nothing opens until an
+                        // interface is chosen, so choosing one is the whole page.
+                        Backend::None => {
+                            ui.label(
+                                RichText::new(if io.can_probe {
+                                    "This radio has no interface yet — pick one above and press \
+                                     Apply / reconnect."
+                                } else {
+                                    "This radio has no interface yet. One can be picked above once \
+                                     the machine the radio is attached to has answered."
+                                })
+                                .weak(),
+                            );
+                        }
                     }
-                    Backend::Hpsdr => settings_hpsdr_tab(
-                        ui,
-                        &self.hpsdr_devices,
-                        io.radio_edit,
-                        io.hpsdr_discover,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    Backend::Cat => settings_cat_tab(
-                        ui,
-                        &self.serial_ports,
-                        io.radio_edit,
-                        self.caps.as_ref(),
-                        &self.state.antenna_rx,
-                        self.state.rx_antenna,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    Backend::UsbAudio => settings_usb_audio_tab(ui),
-                    // No `apply_iface`: this panel does not draw an Apply row,
-                    // because the shared one below does it for every backend.
-                    Backend::AtsMini => settings_atsmini_tab(
-                        ui,
-                        self.atsmini_memories.as_deref(),
-                        io.radio_edit,
-                        cmds,
-                    ),
-                    Backend::Tci => settings_tci_tab(
-                        ui,
-                        io.radio_edit,
-                        io.tci_test,
-                        &self.tci_test_result,
-                        io.can_probe,
-                    ),
-                    Backend::IcomNet => settings_icomnet_tab(
-                        ui,
-                        io.radio_edit,
-                        self.caps.as_ref(),
-                        &self.state.antenna_rx,
-                        self.state.rx_antenna,
-                        io.icomnet_test,
-                        io.icomnet_copy_report,
-                        &self.icomnet_test_result,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    Backend::SmartSdr => settings_smartsdr_tab(
-                        ui,
-                        &self.smartsdr_devices,
-                        io.radio_edit,
-                        io.smartsdr_discover,
-                        io.smartsdr_test,
-                        io.smartsdr_copy_report,
-                        &self.smartsdr_test_result,
-                        io.can_probe,
-                    ),
-                    Backend::Pluto => settings_pluto_tab(
-                        ui,
-                        &self.pluto_devices,
-                        io.radio_edit,
-                        io.pluto_discover,
-                        io.pluto_test,
-                        io.pluto_copy_report,
-                        &self.pluto_test_result,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    Backend::RtlSdr => settings_rtlsdr_tab(
-                        ui,
-                        &self.rtlsdr_devices,
-                        io.radio_edit,
-                        io.rtlsdr_rescan,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    // No device list: the dongle is the server's, and the
-                    // protocol has no enumeration — there is nothing to rescan
-                    // and nothing to pick from.
-                    Backend::RtlTcp => settings_rtltcp_tab(ui, io.radio_edit, cmds),
-                    // Likewise no device list: the receiver is the server's,
-                    // and the protocol has no enumeration. What it does have
-                    // is an answer — the Test button reads it back.
-                    Backend::SpyServer | Backend::SpyServerVfo => settings_spyserver_tab(
-                        ui,
-                        io.radio_edit,
-                        backend == Backend::SpyServerVfo,
-                        io.spyserver_test,
-                        &self.spyserver_test_result,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    Backend::KiwiSdr => settings_kiwisdr_tab(
-                        ui,
-                        io.radio_edit,
-                        io.kiwi_test,
-                        &self.kiwi_test_result,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    Backend::Rx888 => settings_rx888_tab(
-                        ui,
-                        &self.rx888_devices,
-                        io.radio_edit,
-                        io.rx888_rescan,
-                        io.apply_iface,
-                        io.can_probe,
-                        self.state.rx_freq_hz(),
-                        cmds,
-                    ),
-                    Backend::Elad => settings_elad_tab(
-                        ui,
-                        &self.elad_devices,
-                        &self.serial_ports,
-                        &self.state.antenna_rx,
-                        io.radio_edit,
-                        io.elad_rescan,
-                        io.elad_copy_report,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    Backend::Lime => settings_lime_tab(
-                        ui,
-                        &self.lime_devices,
-                        &self.serial_ports,
-                        io.radio_edit,
-                        io.lime_rescan,
-                        io.lime_copy_report,
-                        io.apply_iface,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    Backend::AirspyHf => settings_airspyhf_tab(
-                        ui,
-                        &self.airspyhf_devices,
-                        self.caps.as_ref(),
-                        io.radio_edit,
-                        io.airspyhf_rescan,
-                        io.airspyhf_copy_report,
-                        io.apply_iface,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    Backend::Airspy => settings_airspy_tab(
-                        ui,
-                        &self.airspy_devices,
-                        self.caps.as_ref(),
-                        io.radio_edit,
-                        io.airspy_rescan,
-                        io.airspy_copy_report,
-                        io.apply_iface,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    Backend::HydraSdr => settings_hydrasdr_tab(
-                        ui,
-                        &self.hydrasdr_devices,
-                        self.caps.as_ref(),
-                        io.radio_edit,
-                        io.hydrasdr_rescan,
-                        io.hydrasdr_copy_report,
-                        io.apply_iface,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    Backend::HackRf => settings_hackrf_tab(
-                        ui,
-                        &self.hackrf_devices,
-                        io.radio_edit,
-                        io.hackrf_rescan,
-                        io.hackrf_copy_report,
-                        io.apply_iface,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    Backend::SdrPlay => settings_sdrplay_tab(
-                        ui,
-                        &self.sdrplay_devices,
-                        self.caps.as_ref(),
-                        io.radio_edit,
-                        io.sdrplay_rescan,
-                        io.apply_iface,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    Backend::Fobos => settings_fobos_tab(
-                        ui,
-                        &self.fobos_devices,
-                        self.caps.as_ref(),
-                        io.radio_edit,
-                        io.fobos_rescan,
-                        io.apply_iface,
-                        io.can_probe,
-                        cmds,
-                    ),
-                    // Legacy configs may still carry the removed auto-detect
-                    // backend; prompt the user to pick a concrete interface.
-                    // Which nobody can do from a remote client — the row above
-                    // is a label there — so say who has to.
-                    Backend::Auto => {
-                        ui.label(
-                            RichText::new(if io.can_probe {
-                                "Pick a radio interface above (this configuration used the \
-                                 removed auto-detect mode)."
-                            } else {
-                                "This configuration used the removed auto-detect mode. Pick an \
-                                 interface above once the machine the radio is attached to has \
-                                 answered."
-                            })
-                            .weak(),
-                        );
-                    }
-                    // A freshly added radio tab: nothing opens until an
-                    // interface is chosen, so choosing one is the whole page.
-                    Backend::None => {
-                        ui.label(
-                            RichText::new(if io.can_probe {
-                                "This radio has no interface yet — pick one above and press \
-                                 Apply / reconnect."
-                            } else {
-                                "This radio has no interface yet. One can be picked above once \
-                                 the machine the radio is attached to has answered."
-                            })
-                            .weak(),
-                        );
-                    }
-                }
+                });
                 // **A gap before the row, and it is not decoration.** Every
                 // panel above ends with a wrapped label — the SDRplay one, the
                 // RTL-SDR one, all of them — and a wrapped label's final height
