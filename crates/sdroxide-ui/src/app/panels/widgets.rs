@@ -500,6 +500,19 @@ mod tests {
         assert!((slot_phase_heard_s(112.0, 15.0, None) - 7.0).abs() < 1e-9);
     }
 
+    #[test]
+    fn the_heard_phase_follows_the_receive_path_on_ft4_and_ft2_slots() {
+        // FT4 (7.5 s): wall 7 s in, audio 2 s behind -> 5 s.
+        assert!((slot_phase_heard_s(112.0, 7.5, Some(2.0)) - 5.0).abs() < 1e-9);
+        assert!((slot_phase_heard_s(112.0, 7.5, None) - 7.0).abs() < 1e-9);
+        // The offset reaching back past the boundary wraps into the previous slot.
+        assert!((slot_phase_heard_s(113.0, 7.5, Some(2.0)) - 6.0).abs() < 1e-9);
+        // FT2 (3.75 s).
+        assert!((slot_phase_heard_s(112.0, 3.75, Some(2.0)) - 1.25).abs() < 1e-9);
+        assert!((slot_phase_heard_s(112.0, 3.75, None) - 3.25).abs() < 1e-9);
+        assert!((slot_phase_heard_s(113.0, 3.75, Some(2.0)) - 2.25).abs() < 1e-9);
+    }
+
     use super::*;
     use sdroxide_types::Mode;
 
