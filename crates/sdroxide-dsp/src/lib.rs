@@ -38,6 +38,7 @@ mod notch;
 mod nr;
 mod nr2;
 mod olivia;
+pub mod playout;
 mod predistort;
 mod psk;
 mod rds;
