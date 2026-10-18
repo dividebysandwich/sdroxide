@@ -298,6 +298,15 @@ impl WefaxUi {
         }
     }
 
+    /// Whether the viewer must ask the engine for the full-size chart `name`:
+    /// when its texture is missing, or when the PNG held for SAVE belongs to
+    /// another chart (the store keeps one, and a texture already in memory
+    /// would otherwise leave SAVE missing), and not yet asked for this one.
+    pub fn needs_full(&self, name: &str, has_texture: bool) -> bool {
+        let png_here = self.full_png.as_ref().is_some_and(|(n, _)| n == name);
+        (!has_texture || !png_here) && self.full_asked.as_deref() != Some(name)
+    }
+
     /// Whether more of the store can still be paged in, or this client is
     /// holding as many thumbnails as it will.
     pub fn can_page(&self) -> bool {
@@ -461,6 +470,19 @@ pub fn gray_image(gray: &[u8], w: u16, h: u16) -> egui::ColorImage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A chart whose texture is in memory but whose PNG is another chart's
+    /// must be fetched again, or SAVE never appears.
+    #[test]
+    fn a_chart_with_a_texture_but_no_png_is_fetched_for_save() {
+        let mut ui = WefaxUi::default();
+        ui.full_png = Some(("b".into(), vec![1]));
+        assert!(ui.needs_full("a", true), "SAVE would be missing for `a`");
+        ui.full_asked = Some("a".into());
+        assert!(!ui.needs_full("a", true), "asked once is enough");
+        assert!(!ui.needs_full("b", true), "b already has its PNG");
+        assert!(ui.needs_full("c", false));
+    }
 
     #[test]
     fn rows_build_the_chart_downwards() {

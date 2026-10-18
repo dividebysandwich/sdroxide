@@ -132,6 +132,19 @@ impl WefaxController {
     /// noise, not a chart, and saving it would fill the gallery with slivers.
     fn emit_image(&mut self) {
         const MIN_ROWS: u16 = 32;
+        // A white carrier that outlived the chart is not part of it.
+        let w = self.width as usize;
+        if w > 0 {
+            let blank = |row: &[u8]| row.iter().map(|&v| v as u32).sum::<u32>() >= 245 * w as u32;
+            while self.height > 0 {
+                let start = (self.height as usize - 1) * w;
+                match self.image.get(start..start + w) {
+                    Some(row) if blank(row) => self.height -= 1,
+                    _ => break,
+                }
+            }
+            self.image.truncate(self.height as usize * w);
+        }
         if self.height < MIN_ROWS || self.width == 0 {
             self.image.clear();
             self.height = 0;
@@ -406,6 +419,24 @@ mod tests {
         });
         assert_eq!(img, Some((100, 64, 100 * 64)));
         assert_eq!(c.saved, 1);
+    }
+
+    /// White rows left by a carrier after the chart are not saved with it.
+    #[test]
+    fn a_trailing_white_carrier_is_trimmed_from_the_saved_chart() {
+        let mut c = ctrl();
+        c.wefax_start();
+        c.width = 100;
+        let mut img = vec![0u8; 100 * 64];
+        img.extend(vec![255u8; 100 * 500]);
+        c.image = img;
+        c.height = 564;
+        c.emit_image();
+        let h = c.queued.iter().find_map(|a| match a {
+            DigiAction::WefaxImage { h, gray, .. } => Some((*h, gray.len())),
+            _ => None,
+        });
+        assert_eq!(h, Some((64, 100 * 64)));
     }
 
     /// Rows must land in order and never behind the write head — a row written

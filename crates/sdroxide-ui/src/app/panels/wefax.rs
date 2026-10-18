@@ -83,7 +83,14 @@ impl SdroxideApp {
             let (text, colour) = if st.phasing {
                 ("phasing…".to_string(), theme::YELLOW())
             } else if st.receiving {
-                (format!("{} lines", st.lines), theme::GREEN())
+                (
+                    format!(
+                        "receiving {:.0} min · {} lines",
+                        f64::from(st.lines) / st.lpm.value(),
+                        st.lines
+                    ),
+                    theme::GREEN(),
+                )
             } else if self.wefax.has_live() {
                 (format!("{} lines held", self.wefax.live_size().1), theme::CYAN_DIM())
             } else {
@@ -714,7 +721,7 @@ impl SdroxideApp {
         // stands in until the real one arrives, so the window opens on
         // something rather than on nothing. Asked once per chart, whatever the
         // answer — a fetch that fails must not become a request every frame.
-        if chart.full.is_none() && self.wefax.full_asked.as_deref() != Some(&chart.name) {
+        if self.wefax.needs_full(&chart.name, chart.full.is_some()) {
             self.wefax.full_asked = Some(chart.name.clone());
             self.wefax.full_gone = false;
             cmds.push(Command::ImageGet {
