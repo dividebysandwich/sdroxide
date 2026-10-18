@@ -52,6 +52,9 @@ pub enum AfskProfile {
     /// 1200 baud, 1300/2100 Hz — the DSC pair (ITU-R M.493-15 §3.1). No NRZI:
     /// DSC is direct FSK, so the slicer's bit is the wire bit.
     Dsc,
+    /// 100 baud, 1615/1785 Hz — MF/HF DSC (ITU-R M.493), a 170 Hz shift about
+    /// a 1700 Hz subcarrier. Sense is settled by the DSC framer.
+    DscHf,
 }
 
 impl AfskProfile {
@@ -59,6 +62,7 @@ impl AfskProfile {
     pub fn baud(self) -> f64 {
         match self {
             AfskProfile::Hf300 => 300.0,
+            AfskProfile::DscHf => 100.0,
             AfskProfile::Vhf1200 | AfskProfile::Dsc => 1200.0,
         }
     }
@@ -70,6 +74,7 @@ impl AfskProfile {
             AfskProfile::Hf300 => (1600.0, 1800.0),
             AfskProfile::Vhf1200 => (1200.0, 2200.0),
             AfskProfile::Dsc => (1300.0, 2100.0),
+            AfskProfile::DscHf => (1615.0, 1785.0),
         }
     }
 
