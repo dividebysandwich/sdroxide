@@ -213,33 +213,41 @@ impl ApplyInterface {
     }
 }
 
-/// How much of a settings note stays on screen, in characters.
+/// How much of a settings note stays on screen, at most, in characters.
 ///
-/// The rest is on the hover, which is where somebody who wants the explanation
-/// is already pointing. The operator, 2026-10-18: *"I'd rather not have the
-/// webserver explain too much.. just a very short pointer would be fine"* — and
-/// one rule for both clients, so there is one thing to keep right rather than
-/// two that drift.
+/// The **first sentence** is the pointer and the rest is on the hover — the
+/// operator asked for exactly that shortening, by name: *"Where the station
+/// is"* for a note that continues through five clauses about band plans. A
+/// first sentence longer than this is cut at a word as well, so a pointer is
+/// always about one line.
 const NOTE_POINTER_CHARS: usize = 64;
 
-/// The pointer: the first [`NOTE_POINTER_CHARS`] characters, cut at a word so
-/// it does not end mid-word, with an ellipsis to say there is more.
+/// The pointer: the note's first sentence, cut at a word if that sentence is
+/// itself long, with an ellipsis to say there is more.
 ///
-/// A note already shorter than the pointer is returned unchanged, which is what
-/// keeps the short ones — "Changing either reopens the radio." — reading exactly
-/// as they did.
+/// A note already short enough is returned unchanged, which is what keeps the
+/// short ones — "Changing either reopens the radio." — reading exactly as they
+/// did.
 fn pointer(text: &str) -> String {
-    if text.chars().count() <= NOTE_POINTER_CHARS {
-        return text.to_string();
+    // The first sentence: up to a full stop that ends a word, so "144-146" and
+    // a decimal point are not mistaken for one.
+    let first = text
+        .char_indices()
+        .find(|(i, c)| *c == '.' && !text[..*i].ends_with(|p: char| p.is_ascii_digit()))
+        .map(|(i, c)| i + c.len_utf8())
+        .filter(|end| *end < text.len())
+        .unwrap_or(text.len());
+    let sentence = text[..first].trim_end();
+    if sentence.chars().count() <= NOTE_POINTER_CHARS {
+        return sentence.to_string();
     }
-    let cut = text
+    let cut = sentence
         .char_indices()
         .take(NOTE_POINTER_CHARS)
         .last()
         .map(|(i, c)| i + c.len_utf8())
         .unwrap_or(0);
-    let head = &text[..cut];
-    // Cut at the last space, unless that would throw away most of the pointer.
+    let head = &sentence[..cut];
     let head = match head.rfind(char::is_whitespace) {
         Some(i) if i >= NOTE_POINTER_CHARS / 2 => &head[..i],
         _ => head,
@@ -338,6 +346,31 @@ mod pointer_tests {
         );
         assert!(!p.trim_end_matches('…').ends_with(' '), "it ends on a space: {p:?}");
         assert!(!p.trim_end_matches('…').ends_with('-'), "it ends mid-word: {p:?}");
+    }
+
+    /// The pointer is the **first sentence** — the shortening the operator
+    /// asked for by name: "Where the station is" for a note that runs on
+    /// through five clauses about band plans, and the complete sentence on the
+    /// hover.
+    #[test]
+    fn the_pointer_is_the_first_sentence() {
+        let region = "Where the station is. Sets every band plan: the band edges, the CW / \
+                      data / phone sub-segments on the waterfall strip, where the skimmers \
+                      listen, and what counts as out of band for transmit.";
+        assert_eq!(pointer(region), "Where the station is.");
+
+        let cb = "11 m (CB) is not the same band everywhere. This picks which country's \
+                  channels the 11 m dial reads in: World / freeband - 80 channels.";
+        assert_eq!(pointer(cb), "11 m (CB) is not the same band everywhere.");
+
+        // A decimal point is not the end of a sentence: "7.200" must not end it.
+        let decimal = "The 40 m plan stops at 7.200 MHz and 70 cm runs 430-440 MHz. That is the \
+                       regional allocation.";
+        assert!(
+            pointer(decimal).contains("7.200 MHz"),
+            "a decimal point ended the pointer: {:?}",
+            pointer(decimal)
+        );
     }
 
     /// A word longer than the whole pointer must not be lost or split at a
@@ -2556,8 +2589,9 @@ impl SdroxideApp {
                     },
                 );
                 ui.add_space(6.0);
-                ui.label(
-                    RichText::new(format!(
+                note(
+                    ui,
+                    &format!(
                         "Where the station is. Sets every band plan: the band edges, the CW / \
                          data / phone sub-segments on the waterfall strip, where the skimmers \
                          listen, the calling frequencies offered, and what counts as out of band \
@@ -2570,20 +2604,19 @@ impl SdroxideApp {
                             sdroxide_types::Region::R2 => "420–450 MHz, and 40 m runs to 7.300",
                             sdroxide_types::Region::R3 => "430–450 MHz, and 80 m stops at 3.900",
                         }
-                    ))
-                    .weak(),
+                    ),
                 );
                 ui.add_space(6.0);
-                ui.label(
-                    RichText::new(format!(
+                note(
+                    ui,
+                    &format!(
                         "11 m (CB) is not the same band everywhere. This picks which country's \
                          channels the 11 m dial reads in: {}. Only the channels and the channel \
                          the band opens on — the band's edges are left wide, so switching plans \
                          never changes what receives or transmits. Applies to every radio at this \
                          station.",
                         io.cb_plan_edit.label(),
-                    ))
-                    .weak(),
+                    ),
                 );
                 ui.add_space(8.0);
                 crate::chrome::checkbox(ui, io.cb_tx_edit, "Allow transmit on 11 m (CB)")
@@ -4625,7 +4658,7 @@ impl SdroxideApp {
                                 }
                             }
                             None => {
-                                ui.label(RichText::new(format!("{} Hz", pan.offset_hz)).weak());
+                                note(ui, &format!("{} Hz", pan.offset_hz));
                             }
                         }
                         ui.end_row();

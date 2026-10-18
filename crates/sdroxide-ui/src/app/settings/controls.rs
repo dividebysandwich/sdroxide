@@ -385,9 +385,7 @@ fn settings_midi_section(
         // Naming the control that just moved is what makes an unlabelled
         // surface bindable at all.
         match last_midi {
-            Some((msg, v)) => {
-                ui.label(RichText::new(format!("Last message: {}  value {v}", msg.label())).weak())
-            }
+            Some((msg, v)) => super::note(ui, &format!("Last message: {}  value {v}", msg.label())),
             None => super::note(ui, "Move a control to see it here."),
         };
     });

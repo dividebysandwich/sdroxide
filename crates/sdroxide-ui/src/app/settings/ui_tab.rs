@@ -239,7 +239,7 @@ pub(in crate::app) fn settings_ui_tab(
                      without them the only way to move a known step is to type the whole \
                      frequency in. Never drawn on a desktop.",
                 );
-            ui.label(RichText::new(format!("Step: {}", cfg.tune_step_label())).weak());
+            super::note(ui, &format!("Step: {}", cfg.tune_step_label()));
         });
         ui.end_row();
 

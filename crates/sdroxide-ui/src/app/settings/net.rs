@@ -90,7 +90,7 @@ pub(in crate::app) fn operator_identity_note(
                 .color(Color32::from_rgb(230, 170, 60)),
         );
     } else {
-        ui.label(RichText::new(format!("{call} / {grid}  — set on the General tab")).weak());
+        super::note(ui, &format!("{call} / {grid}  — set on the General tab"));
     }
 }
 
@@ -160,12 +160,9 @@ pub(in crate::app) fn settings_freedv_tab(
             .color(Color32::from_rgb(230, 170, 60)),
         );
     } else if enabled && digi_seeded {
-        ui.label(
-            RichText::new(format!(
-                "Reporting as {call} / {grid} — SDRoxide {}",
-                env!("CARGO_PKG_VERSION")
-            ))
-            .weak(),
+        super::note(
+            ui,
+            &format!("Reporting as {call} / {grid} — SDRoxide {}", env!("CARGO_PKG_VERSION")),
         );
         super::note(ui, "Callsign and grid are set on the General tab.");
     }
