@@ -79,7 +79,7 @@ pub(in crate::app) fn settings_ui_tab(
         Some(11.0),
     );
     ui.add_space(6.0);
-    egui::Grid::new("ui-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+    egui::Grid::new("ui-grid").num_columns(2).spacing([12.0, 8.0]).min_row_height(ui.spacing().interact_size.y).show(ui, |ui| {
         ui.label("Layout");
         enum_combo(ui, "ui-layout", &mut cfg.layout, &LayoutMode::ALL, LayoutMode::label);
         ui.end_row();
@@ -726,16 +726,20 @@ pub(in crate::app) fn settings_ui_tab(
     ui.add_space(14.0);
     ui.label(RichText::new("3D view").size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(6.0);
-    egui::Grid::new("ui-grid-3d").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-        ui.label("Cloud rendering");
-        ComboBox::from_id_salt("ui-cloud-march")
-            .selected_text(if *cloud_march { "Volumetric" } else { "Layered" })
-            .show_styled(ui, |ui| {
-                ui.selectable_value(cloud_march, false, "Layered");
-                ui.selectable_value(cloud_march, true, "Volumetric");
-            });
-        ui.end_row();
-    });
+    egui::Grid::new("ui-grid-3d")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .min_row_height(ui.spacing().interact_size.y)
+        .show(ui, |ui| {
+            ui.label("Cloud rendering");
+            ComboBox::from_id_salt("ui-cloud-march")
+                .selected_text(if *cloud_march { "Volumetric" } else { "Layered" })
+                .show_styled(ui, |ui| {
+                    ui.selectable_value(cloud_march, false, "Layered");
+                    ui.selectable_value(cloud_march, true, "Volumetric");
+                });
+            ui.end_row();
+        });
     ui.add_space(8.0);
     super::note(
         ui,
@@ -768,71 +772,81 @@ pub(in crate::app) fn speech_settings(
         .on_hover_text("Reads out what changed, so the radio can be operated without seeing it");
 
     ui.add_enabled_ui(cfg.enabled, |ui| {
-        egui::Grid::new("speech-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-            ui.label("Voice");
-            let shown =
-                if cfg.voice.is_empty() { "Shipped voice".to_string() } else { cfg.voice.clone() };
-            ComboBox::from_id_salt("speech-voice").width(300.0).selected_text(shown).show_styled(
-                ui,
-                |ui| {
-                    if ui.selectable_label(cfg.voice.is_empty(), "Shipped voice").clicked() {
-                        cfg.voice.clear();
-                    }
-                    for v in voices {
-                        if ui.selectable_label(&cfg.voice == v, v).clicked() {
-                            cfg.voice = v.clone();
+        egui::Grid::new("speech-grid")
+            .num_columns(2)
+            .spacing([12.0, 8.0])
+            .min_row_height(ui.spacing().interact_size.y)
+            .show(ui, |ui| {
+                ui.label("Voice");
+                let shown = if cfg.voice.is_empty() {
+                    "Shipped voice".to_string()
+                } else {
+                    cfg.voice.clone()
+                };
+                ComboBox::from_id_salt("speech-voice")
+                    .width(300.0)
+                    .selected_text(shown)
+                    .show_styled(ui, |ui| {
+                        if ui.selectable_label(cfg.voice.is_empty(), "Shipped voice").clicked() {
+                            cfg.voice.clear();
                         }
-                    }
-                },
-            );
-            ui.end_row();
+                        for v in voices {
+                            if ui.selectable_label(&cfg.voice == v, v).clicked() {
+                                cfg.voice = v.clone();
+                            }
+                        }
+                    });
+                ui.end_row();
 
-            ui.label("Speed");
-            crate::chrome::slider(
-                ui,
-                egui::Slider::new(&mut cfg.rate, SpeechSettings::RATE_RANGE)
-                    .step_by(0.1)
-                    .suffix("×"),
-            )
-            .on_hover_text(
-                "The voice stretches or compresses its own phrasing, so the pitch does not \
+                ui.label("Speed");
+                crate::chrome::slider(
+                    ui,
+                    egui::Slider::new(&mut cfg.rate, SpeechSettings::RATE_RANGE)
+                        .step_by(0.1)
+                        .suffix("×"),
+                )
+                .on_hover_text(
+                    "The voice stretches or compresses its own phrasing, so the pitch does not \
                  change. Past about 2× it stops getting shorter.",
-            );
-            ui.end_row();
+                );
+                ui.end_row();
 
-            ui.label("Volume");
-            crate::chrome::slider(ui, egui::Slider::new(&mut cfg.volume, 0.0..=1.0).step_by(0.05));
-            ui.end_row();
+                ui.label("Volume");
+                crate::chrome::slider(
+                    ui,
+                    egui::Slider::new(&mut cfg.volume, 0.0..=1.0).step_by(0.05),
+                );
+                ui.end_row();
 
-            ui.label("Output");
-            // `device_combo` borrows the current selection while handing the
-            // new one to the closure, so the two cannot both be `cfg.device`.
-            let cur = cfg.device.clone();
-            device_combo(ui, "speech-out", outputs, &cur, |n| cfg.device = n);
-            ui.end_row();
+                ui.label("Output");
+                // `device_combo` borrows the current selection while handing the
+                // new one to the closure, so the two cannot both be `cfg.device`.
+                let cur = cfg.device.clone();
+                device_combo(ui, "speech-out", outputs, &cur, |n| cfg.device = n);
+                ui.end_row();
 
-            ui.label("Detail");
-            crate::app::settings::enum_combo(
-                ui,
-                "speech-verbosity",
-                &mut cfg.verbosity,
-                &Verbosity::ALL,
-                Verbosity::label,
-            );
-            ui.end_row();
+                ui.label("Detail");
+                crate::app::settings::enum_combo(
+                    ui,
+                    "speech-verbosity",
+                    &mut cfg.verbosity,
+                    &Verbosity::ALL,
+                    Verbosity::label,
+                );
+                ui.end_row();
 
-            ui.label("Duck receiver");
-            ui.horizontal(|ui| {
-                crate::chrome::checkbox(ui, &mut cfg.duck_rx, "While speaking");
-                ui.add_enabled_ui(cfg.duck_rx, |ui| {
-                    crate::chrome::slider(
-                        ui,
-                        egui::Slider::new(&mut cfg.duck_level, 0.0..=1.0).step_by(0.05),
-                    );
+                ui.label("Duck receiver");
+                ui.horizontal(|ui| {
+                    crate::chrome::checkbox(ui, &mut cfg.duck_rx, "While speaking");
+                    ui.add_enabled_ui(cfg.duck_rx, |ui| {
+                        crate::chrome::slider(
+                            ui,
+                            egui::Slider::new(&mut cfg.duck_level, 0.0..=1.0).step_by(0.05),
+                        );
+                    });
                 });
+                ui.end_row();
             });
-            ui.end_row();
-        });
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -851,52 +865,66 @@ pub(in crate::app) fn speech_settings(
 
         ui.add_space(4.0);
         egui::CollapsingHeader::new("What to announce").default_open(false).show(ui, |ui| {
-            egui::Grid::new("speech-cats").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-                let c = &mut cfg.cat;
-                crate::chrome::checkbox(ui, &mut c.frequency, "Frequency");
-                crate::chrome::checkbox(ui, &mut c.mode_band, "Mode and band");
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut c.vfo_split, "VFO and split");
-                crate::chrome::checkbox(ui, &mut c.agc_gain, "AGC and gain");
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut c.levels, "Drive, tune and mic");
-                crate::chrome::checkbox(ui, &mut c.ptt, "Transmit and receive");
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut c.rit_xit, "RIT and XIT");
-                crate::chrome::checkbox(ui, &mut c.memory_scan, "Memories and scanning");
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut c.band_edge, "Leaving an amateur band");
-                crate::chrome::checkbox(ui, &mut c.notices, "Warnings and messages");
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut c.filters, "Filters, squelch and noise reduction")
+            egui::Grid::new("speech-cats")
+                .num_columns(2)
+                .spacing([16.0, 4.0])
+                .min_row_height(ui.spacing().interact_size.y)
+                .show(ui, |ui| {
+                    let c = &mut cfg.cat;
+                    crate::chrome::checkbox(ui, &mut c.frequency, "Frequency");
+                    crate::chrome::checkbox(ui, &mut c.mode_band, "Mode and band");
+                    ui.end_row();
+                    crate::chrome::checkbox(ui, &mut c.vfo_split, "VFO and split");
+                    crate::chrome::checkbox(ui, &mut c.agc_gain, "AGC and gain");
+                    ui.end_row();
+                    crate::chrome::checkbox(ui, &mut c.levels, "Drive, tune and mic");
+                    crate::chrome::checkbox(ui, &mut c.ptt, "Transmit and receive");
+                    ui.end_row();
+                    crate::chrome::checkbox(ui, &mut c.rit_xit, "RIT and XIT");
+                    crate::chrome::checkbox(ui, &mut c.memory_scan, "Memories and scanning");
+                    ui.end_row();
+                    crate::chrome::checkbox(ui, &mut c.band_edge, "Leaving an amateur band");
+                    crate::chrome::checkbox(ui, &mut c.notices, "Warnings and messages");
+                    ui.end_row();
+                    crate::chrome::checkbox(
+                        ui,
+                        &mut c.filters,
+                        "Filters, squelch and noise reduction",
+                    )
                     .on_hover_text("Off by default: these move constantly while chasing a signal");
-                ui.end_row();
-            });
+                    ui.end_row();
+                });
 
             ui.add_space(8.0);
             ui.label(RichText::new("Decoded messages").strong());
-            egui::Grid::new("speech-decodes").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-                let d = &mut cfg.decodes;
-                crate::chrome::checkbox(ui, &mut d.ft8_to_me, "FT8 calls to me");
-                crate::chrome::checkbox(ui, &mut d.ft8_cq_for_me, "FT8 CQs I could answer")
-                    .on_hover_text(
-                        "A busy evening on twenty metres is a hundred of these a minute",
-                    );
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut d.js8, "JS8 messages to me");
-                crate::chrome::checkbox(ui, &mut d.js8_allcall, "JS8 @ALLCALL too");
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut d.fsq, "FSQ messages to me");
-                crate::chrome::checkbox(ui, &mut d.include_snr, "Include the report")
+            egui::Grid::new("speech-decodes")
+                .num_columns(2)
+                .spacing([16.0, 4.0])
+                .min_row_height(ui.spacing().interact_size.y)
+                .show(ui, |ui| {
+                    let d = &mut cfg.decodes;
+                    crate::chrome::checkbox(ui, &mut d.ft8_to_me, "FT8 calls to me");
+                    crate::chrome::checkbox(ui, &mut d.ft8_cq_for_me, "FT8 CQs I could answer")
+                        .on_hover_text(
+                            "A busy evening on twenty metres is a hundred of these a minute",
+                        );
+                    ui.end_row();
+                    crate::chrome::checkbox(ui, &mut d.js8, "JS8 messages to me");
+                    crate::chrome::checkbox(ui, &mut d.js8_allcall, "JS8 @ALLCALL too");
+                    ui.end_row();
+                    crate::chrome::checkbox(ui, &mut d.fsq, "FSQ messages to me");
+                    crate::chrome::checkbox(ui, &mut d.include_snr, "Include the report")
                     .on_hover_text(
                         "Only where the message carries none of its own — a decode that already \
                      reports a number does not also get ours",
                     );
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut d.ft8_qso, "My own FT8 exchange")
-                    .on_hover_text("What the sequencer is about to send, and the contact ending");
-                ui.end_row();
-            });
+                    ui.end_row();
+                    crate::chrome::checkbox(ui, &mut d.ft8_qso, "My own FT8 exchange")
+                        .on_hover_text(
+                            "What the sequencer is about to send, and the contact ending",
+                        );
+                    ui.end_row();
+                });
 
             ui.add_space(8.0);
             ui.label(RichText::new("Reading decoded text aloud").strong());
@@ -948,26 +976,30 @@ pub(in crate::app) fn speech_settings(
 
             ui.add_space(8.0);
             ui.label(RichText::new("How things are read").strong());
-            egui::Grid::new("speech-style").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                ui.label("Frequencies");
-                crate::app::settings::enum_combo(
-                    ui,
-                    "speech-freq-style",
-                    &mut cfg.freq_style,
-                    &FreqStyle::ALL,
-                    FreqStyle::label,
-                );
-                ui.end_row();
-                ui.label("Callsigns");
-                crate::app::settings::enum_combo(
-                    ui,
-                    "speech-call-style",
-                    &mut cfg.callsign_style,
-                    &CallsignStyle::ALL,
-                    CallsignStyle::label,
-                );
-                ui.end_row();
-            });
+            egui::Grid::new("speech-style")
+                .num_columns(2)
+                .spacing([12.0, 6.0])
+                .min_row_height(ui.spacing().interact_size.y)
+                .show(ui, |ui| {
+                    ui.label("Frequencies");
+                    crate::app::settings::enum_combo(
+                        ui,
+                        "speech-freq-style",
+                        &mut cfg.freq_style,
+                        &FreqStyle::ALL,
+                        FreqStyle::label,
+                    );
+                    ui.end_row();
+                    ui.label("Callsigns");
+                    crate::app::settings::enum_combo(
+                        ui,
+                        "speech-call-style",
+                        &mut cfg.callsign_style,
+                        &CallsignStyle::ALL,
+                        CallsignStyle::label,
+                    );
+                    ui.end_row();
+                });
 
             ui.add_space(6.0);
             crate::chrome::checkbox(ui, &mut cfg.duck_on_ptt, "Stay quiet while transmitting")

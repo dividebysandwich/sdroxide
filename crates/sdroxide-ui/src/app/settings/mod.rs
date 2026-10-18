@@ -806,93 +806,98 @@ fn transverter_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
     ui.add_space(6.0);
 
     let mut remove: Option<usize> = None;
-    egui::Grid::new("xvtr-grid").num_columns(8).spacing([10.0, 6.0]).striped(true).show(ui, |ui| {
-        for h in ["", "Name", "Band low", "Band high", "Offset", "Transmit", "Max drive", ""] {
-            ui.label(RichText::new(h).weak().size(10.0));
-        }
-        ui.end_row();
+    egui::Grid::new("xvtr-grid")
+        .num_columns(8)
+        .spacing([10.0, 6.0])
+        .min_row_height(ui.spacing().interact_size.y)
+        .striped(true)
+        .show(ui, |ui| {
+            for h in ["", "Name", "Band low", "Band high", "Offset", "Transmit", "Max drive", ""] {
+                ui.label(RichText::new(h).weak().size(10.0));
+            }
+            ui.end_row();
 
-        for (i, x) in cfg.transverters.iter_mut().enumerate() {
-            crate::chrome::checkbox(ui, &mut x.enabled, "").on_hover_text(
-                "Off takes this transverter out of the line without losing the row — the \
+            for (i, x) in cfg.transverters.iter_mut().enumerate() {
+                crate::chrome::checkbox(ui, &mut x.enabled, "").on_hover_text(
+                    "Off takes this transverter out of the line without losing the row — the \
                      band goes back to whatever the radio reaches on its own.",
-            );
-            crate::chrome::field(
-                ui,
-                egui::TextEdit::singleline(&mut x.name)
-                    .id_salt(("xvtr-name", i))
-                    .desired_width(110.0)
-                    .hint_text("2 m"),
-            )
-            .on_hover_text("What you call it. Shown in the log when the dial selects it.");
-            mhz_drag(
-                ui,
-                &mut x.rf_lo_hz,
-                "The bottom of the band this transverter works, \
+                );
+                crate::chrome::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut x.name)
+                        .id_salt(("xvtr-name", i))
+                        .desired_width(110.0)
+                        .hint_text("2 m"),
+                )
+                .on_hover_text("What you call it. Shown in the log when the dial selects it.");
+                mhz_drag(
+                    ui,
+                    &mut x.rf_lo_hz,
+                    "The bottom of the band this transverter works, \
                      on the dial. 144 for 2 m.",
-            );
-            mhz_drag(
-                ui,
-                &mut x.rf_hi_hz,
-                "The top of the band, on the dial. 148 for 2 m \
+                );
+                mhz_drag(
+                    ui,
+                    &mut x.rf_hi_hz,
+                    "The top of the band, on the dial. 148 for 2 m \
                      in Regions 2 and 3, 146 in Region 1.",
-            );
-            ui.add(
-                egui::DragValue::new(&mut x.offset_hz)
-                    .speed(1000.0)
-                    .range(
-                        -sdroxide_types::CONVERTER_OFFSET_MAX_HZ
-                            ..=sdroxide_types::CONVERTER_OFFSET_MAX_HZ,
-                    )
-                    .custom_formatter(|n, _| format!("{:.4}", n / 1e6))
-                    .custom_parser(|s| s.trim().parse::<f64>().ok().map(|m| m * 1e6))
-                    .suffix(" MHz"),
-            )
-            .on_hover_text(
-                "The radio ends up on dial + offset, so a transverter that brings a band \
+                );
+                ui.add(
+                    egui::DragValue::new(&mut x.offset_hz)
+                        .speed(1000.0)
+                        .range(
+                            -sdroxide_types::CONVERTER_OFFSET_MAX_HZ
+                                ..=sdroxide_types::CONVERTER_OFFSET_MAX_HZ,
+                        )
+                        .custom_formatter(|n, _| format!("{:.4}", n / 1e6))
+                        .custom_parser(|s| s.trim().parse::<f64>().ok().map(|m| m * 1e6))
+                        .suffix(" MHz"),
+                )
+                .on_hover_text(
+                    "The radio ends up on dial + offset, so a transverter that brings a band \
                      down to an I.F. is negative: 2 m into a 28 MHz I.F. is -116, because \
                      144 - 116 = 28. Drag to trim it a hertz at a time for an oscillator that \
                      is slightly off.",
-            );
-            egui::ComboBox::from_id_salt(("xvtr-tx", i))
-                .selected_text(x.tx.label())
-                .width(120.0)
-                .show_styled(ui, |ui| {
-                    for opt in [Tx::Off, Tx::Transverter] {
-                        let on = std::mem::discriminant(&opt) == std::mem::discriminant(&x.tx);
-                        if ui.selectable_label(on, opt.label()).clicked() && !on {
-                            x.tx = opt;
+                );
+                egui::ComboBox::from_id_salt(("xvtr-tx", i))
+                    .selected_text(x.tx.label())
+                    .width(120.0)
+                    .show_styled(ui, |ui| {
+                        for opt in [Tx::Off, Tx::Transverter] {
+                            let on = std::mem::discriminant(&opt) == std::mem::discriminant(&x.tx);
+                            if ui.selectable_label(on, opt.label()).clicked() && !on {
+                                x.tx = opt;
+                            }
                         }
-                    }
-                })
-                .response
-                .on_hover_text(
-                    "Off while converting: receive only — the row is a converter, not a \
+                    })
+                    .response
+                    .on_hover_text(
+                        "Off while converting: receive only — the row is a converter, not a \
                          transverter, and nothing is keyed on this band.\n\nThrough the same \
                          converter: it works both ways, and transmit takes the same offset.",
-                );
-            ui.add(
-                egui::DragValue::new(&mut x.tx_drive)
-                    .speed(0.005)
-                    .range(0.0..=1.0)
-                    .custom_formatter(|n, _| format!("{:.0}", n * 100.0))
-                    .custom_parser(|s| s.trim().parse::<f64>().ok().map(|p| p / 100.0))
-                    .suffix(" %"),
-            )
-            .on_hover_text(
-                "A ceiling on transmit drive while this transverter is selected, as a \
+                    );
+                ui.add(
+                    egui::DragValue::new(&mut x.tx_drive)
+                        .speed(0.005)
+                        .range(0.0..=1.0)
+                        .custom_formatter(|n, _| format!("{:.0}", n * 100.0))
+                        .custom_parser(|s| s.trim().parse::<f64>().ok().map(|p| p / 100.0))
+                        .suffix(" %"),
+                )
+                .on_hover_text(
+                    "A ceiling on transmit drive while this transverter is selected, as a \
                      percentage of full. A transverter's I.F. input takes milliwatts and the \
                      drive that is right for the radio's own bands will destroy it, so this is \
                      the row's most important field. 100% is no limit.\n\nYour Drive setting \
                      is held under this rather than moved, so the number you use on HF comes \
                      back when the dial leaves the band.",
-            );
-            if crate::chrome::chip(ui, false, "REMOVE").clicked() {
-                remove = Some(i);
+                );
+                if crate::chrome::chip(ui, false, "REMOVE").clicked() {
+                    remove = Some(i);
+                }
+                ui.end_row();
             }
-            ui.end_row();
-        }
-    });
+        });
     if let Some(i) = remove {
         cfg.transverters.remove(i);
     }
@@ -992,9 +997,12 @@ fn drive_trim_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
     let bands: Vec<Band> =
         Band::ALL.iter().copied().filter(|b| *b == Band::Gen || b.edges().is_some()).collect();
     let mut set: Option<(Band, f32)> = None;
-    egui::Grid::new("drive-trim-grid").num_columns(8).spacing([12.0, 6.0]).striped(true).show(
-        ui,
-        |ui| {
+    egui::Grid::new("drive-trim-grid")
+        .num_columns(8)
+        .spacing([12.0, 6.0])
+        .min_row_height(ui.spacing().interact_size.y)
+        .striped(true)
+        .show(ui, |ui| {
             for (i, band) in bands.iter().enumerate() {
                 let mut db =
                     cfg.tx_drive_trim.iter().find(|t| t.band == *band).map(|t| t.db).unwrap_or(0.0);
@@ -1016,8 +1024,7 @@ fn drive_trim_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
                 }
             }
             ui.end_row();
-        },
-    );
+        });
     if let Some((band, db)) = set {
         cfg.tx_drive_trim.retain(|t| t.band != band);
         if db != 0.0 {
@@ -2449,9 +2456,11 @@ impl SdroxideApp {
                     );
                 }
                 ui.add_enabled_ui(io.digi_seeded, |ui| {
-                    egui::Grid::new("general-grid").num_columns(2).spacing([12.0, 8.0]).show(
-                        ui,
-                        |ui| {
+                    egui::Grid::new("general-grid")
+                        .num_columns(2)
+                        .spacing([12.0, 8.0])
+                        .min_row_height(ui.spacing().interact_size.y)
+                        .show(ui, |ui| {
                             ui.label("Callsign");
                             if crate::chrome::field(
                                 ui,
@@ -2468,8 +2477,7 @@ impl SdroxideApp {
                                 egui::TextEdit::singleline(&mut io.digi_edit.my_grid),
                             );
                             ui.end_row();
-                        },
-                    );
+                        });
                 });
                 // The 11 m field is 11 characters for the whole identifier,
                 // `/zzz` included, and an activation callsign is chosen right
@@ -2570,9 +2578,11 @@ impl SdroxideApp {
                 // from the digi config, so it is neither waiting on the same
                 // seeding nor sent with the same command.
                 ui.add_space(8.0);
-                egui::Grid::new("general-region-grid").num_columns(2).spacing([12.0, 8.0]).show(
-                    ui,
-                    |ui| {
+                egui::Grid::new("general-region-grid")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .min_row_height(ui.spacing().interact_size.y)
+                    .show(ui, |ui| {
                         ui.label("IARU region");
                         region_combo(ui, io.region_edit);
                         ui.end_row();
@@ -2586,8 +2596,7 @@ impl SdroxideApp {
                         );
                         cb_plan_combo(ui, io.cb_plan_edit);
                         ui.end_row();
-                    },
-                );
+                    });
                 ui.add_space(6.0);
                 note(
                     ui,
@@ -2764,7 +2773,7 @@ impl SdroxideApp {
                     )
                 });
                 let site = io.rx_site.get_or_insert_with(|| cfg.rx_site.clone());
-                egui::Grid::new("iface-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                egui::Grid::new("iface-grid").num_columns(2).spacing([12.0, 6.0]).min_row_height(ui.spacing().interact_size.y).show(ui, |ui| {
                     ui.label(RichText::new("Radio interface").strong());
                     // Switching the far end's interface is allowed: the device
                     // lists below come from that machine, so this is a choice
@@ -3215,9 +3224,11 @@ impl SdroxideApp {
                          actually moved. Applies immediately.",
                     );
                     ui.add_space(4.0);
-                    egui::Grid::new("tx-eq-grid").num_columns(4).spacing([10.0, 6.0]).show(
-                        ui,
-                        |ui| {
+                    egui::Grid::new("tx-eq-grid")
+                        .num_columns(4)
+                        .spacing([10.0, 6.0])
+                        .min_row_height(ui.spacing().interact_size.y)
+                        .show(ui, |ui| {
                             ui.label("");
                             note(ui, "Freq");
                             note(ui, "Gain");
@@ -3248,8 +3259,7 @@ impl SdroxideApp {
                                 sdroxide_types::TxEqState::SHELF_SLOPE_RANGE,
                                 "Brightness/de-ess.",
                             );
-                        },
-                    );
+                        });
                 }
                 ui.separator();
 
@@ -4513,114 +4523,118 @@ impl SdroxideApp {
         );
         ui.add_space(6.0);
 
-        egui::Grid::new("panadapter-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label(RichText::new("Receiver").strong());
-            let selected = pan
-                .source_radio
-                .map(|id| {
-                    candidates
-                        .iter()
-                        .find(|(c, _)| *c == id)
-                        .map_or_else(|| format!("radio {}", id + 1), |(_, n)| n.clone())
-                })
-                .unwrap_or_else(|| "None".to_string());
-            ComboBox::from_id_salt("pan-source")
-                .selected_text(selected)
-                .show_styled(ui, |ui| {
-                    if ui.selectable_label(pan.source_radio.is_none(), "None").clicked() {
-                        pan.source_radio = None;
-                    }
-                    for (id, name) in &candidates {
-                        if ui.selectable_label(pan.source_radio == Some(*id), name).clicked() {
-                            pan.source_radio = Some(*id);
+        egui::Grid::new("panadapter-grid")
+            .num_columns(2)
+            .spacing([12.0, 6.0])
+            .min_row_height(ui.spacing().interact_size.y)
+            .show(ui, |ui| {
+                ui.label(RichText::new("Receiver").strong());
+                let selected = pan
+                    .source_radio
+                    .map(|id| {
+                        candidates
+                            .iter()
+                            .find(|(c, _)| *c == id)
+                            .map_or_else(|| format!("radio {}", id + 1), |(_, n)| n.clone())
+                    })
+                    .unwrap_or_else(|| "None".to_string());
+                ComboBox::from_id_salt("pan-source")
+                    .selected_text(selected)
+                    .show_styled(ui, |ui| {
+                        if ui.selectable_label(pan.source_radio.is_none(), "None").clicked() {
+                            pan.source_radio = None;
                         }
-                    }
-                })
-                .response
-                .on_hover_text(
-                    "Which radio receives for this one. It leaves the tab strip while it is \
+                        for (id, name) in &candidates {
+                            if ui.selectable_label(pan.source_radio == Some(*id), name).clicked() {
+                                pan.source_radio = Some(*id);
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "Which radio receives for this one. It leaves the tab strip while it is \
                  lent — its front end belongs to this radio's engine — and comes straight \
                  back when this is set to None.\n\nTakes effect on Apply.",
-                );
-            ui.end_row();
+                    );
+                ui.end_row();
 
-            if !pan.is_attached() {
-                return;
-            }
+                if !pan.is_attached() {
+                    return;
+                }
 
-            ui.label(RichText::new("Connected to").strong());
-            enum_combo(ui, "pan-tap", &mut pan.tap, &PanadapterTap::ALL, PanadapterTap::label);
-            ui.end_row();
+                ui.label(RichText::new("Connected to").strong());
+                enum_combo(ui, "pan-tap", &mut pan.tap, &PanadapterTap::ALL, PanadapterTap::label);
+                ui.end_row();
 
-            ui.label(RichText::new("Offset").strong());
-            ui.add(
-                egui::DragValue::new(&mut pan.offset_hz)
-                    .speed(1.0)
-                    .range(
-                        -sdroxide_types::PANADAPTER_OFFSET_MAX_HZ
-                            ..=sdroxide_types::PANADAPTER_OFFSET_MAX_HZ,
-                    )
-                    .max_decimals(0)
-                    .suffix(" Hz"),
-            )
-            .on_hover_text(
-                "How far above this radio's dial the receiver sits, in hertz. 0 for a receiver \
+                ui.label(RichText::new("Offset").strong());
+                ui.add(
+                    egui::DragValue::new(&mut pan.offset_hz)
+                        .speed(1.0)
+                        .range(
+                            -sdroxide_types::PANADAPTER_OFFSET_MAX_HZ
+                                ..=sdroxide_types::PANADAPTER_OFFSET_MAX_HZ,
+                        )
+                        .max_decimals(0)
+                        .suffix(" Hz"),
+                )
+                .on_hover_text(
+                    "How far above this radio's dial the receiver sits, in hertz. 0 for a receiver \
                  on the same antenna; the intermediate frequency for an I.F. tap — 9000000 for \
                  a 9 MHz I.F., 70455000 for a 70.455 MHz one.\n\nThis is not the Converter field \
                  above, which retunes the radio, and not the CAT tab's I/Q centre offset, which \
                  is about this radio's own sound card. Nothing typed here is ever sent to \
                  either radio.\n\nTakes effect on Apply.",
-            );
-            ui.end_row();
+                );
+                ui.end_row();
 
-            ui.label(RichText::new("Audio from").strong());
-            enum_combo(
-                ui,
-                "pan-audio",
-                &mut pan.audio,
-                &PanadapterAudio::ALL,
-                PanadapterAudio::label,
-            );
-            ui.end_row();
+                ui.label(RichText::new("Audio from").strong());
+                enum_combo(
+                    ui,
+                    "pan-audio",
+                    &mut pan.audio,
+                    &PanadapterAudio::ALL,
+                    PanadapterAudio::label,
+                );
+                ui.end_row();
 
-            ui.label(RichText::new("Follow the dial").strong());
-            crate::chrome::checkbox(ui, &mut pan.track, "").on_hover_text(
-                "Keep the receiver on this radio's dial, and move the dial when you tune on \
+                ui.label(RichText::new("Follow the dial").strong());
+                crate::chrome::checkbox(ui, &mut pan.track, "").on_hover_text(
+                    "Keep the receiver on this radio's dial, and move the dial when you tune on \
                  the panadapter. Off parks the receiver where it is — a fixed watch on one \
                  segment while the radio goes elsewhere.",
-            );
-            ui.end_row();
+                );
+                ui.end_row();
 
-            ui.label(RichText::new("Invert spectrum").strong());
-            crate::chrome::checkbox(ui, &mut pan.invert, "").on_hover_text(
-                "Mirror the receiver's span about its centre, for a tap whose oscillator sits \
+                ui.label(RichText::new("Invert spectrum").strong());
+                crate::chrome::checkbox(ui, &mut pan.invert, "").on_hover_text(
+                    "Mirror the receiver's span about its centre, for a tap whose oscillator sits \
                  above the signal and hands the band over the wrong way round. Leave it off \
                  unless the waterfall fills with signals that are all on the wrong side of the \
                  dial.",
-            );
-            ui.end_row();
+                );
+                ui.end_row();
 
-            ui.label(RichText::new("Mute on transmit").strong());
-            crate::chrome::checkbox(ui, &mut pan.mute_on_tx, "").on_hover_text(
-                "Silence receive audio while this radio is transmitting. On by default: with \
+                ui.label(RichText::new("Mute on transmit").strong());
+                crate::chrome::checkbox(ui, &mut pan.mute_on_tx, "").on_hover_text(
+                    "Silence receive audio while this radio is transmitting. On by default: with \
                  the receiver on the same antenna, or on this radio's I.F., what it hears \
                  during an over is your own transmitter. Overs keyed at the radio itself — \
                  the microphone's PTT, a foot switch, MOX — count too, as soon as the CAT \
                  link says the rig has gone to transmit.",
-            );
-            ui.end_row();
+                );
+                ui.end_row();
 
-            ui.label(RichText::new("Blank on transmit").strong());
-            crate::chrome::checkbox(ui, &mut pan.blank_on_tx, "").on_hover_text(
-                "Stop the panadapter and waterfall while this radio is transmitting. On by \
+                ui.label(RichText::new("Blank on transmit").strong());
+                crate::chrome::checkbox(ui, &mut pan.blank_on_tx, "").on_hover_text(
+                    "Stop the panadapter and waterfall while this radio is transmitting. On by \
                  default: a transmitter painted across the whole span erases the band behind \
                  it. Turn it off to watch the band — or your own signal — through an over, \
                  which is worth having with the receiver on a separate antenna. Applies to \
                  overs sdroxide keys: one keyed at the radio is received right through, so \
                  the picture keeps running whatever this says.",
-            );
-            ui.end_row();
-        });
+                );
+                ui.end_row();
+            });
 
         if pan.is_attached() && pan.tap == PanadapterTap::IfOutput {
             ui.add_space(6.0);
@@ -4630,9 +4644,11 @@ impl SdroxideApp {
                      empty uses the offset above.",
             );
             ui.add_space(4.0);
-            egui::Grid::new("pan-mode-offsets").num_columns(3).spacing([10.0, 4.0]).show(
-                ui,
-                |ui| {
+            egui::Grid::new("pan-mode-offsets")
+                .num_columns(3)
+                .spacing([10.0, 4.0])
+                .min_row_height(ui.spacing().interact_size.y)
+                .show(ui, |ui| {
                     for class in IfModeClass::ALL {
                         ui.label(RichText::new(class.label()).strong());
                         let mut on = pan.mode_offset(class).is_some();
@@ -4663,8 +4679,7 @@ impl SdroxideApp {
                         }
                         ui.end_row();
                     }
-                },
-            );
+                });
         }
     }
 }

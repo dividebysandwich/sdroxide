@@ -406,36 +406,42 @@ fn settings_tle_freqs(ui: &mut egui::Ui, io: &mut SettingsIo) {
                 return;
             }
             let mut drop_link = None;
-            egui::Grid::new("sat-links").num_columns(6).spacing([8.0, 4.0]).show(ui, |ui| {
-                for h in ["LINK", "DOWNLINK", "UPLINK", "MODE", "NOTE", ""] {
-                    ui.label(RichText::new(h).color(theme::CYAN_DIM()).size(9.5).strong());
-                }
-                ui.end_row();
-                for (k, l) in f.links.iter_mut().enumerate() {
-                    crate::chrome::field(
-                        ui,
-                        egui::TextEdit::singleline(&mut l.label)
-                            .desired_width(120.0)
-                            .hint_text("FM repeater"),
-                    );
-                    freq_box(ui, (k, "down"), &mut l.downlink, "145.800");
-                    freq_box(ui, (k, "up"), &mut l.uplink, "435.250");
-                    crate::chrome::field(
-                        ui,
-                        egui::TextEdit::singleline(&mut l.mode).desired_width(90.0).hint_text("FM"),
-                    );
-                    crate::chrome::field(
-                        ui,
-                        egui::TextEdit::singleline(&mut l.note)
-                            .desired_width(180.0)
-                            .hint_text("CTCSS 67.0 Hz"),
-                    );
-                    if ui.button("✕").clicked() {
-                        drop_link = Some(k);
+            egui::Grid::new("sat-links")
+                .num_columns(6)
+                .spacing([8.0, 4.0])
+                .min_row_height(ui.spacing().interact_size.y)
+                .show(ui, |ui| {
+                    for h in ["LINK", "DOWNLINK", "UPLINK", "MODE", "NOTE", ""] {
+                        ui.label(RichText::new(h).color(theme::CYAN_DIM()).size(9.5).strong());
                     }
                     ui.end_row();
-                }
-            });
+                    for (k, l) in f.links.iter_mut().enumerate() {
+                        crate::chrome::field(
+                            ui,
+                            egui::TextEdit::singleline(&mut l.label)
+                                .desired_width(120.0)
+                                .hint_text("FM repeater"),
+                        );
+                        freq_box(ui, (k, "down"), &mut l.downlink, "145.800");
+                        freq_box(ui, (k, "up"), &mut l.uplink, "435.250");
+                        crate::chrome::field(
+                            ui,
+                            egui::TextEdit::singleline(&mut l.mode)
+                                .desired_width(90.0)
+                                .hint_text("FM"),
+                        );
+                        crate::chrome::field(
+                            ui,
+                            egui::TextEdit::singleline(&mut l.note)
+                                .desired_width(180.0)
+                                .hint_text("CTCSS 67.0 Hz"),
+                        );
+                        if ui.button("✕").clicked() {
+                            drop_link = Some(k);
+                        }
+                        ui.end_row();
+                    }
+                });
             if let Some(k) = drop_link {
                 f.links.remove(k);
             }

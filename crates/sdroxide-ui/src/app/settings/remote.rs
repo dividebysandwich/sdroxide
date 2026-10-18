@@ -49,50 +49,54 @@ pub(in crate::app) fn settings_remote_tab(
     // rather than sitting there looking as though they still apply.
     let typed_url = cfg.host.contains("://");
     let mut entered = false;
-    egui::Grid::new("remote-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-        ui.label(RichText::new("Address").strong());
-        let addr = crate::chrome::field(
-            ui,
-            egui::TextEdit::singleline(&mut cfg.host)
-                .desired_width(240.0)
-                .hint_text("host name or IP"),
-        );
-        let addr = addr.on_hover_text(
-            "The machine running sdroxide --server: a host name, an IPv4 or IPv6 address, or a \
+    egui::Grid::new("remote-grid")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .min_row_height(ui.spacing().interact_size.y)
+        .show(ui, |ui| {
+            ui.label(RichText::new("Address").strong());
+            let addr = crate::chrome::field(
+                ui,
+                egui::TextEdit::singleline(&mut cfg.host)
+                    .desired_width(240.0)
+                    .hint_text("host name or IP"),
+            );
+            let addr = addr.on_hover_text(
+                "The machine running sdroxide --server: a host name, an IPv4 or IPv6 address, or a \
              complete ws:// (or wss://) URL if the server sits behind a reverse proxy — a URL is \
              used exactly as typed and ignores the port and the switch below.",
-        );
-        // Enter in the address box is the same as pressing CONNECT: an address
-        // box is a thing one types into and presses return on.
-        entered = addr.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        ui.end_row();
-
-        ui.label(RichText::new("Port").strong());
-        ui.add_enabled_ui(!typed_url, |ui| {
-            ui.add(egui::DragValue::new(&mut cfg.port).range(1..=65535)).on_hover_text(
-                "The port that server listens on — server_port in its config.toml. 4950 unless \
-                 it was given --port.",
             );
-        });
-        ui.end_row();
+            // Enter in the address box is the same as pressing CONNECT: an address
+            // box is a thing one types into and presses return on.
+            entered = addr.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            ui.end_row();
 
-        // The scheme, as a switch rather than as something to be spelled out in
-        // the address box. A browser client reads it off the page it was served
-        // from; this one has no page, so the operator has to say — and until
-        // they could, a station behind an HTTPS proxy on 443 was reachable only
-        // by typing the whole URL out, which then took the port box with it
-        // (issue #360).
-        ui.label(RichText::new("Secure").strong());
-        ui.add_enabled_ui(!typed_url, |ui| {
-            ui.checkbox(&mut cfg.tls, "wss:// (TLS)").on_hover_text(
+            ui.label(RichText::new("Port").strong());
+            ui.add_enabled_ui(!typed_url, |ui| {
+                ui.add(egui::DragValue::new(&mut cfg.port).range(1..=65535)).on_hover_text(
+                    "The port that server listens on — server_port in its config.toml. 4950 unless \
+                 it was given --port.",
+                );
+            });
+            ui.end_row();
+
+            // The scheme, as a switch rather than as something to be spelled out in
+            // the address box. A browser client reads it off the page it was served
+            // from; this one has no page, so the operator has to say — and until
+            // they could, a station behind an HTTPS proxy on 443 was reachable only
+            // by typing the whole URL out, which then took the port box with it
+            // (issue #360).
+            ui.label(RichText::new("Secure").strong());
+            ui.add_enabled_ui(!typed_url, |ui| {
+                ui.checkbox(&mut cfg.tls, "wss:// (TLS)").on_hover_text(
                 "Tick this where the server sits behind something that terminates HTTPS for it — \
                  a reverse proxy on port 443, which is the usual way a station is reached across \
                  the open internet. sdroxide's own server speaks plain ws:// and does not want \
                  this.",
             );
+            });
+            ui.end_row();
         });
-        ui.end_row();
-    });
 
     ui.add_space(8.0);
     let ready = !cfg.host.trim().is_empty() && can_connect;

@@ -45,33 +45,40 @@ pub(in crate::app) fn settings_wsjtx_tab(
     crate::chrome::checkbox(ui, &mut cfg.enabled, "Enable");
     ui.add_space(6.0);
     ui.add_enabled_ui(cfg.enabled, |ui| {
-        egui::Grid::new("wsjtx-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Send to");
-            crate::chrome::field(
-                ui,
-                egui::TextEdit::singleline(&mut cfg.host)
-                    .desired_width(160.0)
-                    .hint_text("127.0.0.1"),
-            )
-            .on_hover_text(
-                "127.0.0.1 reaches clients on this machine; a LAN address or a multicast \
+        egui::Grid::new("wsjtx-grid")
+            .num_columns(2)
+            .spacing([12.0, 6.0])
+            .min_row_height(ui.spacing().interact_size.y)
+            .show(ui, |ui| {
+                ui.label("Send to");
+                crate::chrome::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut cfg.host)
+                        .desired_width(160.0)
+                        .hint_text("127.0.0.1"),
+                )
+                .on_hover_text(
+                    "127.0.0.1 reaches clients on this machine; a LAN address or a multicast \
                  group (224.0.0.1) reaches others",
-            );
-            ui.end_row();
+                );
+                ui.end_row();
 
-            ui.label("Port");
-            ui.add(egui::DragValue::new(&mut cfg.port).range(1..=65535))
-                .on_hover_text("2237 is the port every client defaults to");
-            ui.end_row();
+                ui.label("Port");
+                ui.add(egui::DragValue::new(&mut cfg.port).range(1..=65535))
+                    .on_hover_text("2237 is the port every client defaults to");
+                ui.end_row();
 
-            ui.label("Identify as");
-            crate::chrome::field(ui, egui::TextEdit::singleline(&mut cfg.id).desired_width(160.0))
+                ui.label("Identify as");
+                crate::chrome::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut cfg.id).desired_width(160.0),
+                )
                 .on_hover_text(
                     "The name clients see. Some loggers only accept traffic identifying itself \
                  as WSJT-X.",
                 );
-            ui.end_row();
-        });
+                ui.end_row();
+            });
     });
 
     // ── N1MM+, the other dialect ──
@@ -97,37 +104,41 @@ pub(in crate::app) fn settings_wsjtx_tab(
     crate::chrome::checkbox(ui, &mut cfg.n1mm.enabled, "Enable");
     ui.add_space(6.0);
     ui.add_enabled_ui(cfg.n1mm.enabled, |ui| {
-        egui::Grid::new("n1mm-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Send to");
-            crate::chrome::field(
-                ui,
-                egui::TextEdit::singleline(&mut cfg.n1mm.host)
-                    .desired_width(160.0)
-                    .hint_text("127.0.0.1"),
-            )
-            .on_hover_text(
-                "127.0.0.1 reaches clients on this machine. N1MM's own advice for a contest \
+        egui::Grid::new("n1mm-grid")
+            .num_columns(2)
+            .spacing([12.0, 6.0])
+            .min_row_height(ui.spacing().interact_size.y)
+            .show(ui, |ui| {
+                ui.label("Send to");
+                crate::chrome::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut cfg.n1mm.host)
+                        .desired_width(160.0)
+                        .hint_text("127.0.0.1"),
+                )
+                .on_hover_text(
+                    "127.0.0.1 reaches clients on this machine. N1MM's own advice for a contest \
                  network is this subnet's broadcast address — 192.168.1.255 for a 192.168.1.n \
                  network — which reaches every position at once.",
-            );
-            ui.end_row();
+                );
+                ui.end_row();
 
-            ui.label("Port");
-            ui.add(egui::DragValue::new(&mut cfg.n1mm.port).range(1..=65535))
-                .on_hover_text("12060 is the port N1MM's documentation recommends");
-            ui.end_row();
+                ui.label("Port");
+                ui.add(egui::DragValue::new(&mut cfg.n1mm.port).range(1..=65535))
+                    .on_hover_text("12060 is the port N1MM's documentation recommends");
+                ui.end_row();
 
-            ui.label("Station name");
-            crate::chrome::field(
-                ui,
-                egui::TextEdit::singleline(&mut cfg.n1mm.station).desired_width(160.0),
-            )
-            .on_hover_text(
-                "What N1MM calls the StationName: the name of the computer that sent the \
+                ui.label("Station name");
+                crate::chrome::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut cfg.n1mm.station).desired_width(160.0),
+                )
+                .on_hover_text(
+                    "What N1MM calls the StationName: the name of the computer that sent the \
                  packet. Loggers show it to tell one operating position from another.",
-            );
-            ui.end_row();
-        });
+                );
+                ui.end_row();
+            });
     });
 
     ui.add_space(8.0);
@@ -167,40 +178,47 @@ pub(in crate::app) fn settings_rigctld_tab(
     ui.add_space(6.0);
 
     ui.add_enabled_ui(cfg.enabled, |ui| {
-        egui::Grid::new("rigctld-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Listen on");
-            ComboBox::from_id_salt("rigctld_bind").selected_text(&cfg.bind).show_styled(ui, |ui| {
-                for b in RigctldConfig::BINDS {
-                    let label = if b == "127.0.0.1" {
-                        "127.0.0.1 (this machine)"
-                    } else {
-                        "0.0.0.0 (whole network)"
-                    };
-                    if ui.selectable_label(cfg.bind == b, label).clicked() {
-                        cfg.bind = b.to_string();
-                    }
-                }
+        egui::Grid::new("rigctld-grid")
+            .num_columns(2)
+            .spacing([12.0, 6.0])
+            .min_row_height(ui.spacing().interact_size.y)
+            .show(ui, |ui| {
+                ui.label("Listen on");
+                ComboBox::from_id_salt("rigctld_bind").selected_text(&cfg.bind).show_styled(
+                    ui,
+                    |ui| {
+                        for b in RigctldConfig::BINDS {
+                            let label = if b == "127.0.0.1" {
+                                "127.0.0.1 (this machine)"
+                            } else {
+                                "0.0.0.0 (whole network)"
+                            };
+                            if ui.selectable_label(cfg.bind == b, label).clicked() {
+                                cfg.bind = b.to_string();
+                            }
+                        }
+                    },
+                );
+                ui.end_row();
+
+                ui.label("Port");
+                ui.add(egui::DragValue::new(&mut cfg.port).range(1..=65535))
+                    .on_hover_text("4532 is the port every rigctld client assumes");
+                ui.end_row();
+
+                ui.label("Rig name");
+                crate::chrome::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut cfg.rig_name)
+                        .desired_width(160.0)
+                        .hint_text("reported to clients"),
+                );
+                ui.end_row();
+
+                ui.label("Max clients");
+                ui.add(egui::DragValue::new(&mut cfg.max_clients).range(1..=32));
+                ui.end_row();
             });
-            ui.end_row();
-
-            ui.label("Port");
-            ui.add(egui::DragValue::new(&mut cfg.port).range(1..=65535))
-                .on_hover_text("4532 is the port every rigctld client assumes");
-            ui.end_row();
-
-            ui.label("Rig name");
-            crate::chrome::field(
-                ui,
-                egui::TextEdit::singleline(&mut cfg.rig_name)
-                    .desired_width(160.0)
-                    .hint_text("reported to clients"),
-            );
-            ui.end_row();
-
-            ui.label("Max clients");
-            ui.add(egui::DragValue::new(&mut cfg.max_clients).range(1..=32));
-            ui.end_row();
-        });
         ui.add_space(4.0);
         crate::chrome::checkbox(ui, &mut cfg.allow_tx, "Allow clients to transmit").on_hover_text(
             "Off refuses every key request and stops advertising a transmit range, so Hamlib \
@@ -301,109 +319,119 @@ pub(in crate::app) fn settings_rotator_tab(
     crate::chrome::checkbox(ui, &mut cfg.enabled, "Enable");
     ui.add_space(6.0);
     ui.add_enabled_ui(cfg.enabled, |ui| {
-        egui::Grid::new("rotator-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Connection");
-            egui::ComboBox::from_id_salt("rotator-transport")
-                .selected_text(match cfg.transport {
-                    T::Rotctld => "Hamlib rotctld (TCP)",
-                    T::EasyComm2 => "EasyComm II (serial)",
-                    T::Gs232 => "Yaesu GS-232 (serial)",
-                    T::PsRotator => "PSTRotator (UDP)",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut cfg.transport, T::Rotctld, "Hamlib rotctld (TCP)");
-                    ui.selectable_value(&mut cfg.transport, T::EasyComm2, "EasyComm II (serial)");
-                    ui.selectable_value(&mut cfg.transport, T::Gs232, "Yaesu GS-232 (serial)");
-                    ui.selectable_value(&mut cfg.transport, T::PsRotator, "PSTRotator (UDP)");
-                });
-            ui.end_row();
-
-            match cfg.transport {
-                T::Rotctld => {
-                    ui.label("Host");
-                    crate::chrome::field(
-                        ui,
-                        egui::TextEdit::singleline(&mut cfg.host)
-                            .desired_width(160.0)
-                            .hint_text("127.0.0.1"),
-                    );
-                    ui.end_row();
-
-                    ui.label("Port");
-                    ui.add(egui::DragValue::new(&mut cfg.port).range(1..=65535))
-                        .on_hover_text("4533 is rotctld's default");
-                    ui.end_row();
-                }
-                T::EasyComm2 | T::Gs232 => {
-                    ui.label("Serial port");
-                    crate::chrome::field(
-                        ui,
-                        egui::TextEdit::singleline(&mut cfg.serial_port)
-                            .desired_width(160.0)
-                            .hint_text("/dev/ttyUSB0"),
-                    );
-                    ui.end_row();
-
-                    ui.label("Baud");
-                    ui.add(egui::DragValue::new(&mut cfg.baud).range(1200..=115200))
-                        .on_hover_text("Most controllers run at 9600");
-                    ui.end_row();
-                }
-                T::PsRotator => {
-                    // PSTRotator takes commands on the port and answers on
-                    // port + 1, so the host and port row above is the whole of
-                    // it — no serial port, no baud.
-                    ui.label("");
-                    ui.label(
-                        "PSTRotator's own UDP port. In its Setup, turn UDP Control on; \
-                         it answers commands on this port and replies on the next one.",
-                    );
-                }
-            }
-
-            ui.label("Min elevation");
-            ui.add(egui::DragValue::new(&mut cfg.min_el_deg).range(0.0..=45.0).suffix("°"))
-                .on_hover_text(
-                    "Below this the rotator parks instead of tracking — set it to your local \
-                     horizon or roofline",
-                );
-            ui.end_row();
-
-            ui.label("Azimuth offset");
-            ui.add(egui::DragValue::new(&mut cfg.az_offset_deg).range(-180.0..=180.0).suffix("°"))
-                .on_hover_text("Added to every command, for a rotator whose north is off");
-            ui.end_row();
-
-            ui.label("Min movement");
-            ui.add(egui::DragValue::new(&mut cfg.min_move_deg).range(0.1..=10.0).suffix("°"))
-                .on_hover_text(
-                    "Steps smaller than this are not sent — chasing tenths of a degree wears \
-                     motors for nothing",
-                );
-            ui.end_row();
-
-            ui.label("Park position");
-            let mut has_park = cfg.park.is_some();
-            if ui
-                .checkbox(&mut has_park, "drive to a position when idle")
-                .on_hover_text("Off leaves the antenna wherever the last pass ended")
-                .changed()
-            {
-                cfg.park = has_park.then_some((0.0, 0.0));
-            }
-            ui.end_row();
-
-            if let Some((az, el)) = cfg.park.as_mut() {
-                ui.label("");
-                ui.horizontal(|ui| {
-                    ui.label("az");
-                    ui.add(egui::DragValue::new(az).range(0.0..=360.0).suffix("°"));
-                    ui.label("el");
-                    ui.add(egui::DragValue::new(el).range(0.0..=90.0).suffix("°"));
-                });
+        egui::Grid::new("rotator-grid")
+            .num_columns(2)
+            .spacing([12.0, 6.0])
+            .min_row_height(ui.spacing().interact_size.y)
+            .show(ui, |ui| {
+                ui.label("Connection");
+                egui::ComboBox::from_id_salt("rotator-transport")
+                    .selected_text(match cfg.transport {
+                        T::Rotctld => "Hamlib rotctld (TCP)",
+                        T::EasyComm2 => "EasyComm II (serial)",
+                        T::Gs232 => "Yaesu GS-232 (serial)",
+                        T::PsRotator => "PSTRotator (UDP)",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut cfg.transport, T::Rotctld, "Hamlib rotctld (TCP)");
+                        ui.selectable_value(
+                            &mut cfg.transport,
+                            T::EasyComm2,
+                            "EasyComm II (serial)",
+                        );
+                        ui.selectable_value(&mut cfg.transport, T::Gs232, "Yaesu GS-232 (serial)");
+                        ui.selectable_value(&mut cfg.transport, T::PsRotator, "PSTRotator (UDP)");
+                    });
                 ui.end_row();
-            }
-        });
+
+                match cfg.transport {
+                    T::Rotctld => {
+                        ui.label("Host");
+                        crate::chrome::field(
+                            ui,
+                            egui::TextEdit::singleline(&mut cfg.host)
+                                .desired_width(160.0)
+                                .hint_text("127.0.0.1"),
+                        );
+                        ui.end_row();
+
+                        ui.label("Port");
+                        ui.add(egui::DragValue::new(&mut cfg.port).range(1..=65535))
+                            .on_hover_text("4533 is rotctld's default");
+                        ui.end_row();
+                    }
+                    T::EasyComm2 | T::Gs232 => {
+                        ui.label("Serial port");
+                        crate::chrome::field(
+                            ui,
+                            egui::TextEdit::singleline(&mut cfg.serial_port)
+                                .desired_width(160.0)
+                                .hint_text("/dev/ttyUSB0"),
+                        );
+                        ui.end_row();
+
+                        ui.label("Baud");
+                        ui.add(egui::DragValue::new(&mut cfg.baud).range(1200..=115200))
+                            .on_hover_text("Most controllers run at 9600");
+                        ui.end_row();
+                    }
+                    T::PsRotator => {
+                        // PSTRotator takes commands on the port and answers on
+                        // port + 1, so the host and port row above is the whole of
+                        // it — no serial port, no baud.
+                        ui.label("");
+                        ui.label(
+                            "PSTRotator's own UDP port. In its Setup, turn UDP Control on; \
+                         it answers commands on this port and replies on the next one.",
+                        );
+                    }
+                }
+
+                ui.label("Min elevation");
+                ui.add(egui::DragValue::new(&mut cfg.min_el_deg).range(0.0..=45.0).suffix("°"))
+                    .on_hover_text(
+                        "Below this the rotator parks instead of tracking — set it to your local \
+                     horizon or roofline",
+                    );
+                ui.end_row();
+
+                ui.label("Azimuth offset");
+                ui.add(
+                    egui::DragValue::new(&mut cfg.az_offset_deg).range(-180.0..=180.0).suffix("°"),
+                )
+                .on_hover_text("Added to every command, for a rotator whose north is off");
+                ui.end_row();
+
+                ui.label("Min movement");
+                ui.add(egui::DragValue::new(&mut cfg.min_move_deg).range(0.1..=10.0).suffix("°"))
+                    .on_hover_text(
+                        "Steps smaller than this are not sent — chasing tenths of a degree wears \
+                     motors for nothing",
+                    );
+                ui.end_row();
+
+                ui.label("Park position");
+                let mut has_park = cfg.park.is_some();
+                if ui
+                    .checkbox(&mut has_park, "drive to a position when idle")
+                    .on_hover_text("Off leaves the antenna wherever the last pass ended")
+                    .changed()
+                {
+                    cfg.park = has_park.then_some((0.0, 0.0));
+                }
+                ui.end_row();
+
+                if let Some((az, el)) = cfg.park.as_mut() {
+                    ui.label("");
+                    ui.horizontal(|ui| {
+                        ui.label("az");
+                        ui.add(egui::DragValue::new(az).range(0.0..=360.0).suffix("°"));
+                        ui.label("el");
+                        ui.add(egui::DragValue::new(el).range(0.0..=90.0).suffix("°"));
+                    });
+                    ui.end_row();
+                }
+            });
     });
 
     ui.add_space(8.0);
@@ -461,39 +489,46 @@ pub(in crate::app) fn settings_tci_server_tab(
     ui.add_space(6.0);
 
     ui.add_enabled_ui(cfg.enabled, |ui| {
-        egui::Grid::new("tci-srv-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Listen on");
-            ComboBox::from_id_salt("tci_srv_bind").selected_text(&cfg.bind).show_styled(ui, |ui| {
-                for b in TciServerConfig::BINDS {
-                    let label = if b == "127.0.0.1" {
-                        "127.0.0.1 (this machine)"
-                    } else {
-                        "0.0.0.0 (whole network)"
-                    };
-                    if ui.selectable_label(cfg.bind == b, label).clicked() {
-                        cfg.bind = b.to_string();
-                    }
-                }
+        egui::Grid::new("tci-srv-grid")
+            .num_columns(2)
+            .spacing([12.0, 6.0])
+            .min_row_height(ui.spacing().interact_size.y)
+            .show(ui, |ui| {
+                ui.label("Listen on");
+                ComboBox::from_id_salt("tci_srv_bind").selected_text(&cfg.bind).show_styled(
+                    ui,
+                    |ui| {
+                        for b in TciServerConfig::BINDS {
+                            let label = if b == "127.0.0.1" {
+                                "127.0.0.1 (this machine)"
+                            } else {
+                                "0.0.0.0 (whole network)"
+                            };
+                            if ui.selectable_label(cfg.bind == b, label).clicked() {
+                                cfg.bind = b.to_string();
+                            }
+                        }
+                    },
+                );
+                ui.end_row();
+
+                ui.label("Port");
+                ui.add(egui::DragValue::new(&mut cfg.port).range(1..=65535));
+                ui.end_row();
+
+                ui.label("Device name");
+                crate::chrome::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut cfg.device_name)
+                        .desired_width(160.0)
+                        .hint_text("reported to clients"),
+                );
+                ui.end_row();
+
+                ui.label("Max clients");
+                ui.add(egui::DragValue::new(&mut cfg.max_clients).range(1..=32));
+                ui.end_row();
             });
-            ui.end_row();
-
-            ui.label("Port");
-            ui.add(egui::DragValue::new(&mut cfg.port).range(1..=65535));
-            ui.end_row();
-
-            ui.label("Device name");
-            crate::chrome::field(
-                ui,
-                egui::TextEdit::singleline(&mut cfg.device_name)
-                    .desired_width(160.0)
-                    .hint_text("reported to clients"),
-            );
-            ui.end_row();
-
-            ui.label("Max clients");
-            ui.add(egui::DragValue::new(&mut cfg.max_clients).range(1..=32));
-            ui.end_row();
-        });
         ui.add_space(4.0);
         crate::chrome::checkbox(ui, &mut cfg.allow_tx, "Allow clients to transmit").on_hover_text(
             "Off leaves control and the receive streams working, but every key request \

@@ -30,18 +30,25 @@ pub(in crate::app) fn alerts_settings(
         );
 
     ui.add_enabled_ui(cfg.enabled, |ui| {
-        egui::Grid::new("alerts-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-            ui.label("Volume");
-            crate::chrome::slider(ui, egui::Slider::new(&mut cfg.volume, 0.0..=1.0).step_by(0.05));
-            ui.end_row();
+        egui::Grid::new("alerts-grid")
+            .num_columns(2)
+            .spacing([12.0, 8.0])
+            .min_row_height(ui.spacing().interact_size.y)
+            .show(ui, |ui| {
+                ui.label("Volume");
+                crate::chrome::slider(
+                    ui,
+                    egui::Slider::new(&mut cfg.volume, 0.0..=1.0).step_by(0.05),
+                );
+                ui.end_row();
 
-            ui.label("Output");
-            // Same contract as the speech tab: the current selection is read
-            // into a copy because the dropdown's closure hands the new one back.
-            let cur = cfg.device.clone();
-            device_combo(ui, "alerts-out", outputs, &cur, |n| cfg.device = n);
-            ui.end_row();
-        });
+                ui.label("Output");
+                // Same contract as the speech tab: the current selection is read
+                // into a copy because the dropdown's closure hands the new one back.
+                let cur = cfg.device.clone();
+                device_combo(ui, "alerts-out", outputs, &cur, |n| cfg.device = n);
+                ui.end_row();
+            });
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {

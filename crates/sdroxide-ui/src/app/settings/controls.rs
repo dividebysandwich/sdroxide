@@ -76,62 +76,69 @@ pub(in crate::app) fn settings_controls_tab(
     ui.add_space(6.0);
 
     let mut remove: Option<usize> = None;
-    egui::Grid::new("keys-grid").num_columns(6).spacing([10.0, 6.0]).striped(true).show(ui, |ui| {
-        ui.label(RichText::new("Shortcut").small().weak());
-        ui.label(RichText::new("Does").small().weak());
-        ui.label(RichText::new("Step / mode").small().weak());
-        ui.label(RichText::new("Accel").small().weak());
-        ui.label(RichText::new("On").small().weak());
-        ui.label("");
-        ui.end_row();
-
-        for (i, b) in cfg.keys.iter_mut().enumerate() {
-            let capturing = *key_capture == Some(i);
-            let label = if capturing { "press a key…".to_string() } else { b.chord.label() };
-            if crate::chrome::chip(ui, capturing, RichText::new(label).monospace()).clicked() {
-                *key_capture = if capturing { None } else { Some(i) };
-            }
-
-            if action_combo(ui, ("keyact", i), &mut b.action, memories) {
-                b.tuning.step = b.action.default_step();
-            }
-
-            match b.action.kind() {
-                ActionKind::Continuous => {
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut b.tuning.step)
-                                .speed(1.0)
-                                .range(0.0001..=1_000_000.0),
-                        );
-                        // The sign of `value` is the direction, so one
-                        // action can have an up key and a down key.
-                        let mut down = b.value < 0.0;
-                        if crate::chrome::checkbox(ui, &mut down, "down").changed() {
-                            b.value = if down { -1.0 } else { 1.0 };
-                        }
-                    });
-                    ui.add(egui::DragValue::new(&mut b.tuning.accel).speed(0.05).range(0.0..=4.0));
-                }
-                ActionKind::Momentary => {
-                    ui.horizontal(|ui| {
-                        for m in ButtonMode::ALL {
-                            if crate::chrome::chip(ui, b.button == m, m.label()).clicked() {
-                                b.button = m;
-                            }
-                        }
-                    });
-                    ui.label("");
-                }
-            }
-
-            crate::chrome::checkbox(ui, &mut b.enabled, "");
-            if ui.small_button("✕").on_hover_text("Remove this binding").clicked() {
-                remove = Some(i);
-            }
+    egui::Grid::new("keys-grid")
+        .num_columns(6)
+        .spacing([10.0, 6.0])
+        .min_row_height(ui.spacing().interact_size.y)
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label(RichText::new("Shortcut").small().weak());
+            ui.label(RichText::new("Does").small().weak());
+            ui.label(RichText::new("Step / mode").small().weak());
+            ui.label(RichText::new("Accel").small().weak());
+            ui.label(RichText::new("On").small().weak());
+            ui.label("");
             ui.end_row();
-        }
-    });
+
+            for (i, b) in cfg.keys.iter_mut().enumerate() {
+                let capturing = *key_capture == Some(i);
+                let label = if capturing { "press a key…".to_string() } else { b.chord.label() };
+                if crate::chrome::chip(ui, capturing, RichText::new(label).monospace()).clicked() {
+                    *key_capture = if capturing { None } else { Some(i) };
+                }
+
+                if action_combo(ui, ("keyact", i), &mut b.action, memories) {
+                    b.tuning.step = b.action.default_step();
+                }
+
+                match b.action.kind() {
+                    ActionKind::Continuous => {
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut b.tuning.step)
+                                    .speed(1.0)
+                                    .range(0.0001..=1_000_000.0),
+                            );
+                            // The sign of `value` is the direction, so one
+                            // action can have an up key and a down key.
+                            let mut down = b.value < 0.0;
+                            if crate::chrome::checkbox(ui, &mut down, "down").changed() {
+                                b.value = if down { -1.0 } else { 1.0 };
+                            }
+                        });
+                        ui.add(
+                            egui::DragValue::new(&mut b.tuning.accel).speed(0.05).range(0.0..=4.0),
+                        );
+                    }
+                    ActionKind::Momentary => {
+                        ui.horizontal(|ui| {
+                            for m in ButtonMode::ALL {
+                                if crate::chrome::chip(ui, b.button == m, m.label()).clicked() {
+                                    b.button = m;
+                                }
+                            }
+                        });
+                        ui.label("");
+                    }
+                }
+
+                crate::chrome::checkbox(ui, &mut b.enabled, "");
+                if ui.small_button("✕").on_hover_text("Remove this binding").clicked() {
+                    remove = Some(i);
+                }
+                ui.end_row();
+            }
+        });
     if let Some(i) = remove {
         cfg.keys.remove(i);
         if *key_capture == Some(i) {
@@ -190,34 +197,41 @@ pub(in crate::app) fn settings_controls_tab(
     ui.add_space(6.0);
 
     let w = &mut cfg.wheel;
-    egui::Grid::new("mouse-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-        ui.label("Wheel");
-        wheel_action_combo(ui, "wheel-plain", &mut w.wheel);
-        ui.end_row();
+    egui::Grid::new("mouse-grid")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .min_row_height(ui.spacing().interact_size.y)
+        .show(ui, |ui| {
+            ui.label("Wheel");
+            wheel_action_combo(ui, "wheel-plain", &mut w.wheel);
+            ui.end_row();
 
-        ui.label("Wheel + Shift");
-        wheel_action_combo(ui, "wheel-shift", &mut w.wheel_shift);
-        ui.end_row();
+            ui.label("Wheel + Shift");
+            wheel_action_combo(ui, "wheel-shift", &mut w.wheel_shift);
+            ui.end_row();
 
-        ui.label("Tune step");
-        ui.add(
-            egui::DragValue::new(&mut w.tune_step_hz).speed(10.0).range(1.0..=1e6).suffix(" Hz"),
-        );
-        ui.end_row();
+            ui.label("Tune step");
+            ui.add(
+                egui::DragValue::new(&mut w.tune_step_hz)
+                    .speed(10.0)
+                    .range(1.0..=1e6)
+                    .suffix(" Hz"),
+            );
+            ui.end_row();
 
-        ui.label("Zoom rate");
-        ui.add(egui::DragValue::new(&mut w.zoom_rate).speed(0.05).range(0.1..=5.0));
-        ui.end_row();
+            ui.label("Zoom rate");
+            ui.add(egui::DragValue::new(&mut w.zoom_rate).speed(0.05).range(0.1..=5.0));
+            ui.end_row();
 
-        ui.label("Click-tune rounding");
-        ui.add(
-            egui::DragValue::new(&mut w.click_tune_step_hz)
-                .speed(1.0)
-                .range(1.0..=10_000.0)
-                .suffix(" Hz"),
-        );
-        ui.end_row();
-    });
+            ui.label("Click-tune rounding");
+            ui.add(
+                egui::DragValue::new(&mut w.click_tune_step_hz)
+                    .speed(1.0)
+                    .range(1.0..=10_000.0)
+                    .suffix(" Hz"),
+            );
+            ui.end_row();
+        });
     ui.add_space(4.0);
     crate::chrome::checkbox(ui, &mut w.invert, "Invert wheel direction");
     crate::chrome::checkbox(ui, &mut w.drag_tunes, "Left-drag tunes as well as pans")
@@ -252,9 +266,12 @@ pub(in crate::app) fn settings_controls_tab(
     ui.add_space(6.0);
 
     let mut remove: Option<usize> = None;
-    egui::Grid::new("mousebtn-grid").num_columns(5).spacing([10.0, 6.0]).striped(true).show(
-        ui,
-        |ui| {
+    egui::Grid::new("mousebtn-grid")
+        .num_columns(5)
+        .spacing([10.0, 6.0])
+        .min_row_height(ui.spacing().interact_size.y)
+        .striped(true)
+        .show(ui, |ui| {
             for (i, b) in cfg.mouse_buttons.iter_mut().enumerate() {
                 ComboBox::from_id_salt(("mb", i))
                     .width(130.0)
@@ -280,8 +297,7 @@ pub(in crate::app) fn settings_controls_tab(
                 }
                 ui.end_row();
             }
-        },
-    );
+        });
     if let Some(i) = remove {
         cfg.mouse_buttons.remove(i);
     }
@@ -344,27 +360,31 @@ fn settings_midi_section(
     ui.add_space(6.0);
 
     ui.add_enabled_ui(cfg.midi.enabled, |ui| {
-        egui::Grid::new("midi-ports").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Controller");
-            midi_port_combo(
-                ui,
-                "midi-in",
-                midi_in,
-                &mut cfg.midi.in_port_id,
-                &mut cfg.midi.in_port_name,
-            );
-            ui.end_row();
+        egui::Grid::new("midi-ports")
+            .num_columns(2)
+            .spacing([12.0, 6.0])
+            .min_row_height(ui.spacing().interact_size.y)
+            .show(ui, |ui| {
+                ui.label("Controller");
+                midi_port_combo(
+                    ui,
+                    "midi-in",
+                    midi_in,
+                    &mut cfg.midi.in_port_id,
+                    &mut cfg.midi.in_port_name,
+                );
+                ui.end_row();
 
-            ui.label("Feedback to");
-            midi_port_combo(
-                ui,
-                "midi-out",
-                midi_out,
-                &mut cfg.midi.out_port_id,
-                &mut cfg.midi.out_port_name,
-            );
-            ui.end_row();
-        });
+                ui.label("Feedback to");
+                midi_port_combo(
+                    ui,
+                    "midi-out",
+                    midi_out,
+                    &mut cfg.midi.out_port_id,
+                    &mut cfg.midi.out_port_name,
+                );
+                ui.end_row();
+            });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             if crate::chrome::chip(ui, false, "Rescan ports").clicked() {
@@ -392,82 +412,88 @@ fn settings_midi_section(
 
     ui.add_space(8.0);
     let mut remove: Option<usize> = None;
-    egui::Grid::new("midi-grid").num_columns(7).spacing([10.0, 6.0]).striped(true).show(ui, |ui| {
-        ui.label(RichText::new("Control").small().weak());
-        ui.label(RichText::new("Does").small().weak());
-        ui.label(RichText::new("Reads as").small().weak());
-        ui.label(RichText::new("Step / mode").small().weak());
-        ui.label(RichText::new("LED").small().weak());
-        ui.label(RichText::new("On").small().weak());
-        ui.label("");
-        ui.end_row();
+    egui::Grid::new("midi-grid")
+        .num_columns(7)
+        .spacing([10.0, 6.0])
+        .min_row_height(ui.spacing().interact_size.y)
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label(RichText::new("Control").small().weak());
+            ui.label(RichText::new("Does").small().weak());
+            ui.label(RichText::new("Reads as").small().weak());
+            ui.label(RichText::new("Step / mode").small().weak());
+            ui.label(RichText::new("LED").small().weak());
+            ui.label(RichText::new("On").small().weak());
+            ui.label("");
+            ui.end_row();
 
-        for (i, b) in cfg.midi.bindings.iter_mut().enumerate() {
-            let learning = learn.map(|l| l.row) == Some(i);
-            let label = if learning { "move it…".to_string() } else { b.msg.label() };
-            if crate::chrome::chip(ui, learning, RichText::new(label).monospace())
-                .on_hover_text("Click, then move the control you want to bind")
-                .clicked()
-            {
-                *learn = if learning { None } else { Some(crate::input::MidiLearn { row: i }) };
-            }
+            for (i, b) in cfg.midi.bindings.iter_mut().enumerate() {
+                let learning = learn.map(|l| l.row) == Some(i);
+                let label = if learning { "move it…".to_string() } else { b.msg.label() };
+                if crate::chrome::chip(ui, learning, RichText::new(label).monospace())
+                    .on_hover_text("Click, then move the control you want to bind")
+                    .clicked()
+                {
+                    *learn = if learning { None } else { Some(crate::input::MidiLearn { row: i }) };
+                }
 
-            if action_combo(ui, ("midiact", i), &mut b.action, memories) {
-                b.tuning.step = b.action.default_step();
-            }
+                if action_combo(ui, ("midiact", i), &mut b.action, memories) {
+                    b.tuning.step = b.action.default_step();
+                }
 
-            match b.action.kind() {
-                ActionKind::Continuous => {
-                    ComboBox::from_id_salt(("midirel", i))
-                        .width(170.0)
-                        .selected_text(b.relative.label())
-                        .show_styled(ui, |ui| {
-                            for m in RelativeMode::ALL {
-                                if ui.selectable_label(b.relative == m, m.label()).clicked() {
-                                    b.relative = m;
+                match b.action.kind() {
+                    ActionKind::Continuous => {
+                        ComboBox::from_id_salt(("midirel", i))
+                            .width(170.0)
+                            .selected_text(b.relative.label())
+                            .show_styled(ui, |ui| {
+                                for m in RelativeMode::ALL {
+                                    if ui.selectable_label(b.relative == m, m.label()).clicked() {
+                                        b.relative = m;
+                                    }
+                                }
+                            });
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut b.tuning.step)
+                                    .speed(1.0)
+                                    .range(0.0001..=1_000_000.0),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut b.tuning.accel)
+                                    .speed(0.05)
+                                    .range(0.0..=4.0)
+                                    .prefix("×"),
+                            )
+                            .on_hover_text("Speed sensitivity: spin faster to tune faster");
+                            // Sign/magnitude and 64-centred encoders are
+                            // indistinguishable from small movements, so a wrong
+                            // guess shows up as a knob that turns the wrong way.
+                            crate::chrome::checkbox(ui, &mut b.tuning.invert, "rev");
+                        });
+                    }
+                    ActionKind::Momentary => {
+                        ui.label("");
+                        ui.horizontal(|ui| {
+                            for m in ButtonMode::ALL {
+                                if crate::chrome::chip(ui, b.button_mode == m, m.label()).clicked()
+                                {
+                                    b.button_mode = m;
                                 }
                             }
                         });
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut b.tuning.step)
-                                .speed(1.0)
-                                .range(0.0001..=1_000_000.0),
-                        );
-                        ui.add(
-                            egui::DragValue::new(&mut b.tuning.accel)
-                                .speed(0.05)
-                                .range(0.0..=4.0)
-                                .prefix("×"),
-                        )
-                        .on_hover_text("Speed sensitivity: spin faster to tune faster");
-                        // Sign/magnitude and 64-centred encoders are
-                        // indistinguishable from small movements, so a wrong
-                        // guess shows up as a knob that turns the wrong way.
-                        crate::chrome::checkbox(ui, &mut b.tuning.invert, "rev");
-                    });
+                    }
                 }
-                ActionKind::Momentary => {
-                    ui.label("");
-                    ui.horizontal(|ui| {
-                        for m in ButtonMode::ALL {
-                            if crate::chrome::chip(ui, b.button_mode == m, m.label()).clicked() {
-                                b.button_mode = m;
-                            }
-                        }
-                    });
-                }
-            }
 
-            crate::chrome::checkbox(ui, &mut b.feedback, "")
-                .on_hover_text("Send the current value back, to light an LED or move a fader");
-            crate::chrome::checkbox(ui, &mut b.enabled, "");
-            if ui.small_button("✕").clicked() {
-                remove = Some(i);
+                crate::chrome::checkbox(ui, &mut b.feedback, "")
+                    .on_hover_text("Send the current value back, to light an LED or move a fader");
+                crate::chrome::checkbox(ui, &mut b.enabled, "");
+                if ui.small_button("✕").clicked() {
+                    remove = Some(i);
+                }
+                ui.end_row();
             }
-            ui.end_row();
-        }
-    });
+        });
     if let Some(i) = remove {
         cfg.midi.bindings.remove(i);
         if learn.map(|l| l.row) == Some(i) {

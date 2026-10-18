@@ -196,20 +196,26 @@ pub(in crate::app) fn remote_access_settings(ui: &mut egui::Ui, access: &mut Rem
         Some(11.5),
     );
     ui.add_space(8.0);
-    egui::Grid::new("remote-access-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-        ui.label("Username");
-        crate::chrome::field(
-            ui,
-            egui::TextEdit::singleline(&mut access.username).desired_width(200.0),
-        );
-        ui.end_row();
-        ui.label("Password");
-        crate::chrome::field(
-            ui,
-            egui::TextEdit::singleline(&mut access.password).password(true).desired_width(200.0),
-        );
-        ui.end_row();
-    });
+    egui::Grid::new("remote-access-grid")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .min_row_height(ui.spacing().interact_size.y)
+        .show(ui, |ui| {
+            ui.label("Username");
+            crate::chrome::field(
+                ui,
+                egui::TextEdit::singleline(&mut access.username).desired_width(200.0),
+            );
+            ui.end_row();
+            ui.label("Password");
+            crate::chrome::field(
+                ui,
+                egui::TextEdit::singleline(&mut access.password)
+                    .password(true)
+                    .desired_width(200.0),
+            );
+            ui.end_row();
+        });
     ui.add_space(6.0);
     // The state of the door, said plainly. "Both boxes empty means anyone may
     // key my transmitter" is not something an operator should have to infer.

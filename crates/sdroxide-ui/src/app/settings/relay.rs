@@ -58,137 +58,141 @@ pub(in crate::app) fn settings_relay_tab(
     ui.add_space(8.0);
 
     // ── the link ────────────────────────────────────────────────────────────
-    egui::Grid::new("relay-link-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-        ui.label("Hardware");
-        ComboBox::from_id_salt("relay-link")
-            .width(260.0)
-            .selected_text(cfg.link.label())
-            .show_styled(ui, |ui| {
-                for l in [
-                    RelayLink::Off,
-                    RelayLink::Serial,
-                    RelayLink::SerialLines,
-                    RelayLink::Hid,
-                    RelayLink::Cm108,
-                    RelayLink::Gpio,
-                    RelayLink::Command,
-                ] {
-                    if ui.selectable_label(cfg.link == l, l.label()).clicked() {
-                        cfg.link = l;
-                    }
-                }
-            });
-        ui.end_row();
-
-        if cfg.link == RelayLink::Serial {
-            ui.label("Board");
-            ComboBox::from_id_salt("relay-family")
+    egui::Grid::new("relay-link-grid")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .min_row_height(ui.spacing().interact_size.y)
+        .show(ui, |ui| {
+            ui.label("Hardware");
+            ComboBox::from_id_salt("relay-link")
                 .width(260.0)
-                .selected_text(cfg.family.label())
+                .selected_text(cfg.link.label())
                 .show_styled(ui, |ui| {
-                    for f in [RelayFamily::Lcus, RelayFamily::KMtronic, RelayFamily::Numato] {
-                        if ui.selectable_label(cfg.family == f, f.label()).clicked() {
-                            cfg.family = f;
-                            cfg.serial.baud = f.baud();
+                    for l in [
+                        RelayLink::Off,
+                        RelayLink::Serial,
+                        RelayLink::SerialLines,
+                        RelayLink::Hid,
+                        RelayLink::Cm108,
+                        RelayLink::Gpio,
+                        RelayLink::Command,
+                    ] {
+                        if ui.selectable_label(cfg.link == l, l.label()).clicked() {
+                            cfg.link = l;
                         }
                     }
-                })
-                .response
-                .on_hover_text(
-                    "LCUS is the four-byte A0-command board sold under a dozen names; KMtronic \
+                });
+            ui.end_row();
+
+            if cfg.link == RelayLink::Serial {
+                ui.label("Board");
+                ComboBox::from_id_salt("relay-family")
+                    .width(260.0)
+                    .selected_text(cfg.family.label())
+                    .show_styled(ui, |ui| {
+                        for f in [RelayFamily::Lcus, RelayFamily::KMtronic, RelayFamily::Numato] {
+                            if ui.selectable_label(cfg.family == f, f.label()).clicked() {
+                                cfg.family = f;
+                                cfg.serial.baud = f.baud();
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "LCUS is the four-byte A0-command board sold under a dozen names; KMtronic \
                      and Numato can also be asked what they are set to",
+                    );
+                ui.end_row();
+            }
+
+            if cfg.link.uses_serial_port() {
+                ui.label("Port");
+                let shown = if cfg.serial.path.is_empty() {
+                    "— choose —".to_string()
+                } else {
+                    cfg.serial.path.clone()
+                };
+                // The list is of the *engine's* machine. Where that is elsewhere the
+                // stored path is still worth showing — it says which port the switch
+                // is on — but there is nothing here to choose from.
+                ComboBox::from_id_salt("relay-port").width(260.0).selected_text(shown).show_styled(
+                    ui,
+                    |ui| {
+                        for p in serial_ports {
+                            if ui.selectable_label(&cfg.serial.path == p, p).clicked() {
+                                cfg.serial.path = p.clone();
+                            }
+                        }
+                    },
                 );
-            ui.end_row();
-        }
+                ui.end_row();
+            }
 
-        if cfg.link.uses_serial_port() {
-            ui.label("Port");
-            let shown = if cfg.serial.path.is_empty() {
-                "— choose —".to_string()
-            } else {
-                cfg.serial.path.clone()
-            };
-            // The list is of the *engine's* machine. Where that is elsewhere the
-            // stored path is still worth showing — it says which port the switch
-            // is on — but there is nothing here to choose from.
-            ComboBox::from_id_salt("relay-port").width(260.0).selected_text(shown).show_styled(
-                ui,
-                |ui| {
-                    for p in serial_ports {
-                        if ui.selectable_label(&cfg.serial.path == p, p).clicked() {
-                            cfg.serial.path = p.clone();
+            if cfg.link.uses_device_list() {
+                ui.label("Device");
+                let shown = if cfg.device.is_empty() {
+                    "— choose —".to_string()
+                } else {
+                    devices
+                        .iter()
+                        .find(|d| d.key == cfg.device)
+                        .map(|d| d.label.clone())
+                        .unwrap_or_else(|| cfg.device.clone())
+                };
+                ComboBox::from_id_salt("relay-device")
+                    .width(260.0)
+                    .selected_text(shown)
+                    .show_styled(ui, |ui| {
+                        for d in devices.iter().filter(|d| d.link == cfg.link) {
+                            if ui.selectable_label(cfg.device == d.key, &d.label).clicked() {
+                                cfg.device = d.key.clone();
+                            }
                         }
-                    }
-                },
-            );
-            ui.end_row();
-        }
+                    });
+                ui.end_row();
+            }
 
-        if cfg.link.uses_device_list() {
-            ui.label("Device");
-            let shown = if cfg.device.is_empty() {
-                "— choose —".to_string()
-            } else {
-                devices
-                    .iter()
-                    .find(|d| d.key == cfg.device)
-                    .map(|d| d.label.clone())
-                    .unwrap_or_else(|| cfg.device.clone())
-            };
-            ComboBox::from_id_salt("relay-device").width(260.0).selected_text(shown).show_styled(
-                ui,
-                |ui| {
-                    for d in devices.iter().filter(|d| d.link == cfg.link) {
-                        if ui.selectable_label(cfg.device == d.key, &d.label).clicked() {
-                            cfg.device = d.key.clone();
-                        }
-                    }
-                },
-            );
-            ui.end_row();
-        }
-
-        if cfg.link == RelayLink::Cm108 {
-            ui.label("GPIO pin");
-            ui.add(egui::DragValue::new(&mut cfg.cm108_pin).range(1..=8)).on_hover_text(
+            if cfg.link == RelayLink::Cm108 {
+                ui.label("GPIO pin");
+                ui.add(egui::DragValue::new(&mut cfg.cm108_pin).range(1..=8)).on_hover_text(
                 "Pin 3 on every homebrew plan and every commercial board — it is the one at the \
                  end of the package that a wire can be tacked to. If the relay does not click, \
                  the card is a clone that does not implement these pins at all.",
             );
-            ui.end_row();
-        }
+                ui.end_row();
+            }
 
-        if cfg.link == RelayLink::Gpio {
-            ui.label("GPIO chip");
-            crate::chrome::field(
-                ui,
-                egui::TextEdit::singleline(&mut cfg.device)
-                    .desired_width(260.0)
-                    .hint_text("/dev/gpiochip0"),
-            )
-            .on_hover_text("Linux only. `gpiodetect` lists the chips on the machine.");
-            ui.end_row();
-        }
+            if cfg.link == RelayLink::Gpio {
+                ui.label("GPIO chip");
+                crate::chrome::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut cfg.device)
+                        .desired_width(260.0)
+                        .hint_text("/dev/gpiochip0"),
+                )
+                .on_hover_text("Linux only. `gpiodetect` lists the chips on the machine.");
+                ui.end_row();
+            }
 
-        if cfg.link == RelayLink::Command {
-            ui.label("On transmit");
-            crate::chrome::field(
-                ui,
-                egui::TextEdit::singleline(&mut cfg.tx_cmd)
-                    .desired_width(260.0)
-                    .hint_text("usbrelay 1_1=1"),
-            );
-            ui.end_row();
-            ui.label("On receive");
-            crate::chrome::field(
-                ui,
-                egui::TextEdit::singleline(&mut cfg.rx_cmd)
-                    .desired_width(260.0)
-                    .hint_text("usbrelay 1_1=0"),
-            );
-            ui.end_row();
-        }
-    });
+            if cfg.link == RelayLink::Command {
+                ui.label("On transmit");
+                crate::chrome::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut cfg.tx_cmd)
+                        .desired_width(260.0)
+                        .hint_text("usbrelay 1_1=1"),
+                );
+                ui.end_row();
+                ui.label("On receive");
+                crate::chrome::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut cfg.rx_cmd)
+                        .desired_width(260.0)
+                        .hint_text("usbrelay 1_1=0"),
+                );
+                ui.end_row();
+            }
+        });
 
     if cfg.link == RelayLink::Off {
         ui.add_space(8.0);
@@ -379,26 +383,30 @@ pub(in crate::app) fn settings_relay_tab(
 
     // ── the fail-safe ───────────────────────────────────────────────────────
     ui.add_space(10.0);
-    egui::Grid::new("relay-timing").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-        ui.label("If it will not answer");
-        ComboBox::from_id_salt("relay-failsafe")
-            .width(260.0)
-            .selected_text(cfg.fail_safe.label())
-            .show_styled(ui, |ui| {
-                for f in [FailSafe::RefuseTx, FailSafe::WarnOnly] {
-                    if ui.selectable_label(cfg.fail_safe == f, f.label()).clicked() {
-                        cfg.fail_safe = f;
+    egui::Grid::new("relay-timing")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .min_row_height(ui.spacing().interact_size.y)
+        .show(ui, |ui| {
+            ui.label("If it will not answer");
+            ComboBox::from_id_salt("relay-failsafe")
+                .width(260.0)
+                .selected_text(cfg.fail_safe.label())
+                .show_styled(ui, |ui| {
+                    for f in [FailSafe::RefuseTx, FailSafe::WarnOnly] {
+                        if ui.selectable_label(cfg.fail_safe == f, f.label()).clicked() {
+                            cfg.fail_safe = f;
+                        }
                     }
-                }
-            })
-            .response
-            .on_hover_text(
-                "A switch that exists to protect a receiver is not worth having if it silently \
+                })
+                .response
+                .on_hover_text(
+                    "A switch that exists to protect a receiver is not worth having if it silently \
                  stops protecting it — so refusing is the default. Choose the other where a \
                  loose USB cable ending your contest is the worse outcome.",
-            );
-        ui.end_row();
-    });
+                );
+            ui.end_row();
+        });
 
     // ── what it will actually do ────────────────────────────────────────────
     ui.add_space(10.0);
@@ -428,24 +436,28 @@ pub(in crate::app) fn settings_relay_tab(
     );
     ui.add_space(6.0);
     ui.add_enabled_ui(cfg.link.uses_serial_port(), |ui| {
-        egui::Grid::new("relay-sense").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Line");
-            ComboBox::from_id_salt("relay-sense-line")
-                .width(260.0)
-                .selected_text(cfg.sense.line.label())
-                .show_styled(ui, |ui| {
-                    for l in [SenseLine::Off, SenseLine::Cts, SenseLine::Dsr, SenseLine::Dcd] {
-                        if ui.selectable_label(cfg.sense.line == l, l.label()).clicked() {
-                            cfg.sense.line = l;
+        egui::Grid::new("relay-sense")
+            .num_columns(2)
+            .spacing([12.0, 6.0])
+            .min_row_height(ui.spacing().interact_size.y)
+            .show(ui, |ui| {
+                ui.label("Line");
+                ComboBox::from_id_salt("relay-sense-line")
+                    .width(260.0)
+                    .selected_text(cfg.sense.line.label())
+                    .show_styled(ui, |ui| {
+                        for l in [SenseLine::Off, SenseLine::Cts, SenseLine::Dsr, SenseLine::Dcd] {
+                            if ui.selectable_label(cfg.sense.line == l, l.label()).clicked() {
+                                cfg.sense.line = l;
+                            }
                         }
-                    }
-                });
-            ui.end_row();
+                    });
+                ui.end_row();
 
-            if cfg.sense.line != SenseLine::Off {
-                ui.label("Transmitting is");
-                let mut high = cfg.sense.active_high;
-                if ui
+                if cfg.sense.line != SenseLine::Off {
+                    ui.label("Transmitting is");
+                    let mut high = cfg.sense.active_high;
+                    if ui
                     .checkbox(&mut high, "a high line")
                     .on_hover_text(
                         "Most opto-isolated interfaces pull the line down when the rig keys, so \
@@ -455,10 +467,10 @@ pub(in crate::app) fn settings_relay_tab(
                 {
                     cfg.sense.active_high = high;
                 }
-                ui.end_row();
+                    ui.end_row();
 
-                ui.label("Belongs to radio");
-                ui.add(
+                    ui.label("Belongs to radio");
+                    ui.add(
                     egui::DragValue::new(&mut cfg.sense.radio)
                         .range(0..=15)
                         .custom_formatter(|n, _| format!("{}", n as u32 + 1)),
@@ -467,9 +479,9 @@ pub(in crate::app) fn settings_relay_tab(
                     "Which radio tab the sensed transceiver is. On a station with one radio this \
                      is 1 and nothing depends on it.",
                 );
-                ui.end_row();
-            }
-        });
+                    ui.end_row();
+                }
+            });
     });
     if !cfg.link.uses_serial_port() {
         super::note(ui, "Needs a serial port — the handshake lines are on it.");
@@ -573,9 +585,12 @@ fn relay_band_table(ui: &mut egui::Ui, cfg: &mut RelayConfig) {
         .copied()
         .filter(|b| *b == sdroxide_types::Band::Gen || b.edges().is_some())
         .collect();
-    egui::Grid::new("relay-band-grid").num_columns(4).spacing([12.0, 4.0]).striped(true).show(
-        ui,
-        |ui| {
+    egui::Grid::new("relay-band-grid")
+        .num_columns(4)
+        .spacing([12.0, 4.0])
+        .min_row_height(ui.spacing().interact_size.y)
+        .striped(true)
+        .show(ui, |ui| {
             for h in ["Band", "RX", "TX", "Outputs asserted"] {
                 ui.label(RichText::new(h).weak().size(10.0));
             }
@@ -614,8 +629,7 @@ fn relay_band_table(ui: &mut egui::Ui, cfg: &mut RelayConfig) {
                 }
                 ui.end_row();
             }
-        },
-    );
+        });
 }
 
 /// One control word, typed and shown as hexadecimal — see
