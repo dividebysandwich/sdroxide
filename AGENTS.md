@@ -4904,6 +4904,21 @@ Kevin cuts the pre-releases**, and a full release is cut when everything is good
 **and Kevin says so**. That is what he asked to be told, in as many words, on
 fork #72.
 
+**The `nightly` release and its tag were removed the same day**, at the operator's
+instruction — *"remove the nightly that was not created by kevin"*. It was the one
+release on the page the workflow had made: author `github-actions[bot]`, title
+*SDR Oxide Brown nightly 2026-10-17*, 15 assets, created 2026-10-03 and reused
+every night since (`gh release delete nightly --cleanup-tag`). **Every remaining
+pre-release is Kevin's** — `v2.0.13.2`, `.3` and `.4` are all authored by F4NRM —
+which is worth knowing before wondering whether one appeared by itself.
+`nightly.yml` still exists and still moves the `nightly` tag when **run by hand**,
+so a nightly can be had on request; nothing does it on its own.
+
+**What still runs by itself, so it is not mistaken for a release:** Pages deploys
+the `docs/` site on every push to `main` (`pages-build-deployment`, event
+`dynamic`). That publishes a website, not a build, and it is not to be confused
+with a release.
+
 **An agent must not tag a release.** Not a Friday one, not a patch one, not a
 pre-release, not "because the queue looks clean". Ask. (Kevin's own pre-releases
 are his to cut; that is a different thing from an agent cutting one.)
