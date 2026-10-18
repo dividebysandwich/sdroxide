@@ -471,9 +471,7 @@ impl WefaxRx {
     /// The usual way to catch a chart that was already running when you tuned
     /// to it — which, on a fifteen-minute transmission, is most of the time.
     pub fn start_manual(&mut self, out: &mut Vec<WefaxEvent>) {
-        if self.phase != Phase::Idle {
-            return;
-        }
+        self.finish(false, out);
         self.begin(self.ioc, false, out);
     }
 
@@ -1917,5 +1915,69 @@ mod tests {
             "phased but produced {lines} lines: a picture that stops immediately is the fault \
              this test exists to catch"
         );
+    }
+
+    // ---- START while a page is in the picture ----
+
+    /// Events with the picture lines collapsed, so a failure reads as a story.
+    fn story(ev: &[WefaxEvent]) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut run = 0;
+        for e in ev {
+            if let WefaxEvent::Line { .. } = e {
+                run += 1;
+                continue;
+            }
+            if run > 0 {
+                out.push(format!("{run} lines"));
+                run = 0;
+            }
+            out.push(match e {
+                WefaxEvent::Start { auto, .. } => format!("Start(auto={auto})"),
+                WefaxEvent::Phased { .. } => "Phased".into(),
+                WefaxEvent::Complete { lines, by_tone } => {
+                    format!("Complete({lines}, by_tone={by_tone})")
+                }
+                WefaxEvent::Line { .. } => unreachable!(),
+            });
+        }
+        if run > 0 {
+            out.push(format!("{run} lines"));
+        }
+        out
+    }
+
+    fn starts(ev: &[WefaxEvent]) -> usize {
+        ev.iter().filter(|e| matches!(e, WefaxEvent::Start { .. })).count()
+    }
+
+    /// START while a page is in the picture closes it and begins another.
+    #[test]
+    fn start_during_a_picture_begins_a_new_page() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut ev = into_image(&mut rx, lpm);
+        ev.extend(drain(&mut rx, &ramp_picture(lpm, 10)));
+        rx.start_manual(&mut ev);
+        let s = story(&ev);
+        assert_eq!(completes(&ev), 1, "START left the old page open: {s:?}");
+        // The first START, from `into_image`, and the new one.
+        assert_eq!(starts(&ev), 2, "START did not begin a page: {s:?}");
+        assert!(rx.phasing(), "not phasing a new page: {s:?}");
+    }
+
+    /// Control: START from idle, after a finished page, does begin one.
+    #[test]
+    fn start_after_a_finished_page_begins_one() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut ev = into_image(&mut rx, lpm);
+        ev.extend(drain(&mut rx, &ramp_picture(lpm, 6)));
+        rx.stop_manual(&mut ev);
+        assert!(!rx.receiving());
+        rx.start_manual(&mut ev);
+        assert!(rx.receiving(), "START from idle did nothing: {:?}", story(&ev));
     }
 }
