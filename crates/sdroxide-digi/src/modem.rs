@@ -342,6 +342,20 @@ impl Ft8Modem {
             return;
         }
         let hint = ap.ft8();
+        // **The CB widening has to be on *this* request too.**
+        //
+        // It is a fork-only hook (`DecodeRequest::also_accept`, mfsk-core#386):
+        // upstream has no citizens'-band grammar, so the streaming rewrite above
+        // rebuilt the request without it and the stock per-field gate went back
+        // to refusing 11 m calls. The two halves failed differently, which is
+        // what the bench saw on 2026-10-18 — *"messages come in but no CQ
+        // calls"* on 27.265, where a week earlier two thirds of the decodes were
+        // CQs. The report forms survived as unresolved hashes (`<19DC373>
+        // <26AT715> R-12`); **every CQ form was dropped outright**, because a CQ
+        // to a non-standard call is the one layout whose call cannot be carried
+        // as a hash. See `a_cb_cq_survives_the_streaming_path`, which is this
+        // hook's guard.
+        let wide = self.cb_wide;
         let request = || {
             let req = DecodeRequest::<mfsk_core::Ft8>::new(
                 audio_12k,
@@ -350,7 +364,8 @@ impl Ft8Modem {
                 SYNC_MIN,
                 MAX_CAND,
             )
-            .osd(true);
+            .osd(true)
+            .also_accept(|m| m.callsigns().all(|c| is_cb_compatible_call(c, wide)));
             match hint.as_ref() {
                 Some(h) => req.ap_hint(h),
                 None => req,
@@ -3013,6 +3028,109 @@ mod tests {
         }));
     }
 
+    /// A decoded message with the hash brackets taken off.
+    ///
+    /// WSJT-X marks a **hashed** field `<CALL>` when it resolves and `<...>`
+    /// when it does not; a call spelled out in the clear carries none. An 11 m
+    /// pair is packed with one end hashed, so a correct round trip comes back
+    /// bracketed — comparing the brackets would be testing WSJT-X's convention
+    /// rather than the chain. What has to survive is the *content*.
+    fn debracketed(s: &str) -> String {
+        s.replace(['<', '>'], "")
+    }
+
+    /// The forms an 11 m station actually sends, and the wider grammar's shape
+    /// last. Shared by the tests below so they cannot drift apart.
+    const CB_FORMS: &[(&str, bool)] = &[
+        ("CQ 19DC373", false),
+        ("CQ 26AT715", false),
+        ("CQ 26AT715 JO22", false),
+        ("CQ 19DC373/P", false),
+        ("19DC373 26AT715 R-12", false),
+        ("26AT715 19DC373 RR73", false),
+        ("19DCG3733 26AT715 R-12", true),
+    ];
+
+    /// **A CB CQ has to survive the whole chain, not just the gate.**
+    ///
+    /// Everything above this tests the *predicate* — `is_cb_compatible_call` on
+    /// fields — and the packing is tested from the QSO side. Nothing decoded a
+    /// `CQ <11 m call>` from audio until this test, and that is the case the
+    /// bench reported on 2026-10-18: on 27.265 (CB ch 26, FT8) the station heard
+    /// CB stations exchanging reports and RR73 all evening and **never once a CQ
+    /// from one**, while CQs from amateur calls came through. The predicate
+    /// accepting `CQ 26AT715` says nothing about whether the chain can *carry*
+    /// it — a CQ to a non-standard call is a different bit layout from the
+    /// report forms, and this is where that difference shows.
+    #[test]
+    fn a_cb_cq_survives_the_whole_chain() {
+        for &(text, wide) in CB_FORMS {
+            let mut rx = Ft8Modem::new(Mode::Ft8);
+            rx.set_cb_wide(wide);
+            // A hash is only resolvable once the call has been spelled out, so
+            // seed what a station that had already heard these would hold.
+            rx.seed_hashes(&["19DC373".into(), "26AT715".into(), "19DC373/P".into()]);
+            rx.seed_hashes(&["19DCG3733".into()]);
+            let (burst, sent) = rx
+                .encode_burst_12k(text, 1500.0, 0.5)
+                .unwrap_or_else(|| panic!("{text}: cannot even be packed"));
+            let mut slot = vec![0.0f32; 6_000];
+            slot.extend_from_slice(&burst);
+            slot.resize((15.0 * 12_000.0) as usize, 0.0);
+            let buf: Vec<i16> = slot.iter().map(|&s| (s * 12_000.0) as i16).collect();
+            let got: Vec<String> = rx
+                .decode_slot(&buf, 0, &ApHints::default(), 1500.0)
+                .iter()
+                .map(|d| d.message.clone())
+                .collect();
+            assert!(
+                got.iter().any(|m| debracketed(m) == debracketed(&sent)),
+                "{text}: sent as {sent:?}, came back as {got:?}"
+            );
+        }
+    }
+
+    /// **The same forms through the path the app actually calls.**
+    ///
+    /// `decode_slot_streaming` is what the worker runs (`controller.rs`), and it
+    /// builds its own `DecodeRequest` rather than going through
+    /// `decode_slot`/`decode_slot_staged`. The CB grammar is a fork-only hook on
+    /// that request (`DecodeRequest::also_accept`) — upstream has no
+    /// citizens'-band calls — so a request built without it falls back to the
+    /// stock per-field gate, which is the gate this fork exists to widen.
+    #[test]
+    fn a_cb_cq_survives_the_streaming_path() {
+        let mut lost: Vec<String> = Vec::new();
+        for &(text, wide) in CB_FORMS {
+            let mut rx = Ft8Modem::new(Mode::Ft8);
+            rx.set_cb_wide(wide);
+            rx.seed_hashes(&["19DC373".into(), "26AT715".into()]);
+            rx.seed_hashes(&["19DCG3733".into()]);
+            let (burst, sent) = rx
+                .encode_burst_12k(text, 1500.0, 0.5)
+                .unwrap_or_else(|| panic!("{text}: cannot even be packed"));
+            let mut slot = vec![0.0f32; 6_000];
+            slot.extend_from_slice(&burst);
+            slot.resize(180_000, 0.0);
+            let buf: Vec<i16> = slot.iter().map(|&s| (s * 12_000.0) as i16).collect();
+            let got = std::sync::Mutex::new(Vec::<String>::new());
+            rx.decode_slot_streaming(&buf, 0, &ApHints::default(), 1500.0, &|| false, &|batch| {
+                got.lock().unwrap().extend(batch.into_iter().map(|d| d.message));
+            });
+            let got = got.into_inner().unwrap();
+            if !got.iter().any(|m| debracketed(m) == debracketed(&sent)) {
+                lost.push(format!("{text} (sent as {sent:?}) → {got:?}"));
+            }
+        }
+        assert!(
+            lost.is_empty(),
+            "the app's own decode path lost {} of {} forms:\n  {}",
+            lost.len(),
+            CB_FORMS.len(),
+            lost.join("\n  ")
+        );
+    }
+
     // ── the sensitivity sweep ───────────────────────────────────────────────
     //
     // Not a pass/fail gate but a measurement: the noise level at which a slot
@@ -3199,6 +3317,47 @@ mod tests {
         assert!(
             e.contains(&"CQ W9XYZ EN52"),
             "the extras must hold the weak signal subtraction recovers: {e:?}"
+        );
+    }
+
+    /// **The 11 m case of the test above, through the path the app actually
+    /// uses — and the one that was broken on the bench.**
+    ///
+    /// Both calls are non-standard, so both have to survive the field gate, and
+    /// the weak one is only ever found by the *subtraction* pass. That gate is a
+    /// fork-only hook on the decode request (`DecodeRequest::also_accept`, the
+    /// CB grammar — upstream has no citizens'-band calls), so a rework of the
+    /// decode path can drop it for one pass and leave the other working. That
+    /// is precisely the shape reported from the bench on 2026-10-18: on 27.265
+    /// (CB ch 26, FT8) the station heard CB stations exchanging reports and
+    /// RR73 all evening and **not one CQ from one**, while a week earlier (8
+    /// October, before the FT8 streaming merge) **37 of its 66 decodes were
+    /// CQs**. Loud signals still come through the quick pass; the ones a busy
+    /// band masks are found by subtraction, and those are the CQs.
+    #[test]
+    fn a_weak_cb_cq_survives_the_subtraction_pass() {
+        let modem = Ft8Modem::new(Mode::Ft8);
+        let (strong, _) = modem.encode_burst_12k("CQ 19DC373", 2310.0, 0.5).unwrap();
+        let weak_amp = 0.5f32 * 10f32.powf(-14.0 / 20.0);
+        let (weak, _) = modem.encode_burst_12k("CQ 19AT168", 2320.0, weak_amp).unwrap();
+        let mut out = vec![0.0f32; 180_000];
+        for (i, &x) in strong.iter().enumerate() {
+            out[6_000 + i] += x;
+        }
+        for (i, &x) in weak.iter().enumerate() {
+            out[6_000 + i] += x;
+        }
+        let buf: Vec<i16> = out.iter().map(|&x| (x * 12_000.0) as i16).collect();
+
+        let mut rx = Ft8Modem::new(Mode::Ft8);
+        rx.seed_hashes(&["19DC373".into(), "19AT168".into()]);
+        let (quick, extras) = rx.decode_slot_staged(&buf, 0, &ApHints::default(), 2310.0);
+        let q: Vec<&str> = quick.iter().map(|d| d.message.as_str()).collect();
+        let e: Vec<&str> = extras.iter().map(|d| d.message.as_str()).collect();
+        assert!(q.contains(&"CQ 19DC373"), "the strong CB CQ must decode in the quick pass: {q:?}");
+        assert!(
+            e.contains(&"CQ 19AT168"),
+            "the subtraction pass must recover the weak CB CQ — quick={q:?} extras={e:?}"
         );
     }
 

@@ -1,5 +1,11 @@
 # Agent notes — SDR Oxide, the CB and SWL fork
 
+> **His name is F4NRM.** The operator says *"Kevin"* by accident — **correct it
+> when he does, and use `F4NRM` everywhere**: notes, replies, commits, release
+> text. His GitHub handle is `F4NRM` (older notes here say `kevin2008-01`; the
+> same person). Prose and quoted speech below still say "Kevin" in places, and
+> **quotes are left as they were said** — do not rewrite a quote to fix a name.
+>
 > **Fresh session, 2026-10-09. Start here.** `main` is green, the whole open
 > queue is merged (#22 SSTV KEEP DIAL, #23 the browser `remember` cookie, #24
 > the ADS-B noise floor), and `2.0.4_brown` is cut and installed.
