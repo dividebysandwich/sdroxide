@@ -2886,6 +2886,10 @@ impl SdroxideApp {
                         if self.state.rx[0].mode.is_sstv() && !prev_mode.is_sstv() {
                             self.fit_sstv_view();
                         }
+                        // The same for WEFAX: the view opens on the tuned frequency.
+                        if self.state.rx[0].mode.is_wefax() && !prev_mode.is_wefax() {
+                            self.fit_wefax_view();
+                        }
                     } else if qsy_clears_decodes(prev_band, self.state.band, self.state.rx[0].mode)
                     {
                         self.clear_digi_band_rx();
