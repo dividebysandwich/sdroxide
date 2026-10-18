@@ -2650,8 +2650,10 @@ NEC-style solver validated against a published OWA Yagi design, ground models, a
 SVG pattern preview) — it has no AGENTS record at all, which is exactly why it
 must not be deleted on a housekeeping pass: it is work, not history.
 `claude/funny-wright-aujoii` is remote-only, one commit (a probe that lists a DAB
-capture's FIC data services) on a base 25,000 lines behind `main`, and it is the
-seed of the deferred MOT-slideshow work. Both are the operator's to call.
+capture's FIC data services) on a base 25,000 lines behind `main`. **Both stay, by
+the operator's word on 2026-10-18: the DAB probe is Kevin's and is not to be
+touched, and the antenna tool is still WIP.** A housekeeping pass that takes
+either is a pass that has thrown away work.
 
 ### An issue template that cannot be ignored
 
