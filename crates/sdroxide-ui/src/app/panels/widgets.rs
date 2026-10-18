@@ -344,6 +344,17 @@ pub(in crate::app) fn slot_phase_s(now: f64, slot_s: f64, engine_slot_utc: i64) 
     if engine_slot_utc > 0 && (0.0..slot_s).contains(&into) { into } else { now.rem_euclid(slot_s) }
 }
 
+/// The phase of a slot as it reaches us over the receive path.
+///
+/// `offset_s` is the DT the stations we hear show against our own slot
+/// boundary, which already includes the audio and network chain. A frame is on
+/// the air from the boundary, but it is in our audio `offset_s` later, so the
+/// bar that follows what is being received is that far behind the wall clock.
+/// `None` (nothing measured yet) is the wall clock, as before.
+pub(in crate::app) fn slot_phase_heard_s(now: f64, slot_s: f64, offset_s: Option<f32>) -> f64 {
+    slot_phase_s(now - offset_s.unwrap_or(0.0) as f64, slot_s, 0)
+}
+
 /// The slot clock: how far through its turn this station is, whichever way
 /// round it is spending it.
 ///
@@ -481,6 +492,14 @@ pub(in crate::app) fn sstv_section<R>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_heard_phase_follows_the_receive_path_not_the_wall_clock() {
+        // Audio arrives 2 s behind our boundary: at wall 7 s into a 15 s
+        // slot the frame in the audio is 5 s in, not 7.
+        assert!((slot_phase_heard_s(112.0, 15.0, Some(2.0)) - 5.0).abs() < 1e-9);
+        assert!((slot_phase_heard_s(112.0, 15.0, None) - 7.0).abs() < 1e-9);
+    }
+
     use super::*;
     use sdroxide_types::Mode;
 

@@ -1483,8 +1483,15 @@ impl SdroxideApp {
         // window's own clock is the same answer whenever the two agree — and
         // when they do not, the DT readout in the QSO area is the thing that
         // says so.
-        let into = widgets::slot_phase_s(crate::time::now_unix_f64(), t.slot_s, 0);
         let transmitting = self.digi_status.as_ref().map(|s| s.transmitting).unwrap_or(false);
+        // Listening follows the frame as it reaches us (the measured DT); our
+        // own transmission leaves on the wall clock, so it keeps that.
+        let heard = if transmitting {
+            None
+        } else {
+            self.digi_status.as_ref().and_then(|s| s.clock_offset_s)
+        };
+        let into = widgets::slot_phase_heard_s(crate::time::now_unix_f64(), t.slot_s, heard);
         let state = if transmitting {
             widgets::SlotState::Transmitting
         } else {
