@@ -1384,6 +1384,105 @@ pub fn start_output(
     Err(last)
 }
 
+/// The most playout an output ring may hold before new audio is held back, in
+/// interleaved stereo samples: 250 ms at 48 kHz.
+///
+/// The ring behind [`start_output`] is a second long. Filled by a producer that
+/// is running ahead, it plays every sample it holds, so the audio the operator
+/// hears is that much behind the picture — the ring's depth, not the network's.
+/// Capping the backlog bounds that delay at a quarter of a second, and what is
+/// held back is the newest audio, because the older audio is the part already
+/// queued ahead of it.
+pub const PLAYOUT_BACKLOG: usize = 24_000;
+
+/// Queue mono `pcm` for playback on an output opened by [`start_output`], which
+/// takes interleaved stereo: every sample goes to both channels.
+///
+/// Whole frames only. Each sample is written as a left and right pair, and a
+/// sample is taken only when both halves fit, so a full ring can never leave a
+/// lone channel behind — which would swap left and right from that point on.
+/// Stops once the ring already holds `max_backlog` samples.
+///
+/// Returns how many input samples were taken. The rest were not played, and the
+/// caller decides whether that is worth saying.
+pub fn queue_mono(producer: &mut rtrb::Producer<f32>, pcm: &[f32], max_backlog: usize) -> usize {
+    let capacity = producer.buffer().capacity();
+    let mut taken = 0;
+    for &s in pcm {
+        let backlog = capacity - producer.slots();
+        if backlog + 2 > max_backlog || producer.slots() < 2 {
+            break;
+        }
+        let _ = producer.push(s);
+        let _ = producer.push(s);
+        taken += 1;
+    }
+    taken
+}
+
+#[cfg(test)]
+mod playout_tests {
+    use super::{PLAYOUT_BACKLOG, queue_mono};
+
+    /// The ring [`start_output`] makes: one second of interleaved stereo.
+    fn ring() -> (rtrb::Producer<f32>, rtrb::Consumer<f32>) {
+        rtrb::RingBuffer::<f32>::new(96_000)
+    }
+
+    fn drain(c: &mut rtrb::Consumer<f32>) -> Vec<f32> {
+        let mut out = Vec::new();
+        while let Ok(s) = c.pop() {
+            out.push(s);
+        }
+        out
+    }
+
+    /// Every sample reaches both channels, in order: the frame is `(s, s)`.
+    #[test]
+    fn a_mono_sample_is_written_to_both_channels_in_order() {
+        let (mut p, mut c) = ring();
+        assert_eq!(queue_mono(&mut p, &[0.5, -0.25, 0.125], PLAYOUT_BACKLOG), 3);
+        assert_eq!(drain(&mut c), vec![0.5, 0.5, -0.25, -0.25, 0.125, 0.125]);
+    }
+
+    /// A ring with exactly one free slot must not be given half a frame. The
+    /// lone left sample would put every later right channel into the left.
+    #[test]
+    fn a_full_ring_never_leaves_a_lone_channel_behind() {
+        let (mut p, mut c) = rtrb::RingBuffer::<f32>::new(5);
+        // Five slots: two whole frames fit, the third sample has room for one
+        // channel only and must be refused entirely.
+        assert_eq!(queue_mono(&mut p, &[1.0, 2.0, 3.0], usize::MAX), 2);
+        assert_eq!(drain(&mut c), vec![1.0, 1.0, 2.0, 2.0]);
+        assert_eq!(p.slots(), 5, "the refused sample wrote nothing");
+    }
+
+    /// The backlog is held at the cap however much arrives, so a producer that
+    /// runs ahead cannot make the audio fall further behind the waterfall.
+    #[test]
+    fn the_backlog_is_held_at_the_cap() {
+        let (mut p, _c) = ring();
+        let burst = vec![0.1f32; 48_000];
+        let taken = queue_mono(&mut p, &burst, PLAYOUT_BACKLOG);
+        let backlog = 96_000 - p.slots();
+        assert!(backlog <= PLAYOUT_BACKLOG, "backlog {backlog} above the cap");
+        assert!(backlog + 2 > PLAYOUT_BACKLOG, "the cap was not used");
+        assert_eq!(taken * 2, backlog, "every taken sample is a whole frame");
+    }
+
+    /// Once the output has played some of its backlog, the next block is taken
+    /// in again — the cap holds the delay down, it does not stop the audio.
+    #[test]
+    fn audio_is_taken_again_as_the_output_plays() {
+        let (mut p, mut c) = ring();
+        queue_mono(&mut p, &vec![0.1f32; 48_000], PLAYOUT_BACKLOG);
+        for _ in 0..1_000 {
+            c.pop().unwrap();
+        }
+        assert!(queue_mono(&mut p, &[0.9; 10], PLAYOUT_BACKLOG) > 0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

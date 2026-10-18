@@ -48,14 +48,7 @@ impl NullSource {
     /// every few seconds is exactly what switching it off was meant to stop.
     /// Switching it on asks the engine to rebuild the front end outright.
     pub fn off(center_hz: f64) -> Self {
-        NullSource {
-            center: center_hz,
-            status: "This radio is switched off — its interface is not open. Switch it back on \
-                     with the power button above the A/B selector (in the VFO menu on a \
-                     compact layout), on its tab, or in Settings → Radio."
-                .into(),
-            retry: false,
-        }
+        NullSource { center: center_hz, status: String::new(), retry: false }
     }
 }
 
@@ -83,8 +76,11 @@ impl IqSource for NullSource {
         "No radio".into()
     }
 
+    /// A switched-off radio has no status line: its tab already says it is off,
+    /// and a banner repeating that is noise. Every other stand-in says why it is
+    /// standing in.
     fn open_status(&self) -> Option<String> {
-        Some(self.status.clone())
+        self.retry.then(|| self.status.clone())
     }
 
     /// Normally always: this is the "no radio" placeholder, so the engine keeps

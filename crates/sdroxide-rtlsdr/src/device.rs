@@ -431,7 +431,7 @@ fn direct_sampling_for(hz: f64, mode: RtlSdrHfMode, current: DirectSampling) -> 
 ///
 /// A non-finite centre passes: it is a corrupt session rather than an unreachable
 /// frequency, and saying "out of range" about a NaN would be a lie.
-fn check_tunable_hz(hz: f64) -> Result<()> {
+pub(crate) fn check_tunable_hz(hz: f64) -> Result<()> {
     if hz.is_finite() && hz > TUNER_MAX_HZ {
         return Err(Error::OutOfRange(format!(
             "{} MHz is above this RTL-SDR's tuner range, which ends at {:.0} MHz. \
