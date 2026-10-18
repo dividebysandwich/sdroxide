@@ -71,6 +71,10 @@ mod widgets;
 pub use widgets::worldmap::ground_image;
 
 pub use app::SdroxideApp;
+// The browser's debug hooks, beside the app itself: `?trace=1` numbers every
+// settings row's y, `?tab=radio` opens that page. See `chrome::trace_on` and
+// `app::set_open_settings_tab`.
+pub use app::set_open_settings_tab;
 pub use multi::{MultiApp, RadioFactory, RadioTab, RemoteFactory};
 #[cfg(feature = "remote")]
 pub use remote::{AudioBridge, RemoteController};

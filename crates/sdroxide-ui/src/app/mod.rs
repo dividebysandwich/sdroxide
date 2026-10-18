@@ -167,6 +167,21 @@ pub(crate) struct ToolWindowState {
     pub window: Option<sdroxide_types::DetachedWindow>,
 }
 
+/// The settings page a client asked for **by name** before the app existed —
+/// the browser's `?tab=radio`. See [`set_open_settings_tab`].
+static OPEN_TAB: std::sync::OnceLock<SettingsTab> = std::sync::OnceLock::new();
+
+/// Ask for a settings page by name, before the app is built. Unknown names are
+/// ignored rather than guessed at, so the page falls back to General.
+///
+/// A debug hook beside the settings trace: a page that has been reported can be
+/// opened and measured instead of clicked to by hand.
+pub fn set_open_settings_tab(key: &str) {
+    if let Some(tab) = SettingsTab::from_key(key) {
+        let _ = OPEN_TAB.set(tab);
+    }
+}
+
 pub struct SdroxideApp {
     ctrl: Box<dyn RadioController>,
     caps: Option<DeviceCaps>,
@@ -1768,7 +1783,9 @@ impl SdroxideApp {
             probes_answered: true,
             probe_waiting: 0,
             probe_wait_until: 0.0,
-            settings_tab: SettingsTab::General,
+            // A client that named a page (`?tab=radio`) gets it; otherwise the
+            // one the operator lands on.
+            settings_tab: OPEN_TAB.get().copied().unwrap_or(SettingsTab::General),
             profile_name_edit: String::new(),
             profiles: Vec::new(),
             profile_apply_pending: false,
@@ -1849,7 +1866,10 @@ impl SdroxideApp {
             hfdl_status: None,
             hfdl_map: crate::hfdl_map::HfdlMapState::default(),
             hfdl_filter: String::new(),
-            show_settings: false,
+            // The settings trace is *for* the settings page, so turning it on
+            // opens the window: a browser cannot be asked to click the chip,
+            // and a screenshot of the numbers is the whole point.
+            show_settings: crate::chrome::trace_on(),
             settings_scroll_top: true,
             voice: sdroxide_types::VoiceStatus::default(),
             show_voice: false,

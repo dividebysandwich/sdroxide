@@ -66,7 +66,7 @@ use crate::theme::ThemedScroll as _;
 /// settings, display/UI preferences and spoken announcements, control inputs
 /// (keyboard/mouse bindings), the network cockpit (spot feeds + uploads), and
 /// the built-in TCI server.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(in crate::app) enum SettingsTab {
     General,
     Radio,
@@ -97,6 +97,38 @@ pub(in crate::app) enum SettingsTab {
     /// Named working setups (issue #197): the operator's saved snapshots of how
     /// the station is set up, each put back on whole by one click.
     Profiles,
+}
+
+impl SettingsTab {
+    /// The tab a **name** picks — the browser's `?tab=radio`.
+    ///
+    /// A debug hook beside the settings trace, for the same reason: a page that
+    /// has been reported can then be opened and *measured* rather than clicked
+    /// to by hand. It matches the variant's own name, lowercased, so the list
+    /// cannot drift from the enum; an unknown name is `None` rather than a
+    /// guess, and the caller falls back to General.
+    pub(in crate::app) fn from_key(key: &str) -> Option<Self> {
+        let key = key.trim().to_ascii_lowercase();
+        [
+            Self::General,
+            Self::Radio,
+            Self::Audio,
+            Self::Cw,
+            Self::Ui,
+            Self::Alerts,
+            Self::Controls,
+            Self::Spots,
+            Self::FreeDv,
+            Self::Uploads,
+            Self::Winlink,
+            Self::Servers,
+            Self::TrSwitch,
+            Self::Tle,
+            Self::Profiles,
+        ]
+        .into_iter()
+        .find(|tab| format!("{tab:?}").to_ascii_lowercase() == key)
+    }
 }
 
 /// The settings menu, in the order it is read.

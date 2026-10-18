@@ -195,6 +195,18 @@ mod web {
             let location = window.location();
             let search = location.search().unwrap_or_default();
             let solar = search.contains("view=solar");
+            // `?trace=1` numbers every settings row's y in the browser, and
+            // opens the window it is for — see `sdroxide_ui::chrome::trace_on`.
+            if search.contains("trace=1") {
+                sdroxide_ui::chrome::set_trace(true);
+            }
+            // `?tab=radio` opens that settings page, so a reported page can be
+            // measured without clicking through to it.
+            if let Some(tab) =
+                search.trim_start_matches('?').split('&').find_map(|p| p.strip_prefix("tab="))
+            {
+                sdroxide_ui::set_open_settings_tab(tab);
+            }
             let options = web_options(&search);
 
             let ws_proto =

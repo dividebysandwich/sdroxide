@@ -935,9 +935,24 @@ pub fn red_panel<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
 /// to reason it out from the code each produced a confident answer that a
 /// measurement then refused.
 pub fn trace_on() -> bool {
+    if SET.get().copied() == Some(true) {
+        return true;
+    }
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("SDROXIDE_SETTINGS_TRACE").is_ok_and(|v| v != "0"))
 }
+
+/// The same switch, for a client with no environment to read — the browser.
+///
+/// The web client turns it on from `?trace=1` in its own URL, the way it already
+/// reads `?view=solar` and `?radio=N`: a report of overlapping rows can then be
+/// measured in the browser it was reported from, rather than reasoned about
+/// from the code and fixed blind.
+pub fn set_trace(on: bool) {
+    let _ = SET.set(on);
+}
+
+static SET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
 /// Paint `rect`'s top edge as a number beside it. Does nothing unless tracing.
 pub fn trace_row(ui: &Ui, rect: egui::Rect, what: &str) {
