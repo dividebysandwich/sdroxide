@@ -3086,7 +3086,6 @@ impl SdroxideApp {
                     // as an intercontinental opening, because the reports went
                     // out from the operator's square.
                     ui.label(RichText::new("Antenna is").strong());
-                    ui.end_row();
                     ui.horizontal(|ui| {
                         use sdroxide_types::RxSite;
                         egui::ComboBox::from_id_salt("rx-site")
@@ -3136,7 +3135,6 @@ impl SdroxideApp {
                     // operator sets it against a signal they are watching, and
                     // it only moves the reading, so there is nothing to reopen.
                     ui.label(RichText::new("S-Meter calib").strong());
-                    ui.end_row();
                     smeter_cal_combo(ui, &mut cfg.smeter_cal);
                     ui.end_row();
 
