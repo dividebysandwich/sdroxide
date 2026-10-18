@@ -1650,22 +1650,29 @@ impl StereoMixer {
         }
 
         if n > 0 {
-            if self.out.slots() >= n * 2 {
-                let g = if self.tx_muted { 0.0 } else { self.duck * self.trim };
-                for i in 0..n {
+            // Bounded to a quarter second of playout, for every radio: the
+            // ring plays what it holds, so a backlog is audio heard late. What
+            // does not fit is held back, and the newest audio is what waits.
+            let g = if self.tx_muted { 0.0 } else { self.duck * self.trim };
+            let (main_q, sub_q) = (&self.main_q, &self.sub_q);
+            let taken = sdroxide_dsp::playout::queue_frames(
+                &mut self.out,
+                n,
+                sdroxide_dsp::playout::PLAYOUT_BACKLOG,
+                |i| {
                     // Clamped because `trim` may be above unity, and a sample
                     // past full scale does not merely distort: the conversion
                     // to a device's own sample format is free to wrap it, and a
                     // wrap is a click at the loudest the card can go.
-                    let l = (self.main_q[i] * g).clamp(-1.0, 1.0);
-                    let r = if dual { (self.sub_q[i] * g).clamp(-1.0, 1.0) } else { l };
-                    let _ = self.out.push(l);
-                    let _ = self.out.push(r);
-                }
-            } else {
-                self.dropped += n as u64;
+                    let l = (main_q[i] * g).clamp(-1.0, 1.0);
+                    let r = if dual { (sub_q[i] * g).clamp(-1.0, 1.0) } else { l };
+                    (l, r)
+                },
+            );
+            if taken < n {
+                self.dropped += (n - taken) as u64;
                 if self.dropped.is_power_of_two() {
-                    warn!(dropped = self.dropped, "audio ring full, dropping");
+                    warn!(dropped = self.dropped, "audio held back: playout backlog full");
                 }
             }
             self.main_q.drain(..n);
