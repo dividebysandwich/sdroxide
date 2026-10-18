@@ -4909,10 +4909,25 @@ instruction — *"remove the nightly that was not created by kevin"*. It was the
 release on the page the workflow had made: author `github-actions[bot]`, title
 *SDR Oxide Brown nightly 2026-10-17*, 15 assets, created 2026-10-03 and reused
 every night since (`gh release delete nightly --cleanup-tag`). **Every remaining
-pre-release is Kevin's** — `v2.0.13.2`, `.3` and `.4` are all authored by F4NRM —
-which is worth knowing before wondering whether one appeared by itself.
+pre-release is Kevin's** — `v2.0.13.2` and `.4` are authored by F4NRM — which is
+worth knowing before wondering whether one appeared by itself.
 `nightly.yml` still exists and still moves the `nightly` tag when **run by hand**,
 so a nightly can be had on request; nothing does it on its own.
+
+**`v2.0.13.3_brown`'s release was removed too** (2026-10-18, *"remove the one
+without assets"*): its run was cancelled, so it was a release page with **0
+assets** — a tag and nothing to download. Its **tag was kept** deliberately
+(`--cleanup-tag` *not* used), so the version number can never be re-cut onto
+different content; the release can be recreated from the tag if it is ever wanted.
+**The check turned up a second one of the same shape: `v2.0.9.4`** — Kevin's,
+2026-10-12, pre-release, **0 assets** — and that one was **left in place**, because
+the operator asked for a specific release rather than for a sweep. Offer it.
+
+**A release with no assets is the shape to watch for.** It happens when a run is
+cancelled or fails before its uploads and `create release` still publishes the
+page (it is deliberately tolerant of failed build jobs, so the platforms that did
+build are not lost). Listing every release and its asset count is three lines of
+`gh` and is worth running after any cancelled release run.
 
 **What still runs by itself, so it is not mistaken for a release:** Pages deploys
 the `docs/` site on every push to `main` (`pages-build-deployment`, event
