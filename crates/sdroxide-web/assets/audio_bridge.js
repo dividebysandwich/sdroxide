@@ -5,6 +5,17 @@
 //
 // The AudioContext can only start after a user gesture, so everything is
 // initialized lazily on the first one.
+//
+// **The playback context is treated as a resource that can die.** A window left
+// in the taskbar for a long spell is a page the browser stops drawing, freezes,
+// or drops the audio device under — and the context goes with it. It can come
+// back reporting "closed", or it can go on reporting "running" on a sink the
+// browser has let go, and in both cases `resume()` settles nothing: a page that
+// only calls it is silent for the rest of the session, with the waterfall
+// still moving and nothing on screen to say why. So the audio thread itself is
+// watched (the player worklet reports how much it has rendered), the context is
+// rebuilt when it stops, and when the browser will not let a rebuild start
+// without a gesture the page says so and offers the one.
 
 (function () {
     let ctx = null;
@@ -14,6 +25,32 @@
     let micStarting = false;
     let micReady = false;
     let initStarted = false;
+    // The microphone is opened once and re-attached to whatever context is in
+    // force: a rebuild must not ask for it again (a second permission prompt,
+    // or a refused one on Safari).
+    let micStream = null;
+
+    // --- watching the audio thread --------------------------------------
+    //
+    // `generation` marks which context a callback belongs to. Rebuilding makes
+    // a new one while the old one is still closing, and its `onstatechange`
+    // fires on the way out — acted on, that would rebuild forever.
+    let generation = 0;
+    // When the player last rendered. Both the events that mean "we were away"
+    // and the worklet's own heartbeat write it.
+    let lastRenderAt = 0;
+    let lastRebuildAt = 0;
+    // A page that is not being drawn is not expected to render anything, so a
+    // gap while hidden proves nothing; the question is whether it renders from
+    // the moment it is back. Two seconds of silence while visible does not.
+    const STALL_MS = 2000;
+    // A context that will not run without a gesture would otherwise be rebuilt
+    // every second, and each rebuild is a fresh audio device.
+    const REBUILD_MIN_MS = 5000;
+    // A rebuild that does not restore rendering is a device the browser is not
+    // giving back — rebuilding again would churn through contexts and never
+    // make a sound, so after a couple of tries the operator is told instead.
+    let stalledRebuilds = 0;
 
     // AudioWorklet and getUserMedia are both secure-context-only, and the whole
     // audio path runs through them. Over plain http a browser only treats
@@ -33,12 +70,7 @@
         );
         const show = () => {
             const bar = document.createElement("div");
-            bar.style.cssText =
-                "position:fixed;left:0;right:0;top:0;z-index:9999;padding:8px 12px;" +
-                "font:13px system-ui,sans-serif;background:#4a3000;color:#ffd479;" +
-                "border-bottom:1px solid #7a5000;cursor:pointer;" +
-                // The page disables selection; this text is worth copying.
-                "-webkit-user-select:text;user-select:text";
+            bar.style.cssText = BAR_CSS;
             bar.textContent =
                 "No audio: " + location.protocol + "//" + location.host +
                 " is not a secure origin, so this browser withholds audio playback " +
@@ -50,6 +82,50 @@
         // This script runs from <head>, so <body> may not exist yet.
         if (document.body) show();
         else window.addEventListener("DOMContentLoaded", show, { once: true });
+    }
+
+    // A bar across the top of the page, for the two things the operator has to
+    // be told about the sound.
+    const BAR_CSS =
+        "position:fixed;left:0;right:0;top:0;z-index:9999;padding:8px 12px;" +
+        "font:13px system-ui,sans-serif;background:#4a3000;color:#ffd479;" +
+        "border-bottom:1px solid #7a5000;cursor:pointer;" +
+        // The page disables selection; this text is worth copying.
+        "-webkit-user-select:text;user-select:text";
+
+    // Shown when the audio path has stopped and the browser will not let the
+    // page start it again on its own. The one gesture it is waiting for is a
+    // click anywhere, and this is the only thing on screen that says so.
+    let restartBar = null;
+
+    function wantRestartBar() {
+        // The Sound welcome hint is the other thing that occupies the top of a
+        // page whose sound is not running; it says what to do, so this would
+        // only be a second voice saying it.
+        if (restartBar || hint || location.search.includes("view=solar")) return;
+        const put = () => {
+            if (restartBar) return;
+            const bar = document.createElement("div");
+            bar.style.cssText = BAR_CSS;
+            bar.textContent =
+                "Sound stopped while this window was in the background. " +
+                "Click here to start it again.";
+            bar.addEventListener("click", () => {
+                hideRestartBar();
+                restartAudio("the sound banner was clicked");
+            });
+            document.body.appendChild(bar);
+            restartBar = bar;
+        };
+        if (document.body) put();
+        else window.addEventListener("DOMContentLoaded", put, { once: true });
+    }
+
+    function hideRestartBar() {
+        if (restartBar) {
+            restartBar.remove();
+            restartBar = null;
+        }
     }
 
     // Until the first gesture there is no context at all, so the page is
@@ -155,43 +231,165 @@
         }
     }
 
-    async function init() {
-        if (initStarted) return;
-        initStarted = true;
+    // The player worklet says how much it has rendered; that is the page's only
+    // evidence that the audio thread is still running.
+    function noteRender() {
+        lastRenderAt = performance.now();
+        stalledRebuilds = 0;
+        hideRestartBar();
+    }
+
+    /// Build the playback path from scratch: a new context, a new player, and
+    /// the microphone re-attached if it is wanted.
+    ///
+    /// Called on the first gesture and again whenever the old context has died.
+    /// The old one is silenced and closed first, and every callback it still
+    /// owes is disowned by the generation check — a closing context fires
+    /// `onstatechange`, and acted on that would rebuild in a loop.
+    async function buildAudio() {
+        const gen = ++generation;
+        const old = ctx;
+        ctx = null;
+        player = null;
+        micReady = false;
+        if (old) {
+            old.onstatechange = null;
+            old.close().catch(() => {});
+        }
+        // The clock starts now: whatever the browser did while the page was
+        // hidden is behind us, and the question is what happens next.
+        lastRenderAt = performance.now();
+
+        let next;
         try {
-            ctx = new AudioContext({ sampleRate: 48000 });
-            // iOS drops the context on any audio-session interruption (a call,
-            // another app, backgrounding) and never comes back on its own. It
-            // also has a non-standard "interrupted" state, so test against
-            // "running" rather than listing the states we know about.
-            ctx.onstatechange = () => {
-                console.log("sdroxide audio: context state", ctx.state);
-                if (ctx.state === "running") hideHint();
-                else resumeCtx();
-            };
-            if (ctx.state === "running") hideHint();
+            next = new AudioContext({ sampleRate: 48000 });
+        } catch (e) {
+            // A sound device that will not take 48 kHz still beats no sound.
+            next = new AudioContext();
+        }
+        ctx = next;
+        next.onstatechange = () => {
+            if (gen !== generation) return;
+            console.log("sdroxide audio: context state", next.state);
+            if (next.state === "running") {
+                hideHint();
+                hideRestartBar();
+            } else if (next.state === "closed") {
+                // Closed, and a hidden page can neither use nor keep a context:
+                // rebuilding now would be work the browser undoes, and the
+                // moment to do it is the moment the operator is back.
+                if (!document.hidden) rebuildAudio("the browser closed the audio context");
+            } else {
+                resumeCtx();
+            }
+        };
+        if (next.state === "running") hideHint();
+
+        try {
             // Start the module fetch but do NOT await it yet: resume() has to
             // be called while the gesture's transient activation is still
             // alive, and on WebKit that is gone by the time an await resolves.
-            const moduleReady = ctx.audioWorklet.addModule("pcm_worklet.js");
+            const moduleReady = next.audioWorklet.addModule("pcm_worklet.js");
             resumeCtx();
             await moduleReady;
-            player = new AudioWorkletNode(ctx, "pcm-player", {
+            if (gen !== generation) return;
+            const node = new AudioWorkletNode(next, "pcm-player", {
                 outputChannelCount: [1],
             });
-            player.connect(ctx.destination);
+            node.port.onmessage = () => {
+                if (gen !== generation) return;
+                noteRender();
+            };
+            node.connect(next.destination);
+            player = node;
             // Second chance, now that there is something to hear.
             resumeCtx();
-            console.log("sdroxide audio: playback ready at", ctx.sampleRate, "Hz");
+            console.log("sdroxide audio: playback ready at", next.sampleRate, "Hz");
+            if (micWanted) startMic();
         } catch (e) {
-            console.warn("sdroxide audio init failed:", e);
+            console.warn("sdroxide audio: playback bridge failed:", e);
+            if (gen !== generation) return;
+            // The same bound as a stall: a bridge that will not build is not
+            // going to build on the fourth attempt either, and each one is a
+            // fresh audio device.
+            if (stalledRebuilds >= 2) return;
+            stalledRebuilds += 1;
+            rebuildAudio("the playback bridge would not start");
         }
+    }
+
+    /// Throw the dead context away and build a new one, at most every
+    /// [`REBUILD_MIN_MS`] — a rebuild that cannot succeed (no gesture yet)
+    /// would otherwise be attempted once a second.
+    function rebuildAudio(reason) {
+        const now = performance.now();
+        if (now - lastRebuildAt < REBUILD_MIN_MS) return;
+        lastRebuildAt = now;
+        console.log("sdroxide audio: rebuilding the playback path:", reason);
+        buildAudio();
     }
 
     function resumeCtx() {
         if (!ctx || ctx.state === "running") return;
         // Outside a user gesture this rejects; the next gesture retries.
         ctx.resume().catch(() => {});
+    }
+
+    /// Whatever has happened to the audio path, this is the page asking it to
+    /// work: rebuild a context the browser has closed, resume one it paused.
+    ///
+    /// Never creates the first context — that is the gesture's job, and a page
+    /// that makes one on its own is a page whose sound the browser then holds
+    /// back until some later click, which is the failure the hint exists to
+    /// explain. Nor does it judge anything: `resume()` resolves asynchronously,
+    /// so an event that has just asked for the sound cannot yet know whether it
+    /// got it, and the watchdog is the one place that decides.
+    function ensureAudio(reason) {
+        if (!ctx) return;
+        if (ctx.state === "closed") {
+            rebuildAudio(reason + ": the playback context is closed");
+            return;
+        }
+        resumeCtx();
+    }
+
+    /// The context is back and the operator is looking at it: give the audio
+    /// thread a moment to render before judging it, then rebuild if it does
+    /// not.
+    function cameBack(reason) {
+        lastRenderAt = performance.now();
+        ensureAudio(reason);
+    }
+
+    /// One tick's judgement on the audio path, and the only place the operator
+    /// is told the sound has stopped.
+    ///
+    /// Two failures are told apart here: a path that is not playing — the
+    /// browser is holding the context, or the bridge never finished building —
+    /// which only a gesture is likely to release, so say so; and a context that
+    /// says it *is* running on a device the browser has let go, which has no
+    /// symptom at all except that nothing is rendered. It is the second one that
+    /// a page calling `resume()` is silent about.
+    function watchAudio(now) {
+        if (!ctx || document.hidden) return;
+        if (ctx.state !== "running" || !player) {
+            wantRestartBar();
+            return;
+        }
+        if (now - lastRenderAt > STALL_MS) {
+            if (stalledRebuilds >= 2) {
+                wantRestartBar();
+                return;
+            }
+            stalledRebuilds += 1;
+            rebuildAudio("the audio thread stopped without the context saying so");
+        }
+    }
+
+    function init() {
+        if (ctx || initStarted) return;
+        initStarted = true;
+        buildAudio();
     }
 
     // Opening the microphone is deliberately deferred until the app actually
@@ -203,44 +401,53 @@
         if (micStarting || micReady || !ctx) return;
         micStarting = true;
         try {
-            // Raw capture, explicitly. A browser defaults all three of these
-            // ON, because its idea of a microphone is a conference call: the
-            // echo canceller removes whatever the page is also playing, the
-            // noise suppressor removes anything that does not look like
-            // speech, and the gain control rides the level.
-            //
-            // Every one of them is wrong on a transmitter. A transmitter must
-            // send what the microphone heard -- the suppressor alone will gate
-            // a CW note or a digital tone to nothing, since neither looks like
-            // speech to it. The echo canceller is worse still: this page plays
-            // receive audio through the same AudioContext, so the band becomes
-            // the far-end reference and the operator's voice becomes the thing
-            // it is built to subtract, which is a microphone that reads open
-            // and transmits silence (issue #493; receive audio is also held
-            // off for the length of an over now, see `RemoteController`).
-            //
-            // Plain values rather than `exact`: these are preferences, and a
-            // device that cannot turn its processing off should still open.
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    channelCount: 1,
-                    echoCancellation: false,
-                    noiseSuppression: false,
-                    autoGainControl: false,
-                },
-            });
-            // What the browser actually gave us, named in the log so a report
-            // of a silent transmitter does not need a second round trip.
-            const track = stream.getAudioTracks()[0];
-            const got = (track && track.getSettings) ? track.getSettings() : {};
-            console.log(
-                "sdroxide audio: microphone", (track && track.label) || "(unnamed)",
-                "rate", got.sampleRate || "(context)",
-                "channels", got.channelCount || 1,
-                "aec", got.echoCancellation, "ns", got.noiseSuppression,
-                "agc", got.autoGainControl
+            // The stream is kept across a rebuild: the permission has been
+            // asked for and answered, and the device is the same one.
+            const live = micStream && micStream.getAudioTracks().some(
+                (t) => t.readyState === "live"
             );
-            const src = ctx.createMediaStreamSource(stream);
+            if (live) {
+                console.log("sdroxide audio: microphone re-attached to a new context");
+            } else {
+                // Raw capture, explicitly. A browser defaults all three of these
+                // ON, because its idea of a microphone is a conference call: the
+                // echo canceller removes whatever the page is also playing, the
+                // noise suppressor removes anything that does not look like
+                // speech, and the gain control rides the level.
+                //
+                // Every one of them is wrong on a transmitter. A transmitter must
+                // send what the microphone heard -- the suppressor alone will gate
+                // a CW note or a digital tone to nothing, since neither looks like
+                // speech to it. The echo canceller is worse still: this page plays
+                // receive audio through the same AudioContext, so the band becomes
+                // the far-end reference and the operator's voice becomes the thing
+                // it is built to subtract, which is a microphone that reads open
+                // and transmits silence (issue #493; receive audio is also held
+                // off for the length of an over now, see `RemoteController`).
+                //
+                // Plain values rather than `exact`: these are preferences, and a
+                // device that cannot turn its processing off should still open.
+                micStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false,
+                    },
+                });
+                // What the browser actually gave us, named in the log so a report
+                // of a silent transmitter does not need a second round trip.
+                const track = micStream.getAudioTracks()[0];
+                const got = (track && track.getSettings) ? track.getSettings() : {};
+                console.log(
+                    "sdroxide audio: microphone", (track && track.label) || "(unnamed)",
+                    "rate", got.sampleRate || "(context)",
+                    "channels", got.channelCount || 1,
+                    "aec", got.echoCancellation, "ns", got.noiseSuppression,
+                    "agc", got.autoGainControl
+                );
+            }
+            const src = ctx.createMediaStreamSource(micStream);
             const capture = new AudioWorkletNode(ctx, "mic-capture");
             capture.port.onmessage = (ev) => {
                 micChunks.push(ev.data);
@@ -288,8 +495,24 @@
         // of this same tap would then fall through to the waterfall.
         if (hint && ev && hint.contains(ev.target)) hintBusy = true;
         init();
-        resumeCtx();
+        // A gesture is also the one thing that can start a context the browser
+        // has stopped, so it is the moment to put the audio path back.
+        lastRebuildAt = 0;
+        ensureAudio("a gesture");
         if (micWanted) startMic();
+    }
+
+    function restartAudio(reason) {
+        lastRebuildAt = 0;
+        if (!ctx) {
+            init();
+            return;
+        }
+        if (ctx.state === "running" && player) {
+            resumeCtx();
+            return;
+        }
+        rebuildAudio(reason);
     }
 
     if (INSECURE) {
@@ -309,10 +532,24 @@
         for (const ev of ["pointerdown", "touchstart", "touchend", "click", "keydown"]) {
             window.addEventListener(ev, onGesture, opts);
         }
-        // iOS suspends the context when the tab goes to the background.
+        // iOS suspends the context when the tab goes to the background; a
+        // browser that has stopped drawing a minimised window freezes it and
+        // tears its audio down. Either way the way back is the same, and it is
+        // the only moment at which rebuilding is worth attempting.
         document.addEventListener("visibilitychange", () => {
-            if (!document.hidden) resumeCtx();
+            if (!document.hidden) cameBack("the page was shown again");
         });
+        // The Page Lifecycle API: `freeze` stops a hidden page's tasks without
+        // unloading it (Chrome does this to background tabs), and `resume` is
+        // the way back from that — a page that never sees `visibilitychange`
+        // because it was never hidden, only frozen.
+        document.addEventListener("resume", () => cameBack("the page was resumed"));
+        window.addEventListener("pageshow", () => cameBack("the page was shown"));
+        window.addEventListener("focus", () => ensureAudio("the window was focused"));
+        // The watchdog: a context that has stopped rendering says nothing, so
+        // it has to be asked. One tick a second while the page is visible is
+        // free; the tick itself is what notices the silence.
+        setInterval(() => watchAudio(performance.now()), 1000);
     }
 
     window.sdroxideAudio = {
@@ -350,6 +587,25 @@
         setMicActive: function (active) {
             micWanted = !!active;
             if (micWanted) startMic();
+        },
+        // What the audio path is doing, for the operator's own report and for
+        // the browser harness: there is no other way to ask a page whether the
+        // sound it is supposed to be making is being made.
+        health: function () {
+            return {
+                state: ctx ? ctx.state : "none",
+                playing: !!player,
+                generation: generation,
+                // -1 means "nothing has ever rendered on this context".
+                renderAgoMs: lastRenderAt ? Math.round(performance.now() - lastRenderAt) : -1,
+                hidden: document.hidden,
+                microphone: micReady,
+            };
+        },
+        // Force the audio path back on, for the banner and for a caller that
+        // knows what it is looking at.
+        restart: function () {
+            restartAudio("the audio path was restarted by hand");
         },
     };
 })();
