@@ -264,6 +264,9 @@ pub struct WefaxRx {
     /// Samples spent phasing, so a transmission whose phasing signal was missed
     /// still produces a (misaligned) chart rather than nothing.
     phase_samples: u64,
+    /// Whether the picture in progress was begun by a start tone rather than
+    /// by the operator.
+    auto_begun: bool,
     /// Consecutive completed lines that looked like a phasing signal *while a
     /// picture was being built*, and where the last one's pulse sat. See
     /// [`WefaxRx::note_phasing_line`].
@@ -285,17 +288,11 @@ pub struct WefaxRx {
 const TONE_WINDOW_S: f64 = 0.5;
 /// Matching windows needed to accept a start signal while *idle* (≈1.5 s).
 const TONE_RUN: u32 = 3;
-/// Matching windows needed to accept a start signal heard *while a picture is
-/// being drawn* (≈3 s).
-///
-/// A real start signal is five seconds long and is the second way to learn that
-/// a page is over — the stop tone, the first way, is the first thing a fade
-/// takes. But a chart's own high-contrast detail can hold a start-tone-looking
-/// rate for a window or two, and each false accept cuts a healthy picture in
-/// two (issue #496). Asking for twice the evidence mid-picture still catches
-/// the real five-second signal with two seconds to spare, and a fading chart
-/// is far less likely to fake three seconds than one and a half.
-const START_RUN_RECEIVING: u32 = 6;
+/// Seconds an automatic start may wait for its phasing signal. A real
+/// transmission shows its phasing a few seconds after the start tone ends. A
+/// start tone that never does was the chart's own detail or noise, and it
+/// yields no picture rather than one drawn on no phase at all.
+const AUTO_PHASE_TIMEOUT_S: f64 = 20.0;
 /// Matching windows needed to accept a stop signal (≈3.5 s). A stop tone is
 /// five seconds long; requiring most of it keeps a noise burst or a fade from
 /// ending a chart whose signal is merely dipping (issue #496).
@@ -365,6 +362,7 @@ impl WefaxRx {
             phase_lines: 0,
             phase_skew: 0.0,
             phase_samples: 0,
+            auto_begun: false,
             rephase_lines: 0,
             rephase_skew: 0.0,
             start_det: ToneDetect::default(),
@@ -480,6 +478,7 @@ impl WefaxRx {
         self.phase_lines = 0;
         self.phase_skew = 0.0;
         self.phase_samples = 0;
+        self.auto_begun = auto;
         self.rephase_lines = 0;
         self.start_det.reset();
         self.start_run = 0;
@@ -553,13 +552,13 @@ impl WefaxRx {
     }
 
     /// Feed the start-signal detector one sample; `Some(ioc)` once a whole
-    /// start signal has been heard. `required` matching windows are demanded,
-    /// because how much evidence a start signal needs depends on what else is
-    /// on the line: see [`TONE_RUN`] and [`START_RUN_RECEIVING`].
+    /// start signal has been heard. `required` matching windows are demanded.
     ///
-    /// Run while receiving as well as while idle: the next transmission's start
-    /// signal is the second way to learn that this picture is over, and the
-    /// stop tone — the first way — is also the first thing a fade takes.
+    /// Run only while idle. Mid-picture a start signal is not acted on: a
+    /// chart's own periodic detail (dotted graticule lines, hatching) alternates
+    /// at the same rate and cut healthy pictures into pieces. The next
+    /// transmission is found by its phasing signal instead, see
+    /// [`WefaxRx::note_phasing_line`].
     fn start_tone(&mut self, level: f32, required: u32) -> Option<Ioc> {
         let window = (self.rate * TONE_WINDOW_S) as u32;
         let rate = self.start_det.push(level, window)?;
@@ -641,21 +640,6 @@ impl WefaxRx {
     fn step_receiving(&mut self, level: f32, out: &mut Vec<WefaxEvent>) {
         self.line_buf.push(level);
 
-        // The next chart's start signal, heard while this one is still being
-        // drawn. A stop tone is how a transmission normally ends, and a
-        // receiver that misses one — a fade takes five seconds of tone whole,
-        // and not every station sends the same one — used to go on appending
-        // the *next* chart to the old page on the old line phase, which is a
-        // picture that can never come out straight (issue #276). Finish the
-        // page here instead and phase the new one properly.
-        if self.auto_start
-            && let Some(ioc) = self.start_tone(level, START_RUN_RECEIVING)
-        {
-            self.finish(false, out);
-            self.begin(ioc, true, out);
-            return;
-        }
-
         if self.auto_stop {
             let window = (self.rate * TONE_WINDOW_S) as u32;
             if let Some(rate) = self.stop_det.push(level, window) {
@@ -700,6 +684,13 @@ impl WefaxRx {
                         self.phase = Phase::Image;
                         out.push(WefaxEvent::Phased { skew: mean.max(0.0) as u32 });
                     }
+                }
+                if self.phase == Phase::Phasing
+                    && self.auto_begun
+                    && self.phase_samples as f64 > AUTO_PHASE_TIMEOUT_S * self.rate
+                {
+                    self.finish(false, out);
+                    return;
                 }
                 if self.phase == Phase::Phasing
                     && self.phase_samples as f64 > PHASE_TIMEOUT_S * self.rate
@@ -1231,9 +1222,10 @@ mod tests {
     }
 
     /// The same, the ordinary way round: the new transmission's *start* signal
-    /// arrives while the old page is still being drawn.
+    /// arrives while the old page is still being drawn, and its phasing signal
+    /// follows. The page ends on the phasing, not on the start tone.
     #[test]
-    fn a_start_tone_during_a_picture_starts_the_next_one() {
+    fn a_start_tone_then_phasing_during_a_picture_starts_the_next_one() {
         let lpm = Lpm::L120;
         let mut rx = WefaxRx::new(RATE);
         rx.set_lpm(lpm);
@@ -1242,12 +1234,79 @@ mod tests {
         let mut audio = phasing(lpm, 8);
         audio.extend(ramp_picture(lpm, 6));
         audio.extend(tone(Ioc::I576.start_tone_hz(), 5.0));
+        audio.extend(phasing(lpm, 16));
         let ev = drain(&mut rx, &audio);
         assert!(
             ev.iter().any(|e| matches!(e, WefaxEvent::Complete { by_tone: false, .. })),
-            "the page should have ended on the next start signal: {ev:?}"
+            "the page should have ended on the next transmission: {ev:?}"
         );
-        assert!(rx.receiving() && rx.phasing(), "and the next one should be phasing");
+        assert!(rx.receiving(), "and the next one should be under way");
+    }
+
+    /// A start tone mid-picture with no phasing behind it is the chart's own
+    /// detail, not a new transmission: the page goes on.
+    #[test]
+    fn a_start_tone_with_no_phasing_behind_it_does_not_cut_the_page() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut out = into_image(&mut rx, lpm);
+        let mut audio = ramp_picture(lpm, 2);
+        audio.extend(tone(Ioc::I576.start_tone_hz(), 5.0));
+        audio.extend(ramp_picture(lpm, 2));
+        out.extend(drain(&mut rx, &audio));
+        assert!(
+            !out.iter().any(|e| matches!(e, WefaxEvent::Complete { .. })),
+            "a start-tone-like pattern ended the page: {out:?}"
+        );
+        assert!(rx.receiving());
+    }
+
+    /// A periodic pattern in the chart (dotted graticule lines) alternates at
+    /// the start tone's rate for as long as it is on the page. It must not
+    /// restart the picture over and over.
+    #[test]
+    fn a_chart_with_periodic_detail_is_not_restarted() {
+        let lpm = Lpm::L120;
+        let per = (RATE * lpm.line_secs()) as usize;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut out = into_image(&mut rx, lpm);
+        let mut levels = Vec::new();
+        for _ in 0..40 {
+            for i in 0..per {
+                let px = i * 1809 / per;
+                levels.push(if (px / 6) % 2 == 0 { 0.0 } else { 1.0 });
+            }
+        }
+        out.extend(drain(&mut rx, &modulate(&levels)));
+        let lines = out.iter().filter(|e| matches!(e, WefaxEvent::Line { .. })).count();
+        assert!(lines >= 30, "only {lines} lines came out");
+        assert!(
+            !out.iter().any(|e| matches!(e, WefaxEvent::Complete { .. })),
+            "periodic detail restarted the picture: {out:?}"
+        );
+    }
+
+    /// An automatic start that is never followed by phasing is noise or a
+    /// chart's detail. It must not be saved as a picture.
+    #[test]
+    fn an_auto_start_with_no_phasing_yields_no_picture() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut audio = tone(Ioc::I576.start_tone_hz(), 5.0);
+        audio.extend(ramp_picture(lpm, 60));
+        let ev = drain(&mut rx, &audio);
+        assert!(
+            !ev.iter().any(|e| matches!(e, WefaxEvent::Phased { .. })),
+            "a ramp was phased: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(|e| matches!(e, WefaxEvent::Complete { lines: 0, .. })),
+            "the unphased start was not abandoned: {ev:?}"
+        );
+        assert!(!rx.receiving());
     }
 
     /// ...but only when the operator asked for automatic starts. Someone
