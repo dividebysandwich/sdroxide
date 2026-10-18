@@ -1371,12 +1371,29 @@ impl SdroxideApp {
             ctx,
             "settings",
             "Settings",
-            [900.0, 760.0],
-            // A floor rather than none: the tabs are laid out at fixed widths
-            // and become a column of clipped controls if dragged much narrower.
-            [380.0, 300.0],
+            // **Wide enough for the widest row the tabs contain**, and that is
+            // an arithmetic rather than a taste. The settings menu column is
+            // `MENU_WIDTH` (180) and is drawn at any window this wide; the
+            // widest control on any tab is the 600 pt field on TLE; the label
+            // column is the widest row name, about 140; and egui's spacing and
+            // frame margins come to roughly 40. That is 960, and at less than it
+            // the fixed-width rows have nowhere to go — an `egui::Grid` lays out
+            // fixed columns and **cannot wrap**, so the cells collide with the
+            // row below and the page reads as a pile of overlapping text.
+            //
+            // Reported from the browser on 2026-10-18 (discussion #90): the web
+            // client opens this window at its default, the desktop had been
+            // dragged wider long ago and remembered it, so only the browser
+            // showed the mess. The operator confirmed the mechanism by dragging
+            // the window wider in the browser: "it falls in place".
+            [960.0, 760.0],
+            // The same width as a floor, because a floor below the layout's own
+            // need is not a floor — it is permission to open the window into a
+            // mess. The height stays modest: the page scrolls, the width does
+            // not.
+            [960.0, 300.0],
             // And in the middle of the screen the first time, as the pinned
-            // window was: a 900x760 box in a corner is under the top bar.
+            // window was: a 960x760 box in a corner is under the top bar.
             true,
             // Already known open — the `!self.show_settings` arm returned.
             true,

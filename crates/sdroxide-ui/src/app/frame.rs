@@ -340,7 +340,7 @@ fn tool_window_title_button(
 /// See [`SdroxideApp::tool_window_egui`]: the id epoch that resets a tool
 /// window's remembered geometry when this window's bounding changes. Bump it
 /// whenever a tool window's default size or its body's height-filling changes.
-const TOOL_WINDOW_EPOCH: &str = "b1";
+const TOOL_WINDOW_EPOCH: &str = "b2";
 
 /// The DETACH/DOCK chip a tool window wears at the top-right of its body. On the
 /// browser it is absent — there is no second window to move to.
