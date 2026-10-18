@@ -2541,6 +2541,7 @@ impl SdroxideApp {
                 ui.add_space(10.0);
                 ui.add_enabled_ui(io.digi_seeded, |ui| {
                     ui.label(RichText::new("11 m / WSJT-CB callsign grammar").strong());
+                    ui.end_row();
                     ui.add_space(4.0);
                     if crate::chrome::chip(
                         ui,
@@ -2775,6 +2776,7 @@ impl SdroxideApp {
                 let site = io.rx_site.get_or_insert_with(|| cfg.rx_site.clone());
                 egui::Grid::new("iface-grid").num_columns(2).spacing([12.0, 6.0]).min_row_height(ui.spacing().interact_size.y).show(ui, |ui| {
                     ui.label(RichText::new("Radio interface").strong());
+                    ui.end_row();
                     // Switching the far end's interface is allowed: the device
                     // lists below come from that machine, so this is a choice
                     // between radios that are actually there, and a reopen that
@@ -2820,6 +2822,7 @@ impl SdroxideApp {
                     // Who this radio is. Empty is the common case: a station
                     // with one identity sets it once on the General tab.
                     ui.label(RichText::new("Callsign").strong());
+                    ui.end_row();
                     crate::chrome::field(
                         ui,
                         egui::TextEdit::singleline(&mut cfg.callsign).desired_width(140.0),
@@ -2841,6 +2844,7 @@ impl SdroxideApp {
                     // listening set stays a listener's while the transceiver
                     // beside it keeps its PTT.
                     ui.label(RichText::new("Transmit controls").strong());
+                    ui.end_row();
                     crate::chrome::checkbox(ui, &mut cfg.hide_tx, "hide them all (SWL mode)")
                         .on_hover_text(
                             "Hide every transmit control for *this* radio — the PTT, CALL CQ, TX \
@@ -2858,6 +2862,7 @@ impl SdroxideApp {
                     // because auto mode is for a break, not a contest — except
                     // on a PlutoSDR, which offers up to six hours or no stop.
                     ui.label(RichText::new("Auto mode").strong());
+                    ui.end_row();
                     let long = sdroxide_types::auto::has_long_idle_stop(cfg.backend);
                     ui.horizontal(|ui| {
                         if long {
@@ -2907,6 +2912,7 @@ impl SdroxideApp {
                     ui.end_row();
 
                     ui.label(RichText::new("Converter").strong());
+                    ui.end_row();
                     let named = sdroxide_types::converter_preset_name(*converter);
                     egui::ComboBox::from_id_salt("converter-preset")
                         .selected_text(named)
@@ -2942,6 +2948,7 @@ impl SdroxideApp {
                     ui.end_row();
 
                     ui.label(RichText::new("Offset").strong());
+                    ui.end_row();
                     ui.add(
                         egui::DragValue::new(converter)
                             .speed(1.0)
@@ -2974,6 +2981,7 @@ impl SdroxideApp {
                     // QO-100 operator receives 10 GHz through an LNB and puts
                     // 2.4 GHz straight out of the radio.
                     ui.label(RichText::new("Transmit").strong());
+                    ui.end_row();
                     // Greyed out with no converter set, because that is exactly
                     // when it decides nothing: the transmit path was never
                     // touched to begin with.
@@ -3040,6 +3048,7 @@ impl SdroxideApp {
                     // check a frequency against) or publishes the tuner chip's
                     // rather than the radio's.
                     ui.label(RichText::new("RX range").strong());
+                    ui.end_row();
                     freq_range_edit(
                         ui,
                         "rx-range",
@@ -3054,6 +3063,7 @@ impl SdroxideApp {
                     ui.end_row();
 
                     ui.label(RichText::new("TX range").strong());
+                    ui.end_row();
                     freq_range_edit(
                         ui,
                         "tx-range",
@@ -3076,6 +3086,7 @@ impl SdroxideApp {
                     // as an intercontinental opening, because the reports went
                     // out from the operator's square.
                     ui.label(RichText::new("Antenna is").strong());
+                    ui.end_row();
                     ui.horizontal(|ui| {
                         use sdroxide_types::RxSite;
                         egui::ComboBox::from_id_salt("rx-site")
@@ -3125,6 +3136,7 @@ impl SdroxideApp {
                     // operator sets it against a signal they are watching, and
                     // it only moves the reading, so there is nothing to reopen.
                     ui.label(RichText::new("S-Meter calib").strong());
+                    ui.end_row();
                     smeter_cal_combo(ui, &mut cfg.smeter_cal);
                     ui.end_row();
 
@@ -4529,6 +4541,7 @@ impl SdroxideApp {
             .min_row_height(ui.spacing().interact_size.y)
             .show(ui, |ui| {
                 ui.label(RichText::new("Receiver").strong());
+                ui.end_row();
                 let selected = pan
                     .source_radio
                     .map(|id| {
@@ -4563,10 +4576,12 @@ impl SdroxideApp {
                 }
 
                 ui.label(RichText::new("Connected to").strong());
+                ui.end_row();
                 enum_combo(ui, "pan-tap", &mut pan.tap, &PanadapterTap::ALL, PanadapterTap::label);
                 ui.end_row();
 
                 ui.label(RichText::new("Offset").strong());
+                ui.end_row();
                 ui.add(
                     egui::DragValue::new(&mut pan.offset_hz)
                         .speed(1.0)
@@ -4588,6 +4603,7 @@ impl SdroxideApp {
                 ui.end_row();
 
                 ui.label(RichText::new("Audio from").strong());
+                ui.end_row();
                 enum_combo(
                     ui,
                     "pan-audio",
@@ -4598,6 +4614,7 @@ impl SdroxideApp {
                 ui.end_row();
 
                 ui.label(RichText::new("Follow the dial").strong());
+                ui.end_row();
                 crate::chrome::checkbox(ui, &mut pan.track, "").on_hover_text(
                     "Keep the receiver on this radio's dial, and move the dial when you tune on \
                  the panadapter. Off parks the receiver where it is — a fixed watch on one \
@@ -4606,6 +4623,7 @@ impl SdroxideApp {
                 ui.end_row();
 
                 ui.label(RichText::new("Invert spectrum").strong());
+                ui.end_row();
                 crate::chrome::checkbox(ui, &mut pan.invert, "").on_hover_text(
                     "Mirror the receiver's span about its centre, for a tap whose oscillator sits \
                  above the signal and hands the band over the wrong way round. Leave it off \
@@ -4615,6 +4633,7 @@ impl SdroxideApp {
                 ui.end_row();
 
                 ui.label(RichText::new("Mute on transmit").strong());
+                ui.end_row();
                 crate::chrome::checkbox(ui, &mut pan.mute_on_tx, "").on_hover_text(
                     "Silence receive audio while this radio is transmitting. On by default: with \
                  the receiver on the same antenna, or on this radio's I.F., what it hears \
@@ -4625,6 +4644,7 @@ impl SdroxideApp {
                 ui.end_row();
 
                 ui.label(RichText::new("Blank on transmit").strong());
+                ui.end_row();
                 crate::chrome::checkbox(ui, &mut pan.blank_on_tx, "").on_hover_text(
                     "Stop the panadapter and waterfall while this radio is transmitting. On by \
                  default: a transmitter painted across the whole span erases the band behind \
@@ -5042,6 +5062,7 @@ impl SdroxideApp {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Name").strong());
+                ui.end_row();
                 let stale = !matches!(name_edit, Some((id, _)) if *id == chip.id);
                 if stale {
                     *name_edit = Some((chip.id, chip.name.clone()));

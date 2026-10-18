@@ -1079,6 +1079,7 @@ fn cat_radio_audio(ui: &mut egui::Ui) {
     ui.end_row();
     ui.add_space(6.0);
     ui.label(RichText::new("Radio audio (sound card)").strong());
+    ui.end_row();
     super::note(
         ui,
         "Which sound card carries this radio's audio is under **Audio**, with your own \
@@ -1099,6 +1100,7 @@ pub(in crate::app) fn settings_usb_audio_tab(ui: &mut egui::Ui) {
     ui.end_row();
     ui.add_space(6.0);
     ui.label(RichText::new("Radio audio (sound card)").strong());
+    ui.end_row();
     super::note(
         ui,
         "Which sound card carries this radio's audio is under **Audio**, with your own \
@@ -1131,6 +1133,7 @@ pub(in crate::app) fn settings_atsmini_tab(
 
     ui.add_space(6.0);
     ui.label(RichText::new("Control link").strong());
+    ui.end_row();
     egui::Grid::new("atsmini-link")
         .num_columns(2)
         .spacing([12.0, 6.0])
@@ -1171,6 +1174,7 @@ pub(in crate::app) fn settings_atsmini_tab(
     ui.end_row();
     ui.add_space(6.0);
     ui.label(RichText::new("Radio audio (sound card)").strong());
+    ui.end_row();
     super::note(
         ui,
         "Which sound card carries this radio's audio is under **Audio**, with your own \
@@ -1203,6 +1207,7 @@ pub(in crate::app) fn settings_atsmini_tab(
     ui.end_row();
     ui.add_space(6.0);
     ui.label(RichText::new("Live controls").strong());
+    ui.end_row();
     ui.horizontal_wrapped(|ui| {
         for (key, label) in [
             ("band", "BAND"),
@@ -1237,6 +1242,7 @@ pub(in crate::app) fn settings_atsmini_tab(
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.label(RichText::new("Memories").strong());
+        ui.end_row();
         if ui.button("Refresh").on_hover_text("Read the 99 slots from the receiver").clicked() {
             cmds.push(Command::SetDeviceSetting {
                 key: "memories-dump".into(),
@@ -2285,6 +2291,7 @@ pub(in crate::app) fn settings_rtltcp_tab(
     ui.separator();
     ui.end_row();
     ui.label(RichText::new("SDRplay server (rsp_tcp)").strong());
+    ui.end_row();
     super::note(
         ui,
         "An SDRplay server greets exactly like a dongle, so these are shown \
@@ -4075,6 +4082,7 @@ pub(in crate::app) fn settings_soapy_devices(
     // answered there is nothing here worth drawing a Rescan button beside.
     if !can_probe && devices.is_none() {
         ui.label(RichText::new("Devices SoapySDR can see").strong());
+        ui.end_row();
         super::note(
             ui,
             "Waiting for the machine the radio is attached to, where the modules are \
@@ -4086,6 +4094,7 @@ pub(in crate::app) fn settings_soapy_devices(
 
     ui.horizontal(|ui| {
         ui.label(RichText::new("Devices SoapySDR can see").strong());
+        ui.end_row();
         probe_only(ui, can_probe, |ui| {
             if ui
                 .button("Rescan")
@@ -4183,6 +4192,7 @@ impl SdroxideApp {
             super::note(ui, "This rig has no software-adjustable gains.");
         }
         ui.label(RichText::new("RX gains").strong());
+        ui.end_row();
         egui::Grid::new("gains")
             .num_columns(2)
             .spacing([12.0, 6.0])
@@ -4255,6 +4265,7 @@ impl SdroxideApp {
             ui.separator();
             ui.end_row();
             ui.label(RichText::new("Antennas").strong());
+            ui.end_row();
             egui::Grid::new("antennas")
                 .num_columns(2)
                 .min_row_height(ui.spacing().interact_size.y)
@@ -4357,6 +4368,7 @@ pub(in crate::app) fn settings_soapy_tab(
 
     if !caps.sample_rates.is_empty() || !caps.rate_ranges.is_empty() {
         ui.label(RichText::new("Stream").strong());
+        ui.end_row();
         egui::Grid::new("soapy-stream")
             .num_columns(2)
             .spacing([12.0, 6.0])
@@ -4450,6 +4462,7 @@ pub(in crate::app) fn settings_soapy_tab(
     ui.separator();
     ui.end_row();
     ui.label(RichText::new(format!("{} settings", caps.driver)).strong());
+    ui.end_row();
     egui::Grid::new("soapy-settings")
         .num_columns(2)
         .spacing([12.0, 6.0])
@@ -5115,6 +5128,7 @@ pub(in crate::app) fn settings_elad_tab(
 
     ui.add_space(8.0);
     ui.label(RichText::new("Rig control — FDM-DUO only").strong());
+    ui.end_row();
     super::note(
         ui,
         "The transceiver's CAT USB port, which is a separate cable from the \
@@ -6746,6 +6760,7 @@ pub(in crate::app) fn settings_hackrf_tab(
     ui.separator();
     ui.end_row();
     ui.label(RichText::new("Transmit").strong());
+    ui.end_row();
     ui.add_space(4.0);
 
     egui::Grid::new("hackrf-tx-grid")
@@ -7438,6 +7453,7 @@ pub(in crate::app) fn settings_sdrplay_tab(
         ui.separator();
         ui.end_row();
         ui.label(RichText::new("Second tuner").strong());
+        ui.end_row();
         super::note(
             ui,
             "An RSPduo is two whole tuners on one board, clocked from one reference. \

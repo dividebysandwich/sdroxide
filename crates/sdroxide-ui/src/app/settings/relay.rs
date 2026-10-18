@@ -216,6 +216,7 @@ pub(in crate::app) fn settings_relay_tab(
     // ── the channels ────────────────────────────────────────────────────────
     ui.add_space(10.0);
     ui.label(RichText::new("Contacts").strong());
+    ui.end_row();
     ui.add_space(4.0);
     if cfg.link == RelayLink::SerialLines {
         super::note(ui, "Contact 1 is RTS and contact 2 is DTR.");
@@ -425,6 +426,7 @@ pub(in crate::app) fn settings_relay_tab(
     // ── the transmit sense input ────────────────────────────────────────────
     ui.add_space(12.0);
     ui.label(RichText::new("Transmit sense input").strong());
+    ui.end_row();
     ui.add_space(4.0);
     super::note(
         ui,

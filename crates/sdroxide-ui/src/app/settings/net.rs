@@ -259,6 +259,7 @@ pub(in crate::app) fn broadcast_stations_settings(
     // looks exactly like one that worked — which is the whole failure this page
     // is for.
     ui.label(RichText::new("Schedules").strong());
+    ui.end_row();
     for (source, rows) in sdroxide_config::cached_broadcast_sources() {
         let name = match source {
             sdroxide_types::ScheduleSource::Eibi => "EiBi",

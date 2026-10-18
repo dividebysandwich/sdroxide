@@ -55,6 +55,7 @@ pub(in crate::app) fn settings_remote_tab(
         .min_row_height(ui.spacing().interact_size.y)
         .show(ui, |ui| {
             ui.label(RichText::new("Address").strong());
+            ui.end_row();
             let addr = crate::chrome::field(
                 ui,
                 egui::TextEdit::singleline(&mut cfg.host)
@@ -72,6 +73,7 @@ pub(in crate::app) fn settings_remote_tab(
             ui.end_row();
 
             ui.label(RichText::new("Port").strong());
+            ui.end_row();
             ui.add_enabled_ui(!typed_url, |ui| {
                 ui.add(egui::DragValue::new(&mut cfg.port).range(1..=65535)).on_hover_text(
                     "The port that server listens on — server_port in its config.toml. 4950 unless \
@@ -87,6 +89,7 @@ pub(in crate::app) fn settings_remote_tab(
             // by typing the whole URL out, which then took the port box with it
             // (issue #360).
             ui.label(RichText::new("Secure").strong());
+            ui.end_row();
             ui.add_enabled_ui(!typed_url, |ui| {
                 ui.checkbox(&mut cfg.tls, "wss:// (TLS)").on_hover_text(
                 "Tick this where the server sits behind something that terminates HTTPS for it — \

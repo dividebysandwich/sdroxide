@@ -288,6 +288,7 @@ impl SdroxideApp {
         );
         ui.horizontal(|ui| {
             ui.label(RichText::new("Send to").strong());
+            ui.end_row();
             crate::chrome::field(
                 ui,
                 egui::TextEdit::singleline(&mut cfg.udp_audio)

@@ -897,6 +897,7 @@ pub(in crate::app) fn speech_settings(
 
             ui.add_space(8.0);
             ui.label(RichText::new("Decoded messages").strong());
+            ui.end_row();
             egui::Grid::new("speech-decodes")
                 .num_columns(2)
                 .spacing([16.0, 4.0])
@@ -928,6 +929,7 @@ pub(in crate::app) fn speech_settings(
 
             ui.add_space(8.0);
             ui.label(RichText::new("Reading decoded text aloud").strong());
+            ui.end_row();
             ui.horizontal(|ui| {
                 crate::chrome::checkbox(ui, &mut cfg.text.cw, "CW");
                 crate::chrome::checkbox(ui, &mut cfg.text.rtty_psk, "RTTY, PSK, Olivia, THOR, FSQ");
@@ -947,6 +949,7 @@ pub(in crate::app) fn speech_settings(
 
             ui.add_space(8.0);
             ui.label(RichText::new("Tuning up").strong());
+            ui.end_row();
             crate::chrome::checkbox(
                 ui,
                 &mut cfg.tune.swr_while_tuning,
@@ -976,6 +979,7 @@ pub(in crate::app) fn speech_settings(
 
             ui.add_space(8.0);
             ui.label(RichText::new("How things are read").strong());
+            ui.end_row();
             egui::Grid::new("speech-style")
                 .num_columns(2)
                 .spacing([12.0, 6.0])

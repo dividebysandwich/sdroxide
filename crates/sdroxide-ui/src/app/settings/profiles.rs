@@ -44,6 +44,7 @@ pub(in crate::app) fn settings_profiles_tab(
     ui.add_space(10.0);
 
     ui.label(RichText::new("Save the current setup").strong());
+    ui.end_row();
     ui.horizontal(|ui| {
         crate::chrome::field(
             ui,
@@ -68,6 +69,7 @@ pub(in crate::app) fn settings_profiles_tab(
     }
 
     ui.label(RichText::new("Saved profiles").strong());
+    ui.end_row();
     ui.add_space(4.0);
     for name in profiles {
         ui.horizontal(|ui| {

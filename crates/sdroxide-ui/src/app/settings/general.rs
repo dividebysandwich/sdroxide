@@ -272,6 +272,7 @@ pub(in crate::app) fn settings_rx_audio_gain(
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.label(RichText::new("Receive audio gain").strong());
+        ui.end_row();
         ui.add(
             egui::DragValue::new(&mut cfg.rx_audio_gain_db)
                 .speed(0.5)
@@ -385,6 +386,7 @@ impl SdroxideApp {
         import: &mut bool,
     ) {
         ui.label(RichText::new("Settings file").strong());
+        ui.end_row();
         if self.ctrl.engine_is_remote() {
             ui.label(
                 RichText::new(
@@ -624,6 +626,7 @@ impl SdroxideApp {
     /// its value every frame it is dragged and each one would be a config write.
     pub(in crate::app) fn settings_swr_guard(&self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         ui.label(RichText::new("SWR guard").strong());
+        ui.end_row();
         ui.add_space(4.0);
 
         let mut enabled = self.state.tx.swr_guard;
@@ -703,6 +706,7 @@ impl SdroxideApp {
         cmds: &mut Vec<sdroxide_types::Command>,
     ) {
         ui.label(RichText::new("Per-mode settings").strong());
+        ui.end_row();
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             if crate::chrome::chip(ui, false, RichText::new("RESET EVERY MODE").size(10.5))

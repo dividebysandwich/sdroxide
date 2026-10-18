@@ -72,6 +72,7 @@ fn settings_tle_subscriptions(ui: &mut egui::Ui, io: &mut SettingsIo) {
     use crate::theme;
 
     ui.label(RichText::new("Subscriptions").strong());
+    ui.end_row();
     super::note_at(
         ui,
         "Listings fetched and kept current, on the same six-hourly cadence as the amateur \
@@ -209,6 +210,7 @@ fn settings_tle_pasted(ui: &mut egui::Ui, io: &mut SettingsIo) {
     use crate::theme;
 
     ui.label(RichText::new("Pasted element sets").strong());
+    ui.end_row();
     super::note_at(
         ui,
         "For a one-off. These do not update themselves, and SGP4 stops propagating an \
@@ -371,6 +373,7 @@ fn settings_tle_freqs(ui: &mut egui::Ui, io: &mut SettingsIo) {
     use crate::theme;
 
     ui.label(RichText::new("Frequencies").strong());
+    ui.end_row();
     super::note_at(
         ui,
         "Shown under the pass table in the solar window. An entry here replaces the \
