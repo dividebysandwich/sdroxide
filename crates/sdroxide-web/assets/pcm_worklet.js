@@ -9,6 +9,14 @@ class PcmPlayer extends AudioWorkletProcessor {
         this.offset = 0;
         // Wait for ~60 ms before starting playback (jitter buffer).
         this.primed = false;
+        // How much of the page's audio this processor has rendered, reported
+        // back so the page can tell a live audio thread from a dead one. A
+        // browser that has frozen a hidden page stops calling `process`, and
+        // the context can go on reporting state "running" while that happens,
+        // so the only honest evidence that sound is being made is this count
+        // advancing. See `audio_bridge.js`.
+        this.rendered = 0;
+        this.blocks = 0;
         this.port.onmessage = (ev) => {
             this.queue.push(ev.data);
             this.queued += ev.data.length;
@@ -23,6 +31,15 @@ class PcmPlayer extends AudioWorkletProcessor {
 
     process(_inputs, outputs) {
         const out = outputs[0][0];
+        // One render quantum is 128 frames whatever it carries, so counting
+        // quanta is a clock that runs at the audio rate and cannot be confused
+        // with the page's own timers (which a hidden tab has throttled to a
+        // crawl). Every 64 of them — about 170 ms at 48 kHz — say so.
+        this.rendered += out.length;
+        if (++this.blocks >= 64) {
+            this.blocks = 0;
+            this.port.postMessage({ rendered: this.rendered, queued: this.queued });
+        }
         if (!this.primed) {
             if (this.queued >= 2880) this.primed = true;
             else {
