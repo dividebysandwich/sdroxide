@@ -1232,7 +1232,10 @@ mod tests {
         let mut out = Vec::new();
         rx.start_manual(&mut out);
         let mut audio = phasing(lpm, 8);
-        audio.extend(ramp_picture(lpm, 6));
+        // Past the page's own phasing signal: a page opens with it and the
+        // rephase rule may not fire inside it, so the fixture's first page has
+        // to run beyond those thirty seconds (sixty lines at 120 LPM).
+        audio.extend(ramp_picture(lpm, 60));
         audio.extend(tone(Ioc::I576.start_tone_hz(), 5.0));
         audio.extend(phasing(lpm, 16));
         let ev = drain(&mut rx, &audio);
