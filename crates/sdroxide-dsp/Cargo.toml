@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 sdroxide-types.workspace = true
+rtrb.workspace = true
 num-complex.workspace = true
 rustfft.workspace = true
 # Real-input FFT for the RX-888's wideband downconverter. A thin pure-Rust

@@ -5114,6 +5114,7 @@ version = "2.0.13"
 dependencies = [
  "cpal",
  "rtrb",
+ "sdroxide-dsp",
  "sdroxide-types",
  "thiserror 2.0.20",
  "tracing",
@@ -5237,6 +5238,7 @@ dependencies = [
  "nnnoiseless",
  "num-complex",
  "realfft",
+ "rtrb",
  "rubato 5.0.0",
  "rustfft",
  "sdroxide-types",

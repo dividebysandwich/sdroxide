@@ -1384,40 +1384,16 @@ pub fn start_output(
     Err(last)
 }
 
-/// The most playout an output ring may hold before new audio is held back, in
-/// interleaved stereo samples: 250 ms at 48 kHz.
-///
-/// The ring behind [`start_output`] is a second long. Filled by a producer that
-/// is running ahead, it plays every sample it holds, so the audio the operator
-/// hears is that much behind the picture — the ring's depth, not the network's.
-/// Capping the backlog bounds that delay at a quarter of a second, and what is
-/// held back is the newest audio, because the older audio is the part already
-/// queued ahead of it.
-pub const PLAYOUT_BACKLOG: usize = 24_000;
+pub use sdroxide_dsp::playout::{PLAYOUT_BACKLOG, queue_frames};
 
 /// Queue mono `pcm` for playback on an output opened by [`start_output`], which
-/// takes interleaved stereo: every sample goes to both channels.
-///
-/// Whole frames only. Each sample is written as a left and right pair, and a
-/// sample is taken only when both halves fit, so a full ring can never leave a
-/// lone channel behind — which would swap left and right from that point on.
-/// Stops once the ring already holds `max_backlog` samples.
+/// takes interleaved stereo: every sample goes to both channels, and the same
+/// whole-frame and backlog rules apply as in [`queue_frames`].
 ///
 /// Returns how many input samples were taken. The rest were not played, and the
 /// caller decides whether that is worth saying.
 pub fn queue_mono(producer: &mut rtrb::Producer<f32>, pcm: &[f32], max_backlog: usize) -> usize {
-    let capacity = producer.buffer().capacity();
-    let mut taken = 0;
-    for &s in pcm {
-        let backlog = capacity - producer.slots();
-        if backlog + 2 > max_backlog || producer.slots() < 2 {
-            break;
-        }
-        let _ = producer.push(s);
-        let _ = producer.push(s);
-        taken += 1;
-    }
-    taken
+    queue_frames(producer, pcm.len(), max_backlog, |i| (pcm[i], pcm[i]))
 }
 
 #[cfg(test)]
