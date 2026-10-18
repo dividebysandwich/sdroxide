@@ -307,6 +307,15 @@ const TONE_TOL: f64 = 0.18;
 const PHASE_TIMEOUT_S: f64 = 35.0;
 /// Phasing lines to average the skew over before locking.
 const PHASE_LINES: u32 = 5;
+/// How long a transmission's own phasing signal lasts, in seconds.
+///
+/// The standard is thirty: a five-second start tone, then thirty seconds of
+/// phasing, then the chart. The decoder takes its lock on the *first* phasing
+/// pulse, so the opening thirty seconds of every page are the rest of that
+/// signal — and the signal is black lines with a white pulse, which is exactly
+/// what the rephase rule looks for. This is the guard that keeps it from cutting
+/// the page it has just started: see [`WefaxRx::note_phasing_line`].
+const PHASING_SIGNAL_S: f64 = 30.0;
 /// Phasing-looking lines in a row, in the middle of a picture, that mean the
 /// next transmission has begun on top of it.
 ///
@@ -589,6 +598,26 @@ impl WefaxRx {
     /// however long the run is asked to be (issue #496). What carries it is the
     /// *shape* test in [`phasing_skew_strict`]; the run and the consistency
     /// narrow the window a passing shape has to survive.
+    ///
+    /// **And the run has to be past the page's own phasing signal.**
+    ///
+    /// The lock is taken on the transmission's *first* phasing pulse and the
+    /// standard signal runs for thirty seconds after it, so the opening of every
+    /// page is black lines with a white pulse — exactly the shape this looks
+    /// for. Ungated, the rule cut the page it had just started, over and over:
+    /// measured on an off-air recording (`Sigidwiki`'s *WFax_IntroNORTHWOOD*, a
+    /// start tone followed by its phasing signal), one transmission came out as
+    /// **four** pages of eight to eleven lines, cut every seven seconds, every
+    /// cut inside the phasing — a chart that could never come out whole.
+    ///
+    /// The gate is **time, not content**, and that was measured rather than
+    /// assumed. The obvious test — wait until a line the strict test *rejects*
+    /// has been drawn — does not work: the strict test turns away some of the
+    /// phasing signal's own lines (the partial line the lock leaves at the head
+    /// of the page, and others a few seconds in), so the gate opens while the
+    /// signal is still running. [`PHASING_SIGNAL_S`] is the standard's own
+    /// number, and it costs nothing real: the next chart's phasing is minutes
+    /// away, never seconds.
     fn note_phasing_line(&mut self, line: &[f32]) -> bool {
         // The strict test: mid-picture, a line that is merely "mostly black
         // with a white patch" is a chart's own graphic, not a phasing pulse.
@@ -686,8 +715,18 @@ impl WefaxRx {
                 // seconds long and a fade can swallow it whole, while the
                 // phasing signal that follows it runs for thirty. A run of
                 // phasing lines in the middle of a picture is the next
-                // transmission, whether its start tone arrived or not.
-                if self.auto_start && self.note_phasing_line(&line) {
+                // transmission, whether its start tone arrived or not — and
+                // "in the middle of a picture" is load-bearing, because a page
+                // opens with its *own* phasing signal: see
+                // [`WefaxRx::note_phasing_line`].
+                let since_lock_s = f64::from(self.line_no) * self.samples_per_line() / self.rate;
+                // The run is maintained whether or not the guard has expired —
+                // `note_phasing_line` is what counts the lines, so skipping the
+                // call would leave the count at zero when the guard lifts.
+                if self.auto_start
+                    && self.note_phasing_line(&line)
+                    && since_lock_s >= PHASING_SIGNAL_S
+                {
                     self.finish(false, out);
                     self.begin(self.ioc, true, out);
                     return;
@@ -1080,7 +1119,11 @@ mod tests {
         let mut out = Vec::new();
         rx.start_manual(&mut out);
         let mut audio = phasing(lpm, 8);
-        audio.extend(ramp_picture(lpm, 6));
+        // A page long enough for the rule to be allowed to fire at all: the
+        // first thirty seconds of a page are its own phasing signal, so the
+        // fixture's first page has to run past that — sixty lines at 120 LPM,
+        // where a real chart runs for minutes.
+        audio.extend(ramp_picture(lpm, 60));
         // The next transmission, arriving with nothing but its phasing signal.
         // A real one runs about thirty seconds — sixty lines at 120 LPM — and
         // the rephase spends eight of them recognising it before the new page
@@ -1136,7 +1179,9 @@ mod tests {
         let mut out = Vec::new();
         rx.start_manual(&mut out);
         let mut audio = phasing(lpm, 8);
-        audio.extend(ramp_picture(lpm, 6));
+        // Past the page's own phasing signal, as above: the rule cannot fire
+        // before then.
+        audio.extend(ramp_picture(lpm, 60));
         // The next transmission, its pulse a third of the way into the line as
         // the old clock slices it.
         audio.extend(phasing_at(lpm, 16, 0.3));
@@ -1145,6 +1190,43 @@ mod tests {
         assert!(
             ev.iter().any(|e| matches!(e, WefaxEvent::Complete { by_tone: false, .. })),
             "the new transmission was missed: {ev:?}"
+        );
+    }
+
+    /// **A page's own phasing signal is not the next transmission's.**
+    ///
+    /// The lock is taken on the first phasing pulse and the standard signal runs
+    /// for thirty seconds after it, so every page opens with black lines and a
+    /// white pulse — the very shape the rephase rule looks for. Ungated, it cut
+    /// the page it had just started: on an off-air recording (`Sigidwiki`'s
+    /// *WFax_IntroNORTHWOOD*, a start tone followed by its phasing signal) one
+    /// transmission came out as **four** pages of eight to eleven lines, cut
+    /// every seven seconds. The rule is for a run *in the middle of a picture*,
+    /// so it has to wait for chart content — and once there is chart on the
+    /// page, the next transmission is still caught, which is the other half.
+    #[test]
+    fn the_pages_own_phasing_signal_does_not_cut_the_page() {
+        let lpm = Lpm::L120;
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        let mut out = into_image(&mut rx, lpm);
+        // The rest of this transmission's phasing signal, and then its chart.
+        let mut audio = phasing(lpm, 40);
+        audio.extend(ramp_picture(lpm, 6));
+        out.extend(drain(&mut rx, &audio));
+        assert!(
+            !out.iter().any(|e| matches!(e, WefaxEvent::Complete { .. })),
+            "the page's own phasing signal ended it: {out:?}"
+        );
+        assert!(rx.receiving(), "the page is still being drawn");
+
+        // With chart on the page, a run of phasing lines is the next page again.
+        let mut next = phasing(lpm, 16);
+        next.extend(ramp_picture(lpm, 6));
+        out.extend(drain(&mut rx, &next));
+        assert!(
+            out.iter().any(|e| matches!(e, WefaxEvent::Complete { by_tone: false, .. })),
+            "a new transmission after chart content was missed: {out:?}"
         );
     }
 
@@ -1394,5 +1476,108 @@ mod tests {
         // Fewer samples than pixels still fills the row rather than panicking.
         assert_eq!(resample_line(&[1.0], 4).len(), 4);
         assert_eq!(resample_line(&[], 4), vec![0, 0, 0, 0]);
+    }
+    /// **The real thing: an off-air recording decodes a picture.**
+    ///
+    /// Point `SDROXIDE_WEFAX_SAMPLE` at a mono **12 kHz** WAV — convert a
+    /// capture with `ffmpeg -i capture.mp3 -ac 1 -ar 12000 fax.wav` (the
+    /// engine's digi tap rate, which is what the decoder is built for) — and
+    /// set the geometry if it is not the usual one:
+    /// `SDROXIDE_WEFAX_LPM` and `SDROXIDE_WEFAX_IOC`.
+    ///
+    /// Off-air material cannot live in the tree, so the test is `#[ignore]`d and
+    /// skips when the variable is unset. Run it with
+    /// `cargo test -p sdroxide-dsp --release -- --ignored --nocapture`.
+    ///
+    /// **What it asks of the recording**, and this is the part worth knowing
+    /// before pointing it at a file: a picture can only be phased from a
+    /// *phasing pulse*, which a weather service sends in the thirty seconds
+    /// before its chart. A recording that starts in the middle of a chart has
+    /// no pulse in it and therefore no line start — the decoder is right to
+    /// decode nothing from it, and this test would fail on a perfectly good
+    /// file. So record from before the start tone, or take the transmission
+    /// whole: `Sigidwiki`'s *WFax_IntroNORTHWOOD* sample is such a recording —
+    /// a start tone, thirty seconds of phasing and six seconds of chart — and
+    /// it is what this test was checked against (start found, phased, 8–11
+    /// lines at 120 LPM, which is what six seconds of a chart is).
+    #[test]
+    #[ignore]
+    fn an_off_air_recording_decodes() {
+        let Ok(path) = std::env::var("SDROXIDE_WEFAX_SAMPLE") else {
+            eprintln!("SDROXIDE_WEFAX_SAMPLE unset; skipping");
+            return;
+        };
+        let mut reader = hound::WavReader::open(&path).expect("open the sample WAV");
+        let spec = reader.spec();
+        assert_eq!(spec.sample_rate, RATE as u32, "the sample must be at 12 000 Hz");
+        assert_eq!(spec.channels, 1, "the sample must be mono");
+        let audio: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Float => reader.samples::<f32>().collect::<Result<_, _>>(),
+            hound::SampleFormat::Int => {
+                let peak = (1i64 << (spec.bits_per_sample - 1)) as f32;
+                reader
+                    .samples::<i32>()
+                    .map(|s| s.map(|v| v as f32 / peak))
+                    .collect::<Result<_, _>>()
+            }
+        }
+        .expect("read the sample");
+
+        let lpm = match std::env::var("SDROXIDE_WEFAX_LPM").ok().as_deref() {
+            Some("60") => Lpm::L60,
+            Some("90") => Lpm::L90,
+            Some("180") => Lpm::L180,
+            Some("240") => Lpm::L240,
+            _ => Lpm::L120,
+        };
+        let ioc = match std::env::var("SDROXIDE_WEFAX_IOC").ok().as_deref() {
+            Some("288") => Ioc::I288,
+            _ => Ioc::I576,
+        };
+
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(lpm);
+        rx.set_ioc(ioc);
+        rx.set_auto_start(true);
+        let mut events = Vec::new();
+        let mut lines = 0usize;
+        let mut pages: Vec<u16> = Vec::new();
+        let mut phased = false;
+        let mut started = false;
+        for block in audio.chunks(4096) {
+            events.clear();
+            rx.process(block, &mut events);
+            for e in &events {
+                match e {
+                    WefaxEvent::Start { .. } => started = true,
+                    WefaxEvent::Phased { skew } => {
+                        phased = true;
+                        println!("phased {skew} samples into the line");
+                    }
+                    WefaxEvent::Line { .. } => lines += 1,
+                    WefaxEvent::Complete { lines, by_tone } => {
+                        pages.push(*lines);
+                        println!("complete: {lines} lines, by_tone={by_tone}")
+                    }
+                }
+            }
+        }
+        // The page structure is printed rather than asserted: a recording of one
+        // transmission that ends mid-chart leaves its page open, one that carries
+        // a stop tone closes it, and one of several transmissions makes several
+        // pages — all of them correct. What the *decoder* must not do is cut a
+        // page inside its own phasing signal, and that is pinned by
+        // `the_pages_own_phasing_signal_does_not_cut_the_page`.
+        println!(
+            "{path}: started={started} phased={phased} lines={lines} pages={pages:?} open={}",
+            lines - pages.iter().map(|n| *n as usize).sum::<usize>()
+        );
+        assert!(started, "no start tone found in the recording");
+        assert!(phased, "the start tone was found but no phasing pulse — was the file cut short?");
+        assert!(
+            lines >= 4,
+            "phased but produced {lines} lines: a picture that stops immediately is the fault \
+             this test exists to catch"
+        );
     }
 }
