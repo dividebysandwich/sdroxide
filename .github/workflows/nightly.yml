@@ -1,34 +1,26 @@
 name: Nightly
 
-# A rolling build of `main`, every evening, carrying **only the platforms people
-# actually downloaded** from the last release (see the `wanted` step below).
+# A rolling build of `main`, **on demand only**, carrying **only the platforms
+# people actually downloaded** from the last releases (see the `wanted` step
+# below).
+#
+# **Nothing publishes by itself.** This workflow is a release — a pre-release,
+# but a release — and the 18:00 UTC cron it used to carry was removed on
+# 2026-10-18 at the operator's instruction: a build appearing overnight, unasked,
+# is exactly what he is avoiding. (It had also stopped being *at* 18:00: the run
+# that landed on the evening of 2026-10-17 started at 20:21 UTC, because GitHub's
+# scheduler is best-effort.) Run it by hand when a nightly is wanted:
+#
+#     gh workflow run nightly.yml
+#
+# A manual run always builds, whether the branch moved or not.
 #
 # Rather than duplicate the ~900-line release workflow, this moves a `nightly`
 # tag to the branch head and dispatches `release.yml` against it. The release
 # job publishes a tag ref as a release, and it knows to mark this one a
 # **pre-release** — so `/releases/latest`, and the README's stable download
-# links, keep pointing at a real tagged release rather than at last night's
-# build.
-#
-# Scheduled workflows only run on the default branch, and run against whatever
-# is pushed there: this builds the remote `main`, not any local checkout.
+# links, keep pointing at a real tagged release rather than at a nightly build.
 on:
-  schedule:
-    # Every evening, 18:00 UTC — about 20:00 where the operator is, so a
-    # nightly is there when he gets to it and when the testers who asked for
-    # one are awake. The *frequency* is the operator's standing decision
-    # (AGENTS.md, "The release rhythm"): nightly, Friday release at noon,
-    # patch release only for a serious bug. The reason a nightly may be worth
-    # running every evening where a weekly one was not is that it now builds
-    # only what somebody downloaded, so an evening build is a few jobs rather
-    # than fourteen.
-    #
-    # GitHub's scheduler is best-effort — a busy queue can delay it by minutes,
-    # and it skips a run if one is already going (see the concurrency group).
-    - cron: '0 18 * * *'
-  # For a build on demand, from the Actions tab or
-  # `gh workflow run nightly.yml`. A manual run always builds, whether the
-  # branch moved or not.
   workflow_dispatch:
 
 permissions:
@@ -53,27 +45,14 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.repository.default_branch }}
       - name: Point the nightly tag at the branch head
-        id: tag
-        env:
-          EVENT: ${{ github.event_name }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          # A scheduled run on a branch that has not moved would rebuild the
-          # same tree, which is fourteen platform builds and ~30 assets for
-          # nothing. Leave the tag where it is and build nothing. A manual run
-          # skips this check, so asking for a build always gets one.
-          git fetch --force --tags origin
-          if [ "$EVENT" = "schedule" ] &&
-             git rev-parse -q --verify refs/tags/nightly > /dev/null &&
-             [ "$(git rev-parse 'refs/tags/nightly^{commit}')" = "$(git rev-parse HEAD)" ]; then
-            echo "nightly already points at $(git rev-parse --short HEAD) — nothing to build"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "changed=true" >> "$GITHUB_OUTPUT"
+          # No "has the branch moved?" check any more: that existed only to keep
+          # the *scheduled* run from rebuilding an unchanged tree, and there is no
+          # scheduled run. Asking for a nightly always gets one.
           git tag -f nightly HEAD
-          # Force, because the tag moves every week; that is what makes it
+          # Force, because the tag moves every time; that is what makes it
           # "nightly" rather than a growing pile of tags.
           git push --force origin nightly
       - name: Which platforms did anyone actually download?
@@ -128,7 +107,6 @@ jobs:
           echo "wanted=$wanted" >> "$GITHUB_OUTPUT"
 
       - name: Start the release workflow on it
-        if: steps.tag.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           WANTED: ${{ steps.wanted.outputs.wanted }}

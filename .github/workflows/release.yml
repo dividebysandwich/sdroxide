@@ -40,14 +40,15 @@ on:
   # **No schedule here, and that is the point.** This workflow used to carry a
   # daily cron that built the whole matrix and then skipped creating a release
   # (the release is gated on a tag), so it published nothing and cost fourteen
-  # builds a day. `nightly.yml` superseded it — that one moves the `nightly`
-  # tag and dispatches this workflow against it, which *does* publish a
-  # pre-release, at 18:00 UTC and on a smaller matrix.
+  # builds a day.
   #
-  # **A release now happens only two ways: a tag is pushed, or this is
-  # dispatched by hand.** Nothing publishes on its own. That is deliberate —
-  # the operator's standing rule is that a build reaching a tester has been
-  # asked for, and the nightly is the one exception he named.
+  # **A release happens only when somebody asks for one: a tag is pushed, or
+  # this is dispatched by hand — and that is now true of the nightly as well.**
+  # Its 18:00 cron was removed on 2026-10-18 at the operator's instruction
+  # ("disable all auto releases"), after a nightly appeared overnight unasked
+  # (and late: GitHub's scheduler started it at 20:21 UTC, not 18:00). The
+  # arrangement that replaces it: **Kevin cuts the pre-releases**, and a full
+  # release waits until everything is good and he says so.
 
 permissions:
   contents: write
@@ -60,11 +61,10 @@ env:
   CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
-  # Which build combinations this run wants. A tag or a manual run builds all
-  # fourteen; the nightly builds four — the standard (non-SoapySDR) variant of
-  # the platforms most people run. A scheduled run publishes nothing (`release`
-  # below is gated on a tag), so its artifacts on the run page are the whole
-  # product of the run and the releases page never hears about it.
+  # Which build combinations this run wants. A tag or an untargeted manual run
+  # builds all fourteen; the nightly names its own platforms and asks for the
+  # `cat` variant, so it builds only what people actually downloaded, plus the
+  # two it keeps whatever the counts say.
   #
   # The platform table lives in this job rather than in `build`'s own
   # `strategy.matrix` because a matrix written in YAML cannot be narrowed per
@@ -142,18 +142,14 @@ jobs:
           # libSoapySDR installed; drive a CAT rig over serial + a sound card
           # instead). The nightly builds `cat` only — it is what the installers
           # ship and the one a tester can run without installing PothosSDR
-          # first.
-          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
-            # Nightly is the exception that keeps the ARM build alive: a
-            # scheduled run already builds a subset on purpose, and keeping
-            # `linux-aarch64-compat` in it means the artifact that no release
-            # publishes is still built weekly and can be grabbed from the
-            # pre-release by anyone who wants it. Names from `extra_platforms`
-            # are reachable here precisely because the matrix pool includes
-            # them.
-            wanted='["linux-x86_64", "linux-aarch64-compat", "windows-x86_64", "macos-aarch64"]'
-            variants='["cat"]'
-          elif [[ -n "${{ inputs.wanted }}" ]]; then
+          # first — and it names its platforms and variants on the dispatch, so
+          # there is no branch for it here.
+          #
+          # There used to be one, keyed on a scheduled event, because a cron run
+          # could not pass inputs. The nightly has been manual-only since
+          # 2026-10-18 (no release publishes by itself), and it passes both
+          # inputs, so that branch was unreachable and is gone.
+          if [[ -n "${{ inputs.wanted }}" ]]; then
             # A manual dispatch may narrow the run to named platforms, which is
             # how the aarch64 link probe runs without fourteen builds. The list
             # is validated here rather than trusted: a typo in a dispatch input
@@ -217,10 +213,18 @@ jobs:
           # from. `sdroxide-version`'s build script reads this; unset (a local
           # `cargo build`) means the plain version. Both the wasm client and
           # every native build take it from here so they agree.
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            stamp=""
-          elif [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+          #
+          # The `nightly` tag is asked about **first**, because it *is* a tag:
+          # the generic branch below would otherwise catch it and leave a
+          # nightly reporting the bare release version, which is the one thing
+          # this stamp exists to prevent. It used to be keyed on a scheduled
+          # event instead, and that was wrong in the same way twice over — the
+          # nightly has been manual-only since 2026-10-18, and the runs that
+          # produce it are dispatched against the tag.
+          if [[ "$GITHUB_REF_NAME" == "nightly" ]]; then
             stamp="nightly.$(date -u +%Y%m%d).${GITHUB_SHA::7}"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            stamp=""
           else
             stamp="dev.${GITHUB_SHA::7}"
           fi
@@ -278,8 +282,9 @@ jobs:
           if-no-files-found: error
           # A nightly is superseded the next night, so it need not sit on the
           # run page for the repository's default 90 days. 0 means "use the
-          # default", which is what a tagged or manual run keeps.
-          retention-days: ${{ github.event_name == 'schedule' && 14 || 0 }}
+          # default", which is what a release tag or any other run keeps — the
+          # `nightly` ref is the one that expires sooner.
+          retention-days: ${{ github.ref_name == 'nightly' && 14 || 0 }}
 
   build:
     name: ${{ matrix.label }} (${{ matrix.variant }})
@@ -1044,7 +1049,7 @@ jobs:
           if-no-files-found: error
           # As above: a nightly's artifacts expire in a fortnight, a tagged
           # build's become the release assets and keep the default retention.
-          retention-days: ${{ github.event_name == 'schedule' && 14 || 0 }}
+          retention-days: ${{ github.ref_name == 'nightly' && 14 || 0 }}
 
   # Arch Linux. No package is shipped in the release any more: Arch users
   # build sdroxide themselves from the PKGBUILD in packaging/arch/, which

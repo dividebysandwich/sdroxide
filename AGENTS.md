@@ -4872,35 +4872,54 @@ that cannot transmit — because the ham RX strip has no room for another chip (
 desktop-strip two-row test pins it) and a listener's log is the reception one.
 The same EQ is also on the LISTEN window's Tone row.
 
-## ⛔ No release happens by itself — and none by an agent (2026-10-16)
+## ⛔ No release happens by itself — and none by an agent (2026-10-16, tightened 2026-10-18)
 
 **The operator's standing rule, and it overrides the rhythm below: a release is
 cut only when he asks, and after Kevin has tested.** Neither an agent nor he
 tags one on his own initiative. He is not at home with his radio, the work has
 got technical, and a build reaching a tester unasked is the thing he is avoiding.
 
-**The one exception he named: the nightly.** `nightly.yml` at 18:00 UTC moves the
-`nightly` tag and dispatches `release.yml` against it, publishing a
-**pre-release**. That continues.
+**There are no exceptions left, and that includes the nightly (2026-10-18).** The
+operator: *"somehow there was a release last night.. i want you to disable all
+auto releases."* `nightly.yml`'s 18:00 UTC cron is **gone**; the workflow is
+`workflow_dispatch` only, so a nightly is now something somebody asks for
+(`gh workflow run nightly.yml`). **No workflow in `.github/workflows/` carries a
+`schedule:` trigger any more** — that is the check to run if this is ever in
+doubt: `grep -rn cron .github/workflows/` should print only prose.
 
-**What was actually happening, because it was not the Friday release.** The
-"release run" with errors on the morning of the 16th was `release.yml`'s own
-**daily cron** (`17 3 * * *`), which had been there since an older nightly and
-was **superseded by `nightly.yml`**: it built the whole matrix every day and then
-skipped `create release` (the release is gated on a tag), so it published nothing
-and cost fourteen builds a day. It fired on the 14th, 15th and 16th.
+**What happened on the night of 2026-10-17/18, because "somehow" had two
+answers.** Neither was the Friday release:
 
-**The schedule is removed.** `release.yml` now triggers on a **tag push** and on
-**`workflow_dispatch`** only. `windows-msi.yml` and `armv7-probe.yml` are already
-dispatch-only. So nothing publishes on its own but the nightly.
+- **The nightly cron fired late.** GitHub's scheduler started it at **20:21 UTC**,
+  not 18:00 (it is best-effort), and it republished the `nightly` pre-release.
+- **Two tags were pushed** — `v2.0.13.3_brown` (its run was cancelled) and
+  `v2.0.13.4_brown` (published) at 00:36/00:42 UTC, carrying Kevin's WEFAX fix.
+  **Kevin has `write` on the repository**, and the merge commit for his own PR
+  #101 is authored by him, so this was almost certainly his doing rather than an
+  agent's. Both are **pre-releases**, so `/releases/latest` still points at
+  `v2.0.13.1_brown` and the README's stable links are untouched.
 
-**An agent must not tag a release.** Not a Friday one, not a patch one, not
-"because the queue looks clean". Ask.
+**The arrangement that replaces the rhythm, and it is the operator's (2026-10-18):
+Kevin cuts the pre-releases**, and a full release is cut when everything is good
+**and Kevin says so**. That is what he asked to be told, in as many words, on
+fork #72.
+
+**An agent must not tag a release.** Not a Friday one, not a patch one, not a
+pre-release, not "because the queue looks clean". Ask. (Kevin's own pre-releases
+are his to cut; that is a different thing from an agent cutting one.)
 
 ## The release rhythm (decided 2026-10-07, and it is a decision, not a habit)
 
 The operator's own words, kept because the reasoning is the whole point: *"we'll
 be more mindful instead of riding the wind."* Three rungs, and what each is for:
+
+> **⚠️ Superseded on 2026-10-18 — read the section above first.** The *calendar*
+> is gone: nothing is cut on a schedule any more, because the operator asked for
+> **all auto releases** to be disabled. **Kevin cuts the pre-releases**, and a
+> full release is cut when everything is good **and Kevin says so**. What
+> survives from the table below is the *shape* of a build — a nightly carries
+> only what people downloaded, a release carries the full matrix — and the
+> reasoning, which is why the table is kept rather than deleted.
 
 | When | What | Why |
 | --- | --- | --- |
@@ -5075,15 +5094,14 @@ enough that one job should never depend on every file succeeding, and the
 `--clobber` re-runs that followed deleted and re-created assets until they too
 failed.
 
-Nightlies are separate, and their shape is the operator's standing decision (see
-**The release rhythm** above): `.github/workflows/nightly.yml` runs **every
-evening at 18:00 UTC** (and by hand), moves the `nightly` tag to `main` and
-dispatches the same release workflow against it. A scheduled run whose `main`
-has not moved since the last one is skipped — no point rebuilding an unchanged
-tree — and a manual dispatch always builds. `release.yml` publishes a `nightly`
-ref as a **pre-release** with a dated title, so `/releases/latest` and the
-README's stable download links keep pointing at a tagged release rather than at
-last night's build.
+Nightlies are separate, and they are **manual only since 2026-10-18** — nothing
+publishes by itself (see **No release happens by itself**, above; the 18:00 cron
+is gone, and **Kevin cuts the pre-releases** now). `.github/workflows/nightly.yml`
+is `workflow_dispatch` only: run it by hand (`gh workflow run nightly.yml`) and it
+moves the `nightly` tag to `main` and dispatches the same release workflow against
+it. Asking for one always builds one. `release.yml` publishes a `nightly` ref as a
+**pre-release** with a dated title, so `/releases/latest` and the README's stable
+download links keep pointing at a tagged release rather than at a nightly build.
 
 **What a nightly builds, and why it is not all fourteen** (2026-10-07): the
 **only platforms anybody has downloaded from the last three releases**, read from
