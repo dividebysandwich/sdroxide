@@ -44,7 +44,10 @@
 
 use std::f64::consts::{PI, TAU};
 
+use std::sync::Arc;
+
 use num_complex::Complex32;
+use realfft::{RealFftPlanner, RealToComplex};
 
 use crate::fir::{ComplexFir, bandpass_taps};
 
@@ -194,6 +197,11 @@ struct ToneDetect {
     above: bool,
     /// Consecutive windows whose rate matched, in units of the window length.
     matched: f32,
+    /// Samples in the window so far that sat near black and near white.
+    dark: u32,
+    bright: u32,
+    /// Whether the window that just completed swung the full range.
+    swing: bool,
 }
 
 impl ToneDetect {
@@ -208,12 +216,20 @@ impl ToneDetect {
             self.above = above;
         }
         self.samples += 1;
+        self.dark += (level < 0.25) as u32;
+        self.bright += (level > 0.75) as u32;
         if self.samples < window {
             return None;
         }
         let rate = self.crossings as f64;
+        // A real start signal spends about half its time at each extreme. A
+        // steady carrier whose level merely wobbles about mid-grey crosses the
+        // threshold just as often and never gets near either.
+        self.swing = self.dark * 4 >= self.samples && self.bright * 4 >= self.samples;
         self.crossings = 0;
         self.samples = 0;
+        self.dark = 0;
+        self.bright = 0;
         Some(rate)
     }
 
@@ -221,6 +237,99 @@ impl ToneDetect {
         self.crossings = 0;
         self.samples = 0;
         self.matched = 0.0;
+        self.dark = 0;
+        self.bright = 0;
+        self.swing = false;
+    }
+}
+
+/// What a window of plain audio held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AudioTone {
+    /// A pure tone at the start-signal pitch, [`START_AUDIO_HZ`].
+    Start,
+    /// A pure tone at the stop-signal pitch, [`STOP_TONE_HZ`].
+    Stop,
+    Other,
+}
+
+/// Detector for a start or stop signal sent as a literal audio tone.
+///
+/// The standard describes both as the subcarrier alternating black/white, which
+/// [`ToneDetect`] measures after the discriminator. A transmission can also
+/// carry them as a plain 300 / 450 Hz tone, which lies outside the subcarrier's
+/// passband and so is invisible to the discriminator (it reads as noise).
+/// This looks at the raw audio instead: one FFT per window, the strongest line
+/// between [`AUDIO_TONE_LO_HZ`] and [`AUDIO_TONE_HI_HZ`], and the share of the
+/// window's energy that line holds. A tone is *pure* or it is not a tone — a
+/// chart, noise or a voice spread their energy and never reach
+/// [`AUDIO_TONE_PURITY`].
+struct AudioToneDetect {
+    fft: Arc<dyn RealToComplex<f32>>,
+    window: Vec<f32>,
+    buf: Vec<f32>,
+    spec: Vec<Complex32>,
+    scratch: Vec<Complex32>,
+    hz_per_bin: f64,
+}
+
+impl AudioToneDetect {
+    fn new(rate: f64) -> Self {
+        let n = ((rate * TONE_WINDOW_S) as usize).max(16);
+        let fft = RealFftPlanner::<f32>::new().plan_fft_forward(n);
+        let spec = fft.make_output_vec();
+        let scratch = fft.make_scratch_vec();
+        let window = (0..n).map(|i| 0.5 - 0.5 * (TAU * i as f64 / n as f64).cos() as f32).collect();
+        AudioToneDetect {
+            fft,
+            window,
+            buf: Vec::with_capacity(n),
+            spec,
+            scratch,
+            hz_per_bin: rate / n as f64,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.buf.clear();
+    }
+
+    /// Feed one audio sample; the verdict on the window once it is full.
+    fn push(&mut self, a: f32) -> Option<AudioTone> {
+        self.buf.push(a);
+        if self.buf.len() < self.window.len() {
+            return None;
+        }
+        for (b, w) in self.buf.iter_mut().zip(&self.window) {
+            *b *= w;
+        }
+        let ok = self.fft.process_with_scratch(&mut self.buf, &mut self.spec, &mut self.scratch);
+        self.buf.clear();
+        if ok.is_err() {
+            return Some(AudioTone::Other);
+        }
+        let power: Vec<f32> = self.spec.iter().map(|c| c.norm_sqr()).collect();
+        let total: f32 = power.iter().skip(1).sum();
+        let lo = (AUDIO_TONE_LO_HZ / self.hz_per_bin) as usize;
+        let hi = ((AUDIO_TONE_HI_HZ / self.hz_per_bin) as usize).min(power.len() - 1);
+        if total <= 1e-9 || lo >= hi {
+            return Some(AudioTone::Other);
+        }
+        let peak = (lo..=hi).max_by(|&a, &b| power[a].total_cmp(&power[b]))?;
+        // A Hann window spreads a line over a few bins either side.
+        let held: f32 =
+            power[peak.saturating_sub(3)..=(peak + 3).min(power.len() - 1)].iter().sum();
+        if held < total * AUDIO_TONE_PURITY {
+            return Some(AudioTone::Other);
+        }
+        let hz = peak as f64 * self.hz_per_bin;
+        Some(if (hz - START_AUDIO_HZ).abs() <= START_AUDIO_TOL_HZ {
+            AudioTone::Start
+        } else if (hz - STOP_TONE_HZ).abs() <= STOP_AUDIO_TOL_HZ {
+            AudioTone::Stop
+        } else {
+            AudioTone::Other
+        })
     }
 }
 
@@ -288,6 +397,20 @@ pub struct WefaxRx {
     stop_miss: u32,
     /// Which IOC the start tone that armed us implied.
     start_ioc: Ioc,
+
+    /// Plain-audio start and stop tones, see [`AudioToneDetect`].
+    audio_tone: AudioToneDetect,
+    audio_start_run: u32,
+    audio_stop_run: u32,
+    audio_stop_miss: u32,
+    /// An automatic start that has not yet been confirmed by its phasing
+    /// signal: nothing has been announced, so a carrier that was never a
+    /// transmission leaves no trace.
+    start_pending: bool,
+    /// Audio energy and the part of it inside the subcarrier's band, over the
+    /// start-detector window in progress.
+    band_raw: f32,
+    band_sub: f32,
 }
 
 /// How long a tone-detector window is, in seconds. Long enough that a chart's
@@ -320,6 +443,23 @@ const BLANK_MEAN: f32 = 0.9;
 const BLANK_GAP_LINES: u32 = 6;
 /// How far a measured crossing rate may be from the nominal one, as a fraction.
 const TONE_TOL: f64 = 0.18;
+/// Pitch of a start signal sent as a plain audio tone, Hz — the 300 Hz of
+/// [`Ioc::I576`].
+const START_AUDIO_HZ: f64 = 300.0;
+/// How far a start or stop tone may sit from its nominal pitch, Hz. Propagation
+/// and a receiver a little off tune move a tone in the audio by tens of hertz;
+/// the two windows do not overlap, so the start and stop tones cannot be
+/// mistaken for one another.
+const START_AUDIO_TOL_HZ: f64 = 70.0;
+const STOP_AUDIO_TOL_HZ: f64 = 50.0;
+/// The band searched for an audio start or stop tone, Hz.
+const AUDIO_TONE_LO_HZ: f64 = 200.0;
+const AUDIO_TONE_HI_HZ: f64 = 520.0;
+/// Share of a window's energy a tone must hold to count as one.
+const AUDIO_TONE_PURITY: f32 = 0.6;
+/// Share of a window's audio energy that must lie in the subcarrier's band for
+/// an alternating start signal to be believed.
+const SUBCARRIER_SHARE: f32 = 0.25;
 /// Give up looking for the phasing pulse after this long and start the picture
 /// anyway — a misaligned chart beats no chart.
 const PHASE_TIMEOUT_S: f64 = 35.0;
@@ -395,6 +535,13 @@ impl WefaxRx {
             blank_run: 0,
             blank_gap: 0,
             start_ioc: Ioc::default(),
+            audio_tone: AudioToneDetect::new(rate),
+            audio_start_run: 0,
+            audio_stop_run: 0,
+            audio_stop_miss: 0,
+            start_pending: false,
+            band_raw: 0.0,
+            band_sub: 0.0,
         }
     }
 
@@ -453,12 +600,12 @@ impl WefaxRx {
     }
 
     pub fn receiving(&self) -> bool {
-        self.phase != Phase::Idle
+        self.phase != Phase::Idle && !self.start_pending
     }
 
     /// True while still hunting for the phasing pulse.
     pub fn phasing(&self) -> bool {
-        self.phase == Phase::Phasing
+        self.phase == Phase::Phasing && !self.start_pending
     }
 
     /// Lines emitted for the picture in progress.
@@ -493,6 +640,20 @@ impl WefaxRx {
     }
 
     fn begin(&mut self, ioc: Ioc, auto: bool, out: &mut Vec<WefaxEvent>) {
+        self.arm(ioc, auto);
+        out.push(WefaxEvent::Start { ioc, lpm: self.lpm, auto });
+    }
+
+    /// Arm for an automatic start without announcing it: [`WefaxEvent::Start`]
+    /// is sent when the phasing signal locks, and nothing at all is sent if it
+    /// never does.
+    fn begin_pending(&mut self, ioc: Ioc) {
+        self.arm(ioc, true);
+        self.start_pending = true;
+    }
+
+    fn arm(&mut self, ioc: Ioc, auto: bool) {
+        self.start_pending = false;
         self.ioc = ioc;
         self.phase = Phase::Phasing;
         self.line_buf.clear();
@@ -511,7 +672,16 @@ impl WefaxRx {
         self.stop_det.reset();
         self.stop_run = 0;
         self.stop_miss = 0;
-        out.push(WefaxEvent::Start { ioc, lpm: self.lpm, auto });
+        self.reset_audio_tones();
+    }
+
+    fn reset_audio_tones(&mut self) {
+        self.audio_tone.reset();
+        self.audio_start_run = 0;
+        self.audio_stop_run = 0;
+        self.audio_stop_miss = 0;
+        self.band_raw = 0.0;
+        self.band_sub = 0.0;
     }
 
     fn finish(&mut self, by_tone: bool, out: &mut Vec<WefaxEvent>) {
@@ -519,6 +689,8 @@ impl WefaxRx {
             return;
         }
         let lines = self.line_no;
+        let announced = !self.start_pending;
+        self.start_pending = false;
         self.phase = Phase::Idle;
         self.line_buf.clear();
         self.rephase_lines = 0;
@@ -527,7 +699,10 @@ impl WefaxRx {
         self.start_run = 0;
         self.stop_run = 0;
         self.stop_miss = 0;
-        out.push(WefaxEvent::Complete { lines, by_tone });
+        self.reset_audio_tones();
+        if announced {
+            out.push(WefaxEvent::Complete { lines, by_tone });
+        }
     }
 
     /// Feed audio; push any decoded events.
@@ -545,7 +720,13 @@ impl WefaxRx {
         let mut bb = Vec::with_capacity(audio.len());
         self.lpf.process(&mixed, &mut bb);
 
-        for z in bb {
+        for (i, z) in bb.into_iter().enumerate() {
+            let a = audio.get(i).copied().unwrap_or(0.0);
+            self.band_raw += a * a;
+            self.band_sub += z.norm_sqr();
+            if let Some(tone) = self.audio_tone.push(a) {
+                self.on_audio_tone(tone, out);
+            }
             let raw_hz = if self.have_prev {
                 let d = z * self.prev.conj();
                 CENTRE_HZ + (d.arg() as f64) * self.rate / TAU
@@ -565,6 +746,44 @@ impl WefaxRx {
             match self.phase {
                 Phase::Idle => self.step_idle(level, out),
                 Phase::Phasing | Phase::Image => self.step_receiving(level, out),
+            }
+        }
+    }
+
+    /// A window of plain audio has been classified.
+    ///
+    /// Idle, a start tone held for [`TONE_RUN`] windows arms an automatic start
+    /// — announced only once the phasing signal confirms it. Receiving, a stop
+    /// tone held for [`STOP_RUN`] windows ends the page, exactly as the
+    /// alternating stop signal does. A start tone mid-picture is ignored, for
+    /// the reason given at [`WefaxRx::start_tone`].
+    fn on_audio_tone(&mut self, tone: AudioTone, out: &mut Vec<WefaxEvent>) {
+        if self.phase == Phase::Idle {
+            if !self.auto_start {
+                return;
+            }
+            if tone == AudioTone::Start {
+                self.audio_start_run += 1;
+                if self.audio_start_run >= TONE_RUN {
+                    self.begin_pending(Ioc::I576);
+                }
+            } else {
+                self.audio_start_run = 0;
+            }
+        } else if self.auto_stop {
+            if tone == AudioTone::Stop {
+                self.audio_stop_run += 1;
+                self.audio_stop_miss = 0;
+                if self.audio_stop_run >= STOP_RUN {
+                    self.line_no = self.line_no.saturating_sub(2);
+                    self.finish(true, out);
+                }
+            } else if self.audio_stop_run > 0 {
+                self.audio_stop_miss += 1;
+                if self.audio_stop_miss > STOP_MISS_TOL {
+                    self.audio_stop_run = 0;
+                    self.audio_stop_miss = 0;
+                }
             }
         }
     }
@@ -590,12 +809,15 @@ impl WefaxRx {
     fn start_tone(&mut self, level: f32, required: u32) -> Option<Ioc> {
         let window = (self.rate * TONE_WINDOW_S) as u32;
         let rate = self.start_det.push(level, window)?;
+        let in_band = self.band_sub >= self.band_raw * SUBCARRIER_SHARE;
+        self.band_raw = 0.0;
+        self.band_sub = 0.0;
         // Crossings per window → crossings per second → the alternation rate,
         // which is half the crossing rate.
         let alt_hz = rate / TONE_WINDOW_S / 2.0;
         let hit = Ioc::ALL.into_iter().find(|i| {
             let want = i.start_tone_hz();
-            (alt_hz - want).abs() <= want * TONE_TOL
+            in_band && self.start_det.swing && (alt_hz - want).abs() <= want * TONE_TOL
         });
         match hit {
             Some(ioc) if ioc == self.start_ioc => {
@@ -692,7 +914,16 @@ impl WefaxRx {
             let window = (self.rate * TONE_WINDOW_S) as u32;
             if let Some(rate) = self.stop_det.push(level, window) {
                 let alt_hz = rate / TONE_WINDOW_S / 2.0;
-                if (alt_hz - STOP_TONE_HZ).abs() <= STOP_TONE_HZ * TONE_TOL {
+                // Same two conditions as a start signal: it has to be the
+                // subcarrier swinging, not a plain audio tone or a steady
+                // carrier that the discriminator reads as noise.
+                let in_band = self.band_sub >= self.band_raw * SUBCARRIER_SHARE;
+                self.band_raw = 0.0;
+                self.band_sub = 0.0;
+                if in_band
+                    && self.stop_det.swing
+                    && (alt_hz - STOP_TONE_HZ).abs() <= STOP_TONE_HZ * TONE_TOL
+                {
                     self.stop_run += 1;
                     self.stop_miss = 0;
                     if self.stop_run >= STOP_RUN {
@@ -735,6 +966,14 @@ impl WefaxRx {
                         let mean = (self.phase_skew / self.phase_lines as f64).round();
                         self.line_start += mean;
                         self.phase = Phase::Image;
+                        if self.start_pending {
+                            self.start_pending = false;
+                            out.push(WefaxEvent::Start {
+                                ioc: self.ioc,
+                                lpm: self.lpm,
+                                auto: true,
+                            });
+                        }
                         out.push(WefaxEvent::Phased { skew: mean.max(0.0) as u32 });
                     }
                 }
@@ -1860,5 +2099,177 @@ mod tests {
         assert!(!rx.receiving());
         rx.start_manual(&mut ev);
         assert!(rx.receiving(), "START from idle did nothing: {:?}", story(&ev));
+    }
+}
+
+/// Start and stop signals that arrive as plain audio tones.
+///
+/// The standard describes them as the subcarrier alternating black/white at 300
+/// and 450 Hz, but a transmission can also carry them as a literal 300 / 450 Hz
+/// tone in the audio, which the subcarrier discriminator cannot see at all.
+#[cfg(test)]
+mod audio_tone_tests {
+    use super::*;
+
+    const RATE: f64 = 12_000.0;
+    const LPM: Lpm = Lpm::L120;
+
+    fn sine(hz: f64, secs: f64) -> Vec<f32> {
+        (0..(RATE * secs) as usize)
+            .map(|i| (0.5 * (TAU * hz * i as f64 / RATE).sin()) as f32)
+            .collect()
+    }
+
+    fn fm(levels: &[f32]) -> Vec<f32> {
+        let mut ph = 0.0f64;
+        levels
+            .iter()
+            .map(|&l| {
+                ph += TAU * (BLACK_HZ + (WHITE_HZ - BLACK_HZ) * l as f64) / RATE;
+                (ph.sin() * 0.5) as f32
+            })
+            .collect()
+    }
+
+    fn per_line() -> usize {
+        (RATE * LPM.line_secs()) as usize
+    }
+
+    /// Black lines, each ending in a 5 % white pulse.
+    fn phasing(lines: usize) -> Vec<f32> {
+        let per = per_line();
+        let pulse = per / 20;
+        let mut v = Vec::new();
+        for _ in 0..lines {
+            v.extend(std::iter::repeat_n(0.0f32, per - pulse));
+            v.extend(std::iter::repeat_n(1.0f32, pulse));
+        }
+        fm(&v)
+    }
+
+    fn picture(lines: usize) -> Vec<f32> {
+        let per = per_line();
+        let v: Vec<f32> =
+            (0..lines).flat_map(|_| (0..per).map(move |i| i as f32 / per as f32)).collect();
+        fm(&v)
+    }
+
+    fn black(secs: f64) -> Vec<f32> {
+        fm(&vec![0.0; (RATE * secs) as usize])
+    }
+
+    /// Start tone, phasing, a picture, stop tone, black carrier: the shape of a
+    /// reference recording, with the tones as audio.
+    fn page(start_hz: f64, chart: usize) -> Vec<f32> {
+        let mut a = sine(start_hz, 5.0);
+        a.extend(phasing(20));
+        a.extend(picture(chart));
+        a.extend(sine(450.0, 5.0));
+        a.extend(black(3.0));
+        a
+    }
+
+    fn feed(rx: &mut WefaxRx, audio: &[f32]) -> Vec<WefaxEvent> {
+        let mut out = Vec::new();
+        for c in audio.chunks(1024) {
+            rx.process(c, &mut out);
+        }
+        out
+    }
+
+    fn rx() -> WefaxRx {
+        let mut rx = WefaxRx::new(RATE);
+        rx.set_lpm(LPM);
+        rx
+    }
+
+    fn starts(ev: &[WefaxEvent]) -> usize {
+        ev.iter().filter(|e| matches!(e, WefaxEvent::Start { .. })).count()
+    }
+
+    fn completes(ev: &[WefaxEvent]) -> Vec<(u16, bool)> {
+        ev.iter()
+            .filter_map(|e| match e {
+                WefaxEvent::Complete { lines, by_tone } => Some((*lines, *by_tone)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_300_hz_audio_tone_starts_a_page_and_a_450_hz_one_ends_it() {
+        let mut rx = rx();
+        let ev = feed(&mut rx, &page(300.0, 80));
+        assert_eq!(starts(&ev), 1, "{ev:?}");
+        let c = completes(&ev);
+        assert_eq!(c.len(), 1, "{ev:?}");
+        assert!(c[0].1 && c[0].0 >= 70, "the page did not end on its stop tone: {c:?}");
+        assert!(!rx.receiving(), "the decoder did not return to detection");
+    }
+
+    #[test]
+    fn a_second_page_follows_straight_after_the_first() {
+        let mut rx = rx();
+        let mut a = page(300.0, 60);
+        a.extend(page(300.0, 70));
+        let ev = feed(&mut rx, &a);
+        assert_eq!(starts(&ev), 2, "{ev:?}");
+        assert_eq!(completes(&ev).len(), 2, "{ev:?}");
+    }
+
+    #[test]
+    fn the_start_tone_may_be_off_frequency() {
+        for hz in [250.0, 280.0, 330.0, 355.0] {
+            let mut rx = rx();
+            let ev = feed(&mut rx, &page(hz, 50));
+            assert_eq!(starts(&ev), 1, "{hz} Hz: {ev:?}");
+        }
+    }
+
+    #[test]
+    fn a_bare_carrier_does_not_start_a_page() {
+        // A carrier at the start-tone pitch with nothing behind it: before the
+        // signal, or after it.
+        let mut rx = rx();
+        let mut a = sine(300.0, 8.0);
+        a.extend(black(40.0));
+        let ev = feed(&mut rx, &a);
+        assert!(ev.is_empty(), "a bare carrier produced {ev:?}");
+        assert!(!rx.receiving());
+
+        // The same after a finished page.
+        let mut rx = rx_after_page();
+        let mut a = sine(300.0, 8.0);
+        a.extend(black(40.0));
+        let ev = feed(&mut rx, &a);
+        assert!(ev.is_empty(), "a carrier after the page produced {ev:?}");
+    }
+
+    fn rx_after_page() -> WefaxRx {
+        let mut rx = rx();
+        feed(&mut rx, &page(300.0, 60));
+        rx
+    }
+
+    #[test]
+    fn tones_that_are_not_the_start_tone_start_nothing() {
+        for hz in [450.0, 150.0, 600.0, 1900.0, 2300.0] {
+            let mut rx = rx();
+            let ev = feed(&mut rx, &sine(hz, 8.0));
+            assert!(ev.is_empty(), "{hz} Hz produced {ev:?}");
+        }
+    }
+
+    #[test]
+    fn a_tone_buried_in_noise_does_not_start_a_page() {
+        let mut rx = rx();
+        let mut seed = 0x1234_5678u32;
+        let mut noise = || {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5
+        };
+        let a: Vec<f32> = sine(300.0, 8.0).iter().map(|s| 0.1 * s + 0.6 * noise()).collect();
+        let ev = feed(&mut rx, &a);
+        assert!(ev.is_empty(), "{ev:?}");
     }
 }

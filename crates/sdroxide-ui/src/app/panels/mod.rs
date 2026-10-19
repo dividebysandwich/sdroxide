@@ -170,6 +170,15 @@ pub(in crate::app) fn save_text_chip(
     }
 }
 
+/// The **SAVE** chip for a panel that saves something other than a text log.
+pub(in crate::app) fn save_chip_with(
+    ui: &mut egui::Ui,
+    ready: bool,
+    hover: &str,
+) -> egui::Response {
+    save_chip(ui, ready, hover)
+}
+
 /// The **SAVE** chip itself, drawn the same wherever it appears; the two
 /// callers differ only in what they do when it is clicked. One place, so the
 /// chip cannot drift between a panel that holds its log in `DigiStatus` and one

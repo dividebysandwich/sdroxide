@@ -285,6 +285,29 @@ impl SdroxideApp {
                 self.wefax.follow = !follow;
             }
 
+            // CLEAR RX drops a reception that is failing — the engine forgets the
+            // chart and goes back to listening for the next start tone — and
+            // SAVE writes the chart on screen to this computer, whichever way
+            // the program is running, on top of the copy the station keeps.
+            let has_chart = st.receiving || self.wefax.has_live();
+            let clear_from = cmds.len();
+            super::clear_rx_chip_at(ui, cmds, has_chart);
+            if cmds.len() > clear_from {
+                self.wefax.clear_live();
+            }
+            let payload = self.wefax.save_payload(crate::time::now_unix());
+            if super::save_chip_with(
+                ui,
+                payload.is_some(),
+                "Save the chart on screen to this computer, as far as it has arrived",
+            )
+            .clicked()
+            {
+                if let Some((name, png)) = &payload {
+                    crate::download::save_as(name, png, crate::download::Mime::Png);
+                }
+            }
+
             if changed && seeded {
                 cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
             }
