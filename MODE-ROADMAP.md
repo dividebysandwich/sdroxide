@@ -1,0 +1,139 @@
+# Modes we do not ship — a todo, cheapest first
+
+**Local only.** Written 2026-10-19. Read with `MODE-DECODERS-HANDOVER.md`, which
+has the instruments, the measurements and the per-mode state; this file is the
+queue.
+
+## The rule the ordering comes from
+
+A mode costs what it costs because of two things, and nothing else:
+
+1. **Is there a licence-clean reference?** GPL-3 or MIT, or a public standard.
+   Without one, the mode is not cheap at any size — it is guesswork with a
+   deadline.
+2. **How far is its DSP from what this tree already does?** A mode that is our
+   FSK engine with different constants is an afternoon. A mode with a novel air
+   interface, its own FEC and a bit-level protocol is a project.
+
+So "easy" below does not mean "unimportant". It means "we already have the
+reference and most of the machine".
+
+**Every mode fldigi implements is licence-clean**, because fldigi is GPL-3 and so
+is this fork. That covers a startling amount of the list, and it is why the top
+half of this file is short.
+
+## Already done, or one small step away
+
+These are not new modes; they are the current tree, nearly there:
+
+| | state |
+|---|---|
+| **Hellschreiber** | **fixed** — print sync from the inter-line gap, plus a slant trim (`fork/hell-phase`) |
+| **RTTY 50 / 75** | `rtty_baud` already exists and defaults to 45.45; the corpus files exist. Probably works today and is simply untested — **verify first, before writing anything** |
+| **SYNOP** | the weather decoder from 2026-10-15 is in the tree; the corpus has `SYNOP-1580_Hz`, so it is a harness arm, not a decoder |
+| **HELL 80 / FM Hell** | already variants of the Hell we just fixed |
+| **BPSK63/125/250, QPSK31/63/125/250** | `psk.rs` has the rate hardcoded at 31.25 and the detector is BPSK only. The fix is planned and small (`fork/psk-variants`) |
+
+## The todo, cheapest first
+
+"Reference" is what makes a mode possible: **fl** = fldigi (GPL-3), **pub** =
+public standard or declassified document, **none** = nothing licence-clean
+found. "Recording" is whether our corpus already holds one.
+
+### 1. Hours each — our engine, different constants
+
+| mode | reference | recording | what it needs |
+|---|---|---|---|
+| **Contestia** (all) | fl | `CONTESTIA_32_1K` | Olivia's machinery with a different tone/framing set. **Falls out of the Olivia fix** — do it after, not before |
+| **MFSK8 / MFSK16** (and 32/64) | fl | `MFSK8`, `MFSK16` | a new modem, but a small one; fldigi's is ~1 500 lines. Shortwave Radiogram uses MFSK32 weekly, so it has an audience |
+| **MT63** | fl | `MT63` | 64-tone OFDM with Walsh spreading; the spreading is the whole trick |
+| **DominoEX / DominoF** | fl | `DominoEX`, `DominoF` | incremental FSK, IFK+; `src/ifkp` is the same family |
+| **THROB / THROBX** | fl | `THROB_2`, `THROBX_2` | multi-tone with a reeded pulse shape |
+| **RS_ID / CALL_ID** | fl (`src/rsid`) | `RS_ID_QPSK31`, `CALL_ID_F6CTE_JN18` | a short watermark burst; small, and it makes every other mode nicer |
+| **DTMF** | fl (`src/dtmf`) | `DTMF` | a tone decoder. Hours |
+| **DGPS** (RTCM SC-104) | pub | `DGPS_100` | 100 baud FSK — the NAVTEX decoder with different constants |
+| **POCSAG** | pub | `POCSAG_bits_inverted` | 512/1200/2400 FSK paging, fully documented |
+| **SELCAL** | pub (CCIR tones) | `SELCAL` | tone sequences. Hours |
+| **QRSS / NDB** | — (it is CW) | `QRSS_1sec`, `NDB-PHG` | our CW decoder with a much longer time constant |
+| **NWR / SAME** | pub | `NWR_SAME_WASHINGTON` | the 520.83 baud SAME header — an AFSK burst with three repeats |
+
+### 2. Days each — a new modem, but the machine is known
+
+| mode | reference | recording | what it needs |
+|---|---|---|---|
+| **STANAG 4481** | pub | — | 75 baud FSK teletype, the naval equivalent of RTTY. We have the engine |
+| **MIL-STD-188-110A serial** | pub | `110A`, `skysweep/110ademo` | 4285's cousin; same 2 400 baud symbol stream, different preamble and interleaving |
+| **STANAG 4529** | pub (conformance procedures are public) | — | 4285 at 1 240 Hz; the conformance document states the interleaver parameters 4285's Annex E does not give us |
+| **141A / 1382** (French Navy) | partially pub | `141A_*`, `1382_GPS_positions` | the same family again, with a French preamble |
+| **MFSK32 / 64** | fl | — | the rest of the MFSK family once 8/16 works |
+| **Radiosondes** (RS41, LMS6, IMET4, M10) | pub (open decoders exist) | `RS41`, `LMS6`, `IMET4`, `M10` | GFSK at 4800 baud, no licence wall, and a genuinely different audience — weather people |
+| **ORBCOMM** | partially pub | `ORBCOMM` | satellite SDPSK; needs a wideband lane and its own band |
+| **STANAG 4539** | pub | — | 110B-class, own preamble and equaliser |
+
+### 3. Weeks — the interesting one
+
+**STANAG 4285.** The most interesting mode for an SWL, and the only one where we
+have already done the hard intellectual work: the specification is
+**declassified** (Edition 1, 16 February 1989, downgraded to NATO UNCLASSIFIED
+in 1993) and **the transcription is proven** — a frame built from it round-trips
+exactly (`tools/s4285-probe/s4285_sim.py`).
+
+What is left is receiver engineering, in this order:
+
+1. **A real resampler.** The probe uses linear interpolation, and that is what
+   gives up past a few hundred ppm of clock error. Polyphase or cubic.
+2. **Carrier tracking per frame**, from the 48 reference symbols. One offset
+   fitted over a whole recording holds for a single frame — that is measured.
+3. **Acquisition on a faded signal.** `~/Downloads/sounds/4285.WAV` (MultiPSK's
+   own, 64.7 s at 12 kHz) is the better of the two fixtures; SkySweep's fades 45×.
+4. **Annex E** — the convolutional code and interleaver — for the **coded**
+   rates. The uncoded 1 200 / 2 400 / 3 600 bps need none of it, and the traffic
+   that is actually on the air is coded 600 baud long interleave. Its parameters
+   are stated in STANAG 4529's conformance procedures, which are public.
+5. **The output**: ITA2 5N1/5N2, which is RTTY's character set and already in
+   the tree.
+
+### 4. Not ranked, because there is no clean reference yet
+
+Each needs a research day before it can be estimated at all:
+
+`Coquelet-8/13`, `Piccolo`, `PAX`, `PAX2`, `CHIP64`, `Lentus`, `BIIS`, `DFM`,
+`IEC-870-5`, `THROB` (covered above), `Pactor-I` (documented in outline),
+`GTOR`, `IRA-ARQ`, `MD-*` (Russian), `RSX.25`, `EPIRB`, `EM` beacons,
+`skyofdm` (SkySweep's own OFDM, undocumented).
+
+### 5. Not doing, and the reason is not laziness
+
+**DMR, P25, NXDN, dPMR** — the AMBE+2 voice codec is covered by US Patent
+8,359,197 until **2028-05-20**. Decided by the operator on 2026-10-11: we stay
+quiet on these. The thesis is in `AGENTS.md` under "DMR: scoped to the codec, and
+decided against", with the survey of what the ecosystem does (DSDcc ships without
+the codec; the others are anonymous, licensed silicon, or closed).
+
+**D-STAR / C4FM** — the same codec family, but a clean pure-Rust crate exists for
+D-STAR, which changes the answer for that one mode alone. Not queued.
+
+**Pactor II / III** — proprietary and encrypted; there is nothing to implement
+against.
+
+## A suggested order for a few days
+
+The point of this order is that each step makes the next cheaper, and the first
+two are near-free:
+
+1. **Verify the free wins** — RTTY 50/75, SYNOP, and the Hell variants we
+   already ship. A harness arm each, an hour in total, and it turns "untested"
+   into either "works" or a real finding. Do this first because it is how we
+   learn what the tree already does.
+2. **`fork/psk-variants`** — symbol rate and constellation. It fixes seven corpus
+   files, and it is the front end of both 4285 and 110A.
+3. **MFSK8/16** — the cleanest *new* mode, a popular one, and it exercises the
+   "add a mode" path end to end for whoever does the rest.
+4. **STANAG 4285** — the resampler and carrier tracking, against `4285.WAV`.
+5. **One from the hours table per day** after that: Contestia (once Olivia is
+   fixed), MT63, DominoEX, RS_ID.
+
+The two things that would change this order are a **clean recording of a coded
+4285 transmission whose text is known** — that would collapse step 4's Annex E
+question — and **fldigi's `src/` read end to end**, which would probably reveal
+that three or four of the "days" entries are afternoons.
