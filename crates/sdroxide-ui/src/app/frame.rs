@@ -3226,6 +3226,9 @@ impl SdroxideApp {
                         self.speech.announcer.on_digi(&s, &self.state, now);
                     }
                     self.digi_status = Some(s);
+                    // Coded weather arrives as RTTY text, not as a decode, so
+                    // it is picked up here rather than in the decode arm.
+                    self.scan_coded_weather(now as u64);
                 }
                 RadioEvent::Ft8QsoLogged(mut r) => {
                     // Another tab may have logged since this copy was read;

@@ -558,6 +558,51 @@ const CALM: Palette = Palette {
     hazard_dark: c(0x241f12),
 };
 
+/// Summit Radio's palette: seven colours, and the restraint is the point.
+///
+/// Every value below is one of the site's own CSS variables — `--bg 091522`,
+/// `--panel 10212f`, `--border 253b4b`, `--text eaf2f4`, `--muted 9aafb9`,
+/// `--cyan 8be0db`, `--orange f3b76f` — with the intermediate surfaces derived
+/// from them. Nothing here is a hue the palette does not contain.
+const CALMER: Palette = Palette {
+    light: false,
+    no_dim: false,
+    bg_deep: c(0x091522),
+    panel: c(0x10212f),
+    input_bg: c(0x0b1925),
+    fill: c(0x16293a),
+    fill_hover: c(0x1d3446),
+    fill_active: c(0x24465c),
+    line: c(0x253b4b),
+    line_lit: c(0x8be0db),
+    text: c(0xeaf2f4),
+    text_strong: c(0xf8fcfd),
+    cyan: c(0x8be0db),
+    cyan_dim: c(0x74c4c0),
+    // The site's second accent, and the only warm note in the whole theme: it
+    // is its chrome and its warning colour both, as it is on the page.
+    pink: c(0xf3b76f),
+    yellow: c(0xf3b76f),
+    green: c(0x9ed2b2),
+    ink_on_cyan: c(0x071a1d),
+    ink_on_bright: Color32::BLACK,
+    red_deep: c(0x5a2b38),
+    cq_bg: c(0x2a2a3a),
+    tome_bg: c(0x3a3422),
+    done_bg: c(0x1e342c),
+    row_bg: c(0x0d1b28),
+    row_hover: c(0x1a2e40),
+    scroll_track: c(0x0c1826),
+    scroll_handle: c(0x8be0db),
+    scroll_handle_hover: c(0xb3ebe7),
+    scroll_handle_drag: c(0xeaf7f7),
+    faint_bg: c(0x0c1826),
+    // The same hot red every theme keeps: the alarm has to read as an alarm.
+    alert: c(0xe35545),
+    hazard: c(0xf3b76f),
+    hazard_dark: c(0x241f12),
+};
+
 /// The warm Gruvbox palette: parchment text on near-black browns, blue/aqua
 /// accents, and the bright-orange chrome that makes it unmistakable.
 const GRUVBOX: Palette = Palette {
@@ -872,7 +917,7 @@ const MODERN_MINIMALIST: Palette = Palette {
 };
 
 /// Indexed by [`theme_index`].
-static PALETTES: [Palette; 18] = [
+static PALETTES: [Palette; 19] = [
     DEFAULT,           // 0  Default
     GREEN_PHOSPHOR,    // 1  Green phosphor
     AMBER_PHOSPHOR,    // 2  Amber phosphor
@@ -891,6 +936,7 @@ static PALETTES: [Palette; 18] = [
     LIGHT,             // 15 Light
     HIGH_CONTRAST,     // 16 High contrast
     CALM,              // 17 Calm
+    CALMER,            // 18 Calmer
 ];
 
 /// The S-meter instrument's colours: the face wash, the backlight bloom, the
@@ -1199,7 +1245,7 @@ const fn meter_paper(p: &Palette) -> MeterPalette {
 /// Indexed by [`theme_index`], like [`PALETTES`]. Rainbow keeps the historic
 /// navy instrument: its grounds are the default's, and the meter already
 /// reads in the accents the ramps give it.
-static METER_PALETTES: [MeterPalette; 18] = [
+static METER_PALETTES: [MeterPalette; 19] = [
     METER_DEFAULT,                   // 0  Default
     METER_GREEN,                     // 1  Green phosphor
     METER_AMBER,                     // 2  Amber phosphor
@@ -1218,6 +1264,7 @@ static METER_PALETTES: [MeterPalette; 18] = [
     METER_LIGHT,                     // 15 Light
     METER_HIGH_CONTRAST,             // 16 High contrast
     meter_from(&CALM),               // 17 Calm
+    meter_from(&CALMER),             // 18 Calmer
 ];
 
 /// The current theme's S-meter instrument colours.
@@ -1631,6 +1678,7 @@ const fn theme_index(t: UiTheme) -> u8 {
         UiTheme::Light => 15,
         UiTheme::HighContrast => 16,
         UiTheme::Calm => 17,
+        UiTheme::Calmer => 18,
     }
 }
 
@@ -1661,6 +1709,12 @@ pub fn set_look(theme: UiTheme, buttons: ChromeStyle, windows: ChromeStyle) {
 
 /// The current theme's palette.
 #[inline]
+/// How many themes the operator's list has, for the tests that check the
+/// three parallel arrays stay in step with it.
+pub fn list_len() -> usize {
+    sdroxide_types::UiTheme::ALL.len()
+}
+
 pub fn palette() -> &'static Palette {
     &PALETTES[THEME.load(Ordering::Relaxed) as usize]
 }
@@ -2731,6 +2785,31 @@ mod tests {
     /// in any of the others is read, not just seen. Every dark theme predating
     /// the Solarized/Gruvbox/Everforest set already cleared 4.5:1 on its panel,
     /// and this keeps a new one from quietly arriving under it.
+    /// Every theme in the operator's list has a palette and a meter face, and
+    /// the two arrays are the same length as the list.
+    ///
+    /// The three are indexed by [`theme_index`], so a theme added to `ALL` and
+    /// forgotten in `PALETTES` selects somebody else's colours — or, once the
+    /// list outgrows the array, panics on the first frame. Neither is visible
+    /// from a screenshot of the default theme.
+    #[test]
+    fn every_theme_in_the_list_has_a_palette_and_a_meter() {
+        assert_eq!(list_len(), PALETTES.len(), "a theme with no palette");
+        assert_eq!(list_len(), METER_PALETTES.len(), "a theme with no meter face");
+        for t in sdroxide_types::UiTheme::ALL {
+            let i = theme_index(t) as usize;
+            assert!(i < PALETTES.len(), "{t:?} indexes past the palettes");
+        }
+        // And the one that was just added is not silently the default's.
+        let calmer = theme_index(sdroxide_types::UiTheme::Calmer) as usize;
+        let default = theme_index(sdroxide_types::UiTheme::Default) as usize;
+        assert_ne!(calmer, default, "Calmer landed on the default's slot");
+        assert_ne!(
+            PALETTES[calmer].panel, PALETTES[default].panel,
+            "Calmer wears the default's panel colour"
+        );
+    }
+
     ///
     /// The alert role is held to 3:1 instead. It has to stay a real red
     /// ([`every_theme_keeps_alerts_red`]), and on a mid-grey ground like

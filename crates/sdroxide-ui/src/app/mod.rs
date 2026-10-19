@@ -735,6 +735,12 @@ pub struct SdroxideApp {
     /// newest first. Session-only — they are of no use tomorrow, and a stored
     /// report read on another day is a lie about when it was observed.
     pub weather_reports: Vec<(i64, sdroxide_types::synop::Report)>,
+    /// Lines already offered to the SYNOP/SHIP parser.
+    ///
+    /// `text_rx` is a *rolling* buffer, so it is re-read on every status; the
+    /// dedupe is what makes that once per line instead of once per frame. Keyed
+    /// by a hash of the line because the same bulletin repeats verbatim.
+    pub synop_seen: std::collections::VecDeque<u64>,
     /// The WEATHER window's own open state.
     pub weather: crate::app::weather::WeatherWindow,
     /// PSK/RTTY outgoing text buffer (UI-owned; streamed to the engine, which
@@ -1639,7 +1645,50 @@ pub(crate) enum RadioTabRequest {
     Reorder(Vec<u32>),
 }
 
+/// The lines of `text` worth offering to the coded-weather parser.
+///
+/// Split out from the scanner so the rule can be tested without an app: a
+/// decoder hands out text in fragments as it locks, and a fragment that parses
+/// as half a report is worse than nothing — it puts a wrong fix on the map.
+/// A real SYNOP or SHIP line is well over forty characters.
+fn coded_weather_lines(text: &str) -> impl Iterator<Item = &str> {
+    text.split(['\r', '\n']).map(str::trim).filter(|l| l.len() >= 20)
+}
+
 impl SdroxideApp {
+    /// Offer any new RTTY text lines to the coded-weather parser.
+    ///
+    /// SYNOP and SHIP arrive as ordinary RTTY text, so they are found where the
+    /// text already lands rather than on a new wire event — the same choice the
+    /// decode path makes. A line is offered **once**: `text_rx` is a rolling
+    /// buffer that is re-read on every status, so without the dedupe the same
+    /// bulletin would be re-parsed sixty times a second.
+    ///
+    /// Nothing here knows which mode is running. SYNOP is RTTY, and a PSK or
+    /// Olivia session simply never produces a line that parses.
+    pub fn scan_coded_weather(&mut self, now: u64) {
+        use std::hash::{Hash, Hasher};
+        let Some(text) = self.digi_status.as_ref().map(|d| d.text_rx.clone()) else {
+            return;
+        };
+        for line in coded_weather_lines(&text) {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            line.hash(&mut h);
+            let h = h.finish();
+            if self.synop_seen.contains(&h) {
+                continue;
+            }
+            self.synop_seen.push_back(h);
+            if self.synop_seen.len() > 256 {
+                self.synop_seen.pop_front();
+            }
+            if let Some(r) = sdroxide_types::synop::parse(line) {
+                self.weather_reports.insert(0, (now as i64, r));
+                self.weather_reports.truncate(64);
+            }
+        }
+    }
+
     pub fn new(cc: &eframe::CreationContext<'_>, ctrl: Box<dyn RadioController>) -> Self {
         Self::new_tab(&cc.egui_ctx, cc.storage, cc.wgpu_render_state.clone(), ctrl, 0, true)
     }
@@ -1928,6 +1977,7 @@ impl SdroxideApp {
             digi_status: None,
             session_ignored: ignore::Ignored::new(),
             weather_reports: Vec::new(),
+            synop_seen: std::collections::VecDeque::new(),
             weather: Default::default(),
             text_tx: String::new(),
             qso_log: load_qso_log(storage),
@@ -2851,6 +2901,31 @@ impl SdroxideApp {
 mod touch_lock_tests;
 #[cfg(test)]
 mod tests {
+
+    /// Coded weather arrives as RTTY text, so it is found by reading the text
+    /// the decoder already produces — and only in whole lines.
+    ///
+    /// The fragments matter: a line-oriented decoder hands out partial lines
+    /// while it is locking, and a fragment that happens to parse would put a
+    /// wrong position on the weather list. Everything shorter than a real
+    /// bulletin is dropped before the parser ever sees it.
+    #[test]
+    fn coded_weather_is_found_in_rtty_text_and_only_in_whole_lines() {
+        let text = "RYRYRY\r\n\
+                    01007 11580 411\r\n\
+                    BBXX BRAVO 20123 99252 10595 41494 81412 10285 20269 40100 53012 79586 \
+                    8597/ 22265 00280 20405 31705 40506 50407=\r\n\
+                    NNNN\r\n";
+        let lines: Vec<&str> = coded_weather_lines(text).collect();
+        assert_eq!(lines.iter().filter(|l| l.starts_with("BBXX")).count(), 1, "{lines:?}");
+        assert!(
+            !lines.iter().any(|l| l.contains("01007 11580 411") && l.len() < 40),
+            "a fragment was offered to the parser: {lines:?}"
+        );
+        // And the wiring is worthless unless a whole line really parses.
+        let ship = lines.iter().find(|l| l.starts_with("BBXX")).unwrap();
+        assert!(sdroxide_types::synop::parse(ship).is_some(), "the parser rejected a real report");
+    }
     use super::*;
     use eframe::App;
     use sdroxide_types::{Command, RadioEvent, Spot, SpotKind};

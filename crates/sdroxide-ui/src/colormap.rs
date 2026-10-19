@@ -1,6 +1,6 @@
 //! Waterfall colormap LUTs: 256×1 RGBA8.
 
-pub const NAMES: [&str; 11] = [
+pub const NAMES: [&str; 12] = [
     "Classic",
     "Viridis",
     "Gray",
@@ -12,6 +12,7 @@ pub const NAMES: [&str; 11] = [
     "Amber",
     "Rainbow",
     "Blue",
+    "Calmer",
 ];
 
 /// Piecewise-linear gradient through (position, RGB) anchor points.
@@ -105,6 +106,20 @@ pub fn lut(index: usize) -> [u8; 256 * 4] {
             (0.72, [120, 238, 255]),
             (0.86, [244, 252, 255]),
             (1.00, [255, 150, 26]),
+        ]),
+        // Calmer — Tron's shape at Summit Radio's volume: the same
+        // black → deep ground → cyan → pale → spike, drawn from the Calmer
+        // theme's own seven colours. The spike is its orange, so a loud signal
+        // here is the same amber as the chrome around it, and the ramp between
+        // spends its dark run on the theme's navy rather than on pure blue.
+        11 => gradient(&[
+            (0.00, [0, 0, 0]),
+            (0.26, [9, 21, 34]),
+            (0.50, [16, 90, 104]),
+            (0.68, [80, 190, 190]),
+            (0.82, [139, 224, 219]),
+            (0.93, [214, 246, 244]),
+            (1.00, [243, 183, 111]),
         ]),
         // Amber — the waterfall to wear with the Amber Phosphor UI theme: a
         // single warm phosphor family, black through ember and amber to a
@@ -330,5 +345,25 @@ mod prop_tests {
             assert!(!seen.contains(&c), "{} reuses {c:?}", b.label());
             seen.push(c);
         }
+    }
+
+    /// Every named scheme has its own ramp, and Calmer is Tron's shape at
+    /// Summit Radio's volume rather than a second copy of it.
+    #[test]
+    fn every_named_scheme_has_its_own_ramp() {
+        let calmer = lut(NAMES.iter().position(|n| *n == "Calmer").unwrap());
+        let tron = lut(NAMES.iter().position(|n| *n == "Tron").unwrap());
+        assert_ne!(calmer, tron, "Calmer is a copy of Tron");
+        // The peak is the theme's orange, as Tron's is amber: a loud signal has
+        // to look like the chrome's own warning colour.
+        let peak = &calmer[255 * 4..255 * 4 + 3];
+        assert!(
+            peak[0] > peak[1] && peak[1] > peak[2],
+            "the peak is not the warm accent: {peak:?}"
+        );
+        // And the dark end is the theme's navy rather than pure blue: red stays
+        // low and blue stays the largest.
+        let low = &calmer[64 * 4..64 * 4 + 3];
+        assert!(low[2] > low[1] && low[1] > low[0], "the dark run is not navy: {low:?}");
     }
 }

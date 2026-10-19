@@ -375,6 +375,18 @@ pub enum UiTheme {
     /// added — a `UiTheme` rides [`ClientScreen`], so this is the reason the
     /// theme arrived with a `PROTO_VERSION` bump rather than a free change.
     Calm,
+    /// Summit Radio's palette — seven colours and nothing else.
+    ///
+    /// Taken from summitradiodesigns.com, whose whole stylesheet is one `:root`
+    /// block: a near-black navy ground, one panel, one border, two text inks
+    /// and exactly two accents. That restraint is the point of it — the site is
+    /// liked for being usable by somebody who has never seen an antenna
+    /// model — so this theme adds no register the palette does not have.
+    ///
+    /// Declared before the catch-all for the same reason as [`UiTheme::Calm`],
+    /// which means **`Default`'s discriminant moves** and this rides
+    /// `ClientScreen`.
+    Calmer,
     /// The classic navy/cyan/pink look. Declared last because serde demands
     /// the catch-all be the final variant: it also swallows an unrecognised
     /// value in a hand-edited config, so a typo degrades to the default theme
@@ -385,7 +397,7 @@ pub enum UiTheme {
 }
 
 impl UiTheme {
-    pub const ALL: [UiTheme; 18] = [
+    pub const ALL: [UiTheme; 19] = [
         UiTheme::Default,
         UiTheme::Light,
         UiTheme::HighContrast,
@@ -404,6 +416,7 @@ impl UiTheme {
         UiTheme::CatppuccinLatte,
         UiTheme::ModernMinimalist,
         UiTheme::Calm,
+        UiTheme::Calmer,
     ];
 
     pub fn label(self) -> &'static str {
@@ -426,6 +439,7 @@ impl UiTheme {
             UiTheme::CatppuccinLatte => "Catppuccin latte",
             UiTheme::ModernMinimalist => "Modern minimalist",
             UiTheme::Calm => "Calm",
+            UiTheme::Calmer => "Calmer",
         }
     }
 

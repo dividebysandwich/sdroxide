@@ -1859,8 +1859,13 @@ use sdroxide_types::{
 /// four symbol rates, which were a compile-time constant until now and so could
 /// not be tuned to at all. `PROTO_VERSION` 214 → 215, `VERSION_BYTE` 0x22 → 0x23.
 /// A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 215;
-const VERSION_BYTE: u8 = 0x23;
+/// v216: [`sdroxide_types::UiTheme`] gains `Calmer` before the serde
+/// catch-all, so `Default`'s discriminant moves and the enum rides
+/// [`sdroxide_types::ClientScreen`] — the same trade as `Calm` at v198.
+/// `PROTO_VERSION` 215 → 216, `VERSION_BYTE` 0x23 → 0x24. A downstream (fork)
+/// change.
+pub const PROTO_VERSION: u16 = 216;
+const VERSION_BYTE: u8 = 0x24;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {
