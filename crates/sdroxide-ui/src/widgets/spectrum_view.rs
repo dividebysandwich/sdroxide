@@ -3180,7 +3180,10 @@ fn faded_label(
 }
 
 /// Format a bandwidth (Hz) as a compact human string.
-fn format_bandwidth(hz: f64) -> String {
+///
+/// Shared with the panadapter's clock stack, so the ruler's own span label and
+/// the readout beneath the clock cannot disagree about how a width is written.
+pub(crate) fn format_bandwidth(hz: f64) -> String {
     if hz >= 1_000_000.0 {
         // The ruler also runs over the full-band strip, where a span of several
         // megahertz is the ordinary case and four digits of kilohertz is not a
