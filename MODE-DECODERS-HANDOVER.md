@@ -126,6 +126,54 @@ Garbage with `ThorMode::Thor11` set, so it is not the variant. **Diagnose before
 fixing** — the same instrumentation approach as Olivia (print the symbol clock
 and the confidence per block) is the first move.
 
+## 4b. The PSK family — diagnosed, and it is the foundation for 4285
+
+Read from the code, not inferred: **`crates/sdroxide-dsp/src/psk.rs:21` is
+`const BAUD: f64 = 31.25;`** — a compile-time constant, with `SPS = 16` and
+`DEC_RATE = BAUD * SPS` (500 Hz) derived from it, and four places that read it
+(`:173` the TX samples-per-symbol, `:515` the RX decimation). And the detector is
+**differential BPSK only**: `BpskCore::push`'s own comment says *"Decision-directed
+BPSK phase error"* and *"Differential BPSK detection (immune to the Costas ±
+ambiguity)"*.
+
+That explains the corpus exactly. **BPSK31 works because it is the one file whose
+speed is the constant.** BPSK63, BPSK125 and BPSK250 are 2×, 4× and 8× that
+symbol rate, and all four QPSK files are a constellation the detector has no
+branch for. Nothing else is wrong with them — the baud and the constellation are
+both simply not expressible.
+
+The two are independent axes, which is the part worth keeping:
+
+| | axis | what fails |
+|---|---|---|
+| BPSK31 → 63/125/250 | **baud** | 31.25 → 62.5 / 125 / 250 |
+| BPSK → QPSK | **constellation** | 1 bit/symbol → 2 bits/symbol, phases at π/4 spacing |
+
+And PSK is usually **differentially encoded** — the data is in the phase *change*,
+not an absolute phase — which our BPSK31 path already does correctly, so that half
+is proven and does not need touching.
+
+### Why this is first: it is also the front end for STANAG-4285
+
+STANAG-4285 is **2400 baud always**, with the constellation chosen by the data
+rate, and BPSK, QPSK *and* 8-PSK all appear:
+
+| data rate | constellation | FEC |
+|---|---|---|
+| 2400 bps | 8-PSK | 2/3 |
+| 1200 bps | QPSK | 1/2 |
+| 600 bps | BPSK | 1/2 |
+| 300 bps | BPSK | 1/4 |
+| 150 bps | BPSK | 1/8 |
+| 75 bps | BPSK | 1/16 |
+| 3600 / 2400 / 1200 uncoded | 8-PSK / QPSK / BPSK | none |
+
+So a differential PSK demodulator with a **parameterised symbol rate and
+constellation** is three things at once: the fix for seven corpus files, the front
+end of 4285, and most of MIL-STD-188-110A. **That is why it leads the plan** — and
+it is small: one constant becomes a parameter, and the detector gains a branch per
+constellation.
+
 ## 5. The plan, one branch per mode
 
 Each is self-contained and is to be pushed on its own so F4NRM can test it alone.
@@ -134,6 +182,7 @@ branch costs a ref plus the objects for its own diff, kilobytes.
 
 | branch | what | proof |
 |---|---|---|
+| `fork/psk-variants` | symbol rate and constellation as parameters — **the foundation** | 7 corpus files (BPSK63/125/250, QPSK31/63/125/250) + our round trip |
 | `fork/mfsk` | **new mode** — MFSK8/16/32/64 | the corpus (MFSK8, MFSK16 files) + our round trip |
 | `fork/olivia-timing` | fix the symbol/block clock | the corpus **and** Kevin's capture |
 | `fork/thor-timing` | diagnose first, then fix | the corpus |
@@ -141,7 +190,7 @@ branch costs a ref plus the objects for its own diff, kilobytes.
 | `fork/dsc-navtex` | DSC and NAVTEX on the audio path | the corpus (GMDSS, SITOR-A) |
 | `fork/stanag-4285` | **parked on the licence question** — see §6 | — |
 
-### MFSK first, because it is the clean one
+### MFSK, the clean new mode
 
 fldigi implements the whole family: `src/mfsk/` — `mfsk.cxx`,
 `mfskvaricode.cxx`, `interleave.cxx`, `mfsk-pic.cxx`. **fldigi is GPL-3 and this
@@ -159,17 +208,10 @@ takes the next `PROTO_VERSION` and the `VERSION_BYTE` with it.
 ### The untested twenty are mostly cheap
 
 Most need only a harness arm, not a decoder change: CW, FT8, FT4, JT65, WSPR,
-HFDL, VDL2, APRS, ALE, SYNOP, RTTY50/75, QPSK31/63/125/250, BPSK63/125/250,
-SSTV Robot 24 B/W, RS_ID, CALL_ID, RDS. Worth doing **before** any decoder work,
-because each one either confirms a mode works or turns "untested" into a real
-finding.
-
-**And one finding already sits in this column: there is no baud or variant field
-for PSK in `DigiConfig` at all.** RTTY, THOR, Olivia and Hell all carry theirs;
-PSK does not. So our PSK cannot be told which speed it is hearing, and
-BPSK63/125/250 and all four QPSK speeds cannot be judged until that is
-understood. That is worth a look on its own — it may be an auto-detect, and it
-may be nothing at all.
+HFDL, VDL2, APRS, ALE, SYNOP, RTTY50/75, SSTV Robot 24 B/W, RS_ID, CALL_ID, RDS.
+Worth doing **before** any decoder work, because each one either confirms a mode
+works or turns "untested" into a real finding. (The PSK speeds are not in this
+group — §4b has them, and they are a decoder change.)
 
 ## 6. The licence boundary, stated once
 
@@ -181,21 +223,42 @@ may be nothing at all.
   somebody's binary and do not treat having read one as a licence to write
   against it. Measuring a published *recording* is a different thing and is what
   §1–§3 do.
-- **STANAG-4285 — the licence wall, and it is the whole answer for that mode.**
-  The only working open decoder is **C.H. Brain G4GUO's**, in the KiwiSDR tree at
-  `extensions/s4285/` (`s4285.cpp`, `s4285control.cpp`, `s4285convolutional.cpp`,
-  ~1,400 lines). Its own licence file reads, in full: `// (License TBD)`.
-  **No licence granted** — so it may not be copied, ported or reimplemented from.
-  `Rhizomatica/open5066` is GPL-2.0 and compatible, but it is **STANAG 5066, the
-  data-link layer** — it interfaces to a modem rather than containing one. The
-  standard itself is NATO/DLA and not public. What is public is *description*
-  (sigidwiki, an HFLINK explainer, a paper): 2400 baud, 8-PSK/QAM, 75–2400 bps
-  coded, a 256-symbol sync preamble, short and long interleave — but the exact
-  FEC, interleaver and scrambler are in the standard and in that unlicensed code.
-  **The two honest routes are to ask G4GUO or the KiwiSDR maintainer for a
-  licence — the same move the notes prescribe for Sigidwiki's content — or to
-  implement from the public description and verify on the air. That is the
-  operator's call and it should be made before anyone spends a week on it.**
+- **STANAG-4285 — the modulation is public, the payload detail is not.**
+  The waveform is documented well enough to build the front end: **a single 1800 Hz
+  tone, 2400 symbols/s always, USB, ~2.75 kHz wide**, with the constellation
+  chosen by the data rate (§4b). Hugh Stegman NV6H's *"Demystifying STANAG 4285"*
+  (Monitoring Times, July 2009, p.28) adds the operational facts that matter more
+  than the theory: it **does not autobaud**, so it must be told the rate, the
+  interleave and the framing; and *"nearly everything that we stand any chance of
+  decoding will be 300 or 600 baud, long interleave… usually ITA2, same as used in
+  RTTY"*. The one parameter that ties the two together is the **ACF of 106.66 ms**
+  (sigidwiki), which is a synchronisation measurement, not a data one.
+
+  **The wall is not the modulation, it is the payload detail** — the exact sync
+  preamble, scrambler, convolutional code and the interleaver matrices. Those live
+  in the standard (NATO/DLA, not public) and in the one open implementation, which
+  is **C.H. Brain G4GUO's** in the KiwiSDR tree at `extensions/s4285/`
+  (`s4285.cpp`, `s4285control.cpp`, `s4285convolutional.cpp`, ~1,400 lines). Its
+  own licence file reads, in full: `// (License TBD)` — **no rights granted**, so
+  it may not be copied, ported or reimplemented from. `Rhizomatica/open5066` is
+  GPL-2.0 and compatible, but it is **STANAG 5066, the data-link layer** — it
+  interfaces to a modem rather than containing one.
+
+  **So the split is clean, and it is what makes a plan possible:** the PSK front
+  end is ours to build from the published description (§4b), and the FEC and
+  interleaving are the part that needs either a licence or air work. The three
+  honest routes are **ask G4GUO or the KiwiSDR maintainer for a licence** — the
+  same move the notes prescribe for Sigidwiki's content — **implement the front
+  end and the uncoded modes first** — 1200/2400/3600 bps carry no FEC and no
+  interleave, so they need the preamble and the scrambler but not the code or the
+  interleaver matrices, which is the smaller half of the wall — or **implement
+  from the public description and verify on the air.** That is the
+  operator's call and it should be made before anyone spends a week on it.
+
+  Worth knowing while deciding: sigidwiki lists MultiPSK, **Sigmira** and
+  **Sorcerer** as the hobby decoders, and Sigmira is the one Stegman singles out
+  because *"the parameters can be changed so quickly"* — i.e. it exposes the same
+  rate/interleave/framing knobs the mode needs.
 - **The recordings stay local fixtures.** Nothing from the collection goes into
   the tree, and none of it is redistributed.
 
