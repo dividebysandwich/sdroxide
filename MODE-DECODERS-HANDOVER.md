@@ -66,8 +66,9 @@ signal it did not generate.
 
 | | files | |
 |---|---|---|
-| **Decoded** | 3 | BPSK31, RTTY45, SSTV Martin 1 |
-| **We have the mode, it fails** | 9 | Olivia, THOR11, Feld Hell, Hell 80, FM Hell 245, PSK Hell, GMDSS (DSC), SITOR-A (NAVTEX), WEFAX |
+| **Decoded** | 5 | BPSK31, RTTY45, SSTV Martin 1 — **plus NAVTEX and WEFAX, which §3b clears** |
+| **We have the mode, it fails** | 6 | Olivia, THOR11, Feld Hell, Hell 80, FM Hell 245, PSK Hell |
+| **Not a decoder fault after all** | 3 | NAVTEX (the corpus file was SITOR-A, a different mode), WEFAX (the corpus file has a non-standard shift), DSC (still open — see §3b) |
 | **We have the mode, no harness path** | ~20 | CW, FT8, FT4, JT65, WSPR, HFDL, VDL2, APRS/packet, ALE ×2, SYNOP, QPSK31/63/125/250, BPSK63/125/250, RTTY50/75, SSTV Robot 24 B/W, RS_ID, CALL_ID, RDS |
 | **No such mode** | ~50 | MFSK, MT63, DominoEX/F, Contestia, RTTYM, THROB/X, PAX/PAX2, Coquelet, Voice, Lentus, CHIP64 · STANAG-4285, 110A · D-STAR, C4FM, DMR, P25 · POCSAG, SELCAL, DTMF, DGPS, BIIS, DFM, 1382, IEC-870-5, NWR/SAME, ORBCOMM, EGC, M10, LMS6, IMET4, RS41, EPIRB, Extended Message, CCW, QRSS, NDB, PACTOR |
 
@@ -77,6 +78,71 @@ column timing recovery**. The three that pass have neither: BPSK31 and RTTY45 us
 a plain bit-clock PLL, SSTV is frame-synced. So the fault class is the clock, not
 the demodulation and not the character coding — BPSK31 and RTTY45 prove those
 work.
+
+## 3b. A second corpus: SkySweep Pro's own recordings (2026-10-19)
+
+The operator had an old installer in `~/Downloads/sw` — an **InstallShield 3**
+package whose `SETUP.INI` says `AppName=SkySwePro`. It is **SkySweep Pro 5.12**
+by SkySweep Technologies, the decoder Hugh Stegman recommends for STANAG 4285
+("SkySweeper is fussier to set up, but it also works"). The company is gone.
+
+Installed into a throwaway Wine prefix (`/tmp/opencode/winesky`, nothing touched
+in `~/.wine`), which reveals **22 test recordings at 11025 Hz mono**, one per mode
+it decodes, plus the manual (`SKYSWEEP.HLP`), the per-mode configurations
+(`*.cfg`, plain text) and three Hell fonts (`SKYHELL1/2/3.FON`).
+
+**Licence: the manual's own notice is "SkySweeper is a registered trademark of
+SkySweep Technologies. All rights reserved."** No licence file ships at all, and
+with the company gone there is nobody to ask. So this is the RadioScript
+position: **instrument and documentation, never source.** Its recordings are test
+material in the same sense the MultiPSK collection is — used locally, never
+redistributed. The Hell fonts are in the tree's neighbourhood too, and the rule
+for them is the same: observe the *convention* from the program's behaviour, do
+not copy glyph art.
+
+### What the recordings settle
+
+Centre frequencies measured from the audio (loudest 3 s, spectral extent), not
+guessed from the file names:
+
+| recording | centre | our decoder | verdict |
+|---|---|---|---|
+| `Bpsk.wav` | 1000 Hz | PSK | **decodes**: `SKYSWEEP TECHNOLOGIES` repeating |
+| `Sitorb.wav` | 1000 Hz | NAVTEX | **decodes perfectly** — a real Baltic warning, `ZCZC UA72`, firing-exercise area, coordinates |
+| `hffax240.wav` | 1500/2300 shift | WEFAX | **decodes**, score 0.777, a clean calibration grid at 240 LPM / 288 IOC |
+| `Hellschr.wav` | ~1000 Hz | Hell | **garbage** — dense striping, same as on the MultiPSK file |
+| `qpsk.wav` | 1000 Hz | PSK | **garbage**, `0\`eo``, which is the missing QPSK constellation |
+| `gmdss.wav` | ~1895 Hz | DSC | 0 messages — but the harness's DSC arm takes no centre, so this is not a fair test yet |
+| `sta4285.wav` | 1800 Hz | — | no decoder in the tree; this is the recording a port should be built against |
+| `110ademo.wav` | ~1800 Hz | — | MIL-STD-188-110A, same family, same gap |
+
+### Three corrections to §3, and they are the important part of this section
+
+1. **NAVTEX was never broken.** The "SITOR_A/NAVTEX" file in the MultiPSK
+   collection is **SITOR-A, which is ARQ** — a two-station handshake mode, not the
+   FEC broadcast that NAVTEX is. Put a NAVTEX decoder against a SITOR-A
+   recording and it is being asked for a mode it does not claim. Against
+   **SITOR-B** it reads a weather bulletin and a navigational warning perfectly.
+   **A classification error in the sweep, not a fault in the decoder.**
+2. **WEFAX is not broken either.** The MultiPSK `FAX_Hambourg` file swings
+   1400↔2400 — a **1000 Hz shift**, where WEFAX is 800 (1500/2300). Ten
+   geometries scoring at most 0.043 was the right answer to the wrong signal.
+   Against a standard 1500/2300 recording the decoder produces a clean chart.
+   The Hamburg file is still worth understanding (what *is* it?), but it is not
+   evidence against the decoder.
+3. **Hell's failure is robust.** It fails on a second, independent, vendor-made
+   recording, and the output *does* change with tuning — so the receiver is
+   working and the convention is wrong, exactly as §4 argues. This is now the
+   best-supported fault in the file.
+
+### The recurring trap, written up because it cost this sweep twice
+
+**A mode name in a corpus is not a mode.** SITOR-A is not NAVTEX. A file called
+`FAX_...` may not be standard WEFAX. And a file with no stated centre is where
+the signal isn't — `Sitorb.wav` returned nothing at 1700, 1800, 1900 and 2000 Hz
+and a whole bulletin at 1000. **Measure the recording's spectrum before
+concluding anything about a decoder.** Two of the nine "failures" in §3 were this
+and nothing else.
 
 ## 4. The timing-recovery class
 
@@ -187,7 +253,7 @@ branch costs a ref plus the objects for its own diff, kilobytes.
 | `fork/olivia-timing` | fix the symbol/block clock | the corpus **and** Kevin's capture |
 | `fork/thor-timing` | diagnose first, then fix | the corpus |
 | `fork/hell-dot-rate` | detect the dot rate; keep both conventions | the corpus (4 Hell files) + our round trip |
-| `fork/dsc-navtex` | DSC and NAVTEX on the audio path | the corpus (GMDSS, SITOR-A) |
+| `fork/dsc` | DSC only — NAVTEX already works (§3b) | the corpus, once the arm takes a centre |
 | `fork/stanag-4285` | protocol from the declassified spec — uncoded first | broadcasts; needs a recording |
 
 ### MFSK, the clean new mode
@@ -352,13 +418,14 @@ in mind rather than by what is easiest.
   Wikipedia sample; Hell's geometry follows fldigi), so a change made to suit
   MultiPSK could break what works. **Kevin's capture is not on this box and is
   needed before `olivia.rs` is touched.**
-- **WEFAX is waiting on a comparison, not a fix.** Ten geometries (5 LPM × 2 IOC,
-  automatic and manual start) score at most 0.043 — no structure anywhere — and
-  the measured signal is a ~1000 Hz shift (1400↔2400) where WEFAX is 800
-  (1500/2300), with a steady ~2242 Hz carrier at points. The one-step experiment
-  that settles it is F4NRM putting `FAX_Hambourg-2250_Hz.WAV` through MultiPSK: if
-  his decodes it and ours does not, it is a real fault with a fixture attached; if
-  his also makes noise of it, the file is the problem.
+- **WEFAX is answered as far as the decoder goes, and the open question is now
+  about one file rather than the code.** Ten geometries on the MultiPSK Hamburg
+  recording score at most 0.043, and its measured shift is ~1000 Hz
+  (1400↔2400) where WEFAX is 800 (1500/2300). Against SkySweep's standard
+  1500/2300 recording (§3b) the decoder produces a clean calibration grid at 240
+  LPM / 288 IOC, score 0.777. **So the decoder works and the Hamburg file is not
+  a standard WEFAX signal.** F4NRM's comparison is still worth having — it would
+  say what that file *is* — but it is no longer a question about our WEFAX.
 - **The 4285 mode is no longer parked.** Its specification is public and
   declassified (§6b), so the work can start whenever it is wanted — but it wants a
   real recording before it can be judged, and the traffic that matters needs
