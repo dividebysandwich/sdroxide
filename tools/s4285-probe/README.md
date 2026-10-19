@@ -47,9 +47,11 @@ Annex F is about Doppler and synchronisation rather than about a correlator.
 | `sync_freq.py` | the carrier-offset search |
 | `diff.py` | the one that works — differential detection against the differentially encoded PRN |
 
-They take the recording's path in the source; `readwav.py` is a small helper that
-lives beside them in `/tmp/opencode` and is not committed (it is four lines of
-`wave` + `numpy`).
+`s4285_sync.py <file.wav> [centre]` is the one to run first: frame-period
+autocorrelation and the differential sync correlation against the same file, so
+"is this 4285" and "can we acquire it" are answered together. `readwav.py` is a
+small reader that parses the RIFF chunks by hand — `wave` refuses several of
+these demo files, whose headers it does not accept.
 
 ## What is left
 
@@ -65,3 +67,29 @@ lives beside them in `/tmp/opencode` and is not committed (it is four lines of
    recordings; a live capture on a naval frequency would be better still.
 4. Only then a mode in the tree, receive-only, uncoded rates first (1200 / 2400 /
    3600 need no FEC at all).
+
+## Fixtures
+
+Two, both off-air and both now in `~/Downloads/sounds`:
+
+* `skysweep/sta4285.wav` — SkySweep Pro's demo recording, 14 s at 11025 Hz.
+  Frame confirmed (ACF 7x), sync 0.546 differentially. Fades hard: the envelope
+  varies 45x and the averaged frame only reaches 0.275 coherence.
+* `4285.WAV` — MultiPSK's own sample, **64.7 s at 12000 Hz**, and a much
+  healthier signal (envelope varies 7.8x). Its differential sync correlation is
+  **0.610**, better than the other one, though its frame-period ACF is weak
+  (0.031 against a 0.013 median). Worth a look before anything else: either the
+  capture is of a variant with a different frame, or the frame is there and the
+  short-lag ACF is simply diluted over 64 s of data.
+
+The SkySweep recordings live in `~/Downloads/sounds/skysweep/`, beside the
+MultiPSK collection rather than in it: the two sets collide (`hfdl.wav` exists in
+both) and keeping them apart keeps their provenance obvious.
+
+**What SkySweep does not give us.** Its decoder is closed — the manual's licence
+notice is "All rights reserved" and the company is gone, so there is nobody to
+ask — and the SDK sources its installer manifest lists (`demo.c`, `siggen.c`,
+`control.cpp`) are not actually installed. Its manual does document the *shape*
+of the need: a generic bit analyser with bit synchronisation, an interleaver and
+the Baudot/ITA2 character set, which is exactly the decode path the Monitoring
+Times article describes. It says nothing about Annex E's parameters.
