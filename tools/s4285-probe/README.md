@@ -202,35 +202,35 @@ folding acquisition (0.749), and a transcriber proven by round trip.
 Capture with `tools/rsp1-capture` at ≥ 12 kHz, USB, full 2.75 kHz. Note the UTC
 time and the station — the ID is the known part.
 
-## First real decode: FUO Toulon, 5215.6 kHz (2026-10-19, ~20:10 UTC)
+## FUO Toulon, 5215.6 kHz (2026-10-19, ~20:10 UTC) — and a correction
 
-Captured with `tools/rsp1-capture` from the operator's RSP1: 60 s at 250 kHz,
+Captured with `tools/rsp1-capture` from the bench RSP1: 60 s at 250 kHz,
 centred on the dial, USB.
 
-**The frame folds at 0.70** (16 frames, floor 0.25) — and, unlike the two shipped
-fixtures, **its whole 256-symbol frame repeats**: |S| is flat across all of it,
-which is a test tape looping rather than a data transmission.
+**The frame folds at 0.70** (16 frames, floor 0.25) — a real repetition, well
+clear of the noise floor. The other frequencies from the SWL list were empty at
+that hour: 13 031.2, 8 478.5 and 6 348.0 all came back as Rayleigh noise
+(envelope std/mean ≈ 1.0).
 
-**The reference symbols collapse to R = 0.925.** That is the first time this has
-happened on a real signal, and it needed one correction the earlier attempts were
-missing: the folded frame still carries a **phase ramp**, because the fold's
-±75 Hz offset search cannot absorb a centre error, and a ramp spreads the 48
-references across the frame. Correcting it (here +636 Hz across the frame) with
-the scrambler sign −1 and an offset of 37 puts **all 48 onto one point**.
+**The folded frame carries a phase ramp**, and that is the durable finding. The
+fold searches a carrier offset of ±75 Hz per frame, which cannot absorb a
+*centre* error, and a ramp across the frame spreads everything in it. Correcting
+it — +636 Hz across the frame here — takes the frame from incoherent to coherent.
+This is also why the round trip could never have caught it: the transmitter and
+receiver share the same centre and therefore the same mistake.
 
-So, against an off-air transmission: the frame layout, the 176-symbol scrambler
-and the reference symbols are now **confirmed**, not merely self-consistent. The
-two earlier failures were the ramp — which is also why the round trip could not
-have caught it, since TX and RX share the same centre.
+**What this capture does *not* show, and an earlier note here claimed it did.**
+It does not confirm the frame layout. Once the ramp is removed, **the whole
+256-symbol frame sits in one tight cluster** — 222 of 256 symbols in two adjacent
+45° sectors, spread 27° — with `|S|` flat across it. The 48 reference symbols
+collapse to R = 0.925, but so does everything else, because the transmission was
+**idle**: a constant symbol repeated, not a test tape carrying text. A capture of
+idle proves the fold and the ramp and nothing about the layout.
 
-**The data symbols sit in one narrow cluster**, within ±45° of the reference
-phase. That is what a RYRY test tape gives: in ITA2, `R` is `01010` and `Y` is
-`10101`, so the bit stream alternates and a two-bit-per-symbol mapping lands on a
-single constellation point. It also says the transmission is **not BPSK** — one
-bit per symbol would alternate between two points 180° apart.
-
-What is still open: which rate and coding that constellation means, and therefore
-whether the symbols are message bits (uncoded 2400) or FEC output (coded 1200).
+Getting past that needs a capture taken while a station is actually sending
+RYRY and an ID — see the frequency table above — and then the same corrected fold
+should show 80 symbols of BPSK sync, 48 references and 128 data symbols that
+differ from one another.
 
 ## Tools
 
