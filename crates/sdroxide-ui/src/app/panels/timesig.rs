@@ -3,18 +3,21 @@
 //!
 //! Three rows, top to bottom in the order an operator needs them. The station
 //! row tunes: one chip per station, which both picks the decoder and puts the
-//! dial a kilohertz below the carrier. The reading row is what is coming in —
-//! the carrier, the second lock, the minute as a ribbon of bits, and the
-//! average second drawn as the keying looks. The clock row is what it is for:
-//! the offset, setting the clock from it, calibrating the receiver's latency,
-//! and the NTP server.
+//! dial a kilohertz below the carrier, and for the short-wave stations one
+//! chip per frequency they share. The reading row is what is coming in — the
+//! carrier, the second lock, the minute as a ribbon of bits (and WWVB's phase
+//! bits under it), and the average second drawn as the keying looks. The
+//! clock row is what it is for: the offset, setting the clock from it,
+//! calibrating the receiver's latency, and the NTP server.
 //!
 //! "The clock" is the engine host's throughout. On a remote client that is
 //! the station's computer, not the one in front of the operator, and the panel
 //! says so rather than letting a SET CLOCK look like it acts on this screen.
 
 use eframe::egui::{self, RichText};
-use sdroxide_types::{ClockAuthority, Command, TimeSigStatus, TimeStation, Vfo, utc_ymd_hms};
+use sdroxide_types::{
+    ClockAuthority, Command, TimeCode, TimeSigStatus, TimeStation, Vfo, utc_ymd_hms,
+};
 
 use crate::app::SdroxideApp;
 use crate::theme;
@@ -45,10 +48,14 @@ fn header(
                 ),
             None => ui
                 .label(RichText::new("no carrier").size(10.0).color(theme::YELLOW()))
-                .on_hover_text(
+                .on_hover_text(if st.station.is_hf() {
+                    "Nothing stands out of the noise near 1 kHz yet. On short wave, try another \
+                     of the station's frequencies: the lower ones carry at night, the higher \
+                     ones by day."
+                } else {
                     "Nothing stands out of the noise near 1 kHz yet. Long-wave stations need an \
-                     antenna and a receiver that reach 40–80 kHz, and are strongest at night.",
-                ),
+                     antenna and a receiver that reach 40–80 kHz, and are strongest at night."
+                }),
         };
         if st.second_lock {
             ui.label(RichText::new("LOCK").strong().color(theme::GREEN()))
@@ -65,15 +72,29 @@ fn header(
             ui.label(RichText::new("hunting").weak())
                 .on_hover_text("Looking for the start of the second — this takes 10–30 s.");
         }
-        ui.label(
-            RichText::new(format!("{} good · {} bad", st.frames_good, st.frames_bad))
-                .size(10.0)
-                .color(if st.frames_bad > st.frames_good {
-                    theme::YELLOW()
-                } else {
-                    theme::CYAN_DIM()
-                }),
-        )
+        if let Some(db) = st.phase_snr_db {
+            ui.label(
+                RichText::new(format!("phase {db:.0} dB")).size(10.0).color(theme::CYAN_DIM()),
+            )
+            .on_hover_text(
+                "How cleanly WWVB's phase code reads: a bit against the noise. It is read \
+                     alongside the amplitude code, and holds on to the minute when the \
+                     amplitude code's seconds start to go.",
+            );
+        }
+        let counts = if st.frames_phase > 0 {
+            format!(
+                "{} good ({} by phase) · {} bad",
+                st.frames_good, st.frames_phase, st.frames_bad
+            )
+        } else {
+            format!("{} good · {} bad", st.frames_good, st.frames_bad)
+        };
+        ui.label(RichText::new(counts).size(10.0).color(if st.frames_bad > st.frames_good {
+            theme::YELLOW()
+        } else {
+            theme::CYAN_DIM()
+        }))
         .on_hover_text("Minutes that decoded and passed every check, and minutes that did not.");
         crate::chrome::row_tail(ui, |ui| {
             super::save_rx_chip_for(ui, status);
@@ -84,25 +105,43 @@ fn header(
 
 /// The current minute as a strip of sixty cells, and the second being read.
 fn ribbon(ui: &mut egui::Ui, st: &TimeSigStatus) {
+    let resp = cells(ui, &st.symbols, st.second_of_minute, 1.6);
+    resp.on_hover_text(
+        "This minute, one cell a second: dim for a 0, green for a 1 (MSF's two bits show green \
+         for either), cyan for a marker — and for WWV's empty second 0 — red for a second that \
+         could not be read. One red cell costs the minute.",
+    );
+    if !st.phase_symbols.is_empty() {
+        let resp = cells(ui, &st.phase_symbols, st.second_of_minute, 0.8);
+        resp.on_hover_text(
+            "WWVB's phase code for the same seconds: dim for a 0, green for a 1, red for a second \
+             too noisy to call. Its minute is found by its own sync word and checked by a Hamming \
+             code, so a red cell or two here does not lose the minute.",
+        );
+    }
+}
+
+/// Sixty cells, one per second, `height` cells tall.
+fn cells(ui: &mut egui::Ui, symbols: &[u8], now: Option<u8>, height: f32) -> egui::Response {
     let w = ui.available_width().min(720.0);
     let cell = (w / 61.0).floor().max(4.0);
     let (rect, resp) =
-        ui.allocate_exact_size(egui::vec2(cell * 60.0, cell * 1.6), egui::Sense::hover());
+        ui.allocate_exact_size(egui::vec2(cell * 60.0, cell * height), egui::Sense::hover());
     let p = ui.painter_at(rect);
     for i in 0..60usize {
         let r = egui::Rect::from_min_size(
             rect.min + egui::vec2(i as f32 * cell, 0.0),
             egui::vec2(cell - 1.0, rect.height()),
         );
-        let color = match st.symbols.get(i) {
+        let color = match symbols.get(i) {
             None => theme::ROW_BG(),
-            Some(&TimeSigStatus::MARKER) => theme::CYAN(),
+            Some(&TimeSigStatus::MARKER | &TimeSigStatus::HOLE) => theme::CYAN(),
             Some(&TimeSigStatus::UNKNOWN) => theme::ALERT(),
             Some(0) => theme::CYAN_DIM().gamma_multiply(0.45),
             Some(_) => theme::GREEN(),
         };
         p.rect_filled(r, 1.0, color);
-        if st.second_of_minute == Some(i as u8) {
+        if now == Some(i as u8) {
             p.rect_stroke(
                 r,
                 1.0,
@@ -111,11 +150,7 @@ fn ribbon(ui: &mut egui::Ui, st: &TimeSigStatus) {
             );
         }
     }
-    resp.on_hover_text(
-        "This minute, one cell a second: dim for a 0, green for a 1 (MSF's two bits show green \
-         for either), cyan for a marker, red for a second that could not be read. One red cell \
-         costs the minute.",
-    );
+    resp
 }
 
 /// The average second as the keying looks: high where the carrier is full,
@@ -140,11 +175,15 @@ fn scope(ui: &mut egui::Ui, st: &TimeSigStatus) {
             .collect();
         p.add(egui::Shape::line(pts, egui::Stroke::new(1.5, theme::CYAN())));
     }
-    resp.on_hover_text(
+    resp.on_hover_text(if st.station.is_hf() {
+        "The 100 Hz time code through one second, averaged over the last fifteen or so, \
+         starting at the tick. A clean station shows the pulse rising just after the left edge \
+         and falling at 0.2, 0.5 or 0.8 s; noise shows a ragged line."
+    } else {
         "The carrier through one second, averaged over the last fifteen or so, starting at the \
          second. A clean station shows a sharp step at the left edge and the keying after it; \
-         noise shows a ragged line.",
-    );
+         noise shows a ragged line."
+    });
 }
 
 /// "2026-10-18 12:37 UTC (14:37 local at the station)".
@@ -182,10 +221,18 @@ impl SdroxideApp {
             scope(ui, &st);
             ui.vertical(|ui| {
                 ribbon(ui, &st);
+                let by = match (st.station, st.last_code) {
+                    (TimeStation::Wwvb, TimeCode::Both) => " (both codes)",
+                    (TimeStation::Wwvb, TimeCode::Phase) => " (phase code)",
+                    (TimeStation::Wwvb, TimeCode::Amplitude) => " (amplitude code)",
+                    _ => "",
+                };
                 let line = match (&st.last_frame, st.confirmed) {
-                    (Some(f), n) if n >= 2 => format!("{} · {n} minutes agree", frame_text(f)),
+                    (Some(f), n) if n >= 2 => {
+                        format!("{}{by} · {n} minutes agree", frame_text(f))
+                    }
                     (Some(f), _) => {
-                        format!("{} · waiting for the next minute to agree", frame_text(f))
+                        format!("{}{by} · waiting for the next minute to agree", frame_text(f))
                     }
                     (None, _) if st.second_lock => "reading the minute…".to_string(),
                     (None, _) => String::new(),
@@ -212,36 +259,138 @@ impl SdroxideApp {
         self.timesig_clock(ui, cmds, &st);
     }
 
-    /// One chip per station. A press picks the decoder and tunes the dial.
+    /// One chip per station, and for the short-wave stations one per
+    /// frequency. A station's chip picks the decoder and tunes the dial; a
+    /// frequency's only tunes.
     fn timesig_stations(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, st: &TimeSigStatus) {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("STATION").size(10.0).weak());
             for s in TimeStation::ALL {
-                let chip = crate::chrome::chip(ui, st.station == s, RichText::new(s.label()).size(10.5))
-                    .on_hover_text(format!(
-                        "{} kHz — {}. Tunes the dial to {} kHz USB, which puts the carrier at 1 kHz.",
-                        s.carrier_hz() / 1000.0,
+                let khz = |hz: f64| hz / 1000.0;
+                let tip = if s.is_hf() {
+                    let freqs: Vec<String> =
+                        s.carriers_hz().iter().map(|f| format!("{}", f / 1e6)).collect();
+                    format!(
+                        "{} — {}, on {} MHz. Tunes to {} MHz with the dial 1 kHz below, in USB. \
+                         Its seconds are timed by the station's own ticks; the other NIST station \
+                         on the same frequencies sends the same time code.",
+                        s.label(),
                         s.site(),
-                        s.dial_hz() / 1000.0
-                    ));
+                        freqs.join(", "),
+                        s.carrier_hz() / 1e6
+                    )
+                } else {
+                    format!(
+                        "{} kHz — {}. Tunes the dial to {} kHz USB, which puts the carrier at 1 kHz.",
+                        khz(s.carrier_hz()),
+                        s.site(),
+                        khz(s.dial_hz())
+                    )
+                };
+                let chip = crate::chrome::chip(ui, st.station == s, RichText::new(s.label()).size(10.5))
+                    .on_hover_text(tip);
                 if chip.clicked() && self.digi_cfg_seeded {
                     self.digi_cfg_edit.timesig.station = s;
                     cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
-                    cmds.push(Command::SetVfo { vfo: Vfo::A, hz: s.dial_hz() });
+                    // Staying on a frequency the station shares with the one
+                    // just left: the press is about which ticks to time, not
+                    // where to listen.
+                    let dial = self.state.rx_freq_hz();
+                    let here = s.carriers_hz().iter().any(|&f| TimeStation::dial_for(f) == dial);
+                    if !here {
+                        cmds.push(Command::SetVfo { vfo: Vfo::A, hz: s.dial_hz() });
+                    }
                 }
             }
             if let (Some(km), Some(ms)) = (st.distance_km, st.propagation_ms) {
-                ui.label(RichText::new(format!("{km:.0} km · +{ms:.2} ms")).size(10.0).weak())
-                    .on_hover_text(
+                let hops = match st.propagation_hops {
+                    Some(1) => " · 1 hop".to_string(),
+                    Some(n) => format!(" · {n} hops"),
+                    None => String::new(),
+                };
+                let text = format!("{km:.0} km · +{ms:.2} ms{hops}");
+                ui.label(RichText::new(text).size(10.0).weak())
+                    .on_hover_text(if st.station.is_hf() {
                         "The distance from your locator to the transmitter, and the signal's \
-                         travel time over it, already added to the measurement.",
-                    );
+                         travel time by sky wave — up to the ionosphere's F2 layer and down, in \
+                         as few hops as reach — already added to the measurement. The layer \
+                         moves with the time of day, so this is good to half a millisecond or so."
+                    } else {
+                        "The distance from your locator to the transmitter, and the signal's \
+                         travel time over it, already added to the measurement."
+                    });
             } else {
                 ui.label(RichText::new("no locator").size(10.0).color(theme::YELLOW()))
                     .on_hover_text(
                         "Set your grid square (Settings → General) and the signal's travel time from \
                          the transmitter is added in — about 3.3 ms per 1000 km.",
                     );
+            }
+        });
+        if st.station.is_hf() {
+            self.timesig_frequencies(ui, cmds, st);
+        }
+    }
+
+    /// The short-wave station's frequencies, and what the receiver hears of
+    /// the station that shares them.
+    fn timesig_frequencies(
+        &mut self,
+        ui: &mut egui::Ui,
+        cmds: &mut Vec<Command>,
+        st: &TimeSigStatus,
+    ) {
+        let dial = self.state.rx_freq_hz();
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("MHz").size(10.0).weak());
+            for &f in st.station.carriers_hz() {
+                let on = TimeStation::dial_for(f) == dial;
+                let chip =
+                    crate::chrome::chip(ui, on, RichText::new(format!("{}", f / 1e6)).size(10.5))
+                        .on_hover_text(format!(
+                            "Tune to {} MHz: the dial {} kHz, USB.",
+                            f / 1e6,
+                            TimeStation::dial_for(f) / 1000.0
+                        ));
+                if chip.clicked() {
+                    cmds.push(Command::SetVfo { vfo: Vfo::A, hz: TimeStation::dial_for(f) });
+                }
+            }
+            match (st.sibling_heard, st.ticks_heard) {
+                (Some(other), false) => {
+                    ui.label(
+                        RichText::new(format!("only {}'s ticks are heard here", other.label()))
+                            .size(10.0)
+                            .color(theme::YELLOW()),
+                    );
+                    let switch = crate::chrome::chip(
+                        ui,
+                        false,
+                        RichText::new(format!("LISTEN TO {}", other.label())).size(10.0),
+                    )
+                    .on_hover_text(
+                        "The time code is the same from both stations; the ticks say whose time \
+                         is being measured, and so whose distance to add. Switching keeps this \
+                         frequency.",
+                    );
+                    if switch.clicked() && self.digi_cfg_seeded {
+                        self.digi_cfg_edit.timesig.station = other;
+                        cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+                    }
+                }
+                (Some(other), true) => {
+                    ui.label(
+                        RichText::new(format!("{}'s ticks are heard too", other.label()))
+                            .size(10.0)
+                            .weak(),
+                    )
+                    .on_hover_text(
+                        "Both NIST stations are coming in on this frequency. Each is timed by its \
+                         own ticks, so the measurement is this station's; the shared time code \
+                         can read a little worse where the two arrive out of step.",
+                    );
+                }
+                _ => {}
             }
         });
     }

@@ -3,7 +3,7 @@ name = "sdroxide-timesig"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Standard time-signal decoder: DCF77, MSF, WWVB and JJY from receive audio, to a UTC instant tied to a sample."
+description = "Standard time-signal decoder: DCF77, MSF, WWVB (both codes), JJY, WWV and WWVH from receive audio, to a UTC instant tied to a sample."
 
 # Pure signal processing: no I/O, no threads, and no clock of its own. Audio
 # goes in and what comes out names a *sample* — "the minute that starts here is

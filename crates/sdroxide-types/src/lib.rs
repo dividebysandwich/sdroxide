@@ -280,8 +280,9 @@ pub use state::{
 pub use station::StationConfig;
 pub use tciserver::TciServerConfig;
 pub use timesig::{
-    ClockAuthority, ClockStatus, NtpServerConfig, NtpServerStatus, TIMESIG_SEARCH_HZ,
-    TIMESIG_TONE_HZ, TimeFrame, TimeSigConfig, TimeSigStatus, TimeStation,
+    ClockAuthority, ClockStatus, NtpServerConfig, NtpServerStatus, TIMESIG_HF_FROM_HZ,
+    TIMESIG_HF_TOP_HZ, TIMESIG_SEARCH_HZ, TIMESIG_TONE_HZ, TimeCode, TimeFrame, TimeSigConfig,
+    TimeSigStatus, TimeStation,
 };
 pub use tone::{CTCSS_TONES, SubTone};
 pub use ui::{

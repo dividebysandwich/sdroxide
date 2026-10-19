@@ -1,5 +1,5 @@
 //! Runs a synthetic station through the decoder and prints what it found.
-//! `cargo run -p sdroxide-timesig --release --example timesig_probe -- dcf77 -15 187 40`
+//! `cargo run -p sdroxide-timesig --release --example timesig_probe -- dcf77 -15 187 40 [seed] [seconds]`
 use sdroxide_timesig::{Decoder, Event, synth::Synth};
 use sdroxide_types::TimeStation;
 
@@ -9,6 +9,9 @@ fn main() {
         "msf" => TimeStation::Msf,
         "wwvb" => TimeStation::Wwvb,
         "jjy" => TimeStation::Jjy60,
+        "jjy40" => TimeStation::Jjy40,
+        "wwv" => TimeStation::Wwv,
+        "wwvh" => TimeStation::Wwvh,
         _ => TimeStation::Dcf77,
     };
     let snr: Option<f64> = args.get(2).and_then(|s| s.parse().ok());
@@ -19,9 +22,10 @@ fn main() {
     s.snr_db = snr;
     s.tone_hz += off;
     s.rate_error_ppm = ppm;
-    s.seed = 3;
+    s.seed = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(3);
     let start = sdroxide_types::ymd_hms_to_unix(2026, 10, 18, 12, 36, 23) as f64 + 0.4;
-    let audio = s.render(start, 200.0);
+    let secs: f64 = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(200.0);
+    let audio = s.render(start, secs);
     let mut dec = Decoder::new(station, rate);
     let mut ev = Vec::new();
     for (i, block) in audio.chunks(240).enumerate() {
@@ -43,8 +47,8 @@ fn main() {
                         println!("  [{:.3}]", st.rem_euclid(60.0));
                     }
                 }
-                Event::Frame { pos, frame } => println!(
-                    "\nFRAME utc={} err={:.3}ms",
+                Event::Frame { pos, frame, code } => println!(
+                    "\nFRAME {code:?} utc={} err={:.3}ms",
                     frame.utc,
                     (start + pos / rate - frame.utc as f64) * 1e3
                 ),
@@ -64,10 +68,12 @@ fn main() {
     }
     let sn = dec.snapshot();
     println!(
-        "\nend: locked={} z={:.2} carrier={:?} snr={:.1}",
+        "\nend: locked={} z={:.2} carrier={:?} snr={:.1} phase snr={:?} sibling z={:?}",
         sn.locked,
         dec.edge_z(),
         sn.carrier_hz,
-        sn.snr_db
+        sn.snr_db,
+        sn.phase_snr_db,
+        sn.sibling_z
     );
 }

@@ -1553,7 +1553,10 @@ use sdroxide_types::{
 /// `timesig` on their tails; [`sdroxide_types::StationConfig`] gains
 /// `ntp_server`; and `Command::SetSystemClock` and
 /// `Command::SetNtpServerConfig` are appended. A v179 peer would read every
-/// digital status and config out of step.
+/// digital status and config out of step. The short-wave stations and WWVB's
+/// phase code arrived before v180 was released: [`sdroxide_types::TimeStation`]
+/// gains `Wwv` and `Wwvh` and [`sdroxide_types::TimeSigStatus`] the phase code's
+/// and the short-wave pair's fields, all within the same version.
 pub const PROTO_VERSION: u16 = 180;
 const VERSION_BYTE: u8 = 0x12;
 

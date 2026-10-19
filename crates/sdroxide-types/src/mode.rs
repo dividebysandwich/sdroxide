@@ -1231,7 +1231,15 @@ impl Mode {
     /// onto the lower sideband where the mode rides one there (SSTV and RADE on
     /// 160/80/40 m). Sideband is carried entirely in the sign of the edges, so
     /// this is what actually puts the demodulator on the right side.
+    ///
+    /// The time-signal mode is the other mode whose passband depends on where
+    /// it is tuned: a long-wave station is a bare carrier and wants nothing
+    /// but the search range around it, while a short-wave one is an AM
+    /// broadcast whose ticks sit a kilohertz and more above its carrier.
     pub fn default_filter_at(self, dial_hz: f64) -> (f32, f32) {
+        if self == Mode::TimeSignal && dial_hz >= crate::TIMESIG_HF_FROM_HZ {
+            return (crate::TIMESIG_TONE_HZ - crate::TIMESIG_SEARCH_HZ, crate::TIMESIG_HF_TOP_HZ);
+        }
         let (lo, hi) = self.default_filter();
         if self.is_lower_sideband_at(dial_hz) && lo >= 0.0 { (-hi, -lo) } else { (lo, hi) }
     }

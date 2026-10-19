@@ -100,10 +100,11 @@ One binary, three ways to run it:
   receive-only **HFDL**, the shortwave ground network airliners use where no VHF
   receiver can hear them, one assigned channel at a time between 2.8 and 22 MHz,
   with a decode log and a map of the aircraft positions it carries — and
-  receive-only **time signals**: DCF77, MSF, WWVB and JJY decoded to the
-  minute, the computer's clock measured against them to the millisecond and set
-  from them (Linux and macOS), and a built-in **NTP server** that hands the
-  received time to the rest of the network.
+  receive-only **time signals**: DCF77, MSF, WWVB (amplitude and phase codes)
+  and JJY on long wave, WWV and WWVH on short wave, decoded to the minute, the
+  computer's clock measured against them to the millisecond and set from them
+  (Linux and macOS), and a built-in **NTP server** that hands the received time
+  to the rest of the network.
 - **Receiver** — hang AGC, draggable passband filter edges (on the spectrum and
   the waterfall), noise blanker, auto-notch, **five noise-reduction engines**
   (RNNoise, DeepFilterNet3, a libspecbleach port, a port of WDSP's NR2 and the

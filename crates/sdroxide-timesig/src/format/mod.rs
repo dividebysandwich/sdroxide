@@ -1,13 +1,18 @@
 //! The time codes: what each second's keying means, and how a minute of them
 //! becomes a UTC instant.
 //!
-//! All four stations here say one thing per second by how long the carrier is
-//! reduced, and every length any of them uses is a whole number of tenths of a
+//! Every station here says one thing per second by how long something is held
+//! at full level — the long-wave carrier, or the short-wave stations' 100 Hz
+//! subcarrier — and every length any of them uses ends on a whole tenth of a
 //! second. So a second is described to the decoder as ten 100 ms slots, each
-//! either at full carrier or reduced, and each station is a short list of the
+//! either at full level or reduced, and each station is a short list of the
 //! patterns it sends — its [`Template`]s. What differs is only which patterns,
 //! which edge starts the second, and how the minute's sixty symbols are laid
 //! out; that is a [`Format`].
+//!
+//! WWVB's phase code is the exception: one bit a second carried by the sign
+//! of the carrier rather than a pattern of levels. It is described in
+//! [`wwvb_phase`], next to the amplitude code it rides alongside.
 //!
 //! Each format also has an encoder. The receiver never transmits, but the
 //! tests and the signal generator in [`crate::synth`] need the symbols a real
@@ -18,7 +23,9 @@
 mod dcf77;
 mod jjy;
 mod msf;
+mod wwv;
 mod wwvb;
+pub mod wwvb_phase;
 
 use sdroxide_types::{TimeFrame, TimeStation};
 
@@ -26,31 +33,35 @@ use sdroxide_types::{TimeFrame, TimeStation};
 ///
 /// `a` is the bit for the codes with one bit a second. MSF sends two, A and
 /// B, and uses both fields. `marker` is the position or minute marker, which
-/// carries no bit.
+/// carries no bit. `hole` is WWV's second 0, which carries nothing at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Sym {
     pub a: bool,
     pub b: bool,
     pub marker: bool,
+    pub hole: bool,
 }
 
 impl Sym {
-    pub const ZERO: Sym = Sym { a: false, b: false, marker: false };
-    pub const ONE: Sym = Sym { a: true, b: false, marker: false };
-    pub const MARKER: Sym = Sym { a: false, b: false, marker: true };
+    pub const ZERO: Sym = Sym { a: false, b: false, marker: false, hole: false };
+    pub const ONE: Sym = Sym { a: true, ..Sym::ZERO };
+    pub const MARKER: Sym = Sym { marker: true, ..Sym::ZERO };
+    pub const HOLE: Sym = Sym { hole: true, ..Sym::ZERO };
 
-    pub fn bit(a: bool) -> Sym {
+    pub const fn bit(a: bool) -> Sym {
         Sym { a, ..Sym::ZERO }
     }
 
-    pub fn ab(a: bool, b: bool) -> Sym {
-        Sym { a, b, marker: false }
+    pub const fn ab(a: bool, b: bool) -> Sym {
+        Sym { a, b, ..Sym::ZERO }
     }
 
     /// The value [`sdroxide_types::TimeSigStatus::symbols`] carries for it.
     pub fn code(self) -> u8 {
         if self.marker {
             sdroxide_types::TimeSigStatus::MARKER
+        } else if self.hole {
+            sdroxide_types::TimeSigStatus::HOLE
         } else {
             u8::from(self.a) + 2 * u8::from(self.b)
         }
@@ -107,7 +118,8 @@ pub struct Format {
     pub templates: &'static [Template],
     /// True where a second begins with the carrier coming *up* (JJY, which
     /// spends the end of every second reduced); false where it begins with the
-    /// carrier going down (the other three).
+    /// carrier going down (the other long-wave stations). The short-wave
+    /// stations' seconds are found by their ticks instead, and this is unused.
     pub rising_edge: bool,
     /// How many symbols [`Format::decode`] reads, ending with the marker that
     /// triggers it.
@@ -132,6 +144,8 @@ impl Format {
             TimeStation::Wwvb => &wwvb::FORMAT,
             TimeStation::Jjy40 => &jjy::FORMAT_40,
             TimeStation::Jjy60 => &jjy::FORMAT_60,
+            TimeStation::Wwv => &wwv::FORMAT_WWV,
+            TimeStation::Wwvh => &wwv::FORMAT_WWVH,
         }
     }
 
@@ -213,14 +227,15 @@ mod tests {
 
     #[test]
     fn one_flipped_bit_never_decodes_to_a_different_time_where_there_is_parity() {
-        // DCF77, MSF and JJY carry parity over the time fields; WWVB carries
-        // none, and is protected only by its unused bits and range checks.
+        // DCF77, MSF and JJY carry parity over the time fields; WWVB's
+        // amplitude code and WWV's carry none, and are protected only by their
+        // unused bits and range checks.
         for station in [TimeStation::Dcf77, TimeStation::Msf, TimeStation::Jjy60] {
             let fmt = Format::for_station(station);
             for t in minutes().into_iter().take(60) {
                 let w = window_naming(fmt, t);
                 for i in 0..w.len() {
-                    if w[i].marker {
+                    if w[i].marker || w[i].hole {
                         continue;
                     }
                     let mut bad = w.clone();

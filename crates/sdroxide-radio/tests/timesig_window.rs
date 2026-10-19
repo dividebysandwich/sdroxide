@@ -1,5 +1,5 @@
-//! The time-signal mode, from a mock long-wave front end to a decoded minute
-//! and a measured clock.
+//! The time-signal mode, from a mock front end to a decoded minute and a
+//! measured clock — on long wave, and on short wave.
 //!
 //! The decoder crate tests the decoding on audio it makes itself. What only an
 //! engine can show is the path: the dial put a kilohertz below the carrier,
@@ -7,7 +7,9 @@
 //! AGC, the controller picked for the mode, and the arrival times the engine
 //! hands it. A carrier that came out of that chain on the wrong side of the
 //! dial, or a tap behind the AGC, would decode nothing here and everything in
-//! the crate's own tests.
+//! the crate's own tests. On short wave there is one thing more: the passband
+//! has to open up when the dial moves there, or the ticks a kilohertz above
+//! the carrier never reach the decoder.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
@@ -15,7 +17,8 @@ use std::time::{Duration, Instant, SystemTime};
 use sdroxide_radio::{AudioParams, Complex32, EngineConfig, IqSource, Result, rtrb, start_engine};
 use sdroxide_timesig::Format;
 use sdroxide_types::{
-    Command, DeviceCaps, Mode, RadioEvent, RxId, TimeSigStatus, TimeStation, Vfo,
+    Command, DeviceCaps, DigiConfig, Mode, RadioEvent, RxId, TIMESIG_HF_TOP_HZ, TimeSigConfig,
+    TimeSigStatus, TimeStation, Vfo,
 };
 
 const RATE: f64 = 192_000.0;
@@ -102,6 +105,85 @@ impl IqSource for Longwave {
     }
 }
 
+/// A short-wave front end hearing WWV on 10 MHz: an AM broadcast of its
+/// carrier, its 100 Hz time code and its ticks.
+struct Shortwave {
+    center: Arc<Mutex<f64>>,
+    pos: u64,
+    utc0: f64,
+    phase: f64,
+    noise: u64,
+}
+
+impl Shortwave {
+    /// WWV's modulation at `t`, as a fraction of the carrier.
+    fn modulation(t: f64) -> f64 {
+        let fmt = Format::for_station(TimeStation::Wwv);
+        let sec = t.floor() as i64;
+        let minute = sec.div_euclid(60) * 60;
+        let s_of_m = (sec - minute) as usize;
+        let sym = (fmt.encode)(minute)[s_of_m];
+        let into = t - sec as f64;
+        let tau = std::f64::consts::TAU;
+        let mut m = 0.0;
+        if into >= 0.03 && !sym.hole {
+            let slot = ((into * 10.0) as usize).min(9);
+            let high = fmt.template(sym).is_some_and(|tpl| !tpl.low[slot]);
+            m += if high { 0.178 } else { 0.0316 } * (tau * 100.0 * into).sin();
+        }
+        let tick = if s_of_m == 0 { 0.8 } else { 0.005 };
+        if into < tick && s_of_m != 29 && s_of_m != 59 {
+            m += (tau * 1000.0 * into).sin();
+        }
+        m
+    }
+}
+
+impl IqSource for Shortwave {
+    fn sample_rate(&self) -> f64 {
+        RATE
+    }
+    fn center_hz(&self) -> f64 {
+        *self.center.lock().unwrap()
+    }
+    fn set_center_hz(&mut self, hz: f64) -> Result<()> {
+        *self.center.lock().unwrap() = hz;
+        Ok(())
+    }
+    fn read(&mut self, buf: &mut [Complex32]) -> Result<usize> {
+        let n = buf.len().min(4096);
+        let step =
+            std::f64::consts::TAU * (TimeStation::Wwv.carrier_hz() - self.center_hz()) / RATE;
+        let mut r = Noise(self.noise);
+        for z in buf[..n].iter_mut() {
+            let t = self.utc0 + self.pos as f64 / RATE;
+            // Double sideband with its carrier: what any AM station is.
+            let a = (0.03 * (1.0 + Self::modulation(t))) as f32;
+            let (s, c) = self.phase.sin_cos();
+            *z = Complex32::new(a * c as f32 + 0.001 * r.next(), a * s as f32 + 0.001 * r.next());
+            self.phase = (self.phase + step) % std::f64::consts::TAU;
+            self.pos += 1;
+        }
+        self.noise = r.0;
+        Ok(n)
+    }
+    fn describe(&self) -> String {
+        "WWV on 10 MHz".into()
+    }
+}
+
+/// xorshift, for a little noise that is the same every run.
+struct Noise(u64);
+
+impl Noise {
+    fn next(&mut self) -> f32 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 >> 40) as f32 / (1u64 << 24) as f32 - 0.5
+    }
+}
+
 fn isolate_config(name: &str) {
     let root = std::env::temp_dir().join(format!("sdroxide-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
@@ -111,7 +193,7 @@ fn isolate_config(name: &str) {
     unsafe { std::env::set_var("SDROXIDE_CONFIG_DIR", &root) };
 }
 
-fn engine(src: Longwave) -> sdroxide_radio::EngineHandles {
+fn engine(src: impl IqSource + 'static) -> sdroxide_radio::EngineHandles {
     let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(48_000);
     start_engine(
         Box::new(src),
@@ -196,6 +278,51 @@ fn selecting_the_mode_decodes_the_minute() {
     assert_eq!(f.utc % 60, 0);
     assert_eq!(f.zone_min, 120, "CEST in October");
     assert_eq!(st.station, TimeStation::Dcf77);
+}
+
+#[test]
+fn short_wave_opens_the_passband_and_decodes_the_minute() {
+    isolate_config("timesig-shortwave");
+    let utc0 = sdroxide_types::ymd_hms_to_unix(2026, 10, 18, 12, 36, 23) as f64 + 0.4;
+    let center = Arc::new(Mutex::new(TimeStation::Dcf77.dial_hz()));
+    let mut h = engine(Shortwave { center, pos: 0, utc0, phase: 0.0, noise: 3 });
+    let _thread = h.thread.take();
+    let send = |c: Command| h.cmd_tx.send(c).unwrap();
+    // Into the mode on long wave, as an operator coming from DCF77 would be,
+    // then to WWV on 10 MHz.
+    send(Command::SetVfo { vfo: Vfo::A, hz: TimeStation::Dcf77.dial_hz() });
+    send(Command::SetMode { rx: RxId::Main, mode: Mode::TimeSignal });
+    send(Command::SetDigiConfig(DigiConfig {
+        timesig: TimeSigConfig { station: TimeStation::Wwv, ..Default::default() },
+        ..Default::default()
+    }));
+    send(Command::SetVfo { vfo: Vfo::A, hz: TimeStation::Wwv.dial_hz() });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut widened = None;
+    while widened.is_none() && Instant::now() < deadline {
+        while let Ok(ev) = h.event_rx.try_recv() {
+            if let RadioEvent::State(st) = ev
+                && (st.rx_freq_hz() - TimeStation::Wwv.dial_hz()).abs() < 1.0
+                && st.rx[0].mode == Mode::TimeSignal
+            {
+                widened = Some((st.rx[0].filter_lo, st.rx[0].filter_hi));
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let (lo, hi) = widened.expect("a state on the new dial");
+    assert_eq!(hi, TIMESIG_HF_TOP_HZ, "the passband opens on short wave: {lo}..{hi}");
+
+    let st = status(&h, Duration::from_secs(300), "two decoded minutes", |s| {
+        s.station == TimeStation::Wwv && s.frames_good >= 2
+    });
+    let carrier = st.carrier_hz.expect("the carrier was found");
+    assert!((carrier - 1000.0).abs() < 5.0, "the carrier at 1 kHz in USB, not {carrier} Hz");
+    assert!(st.ticks_heard, "WWV's own ticks timed the seconds");
+    assert_eq!(st.sibling_heard, None);
+    let f = st.last_frame.expect("a frame");
+    assert!(f.utc >= utc0 as i64 && f.utc <= utc0 as i64 + 300, "decoded {}", f.utc);
 }
 
 /// The clock measurement through the engine: the station's time runs 2.5 s

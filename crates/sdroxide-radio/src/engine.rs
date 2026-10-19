@@ -15648,14 +15648,27 @@ impl Engine {
     /// the right side and, at key-down, the modulator), and tell a rig that is
     /// doing the receiving. Every other mode's sideband is fixed, so this
     /// leaves them alone.
+    ///
+    /// The time-signal mode's passband follows the band too, from a long-wave
+    /// carrier's few hundred hertz to a short-wave broadcast's couple of
+    /// kilohertz — but only while it is the default for the band being left,
+    /// so a passband the operator narrowed around a weak station stays put.
     fn follow_sideband(&mut self) {
         let mode = self.state.rx[0].mode;
-        if !mode.sideband_follows_band() {
-            return;
-        }
-        let want = mode.default_filter_at(self.state.rx_freq_hz());
+        let dial = self.state.rx_freq_hz();
+        let want = mode.default_filter_at(dial);
         let r = &mut self.state.rx[0];
-        if (r.filter_lo, r.filter_hi) == want {
+        let follows = if mode == Mode::TimeSignal {
+            let other = if dial >= sdroxide_types::TIMESIG_HF_FROM_HZ {
+                mode.default_filter()
+            } else {
+                mode.default_filter_at(sdroxide_types::TIMESIG_HF_FROM_HZ)
+            };
+            (r.filter_lo, r.filter_hi) == other
+        } else {
+            mode.sideband_follows_band()
+        };
+        if !follows || (r.filter_lo, r.filter_hi) == want {
             return;
         }
         (r.filter_lo, r.filter_hi) = want;

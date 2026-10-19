@@ -40,13 +40,13 @@ use crate::civil::{bcd, bcd_digits_ok, eu_summer, iso_weekday, parity, to_bcd, v
 pub(super) static FORMAT: Format = Format {
     station: TimeStation::Msf,
     templates: &[
-        Template { sym: Sym { a: false, b: false, marker: false }, low: low(0, 1) },
-        Template { sym: Sym { a: true, b: false, marker: false }, low: low(0, 2) },
+        Template { sym: Sym::ab(false, false), low: low(0, 1) },
+        Template { sym: Sym::ab(true, false), low: low(0, 2) },
         Template {
-            sym: Sym { a: false, b: true, marker: false },
+            sym: Sym::ab(false, true),
             low: [true, false, true, false, false, false, false, false, false, false],
         },
-        Template { sym: Sym { a: true, b: true, marker: false }, low: low(0, 3) },
+        Template { sym: Sym::ab(true, true), low: low(0, 3) },
         Template { sym: Sym::MARKER, low: low(0, 5) },
     ],
     rising_edge: false,

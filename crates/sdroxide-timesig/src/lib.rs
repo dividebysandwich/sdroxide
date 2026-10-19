@@ -3,7 +3,8 @@
 //! Four pieces, each usable on its own:
 //!
 //! * [`Decoder`] — audio in; out come the seconds it read and the minutes it
-//!   decoded, each tied to the input sample it began on.
+//!   decoded, each tied to the input sample it began on. Long-wave stations
+//!   are timed by their carrier's keying, short-wave ones by their ticks.
 //! * [`Tracker`] — decides when consecutive minutes agree well enough to be
 //!   believed, and from then on names the UTC second every boundary began.
 //! * [`SampleClock`] — which reading of the computer's clock an input sample
@@ -22,6 +23,8 @@ mod clock;
 mod decoder;
 pub mod format;
 mod frontend;
+mod hf;
+mod search;
 pub mod synth;
 mod tracker;
 
@@ -51,7 +54,7 @@ mod tests {
         events
             .iter()
             .filter_map(|e| match e {
-                Event::Frame { pos, frame } => Some((*pos, frame.utc)),
+                Event::Frame { pos, frame, .. } => Some((*pos, frame.utc)),
                 _ => None,
             })
             .collect()
@@ -87,7 +90,9 @@ mod tests {
     fn decodes_through_noise_off_frequency_and_off_rate() {
         for station in TimeStation::ALL {
             let mut s = synth::Synth::new(station, 12_000.0);
-            s.snr_db = Some(-10.0);
+            // Short wave's time code is 21 dB below the carrier the SNR is
+            // quoted against, where a long-wave code is the carrier itself.
+            s.snr_db = Some(if station.is_hf() { 12.0 } else { -10.0 });
             s.tone_hz = 1000.0 + 187.0;
             s.rate_error_ppm = 40.0;
             s.seed = 3;
@@ -104,6 +109,113 @@ mod tests {
                 assert!(err_ms.abs() < 4.0, "{station:?}: frame {err_ms:.3} ms out");
             }
         }
+    }
+
+    /// WWV and WWVH on one frequency, WWVH 12.7 ms later and weaker — a
+    /// listener somewhere in between. Each decoder is timed by its own
+    /// station's ticks and says the other is there.
+    #[test]
+    fn the_short_wave_pair_are_told_apart() {
+        let delay = 0.0127;
+        for (station, late) in [(TimeStation::Wwv, 0.0), (TimeStation::Wwvh, delay)] {
+            let mut s = synth::Synth::new(TimeStation::Wwv, 12_000.0);
+            s.sibling = Some(synth::Sibling { delay_s: delay, level: 0.7 });
+            s.snr_db = Some(20.0);
+            let audio = s.render(start(), 200.0);
+            let mut dec = Decoder::new(station, s.rate);
+            let mut ev = Vec::new();
+            for block in audio.chunks(240) {
+                dec.process(block, &mut ev);
+            }
+            let f = frames(&ev);
+            assert!(f.len() >= 2, "{station:?}: {} frames", f.len());
+            for (pos, utc) in f {
+                let err_ms = (start() + pos / s.rate - utc as f64 - late) * 1000.0;
+                assert!(err_ms.abs() < 1.0, "{station:?}: timed {err_ms:.3} ms from its own ticks");
+            }
+            let snap = dec.snapshot();
+            assert!(snap.sibling_heard, "{station:?} should hear the other: {:?}", snap.sibling_z);
+        }
+        // And alone, nothing is said to be there — however clean the signal,
+        // since its own gating is what a careless detector would hear.
+        for snr in [20.0, 40.0] {
+            let s =
+                synth::Synth { snr_db: Some(snr), ..synth::Synth::new(TimeStation::Wwv, 12_000.0) };
+            let mut dec = Decoder::new(TimeStation::Wwv, s.rate);
+            let mut ev = Vec::new();
+            dec.process(&s.render(start(), 200.0), &mut ev);
+            let snap = dec.snapshot();
+            assert!(!snap.sibling_heard, "WWVH heard where there is none: {:?}", snap.sibling_z);
+        }
+    }
+
+    /// A short-wave signal fading 20 dB and back every few seconds. The
+    /// levels are read against the carrier, so the fade itself costs
+    /// nothing; what it costs is the SNR at the bottom of each trough, which
+    /// here stays above what the code needs.
+    #[test]
+    fn short_wave_decodes_through_a_fade() {
+        let mut s = synth::Synth::new(TimeStation::Wwv, 12_000.0);
+        s.snr_db = Some(35.0);
+        s.fade_hz = Some(0.3);
+        let f = frames(&run(&s, start(), 200.0));
+        assert!(f.len() >= 2, "{} frames through the fade", f.len());
+    }
+
+    /// WWVB's phase bits, read second by second, are the ones it sent —
+    /// right way up, and each in its own second.
+    #[test]
+    fn the_phase_bits_are_the_ones_sent() {
+        let mut s = synth::Synth::new(TimeStation::Wwvb, 12_000.0);
+        s.snr_db = Some(0.0);
+        s.tone_hz += 0.7;
+        let ev = run(&s, start(), 200.0);
+        let codes: Vec<_> = ev
+            .iter()
+            .filter_map(|e| match e {
+                Event::Frame { code, .. } => Some(*code),
+                _ => None,
+            })
+            .collect();
+        assert!(codes.contains(&sdroxide_types::TimeCode::Both), "codes {codes:?}");
+        let mut checked = 0;
+        for e in &ev {
+            if let Event::Second(sec) = e
+                && let Some(bit) = sec.phase_bit
+            {
+                let utc = (start() + sec.pos / s.rate).round() as i64;
+                assert_eq!(bit, format::wwvb_phase::bit_at(utc), "second {utc}");
+                checked += 1;
+            }
+        }
+        assert!(checked > 60, "only {checked} phase bits read");
+    }
+
+    /// From XX:10 and XX:40 WWVB's phase carries six minutes of its extended
+    /// symbol instead of time frames: the amplitude code carries on, and the
+    /// phase code says nothing until the frames come back.
+    #[test]
+    fn the_extended_symbols_leave_the_phase_code_quiet() {
+        let begin = ymd_hms_to_unix(2026, 10, 18, 12, 8, 30) as f64;
+        let s = synth::Synth::new(TimeStation::Wwvb, 12_000.0);
+        let audio = s.render(begin, 600.0);
+        let mut dec = Decoder::new(TimeStation::Wwvb, s.rate);
+        let mut ev = Vec::new();
+        for block in audio.chunks(240) {
+            dec.process(block, &mut ev);
+        }
+        let ten = ymd_hms_to_unix(2026, 10, 18, 12, 10, 0);
+        let mut seen = Vec::new();
+        for e in &ev {
+            if let Event::Frame { frame, code, .. } = e {
+                let extended = (ten..ten + 360).contains(&frame.utc);
+                let by_phase = *code != sdroxide_types::TimeCode::Amplitude;
+                assert_eq!(by_phase, !extended, "{} by {code:?}", frame.utc);
+                seen.push(frame.utc);
+            }
+        }
+        assert!(seen.contains(&(ten + 120)), "the amplitude code carried on: {seen:?}");
+        assert!(seen.contains(&(ten + 360)), "the phase code came back: {seen:?}");
     }
 
     #[test]
@@ -140,24 +252,54 @@ mod tests {
         }
     }
 
+    /// A carrier on the air with nothing on it, in noise: the transmitter is
+    /// there, the time code is not. Nothing must be read from it, and on
+    /// short wave — where the carrier is what everything is measured against
+    /// — not even a second.
+    #[test]
+    fn dead_air_never_decodes() {
+        for station in TimeStation::ALL {
+            let mut s = synth::Synth::new(station, 8_000.0);
+            s.dead_air = true;
+            s.snr_db = Some(if station.is_hf() { 10.0 } else { -10.0 });
+            s.seed = 5;
+            let ev = run(&s, start(), 600.0);
+            assert!(frames(&ev).is_empty(), "{station:?} decoded a frame from a bare carrier");
+            let locks = ev.iter().filter(|e| matches!(e, Event::Locked)).count();
+            assert_eq!(locks, 0, "{station:?} found seconds on a bare carrier");
+        }
+    }
+
     /// `cargo test -p sdroxide-timesig --release -- --ignored --nocapture`
+    ///
+    /// Each station's six hours are noise alone and then a bare carrier in
+    /// noise, three hours of each.
     #[test]
     #[ignore]
     fn noise_never_decodes_long() {
         for station in TimeStation::ALL {
             let mut s = synth::Synth::new(station, 8_000.0);
-            s.snr_db = Some(-200.0);
             let mut total = 0;
+            let mut total_locks = 0;
             for seed in 0..12 {
                 s.seed = 100 + seed;
+                s.dead_air = seed % 2 == 1;
+                s.snr_db = Some(match (s.dead_air, station.is_hf()) {
+                    (false, _) => -200.0,
+                    (true, true) => 10.0,
+                    (true, false) => -10.0,
+                });
                 let ev = run(&s, start(), 1800.0);
                 let n = frames(&ev).len();
                 let bad = ev.iter().filter(|e| matches!(e, Event::BadFrame { .. })).count();
                 let locks = ev.iter().filter(|e| matches!(e, Event::Locked)).count();
-                println!("{station:?} seed {seed}: {n} frames, {bad} bad, {locks} locks");
+                let what = if s.dead_air { "carrier" } else { "noise" };
+                println!("{station:?} seed {seed} {what}: {n} frames, {bad} bad, {locks} locks");
                 total += n;
+                total_locks += locks;
             }
             assert_eq!(total, 0, "{station:?}: frames from six hours of noise");
+            assert_eq!(total_locks, 0, "{station:?}: seconds found in six hours of noise");
         }
     }
 
@@ -165,13 +307,25 @@ mod tests {
     /// decode, and the timing error, at each SNR.
     ///
     /// `cargo test -p sdroxide-timesig --release -- --ignored --nocapture sweep`
+    ///
+    /// Short wave is swept from much higher: its time code is 21 dB below the
+    /// carrier the SNR is quoted against. WWVB's minutes are also counted by
+    /// which code read them, which is what the phase code is worth.
     #[test]
     #[ignore]
     fn sensitivity_sweep() {
         for station in TimeStation::ALL {
-            for snr in [-10.0, -15.0, -20.0, -25.0, -28.0, -31.0] {
+            let snrs: &[f64] = if station.is_hf() {
+                &[20.0, 10.0, 5.0, 0.0, -5.0, -10.0]
+            } else if station == TimeStation::Wwvb {
+                &[-10.0, -15.0, -20.0, -25.0, -28.0, -31.0, -34.0, -37.0]
+            } else {
+                &[-10.0, -15.0, -20.0, -25.0, -28.0, -31.0]
+            };
+            for &snr in snrs {
                 let mut got = 0usize;
                 let mut wrong = 0usize;
+                let mut by_phase = 0usize;
                 let mut worst_ms = 0.0f64;
                 let seeds = 4;
                 for seed in 0..seeds {
@@ -179,11 +333,13 @@ mod tests {
                     s.snr_db = Some(snr);
                     s.seed = 1 + seed;
                     let ev = run(&s, start(), 600.0);
-                    for (pos, utc) in frames(&ev) {
-                        let err = (start() + pos / s.rate - utc as f64) * 1000.0;
+                    for e in &ev {
+                        let Event::Frame { pos, frame, code } = e else { continue };
+                        let err = (start() + pos / s.rate - frame.utc as f64) * 1000.0;
                         if err.abs() < 500.0 {
                             worst_ms = worst_ms.max(err.abs());
                             got += 1;
+                            by_phase += usize::from(*code != sdroxide_types::TimeCode::Amplitude);
                         } else {
                             // Passed every check and names the wrong minute:
                             // what the tracker's agreement rule is for.
@@ -194,7 +350,8 @@ mod tests {
                 // Ten minutes, of which the first is spent finding the second.
                 let possible = 9 * seeds as usize;
                 println!(
-                    "{:<7} {snr:>6} dB: {got:>2}/{possible} minutes, {wrong} wrong, worst {worst_ms:.2} ms",
+                    "{:<7} {snr:>6} dB: {got:>2}/{possible} minutes ({by_phase} by phase), \
+                     {wrong} wrong, worst {worst_ms:.2} ms",
                     station.label()
                 );
             }

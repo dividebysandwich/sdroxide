@@ -8,11 +8,20 @@
 //!
 //! # The stations
 //!
-//! The long-wave services whose time code is amplitude keyed — the carrier is
+//! Two families. The long-wave services key their carrier's amplitude — it is
 //! reduced (or switched off) for a length of time each second that says what
-//! the bit is. They share everything up to the bit decision, which is why they
-//! arrived together: DCF77, MSF, WWVB and the two JJY transmitters. Each
-//! publishes its own format, cited in `sdroxide-timesig` where it is decoded.
+//! the bit is: DCF77, MSF, WWVB and the two JJY transmitters. WWVB also keys
+//! its carrier's phase with a second code, which is read alongside.
+//!
+//! The short-wave services, WWV and WWVH, are AM broadcasts: a tick on every
+//! second, voice and tones, and the time code on a 100 Hz subcarrier underneath.
+//! They share their frequencies, so either may be heard alone or both at once,
+//! told apart by the pitch of their ticks.
+//!
+//! Each station publishes its own format, cited in `sdroxide-timesig` where it
+//! is decoded. CHU, Canada's short-wave service, closed on 22 June 2026 and is
+//! not here: a decoder for a station that no longer transmits would only ever
+//! be fed by whoever imitates it.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,9 +38,20 @@ use serde::{Deserialize, Serialize};
 pub const TIMESIG_TONE_HZ: f32 = 1000.0;
 
 /// How far either side of [`TIMESIG_TONE_HZ`] the decoder looks for the
-/// carrier. The mode's default passband is this wide and no wider: a carrier
-/// found outside it would be one the receive filter had already attenuated.
+/// carrier. On long wave the mode's default passband is this wide and no
+/// wider: a carrier found outside it would be one the receive filter had
+/// already attenuated.
 pub const TIMESIG_SEARCH_HZ: f32 = 300.0;
+
+/// The top of the passband on short wave, Hz of receive audio. WWV and WWVH
+/// put everything they send within 1.5 kHz above their carrier — the ticks at
+/// 1000 and 1200 Hz, the hour tone at 1500 — so with the carrier at
+/// [`TIMESIG_TONE_HZ`] this keeps all of it and the search's slack.
+pub const TIMESIG_HF_TOP_HZ: f32 = 2_800.0;
+
+/// Where long wave ends for the mode's passband: a dial above this is tuned to
+/// a short-wave station.
+pub const TIMESIG_HF_FROM_HZ: f64 = 1_000_000.0;
 
 /// A time-signal station the receiver can decode.
 ///
@@ -45,24 +65,34 @@ pub enum TimeStation {
     Dcf77,
     /// MSF, Anthorn, United Kingdom — NPL's 60 kHz service.
     Msf,
-    /// WWVB, Fort Collins, Colorado — NIST's 60 kHz service. Decoded here from
-    /// its amplitude code; the phase code added in 2012 is not read yet.
+    /// WWVB, Fort Collins, Colorado — NIST's 60 kHz service. Both its codes
+    /// are read: the amplitude code every long-wave station has, and the phase
+    /// code added in 2012, which holds on to the minute further into the noise.
     Wwvb,
     /// JJY on 40 kHz, Mount Ōtakadoya, Fukushima — NICT's eastern transmitter.
     Jjy40,
     /// JJY on 60 kHz, Mount Hagane, on the Saga/Fukuoka border — NICT's
     /// western transmitter. The same time code as [`TimeStation::Jjy40`].
     Jjy60,
+    /// WWV, Fort Collins, Colorado — NIST's short-wave service, on 2.5, 5, 10,
+    /// 15, 20 and 25 MHz. Its seconds are 1000 Hz ticks.
+    Wwv,
+    /// WWVH, Kekaha, Kauaʻi, Hawaii — NIST's Pacific short-wave service, on
+    /// 2.5, 5, 10 and 15 MHz, the same frequencies as [`TimeStation::Wwv`]. Its
+    /// seconds are 1200 Hz ticks, which is how it is told apart.
+    Wwvh,
 }
 
 impl TimeStation {
     /// Every station, in the order the panel offers them.
-    pub const ALL: [TimeStation; 5] = [
+    pub const ALL: [TimeStation; 7] = [
         TimeStation::Dcf77,
         TimeStation::Msf,
         TimeStation::Wwvb,
         TimeStation::Jjy40,
         TimeStation::Jjy60,
+        TimeStation::Wwv,
+        TimeStation::Wwvh,
     ];
 
     /// The call sign, as the station's operator writes it.
@@ -73,21 +103,70 @@ impl TimeStation {
             TimeStation::Wwvb => "WWVB",
             TimeStation::Jjy40 => "JJY 40",
             TimeStation::Jjy60 => "JJY 60",
+            TimeStation::Wwv => "WWV",
+            TimeStation::Wwvh => "WWVH",
         }
     }
 
-    /// The carrier frequency, Hz.
+    /// Every frequency the station transmits on, Hz, lowest first.
+    pub fn carriers_hz(self) -> &'static [f64] {
+        match self {
+            TimeStation::Dcf77 => &[77_500.0],
+            TimeStation::Msf | TimeStation::Wwvb | TimeStation::Jjy60 => &[60_000.0],
+            TimeStation::Jjy40 => &[40_000.0],
+            TimeStation::Wwv => {
+                &[2_500_000.0, 5_000_000.0, 10_000_000.0, 15_000_000.0, 20_000_000.0, 25_000_000.0]
+            }
+            TimeStation::Wwvh => &[2_500_000.0, 5_000_000.0, 10_000_000.0, 15_000_000.0],
+        }
+    }
+
+    /// The carrier frequency a press of the station's chip tunes to, Hz: the
+    /// only one on long wave, and 10 MHz on short wave — the one both NIST
+    /// stations use that is open by day and by night across most of their
+    /// coverage.
     pub fn carrier_hz(self) -> f64 {
         match self {
-            TimeStation::Dcf77 => 77_500.0,
-            TimeStation::Msf | TimeStation::Wwvb | TimeStation::Jjy60 => 60_000.0,
-            TimeStation::Jjy40 => 40_000.0,
+            TimeStation::Wwv | TimeStation::Wwvh => 10_000_000.0,
+            s => s.carriers_hz()[0],
         }
     }
 
     /// The USB dial frequency that puts the carrier at [`TIMESIG_TONE_HZ`].
     pub fn dial_hz(self) -> f64 {
-        self.carrier_hz() - f64::from(TIMESIG_TONE_HZ)
+        Self::dial_for(self.carrier_hz())
+    }
+
+    /// The USB dial frequency that puts a carrier at `carrier_hz` on
+    /// [`TIMESIG_TONE_HZ`].
+    pub fn dial_for(carrier_hz: f64) -> f64 {
+        carrier_hz - f64::from(TIMESIG_TONE_HZ)
+    }
+
+    /// A short-wave station, heard by sky wave: an AM broadcast whose seconds
+    /// are ticks, rather than a long-wave carrier whose seconds are its keying.
+    pub fn is_hf(self) -> bool {
+        matches!(self, TimeStation::Wwv | TimeStation::Wwvh)
+    }
+
+    /// The pitch of the station's seconds ticks, Hz — for the short-wave
+    /// stations, which are told apart by it.
+    pub fn tick_hz(self) -> Option<f64> {
+        match self {
+            TimeStation::Wwv => Some(1000.0),
+            TimeStation::Wwvh => Some(1200.0),
+            _ => None,
+        }
+    }
+
+    /// The station that shares this one's frequencies, if any: WWV and WWVH
+    /// transmit on the same four, and a receiver often hears both.
+    pub fn sibling(self) -> Option<TimeStation> {
+        match self {
+            TimeStation::Wwv => Some(TimeStation::Wwvh),
+            TimeStation::Wwvh => Some(TimeStation::Wwv),
+            _ => None,
+        }
     }
 
     /// Where the transmitter is, for the reader.
@@ -98,6 +177,8 @@ impl TimeStation {
             TimeStation::Wwvb => "Fort Collins, Colorado, USA",
             TimeStation::Jjy40 => "Mt. Ōtakadoya, Fukushima, Japan",
             TimeStation::Jjy60 => "Mt. Hagane, Kyushu, Japan",
+            TimeStation::Wwv => "Fort Collins, Colorado, USA",
+            TimeStation::Wwvh => "Kekaha, Kauaʻi, Hawaii, USA",
         }
     }
 
@@ -113,6 +194,8 @@ impl TimeStation {
             TimeStation::Wwvb => (40.6781, -105.0469),
             TimeStation::Jjy40 => (37.3725, 140.8489),
             TimeStation::Jjy60 => (33.4653, 130.1758),
+            TimeStation::Wwv => (40.6809, -105.0408),
+            TimeStation::Wwvh => (21.9878, -159.7644),
         }
     }
 
@@ -124,6 +207,8 @@ impl TimeStation {
             TimeStation::Msf => *b"MSF\0",
             TimeStation::Wwvb => *b"WWVB",
             TimeStation::Jjy40 | TimeStation::Jjy60 => *b"JJY\0",
+            TimeStation::Wwv => *b"WWV\0",
+            TimeStation::Wwvh => *b"WWVH",
         }
     }
 }
@@ -144,8 +229,8 @@ pub struct TimeSigConfig {
     ///
     /// Zero until the operator calibrates it, which the panel does in one
     /// press against a clock already known to be right (one kept by NTP, say).
-    /// Uncalibrated, a measurement is late by however long that path is: a few
-    /// milliseconds on a local USB receiver, much more on a network one.
+    /// Uncalibrated, a measurement is late by however long that path is: around
+    /// ten milliseconds on a local USB receiver, much more on a network one.
     pub latency_ms: f64,
     /// How many consecutive minutes have to decode and agree with each other
     /// before the time is believed. Two is the least that means anything —
@@ -191,8 +276,8 @@ pub struct TimeFrame {
     /// The UTC instant the frame names, Unix seconds — always a whole minute.
     pub utc: i64,
     /// The station's own civil time zone at that instant, minutes east of UTC:
-    /// +60 for CET, +120 for CEST, 0 for GMT, +540 for JST. WWVB sends UTC and
-    /// reports 0.
+    /// +60 for CET, +120 for CEST, 0 for GMT, +540 for JST. The NIST stations
+    /// send UTC and report 0.
     pub zone_min: i16,
     /// Daylight saving time is in force, where the code says so.
     pub dst: bool,
@@ -202,6 +287,18 @@ pub struct TimeFrame {
     pub leap_second_soon: bool,
     /// UT1 − UTC in milliseconds, for the codes that carry it.
     pub dut1_ms: Option<i16>,
+}
+
+/// Which of a station's codes a frame was read from. Only WWVB has two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TimeCode {
+    /// The amplitude code — the only one every other station sends.
+    #[default]
+    Amplitude,
+    /// WWVB's phase code alone; the amplitude code did not read that minute.
+    Phase,
+    /// Both, and they agreed.
+    Both,
 }
 
 /// Who may set this computer's clock, and how.
@@ -310,9 +407,30 @@ pub struct TimeSigStatus {
     pub scope: Vec<u8>,
     /// The most recent frame that decoded.
     pub last_frame: Option<TimeFrame>,
+    /// Which code it was read from.
+    pub last_code: TimeCode,
     /// Frames that decoded and passed every check, and those that did not.
     pub frames_good: u32,
     pub frames_bad: u32,
+    /// How many of [`TimeSigStatus::frames_good`] the phase code read, alone
+    /// or with the amplitude code — WWVB only.
+    pub frames_phase: u32,
+    /// The current minute's phase-code bits, WWVB only: 0, 1, or
+    /// [`TimeSigStatus::UNKNOWN`] for a second too noisy to call. Laid out
+    /// like [`TimeSigStatus::symbols`].
+    pub phase_symbols: Vec<u8>,
+    /// How cleanly the phase code reads, dB: a bit's mean against its
+    /// scatter. WWVB only, once the carrier's phase is being followed.
+    pub phase_snr_db: Option<f32>,
+    /// The other station on these frequencies, when its ticks are heard
+    /// clearly enough to lock to — WWVH while listening to WWV, or the other
+    /// way about. Both share the time code, so either decodes it; the ticks
+    /// say whose time is being measured.
+    pub sibling_heard: Option<TimeStation>,
+    /// Whether this station's own ticks are being heard. `false` with
+    /// [`TimeSigStatus::sibling_heard`] set means the other one is what is on
+    /// the air here, and choosing it would get a lock.
+    pub ticks_heard: bool,
     /// Consecutive frames that agree with each other. The time is believed
     /// once this reaches [`TimeSigConfig::confirmations`].
     pub confirmed: u32,
@@ -324,6 +442,9 @@ pub struct TimeSigStatus {
     /// The signal's travel time from the transmitter, ms, already added in.
     /// `None` without a locator to measure from.
     pub propagation_ms: Option<f64>,
+    /// The ionospheric hops that travel time was worked out for — short wave
+    /// only, where the signal goes up and down rather than along the ground.
+    pub propagation_hops: Option<u8>,
     /// The distance it was computed from, km.
     pub distance_km: Option<f64>,
     /// The engine host's clock and NTP server.
@@ -335,6 +456,9 @@ impl TimeSigStatus {
     pub const MARKER: u8 = 8;
     /// [`TimeSigStatus::symbols`] value for a second that could not be read.
     pub const UNKNOWN: u8 = 255;
+    /// [`TimeSigStatus::symbols`] value for WWV's second 0, which carries no
+    /// pulse at all: the hole that marks the minute.
+    pub const HOLE: u8 = 9;
 }
 
 #[cfg(test)]
@@ -345,8 +469,24 @@ mod tests {
     fn the_dial_puts_the_carrier_on_the_tone() {
         for s in TimeStation::ALL {
             assert_eq!(s.dial_hz() + f64::from(TIMESIG_TONE_HZ), s.carrier_hz());
+            assert!(s.carriers_hz().contains(&s.carrier_hz()), "{s:?}");
+            // Long wave and short wave are told apart by the dial alone.
+            assert_eq!(s.dial_hz() >= TIMESIG_HF_FROM_HZ, s.is_hf(), "{s:?}");
         }
         assert_eq!(TimeStation::Dcf77.dial_hz(), 76_500.0);
+        assert_eq!(TimeStation::Wwv.dial_hz(), 9_999_000.0);
+    }
+
+    #[test]
+    fn the_short_wave_pair_point_at_each_other() {
+        assert_eq!(TimeStation::Wwv.sibling(), Some(TimeStation::Wwvh));
+        assert_eq!(TimeStation::Wwvh.sibling(), Some(TimeStation::Wwv));
+        assert_eq!(TimeStation::Dcf77.sibling(), None);
+        // Every WWVH frequency is a WWV one, which is why they are heard
+        // together.
+        for f in TimeStation::Wwvh.carriers_hz() {
+            assert!(TimeStation::Wwv.carriers_hz().contains(f));
+        }
     }
 
     #[test]
@@ -361,6 +501,8 @@ mod tests {
     fn refids_are_the_rfc_5905_ones() {
         assert_eq!(&TimeStation::Dcf77.ntp_refid(), b"DCF\0");
         assert_eq!(&TimeStation::Wwvb.ntp_refid(), b"WWVB");
+        assert_eq!(&TimeStation::Wwv.ntp_refid(), b"WWV\0");
+        assert_eq!(&TimeStation::Wwvh.ntp_refid(), b"WWVH");
         assert_eq!(TimeStation::Jjy40.ntp_refid(), TimeStation::Jjy60.ntp_refid());
     }
 }
