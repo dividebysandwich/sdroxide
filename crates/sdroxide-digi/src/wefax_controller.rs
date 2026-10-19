@@ -125,6 +125,16 @@ impl WefaxController {
         self.image.reserve(width as usize * GROW_ROWS);
     }
 
+    /// Throw away the picture being built and put the receiver back in
+    /// detection, without saving anything.
+    fn discard_picture(&mut self) {
+        self.image.clear();
+        self.height = 0;
+        let mut out = Vec::new();
+        self.rx.stop_manual(&mut out);
+        self.status_dirty = true;
+    }
+
     /// Hand the finished picture to the engine, if there is enough of one to be
     /// worth keeping.
     ///
@@ -278,11 +288,13 @@ impl DigiEngine for WefaxController {
     /// Abort means "throw away the picture in progress", which is the only
     /// thing there is to abort here.
     fn abort(&mut self) {
-        self.image.clear();
-        self.height = 0;
-        let mut out = Vec::new();
-        self.rx.stop_manual(&mut out);
-        self.status_dirty = true;
+        self.discard_picture();
+    }
+
+    /// CLEAR RX: the reception in progress failed, so it is dropped unsaved and
+    /// the receiver goes back to listening for the next start tone.
+    fn clear_rx(&mut self) {
+        self.discard_picture();
     }
 
     fn abort_tx(&mut self) {}
@@ -479,5 +491,87 @@ mod tests {
         assert!(a.iter().any(|x| matches!(x, DigiAction::Status(_))));
         // ...and it never asks to key the transmitter.
         assert!(!a.iter().any(|x| matches!(x, DigiAction::KeyTx)));
+    }
+
+    const RATE: f64 = 12_000.0;
+
+    fn sine(hz: f64, secs: f64) -> Vec<f32> {
+        (0..(RATE * secs) as usize)
+            .map(|i| (0.5 * (std::f64::consts::TAU * hz * i as f64 / RATE).sin()) as f32)
+            .collect()
+    }
+
+    fn fm(levels: &[f32]) -> Vec<f32> {
+        let mut ph = 0.0f64;
+        levels
+            .iter()
+            .map(|&l| {
+                ph += std::f64::consts::TAU * (1500.0 + 800.0 * l as f64) / RATE;
+                (ph.sin() * 0.5) as f32
+            })
+            .collect()
+    }
+
+    /// A page as a station sends it, with the start and stop signals as audio
+    /// tones: start tone, phasing, `lines` of ramp at 120 LPM, stop tone, then a
+    /// black carrier.
+    fn page(lines: usize) -> Vec<f32> {
+        let per = (RATE * 0.5) as usize;
+        let pulse = per / 20;
+        let mut v = Vec::new();
+        for _ in 0..20 {
+            v.extend(std::iter::repeat_n(0.0f32, per - pulse));
+            v.extend(std::iter::repeat_n(1.0f32, pulse));
+        }
+        for _ in 0..lines {
+            v.extend((0..per).map(|i| i as f32 / per as f32));
+        }
+        let mut a = sine(300.0, 5.0);
+        a.extend(fm(&v));
+        a.extend(sine(450.0, 5.0));
+        a.extend(fm(&vec![0.0; (RATE * 3.0) as usize]));
+        a
+    }
+
+    fn feed(c: &mut WefaxController, audio: &[f32]) {
+        for chunk in audio.chunks(1024) {
+            c.on_rx_audio(chunk);
+        }
+    }
+
+    fn saved(c: &mut WefaxController) -> usize {
+        c.poll(SystemTime::UNIX_EPOCH, 0.0)
+            .iter()
+            .filter(|a| matches!(a, DigiAction::WefaxImage { .. }))
+            .count()
+    }
+
+    /// The whole job, with nobody pressing START: a page is found by its start
+    /// tone, saved when its stop tone arrives, and the receiver is listening
+    /// again at once, so the next page is found, decoded and saved too.
+    #[test]
+    fn two_pages_in_a_row_are_each_found_and_saved() {
+        let mut c = ctrl();
+        feed(&mut c, &page(60));
+        assert_eq!(saved(&mut c), 1);
+        assert!(!c.rx.receiving(), "the receiver did not go back to detection");
+        feed(&mut c, &page(70));
+        assert_eq!(saved(&mut c), 1);
+    }
+
+    /// CLEAR RX drops a failing reception unsaved and leaves the receiver ready
+    /// for the next transmission.
+    #[test]
+    fn clearing_a_reception_in_progress_saves_nothing_and_re_arms() {
+        let mut c = ctrl();
+        let half = page(60);
+        feed(&mut c, &half[..half.len() / 2]);
+        assert!(c.rx.receiving());
+        c.clear_rx();
+        assert!(!c.rx.receiving());
+        assert_eq!(c.height, 0);
+        assert_eq!(saved(&mut c), 0);
+        feed(&mut c, &page(60));
+        assert_eq!(saved(&mut c), 1);
     }
 }

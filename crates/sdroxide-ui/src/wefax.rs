@@ -237,6 +237,36 @@ impl WefaxUi {
         self.live_h > 0
     }
 
+    /// What the SAVE chip writes: the chart being received, as far as it has
+    /// got, or failing that the last finished one. The name and the PNG bytes.
+    ///
+    /// The chart in progress is encoded here from the rows the panel already
+    /// holds, so saving works the same on every build — native, web session or
+    /// web app — and needs nothing from the engine. `unix` names a partial chart
+    /// by when it is saved; a finished one keeps the name the engine gave it.
+    pub fn save_payload(&self, unix: i64) -> Option<(String, Vec<u8>)> {
+        if self.live_h > 0 {
+            let stamp = utc_stamp(unix);
+            let png = self.live_png()?;
+            return Some((format!("wefax-{stamp}.png"), png));
+        }
+        self.full_png.clone()
+    }
+
+    fn live_png(&self) -> Option<Vec<u8>> {
+        use image::ImageEncoder;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(
+                &self.live[..self.live_w as usize * self.live_h as usize],
+                u32::from(self.live_w),
+                u32::from(self.live_h),
+                image::ExtendedColorType::L8,
+            )
+            .ok()?;
+        Some(png)
+    }
+
     /// Throw the live chart away — the operator restarting, or a completed one
     /// having moved to the gallery.
     pub fn clear_live(&mut self) {
@@ -447,6 +477,24 @@ pub fn live_size(zoom: Zoom, aspect: f32, view: (f32, f32), size: (u16, u16)) ->
 }
 
 /// Decode a PNG to a single-channel raster plus its size.
+/// `YYYYMMDD-HHMMSS` in UTC. Written out because `chrono` is not a dependency
+/// of the browser build.
+fn utc_stamp(unix: i64) -> String {
+    let days = unix.div_euclid(86_400);
+    let secs = unix.rem_euclid(86_400);
+    // Civil date from a day count (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}{m:02}{d:02}-{:02}{:02}{:02}", secs / 3600, secs % 3600 / 60, secs % 60)
+}
+
 pub fn decode_gray(png: &[u8]) -> Option<(Vec<u8>, u16, u16)> {
     let img = image::load_from_memory(png).ok()?.to_luma8();
     let (w, h) = (img.width(), img.height());
@@ -723,5 +771,23 @@ mod tests {
         assert_eq!(img.pixels[2], egui::Color32::from_gray(255));
         // A short buffer is padded rather than panicking.
         assert_eq!(gray_image(&[1], 2, 2).pixels.len(), 4);
+    }
+
+    /// SAVE on a chart still arriving writes the rows so far, and they decode
+    /// back to what was received.
+    #[test]
+    fn a_chart_in_progress_is_saved_as_the_rows_so_far() {
+        let mut w = WefaxUi::default();
+        assert!(w.save_payload(0).is_none(), "nothing received, nothing to save");
+        for y in 0..3u16 {
+            w.push_line(1, y, &[y as u8 * 40; 8]);
+        }
+        let (name, png) = w.save_payload(1_700_000_000).expect("a chart in progress");
+        assert!(name.starts_with("wefax-20231114-") && name.ends_with(".png"), "{name}");
+        let (gray, gw, gh) = decode_gray(&png).expect("a PNG");
+        assert_eq!((gw, gh), (8, 3));
+        assert_eq!(gray[0], 0);
+        assert_eq!(gray[8], 40);
+        assert_eq!(gray[16], 80);
     }
 }
