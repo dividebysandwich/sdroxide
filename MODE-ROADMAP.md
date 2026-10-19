@@ -76,6 +76,32 @@ found. "Recording" is whether our corpus already holds one.
 | **QRSS / NDB** | — (it is CW) | `QRSS_1sec`, `NDB-PHG` | our CW decoder with a much longer time constant |
 | **NWR / SAME** | pub | `NWR_SAME_WASHINGTON` | the 520.83 baud SAME header — an AFSK burst with three repeats |
 
+### QPSK: what it needs, read off fldigi (2026-10-19)
+
+The FEC is in place — `ConvCode::PSK_QPSK` is K=5, rate 1/2, and the trellis size
+now follows the code. Four things remain, and the first is the one that would
+have cost a day to discover:
+
+1. **A streaming Viterbi.** `viterbi_soft` is a *block* decoder: it starts every
+   call from state 0 and traces back from the best final state. That is right for
+   THOR and QO-100, which decode a finished block, and wrong for a continuous
+   mode — a trellis restarted every block is a trellis with a discontinuity in
+   it. QPSK needs survivor history carried across symbols with a traceback depth
+   of a few constraint lengths, and the tail bits only at the end of an over.
+2. **One data bit per symbol, not two.** `psk::tx_bit` does
+   `sym = enc->encode(bit) & 3`, so a QPSK symbol *is* the encoder's output pair.
+   Two channel bits per symbol at rate 1/2 is one data bit — which is why QPSK31
+   carries text at the same rate as BPSK31 with half the errors.
+3. **The mapping.** Transmit `sym` straight into the 2-bit phase; receive
+   `bits = (4 - bits) & 3` unless `reverse` is set, then two soft symbols with
+   **the second inverted** (`sym[1] = (bits & 2) ? 0 : 255`) — the inversion is
+   how the standard guarantees transitions on an all-zero message.
+4. **A selector.** `PskSpeed` names the four rates; QPSK is a *second axis* on
+   top of them, so it wants its own field or a wider enum, and a wire bump.
+
+Recordings: `QPSK31/63/125/250-1000_Hz` in `~/Downloads/sounds`, named for a
+*tone* rather than a centre (the lesson from §1) — measure before trusting 1000.
+
 ### 2. Days each — a new modem, but the machine is known
 
 | mode | reference | recording | what it needs |
