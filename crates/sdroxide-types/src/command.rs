@@ -99,9 +99,9 @@ pub enum Command {
         hz: i32,
     },
     /// Start (`true`) or stop (`false`) recording both sides of the QSO (RX
-    /// left, TX right) to an MP3 file. The engine names the file (date/time/
-    /// frequency/mode) and stores it in the user's music directory (or the
-    /// config dir as a fallback).
+    /// left, TX right) to a file — see [`crate::RecordingFormat`] for the
+    /// format. The engine names the file (date/time/frequency/mode) and stores
+    /// it in the user's music directory (or the config dir as a fallback).
     SetRecording(bool),
     /// Whether the *next* recording mixes RX/TX down to a single channel
     /// instead of splitting them left/right. No effect on a recording already
@@ -1314,6 +1314,13 @@ pub enum Command {
     ///
     /// Appended last, for the usual reason.
     ListRecordings,
+
+    /// Choose the format the receiver audio is recorded in — see
+    /// [`crate::RecordingFormat`]. Takes effect on the next
+    /// [`Command::SetRecording(true)`], not on a recording already running.
+    ///
+    /// Appended last, for the usual reason.
+    SetRecordingFormat(crate::RecordingFormat),
 }
 
 /// What a [`Command::GetKnownCalls`] was answered with.

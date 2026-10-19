@@ -25,8 +25,9 @@ use eframe::egui::{self, Color32, ComboBox, DragValue, RichText, Slider};
 use sdroxide_types::{
     AgcMode, BURST_MS_RANGE, Band, Command, CwEngine, DCS_CODES, DIV_FREEZE_ELEMENT,
     DIV_MODE_ELEMENT, DIV_RATE_ELEMENT, DIV_RESET_ELEMENT, DeviceCaps, Direction, DiversityMode,
-    GainElement, GainUnit, MAX_OFFSET_HZ, Mode, NrEngine, NrLevel, NrStrength, RadioState, RxId,
-    Shift, SkimmerKind, SpectrumDetail, SpectrumFillStyle, Speed, SubTone, ToneMode, Vfo,
+    GainElement, GainUnit, MAX_OFFSET_HZ, Mode, NrEngine, NrLevel, NrStrength, RadioState,
+    RecordingFormat, RxId, Shift, SkimmerKind, SpectrumDetail, SpectrumFillStyle, Speed, SubTone,
+    ToneMode, Vfo,
 };
 
 use crate::widgets::{freq_display, smeter};
@@ -4181,24 +4182,38 @@ impl SdroxideApp {
         let iq = self.state.iq_recording;
 
         crate::chrome::menu_caption(ui, "Record audio");
+        // The container is chosen by picking the chip that starts the
+        // recording, and it is fixed for the life of the file — a WAV's header
+        // cannot be re-cut mid-file. So the two format chips are one control
+        // between them: the one that is recording stops it, the other greys
+        // out, and the choice stands for whatever starts next — a quick clip,
+        // a scheduled recording or auto-record all begin through the engine
+        // with this same field.
         ui.horizontal_wrapped(|ui| {
-            if crate::chrome::chip_accent(
-                ui,
-                audio,
-                if audio { "● MP3" } else { "MP3" },
-                crate::theme::ALERT(),
-                Color32::WHITE,
-            )
-            .on_hover_text(
-                "What you hear, as an MP3: the receiver in one channel and your own transmit in \
-                 the other. This is the recording of a QSO.",
-            )
-            .clicked()
-            {
-                cmds.push(Command::SetRecording(!audio));
+            for format in REC_FORMATS {
+                let chip = rec_format_chip(format, audio, self.state.recording_format);
+                if crate::chrome::chip_accent_enabled(
+                    ui,
+                    chip.enabled,
+                    chip.selected,
+                    chip.label,
+                    None,
+                    crate::theme::ALERT(),
+                    Color32::WHITE,
+                )
+                .on_hover_text(chip.hover)
+                .clicked()
+                {
+                    if chip.selected {
+                        cmds.push(Command::SetRecording(false));
+                    } else {
+                        cmds.push(Command::SetRecordingFormat(format));
+                        cmds.push(Command::SetRecording(true));
+                    }
+                }
             }
             // Channel layout is a property of the *next* recording — the
-            // encoder is initialised with it — so it greys out while one runs.
+            // writer is initialised with it — so it greys out while one runs.
             let mono = self.state.recording_mono;
             let mono_chip =
                 crate::chrome::chip_enabled(ui, !audio, mono, "MONO").on_hover_text(if mono {
@@ -4284,7 +4299,7 @@ impl SdroxideApp {
                     // which is only its own for the first second.
                     let armed = self.recording_stop_at.is_some_and(|(_, s)| s == secs);
                     if crate::chrome::chip(ui, armed, format!("{minutes} min"))
-                        .on_hover_text(format!("Stop the MP3 recording after {minutes} minutes"))
+                        .on_hover_text(format!("Stop the recording after {minutes} minutes"))
                         .clicked()
                     {
                         arm = Some((now + i64::from(secs), secs));
@@ -9200,6 +9215,48 @@ fn readout_digit_count(
     if earns_extra { freq_display::DIGITS_EXT } else { freq_display::DIGITS }
 }
 
+/// The audio formats the REC row offers, in the order it draws them.
+///
+/// MP3 and WAV sit together because they are the same audio in two containers;
+/// MONO follows rather than joining them, because the channel layout is a
+/// property of both. The order is a value so it can be pinned without drawing
+/// the row.
+const REC_FORMATS: [RecordingFormat; 2] = [RecordingFormat::Mp3, RecordingFormat::Wav];
+
+/// One audio-format chip's state, so the pair's one-control behaviour can be
+/// pinned without drawing it.
+///
+/// `audio` is whether an audio recording is running and `active` is the format
+/// it was started with. Idle, both chips are pressable and neither is lit.
+/// Running, the format that is writing is lit and pressable — pressing it stops
+/// the file — and the other greys out, because a container cannot be chosen
+/// mid-file.
+struct RecFormatChip {
+    label: &'static str,
+    hover: &'static str,
+    /// Whether the chip may be pressed: the running format, or either while idle.
+    enabled: bool,
+    /// Whether this is the format currently being written.
+    selected: bool,
+}
+
+fn rec_format_chip(format: RecordingFormat, audio: bool, active: RecordingFormat) -> RecFormatChip {
+    let selected = audio && format == active;
+    let (label, hover) = match format {
+        RecordingFormat::Mp3 => (
+            if selected { "● MP3" } else { "MP3" },
+            "What you hear, as an MP3: the receiver in one channel and your own transmit in \
+             the other. This is the recording of a QSO.",
+        ),
+        RecordingFormat::Wav => (
+            if selected { "● WAV" } else { "WAV" },
+            "The same audio as uncompressed 16-bit PCM at 48 kHz — about 11 MB a minute \
+             stereo. For an editor or a decoder of your own.",
+        ),
+    };
+    RecFormatChip { label, hover, enabled: !audio || selected, selected }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -11890,5 +11947,41 @@ mod tests {
         for k in keys {
             assert!(k.max.x <= col + 1.0, "a key painted to {k:?}, past the column");
         }
+    }
+
+    /// The two audio formats are one control between them, and the order is the
+    /// one the operator asked for: WAV sits between MP3 and MONO.
+    #[test]
+    fn the_audio_formats_are_one_control_between_them() {
+        assert_eq!(
+            REC_FORMATS,
+            [RecordingFormat::Mp3, RecordingFormat::Wav],
+            "MP3 then WAV, with MONO drawn after the pair"
+        );
+
+        // Idle: both pressable, neither lit, and their labels carry no dot.
+        for format in REC_FORMATS {
+            let chip = rec_format_chip(format, false, RecordingFormat::Mp3);
+            assert!(chip.enabled, "{format:?} must be pressable while nothing records");
+            assert!(!chip.selected, "{format:?} is not recording");
+            assert_eq!(chip.label, format.label());
+        }
+
+        // An MP3 running: MP3 lit and pressable, WAV greyed out — a container
+        // cannot be chosen mid-file.
+        let mp3 = rec_format_chip(RecordingFormat::Mp3, true, RecordingFormat::Mp3);
+        let wav = rec_format_chip(RecordingFormat::Wav, true, RecordingFormat::Mp3);
+        assert!(mp3.selected && mp3.enabled, "the running format stops the file");
+        assert_eq!(mp3.label, "● MP3");
+        assert!(!wav.selected);
+        assert!(!wav.enabled, "the other container cannot be switched to mid-file");
+        assert_eq!(wav.label, "WAV");
+
+        // And the mirror image, with a WAV running.
+        let mp3 = rec_format_chip(RecordingFormat::Mp3, true, RecordingFormat::Wav);
+        let wav = rec_format_chip(RecordingFormat::Wav, true, RecordingFormat::Wav);
+        assert!(!mp3.enabled, "MP3 greys out while a WAV writes");
+        assert!(wav.selected && wav.enabled);
+        assert_eq!(wav.label, "● WAV");
     }
 }

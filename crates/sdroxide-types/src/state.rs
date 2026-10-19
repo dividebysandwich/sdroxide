@@ -625,6 +625,12 @@ pub struct RadioState {
     /// received. Appended last: postcard numbers fields by position.
     #[serde(default)]
     pub playback: Option<crate::PlaybackStatus>,
+    /// The format the receiver audio is written in, and the operator's standing
+    /// choice of it — see [`crate::RecordingFormat`]. Takes effect on the next
+    /// recording start, not on one already running. Appended last: postcard
+    /// numbers fields by position.
+    #[serde(default)]
+    pub recording_format: crate::RecordingFormat,
 }
 
 impl Default for RadioState {
@@ -679,6 +685,7 @@ impl Default for RadioState {
             hfdl: crate::HfdlSettings::default(),
             gain_by_band: false,
             playback: None,
+            recording_format: crate::RecordingFormat::default(),
         }
     }
 }

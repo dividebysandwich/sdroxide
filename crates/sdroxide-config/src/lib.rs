@@ -1542,6 +1542,15 @@ pub struct Session {
     /// rides here rather than in `config.toml` because the UI is the only thing
     /// that sets it, and the engine is what owns writing it back.
     pub recording_mono: bool,
+    /// The format a recording of the receiver audio is written in, and the
+    /// operator's standing choice of it — see
+    /// [`sdroxide_types::RecordingFormat`]. Rides here beside
+    /// [`Self::recording_mono`] for the same reason: the UI sets it, the engine
+    /// owns writing it back, and it is a preference rather than a property of
+    /// the radio. Absent in a session written before this existed, in which case
+    /// `#[serde(default)]` on the struct gives it the MP3 the station used to
+    /// write.
+    pub recording_format: sdroxide_types::RecordingFormat,
     /// The antenna sockets the operator last chose **on each band**, as
     /// `(RX, TX)`.
     ///
@@ -1645,6 +1654,7 @@ impl Default for Session {
             gains: Vec::new(),
             tx_gains: Vec::new(),
             recording_mono: radio.recording_mono,
+            recording_format: radio.recording_format,
             band_antenna: BandAntennas::new(),
             // And no socket of its own for either VFO until one has been
             // chosen on it — nothing moves a relay before the operator has
@@ -3999,6 +4009,7 @@ mod tests {
             gains: vec![("LNA".into(), 24.0), ("VGA".into(), 16.0)],
             tx_gains: vec![("PAD".into(), -6.0)],
             recording_mono: true,
+            recording_format: sdroxide_types::RecordingFormat::Wav,
             band_antenna: BandAntennas::from([
                 (sdroxide_types::Band::M40, (Some("ANT1".into()), None)),
                 (sdroxide_types::Band::M2, (Some("ANT2".into()), Some("ANT2".into()))),
@@ -4036,6 +4047,9 @@ mod tests {
         assert_eq!(old.mic_gain, radio.tx.mic_gain);
         assert_eq!(old.tx_eq, radio.tx.eq);
         assert_eq!(old.recording_mono, radio.recording_mono);
+        // The recording format an older session has no field for: MP3, the
+        // only thing that station ever wrote.
+        assert_eq!(old.recording_format, radio.recording_format);
         // Likewise the receive settings added after those: an operator upgrading
         // into this comes up squelch-open with NR off, exactly as they always
         // did, and on the front end's own gains rather than on invented ones.

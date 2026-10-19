@@ -580,10 +580,16 @@ mod tests {
     #[test]
     fn the_recorders_own_mp3_plays_back() {
         use crate::recorder::{Recorder, RecordingChannels};
+        use sdroxide_types::RecordingFormat;
         let path = scratch("sdroxide_2026-10-06_10-00-05Z_14.230000MHz_SSTV.mp3");
         let _ = std::fs::remove_file(&path);
-        let (rec, mut prod) =
-            Recorder::start(path.clone(), 48_000.0, RecordingChannels::Stereo).unwrap();
+        let (rec, mut prod) = Recorder::start(
+            path.clone(),
+            48_000.0,
+            RecordingChannels::Stereo,
+            RecordingFormat::Mp3,
+        )
+        .unwrap();
         for i in 0..96_000 {
             let t = i as f32 / 48_000.0;
             let l = 0.5 * (std::f32::consts::TAU * 1000.0 * t).sin();
