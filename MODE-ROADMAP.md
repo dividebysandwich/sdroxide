@@ -26,13 +26,23 @@ half of this file is short.
 
 These are not new modes; they are the current tree, nearly there:
 
-| | state |
+**These were checked on 2026-10-19, and the guess was wrong about two of the
+three.** Measured, not assumed:
+
+| | measured state |
 |---|---|
-| **Hellschreiber** | **fixed** — print sync from the inter-line gap, plus a slant trim (`fork/hell-phase`) |
-| **RTTY 50 / 75** | `rtty_baud` already exists and defaults to 45.45; the corpus files exist. Probably works today and is simply untested — **verify first, before writing anything** |
-| **SYNOP** | the weather decoder from 2026-10-15 is in the tree; the corpus has `SYNOP-1580_Hz`, so it is a harness arm, not a decoder |
-| **HELL 80 / FM Hell** | already variants of the Hell we just fixed |
-| **BPSK63/125/250, QPSK31/63/125/250** | `psk.rs` has the rate hardcoded at 31.25 and the detector is BPSK only. The fix is planned and small (`fork/psk-variants`) |
+| **Feld Hell** | **works** — MultiPSK's `FELD_HELL-1000_Hz` reads as text (French amateur copy). Confirmed a third time, on a third recording |
+| **Hell 80** | **fails** — the image wraps at the cell boundary. `HellVariant::ROWS = 14` and `CELL_COLS = 7` are *global* across all seven variants, so a variant with a different cell is decoded with the wrong geometry |
+| **FM Hell (FSK 245 / 105)** | **fails** — same wrap, different reason: in FSK Hell the carrier never stops, so there is no quiet run for the print-sync tracker to find. The gap metric has to be something other than amplitude for these two |
+| **RTTY 45.45** | **works** — clean text from `RTTY45-1000_Hz` |
+| **RTTY 50** | **works, but not at 170 Hz shift**: MultiPSK's file is **450 Hz**, and at that shift the text reads. `rtty_baud` and `rtty_shift_hz` both reach the demodulator, so this was a parameter, not a decoder |
+| **RTTY 75** | **fails** — garbled at 170, 450 and 850 Hz shift, at its own baud. The bits are close but slip, so the decoder's handling of 75 baud needs looking at, not the file |
+| **SYNOP** | **does not decode as RTTY** at 50 or 75 baud at any shift tried. The digits come out as plausible groups, so the bits are nearly there; suspect a different framing or FEC. Needs an afternoon of investigation before it is costed |
+| **BPSK63/125/250, QPSK31/63/125/250** | unchanged: `psk.rs` hardcodes 31.25 and the detector is BPSK only (`fork/psk-variants`) |
+
+The lesson, and it is the same one as the WEFAX file: **"untested" and "nearly
+free" are not the same thing**, and the corpus is what tells them apart. Two of
+these three turned into real work the moment they were pointed at a recording.
 
 ## The todo, cheapest first
 
