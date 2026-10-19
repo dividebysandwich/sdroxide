@@ -50,7 +50,14 @@ impl super::SdroxideApp {
             // The other four slots are kept: the panel is sized for them, so a
             // receiver added here does not widen the window.
             for _ in 1..EXTRAS_SLOTS {
-                ui.add_space(SLOT_W);
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(SLOT_W, SLOT_H), egui::Sense::hover());
+                ui.painter().rect_stroke(
+                    rect,
+                    3.0,
+                    egui::Stroke::new(1.0, crate::theme::gray(60)),
+                    egui::StrokeKind::Inside,
+                );
             }
         });
     }

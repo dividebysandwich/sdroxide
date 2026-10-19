@@ -33,6 +33,7 @@ pub(in crate::app) mod cw_key;
 pub(in crate::app) mod dial_hold;
 pub(in crate::app) mod drm;
 pub(in crate::app) mod enigma;
+pub(in crate::app) mod extras;
 pub(in crate::app) mod frame;
 pub(in crate::app) mod grid_tracker;
 pub(in crate::app) mod hd;
@@ -47,7 +48,6 @@ pub(in crate::app) mod morse;
 pub(in crate::app) mod net;
 pub(in crate::app) mod panels;
 pub(crate) mod persist;
-pub(in crate::app) mod extras;
 pub(in crate::app) mod playback;
 pub(in crate::app) mod publicsdr;
 pub(in crate::app) mod qo100;
@@ -3746,6 +3746,58 @@ mod tests {
         );
         let out = std::env::var("DAB_PREVIEW").unwrap_or_else(|_| {
             format!("{}/../../target/dab_preview.png", env!("CARGO_MANIFEST_DIR"))
+        });
+        img.save(&out).expect("write the preview");
+        println!("wrote {out}");
+    }
+    /// Render the top bar, with the EXTRAS window open or closed, to a PNG to
+    /// look at. `EXTRAS_OPEN=1` opens the window; `EXTRAS_W` is the window width
+    /// (default 1600); writes `target/extras_preview.png` or `$EXTRAS_PREVIEW`.
+    ///
+    /// ```sh
+    /// EXTRAS_OPEN=1 cargo test -p sdroxide-ui --release --lib extras_preview -- --ignored --nocapture
+    /// ```
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[ignore = "writes a picture to look at; not an assertion"]
+    fn extras_preview() {
+        use crate::multi::frame_test_lock;
+        let _guard = frame_test_lock();
+        let dir =
+            std::env::temp_dir().join(format!("sdroxide-extras-preview-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        unsafe { std::env::set_var("SDROXIDE_CONFIG_DIR", &dir) };
+        let w: f32 = std::env::var("EXTRAS_W").ok().and_then(|v| v.parse().ok()).unwrap_or(1600.0);
+        let h: f32 = std::env::var("EXTRAS_H").ok().and_then(|v| v.parse().ok()).unwrap_or(500.0);
+        let controller: Box<dyn RadioController> = Box::new(RecordingController::default());
+        let ctx = egui::Context::default();
+        let mut app = SdroxideApp::new_tab(&ctx, None, None, controller, 0, true);
+        app.show_extras = std::env::var("EXTRAS_OPEN").is_ok();
+        let mut tex = crate::test_raster::Textures::default();
+        let mut last = None;
+        for i in 0..4 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h))),
+                time: Some(10.0 + i as f64 / 30.0),
+                ..Default::default()
+            };
+            let mut full = ctx.run_ui(input, |ui| {
+                app.ui(ui, &mut eframe::Frame::_new_kittest());
+            });
+            tex.apply(&full.textures_delta);
+            full.textures_delta.clear();
+            last = Some(full);
+        }
+        let img = crate::test_raster::rasterize(
+            &ctx,
+            last.unwrap(),
+            &tex,
+            egui::vec2(w, h),
+            crate::theme::BG_DEEP(),
+        );
+        let out = std::env::var("EXTRAS_PREVIEW").unwrap_or_else(|_| {
+            format!("{}/../../target/extras_preview.png", env!("CARGO_MANIFEST_DIR"))
         });
         img.save(&out).expect("write the preview");
         println!("wrote {out}");
