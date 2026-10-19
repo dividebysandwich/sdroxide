@@ -32,17 +32,26 @@ three.** Measured, not assumed:
 | | measured state |
 |---|---|
 | **Feld Hell** | **works** — MultiPSK's `FELD_HELL-1000_Hz` reads as text (French amateur copy). Confirmed a third time, on a third recording |
-| **Hell 80** | **fails** — the image wraps at the cell boundary. `HellVariant::ROWS = 14` and `CELL_COLS = 7` are *global* across all seven variants, so a variant with a different cell is decoded with the wrong geometry |
-| **FM Hell (FSK 245 / 105)** | **fails** — same wrap, different reason: in FSK Hell the carrier never stops, so there is no quiet run for the print-sync tracker to find. The gap metric has to be something other than amplitude for these two |
+| **Hell 80** | **fixed** — it transmits **7 rows**, not 14 ("displayed twice, transmitted once"); the cell height is now a property of the variant, and MultiPSK's recording reads |
+| **FM Hell (FSK 245)** | **works** — and my first two explanations were wrong. The file name's 1000 Hz is the **upper of its two tones**; the centre is 939, and at that tuning it decodes with no wrap and no change to the gap metric |
 | **RTTY 45.45** | **works** — clean text from `RTTY45-1000_Hz` |
 | **RTTY 50** | **works, but not at 170 Hz shift**: MultiPSK's file is **450 Hz**, and at that shift the text reads. `rtty_baud` and `rtty_shift_hz` both reach the demodulator, so this was a parameter, not a decoder |
-| **RTTY 75** | **fails** — garbled at 170, 450 and 850 Hz shift, at its own baud. The bits are close but slip, so the decoder's handling of 75 baud needs looking at, not the file |
-| **SYNOP** | **does not decode as RTTY** at 50 or 75 baud at any shift tried. The digits come out as plausible groups, so the bits are nearly there; suspect a different framing or FEC. Needs an afternoon of investigation before it is costed |
+| **RTTY 75** | **works** at its own baud and a 450 Hz shift — once tuned to its real centre of ~786 Hz rather than the 1000 in the name |
+| **SYNOP** | **works**: 50 baud, 425 Hz shift, centre 1367, and it prints a whole bulletin — `ZCZC 277`, `SMNO01 ENMI 121800`, `AAXX`, the station groups, the `333` groups, `NNNN`. What is missing is not decoding but *wiring*: nothing in the tree runs RTTY and hands the text to the SYNOP parser |
 | **BPSK63/125/250, QPSK31/63/125/250** | unchanged: `psk.rs` hardcodes 31.25 and the detector is BPSK only (`fork/psk-variants`) |
 
-The lesson, and it is the same one as the WEFAX file: **"untested" and "nearly
-free" are not the same thing**, and the corpus is what tells them apart. Two of
-these three turned into real work the moment they were pointed at a recording.
+### The lesson, and it cost most of a day
+
+**MultiPSK's file names are not centres.** They name a *tone*, and for the
+two-tone modes that is the upper tone — FM Hell at 939 (not 1000), RTTY 75 at
+786, SYNOP at 1367. Three of the four "failures" were a tuning error in the test
+rig, and each one looked exactly like a broken decoder: the wrap in FM Hell, the
+mitten-garbled text in RTTY 75, the plausible digits in SYNOP.
+
+So the rule before judging any of these: **measure the tones in the file and tune
+to the middle of them** — the same rule as measuring the centre on the Hell
+recording of §3, and it has now been learned twice. What survives of the original
+guess is Hell 80, which was a genuine geometry bug, and it is fixed.
 
 ## The todo, cheapest first
 
