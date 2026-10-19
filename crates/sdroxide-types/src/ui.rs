@@ -1048,6 +1048,17 @@ pub struct UiSettings {
     /// its own.
     #[serde(default)]
     pub solar3d_window: Option<Solar3dWindow>,
+    /// Where the EXTRAS window last was, docked in the main window — size and
+    /// position, so it reopens exactly there on every platform and in every
+    /// session. `None` until it has been moved or resized: it then opens under
+    /// the EXTRAS chip, at the top right of the spectrum frame. Machine-local,
+    /// like [`Self::solar3d_window`].
+    #[serde(default)]
+    pub extras_window: Option<DetachedWindow>,
+    /// The same for the EXTRAS window once detached into its own OS window
+    /// (native only).
+    #[serde(default)]
+    pub extras_os_window: Option<DetachedWindow>,
     /// Also carry this remote client's **control bindings** in the server
     /// profile, as well as its screen (which always travels — see
     /// `ClientScreen`).
@@ -1528,6 +1539,8 @@ impl Default for UiSettings {
             sound_welcome: true,
             start_swl: false,
             solar3d_window: None,
+            extras_window: None,
+            extras_os_window: None,
             client_share_bindings: false,
             client_bindings_declined: false,
             dismissed_advisories: 0,

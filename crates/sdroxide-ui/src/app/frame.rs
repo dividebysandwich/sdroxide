@@ -904,6 +904,7 @@ impl eframe::App for SdroxideApp {
                         self.top_bar(ui, &mut cmds);
                     });
                 });
+            self.top_bar_bottom = band_panel.response.rect.bottom();
             if let Some(slot) = band_slot {
                 let window = ctx.content_rect();
                 ui.painter().set(
@@ -1493,6 +1494,7 @@ impl eframe::App for SdroxideApp {
         self.weather_window(&ctx);
         self.poll_playback_list(&mut cmds);
         self.playback_window(&ctx, &mut cmds);
+        self.extras_window(&ctx, &mut cmds);
         self.help.ui(&ctx);
         // Last, so it lands on top of everything else that opened this frame.
         self.oob_tx_window(&ctx);
@@ -2392,7 +2394,11 @@ impl SdroxideApp {
         body: impl FnOnce(&mut Self, &mut egui::Ui),
     ) -> (bool, bool) {
         let mut win_open = true;
-        let win_id = crate::layout::salted_id(ctx, id).with(TOOL_WINDOW_EPOCH);
+        let place = self.tool_place.take();
+        let mut win_id = crate::layout::salted_id(ctx, id).with(TOOL_WINDOW_EPOCH);
+        if let Some(p) = place {
+            win_id = win_id.with(p.epoch);
+        }
         #[cfg_attr(target_arch = "wasm32", allow(unused))]
         let mut body_top = f32::NAN;
         let mut w = egui::Window::new(title)
@@ -2412,6 +2418,9 @@ impl SdroxideApp {
             // allocation), so a large window is merely large, not broken; this
             // just keeps it sane.
             .max_size(ctx.content_rect().size() * 0.95);
+        if let Some(p) = place {
+            w = w.default_pos(p.pos).default_size(p.size);
+        }
         if min_size[0] > 0.0 {
             w = w
                 .min_width(crate::layout::window_w(ctx, min_size[0]))
@@ -2440,6 +2449,7 @@ impl SdroxideApp {
         #[cfg_attr(target_arch = "wasm32", allow(unused))]
         let mut detach = false;
         if let Some(r) = &resp {
+            self.tool_rect = Some(r.response.rect);
             crate::chrome::paint_window_border(ctx, &r.response);
             #[cfg(not(target_arch = "wasm32"))]
             {
