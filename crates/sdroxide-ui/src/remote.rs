@@ -164,6 +164,40 @@ fn fresh_tail(pcm: &[f32]) -> &[f32] {
     &pcm[pcm.len().saturating_sub(RX_PLAYOUT_MAX)..]
 }
 
+/// What this client's own playout is thought to add between handing audio to
+/// the bridge and the sound leaving the speakers: the bridge's queue (the
+/// browser's worklet holds 60 ms or more) and the device. Not measurable from
+/// here, so it is a middle figure, and the slot bar is as late as it is wrong.
+const REMOTE_PLAYOUT_LATENCY_S: f64 = 0.1;
+
+/// Feed the audio just handed to the bridge to the frame gate, and say when its
+/// edges will be heard.
+///
+/// Taken from the audio this client plays rather than from anything the server
+/// sends: the sound the operator hears is the one that arrived here, however
+/// long it took, and no field on the wire could know how long that was.
+fn frame_edges(
+    gate: &mut Option<sdroxide_types::FrameGate>,
+    fed: &mut Option<f64>,
+    pcm: &[f32],
+) -> Vec<sdroxide_types::HeardEdge> {
+    let Some(gate) = gate.as_mut() else { return Vec::new() };
+    let now = crate::time::now_unix_f64();
+    // A stretch with no audio — our own over, a tab holding the page's one
+    // output — is not a stretch of quiet band.
+    if fed.is_some_and(|t| now - t > 0.5) {
+        gate.reset();
+    }
+    *fed = Some(now);
+    let mut found = Vec::new();
+    gate.process(pcm, &mut found);
+    let heard_end = now + pcm.len() as f64 / gate.rate() + REMOTE_PLAYOUT_LATENCY_S;
+    found
+        .into_iter()
+        .map(|e| sdroxide_types::HeardEdge { present: e.present, at: heard_end - e.ago_s })
+        .collect()
+}
+
 /// How many receive audio packets went missing between the last one seen and
 /// `seq`. The server numbers its packets consecutively, so the next one is
 /// `prev + 1`; anything skipped was dropped on the way. A repeat or a number
@@ -174,6 +208,94 @@ fn packets_skipped(prev: Option<u32>, seq: u32) -> u32 {
     let gap = seq.wrapping_sub(prev).wrapping_sub(1);
     // A forward gap is a small number; a backwards step wraps to a large one.
     if gap < u32::MAX / 2 { gap } else { 0 }
+}
+
+#[cfg(test)]
+mod heard_frame_tests {
+    use super::frame_edges;
+    use sdroxide_types::FrameGate;
+
+    /// Four seconds of tones, a second and a half of hiss, a second of tones —
+    /// an FT8 frame, its gap and the start of the next one — at 48 kHz.
+    fn audio() -> Vec<f32> {
+        let mut seed = 9u32;
+        let mut n = 0.0f64;
+        let mut all = Vec::new();
+        for (seconds, tones) in [(4.0, 0.3f32), (1.5, 0.0), (1.0, 0.3)] {
+            for _ in 0..(seconds * 48_000.0) as usize {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let hiss = ((seed >> 8) as f32 / (1u32 << 23) as f32 - 1.0) * 0.02;
+                n += 1.0;
+                let t = n / 48_000.0;
+                let tone: f32 = [900.0, 1_300.0, 1_700.0]
+                    .iter()
+                    .map(|f| (std::f64::consts::TAU * f * t).sin() as f32)
+                    .sum();
+                all.push(hiss + tones * tone * 0.3);
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn a_client_hears_the_gap_in_the_audio_it_plays() {
+        let mut gate = Some(FrameGate::new(48_000.0));
+        let mut fed = None;
+        let mut edges = Vec::new();
+        for b in audio().chunks(960) {
+            edges.extend(frame_edges(&mut gate, &mut fed, b));
+        }
+        assert_eq!(edges.iter().map(|e| e.present).collect::<Vec<_>>(), vec![false, true]);
+        assert!(edges[0].at < edges[1].at);
+    }
+
+    /// The sound is not heard when it is handed to the bridge but a little
+    /// later, after the bridge's queue: an edge found in the block just handed
+    /// over is stamped ahead of now, not at it.
+    #[test]
+    fn an_edge_is_stamped_for_when_the_playout_gets_to_it() {
+        let mut gate = Some(FrameGate::new(48_000.0));
+        let mut fed = None;
+        for b in audio().chunks(960) {
+            let before = crate::time::now_unix_f64();
+            let found = frame_edges(&mut gate, &mut fed, b);
+            if let Some(start) = found.iter().find(|e| e.present) {
+                let ahead = start.at - before;
+                assert!(ahead > 0.02 && ahead < 0.3, "stamped {ahead:.3} s from now");
+                return;
+            }
+        }
+        panic!("the next frame was never heard");
+    }
+
+    #[test]
+    fn a_stretch_with_no_audio_is_not_taken_for_quiet_band() {
+        let mut gate = Some(FrameGate::new(48_000.0));
+        let mut fed = Some(crate::time::now_unix_f64() - 30.0);
+        // Pretend the gate had learnt a frame level, then went unfed for 30 s
+        // (an over, or a tab holding the page's one output).
+        for b in audio().chunks(960).take(150) {
+            let _ = frame_edges(&mut gate, &mut fed, b);
+            fed = Some(crate::time::now_unix_f64());
+        }
+        fed = Some(crate::time::now_unix_f64() - 30.0);
+        // First blocks after the pause are hiss, as they would be in a gap:
+        // with the old level remembered they would be called a gap from the
+        // very first hop.
+        let hiss: Vec<f32> = audio()[4 * 48_000..4 * 48_000 + 9_600].to_vec();
+        let mut out = Vec::new();
+        for b in hiss.chunks(960) {
+            out.extend(frame_edges(&mut gate, &mut fed, b));
+        }
+        assert!(out.is_empty(), "the pause was heard as a gap: {out:?}");
+    }
+
+    #[test]
+    fn no_gate_no_edges() {
+        let mut gate = None;
+        let mut fed = None;
+        assert!(frame_edges(&mut gate, &mut fed, &audio()[..960]).is_empty());
+    }
 }
 
 #[cfg(test)]
@@ -220,6 +342,13 @@ pub struct RemoteController {
     /// Receive audio decoded in this poll, played in one go at its end — see
     /// [`fresh_tail`].
     rx_pcm: Vec<f32>,
+    /// Finds where the frames of a slotted mode start and stop in the audio
+    /// this client plays, for the slot bar. Present only in FT8, FT4 and FT2 —
+    /// see [`frame_edges`].
+    frame_gate: Option<sdroxide_types::FrameGate>,
+    /// When the gate last had audio, so the gap an over or a muted tab leaves
+    /// in it is not heard as a stretch of quiet band.
+    frame_gate_fed: Option<f64>,
     /// The number of the last receive audio packet seen, and how many the
     /// server numbered that never arrived — see [`packets_skipped`].
     rx_seq: Option<u32>,
@@ -365,6 +494,8 @@ impl RemoteController {
             auth: AuthPhase::Open,
             audio,
             rx_pcm: Vec::new(),
+            frame_gate: None,
+            frame_gate_fed: None,
             rx_seq: None,
             rx_lost: 0,
             pending: VecDeque::new(),
@@ -401,6 +532,19 @@ impl RemoteController {
     fn send_msg(&mut self, msg: ClientMsg) {
         if let Some(msg) = self.outbox.send(msg) {
             self.write(&msg);
+        }
+    }
+
+    /// Run the frame gate on the audio played, or stop. Only the slotted modes
+    /// ask for it: in a voice mode it would find an edge at every syllable.
+    fn watch_frames(&mut self, on: bool) {
+        match (on, self.frame_gate.is_some()) {
+            (true, false) => self.frame_gate = Some(sdroxide_types::FrameGate::new(48_000.0)),
+            (false, true) => {
+                self.frame_gate = None;
+                self.frame_gate_fed = None;
+            }
+            _ => {}
         }
     }
 
@@ -443,6 +587,12 @@ impl RemoteController {
             ServerMsg::AuthRejected(why) => self.auth = AuthPhase::Prompt(Some(why)),
             ServerMsg::State(s) => {
                 self.transmitting = s.tx.ptt || s.tx.tune;
+                self.watch_frames(matches!(
+                    s.rx[0].mode,
+                    sdroxide_types::Mode::Ft8
+                        | sdroxide_types::Mode::Ft4
+                        | sdroxide_types::Mode::Ft2
+                ));
                 self.pending.push_back(RadioEvent::State(s));
             }
             ServerMsg::Spectrum(f) => self.pending.push_back(RadioEvent::Spectrum(f)),
@@ -809,6 +959,8 @@ impl RadioController for RemoteController {
             if let Some(bridge) = self.audio.as_mut() {
                 bridge.play(pcm);
             }
+            let edges = frame_edges(&mut self.frame_gate, &mut self.frame_gate_fed, pcm);
+            self.pending.extend(edges.into_iter().map(RadioEvent::HeardFrame));
             self.rx_pcm.clear();
         }
         self.pump_mic();

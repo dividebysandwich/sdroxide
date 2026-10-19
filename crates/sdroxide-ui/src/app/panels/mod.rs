@@ -1486,6 +1486,12 @@ impl SdroxideApp {
     /// through, and a bar that crept across a PSK panel would be measuring
     /// something that does not exist.
     pub(in crate::app) fn slot_progress(&self, ui: &mut egui::Ui) {
+        self.slot_progress_at(ui, crate::time::now_unix_f64());
+    }
+
+    /// [`Self::slot_progress`] at a given instant, so the bar can be asked
+    /// about a moment the test chose rather than the one it happened to run in.
+    pub(in crate::app) fn slot_progress_at(&self, ui: &mut egui::Ui, now: f64) {
         let Some(t) = self.slot_timing() else { return };
         // No engine anchor: only WSPR's status carries the slot it is working
         // on. A slot is a fixed block of UTC counted from the epoch, so this
@@ -1500,7 +1506,20 @@ impl SdroxideApp {
         } else {
             self.digi_status.as_ref().and_then(|s| s.clock_offset_s)
         };
-        let into = widgets::slot_phase_heard_s(crate::time::now_unix_f64(), t.slot_s, heard);
+        // FT8, FT4 and FT2 follow what is heard: white while a frame sounds,
+        // green from the moment it stops. Where the sound has nothing clear to
+        // say — a quiet band, QRM through the gap — the clock's bar carries on.
+        if !transmitting && matches!(self.state.rx[0].mode, Mode::Ft8 | Mode::Ft4 | Mode::Ft2) {
+            if let Some(followed) = self.slot_follow.view(&t, now) {
+                widgets::slot_bar_heard(ui, t, followed).on_hover_text(
+                    "Follows the sound in the speakers: white while a frame is heard, green \
+                     once it has stopped, and back to the start when the next one begins. \
+                     The times are the mode's, so a frame that runs short still fills the bar.",
+                );
+                return;
+            }
+        }
+        let into = widgets::slot_phase_heard_s(now, t.slot_s, heard);
         let state = if transmitting {
             widgets::SlotState::Transmitting
         } else {

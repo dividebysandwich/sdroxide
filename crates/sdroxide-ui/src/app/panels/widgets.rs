@@ -355,13 +355,63 @@ pub(in crate::app) fn slot_phase_heard_s(now: f64, slot_s: f64, offset_s: Option
     slot_phase_s(now - offset_s.unwrap_or(0.0) as f64, slot_s, 0)
 }
 
-/// Where the closing stretch of an FT8 cycle begins, as a fraction of the slot.
+/// Where the closing stretch of an FT8, FT4 or FT2 cycle begins, as a fraction
+/// of the slot.
 ///
-/// The bar turns green from the end of the 12.64 s burst to the end of the 15 s
-/// slot. It marks the end of the cycle and says nothing about how long a decode
-/// takes. Only FT8's slot has it: the other slotted modes keep one colour.
+/// The bar turns green from the end of the burst — 12.64 s of FT8's 15, 4.48 s
+/// of FT4's 7.5, 2.52 s of FT2's 3.75 — to the end of the slot. It marks the end
+/// of the cycle and says nothing about how long a decode takes. The other
+/// slotted modes keep one colour.
 pub(in crate::app) fn slot_green_start_frac(t: SlotTiming) -> Option<f32> {
-    (t.slot_s == 15.0 && t.burst_s == 12.64).then(|| (t.burst_s / t.slot_s) as f32)
+    const FRAMED: [(f64, f64); 3] = [(15.0, 12.64), (7.5, 4.48), (3.75, 2.52)];
+    FRAMED.contains(&(t.slot_s, t.burst_s)).then(|| (t.burst_s / t.slot_s) as f32)
+}
+
+/// The slot bar for a mode whose frames are being followed by ear.
+///
+/// White while a frame is sounding, green from the moment it stops until the
+/// next one starts: the bar is where the sound is, not where the clock says it
+/// should be, and the two halves are the burst's and the gap's shares of the
+/// slot whatever the real frame lasted. The dim cyan of [`slot_bar`] means the
+/// clock is doing the work; this is the colour of the sound doing it.
+pub(in crate::app) fn slot_bar_heard(
+    ui: &mut egui::Ui,
+    t: SlotTiming,
+    heard: sdroxide_types::Followed,
+) -> egui::Response {
+    let (bar, resp) = slot_track(ui, t);
+    let p = ui.painter_at(bar);
+    let fill_to = |frac: f32| {
+        let mut r = bar;
+        r.set_width(bar.width() * frac.clamp(0.0, 1.0));
+        r
+    };
+    p.rect_filled(fill_to(heard.frac.min(heard.split)), 0.0, crate::theme::gray(235));
+    if heard.quiet {
+        let from = bar.left() + bar.width() * heard.split;
+        let to = bar.left() + bar.width() * heard.frac.clamp(0.0, 1.0);
+        p.rect_filled(
+            egui::Rect::from_min_max(egui::pos2(from, bar.top()), egui::pos2(to, bar.bottom())),
+            0.0,
+            crate::theme::GREEN(),
+        );
+    }
+    resp
+}
+
+/// The empty track of a slot bar, the frames it asks for, and the response to
+/// hang hover text on.
+fn slot_track(ui: &mut egui::Ui, t: SlotTiming) -> (egui::Rect, egui::Response) {
+    // The bar moves on the wall clock rather than on anything arriving, so it
+    // has to ask for its own frames. About a four-hundredth of the bar per
+    // frame is enough to read as moving without asking a phone to redraw the
+    // panel sixty times a second for a strip five pixels tall.
+    let step_ms = (t.slot_s * 1000.0 / 400.0).clamp(80.0, 250.0);
+    crate::repaint::after_ms(ui.ctx(), step_ms as u64);
+    let (bar, resp) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 5.0), egui::Sense::hover());
+    ui.painter_at(bar).rect_filled(bar, 0.0, crate::theme::gray(24));
+    (bar, resp)
 }
 
 /// The slot clock: how far through its turn this station is, whichever way
@@ -383,17 +433,8 @@ pub(in crate::app) fn slot_bar(
     into_slot: f64,
     state: SlotState,
 ) -> egui::Response {
-    // The clock runs on the wall clock rather than on anything arriving, so the
-    // bar has to ask for its own frames. About a four-hundredth of the bar per
-    // frame is enough to read as moving without asking a phone to redraw the
-    // panel sixty times a second for a strip five pixels tall.
-    let step_ms = (t.slot_s * 1000.0 / 400.0).clamp(80.0, 250.0);
-    crate::repaint::after_ms(ui.ctx(), step_ms as u64);
-
-    let (bar, resp) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 5.0), egui::Sense::hover());
+    let (bar, resp) = slot_track(ui, t);
     let p = ui.painter_at(bar);
-    p.rect_filled(bar, 0.0, crate::theme::gray(24));
 
     let frac = (into_slot / t.slot_s).clamp(0.0, 1.0) as f32;
     let tail_from = slot_green_start_frac(t);
@@ -603,11 +644,12 @@ mod tests {
 
     fn bar_fills(into_s: f64, t: SlotTiming) -> Vec<(egui::Rect, Color32)> {
         let ctx = egui::Context::default();
-        let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             slot_bar(ui, t, into_s, SlotState::Listening);
         });
-        let mut fills: Vec<_> = out
-            .shapes
+        let shapes = std::mem::take(&mut out.shapes);
+        out.drop_without_applying_deltas();
+        let mut fills: Vec<_> = shapes
             .iter()
             .filter_map(|c| match &c.shape {
                 egui::Shape::Rect(r) if r.rect.height() == 5.0 => Some((r.rect, r.fill)),
@@ -620,12 +662,16 @@ mod tests {
     }
 
     #[test]
-    fn only_the_ft8_slot_has_a_green_tail() {
+    fn the_ft_family_has_a_green_tail_and_nothing_else_does() {
         let ft8 = Mode::Ft8.slot_timing().unwrap();
         assert!((slot_green_start_frac(ft8).unwrap() - 12.64 / 15.0).abs() < 1e-6);
-        assert_eq!(slot_green_start_frac(Mode::Ft4.slot_timing().unwrap()), None);
-        assert_eq!(slot_green_start_frac(Mode::Ft2.slot_timing().unwrap()), None);
+        for mode in [Mode::Ft4, Mode::Ft2] {
+            let t = mode.slot_timing().unwrap();
+            let g = slot_green_start_frac(t).unwrap_or_else(|| panic!("{mode:?} has no tail"));
+            assert!((g - (t.burst_s / t.slot_s) as f32).abs() < 1e-6, "{mode:?}: {g}");
+        }
         assert_eq!(slot_green_start_frac(wspr()), None);
+        assert_eq!(slot_green_start_frac(Mode::Pi4.slot_timing().unwrap()), None);
     }
 
     #[test]
@@ -655,8 +701,62 @@ mod tests {
 
     #[test]
     fn other_slots_stay_one_colour() {
-        let t = Mode::Ft4.slot_timing().unwrap();
+        let t = wspr();
         assert_eq!(bar_fills(t.slot_s * 0.95, t).len(), 1);
+    }
+
+    #[test]
+    fn the_clocks_bar_has_the_same_tail_on_ft4_and_ft2() {
+        for mode in [Mode::Ft4, Mode::Ft2] {
+            let t = mode.slot_timing().unwrap();
+            let after = bar_fills(t.slot_s * 0.97, t);
+            assert_eq!(after.len(), 2, "{mode:?}: no green after the burst");
+            assert_eq!(after[1].1, crate::theme::GREEN());
+        }
+    }
+
+    fn heard_fills(heard: sdroxide_types::Followed, t: SlotTiming) -> Vec<(egui::Rect, Color32)> {
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            slot_bar_heard(ui, t, heard);
+        });
+        let shapes = std::mem::take(&mut out.shapes);
+        out.drop_without_applying_deltas();
+        let mut fills: Vec<_> = shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Rect(r) if r.rect.height() == 5.0 => Some((r.rect, r.fill)),
+                _ => None,
+            })
+            .collect();
+        fills.remove(0); // the track
+        fills
+    }
+
+    #[test]
+    fn the_heard_bar_is_white_while_a_frame_sounds_and_only_white() {
+        let t = Mode::Ft8.slot_timing().unwrap();
+        let split = (t.burst_s / t.slot_s) as f32;
+        let fills =
+            heard_fills(sdroxide_types::Followed { frac: split * 0.5, split, quiet: false }, t);
+        assert_eq!(fills.len(), 1, "{fills:?}");
+        assert_eq!(fills[0].1, crate::theme::gray(235));
+        let track = fills[0].0.width() / (split * 0.5);
+        assert!((fills[0].0.width() / track - split * 0.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_heard_bar_turns_green_the_moment_the_sound_stops() {
+        let t = Mode::Ft8.slot_timing().unwrap();
+        let split = (t.burst_s / t.slot_s) as f32;
+        // Right at the change: the white is full and the green has just begun —
+        // however little of the 12.64 s the clock thinks has gone by.
+        let fills =
+            heard_fills(sdroxide_types::Followed { frac: split + 0.02, split, quiet: true }, t);
+        assert_eq!(fills.len(), 2, "{fills:?}");
+        assert_eq!(fills[0].1, crate::theme::gray(235));
+        assert_eq!(fills[1].1, crate::theme::GREEN());
+        assert!((fills[0].0.right() - fills[1].0.left()).abs() < 1e-3, "no gap between the two");
     }
 }
 

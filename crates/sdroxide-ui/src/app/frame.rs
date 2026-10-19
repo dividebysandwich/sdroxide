@@ -3412,6 +3412,11 @@ impl SdroxideApp {
                         }
                     }
                 }
+                RadioEvent::HeardFrame(edge) => {
+                    if let Some(t) = self.slot_timing() {
+                        self.slot_follow.edge(&t, edge);
+                    }
+                }
                 RadioEvent::Qo100Status(st) => self.qo100_status = Some(st),
                 RadioEvent::HfdlStatus(st) => {
                     // Feed the map's plot table before the log scrolls anything
