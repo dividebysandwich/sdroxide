@@ -2683,6 +2683,26 @@ are the cheap thing to delete because relinking is seconds.
 NEC-style solver validated against a published OWA Yagi design, ground models, an
 SVG pattern preview) — it has no AGENTS record at all, which is exactly why it
 must not be deleted on a housekeeping pass: it is work, not history.
+**The reference the operator sent for it (2026-10-19):
+`https://summitradiodesigns.com/`** — a browser-only NEC2++ antenna studio
+(KE2GYH). What is worth taking is the *approach*, because the operator's reason
+for sending it is the thing to copy: **"people love it for its simplicity, even
+a layman can use it."** Three things about how it does that:
+
+* **One screen, two panes.** A setup form on the left, the result on the right,
+  and three numbers across the top — feed height, peak gain, peak elevation.
+  Nothing is behind a menu that a first-time visitor needs.
+* **It says what it does not do.** The model notes are a `<details>` block
+  naming the ground presets, the segment limits, and plainly that the checks are
+  "numerical, not measured hardware validation" — the same discipline this
+  project's handovers keep.
+* **Browser-only, no account, no calculation server**, which is the offline rule
+  in this file seen from the user's side.
+
+Its palette is now the **Calmer** theme and a waterfall scheme of the same name.
+**No licence is stated on the site**, so it is a reference for the interaction
+and nothing else — no code, no solver, no assets.
+
 `claude/funny-wright-aujoii` is remote-only, one commit (a probe that lists a DAB
 capture's FIC data services) on a base 25,000 lines behind `main`. **Both stay, by
 the operator's word on 2026-10-18: the DAB probe is Kevin's and is not to be
