@@ -1855,8 +1855,12 @@ use sdroxide_types::{
 /// already carries. A sender whose clock differs from ours draws the glyphs
 /// leaning, and re-framing cannot straighten them. `PROTO_VERSION` 213 → 214,
 /// `VERSION_BYTE` 0x21 → 0x22. A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 214;
-const VERSION_BYTE: u8 = 0x22;
+/// v215: [`sdroxide_types::DigiConfig`] gains `psk_speed` at its tail — PSK31's
+/// four symbol rates, which were a compile-time constant until now and so could
+/// not be tuned to at all. `PROTO_VERSION` 214 → 215, `VERSION_BYTE` 0x22 → 0x23.
+/// A downstream (fork) change.
+pub const PROTO_VERSION: u16 = 215;
+const VERSION_BYTE: u8 = 0x23;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

@@ -167,13 +167,13 @@ pub use digi::{
     FoxCaller, FsqHeard, FsqMsg, Ft8Depth, HOUND_ZONE_MAX_HZ, HellVariant, NAVTEX_MESSAGE_MAX,
     NAVTEX_TONE_HZ, NavtexMessage, NavtexStatus, PACKET_HEARD_MAX, PACKET_TERM_LINE_MAX,
     PACKET_TERM_MAX, PacketBaud, PacketHeard, PacketLink, PacketLinkOwner, PacketStatus,
-    PacketTermKind, PacketTermLine, QsoLive, QsoRecord, QsoStep, QueuedCall, RTTY_CENTER_HZ,
-    RadeStatus, SstvStyle, TX_AUDIO_LEVEL_MIN, TX_AUDIO_LEVEL_MIN_DB, ThorMode, TranscriptLine,
-    WsprRadio, adif_band, adif_records, adif_to_qso_log, adif_to_qso_log_counting_swl,
-    clock_health, cq_is_for_us, digi_decode_to_adif_record, digi_decodes_to_adif,
-    digi_decodes_to_csv, eu_vhf_rs, fmt_report, next_contest_serial, qso_log_to_adif,
-    qso_log_to_text, qso_to_adif_record, tx_level_db, tx_level_from_db, utc_ymd_hms, worked_before,
-    ymd_hms_to_unix,
+    PacketTermKind, PacketTermLine, PskSpeed, QsoLive, QsoRecord, QsoStep, QueuedCall,
+    RTTY_CENTER_HZ, RadeStatus, SstvStyle, TX_AUDIO_LEVEL_MIN, TX_AUDIO_LEVEL_MIN_DB, ThorMode,
+    TranscriptLine, WsprRadio, adif_band, adif_records, adif_to_qso_log,
+    adif_to_qso_log_counting_swl, clock_health, cq_is_for_us, digi_decode_to_adif_record,
+    digi_decodes_to_adif, digi_decodes_to_csv, eu_vhf_rs, fmt_report, next_contest_serial,
+    qso_log_to_adif, qso_log_to_text, qso_to_adif_record, tx_level_db, tx_level_from_db,
+    utc_ymd_hms, worked_before, ymd_hms_to_unix,
 };
 pub use drm::{
     DrmChannel, DrmCodec, DrmConstellation, DrmRobustness, DrmService, DrmStatus, DrmSync, DrmTime,
@@ -340,9 +340,9 @@ pub use tciserver::TciServerConfig;
 pub use tone::{CTCSS_TONES, SubTone};
 pub use ui::{
     BandplanKind, BroadcastScope, ChromeStyle, ClassicSection, ClientAcks, ClientScreen,
-    DetachableModule,
-    DetachedState, DetachedWindow, FontSize, LayoutMode, MapStyle, SmeterStyle, Solar3dWindow,
-    SpectrumDetail, SpectrumFillStyle, Speed, UiSettings, UiTheme, WORKSPACE_MAX, Workspace,
+    DetachableModule, DetachedState, DetachedWindow, FontSize, LayoutMode, MapStyle, SmeterStyle,
+    Solar3dWindow, SpectrumDetail, SpectrumFillStyle, Speed, UiSettings, UiTheme, WORKSPACE_MAX,
+    Workspace,
 };
 pub use ui::{force_swl, set_force_swl};
 pub use uvpacket::{

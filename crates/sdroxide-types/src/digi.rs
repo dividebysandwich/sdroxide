@@ -1264,7 +1264,49 @@ pub fn worked_before(
     })
 }
 
-/// Operator configuration for digital-mode operation. Persisted engine-side,
+/// PSK31's speed.
+///
+/// The family is one modulation — differential BPSK — at four symbol rates, and
+/// nothing else changes between them: the Varicode, the differential encoding
+/// and the idle reversals are the same at 31 baud and at 250.
+///
+/// QPSK is deliberately *not* here. It is not a fourth speed but a different
+/// mode: the PSK31-family QPSK carries a rate-1/2 convolutional code, so it
+/// needs a Viterbi decoder and the interleaver before a constellation alone
+/// would mean anything. The wide spectrum modes (`QPSK` in the corpus) are
+/// therefore still not tunable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PskSpeed {
+    #[default]
+    Bps31,
+    Bps63,
+    Bps125,
+    Bps250,
+}
+
+impl PskSpeed {
+    pub const ALL: [PskSpeed; 4] =
+        [PskSpeed::Bps31, PskSpeed::Bps63, PskSpeed::Bps125, PskSpeed::Bps250];
+
+    pub fn baud(self) -> f64 {
+        match self {
+            PskSpeed::Bps31 => 31.25,
+            PskSpeed::Bps63 => 62.5,
+            PskSpeed::Bps125 => 125.0,
+            PskSpeed::Bps250 => 250.0,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PskSpeed::Bps31 => "BPSK31",
+            PskSpeed::Bps63 => "BPSK63",
+            PskSpeed::Bps125 => "BPSK125",
+            PskSpeed::Bps250 => "BPSK250",
+        }
+    }
+}
+
 /// THOR (DominoEX-family) submode: sets the symbol rate. All use 18 tones with
 /// incremental frequency keying (IFK+) and convolutional FEC.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -2360,6 +2402,14 @@ pub struct DigiConfig {
     /// Appended last, so this is a wire change (`PROTO_VERSION` 213 → 214).
     #[serde(default)]
     pub hell_slant_ppm: f32,
+    /// PSK: the symbol rate. Differential BPSK at 31.25 baud is PSK31, and the
+    /// other three are the same modem run faster — the operator has to say
+    /// which, because nothing in the signal says it and a decoder tuned to the
+    /// wrong rate hears nothing at all.
+    ///
+    /// Appended last, so this is a wire change (`PROTO_VERSION` 214 → 215).
+    #[serde(default)]
+    pub psk_speed: PskSpeed,
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2611,6 +2661,7 @@ impl Default for DigiConfig {
             ft8_depth: Ft8Depth::default(),
             sstv_keep_dial: false,
             hell_slant_ppm: 0.0,
+            psk_speed: PskSpeed::default(),
         }
     }
 }

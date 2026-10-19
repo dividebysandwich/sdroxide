@@ -643,11 +643,13 @@ impl SdroxideApp {
     /// Mode-specific parameter buttons for the continuous keyboard modes, shown
     /// inline in the panel header next to the tune buttons (moved here from the
     /// setup dialog). Edits the UI-owned config copy and pushes it on change.
-    /// PSK has no parameters, so nothing is drawn.
+    ///
+    /// PSK is here for its symbol rate alone — the four speeds are one modem and
+    /// nothing else differs between them — and RTTY, Olivia and THOR for theirs.
     fn text_modem_params_row(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let mode = self.state.rx[0].mode;
-        if !matches!(mode, Mode::Rtty | Mode::RttyFm | Mode::Olivia | Mode::Thor) {
-            return; // PSK (and anything else) has no per-mode settings
+        if !matches!(mode, Mode::Psk | Mode::Rtty | Mode::RttyFm | Mode::Olivia | Mode::Thor) {
+            return; // anything else has no per-mode settings
         }
         fn cap(ui: &mut egui::Ui, text: &str) {
             ui.label(RichText::new(text).size(10.5).strong().color(crate::theme::CYAN_DIM()));
@@ -753,6 +755,24 @@ impl SdroxideApp {
                     for m in sdroxide_types::ThorMode::ALL {
                         if ui.selectable_label(cfg.thor_mode == m, m.label()).clicked() {
                             cfg.thor_mode = m;
+                            changed = true;
+                        }
+                    }
+                }
+                Mode::Psk => {
+                    // Nothing in the signal says which speed it is, so the
+                    // operator has to — and a decoder tuned to the wrong one
+                    // hears nothing at all rather than something wrong.
+                    cap(ui, "Speed");
+                    for sp in sdroxide_types::PskSpeed::ALL {
+                        let sel = cfg.psk_speed == sp;
+                        if ui
+                            .selectable_label(sel, sp.label())
+                            .on_hover_text(format!("{:.1} baud", sp.baud()))
+                            .clicked()
+                            && !sel
+                        {
+                            cfg.psk_speed = sp;
                             changed = true;
                         }
                     }
