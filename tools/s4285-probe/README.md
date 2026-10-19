@@ -126,12 +126,14 @@ what has to match is the data.
 | clock error | frame found | data |
 |---|---|---|
 | 0 ppm | R = 1.000 | exact |
-| 100 ppm | R = 1.000 | 3 and 8 symbols of 128 wrong |
-| 1000 ppm | R = 1.000 | fails |
-| 5000 ppm | R = 0.997 | fails |
+| 300 ppm | R = 1.000 | decision error 0.18 rad, no exact frame |
+| 1000 ppm | R = 1.000 | decision error 0.18 rad, no exact frame |
+| 5000 ppm | R = 0.997 | no exact frame |
 
-The frame lock is robust; the *data* is not, because the sampling instant is
-quantised to one of eight samples per symbol and there is no fractional timing
-recovery. That is the gap between this probe and a decoder that works on a
-recording, and it is ordinary receiver engineering rather than a question about
-the standard: interpolate to a fractional instant, and track it per frame.
+The frame lock is robust at every rate tried. The data now samples a fractional
+instant — interpolated, not one of eight whole samples — and a per-frame timing
+search picks it, which is what a receiver needs. What still degrades is the
+*resampling*: the probe's `demod` uses linear interpolation, which is not a good
+enough resampler for a band-limited signal at a few hundred ppm, and the decision
+error roughly doubles there. That is a probe limitation with a known fix (a
+polyphase or cubic resampler), not a property of the mode.

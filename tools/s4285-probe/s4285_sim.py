@@ -150,22 +150,29 @@ def find_frame(sym):
     return best
 
 
-def decode_frames(sym, start, sub, w, frames):
-    """Descramble and slice each frame; returns the received data symbols."""
+def decode_frames(sym8, start_sample, w, tau, frames):
+    """Sample a fractional instant, descramble, and slice each frame.
+
+    `sym8` is the baseband at SPS samples per symbol. The sampling instant is
+    `start + k*SPS + tau*SPS`, interpolated: a receiver that can only sample on
+    whole samples is limited to one of eight phases per symbol, which is why the
+    integer version fell apart at a few hundred ppm of clock error.
+    """
     scr = scrambler_phase()
     term = np.ones(FRAME, dtype=complex)
     term[SYNC:] = np.conj(scr)
     rp, dp = ref_positions(), data_positions()
     t = np.arange(FRAME) / BAUD
-    s = sym[sub::SPS]
     out = []
     for f in range(frames):
-        st = start + f * FRAME
-        if st + FRAME > len(s):
+        base = start_sample + f * FRAME * SPS + tau * SPS
+        pos = base + np.arange(FRAME) * SPS
+        if pos[-1] >= len(sym8) or pos[0] < 0:
             break
-        z = s[st:st + FRAME] * term * np.exp(-2j * np.pi * w * t)
-        ref = z[SYNC + rp]
-        rot = np.exp(-1j * np.angle(np.sum(ref)))
+        z = (np.interp(pos, np.arange(len(sym8)), sym8.real)
+             + 1j * np.interp(pos, np.arange(len(sym8)), sym8.imag))
+        z = z * term * np.exp(-2j * np.pi * w * t)
+        rot = np.exp(-1j * np.angle(np.sum(z[SYNC + rp])))
         out.append(z[SYNC + dp] * rot)
     return out
 
@@ -181,6 +188,7 @@ def decision_error(frames_data):
 
 def main():
     centre, rate, ppm, snr = 1800.0, 12000.0, 0.0, 40.0
+    write = None
     args = sys.argv[1:]
     for i, a in enumerate(args):
         if a == "--centre":
@@ -191,6 +199,8 @@ def main():
             ppm = float(args[i + 1])
         elif a == "--snr":
             snr = float(args[i + 1])
+        elif a == "--write":
+            write = args[i + 1]
 
     rng = np.random.default_rng(7)
     frames = 4
@@ -202,6 +212,17 @@ def main():
     print(f"modulated {frames} frames: {len(audio)/rate_in:.3f}s at {rate_in:.0f} Hz, "
           f"SNRa {snr:.0f} dB, clock {ppm:+.0f} ppm")
 
+    if write:
+        import wave
+        pcm = (np.clip(audio, -1, 1) * 32767).astype("<i2")
+        w = wave.open(write, "wb")
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(int(round(rate_in)))
+        w.writeframes(pcm.tobytes())
+        w.close()
+        print(f"wrote {write}")
+
     sym = demod(audio, rate_in, centre)
     r, where = find_frame(sym)
     if where is None:
@@ -211,35 +232,27 @@ def main():
     print(f"frame found with R = {r:.3f} at start {start}, sub-phase {sub}, offset {w:+.0f} Hz "
           f"(noise ~0.14)")
 
-    # Timing, then. The sixteen reference symbols in a row all carry the same
-    # phase, so they say nothing about *where* inside a symbol to sample — any
-    # instant across them looks equally good, and the search above will happily
-    # pick a boundary. The data does say, so the sub-phase is chosen by how
-    # tightly its symbols land on constellation points.
-    scores = [(decision_error(decode_frames(sym, start, x, w, frames)), x) for x in range(SPS)]
-    scores.sort()
-    if scores[0][1] != sub:
-        print(f"timing: sub-phase {sub} -> {scores[0][1]} "
-              f"(decision error {scores[0][0]:.3f} rad vs "
-              f"{decision_error(decode_frames(sym, start, sub, w, frames)):.3f})")
-        sub = scores[0][1]
-    else:
-        print(f"timing: sub-phase {sub} is best (decision error {scores[0][0]:.3f} rad)")
+    # Timing, then. Sixteen reference symbols in a row all carry the same phase,
+    # so they say nothing about *where* inside a symbol to sample — the search
+    # above scores best when it lands on a boundary. The data does say, and the
+    # instant is interpolated rather than chosen from the eight whole samples.
+    start_sample = start * SPS + sub
+    taus = np.arange(-0.5, 0.5001, 0.05)
+    errs = [decision_error(decode_frames(sym, start_sample, w, tau, frames)) for tau in taus]
+    tau = float(taus[int(np.argmin(errs))])
+    print(f"timing: tau {tau:+.2f} samples, decision error {min(errs):.3f} rad")
 
-    got = decode_frames(sym, start, sub, w, frames)
+    got = decode_frames(sym, start_sample, w, tau, frames)
     dp = data_positions()
     ok = 0
     for f, d in enumerate(got):
         g = np.round(np.angle(d) / (np.pi / 4)).astype(int) % 8
-        # Every frame carries the same reference symbols, so finding *a* frame
-        # boundary says nothing about which frame it is. What must match is the
-        # data, so each decoded frame is compared against every frame sent.
-        hits = [i for i, s_ in enumerate(sent) if np.array_equal(g, s_[dp])]
+        hits = [i2 for i2, s_ in enumerate(sent) if np.array_equal(g, s_[dp])]
         if hits:
             ok += 1
         else:
-            near = min(sent, key=lambda s_: np.sum(np.round(np.angle(
-                np.exp(1j * np.pi / 4 * s_[dp]))) != g))
+            near = min(sent, key=lambda s_: np.sum(
+                np.round(np.angle(np.exp(1j * np.pi / 4 * s_[dp]))) != g))
             print(f"  frame {f}: {np.sum(g != near[dp])} of {len(dp)} symbols wrong")
     print(f"frames decoded exactly: {ok} of {len(got)}")
     return 0 if ok == len(got) else 1
