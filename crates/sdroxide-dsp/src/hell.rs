@@ -51,6 +51,42 @@ const RX_TAPS: usize = 65;
 /// Dot columns the receive AGC's peak decays over.
 const AGC_COLUMNS: f32 = 8.0;
 
+/// Print sync: how the receiver finds where the sender's character cell starts.
+///
+/// Hell carries no frame sync, so a receiver that counts dots from whenever it
+/// was started paints the cell at an arbitrary phase and every glyph is split
+/// across the join between two print copies. The signal carries the answer
+/// anyway: every on-air font leaves a blank pixel above and below the glyph, and
+/// because the bottom padding is sent first and the top padding last, those two
+/// blanks are *adjacent* in the cyclic element order. They form a run of four
+/// quiet element positions, and the cell boundary sits a fixed distance from it.
+///
+/// The numbers below are the same ones `lu1aat/hellschreiber2026` arrived at
+/// (MIT), measured against off-air recordings: band noise scores 0.03–0.06, a
+/// clean machine clip 0.87, a real 80 m QSO through QSB 0.84.
+const PHASE_COLS: f32 = 80.0;
+/// Below this the "gap" is noise shaped by the AGC, and following it would make
+/// the picture wander while the band is empty.
+const PHASE_MIN_CONF: f32 = 0.2;
+/// How much quieter a candidate must be before the picture is moved. Without it
+/// the estimate flips between near-equal candidates and the text twitches.
+const PHASE_MARGIN: f32 = 0.15;
+/// Element positions in the blank run: the padding above and below, doubled.
+const GAP_LANES: usize = 4;
+/// Where that run starts within a cell: the bottom padding is sent first.
+const GAP_OFFSET: usize = 12;
+/// Signal-bearing columns needed before the picture may be moved at all. One
+/// column cannot locate a gap: a single character's blank lanes look like the
+/// inter-line gap wherever they happen to fall, and acting on that walks the
+/// picture across the screen during the first moments of every over.
+const PHASE_MIN_COLS: u32 = 4;
+/// Mean ink a column must carry before it is allowed to teach the tracker. An
+/// empty band is not neutral evidence: the shade function returns exact zeros
+/// between dots, so silence scores a perfect gap on the quietest four lanes and
+/// the picture would chase it. Only a column with signal in it says anything
+/// about where the sender's cell starts.
+const PHASE_MIN_INK: f32 = 0.02;
+
 /// The dot columns `text` will be sent as, bit 0 = the top row.
 ///
 /// Exposed for the panel's transmit preview and for the loopback tests: it is
@@ -334,8 +370,22 @@ pub struct HellRx {
     fsk_n: u32,
     prev: Complex32,
 
-    row: usize,
     col: Vec<u8>,
+
+    /// Per-element-position ink, for print sync. One bin is updated once per
+    /// column, so the time constant is in columns rather than samples.
+    phase_bins: [f32; ROWS],
+    phase_alpha: f32,
+    /// Dots seen since the last retune; indexes `phase_bins` and `col`, so both
+    /// are keyed by the receiver's own arbitrary phase and the picture is
+    /// rotated into place when it is emitted.
+    dots: u64,
+    /// Signal-bearing columns folded into `phase_bins` since the last retune.
+    phase_cols: u32,
+    /// Set once the boundary has been adopted. See `track_sync`.
+    locked: bool,
+    /// The cell start the raster is currently drawn at, 0..ROWS.
+    sync: usize,
 
     agc_peak: f32,
     floor: f32,
@@ -367,8 +417,13 @@ impl HellRx {
             fsk_acc: 0.0,
             fsk_n: 0,
             prev: Complex32::default(),
-            row: 0,
             col: vec![0; ROWS],
+            phase_bins: [0.0; ROWS],
+            phase_alpha: 1.0 - (-1.0 / PHASE_COLS).exp(),
+            dots: 0,
+            phase_cols: 0,
+            locked: false,
+            sync: 0,
             agc_peak: 1e-3,
             floor: 0.0,
             level: 0.0,
@@ -410,8 +465,12 @@ impl HellRx {
         self.peak_acc = 0.0;
         self.fsk_acc = 0.0;
         self.fsk_n = 0;
-        self.row = 0;
         self.col.iter_mut().for_each(|v| *v = 0);
+        self.phase_bins = [0.0; ROWS];
+        self.dots = 0;
+        self.phase_cols = 0;
+        self.locked = false;
+        self.sync = 0;
     }
 
     /// Smoothed detector magnitude, for the decode squelch and the tuning
@@ -421,7 +480,9 @@ impl HellRx {
     }
 
     /// Push audio at the construction rate; append one gray byte per received
-    /// dot (0 = black … 255 = white). Fourteen consecutive bytes are one column.
+    /// dot (0 = black … 255 = white). Fourteen consecutive bytes are one column,
+    /// emitted from the character-cell boundary the print-sync tracker has
+    /// found, so the caller never has to search for it.
     pub fn process(&mut self, audio: &[f32], out: &mut Vec<u8>) {
         let dph = -TAU * self.carrier_hz / self.rate;
         self.fir_in.clear();
@@ -487,11 +548,35 @@ impl HellRx {
             };
             self.peak_acc = 0.0;
 
-            self.col[self.row] = (v * 255.0) as u8;
-            self.row += 1;
-            if self.row >= ROWS {
-                self.row = 0;
+            // Two indexes, and they are not the same thing. `lane` is the
+            // receiver's own count, which is what the sync estimate is measured
+            // in; `cell` is the position within the sender's character, which
+            // is `lane` shifted by the boundary the tracker has found. Collect
+            // by `cell`, so the fourteen dots in hand are always one whole
+            // character and never straddle two — rotating a straddling window
+            // would preserve the mixture, not undo it.
+            let lane = (self.dots % ROWS as u64) as usize;
+            let cell = (lane + ROWS - self.sync) % ROWS;
+            self.col[cell] = (v * 255.0) as u8;
+            self.dots += 1;
+            if cell + 1 == ROWS {
+                // One lane is visited once per column, so folding a whole column
+                // is the same as updating each lane as it arrives. The bins are
+                // keyed by `lane`, so the estimate keeps its own frame of
+                // reference however the picture is currently drawn.
+                let mut ink = 0.0;
+                for (i, &px) in self.col.iter().enumerate() {
+                    ink += px as f32;
+                    let lane = (i + self.sync) % ROWS;
+                    self.phase_bins[lane] +=
+                        (px as f32 / 255.0 - self.phase_bins[lane]) * self.phase_alpha;
+                }
+                if ink / (ROWS as f32 * 255.0) > PHASE_MIN_INK {
+                    self.phase_cols += 1;
+                }
+                // Collected from the cell boundary, so it goes out as it stands.
                 out.extend_from_slice(&self.col);
+                self.track_sync();
             }
         }
 
@@ -499,6 +584,57 @@ impl HellRx {
         fir_out.clear();
         self.fir_in = fir_in;
         self.fir_out = fir_out;
+    }
+
+    /// Ink in the `GAP_LANES` element positions starting at `start`, cyclically.
+    fn gap_ink(&self, start: usize) -> f32 {
+        (0..GAP_LANES).map(|k| self.phase_bins[(start + k) % ROWS]).sum()
+    }
+
+    /// The cell start implied by the ink seen so far, and how pronounced the
+    /// inter-line gap is. A confidence of 0 means every element position is
+    /// equally inked — no signal, or a sender whose font has no padding.
+    fn estimate_sync(&self) -> (usize, f32) {
+        let total: f32 = self.phase_bins.iter().sum();
+        let mut quietest = 0usize;
+        let mut least = f32::INFINITY;
+        for start in 0..ROWS {
+            let ink = self.gap_ink(start);
+            if ink < least {
+                least = ink;
+                quietest = start;
+            }
+        }
+        // Compared against a flat distribution: a picture with no gap scores 0.
+        let flat = total * GAP_LANES as f32 / ROWS as f32;
+        let confidence = if flat > 0.0 { (1.0 - least / flat).max(0.0) } else { 0.0 };
+        ((quietest + ROWS - GAP_OFFSET) % ROWS, confidence)
+    }
+
+    /// Move the raster only when another position is convincingly quieter than
+    /// the one in use. This is a phasing control automated: it decides *where*
+    /// the picture is drawn and never what a dot's intensity is, so a weak
+    /// signal is not made to look like a strong one.
+    fn track_sync(&mut self) -> usize {
+        if self.locked || self.phase_cols < PHASE_MIN_COLS {
+            return self.sync;
+        }
+        let (sync, confidence) = self.estimate_sync();
+        if confidence < PHASE_MIN_CONF || sync == self.sync {
+            return self.sync;
+        }
+        let candidate = self.gap_ink((sync + GAP_OFFSET) % ROWS);
+        let in_use = self.gap_ink((self.sync + GAP_OFFSET) % ROWS);
+        if candidate < in_use * (1.0 - PHASE_MARGIN) {
+            self.sync = sync;
+            self.locked = true;
+        }
+        self.sync
+    }
+
+    /// The cell boundary the raster is currently drawn from, for diagnostics.
+    pub fn sync(&self) -> usize {
+        self.sync
     }
 
     /// Map an on/off-keyed dot magnitude onto 0..1.
@@ -653,14 +789,19 @@ mod tests {
             run(&mut tx, &mut rx, &mut px, dot * ROWS * 8, true);
             let lead = px.len();
 
-            tx.push_text("HELL");
-            // Four cells is 28 columns; budget an order of magnitude over that.
+            // Repeated, so the correlation has whole cells left to match after
+            // the settling columns are skipped.
+            tx.push_text("HELLHELLHELLHELLHELLHELL");
             drain(&mut tx, &mut rx, &mut px, dot * ROWS * 300);
             // Tail clears the filter's group delay.
             run(&mut tx, &mut rx, &mut px, dot * ROWS * 4, false);
 
+            // The first few columns go out before there is enough signal for
+            // the phasing to settle, exactly as they do on the air; an operator
+            // reads past them, and so does this.
+            let settled = (lead + 8 * ROWS).min(px.len() - 1);
             let want = render_columns("HELL");
-            let (score, _off) = best_correlation(&px[lead..], &want);
+            let (score, _off) = best_correlation(&px[settled..], &want);
             scores.push((variant, score));
         }
         // Report the whole set, so a failure shows whether one variant regressed
@@ -671,6 +812,55 @@ mod tests {
             "loopback correlations: {}",
             scores.iter().map(|(v, s)| format!("{v:?} {s:.3}")).collect::<Vec<_>>().join(", ")
         );
+    }
+
+    /// Print sync: the receiver has to find where the sender's character cell
+    /// begins, because Hell carries no frame sync at all.
+    ///
+    /// The measure is the inter-line gap. Every on-air font leaves the top and
+    /// bottom rows of the cell blank, so a correctly framed picture has four
+    /// quiet rows where two characters meet. Get the boundary wrong and each
+    /// glyph is cut and wrapped onto itself, which fills those rows with ink —
+    /// a reader sees it as a wall of pixels with no line to read along.
+    ///
+    /// A correlation against the expected text cannot see this: a constant
+    /// rotation of a dot stream is indistinguishable from a shift of it, so the
+    /// old loopback scored well on a picture nobody could read. This measures
+    /// the picture instead.
+    #[test]
+    fn the_cell_boundary_is_found_without_being_told() {
+        for variant in HellVariant::ALL {
+            let hz = carrier(variant);
+            let mut tx = HellTx::new(RATE, hz, variant);
+            let mut rx = HellRx::new(RATE, hz, variant, 0.5);
+            let mut px = Vec::new();
+            let dot = (RATE / variant.pixel_rate()) as usize;
+
+            // A loopback shares one clock, so put the receiver out of step on
+            // purpose: that is the state every real signal arrives in.
+            rx.process(&vec![0.0f32; dot / 3 + 2], &mut px);
+            run(&mut tx, &mut rx, &mut px, dot * ROWS * 8, true);
+            let lead = px.len();
+
+            tx.push_text("HELLHELLHELLHELLHELLHELL");
+            drain(&mut tx, &mut rx, &mut px, dot * ROWS * 400);
+            run(&mut tx, &mut rx, &mut px, dot * ROWS * 4, false);
+
+            // Past the columns drawn before the phasing had anything to work on.
+            let tail = &px[lead + 8 * ROWS..];
+            let cols = tail.len() / ROWS;
+            let row_ink = |r: usize| {
+                (0..cols).map(|c| tail[c * ROWS + r] as f32).sum::<f32>() / cols.max(1) as f32
+            };
+            let pad: f32 =
+                [0, 1, ROWS - 2, ROWS - 1].iter().map(|&r| row_ink(r)).sum::<f32>() / 4.0;
+            let body: f32 = (2..ROWS - 2).map(row_ink).sum::<f32>() / (ROWS - 4) as f32;
+            let ratio = pad / body.max(1.0);
+            assert!(
+                ratio < 0.6,
+                "{variant:?}: the inter-line gap is missing — the padding rows carry {ratio:.2} of the body's ink, so the cell boundary is wrong"
+            );
+        }
     }
 
     #[test]
