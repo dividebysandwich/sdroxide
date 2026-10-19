@@ -9,8 +9,8 @@
 //!
 //! `audio_offset_hz` (default 1700) is where the capture's centre frequency
 //! should appear in the audio, because a DSC channel is quoted as its
-//! *assigned* frequency — the centre of the J2B tone pair — and the two tones
-//! are 1300 and 2100 Hz either side of it. Captured with the assigned channel
+//! *assigned* frequency — the centre of the J2B tone pair — and the MF/HF
+//! tones are 1615 and 1785 Hz either side of it (VHF: 1300/2100 Hz). Captured with the assigned channel
 //! at the centre, that offset is 1700.
 
 use std::io::Read;

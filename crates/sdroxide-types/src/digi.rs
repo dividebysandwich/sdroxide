@@ -214,8 +214,9 @@ pub const NAVTEX_TONE_HZ: f32 = 1700.0;
 ///
 /// The same 1700 Hz as NAVTEX, and for the same reason: a DSC channel
 /// frequency (2187.5, 4207.5, 8414.5 kHz and the rest) is the *assigned*
-/// frequency, which for the J2B emission is the centre of the two tones — mark
-/// 1300 Hz, space 2100 Hz. So a receiver in upper sideband tunes 1700 Hz below
+/// frequency, which for the J2B emission is the centre of the two tones — 1615
+/// and 1785 Hz (170 Hz shift) at 100 baud on MF/HF. VHF channel 70 is FM with
+/// 1300/2100 Hz at 1200 baud and has no dial offset. So a receiver in upper sideband tunes 1700 Hz below
 /// the channel and the tones land where the decoder looks for them. Fixed by
 /// ITU-R M.493; there is nothing here for an operator to choose.
 pub const DSC_TONE_HZ: f32 = 1700.0;

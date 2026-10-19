@@ -10,8 +10,9 @@
 //!
 //! # The wire, and the two layers
 //!
-//! ITU-R M.493-15 is the authority. The link layer is 1200-baud FFSK —
-//! mark 1300 Hz, space 2100 Hz — carrying 10-bit characters, each of which
+//! ITU-R M.493-15 is the authority. The link layer is FSK — MF/HF at 100
+//! baud, 1615/1785 Hz (170 Hz shift) about 1700 Hz; VHF channel 70 at 1200
+//! baud, 1300/2100 Hz — carrying 10-bit characters, each of which
 //! is 7 data bits plus a 3-bit BCH(10,7) check. **Every character is sent
 //! twice**: once in the "DX" position and once in the "RX" position,
 //! interleaved on a 20-bit grid. The check is a CRC-3, and because its
@@ -408,6 +409,9 @@ pub const MAX_SEQ_SYMBOLS: usize = 40;
 /// to recover the 7-bit symbols, and stops at the end-of-sequence character.
 ///
 /// # DX/RX time diversity
+///
+/// Only DX is read today: the RX copy is not used to repair a DX error, and
+/// the DX phasing characters (111..104) are skipped.
 ///
 /// DSC sends each character twice, in the DX and RX positions, interleaved on a
 /// 20-bit grid. This takes the simple path the reference does first: lock the

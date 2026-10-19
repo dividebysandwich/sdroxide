@@ -253,7 +253,7 @@ mod tests {
     use super::*;
     use sdroxide_types::{DSC_TONE_HZ, Mode};
 
-    /// A DSC channel is quoted as the centre of the 1300/2100 Hz tone pair, and
+    /// A DSC channel is quoted as the centre of the 1615/1785 Hz MF/HF tone pair, and
     /// the receiver is upper sideband, so the dial sits `DSC_TONE_HZ` below it:
     /// 2187.5 kHz is tuned at 2185.8. Both chip lists must agree with that, and
     /// with each other, or one of them tunes the tones 1.7 kHz out of the

@@ -1,4 +1,4 @@
-//! DSC's audio front end: 1200-baud FFSK in, messages out.
+//! DSC's audio front end: FSK in (MF/HF 100 Bd, VHF 1200 Bd), messages out.
 //!
 //! The link layer of Digital Selective Calling is nothing exotic — it is the
 //! same non-coherent binary FSK the packet modes use. VHF (channel 70) runs
@@ -19,6 +19,12 @@
 //! detector wants the tones well inside its band, so the rate is comfortably
 //! above twice the higher tone — 9600 Hz is 1200 × 8 and puts the 2100 Hz space
 //! tone at a fraction of Nyquist.
+//!
+//! # Limits
+//!
+//! Only the DX characters are read; the RX copy (the same character five
+//! slots later) is not used to repair a DX error. The DX phasing run
+//! (111..104) and the doubled format specifier are skipped by the framer.
 
 use sdroxide_types::{DscFramer, DscMessage};
 
@@ -147,7 +153,7 @@ impl DscRx {
 mod tests {
     use super::*;
     use crate::afsk::{AfskProfile, AfskRx};
-    use sdroxide_types::{DSC_PHASING_SYMBOL, DscFormat, DscNature, dsc_bch};
+    use sdroxide_types::{DSC_PHASING_SYMBOL, DscCategory, DscFormat, DscNature, dsc_bch};
 
     fn char_bits(symbol: u8) -> Vec<bool> {
         let cw = dsc_bch::encode(symbol);
@@ -288,7 +294,8 @@ mod tests {
     #[test]
     fn an_mf_hf_call_at_100_baud_decodes() {
         let dx_phasing = [111u8, 110, 109, 108, 107, 106, 105, 104];
-        let body = [120u8, 120, 0, 23, 20, 0, 10, 100, 50, 30, 0, 10, 0, 0, 50, 10, 30, 117];
+        // format x2, target 002320001, category, self 005030001, two telecommands, EOS
+        let body = [120u8, 120, 0, 23, 20, 0, 10, 100, 0, 50, 30, 0, 10, 100, 126, 127];
         let mut dx: Vec<u8> = dx_phasing.to_vec();
         dx.extend(body);
         let mut bits: Vec<bool> = (0..200).map(|i| i % 2 == 0).collect();
@@ -318,5 +325,9 @@ mod tests {
         let m = out.first().expect("no MF/HF sequence decoded");
         assert_eq!(m.format, DscFormat::Individual);
         assert_eq!(m.target_mmsi, 2_320_001);
+        assert_eq!(m.self_mmsi, 5_030_001);
+        assert_eq!(m.category, DscCategory::from_symbol(100));
+        assert!(m.clean, "a clean synthetic call must not be flagged marginal");
+        assert_eq!(out.len(), 1);
     }
 }
