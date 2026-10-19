@@ -168,6 +168,17 @@ pub(crate) struct ToolWindowState {
     pub window: Option<sdroxide_types::DetachedWindow>,
 }
 
+/// Where a tool window must open, and which opening this is. Set by a caller
+/// that remembers its window's geometry (EXTRAS) and consumed by
+/// [`SdroxideApp::tool_window_egui`]: the `epoch` goes into the window's id, so
+/// egui has no remembered state for this opening and `pos`/`size` apply.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ToolPlace {
+    pub pos: egui::Pos2,
+    pub size: egui::Vec2,
+    pub epoch: u32,
+}
+
 /// The settings page a client asked for **by name** before the app existed —
 /// the browser's `?tab=radio`. See [`set_open_settings_tab`].
 static OPEN_TAB: std::sync::OnceLock<SettingsTab> = std::sync::OnceLock::new();
@@ -511,6 +522,16 @@ pub struct SdroxideApp {
     show_memories: bool,
     /// The EXTRAS window — see [`extras`].
     show_extras: bool,
+    /// The placement the next tool window is to open at; see [`ToolPlace`].
+    tool_place: Option<ToolPlace>,
+    /// Where the docked tool window drawn this frame ended up.
+    tool_rect: Option<egui::Rect>,
+    /// Which opening of the EXTRAS window this is, and whether it was open last
+    /// frame — see [`extras`].
+    extras_epoch: u32,
+    /// Where the top bar ends — the top of the spectrum frame below it.
+    top_bar_bottom: f32,
+    extras_was_open: bool,
     /// The RDS window. Opened from the RDS chip in the receive menu, which only
     /// appears on WFM.
     show_rds: bool,
@@ -1847,6 +1868,11 @@ impl SdroxideApp {
             dial_hold: dial_hold::DialHold::default(),
             show_memories: false,
             show_extras: false,
+            tool_place: None,
+            tool_rect: None,
+            extras_epoch: 0,
+            top_bar_bottom: 0.0,
+            extras_was_open: false,
             show_rds: false,
             show_drm: false,
             drm: None,
@@ -3750,6 +3776,55 @@ mod tests {
         img.save(&out).expect("write the preview");
         println!("wrote {out}");
     }
+    /// The EXTRAS window opens under the top bar at the right of the frame, and
+    /// a window that was moved and resized comes back at that place and size —
+    /// also from a fresh app built on the saved settings, which is what a new
+    /// session is.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_extras_window_returns_where_it_was_left() {
+        use crate::multi::frame_test_lock;
+        let _guard = frame_test_lock();
+        let dir =
+            std::env::temp_dir().join(format!("sdroxide-extras-place-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        unsafe { std::env::set_var("SDROXIDE_CONFIG_DIR", &dir) };
+        let (w, h) = (1920.0_f32, 720.0_f32);
+        let open_rect = |saved: Option<sdroxide_types::DetachedWindow>| {
+            let controller: Box<dyn RadioController> = Box::new(RecordingController::default());
+            let ctx = egui::Context::default();
+            let mut app = SdroxideApp::new_tab(&ctx, None, None, controller, 0, true);
+            app.ui_settings.extras_window = saved;
+            app.show_extras = true;
+            let mut tex = crate::test_raster::Textures::default();
+            for i in 0..4 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(w, h),
+                    )),
+                    time: Some(10.0 + i as f64 / 30.0),
+                    ..Default::default()
+                };
+                let mut full = ctx.run_ui(input, |ui| {
+                    app.ui(ui, &mut eframe::Frame::_new_kittest());
+                });
+                tex.apply(&full.textures_delta);
+                full.textures_delta.clear();
+            }
+            (app.tool_rect.expect("the window was drawn"), app.top_bar_bottom)
+        };
+        let (r, bar) = open_rect(None);
+        assert!(r.top() >= bar && r.top() < bar + 12.0, "under the top bar: {r:?} vs {bar}");
+        assert!(r.right() > w - 12.0, "at the right of the frame: {r:?}");
+        let saved =
+            sdroxide_types::DetachedWindow { size: [720.0, 230.0], pos: Some([200.0, 300.0]) };
+        let (r, _) = open_rect(Some(saved));
+        assert!((r.min.x - 200.0).abs() < 2.0 && (r.min.y - 300.0).abs() < 2.0, "place: {r:?}");
+        assert!((r.width() - 720.0).abs() < 2.0, "size: {r:?}");
+    }
+
     /// Render the top bar, with the EXTRAS window open or closed, to a PNG to
     /// look at. `EXTRAS_OPEN=1` opens the window; `EXTRAS_W` is the window width
     /// (default 1600); writes `target/extras_preview.png` or `$EXTRAS_PREVIEW`.
