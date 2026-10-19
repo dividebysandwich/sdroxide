@@ -18,10 +18,17 @@ use std::f32::consts::PI;
 use crate::Complex32;
 use crate::fir::{ComplexFir, bandpass_taps};
 
-const BAUD: f64 = 31.25;
+/// The rate PSK31 is defined at, and the default for every constructor that
+/// does not say otherwise.
+pub const PSK31_BAUD: f64 = 31.25;
 /// Decimated baseband rate: an integer number of samples per symbol.
-const SPS: usize = 16;
-const DEC_RATE: f64 = BAUD * SPS as f64; // 500 Hz
+pub const SPS: usize = 16;
+
+/// The decimated baseband rate for a baud rate: `SPS` samples per symbol, so a
+/// decoder always sees the same oversampling whatever the mode's speed.
+fn dec_rate(baud: f64) -> f64 {
+    baud * SPS as f64
+}
 
 /// Varicode for a printable ASCII byte, or `""` if unmapped. Bits are sent
 /// most-significant first; a `00` separator is appended between characters.
@@ -153,6 +160,7 @@ struct TxBit {
 /// Streaming BPSK31 transmitter. Feed text with [`PskTx::push_text`]; pull audio
 /// with [`PskTx::next_block`]. When the queue is empty it emits idle reversals.
 pub struct PskTx {
+    baud: f64,
     sps: usize,
     cph: f32,
     cph_inc: f32,
@@ -169,8 +177,15 @@ pub struct PskTx {
 
 impl PskTx {
     pub fn new(rate: f64, carrier_hz: f64) -> Self {
+        Self::new_baud(rate, carrier_hz, PSK31_BAUD)
+    }
+
+    /// The same modulator at any of PSK31's speeds: they differ in the symbol
+    /// rate and in nothing else.
+    pub fn new_baud(rate: f64, carrier_hz: f64, baud: f64) -> Self {
         PskTx {
-            sps: (rate / BAUD).round() as usize,
+            baud,
+            sps: (rate / baud).round().max(1.0) as usize,
             cph: 0.0,
             cph_inc: (std::f64::consts::TAU * carrier_hz / rate) as f32,
             amp: 0.5,
@@ -186,6 +201,16 @@ impl PskTx {
 
     pub fn set_carrier(&mut self, carrier_hz: f64, rate: f64) {
         self.cph_inc = (std::f64::consts::TAU * carrier_hz / rate) as f32;
+    }
+
+    /// Change the symbol rate. The symbol in progress is finished first, so a
+    /// speed change never lands mid-symbol.
+    pub fn set_baud(&mut self, baud: f64, rate: f64) {
+        if (baud - self.baud).abs() < 1e-9 {
+            return;
+        }
+        self.baud = baud;
+        self.sps = (rate / baud).round().max(1.0) as usize;
     }
 
     /// Queue text for transmission (appends; does not reset progress counters).
@@ -502,6 +527,7 @@ impl BpskCore {
 pub struct PskRx {
     rate: f64,
     carrier: f64,
+    baud: f64,
     ph: f32,
     ph_inc: f32,
     lpf: ComplexFir,
@@ -512,19 +538,31 @@ pub struct PskRx {
 
 impl PskRx {
     pub fn new(rate: f64, carrier_hz: f64) -> Self {
-        let decim = (rate / DEC_RATE).round().max(1.0) as usize;
-        // Complex low-pass ~±80 Hz around the carrier (PSK31 is ~±16 Hz wide;
-        // extra margin tolerates mistuning).
-        let taps = bandpass_taps(129, -80.0, 80.0, rate);
+        Self::new_baud(rate, carrier_hz, PSK31_BAUD)
+    }
+
+    /// The same receiver at any of PSK31's speeds.
+    ///
+    /// The passband has to follow the baud rate, not just the decimation: PSK31
+    /// is about as wide as its symbol rate, so a filter sized for 31 baud throws
+    /// away most of a 250-baud signal while a filter sized for 250 lets the
+    /// neighbourhood into a 31-baud one.
+    pub fn new_baud(rate: f64, carrier_hz: f64, baud: f64) -> Self {
+        let decim = (rate / dec_rate(baud)).round().max(1.0) as usize;
+        let half = (2.5 * baud).max(80.0);
+        let taps = bandpass_taps(129, -half, half, rate);
         PskRx {
             rate,
             carrier: carrier_hz,
+            baud,
             ph: 0.0,
             ph_inc: (std::f64::consts::TAU * carrier_hz / rate) as f32,
             lpf: ComplexFir::new(taps),
             decim,
             dcount: 0,
-            core: BpskCore::new(SPS as f32),
+            // The core's loop is in samples per symbol at the decimated rate,
+            // which is only exactly `SPS` when the decimation landed exactly.
+            core: BpskCore::new((rate / decim as f64 / baud) as f32),
         }
     }
 
@@ -532,6 +570,25 @@ impl PskRx {
         self.carrier = carrier_hz;
         self.ph_inc = (std::f64::consts::TAU * carrier_hz / self.rate) as f32;
         self.lpf.reset();
+    }
+
+    /// Change the symbol rate: the decimation, the passband and the timing loop
+    /// are all derived from it, so all three are rebuilt and the partial symbol
+    /// is dropped.
+    pub fn set_baud(&mut self, baud: f64) {
+        if (baud - self.baud).abs() < 1e-9 {
+            return;
+        }
+        self.baud = baud;
+        self.decim = (self.rate / dec_rate(baud)).round().max(1.0) as usize;
+        let half = (2.5 * baud).max(80.0);
+        self.lpf = ComplexFir::new(bandpass_taps(129, -half, half, self.rate));
+        self.core = BpskCore::new((self.rate / self.decim as f64 / baud) as f32);
+        self.dcount = 0;
+    }
+
+    pub fn baud(&self) -> f64 {
+        self.baud
     }
 
     /// Rough tuning/quality magnitude (average symbol amplitude).
@@ -615,5 +672,47 @@ mod tests {
         assert!(decoded.contains(msg), "decoded {decoded:?} did not contain {msg:?}");
         // Sent-char progress reached the whole message.
         assert_eq!(tx.sent_chars(), tx.total_chars());
+    }
+
+    /// The four speeds are one modem, so each must read its own transmission.
+    ///
+    /// This is the guard for `psk_speed`. The rate used to be a compile-time
+    /// constant, and that failure was silent: a decoder tuned to 31 baud hears
+    /// nothing at all from a 250-baud signal and reports nothing wrong, so the
+    /// fault can only be caught by transmitting at the rate and reading it back.
+    #[test]
+    fn every_speed_reads_back() {
+        for baud in [31.25f64, 62.5, 125.0, 250.0] {
+            let rate = 8000.0;
+            let carrier = 1000.0;
+            let mut tx = PskTx::new_baud(rate, carrier, baud);
+            let mut audio = Vec::new();
+            let mut blk = [0.0f32; 4000]; // idle reversals, to acquire timing
+            tx.next_block(&mut blk);
+            audio.extend_from_slice(&blk);
+
+            let msg = "CQ CQ DE AB1CD K";
+            tx.push_text(msg);
+            let mut guard = 0;
+            while tx.sent_chars() < tx.total_chars() && guard < 4000 {
+                let mut b = [0.0f32; 2000];
+                tx.next_block(&mut b);
+                audio.extend_from_slice(&b);
+                guard += 1;
+            }
+            let mut tail = [0.0f32; 4000];
+            tx.next_block(&mut tail);
+            audio.extend_from_slice(&tail);
+
+            let mut rx = PskRx::new_baud(rate, carrier, baud);
+            let mut decoded = String::new();
+            for chunk in audio.chunks(512) {
+                decoded.push_str(&rx.process(chunk));
+            }
+            assert!(
+                decoded.contains(msg),
+                "{baud} baud decoded {decoded:?}, which does not contain {msg:?}"
+            );
+        }
     }
 }
