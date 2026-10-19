@@ -1,6 +1,6 @@
 //! Waterfall colormap LUTs: 256×1 RGBA8.
 
-pub const NAMES: [&str; 12] = [
+pub const NAMES: [&str; 14] = [
     "Classic",
     "Viridis",
     "Gray",
@@ -13,6 +13,8 @@ pub const NAMES: [&str; 12] = [
     "Rainbow",
     "Blue",
     "Calmer",
+    "Compline",
+    "Lauds",
 ];
 
 /// Piecewise-linear gradient through (position, RGB) anchor points.
@@ -120,6 +122,38 @@ pub fn lut(index: usize) -> [u8; 256 * 4] {
             (0.82, [139, 224, 219]),
             (0.93, [214, 246, 244]),
             (1.00, [243, 183, 111]),
+        ]),
+        // Compline — the palette's own restraint. It is nearly monochrome by
+        // design, so the ramp is a cool grey-blue climb with no hue jump
+        // anywhere in it, ending on the palette's warm cream. A waterfall to
+        // wear with the Compline theme rather than to shout over it.
+        12 => gradient(&[
+            (0.00, [0, 0, 0]),
+            (0.22, [15, 17, 20]),
+            (0.40, [40, 44, 52]),
+            (0.56, [81, 87, 97]),
+            (0.70, [139, 145, 154]),
+            (0.84, [180, 192, 200]),
+            (0.93, [224, 220, 212]),
+            (1.00, [212, 204, 180]),
+        ]),
+        // Lauds — the same palette, and a dark ramp built from its *inks*
+        // rather than its paper: a near-black floor, the muted green and blue
+        // it keeps for text, then a warm brick, ending on the cream its page is
+        // made of.
+        //
+        // It was a paper waterfall for one draft and that was wrong for a
+        // reason the guard already knew: on a light ramp the noise floor is the
+        // brightest thing on screen, so an empty band reads as a hot one.
+        13 => gradient(&[
+            (0.00, [0, 0, 0]),
+            (0.24, [26, 29, 33]),
+            (0.42, [74, 77, 81]),
+            (0.56, [90, 107, 90]),
+            (0.68, [100, 117, 125]),
+            (0.80, [139, 102, 102]),
+            (0.92, [184, 181, 176]),
+            (1.00, [240, 239, 235]),
         ]),
         // Amber — the waterfall to wear with the Amber Phosphor UI theme: a
         // single warm phosphor family, black through ember and amber to a
@@ -365,5 +399,31 @@ mod prop_tests {
         // low and blue stays the largest.
         let low = &calmer[64 * 4..64 * 4 + 3];
         assert!(low[2] > low[1] && low[1] > low[0], "the dark run is not navy: {low:?}");
+    }
+
+    /// The two from joshuablais/compline: both dark-to-bright, and neither a
+    /// hue a schematic display would lie about.
+    ///
+    /// Lauds was drafted as a *paper* waterfall — light floor, dark signal — and
+    /// that was wrong for a reason the global guard already encodes: on a light
+    /// ramp an empty band is the brightest thing on screen, so noise reads as a
+    /// hot signal. Both are dark ramps; what differs between them is the hue
+    /// path, which is the palette's.
+    #[test]
+    fn the_compline_pair_are_two_ramps_from_one_palette() {
+        let idx = |n: &str| NAMES.iter().position(|x| *x == n).expect("scheme is named");
+        let comp = lut(idx("Compline"));
+        let lauds = lut(idx("Lauds"));
+        assert_ne!(comp, lauds, "the two palettes gave one waterfall");
+        // Compline never leaves its cool family: blue never loses to red.
+        for i in [0usize, 64, 128, 192] {
+            let px = &comp[i * 4..i * 4 + 3];
+            assert!(px[2] >= px[0], "Compline leaves its cool family at {i}: {px:?}");
+        }
+        // Lauds passes through the muted green and blue it keeps for text, so
+        // somewhere in the middle green leads and the floor is near-black.
+        assert!(lauds[0] < 40 && lauds[255 * 4] > 180, "Lauds is not dark to bright");
+        let mid = &lauds[140 * 4..140 * 4 + 3];
+        assert!(mid[1] >= mid[0] || mid[2] >= mid[0], "Lauds lost its muted hues: {mid:?}");
     }
 }

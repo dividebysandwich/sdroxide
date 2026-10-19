@@ -387,6 +387,14 @@ pub enum UiTheme {
     /// which means **`Default`'s discriminant moves** and this rides
     /// `ClientScreen`.
     Calmer,
+    /// Compline, from joshuablais/compline (GPL-3.0): a cool grey-blue ground
+    /// with every hue drawn from one narrow chroma, so nothing in it shouts.
+    ///
+    /// Its partner [`UiTheme::Lauds`] is the same palette at dawn.
+    Compline,
+    /// Lauds, the light half of the Compline palette: warm cream grounds and a
+    /// cool near-black for ink.
+    Lauds,
     /// The classic navy/cyan/pink look. Declared last because serde demands
     /// the catch-all be the final variant: it also swallows an unrecognised
     /// value in a hand-edited config, so a typo degrades to the default theme
@@ -397,7 +405,7 @@ pub enum UiTheme {
 }
 
 impl UiTheme {
-    pub const ALL: [UiTheme; 19] = [
+    pub const ALL: [UiTheme; 21] = [
         UiTheme::Default,
         UiTheme::Light,
         UiTheme::HighContrast,
@@ -417,6 +425,8 @@ impl UiTheme {
         UiTheme::ModernMinimalist,
         UiTheme::Calm,
         UiTheme::Calmer,
+        UiTheme::Compline,
+        UiTheme::Lauds,
     ];
 
     pub fn label(self) -> &'static str {
@@ -440,6 +450,8 @@ impl UiTheme {
             UiTheme::ModernMinimalist => "Modern minimalist",
             UiTheme::Calm => "Calm",
             UiTheme::Calmer => "Calmer",
+            UiTheme::Compline => "Compline",
+            UiTheme::Lauds => "Lauds",
         }
     }
 

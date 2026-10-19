@@ -603,6 +603,100 @@ const CALMER: Palette = Palette {
     hazard_dark: c(0x241f12),
 };
 
+/// Compline: a colour palette "for deep contemplation and work"
+/// (github.com/joshuablais/compline, GPL-3.0). A cool grey-blue ground with
+/// everything — text and accents alike — drawn from a single narrow chroma, so
+/// nothing in it shouts.
+///
+/// The base scale is the palette's own: `base0` is the deep ground, `base4` the
+/// heaviest line, and the accents are its pastels. `alert` is **not** the
+/// palette's red: `#cdacac` is a dusty rose made to sit still in prose, and the
+/// guard that keeps alarms readable needs a red with some voltage in it.
+const COMPLINE: Palette = Palette {
+    light: false,
+    no_dim: false,
+    bg_deep: c(0x0f1114),     // base0
+    panel: c(0x1a1d21),       // bg
+    input_bg: c(0x171a1e),    // base1
+    fill: c(0x1f2228),        // base2
+    fill_hover: c(0x282c34),  // base3
+    fill_active: c(0x3d424a), // base4
+    line: c(0x3d424a),
+    line_lit: c(0xb4c0c8), // cyan
+    text: c(0xf0efeb),     // fg
+    text_strong: c(0xf8f7f4),
+    cyan: c(0xb4c0c8),
+    cyan_dim: c(0x98a4ac), // dark-cyan
+    pink: c(0xccc4b4),     // orange
+    yellow: c(0xd4ccb4),
+    green: c(0xb8c4b8),
+    ink_on_cyan: c(0x1a1d21),
+    ink_on_bright: Color32::BLACK,
+    red_deep: c(0x4a3a3a),
+    cq_bg: c(0x2a2634),
+    tome_bg: c(0x33301f),
+    done_bg: c(0x22301f),
+    row_bg: c(0x171a1e),
+    row_hover: c(0x22262b),
+    scroll_track: c(0x171a1e),
+    scroll_handle: c(0xb4c0c8),
+    scroll_handle_hover: c(0xc9d2d8),
+    scroll_handle_drag: c(0xe6ecef),
+    faint_bg: c(0x171a1e),
+    alert: c(0xd9534f),
+    hazard: c(0xd4ccb4),
+    hazard_dark: c(0x2a2519),
+};
+
+/// Lauds: the same palette at dawn — Compline's values inverted, warm cream
+/// grounds and the ink taken down to a cool near-black.
+///
+/// Three accents are darker than the palette's own table: `cyan`, `pink` and
+/// `yellow` measure 4.16, 4.36 and 3.51 to one on this panel, and an accent is
+/// used as *text* here — headings, links, captions. They are carried down until
+/// they clear 4.5:1 with their hue intact, which is the same trade Solarized
+/// and Catppuccin Latte make on a pale ground.
+const LAUDS: Palette = Palette {
+    light: true,
+    no_dim: false,
+    // The page is always *behind* the panels, which on a light theme means it
+    // is the tint rather than the white: the palette's own `bg-alt` behind its
+    // `base0`.
+    bg_deep: c(0xe0dcd4),     // bg-alt
+    panel: c(0xf5f4f2),       // base0
+    input_bg: c(0xefeeed),    // base1
+    fill: c(0xe5e3e0),        // base2
+    fill_hover: c(0xd8d6d3),  // base3
+    fill_active: c(0xb8b5b0), // base4
+    line: c(0xb8b5b0),
+    line_lit: c(0x5f6f76),
+    text: c(0x1a1d21), // fg
+    text_strong: c(0x0d0f12),
+    cyan: c(0x5f6f76), // 4.16 -> 4.54
+    cyan_dim: c(0x546470),
+    pink: c(0x866262),   // 4.36 -> 4.64
+    yellow: c(0x766b45), // 3.51 -> 4.61
+    green: c(0x5a6b5a),
+    ink_on_cyan: c(0xf5f4f2),
+    ink_on_bright: c(0xf5f4f2),
+    red_deep: c(0x8b6666),
+    cq_bg: c(0xe6e2e8),
+    tome_bg: c(0xe8e3d4),
+    done_bg: c(0xdce6dc),
+    row_bg: c(0xf5f4f2),
+    row_hover: c(0xe5e3e0),
+    scroll_track: c(0xe5e3e0),
+    scroll_handle: c(0x5f6f76),
+    scroll_handle_hover: c(0x55646b),
+    scroll_handle_drag: c(0x3f4a50),
+    faint_bg: c(0xf5f4f2),
+    // The palette's own red is #8b6666, a dusty brick made for prose; an alarm
+    // has to read as an alarm, so this is the same family with the voltage in.
+    alert: c(0xc0392b),
+    hazard: c(0x766b45),
+    hazard_dark: c(0xe8e3d4),
+};
+
 /// The warm Gruvbox palette: parchment text on near-black browns, blue/aqua
 /// accents, and the bright-orange chrome that makes it unmistakable.
 const GRUVBOX: Palette = Palette {
@@ -917,7 +1011,7 @@ const MODERN_MINIMALIST: Palette = Palette {
 };
 
 /// Indexed by [`theme_index`].
-static PALETTES: [Palette; 19] = [
+static PALETTES: [Palette; 21] = [
     DEFAULT,           // 0  Default
     GREEN_PHOSPHOR,    // 1  Green phosphor
     AMBER_PHOSPHOR,    // 2  Amber phosphor
@@ -937,6 +1031,8 @@ static PALETTES: [Palette; 19] = [
     HIGH_CONTRAST,     // 16 High contrast
     CALM,              // 17 Calm
     CALMER,            // 18 Calmer
+    COMPLINE,          // 19 Compline
+    LAUDS,             // 20 Lauds
 ];
 
 /// The S-meter instrument's colours: the face wash, the backlight bloom, the
@@ -1245,7 +1341,7 @@ const fn meter_paper(p: &Palette) -> MeterPalette {
 /// Indexed by [`theme_index`], like [`PALETTES`]. Rainbow keeps the historic
 /// navy instrument: its grounds are the default's, and the meter already
 /// reads in the accents the ramps give it.
-static METER_PALETTES: [MeterPalette; 19] = [
+static METER_PALETTES: [MeterPalette; 21] = [
     METER_DEFAULT,                   // 0  Default
     METER_GREEN,                     // 1  Green phosphor
     METER_AMBER,                     // 2  Amber phosphor
@@ -1265,6 +1361,8 @@ static METER_PALETTES: [MeterPalette; 19] = [
     METER_HIGH_CONTRAST,             // 16 High contrast
     meter_from(&CALM),               // 17 Calm
     meter_from(&CALMER),             // 18 Calmer
+    meter_from(&COMPLINE),           // 19 Compline
+    meter_paper(&LAUDS),             // 20 Lauds
 ];
 
 /// The current theme's S-meter instrument colours.
@@ -1368,7 +1466,7 @@ const fn scope_light_from(p: &Palette) -> ScopePalette {
 /// Indexed by [`theme_index`], like [`PALETTES`]. High contrast lends the
 /// instruments its own roles like any other dark theme — its accents were
 /// already picked to sit on black, which is what the glass is.
-static SCOPE_PALETTES: [ScopePalette; 18] = [
+static SCOPE_PALETTES: [ScopePalette; 21] = [
     scope_from(&DEFAULT),                 // 0  Default
     scope_from(&GREEN_PHOSPHOR),          // 1  Green phosphor
     scope_from(&AMBER_PHOSPHOR),          // 2  Amber phosphor
@@ -1387,6 +1485,9 @@ static SCOPE_PALETTES: [ScopePalette; 18] = [
     SCOPE_LIGHT,                          // 15 Light
     scope_from(&HIGH_CONTRAST),           // 16 High contrast
     scope_from(&CALM),                    // 17 Calm
+    scope_from(&CALMER),                  // 18 Calmer
+    scope_from(&COMPLINE),                // 19 Compline
+    scope_light_from(&LAUDS),             // 20 Lauds
 ];
 
 /// The current theme's instrument inks — see [`ScopePalette`].
@@ -1553,7 +1654,7 @@ const fn map_light_from(p: &Palette) -> MapPalette {
 }
 
 /// Indexed by [`theme_index`], like [`PALETTES`].
-static MAP_PALETTES: [MapPalette; 18] = [
+static MAP_PALETTES: [MapPalette; 21] = [
     map_from(&DEFAULT),                 // 0  Default
     map_from(&GREEN_PHOSPHOR),          // 1  Green phosphor
     map_from(&AMBER_PHOSPHOR),          // 2  Amber phosphor
@@ -1572,6 +1673,9 @@ static MAP_PALETTES: [MapPalette; 18] = [
     SCOPE_MAP_LIGHT,                    // 15 Light
     MAP_HIGH_CONTRAST,                  // 16 High contrast
     map_from(&CALM),                    // 17 Calm
+    map_from(&CALMER),                  // 18 Calmer
+    map_from(&COMPLINE),                // 19 Compline
+    map_light_from(&LAUDS),             // 20 Lauds
 ];
 
 /// The current theme's world-map inks — see [`MapPalette`].
@@ -1679,6 +1783,8 @@ const fn theme_index(t: UiTheme) -> u8 {
         UiTheme::HighContrast => 16,
         UiTheme::Calm => 17,
         UiTheme::Calmer => 18,
+        UiTheme::Compline => 19,
+        UiTheme::Lauds => 20,
     }
 }
 
@@ -2794,11 +2900,19 @@ mod tests {
     /// from a screenshot of the default theme.
     #[test]
     fn every_theme_in_the_list_has_a_palette_and_a_meter() {
+        // Four parallel arrays, all indexed by `theme_index`. The bright-theme
+        // guards skip dark themes, so a short scope or map array is invisible
+        // until somebody adds a light theme -- which is exactly how the first
+        // two of these were missed.
         assert_eq!(list_len(), PALETTES.len(), "a theme with no palette");
         assert_eq!(list_len(), METER_PALETTES.len(), "a theme with no meter face");
+        assert_eq!(list_len(), SCOPE_PALETTES.len(), "a theme with no scope inks");
+        assert_eq!(list_len(), MAP_PALETTES.len(), "a theme with no map inks");
         for t in sdroxide_types::UiTheme::ALL {
             let i = theme_index(t) as usize;
             assert!(i < PALETTES.len(), "{t:?} indexes past the palettes");
+            assert!(i < SCOPE_PALETTES.len(), "{t:?} indexes past the scope inks");
+            assert!(i < MAP_PALETTES.len(), "{t:?} indexes past the map inks");
         }
         // And the one that was just added is not silently the default's.
         let calmer = theme_index(sdroxide_types::UiTheme::Calmer) as usize;

@@ -1864,8 +1864,12 @@ use sdroxide_types::{
 /// [`sdroxide_types::ClientScreen`] — the same trade as `Calm` at v198.
 /// `PROTO_VERSION` 215 → 216, `VERSION_BYTE` 0x23 → 0x24. A downstream (fork)
 /// change.
-pub const PROTO_VERSION: u16 = 216;
-const VERSION_BYTE: u8 = 0x24;
+/// v217: [`sdroxide_types::UiTheme`] gains `Compline` and `Lauds` before the
+/// serde catch-all, so `Default`'s discriminant moves again and the enum rides
+/// [`sdroxide_types::ClientScreen`]. `PROTO_VERSION` 216 → 217,
+/// `VERSION_BYTE` 0x24 → 0x25. A downstream (fork) change.
+pub const PROTO_VERSION: u16 = 217;
+const VERSION_BYTE: u8 = 0x25;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {
