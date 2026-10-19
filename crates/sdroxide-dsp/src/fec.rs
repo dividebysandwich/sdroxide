@@ -136,6 +136,26 @@ impl ConvCode {
     /// The pair this module's own [`conv_encode`]/[`viterbi_decode`] use.
     pub const THOR: ConvCode = ConvCode { poly_a: G1, poly_b: G2, invert_b: false };
 
+    /// PSK31's **QPSK** code: constraint length 5, polynomials `0x17` and
+    /// `0x19`. Same construction as [`ConvCode::THOR`] at two fewer bits, which
+    /// is why the rest of this module serves it with no new machinery.
+    pub const PSK_QPSK: ConvCode = ConvCode { poly_a: 0x17, poly_b: 0x19, invert_b: false };
+
+    /// Constraint length, read off the polynomials rather than declared.
+    ///
+    /// The register is as wide as the highest set bit of either polynomial, and
+    /// for both codes this tree carries that is exactly the constraint length:
+    /// `0x17|0x19` is five bits, `0o155|0o117` is seven. One fewer field to get
+    /// wrong, and a code that cannot disagree with itself about its own size.
+    pub fn k(&self) -> u32 {
+        32 - (self.poly_a | self.poly_b).leading_zeros()
+    }
+
+    /// Trellis states: `2^(k-1)`.
+    pub fn states(&self) -> usize {
+        1usize << (self.k() - 1)
+    }
+
     /// The two output symbols for input `b` from state `s`.
     fn outputs(&self, s: usize, b: u8) -> (u8, u8) {
         let reg = ((s as u32) << 1) | b as u32;
@@ -162,7 +182,8 @@ pub fn viterbi_soft(sym: &[f32], code: ConvCode, terminated: bool) -> Vec<u8> {
         return Vec::new();
     }
     // Branch outputs for every (state, input), as ±1 signs to correlate with.
-    let mut sign = [[(0.0f32, 0.0f32); 2]; NSTATES];
+    let n = code.states();
+    let mut sign = vec![[(0.0f32, 0.0f32); 2]; n];
     for (s, row) in sign.iter_mut().enumerate() {
         for (b, cell) in row.iter_mut().enumerate() {
             let (a, bb) = code.outputs(s, b as u8);
@@ -172,9 +193,9 @@ pub fn viterbi_soft(sym: &[f32], code: ConvCode, terminated: bool) -> Vec<u8> {
 
     // The encoder starts in state 0, so at step 0 every other state is
     // impossible rather than merely unlikely.
-    let mut metric = [f32::NEG_INFINITY; NSTATES];
+    let mut metric = vec![f32::NEG_INFINITY; n];
     metric[0] = 0.0;
-    let mut next = [f32::NEG_INFINITY; NSTATES];
+    let mut next = vec![f32::NEG_INFINITY; n];
     // One decision bit per state per step: which of the two predecessors won.
     let mut back = vec![0u64; nsteps];
 
@@ -185,7 +206,7 @@ pub fn viterbi_soft(sym: &[f32], code: ConvCode, terminated: bool) -> Vec<u8> {
             // `ns` is reached from `ns >> 1` or `(ns >> 1) | 32`, in both cases
             // by feeding in `ns & 1`.
             let b = ns & 1;
-            let (p0, p1) = (ns >> 1, (ns >> 1) | (NSTATES / 2));
+            let (p0, p1) = (ns >> 1, (ns >> 1) | (n / 2));
             let (a0, b0) = sign[p0][b];
             let (a1, b1) = sign[p1][b];
             let m0 = metric[p0] + a0 * r0 + b0 * r1;
@@ -205,23 +226,23 @@ pub fn viterbi_soft(sym: &[f32], code: ConvCode, terminated: bool) -> Vec<u8> {
             }
         }
         metric = next;
-        next = [f32::NEG_INFINITY; NSTATES];
+        next = vec![f32::NEG_INFINITY; n];
     }
 
     let mut s = if terminated {
         0
     } else {
-        (0..NSTATES).max_by(|&a, &b| metric[a].total_cmp(&metric[b])).unwrap_or(0)
+        (0..n).max_by(|&a, &b| metric[a].total_cmp(&metric[b])).unwrap_or(0)
     };
     let mut bits = vec![0u8; nsteps];
     for t in (0..nsteps).rev() {
         // The input bit that reached this state is its own low bit.
         bits[t] = (s & 1) as u8;
         let from = (back[t] >> s) & 1;
-        s = (s >> 1) | ((from as usize) * (NSTATES / 2));
+        s = (s >> 1) | ((from as usize) * (n / 2));
     }
     if terminated {
-        bits.truncate(nsteps.saturating_sub(K - 1));
+        bits.truncate(nsteps.saturating_sub(code.k() as usize - 1));
     }
     bits
 }
@@ -234,15 +255,49 @@ mod tests {
     /// against codes this module does not otherwise transmit.
     fn encode_with(bits: &[u8], code: ConvCode) -> Vec<u8> {
         let mut s = 0usize;
-        let mut out = Vec::with_capacity((bits.len() + K - 1) * 2);
-        for &b in bits.iter().chain(std::iter::repeat_n(&0u8, K - 1)) {
+        let k = code.k() as usize;
+        let mut out = Vec::with_capacity((bits.len() + k - 1) * 2);
+        for &b in bits.iter().chain(std::iter::repeat_n(&0u8, k - 1)) {
             let b = b & 1;
             let (o1, o2) = code.outputs(s, b);
             out.push(o1);
             out.push(o2);
-            s = ((s << 1) | b as usize) & (NSTATES - 1);
+            s = ((s << 1) | b as usize) & (code.states() - 1);
         }
         out
+    }
+
+    /// PSK31's QPSK code is the same machine two bits shorter: K=5, sixteen
+    /// states, and it corrects a noisy channel just as the K=7 one does.
+    ///
+    /// This is the guard for the generalisation. The state count used to be a
+    /// constant taken from the K=7 code, so a K=5 code would have been decoded
+    /// against a 64-state trellis — confident nonsense, and no test would have
+    /// noticed because nothing in the tree asked for K=5 yet.
+    #[test]
+    fn the_qpsk_code_is_the_same_machine_at_k5() {
+        let code = ConvCode::PSK_QPSK;
+        assert_eq!(code.k(), 5, "the constraint length is not read off the polynomials");
+        assert_eq!(code.states(), 16);
+        assert_eq!(ConvCode::THOR.k(), 7);
+        assert_eq!(ConvCode::THOR.states(), 64);
+
+        let bits: Vec<u8> = (0..200u32).map(|i| ((i * 7 + 3) % 2) as u8).collect();
+        let coded = encode_with(&bits, code);
+        assert_eq!(viterbi_soft(&soft(&coded, 1.0), code, true), bits, "a clean K=5 block");
+
+        // And on a channel that flips one symbol in thirteen.
+        let mut noisy = soft(&coded, 1.0);
+        for (i, v) in noisy.iter_mut().enumerate() {
+            if i % 13 == 0 {
+                *v = -*v;
+            }
+        }
+        assert_eq!(
+            viterbi_soft(&noisy, code, true),
+            bits,
+            "the K=5 decoder did not correct the channel"
+        );
     }
 
     /// Coded bits as ideal soft values: ±`amp`.
