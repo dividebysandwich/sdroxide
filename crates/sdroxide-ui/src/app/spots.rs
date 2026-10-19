@@ -358,13 +358,14 @@ impl SdroxideApp {
         if s.kind == SpotKind::HeardMe {
             return false;
         }
-        // SWL mode drops the ham feeds that need a licence to be useful — the
-        // DX cluster, POTA and SOTA — but keeps the receive-only networks
-        // (PSK Reporter, FreeDV Reporter) and the broadcast stations, which are
-        // exactly what a listener is here for.
-        if self.swl_mode()
-            && matches!(s.kind, SpotKind::DxCluster | SpotKind::Pota | SpotKind::Sota)
-        {
+        // SWL mode drops the ham feeds that need a licence to be useful — POTA
+        // and SOTA — but keeps the receive-only networks (PSK Reporter, FreeDV
+        // Reporter), the broadcast stations and the DX cluster, which are exactly
+        // what a listener is here for. The cluster is a *listening* feed: a
+        // listener wants to know what is being worked on the band, and it carries
+        // no transmit obligation, so it is shown whether SWL mode is on or not
+        // (F4NRM: "SWL ou pas, dans les 2 cas, le cluster doit s'afficher").
+        if self.swl_mode() && matches!(s.kind, SpotKind::Pota | SpotKind::Sota) {
             return false;
         }
         // **Only the station you are tuned to, on the broadcast overlay.**
@@ -588,11 +589,10 @@ impl SdroxideApp {
         ];
         ui.horizontal(|ui| {
             for (i, (kind, label)) in labels.iter().enumerate() {
-                // SWL mode has no DX cluster / POTA / SOTA feed to show,
-                // so it shows no chip for one.
-                if self.swl_mode()
-                    && matches!(kind, SpotKind::DxCluster | SpotKind::Pota | SpotKind::Sota)
-                {
+                // SWL mode has no POTA / SOTA feed to show, so it shows no chip
+                // for one. The DX cluster is a listening feed and is shown in
+                // both modes, so its chip stays (F4NRM).
+                if self.swl_mode() && matches!(kind, SpotKind::Pota | SpotKind::Sota) {
                     continue;
                 }
                 let chip = crate::chrome::chip(ui, self.view.spot_kinds_shown[i], *label);
