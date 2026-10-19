@@ -202,6 +202,36 @@ folding acquisition (0.749), and a transcriber proven by round trip.
 Capture with `tools/rsp1-capture` at ≥ 12 kHz, USB, full 2.75 kHz. Note the UTC
 time and the station — the ID is the known part.
 
+## First real decode: FUO Toulon, 5215.6 kHz (2026-10-19, ~20:10 UTC)
+
+Captured with `tools/rsp1-capture` from the operator's RSP1: 60 s at 250 kHz,
+centred on the dial, USB.
+
+**The frame folds at 0.70** (16 frames, floor 0.25) — and, unlike the two shipped
+fixtures, **its whole 256-symbol frame repeats**: |S| is flat across all of it,
+which is a test tape looping rather than a data transmission.
+
+**The reference symbols collapse to R = 0.925.** That is the first time this has
+happened on a real signal, and it needed one correction the earlier attempts were
+missing: the folded frame still carries a **phase ramp**, because the fold's
+±75 Hz offset search cannot absorb a centre error, and a ramp spreads the 48
+references across the frame. Correcting it (here +636 Hz across the frame) with
+the scrambler sign −1 and an offset of 37 puts **all 48 onto one point**.
+
+So, against an off-air transmission: the frame layout, the 176-symbol scrambler
+and the reference symbols are now **confirmed**, not merely self-consistent. The
+two earlier failures were the ramp — which is also why the round trip could not
+have caught it, since TX and RX share the same centre.
+
+**The data symbols sit in one narrow cluster**, within ±45° of the reference
+phase. That is what a RYRY test tape gives: in ITA2, `R` is `01010` and `Y` is
+`10101`, so the bit stream alternates and a two-bit-per-symbol mapping lands on a
+single constellation point. It also says the transmission is **not BPSK** — one
+bit per symbol would alternate between two points 180° apart.
+
+What is still open: which rate and coding that constellation means, and therefore
+whether the symbols are message bits (uncoded 2400) or FEC output (coded 1200).
+
 ## Tools
 
 | file | what it does |
