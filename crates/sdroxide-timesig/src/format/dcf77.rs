@@ -30,6 +30,11 @@
 //!
 //! A leap second makes second 59 a 0 bit and moves the marker to second 60.
 //! That minute does not decode here, which costs one minute every few years.
+//!
+//! # Seconds that could not be read
+//!
+//! A minute with a second or two unread is not given up on where its checks
+//! can stand in for them — see [`fill_layout`], which ALS162 shares.
 
 use sdroxide_types::{TimeFrame, TimeStation, utc_ymd_hms, ymd_hms_to_unix};
 
@@ -48,6 +53,7 @@ pub(super) static FORMAT: Format = Format {
     time_index: 60,
     encode,
     decode,
+    fill: Some(fill),
 };
 
 const MIN_W: [u32; 7] = [1, 2, 4, 8, 10, 20, 40];
@@ -81,6 +87,82 @@ fn encode(minute_utc: i64) -> [Sym; 60] {
         *s = Sym::bit(bit);
     }
     out
+}
+
+/// The most unread seconds a minute may have and still be filled.
+const MAX_FILLS: usize = 2;
+/// How clearly every other bit of a parity group must have been read for
+/// the group's parity to stand in for one that was not, in the decoder's
+/// margin — where a clean second reads at about 1 and a coin toss at 0.
+const FILL_MIN_MARGIN: f32 = 0.3;
+/// The even-parity groups: minute, hour, date.
+const GROUPS: [std::ops::RangeInclusive<usize>; 3] = [21..=28, 29..=35, 36..=58];
+
+fn fill(w: &[Option<Sym>], margin: &[f32]) -> Option<Vec<Sym>> {
+    fill_layout(w, margin, false)
+}
+
+/// The unread seconds of a minute in DCF77's layout, worked out from the
+/// rest of it.
+///
+/// - In a parity group (minute, hour, date): what makes the group's parity
+///   even — when it is the group's only unread second, and every other bit of
+///   the group was read clearly. One misread bit beside it would otherwise
+///   pass as the right parity.
+/// - Bit 0 is always 0 and bit 20 always 1; of 17 and 18 exactly one is set,
+///   so either says what the other is.
+/// - Every other bit is a flag or data that is 0 in all but a few minutes a
+///   year: it is taken to be 0. A missed announcement is the cost.
+/// - `count` (ALS162): bits 3–6 count the 1s in 21–58, and can be worked out
+///   from them — but only when no group needed its parity, so that every
+///   filled minute keeps at least one check it did not use up.
+///
+/// At most [`MAX_FILLS`] seconds are filled; the frame is then decoded and
+/// checked as any other.
+pub(super) fn fill_layout(w: &[Option<Sym>], margin: &[f32], count: bool) -> Option<Vec<Sym>> {
+    if w.len() != 60 || margin.len() != 60 || !w[59].is_some_and(|s| s.marker) {
+        return None;
+    }
+    let unread: Vec<usize> = (0..59).filter(|&i| w[i].is_none()).collect();
+    if unread.len() > MAX_FILLS || w[..59].iter().flatten().any(|s| s.marker) {
+        return None;
+    }
+    let mut b: Vec<Option<bool>> = w[..59].iter().map(|s| s.map(|s| s.a)).collect();
+    let mut grouped = false;
+    let mut counted = false;
+    for &i in &unread {
+        if let Some(g) = GROUPS.iter().find(|g| g.contains(&i)) {
+            let others: Vec<usize> = g.clone().filter(|&j| j != i).collect();
+            if others.iter().any(|&j| b[j].is_none() || margin[j] < FILL_MIN_MARGIN) {
+                return None;
+            }
+            b[i] = Some(others.iter().filter(|&&j| b[j] == Some(true)).count() % 2 == 1);
+            grouped = true;
+        } else if i == 17 || i == 18 {
+            // A misread partner would move the time by an hour.
+            let other = if i == 17 { 18 } else { 17 };
+            if margin[other] < FILL_MIN_MARGIN {
+                return None;
+            }
+            b[i] = Some(!b[other]?);
+        } else if count && (3..=6).contains(&i) {
+            counted = true;
+        } else {
+            b[i] = Some(i == 20);
+        }
+    }
+    if counted {
+        if grouped {
+            return None;
+        }
+        let ones = b[21..59].iter().filter(|&&x| x == Some(true)).count();
+        for (k, i) in (3..=6).enumerate() {
+            b[i] = Some(ones & (2 << k) != 0);
+        }
+    }
+    let mut out: Vec<Sym> = b.into_iter().map(|x| x.map(Sym::bit)).collect::<Option<_>>()?;
+    out.push(Sym::MARKER);
+    Some(out)
 }
 
 fn put(b: &mut [bool], at: usize, field: &[bool]) {

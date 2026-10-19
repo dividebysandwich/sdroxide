@@ -50,6 +50,7 @@ pub(super) static FORMAT_40: Format = Format {
     time_index: 0,
     encode,
     decode,
+    fill: None,
 };
 
 pub(super) static FORMAT_60: Format = Format { station: TimeStation::Jjy60, ..FORMAT_40 };

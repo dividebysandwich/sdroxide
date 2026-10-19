@@ -54,6 +54,7 @@ pub(super) static FORMAT: Format = Format {
     time_index: 59,
     encode,
     decode,
+    fill: None,
 };
 
 const YEAR_W: [u32; 8] = [80, 40, 20, 10, 8, 4, 2, 1];

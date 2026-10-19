@@ -4,7 +4,8 @@
 //!
 //! * [`Decoder`] — audio in; out come the seconds it read and the minutes it
 //!   decoded, each tied to the input sample it began on. Long-wave stations
-//!   are timed by their carrier's keying, short-wave ones by their ticks.
+//!   are timed by their carrier's keying (ALS162 by its phase), short-wave
+//!   ones by their ticks.
 //! * [`Tracker`] — decides when consecutive minutes agree well enough to be
 //!   believed, and from then on names the UTC second every boundary began.
 //! * [`SampleClock`] — which reading of the computer's clock an input sample
@@ -92,7 +93,13 @@ mod tests {
             let mut s = synth::Synth::new(station, 12_000.0);
             // Short wave's time code is 21 dB below the carrier the SNR is
             // quoted against, where a long-wave code is the carrier itself.
-            s.snr_db = Some(if station.is_hf() { 12.0 } else { -10.0 });
+            // ALS162's bit is one phase element more or less, which carries
+            // a few dB less than another 100 ms of reduced carrier does.
+            s.snr_db = Some(match station {
+                _ if station.is_hf() => 12.0,
+                TimeStation::Als162 => -7.0,
+                _ => -10.0,
+            });
             s.tone_hz = 1000.0 + 187.0;
             s.rate_error_ppm = 40.0;
             s.seed = 3;
@@ -216,6 +223,35 @@ mod tests {
         }
         assert!(seen.contains(&(ten + 120)), "the amplitude code carried on: {seen:?}");
         assert!(seen.contains(&(ten + 360)), "the phase code came back: {seen:?}");
+    }
+
+    /// DCF77 with its carrier gone for the whole of two seconds — each in a
+    /// minute's field, so its parity can stand in. The first is in the very
+    /// first minute, with nothing before it to check a filled minute against,
+    /// and that minute is lost; the second is filled.
+    #[test]
+    fn an_unread_second_is_filled_only_with_a_frame_to_check_against() {
+        let s = synth::Synth::new(TimeStation::Dcf77, 12_000.0);
+        let mut audio = s.render(start(), 330.0);
+        let at = |h, m, sec| ymd_hms_to_unix(2026, 10, 18, h, m, sec);
+        for gone in [at(12, 37, 25), at(12, 39, 25)] {
+            let from = ((gone as f64 - start()) * s.rate) as usize;
+            audio[from..from + s.rate as usize].iter_mut().for_each(|x| *x = 0.0);
+        }
+        let mut dec = Decoder::new(TimeStation::Dcf77, s.rate);
+        let mut ev = Vec::new();
+        for block in audio.chunks(240) {
+            dec.process(block, &mut ev);
+        }
+        let named: Vec<i64> = frames(&ev).into_iter().map(|(_, utc)| utc).collect();
+        let unread =
+            ev.iter().filter(|e| matches!(e, Event::Second(sec) if sec.sym.is_none())).count();
+        assert_eq!(unread, 2, "the two silent seconds, and only they, were unread");
+        assert!(!named.contains(&at(12, 38, 0)), "filled with nothing to check it: {named:?}");
+        assert!(named.contains(&at(12, 39, 0)), "{named:?}");
+        assert!(named.contains(&at(12, 40, 0)), "the filled minute: {named:?}");
+        assert!(named.contains(&at(12, 41, 0)), "{named:?}");
+        assert!(!ev.iter().any(|e| matches!(e, Event::BadFrame { .. })), "a filled minute failed");
     }
 
     #[test]

@@ -47,6 +47,7 @@ pub(super) static FORMAT: Format = Format {
     time_index: 0,
     encode,
     decode,
+    fill: None,
 };
 
 pub(super) const MARKERS: [usize; 7] = [0, 9, 19, 29, 39, 49, 59];

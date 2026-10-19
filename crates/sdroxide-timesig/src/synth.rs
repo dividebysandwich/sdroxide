@@ -8,7 +8,10 @@
 //! a test say the decoder was right to a fraction of a millisecond. WWVB's
 //! carrier is also inverted for each 1 of its phase code, from 100 ms into
 //! the second, with the extended symbols sent at XX:10 and XX:40 as the real
-//! station sends them.
+//! station sends them. ALS162's carrier keeps its amplitude and swings its
+//! phase instead: an element or two at the start of every second, and over
+//! the rest of it the pseudo-random code the station adds, which is there to
+//! be read past.
 //!
 //! The short-wave stations are an AM broadcast as a USB receiver hears it:
 //! the carrier at the tone and each part of the modulation as a tone above
@@ -27,7 +30,7 @@
 
 use sdroxide_types::TimeStation;
 
-use crate::format::{Format, Sym, wwvb_phase};
+use crate::format::{Format, Sym, als162, wwvb_phase};
 
 /// What a station's reduced carrier is, against its full carrier.
 fn low_level(station: TimeStation) -> f32 {
@@ -40,8 +43,8 @@ fn low_level(station: TimeStation) -> f32 {
         TimeStation::Wwvb => 0.1413,
         // 10 % — NICT.
         TimeStation::Jjy40 | TimeStation::Jjy60 => 0.1,
-        // Unused: the short-wave carrier is never keyed.
-        TimeStation::Wwv | TimeStation::Wwvh => 1.0,
+        // Unused: the short-wave carrier and ALS162's are never reduced.
+        TimeStation::Wwv | TimeStation::Wwvh | TimeStation::Als162 => 1.0,
     }
 }
 
@@ -131,7 +134,8 @@ impl Synth {
                 }
                 x
             } else {
-                lf.sample(t) * wc.cos()
+                let (a, phase) = lf.sample(t);
+                a * (wc + phase).cos()
             };
             let noise = sigma.map_or(0.0, |s| s * rng.gauss());
             out.push((amp * fade * signal + noise) as f32);
@@ -165,24 +169,129 @@ impl Lf {
         if reduced { low_level(self.station) } else { 1.0 }
     }
 
-    /// The carrier's amplitude and sign at `t`.
-    fn sample(&mut self, t: f64) -> f64 {
+    /// The carrier's amplitude and phase at `t`.
+    fn sample(&mut self, t: f64) -> (f64, f64) {
         let half_ramp = 0.0005;
         let a =
             (self.level_at(t - half_ramp) + self.level_at(t) + self.level_at(t + half_ramp)) / 3.0;
-        let sign = if self.station == TimeStation::Wwvb {
-            // Each phase bit starts 100 ms into its second.
-            let sec = (t - 0.1).floor() as i64;
-            if self.phase_bit.is_none_or(|(at, _)| at != sec) {
-                self.phase_bit = Some((sec, wwvb_phase::bit_at(sec)));
+        let phase = match self.station {
+            TimeStation::Wwvb => {
+                // Each phase bit starts 100 ms into its second.
+                let sec = (t - 0.1).floor() as i64;
+                if self.phase_bit.is_none_or(|(at, _)| at != sec) {
+                    self.phase_bit = Some((sec, wwvb_phase::bit_at(sec)));
+                }
+                if self.phase_bit.expect("just set").1 { std::f64::consts::PI } else { 0.0 }
             }
-            if self.phase_bit.expect("just set").1 { -1.0 } else { 1.0 }
-        } else {
-            1.0
+            TimeStation::Als162 => self.als162_phase(t),
+            _ => 0.0,
         };
-        f64::from(a) * sign
+        (f64::from(a), phase)
+    }
+
+    /// ALS162's phase at `t`: the elements of the second that `t` is nearest
+    /// the start of, and the position code of whichever second it is in.
+    fn als162_phase(&mut self, t: f64) -> f64 {
+        // An element starts 50 ms before its second, so everything from
+        // −50 ms on belongs to the second that follows.
+        let sec = (t + 0.05).floor() as i64;
+        let into = t - sec as f64;
+        let m = sec.div_euclid(60) * 60;
+        if self.minute.is_none_or(|(at, _)| at != m) {
+            self.minute = Some((m, (self.fmt.encode)(m)));
+        }
+        let s_of_m = (sec - m) as usize;
+        let sym = self.minute.expect("just set").1[s_of_m];
+        let elements = (0..als162::elements(sym))
+            .map(|k| als162::element(into - k as f64 * als162::ELEMENT_S))
+            .sum::<f64>();
+        // The position code's 25 ms slices are slopes, in units of a radian
+        // a slice, from 150 ms to 950 ms; integrated, it is back at zero by
+        // the end of each.
+        let mut code = 0.0;
+        let from = 0.15;
+        if into > from {
+            let slices = &ALS162_POSITION[s_of_m];
+            let x = (into - from) / 0.025;
+            let whole = (x as usize).min(slices.len());
+            code = slices[..whole].iter().map(|&d| f64::from(d)).sum::<f64>();
+            if whole < slices.len() {
+                code += f64::from(slices[whole]) * x.fract();
+            }
+        }
+        elements + code
     }
 }
+
+/// ALS162's pseudo-random phase code as reverse-engineered from the air by
+/// Henning Maier for gr_ALS162_Receiver (GPL-3.0, github.com/henningM1r,
+/// `python/ALS162_codes.py`), one row a second of the minute: each entry is
+/// the slope of the phase over one 25 ms slice, radians a slice. Not used to
+/// decode — LNE-SYRTE does not publish it — only to put on the synthetic
+/// carrier what a receiver has to read the elements past.
+#[rustfmt::skip]
+static ALS162_POSITION: [[i8; 32]; 60] = [
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 1, -1, 0, 0, 0, 1, -1, 0, 0, 0, 0, 0, 0, 0, -1, 0, 2, 0, -2, 0, 2, 0, -2, 0, 1, 0, 0, 0, 0, 0, 0],
+    [1, 0, -2, 0, 2, -1, -1, 1, 1, -1, -1, 1, 0, 1, 0, -2, 1, 0, 0, 1, -2, 0, 1, 0, 1, -1, -1, 1, 0, 0, 0, 0],
+    [1, -1, 0, 0, -1, 2, 0, -1, -1, 0, 2, -1, -1, 2, 0, -1, -1, 0, 2, -1, -1, 2, 0, -1, -1, 0, 1, 0, 0, 0, 0, 0],
+    [1, -1, -1, 1, 1, 0, -1, -1, 1, 0, -1, 1, 0, 0, 0, 1, 0, -2, 1, 1, -1, -1, 0, 1, 1, -1, -1, 1, 0, 0, 0, 0],
+    [1, -1, 0, 1, -2, 0, 1, 0, 1, 0, -1, -1, 0, 2, 0, -1, -1, 0, 1, 1, -1, -1, 2, -1, -1, 1, 0, 0, 0, 0, 0, 0],
+    [1, -1, -1, 1, 1, 0, -1, -1, 0, 1, 0, 1, 0, -2, 0, 2, 0, -2, 1, 1, -1, -1, 0, 2, -1, -1, 1, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 1, 0, -1, 0, -1, 0, 1, 1, 0, -1, -1, 1, 0, 0, 0, -1, 1, 1, 0, -1, -1, 0, 1, 0, 0, 0, 0, 0],
+    [0, 0, 1, 0, -1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, -1, -1, 2, -1, -1, 1, 0, 0, 0, 0],
+    [1, -1, 0, 1, -2, 1, 0, -1, 1, 1, -1, -1, 1, 1, 0, -1, -1, 0, 1, 1, 0, -1, -1, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+    [0, 1, 0, -1, -1, 0, 1, 1, 0, -1, -1, 0, 2, -1, -1, 1, 1, 0, -1, -1, 1, 1, -2, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+    [0, 1, 0, -1, -1, 1, 1, -2, 1, 0, -1, 1, 0, 1, -1, 0, 1, -1, 0, -1, 0, 2, -1, 0, 0, -1, 1, 0, 0, 0, 0, 0],
+    [0, 1, 0, -1, 0, 0, -1, 0, 2, -1, -1, 1, 1, 0, -1, 0, -1, 0, 1, 0, 0, 0, 0, 0, 1, -1, -1, 1, 0, 0, 0, 0],
+    [1, -1, -1, 2, 0, -1, -1, 0, 1, 1, -1, 0, 1, -2, 0, 1, 1, -1, -1, 1, 0, 0, 1, 0, -1, -1, 0, 1, 0, 0, 0, 0],
+    [1, 0, -2, 1, 1, -2, 1, 0, -1, 2, 0, -2, 0, 1, 1, -1, 0, 0, -1, 1, 1, -1, -1, 2, 0, -2, 0, 1, 0, 0, 0, 0],
+    [0, 1, -1, -1, 1, 1, 0, -1, 0, -1, 0, 2, 0, -1, 0, -1, 0, 2, -1, 0, 1, -2, 0, 2, -1, -1, 1, 0, 0, 0, 0, 0],
+    [0, 0, 1, 0, -2, 1, 1, -1, 0, 0, -1, 1, 0, -1, 1, 0, 0, 0, 0, 1, 0, -2, 1, 1, -1, -1, 0, 1, 0, 0, 0, 0],
+    [1, 0, -2, 0, 2, -1, 0, 1, -1, 0, 0, -1, 1, 1, -1, 0, 0, -1, 1, 1, -2, 1, 1, -2, 0, 1, 0, 0, 0, 0, 0, 0],
+    [1, -1, 0, 1, -2, 0, 2, -1, 0, 1, -1, 0, 0, -1, 0, 2, 0, -1, 0, -1, 1, 0, -1, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+    [1, 0, -1, 0, -1, 0, 1, 1, -1, 0, 1, -2, 0, 2, -1, -1, 1, 0, 0, 1, -1, -1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [1, -1, -1, 1, 0, 1, 0, -2, 0, 1, 0, 1, -1, 0, 1, -2, 0, 2, -1, 0, 1, -2, 0, 2, -1, -1, 1, 0, 0, 0, 0, 0],
+    [0, 0, 1, -1, -1, 2, -1, 0, 1, -1, 0, -1, 0, 1, 1, -1, 0, 1, -2, 1, 1, -1, 0, -1, 0, 1, 0, 0, 0, 0, 0, 0],
+    [1, -1, -1, 2, -1, 0, 0, -1, 1, 0, 1, 0, -1, -1, 0, 2, 0, -2, 0, 2, 0, -1, 0, -1, 1, 0, -1, 1, 0, 0, 0, 0],
+    [0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0, 0, -1, 1, 1, -2, 1, 0, 0, 1, -1, -1, 0, 2, 0, -2, 0, 1, 0, 0, 0, 0],
+    [0, 0, 0, 0, 1, -1, 0, 0, 0, 1, -2, 1, 0, -1, 2, 0, -1, -1, 1, 1, -2, 1, 1, -1, 0, -1, 0, 1, 0, 0, 0, 0],
+    [1, 0, -2, 0, 1, 0, 0, 0, 1, 0, -2, 0, 2, 0, -1, 0, 0, -1, 1, 0, 0, 1, -2, 1, 1, -2, 0, 1, 0, 0, 0, 0],
+    [1, -1, 0, 1, -2, 0, 2, -1, 0, 0, 0, 1, -2, 0, 2, -1, -1, 1, 0, 1, -1, 0, 1, -1, -1, 0, 1, 0, 0, 0, 0, 0],
+    [1, 0, -2, 0, 1, 1, -1, -1, 1, 0, 1, 0, -2, 0, 2, 0, -1, -1, 1, 0, -1, 1, 1, 0, -2, 0, 1, 0, 0, 0, 0, 0],
+    [1, 0, -1, -1, 1, 1, -2, 1, 0, 0, 1, -2, 0, 1, 0, 1, -1, -1, 2, 0, -1, 0, -1, 1, 1, -2, 0, 1, 0, 0, 0, 0],
+    [0, 1, -1, -1, 2, 0, -2, 0, 2, 0, -1, 0, 0, 0, 0, -1, 0, 2, -1, -1, 1, 0, 1, -1, -1, 1, 0, 0, 0, 0, 0, 0],
+    [1, 0, -2, 0, 2, -1, -1, 1, 0, 1, 0, -2, 0, 2, 0, -2, 1, 0, 0, 1, -2, 0, 1, 1, 0, -2, 0, 1, 0, 0, 0, 0],
+    [0, 1, -1, 0, 1, -2, 0, 1, 1, 0, -2, 1, 1, -1, 0, -1, 0, 2, 0, -1, -1, 0, 2, -1, -1, 1, 0, 0, 0, 0, 0, 0],
+    [0, 0, 1, 0, -2, 1, 1, -1, -1, 0, 1, 1, 0, -2, 0, 1, 0, 0, 0, 1, 0, -2, 1, 0, 0, 0, -1, 1, 0, 0, 0, 0],
+    [1, 0, -1, 0, -1, 1, 0, -1, 1, 0, 0, 1, -1, 0, 1, -1, 0, 0, 0, -1, 0, 1, 1, 0, -2, 0, 1, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 1, 0, -2, 0, 2, -1, -1, 2, 0, -1, 0, 0, 0, -1, 1, 1, -1, 0, 0, 0, -1, 0, 1, 0, 0, 0, 0, 0],
+    [0, 0, 0, 1, 0, -1, 0, 0, -1, 0, 1, 0, 1, 0, -2, 1, 0, 0, 1, -1, 0, -1, 0, 1, 1, -1, -1, 1, 0, 0, 0, 0],
+    [1, -1, 0, 1, -1, 0, 0, 0, -1, 0, 2, -1, 0, 0, 0, 0, -1, 1, 0, 0, 0, 1, -1, 0, 0, -1, 1, 0, 0, 0, 0, 0],
+    [1, -1, -1, 1, 0, 1, -1, -1, 1, 1, -1, -1, 1, 0, 1, 0, -2, 1, 0, 0, 1, -1, -1, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+    [0, 1, 0, -2, 1, 1, -1, 0, 0, 0, -1, 0, 2, -1, -1, 1, 1, 0, -2, 0, 1, 1, -1, -1, 1, 0, 0, 0, 0, 0, 0, 0],
+    [0, 1, 0, -1, -1, 1, 1, -2, 0, 2, -1, -1, 1, 1, -1, 0, 1, -1, 0, -1, 0, 2, -1, -1, 1, 0, 0, 0, 0, 0, 0, 0],
+    [0, 1, 0, -1, 0, 0, -1, 0, 2, -1, -1, 1, 1, -1, -1, 1, 1, 0, -1, 0, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0, 0, 0],
+    [0, 1, 0, -1, -1, 1, 1, -2, 1, 1, -1, 0, -1, 0, 2, -1, -1, 1, 0, 1, 0, -2, 1, 0, -1, 1, 0, 0, 0, 0, 0, 0],
+    [1, 0, -1, -1, 1, 0, -1, 2, 0, -1, -1, 1, 1, -2, 0, 2, -1, -1, 2, 0, -2, 0, 2, 0, -1, -1, 0, 1, 0, 0, 0, 0],
+    [1, 0, -1, 0, -1, 0, 2, 0, -2, 0, 2, -1, 0, 1, -1, 0, 0, 0, 0, -1, 1, 0, -1, 1, 1, -1, -1, 1, 0, 0, 0, 0],
+    [0, 1, -1, -1, 2, 0, -2, 0, 2, -1, 0, 0, 0, 0, 0, 1, -2, 1, 0, -1, 1, 0, 0, 0, 1, -1, -1, 1, 0, 0, 0, 0],
+    [0, 1, 0, -1, 0, 0, -1, 1, 1, -2, 1, 0, -1, 2, 0, -2, 0, 1, 0, 0, 0, 0, 0, 1, -1, -1, 1, 0, 0, 0, 0, 0],
+    [1, -1, -1, 1, 1, -1, -1, 2, 0, -2, 0, 2, -1, -1, 1, 1, 0, -2, 1, 1, -2, 0, 2, 0, -2, 0, 1, 0, 0, 0, 0, 0],
+    [0, 0, 1, 0, -2, 0, 1, 0, 1, 0, -2, 1, 0, -1, 2, -1, 0, 1, -1, -1, 1, 1, -2, 1, 1, -2, 0, 1, 0, 0, 0, 0],
+    [1, 0, -1, -1, 1, 0, 0, 1, -2, 1, 0, -1, 2, 0, -2, 1, 0, -1, 2, 0, -2, 1, 0, 0, 1, -2, 0, 1, 0, 0, 0, 0],
+    [1, -1, -1, 2, -1, -1, 2, 0, -2, 0, 2, 0, -1, 0, 0, 0, -1, 1, 1, -2, 1, 0, -1, 1, 1, -1, -1, 1, 0, 0, 0, 0],
+    [0, 0, 1, 0, -2, 0, 1, 0, 1, -1, 0, 0, 0, 0, 0, 1, -1, 0, 0, -1, 1, 1, -1, 0, -1, 0, 1, 0, 0, 0, 0, 0],
+    [1, -1, -1, 1, 0, 0, 0, 1, -1, 0, 1, -1, -1, 0, 2, 0, -2, 1, 0, 0, 0, -1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [1, 0, -1, -1, 1, 1, -1, 0, 0, 0, 0, -1, 1, 0, -1, 2, -1, -1, 2, 0, -1, -1, 1, 1, -1, -1, 0, 1, 0, 0, 0, 0],
+    [0, 1, 0, -1, -1, 0, 2, 0, -2, 0, 1, 1, -1, -1, 1, 1, 0, -1, 0, -1, 1, 0, -1, 1, 1, -1, -1, 1, 0, 0, 0, 0],
+    [1, 0, -1, -1, 0, 1, 1, 0, -2, 1, 0, 0, 0, 0, 0, 0, 0, -1, 2, -1, 0, 0, 0, 0, -1, 1, 0, 0, 0, 0, 0, 0],
+    [0, 0, 1, -1, 0, 1, -2, 0, 2, -1, -1, 2, -1, 0, 0, 0, 0, -1, 2, 0, -1, 0, -1, 1, 0, -1, 1, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 1, -1, -1, 2, 0, -2, 0, 1, 0, 0, 1, -1, 0, 0, -1, 2, -1, 0, 0, -1, 1, 0, 0, 0, 0],
+    [0, 0, 1, 0, -2, 1, 0, 0, 1, -1, -1, 1, 0, 0, 1, -2, 1, 1, -1, -1, 0, 1, 0, 1, 0, -2, 0, 1, 0, 0, 0, 0],
+    [1, 0, -1, 0, -1, 1, 0, -1, 2, -1, -1, 2, -1, -1, 2, -1, 0, 1, -1, -1, 0, 1, 0, 0, 1, -1, -1, 1, 0, 0, 0, 0],
+    [1, 0, -2, 0, 2, 0, -2, 0, 2, 0, -2, 0, 2, 0, -2, 0, 2, 0, -2, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+];
 
 /// One short-wave station's broadcast, as USB audio relative to its carrier.
 struct Hf {

@@ -28,7 +28,7 @@ or connects to a remote sdroxide server.
     - [3.23 FST4](#323-fst4)
     - [3.24 Q65](#324-q65)
     - [3.25 FSK441](#325-fsk441)
-    - [3.26 Time signals](#326-time-signals-dcf77-msf-wwvb-jjy-wwv-wwvh)
+    - [3.26 Time signals](#326-time-signals-dcf77-als162-msf-wwvb-jjy-wwv-wwvh)
 4. [Skimmers (CW, PSK, RTTY)](#4-skimmers)
 5. [ISM band decoder (315 / 345 / 433 / 868 / 915 MHz devices)](#5-ism-band-decoder)
 6. [Settings](#6-settings)
@@ -6206,13 +6206,14 @@ first. There is no automatic sequencing and no station being called: a
 meteor-scatter contact is arranged by ear and by the shorthand, which is what
 the mode has always been.
 
-### 3.26 Time signals (DCF77, MSF, WWVB, JJY, WWV, WWVH)
+### 3.26 Time signals (DCF77, ALS162, MSF, WWVB, JJY, WWV, WWVH)
 
-The national time stations send the date and time once a minute. The long-wave ones key their carrier: every second the carrier is reduced for a moment, and how long it stays reduced is the bit. The short-wave ones, WWV and WWVH, are AM broadcasts with a tick on every second and the time code on a quiet 100 Hz tone underneath. The **TIME** mode decodes them and measures how far the clock of the computer running sdroxide is from the received time. It can then **set that clock** from the radio, and the built-in **NTP server** can hand the received time to other machines on your network.
+The national time stations send the date and time once a minute. The long-wave ones key their carrier: every second the carrier is reduced for a moment, and how long it stays reduced is the bit. ALS162 is the exception: its carrier stays at full strength and swings its phase instead, once for a 0 and twice for a 1. The short-wave ones, WWV and WWVH, are AM broadcasts with a tick on every second and the time code on a quiet 100 Hz tone underneath. The **TIME** mode decodes them and measures how far the clock of the computer running sdroxide is from the received time. It can then **set that clock** from the radio, and the built-in **NTP server** can hand the received time to other machines on your network.
 
 | Station | Frequency | Where | Heard |
 | --- | --- | --- | --- |
 | **DCF77** | 77.5 kHz | Mainflingen, Germany (PTB) | Most of Europe, by ground wave |
+| **ALS162** | 162 kHz | Allouis, France (LNE-SYRTE, ANFR) | France and its neighbours, by ground wave |
 | **MSF** | 60 kHz | Anthorn, United Kingdom (NPL) | The UK and north-west Europe |
 | **WWVB** | 60 kHz | Fort Collins, Colorado (NIST) | Most of North America, best at night |
 | **JJY 40** | 40 kHz | Mt. Ōtakadoya, Fukushima (NICT) | Eastern Japan |
@@ -6222,7 +6223,7 @@ The national time stations send the date and time once a minute. The long-wave o
 
 CHU, Canada's short-wave time station, closed for good on 22 June 2026 and is not offered. A decoder for a station that no longer transmits would only ever hear whoever imitates it, and this one sets clocks.
 
-**What you need on long wave.** A receiver that tunes to 40–80 kHz, and an antenna for it. That rules out an RTL-SDR on its own; the usual routes are direct sampling, an up-converter, a receiver built for the low bands (Airspy HF+, RX888, SDRplay, KiwiSDR), or a transceiver with a general-coverage receiver. A ferrite rod, a small loop or an active whip all work. Long-wave noise from switch-mode supplies is the usual enemy, so keep the antenna away from the computer. The stations are strongest at night.
+**What you need on long wave.** A receiver that tunes to 40–80 kHz (162 kHz for ALS162), and an antenna for it. That rules out an RTL-SDR on its own; the usual routes are direct sampling, an up-converter, a receiver built for the low bands (Airspy HF+, RX888, SDRplay, KiwiSDR), or a transceiver with a general-coverage receiver. A ferrite rod, a small loop or an active whip all work. Long-wave noise from switch-mode supplies is the usual enemy, so keep the antenna away from the computer. The stations are strongest at night.
 
 **What you need on short wave.** Any HF receiver and antenna that hear WWV or WWVH. Which frequency works depends on the hour and the season, as for any short-wave path: 5 and 10 MHz most of the time, 2.5 MHz at night, 15 MHz and up by day. The time code needs the station clearly above the noise, since it is a faint tone 21 dB below the carrier and has no parity to rescue a misread second. As a rough guide, every minute reads at 10 dB of signal over the noise in a 3 kHz bandwidth, and few do below 5 dB. The ticks, which the time is measured from, are heard well below that.
 
@@ -6232,10 +6233,12 @@ The passband follows the band. On long wave it is the search range around the ca
 
 **What the panel shows.**
 
-- **LOCK** once the start of each second has been found, which takes 10–30 seconds. The figure after it is how cleanly the keying reads. Below about 10 dB, minutes begin to fail their checks.
-- The **scope** on the left is the average second: the carrier through one second (on short wave, the 100 Hz time code), averaged over the last fifteen or so. A good signal draws a sharp step at the left edge and the keying after it.
-- The **ribbon** is the current minute, one cell a second: dim for a 0, green for a 1, cyan for a marker (and for WWV's empty second 0, which marks the minute), red for a second that could not be read. One red cell costs that minute, and the next minute starts again.
+- **LOCK** once the start of each second has been found, which takes 10–30 seconds. The figure after it is how cleanly the keying reads (for ALS162, the phase swings). Below about 10 dB, minutes begin to fail their checks.
+- The **scope** on the left is the average second: the carrier through one second (on short wave, the 100 Hz time code; for ALS162, the carrier's phase, starting a tenth of a second early), averaged over the last fifteen or so. A good signal draws a sharp step at the left edge and the keying after it. A good ALS162 signal draws a swing up, down and back at the left edge, a smaller one after it, and a low ripple for the rest of the second.
+- The **ribbon** is the current minute, one cell a second: dim for a 0, green for a 1, cyan for a marker (and for WWV's empty second 0, which marks the minute), red for a second that could not be read. One red cell costs that minute, and the next minute starts again — except on DCF77 and ALS162, whose parity bits can stand in for a red cell or two (see below).
 - Under it, the last minute decoded, in UTC and in the station's own civil time. A minute is only *believed* once two consecutive ones decode and agree with each other (**2 minutes agree**). Single minutes can pass their parity checks and still be wrong, especially from WWVB's amplitude code and WWV's, which have no parity at all.
+
+**Red cells on DCF77 and ALS162.** Their minutes carry parity bits over the minute, the hour and the date, so a minute with one or two unread seconds is not always lost. An unread second in one of those fields is worked out from the field's parity, provided it is the field's only unread second and every other bit in it was read clearly. The summer-time bits are worked out from each other, the start-of-time bits are fixed, and an unread announcement or flag is taken to be 0, which it is in all but a few minutes a year. Filling uses up the check that would have caught a misread bit, so a filled minute is only believed if it names exactly the minute that the time since the last decoded minute says it must be. The first minute after tuning in is never filled. Where reception is marginal, that reads about a quarter more minutes.
 
 **WWVB's phase code.** Since 2012 WWVB also inverts its carrier for every 1 of a second code, laid over the familiar one without disturbing it. Its minute is found by a sync word and protected by a Hamming code that corrects a single wrong bit, so it reads minutes the amplitude code loses to one bad second. Both are read at once. With WWVB selected the panel adds:
 
@@ -6245,7 +6248,13 @@ The passband follows the band. On long wave it is the search range around the ca
 
 Twice an hour, from :10 and :40, WWVB spends six minutes sending a special slow sequence instead of phase-code minutes. The amplitude code carries on as usual through those minutes, and the phase code comes back at :16 and :46.
 
-The phase code reads minutes more reliably, but it does not reach further into the noise: finding the start of each second still relies on the amplitude keying, as for every long-wave station.
+The phase code reads minutes more reliably, but it does not reach further into the noise: finding the start of each second still relies on the amplitude keying, as for every other long-wave station but ALS162.
+
+**ALS162.** France's legal time is sent from Allouis on 162 kHz, the transmitter that carried France Inter on long wave until 2017. The code is DCF77's from second 15 on, in French civil time, with one check DCF77 does not have: seconds 3–6 count the 1s in the date and time, and a minute whose count disagrees is refused. The carrier's strength never changes. Instead, each second is marked by a swing of its phase, up by a radian, down through zero exactly on the second, and back, all within a tenth of a second either side; a 1 adds a second swing straight after the first, and second 59 has none. The rest of every second carries a pseudo-random phase pattern, which is not published and is not read. The decoder looks past it.
+
+- A swing of phase carries less energy than DCF77's dip in strength, so ALS162 needs about 3 dB more signal for the same share of minutes. The time is measured where the swing crosses zero, and on a clean signal that is as precise as DCF77's edge.
+- The phase has to reach the decoder the right way up. The mode's USB does that. A receiver that mirrors its spectrum would also put the carrier on the wrong side of the dial, where the decoder would not find it at all.
+- The transmitter is usually off the air for a few hours on Tuesday mornings for maintenance.
 
 **WWV and WWVH together.** The two stations share their frequencies, so many listeners hear both at once, a few milliseconds apart. They send the same time code. What tells them apart is the pitch of the ticks, 1000 Hz from WWV and 1200 Hz from WWVH. The ticks are what the time is measured from, and the station you pick is the one whose ticks are timed, and whose distance is added. The panel says when the other station is heard too. When only the other one is coming in, it says so and offers a **LISTEN TO WWVH** (or **WWV**) chip, which switches station without retuning. Where the two arrive out of step, their 100 Hz codes can partly cancel, and minutes read a little worse.
 
@@ -6282,7 +6291,7 @@ allow_remote_clock_set = true
 
 It must go among the plain settings at the top of the file, above the first `[section]`. The setting is read again on every attempt, so no restart is needed.
 
-**The NTP server.** **Settings → Servers → Built-in NTP server** serves the received time as a stratum 1 NTP server. While a recent reception is in hand it announces itself as synchronised, with the station named as its reference (`DCF`, `MSF`, `WWVB`, `JJY`, `WWV`, `WWVH`). For two hours after the last reception it keeps serving, with an error estimate that grows with the time since. After that, or before the first reception, it answers as unsynchronised, and clients ignore it.
+**The NTP server.** **Settings → Servers → Built-in NTP server** serves the received time as a stratum 1 NTP server. While a recent reception is in hand it announces itself as synchronised, with the station named as its reference (`DCF`, `TDF` for ALS162, `MSF`, `WWVB`, `JJY`, `WWV`, `WWVH`). For two hours after the last reception it keeps serving, with an error estimate that grows with the time since. After that, or before the first reception, it answers as unsynchronised, and clients ignore it.
 
 It serves the computer's clock *corrected by the latest measurement*, so it gives radio time even if this computer's own clock is never set. The usual arrangement is to point this machine's own time service at it, which keeps the clock on radio time continuously with no password at all. For chrony:
 
@@ -14960,7 +14969,7 @@ and not the station's.
 
 | File | Format | Contents |
 | --- | --- | --- |
-| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `dismissed_update` (the published release whose update banner was dismissed, [§6.3](#63-ui-display-preferences-and-voice-announcements)), `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), `allow_remote_clock_set` (whether a remote client may set this machine's clock from the time signal, [§3.26](#326-time-signals-dcf77-msf-wwvb-jjy-wwv-wwvh)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **Remote** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
+| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `dismissed_update` (the published release whose update banner was dismissed, [§6.3](#63-ui-display-preferences-and-voice-announcements)), `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), `allow_remote_clock_set` (whether a remote client may set this machine's clock from the time signal, [§3.26](#326-time-signals-dcf77-als162-msf-wwvb-jjy-wwv-wwvh)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **Remote** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
 | `radio.json` | JSON | Which radio interface is selected and everything that configures it — the CAT/HPSDR/TCI/SmartSDR/RTL-SDR/rtl_tcp/SpyServer/RX-888/Airspy HF+/SDRplay/PlutoSDR sections, the converter offset and stated tuning ranges, and the radio's sound-card device names. |
 | `digi.json` | JSON | Digital-mode operator settings: your callsign and grid, FT8/FT4/FT2 TX period, auto-sequence and message templates, the transmit-frequency hold (`hold_tx_freq`) and the per-band transmit offsets it pins (`tx_audio_hz`), the per-mode transmit-audio levels (`tx_audio_levels`, with `tx_audio_level_fm` / `tx_audio_level_ssb` as the level a mode with no entry of its own inherits), and the WSPR beacon's duty cycle, power and band-hop list. |
 | `memories.json` | JSON | Saved memory channels. |
@@ -14973,7 +14982,7 @@ and not the station's.
 | `net.json` | JSON | Network cockpit: DX cluster / POTA / SOTA / PSK / FreeDV Reporter / WSPRnet feed settings, and callsign-lookup / eQSL / QRZ / HamQTH / Club Log / LoTW credentials (stored in plaintext). |
 | `winlink/` | directory | The Winlink mailbox: `inbox/`, `outbox/`, `sent/` and `archive/`, one `.b2f` file per message holding it exactly as it rides the wire ([§11](#11-winlink-radio-email)). The account settings live in `net.json`, password included, in plaintext. |
 | `tciserver.json` | JSON | Built-in TCI server: enabled, bind address, port, advertised device name, whether clients may transmit, and the client limit. |
-| `ntpserver.json` | JSON | Built-in NTP server ([§3.26](#326-time-signals-dcf77-msf-wwvb-jjy-wwv-wwvh)): enabled, bind address and port. Belongs to the engine's machine, like the other servers. |
+| `ntpserver.json` | JSON | Built-in NTP server ([§3.26](#326-time-signals-dcf77-als162-msf-wwvb-jjy-wwv-wwvh)): enabled, bind address and port. Belongs to the engine's machine, like the other servers. |
 | `rigctld.json` | JSON | Built-in Hamlib rigctld server: enabled, bind address, port, reported rig name, whether clients may transmit, and the client limit. |
 | `wsjtx.json` | JSON | WSJT-X UDP broadcast: enabled, destination host and port, and the name clients see. |
 | `scanner.json` | JSON | The scanner: memories or a range, the range and channel step, the level that counts as busy, the dwell, how it resumes, and which memories to skip. |
@@ -16412,7 +16421,7 @@ using. Bind them under **Speech** on the Controls tab:
 | RTTY | RTTY keyboard mode (Baudot; selectable shift and baud), on a sideband. |
 | RTTY-FM | The same modem on an FM carrier, the way a club bulletin is still sent on VHF. |
 | NAVTEX | The maritime safety broadcast on 518, 490 and 4209.5 kHz: navigational and meteorological warnings, search-and-rescue bulletins and ice reports, framed into messages. Receive only. |
-| TIME | The time stations DCF77, MSF, WWVB (both its codes), JJY, WWV and WWVH: the minute decoded, how far the computer's clock is from it, setting that clock, and an NTP server serving the received time. Receive only. See [3.26](#326-time-signals-dcf77-msf-wwvb-jjy-wwv-wwvh). |
+| TIME | The time stations DCF77, ALS162, MSF, WWVB (both its codes), JJY, WWV and WWVH: the minute decoded, how far the computer's clock is from it, setting that clock, and an NTP server serving the received time. Receive only. See [3.26](#326-time-signals-dcf77-als162-msf-wwvb-jjy-wwv-wwvh). |
 | OLIVIA | Robust MFSK keyboard mode (selectable tones/bandwidth). |
 | THOR | DominoEX-family IFK keyboard mode with FEC (THOR4…THOR32). |
 | FSQ | Fast Simple QSO — 33-tone IFK with directed (FSQCALL) messaging and images. |

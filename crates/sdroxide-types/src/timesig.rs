@@ -11,7 +11,9 @@
 //! Two families. The long-wave services key their carrier's amplitude — it is
 //! reduced (or switched off) for a length of time each second that says what
 //! the bit is: DCF77, MSF, WWVB and the two JJY transmitters. WWVB also keys
-//! its carrier's phase with a second code, which is read alongside.
+//! its carrier's phase with a second code, which is read alongside. ALS162 is
+//! the long-wave exception: its carrier stays at full power and the seconds
+//! and bits are swings of its phase alone.
 //!
 //! The short-wave services, WWV and WWVH, are AM broadcasts: a tick on every
 //! second, voice and tones, and the time code on a 100 Hz subcarrier underneath.
@@ -81,12 +83,18 @@ pub enum TimeStation {
     /// 2.5, 5, 10 and 15 MHz, the same frequencies as [`TimeStation::Wwv`]. Its
     /// seconds are 1200 Hz ticks, which is how it is told apart.
     Wwvh,
+    /// ALS162, Allouis, France — the French legal time on 162 kHz, kept by
+    /// LNE-SYRTE and transmitted by ANFR; once France Inter's long-wave
+    /// transmitter (TDF). A DCF77-like code sent by swinging the carrier's
+    /// phase, so its amplitude never moves.
+    Als162,
 }
 
 impl TimeStation {
     /// Every station, in the order the panel offers them.
-    pub const ALL: [TimeStation; 7] = [
+    pub const ALL: [TimeStation; 8] = [
         TimeStation::Dcf77,
+        TimeStation::Als162,
         TimeStation::Msf,
         TimeStation::Wwvb,
         TimeStation::Jjy40,
@@ -105,6 +113,7 @@ impl TimeStation {
             TimeStation::Jjy60 => "JJY 60",
             TimeStation::Wwv => "WWV",
             TimeStation::Wwvh => "WWVH",
+            TimeStation::Als162 => "ALS162",
         }
     }
 
@@ -118,6 +127,7 @@ impl TimeStation {
                 &[2_500_000.0, 5_000_000.0, 10_000_000.0, 15_000_000.0, 20_000_000.0, 25_000_000.0]
             }
             TimeStation::Wwvh => &[2_500_000.0, 5_000_000.0, 10_000_000.0, 15_000_000.0],
+            TimeStation::Als162 => &[162_000.0],
         }
     }
 
@@ -179,6 +189,7 @@ impl TimeStation {
             TimeStation::Jjy60 => "Mt. Hagane, Kyushu, Japan",
             TimeStation::Wwv => "Fort Collins, Colorado, USA",
             TimeStation::Wwvh => "Kekaha, Kauaʻi, Hawaii, USA",
+            TimeStation::Als162 => "Allouis, France",
         }
     }
 
@@ -196,6 +207,7 @@ impl TimeStation {
             TimeStation::Jjy60 => (33.4653, 130.1758),
             TimeStation::Wwv => (40.6809, -105.0408),
             TimeStation::Wwvh => (21.9878, -159.7644),
+            TimeStation::Als162 => (47.1694, 2.2042),
         }
     }
 
@@ -209,6 +221,8 @@ impl TimeStation {
             TimeStation::Jjy40 | TimeStation::Jjy60 => *b"JJY\0",
             TimeStation::Wwv => *b"WWV\0",
             TimeStation::Wwvh => *b"WWVH",
+            // RFC 5905 still calls Allouis by its old operator's name.
+            TimeStation::Als162 => *b"TDF\0",
         }
     }
 }
@@ -403,7 +417,9 @@ pub struct TimeSigStatus {
     /// read.
     pub symbols: Vec<u8>,
     /// The envelope of an average second, 0–255, 100 points from the start of
-    /// the second — the picture of the keying the operator tunes by.
+    /// the second — the picture of the keying the operator tunes by. ALS162's
+    /// is its carrier's phase, from a tenth of a second before the second, so
+    /// the swing that marks it is drawn whole.
     pub scope: Vec<u8>,
     /// The most recent frame that decoded.
     pub last_frame: Option<TimeFrame>,
@@ -503,6 +519,7 @@ mod tests {
         assert_eq!(&TimeStation::Wwvb.ntp_refid(), b"WWVB");
         assert_eq!(&TimeStation::Wwv.ntp_refid(), b"WWV\0");
         assert_eq!(&TimeStation::Wwvh.ntp_refid(), b"WWVH");
+        assert_eq!(&TimeStation::Als162.ntp_refid(), b"TDF\0");
         assert_eq!(TimeStation::Jjy40.ntp_refid(), TimeStation::Jjy60.ntp_refid());
     }
 }

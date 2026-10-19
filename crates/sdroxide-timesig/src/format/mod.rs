@@ -12,7 +12,9 @@
 //!
 //! WWVB's phase code is the exception: one bit a second carried by the sign
 //! of the carrier rather than a pattern of levels. It is described in
-//! [`wwvb_phase`], next to the amplitude code it rides alongside.
+//! [`wwvb_phase`], next to the amplitude code it rides alongside. ALS162 is
+//! the other: its carrier is never reduced, and a second says its bit by how
+//! many swings of phase it carries — see [`als162`].
 //!
 //! Each format also has an encoder. The receiver never transmits, but the
 //! tests and the signal generator in [`crate::synth`] need the symbols a real
@@ -20,6 +22,7 @@
 //! specification is the independent half that makes a round trip mean
 //! something.
 
+pub mod als162;
 mod dcf77;
 mod jjy;
 mod msf;
@@ -134,7 +137,16 @@ pub struct Format {
     /// A window of `frame_len` symbols ending at a marker, to the frame it
     /// carries.
     pub decode: fn(window: &[Sym], ctx: &Context) -> Result<TimeFrame, FrameError>,
+    /// For the codes whose checks can stand in for a second that could not
+    /// be read: a window of `frame_len` seconds, `None` where unread, and how
+    /// clearly each read second was read (the decoder's margin), to the whole
+    /// window — or `None` where what is missing cannot be worked out safely.
+    /// [`Format::decode`] still has the last word on the result.
+    pub fill: Option<Fill>,
 }
+
+/// See [`Format::fill`].
+pub type Fill = fn(window: &[Option<Sym>], margin: &[f32]) -> Option<Vec<Sym>>;
 
 impl Format {
     pub fn for_station(station: TimeStation) -> &'static Format {
@@ -146,6 +158,7 @@ impl Format {
             TimeStation::Jjy60 => &jjy::FORMAT_60,
             TimeStation::Wwv => &wwv::FORMAT_WWV,
             TimeStation::Wwvh => &wwv::FORMAT_WWVH,
+            TimeStation::Als162 => &als162::FORMAT,
         }
     }
 
@@ -227,10 +240,12 @@ mod tests {
 
     #[test]
     fn one_flipped_bit_never_decodes_to_a_different_time_where_there_is_parity() {
-        // DCF77, MSF and JJY carry parity over the time fields; WWVB's
-        // amplitude code and WWV's carry none, and are protected only by their
-        // unused bits and range checks.
-        for station in [TimeStation::Dcf77, TimeStation::Msf, TimeStation::Jjy60] {
+        // DCF77, ALS162, MSF and JJY carry parity over the time fields;
+        // WWVB's amplitude code and WWV's carry none, and are protected only
+        // by their unused bits and range checks.
+        for station in
+            [TimeStation::Dcf77, TimeStation::Als162, TimeStation::Msf, TimeStation::Jjy60]
+        {
             let fmt = Format::for_station(station);
             for t in minutes().into_iter().take(60) {
                 let w = window_naming(fmt, t);
@@ -247,6 +262,69 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// A window with some seconds unread, every read one read cleanly.
+    fn erased(fmt: &Format, t: i64, gone: &[usize]) -> (Vec<Option<Sym>>, Vec<f32>) {
+        let w = window_naming(fmt, t);
+        let read = w.iter().enumerate().map(|(i, s)| (!gone.contains(&i)).then_some(*s)).collect();
+        let margin = (0..w.len()).map(|i| if gone.contains(&i) { 0.0 } else { 1.0 }).collect();
+        (read, margin)
+    }
+
+    #[test]
+    fn an_unread_second_is_filled_back_to_the_minute_sent() {
+        for station in [TimeStation::Dcf77, TimeStation::Als162] {
+            let fmt = Format::for_station(station);
+            let fill = fmt.fill.expect("a code with parity fills");
+            for t in minutes().into_iter().take(80) {
+                // One in each parity group, one flag, one zone bit, one fixed
+                // bit — and two at once, in different groups.
+                for gone in [&[25][..], &[33], &[47], &[58], &[16], &[17], &[18], &[0], &[20]]
+                    .into_iter()
+                    .chain([&[22, 40][..], &[30, 2]])
+                {
+                    let (read, margin) = erased(fmt, t, gone);
+                    let w = fill(&read, &margin).unwrap_or_else(|| panic!("{station:?} {gone:?}"));
+                    let f = (fmt.decode)(&w, &Context::default());
+                    assert_eq!(f.map(|f| f.utc), Ok(t), "{station:?} at {t}, {gone:?} unread");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn what_cannot_be_worked_out_safely_is_not_filled() {
+        let t = ymd_hms_to_unix(2026, 10, 18, 12, 37, 0);
+        for station in [TimeStation::Dcf77, TimeStation::Als162] {
+            let fmt = Format::for_station(station);
+            let fill = fmt.fill.expect("a code with parity fills");
+            // Two in one group, three in all, both zone bits.
+            for gone in [&[22, 25][..], &[40, 50], &[1, 25, 40], &[17, 18]] {
+                let (read, margin) = erased(fmt, t, gone);
+                assert!(fill(&read, &margin).is_none(), "{station:?}: {gone:?} filled");
+            }
+            // A group whose other bits were not read clearly.
+            let (read, mut margin) = erased(fmt, t, &[25]);
+            margin[27] = 0.1;
+            assert!(fill(&read, &margin).is_none(), "{station:?}: filled past a doubtful bit");
+            // A zone bit whose partner was not read clearly.
+            let (read, mut margin) = erased(fmt, t, &[17]);
+            margin[18] = 0.1;
+            assert!(fill(&read, &margin).is_none(), "{station:?}: zone from a doubtful partner");
+        }
+        // ALS162's count stands in only when no group's parity did.
+        let fmt = Format::for_station(TimeStation::Als162);
+        let fill = fmt.fill.expect("fills");
+        let (read, margin) = erased(fmt, t, &[4]);
+        let w = fill(&read, &margin).expect("the count alone is worked out");
+        assert_eq!((fmt.decode)(&w, &Context::default()).map(|f| f.utc), Ok(t));
+        let (read, margin) = erased(fmt, t, &[4, 25]);
+        assert!(fill(&read, &margin).is_none(), "the count and a group both filled");
+        // The other codes have nothing to fill from.
+        for station in [TimeStation::Msf, TimeStation::Wwvb, TimeStation::Jjy60, TimeStation::Wwv] {
+            assert!(Format::for_station(station).fill.is_none(), "{station:?}");
         }
     }
 

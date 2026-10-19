@@ -52,9 +52,13 @@ fn header(
                     "Nothing stands out of the noise near 1 kHz yet. On short wave, try another \
                      of the station's frequencies: the lower ones carry at night, the higher \
                      ones by day."
+                        .to_string()
                 } else {
-                    "Nothing stands out of the noise near 1 kHz yet. Long-wave stations need an \
-                     antenna and a receiver that reach 40–80 kHz, and are strongest at night."
+                    format!(
+                        "Nothing stands out of the noise near 1 kHz yet. Long-wave stations need \
+                         an antenna and a receiver that reach {} kHz, and are strongest at night.",
+                        st.station.carrier_hz() / 1000.0
+                    )
                 }),
         };
         if st.second_lock {
@@ -63,11 +67,15 @@ fn header(
             ui.label(
                 RichText::new(format!("{:.0} dB", st.snr_db)).size(10.0).color(theme::CYAN_DIM()),
             )
-            .on_hover_text(
+            .on_hover_text(if st.station == TimeStation::Als162 {
+                "How cleanly the seconds read: the size of one swing of the carrier's phase \
+                 against the scatter of its reading. Below about 10 dB, minutes start to fail \
+                 their checks."
+            } else {
                 "How cleanly the keying reads: the gap between full and reduced carrier \
-                     against the scatter of a 100 ms reading. Below about 10 dB, minutes start \
-                     to fail their checks.",
-            );
+                 against the scatter of a 100 ms reading. Below about 10 dB, minutes start to \
+                 fail their checks."
+            });
         } else {
             ui.label(RichText::new("hunting").weak())
                 .on_hover_text("Looking for the start of the second — this takes 10–30 s.");
@@ -109,7 +117,8 @@ fn ribbon(ui: &mut egui::Ui, st: &TimeSigStatus) {
     resp.on_hover_text(
         "This minute, one cell a second: dim for a 0, green for a 1 (MSF's two bits show green \
          for either), cyan for a marker — and for WWV's empty second 0 — red for a second that \
-         could not be read. One red cell costs the minute.",
+         could not be read. One red cell costs the minute — except on DCF77 and ALS162, whose \
+         parity can stand in for a red cell or two once a minute has already been decoded.",
     );
     if !st.phase_symbols.is_empty() {
         let resp = cells(ui, &st.phase_symbols, st.second_of_minute, 0.8);
@@ -154,7 +163,8 @@ fn cells(ui: &mut egui::Ui, symbols: &[u8], now: Option<u8>, height: f32) -> egu
 }
 
 /// The average second as the keying looks: high where the carrier is full,
-/// low where it is reduced. What an operator tunes by.
+/// low where it is reduced — or, for ALS162, its phase. What an operator tunes
+/// by.
 fn scope(ui: &mut egui::Ui, st: &TimeSigStatus) {
     let size = egui::vec2(200.0, 40.0);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -179,6 +189,12 @@ fn scope(ui: &mut egui::Ui, st: &TimeSigStatus) {
         "The 100 Hz time code through one second, averaged over the last fifteen or so, \
          starting at the tick. A clean station shows the pulse rising just after the left edge \
          and falling at 0.2, 0.5 or 0.8 s; noise shows a ragged line."
+    } else if st.station == TimeStation::Als162 {
+        "The carrier's phase through one second, averaged over the last fifteen or so, starting \
+         a tenth of a second before the second. A clean station shows a swing up, down through \
+         the second and back at the left, a smaller second swing after it (the 1s), and a low \
+         ripple for the rest, which is the station's pseudo-random code averaging away; noise \
+         shows a ragged line."
     } else {
         "The carrier through one second, averaged over the last fifteen or so, starting at the \
          second. A clean station shows a sharp step at the left edge and the keying after it; \

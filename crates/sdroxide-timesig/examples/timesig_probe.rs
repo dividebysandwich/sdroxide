@@ -12,6 +12,7 @@ fn main() {
         "jjy40" => TimeStation::Jjy40,
         "wwv" => TimeStation::Wwv,
         "wwvh" => TimeStation::Wwvh,
+        "als162" => TimeStation::Als162,
         _ => TimeStation::Dcf77,
     };
     let snr: Option<f64> = args.get(2).and_then(|s| s.parse().ok());

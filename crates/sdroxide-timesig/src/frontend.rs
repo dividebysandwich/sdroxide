@@ -22,6 +22,24 @@
 //! so its "in phase" flips sign with the phase code; its amplitude is read by
 //! magnitude instead.
 //!
+//! # ALS162's phase
+//!
+//! ALS162 never moves its carrier's amplitude, and swings its phase by up to
+//! a radian either way — symmetrically, so the swings average to nothing and
+//! the half-second average above still points along the unmodulated carrier.
+//! What leaves is the part of the signal *across* that average: the carrier's
+//! amplitude times the sine of its phase swing, which for a swing of a radian
+//! is close to the swing itself. Like the in-phase reading, it is linear in
+//! the noise, and only the noise in its own quadrature reaches it.
+//!
+//! The average is a different one, though: two seconds centred on the sample,
+//! rather than half a second behind it. A trailing average swings with each
+//! element as it goes past — towards its first lobe, then back — and moves
+//! the element's zero crossing, which is the time, by half a millisecond. A
+//! centred one holds the whole element throughout, and an element sums to
+//! nothing; what enters at one end and leaves at the other is the same part
+//! of the seconds either side, and cancels too.
+//!
 //! # WWVB's phase
 //!
 //! For the phase code itself the carrier's phase is followed by a loop on the
@@ -40,6 +58,8 @@
 //! whose delay depended on frequency or level would move the answer. Each
 //! output carries `pos`, the input sample (fractional) it stands for once
 //! both averages' delays are taken off.
+
+use std::collections::VecDeque;
 
 use num_complex::Complex32;
 
@@ -66,6 +86,19 @@ const PLL_ZETA: f64 = 0.707;
 const PLL_SEED: u32 = 500;
 /// The power average the loop's error is normalised by: a second.
 const POWER_TC: f32 = 1000.0;
+
+/// What a station keys, and so what the front end reads off its carrier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Keying {
+    /// The amplitude alone: read in phase with the carrier.
+    Amplitude,
+    /// The amplitude, and the carrier's sign as a second code (WWVB): the
+    /// amplitude by magnitude, the sign through the phase loop into
+    /// [`EnvSample::iq`].
+    AmplitudeAndSign,
+    /// The phase alone (ALS162): the part of the signal across the carrier.
+    Phase,
+}
 
 /// One envelope sample.
 ///
@@ -163,10 +196,13 @@ pub struct FrontEnd {
     /// The fine mixer, at the envelope rate.
     fine_phase: f64,
     ring: [Complex32; SMOOTH],
-    /// Read the in-phase part rather than the magnitude.
-    coherent: bool,
+    keying: Keying,
     /// The carrier's phase reference: a slow average of the signal.
     reference: Complex32,
+    /// ALS162: the smoothed samples either side of the one being read, and
+    /// their sum — its phase reference.
+    centred: VecDeque<(f64, Complex32)>,
+    centred_sum: Complex32,
     search: CarrierSearch,
     /// WWVB's phase loop, for the stations that key their carrier's phase.
     pll: Option<PhaseLoop>,
@@ -175,13 +211,10 @@ pub struct FrontEnd {
 }
 
 impl FrontEnd {
-    /// `coherent` reads the carrier's in-phase part rather than its magnitude
-    /// — right for every station whose carrier phase is not keyed. `phase_code`
-    /// follows a carrier whose phase *is* keyed, and hands the keying on in
-    /// [`EnvSample::iq`].
-    pub fn new(rate: f64, tone_hz: f64, coherent: bool, phase_code: bool) -> Self {
+    pub fn new(rate: f64, tone_hz: f64, keying: Keying) -> Self {
         let m = (rate / ENV_RATE).round().max(1.0) as usize;
         let env_rate = rate / m as f64;
+        let phase_code = keying == Keying::AmplitudeAndSign;
         FrontEnd {
             rate,
             m,
@@ -193,8 +226,10 @@ impl FrontEnd {
             blocks: 0,
             fine_phase: 0.0,
             ring: [Complex32::new(0.0, 0.0); SMOOTH],
-            coherent,
+            keying,
             reference: Complex32::new(0.0, 0.0),
+            centred: VecDeque::new(),
+            centred_sum: Complex32::new(0.0, 0.0),
             search: CarrierSearch::new(env_rate, phase_code),
             pll: phase_code.then(|| PhaseLoop::new(env_rate)),
             moves_seen: 0,
@@ -206,6 +241,12 @@ impl FrontEnd {
     /// before it was measured on the right frequency.
     pub fn moved_at(&self) -> f64 {
         self.moved_at
+    }
+
+    /// The unmodulated carrier's amplitude as received, for the stations
+    /// read against it.
+    pub fn carrier_level(&self) -> f32 {
+        self.reference.norm()
     }
 
     /// The envelope's sample rate.
@@ -247,10 +288,13 @@ impl FrontEnd {
         if self.search.moves() != self.moves_seen {
             self.moves_seen = self.search.moves();
             self.moved_at = self.blocks as f64 * self.m as f64;
-            // The phase loop was following whatever was at the old frequency.
+            // The phase loop was following whatever was at the old frequency,
+            // and the centred average holds it.
             if let Some(pll) = &mut self.pll {
                 *pll = PhaseLoop::new(self.rate / self.m as f64);
             }
+            self.centred.clear();
+            self.centred_sum = Complex32::new(0.0, 0.0);
         }
         let env_rate = self.env_rate();
         let found = self.search.offset_hz();
@@ -274,15 +318,19 @@ impl FrontEnd {
             let centre = k as f64 - (SMOOTH as f64 - 1.0) / 2.0;
             let pos = centre * self.m as f64 + (self.m as f64 - 1.0) / 2.0;
             let smooth = sum / SMOOTH as f32;
-            let mag = if self.coherent {
+            if self.keying == Keying::Phase {
+                self.across(pos, smooth, out);
+                return;
+            }
+            let mag = if self.keying == Keying::AmplitudeAndSign {
+                smooth.norm()
+            } else {
                 // The reference follows the newest samples and the smoothed
                 // value is centred two behind; half a second's average has
                 // not turned by anything measurable in two milliseconds.
                 self.reference += (smooth - self.reference) / PHASE_TC;
                 let r = self.reference.norm();
                 if r > 0.0 { (smooth * self.reference.conj()).re / r } else { smooth.norm() }
-            } else {
-                smooth.norm()
             };
             // The loop runs only on a carrier the search has found: before
             // that it would be locking to the tone's neighbourhood.
@@ -292,6 +340,25 @@ impl FrontEnd {
             };
             out.push(EnvSample { pos, mag, tpos: pos, timing: mag, sibling: 0.0, iq });
         }
+    }
+
+    /// ALS162: queues a smoothed sample, and reads the one a second back
+    /// across the average of the two seconds around it.
+    fn across(&mut self, pos: f64, smooth: Complex32, out: &mut Vec<EnvSample>) {
+        let half = self.env_rate().round() as usize;
+        self.centred.push_back((pos, smooth));
+        self.centred_sum += smooth;
+        if self.centred.len() < 2 * half + 1 {
+            return;
+        }
+        let (pos, z) = self.centred[half];
+        self.reference = self.centred_sum / self.centred.len() as f32;
+        let r = self.reference.norm();
+        let mag = if r > 0.0 { (z * self.reference.conj()).im / r } else { 0.0 };
+        let zero = Complex32::new(0.0, 0.0);
+        out.push(EnvSample { pos, mag, tpos: pos, timing: mag, sibling: 0.0, iq: zero });
+        let (_, gone) = self.centred.pop_front().expect("full");
+        self.centred_sum -= gone;
     }
 }
 
@@ -308,7 +375,7 @@ mod tests {
     #[test]
     fn finds_a_carrier_off_the_tone() {
         for (rate, off) in [(12_000.0, 0.0), (48_000.0, 173.4), (44_100.0, -251.0)] {
-            let mut fe = FrontEnd::new(rate, 1000.0, true, false);
+            let mut fe = FrontEnd::new(rate, 1000.0, Keying::Amplitude);
             let mut out = Vec::new();
             fe.process(&tone(rate, 1000.0 + off, 10.0), &mut out);
             let found = fe.carrier_hz().expect("carrier") - 1000.0;
@@ -335,7 +402,7 @@ mod tests {
             for s in &mut x[cut..] {
                 *s = 0.0;
             }
-            let mut fe = FrontEnd::new(rate, 1000.0, true, false);
+            let mut fe = FrontEnd::new(rate, 1000.0, Keying::Amplitude);
             let mut out = Vec::new();
             fe.process(&x, &mut out);
             let half = 0.075;

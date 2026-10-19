@@ -61,6 +61,7 @@ pub(super) static FORMAT_WWV: Format = Format {
     time_index: 0,
     encode,
     decode,
+    fill: None,
 };
 
 pub(super) static FORMAT_WWVH: Format = Format { station: TimeStation::Wwvh, ..FORMAT_WWV };

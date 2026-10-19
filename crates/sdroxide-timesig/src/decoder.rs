@@ -23,6 +23,19 @@
 //! enough that one detector does both: the fold's peak against the quiet zone
 //! either side of it, placed between bins by the shape of the peak.
 //!
+//! ALS162's seconds are neither: each is marked by an element, a swing of
+//! the carrier's phase up, down through zero on the second, and back. The
+//! timing channel is the phase, and the fold is searched with the element's
+//! own shape — a matched filter. The element averages to nothing, so a phase
+//! offset the front end leaves does not move the answer; and the filter's
+//! output is symmetric about its peak, so the peak is placed between bins the
+//! way a tick is. What else matches an element in the fold — the second
+//! element of every 1, a tenth of a second later, and what is left of the
+//! station's pseudo-random code after sixteen seconds' averaging — can stand
+//! half as tall as the real one, but unlike it, it changes from second to
+//! second; so the filter's output is folded with its square as well, and
+//! where it matches is held to how steadily it does.
+//!
 //! The fold is over the input's own sample clock, not the computer's: a
 //! receiver whose sample rate is fifty parts per million out drifts by a
 //! millisecond in twenty seconds, which the fold's memory is short enough to
@@ -45,6 +58,11 @@
 //! good. The closest pattern wins, if it wins clearly; otherwise the second
 //! is left unread, which costs that minute and protects every minute after it.
 //!
+//! ALS162's seconds are read the same way with the element in place of the
+//! slots: how much of an element there is on the second, and how much a
+//! tenth of a second later, against the size of one. None, one and two are
+//! the marker, a 0 and a 1.
+//!
 //! WWVB's seconds are also read for their phase: the carrier, turned onto its
 //! own phase by the front end, summed over the part of the second at full
 //! power — the part the amplitude pattern just read says is full, or where
@@ -55,7 +73,9 @@
 //!
 //! When a marker arrives the last minute's worth of symbols is handed to the
 //! station's [`Format`], which decides whether it is a minute and what it
-//! says. WWVB's phase bits are tried every second, since a minute of them is
+//! says. A second or two that could not be read lose the minute, except in
+//! the codes whose parity can stand in for them (DCF77 and ALS162), where the
+//! format fills them in first. WWVB's phase bits are tried every second, since a minute of them is
 //! found by its sync word rather than by a marker; the two codes name the
 //! same minute and are merged into one frame, so nothing downstream ever sees
 //! a minute twice. The instant a frame names is tied to the input sample its
@@ -66,8 +86,8 @@ use std::collections::VecDeque;
 
 use sdroxide_types::{TIMESIG_TONE_HZ, TimeCode, TimeFrame, TimeStation};
 
-use crate::format::{Context, Format, FrameError, Sym, Template, wwvb_phase};
-use crate::frontend::{EnvSample, FrontEnd};
+use crate::format::{Context, Format, FrameError, Sym, Template, als162, wwvb_phase};
+use crate::frontend::{EnvSample, FrontEnd, Keying};
 use crate::hf::HfFrontEnd;
 
 /// Bins in the fold: one a millisecond.
@@ -117,6 +137,14 @@ const CORR_BINS: f64 = 5.0;
 /// lock on noise would still have to read a minute that passes its checks,
 /// twice, before anything believed it.
 const MIN_EDGE_Z: f32 = 6.0;
+/// ALS162: how much before the second its reading begins, seconds.
+const ELEMENT_LEAD_S: f64 = 0.051;
+/// ALS162: the largest a second's misfit may be, in squared units of one
+/// element, and how many times noise alone it may be, where that is more —
+/// two readings' worth of noise variance, which a second fits within seven
+/// times over all but once in a thousand.
+const ELEMENT_MAX_COST: f32 = 0.5;
+const ELEMENT_MAX_COST_NOISE: f32 = 7.0;
 /// Seconds of envelope folded before the fold is asked anything.
 const WARMUP_S: f64 = 6.0;
 /// How old, on average, what the fold holds is, seconds: an average that
@@ -174,6 +202,10 @@ const LEVEL_BETA: f32 = 0.15;
 /// Consecutive unread seconds after which the levels are reseeded from the
 /// fold.
 const RESEED_AFTER: u32 = 8;
+/// How long after the last frame a minute with seconds filled in may still
+/// be checked against it, seconds: an hour, over which even a sample clock
+/// [`DRIFT_MAX`] out moves less than a second.
+const FILL_CONTEXT_S: f64 = 3600.0;
 /// Symbols kept: two minutes and a little over.
 const SYMS_KEPT: usize = 130;
 /// How likely each slot of a WWVB second is to be at full power when its
@@ -229,8 +261,8 @@ pub struct Snapshot {
     pub level_db: f32,
     pub snr_db: f32,
     pub locked: bool,
-    /// The level channel's fold, rotated to start at the second's start, 100
-    /// points, 0–255.
+    /// The level channel's fold, rotated to start at the second's start (a
+    /// tenth of a second before it for ALS162), 100 points, 0–255.
     pub scope: Vec<u8>,
     /// WWVB: how cleanly the phase bits read, dB.
     pub phase_snr_db: Option<f32>,
@@ -252,6 +284,8 @@ enum Timing {
     /// A tick: a short burst whose middle is [`TICK_CENTRE_S`] after the
     /// second.
     Tick,
+    /// ALS162's element: a swing of phase through zero on the second.
+    Element,
 }
 
 // One per decoder, held for its whole life: the size of the smaller variant
@@ -425,6 +459,131 @@ impl Fold {
     }
 }
 
+/// ALS162's timing channel run through a filter matched to the element, and
+/// folded twice: the output, and its square.
+///
+/// The one fold says how well each point of the second matches an element on
+/// average; the two together say how steadily it does, second after second.
+/// Every second but the marker carries the same element, so on the second
+/// the output barely varies beyond the noise. Everything else that matches an
+/// element in the average — the second element of a 1, which only some
+/// seconds send, and what the station's pseudo-random code leaves behind —
+/// changes from second to second, and is told apart by it.
+///
+/// Each bin is a plain mean of what it has seen until it has seen
+/// 1/[`FOLD_ALPHA`] seconds, and the usual moving average after: its spread is
+/// measured from the first few seconds, when an average that started from
+/// the first sample would still be mostly that one.
+struct MatchedFold {
+    /// The element at the envelope's sample spacing, centred.
+    taps: Vec<f32>,
+    energy: f32,
+    /// The last `taps.len()` timing samples, seconds of input and value.
+    ring: VecDeque<(f64, f32)>,
+    mean: Vec<f32>,
+    square: Vec<f32>,
+    /// The sum of the squared weights each bin's mean is made of: how much of
+    /// one sample's variance its mean carries.
+    weight2: Vec<f32>,
+    seen: Vec<u32>,
+    off: Vec<f32>,
+}
+
+impl MatchedFold {
+    fn new(env_rate: f64) -> Self {
+        let half = (als162::ELEMENT_S / 2.0 * env_rate).ceil() as isize;
+        let taps: Vec<f32> =
+            (-half..=half).map(|k| als162::element(k as f64 / env_rate) as f32).collect();
+        MatchedFold {
+            energy: taps.iter().map(|w| w * w).sum(),
+            taps,
+            ring: VecDeque::new(),
+            mean: vec![0.0; NB],
+            square: vec![0.0; NB],
+            weight2: vec![1.0; NB],
+            seen: vec![0; NB],
+            off: vec![0.5; NB],
+        }
+    }
+
+    fn clear(&mut self) {
+        self.ring.clear();
+        self.seen.iter_mut().for_each(|n| *n = 0);
+    }
+
+    fn add(&mut self, t: f64, x: f32) {
+        self.ring.push_back((t, x));
+        if self.ring.len() < self.taps.len() {
+            return;
+        }
+        let y: f32 = self.ring.iter().zip(&self.taps).map(|(&(_, x), w)| w * x).sum();
+        let t = self.ring[self.taps.len() / 2].0;
+        self.ring.pop_front();
+        let at = t.rem_euclid(1.0) * NB as f64;
+        let bin = (at as usize).min(NB - 1);
+        let off = (at - bin as f64) as f32;
+        self.seen[bin] = self.seen[bin].saturating_add(1);
+        let a = (1.0 / self.seen[bin] as f32).max(FOLD_ALPHA);
+        if self.seen[bin] == 1 {
+            self.mean[bin] = y;
+            self.square[bin] = y * y;
+            self.weight2[bin] = 1.0;
+            self.off[bin] = off;
+        } else {
+            self.mean[bin] += a * (y - self.mean[bin]);
+            self.square[bin] += a * (y * y - self.square[bin]);
+            self.weight2[bin] = (1.0 - a) * (1.0 - a) * self.weight2[bin] + a * a;
+            self.off[bin] += a * (off - self.off[bin]);
+        }
+    }
+
+    /// Where the element is: as a fraction of a second, how many standard
+    /// deviations of noise it stands, and its height in units of one element.
+    /// `sigma_bin` is one bin's noise in the plain fold of the same channel.
+    ///
+    /// Each point is held to two standards: its mean against the fold's
+    /// noise, as every other detector here is, and against its own spread from
+    /// second to second. Noise fails the first; the second element and the
+    /// pseudo-random code, which are strong but unsteady, fail the second.
+    /// A point's score is the lesser of the two.
+    fn find(&self, sigma_bin: f64) -> (f64, f32, f64) {
+        let sigma = (sigma_bin * (CORR_BINS * f64::from(self.energy)).sqrt()).max(1e-12);
+        let score = |b: usize| {
+            let (m, w2) = (f64::from(self.mean[b]), f64::from(self.weight2[b]));
+            if self.seen[b] < 2 || w2 >= 1.0 {
+                return f64::MIN;
+            }
+            // One output's spread, unbiased for the weights it was averaged
+            // with, times how much of it the mean keeps.
+            let var = (f64::from(self.square[b]) - m * m).max(0.0) / (1.0 - w2) * w2;
+            (m / sigma).min(m / var.sqrt().max(1e-12))
+        };
+        let best = (0..NB).max_by(|&a, &b| score(a).total_cmp(&score(b))).unwrap_or(0);
+        let z = score(best);
+        // The best score is near the top of its peak, not necessarily on it:
+        // climb to the top of the mean, and place it between bins by its
+        // curvature.
+        let at = |i: isize| f64::from(self.mean[i.rem_euclid(NB as isize) as usize]);
+        let mut peak = best as isize;
+        for _ in 0..(als162::ELEMENT_S * NB as f64 / 2.0) as usize {
+            let up = if at(peak + 1) > at(peak) {
+                1
+            } else if at(peak - 1) > at(peak) {
+                -1
+            } else {
+                break;
+            };
+            peak += up;
+        }
+        let (l, c, r) = (at(peak - 1), at(peak), at(peak + 1));
+        let den = l - 2.0 * c + r;
+        let frac = if den.abs() > 1e-12 { (0.5 * (l - r) / den).clamp(-0.5, 0.5) } else { 0.0 };
+        let p = peak.rem_euclid(NB as isize) as usize;
+        let pos = (peak as f64 + frac + f64::from(self.off[p])) / NB as f64;
+        (pos.rem_euclid(1.0), z as f32, c / f64::from(self.energy))
+    }
+}
+
 pub struct Decoder {
     fmt: &'static Format,
     rate: f64,
@@ -439,6 +598,10 @@ pub struct Decoder {
     level_fold: Fold,
     /// The other short-wave station's ticks, folded.
     sibling_fold: Option<Fold>,
+    /// ALS162's timing channel through its element's matched filter.
+    matched: Option<MatchedFold>,
+    /// The height of ALS162's element in the fold, at the last look.
+    element_height: f64,
     /// The time, seconds of input, the fold started and was last examined.
     fold_start: Option<f64>,
     examined: f64,
@@ -467,6 +630,8 @@ pub struct Decoder {
     unread: u32,
     syms: VecDeque<Second>,
     ctx: Context,
+    /// The input sample the last frame named, and the instant it named.
+    last_frame: Option<(f64, i64)>,
     /// WWVB's phase code is read.
     phase_code: bool,
     /// The phase reading's noise: the mean square of the other quadrature's
@@ -483,15 +648,24 @@ impl Decoder {
     pub fn new(station: TimeStation, rate: f64) -> Self {
         let fmt = Format::for_station(station);
         let tone = f64::from(TIMESIG_TONE_HZ);
-        let (fe, timing) = if station.is_hf() {
-            (Fe::Hf(HfFrontEnd::new(station, rate, tone)), Timing::Tick)
-        } else {
+        let (fe, timing) = match station {
+            _ if station.is_hf() => (Fe::Hf(HfFrontEnd::new(station, rate, tone)), Timing::Tick),
+            TimeStation::Als162 => {
+                (Fe::Lf(FrontEnd::new(rate, tone, Keying::Phase)), Timing::Element)
+            }
             // WWVB keys its carrier's phase as well: see the front end.
-            let wwvb = station == TimeStation::Wwvb;
-            (
-                Fe::Lf(FrontEnd::new(rate, tone, !wwvb, wwvb)),
+            TimeStation::Wwvb => (
+                Fe::Lf(FrontEnd::new(rate, tone, Keying::AmplitudeAndSign)),
                 Timing::Edge { rising: fmt.rising_edge },
-            )
+            ),
+            _ => (
+                Fe::Lf(FrontEnd::new(rate, tone, Keying::Amplitude)),
+                Timing::Edge { rising: fmt.rising_edge },
+            ),
+        };
+        let matched = match (&fe, timing) {
+            (Fe::Lf(f), Timing::Element) => Some(MatchedFold::new(f.env_rate())),
+            _ => None,
         };
         Decoder {
             fmt,
@@ -503,6 +677,8 @@ impl Decoder {
             timing_fold: Fold::new(),
             level_fold: Fold::new(),
             sibling_fold: station.sibling().map(|_| Fold::new()),
+            matched,
+            element_height: 0.0,
             fold_start: None,
             examined: 0.0,
             second_phase: None,
@@ -522,6 +698,7 @@ impl Decoder {
             unread: 0,
             syms: VecDeque::new(),
             ctx: Context::default(),
+            last_frame: None,
             phase_code: station == TimeStation::Wwvb,
             phase_noise: 0.0,
             phase_seconds: 0,
@@ -564,6 +741,9 @@ impl Decoder {
         if let Some(f) = &mut self.sibling_fold {
             f.add(tt, e.sibling);
         }
+        if let Some(f) = &mut self.matched {
+            f.add(tt, e.timing);
+        }
         let start = *self.fold_start.get_or_insert(t);
         self.env.push_back(e);
         while self.env.front().is_some_and(|f| f.pos / self.rate < t - HISTORY_S) {
@@ -590,6 +770,9 @@ impl Decoder {
         self.timing_fold.clear();
         self.level_fold.clear();
         if let Some(f) = &mut self.sibling_fold {
+            f.clear();
+        }
+        if let Some(f) = &mut self.matched {
             f.clear();
         }
         self.fold_start = None;
@@ -627,6 +810,12 @@ impl Decoder {
                 (e, z, 0.0)
             }
             Timing::Tick => self.timing_fold.tick(None),
+            Timing::Element => {
+                let sigma = self.timing_fold.sigma();
+                let (e, z, h) = self.matched.as_ref().expect("made for Element").find(sigma);
+                self.element_height = h;
+                (e, z, 0.0)
+            }
         };
         self.edge_z = z;
         let credible = z >= MIN_EDGE_Z;
@@ -685,10 +874,13 @@ impl Decoder {
             self.locked = true;
             self.disagree = 0;
             self.seed_levels();
-            // The first whole second still in the history.
+            // The first whole second still in the history — with its element
+            // from 50 ms before it, for ALS162.
+            let lead =
+                if matches!(self.timing, Timing::Element) { ELEMENT_LEAD_S } else { SLOT_GUARD_S };
             let oldest = self.env.front().map_or(now, |e| e.pos / self.rate);
-            let mut first = snap(oldest + SLOT_GUARD_S, p);
-            if first < oldest + SLOT_GUARD_S {
+            let mut first = snap(oldest + lead, p);
+            if first < oldest + lead {
                 first += 1.0;
             }
             self.next = Some(first);
@@ -697,8 +889,15 @@ impl Decoder {
     }
 
     /// Starting levels, from the level fold: its top and bottom twentieths
-    /// are full and reduced level in every code here.
+    /// are full and reduced level in every code here. ALS162's are one
+    /// element and none, and the size of an element is what the fold's match
+    /// to one says.
     fn seed_levels(&mut self) {
+        if matches!(self.timing, Timing::Element) {
+            self.lo = 0.0;
+            self.hi = self.element_height as f32;
+            return;
+        }
         let mut v = self.level_fold.v.clone();
         v.sort_by(f32::total_cmp);
         let n = NB / 20;
@@ -726,7 +925,73 @@ impl Decoder {
         (sum, n)
     }
 
+    /// ALS162's second starting at `start`: how much of an element there is
+    /// on the second and a tenth of a second after it, in units of one, to
+    /// the number of elements the second carried.
+    fn read_elements(&mut self, start: f64) -> Option<(Sym, f32)> {
+        let (mut a, mut w2) = ([0.0f32; 2], [0.0f32; 2]);
+        for e in &self.env {
+            let r = e.pos / self.rate - start;
+            for (k, (a, w2)) in a.iter_mut().zip(&mut w2).enumerate() {
+                let w = als162::element(r - k as f64 * als162::ELEMENT_S) as f32;
+                *a += w * e.mag;
+                *w2 += w * w;
+            }
+        }
+        if w2.contains(&0.0) || self.hi <= 0.0 {
+            return None;
+        }
+        let y = [a[0] / w2[0] / self.hi, a[1] / w2[1] / self.hi];
+        let mut costs: Vec<(f32, f32, Sym)> = als162::SYMBOLS
+            .iter()
+            .map(|&(sym, n)| {
+                let c = (0..2)
+                    .map(|k| {
+                        let want = if k < n { 1.0 } else { 0.0 };
+                        (y[k] - want) * (y[k] - want)
+                    })
+                    .sum::<f32>();
+                // One second in sixty is the marker, as one in sixty is
+                // WWV's hole; see `HOLE_PRIOR`.
+                let prior = if sym.marker { 2.0 * HOLE_PRIOR * self.misfit } else { 0.0 };
+                (c + prior, c, sym)
+            })
+            .collect();
+        costs.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let (best, fit, sym) = costs[0];
+        let margin = costs[1].0 - best;
+        let max_cost = ELEMENT_MAX_COST.max(ELEMENT_MAX_COST_NOISE * 2.0 * self.misfit);
+        if margin < MIN_MARGIN || fit > max_cost {
+            return None;
+        }
+        // Each element read says what the size of one is now.
+        let n = als162::elements(sym);
+        if n > 0 {
+            let seen = y[..n].iter().sum::<f32>() / n as f32 * self.hi;
+            self.hi += LEVEL_BETA * (seen - self.hi);
+        }
+        self.misfit += 0.1 * (fit / 2.0 - self.misfit);
+        Some((sym, margin))
+    }
+
     fn read_second(&mut self, start: f64, events: &mut Vec<Event>) {
+        if matches!(self.timing, Timing::Element) {
+            let read = self.read_elements(start);
+            self.unread = if read.is_some() { 0 } else { self.unread + 1 };
+            if self.unread >= RESEED_AFTER {
+                self.unread = 0;
+                self.seed_levels();
+            }
+            let second = Second {
+                pos: start * self.rate,
+                sym: read.map(|(s, _)| s),
+                margin: read.map_or(0.0, |(_, m)| m),
+                phase: None,
+                phase_bit: None,
+            };
+            self.push_second(second, events);
+            return;
+        }
         let (sum, n) = self.slots(start);
         let read = if n.iter().all(|&c| c > 0) && self.hi > self.lo {
             let span = self.hi - self.lo;
@@ -790,6 +1055,11 @@ impl Decoder {
             phase,
             phase_bit: phase.zip(self.polarity).and_then(|(s, p)| wwvb_phase::bit(s, p)),
         };
+        self.push_second(second, events);
+    }
+
+    /// A second read: reported, kept, and — if it ends a minute — decoded.
+    fn push_second(&mut self, second: Second, events: &mut Vec<Event>) {
         events.push(Event::Second(second));
         if self.syms.len() == SYMS_KEPT {
             self.syms.pop_front();
@@ -870,11 +1140,26 @@ impl Decoder {
     /// The minute the amplitude code says, now its trigger marker is in.
     /// `None` when there is nothing to report: a gap, an unread second, or a
     /// marker that does not end a minute.
+    ///
+    /// A minute with seconds filled in ([`Format::fill`]) has used up some of
+    /// its checks doing it, and two misread bits in one parity group pass as
+    /// none. So it is believed only if it names exactly the minute the input's
+    /// own clock says has come since the last frame — which a wrong one would
+    /// have to hit by chance — and a filled minute that fails is not counted
+    /// as a bad one, since it was never read in full.
     fn amplitude_frame(&self) -> Option<(f64, Result<TimeFrame, FrameError>)> {
         let len = self.fmt.frame_len;
         let window = self.window(len)?;
-        // A second could not be read; nothing to check.
-        let syms = window.iter().map(|s| s.sym).collect::<Option<Vec<Sym>>>()?;
+        let read: Vec<Option<Sym>> = window.iter().map(|s| s.sym).collect();
+        let (syms, filled) = match read.iter().copied().collect::<Option<Vec<Sym>>>() {
+            Some(syms) => (syms, false),
+            // A second could not be read: worked out from the rest where the
+            // code's checks allow, and otherwise there is nothing to check.
+            None => {
+                let margin: Vec<f32> = window.iter().map(|s| s.margin).collect();
+                ((self.fmt.fill?)(&read, &margin)?, true)
+            }
+        };
         let last = window[len - 1].pos;
         match (self.fmt.decode)(&syms, &self.ctx) {
             Ok(frame) => {
@@ -883,11 +1168,19 @@ impl Decoder {
                 } else {
                     last + self.rate
                 };
+                if filled {
+                    let (at, utc) = self.last_frame?;
+                    let since = (pos - at) / self.rate;
+                    if since > FILL_CONTEXT_S || frame.utc != utc + since.round() as i64 {
+                        return None;
+                    }
+                }
                 Some((pos, Ok(frame)))
             }
             // Not a minute: WWVB, WWV and JJY send a marker every ten
             // seconds, and only the one ending a minute frames.
             Err(FrameError::Framing) => None,
+            Err(_) if filled => None,
             Err(e) => Some((last, Err(e))),
         }
     }
@@ -934,6 +1227,7 @@ impl Decoder {
         match found {
             Ok((pos, frame, code)) => {
                 self.ctx.last_utc = Some(frame.utc);
+                self.last_frame = Some((pos, frame.utc));
                 events.push(Event::Frame { pos, frame, code });
             }
             Err((pos, error)) => events.push(Event::BadFrame { pos, error }),
@@ -943,12 +1237,17 @@ impl Decoder {
     pub fn snapshot(&self) -> Snapshot {
         let level = match &self.fe {
             // A cosine of amplitude A mixes to A/2.
+            Fe::Lf(f) if matches!(self.timing, Timing::Element) => {
+                2.0 * f.carrier_level().max(1e-9)
+            }
             Fe::Lf(_) => 2.0 * self.hi.max(1e-9),
             Fe::Hf(f) => 2.0 * f.level().max(1e-9),
         };
         let scope = match self.second_phase {
             Some(p) => {
-                let start = (p * NB as f64) as usize;
+                // ALS162's element starts before its second.
+                let lead = if matches!(self.timing, Timing::Element) { 0.1 } else { 0.0 };
+                let start = ((p - lead).rem_euclid(1.0) * NB as f64) as usize;
                 let v = &self.level_fold.v;
                 let pts: Vec<f32> = (0..100)
                     .map(|i| (0..10).map(|j| v[(start + i * 10 + j) % NB]).sum::<f32>() / 10.0)
