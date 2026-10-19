@@ -173,7 +173,36 @@ recording of a station that is known to be sending Edition 1**, or the variant's
 preamble. Everything up to the payload is in place — frame period, carrier
 offset, folding acquisition, and a proven transcriber.
 
-### Tools
+### What the mode needs to be proven, and where to find it (2026-10-19)
+
+**Intel from the SWL group, via the operator.** The French Navy runs
+**unencrypted test tapes** — RYRY loops and a station ID — and those are the
+material this work has been missing: known content, on the air, regularly.
+
+Signals are ~2.75 kHz wide, a buzzsaw in USB, tuned at **1800 Hz** with the full
+bandwidth across it. Reported:
+
+| station | place | kHz | heard (UTC) |
+|---|---|---|---|
+| **FUF** | Fort-de-France, Martinique | **13031.2** | 1846 |
+| | | **8478.5** | 1203 |
+| | | **4232.0** | 0146 |
+| **FUV** | Djibouti | **8467.8** | — |
+| **FUO** | Toulon | **5215.6** | — |
+| **6WW** | Dakar | **12857.0**, **13411.9** | — |
+| **FUG** | La Régine | **12873.9** | — |
+| **FUE** | Brest | **6348.0** | — |
+
+A capture of any one of these, with its **RYRY and ID**, would settle the
+question the two shipped fixtures could not: whether the payload of a real
+Edition 1 transmission matches the declassified document. Everything up to the
+payload already works — frame period (1280 samples = 106.67 ms, ACF 0.594),
+folding acquisition (0.749), and a transcriber proven by round trip.
+
+Capture with `tools/rsp1-capture` at ≥ 12 kHz, USB, full 2.75 kHz. Note the UTC
+time and the station — the ID is the known part.
+
+## Tools
 
 | file | what it does |
 |---|---|
