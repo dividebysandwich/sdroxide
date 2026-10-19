@@ -80,6 +80,11 @@ const GAP_OFFSET: usize = 12;
 /// inter-line gap wherever they happen to fall, and acting on that walks the
 /// picture across the screen during the first moments of every over.
 const PHASE_MIN_COLS: u32 = 4;
+/// Signal-bearing columns to wait after a move. A sender whose clock differs
+/// from ours slides the boundary by a fraction of an element per column, so
+/// following it is what keeps the glyphs upright; moving no more often than
+/// this keeps the picture still.
+const PHASE_DWELL_COLS: u32 = 3;
 /// Mean ink a column must carry before it is allowed to teach the tracker. An
 /// empty band is not neutral evidence: the shade function returns exact zeros
 /// between dots, so silence scores a perfect gap on the quietest four lanes and
@@ -382,8 +387,21 @@ pub struct HellRx {
     dots: u64,
     /// Signal-bearing columns folded into `phase_bins` since the last retune.
     phase_cols: u32,
-    /// Set once the boundary has been adopted. See `track_sync`.
-    locked: bool,
+    /// Sample-clock trim in parts per million, applied to the dot clock. A
+    /// sender whose clock differs from ours slides the character boundary by a
+    /// fraction of an element every column, which draws the glyphs leaning;
+    /// WEFAX calls the same correction a slant and every fax operator ends up
+    /// touching it.
+    slant_ppm: f64,
+    /// How many times the picture has been re-framed, for diagnostics and for
+    /// the test that a trim really does stop the boundary walking.
+    sync_moves: u32,
+    /// Signal-bearing columns since the picture last moved. Following the
+    /// boundary is also what corrects a rate error between the sender and us:
+    /// the drift shows up as the boundary sliding, and each move takes it out,
+    /// so the shear never exceeds half an element. The dwell stops that turning
+    /// into a twitch on every column.
+    cols_since_move: u32,
     /// The cell start the raster is currently drawn at, 0..ROWS.
     sync: usize,
 
@@ -420,9 +438,11 @@ impl HellRx {
             col: vec![0; ROWS],
             phase_bins: [0.0; ROWS],
             phase_alpha: 1.0 - (-1.0 / PHASE_COLS).exp(),
+            slant_ppm: 0.0,
+            sync_moves: 0,
             dots: 0,
             phase_cols: 0,
-            locked: false,
+            cols_since_move: PHASE_MIN_COLS,
             sync: 0,
             agc_peak: 1e-3,
             floor: 0.0,
@@ -446,7 +466,7 @@ impl HellRx {
     }
 
     fn retune(&mut self) {
-        let pixel_rate = self.variant.pixel_rate();
+        let pixel_rate = self.variant.pixel_rate() * (1.0 + self.slant_ppm * 1e-6);
         // Land near RX_SLICES samples per dot after decimation; never below 1.
         self.dec = ((self.rate / (RX_SLICES as f64 * pixel_rate)).floor() as usize).max(1);
         self.dec_rate = self.rate / self.dec as f64;
@@ -469,7 +489,7 @@ impl HellRx {
         self.phase_bins = [0.0; ROWS];
         self.dots = 0;
         self.phase_cols = 0;
-        self.locked = false;
+        self.cols_since_move = PHASE_MIN_COLS;
         self.sync = 0;
     }
 
@@ -573,6 +593,7 @@ impl HellRx {
                 }
                 if ink / (ROWS as f32 * 255.0) > PHASE_MIN_INK {
                     self.phase_cols += 1;
+                    self.cols_since_move += 1;
                 }
                 // Collected from the cell boundary, so it goes out as it stands.
                 out.extend_from_slice(&self.col);
@@ -616,7 +637,7 @@ impl HellRx {
     /// the picture is drawn and never what a dot's intensity is, so a weak
     /// signal is not made to look like a strong one.
     fn track_sync(&mut self) -> usize {
-        if self.locked || self.phase_cols < PHASE_MIN_COLS {
+        if self.phase_cols < PHASE_MIN_COLS || self.cols_since_move < PHASE_DWELL_COLS {
             return self.sync;
         }
         let (sync, confidence) = self.estimate_sync();
@@ -627,7 +648,8 @@ impl HellRx {
         let in_use = self.gap_ink((self.sync + GAP_OFFSET) % ROWS);
         if candidate < in_use * (1.0 - PHASE_MARGIN) {
             self.sync = sync;
-            self.locked = true;
+            self.cols_since_move = 0;
+            self.sync_moves += 1;
         }
         self.sync
     }
@@ -635,6 +657,26 @@ impl HellRx {
     /// The cell boundary the raster is currently drawn from, for diagnostics.
     pub fn sync(&self) -> usize {
         self.sync
+    }
+
+    /// How many times the picture has been re-framed. A trim that matches the
+    /// sender's clock should leave this small.
+    pub fn sync_moves(&self) -> u32 {
+        self.sync_moves
+    }
+
+    /// Sample-clock trim, positive to speed the dot clock up. See `slant_ppm`.
+    pub fn set_slant_ppm(&mut self, ppm: f32) {
+        let ppm = ppm.clamp(-10_000.0, 10_000.0) as f64;
+        if ppm == self.slant_ppm {
+            return;
+        }
+        self.slant_ppm = ppm;
+        self.retune();
+    }
+
+    pub fn slant_ppm(&self) -> f32 {
+        self.slant_ppm as f32
     }
 
     /// Map an on/off-keyed dot magnitude onto 0..1.
@@ -861,6 +903,39 @@ mod tests {
                 "{variant:?}: the inter-line gap is missing — the padding rows carry {ratio:.2} of the body's ink, so the cell boundary is wrong"
             );
         }
+    }
+
+    /// A sender whose clock differs from ours slides the character boundary by
+    /// a fraction of an element every column, and the picture leans. The trim
+    /// is the fix, and this is what says so: with it the boundary stops
+    /// walking, without it the raster is re-framed over and over.
+    #[test]
+    fn a_clock_trim_stops_the_boundary_walking() {
+        // Dots 0.4 % long, which is an ordinary sound card capture — and what
+        // SkySweep's off-air Hell recording measures. Generated at a higher
+        // sample rate and played back at this one, a dot comes out longer.
+        let slow = RATE * 1.004;
+        let variant = HellVariant::Feld;
+        let mut counts = Vec::new();
+        for ppm in [0.0f32, -4000.0] {
+            let hz = carrier(variant);
+            let mut tx = HellTx::new(slow, hz, variant);
+            let mut rx = HellRx::new(RATE, hz, variant, 0.5);
+            rx.set_slant_ppm(ppm);
+            let mut px = Vec::new();
+            let dot = (RATE / variant.pixel_rate()) as usize;
+            run(&mut tx, &mut rx, &mut px, dot * ROWS * 8, true);
+            tx.push_text("HELLHELLHELLHELLHELLHELLHELLHELL");
+            drain(&mut tx, &mut rx, &mut px, dot * ROWS * 400);
+            counts.push((ppm, rx.sync_moves()));
+        }
+        let untrimmed = counts[0].1;
+        let trimmed = counts[1].1;
+        assert!(
+            trimmed * 3 < untrimmed.max(1),
+            "the trim did not stop the boundary walking: {untrimmed} moves untrimmed, {trimmed} with {} ppm",
+            counts[1].0
+        );
     }
 
     #[test]

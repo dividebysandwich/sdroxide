@@ -2332,6 +2332,17 @@ pub struct DigiConfig {
     /// is a wire change (`PROTO_VERSION` 195 → 196).
     #[serde(default)]
     pub sstv_keep_dial: bool,
+    /// Hellschreiber receive sample-clock trim, in parts per million.
+    ///
+    /// A sender whose clock differs from ours slides the character boundary by
+    /// a fraction of an element every column, so the glyphs are drawn leaning
+    /// and no amount of re-framing straightens them. The same correction WEFAX
+    /// calls a slant, for the same reason and with the same sign: positive
+    /// speeds our dot clock up, which straightens a picture leaning left.
+    ///
+    /// Appended last, so this is a wire change (`PROTO_VERSION` 213 → 214).
+    #[serde(default)]
+    pub hell_slant_ppm: f32,
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2582,6 +2593,7 @@ impl Default for DigiConfig {
             cb_wide_callsigns: false,
             ft8_depth: Ft8Depth::default(),
             sstv_keep_dial: false,
+            hell_slant_ppm: 0.0,
         }
     }
 }

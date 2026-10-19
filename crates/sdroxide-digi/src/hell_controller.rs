@@ -299,7 +299,14 @@ impl DigiEngine for HellController {
         let retune =
             cfg.hell_variant != self.cfg.hell_variant || cfg.hell_rx_agc != self.cfg.hell_rx_agc;
         let revariant = cfg.hell_variant != self.cfg.hell_variant;
+        let reslant = cfg.hell_slant_ppm != self.cfg.hell_slant_ppm;
         self.cfg = cfg;
+        if reslant {
+            // Only the dot clock moves; the raster already drawn is left as it
+            // stands, because a trim is the operator straightening the picture
+            // from here on rather than a reason to throw it away.
+            self.rx.set_slant_ppm(self.cfg.hell_slant_ppm);
+        }
         if retune {
             self.audio_hz = self.clamp_audio_hz(self.audio_hz);
             let hz = self.audio_hz as f64;
