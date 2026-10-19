@@ -188,7 +188,7 @@ branch costs a ref plus the objects for its own diff, kilobytes.
 | `fork/thor-timing` | diagnose first, then fix | the corpus |
 | `fork/hell-dot-rate` | detect the dot rate; keep both conventions | the corpus (4 Hell files) + our round trip |
 | `fork/dsc-navtex` | DSC and NAVTEX on the audio path | the corpus (GMDSS, SITOR-A) |
-| `fork/stanag-4285` | **parked on the licence question** — see §6 | — |
+| `fork/stanag-4285` | protocol from the declassified spec — uncoded first | broadcasts; needs a recording |
 
 ### MFSK, the clean new mode
 
@@ -223,44 +223,125 @@ group — §4b has them, and they are a decoder change.)
   somebody's binary and do not treat having read one as a licence to write
   against it. Measuring a published *recording* is a different thing and is what
   §1–§3 do.
-- **STANAG-4285 — the modulation is public, the payload detail is not.**
-  The waveform is documented well enough to build the front end: **a single 1800 Hz
-  tone, 2400 symbols/s always, USB, ~2.75 kHz wide**, with the constellation
-  chosen by the data rate (§4b). Hugh Stegman NV6H's *"Demystifying STANAG 4285"*
-  (Monitoring Times, July 2009, p.28) adds the operational facts that matter more
-  than the theory: it **does not autobaud**, so it must be told the rate, the
-  interleave and the framing; and *"nearly everything that we stand any chance of
-  decoding will be 300 or 600 baud, long interleave… usually ITA2, same as used in
-  RTTY"*. The one parameter that ties the two together is the **ACF of 106.66 ms**
-  (sigidwiki), which is a synchronisation measurement, not a data one.
-
-  **The wall is not the modulation, it is the payload detail** — the exact sync
-  preamble, scrambler, convolutional code and the interleaver matrices. Those live
-  in the standard (NATO/DLA, not public) and in the one open implementation, which
-  is **C.H. Brain G4GUO's** in the KiwiSDR tree at `extensions/s4285/`
-  (`s4285.cpp`, `s4285control.cpp`, `s4285convolutional.cpp`, ~1,400 lines). Its
-  own licence file reads, in full: `// (License TBD)` — **no rights granted**, so
-  it may not be copied, ported or reimplemented from. `Rhizomatica/open5066` is
-  GPL-2.0 and compatible, but it is **STANAG 5066, the data-link layer** — it
-  interfaces to a modem rather than containing one.
-
-  **So the split is clean, and it is what makes a plan possible:** the PSK front
-  end is ours to build from the published description (§4b), and the FEC and
-  interleaving are the part that needs either a licence or air work. The three
-  honest routes are **ask G4GUO or the KiwiSDR maintainer for a licence** — the
-  same move the notes prescribe for Sigidwiki's content — **implement the front
-  end and the uncoded modes first** — 1200/2400/3600 bps carry no FEC and no
-  interleave, so they need the preamble and the scrambler but not the code or the
-  interleaver matrices, which is the smaller half of the wall — or **implement
-  from the public description and verify on the air.** That is the
-  operator's call and it should be made before anyone spends a week on it.
-
-  Worth knowing while deciding: sigidwiki lists MultiPSK, **Sigmira** and
-  **Sorcerer** as the hobby decoders, and Sigmira is the one Stegman singles out
-  because *"the parameters can be changed so quickly"* — i.e. it exposes the same
-  rate/interleave/framing knobs the mode needs.
+- **STANAG-4285 — the specification itself is public, so none of the above needs
+  anybody's code.** See §6b. The only open decoder (G4GUO's in KiwiSDR,
+  `extensions/s4285/`) still reads `// (License TBD)` and may not be copied,
+  ported or reimplemented from — but it is no longer *needed*, which is the
+  cleanest position available.
 - **The recordings stay local fixtures.** Nothing from the collection goes into
   the tree, and none of it is redistributed.
+
+## 6b. STANAG-4285 is a public document, and that settles the licence question
+
+The standard is **not** behind a wall. It is **NATO UNCLASSIFIED**, formally
+downgraded by **MAS/59-EL/4285 of 9 February 1993** — *"recipients of reference b.
+are requested to downgrade STANAG 4285 to NATO UNCLASSIFIED"* — and a scan of the
+document circulates publicly (obtained from
+`http://www.n2ckh.com/MARS_ALE_FORUM/s4285.PDF`, which the UDXF notes link as
+*"the unclassified specification can be downloaded here"*). It is Edition 1,
+promulgated 16 February 1989, and it carries a NATO copyright line — so **we may
+implement from it but must not redistribute the document or paste its text into
+the tree.** The parameters below are functional facts, written out in our own
+words, and that is the normal posture for a standards-based implementation.
+
+**So nobody has to derive anything from anybody's code, and no clean room is
+needed.** Read the source, write the receiver. That is also, almost certainly,
+what MultiPSK and Sigmira did — which is the honest version of "people can have
+the same idea": here the idea is a published document rather than a secret.
+
+### The waveform, from Annex A (normative)
+
+- **1800 Hz sub-carrier**, phase-shifted. **2400 baud**, held to 1 part in 10⁵,
+  with the symbol clock locked to the same reference as the carrier. Occupied
+  bandwidth **3000 Hz**.
+- **Absolute phase**, not differential: symbol *n* maps to phase **n·π/4**, so
+  the eight states are 45° apart and the receiver needs a phase reference — the
+  48 reference symbols per frame are what provide it. (Our `psk.rs` is
+  differential; this is the one place 4285 differs from amateur PSK.)
+- Transcoding, and this is how the constellation is chosen by the data rate:
+
+  | rate | bits per symbol | transcode |
+  |---|---|---|
+  | 1200 | 1 | `0 → sym 0`, `1 → sym 4` |
+  | 2400 | 2 | `00→0  01→2  10→6  11→4` |
+  | 3600 | 3 | `000→1 001→0 010→2 011→3 100→6 101→7 110→5 111→4` |
+
+  Both are Gray-coded, which is why the transcoded symbol order looks shuffled.
+
+### The frame
+
+**256 symbols = 106.6 ms**, giving 128 bits at 1200 bps, 256 at 2400, 384 at
+3600. Within a frame:
+
+- **80 sync symbols**, then **48 reference symbols**, then **128 data symbols**.
+- The reference and data symbols form **four blocks**: three of *32 data + 16
+  reference*, then a last block of *32 data*. **Every reference symbol is symbol
+  number 0** — an unmodulated 1800 Hz burst, 16 symbols long, three times a frame.
+- The 176 reference-plus-data symbols are multiplied by an **176-symbol, 8-phase
+  scrambling sequence**, so that the frame looks like 8-PSK whatever the data
+  rate is.
+
+### The generators, in closed form
+
+Both are linear feedback shift registers, and both are in the document, so the
+sequences do not have to be guessed or measured:
+
+- **Sync sequence** — 80 symbols, BPSK, recurrence **x⁵ + x² + 1**, register
+  initialised to **1 1 0 1 0** at the start of every frame. The first symbol is
+  the register's least significant bit and the remaining 79 come from clocking it
+  79 times. (Because the sequence is length 31, 80 symbols is two whole periods
+  plus the first 18 of the next — the document says so explicitly.)
+- **Data scrambler** — 176 symbols from a PN sequence of length **511**,
+  recurrence **x⁹ + x⁴ + 1**, register initialised to 1 at the start of the
+  frame. Each symbol takes the three lowest register bits and forms
+  **n = 4·x₂ + 2·x₁ + x₀**, giving phase **n·π/4**; the register is then shifted
+  **three positions** for the next symbol.
+
+The sync is also what the receiver uses for signal detection, Doppler and
+frequency correction, bit timing and equaliser training — so a 4285 receiver is
+one acquisition step followed by a decision-directed tracking loop, which is a
+shape this tree already has in the VDL2 and HFDL lanes.
+
+### The only gap, and it is not in the public copy
+
+**Annex E** — the convolutional code and the interleaver — is referenced by the
+excerpt above but is not part of it. That matters only for the **coded** rates;
+**1200, 2400 and 3600 bps are uncoded**, so the document as it stands is a
+complete implementation of those three. And even Annex E is substantially
+described in public: the interleaver's parameters are stated verbatim in
+**STANAG 4529's conformance test procedures** (also on the same public MARS
+forum: *"Number of rows: I = 32 for all data rates…"*), and the code is discussed
+in M. B. Jorgenson's *"HF Serial-Tone Waveform Design"*
+(`hflink.com/standards/HF_modems_explained_stanag.pdf`).
+
+### What is actually on the air, and it decides the order of work
+
+Two operational facts, both from Hugh Stegman NV6H's *"Demystifying STANAG 4285"*
+(Monitoring Times, July 2009, p.28) and confirmed by the UDXF notes:
+
+- **It does not autobaud.** Rate, interleave length and framing must be told to
+  the decoder, so a receiver that guesses wastes the transmission.
+- **"Nearly everything that we stand any chance of decoding will be 300 or 600
+  baud, long interleave… usually ITA2, same as used in RTTY."** So the first
+  useful target is not the 3600 bps technical showpiece — it is **600 bps, long
+  interleave, ITA2 5N1**, which is Annex E territory.
+
+Which means, honestly: the uncoded modes are the *easy* part to build and the
+*rare* part on the air, and the common traffic needs exactly the annex we do not
+have. Both are fine places to stop — but the ordering should be chosen with that
+in mind rather than by what is easiest.
+
+### Test material, without anybody's code
+
+- **Sigmira ships example STANAG 4285 recordings** in its distribution package
+  (`sigtools`), alongside HFDL, SITOR-B, CW, FLEX and others, plus a signal
+  database of over two thousand entries. Freeware, so the *recordings* are usable
+  as local fixtures; the program itself is closed and Windows-only.
+- The UDXF notes give the French Navy net as the best-documented traffic (FUE
+  Brest 4.295, FUO Toulon 2.6084, 6WW Dakar 12.587 and others, with the
+  rate/interleave/framing each was copied with), which is a real receiver target.
+- `~/Downloads/sounds` has no 4285 file — the MultiPSK collection does not cover
+  it, so this mode needs a recording brought in before it can be judged.
 
 ## 7. What is not proven, and what is deliberately not done
 
@@ -278,7 +359,10 @@ group — §4b has them, and they are a decoder change.)
   that settles it is F4NRM putting `FAX_Hambourg-2250_Hz.WAV` through MultiPSK: if
   his decodes it and ours does not, it is a real fault with a fixture attached; if
   his also makes noise of it, the file is the problem.
-- **The 4285 mode is parked**, not scheduled, until §6 is answered.
+- **The 4285 mode is no longer parked.** Its specification is public and
+  declassified (§6b), so the work can start whenever it is wanted — but it wants a
+  real recording before it can be judged, and the traffic that matters needs
+  Annex E, which the public copy does not include.
 
 ## 8. Housekeeping
 
