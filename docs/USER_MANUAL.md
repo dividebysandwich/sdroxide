@@ -114,8 +114,8 @@ or connects to a remote sdroxide server.
 - **Voice keyer** — ten recorded messages, transmitted from a button, a numpad
   key, a MIDI pad or a Hamlib `send_voice_mem` command; works in the voice modes
   and in RADE digital voice.
-- **QSO recorder** — one button records both sides of the contact to an MP3:
-  what you hear as the receiver delivered it, before the volume control, and
+- **QSO recorder** — one button records both sides of the contact to an MP3 or a
+  WAV: what you hear as the receiver delivered it, before the volume control, and
   what you send as it goes to the transmitter. Split into an ear each where a
   second receiver or a stereo broadcast is using both channels, centred where
   nothing is.
@@ -648,8 +648,9 @@ mode. What is in the box never changes; only where the two rows are cut does.
   and RDS first and audio distortion after; it will not go below 20 kHz
   (issue #414).
 - **MUTE** — mute the receiver (keyboard shortcut **M**).
-- **REC** — record what you hear and what you send, or the raw spectrum
-  to an MP3 file, and choose whether it is written in two channels or one. See
+- **REC** — record what you hear and what you send to an MP3 or a WAV file, or
+  the raw spectrum to an I/Q WAV, and choose whether the audio is written in two
+  channels or one. See
   [2.21](#221-recording-the-audio-and-the-spectrum).
 - **SQL** — squelch; below the open threshold it reads
   `off`.
@@ -3163,18 +3164,29 @@ side drops — the mode decodes the digital side or is silent.
 
 ### 2.21 Recording the audio and the spectrum
 
-**REC**, in the receiver box beside MUTE, opens a small picker with the two
-things that can be recorded — and they are different things, so either or both
+**REC**, in the receiver box beside MUTE, opens a small picker with the three
+things that can be recorded — and they are different things, so any combination
 may run:
 
-- **MP3** — what you hear and what you send, described in the rest of this
-  section.
+- **MP3** — what you hear and what you send, compressed, described in the rest of
+  this section.
+- **WAV** — the same audio, uncompressed 16-bit PCM at 48 kHz: larger, and the
+  format to reach for when a recording is going to be edited or passed to another
+  program that does not take MP3.
 - **I/Q WAV** — the raw spectrum the receiver is delivering, described under
   [Recording the spectrum](#recording-the-spectrum) below.
 
-The button lights while either is running and hovering it names the files. On a
+The audio recorder runs in **one** container at a time: MP3 and WAV are two
+answers to *how is the audio written*, so pressing one while the other is
+recording does nothing until the first is stopped — the format that is idle is
+greyed while a recording runs, and the lit one stops it. The last format you
+chose is remembered for the **Quick clip**, **Stop after**, **Auto-record** and
+scheduled recordings, which start without a press of their own.
+
+The button lights while the audio or the spectrum is running and hovering it
+names the files. On a
 narrow window the whole receiver box folds into the **RX** menu chip, and there
-the same two rows are at the bottom of that menu, under **Record audio** and
+the same rows are at the bottom of that menu, under **Record audio** and
 **Record spectrum**, rather than behind a button of their own. It has
 no keyboard shortcut by default, but
 **Record on/off** is in the bindable action list, so it can be put on a key, a
@@ -3217,7 +3229,7 @@ them apart:
   nothing to keep apart, so both what you receive and what you send are written
   to both channels and the file plays centred instead of out of one ear.
 
-**MONO**, beside MP3 in the picker, writes a single channel instead, with
+**MONO**, beside MP3 and WAV in the picker, writes a single channel instead, with
 receive and transmit taking turns on it: a smaller file, and the honest format
 for a recording that is going to be played back in mono anyway.
 
@@ -3235,16 +3247,23 @@ they started and what the radio was doing:
 
 ```
 sdroxide_2026-08-23_14-32-05Z_14.074000MHz_USB.mp3
+sdroxide_2026-08-23_14-32-05Z_14.074000MHz_USB.wav
 ```
 
 — the UTC date and time, then the dial frequency and mode at the moment you
-pressed REC. Tuning or changing mode later does not rename the file. All radios
+pressed REC, and the extension of the format you chose. Tuning or changing mode
+later does not rename the file. All radios
 share the one folder, so the second and later radios of a multi-radio session
 put their number in the name (`sdroxide_radio1_…`); recording is per radio, and
 each tab has its own REC writing its own file.
 
-The file is 48 kHz MP3 at 192 kbps, encoded on a thread of its own so that
-neither the encoder nor the disk can interrupt the audio. If the disk does stall
+Both formats write 48 kHz audio on a thread of its own, so that neither the
+encoder nor the disk can interrupt the audio: **MP3** at 192 kbps, or **WAV** as
+uncompressed 16-bit PCM — about eleven megabytes a minute in stereo and half
+that in mono, and the format to choose when a recording is going to be edited or
+handed to a program that does not take MP3. A WAV that outgrows the 4 GB a
+32-bit size can hold — some six hours in stereo — is written as **RF64** instead,
+which everything that reads a WAV opens. If the disk does stall
 for longer than the few seconds of slack in front of it, the recording takes a
 clean gap rather than a stutter stitched out of whatever fitted.
 
@@ -3317,8 +3336,8 @@ is an ordinary WAV until it needs not to be.
 A radio that hands over demodulated audio rather than I/Q — a transceiver on a
 sound card — has no spectrum to record. Started from a remote or browser client
 the capture is written on the machine the receiver is plugged into, for the
-same reason the MP3 is, and rather more urgently: a gigabyte a minute is not
-something to send over a link.
+same reason an audio recording is, and rather more urgently: a gigabyte a minute
+is not something to send over a link.
 
 This is the same data `--record-iq` ([12](#12-command-line-reference)) writes,
 in a container other programs can open — `--record-iq` writes the bare samples
@@ -3326,7 +3345,8 @@ and starts with the program, which is what a headless capture wants.
 
 #### Playing a recording back into the decoders
 
-The MP3 is not only an archive. **▶ RECORDINGS…**, at the bottom of the REC
+An audio recording — MP3 or WAV — is not only an archive. **▶ RECORDINGS…**, at
+the bottom of the REC
 picker under **Play back**, opens the **PLAYBACK** window: the files in the
 recordings folder, newest first, each read by what its name records — the time,
 the frequency and the mode — rather than by its file name. Press **▶ PLAY** on
@@ -3359,7 +3379,8 @@ A stereo recording plays back in stereo: a WFM stereo broadcast comes back with
 its two channels, and **ST** lights while it does. ST still forces mono, and
 noise reduction or the auto-notch take it back to mono, exactly as on the air.
 The decoders always take the left channel — the receiver; on a recording made
-while transmitting, the right is your own transmit. Playback reads the recorder's MP3 and also WAV, OGG
+while transmitting, the right is your own transmit. Playback reads the
+recorder's own files and also WAV, OGG
 Vorbis and FLAC made elsewhere: copy one into the recordings folder and it is in
 the list. A file whose name carries no stamp plays in the mode you are in. An
 I/Q capture is listed but cannot be played here — it is spectrum, not audio, and
@@ -14084,7 +14105,7 @@ do the thing is worse than no row.
 > can hear. Type the exact name the sound server uses; an empty field is the
 > system default.
 
-**Recording** — the folder the MP3 recordings, the scheduled recordings and the
+**Recording** — the folder the audio recordings, the scheduled recordings and the
 raw I/Q captures are written to, with **CHOOSE…** to pick another and **DEFAULT**
 to go back to the music folder (`<Music>/sdroxide`, or the config directory's
 `recordings` where the system exposes no music folder). It is a path on the

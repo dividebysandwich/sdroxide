@@ -1,13 +1,21 @@
-//! Off-thread MP3 recorder for a QSO: RX in the left channel, TX in the right
+//! Off-thread audio recorder for a QSO: RX in the left channel, TX in the right
 //! — or, in mono mode, both time-multiplexed onto a single channel. A stereo
 //! recording with no second receiver to fill the right channel is written as
 //! dual mono instead of one silent ear; the mixer decides that, this end only
 //! ever sees interleaved frames.
 //!
+//! Two containers, chosen at [`Recorder::start`]:
+//!
+//! - **MP3**, the default, encoded with the pure-Rust `shine_rs` encoder — the
+//!   small-file answer for playing a contact back.
+//! - **WAV**, 16-bit PCM with no codec at all ([`crate::audio_wav`]), for anyone
+//!   who wants the samples themselves: an external decoder, an audio editor, a
+//!   look at the spectrum. It costs roughly 11 MB a minute stereo.
+//!
 //! The engine's audio loop pushes interleaved frames straight off the stereo
 //! mixer into a lock-free ring; a dedicated thread drains it, resamples to
-//! 48 kHz, and encodes to MP3 with the pure-Rust `shine_rs` encoder, writing
-//! to the file. Encoding and file I/O never touch the real-time audio thread.
+//! 48 kHz, and hands it to whichever writer was chosen. Encoding and file I/O
+//! never touch the real-time audio thread.
 //!
 //! A fixed channel count for the life of the recording (chosen at
 //! [`Recorder::start`]), so WFM stereo coming and going, or the sub receiver
@@ -30,9 +38,15 @@ use shine_rs::encoder::{
 use tracing::{error, info, warn};
 
 use sdroxide_dsp::{MonoResampler, StereoResampler};
+use sdroxide_types::RecordingFormat;
 
-/// MP3 encode target — a universally-valid MPEG-1 Layer III rate.
-const MP3_RATE: i32 = 48_000;
+use crate::audio_wav::AudioWavWriter;
+
+/// Every recording is written at this rate, whatever the receiver runs at — a
+/// universally-valid rate for both containers.
+const REC_RATE_HZ: u32 = 48_000;
+/// MP3 encode target — `REC_RATE_HZ` as `shine` wants it.
+const MP3_RATE: i32 = REC_RATE_HZ as i32;
 /// Constant bitrate (kbps). Ample for communications audio, and joint stereo
 /// spends almost none of it when L and R are identical.
 const MP3_BITRATE: i32 = 192;
@@ -107,17 +121,19 @@ pub enum RecorderFault {
 
 impl Recorder {
     /// Start recording interleaved audio arriving at `in_rate` Hz per channel
-    /// to `path`, with `channels` interleaved channels per frame. Returns the
-    /// recorder plus the producer the caller feeds frames into. Fails only if
-    /// the file can't be created (encoder setup happens on the worker thread).
+    /// to `path`, with `channels` interleaved channels per frame in the given
+    /// `format`. Returns the recorder plus the producer the caller feeds frames
+    /// into. Fails only if the file can't be created (encoder setup happens on
+    /// the worker thread).
     pub fn start(
         path: PathBuf,
         in_rate: f64,
         channels: RecordingChannels,
+        format: RecordingFormat,
     ) -> std::io::Result<(Recorder, Producer<f32>)> {
         let file = File::create(&path)?;
         // ~4 s of slack so a brief disk stall drops nothing.
-        let cap = (in_rate as usize).max(MP3_RATE as usize) * 4 * channels.count();
+        let cap = (in_rate as usize).max(REC_RATE_HZ as usize) * 4 * channels.count();
         let (prod, cons) = RingBuffer::<f32>::new(cap);
         let stop = Arc::new(AtomicBool::new(false));
         let failed = Arc::new(AtomicBool::new(false));
@@ -126,12 +142,12 @@ impl Recorder {
         let stop_worker = stop.clone();
         let path_worker = path.clone();
         let join = std::thread::Builder::new()
-            .name("mp3-recorder".into())
+            .name("audio-recorder".into())
             .spawn(move || {
-                encode_loop(cons, file, in_rate, channels, stop_worker, path_worker, health)
+                encode_loop(cons, file, in_rate, channels, format, stop_worker, path_worker, health)
             })
             .expect("spawn recorder thread");
-        info!(path = %path.display(), "recording started");
+        info!(path = %path.display(), format = ?format, "recording started");
         Ok((Recorder { stop, join: Some(join), failed, glitched, path }, prod))
     }
 
@@ -171,8 +187,29 @@ struct Health {
     glitched: Arc<AtomicBool>,
 }
 
-/// The recorder thread: run an encode session, and if the encoder panics,
-/// build a fresh one and carry on appending to the same file.
+/// The recorder thread: run the writer for the chosen container.
+fn encode_loop(
+    cons: Consumer<f32>,
+    file: File,
+    in_rate: f64,
+    channels: RecordingChannels,
+    format: RecordingFormat,
+    stop: Arc<AtomicBool>,
+    path: PathBuf,
+    health: Health,
+) {
+    match format {
+        // PCM is written straight through, so there is no encoder to panic and
+        // none of the supervision below applies. The header is patched on the
+        // way out either way, and a write error is warned rather than starting
+        // a second session over the same bytes.
+        RecordingFormat::Wav => wav_session(cons, file, in_rate, channels, &stop, &path),
+        RecordingFormat::Mp3 => mp3_session(cons, file, in_rate, channels, stop, path, health),
+    }
+}
+
+/// The MP3 worker: run an encode session, and if the encoder panics, build a
+/// fresh one and carry on appending to the same file.
 ///
 /// An MP3 file is a sequence of self-contained frames, so a new encoder's
 /// output appended to a half-written file plays: what is lost is the audio
@@ -188,7 +225,11 @@ struct Health {
 /// supervision stays regardless: the encoder is the one piece of this path
 /// that is not sdroxide's code, and a recording that stops silently is worse
 /// than one with a click in it.
-fn encode_loop(
+///
+/// A WAV gets none of this on purpose — its frames are not self-contained, its
+/// sizes are written at the end, and a second session would restart the header
+/// over a file already part-written.
+fn mp3_session(
     mut cons: Consumer<f32>,
     file: File,
     in_rate: f64,
@@ -236,6 +277,86 @@ fn encode_loop(
     let _ = file.flush();
 }
 
+/// The WAV worker: resample to 48 kHz and write the samples, then patch the
+/// header. One pass, no supervision — there is no encoder to fall over.
+fn wav_session(
+    mut cons: Consumer<f32>,
+    file: File,
+    in_rate: f64,
+    channels: RecordingChannels,
+    stop: &AtomicBool,
+    path: &std::path::Path,
+) {
+    let ch = channels.count();
+    let mut writer = match AudioWavWriter::new(file, path, REC_RATE_HZ, ch as u16) {
+        Ok(w) => w,
+        Err(e) => {
+            warn!(path = %path.display(), "WAV header write failed: {e}; recording aborted");
+            return;
+        }
+    };
+    let mut rs = Resampler48::new(in_rate, ch);
+    let mut drained: Vec<f32> = Vec::new();
+    let mut resampled: Vec<f32> = Vec::new();
+    loop {
+        drained.clear();
+        while let Ok(s) = cons.pop() {
+            drained.push(s);
+        }
+        if drained.is_empty() {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+            continue;
+        }
+        rs.push(&drained, &mut resampled);
+        if let Err(e) = writer.write(&resampled) {
+            warn!(path = %path.display(), "recording write failed: {e}");
+        }
+    }
+    if let Err(e) = writer.finish() {
+        warn!(path = %path.display(), "recording close failed: {e}");
+    }
+}
+
+/// Resample interleaved frames arriving at some rate to `REC_RATE_HZ`, for
+/// either channel count.
+///
+/// Both containers want 48 kHz and the receiver can run at anything, so the
+/// choice of resampler is the same question in both workers: which channel
+/// count, and is a resampler needed at all when the rates already match. Kept
+/// in one place so the MP3 and WAV paths cannot drift.
+struct Resampler48 {
+    stereo: Option<StereoResampler>,
+    mono: Option<MonoResampler>,
+}
+
+impl Resampler48 {
+    fn new(in_rate: f64, channels: usize) -> Resampler48 {
+        if channels == 2 {
+            Resampler48 {
+                stereo: StereoResampler::new(in_rate, f64::from(REC_RATE_HZ)),
+                mono: None,
+            }
+        } else {
+            Resampler48 { stereo: None, mono: MonoResampler::new(in_rate, f64::from(REC_RATE_HZ)) }
+        }
+    }
+
+    /// Resample `input` into `out`, clearing it first. With no resampler live
+    /// (the rates already match) this is a copy, which is what the resampler
+    /// would do anyway.
+    fn push(&mut self, input: &[f32], out: &mut Vec<f32>) {
+        out.clear();
+        match (self.stereo.as_mut(), self.mono.as_mut()) {
+            (Some(r), _) => r.push(input, out),
+            (None, Some(r)) => r.push(input, out),
+            (None, None) => out.extend_from_slice(input),
+        }
+    }
+}
+
 /// One encode session: build an encoder, drain and encode until asked to stop,
 /// then write the tail. Returns normally only on a clean stop — a panic in the
 /// encoder unwinds out of here and [`encode_loop`] catches it.
@@ -267,10 +388,9 @@ fn encode_session(
     };
     let spp = shine_samples_per_pass(&enc) as usize; // samples per channel per frame
 
-    // Exactly one of these is live, matching `ch`; `None` when the rates
-    // already match (see `StereoResampler`/`MonoResampler::new`).
-    let mut stereo_rs = (ch == 2).then(|| StereoResampler::new(in_rate, MP3_RATE as f64)).flatten();
-    let mut mono_rs = (ch == 1).then(|| MonoResampler::new(in_rate, MP3_RATE as f64)).flatten();
+    // Exactly one of these is live, matching `ch`; the rates line up and the
+    // push is a copy when they already match.
+    let mut rs = Resampler48::new(in_rate, ch);
     let mut drained: Vec<f32> = Vec::new();
     let mut resampled: Vec<f32> = Vec::new();
     let mut pending: Vec<f32> = Vec::new(); // 48 kHz interleaved, awaiting a frame
@@ -290,19 +410,8 @@ fn encode_session(
             std::thread::sleep(Duration::from_millis(5));
             continue;
         }
-        match (stereo_rs.as_mut(), mono_rs.as_mut()) {
-            (Some(r), _) => {
-                resampled.clear();
-                r.push(&drained, &mut resampled);
-                pending.extend_from_slice(&resampled);
-            }
-            (None, Some(r)) => {
-                resampled.clear();
-                r.push(&drained, &mut resampled);
-                pending.extend_from_slice(&resampled);
-            }
-            (None, None) => pending.extend_from_slice(&drained),
-        }
+        rs.push(&drained, &mut resampled);
+        pending.extend_from_slice(&resampled);
         while pending.len() >= spp * ch {
             encode_frame(file, &mut enc, &pending[..spp * ch], ch, &mut pcm_l, &mut pcm_r, path);
             pending.drain(..spp * ch);
@@ -367,8 +476,13 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("sdroxide-rec-test-{}.mp3", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let (rec, mut prod) = Recorder::start(path.clone(), 48_000.0, RecordingChannels::Stereo)
-            .expect("start recorder");
+        let (rec, mut prod) = Recorder::start(
+            path.clone(),
+            48_000.0,
+            RecordingChannels::Stereo,
+            RecordingFormat::Mp3,
+        )
+        .expect("start recorder");
 
         // ~1 s at 48 kHz: 1 kHz in the left ear, 400 Hz in the right, so the
         // two channels are genuinely different, fed as it drains.
@@ -393,13 +507,57 @@ mod tests {
         assert_eq!(bytes[1] & 0xE0, 0xE0, "no MP3 frame sync in byte 1");
     }
 
+    /// A WAV recording is plain PCM: a RIFF header, 16-bit samples, and the
+    /// sizes patched in on close — the same drain/resample path as MP3 with a
+    /// different writer behind it.
+    #[test]
+    fn records_a_valid_wav() {
+        let path =
+            std::env::temp_dir().join(format!("sdroxide-rec-test-{}.wav", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let (rec, mut prod) = Recorder::start(
+            path.clone(),
+            48_000.0,
+            RecordingChannels::Stereo,
+            RecordingFormat::Wav,
+        )
+        .expect("start recorder");
+
+        for i in 0..48_000 {
+            let t = i as f32 / 48_000.0;
+            let l = 0.5 * (std::f32::consts::TAU * 1000.0 * t).sin();
+            let r = 0.5 * (std::f32::consts::TAU * 400.0 * t).sin();
+            for s in [l, r] {
+                while prod.push(s).is_err() {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(rec.failure(), None, "a WAV has no encoder to fail");
+        rec.stop();
+
+        let raw = std::fs::read(&path).expect("read wav");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(&raw[..4], b"RIFF", "not a RIFF file");
+        assert_eq!(&raw[8..12], b"WAVE");
+        let riff = u32::from_le_bytes(raw[4..8].try_into().unwrap()) as usize;
+        assert_eq!(riff, raw.len() - 8, "the RIFF size was not patched in");
+        // The data chunk's size is the audio, and it reaches the end of file.
+        let at = find_chunk(&raw, b"data").expect("data chunk");
+        let data = u32::from_le_bytes(raw[at + 4..at + 8].try_into().unwrap()) as usize;
+        assert!(data > 100_000, "wav suspiciously small: {data} bytes");
+        assert_eq!(at + 8 + data, raw.len());
+    }
+
     #[test]
     fn records_a_valid_mono_mp3() {
         let path =
             std::env::temp_dir().join(format!("sdroxide-rec-test-mono-{}.mp3", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let (rec, mut prod) = Recorder::start(path.clone(), 48_000.0, RecordingChannels::Mono)
-            .expect("start recorder");
+        let (rec, mut prod) =
+            Recorder::start(path.clone(), 48_000.0, RecordingChannels::Mono, RecordingFormat::Mp3)
+                .expect("start recorder");
 
         for i in 0..48_000 {
             let t = i as f32 / 48_000.0;
@@ -431,8 +589,13 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("sdroxide-rec-test-rail-{}.mp3", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let (rec, mut prod) = Recorder::start(path.clone(), 48_000.0, RecordingChannels::Stereo)
-            .expect("start recorder");
+        let (rec, mut prod) = Recorder::start(
+            path.clone(),
+            48_000.0,
+            RecordingChannels::Stereo,
+            RecordingFormat::Mp3,
+        )
+        .expect("start recorder");
         for i in 0..48_000u32 {
             // A 1 kHz square at exactly ±1.0, and the other ear its inverse so
             // the joint-stereo path sees the widest difference there is.
@@ -462,8 +625,9 @@ mod tests {
         let path = std::env::temp_dir()
             .join(format!("sdroxide-rec-test-health-{}.mp3", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let (rec, prod) = Recorder::start(path.clone(), 48_000.0, RecordingChannels::Mono)
-            .expect("start recorder");
+        let (rec, prod) =
+            Recorder::start(path.clone(), 48_000.0, RecordingChannels::Mono, RecordingFormat::Mp3)
+                .expect("start recorder");
         assert_eq!(rec.failure(), None);
 
         rec.glitched.store(true, Ordering::Relaxed);
@@ -477,5 +641,19 @@ mod tests {
         drop(prod);
         rec.stop();
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Walk the chunk list of a RIFF file, the way a player does, so a test can
+    /// find `data` without assuming a header layout.
+    fn find_chunk(raw: &[u8], id: &[u8; 4]) -> Option<usize> {
+        let mut at = 12;
+        while at + 8 <= raw.len() {
+            let size = u32::from_le_bytes(raw[at + 4..at + 8].try_into().unwrap()) as usize;
+            if &raw[at..at + 4] == id {
+                return Some(at);
+            }
+            at += 8 + size + (size & 1);
+        }
+        None
     }
 }

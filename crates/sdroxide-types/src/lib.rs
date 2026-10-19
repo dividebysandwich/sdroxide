@@ -283,7 +283,7 @@ pub use rds::{
     RdsClock, RdsData, RdsGroupLog, RdsStandard, RdsStats, RtPlus, af_code_hz, pi_callsign,
     pty_name, rt_plus_class,
 };
-pub use recording::{JobAction, RecordingJob, RecordingKind};
+pub use recording::{JobAction, RecordingFormat, RecordingJob, RecordingKind};
 pub use region::{Region, region, set_region};
 pub use relay::{
     DEFAULT_HOLD_MS, DEFAULT_LEAD_MS, FailSafe, MAX_CHANNEL, RelayBandRow, RelayChannel,

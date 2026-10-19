@@ -30,6 +30,41 @@ impl RecordingKind {
     }
 }
 
+/// The format a recording of the receiver audio is written in.
+///
+/// Kept beside the scheduled-recording module rather than in `playback`: it is
+/// the operator's choice of *file*, set from the REC control and remembered
+/// between sessions, and it decides the extension the recorder stamps on the
+/// file as much as it decides the encoder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordingFormat {
+    /// Lossy MP3 — small, and the default this station has always written.
+    #[default]
+    Mp3,
+    /// 16-bit PCM WAV at 48 kHz — no codec between the receiver and the file,
+    /// for an external decoder or a look at the spectrum.
+    Wav,
+}
+
+impl RecordingFormat {
+    /// The label the REC chip carries.
+    pub fn label(self) -> &'static str {
+        match self {
+            RecordingFormat::Mp3 => "MP3",
+            RecordingFormat::Wav => "WAV",
+        }
+    }
+
+    /// The file extension, without the dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            RecordingFormat::Mp3 => "mp3",
+            RecordingFormat::Wav => "wav",
+        }
+    }
+}
+
 /// One scheduled recording.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -151,6 +186,14 @@ mod tests {
         };
         let text = serde_json::to_string(&j).unwrap();
         assert_eq!(serde_json::from_str::<RecordingJob>(&text).unwrap(), j);
+    }
+
+    #[test]
+    fn the_format_defaults_to_mp3_and_names_its_file() {
+        assert_eq!(RecordingFormat::default(), RecordingFormat::Mp3, "the station's own default");
+        assert_eq!(RecordingFormat::Mp3.extension(), "mp3");
+        assert_eq!(RecordingFormat::Wav.extension(), "wav");
+        assert_eq!(RecordingFormat::Wav.label(), "WAV");
     }
 
     #[test]

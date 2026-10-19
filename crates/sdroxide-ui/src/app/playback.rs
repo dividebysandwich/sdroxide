@@ -197,8 +197,8 @@ impl super::SdroxideApp {
                 if listing.files.is_empty() {
                     ui.label(
                         RichText::new(
-                            "No recordings yet. Press REC → MP3 while something is on the air; \
-                             the file appears here, named with its time, frequency and mode.",
+                            "No recordings yet. Press REC → MP3 or WAV while something is on the \
+                             air; the file appears here, named with its time, frequency and mode.",
                         )
                         .color(crate::theme::gray(150)),
                     );

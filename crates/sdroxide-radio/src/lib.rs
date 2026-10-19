@@ -3,6 +3,7 @@
 //! NATIVE ONLY — this crate links the SoapySDR C library and must never be a
 //! dependency of any wasm-targeted crate.
 
+pub mod audio_wav;
 #[cfg(feature = "soapy")]
 mod device;
 pub mod engine;

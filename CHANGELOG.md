@@ -19,6 +19,7 @@ and the [README](https://github.com/madmedicnl/sdroxide-brown#readme).
 
 ### Added
 - **The S-meter calibration is back, at ±5 S-units** — Kevin's original revision of the per-radio correction, which he says worked perfectly. Per radio, display only, saved with the radio.
+- **A WAV recording beside the MP3** — the REC row offers **MP3**, **WAV** and **MONO**; WAV is uncompressed 16-bit PCM at 48 kHz, in the same folder with the same stamped name, and the chip has to be pressed to start it.
 
 ### Changed
 - **A release can no longer happen by itself.** The daily cron in the release workflow built the whole matrix every day and then published nothing, because the release is gated on a tag. It is gone; a release now takes a tag or a deliberate dispatch, and the nightly is the only thing that publishes on its own.

@@ -538,7 +538,7 @@ impl SdroxideApp {
         ui.add(
             egui::Label::new(
                 RichText::new(
-                    "Where the MP3 recordings, the scheduled recordings and the raw I/Q captures \
+                    "Where the audio recordings, the scheduled recordings and the raw I/Q captures \
                      are written. Default: your music folder's sdroxide subfolder, or the config \
                      directory's recordings folder when the system exposes no music folder.",
                 )
