@@ -35,6 +35,7 @@ mod drm;
 mod dsc;
 mod entity;
 mod entity_flags;
+mod frame_gate;
 mod fsk441;
 mod fst4;
 mod geo;
@@ -188,6 +189,7 @@ pub use dsc::{
 pub use entity::{
     EntityInfo, EntityPlace, all_entities, resolve_callsign, resolve_place, resolve_prefix,
 };
+pub use frame_gate::{Followed, FrameGate, GateEdge, HeardEdge, SlotFollower};
 pub use fsk441::Fsk441Period;
 pub use fst4::Fst4Period;
 pub use geo::{

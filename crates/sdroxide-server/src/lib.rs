@@ -1277,6 +1277,9 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             // Likewise the recordings list: the files are this station's.
             RadioEvent::Recordings(listing) => Some(ServerMsg::Recordings(listing)),
             RadioEvent::DabSlide(s) => Some(ServerMsg::DabSlide(s)),
+            // Found where the sound reaches the speakers, so a remote client
+            // finds its own from the audio it is sent.
+            RadioEvent::HeardFrame(_) => None,
         }
     };
     // The satellite half of the station config also drives this machine's own

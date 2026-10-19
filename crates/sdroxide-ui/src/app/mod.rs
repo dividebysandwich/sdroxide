@@ -838,6 +838,10 @@ pub struct SdroxideApp {
     /// by the round-tripped status echo. Seeded once from the first status.
     digi_cfg_edit: sdroxide_types::DigiConfig,
     digi_cfg_seeded: bool,
+    /// Where the slot bar is, as far as the sound in the speakers says — see
+    /// [`sdroxide_types::SlotFollower`]. FT8, FT4 and FT2 only; the clock's bar
+    /// is the answer wherever this has nothing to say.
+    slot_follow: sdroxide_types::SlotFollower,
     /// Whether the CW panel's message-button editor is open (issue #374).
     /// Screen state, not the operator's: the buttons themselves live in
     /// `DigiConfig`.
@@ -2039,6 +2043,7 @@ impl SdroxideApp {
             aprs_lat_buf: String::new(),
             aprs_lon_buf: String::new(),
             digi_cfg_seeded: false,
+            slot_follow: sdroxide_types::SlotFollower::default(),
             cw_macro_edit: false,
             text_macro_edit: false,
             cw_straight: false,
@@ -4689,6 +4694,73 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The slot bar follows the sound: a frame heard starting puts the bar at
+    /// the start of its white stretch whatever the clock says, the sound
+    /// stopping turns it green at once, and with nothing heard the clock's
+    /// dim bar is what is drawn.
+    #[test]
+    fn the_slot_bar_follows_the_sound_not_the_clock() {
+        use crate::multi::frame_test_lock;
+        let _guard = frame_test_lock();
+        // A slot boundary, so the arithmetic is in whole seconds.
+        let t0 = 1_000_000_005.0f64;
+        let white = crate::theme::gray(235);
+
+        let queue = std::rc::Rc::new(std::cell::RefCell::new(std::collections::VecDeque::new()));
+        let ctx = egui::Context::default();
+        let mut app = SdroxideApp::new_tab(
+            &ctx,
+            None,
+            None,
+            Box::new(SharedController(queue.clone())),
+            0,
+            true,
+        );
+        app.state.rx[0].mode = sdroxide_types::Mode::Ft8;
+
+        let bar = |app: &SdroxideApp, at: f64| -> Vec<egui::Color32> {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| app.slot_progress_at(ui, at));
+            let shapes = std::mem::take(&mut out.shapes);
+            out.drop_without_applying_deltas();
+            let mut fills: Vec<(egui::Rect, egui::Color32)> = shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    egui::Shape::Rect(r) if r.rect.height() == 5.0 => Some((r.rect, r.fill)),
+                    _ => None,
+                })
+                .collect();
+            fills.remove(0); // the track
+            fills.retain(|f| f.0.width() > 0.0);
+            fills.into_iter().map(|f| f.1).collect()
+        };
+
+        // Nothing heard: the clock's bar, dim cyan.
+        assert_eq!(bar(&app, t0 + 3.0), vec![crate::theme::CYAN_DIM()]);
+
+        // A frame heard starting at 0.5 s: by 3.0 s the bar is white.
+        queue.borrow_mut().push_back(RadioEvent::HeardFrame(sdroxide_types::HeardEdge {
+            present: true,
+            at: t0 + 0.5,
+        }));
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.ui(ui, &mut eframe::Frame::_new_kittest());
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(bar(&app, t0 + 3.0), vec![white], "the bar did not follow the sound");
+
+        // The sound stops at 12.9 s: green at once, though the clock's own
+        // burst is not over for another quarter second.
+        queue.borrow_mut().push_back(RadioEvent::HeardFrame(sdroxide_types::HeardEdge {
+            present: false,
+            at: t0 + 12.9,
+        }));
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.ui(ui, &mut eframe::Frame::_new_kittest());
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(bar(&app, t0 + 13.0), vec![white, crate::theme::GREEN()]);
     }
 
     /// The split arithmetic the undocked mode rests on: a part that is undocked
