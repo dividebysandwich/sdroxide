@@ -524,6 +524,30 @@ impl Mode {
         Mode::Ale,
     ];
 
+    /// Modes that are offered but **not yet proven**.
+    ///
+    /// This is not a quality label, it is a warning with a name: a tester
+    /// pointing one of these at a signal deserves to know that a failure is a
+    /// known state rather than something they broke, and that a report about it
+    /// is wanted.
+    ///
+    /// * **Olivia** — locks but its symbol clock wanders; it fails the
+    ///   independent corpus, and the fault is diagnosed in
+    ///   `MODE-DECODERS-HANDOVER.md` §4.
+    /// * **THOR** — fails the same corpus and is not diagnosed at all.
+    /// * **RIFP** — a draft specification (`draft-dulaunoy-rifp-00`), which has
+    ///   never been seen on the air by this project.
+    ///
+    /// The list is deliberately short. A mode that reads real signals is not
+    /// experimental however new it is: Hell, the four PSK speeds, RTTY at every
+    /// rate and the whole wideband set have all been read from recordings.
+    pub const EXPERIMENTAL: [Mode; 3] = [Mode::Olivia, Mode::Thor, Mode::Rifp];
+
+    /// Whether this mode is in [`Mode::EXPERIMENTAL`].
+    pub fn is_experimental(self) -> bool {
+        matches!(self, Mode::Olivia | Mode::Thor | Mode::Rifp)
+    }
+
     /// The digital modes handled by a dedicated decode/encode engine (the
     /// slotted FT8/FT4 modes, the continuous keyboard modes, Hell, SSTV, RIFP,
     /// packet, RF Paint). All are USB underneath except RIFP, VHF packet and
@@ -2309,6 +2333,36 @@ mod tests {
                         || m == Mode::Ais
                         || m == Mode::Hfdl,
                     "{m:?} has only symmetric presets — should its edges mirror?"
+                );
+            }
+        }
+    }
+
+    /// The experimental bench is exactly the modes we cannot vouch for, and
+    /// every one of them must be reachable from the band menu — a mode nobody
+    /// can select is not being tested by anybody.
+    ///
+    /// The list is short by design: a mode that reads real signals is not
+    /// experimental however new it is, and marking a working mode as unproven
+    /// would teach testers to distrust the label.
+    #[test]
+    fn the_experimental_bench_is_the_modes_we_cannot_vouch_for() {
+        let expect = [Mode::Olivia, Mode::Thor, Mode::Rifp];
+        assert_eq!(Mode::EXPERIMENTAL, expect, "the bench changed without its reason changing");
+        for m in Mode::EXPERIMENTAL {
+            assert!(m.is_experimental(), "{m:?} is on the bench but does not say so");
+            assert!(
+                Mode::DIGITAL.contains(&m),
+                "{m:?} is experimental but is not offered by the digital grid, so nobody can test it"
+            );
+        }
+        // And nothing else claims to be: a working mode on the bench is a lie
+        // in the other direction, and it is the one that erodes the label.
+        for m in Mode::ALL {
+            if m.is_experimental() {
+                assert!(
+                    expect.contains(&m),
+                    "{m:?} claims to be experimental but is not on the bench"
                 );
             }
         }

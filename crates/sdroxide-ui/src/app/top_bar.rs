@@ -8218,6 +8218,15 @@ const WIDEBAND_MODES: [Mode; 5] = [Mode::Adsb, Mode::Vdl2, Mode::Ais, Mode::Hfdl
 /// gap after it (the operator: *"remove the alignment"*). The chips pack tight
 /// and the row simply holds up to [`MODE_GRID_COLS`] of them; where even one
 /// column will not fit, a wrapped row reflows instead.
+/// `list` without the modes that are still on the experimental bench.
+///
+/// Split out so the menus can draw them under their own caption and nowhere
+/// else: a mode that appears twice in one popup, once trusted and once not, is
+/// worse than either.
+pub(in crate::app) fn proven_modes(list: &[Mode]) -> Vec<Mode> {
+    list.iter().copied().filter(|m| !m.is_experimental()).collect()
+}
+
 pub(in crate::app) fn mode_chip_grid(
     ui: &mut egui::Ui,
     cur: Mode,
@@ -9079,13 +9088,20 @@ pub(in crate::app) fn band_mode_menu(
             // Rows of five — the operator's ask: a trimmed, left-aligned grid
             // reads better than a ragged wrap, and five is the count that fits a
             // two-word label without stretching it across the popup.
-            mode_chip_grid(ui, mode, &OPERATE_MODES, band, state, false, cmds);
+            let operate = proven_modes(&OPERATE_MODES);
+            mode_chip_grid(ui, mode, &operate, band, state, false, cmds);
             ui.add_space(6.0);
             crate::chrome::menu_caption(ui, "Digital");
-            mode_chip_grid(ui, mode, &Mode::DIGITAL, band, state, false, cmds);
+            let digital = proven_modes(&Mode::DIGITAL);
+            mode_chip_grid(ui, mode, &digital, band, state, false, cmds);
             ui.add_space(6.0);
             crate::chrome::menu_caption(ui, "Wideband");
             mode_chip_grid(ui, mode, &WIDEBAND_MODES, band, state, false, cmds);
+            ui.add_space(6.0);
+            // Last, and named for what it is. A tester deserves to know that a
+            // failure here is a known state rather than something they broke.
+            crate::chrome::menu_caption(ui, "Experimental (unproven)");
+            mode_chip_grid(ui, mode, &Mode::EXPERIMENTAL, band, state, false, cmds);
         }
         BandMenuTab::Listen => {
             ui.add_space(6.0);
@@ -9093,7 +9109,8 @@ pub(in crate::app) fn band_mode_menu(
             // Rows of five, as on the OPERATE tab. Nothing is greyed for the
             // band: the listener's screen is where the dial is explored, so a
             // mode the band table would not put here is still offered.
-            mode_chip_grid(ui, mode, &LISTEN_MODES, band, state, true, cmds);
+            let listen = proven_modes(&LISTEN_MODES);
+            mode_chip_grid(ui, mode, &listen, band, state, true, cmds);
             // Every digimode decode, on the listener's side too: a listener
             // reads the same signals the operator does — WSPR beacons, RTTY
             // and PSK bulletins, NAVTEX and weather fax, APRS, the aircraft
@@ -9102,10 +9119,14 @@ pub(in crate::app) fn band_mode_menu(
             // cannot drift, and the same "every band" rule.
             ui.add_space(6.0);
             crate::chrome::menu_caption(ui, "Digital");
-            mode_chip_grid(ui, mode, &Mode::DIGITAL, band, state, true, cmds);
+            let digital = proven_modes(&Mode::DIGITAL);
+            mode_chip_grid(ui, mode, &digital, band, state, true, cmds);
             ui.add_space(6.0);
             crate::chrome::menu_caption(ui, "Wideband");
             mode_chip_grid(ui, mode, &WIDEBAND_MODES, band, state, true, cmds);
+            ui.add_space(6.0);
+            crate::chrome::menu_caption(ui, "Experimental (unproven)");
+            mode_chip_grid(ui, mode, &Mode::EXPERIMENTAL, band, state, true, cmds);
         }
     }
 }
@@ -9202,6 +9223,27 @@ fn readout_digit_count(
 
 #[cfg(test)]
 mod tests {
+
+    /// A mode on the experimental bench must be drawn exactly once: under its
+    /// own caption, and not also in the Digital grid. Twice in one popup — once
+    /// trusted, once not — is worse than either, and once nowhere means nobody
+    /// can select it.
+    #[test]
+    fn an_experimental_mode_is_drawn_once() {
+        let digital = proven_modes(&Mode::DIGITAL);
+        for m in Mode::EXPERIMENTAL {
+            assert!(!digital.contains(&m), "{m:?} is in the Digital grid as well as on the bench");
+            assert!(
+                Mode::DIGITAL.contains(&m),
+                "{m:?} is on the bench but not in any grid, so it cannot be selected"
+            );
+        }
+        assert_eq!(
+            digital.len() + Mode::EXPERIMENTAL.len(),
+            Mode::DIGITAL.len(),
+            "the filter dropped or duplicated a mode"
+        );
+    }
     use super::*;
 
     /// The real-world bug this exists to catch: minutes and seconds computed
