@@ -173,18 +173,68 @@ and `sps = rate/spacing` compute. **Our formula is right**; the clock is not.
 Reference: `https://raw.githubusercontent.com/w1hkj/fldigi/master/src/include/jalocha/pj_mfsk.h`
 — Jalocha's own header, which this fork's Olivia work already cites.
 
-### Hell — the convention is split, so the fix is detection
+### Hell — diagnosed properly: it is the *phase*, and the font, not the dot rate
 
-Our font art is **14 genuine rows** (the `!` glyph has a real gap at row 8; it is
-not a doubled 7-row glyph). fldigi's `src/feld/Feld7x7-14.cxx` **is** 7 rows
-doubled — every entry repeated. F6CTE's Hell 80 spec says a third thing:
-*"each column is displayed vertically twice (but **transmitted once**)"*.
+**Supersedes the earlier reading in this file, which was wrong.** The dot rate is
+**correct** and was never the problem. Feld Hell is a **7×7 pixel matrix at
+122.5 pixel-baud**, and each pixel is transmitted as **two stacked half-height
+dots** — so the element rate is 245/s and a column is **14 elements**. That is
+exactly `HellVariant::ROWS = 14` and `pixel_rate = column_rate × 14 = 245`. The
+"2× the transmitter's rate" theory in an earlier draft of this file is dead.
 
-So the row/dot convention differs between implementations, and MultiPSK appears
-to be the one that transmits 7 where we sample 14 — which produces exactly the
-row-alternating bars we see. **The fix is therefore to detect the dot rate, not
-to flip a constant.** That was tried first and it cannot work: `hell_font`'s art
-asserts its own height, so `ROWS = 7` does not even compile.
+**The fault is that a Hell receiver has no frame sync.** It counts elements from
+the moment the operator pressed Start, so the sender's character cell lands at an
+**arbitrary phase** — and every glyph is then split across the join between two
+print copies. That is what the dense vertical striping in our output is: not a
+wrong clock, a clock with no idea where the cell begins.
+
+**And there is a signal to lock onto, which is the whole trick.** Every on-air
+Hell font leaves **the top and bottom rows of the 7×7 cell blank** — one row of
+padding above, one below, because a cell inked edge to edge butts into the copy
+above and below and produces a wall of pixels with no line to read along. In the
+cyclic element order those two blank rows are *adjacent* (the bottom pad is sent
+first, the top pad last), so they form a **contiguous quiet run of 4 element
+positions**, and the cell boundary sits a fixed distance from it.
+
+So the receiver keeps **14 exponentially-averaged lane bins**, one per element
+position, finds the quietest 4-lane run, and moves its raster only when a
+candidate is convincingly quieter than the phase in use. Around forty lines, and
+it is a phasing control automated — the same judgement an operator makes by eye.
+
+**Our font is the second half of the fault, and it is why the gap is not there to
+find.** Ours is 14 rows of *genuine* detail — `!` has an inked row at position 1
+and a real gap at row 8 — where the world's fonts are a **5×5 body in a 7×7 cell
+with rows 0 and 6 blank** and each pixel doubled on transmit. So we transmit a
+taller glyph than everyone else *and* our own reception has no gap to lock onto.
+
+Both halves are fixed by the same reference, and it is licence-clean (see below):
+the font moves to the 7-row padded convention, and the receiver gains phase
+tracking. Our round-trip tests will keep passing because both sides move together
+— **which is exactly why they have always passed while every real signal failed.**
+
+#### The reference: `lu1aat/hellschreiber2026`, MIT
+
+An MIT-licensed Hellschreiber transceiver in the browser
+(<https://lu1aat.github.io/hellschreiber2026/>, source at
+`github.com/lu1aat/hellschreiber2026`). Small, modern and unusually well
+documented, and it has already solved this exact problem:
+
+- `src/hell/modes.ts` — `baud 122.5`, `cols 7`, `rows 7`, `halfPixel: true`, with
+  `dotRate = baud × 2`, `dotsPerColumn = 14`, `charsPerSecond = 2.5`. It states
+  the reasoning: *"transmit each pixel as two vertically stacked half-height
+  dots… doubles the element rate without changing the pixel rate."*
+- `src/hell/align.ts` — the phase tracker described above, including the
+  empirical confidence gate (band noise scores 0.03–0.06, a clean machine clip
+  0.87, a real 80 m QSO through QSB 0.84) and the hysteresis margin that stops
+  the picture twitching.
+- `src/hell/font.ts` — the 5×5-in-7×7 font as readable ASCII art, with the
+  padding rule spelled out and a test asserting uppercase and digits stay inside
+  rows 1..5.
+
+**MIT is compatible with this fork's GPL-3**, so it may be used with attribution —
+the licence boundary in §6 is satisfied. fldigi's `feld7x7_14` (GPL-3) is the
+same font in a hex table, which is worth cross-checking against rather than
+shotgunning, since `align.ts` names it as the second source of truth.
 
 ### THOR — no diagnosis yet
 
@@ -252,7 +302,7 @@ branch costs a ref plus the objects for its own diff, kilobytes.
 | `fork/mfsk` | **new mode** — MFSK8/16/32/64 | the corpus (MFSK8, MFSK16 files) + our round trip |
 | `fork/olivia-timing` | fix the symbol/block clock | the corpus **and** Kevin's capture |
 | `fork/thor-timing` | diagnose first, then fix | the corpus |
-| `fork/hell-dot-rate` | detect the dot rate; keep both conventions | the corpus (4 Hell files) + our round trip |
+| `fork/hell-phase` | 7-row padded font **and** column phase tracking (§4) | the corpus (4 Hell files, incl. SkySweep's) + our round trip |
 | `fork/dsc` | DSC only — NAVTEX already works (§3b) | the corpus, once the arm takes a centre |
 | `fork/stanag-4285` | protocol from the declassified spec — uncoded first | broadcasts; needs a recording |
 
@@ -283,6 +333,9 @@ group — §4b has them, and they are a decoder change.)
 
 - **fldigi — GPL-3.** Compatible with this fork. Usable as a reference, with
   attribution. This is what makes MFSK, and the Olivia and THOR fixes, possible.
+- **`lu1aat/hellschreiber2026` — MIT.** Compatible, and the reference for the
+  Hell fix (§4): its mode definitions, phase tracker and padded font. Small
+  enough to read in full, which is why it is cited rather than summarised.
 - **MultiPSK — closed freeware, 30 €.** **Reference and test material only.**
   Never code, never a dependency. **Do not dissect the binary** — the same rule
   the ATS Mini RadioScript note sets out: do not publish a dissection of
