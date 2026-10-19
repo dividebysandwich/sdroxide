@@ -184,7 +184,8 @@ impl DigiEngine for DscController {
 
     fn set_audio_hz(&mut self, _hz: f32) {}
 
-    /// Fixed by the standard: the tones are 1300 and 2100 Hz, and there is
+    /// Fixed by the standard: MF/HF tones are 1615 and 1785 Hz about 1700 Hz
+    /// (100 baud; VHF channel 70 is 1300/2100 Hz at 1200 baud), and there is
     /// nothing here for an operator to tune.
     fn audio_hz(&self) -> f32 {
         sdroxide_types::DSC_TONE_HZ

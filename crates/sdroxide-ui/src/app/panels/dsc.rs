@@ -247,3 +247,41 @@ fn field(ui: &mut egui::Ui, label: &str, value: &str) {
         ui.label(RichText::new(value).monospace());
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sdroxide_types::{DSC_TONE_HZ, Mode};
+
+    /// A DSC channel is quoted as the centre of the 1615/1785 Hz MF/HF tone pair, and
+    /// the receiver is upper sideband, so the dial sits `DSC_TONE_HZ` below it:
+    /// 2187.5 kHz is tuned at 2185.8. Both chip lists must agree with that, and
+    /// with each other, or one of them tunes the tones 1.7 kHz out of the
+    /// decoder's passband.
+    #[test]
+    fn every_hf_channel_is_tuned_1700_hz_below_its_assigned_frequency() {
+        let hf = |c: &&(f64, &str)| c.0 < 30e6;
+        let panel: Vec<_> = CHANNELS.iter().filter(hf).collect();
+        assert_eq!(panel.len(), 6, "2187.5, 4207.5, 6312, 8414.5, 12577, 16804.5");
+        for (dial, label) in panel {
+            let channel_hz = label.parse::<f64>().unwrap() * 1000.0;
+            assert!(
+                (dial - (channel_hz - f64::from(DSC_TONE_HZ))).abs() < 0.5,
+                "{label} kHz is tuned at {dial} Hz, not {} Hz",
+                channel_hz - f64::from(DSC_TONE_HZ)
+            );
+            let (lo, hi) = Mode::Dsc.default_filter_at(*dial);
+            assert!(lo > 0.0 && lo < 1300.0 && hi > 2100.0, "{label}: passband {lo}..{hi}");
+        }
+        let menu: Vec<_> = super::super::digi_dial_freqs(Mode::Dsc).iter().map(|c| c.1).collect();
+        let chips: Vec<_> = CHANNELS.iter().map(|c| c.0).collect();
+        assert_eq!(menu, chips, "the band menu and the DSC panel tune different dials");
+    }
+
+    /// The logged frequency is the channel, not the dial.
+    #[test]
+    fn the_channel_is_the_dial_plus_the_tone_pair_centre() {
+        let dial = 2_185_800.0;
+        assert_eq!(Mode::Dsc.on_air_hz(dial, DSC_TONE_HZ), 2_187_500.0);
+    }
+}
