@@ -232,6 +232,35 @@ RYRY and an ID — see the frequency table above — and then the same corrected
 should show 80 symbols of BPSK sync, 48 references and 128 data symbols that
 differ from one another.
 
+## The fold's noise floor is about 0.44, and that has to be measured
+
+A sweep of the SWL list on 2026-10-19, 20:10–20:40 UTC, from the bench RSP1:
+
+| kHz | station | fold (8 frames) | verdict |
+|---|---|---|---|
+| 5215.6 | FUO Toulon | **0.70** | real, but **idle** (one constant symbol) |
+| 13 031.2 | FUF Fort-de-France | 0.44 | noise |
+| 8 478.5 | FUF | 0.46 | noise |
+| 6 348.0 | FUE Brest | — | noise (Rayleigh envelope) |
+| 12 857.0 | 6WW Dakar | 0.43 | noise |
+| 13 411.9 | 6WW Dakar | 0.42 | noise |
+| 8 467.8 | FUV Djibouti | 0.44 | noise |
+| 4 232.0 | FUF | 0.52 | marginal |
+| 12 873.9 | FUG La Régine | 0.45 | noise |
+
+**A noise-only capture folds at 0.42–0.46 with eight frames**, so the 0.35
+"floor" I had been using is optimistic and `s4285_fold`'s own significance
+threshold of 0.30 is wrong — it will report noise as a lock. A real signal is
+0.70 and up; anything under about 0.55 should be treated as no signal.
+
+The same caution applies to the "varying content" test: a phase spread of ~50°
+looks like data and is what noise gives too (53.9° measured on a known-empty
+frequency). **Both metrics need a null measured on the same capture**, not a
+number carried over.
+
+And at this hour only one of the eight frequencies had anything at all, and that
+one was idle.
+
 ## Tools
 
 | file | what it does |
