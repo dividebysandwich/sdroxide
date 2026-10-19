@@ -71,10 +71,9 @@ const PHASE_MIN_CONF: f32 = 0.2;
 /// How much quieter a candidate must be before the picture is moved. Without it
 /// the estimate flips between near-equal candidates and the text twitches.
 const PHASE_MARGIN: f32 = 0.15;
-/// Element positions in the blank run: the padding above and below, doubled.
+/// Element positions in the blank run for a fourteen-row cell: the padding
+/// above and below, doubled.
 const GAP_LANES: usize = 4;
-/// Where that run starts within a cell: the bottom padding is sent first.
-const GAP_OFFSET: usize = 12;
 /// Signal-bearing columns needed before the picture may be moved at all. One
 /// column cannot locate a gap: a single character's blank lanes look like the
 /// inter-line gap wherever they happen to fall, and acting on that walks the
@@ -148,6 +147,10 @@ pub struct HellTx {
     total_chars: usize,
     sent_chars: usize,
 
+    /// Transmitted rows per column: 14, or 7 for the variants that send each
+    /// font pixel once and are doubled for the eye.
+    rows: usize,
+
     /// Dot columns already generated, drained by [`HellTx::take_columns`] so the
     /// panel can paint what is going out alongside what is coming in.
     echo: Vec<u8>,
@@ -167,7 +170,8 @@ impl HellTx {
             cur_done: None,
             // Start one dot short of a wrap so the very first sample pulls a
             // whole column, rather than opening mid-column.
-            row: ROWS - 1,
+            row: variant.rows() - 1,
+            rows: variant.rows(),
             dot: 0,
             emitted: 0,
             dot_end: 0,
@@ -246,7 +250,7 @@ impl HellTx {
         self.q.clear();
         self.cur = 0;
         self.cur_done = None;
-        self.row = ROWS - 1;
+        self.row = self.rows - 1;
         self.total_chars = 0;
         self.sent_chars = 0;
         self.echo.clear();
@@ -263,7 +267,7 @@ impl HellTx {
     /// while the operator thinks.
     fn advance_dot(&mut self) {
         self.row += 1;
-        if self.row < ROWS {
+        if self.row < self.rows {
             return;
         }
         self.row = 0;
@@ -309,7 +313,10 @@ impl HellTx {
             }
             self.emitted += 1;
 
-            let lit = self.cur & (1 << self.row) != 0;
+            // A seven-row variant sends one dot per font pixel; the fourteen-row
+            // ones send the doubling the font already carries.
+            let bit = if self.rows == ROWS { self.row } else { 2 * self.row };
+            let lit = self.cur & (1 << bit) != 0;
 
             // Raised-cosine keying. Stepping a phase toward the target and
             // mapping it through 0.5*(1-cos(pi*x)) reproduces fldigi's
@@ -402,8 +409,12 @@ pub struct HellRx {
     /// so the shear never exceeds half an element. The dwell stops that turning
     /// into a twitch on every column.
     cols_since_move: u32,
-    /// The cell start the raster is currently drawn at, 0..ROWS.
+    /// The cell start the raster is currently drawn at, 0..lanes.
     sync: usize,
+    /// Transmitted rows per column: 14, or 7 for the variants that send each
+    /// font pixel once. The raster handed to the caller is always `ROWS` tall;
+    /// a seven-lane cell is doubled into it.
+    lanes: usize,
 
     agc_peak: f32,
     floor: f32,
@@ -444,6 +455,7 @@ impl HellRx {
             phase_cols: 0,
             cols_since_move: PHASE_MIN_COLS,
             sync: 0,
+            lanes: variant.rows(),
             agc_peak: 1e-3,
             floor: 0.0,
             level: 0.0,
@@ -490,6 +502,7 @@ impl HellRx {
         self.dots = 0;
         self.phase_cols = 0;
         self.cols_since_move = PHASE_MIN_COLS;
+        self.lanes = self.variant.rows();
         self.sync = 0;
     }
 
@@ -575,28 +588,38 @@ impl HellRx {
             // by `cell`, so the fourteen dots in hand are always one whole
             // character and never straddle two — rotating a straddling window
             // would preserve the mixture, not undo it.
-            let lane = (self.dots % ROWS as u64) as usize;
-            let cell = (lane + ROWS - self.sync) % ROWS;
+            let lanes = self.lanes;
+            let lane = (self.dots % lanes as u64) as usize;
+            let cell = (lane + lanes - self.sync) % lanes;
             self.col[cell] = (v * 255.0) as u8;
             self.dots += 1;
-            if cell + 1 == ROWS {
+            if cell + 1 == lanes {
                 // One lane is visited once per column, so folding a whole column
                 // is the same as updating each lane as it arrives. The bins are
                 // keyed by `lane`, so the estimate keeps its own frame of
                 // reference however the picture is currently drawn.
                 let mut ink = 0.0;
-                for (i, &px) in self.col.iter().enumerate() {
+                for (i, &px) in self.col[..lanes].iter().enumerate() {
                     ink += px as f32;
-                    let lane = (i + self.sync) % ROWS;
+                    let lane = (i + self.sync) % lanes;
                     self.phase_bins[lane] +=
                         (px as f32 / 255.0 - self.phase_bins[lane]) * self.phase_alpha;
                 }
-                if ink / (ROWS as f32 * 255.0) > PHASE_MIN_INK {
+                if ink / (lanes as f32 * 255.0) > PHASE_MIN_INK {
                     self.phase_cols += 1;
                     self.cols_since_move += 1;
                 }
-                // Collected from the cell boundary, so it goes out as it stands.
-                out.extend_from_slice(&self.col);
+                // Collected from the cell boundary, so it goes out as it stands
+                // — doubled into the display height when the sender only sends
+                // half of it.
+                if lanes == ROWS {
+                    out.extend_from_slice(&self.col[..lanes]);
+                } else {
+                    for i in 0..lanes {
+                        out.push(self.col[i]);
+                        out.push(self.col[i]);
+                    }
+                }
                 self.track_sync();
             }
         }
@@ -607,19 +630,32 @@ impl HellRx {
         self.fir_out = fir_out;
     }
 
-    /// Ink in the `GAP_LANES` element positions starting at `start`, cyclically.
+    /// Elements in the blank run. A fourteen-row cell pads by a pixel at each
+    /// end, doubled; a seven-row one pads by a single element at each end.
+    fn gap_lanes(&self) -> usize {
+        if self.lanes == 7 { 2 } else { GAP_LANES }
+    }
+
+    /// Where that run starts within a cell: the bottom padding is sent first,
+    /// so the run opens half its length before the cell boundary.
+    fn gap_offset(&self) -> usize {
+        self.lanes - self.gap_lanes() / 2
+    }
+
+    /// Ink in the blank-run element positions starting at `start`, cyclically.
     fn gap_ink(&self, start: usize) -> f32 {
-        (0..GAP_LANES).map(|k| self.phase_bins[(start + k) % ROWS]).sum()
+        (0..self.gap_lanes()).map(|k| self.phase_bins[(start + k) % self.lanes]).sum()
     }
 
     /// The cell start implied by the ink seen so far, and how pronounced the
     /// inter-line gap is. A confidence of 0 means every element position is
     /// equally inked — no signal, or a sender whose font has no padding.
     fn estimate_sync(&self) -> (usize, f32) {
-        let total: f32 = self.phase_bins.iter().sum();
+        let lanes = self.lanes;
+        let total: f32 = self.phase_bins[..lanes].iter().sum();
         let mut quietest = 0usize;
         let mut least = f32::INFINITY;
-        for start in 0..ROWS {
+        for start in 0..lanes {
             let ink = self.gap_ink(start);
             if ink < least {
                 least = ink;
@@ -627,9 +663,11 @@ impl HellRx {
             }
         }
         // Compared against a flat distribution: a picture with no gap scores 0.
-        let flat = total * GAP_LANES as f32 / ROWS as f32;
+        let gap = self.gap_lanes();
+        let flat = total * gap as f32 / lanes as f32;
         let confidence = if flat > 0.0 { (1.0 - least / flat).max(0.0) } else { 0.0 };
-        ((quietest + ROWS - GAP_OFFSET) % ROWS, confidence)
+        let offset = self.gap_offset();
+        ((quietest + lanes - offset) % lanes, confidence)
     }
 
     /// Move the raster only when another position is convincingly quieter than
@@ -644,8 +682,9 @@ impl HellRx {
         if confidence < PHASE_MIN_CONF || sync == self.sync {
             return self.sync;
         }
-        let candidate = self.gap_ink((sync + GAP_OFFSET) % ROWS);
-        let in_use = self.gap_ink((self.sync + GAP_OFFSET) % ROWS);
+        let offset = self.gap_offset();
+        let candidate = self.gap_ink((sync + offset) % self.lanes);
+        let in_use = self.gap_ink((self.sync + offset) % self.lanes);
         if candidate < in_use * (1.0 - PHASE_MARGIN) {
             self.sync = sync;
             self.cols_since_move = 0;

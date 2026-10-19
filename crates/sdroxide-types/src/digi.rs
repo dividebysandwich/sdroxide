@@ -1331,8 +1331,24 @@ pub enum HellVariant {
 }
 
 impl HellVariant {
-    /// Dot rows scanned per character column.
+    /// Dot rows the receiver paints per column. Every variant is *displayed* at
+    /// this height; some transmit fewer and are doubled on the way to the eye.
     pub const ROWS: usize = 14;
+
+    /// Dot rows actually **transmitted** per column.
+    ///
+    /// Feld Hell and its near relatives send fourteen: the font is a 7-pixel
+    /// cell with every pixel sent twice, which is what the original machine did
+    /// to smooth diagonals on paper tape. Hell 80 sends seven — F6CTE's own
+    /// note says the column is "displayed vertically twice but transmitted
+    /// once" — and the recording agrees: its column rate measures 34.4/s, and
+    /// 34.4 x 14 would be 481 elements where the mode carries 245.
+    pub fn rows(self) -> usize {
+        match self {
+            HellVariant::Hell80 => 7,
+            _ => Self::ROWS,
+        }
+    }
     /// Columns per character cell; the last is the inter-character gap.
     pub const CELL_COLS: usize = 7;
 
@@ -1371,9 +1387,10 @@ impl HellVariant {
         }
     }
 
-    /// Dots (transmitted pixels) per second — 14 rows in every column.
+    /// Dots (transmitted pixels) per second: the column rate times the rows a
+    /// variant actually sends, which is not the same for all of them.
     pub fn pixel_rate(self) -> f64 {
-        self.column_rate() * Self::ROWS as f64
+        self.column_rate() * self.rows() as f64
     }
 
     /// Characters per second — 2.5 for classic Feld Hell.
