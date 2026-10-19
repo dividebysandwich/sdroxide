@@ -137,3 +137,48 @@ search picks it, which is what a receiver needs. What still degrades is the
 enough resampler for a band-limited signal at a few hundred ppm, and the decision
 error roughly doubles there. That is a probe limitation with a known fix (a
 polyphase or cubic resampler), not a property of the mode.
+
+## Acquisition by folding, and what it found (2026-10-19)
+
+`s4285_fold.py` folds the recording onto its own frame period and scores how much
+survives, searching frame phase and carrier offset together. It needs no sync
+pattern, so a lock cannot be an artefact of a guessed sequence — which is what
+made the earlier correlations unreadable.
+
+**It locks.** On MultiPSK's `4285.WAV` the same 128 symbols of every frame add
+coherently: score **0.749** over 8 frames (floor 0.35), **0.60** over 32,
+settling at about **-44 Hz** of carrier offset. The frame period is confirmed
+independently: the autocorrelation peaks at **1280 samples = 106.67 ms exactly**,
+which is 256 symbols at 2400 baud, at **0.594 against a 0.065 median**.
+
+**But the payload is not Edition 1's.** In the folded frame — which has the SNR
+of a frame averaged over eight — the 80-symbol sync does not appear: the best
+correlation against the standard's PRN, over twenty shift-register conventions
+and all 256 rotations, is **0.291 against a 0.11 noise floor**, and fifty-one
+hundred trials of noise would reach that. The 48 all-zero reference symbols do
+not collapse either. So the repeating content of this recording is *not* the
+preamble the declassified document describes.
+
+Two readings, and they are both cheap to test with the right material:
+
+1. **It is a variant.** Sigidwiki notes variants of 4285 — the Thales Système
+   3000 ones in particular — whose identifying feature is "a special preamble at
+   the beginning of the transmission". A French Navy recording is a good candidate
+   for exactly that.
+2. **The recording is a test transmission** whose data repeats, which would fold
+   well regardless of what the sync is.
+
+Either way the conclusion for the mode is the same: **the receiver needs a
+recording of a station that is known to be sending Edition 1**, or the variant's
+preamble. Everything up to the payload is in place — frame period, carrier
+offset, folding acquisition, and a proven transcriber.
+
+### Tools
+
+| file | what it does |
+|---|---|
+| `s4285_sync.py` | frame-period autocorrelation and differential sync correlation |
+| `s4285_frame.py` | finds the frame by reference-symbol concentration |
+| `s4285_fold.py` | **acquisition by folding** — phase and carrier offset together, no pattern assumed |
+| `s4285_decode.py` | frame-by-frame decode once a lock exists |
+| `s4285_sim.py` | round trip from the spec; decodes exactly at 30 dB and above |
