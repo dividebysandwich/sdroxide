@@ -157,7 +157,9 @@ against.
 
 Every mode named by the two reference programs in front of us — MultiPSK's own
 recordings in `~/Downloads/sounds` and SkySweeper's mode table — that this tree
-does not decode today. **63 of them**, counting each distinct mode once.
+does not decode today. **65 of them**, counting each distinct mode once — Pactor's three generations as
+three, and the four QPSK speeds as four, because each is a setting an operator
+would have to choose between.
 
 ### Teleprinters and ARQ (7)
 
@@ -189,11 +191,10 @@ constellation) · `PSK10` · `PSK63F` · `PSK125R` · `PSK220F`
 `SELCAL` (CCIR and the national tone systems) · `DTMF` · `POCSAG` · `FLEX` ·
 `NWR/SAME`
 
-### Utility and satellite (7)
+### Utility and satellite (5)
 
 `DGPS` (RTCM SC-104) · `EGC` · `ORBCOMM` · `EPIRB` · `EM` beacons (GPS and
-locator) · `VDL2` — *we ship this one, listed for the record* · `ACARS` — also
-shipped
+locator)
 
 ### Weather and position (5)
 
