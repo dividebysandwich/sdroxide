@@ -161,6 +161,34 @@
 > the workflow are in "The standing queue and how to check it" below. A tag or a
 > nightly runs the full gate before it is cut — see "Cutting a release".
 
+## The mode roadmap — what to build next, in order (2026-10-19)
+
+**The queue, cheapest first.** Detail, measurements and the reasoning are in
+[`MODE-ROADMAP.md`](MODE-ROADMAP.md); this is the order and nothing else, kept
+here because it is the thing to look at when starting a session.
+
+1. ~~**Verify the modes we already ship against a second corpus**~~ — **done
+   2026-10-19.** Feld Hell, Hell 80, FM Hell, RTTY 45/50/75 and SYNOP all read
+   their recordings. Hell 80 needed a real fix (it transmits 7 rows, not 14);
+   the other three "failures" were the test rig tuning to the wrong centre.
+2. **`fork/psk-variants`** — symbol rate and constellation as parameters.
+   `crates/sdroxide-dsp/src/psk.rs` hardcodes `BAUD = 31.25` and its detector is
+   differential BPSK only, so BPSK63/125/250 and all four QPSK speeds cannot be
+   tuned to at all. It fixes seven corpus files, and it is the front end of both
+   STANAG 4285 and MIL-STD-188-110A — which is why it comes first.
+3. **MFSK8/16** — the cleanest *new* mode: fldigi is GPL-3, Shortwave Radiogram
+   sends MFSK32 every week, and it is the first run through the "add a mode"
+   path (modem, `Mode` variant, `DigiConfig` field).
+4. **STANAG 4285** — transcription proven by round trip, acquisition folds at
+   0.749, and the fixture does **not** carry Edition 1's preamble. **It needs a
+   recording of a station known to be sending Edition 1** before the per-frame
+   tracking work is worth doing.
+5. **One item from the hours table per day** after that: Contestia (after the
+   Olivia fix, not before), MT63, DominoEX, RS_ID.
+
+**Not doing, and the reason is a patent rather than the work:** DMR, P25, NXDN,
+dPMR — AMBE+2 is covered until 2028-05-20. See the DMR section below.
+
 ## Session 2026-10-11, later: **FLATTEN** (waterfall floor), and the RTTY anchor
 
 Two pieces of work, both on `main`, both off a look at **MSHV** (MixW-lineage
