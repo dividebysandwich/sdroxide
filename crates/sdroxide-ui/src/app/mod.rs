@@ -47,6 +47,7 @@ pub(in crate::app) mod morse;
 pub(in crate::app) mod net;
 pub(in crate::app) mod panels;
 pub(crate) mod persist;
+pub(in crate::app) mod extras;
 pub(in crate::app) mod playback;
 pub(in crate::app) mod publicsdr;
 pub(in crate::app) mod qo100;
@@ -508,6 +509,8 @@ pub struct SdroxideApp {
     /// engine snapshots that have not caught up with them. See [`dial_hold`].
     dial_hold: dial_hold::DialHold,
     show_memories: bool,
+    /// The EXTRAS window — see [`extras`].
+    show_extras: bool,
     /// The RDS window. Opened from the RDS chip in the receive menu, which only
     /// appears on WFM.
     show_rds: bool,
@@ -1843,6 +1846,7 @@ impl SdroxideApp {
             seen_first_state: false,
             dial_hold: dial_hold::DialHold::default(),
             show_memories: false,
+            show_extras: false,
             show_rds: false,
             show_drm: false,
             drm: None,

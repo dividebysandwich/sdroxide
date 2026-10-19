@@ -1493,6 +1493,7 @@ impl eframe::App for SdroxideApp {
         self.weather_window(&ctx);
         self.poll_playback_list(&mut cmds);
         self.playback_window(&ctx, &mut cmds);
+        self.extras_window(&ctx, &mut cmds);
         self.help.ui(&ctx);
         // Last, so it lands on top of everything else that opened this frame.
         self.oob_tx_window(&ctx);

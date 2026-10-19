@@ -6501,9 +6501,9 @@ impl SdroxideApp {
         &mut self,
         ui: &mut egui::Ui,
         extra: f32,
-        cmds: &mut Vec<Command>,
+        _cmds: &mut Vec<Command>,
     ) {
-        let [mail, mem, scan_label, hfdl_label, grid_label, public_sdrs, settings, help] =
+        let [mail, mem, scan_label, extras_label, grid_label, public_sdrs, settings, help] =
             SYSTEM_CHIPS_BOTTOM;
         let simple = self.ui_settings.simple_ui;
         // The MAIL slot. SWL mode offers the signal-identification guide there
@@ -6561,45 +6561,15 @@ impl SdroxideApp {
         {
             self.show_scanner = !self.show_scanner;
         }
-        // HFDL: shortwave aircraft ground network — a listener's tool, so it
-        // sits in the row an operator reaches for the decoder windows from, in
-        // both interfaces. It opens HFDL's own mode, whose panel docks under
-        // the waterfall; accented while the decoder runs, like the ISM chip,
-        // because it spends a downconverter and a worker thread whether or not
-        // the panel is on screen.
-        let hfdl_mode = self.state.rx[0].mode.is_hfdl();
-        let hfdl_running = self.state.hfdl.enabled;
-        let hfdl_chip = if hfdl_running {
-            accent_chip_stretched(
-                ui,
-                true,
-                hfdl_label,
-                crate::theme::GREEN(),
-                crate::theme::INK_ON_BRIGHT(),
-                extra,
-            )
-        } else {
-            chip_stretched(ui, hfdl_mode, hfdl_label, extra)
-        };
-        if hfdl_chip
-            .on_hover_text(if hfdl_mode {
-                "HFDL ground network — the decode log and aircraft map, below the \
-                 waterfall. Switch the decoder on with LISTEN inside the panel."
-            } else if hfdl_running {
-                "HFDL ground network — decoding now. Open the panel."
-            } else {
-                "HFDL ground network — the aircraft shortwave data link, one \
-                 listening channel at a time"
-            })
+        // EXTRAS: a launcher window for the receivers that are not a band's
+        // ordinary modes (DAB for now). A plain window chip — it only opens the
+        // window, so it is never tinted. HFDL, which used to sit here, is
+        // reached from the band/mode menu's wideband row.
+        if chip_stretched(ui, self.show_extras, extras_label, extra)
+            .on_hover_text("EXTRAS — DAB and the other receivers, in a window you can detach")
             .clicked()
         {
-            // The lane follows its own chosen frequency; bring the dial with it
-            // so the panadapter shows the signal being decoded.
-            cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Hfdl });
-            cmds.push(Command::SetVfo {
-                vfo: self.state.active_vfo,
-                hz: self.state.hfdl.frequency_hz,
-            });
+            self.show_extras = !self.show_extras;
         }
         // Grid tracker: worked Maidenhead squares on a map.
         //
@@ -6807,7 +6777,7 @@ const SYSTEM_CHIPS_TOP: [&str; 6] = ["LOG", "SPOTS", "AWARDS", "BANDS", "SAT", "
 /// label here and the label drawn have to be the same string; see
 /// [`SYSTEM_CHIPS_TOP`].
 const SYSTEM_CHIPS_BOTTOM: [&str; 8] =
-    ["MAIL", "MEM", "SCAN", "HFDL", "GRID", "PUBLIC SDR", "⚙", "?"];
+    ["MAIL", "MEM", "SCAN", "EXTRAS", "GRID", "PUBLIC SDR", "⚙", "?"];
 
 /// Which log the main-screen LOG chip opens: the listener's reception log in
 /// SWL mode, the QSO logbook otherwise.
@@ -10044,7 +10014,7 @@ mod tests {
         // row — where the simple interface keeps it, unlike radio email.
         assert_eq!(
             system_bottom_row(true, false),
-            vec!["MEM", "SCAN", "HFDL", "GRID", "PUBLIC SDR", "⚙", "?"]
+            vec!["MEM", "SCAN", "EXTRAS", "GRID", "PUBLIC SDR", "⚙", "?"]
         );
         // SWL mode puts the signal guide in the MAIL slot, and keeps it even
         // when the simple interface would have dropped radio email. **GRID goes**:
@@ -10053,11 +10023,11 @@ mod tests {
         // window for the listener who also runs FT8.
         assert_eq!(
             system_bottom_row(false, true),
-            vec!["SIG ID", "MEM", "SCAN", "HFDL", "PUBLIC SDR", "⚙", "?"]
+            vec!["SIG ID", "MEM", "SCAN", "EXTRAS", "PUBLIC SDR", "⚙", "?"]
         );
         assert_eq!(
             system_bottom_row(true, true),
-            vec!["SIG ID", "MEM", "SCAN", "HFDL", "PUBLIC SDR", "⚙", "?"]
+            vec!["SIG ID", "MEM", "SCAN", "EXTRAS", "PUBLIC SDR", "⚙", "?"]
         );
     }
 
