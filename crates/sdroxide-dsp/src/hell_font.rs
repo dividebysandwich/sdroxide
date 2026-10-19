@@ -66,7 +66,18 @@ const fn parse_font(src: &str) -> [[u16; COLS]; GLYPHS] {
             let mut c = 0;
             while c < COLS {
                 match b[line + c] {
-                    b'#' => font[g][c] |= 1 << r,
+                    // The art is drawn on the baseline the eye wants, one
+                    // element higher than the transmitted cell. Every on-air
+                    // font leaves a blank pixel above and below the glyph, and
+                    // the receiver finds the cell by that gap: the bottom
+                    // padding is sent first and the top padding last, so the
+                    // two blanks are adjacent in the cyclic element order and
+                    // the boundary sits at a known distance from them (see
+                    // GAP_OFFSET in `hell.rs`). Sitting the body one element
+                    // down puts the padding where every other transmitter puts
+                    // it, which is what lets our own signal be tracked, and it
+                    // is why the last art row must stay blank to fall off.
+                    b'#' => font[g][c] |= 1 << (r + 1),
                     b' ' => {}
                     _ => panic!("font art may only contain '#' and ' '"),
                 }
@@ -74,6 +85,13 @@ const fn parse_font(src: &str) -> [[u16; COLS]; GLYPHS] {
             }
             assert!(b[line + COLS] == b'\n', "font art row is the wrong width");
             r += 1;
+        }
+        // The bottom art row must be blank, or its own bit would fall off the
+        // end of the cell.
+        let mut c = 0;
+        while c < COLS {
+            assert!(font[g][c] >> ROWS == 0, "the bottom art row must be blank");
+            c += 1;
         }
         g += 1;
     }

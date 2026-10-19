@@ -796,5 +796,33 @@ impl SdroxideApp {
                 cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
             }
         });
+
+        // A sender whose clock differs from ours draws the glyphs leaning, and
+        // re-finding the cell boundary cannot straighten that — the boundary is
+        // right, the rate is not. The same trim WEFAX carries, for the same
+        // reason.
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            ui.label(RichText::new("Slant").size(10.5).strong().color(crate::theme::CYAN_DIM()));
+            let mut ppm = self.digi_cfg_edit.hell_slant_ppm;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut ppm)
+                        .speed(5.0)
+                        .range(-10_000.0..=10_000.0)
+                        .suffix(" ppm")
+                        .fixed_decimals(0),
+                )
+                .on_hover_text(
+                    "Receive sample-clock trim. A capture whose dots arrive 0.4 % long — an \
+                     ordinary sound card, and what SkySweep's off-air Hell recording measures — \
+                     needs about -4000. Adjust until the glyphs stand upright.",
+                )
+                .changed()
+            {
+                self.digi_cfg_edit.hell_slant_ppm = ppm;
+                cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+            }
+        });
     }
 }

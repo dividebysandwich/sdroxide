@@ -1850,8 +1850,13 @@ use sdroxide_types::{
 /// by default the FT8/FT4 feed on 7001 beside the first on 7000. Off by
 /// default. `PROTO_VERSION` 212 → 213, `VERSION_BYTE` 0x20 → 0x21. A downstream
 /// (fork) change.
-pub const PROTO_VERSION: u16 = 213;
-const VERSION_BYTE: u8 = 0x21;
+/// v214: [`sdroxide_types::DigiConfig`] gains `hell_slant_ppm` at its tail — a
+/// sample-clock trim for the Hellschreiber receiver, the same control WEFAX
+/// already carries. A sender whose clock differs from ours draws the glyphs
+/// leaning, and re-framing cannot straighten them. `PROTO_VERSION` 213 → 214,
+/// `VERSION_BYTE` 0x21 → 0x22. A downstream (fork) change.
+pub const PROTO_VERSION: u16 = 214;
+const VERSION_BYTE: u8 = 0x22;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {
