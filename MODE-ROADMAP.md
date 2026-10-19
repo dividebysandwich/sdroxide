@@ -91,25 +91,43 @@ found. "Recording" is whether our corpus already holds one.
 
 ### 3. Weeks — the interesting one
 
-**STANAG 4285.** The most interesting mode for an SWL, and the only one where we
-have already done the hard intellectual work: the specification is
-**declassified** (Edition 1, 16 February 1989, downgraded to NATO UNCLASSIFIED
-in 1993) and **the transcription is proven** — a frame built from it round-trips
-exactly (`tools/s4285-probe/s4285_sim.py`).
+**STANAG 4285.** The most interesting mode for an SWL, and the work is well past
+the reading stage. What is **done and measured** (`tools/s4285-probe/`):
 
-What is left is receiver engineering, in this order:
+- **The transcription is proven.** A frame built from the declassified spec
+  round-trips exactly at 30, 40 and 60 dB (`s4285_sim.py`). Frame layout, the
+  176-symbol scrambler, the sync generator and the eight phases are all as the
+  standard describes.
+- **The fixture is confirmed.** MultiPSK's `4285.WAV` autocorrelates at **1280
+  samples = 106.67 ms exactly** — 256 symbols at 2400 baud — at **0.594 against a
+  0.065 median**.
+- **Acquisition is solved by folding.** Folding the recording onto its own frame
+  period locks at **0.749** over eight frames (floor 0.35), **0.60** over 32, at
+  about **−44 Hz** of carrier offset. It assumes no sync pattern, so the lock
+  cannot be an artefact of a guessed sequence.
 
-1. **A real resampler.** The probe uses linear interpolation, and that is what
-   gives up past a few hundred ppm of clock error. Polyphase or cubic.
-2. **Carrier tracking per frame**, from the 48 reference symbols. One offset
-   fitted over a whole recording holds for a single frame — that is measured.
-3. **Acquisition on a faded signal.** `~/Downloads/sounds/4285.WAV` (MultiPSK's
-   own, 64.7 s at 12 kHz) is the better of the two fixtures; SkySweep's fades 45×.
-4. **Annex E** — the convolutional code and interleaver — for the **coded**
-   rates. The uncoded 1 200 / 2 400 / 3 600 bps need none of it, and the traffic
-   that is actually on the air is coded 600 baud long interleave. Its parameters
-   are stated in STANAG 4529's conformance procedures, which are public.
-5. **The output**: ITA2 5N1/5N2, which is RTTY's character set and already in
+What **blocks it**, and it is not code: the folded frame — with the SNR of eight
+averaged frames — does not carry Edition 1's preamble. The best correlation
+against the standard's PRN, over twenty shift-register conventions and all 256
+rotations, is **0.291 against a 0.11 floor**, and the all-zero reference symbols
+do not collapse. So this recording is either a **variant** (sigidwiki notes the
+Thales ones are identified by "a special preamble") or a **test transmission**
+whose data repeats.
+
+**The next action is not more analysis of that file. It is a recording of a
+station known to be sending Edition 1** — a naval broadcast, or one of Sigmira's
+examples. Given one, the remaining work is bounded and in this order:
+
+1. **Carrier and timing tracking per frame**, from the 48 reference symbols. Both
+   move: the offset across this recording wanders by tens of Hz, and the frame
+   phase drifts.
+2. **A real resampler** — polyphase rather than the probe's linear
+   interpolation, which is measured to give up past a few hundred ppm.
+3. **Annex E** — the convolutional code and interleaver — for the **coded**
+   rates. The uncoded 1 200 / 2 400 / 3 600 need none of it, and the traffic
+   that is on the air is coded 600 baud long interleave. Its parameters are
+   stated in STANAG 4529's conformance procedures, which are public.
+4. **The output**: ITA2 5N1/5N2, which is RTTY's character set and already in
    the tree.
 
 ### 4. Not ranked, because there is no clean reference yet
@@ -140,9 +158,9 @@ against.
 The point of this order is that each step makes the next cheaper, and the first
 two are near-free:
 
-1. **Verify the free wins** — RTTY 50/75, SYNOP, and the Hell variants we
-   already ship. A harness arm each, an hour in total, and it turns "untested"
-   into either "works" or a real finding. Do this first because it is how we
+1. ~~**Verify the free wins**~~ — **done 2026-10-19**. All seven work; three
+   were my tuning and Hell 80 was a real bug. See the table above. ~~A harness
+   arm each~~ was the right instinct: it is how we
    learn what the tree already does.
 2. **`fork/psk-variants`** — symbol rate and constellation. It fixes seven corpus
    files, and it is the front end of both 4285 and 110A.
