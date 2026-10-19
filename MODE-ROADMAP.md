@@ -153,6 +153,67 @@ D-STAR, which changes the answer for that one mode alone. Not queued.
 **Pactor II / III** — proprietary and encrypted; there is nothing to implement
 against.
 
+## The complete list of modes we do not carry
+
+Every mode named by the two reference programs in front of us — MultiPSK's own
+recordings in `~/Downloads/sounds` and SkySweeper's mode table — that this tree
+does not decode today. **63 of them**, counting each distinct mode once.
+
+### Teleprinters and ARQ (7)
+
+`SITOR-A` (ARQ — the corpus file is this one, and it is *not* NAVTEX) ·
+`Pactor-I` · `Pactor-II` · `Pactor-III` · `GTOR` · `IRA-ARQ` · `RSX.25`
+
+### HF data modems (8)
+
+`STANAG 4285` · `STANAG 4481` · `STANAG 4529` · `STANAG 4539` ·
+`MIL-STD-188-110A` · `141A` (French Navy) · `1382` (French Navy) · `Link-11`
+
+### Keyboard and MFSK modes (13)
+
+`MFSK8` · `MFSK16` · `MFSK32` · `MFSK64` · `MT63` · `DominoEX` · `DominoF` ·
+`THROB` · `THROBX` · `Contestia` · `RTTYM` · `Piccolo` · `Coquelet-8/13`
+
+### PSK (8)
+
+`QPSK31` · `QPSK63` · `QPSK125` · `QPSK250` (all four need the FEC, not just a
+constellation) · `PSK10` · `PSK63F` · `PSK125R` · `PSK220F`
+
+### The obscure HF modes (10)
+
+`CHIP64` · `PAX` · `PAX2` · `Lentus` · `BIIS` · `DFM` · `IEC-870-5` · `M10` ·
+`CCW` (FSK and OOK) · `skyofdm` (SkySweeper's own, undocumented)
+
+### Selcall, paging and tones (5)
+
+`SELCAL` (CCIR and the national tone systems) · `DTMF` · `POCSAG` · `FLEX` ·
+`NWR/SAME`
+
+### Utility and satellite (7)
+
+`DGPS` (RTCM SC-104) · `EGC` · `ORBCOMM` · `EPIRB` · `EM` beacons (GPS and
+locator) · `VDL2` — *we ship this one, listed for the record* · `ACARS` — also
+shipped
+
+### Weather and position (5)
+
+`SYNOP` (decodes today but is not wired to a mode) · `SHIP` · `RS41` · `LMS6` ·
+`IMET4`
+
+### Voice codecs, and not doing them (4)
+
+`DMR` · `P25` · `NXDN`/`dPMR` · `D-STAR`/`C4FM` — the AMBE family. The first four
+are the patent case; D-STAR is the one a clean Rust crate exists for.
+
+### Not a mode at all
+
+`VOICE` (a recording of speech, useful for tuning) · `RDS` (a subcarrier inside
+an FM broadcast, and our NFM/WSM path would have to carry it) · `NDB` and `QRSS`
+(both CW, so a decoder setting rather than a mode) · `SITOR-B` (NAVTEX, shipped).
+
+**Which of these is cheap is in the tables above**; this page exists so the
+count is honest and nothing gets quietly dropped.
+
 ## A suggested order for a few days
 
 The point of this order is that each step makes the next cheaper, and the first
