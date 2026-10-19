@@ -411,7 +411,7 @@ impl SdroxideApp {
         section(
             ui,
             "Recording",
-            "Where MP3 recordings, scheduled recordings and raw I/Q captures are written.",
+            "Where audio recordings, scheduled recordings and raw I/Q captures are written.",
         );
         self.settings_recordings_dir(ui, choose, reset);
     }

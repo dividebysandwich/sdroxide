@@ -1850,8 +1850,15 @@ use sdroxide_types::{
 /// by default the FT8/FT4 feed on 7001 beside the first on 7000. Off by
 /// default. `PROTO_VERSION` 212 → 213, `VERSION_BYTE` 0x20 → 0x21. A downstream
 /// (fork) change.
-pub const PROTO_VERSION: u16 = 213;
-const VERSION_BYTE: u8 = 0x21;
+/// v214: the audio recording's container is the operator's choice.
+/// [`sdroxide_types::RadioState`] gains `recording_format`
+/// ([`sdroxide_types::RecordingFormat`]) at its tail, and `Command` gains
+/// `SetRecordingFormat(RecordingFormat)` last. `RadioState` rides the state
+/// frames whole, so the appended field moves their layout; the same value is
+/// stored in `session.json` so it survives a restart. `PROTO_VERSION` 213 →
+/// 214, `VERSION_BYTE` 0x21 → 0x22. A downstream (fork) change.
+pub const PROTO_VERSION: u16 = 214;
+const VERSION_BYTE: u8 = 0x22;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {
@@ -2493,6 +2500,9 @@ mod tests {
                 sdroxide_types::RotatorAuthority::Manual,
             )),
             ClientMsg::Command(Command::StopRotator),
+            // The recording container, appended last with a field on
+            // `RadioState`'s own tail — both a v213 peer would misread.
+            ClientMsg::Command(Command::SetRecordingFormat(sdroxide_types::RecordingFormat::Wav)),
             ClientMsg::MicFrame { seq: 7, payload: vec![1, 2, 3] },
         ];
         for m in &msgs {

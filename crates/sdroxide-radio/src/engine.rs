@@ -41,8 +41,9 @@ use sdroxide_tci::server::{ServerRequest, TciServerController, TciStateSnapshot}
 use sdroxide_types::{
     AgcMode, Band, BandStackEntry, Command, DeviceCaps, DigiConfig, Direction, ImageKind,
     MemoryChannel, MemoryFolder, Meters, Mode, NrEngine, NrLevel, PlaybackCommand, RadioEvent,
-    RadioState, RecordingFile, RecordingListing, RepeaterState, RigctldConfig, RxId, RxState,
-    ScanKind, ScanResume, SpectrumConfig, SpectrumFrame, TciServerConfig, TxEqState, TxMeters, Vfo,
+    RadioState, RecordingFile, RecordingFormat, RecordingListing, RepeaterState, RigctldConfig,
+    RxId, RxState, ScanKind, ScanResume, SpectrumConfig, SpectrumFrame, TciServerConfig, TxEqState,
+    TxMeters, Vfo,
 };
 use sdroxide_vdl2::{Vdl2Action, Vdl2Controller};
 
@@ -2179,6 +2180,71 @@ fn utc_civil(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
     let day = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
     let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
     (if month <= 2 { year + 1 } else { year }, month, day, h, mi, s)
+}
+
+/// `sdroxide_<UTC date>_<UTC time>_<freq>_<mode>.<ext>`, filesystem-safe.
+///
+/// The extension follows the chosen format, and it is the only thing that tells
+/// the two audio containers apart when the recordings are listed — MP3 and WAV
+/// share every other part of the name. Pure, so the shape can be pinned without
+/// building an engine.
+fn recording_filename_for(
+    format: RecordingFormat,
+    instance: u32,
+    freq_hz: f64,
+    mode: Mode,
+    secs: u64,
+) -> String {
+    let (y, mo, d, h, mi, s) = utc_civil(secs);
+    let mhz = freq_hz / 1_000_000.0;
+    // The same tag playback reads back out of the name.
+    let mode = sdroxide_types::playback::recording_mode_tag(mode);
+    // All radios share one recordings directory, so two of them starting a
+    // recording in the same second must not name the same file. Radio 0 keeps
+    // the historical name.
+    let radio = match instance {
+        0 => String::new(),
+        n => format!("_radio{n}"),
+    };
+    let ext = format.extension();
+    format!("sdroxide{radio}_{y:04}-{mo:02}-{d:02}_{h:02}-{mi:02}-{s:02}Z_{mhz:.6}MHz_{mode}.{ext}")
+}
+
+#[cfg(test)]
+mod recording_filename_tests {
+    use super::*;
+
+    /// 2026-08-23 14:32:05 UTC.
+    const SECS: u64 = 1_787_495_525;
+
+    /// The format picks the extension and nothing else, so a WAV and an MP3
+    /// started at the same instant and dial land in the same folder with the
+    /// same stamp and a different tail.
+    #[test]
+    fn the_extension_follows_the_chosen_format() {
+        let mp3 = recording_filename_for(RecordingFormat::Mp3, 0, 14_074_000.0, Mode::Usb, SECS);
+        let wav = recording_filename_for(RecordingFormat::Wav, 0, 14_074_000.0, Mode::Usb, SECS);
+        assert_eq!(
+            mp3, "sdroxide_2026-08-23_14-32-05Z_14.074000MHz_USB.mp3",
+            "the historical MP3 name changed shape"
+        );
+        assert_eq!(
+            wav, "sdroxide_2026-08-23_14-32-05Z_14.074000MHz_USB.wav",
+            "a WAV must be the same name with the WAV extension"
+        );
+        assert_eq!(
+            mp3.trim_end_matches(".mp3"),
+            wav.trim_end_matches(".wav"),
+            "the two formats must differ only in the extension"
+        );
+    }
+
+    /// A second radio is named too, whatever the container.
+    #[test]
+    fn a_second_radio_is_marked_in_the_name() {
+        let name = recording_filename_for(RecordingFormat::Wav, 2, 27_265_000.0, Mode::Lsb, SECS);
+        assert_eq!(name, "sdroxide_radio2_2026-08-23_14-32-05Z_27.265000MHz_LSB.wav");
+    }
 }
 
 impl TxChain {
@@ -4360,6 +4426,7 @@ fn engine_thread(
         // a transmit frequency.
         state.repeater = s.repeater.clamped();
         state.recording_mono = s.recording_mono;
+        state.recording_format = s.recording_format;
     }
     // Every receiver starts on its mode's settings: the mode's defaults with
     // this station's overrides laid over them.
@@ -9161,6 +9228,7 @@ impl Engine {
                 }
             }
             SetRecordingMono(on) => self.state.recording_mono = on,
+            SetRecordingFormat(f) => self.state.recording_format = f,
             SetContestSerial(n) => {
                 let n = n.clamp(1, sdroxide_types::CONTEST_SERIAL_MAX);
                 if self.digi_config.contest_serial != n {
@@ -11171,7 +11239,7 @@ impl Engine {
         } else {
             RecordingChannels::Stereo
         };
-        match Recorder::start(path, self.audio_out_rate, channels) {
+        match Recorder::start(path, self.audio_out_rate, channels, self.state.recording_format) {
             Ok((rec, prod)) => {
                 let mixer = self.mixer.as_mut().expect("checked above");
                 mixer.rec_tap = Some(prod);
@@ -11288,25 +11356,19 @@ impl Engine {
         self.state.recording_file = None;
     }
 
-    /// `sdroxide_<UTC date>_<UTC time>_<freq>_<mode>.mp3`, filesystem-safe.
+    /// The audio recording's name, built by [`recording_filename_for`] from the
+    /// state and the clock.
     fn recording_filename(&self) -> String {
         let secs = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let (y, mo, d, h, mi, s) = utc_civil(secs);
-        let mhz = self.state.active_freq_hz() / 1_000_000.0;
-        // The same tag playback reads back out of the name.
-        let mode = sdroxide_types::playback::recording_mode_tag(self.state.rx[0].mode);
-        // All radios share one recordings directory, so two of them starting a
-        // recording in the same second must not name the same file. Radio 0
-        // keeps the historical name.
-        let radio = match self.instance {
-            0 => String::new(),
-            n => format!("_radio{n}"),
-        };
-        format!(
-            "sdroxide{radio}_{y:04}-{mo:02}-{d:02}_{h:02}-{mi:02}-{s:02}Z_{mhz:.6}MHz_{mode}.mp3"
+        recording_filename_for(
+            self.state.recording_format,
+            self.instance,
+            self.state.active_freq_hz(),
+            self.state.rx[0].mode,
+            secs,
         )
     }
 
@@ -16072,6 +16134,7 @@ impl Engine {
             gains: self.want_gains.0.clone(),
             tx_gains: self.want_gains.1.clone(),
             recording_mono: self.state.recording_mono,
+            recording_format: self.state.recording_format,
             band_antenna: self.band_antenna.clone(),
             // The shelf again, with the live socket written into the active
             // slot on the way past for the same reason the modes are.
