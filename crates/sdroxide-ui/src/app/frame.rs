@@ -209,20 +209,68 @@ fn centred_waterfall_note(ui: &egui::Ui, area: egui::Rect, text: &str) {
     p.galley(box_rect.center() - galley.size() / 2.0, galley, ink);
 }
 
-/// The wall clock, top-right of the panadapter: UTC and the operator's own
-/// local time, so a listener always has both in view (#655). Draw-only over the
-/// picture — it never reflows the strip — and the local half is dropped when
-/// the operator is already on UTC.
-fn paint_panadapter_clock(ui: &egui::Ui, area: egui::Rect) {
-    let text = crate::time::utc_and_local_now(crate::time::now_unix());
+/// The bandwidth line's font size: the clock's 11 pt leaves the bandwidth text
+/// a few points short of the clock's ink, so it is set a touch larger to fill
+/// the shared pill. Measured against Chakra Petch, the app's proportional face.
+const BW_LINE_FONT_PT: f32 = 11.6;
+
+/// Gap between the clock pill and the bandwidth pill.
+const PANADAPTER_PILL_GAP: f32 = 4.0;
+
+/// `BW waterfall · 148.0 kHz`, or `BW waterfall · —` before the first frame has
+/// given the view a window.
+///
+/// The width comes from [`ViewState::span`](crate::view::ViewState::span) — the
+/// same range the frequency ruler is drawn from — not from parsing the ruler's
+/// labels.
+fn waterfall_bw_text(span_hz: f64) -> String {
+    if span_hz.is_finite() && span_hz > 0.0 {
+        format!("BW waterfall · {}", spectrum_view::format_bandwidth(span_hz))
+    } else {
+        "BW waterfall · —".to_owned()
+    }
+}
+
+/// The two pills' rectangles: one shared width, both right-aligned to the
+/// panadapter's 8 pt margin, the bandwidth line 4 pt under the clock.
+///
+/// The width is the wider of the two texts plus the pill's 12 pt of padding, so
+/// neither line is clipped and the boxes line up. The height is the clock's own,
+/// so adding the line cannot change the clock's look.
+fn panadapter_pill_rects(
+    area: egui::Rect,
+    clock_text: egui::Vec2,
+    bw_text: egui::Vec2,
+) -> (egui::Rect, egui::Rect) {
+    let size = egui::vec2(clock_text.x.max(bw_text.x) + 12.0, clock_text.y + 7.0);
+    let clock =
+        egui::Rect::from_min_size(egui::pos2(area.right() - size.x - 8.0, area.top() + 8.0), size);
+    let bw = egui::Rect::from_min_size(
+        egui::pos2(clock.left(), clock.bottom() + PANADAPTER_PILL_GAP),
+        size,
+    );
+    (clock, bw)
+}
+
+/// The wall clock and the waterfall's visible bandwidth, top-right of the
+/// panadapter: UTC and the operator's own local time, so a listener always has
+/// both in view (#655), with the width the ruler spans beneath it.
+///
+/// Draw-only over the picture — it never reflows the strip — and the local half
+/// of the clock is dropped when the operator is already on UTC.
+fn paint_panadapter_clock(ui: &egui::Ui, area: egui::Rect, span_hz: f64) {
+    let clock = crate::time::utc_and_local_now(crate::time::now_unix());
+    let bw = waterfall_bw_text(span_hz);
     let p = ui.painter_at(area);
     let ink = egui::Color32::LIGHT_GRAY;
-    let galley = p.layout_no_wrap(text, egui::FontId::proportional(11.0), ink);
-    let size = galley.size() + egui::vec2(12.0, 7.0);
-    let rect =
-        egui::Rect::from_min_size(egui::pos2(area.right() - size.x - 8.0, area.top() + 8.0), size);
-    p.rect_filled(rect, 4.0, egui::Color32::from_black_alpha(150));
-    p.galley(rect.center() - galley.size() / 2.0, galley, ink);
+    let clock_galley = p.layout_no_wrap(clock, egui::FontId::proportional(11.0), ink);
+    let bw_galley = p.layout_no_wrap(bw, egui::FontId::proportional(BW_LINE_FONT_PT), ink);
+    let (clock_rect, bw_rect) = panadapter_pill_rects(area, clock_galley.size(), bw_galley.size());
+    for rect in [clock_rect, bw_rect] {
+        p.rect_filled(rect, 4.0, egui::Color32::from_black_alpha(150));
+    }
+    p.galley(clock_rect.center() - clock_galley.size() / 2.0, clock_galley, ink);
+    p.galley(bw_rect.center() - bw_galley.size() / 2.0, bw_galley, ink);
 }
 
 /// The dial as a large readout string, MHz with trailing zeros trimmed —
@@ -1960,7 +2008,7 @@ impl SdroxideApp {
                 self.view.auto_fit = false;
             }
             paint_panadapter_chrome(ui, area);
-            paint_panadapter_clock(ui, area);
+            paint_panadapter_clock(ui, area, self.view.span());
             if self.levels_hidden(now) && levels_hidden_chip(ui, spec_area) {
                 self.view.auto_fit = true;
                 self.fit_levels_now(now);
@@ -4307,9 +4355,13 @@ impl SdroxideApp {
 
 #[cfg(test)]
 mod tests {
+    use eframe::egui;
     use sdroxide_types::{Band, Mode};
 
-    use super::{BindingsAction, bindings_action, digi_split, qsy_clears_decodes};
+    use super::{
+        BindingsAction, bindings_action, digi_split, panadapter_pill_rects, qsy_clears_decodes,
+        waterfall_bw_text,
+    };
 
     /// The reported bug, in one line: a profile's control bindings reached the
     /// server and were written to disk correctly, survived a restart, and were
@@ -4487,6 +4539,58 @@ mod tests {
         );
         assert!(size.x <= 800.0 && size.y <= 600.0, "grew past the monitor: {size:?}");
         assert_eq!(pos, Some(eframe::egui::pos2(1920.0, 0.0)));
+    }
+
+    /// The line under the clock names the width the ruler spans, in the units
+    /// the ruler itself uses, so the picture and the number cannot disagree.
+    #[test]
+    fn the_bandwidth_line_reads_the_visible_span() {
+        assert_eq!(waterfall_bw_text(148_000.0), "BW waterfall · 148.0 kHz");
+        assert_eq!(waterfall_bw_text(2_400_000.0), "BW waterfall · 2.400 MHz");
+        assert_eq!(waterfall_bw_text(300.0), "BW waterfall · 300 Hz");
+    }
+
+    /// Before the first spectrum frame there is no window yet, and a `--` is
+    /// the one honest reading. A zero, a negative or a non-finite span must
+    /// never print a bandwidth the picture does not have.
+    #[test]
+    fn an_unset_span_reads_as_no_bandwidth() {
+        for span in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(waterfall_bw_text(span), "BW waterfall · —", "{span}");
+        }
+    }
+
+    /// The two pills are one stack: equal width, one right edge, the clock's
+    /// margin above and the bandwidth line 4 pt beneath it.
+    #[test]
+    fn the_clock_pills_share_their_width_and_right_edge() {
+        let area = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(800.0, 400.0));
+        let (clock, bw) =
+            panadapter_pill_rects(area, egui::vec2(221.0, 15.0), egui::vec2(222.0, 16.0));
+        assert_eq!(clock.size(), bw.size(), "the stack must have one width");
+        assert_eq!(clock.left(), bw.left());
+        assert!(
+            (clock.right() - (area.right() - 8.0)).abs() < 1e-3,
+            "the clock's 8 pt right margin moved: {}",
+            clock.right()
+        );
+        assert_eq!(clock.top(), area.top() + 8.0);
+        assert_eq!(bw.top() - clock.bottom(), 4.0, "the line sits under the clock");
+        // The wider text sets the width, plus the pill's 12 pt of padding.
+        assert_eq!(clock.width(), 222.0 + 12.0);
+    }
+
+    /// On UTC the clock drops its local half and is narrower than the
+    /// bandwidth line; the pair takes the wider text's width rather than
+    /// clipping the line or shrinking the pill.
+    #[test]
+    fn the_narrower_text_does_not_shrink_the_pills() {
+        let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 400.0));
+        let (clock, bw) =
+            panadapter_pill_rects(area, egui::vec2(120.0, 15.0), egui::vec2(210.0, 16.0));
+        assert_eq!(clock.width(), 210.0 + 12.0);
+        assert_eq!(bw.width(), clock.width());
+        assert_eq!(clock.right(), bw.right());
     }
 }
 
