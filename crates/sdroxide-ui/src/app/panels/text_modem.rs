@@ -618,8 +618,10 @@ impl SdroxideApp {
                          They are kept here rather than in the decode list because the \
                          figures on their own mean nothing — and because the weather at a \
                          position three hours ago is what you come back for.\n\n\
-                         Still being tried out: the decoder is tested against four real \
-                         messages but has not yet read one off the air.",
+                         Found in the RTTY text as it arrives, so the mode has to be tuned \
+                         to the station's shift and baud. A land station sends no position, \
+                         so those rows carry the station number and the figures but no \
+                         coordinates; a ship report carries its own.",
                     )
                     .clicked()
                 {

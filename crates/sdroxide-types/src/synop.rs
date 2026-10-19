@@ -110,43 +110,76 @@ pub struct Position {
     pub lon_deg: f32,
 }
 
+/// A land station line begins with its `IIiii` station number, five digits.
+///
+/// The shape cannot tell a station number from an ordinary five-digit group —
+/// `01049` and `11580` are both five digits — so what makes this safe is
+/// *position*: in a land report the station number is the first thing on the
+/// line and a group never is. The length check keeps a torn fragment of the
+/// line above it from passing as a one-station report.
+fn is_station_line(toks: &[&str]) -> bool {
+    toks.len() >= 6 && toks[0].len() == 5 && toks[0].bytes().all(|b| b.is_ascii_digit())
+}
+
 /// Decode one report line as the RTTY decoder hands it over.
+///
+/// Three shapes arrive on the same wire, and the first token says which:
+///
+/// * `BBXX <call> …` — a **ship** (WMO FM 13). It carries its own position, so
+///   the report can be plotted.
+/// * `AAXX …` — the **bulletin header** for the land reports that follow. It
+///   names the day and hour and nothing else; the station lines come next, so
+///   there is no report in this line.
+/// * `<IIiii> …` — one **land station** (WMO FM 12). No position: a shore
+///   station's is in the station catalogue, not in the message, so `position`
+///   stays `None` and the window lists it rather than plotting it.
 pub fn parse(line: &str) -> Option<Report> {
     let line = line.trim().trim_end_matches('=').trim();
-    if !line.starts_with("BBXX") {
-        return None;
-    }
     let toks: Vec<&str> = line.split_whitespace().collect();
-    if toks.len() < 4 {
-        return None;
-    }
-    let call = toks[1];
+    let (kind, callsign) = match toks.first().copied() {
+        Some("BBXX") => {
+            if toks.len() < 4 {
+                return None;
+            }
+            (Kind::Ship, Some(toks[1].to_string()))
+        }
+        // A header with no station in it. Reported as nothing rather than as a
+        // report with no data, which would be a row of blanks on the screen.
+        Some("AAXX") => return None,
+        _ if is_station_line(&toks) => (Kind::Synop, Some(toks[0].to_string())),
+        _ => return None,
+    };
     let mut r = Report {
-        kind: Kind::Ship,
-        callsign: Some(call.to_string()),
+        kind,
+        callsign,
         observed: None,
         position: None,
         fields: Vec::new(),
         remarks: Vec::new(),
         raw: line.to_string(),
     };
-    let mut i = 2;
     fn take(toks: &[&str], i: &mut usize) -> Option<String> {
         let t = toks.get(*i)?;
         *i += 1;
         Some(t.to_string())
     }
 
-    // ── Section 0: mandatory, and the only place position is not needed ──
-    if let Some(t) = take(&toks, &mut i) {
-        read_time(&t, &mut r);
-    }
-    if let Some(t) = take(&toks, &mut i) {
-        read_lat(&t, &mut r);
-    }
-    if let Some(t) = take(&toks, &mut i) {
-        read_lon(&t, &mut r);
-    }
+    // ── Section 0: a ship's time and position. A land line has neither. ──
+    let i = if kind == Kind::Ship {
+        let mut i = 2;
+        if let Some(t) = take(&toks, &mut i) {
+            read_time(&t, &mut r);
+        }
+        if let Some(t) = take(&toks, &mut i) {
+            read_lat(&t, &mut r);
+        }
+        if let Some(t) = take(&toks, &mut i) {
+            read_lon(&t, &mut r);
+        }
+        i
+    } else {
+        1
+    };
 
     // ── Section 1 and 2: an ordered walk. Each entry knows its own shape. ──
     let order: &[(&str, &str, fn(&str) -> bool, fn(&str, &mut Report))] = &[
@@ -908,6 +941,28 @@ mod tests {
             "{:?}",
             r.remarks
         );
+    }
+
+    /// A land station line is a report; the `AAXX` header above it is not; and
+    /// a torn fragment of the line before it must not pass as one.
+    ///
+    /// This is the shape the French Navy test tapes send, and until now the
+    /// parser only knew `BBXX` — so a real SYNOP bulletin decoded to text and
+    /// then produced nothing at all.
+    #[test]
+    fn a_land_station_line_is_a_report_and_its_header_is_not() {
+        // Two lines exactly as `SYNOP-1580_Hz.WAV` decodes them.
+        let r = parse("01049 11584 71509 10025 21028 39992 49995 57011 6//// 70222 8587/")
+            .expect("a land station line is a report");
+        assert_eq!(r.kind, Kind::Synop);
+        assert_eq!(r.callsign.as_deref(), Some("01049"), "the station number is kept");
+        assert!(r.position.is_none(), "a shore station's position is not in the message");
+        assert!(!r.fields.is_empty(), "no group was read at all: {:?}", r.remarks);
+
+        // The header names the day and hour and carries no station.
+        assert!(parse("AAXX 12181").is_none(), "the bulletin header is not a report");
+        // A continuation fragment is four or five tokens and is refused.
+        assert!(parse("57005 60022 72587 85878").is_none(), "a fragment became a report");
     }
 
     /// A bulletin heading is not a report, and an empty row on screen is worse
