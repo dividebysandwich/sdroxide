@@ -93,3 +93,45 @@ ask — and the SDK sources its installer manifest lists (`demo.c`, `siggen.c`,
 of the need: a generic bit analyser with bit synchronisation, an interleaver and
 the Baudot/ITA2 character set, which is exactly the decode path the Monitoring
 Times article describes. It says nothing about Annex E's parameters.
+
+## The round trip, and what it proves
+
+`s4285_sim.py` builds a frame from the transcription and decodes it. This is the
+instrument that settles arguments, because the two recordings disagree with each
+other and neither of them locks — and a fixture that will not lock cannot tell
+you whether the transcription is wrong or the recording is.
+
+**It decodes exactly at 30, 40 and 60 dB audio SNR.** So the frame layout, the
+176-symbol scrambler from `x^9 + x^4 + 1`, the sync generator `x^5 + x^2 + 1`
+seeded 11010, the eight phases at `n*pi/4`, and the reference symbols being all
+symbol 0 are all as the standard describes. The transcription is sound.
+
+Two things about it cost a round each, and both are general:
+
+* **A mixer without a filter corrupts the decision.** Mixing to baseband leaves
+  the mirror at `-2*centre`, which lands inside the resampled band and cost about
+  half the symbols. The filter has to come straight after the mixer.
+* **The reference symbols cannot resolve the sampling instant.** Sixteen symbols
+  in a row all carrying the same phase look equally good at any point across
+  them, so a frame search scores best when it samples a boundary. The timing has
+  to be chosen from the *data*, by how tightly it lands on constellation points.
+
+And one thing that is not a bug: **the frame index is ambiguous by design.** Every
+frame carries the same reference symbols, so a search finds *a* boundary, not
+frame zero. Comparing against a fixed frame position fails for that reason alone;
+what has to match is the data.
+
+### Where it degrades, and what that costs the real receiver
+
+| clock error | frame found | data |
+|---|---|---|
+| 0 ppm | R = 1.000 | exact |
+| 100 ppm | R = 1.000 | 3 and 8 symbols of 128 wrong |
+| 1000 ppm | R = 1.000 | fails |
+| 5000 ppm | R = 0.997 | fails |
+
+The frame lock is robust; the *data* is not, because the sampling instant is
+quantised to one of eight samples per symbol and there is no fractional timing
+recovery. That is the gap between this probe and a decoder that works on a
+recording, and it is ordinary receiver engineering rather than a question about
+the standard: interpolate to a fractional instant, and track it per frame.
