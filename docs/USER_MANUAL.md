@@ -4938,6 +4938,10 @@ one of the two.
   half-picture is dropped and the receiver is hunting again. It is a receive
   control only: it does not touch a transmission in progress (that is **ABORT
   TX**) and it does not put the mode selection back to **Auto**.
+- **Clear Rx** (beside **Restart RX**) wipes the picture currently shown in the
+  **LIVE** view without touching the decoder: a completed frame that is still on
+  screen is removed so the next one can be seen arriving, and an in-progress
+  decode keeps running. Use **Restart RX** to abandon an in-progress picture.
 - Received images are saved as PNG under `~/.config/sdroxide-brown/sstv_rx/` and reload
   into the gallery next time.
 - **Sending one back out — Re-upload.** Open a received picture and **Re-upload**
