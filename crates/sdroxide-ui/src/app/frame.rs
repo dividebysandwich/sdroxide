@@ -2833,6 +2833,48 @@ impl SdroxideApp {
     /// [`crate::multi::MultiApp`]), so a background radio keeps decoding,
     /// logging and reconnecting while another tab is up front. The unbounded
     /// event channel must never be left to back up.
+    /// Restart the slot bar's follower when the radio changes *to* FT8, FT4 or
+    /// FT2 from some other mode: the first frame is joined part-way and nothing
+    /// says where it began, so the bar sweeps from nothing until the first end
+    /// of a frame or the first decode places it. A change away from them just
+    /// forgets what was heard.
+    fn track_slot_mode(&mut self) {
+        let mode = self.state.rx[0].mode;
+        if self.slot_follow_mode == Some(mode) {
+            return;
+        }
+        self.slot_follow_mode = Some(mode);
+        match (matches!(mode, Mode::Ft8 | Mode::Ft4 | Mode::Ft2), self.slot_timing()) {
+            (true, Some(t)) => self.slot_follow.acquire(&t, crate::time::now_unix_f64()),
+            _ => self.slot_follow.reset(),
+        }
+    }
+
+    /// Give the slot bar the frame a batch of decodes came from: its start is
+    /// the slot's boundary, the mode's nominal offset and the DT the stations
+    /// showed (the middle one, so one odd clock does not move it). A decode
+    /// does not depend on level, so it places the bar where QRM leaves the gate
+    /// nothing to find.
+    fn anchor_slot_follow(&mut self, decodes: &[sdroxide_types::Decode]) {
+        if !matches!(self.state.rx[0].mode, Mode::Ft8 | Mode::Ft4 | Mode::Ft2) {
+            return;
+        }
+        let (Some(t), Some(newest)) =
+            (self.slot_timing(), decodes.iter().map(|d| d.slot_utc).max())
+        else {
+            return;
+        };
+        let mut dts: Vec<f32> =
+            decodes.iter().filter(|d| d.slot_utc == newest).map(|d| d.dt).collect();
+        dts.sort_by(|a, b| a.total_cmp(b));
+        let dt = f64::from(dts[dts.len() / 2]);
+        self.slot_follow.anchor(
+            &t,
+            newest as f64 + t.tx_offset_s + dt,
+            crate::time::now_unix_f64(),
+        );
+    }
+
     pub(crate) fn drain_events(&mut self, ctx: &egui::Context, now: f64) {
         // The settings row's explicit "save to profile" / "back to profile",
         // for the same reason as the answers below: the dialog is drawn from
@@ -2864,6 +2906,7 @@ impl SdroxideApp {
         // next one knows it is superseding a picture nothing will ever draw —
         // see the `Spectrum` arm below.
         let mut superseded = false;
+        self.track_slot_mode();
         while let Some(ev) = self.ctrl.poll_event() {
             match ev {
                 RadioEvent::Capabilities(c) => {
@@ -3120,6 +3163,7 @@ impl SdroxideApp {
                 // shows under the dial while it is true.
                 RadioEvent::AtsMiniTuning(on) => self.atsmini_tuning = on,
                 RadioEvent::Ft8Decodes(d) => {
+                    self.anchor_slot_follow(&d);
                     // **A coded weather report is not a message.** SYNOP and
                     // SHIP arrive on the same RTTY decode path as every other
                     // line, and a decode list showing `BBXX BRAVO 20123 99252…`

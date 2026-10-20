@@ -275,6 +275,29 @@ enum Heard {
     Quiet(f64),
 }
 
+/// Where a frame started the last time one was placed, so the rhythm goes on
+/// through the slots whose edges the gate could not find.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Rhythm {
+    /// Unix seconds a frame started sounding at; every slot later is the same
+    /// instant plus a whole number of slots.
+    start: f64,
+    /// When something last confirmed it.
+    seen: f64,
+}
+
+/// How many slots the rhythm is carried on without anything confirming it
+/// before the bar goes back to the clock.
+const RHYTHM_SLOTS: f64 = 4.0;
+/// How many slots the bar sweeps from nothing while it waits to be placed.
+const ACQUIRE_SLOTS: f64 = 2.0;
+/// How long past the gap's length the bar stays green waiting for the next
+/// frame to be heard before the rhythm starts it.
+const QUIET_GRACE_S: f64 = 0.5;
+/// How much of a new measurement of the frame's or the gap's length is taken
+/// in: enough to follow a band, not enough to be thrown by one odd frame.
+const MEASURE_WEIGHT: f64 = 0.3;
+
 /// Turns the edges a [`FrameGate`] found into a place on the slot bar, and
 /// decides how far to trust them.
 ///
@@ -285,6 +308,10 @@ enum Heard {
 /// is what knows the difference. The clock is only asked *whether*, never
 /// *when*: a station running a second early or late, or a path a second long,
 /// is inside the window and the bar goes where the sound is.
+///
+/// Once a frame has been placed the bar keeps its rhythm whether or not the
+/// next edges are found, so a slot the gate could not read — a weak band, QRM
+/// through the gap — does not drop it back to the clock.
 #[derive(Debug, Clone, Default)]
 pub struct SlotFollower {
     heard: Heard,
@@ -292,13 +319,56 @@ pub struct SlotFollower {
     /// to FT4 — is a different slot, and what was heard in one says nothing
     /// about the other.
     slot_s: f64,
+    rhythm: Option<Rhythm>,
+    /// Since when the bar has been waiting for its first placement, and
+    /// sweeping from the start of the bar meanwhile.
+    acquiring: Option<f64>,
+    /// How long a frame was heard to sound, and how long the gap after it
+    /// was, as the sound has measured them. The mode's own figures until then.
+    burst_heard_s: Option<f64>,
+    gap_heard_s: Option<f64>,
 }
 
 impl SlotFollower {
-    /// Forget what was heard: an over of our own, a dial or mode change. The
-    /// bar goes back to the clock until the sound has given it something new.
+    /// Forget what was heard: an over of our own, a dial change. The bar goes
+    /// back to the clock until the sound has given it something new.
     pub fn reset(&mut self) {
-        self.heard = Heard::Nothing;
+        *self = SlotFollower { slot_s: self.slot_s, ..Default::default() };
+    }
+
+    /// Start looking for the frames afresh, as after a change to a slotted
+    /// mode from some other: nothing is known about where in a frame the sound
+    /// has joined, so the bar sweeps from its start and runs, and the first
+    /// edge or decode that says where the frames are places it for good.
+    pub fn acquire(&mut self, t: &SlotTiming, now: f64) {
+        self.reset();
+        self.slot_s = t.slot_s;
+        self.acquiring = Some(now);
+    }
+
+    /// Place the frames from a decode: `start` is when the frame it came from
+    /// began, slot boundary plus the nominal offset plus the DT it showed.
+    ///
+    /// A decode does not depend on level, so QRM and a noisy band cannot
+    /// mislead it; but it knows nothing of the speakers, so it only speaks
+    /// while the sound has no edge of its own to place the bar by.
+    pub fn anchor(&mut self, t: &SlotTiming, start: f64, now: f64) {
+        if self.slot_s != t.slot_s {
+            *self = SlotFollower { slot_s: t.slot_s, ..Default::default() };
+        }
+        if self.edges_view(t, now).is_some() {
+            return;
+        }
+        self.rhythm = Some(Rhythm { start, seen: now });
+        self.acquiring = None;
+    }
+
+    fn burst(&self, t: &SlotTiming) -> f64 {
+        self.burst_heard_s.unwrap_or(t.burst_s)
+    }
+
+    fn gap(&self, t: &SlotTiming) -> f64 {
+        self.gap_heard_s.unwrap_or(t.slot_s - t.burst_s).max(0.1)
     }
 
     /// How far either side of its expected place an edge may fall and still be
@@ -320,72 +390,131 @@ impl SlotFollower {
         if d > t.slot_s / 2.0 { d - t.slot_s } else { d }
     }
 
+    fn measure(slot: &mut Option<f64>, new: f64) {
+        *slot = Some(slot.map_or(new, |old| old + MEASURE_WEIGHT * (new - old)));
+    }
+
     /// Offer an edge the gate found.
     pub fn edge(&mut self, t: &SlotTiming, edge: HeardEdge) {
         if self.slot_s != t.slot_s {
-            self.heard = Heard::Nothing;
-            self.slot_s = t.slot_s;
+            *self = SlotFollower { slot_s: t.slot_s, ..Default::default() };
         }
+        // Until the bar has been placed once there is nothing to hold an edge
+        // up against: the slot clock only says where a frame may be, and a
+        // mode joined mid-frame has no frame to compare with.
+        let free = self.acquiring.is_some();
         if edge.present {
-            let off = Self::offset_in_slot(t, edge.at, t.tx_offset_s);
-            if off.abs() > Self::tolerance(t) {
-                return;
-            }
-            // The same frame twice: a start seen again before there was room
-            // for a whole new slot.
-            if let Heard::Signal(since) = self.heard {
-                if edge.at - since < t.slot_s * 0.5 {
+            if !free {
+                let off = Self::offset_in_slot(t, edge.at, t.tx_offset_s);
+                if off.abs() > Self::tolerance(t) {
                     return;
+                }
+                // The same frame twice: a start seen again before there was
+                // room for a whole new slot.
+                if let Heard::Signal(since) = self.heard {
+                    if edge.at - since < t.slot_s * 0.5 {
+                        return;
+                    }
+                }
+            }
+            if let Heard::Quiet(since) = self.heard {
+                let gap = edge.at - since;
+                if (0.3..=1.5).contains(&(gap / (t.slot_s - t.burst_s).max(0.1))) {
+                    Self::measure(&mut self.gap_heard_s, gap);
                 }
             }
             self.heard = Heard::Signal(edge.at);
+            self.rhythm = Some(Rhythm { start: edge.at, seen: edge.at });
         } else {
-            let off = Self::offset_in_slot(t, edge.at, t.tx_offset_s + t.burst_s);
-            // Not far before the burst's end — that is a fade — and not
-            // unboundedly after it either.
-            if off < -0.1 * t.slot_s || off > Self::tolerance(t) {
-                return;
-            }
-            if let Heard::Quiet(since) = self.heard {
-                if edge.at - since < t.slot_s * 0.5 {
+            if !free {
+                let off = Self::offset_in_slot(t, edge.at, t.tx_offset_s + t.burst_s);
+                // Not far before the burst's end — that is a fade — and not
+                // unboundedly after it either.
+                if off < -0.1 * t.slot_s || off > Self::tolerance(t) {
                     return;
+                }
+                if let Heard::Quiet(since) = self.heard {
+                    if edge.at - since < t.slot_s * 0.5 {
+                        return;
+                    }
+                }
+            }
+            let mut start = edge.at - self.burst(t);
+            if let Heard::Signal(since) = self.heard {
+                let len = edge.at - since;
+                if (0.6..=1.3).contains(&(len / t.burst_s)) {
+                    Self::measure(&mut self.burst_heard_s, len);
+                    start = since;
                 }
             }
             self.heard = Heard::Quiet(edge.at);
+            self.rhythm = Some(Rhythm { start, seen: edge.at });
+        }
+        self.acquiring = None;
+    }
+
+    /// The bar as the last edges put it, or `None` once they stop being
+    /// believable: a frame that has sounded longer than a burst can, a quiet
+    /// that has outlasted the gap.
+    fn edges_view(&self, t: &SlotTiming, now: f64) -> Option<Followed> {
+        let split = (t.burst_s / t.slot_s) as f32;
+        match self.heard {
+            Heard::Nothing => None,
+            Heard::Signal(since) => {
+                let on = now - since;
+                let burst = self.burst(t);
+                if on > burst + Self::grace(t) {
+                    return None;
+                }
+                let p = (on / burst).clamp(0.0, 1.0) as f32;
+                Some(Followed { frac: split * p, split, quiet: false })
+            }
+            Heard::Quiet(since) => {
+                let gap = self.gap(t);
+                let off = now - since;
+                if off > gap + QUIET_GRACE_S {
+                    return None;
+                }
+                let p = (off / gap).clamp(0.0, 1.0) as f32;
+                Some(Followed { frac: split + (1.0 - split) * p, split, quiet: true })
+            }
         }
     }
 
     /// Where the bar is at `now`, or `None` when it should be the clock's.
     ///
     /// `None` is not an error: it is every band that has not given the gate
-    /// anything to find, and every stretch where what was found has stopped
-    /// being believable — a frame that has sounded longer than a burst can, a
-    /// quiet that has outlasted the gap — and the bar must carry on rather
-    /// than stand still on a frame that ended a minute ago.
+    /// anything to find, and the stretch after the sound has stopped being
+    /// heard for long enough that carrying on would be guessing. In between,
+    /// the bar keeps the rhythm of the last frame it placed rather than
+    /// standing still on a frame that ended a minute ago.
     pub fn view(&self, t: &SlotTiming, now: f64) -> Option<Followed> {
-        let split = (t.burst_s / t.slot_s) as f32;
         if self.slot_s != t.slot_s {
             return None;
         }
-        match self.heard {
-            Heard::Nothing => None,
-            Heard::Signal(since) => {
-                let on = now - since;
-                if on > t.burst_s + Self::grace(t) {
-                    return None;
-                }
-                let p = (on / t.burst_s).clamp(0.0, 1.0) as f32;
-                Some(Followed { frac: split * p, split, quiet: false })
+        let split = (t.burst_s / t.slot_s) as f32;
+        if let Some(v) = self.edges_view(t, now) {
+            return Some(v);
+        }
+        if let Some(since) = self.acquiring {
+            let sweep = now - since;
+            if sweep > ACQUIRE_SLOTS * t.slot_s {
+                return None;
             }
-            Heard::Quiet(since) => {
-                let gap = (t.slot_s - t.burst_s).max(0.1);
-                let off = now - since;
-                if off > gap + Self::tolerance(t) {
-                    return None;
-                }
-                let p = (off / gap).clamp(0.0, 1.0) as f32;
-                Some(Followed { frac: split + (1.0 - split) * p, split, quiet: true })
-            }
+            let frac = (sweep.max(0.0) / t.slot_s).min(1.0) as f32;
+            return Some(Followed { frac, split, quiet: frac >= split });
+        }
+        let r = self.rhythm?;
+        if now - r.seen > RHYTHM_SLOTS * t.slot_s {
+            return None;
+        }
+        let burst = self.burst(t);
+        let into = (now - r.start).rem_euclid(t.slot_s);
+        if into < burst {
+            Some(Followed { frac: split * (into / burst) as f32, split, quiet: false })
+        } else {
+            let p = ((into - burst) / (t.slot_s - burst).max(0.1)).clamp(0.0, 1.0) as f32;
+            Some(Followed { frac: split + (1.0 - split) * p, split, quiet: true })
         }
     }
 }
@@ -593,21 +722,26 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_that_never_ends_hands_the_bar_back_to_the_clock() {
+    fn a_frame_that_never_ends_does_not_freeze_the_bar() {
         // QRM keeps the band up through the gap, so no end of frame comes. The
-        // bar must not stand at full for the rest of the evening.
+        // bar must not stand at full for the rest of the evening: it carries
+        // on at the frame's own rhythm, into the quiet stretch.
         let mut f = SlotFollower::default();
         f.edge(&FT8, edge(true, T0 + 0.5));
-        assert!(f.view(&FT8, T0 + 12.0).is_some());
-        assert_eq!(f.view(&FT8, T0 + 12.64 + 1.6 + 0.5), None);
+        assert!(!f.view(&FT8, T0 + 12.0).unwrap().quiet);
+        let v = f.view(&FT8, T0 + 12.64 + 1.5 + 0.7).unwrap();
+        assert!(v.quiet, "{v:?}");
     }
 
     #[test]
-    fn a_quiet_that_outlasts_the_gap_hands_the_bar_back_to_the_clock() {
+    fn the_rhythm_is_carried_for_a_while_and_then_given_back_to_the_clock() {
         let mut f = SlotFollower::default();
-        f.edge(&FT8, edge(false, T0 + 13.0));
-        assert!(f.view(&FT8, T0 + 14.0).is_some());
-        assert_eq!(f.view(&FT8, T0 + 13.0 + 2.36 + 3.0 + 0.1), None);
+        f.edge(&FT8, edge(true, T0 + 0.5));
+        // Two slots on, nothing heard since: the next frame is where the
+        // rhythm says, and the bar starts again with it.
+        let v = f.view(&FT8, T0 + 30.5 + 1.0).unwrap();
+        assert!(!v.quiet && (v.frac - v.split * (1.0 / 12.64) as f32).abs() < 0.01, "{v:?}");
+        assert_eq!(f.view(&FT8, T0 + 0.5 + 4.0 * 15.0 + 1.0), None);
     }
 
     #[test]
@@ -656,6 +790,99 @@ mod tests {
             let v = f.view(&t, T0 + t.tx_offset_s + t.burst_s + 0.2).unwrap();
             assert!(v.quiet, "{t:?}: {v:?}");
             assert!((v.split - (t.burst_s / t.slot_s) as f32).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn a_mode_joined_mid_frame_sweeps_from_the_start_of_the_bar() {
+        // The first thing after a change of mode is a frame already well
+        // under way. Nothing says where it began, so the bar starts from
+        // nothing and runs rather than showing the clock's guess.
+        let mut f = SlotFollower::default();
+        f.acquire(&FT8, T0 + 6.0);
+        let v = f.view(&FT8, T0 + 6.0).unwrap();
+        assert_eq!(v.frac, 0.0);
+        let v = f.view(&FT8, T0 + 9.0).unwrap();
+        assert!((v.frac - 3.0 / 15.0).abs() < 0.01 && !v.quiet, "{v:?}");
+        // …and gives up on its own if nothing ever places it.
+        assert_eq!(f.view(&FT8, T0 + 6.0 + 2.0 * 15.0 + 0.1), None);
+    }
+
+    #[test]
+    fn the_first_end_of_frame_heard_places_the_bar_wherever_it_falls() {
+        // Joined at 6 s into a slot, the end of the frame is heard at 13.0 s.
+        // Held against the slot clock that is fine; the point is that a
+        // follower that has not yet been placed asks for no more than that.
+        let mut f = SlotFollower::default();
+        f.acquire(&FT8, T0 + 6.0);
+        f.edge(&FT8, edge(false, T0 + 13.0));
+        let v = f.view(&FT8, T0 + 13.5).unwrap();
+        assert!(v.quiet, "{v:?}");
+        // The next frame is then expected where this one's rhythm says.
+        let v = f.view(&FT8, T0 + 16.3).unwrap();
+        assert!(!v.quiet, "{v:?}");
+    }
+
+    #[test]
+    fn an_edge_off_the_slot_clock_is_taken_only_while_the_bar_is_unplaced() {
+        // A stop 5 s after the end of the burst is outside what the clock
+        // allows. Once the bar has been placed it is refused, as before.
+        let mut placed = SlotFollower::default();
+        placed.edge(&FT8, edge(true, T0 + 0.5));
+        placed.edge(&FT8, edge(false, T0 + 12.64 + 0.5 + 6.0));
+        assert!(!placed.view(&FT8, T0 + 3.0).unwrap().quiet);
+        let mut loose = SlotFollower::default();
+        loose.acquire(&FT8, T0);
+        loose.edge(&FT8, edge(false, T0 + 12.64 + 0.5 + 6.0));
+        assert!(loose.view(&FT8, T0 + 19.7).unwrap().quiet);
+    }
+
+    #[test]
+    fn a_decode_places_the_bar_when_the_sound_has_given_no_edge() {
+        // QRM hides the gap, so the gate finds nothing. The decode's slot and
+        // DT still say when the frame began: 0.5 s plus a DT of 0.3.
+        let mut f = SlotFollower::default();
+        f.acquire(&FT8, T0 + 6.0);
+        f.anchor(&FT8, T0 + 0.5 + 0.3, T0 + 14.0);
+        let v = f.view(&FT8, T0 + 15.0 + 0.8 + 6.32).unwrap();
+        assert!(!v.quiet && (v.frac - v.split * 0.5).abs() < 0.01, "{v:?}");
+    }
+
+    #[test]
+    fn a_decode_does_not_override_edges_that_are_being_heard() {
+        let mut f = SlotFollower::default();
+        f.edge(&FT8, edge(true, T0 + 0.5));
+        f.anchor(&FT8, T0 + 3.0, T0 + 1.0);
+        let v = f.view(&FT8, T0 + 1.5).unwrap();
+        assert!((v.frac - v.split * (1.0 / 12.64) as f32).abs() < 0.01, "{v:?}");
+    }
+
+    #[test]
+    fn the_white_is_paced_by_the_length_the_frame_was_heard_to_have() {
+        // Frames that sound for 13.4 s, not the nominal 12.64: the bar must
+        // not stand full for three quarters of a second waiting for the stop.
+        let mut f = SlotFollower::default();
+        for k in 0..3 {
+            let t0 = T0 + 15.0 * f64::from(k);
+            f.edge(&FT8, edge(true, t0 + 0.2));
+            f.edge(&FT8, edge(false, t0 + 0.2 + 13.4));
+        }
+        let t0 = T0 + 45.0;
+        f.edge(&FT8, edge(true, t0 + 0.2));
+        let v = f.view(&FT8, t0 + 0.2 + 6.7).unwrap();
+        assert!((v.frac - v.split * 0.5).abs() < 0.01, "{v:?}");
+    }
+
+    #[test]
+    fn ft4_and_ft2_are_placed_on_their_own_proportions_too() {
+        let ft4 = SlotTiming { slot_s: 7.5, tx_offset_s: 0.5, burst_s: 4.48 };
+        let ft2 = SlotTiming { slot_s: 3.75, tx_offset_s: 0.1, burst_s: 2.52 };
+        for t in [ft4, ft2] {
+            let mut f = SlotFollower::default();
+            f.acquire(&t, T0 + 1.0);
+            f.edge(&t, edge(false, T0 + 1.5 + t.slot_s));
+            let v = f.view(&t, T0 + 1.6 + t.slot_s).unwrap();
+            assert!(v.quiet, "{t:?}: {v:?}");
         }
     }
 
