@@ -500,7 +500,6 @@ impl BpskCore {
         self.qpsk
     }
 
-
     /// Turn the carrier-coherence noise gate off (the skimmer scores its own
     /// candidates and would rather see everything).
     pub fn set_gate(&mut self, on: bool) {
@@ -838,14 +837,10 @@ mod tests {
         let Ok(path) = std::env::var("SDROXIDE_QPSK_SAMPLE") else {
             return;
         };
-        let baud: f64 = std::env::var("SDROXIDE_QPSK_BAUD")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(31.25);
-        let hz: f64 = std::env::var("SDROXIDE_QPSK_HZ")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1000.0);
+        let baud: f64 =
+            std::env::var("SDROXIDE_QPSK_BAUD").ok().and_then(|v| v.parse().ok()).unwrap_or(31.25);
+        let hz: f64 =
+            std::env::var("SDROXIDE_QPSK_HZ").ok().and_then(|v| v.parse().ok()).unwrap_or(1000.0);
         let mut r = hound::WavReader::open(&path).expect("open the recording");
         let spec = r.spec();
         let scale = (1i64 << (spec.bits_per_sample.max(1) - 1)) as f32;
@@ -873,4 +868,39 @@ mod tests {
         );
     }
 
+    /// What the decoder makes of a real transmission.
+    ///
+    /// `SDROXIDE_PSK_SAMPLE` is a mono 8 kHz WAV of a PSK signal;
+    /// `SDROXIDE_PSK_CENTRE` (default 1500 Hz), `_BAUD` (31.25) and `_TEXT`
+    /// describe it. Run it with
+    /// `SDROXIDE_PSK_SAMPLE=... cargo test -p sdroxide-dsp --release --lib \\
+    ///   -- --ignored --nocapture an_off_air_capture_decodes`.
+    #[test]
+    #[ignore]
+    fn an_off_air_capture_decodes() {
+        let Ok(path) = std::env::var("SDROXIDE_PSK_SAMPLE") else {
+            eprintln!("SDROXIDE_PSK_SAMPLE unset; skipping");
+            return;
+        };
+        let mut reader = hound::WavReader::open(&path).expect("open the sample WAV");
+        let spec = reader.spec();
+        assert_eq!(spec.sample_rate, 8000, "the sample must be at 8 kHz");
+        assert_eq!(spec.channels, 1, "the sample must be mono");
+        let audio: Vec<f32> =
+            reader.samples::<i16>().map(|s| s.expect("sample") as f32 / 32_768.0).collect();
+        let num = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+        let centre = num("SDROXIDE_PSK_CENTRE", 1500.0);
+        let baud = num("SDROXIDE_PSK_BAUD", 31.25);
+        let mut rx = PskRx::new_baud(8000.0, centre, baud);
+        let mut out = String::new();
+        for chunk in audio.chunks(512) {
+            out.push_str(&rx.process(chunk));
+        }
+        eprintln!("decoded {} chars at {baud} baud, {centre} Hz: {out:?}", out.len());
+        if let Ok(want) = std::env::var("SDROXIDE_PSK_TEXT") {
+            for w in want.split_whitespace() {
+                assert!(out.contains(w), "off-air PSK did not recover {w:?}: {out:?}");
+            }
+        }
+    }
 }
