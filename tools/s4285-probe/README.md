@@ -232,6 +232,32 @@ RYRY and an ID — see the frequency table above — and then the same corrected
 should show 80 symbols of BPSK sync, 48 references and 128 data symbols that
 differ from one another.
 
+## The ramp does not rescue the fixtures, and the null says so (2026-10-20)
+
+`s4285_lock.py` runs the whole chain — fold, offset refinement, ramp search,
+descramble — on one recording. On `4285.WAV` it reports **fold 0.749** and a
+reference concentration of **R = 0.529**, which looks like a frame in hand.
+
+It is not, and the test that says so is cheap: **shuffle the recording's own
+frames** so nothing can repeat, then run the identical search. On this file the
+permutation null reaches **R = 0.601** — higher than the real answer. So 0.529 is
+the size of the search, not a signal, and the ramp correction does **not** rescue
+either shipped fixture after all.
+
+What does discriminate is the **fold**: 0.749 on the real file against 0.40–0.46
+on its own shuffled frames, and against 0.42–0.46 on a known-empty frequency.
+That is the metric to trust here.
+
+**The lesson, and it is worth more than the result.** A statistic searched over
+half a million trials needs its own null, measured on the same material — not a
+number quoted from another file or another night. The reference-concentration
+score is a good idea (the 48 symbols are all zero before scrambling, so a correct
+frame collapses them) but at eight frames it has more freedom than signal, and
+it only becomes decisive with a much longer average or a known-content fixture.
+
+So the mode's position is unchanged and now properly closed: **it needs a
+recording of a station sending Edition 1**, not better analysis of these two.
+
 ## The fold's noise floor is about 0.44, and that has to be measured
 
 A sweep of the SWL list on 2026-10-19, 20:10–20:40 UTC, from the bench RSP1:
