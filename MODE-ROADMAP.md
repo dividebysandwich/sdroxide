@@ -123,6 +123,30 @@ Recordings: `QPSK31/63/125/250-1000_Hz` in `~/Downloads/sounds`, named for a
 | **ORBCOMM** | partially pub | `ORBCOMM` | satellite SDPSK; needs a wideband lane and its own band |
 | **STANAG 4539** | pub | — | 110B-class, own preamble and equaliser |
 
+### Olivia proven on the air, 2026-10-20 (night)
+
+Live proof, not a fixture: fldigi transmitted Olivia 16/500 from the CRT SS9900v
+through VOX, the RSP1 recorded 27.415 MHz, and the vendored engine decoded it.
+
+```
+band 1451-1958 Hz = 507 Hz wide, centre 1705, 109x the noise, zero clipping
+reverse on:  "j#P}TEST TEST THE EAGLE HAS LANDED 12345/B%e,@0M@|$E)I5&9FCXFweq..."
+reverse off: "+"|AUAR!DUaUDaDFDaIRaMOD!p3r5tAAnVCddI-qL}eDhHt'x..."
+```
+
+The phrase is exact, the junk either side is idle and lock, and the negative half
+— the same audio with the switch off — is noise. **The mode works, receive, in
+the program users get**, because the band menu and this test run the same engine.
+
+Two things the run showed as well:
+
+- **Reverse was needed again**, on a second, independent transmission. It is not
+  an artifact of how the captures were extracted; it is this rig's path. The chip
+  is load-bearing and the hover text says what it is for.
+- **The carrier stayed up for about ninety seconds** after the text finished,
+  Olivia's idle filling the gap — the same "fldigi holds TX until released" that
+  cost an evening earlier. Use the macro that ends with `<RX>`, or press RX.
+
 ### Olivia, 2026-10-20 (done): the vendored engine decodes it — and the capture was inverted
 
 `crates/sdroxide-olivia` vendors Pawel Jalocha's `MFSK_Receiver` (fldigi's
