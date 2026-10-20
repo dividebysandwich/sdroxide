@@ -764,6 +764,134 @@ mod tests {
         }
     }
 
+    /// Soft bits for one slice, the way Jalocha's receiver makes them: every
+    /// tone votes on every bit plane with its **power squared**, and a set bit
+    /// votes *negative*.
+    fn slice_soft(mags: &[f32], planes: usize, sign: f32) -> [f32; 6] {
+        let mut soft = [0.0f32; 6];
+        let total: f32 = mags.iter().map(|m| (m * m) * (m * m)).sum();
+        for (k, &m) in mags.iter().enumerate() {
+            let e = (m * m) * (m * m);
+            let val = ungray(k as u32);
+            for (bit, sp) in soft.iter_mut().enumerate().take(planes) {
+                *sp += if (val >> bit) & 1 == 1 { -e } else { e };
+            }
+        }
+        for sp in soft.iter_mut().take(planes) {
+            *sp = sign * *sp / total.max(1e-20);
+        }
+        soft
+    }
+
+    /// The reference front end: a raised-cosine window two symbols long, two
+    /// slices per symbol half a symbol apart, energy-squared soft bits, and a
+    /// search over slice parity, block offset and polarity.
+    ///
+    /// Every element here was read out of `pj_mfsk.h` — `MFSK_InputProcessor`,
+    /// `MFSK_Demodulator::SoftDecode` and `MFSK_SoftDecoder::DecodeCharacter` —
+    /// because our own front end reads nothing from a signal fldigi decodes
+    /// perfectly. This test exists to find out whether the reference algorithm
+    /// reads our fixture, before any of it goes near `OliviaRx`.
+    #[test]
+    #[ignore]
+    fn a_capture_decodes_with_the_reference_front_end() {
+        let Ok(path) = std::env::var("SDROXIDE_OLIVIA_SAMPLE") else {
+            eprintln!("SDROXIDE_OLIVIA_SAMPLE unset; skipping");
+            return;
+        };
+        let mut r = hound::WavReader::open(&path).expect("open the sample WAV");
+        let spec = r.spec();
+        let audio: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Float => r.samples::<f32>().map(|s| s.expect("sample")).collect(),
+            hound::SampleFormat::Int => {
+                r.samples::<i16>().map(|s| s.expect("sample") as f32 / 32_768.0).collect()
+            }
+        };
+        let rate = spec.sample_rate as f64;
+        let num = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+        let tones: usize = num("SDROXIDE_OLIVIA_TONES", 16.0) as usize;
+        let bw = num("SDROXIDE_OLIVIA_BW", 500.0);
+        let hz = num("SDROXIDE_OLIVIA_HZ", 1500.0);
+        let g = Geom::new(rate, hz, tones, bw);
+        let sps = g.sps;
+        let wl = 2 * sps;
+        let shape: Vec<f32> = (0..wl)
+            .map(|t| (0.5 - 0.5 * (std::f64::consts::TAU * t as f64 / wl as f64).cos()) as f32)
+            .collect();
+        let n_sym = audio.len().saturating_sub(wl + sps) / sps;
+        // Two slices per symbol, half a symbol apart; each window is two symbols
+        // long and centred on the symbol, so the shaping does the symbol gating.
+        let mut raw: Vec<[f32; 6]> = Vec::new();
+        for n in 0..n_sym {
+            for sl in 0..2 {
+                let start = n * sps + sl * (sps / 2);
+                if start + wl > audio.len() {
+                    break;
+                }
+                let win: Vec<f32> = (0..wl).map(|t| audio[start + t] * shape[t]).collect();
+                let mags = tone_bank_mags(&win, g.base_hz, g.spacing, g.tones, rate);
+                raw.push(slice_soft(&mags, g.planes, 1.0));
+            }
+        }
+        let want: Vec<String> = std::env::var("SDROXIDE_OLIVIA_TEXT")
+            .map(|t| t.split_whitespace().map(str::to_owned).collect())
+            .unwrap_or_default();
+        let mut best = String::new();
+        for parity in 0..2usize {
+            for off in 0..BLOCK {
+                for sign in [1.0f32, -1.0] {
+                    let mut out = String::new();
+                    let mut n = off;
+                    while 2 * (n + BLOCK) <= raw.len() {
+                        let mut planes_soft = [[0.0f32; BLOCK]; 6];
+                        for t in 0..BLOCK {
+                            let sym = raw[2 * (n + t) + parity];
+                            for p in 0..g.planes {
+                                let b = (p + t) % g.planes;
+                                planes_soft[p][t] =
+                                    sign * if scramble_bit(p, t) { -sym[b] } else { sym[b] };
+                            }
+                        }
+                        for p in 0..g.planes {
+                            let mut v = planes_soft[p];
+                            fht(&mut v);
+                            let (m, val) = v
+                                .iter()
+                                .enumerate()
+                                .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+                                .map(|(i, x)| (i, *x))
+                                .unwrap_or((0, 0.0));
+                            let c = (m as u8 & 63) | if val < 0.0 { 64 } else { 0 };
+                            if (32..127).contains(&c) {
+                                out.push(c as char);
+                            }
+                        }
+                        n += BLOCK;
+                    }
+                    let hits: usize = want.iter().map(|w| out.matches(w.as_str()).count()).sum();
+                    let good =
+                        out.chars().filter(|c| c.is_uppercase() || c.is_ascii_digit()).count();
+                    let score = hits * 1000 + good;
+                    if score > 0
+                        && (best.is_empty()
+                            || out.matches(want.first().map(|w| w.as_str()).unwrap_or("")).count()
+                                > 0)
+                    {
+                        if hits > 0 {
+                            eprintln!("parity {parity} off {off} sign {sign:+} -> hits {hits}");
+                            eprintln!("{out:?}");
+                            return;
+                        }
+                    }
+                    if !want.is_empty() && !out.is_empty() && best.is_empty() {
+                        best = out;
+                    }
+                }
+            }
+        }
+        eprintln!("no combination recovered {want:?}; first attempt was {best:?}");
+    }
+
     /// Every character, at both tone counts, through the transmitter and the
     /// receiver's own `soft_bits` + `fht` — no audio, no timing, so it says
     /// something about the transform and the polarity alone.

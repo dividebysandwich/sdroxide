@@ -123,6 +123,33 @@ Recordings: `QPSK31/63/125/250-1000_Hz` in `~/Downloads/sounds`, named for a
 | **ORBCOMM** | partially pub | `ORBCOMM` | satellite SDPSK; needs a wideband lane and its own band |
 | **STANAG 4539** | pub | — | 110B-class, own preamble and equaliser |
 
+### Olivia, 2026-10-20 (the verdict): stop reimplementing it, vendor the engine
+
+A faithful reimplementation of the reference front end was written and run against
+the fixture — raised-cosine window two symbols long, two slices half a symbol
+apart, energy-squared soft bits, and a sweep of slice parity × block offset ×
+polarity. **It does not decode either** (`a_capture_decodes_with_the_reference_front_end`,
+0.2 s for the whole sweep, prints what each combination produced).
+
+So the situation is now clear, and it is not what any of the previous entries
+assumed: **fldigi reads our recording perfectly, and three separate
+implementations on our side — `OliviaRx`, a Python model, and a careful port of
+`pj_mfsk.h` — all fail on it.** The error is in the reading of the reference, not
+in the architecture of Olivia, and reading it harder has now been tried three
+times.
+
+**The next move is not another reimplementation. It is to vendor the engine.**
+`pj_mfsk.h` and its companions are Pawel Jalocha's, GPL-2-or-later, which this
+tree already satisfies — the same route taken for `vendor/xng` (HFDL) and
+`vendor/rade_c`. A `sdroxide-olivia` crate wrapping `MFSK_Receiver` would give a
+decoder that is *known* to work, because it is the one that just read our
+capture, and it removes the class of bug entirely rather than continuing to
+guess at a Walsh/interleave convention.
+
+That is a decision for the operator — a vendored C++ engine against a pure-Rust
+one — but it is the only route with a known-good endpoint, and the fixtures make
+the result checkable in 1.8 seconds either way.
+
 ### Olivia, 2026-10-20 (final): the recording is good, the decoder is not — and here is what it lacks
 
 **The oracle question is answered, and it went against us.** The 16/500 capture was
