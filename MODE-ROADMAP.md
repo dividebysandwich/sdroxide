@@ -123,6 +123,34 @@ Recordings: `QPSK31/63/125/250-1000_Hz` in `~/Downloads/sounds`, named for a
 | **ORBCOMM** | partially pub | `ORBCOMM` | satellite SDPSK; needs a wideband lane and its own band |
 | **STANAG 4539** | pub | — | 110B-class, own preamble and equaliser |
 
+### Olivia, 2026-10-20: the fixture is runnable, and three things are excluded
+
+Olivia is the most **visible** fault in the tree — it is in the band menu and it
+returns nothing — so it is the right place to work. What this session added is
+the ability to measure it at all:
+
+* **A runnable fixture.** `an_off_air_capture_decodes` takes
+  `SDROXIDE_OLIVIA_SAMPLE` and asserts on the *content*. MultiPSK's
+  `OLIVIA_32_1K-1000_Hz.WAV` converted with `ffmpeg -ar 8000 -ac 1` gives
+  `decoded 0 chars: ""` — the fault, reproduced, and the gate for every future
+  change. Nine minutes a run, so budget one or two per session rather than a loop.
+* **A trace.** `SDROXIDE_OLIVIA_TRACE=1` prints the block confidence every eighth
+  block: `best`, `second`, their ratio, the chosen phase and `tphase`.
+
+**What the trace says, and it is the useful part:** `best/second` is
+**1.00–1.03**. No phase dominates, so the block correlation is flat — the phase
+and lock logic has nothing to work with, and `locked` is a fluke that never
+releases. That **excludes the locking code** and points at `soft_bits` (the
+per-symbol tone-to-soft-bit step) or the tone bank itself.
+
+**And one candidate is excluded by measurement:** voting the sampling instant by
+the *total* comb energy instead of the peak tone looks right on paper and breaks
+`loopback_8_250`, which the peak vote reads perfectly. Written, tested and
+reverted; the code says so, so it is not tried again.
+
+So the next session starts where this one stopped: **`soft_bits` and the tone
+bank**, with a nine-minute gate to check each change.
+
 ### 3. Weeks — the interesting one
 
 **STANAG 4285.** The most interesting mode for an SWL, and the work is well past
