@@ -305,6 +305,21 @@ impl SdroxideApp {
         (station_hz - dial_hz).abs() <= BROADCAST_TUNED_HZ
     }
 
+    /// With ALL on, a favourite is named wherever it sits on the dial; without
+    /// it the ±1 kHz gate applies to every broadcast station.
+    pub(in crate::app) fn broadcast_visible_at(
+        dial_hz: f64,
+        station_hz: f64,
+        call: &str,
+        favs: &[String],
+        all: bool,
+    ) -> bool {
+        if all && favs.iter().any(|n| n == call) {
+            return true;
+        }
+        Self::broadcast_named_at(dial_hz, station_hz)
+    }
+
     /// **The broadcast name is drawn once, however many sources carry it.**
     ///
     /// bebepip is having EiBi, Aoki and HFCC merged into one master store and
@@ -382,7 +397,13 @@ impl SdroxideApp {
         // 11 m that is a wall of names over the passband you are trying to read.
         // One name, for the thing you are listening to.
         if s.kind == SpotKind::Broadcast {
-            return Self::broadcast_named_at(self.state.rx_freq_hz(), s.freq_hz);
+            return Self::broadcast_visible_at(
+                self.state.rx_freq_hz(),
+                s.freq_hz,
+                &s.call,
+                &self.broadcast_favs,
+                self.broadcast_all,
+            );
         }
         if !self.view.spot_kinds_shown[s.kind.index()] {
             return false;
@@ -827,6 +848,46 @@ mod broadcast_only_the_tuned_tests {
             "exactly 1 kHz is the edge, and it is inside"
         );
         assert!(!SdroxideApp::broadcast_named_at(dial, 9_581_001.0), "1 Hz past it is out");
+    }
+
+    /// ALL off: a favourite 2 kHz off the dial is still unnamed, exactly as
+    /// before.
+    #[test]
+    fn a_favourite_outside_the_window_is_unnamed_without_all() {
+        let dial = 9_580_000.0;
+        let favs = vec!["BBC World Service".to_string()];
+        assert!(
+            !SdroxideApp::broadcast_visible_at(
+                dial,
+                9_582_000.0,
+                "BBC World Service",
+                &favs,
+                false
+            ),
+            "2 kHz off, ALL off: unnamed"
+        );
+    }
+
+    /// ALL on: the same favourite is named wherever it sits.
+    #[test]
+    fn a_favourite_is_named_with_all_even_off_the_dial() {
+        let dial = 9_580_000.0;
+        let favs = vec!["BBC World Service".to_string()];
+        assert!(
+            SdroxideApp::broadcast_visible_at(dial, 9_582_000.0, "BBC World Service", &favs, true),
+            "2 kHz off, ALL on, favourite: named"
+        );
+    }
+
+    /// ALL on does not name a station that is not a favourite.
+    #[test]
+    fn a_non_favourite_stays_gated_even_with_all() {
+        let dial = 9_580_000.0;
+        let favs: Vec<String> = Vec::new();
+        assert!(
+            !SdroxideApp::broadcast_visible_at(dial, 9_582_000.0, "BBC World Service", &favs, true),
+            "non-favourite off the dial stays unnamed"
+        );
     }
 }
 
