@@ -491,6 +491,10 @@ pub struct OliviaRx {
     hop: usize,
     /// Symbol-timing energy per sub-phase (decayed).
     sync: [f32; SUBPHASES],
+    /// `SDROXIDE_OLIVIA_TRACE` — prints the block confidence every eighth
+    /// block, which is what says whether the phase estimate has anything to
+    /// work with at all. Read once, because this sits in the symbol loop.
+    trace: bool,
     /// Held sampling sub-phase (updated once per symbol period).
     tphase: usize,
     /// Per-symbol tone magnitudes (one `[tones]` vector per decoded symbol).
@@ -518,6 +522,7 @@ impl OliviaRx {
             next_hop: g.sps,
             hop,
             sync: [0.0; SUBPHASES],
+            trace: std::env::var("SDROXIDE_OLIVIA_TRACE").is_ok(),
             tphase: 0,
             sbuf: VecDeque::new(),
             sbuf_base: 0,
@@ -569,6 +574,13 @@ impl OliviaRx {
         let peak = mags.iter().copied().fold(0.0f32, f32::max);
         self.mag += 0.02 * (peak - self.mag);
         let phase = (t / self.hop) % SUBPHASES;
+        // The sampling instant is voted by the strongest tone in the window.
+        //
+        // **The obvious improvement is wrong, and it was measured.** Choosing by
+        // the *total* comb energy looks right on paper — the tones are spaced at
+        // one symbol rate, so a window straddling two symbols should spread its
+        // energy into the gaps — but it breaks `loopback_8_250`, which the peak
+        // vote reads perfectly. Whatever the real fault is, it is not here.
         for (i, s) in self.sync.iter_mut().enumerate() {
             *s *= 0.995;
             if i == phase {
@@ -683,6 +695,18 @@ impl OliviaRx {
             }
             (bp, b, s)
         };
+        if self.trace && self.scount % (BLOCK * 8) == 0 {
+            eprintln!(
+                "scount {:6} locked {:5} best {:.3} second {:.3} ratio {:.2} phase {:2} tphase {}",
+                self.scount,
+                self.locked,
+                best,
+                second,
+                best / second.max(1e-6),
+                best_phase,
+                self.tphase
+            );
+        }
         if !self.locked {
             if self.scount < 2 * BLOCK || best < 1.4 * second.max(1e-6) {
                 return;
