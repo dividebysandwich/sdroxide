@@ -1130,4 +1130,60 @@ mod tests {
         let frac = inside / total;
         assert!(frac > 0.99, "only {:.3}% of the energy is in-band", frac * 100.0);
     }
+    /// What the decoder makes of a real transmission, drawn as dots.
+    ///
+    /// Hell delivers pictures rather than text, so a capture can only be judged
+    /// by looking at it. `SDROXIDE_HELL_SAMPLE` is a mono 8 kHz WAV,
+    /// `SDROXIDE_HELL_CARRIER` the audio centre (default 1700 Hz).
+    ///
+    /// Run it with
+    /// `SDROXIDE_HELL_SAMPLE=... cargo test -p sdroxide-dsp --release --lib \
+    ///   -- --ignored --nocapture an_off_air_capture_renders`.
+    #[test]
+    #[ignore]
+    fn an_off_air_capture_renders() {
+        let Ok(path) = std::env::var("SDROXIDE_HELL_SAMPLE") else {
+            eprintln!("SDROXIDE_HELL_SAMPLE unset; skipping");
+            return;
+        };
+        let mut reader = hound::WavReader::open(&path).expect("open the sample WAV");
+        let spec = reader.spec();
+        assert_eq!(spec.sample_rate, 8000, "the sample must be at 8 kHz");
+        assert_eq!(spec.channels, 1, "the sample must be mono");
+        let audio: Vec<f32> =
+            reader.samples::<i16>().map(|s| s.expect("sample") as f32 / 32_768.0).collect();
+        let carrier: f64 = std::env::var("SDROXIDE_HELL_CARRIER")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1700.0);
+        let mut rx = HellRx::new(8000.0, carrier, HellVariant::Feld, 0.05);
+        let mut px = Vec::new();
+        for chunk in audio.chunks(512) {
+            rx.process(chunk, &mut px);
+        }
+        let cols = px.len() / HELL_ROWS;
+        let lit = px.iter().filter(|&&v| v > 96).count();
+        eprintln!(
+            "{cols} columns of {HELL_ROWS} dots, {lit} lit, max {}",
+            px.iter().copied().max().unwrap_or(0)
+        );
+        const STRIP: usize = 104;
+        for start in (0..cols).step_by(STRIP) {
+            let end = (start + STRIP).min(cols);
+            for row in 0..HELL_ROWS {
+                // Hell staggers alternate rows by half a column, which is what
+                // turns a lattice of dots into letter shapes.
+                let lead = if row % 2 == 1 { " " } else { "" };
+                let line: String = (start..end)
+                    .map(|c| match px[c * HELL_ROWS + row] {
+                        v if v > 128 => '#',
+                        v if v > 48 => '+',
+                        _ => ' ',
+                    })
+                    .collect();
+                eprintln!("{lead}{line}");
+            }
+            eprintln!("---");
+        }
+    }
 }
