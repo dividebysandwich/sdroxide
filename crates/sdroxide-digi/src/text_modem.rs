@@ -165,6 +165,7 @@ impl TextModemController {
         let (o_tones, o_bw) = (cfg.olivia_tones as usize, cfg.olivia_bw_hz as f64);
         let t_baud = cfg.thor_mode.baud() as f64;
         let p_baud = cfg.psk_speed.baud();
+        let p_qpsk = cfg.psk_modulation == sdroxide_types::PskModulation::Qpsk;
         let rx = match mode {
             Mode::Rtty | Mode::RttyFm => {
                 let mut r = RttyRx::new(MODEM_RATE, audio_hz as f64, baud, shift);
@@ -176,7 +177,11 @@ impl TextModemController {
                 RxModem::Olivia(OliviaRx::new(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
             }
             Mode::Thor => RxModem::Thor(ThorRx::new(MODEM_RATE, audio_hz as f64, t_baud)),
-            _ => RxModem::Psk(PskRx::new_baud(MODEM_RATE, audio_hz as f64, p_baud)),
+            _ => {
+                let mut r = PskRx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
+                r.set_qpsk(p_qpsk);
+                RxModem::Psk(r)
+            }
         };
         let tx = match mode {
             Mode::Rtty | Mode::RttyFm => {
@@ -186,7 +191,11 @@ impl TextModemController {
                 TxModem::Olivia(OliviaTx::new(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
             }
             Mode::Thor => TxModem::Thor(ThorTx::new(MODEM_RATE, audio_hz as f64, t_baud)),
-            _ => TxModem::Psk(PskTx::new_baud(MODEM_RATE, audio_hz as f64, p_baud)),
+            _ => {
+                let mut t = PskTx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
+                t.set_qpsk(p_qpsk);
+                TxModem::Psk(t)
+            }
         };
         TextModemController {
             mode,
@@ -218,10 +227,12 @@ impl TextModemController {
         let (o_tones, o_bw) = (self.cfg.olivia_tones as usize, self.cfg.olivia_bw_hz as f64);
         let t_baud = self.cfg.thor_mode.baud() as f64;
         let p_baud = self.cfg.psk_speed.baud();
+        let p_qpsk = self.cfg.psk_modulation == sdroxide_types::PskModulation::Qpsk;
         match &mut self.rx {
             RxModem::Psk(r) => {
                 r.set_carrier(hz);
                 r.set_baud(p_baud);
+                r.set_qpsk(p_qpsk);
             }
             RxModem::Rtty(r) => {
                 r.set_tuning(hz, baud, shift);
@@ -235,6 +246,7 @@ impl TextModemController {
             TxModem::Psk(m) => {
                 m.set_carrier(hz, MODEM_RATE);
                 m.set_baud(p_baud, MODEM_RATE);
+                m.set_qpsk(p_qpsk);
             }
             TxModem::Rtty(m) => m.set_tuning(hz, shift),
             TxModem::Olivia(m) => m.set_params(hz, o_tones, o_bw),
@@ -421,7 +433,8 @@ impl DigiEngine for TextModemController {
             || cfg.olivia_tones != self.cfg.olivia_tones
             || cfg.olivia_bw_hz != self.cfg.olivia_bw_hz
             || cfg.thor_mode != self.cfg.thor_mode
-            || cfg.psk_speed != self.cfg.psk_speed;
+            || cfg.psk_speed != self.cfg.psk_speed
+            || cfg.psk_modulation != self.cfg.psk_modulation;
         self.cfg = cfg;
         if retune {
             self.retune_modems();

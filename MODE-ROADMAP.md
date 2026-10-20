@@ -82,7 +82,15 @@ The FEC is in place — `ConvCode::PSK_QPSK` is K=5, rate 1/2, and the trellis s
 now follows the code. Four things remain, and the first is the one that would
 have cost a day to discover:
 
-1. **A streaming Viterbi.** `viterbi_soft` is a *block* decoder: it starts every
+0. **A Costas error for QPSK — this is the one that is actually missing.** The
+   loop in `BpskCore` is *decision-directed BPSK*: `if y.re >= 0 { y.im } else
+   { -y.im }`. That is correct for BPSK and cannot track a four-phase carrier, so
+   everything downstream of it sees a wandering phase and the differential
+   decision is noise. Found on 2026-10-20 by sweeping the symbol conventions
+   against `QPSK31-1000_Hz` — all eight quadrant rotations and bit orders scored
+   zero, which rules the mapping out and points upstream of it. Until this is
+   fixed nothing else about QPSK matters.
+1. ~~**A streaming Viterbi.**~~ **Done** — `ViterbiStream`, in `fec.rs`. `viterbi_soft` is a *block* decoder: it starts every
    call from state 0 and traces back from the best final state. That is right for
    THOR and QO-100, which decode a finished block, and wrong for a continuous
    mode — a trellis restarted every block is a trellis with a discontinuity in

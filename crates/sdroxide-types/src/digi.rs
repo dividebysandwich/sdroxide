@@ -1264,6 +1264,33 @@ pub fn worked_before(
     })
 }
 
+/// BPSK or QPSK, on top of [`PskSpeed`].
+///
+/// Two axes rather than one enum of eight: the speed is a rate and the
+/// modulation is a constellation, and the operator picks them separately in the
+/// panel just as they are separate in the mode's name.
+///
+/// QPSK carries **two channel bits per symbol and a rate-1/2 convolutional
+/// code**, so it is one *data* bit per symbol — QPSK31 has BPSK31's text rate
+/// with half the errors, which is the whole reason to use it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PskModulation {
+    #[default]
+    Bpsk,
+    Qpsk,
+}
+
+impl PskModulation {
+    pub const ALL: [PskModulation; 2] = [PskModulation::Bpsk, PskModulation::Qpsk];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PskModulation::Bpsk => "BPSK",
+            PskModulation::Qpsk => "QPSK",
+        }
+    }
+}
+
 /// PSK31's speed.
 ///
 /// The family is one modulation — differential BPSK — at four symbol rates, and
@@ -2410,6 +2437,13 @@ pub struct DigiConfig {
     /// Appended last, so this is a wire change (`PROTO_VERSION` 214 → 215).
     #[serde(default)]
     pub psk_speed: PskSpeed,
+    /// PSK: the constellation. QPSK is a different demodulator *and* a
+    /// convolutionally coded one, so it is a separate axis from the speed
+    /// rather than four more speeds.
+    ///
+    /// Appended last, so this is a wire change (`PROTO_VERSION` 217 → 218).
+    #[serde(default)]
+    pub psk_modulation: PskModulation,
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2662,6 +2696,7 @@ impl Default for DigiConfig {
             sstv_keep_dial: false,
             hell_slant_ppm: 0.0,
             psk_speed: PskSpeed::default(),
+            psk_modulation: PskModulation::default(),
         }
     }
 }

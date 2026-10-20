@@ -16,6 +16,7 @@ use std::collections::VecDeque;
 use std::f32::consts::PI;
 
 use crate::Complex32;
+use crate::fec::{ConvCode, ConvEncoder, ViterbiStream};
 use crate::fir::{ComplexFir, bandpass_taps};
 
 /// The rate PSK31 is defined at, and the default for every constructor that
@@ -165,7 +166,14 @@ pub struct PskTx {
     cph: f32,
     cph_inc: f32,
     amp: f32,
-    last_sym: f32,
+    /// The carrier's phase as a unit phasor: BPSK only ever uses ±1 on the
+    /// real axis, QPSK rotates it by the encoder's pair, so one field carries
+    /// both.
+    last_c: (f32, f32),
+    /// Where the symbol in progress started, for the raised-cosine blend.
+    prev_c: (f32, f32),
+    qpsk: bool,
+    enc: ConvEncoder,
     q: VecDeque<TxBit>,
     total_chars: usize,
     sent_chars: usize,
@@ -189,7 +197,10 @@ impl PskTx {
             cph: 0.0,
             cph_inc: (std::f64::consts::TAU * carrier_hz / rate) as f32,
             amp: 0.5,
-            last_sym: 1.0,
+            last_c: (1.0, 0.0),
+            prev_c: (1.0, 0.0),
+            qpsk: false,
+            enc: ConvEncoder::new(ConvCode::PSK_QPSK),
             q: VecDeque::new(),
             total_chars: 0,
             sent_chars: 0,
@@ -201,6 +212,18 @@ impl PskTx {
 
     pub fn set_carrier(&mut self, carrier_hz: f64, rate: f64) {
         self.cph_inc = (std::f64::consts::TAU * carrier_hz / rate) as f32;
+    }
+
+    /// Switch between BPSK and QPSK. The encoder restarts and the carrier
+    /// returns to phase zero, so a transmission never straddles the two.
+    pub fn set_qpsk(&mut self, on: bool) {
+        if self.qpsk == on {
+            return;
+        }
+        self.qpsk = on;
+        self.enc.reset();
+        self.last_c = (1.0, 0.0);
+        self.prev_c = (1.0, 0.0);
     }
 
     /// Change the symbol rate. The symbol in progress is finished first, so a
@@ -253,21 +276,41 @@ impl PskTx {
     }
 
     fn render_symbol(&mut self, steady: bool, done: Option<usize>) {
-        let s_new = if steady { self.last_sym } else { -self.last_sym };
+        let (mut ci, mut cq) = self.last_c;
+        if self.qpsk {
+            // A QPSK symbol *is* the encoder's output pair, so one queued bit
+            // becomes one phase step of 90 degrees times that pair. The text
+            // rate is unchanged from BPSK: two channel bits per symbol at rate
+            // 1/2 is one data bit.
+            let sym = self.enc.push(steady as u8) & 3;
+            for _ in 0..sym {
+                let t = ci;
+                ci = -cq;
+                cq = t;
+            }
+        } else if !steady {
+            ci = -ci;
+            cq = -cq;
+        }
+        let (pi, pq) = self.prev_c;
         self.cur.clear();
         self.cur_pos = 0;
         self.cur_done = done;
         for i in 0..self.sps {
+            // Blend the *phasor*: on BPSK that is the amplitude dip between
+            // reversals, and on QPSK it is the same dip with the phase turning.
             let blend = 0.5 * (1.0 + (PI * i as f32 / self.sps as f32).cos()); // 1→0
-            let a = self.last_sym * blend + s_new * (1.0 - blend);
-            let s = a * self.cph.cos() * self.amp;
+            let ai = pi * blend + ci * (1.0 - blend);
+            let aq = pq * blend + cq * (1.0 - blend);
+            let s = (ai * self.cph.cos() - aq * self.cph.sin()) * self.amp;
             self.cph += self.cph_inc;
             if self.cph > 2.0 * PI {
                 self.cph -= 2.0 * PI;
             }
             self.cur.push(s);
         }
-        self.last_sym = s_new;
+        self.prev_c = (ci, cq);
+        self.last_c = (ci, cq);
     }
 
     /// Fill `out` with the next audio samples. Emits idle reversals when the
@@ -397,6 +440,11 @@ pub struct BpskCore {
     mag: f32,
     coherence: f32,
     gate: bool,
+    /// QPSK rather than BPSK: two channel bits per symbol, carried by a
+    /// rate-1/2 convolutional code, so one *data* bit per symbol.
+    qpsk: bool,
+    /// The code the QPSK modes carry. Unused in BPSK, where a symbol is a bit.
+    fec: ViterbiStream,
 }
 
 impl BpskCore {
@@ -430,8 +478,28 @@ impl BpskCore {
             mag: 0.0,
             coherence: 1.0,
             gate: true,
+            qpsk: false,
+            fec: ViterbiStream::new(ConvCode::PSK_QPSK),
         }
     }
+
+    /// Switch between BPSK and QPSK.
+    ///
+    /// The two are the same demodulator with a different slice at the end: QPSK
+    /// carries two channel bits per symbol and the convolutional code turns
+    /// them into one data bit, which is why the text rate does not double.
+    pub fn set_qpsk(&mut self, on: bool) {
+        if self.qpsk == on {
+            return;
+        }
+        self.qpsk = on;
+        self.fec.reset();
+    }
+
+    pub fn qpsk(&self) -> bool {
+        self.qpsk
+    }
+
 
     /// Turn the carrier-coherence noise gate off (the skimmer scores its own
     /// candidates and would rather see everything).
@@ -502,16 +570,46 @@ impl BpskCore {
             if scale > 1e-20 {
                 self.acc += (TIMING_GAIN * et / scale).clamp(-0.5, 0.5);
             }
-            // Differential BPSK detection (immune to the Costas ± ambiguity).
+            // Differential detection (immune to the Costas ± ambiguity).
             let d = curr * self.prev_sym.conj();
-            let bit = if d.re >= 0.0 { 1u8 } else { 0 };
             let dn = d.norm();
-            if dn > 1e-20 {
-                self.coherence += COHERENCE_SMOOTH * (d.re.abs() / dn - self.coherence);
-            }
             self.mag += 0.05 * (curr.norm() - self.mag);
             self.prev_sym = curr;
-            if let Some(c) = self.vrx.push_bit(bit)
+            let bit = if self.qpsk {
+                // A QPSK symbol *is* the encoder's output pair, so it carries
+                // one data bit rather than two — the FEC is what halves it.
+                //
+                // The quadrant is taken as `(4 - s) & 3`, which is the mode's
+                // convention and not an accident: inverting the received value
+                // is how an all-zero message still produces transitions for the
+                // receiver's timing to hold on to.
+                let s = if dn > 1e-20 {
+                    ((d.arg() / std::f32::consts::FRAC_PI_2).round() as i32).rem_euclid(4) as u8
+                } else {
+                    0
+                };
+                let bits = (4 - s) & 3;
+                // The inversion the mode applies to its second output lives in
+                // the *code* (`ConvCode::PSK_QPSK`), not here: it belongs to the
+                // encoding, and putting it in both places would cancel it out.
+                let a = if bits & 1 != 0 { 1.0 } else { -1.0 };
+                let b = if bits & 2 != 0 { 1.0 } else { -1.0 };
+                if dn > 1e-20 {
+                    // A clean QPSK point sits on a diagonal, so `|re|` alone is
+                    // only ever 0.707 — below the coherence gate, which would
+                    // have rejected every good symbol.
+                    let coh = d.re.abs().max(d.im.abs()) / dn;
+                    self.coherence += COHERENCE_SMOOTH * (coh - self.coherence);
+                }
+                self.fec.push(a, b)
+            } else {
+                if dn > 1e-20 {
+                    self.coherence += COHERENCE_SMOOTH * (d.re.abs() / dn - self.coherence);
+                }
+                Some(if d.re >= 0.0 { 1u8 } else { 0 })
+            };
+            if let Some(bit) = bit
+                && let Some(c) = self.vrx.push_bit(bit)
                 && (!self.gate || self.coherence >= COHERENCE_GATE)
             {
                 out.push(c);
@@ -589,6 +687,12 @@ impl PskRx {
 
     pub fn baud(&self) -> f64 {
         self.baud
+    }
+
+    /// Switch between BPSK and QPSK. The slicing is the core's, so this is a
+    /// passthrough — the two modes share every stage above it.
+    pub fn set_qpsk(&mut self, on: bool) {
+        self.core.set_qpsk(on);
     }
 
     /// Rough tuning/quality magnitude (average symbol amplitude).
@@ -715,4 +819,58 @@ mod tests {
             );
         }
     }
+
+    /// QPSK against a real recording, because a loopback can only prove the two
+    /// halves agree with each other.
+    ///
+    /// Point `SDROXIDE_QPSK_SAMPLE` at a mono WAV and, if it is not 31.25 baud
+    /// or not centred on 1000 Hz, say so with `SDROXIDE_QPSK_BAUD` and
+    /// `SDROXIDE_QPSK_HZ`. MultiPSK's `QPSK31-1000_Hz.WAV` works unmodified.
+    ///
+    /// The assertion is deliberately weak — text rather than a known sentence.
+    /// The sample's content is somebody else's recording and pinning a word
+    /// from it would make the test a fixture of that file rather than of the
+    /// decoder; what matters here is that a real symbol stream comes back as
+    /// readable text at all.
+    #[test]
+    #[ignore = "needs a recording: SDROXIDE_QPSK_SAMPLE=/path/file.wav"]
+    fn an_off_air_qpsk_recording_decodes() {
+        let Ok(path) = std::env::var("SDROXIDE_QPSK_SAMPLE") else {
+            return;
+        };
+        let baud: f64 = std::env::var("SDROXIDE_QPSK_BAUD")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(31.25);
+        let hz: f64 = std::env::var("SDROXIDE_QPSK_HZ")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1000.0);
+        let mut r = hound::WavReader::open(&path).expect("open the recording");
+        let spec = r.spec();
+        let scale = (1i64 << (spec.bits_per_sample.max(1) - 1)) as f32;
+        let mut audio: Vec<f32> = if spec.bits_per_sample <= 8 {
+            r.samples::<i8>().map(|s| s.unwrap() as f32 / scale).collect()
+        } else {
+            r.samples::<i16>().map(|s| s.unwrap() as f32 / scale).collect()
+        };
+        if spec.channels > 1 {
+            audio = audio.chunks(spec.channels as usize).map(|c| c[0]).collect();
+        }
+        let mut rx = PskRx::new_baud(spec.sample_rate as f64, hz, baud);
+        rx.set_qpsk(true);
+        let mut text = String::new();
+        for chunk in audio.chunks(512) {
+            text.push_str(&rx.process(chunk));
+        }
+        println!("first 240 characters: {:?}", text.chars().take(240).collect::<String>());
+        let letters = text.chars().filter(|c| c.is_ascii_alphabetic()).count();
+        let spaces = text.chars().filter(|c| *c == ' ').count();
+        assert!(
+            letters > 40 && spaces > 5,
+            "no text came out: {letters} letters, {spaces} spaces from {} characters",
+            text.len()
+        );
+    }
+
 }

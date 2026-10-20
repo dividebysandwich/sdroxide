@@ -141,7 +141,12 @@ impl ConvCode {
     /// PSK31's **QPSK** code: constraint length 5, polynomials `0x17` and
     /// `0x19`. Same construction as [`ConvCode::THOR`] at two fewer bits, which
     /// is why the rest of this module serves it with no new machinery.
-    pub const PSK_QPSK: ConvCode = ConvCode { poly_a: 0x17, poly_b: 0x19, invert_b: false };
+    ///
+    /// The second output is **inverted**: PSK's receiver complements it before
+    /// the decoder sees it, which is the same thing as the code emitting it
+    /// inverted, and keeping it here means the transmitter and the receiver
+    /// cannot disagree about which end applies it.
+    pub const PSK_QPSK: ConvCode = ConvCode { poly_a: 0x17, poly_b: 0x19, invert_b: true };
 
     /// Constraint length, read off the polynomials rather than declared.
     ///
@@ -247,6 +252,34 @@ pub fn viterbi_soft(sym: &[f32], code: ConvCode, terminated: bool) -> Vec<u8> {
         bits.truncate(nsteps.saturating_sub(code.k() as usize - 1));
     }
     bits
+}
+
+/// A rate-1/2 encoder for an arbitrary [`ConvCode`], handing back the two
+/// output bits packed as a symbol.
+///
+/// The packed form is what the transmitters want: PSK's QPSK maps the pair
+/// straight onto a phase step of `sym * 90°`, and MFSK maps it onto a tone.
+pub struct ConvEncoder {
+    code: ConvCode,
+    state: usize,
+}
+
+impl ConvEncoder {
+    pub fn new(code: ConvCode) -> Self {
+        ConvEncoder { code, state: 0 }
+    }
+
+    pub fn reset(&mut self) {
+        self.state = 0;
+    }
+
+    /// Encode one bit into its two output bits, packed as `o1 | o2 << 1`.
+    pub fn push(&mut self, bit: u8) -> u8 {
+        let b = bit & 1;
+        let (o1, o2) = self.code.outputs(self.state, b);
+        self.state = ((self.state << 1) | b as usize) & (self.code.states() - 1);
+        o1 | (o2 << 1)
+    }
 }
 
 /// Streaming soft-decision Viterbi, for a mode that never stops.

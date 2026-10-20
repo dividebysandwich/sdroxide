@@ -167,7 +167,7 @@ pub use digi::{
     FoxCaller, FsqHeard, FsqMsg, Ft8Depth, HOUND_ZONE_MAX_HZ, HellVariant, NAVTEX_MESSAGE_MAX,
     NAVTEX_TONE_HZ, NavtexMessage, NavtexStatus, PACKET_HEARD_MAX, PACKET_TERM_LINE_MAX,
     PACKET_TERM_MAX, PacketBaud, PacketHeard, PacketLink, PacketLinkOwner, PacketStatus,
-    PacketTermKind, PacketTermLine, PskSpeed, QsoLive, QsoRecord, QsoStep, QueuedCall,
+    PacketTermKind, PacketTermLine, PskModulation, PskSpeed, QsoLive, QsoRecord, QsoStep, QueuedCall,
     RTTY_CENTER_HZ, RadeStatus, SstvStyle, TX_AUDIO_LEVEL_MIN, TX_AUDIO_LEVEL_MIN_DB, ThorMode,
     TranscriptLine, WsprRadio, adif_band, adif_records, adif_to_qso_log,
     adif_to_qso_log_counting_swl, clock_health, cq_is_for_us, digi_decode_to_adif_record,
