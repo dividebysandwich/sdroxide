@@ -2333,6 +2333,39 @@ mod tests {
     /// claim to be one: the drag rule and the preset buttons are two routes to
     /// the same passband, and an operator who reaches one shape by clicking
     /// and cannot reach it by dragging has found a bug, not a policy.
+    /// Data modes are **USB on every band**, and the phone modes keep the
+    /// amateur rule — LSB below 10 m, USB above — with 60 m the one that is USB
+    /// by convention rather than by frequency.
+    ///
+    /// This is checked rather than assumed because it decides whether Olivia's
+    /// fixed 1500 Hz anchor is a single number or a band lookup, and because the
+    /// operator can always say otherwise: an explicit LSB or USB mode answers
+    /// for itself on every dial, and a station sending on the other sideband
+    /// from what the table expects is what the reverse switch is for.
+    #[test]
+    fn data_modes_are_upper_sideband_everywhere() {
+        let dials = [
+            1_840_000.0,  // 160 m
+            3_600_000.0,  // 80 m
+            5_357_000.0,  // 60 m
+            7_040_000.0,  // 40 m
+            14_074_000.0, // 20 m
+            27_415_000.0, // 11 m
+        ];
+        for dial in dials {
+            for mode in [Mode::Olivia, Mode::Ft8, Mode::Rtty, Mode::Hell, Mode::Psk] {
+                assert!(!mode.is_lower_sideband_at(dial), "{mode:?} at {dial} must be USB");
+            }
+            // The phone rule, on the bands it covers...
+            for mode in [Mode::Lsb] {
+                assert!(mode.is_lower_sideband_at(dial), "{mode:?} at {dial} must be LSB");
+            }
+            // ...and the operator's own word overrides it either way.
+            assert!(Mode::Lsb.is_lower_sideband_at(dial), "explicit LSB is LSB everywhere");
+            assert!(!Mode::Usb.is_lower_sideband_at(dial), "explicit USB is USB everywhere");
+        }
+    }
+
     #[test]
     fn symmetric_modes_have_symmetric_presets() {
         for m in Mode::ALL {
