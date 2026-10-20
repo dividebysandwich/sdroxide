@@ -4,6 +4,68 @@
 has the instruments, the measurements and the per-mode state; this file is the
 queue.
 
+## Where to start next (written 2026-10-20, end of the bench session)
+
+**Nothing is pushed.** The freeze holds, and there is one condition on it: if
+F4NRM (Kevin) pushes a working Olivia during the freeze, **our Olivia is not
+pushed** — his takes precedence.
+
+### Verified on the air, 2026-10-20
+
+| mode | state | fixture |
+|---|---|---|
+| Olivia 16/500 | **decodes**, vendored engine, reverse **on** | `olivia_16-500_cb_27415.wav` |
+| Olivia 32/1k | decodes, vendored engine, reverse off | `olivia_32-1k_cb_knowntext.wav` |
+| Feld Hell | decodes exactly | `hell_feld_cb_27415.wav` |
+| RTTY 45 | decodes exactly, reverse on | `rtty45_cb_27415.wav` |
+| PSK31 | decodes after lock; **±10 Hz sensitive** | `psk31_cb_27415.wav` |
+| MFSK16 | **no decoder**; fixture ready | `mfsk16_cb_eagle.wav` |
+| Hell 80 | **does not decode** | `hell80_cb_27415.wav` |
+
+Fixtures and the method are in `~/Downloads/sounds/our-captures/` with a README:
+how each was made, its centre, width, level and text, and the command to run it.
+
+### First five minutes, before anything new
+
+1. **Check last night's two fixes on the RSP1.** The wheel now tunes and Shift
+   zooms (an existing `input.json` keeps the old Zoom until Settings → Controls
+   is changed once). And a click in Olivia should put the *signal* at the
+   demodulator's 1500 Hz centre rather than the dial on the signal — the window
+   should sit on the station, not beside it.
+2. **Check `~/.cargo/bin/sdroxide` is `2.0.13_brown`** built from
+   `d4b3297e` or later.
+
+### Then, in the order worth doing
+
+1. **MFSK16.** The fixture is captured and measured (255 Hz wide, centre 1730,
+   118× the noise, text `TEST TEST THE EAGLE HAS LANDED 1234567890`). It is the
+   roadmap's next mode and the first run through the "add a mode" path: varicode,
+   the (256,80) FEC, the interleaver, then `Mode::Mfsk16` and its panel.
+2. **PSK's offset search.** Ten hertz off and it decodes nothing — measured, not
+   guessed. The Olivia engine searches ±250 Hz around its centre; ours searches
+   far less. This is the cheapest user-visible fix on the list.
+3. **Hell 80.** 750 columns emitted for 10.8 s where about 100 are due, picture
+   saturated at every AGC setting. The seven-row fix was transmit-side; this is
+   the receive side meeting a real signal for the first time.
+4. **Olivia transmit.** Our modulator is not readable by Jalocha's engine while
+   our own demodulator reads it perfectly, so we send Olivia that nobody else can
+   copy. The engine we already vendor has `MFSK_Transmitter` — porting it behind
+   the same shim fixes both directions for good, and ends the last interop
+   question in the mode.
+
+### Not to be re-derived
+
+- **Reverse.** The operator's rig sends **LSB** on 11 m; that is why Olivia and
+  RTTY both needed the switch. It is a station convention, not a bug — data modes
+  are USB everywhere, and the anchor only needs the magnitude.
+- **fldigi is an oracle.** Our own captures decode in fldigi; feed one in through
+  a PipeWire null sink and it answers. That is how the "is the recording good"
+  question gets settled in a minute instead of an evening.
+- **The RSP1's gain scale is inverted** (20 loudest, 59 quietest) and five metres
+  from a 4 W rig saturates it at every setting. A stub, not an antenna.
+- **fldigi's Tune button sends a carrier** that looks exactly like a broken
+  receiver; its **T/R** sends data, and its saved mode must exist in its own menu.
+
 ## The rule the ordering comes from
 
 A mode costs what it costs because of two things, and nothing else:
