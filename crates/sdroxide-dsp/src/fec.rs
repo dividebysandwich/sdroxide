@@ -2,6 +2,8 @@
 //! with a hard-decision Viterbi decoder. Used by the THOR modem; written as a
 //! standalone block so it can be unit-tested independently.
 
+use std::collections::VecDeque;
+
 const K: usize = 7;
 /// Generator polynomials 0o155 and 0o117 (the standard K=7 r=1/2 code).
 const G1: u32 = 0o155;
@@ -247,6 +249,131 @@ pub fn viterbi_soft(sym: &[f32], code: ConvCode, terminated: bool) -> Vec<u8> {
     bits
 }
 
+/// Streaming soft-decision Viterbi, for a mode that never stops.
+///
+/// [`viterbi_soft`] decodes a *finished block*: it starts its metrics at state 0
+/// and traces back from whichever state ended best. A continuous mode has
+/// neither of those — the trellis runs for the length of the over and there is no
+/// final state to start from — so restarting it every block would put a
+/// discontinuity in the middle of the message.
+///
+/// So the survivor history is kept in a ring and each bit is emitted once it is
+/// `depth` steps old. By then the path has forgotten where it started, which is
+/// the property the traceback depends on; the usual rule of five constraint
+/// lengths is used, and it is nothing more than that rule.
+///
+/// Feed it two soft symbols per message bit — positive for a received `1` — and
+/// [`ViterbiStream::flush`] at the end of the over to collect what is still in
+/// the ring. A transmitter that sends the `k-1` zero tail bits will decode those
+/// as zeros; they are the caller's to drop.
+pub struct ViterbiStream {
+    code: ConvCode,
+    n: usize,
+    metric: Vec<f32>,
+    /// One survivor mask per step: bit `s` is the winning predecessor of state
+    /// `s`. Fits in a `u64` because no constraint length here exceeds seven.
+    ring: VecDeque<u64>,
+    depth: usize,
+    started: bool,
+}
+
+impl ViterbiStream {
+    pub fn new(code: ConvCode) -> Self {
+        let n = code.states();
+        assert!(n <= 64, "a survivor mask has to fit in a u64");
+        ViterbiStream {
+            code,
+            n,
+            metric: vec![0.0; n],
+            ring: VecDeque::new(),
+            depth: (5 * code.k()) as usize,
+            started: false,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.metric.iter_mut().for_each(|m| *m = 0.0);
+        self.ring.clear();
+        self.started = false;
+    }
+
+    fn best_state(&self) -> usize {
+        (0..self.n).max_by(|&a, &b| self.metric[a].total_cmp(&self.metric[b])).unwrap_or(0)
+    }
+
+    /// Walk back through the ring from the best state and return the oldest bit.
+    fn traceback_oldest(&self) -> u8 {
+        let mut s = self.best_state();
+        let mut bit = 0u8;
+        for mask in self.ring.iter().rev() {
+            bit = (s & 1) as u8;
+            let from = (mask >> s) & 1;
+            s = (s >> 1) | ((from as usize) * (self.n / 2));
+        }
+        bit
+    }
+
+    /// Feed the two soft symbols for one message bit; returns the bit that has
+    /// fallen out the far end of the traceback window, once there is one.
+    pub fn push(&mut self, a: f32, b: f32) -> Option<u8> {
+        if !self.started {
+            self.metric.iter_mut().for_each(|m| *m = f32::NEG_INFINITY);
+            self.metric[0] = 0.0;
+            self.started = true;
+        }
+        let mut next = vec![f32::NEG_INFINITY; self.n];
+        let mut mask = 0u64;
+        for ns in 0..self.n {
+            let bit = ns & 1;
+            let (p0, p1) = (ns >> 1, (ns >> 1) | (self.n / 2));
+            let (s0a, s0b) = {
+                let (o1, o2) = self.code.outputs(p0, bit as u8);
+                (if o1 == 1 { 1.0 } else { -1.0 }, if o2 == 1 { 1.0 } else { -1.0 })
+            };
+            let (s1a, s1b) = {
+                let (o1, o2) = self.code.outputs(p1, bit as u8);
+                (if o1 == 1 { 1.0 } else { -1.0 }, if o2 == 1 { 1.0 } else { -1.0 })
+            };
+            let m0 = self.metric[p0] + s0a * a + s0b * b;
+            let m1 = self.metric[p1] + s1a * a + s1b * b;
+            let (m, from) = if m0 >= m1 { (m0, 0u64) } else { (m1, 1u64) };
+            mask |= from << ns;
+            next[ns] = m;
+        }
+        // Only differences matter, and the absolute values would run away.
+        let best = next.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        if best.is_finite() {
+            next.iter_mut().for_each(|m| *m -= best);
+        }
+        self.metric = next;
+        self.ring.push_back(mask);
+        if self.ring.len() > self.depth {
+            // Trace *before* dropping the oldest step: that step's mask is what
+            // says which input bit reached each state, so popping first throws
+            // away the very bit about to be emitted.
+            let bit = self.traceback_oldest();
+            self.ring.pop_front();
+            Some(bit)
+        } else {
+            None
+        }
+    }
+
+    /// Collect what is still inside the traceback window, oldest first.
+    ///
+    /// These are decided with less history behind them than a pushed bit, so a
+    /// caller that cares about the last few should send the transmitter's tail
+    /// bits and drop them.
+    pub fn flush(&mut self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.ring.len());
+        while !self.ring.is_empty() {
+            out.push(self.traceback_oldest());
+            self.ring.pop_front();
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +392,59 @@ mod tests {
             s = ((s << 1) | b as usize) & (code.states() - 1);
         }
         out
+    }
+
+    /// The stream decodes a message that never stops, which is the only shape
+    /// QPSK and MFSK ever present: no final state, no block boundary.
+    ///
+    /// Both codes, because the state count is what the generalisation fixed and
+    /// a stream is where a wrong one shows up as a discontinuity mid-message
+    /// rather than as a single bad bit.
+    #[test]
+    fn the_stream_decodes_a_continuous_message() {
+        for code in [ConvCode::PSK_QPSK, ConvCode::THOR] {
+            let bits: Vec<u8> = (0..600u32).map(|i| ((i * 7 + i / 3) % 2) as u8).collect();
+            let coded = encode_with(&bits, code);
+            let softs = soft(&coded, 1.0);
+            let mut v = ViterbiStream::new(code);
+            let mut got = Vec::new();
+            for pair in softs.chunks(2) {
+                if let Some(b) = v.push(pair[0], pair[1]) {
+                    got.push(b);
+                }
+            }
+            got.extend(v.flush());
+            assert_eq!(
+                &got[..bits.len()],
+                &bits[..],
+                "k={} lost the message in the stream",
+                code.k()
+            );
+        }
+    }
+
+    /// And it still corrects a channel, which is the whole reason it exists: a
+    /// stream that only worked on clean input would decode nothing on the air.
+    #[test]
+    fn the_stream_corrects_a_noisy_channel() {
+        let code = ConvCode::PSK_QPSK;
+        let bits: Vec<u8> = (0..600u32).map(|i| ((i * 11 + 5) % 2) as u8).collect();
+        let coded = encode_with(&bits, code);
+        let mut softs = soft(&coded, 1.0);
+        for (i, v) in softs.iter_mut().enumerate() {
+            if i % 17 == 0 {
+                *v = -*v;
+            }
+        }
+        let mut v = ViterbiStream::new(code);
+        let mut got = Vec::new();
+        for pair in softs.chunks(2) {
+            if let Some(b) = v.push(pair[0], pair[1]) {
+                got.push(b);
+            }
+        }
+        got.extend(v.flush());
+        assert_eq!(&got[..bits.len()], &bits[..], "the stream did not correct the channel");
     }
 
     /// PSK31's QPSK code is the same machine two bits shorter: K=5, sixteen
