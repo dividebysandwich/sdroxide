@@ -898,6 +898,23 @@ impl SdroxideApp {
                                     self.sstv.rx_tex = None;
                                 }
 
+                                // Clear the picture currently shown in LIVE without
+                                // touching the decoder: a completed frame that is
+                                // still on screen is wiped so the next one can be
+                                // seen arriving, and an in-progress decode keeps
+                                // running (use Restart RX to abandon it).
+                                if crate::chrome::chip(ui, false, "Clear Rx")
+                                    .on_hover_text(
+                                        "Clear the picture currently shown in the LIVE view. \
+                                         The decoder keeps running — use Restart RX to abandon \
+                                         an in-progress picture and listen for the next header.",
+                                    )
+                                    .clicked()
+                                {
+                                    self.sstv.rx_color = None;
+                                    self.sstv.rx_tex = None;
+                                }
+
                                 // Who sent it. The FSK ID arrives in tones a
                                 // fraction of a second after the picture, which
                                 // is exactly when the operator is looking at the
