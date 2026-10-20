@@ -35,6 +35,13 @@ fn main() {
     // including under a plain `cargo build`.
     let mut cmake = cmake::Config::new(&wrapper);
     cmake.define("RADE_C_DIR", rade_c.to_string_lossy().as_ref()).profile("Release");
+    // Allow a local Opus archive to be used instead of the network fetch, so the
+    // crate builds offline (set OPUS_URL to a local .zip path).
+    if let Ok(url) = std::env::var("OPUS_URL")
+        && !url.is_empty()
+    {
+        cmake.define("OPUS_URL", url);
+    }
     // **Cross-compiling: `rade_c`'s CMake needs the target triple.** Its
     // `BuildOpus.cmake` passes `--host=${CMAKE_C_COMPILER_TARGET}` to the
     // ExternalProject's autotools `configure`, and only when that variable is
@@ -48,10 +55,10 @@ fn main() {
     // not the Rust target triple, so it is passed in rather than derived: an
     // environment variable of the same name, set by the cross build. Nothing is
     // done when it is unset, which is every native build.
-    if let Ok(triple) = std::env::var("CMAKE_C_COMPILER_TARGET") {
-        if !triple.is_empty() {
-            cmake.define("CMAKE_C_COMPILER_TARGET", triple);
-        }
+    if let Ok(triple) = std::env::var("CMAKE_C_COMPILER_TARGET")
+        && !triple.is_empty()
+    {
+        cmake.define("CMAKE_C_COMPILER_TARGET", triple);
     }
     let dst = cmake.build_target("rade_static").build();
 
