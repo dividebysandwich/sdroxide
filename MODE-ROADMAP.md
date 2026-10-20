@@ -152,10 +152,21 @@ between reading a station and reading noise.
 during the freeze, **this function is not pushed** — his work takes precedence and
 this crate stays unpublished rather than competing with it.
 
-**Still to do:** `text_modem`'s `RxModem::Olivia` still holds our `OliviaRx`, so
-the menu does not use the vendored engine yet. That swap is the user-visible step:
-the crate is proven, the wiring is mechanical, and `magnitude()` for the S-meter
-has to come from the audio envelope since the engine does not report one.
+**Wired, 2026-10-20:** `RxModem::Olivia` now holds `sdroxide_olivia::OliviaReceiver`,
+so the mode in the band menu is decoded by the vendored engine. The receiver
+answers the same three calls our `OliviaRx` did — `process`, `magnitude`,
+`set_params` — so no other code moved; the S-meter is fed by the decayed peak of
+the arriving audio, because the engine reports no level.
+
+**Transmit is still ours.** `OliviaTx` has never been confirmed by another
+station, and now there is a way to check it: send from this program and decode it
+in fldigi. That test has never been run in either direction until tonight's
+receiving work, and it is the last unknown in the mode.
+
+**No reverse switch in the UI yet.** `set_reverse` exists on the receiver and the
+captures needed it, but `DigiConfig` has no field for it, so adding one is a
+`PROTO_VERSION` bump. Worth doing: a reversed Olivia transmission is a real thing
+on the air, and today it reads as noise with no way to try the other polarity.
 
 ### Olivia, 2026-10-20 (the verdict): stop reimplementing it, vendor the engine
 

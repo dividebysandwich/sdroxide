@@ -10,9 +10,8 @@
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
-use sdroxide_dsp::{
-    MonoResampler, OliviaRx, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ThorRx, ThorTx,
-};
+use sdroxide_dsp::{MonoResampler, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ThorRx, ThorTx};
+use sdroxide_olivia::OliviaReceiver;
 use sdroxide_types::{DigiConfig, DigiStatus, Mode, QsoStep, TranscriptLine};
 
 use crate::DigiEngine;
@@ -27,7 +26,7 @@ const RX_TEXT_CAP: usize = 8000;
 enum RxModem {
     Psk(PskRx),
     Rtty(RttyRx),
-    Olivia(OliviaRx),
+    Olivia(OliviaReceiver),
     Thor(ThorRx),
 }
 
@@ -173,9 +172,13 @@ impl TextModemController {
                 r.set_afc(cfg.rtty_afc);
                 RxModem::Rtty(r)
             }
-            Mode::Olivia => {
-                RxModem::Olivia(OliviaRx::new(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
-            }
+            Mode::Olivia => RxModem::Olivia(OliviaReceiver::new(
+                MODEM_RATE,
+                audio_hz as f64,
+                o_tones,
+                o_bw as u32,
+                false,
+            )),
             Mode::Thor => RxModem::Thor(ThorRx::new(MODEM_RATE, audio_hz as f64, t_baud)),
             _ => {
                 let mut r = PskRx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
@@ -239,7 +242,7 @@ impl TextModemController {
                 r.set_reverse(self.cfg.rtty_reverse);
                 r.set_afc(self.cfg.rtty_afc);
             }
-            RxModem::Olivia(r) => r.set_params(hz, o_tones, o_bw),
+            RxModem::Olivia(r) => r.set_params(hz, o_tones, o_bw as u32),
             RxModem::Thor(r) => r.set_params(hz, t_baud),
         }
         match &mut self.tx {

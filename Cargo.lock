@@ -5203,6 +5203,7 @@ dependencies = [
  "sdroxide-ax25",
  "sdroxide-deepcw",
  "sdroxide-dsp",
+ "sdroxide-olivia",
  "sdroxide-rade",
  "sdroxide-types",
  "serde",

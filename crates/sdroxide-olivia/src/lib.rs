@@ -90,6 +90,82 @@ impl OliviaDecoder {
     }
 }
 
+// The engine is a self-contained C++ object: it holds no thread-local state, no
+// file descriptors and no Rust references. The digi controller is *moved*
+// between threads but never used from two at once, which is what `Send` asks
+// for; it stays `!Sync`, because two threads driving it at once would be a data
+// race in the engine and nothing here prevents that.
+unsafe impl Send for OliviaDecoder {}
+
+/// The receiver, shaped the way the digi engine expects: `process`, `magnitude`
+/// and `set_params`, exactly as `sdroxide_dsp::OliviaRx` offers them.
+///
+/// The engine does not report a received level, so the S-meter is fed by the
+/// peak of the audio as it arrives — the same decayed peak the DSP receiver
+/// kept.
+pub struct OliviaReceiver {
+    engine: Option<OliviaDecoder>,
+    rate: f64,
+    centre: f64,
+    tones: usize,
+    bandwidth: u32,
+    reverse: bool,
+    mag: f32,
+}
+
+impl OliviaReceiver {
+    pub fn new(rate: f64, centre: f64, tones: usize, bandwidth: u32, reverse: bool) -> Self {
+        let engine = OliviaDecoder::new(rate, centre, tones, bandwidth, reverse);
+        OliviaReceiver { engine, rate, centre, tones, bandwidth, reverse, mag: 0.0 }
+    }
+
+    /// Retune or change mode. The engine is rebuilt, which is what fldigi's own
+    /// `restart()` does when the tone count or bandwidth changes.
+    pub fn set_params(&mut self, centre: f64, tones: usize, bandwidth: u32) {
+        if (centre - self.centre).abs() < 0.5 && tones == self.tones && bandwidth == self.bandwidth
+        {
+            return;
+        }
+        self.centre = centre;
+        self.tones = tones;
+        self.bandwidth = bandwidth;
+        self.engine = OliviaDecoder::new(self.rate, centre, tones, bandwidth, self.reverse);
+        self.mag = 0.0;
+    }
+
+    /// Invert the tone order. Real stations are sometimes reversed, and a
+    /// capture taken on the wrong sideband always is.
+    pub fn set_reverse(&mut self, reverse: bool) {
+        if reverse == self.reverse {
+            return;
+        }
+        self.reverse = reverse;
+        self.engine = OliviaDecoder::new(self.rate, self.centre, self.tones, self.bandwidth, reverse);
+    }
+
+    pub fn reverse(&self) -> bool {
+        self.reverse
+    }
+
+    pub fn process(&mut self, audio: &[f32]) -> String {
+        let peak = audio.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        self.mag += 0.02 * (peak - self.mag);
+        match self.engine.as_mut() {
+            Some(e) => e.process(audio),
+            None => String::new(),
+        }
+    }
+
+    pub fn magnitude(&self) -> f32 {
+        self.mag
+    }
+
+    /// The engine's signal-to-noise estimate, for the panel's readout.
+    pub fn snr(&self) -> f64 {
+        self.engine.as_ref().map(|e| e.snr()).unwrap_or(0.0)
+    }
+}
+
 impl Drop for OliviaDecoder {
     fn drop(&mut self) {
         unsafe { olivia_free(self.handle) }
