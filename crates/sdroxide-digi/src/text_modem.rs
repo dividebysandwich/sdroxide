@@ -155,10 +155,17 @@ impl TextModemController {
         // RTTY starts on the standard tone pair instead of anywhere convenient:
         // 2125/2295 Hz is what every other RTTY program sends and expects, and
         // it is the offset the log has to take off again to name the contact.
-        let audio_hz = match mode {
-            Mode::Olivia | Mode::Thor | Mode::Fsq => 1500.0f32,
-            Mode::Rtty | Mode::RttyFm => sdroxide_types::RTTY_CENTER_HZ,
-            _ => 1000.0f32,
+        // The fixed-centre modes read their centre from the mode, which is also
+        // what the panadapter anchors on: one number, so a click that puts the
+        // signal where the demodulator listens cannot drift from where the
+        // window says it is.
+        let audio_hz = if mode.holds_audio_centre() {
+            mode.audio_centre_hz()
+        } else {
+            match mode {
+                Mode::Rtty | Mode::RttyFm => sdroxide_types::RTTY_CENTER_HZ,
+                _ => 1000.0f32,
+            }
         };
         let (baud, shift) = (cfg.rtty_baud as f64, cfg.rtty_shift_hz as f64);
         let (o_tones, o_bw) = (cfg.olivia_tones as usize, cfg.olivia_bw_hz as f64);

@@ -1212,6 +1212,20 @@ fn focus_hz(mode: Mode, dial_hz: f64, audio_hz: f32, cw_qrg: bool, audio_front_e
             dial_hz + SSTV_TONE_HZ
         };
     }
+    // **Olivia listens at one audio centre and cannot find a signal that is not
+    // there.** A click puts the signal on that centre, so the dial ends up
+    // beside it rather than on it — which means the window has to be centred on
+    // the signal or the operator is looking at empty space next to what is
+    // being decoded. Same shape as SSTV's picture, for the same reason.
+    if mode.holds_audio_centre() {
+        // `audio_hz` is unsigned, so the side the mode rides decides the sign —
+        // the same rule CW's `cw_qrg` and the SSTV picture use.
+        return if mode.is_lower_sideband_at(dial_hz) {
+            dial_hz - audio_hz as f64
+        } else {
+            dial_hz + audio_hz as f64
+        };
+    }
     //
     // **And the same for RTTY, NAVTEX and DSC — the SSTV case's twin.** Their
     // tone pair is off the dial *only* on a front end that hands over demodulated
@@ -1317,6 +1331,25 @@ mod tests {
         assert_eq!(focus_hz(Mode::Sstv, 3_730_000.0, 0.0, false, true), 3_728_250.0);
         // A mode that really is worked on the dial is untouched...
         assert_eq!(focus_hz(Mode::Ft8, 14_074_000.0, 0.0, false, true), 14_074_000.0);
+        // **Olivia listens at one audio centre and cannot find a signal that is
+        // not there.** A click puts the signal on that centre, so the dial ends
+        // up beside it — and the window has to follow the signal, or the
+        // operator is looking at empty space while the decoder works.
+        assert_eq!(
+            focus_hz(Mode::Olivia, 27_415_000.0, Mode::Olivia.audio_centre_hz(), false, true),
+            27_416_500.0,
+            "USB: the signal sits a centre above the dial"
+        );
+        // ...and it is the same sideband everywhere, because Olivia is a data
+        // mode and those are worked USB on every band. A station actually
+        // sending on the other sideband — the CB convention on 11 m is LSB — is
+        // what the reverse switch is for: the mirroring is in the tone order,
+        // and the offset magnitude is all the anchor needs.
+        assert_eq!(
+            focus_hz(Mode::Olivia, 3_730_000.0, Mode::Olivia.audio_centre_hz(), false, true),
+            3_731_500.0,
+            "a data mode stays USB at 80 m"
+        );
         // ...and **an SDR centres on the picture too** — a HackRF on 80 m
         // showed it as a sliver left of a view centred on the empty dial.
         assert_eq!(focus_hz(Mode::Sstv, 3_730_000.0, 0.0, false, false), 3_728_250.0);

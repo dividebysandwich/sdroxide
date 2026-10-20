@@ -1825,9 +1825,13 @@ impl SdroxideApp {
                 // not on the front end: a click in RTTY tunes the dial on *every*
                 // radio, which is what commit 7c8a14c3 wanted, and it is right on
                 // an SDR too. Only the centring below is front-end-dependent.
-                click_sets_offset: !mode.holds_standard_tones() && !self.atsmini_active(),
+                click_sets_offset: !mode.holds_standard_tones()
+                    && !self.atsmini_active()
+                    && !mode.holds_audio_centre(),
                 line_on_cursor: false,
-                center_on_cursor: (audio_front_end && mode.holds_standard_tones()) || sstv_picture,
+                center_on_cursor: (audio_front_end && mode.holds_standard_tones())
+                    || sstv_picture
+                    || mode.holds_audio_centre(),
             })
         } else {
             None

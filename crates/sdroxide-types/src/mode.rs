@@ -1437,6 +1437,25 @@ impl Mode {
         self.standard_tone_offset_hz().is_some()
     }
 
+    /// True for the modes whose demodulator listens at **one fixed audio
+    /// centre** instead of searching for the signal: Olivia, THOR and FSQ, all
+    /// at [`Self::audio_centre_hz`].
+    ///
+    /// It matters because the two ways of tuning are not interchangeable for
+    /// them. A click that sets the offset leaves the dial where it is and moves
+    /// the *signal* — fine for a mode with AFC, which is how RTTY gets away with
+    /// it. A mode that listens at 1500 Hz and searches only a couple of hundred
+    /// hertz either side has to have the signal *put* there, which means the
+    /// click moves the dial, exactly as CW does with its sidetone pitch.
+    pub fn holds_audio_centre(self) -> bool {
+        matches!(self, Mode::Olivia | Mode::Thor | Mode::Fsq)
+    }
+
+    /// The audio centre those modes listen at, in Hz.
+    pub fn audio_centre_hz(self) -> f32 {
+        1500.0
+    }
+
     /// True where the audio offset belongs to the *mode* rather than to the
     /// band the dial is on, so [`crate::DigiConfig::tx_audio_hz`] neither
     /// supplies it nor learns from it.

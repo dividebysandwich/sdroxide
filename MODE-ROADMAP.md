@@ -123,6 +123,37 @@ Recordings: `QPSK31/63/125/250-1000_Hz` in `~/Downloads/sounds`, named for a
 | **ORBCOMM** | partially pub | `ORBCOMM` | satellite SDPSK; needs a wideband lane and its own band |
 | **STANAG 4539** | pub | — | 110B-class, own preamble and equaliser |
 
+### Olivia: a click now puts the signal where the decoder listens, 2026-10-20
+
+The report that started this: *"I got gibberish the first few times because I
+didn't have the signal under the dial."* Olivia demodulates at **one fixed audio
+centre, 1500 Hz**, and searches only a couple of hundred hertz either side. A
+click on the panadapter put the *dial* on the signal, which leaves the audio at
+zero — so nothing decoded, and the operator had to offset the dial by an amount
+they could only find by trial.
+
+RTTY has the same fixed centre and gets away with it because it has **AFC**,
+which finds the tones wherever they are. Olivia has none. SSTV was already fixed
+the same way this is now: `focus_hz` anchors the view on the signal rather than
+the dial.
+
+Three pieces, and the shared one is the point:
+
+- `Mode::holds_audio_centre()` and `Mode::audio_centre_hz()` name the modes that
+  listen at one centre — Olivia, THOR, FSQ — and `text_modem` now reads its
+  centre from there instead of a literal, so the demodulator and the view cannot
+  drift apart.
+- A click on those modes **tunes the dial** so the clicked signal lands on the
+  centre, the way CW's click lands on the sidetone pitch, instead of setting an
+  offset the demodulator then ignores.
+- `focus_hz` follows the signal, so the window stays on what is being decoded
+  rather than on an empty dial beside it.
+
+The anchor is `dial + 1500` on every band: Olivia is a data mode and those are
+worked USB everywhere. A station really sending on the lower sideband — the CB
+convention on 11 m — is what the **reverse** switch is for, because the mirroring
+lives in the tone order and the anchor only needs the magnitude.
+
 ### Olivia proven on the air, 2026-10-20 (night)
 
 Live proof, not a fixture: fldigi transmitted Olivia 16/500 from the CRT SS9900v
