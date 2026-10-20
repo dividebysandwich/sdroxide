@@ -616,11 +616,34 @@ pub struct WheelSettings {
     pub digit_wheel: bool,
 }
 
+#[cfg(test)]
+mod wheel_default_tests {
+    use super::{WheelAction, WheelSettings};
+
+    /// The plain wheel tunes. It was Zoom, and that reads as a fault: scrolling
+    /// "to change frequency" zooms instead, and a zoom anchors at the cursor, so
+    /// the dial slides away from the pointer whichever way the wheel turns and
+    /// the frequency only ever moves one way.
+    #[test]
+    fn the_wheel_tunes_by_default() {
+        let w = WheelSettings::default();
+        assert_eq!(w.wheel, WheelAction::Tune, "the plain wheel must tune");
+        assert_eq!(w.wheel_shift, WheelAction::Zoom, "shift must zoom");
+    }
+}
+
 impl Default for WheelSettings {
     fn default() -> Self {
         WheelSettings {
-            wheel: WheelAction::Zoom,
-            wheel_shift: WheelAction::Tune,
+            // The plain wheel tunes and Shift zooms, which is what SDR++, SDR#
+            // and PowerSDR all do. The other way round reads as a fault rather
+            // than a preference: scrolling "to change frequency" zooms instead,
+            // and because a zoom anchors at the cursor the dial slides away from
+            // the pointer whichever way the wheel turns — so the frequency only
+            // ever moves in one direction, by amounts the operator did not ask
+            // for.
+            wheel: WheelAction::Tune,
+            wheel_shift: WheelAction::Zoom,
             invert: false,
             tune_step_hz: 100.0,
             zoom_rate: 1.0,
