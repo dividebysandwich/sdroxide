@@ -1868,12 +1868,16 @@ use sdroxide_types::{
 /// serde catch-all, so `Default`'s discriminant moves again and the enum rides
 /// [`sdroxide_types::ClientScreen`]. `PROTO_VERSION` 216 → 217,
 /// `VERSION_BYTE` 0x24 → 0x25. A downstream (fork) change.
+/// v219: [`sdroxide_types::DigiConfig`] gains `olivia_reverse` at its tail.
+/// Olivia's tone order can be inverted, and a reversed station reads as noise
+/// with no way to try the other polarity. Appended, so nothing above it moves.
+///
 /// v218: [`sdroxide_types::DigiConfig`] gains `psk_modulation` at its tail —
 /// BPSK or QPSK, a separate axis from `psk_speed` because QPSK is a different
 /// constellation *and* carries a convolutional code. `PROTO_VERSION`
 /// 217 → 218, `VERSION_BYTE` 0x25 → 0x26. A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 218;
-const VERSION_BYTE: u8 = 0x26;
+pub const PROTO_VERSION: u16 = 219;
+const VERSION_BYTE: u8 = 0x27;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

@@ -219,6 +219,9 @@ pub struct OliviaTx {
     /// stays true after it has been played, so a caller that asks for more
     /// audio — which the loopback flushes do — gets the bracket again, for ever.
     tail_done: bool,
+    /// Invert the tone order. A station sending reversed reads as noise until
+    /// this matches it, and the same switch applies to what we send.
+    reverse: bool,
 }
 
 impl OliviaTx {
@@ -238,7 +241,13 @@ impl OliviaTx {
             tail: None,
             tail_pos: 0,
             tail_done: false,
+            reverse: false,
         }
+    }
+
+    /// Invert the tone order, the mirror of the receiver's `set_reverse`.
+    pub fn set_reverse(&mut self, reverse: bool) {
+        self.reverse = reverse;
     }
 
     pub fn set_params(&mut self, audio_hz: f64, tones: usize, bw: f64) {
@@ -361,6 +370,7 @@ impl OliviaTx {
         self.cur_done = done;
         for i in 0..BLOCK {
             let tone = gray(out[i]) as usize % self.g.tones;
+            let tone = if self.reverse { self.g.tones - 1 - tone } else { tone };
             self.tonegen.emit(self.g.tone_hz(tone), self.g.sps, OUT_AMP, &mut self.cur);
         }
     }

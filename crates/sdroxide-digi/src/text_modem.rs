@@ -177,7 +177,7 @@ impl TextModemController {
                 audio_hz as f64,
                 o_tones,
                 o_bw as u32,
-                false,
+                cfg.olivia_reverse,
             )),
             Mode::Thor => RxModem::Thor(ThorRx::new(MODEM_RATE, audio_hz as f64, t_baud)),
             _ => {
@@ -242,7 +242,10 @@ impl TextModemController {
                 r.set_reverse(self.cfg.rtty_reverse);
                 r.set_afc(self.cfg.rtty_afc);
             }
-            RxModem::Olivia(r) => r.set_params(hz, o_tones, o_bw as u32),
+            RxModem::Olivia(r) => {
+                r.set_reverse(self.cfg.olivia_reverse);
+                r.set_params(hz, o_tones, o_bw as u32);
+            }
             RxModem::Thor(r) => r.set_params(hz, t_baud),
         }
         match &mut self.tx {
@@ -252,7 +255,10 @@ impl TextModemController {
                 m.set_qpsk(p_qpsk);
             }
             TxModem::Rtty(m) => m.set_tuning(hz, shift),
-            TxModem::Olivia(m) => m.set_params(hz, o_tones, o_bw),
+            TxModem::Olivia(m) => {
+                m.set_reverse(self.cfg.olivia_reverse);
+                m.set_params(hz, o_tones, o_bw);
+            }
             TxModem::Thor(m) => m.set_params(hz, t_baud),
         }
     }
@@ -435,6 +441,7 @@ impl DigiEngine for TextModemController {
             || cfg.rtty_afc != self.cfg.rtty_afc
             || cfg.olivia_tones != self.cfg.olivia_tones
             || cfg.olivia_bw_hz != self.cfg.olivia_bw_hz
+            || cfg.olivia_reverse != self.cfg.olivia_reverse
             || cfg.thor_mode != self.cfg.thor_mode
             || cfg.psk_speed != self.cfg.psk_speed
             || cfg.psk_modulation != self.cfg.psk_modulation;

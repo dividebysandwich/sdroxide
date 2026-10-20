@@ -751,6 +751,18 @@ impl SdroxideApp {
                             changed = true;
                         }
                     }
+                    ui.add_space(8.0);
+                    if ui
+                        .selectable_label(cfg.olivia_reverse, "REVERSE")
+                        .on_hover_text(
+                            "Invert the tone order, both ways. A station sending \
+                             reversed reads as noise until this is on.",
+                        )
+                        .clicked()
+                    {
+                        cfg.olivia_reverse = !cfg.olivia_reverse;
+                        changed = true;
+                    }
                 }
                 Mode::Thor => {
                     cap(ui, "Mode");

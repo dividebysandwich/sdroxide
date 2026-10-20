@@ -2444,6 +2444,10 @@ pub struct DigiConfig {
     /// Appended last, so this is a wire change (`PROTO_VERSION` 217 → 218).
     #[serde(default)]
     pub psk_modulation: PskModulation,
+
+    /// Invert Olivia's tone order, receive and transmit.
+    #[serde(default)]
+    pub olivia_reverse: bool,
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2697,6 +2701,7 @@ impl Default for DigiConfig {
             hell_slant_ppm: 0.0,
             psk_speed: PskSpeed::default(),
             psk_modulation: PskModulation::default(),
+            olivia_reverse: false,
         }
     }
 }

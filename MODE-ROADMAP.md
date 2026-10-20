@@ -163,10 +163,25 @@ station, and now there is a way to check it: send from this program and decode i
 in fldigi. That test has never been run in either direction until tonight's
 receiving work, and it is the last unknown in the mode.
 
-**No reverse switch in the UI yet.** `set_reverse` exists on the receiver and the
-captures needed it, but `DigiConfig` has no field for it, so adding one is a
-`PROTO_VERSION` bump. Worth doing: a reversed Olivia transmission is a real thing
-on the air, and today it reads as noise with no way to try the other polarity.
+**The reverse switch is in, 2026-10-20** (`PROTO_VERSION` 218 → 219,
+`VERSION_BYTE` 0x26 → 0x27). `DigiConfig::olivia_reverse` is appended at the tail,
+a **REVERSE** chip sits beside the tones and bandwidth chips, and it is applied to
+both the receiver and our transmitter. Proved on the real capture: with it on,
+`TEST TEST THE EAGLE HAS LANDED 12`; with it off, noise — the negative half is
+what makes the test mean anything.
+
+**And the switch's work found a bigger fault: our transmitter is not Olivia to
+anyone else.** A transmission from `OliviaTx`, reversed or not, does **not**
+decode in Jalocha's engine, while our own `OliviaRx` reads it perfectly. So the
+modulator and our demodulator agree with each other and with nobody else — which
+is what the oldest note in this file suspected ("whether a real fldigi can copy
+*our* transmission") and never checked. The recorded state is the
+`our_transmitter_is_not_yet_readable` test: ignored, because it asserts a known
+fault rather than a fixed one.
+
+Fixing it is the mirror of the receiver: check our modulator's tone assignment
+against `MFSK_Transmitter`, with the engine as the oracle. Until then Olivia is
+receive-only in practice, which for a listener fork is most of what it is for.
 
 ### Olivia, 2026-10-20 (the verdict): stop reimplementing it, vendor the engine
 
