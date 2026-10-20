@@ -123,6 +123,40 @@ Recordings: `QPSK31/63/125/250-1000_Hz` in `~/Downloads/sounds`, named for a
 | **ORBCOMM** | partially pub | `ORBCOMM` | satellite SDPSK; needs a wideband lane and its own band |
 | **STANAG 4539** | pub | — | 110B-class, own preamble and equaliser |
 
+### Olivia, 2026-10-20 (later): the reference is read, and the next question is the signal
+
+The reference implementation has now been read rather than remembered
+(`w1hkj/fldigi`, `src/olivia/olivia.cxx` and `src/include/jalocha/pj_mfsk.h`).
+What it says, and where we differ:
+
+| | fldigi | ours |
+|---|---|---|
+| window | 512 samples, raised-cosine shaped, hopped 128 | one 256-sample rectangular hop per symbol |
+| spectra per symbol | **two** (the synchroniser picks one) | one |
+| tone spacing | every **2** FFT bins of 512 = 31.25 Hz | 31.25 Hz, sampled directly |
+| timing | searches **frequency offset × block phase** and scores each | picks a sub-phase by per-window peak magnitude |
+
+The bit mapping matches ours: character `p` reads position `(p+i) mod planes` of
+symbol `i`, scrambled with `0xE257E6D0291574EC` at `(13p+i) mod 64`, forward FHT,
+peak index, `+64` when the peak is negative.
+
+**And a from-scratch Python reimplementation following the reference — sweeping
+symbol offset, slice parity, block phase, frequency offset, both polarities, both
+Gray directions and both peak rules — still does not decode our fixture.** So the
+remaining explanation is not the decoder: it is the **signal**.
+
+Two observations point at the rig. A clean Olivia symbol should put most of its
+energy in one tone; ours measures **0.98** peak/rest, i.e. about half, on a
+capture that is otherwise clean (114× the noise, no clipping). And the
+transmitter's sound card is at 96 % PCM, which may be overdriving the modulator
+into intermodulation — which looks *exactly* like a flat 500 Hz block on a
+spectrum, and destroys the tone structure underneath.
+
+**The test that settles it, and it needs no analysis:** play the capture back into
+fldigi and see whether fldigi reads its own transmission. It encoded the text, so
+if it cannot read the recording, the recording is not Olivia. That has never been
+checked because fldigi cannot transmit and receive at once.
+
 ### Olivia, 2026-10-20: the fixture is runnable, and three things are excluded
 
 Olivia is the most **visible** fault in the tree — it is in the band menu and it
