@@ -86,7 +86,7 @@ fn main() {
     // number that matters: a picture that stops after a handful of lines is a
     // decoder that lost the signal, and one that runs to a thousand is a chart.
     let (pictures, how) = match decode(&audio, lpm, ioc, false) {
-        Some(v) => (v, "found by its start tone"),
+        Some(v) => (v, "found by the receiver itself, with no hand start"),
         None => match decode(&audio, lpm, ioc, true) {
             Some(v) => (v, "started by hand (no start tone in the recording)"),
             None => (Vec::new(), "nothing"),

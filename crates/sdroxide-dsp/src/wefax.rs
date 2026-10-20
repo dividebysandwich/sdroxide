@@ -27,6 +27,29 @@
 //!   nearly every service uses for charts;
 //! * a **stop tone**, the subcarrier alternating at 450 Hz for five seconds.
 //!
+//! # Finding a transmission
+//!
+//! Two ways, and the second is the one a real channel needs:
+//!
+//! * the **start tone**, whether the subcarrier alternating or a plain audio
+//!   tone, which arms the receiver; the page is announced once the phasing
+//!   behind it locks, so a false tone leaves no trace on screen;
+//! * the **phasing signal alone**. A start tone can sit under a carrier or a
+//!   fade and never be heard, while the phasing signal — the same line, the same
+//!   pulse, at the line rate — is the one thing on a fax channel that repeats
+//!   exactly. Lines are stacked so a weak signal's scattered pulse stands out,
+//!   and a few seconds of it begins a page with no tone at all.
+//!
+//! A **carrier left standing on the channel** starts nothing — it is steady, and
+//! neither the alternation nor a pulse is — and ends a page that has run out of
+//! chart, whatever frequency it has drifted to. A stop tone must be *periodic*
+//! at its pitch, not merely cross mid-grey that often: noise on a weak chart
+//! does, and a real recording was cut short that way.
+//!
+//! Black and white are not taken on trust either. A receiver a little off tune,
+//! or Doppler on the path, moves the whole subcarrier, so the phasing signal is
+//! used to re-measure where they are before the chart is read.
+//!
 //! Line length comes from the *index of cooperation*: pixels per line is
 //! `IOC × π`, so IOC 576 gives 1809 and IOC 288 gives 904. Nothing in the
 //! signal states the height — a chart runs for as long as the station keeps
@@ -202,6 +225,9 @@ struct ToneDetect {
     bright: u32,
     /// Whether the window that just completed swung the full range.
     swing: bool,
+    /// The levels of the window in progress, kept so a completed window can be
+    /// measured for periodicity: see [`LevelSpectrum`].
+    win: Vec<f32>,
 }
 
 impl ToneDetect {
@@ -215,9 +241,13 @@ impl ToneDetect {
             self.crossings += 1;
             self.above = above;
         }
+        if self.samples == 0 {
+            self.win.clear();
+        }
         self.samples += 1;
         self.dark += (level < 0.25) as u32;
         self.bright += (level > 0.75) as u32;
+        self.win.push(level);
         if self.samples < window {
             return None;
         }
@@ -233,7 +263,14 @@ impl ToneDetect {
         Some(rate)
     }
 
+    /// The levels of the window `push` has just completed. Valid until the next
+    /// `push`.
+    fn window(&self) -> &[f32] {
+        &self.win
+    }
+
     fn reset(&mut self) {
+        self.win.clear();
         self.crossings = 0;
         self.samples = 0;
         self.matched = 0.0;
@@ -309,9 +346,14 @@ impl AudioToneDetect {
             return Some(AudioTone::Other);
         }
         let power: Vec<f32> = self.spec.iter().map(|c| c.norm_sqr()).collect();
-        let total: f32 = power.iter().skip(1).sum();
         let lo = (AUDIO_TONE_LO_HZ / self.hz_per_bin) as usize;
         let hi = ((AUDIO_TONE_HI_HZ / self.hz_per_bin) as usize).min(power.len() - 1);
+        // Purity is judged against the low part of the audio only. A carrier on
+        // the channel, or the subcarrier itself, sits near 2 kHz and dominates
+        // the total energy, so a perfectly clean 300 Hz tone beside one is a
+        // twentieth of the whole — and was never heard.
+        let top = ((AUDIO_TONE_BAND_HZ / self.hz_per_bin) as usize).min(power.len() - 1);
+        let total: f32 = power[1.min(top)..=top].iter().sum();
         if total <= 1e-9 || lo >= hi {
             return Some(AudioTone::Other);
         }
@@ -330,6 +372,120 @@ impl AudioToneDetect {
         } else {
             AudioTone::Other
         })
+    }
+}
+
+/// The share of a window's brightness variation that lies near one pitch.
+///
+/// One FFT per completed [`ToneDetect`] window — a few thousand points twice a
+/// second — so the check costs nothing next to the discriminator.
+struct LevelSpectrum {
+    fft: Arc<dyn RealToComplex<f32>>,
+    window: Vec<f32>,
+    buf: Vec<f32>,
+    spec: Vec<Complex32>,
+    scratch: Vec<Complex32>,
+    hz_per_bin: f64,
+}
+
+impl LevelSpectrum {
+    fn new(rate: f64, window_secs: f64) -> Self {
+        let n = ((rate * window_secs) as usize).max(16);
+        let fft = RealFftPlanner::<f32>::new().plan_fft_forward(n);
+        let spec = fft.make_output_vec();
+        let scratch = fft.make_scratch_vec();
+        let window = (0..n).map(|i| 0.5 - 0.5 * (TAU * i as f64 / n as f64).cos() as f32).collect();
+        LevelSpectrum {
+            fft,
+            window,
+            buf: Vec::with_capacity(n),
+            spec,
+            scratch,
+            hz_per_bin: rate / n as f64,
+        }
+    }
+
+    /// Of everything that varies in `levels`, the share within [`PERIODIC_TOL`]
+    /// of `hz`. Zero when the window is the wrong length or does not vary.
+    fn share(&mut self, levels: &[f32], hz: f64) -> f32 {
+        if levels.len() != self.window.len() {
+            return 0.0;
+        }
+        let mean = levels.iter().sum::<f32>() / levels.len() as f32;
+        self.buf.clear();
+        self.buf.extend(levels.iter().zip(&self.window).map(|(l, w)| (l - mean) * w));
+        if self.fft.process_with_scratch(&mut self.buf, &mut self.spec, &mut self.scratch).is_err()
+        {
+            return 0.0;
+        }
+        let total: f32 = self.spec.iter().skip(1).map(|c| c.norm_sqr()).sum();
+        if total <= 1e-9 {
+            return 0.0;
+        }
+        let lo = ((hz * (1.0 - PERIODIC_TOL)) / self.hz_per_bin) as usize;
+        let hi =
+            (((hz * (1.0 + PERIODIC_TOL)) / self.hz_per_bin) as usize).min(self.spec.len() - 1);
+        if lo >= hi {
+            return 0.0;
+        }
+        self.spec[lo..=hi].iter().map(|c| c.norm_sqr()).sum::<f32>() / total
+    }
+}
+
+/// The last few lines, stacked, to see a phasing signal through the noise.
+///
+/// A phasing signal is the one thing on a fax channel that repeats exactly: the
+/// same black line with the same white pulse, at the line rate. On a weak
+/// signal no *single* line shows it — one real recording's pulse arrives as a
+/// scatter of white and black blips whose edges wander by a tenth of a line from
+/// one line to the next — but laid on top of each other the noise averages away
+/// and the pulse stands out as a clean block. So the lock is taken on the
+/// average of a run of lines, not on each line alone, and a run only counts
+/// when nearly every line in it really does carry the pulse: a chart's fixed
+/// graphic would pass the average, but not the line-by-line vote on a signal
+/// that is not there.
+///
+/// The lines have to be cut on one clock — one line length apart — so that the
+/// pulse lands in the same place in each. Both callers do that already.
+#[derive(Debug, Default)]
+struct PhasingStack {
+    lines: std::collections::VecDeque<Vec<f32>>,
+}
+
+impl PhasingStack {
+    fn reset(&mut self) {
+        self.lines.clear();
+    }
+
+    /// Add a line; once `want` are held, where the picture begins in the line
+    /// just added (samples from its start) and where the pulse is, if they make
+    /// a phasing signal.
+    fn push(&mut self, line: &[f32], want: usize) -> Option<(u32, PulseRegion)> {
+        self.lines.push_back(line.to_vec());
+        while self.lines.len() > want {
+            self.lines.pop_front();
+        }
+        if self.lines.len() < want {
+            return None;
+        }
+        // One clock cuts lines a sample apart in length, not more.
+        let n = self.lines.iter().map(Vec::len).min()?;
+        let mut profile = vec![0.0f32; n];
+        for l in &self.lines {
+            for (p, v) in profile.iter_mut().zip(l) {
+                *p += v;
+            }
+        }
+        let k = self.lines.len() as f32;
+        profile.iter_mut().for_each(|p| *p /= k);
+        let pulse = pulse_region(&profile, false)?;
+        // The vote: the pulse has to be in nearly every line, or the average is
+        // a few bright lines and a chart.
+        let present = self.lines.iter().filter(|l| pulse.stands_out(&l[..n])).count();
+        if present + 1 < self.lines.len() {
+            return None;
+        }
+        Some((pulse.picture_start(n), pulse))
     }
 }
 
@@ -367,9 +523,6 @@ pub struct WefaxRx {
     sample_idx: u64,
 
     // Phasing.
-    /// Phasing lines examined so far, and the running skew estimate in samples.
-    phase_lines: u32,
-    phase_skew: f64,
     /// Samples spent phasing, so a transmission whose phasing signal was missed
     /// still produces a (misaligned) chart rather than nothing.
     phase_samples: u64,
@@ -411,6 +564,37 @@ pub struct WefaxRx {
     /// start-detector window in progress.
     band_raw: f32,
     band_sub: f32,
+
+    /// Periodicity of a completed tone-detector window, see [`LevelSpectrum`].
+    level_spec: LevelSpectrum,
+    /// The run of phasing lines being counted: while locking, and while idle.
+    phasing_stack: PhasingStack,
+    /// Lines of phasing signal that must be in the run to lock.
+    lock_lines: u32,
+    /// While idle: the brightness and the subcarrier frequency of the line
+    /// going by, on a clock of its own, and where that line ends.
+    ///
+    /// A transmission can begin at any moment and its line clock is unknown, so
+    /// the idle line is cut at the line rate from wherever the receiver was
+    /// switched on. Taken round the circle of the line, a phasing signal looks
+    /// the same from any starting point, which is what makes this possible.
+    idle_levels: Vec<f32>,
+    idle_hz: Vec<f32>,
+    idle_end: f64,
+    /// The subcarrier frequency of each sample of the line being built, to
+    /// measure black and white from when the line proves to be phasing.
+    hz_buf: Vec<f32>,
+    /// Where black and white actually are, Hz: nominal until a phasing signal
+    /// says otherwise.
+    black_hz: f64,
+    white_hz: f64,
+    /// Phasing lines at the head of a page begun by its phasing signal alone
+    /// are the rest of that signal, not chart, and are dropped; how many have
+    /// been so far.
+    lead_phasing: Option<PulseRegion>,
+    lead_skipped: u32,
+    /// No page is begun by phasing alone before this sample: see [`IDLE_HOLD_S`].
+    idle_hold_until: u64,
 }
 
 /// How long a tone-detector window is, in seconds. Long enough that a chart's
@@ -450,8 +634,10 @@ const START_AUDIO_HZ: f64 = 300.0;
 /// and a receiver a little off tune move a tone in the audio by tens of hertz;
 /// the two windows do not overlap, so the start and stop tones cannot be
 /// mistaken for one another.
-const START_AUDIO_TOL_HZ: f64 = 70.0;
-const STOP_AUDIO_TOL_HZ: f64 = 50.0;
+const START_AUDIO_TOL_HZ: f64 = 75.0;
+const STOP_AUDIO_TOL_HZ: f64 = 75.0;
+/// The part of the audio a tone's purity is judged against, Hz.
+const AUDIO_TONE_BAND_HZ: f64 = 1000.0;
 /// The band searched for an audio start or stop tone, Hz.
 const AUDIO_TONE_LO_HZ: f64 = 200.0;
 const AUDIO_TONE_HI_HZ: f64 = 520.0;
@@ -460,6 +646,62 @@ const AUDIO_TONE_PURITY: f32 = 0.6;
 /// Share of a window's audio energy that must lie in the subcarrier's band for
 /// an alternating start signal to be believed.
 const SUBCARRIER_SHARE: f32 = 0.25;
+/// Share of a window's brightness variation that must sit at the tone's own
+/// pitch, within [`PERIODIC_TOL`], for an alternation to be believed.
+///
+/// Counting mid-grey crossings cannot tell a start or stop signal from noise:
+/// a weak chart's discriminator noise crosses mid-grey four to five hundred
+/// times a second, which is the stop tone's rate, and one real recording was cut
+/// that way twenty seconds before its own end. A square wave puts four fifths of
+/// its energy on its fundamental; that recording's noise put a tenth there.
+const PERIODIC_SHARE: f32 = 0.3;
+/// How far from its nominal pitch the energy of an alternation may sit and
+/// still count, as a fraction. A sound card and a receiver a little off tune
+/// move it by a few percent either way, and propagation by more.
+const PERIODIC_TOL: f64 = 0.15;
+/// Lines in a row, with their phasing pulse in one place, that lock the line
+/// clock on a transmission that announced itself with a start tone.
+const LOCK_LINES: u32 = PHASE_LINES;
+/// Seconds of phasing signal that begin a transmission on their own, with no
+/// start tone at all.
+///
+/// A start tone is five seconds of the subcarrier alternating and a fade, or a
+/// carrier standing on the channel, swallows it — and one real recording's
+/// start tone sat under a carrier and was never there at all. The phasing signal
+/// that follows is the one thing on a fax channel that is *periodic at the line
+/// rate*: black but for a white pulse, in the same place line after line. The
+/// standard asks for thirty seconds of it and stations send anything from five
+/// up, so this is as short as the shortest of them allows. Three seconds of lines
+/// with the pulse in one place is not something a chart does, and it is what a
+/// fade between two transmissions cannot imitate.
+const IDLE_PHASING_S: f64 = 3.0;
+/// The steadiest a line may be, as a standard deviation of its brightness, and
+/// still be a carrier rather than a picture.
+///
+/// A carrier on the channel is steady at whatever frequency it sits — above
+/// white, on it, or somewhere in the middle of the scale if it has drifted —
+/// and so reads as a line with no detail in it. White is the commonest case and
+/// not the only one.
+const FLAT_STD: f32 = 0.04;
+/// How long after a page ends the phasing signal alone may not begin another,
+/// seconds. Charts end on black bars and a station's own return-to-start signal
+/// can look like a few seconds of phasing; neither is a transmission starting.
+/// A real next transmission announces itself by tone, or is minutes away.
+const IDLE_HOLD_S: f64 = 15.0;
+/// Brightness a flat line's mean must reach to count as the bright end of the
+/// scale. A flat *dark* line is a stop signal's black, or a chart's solid black
+/// bar, and neither of those is a carrier left on after the end.
+const FLAT_MEAN: f32 = 0.45;
+/// The span the black and white references may be re-measured within, Hz.
+///
+/// A receiver off tune moves the whole subcarrier, so black does not sit at
+/// 1500 Hz and white at 2300; the phasing signal shows where they actually are.
+/// The limits are wide on purpose — a hundred and fifty hertz of tuning error
+/// or Doppler is ordinary — and narrow enough that a line which is not phasing
+/// at all cannot move the scale.
+const BLACK_RANGE_HZ: (f64, f64) = (1300.0, 1700.0);
+const WHITE_RANGE_HZ: (f64, f64) = (2100.0, 2500.0);
+const SPAN_RANGE_HZ: (f64, f64) = (600.0, 1000.0);
 /// Give up looking for the phasing pulse after this long and start the picture
 /// anyway — a misaligned chart beats no chart.
 const PHASE_TIMEOUT_S: f64 = 35.0;
@@ -520,8 +762,6 @@ impl WefaxRx {
             line_start: 0.0,
             line_no: 0,
             sample_idx: 0,
-            phase_lines: 0,
-            phase_skew: 0.0,
             phase_samples: 0,
             auto_begun: false,
             rephase_lines: 0,
@@ -542,6 +782,18 @@ impl WefaxRx {
             start_pending: false,
             band_raw: 0.0,
             band_sub: 0.0,
+            level_spec: LevelSpectrum::new(rate, TONE_WINDOW_S),
+            phasing_stack: PhasingStack::default(),
+            lock_lines: LOCK_LINES,
+            idle_levels: Vec::new(),
+            idle_hz: Vec::new(),
+            idle_end: 0.0,
+            hz_buf: Vec::new(),
+            black_hz: BLACK_HZ,
+            white_hz: WHITE_HZ,
+            lead_phasing: None,
+            lead_skipped: 0,
+            idle_hold_until: 0,
         }
     }
 
@@ -565,6 +817,7 @@ impl WefaxRx {
     pub fn set_lpm(&mut self, lpm: Lpm) {
         if self.phase == Phase::Idle {
             self.lpm = lpm;
+            self.reset_idle();
         }
     }
 
@@ -659,10 +912,14 @@ impl WefaxRx {
         self.line_buf.clear();
         self.line_start = self.sample_idx as f64;
         self.line_no = 0;
-        self.phase_lines = 0;
-        self.phase_skew = 0.0;
         self.phase_samples = 0;
         self.auto_begun = auto;
+        self.phasing_stack.reset();
+        self.lock_lines = LOCK_LINES;
+        self.hz_buf.clear();
+        self.lead_phasing = None;
+        self.lead_skipped = 0;
+        self.reset_idle();
         self.rephase_lines = 0;
         self.had_content = false;
         self.blank_run = 0;
@@ -700,8 +957,62 @@ impl WefaxRx {
         self.stop_run = 0;
         self.stop_miss = 0;
         self.reset_audio_tones();
+        self.reset_idle();
+        self.hz_buf.clear();
+        self.black_hz = BLACK_HZ;
+        self.white_hz = WHITE_HZ;
+        self.lead_phasing = None;
+        self.idle_hold_until = self.sample_idx + (IDLE_HOLD_S * self.rate) as u64;
         if announced {
             out.push(WefaxEvent::Complete { lines, by_tone });
+        }
+    }
+
+    /// Start the idle line, and the run of phasing lines counted on it, over.
+    fn reset_idle(&mut self) {
+        self.idle_levels.clear();
+        self.idle_hz.clear();
+        self.idle_end = 0.0;
+        self.phasing_stack.reset();
+    }
+
+    /// Brightness of a subcarrier frequency against where black and white
+    /// actually are.
+    fn level_of(&self, hz: f64) -> f32 {
+        brightness_between(hz, self.black_hz, self.white_hz)
+    }
+
+    /// Re-measure black and white from a line that is known to be phasing.
+    ///
+    /// A receiver a little off tune, or Doppler on the path, moves the whole
+    /// subcarrier: black is not at 1500 Hz and white not at 2300, and a chart
+    /// read against the nominal pair comes out too dark or washed out. The
+    /// phasing signal is black with a white pulse, so it shows where both are.
+    /// Anything outside the (wide) ranges is left alone: it was not phasing.
+    fn calibrate(&mut self, line: &[f32], hz: &[f32]) {
+        if line.len() != hz.len() || line.is_empty() {
+            return;
+        }
+        let (mut black, mut blacks, mut white, mut whites) = (0.0f64, 0u32, 0.0f64, 0u32);
+        for (&l, &h) in line.iter().zip(hz) {
+            if l < 0.3 {
+                black += f64::from(h);
+                blacks += 1;
+            } else if l > 0.7 {
+                white += f64::from(h);
+                whites += 1;
+            }
+        }
+        // Enough of each to be a measurement, not a sample.
+        if blacks * 4 < line.len() as u32 || whites * 200 < line.len() as u32 {
+            return;
+        }
+        let (black, white) = (black / f64::from(blacks), white / f64::from(whites));
+        let span = white - black;
+        let ok = |v: f64, r: (f64, f64)| v >= r.0 && v <= r.1;
+        if ok(black, BLACK_RANGE_HZ) && ok(white, WHITE_RANGE_HZ) && ok(span, SPAN_RANGE_HZ) {
+            self.black_hz = black;
+            self.white_hz = white;
         }
     }
 
@@ -740,7 +1051,7 @@ impl WefaxRx {
             // pulse is found by.
             self.inst_hz += 0.5 * (raw_hz - self.inst_hz);
 
-            let level = brightness(self.inst_hz);
+            let level = self.level_of(self.inst_hz);
             self.sample_idx += 1;
 
             match self.phase {
@@ -794,8 +1105,47 @@ impl WefaxRx {
             return;
         }
         if let Some(ioc) = self.start_tone(level, TONE_RUN) {
-            self.begin(ioc, true, out);
+            self.begin_pending(ioc);
+            return;
         }
+        self.idle_phasing(level, out);
+    }
+
+    /// Listening for the phasing signal itself, with no start tone needed.
+    ///
+    /// The line going by is cut at the line rate on a clock of its own and
+    /// tested for the phasing shape, taken round the circle so the starting
+    /// point does not matter. [`IDLE_PHASING_S`] of lines with the pulse in one
+    /// place begins a page, locked on that pulse. A carrier standing on the
+    /// channel, silence, a voice and a chart all fail the test line after line.
+    fn idle_phasing(&mut self, level: f32, out: &mut Vec<WefaxEvent>) {
+        if self.sample_idx < self.idle_hold_until {
+            return;
+        }
+        let spl = self.samples_per_line();
+        if self.idle_end == 0.0 {
+            self.idle_end = self.sample_idx as f64 + spl;
+        }
+        self.idle_levels.push(level);
+        self.idle_hz.push(self.inst_hz as f32);
+        if (self.sample_idx as f64) < self.idle_end {
+            return;
+        }
+        self.idle_end += spl;
+        let line = std::mem::take(&mut self.idle_levels);
+        let hz = std::mem::take(&mut self.idle_hz);
+        let line_s = spl / self.rate;
+        let need = ((IDLE_PHASING_S / line_s).ceil() as usize).max(LOCK_LINES as usize);
+        let Some((skew, pulse)) = self.phasing_stack.push(&line, need) else {
+            return;
+        };
+        self.calibrate(&line, &hz);
+        self.arm(self.ioc, true);
+        self.phase = Phase::Image;
+        self.line_start = self.sample_idx as f64 + f64::from(skew);
+        self.lead_phasing = Some(pulse);
+        out.push(WefaxEvent::Start { ioc: self.ioc, lpm: self.lpm, auto: true });
+        out.push(WefaxEvent::Phased { skew });
     }
 
     /// Feed the start-signal detector one sample; `Some(ioc)` once a whole
@@ -815,9 +1165,12 @@ impl WefaxRx {
         // Crossings per window → crossings per second → the alternation rate,
         // which is half the crossing rate.
         let alt_hz = rate / TONE_WINDOW_S / 2.0;
-        let hit = Ioc::ALL.into_iter().find(|i| {
+        let candidate = Ioc::ALL.into_iter().find(|i| {
             let want = i.start_tone_hz();
             in_band && self.start_det.swing && (alt_hz - want).abs() <= want * TONE_TOL
+        });
+        let hit = candidate.filter(|i| {
+            self.level_spec.share(self.start_det.window(), i.start_tone_hz()) >= PERIODIC_SHARE
         });
         match hit {
             Some(ioc) if ioc == self.start_ioc => {
@@ -890,8 +1243,14 @@ impl WefaxRx {
     /// content counts, so a chart's own white margin never ends it, and a fade
     /// shorter than [`BLANK_GAP_LINES`] does not restart the count.
     fn note_blank_line(&mut self, line: &[f32]) -> bool {
-        let mean = line.iter().sum::<f32>() / line.len().max(1) as f32;
-        if mean >= BLANK_MEAN {
+        let n = line.len().max(1) as f32;
+        let mean = line.iter().sum::<f32>() / n;
+        // A carrier left on after the chart is blank wherever it sits: above
+        // white it reads as white, but one that has drifted (or a station on a
+        // slightly different frequency) is steady at some other brightness.
+        let std = (line.iter().map(|l| (l - mean) * (l - mean)).sum::<f32>() / n).sqrt();
+        let blank = mean >= BLANK_MEAN || (std <= FLAT_STD && mean >= FLAT_MEAN);
+        if blank {
             self.blank_gap = 0;
             self.blank_run += 1;
         } else {
@@ -909,6 +1268,7 @@ impl WefaxRx {
     /// next transmission arriving on top of this one.
     fn step_receiving(&mut self, level: f32, out: &mut Vec<WefaxEvent>) {
         self.line_buf.push(level);
+        self.hz_buf.push(self.inst_hz as f32);
 
         if self.auto_stop {
             let window = (self.rate * TONE_WINDOW_S) as u32;
@@ -923,6 +1283,7 @@ impl WefaxRx {
                 if in_band
                     && self.stop_det.swing
                     && (alt_hz - STOP_TONE_HZ).abs() <= STOP_TONE_HZ * TONE_TOL
+                    && self.level_spec.share(self.stop_det.window(), STOP_TONE_HZ) >= PERIODIC_SHARE
                 {
                     self.stop_run += 1;
                     self.stop_miss = 0;
@@ -952,30 +1313,24 @@ impl WefaxRx {
 
         // One line's worth of brightness is in hand.
         let line: Vec<f32> = std::mem::take(&mut self.line_buf);
+        let line_hz: Vec<f32> = std::mem::take(&mut self.hz_buf);
         self.line_start = end;
 
         match self.phase {
             Phase::Phasing => {
                 self.phase_samples += line.len() as u64;
-                if let Some(skew) = phasing_skew(&line) {
-                    self.phase_skew += skew as f64;
-                    self.phase_lines += 1;
-                    if self.phase_lines >= PHASE_LINES {
-                        // The pulse sits at the *end* of a phasing line, so the
-                        // picture starts just after it.
-                        let mean = (self.phase_skew / self.phase_lines as f64).round();
-                        self.line_start += mean;
-                        self.phase = Phase::Image;
-                        if self.start_pending {
-                            self.start_pending = false;
-                            out.push(WefaxEvent::Start {
-                                ioc: self.ioc,
-                                lpm: self.lpm,
-                                auto: true,
-                            });
-                        }
-                        out.push(WefaxEvent::Phased { skew: mean.max(0.0) as u32 });
+                if let Some((mean, _)) = self.phasing_stack.push(&line, self.lock_lines as usize) {
+                    // The pulse sits at the *end* of a phasing line, so the
+                    // picture starts just after it.
+                    self.calibrate(&line, &line_hz);
+                    self.line_start += f64::from(mean);
+                    self.phasing_stack.reset();
+                    self.phase = Phase::Image;
+                    if self.start_pending {
+                        self.start_pending = false;
+                        out.push(WefaxEvent::Start { ioc: self.ioc, lpm: self.lpm, auto: true });
                     }
+                    out.push(WefaxEvent::Phased { skew: mean });
                 }
                 if self.phase == Phase::Phasing
                     && self.auto_begun
@@ -1010,9 +1365,29 @@ impl WefaxRx {
                     && self.note_phasing_line(&line)
                     && since_lock_s >= PHASING_SIGNAL_S
                 {
+                    // The new transmission is announced once its own phasing
+                    // locks, not here: a transmission also ends with a few
+                    // seconds of the same black-and-pulse lines, and that is
+                    // the end of this page, not the start of another.
                     self.finish(false, out);
-                    self.begin(self.ioc, true, out);
+                    self.begin_pending(self.ioc);
                     return;
+                }
+                // A page begun by its phasing signal alone is still in the
+                // rest of it: those lines are the signal, not the chart.
+                if let Some(pulse) = self.lead_phasing {
+                    // Judged against where the lock found the pulse, not by the
+                    // line's own shape: the end of a phasing signal is where it
+                    // fades into the chart, and a line there is too scattered
+                    // to show a pulse of its own.
+                    let room =
+                        (PHASING_SIGNAL_S * 1.5 * self.rate / self.samples_per_line()) as u32;
+                    let mean = line.iter().sum::<f32>() / line.len().max(1) as f32;
+                    if self.lead_skipped < room && mean <= 0.4 && pulse.stands_out_by(&line, 0.12) {
+                        self.lead_skipped += 1;
+                        return;
+                    }
+                    self.lead_phasing = None;
                 }
                 if self.auto_begun && self.note_blank_line(&line) {
                     let gray = resample_line(&line, self.ioc.width() as usize);
@@ -1033,9 +1408,9 @@ impl WefaxRx {
     }
 }
 
-/// Map a subcarrier frequency to brightness, 0.0 black … 1.0 white.
-fn brightness(hz: f64) -> f32 {
-    (((hz - BLACK_HZ) / (WHITE_HZ - BLACK_HZ)) as f32).clamp(0.0, 1.0)
+/// Map a subcarrier frequency to brightness, 0.0 at `black` … 1.0 at `white`.
+fn brightness_between(hz: f64, black: f64, white: f64) -> f32 {
+    (((hz - black) / (white - black)) as f32).clamp(0.0, 1.0)
 }
 
 /// Average a line's samples down to `width` pixels.
@@ -1070,6 +1445,7 @@ fn resample_line(line: &[f32], width: usize) -> Vec<u8> {
 ///
 /// `None` when the line does not look like a phasing line at all, which is how
 /// a picture that is already under way falls through to the timeout.
+#[cfg(test)]
 fn phasing_skew(line: &[f32]) -> Option<u32> {
     phasing_skew_with(line, false)
 }
@@ -1106,6 +1482,56 @@ fn phasing_skew_strict(line: &[f32]) -> Option<u32> {
 }
 
 fn phasing_skew_with(line: &[f32], strict: bool) -> Option<u32> {
+    let pulse = pulse_region(line, strict)?;
+    Some(pulse.picture_start(line.len()))
+}
+
+/// Where a phasing line's white pulse is: the samples (circular, so one that
+/// straddles the line boundary is found whole) from its rising edge, `start`,
+/// for `width` samples.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PulseRegion {
+    start: usize,
+    width: usize,
+}
+
+impl PulseRegion {
+    /// Where the picture begins, in samples into a line of `n`.
+    ///
+    /// The standard puts the pulse at the end of the line, five per cent wide,
+    /// and the picture starts right after it. That is the pulse's centre plus
+    /// half of five per cent — which, for a pulse of exactly that width, is
+    /// its falling edge, as it has always been. A station whose pulse is wider
+    /// (one real recording's is a quarter of the line) is then still placed by
+    /// its middle, where its chart actually is, and not by an edge a quarter of
+    /// a line away.
+    fn picture_start(&self, n: usize) -> u32 {
+        let standard = (n as f64 * 0.05).round() as usize;
+        ((self.start + self.width / 2 + standard / 2 + (self.width % 2)) % n.max(1)) as u32
+    }
+
+    /// Whether `line` is brighter inside the pulse than outside it by a clear
+    /// margin — whether this one line carries the pulse at all.
+    fn stands_out(&self, line: &[f32]) -> bool {
+        self.stands_out_by(line, 0.25)
+    }
+
+    /// The same, for a margin of the caller's choosing.
+    fn stands_out_by(&self, line: &[f32], margin: f32) -> bool {
+        let n = line.len();
+        if n == 0 || self.width == 0 || self.width >= n {
+            return false;
+        }
+        let inside: f32 = (0..self.width).map(|i| line[(self.start + i) % n]).sum();
+        let total: f32 = line.iter().sum();
+        let (inside, outside) =
+            (inside / self.width as f32, (total - inside) / (n - self.width) as f32);
+        inside - outside >= margin
+    }
+}
+
+/// Find the white pulse of a phasing line, or `None` if it is not one.
+fn pulse_region(line: &[f32], strict: bool) -> Option<PulseRegion> {
     let n = line.len();
     let pulse = (n as f64 * 0.05).round() as usize;
     if n < 32 || pulse == 0 {
@@ -1133,8 +1559,35 @@ fn phasing_skew_with(line: &[f32], strict: bool) -> Option<u32> {
     if best.0 / pulse as f32 <= min_pulse {
         return None;
     }
-    // The picture begins just after the pulse.
-    Some(((best.1 + pulse) % n) as u32)
+    // Grow the window to the pulse: out to where the line goes black on either
+    // side. A station's pulse can be several times wider than the standard's
+    // five per cent, and the window then sits anywhere inside it.
+    let quiet = (n / 600).max(2);
+    let reach = n * 3 / 10;
+    let edge = |from: usize, forward: bool| -> Option<usize> {
+        let mut run = 0usize;
+        for off in 0..reach {
+            let i = if forward { (from + off) % n } else { (from + n - off % n) % n };
+            if line[i] < 0.5 {
+                run += 1;
+                if run >= quiet {
+                    return Some(off + 1 - run);
+                }
+            } else {
+                run = 0;
+            }
+        }
+        None
+    };
+    // Forward from the window's end, backward from just before its start.
+    let after = edge((best.1 + pulse) % n, true)?;
+    let before = edge((best.1 + n - 1) % n, false)?;
+    let width = pulse + after + before;
+    if width > reach {
+        // White for most of the line is a bright picture, not a pulse.
+        return None;
+    }
+    Some(PulseRegion { start: (best.1 + n - before) % n, width })
 }
 
 #[cfg(test)]
@@ -1281,6 +1734,7 @@ mod tests {
 
     #[test]
     fn black_and_white_land_where_the_standard_puts_them() {
+        let brightness = |hz| brightness_between(hz, BLACK_HZ, WHITE_HZ);
         assert_eq!(brightness(BLACK_HZ), 0.0);
         assert_eq!(brightness(WHITE_HZ), 1.0);
         assert!((brightness(CENTRE_HZ) - 0.5).abs() < 1e-6);
@@ -1290,12 +1744,15 @@ mod tests {
     }
 
     /// The 300 Hz start signal has to arm the receiver, and the 675 Hz one has
-    /// to arm it at the other index of cooperation.
+    /// to arm it at the other index of cooperation. The page is announced when
+    /// the phasing that follows the tone locks, not on the tone alone.
     #[test]
     fn a_start_tone_begins_a_picture_at_the_index_it_announces() {
         for ioc in Ioc::ALL {
             let mut rx = WefaxRx::new(RATE);
-            let ev = drain(&mut rx, &tone(ioc.start_tone_hz(), 5.0));
+            let mut audio = tone(ioc.start_tone_hz(), 5.0);
+            audio.extend(phasing(Lpm::L120, 10));
+            let ev = drain(&mut rx, &audio);
             let started = ev.iter().find_map(|e| match e {
                 WefaxEvent::Start { ioc, auto, .. } => Some((*ioc, *auto)),
                 _ => None,
@@ -1686,7 +2143,8 @@ mod tests {
     }
 
     /// An automatic start that is never followed by phasing is noise or a
-    /// chart's detail. It must not be saved as a picture.
+    /// chart's detail. It must not be saved as a picture — and must not be
+    /// announced either, or the picture on screen is wiped for nothing.
     #[test]
     fn an_auto_start_with_no_phasing_yields_no_picture() {
         let lpm = Lpm::L120;
@@ -1700,8 +2158,8 @@ mod tests {
             "a ramp was phased: {ev:?}"
         );
         assert!(
-            ev.iter().any(|e| matches!(e, WefaxEvent::Complete { lines: 0, .. })),
-            "the unphased start was not abandoned: {ev:?}"
+            !ev.iter().any(|e| matches!(e, WefaxEvent::Start { .. } | WefaxEvent::Complete { .. })),
+            "the unphased start was announced: {ev:?}"
         );
         assert!(!rx.receiving());
     }
@@ -2271,5 +2729,210 @@ mod audio_tone_tests {
         let a: Vec<f32> = sine(300.0, 8.0).iter().map(|s| 0.1 * s + 0.6 * noise()).collect();
         let ev = feed(&mut rx, &a);
         assert!(ev.is_empty(), "{ev:?}");
+    }
+}
+
+/// A carrier on the channel, a signal that has drifted, noise that looks like a
+/// stop tone: what a real recording does to the receiver and a clean synthetic
+/// one does not. The recorded versions are in `tests/wefax_real_recording.rs`.
+#[cfg(test)]
+mod carrier_tests {
+    use super::*;
+
+    const RATE: f64 = 12_000.0;
+
+    fn fm(levels: &[f32], black: f64, white: f64) -> Vec<f32> {
+        let mut ph = 0.0f64;
+        levels
+            .iter()
+            .map(|&l| {
+                ph += TAU * (black + (white - black) * l as f64) / RATE;
+                if ph > TAU {
+                    ph -= TAU;
+                }
+                (ph.sin() * 0.5) as f32
+            })
+            .collect()
+    }
+
+    fn carrier(hz: f64, secs: f64) -> Vec<f32> {
+        (0..(RATE * secs) as usize)
+            .map(|i| (TAU * hz * i as f64 / RATE).sin() as f32 * 0.5)
+            .collect()
+    }
+
+    fn per() -> usize {
+        (RATE * Lpm::L120.line_secs()) as usize
+    }
+
+    /// `count` phasing lines with a pulse `width` of a line wide starting at
+    /// `at` of it, scattered like a weak signal's: inside the pulse each sample
+    /// is white only `density` of the time, from a fixed pseudo-random stream.
+    fn phasing(count: usize, at: f64, width: f64, density: f32) -> Vec<f32> {
+        let n = per();
+        let (a, w) = ((n as f64 * at) as usize, (n as f64 * width) as usize);
+        let mut seed = 0x2545_f491u32;
+        let mut levels = Vec::new();
+        for _ in 0..count {
+            for i in 0..n {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let r = (seed >> 8) as f32 / (1u32 << 24) as f32;
+                levels.push(if i >= a && i < a + w && r < density { 1.0 } else { 0.0 });
+            }
+        }
+        levels
+    }
+
+    fn ramp(lines: usize) -> Vec<f32> {
+        let n = per();
+        (0..lines * n).map(|i| (i % n) as f32 / n as f32).collect()
+    }
+
+    fn feed(rx: &mut WefaxRx, audio: &[f32]) -> Vec<WefaxEvent> {
+        let mut out = Vec::new();
+        for chunk in audio.chunks(1024) {
+            rx.process(chunk, &mut out);
+        }
+        out
+    }
+
+    fn lines(ev: &[WefaxEvent]) -> Vec<(u16, Vec<u8>)> {
+        ev.iter()
+            .filter_map(|e| match e {
+                WefaxEvent::Line { y, gray } => Some((*y, gray.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Whatever its frequency — above white, on it, in the middle of the scale
+    /// or at black — a steady carrier is not a transmission starting.
+    #[test]
+    fn a_carrier_alone_starts_nothing() {
+        for hz in [2328.0, 2300.0, 2100.0, 1900.0, 1500.0] {
+            let mut rx = WefaxRx::new(RATE);
+            let ev = feed(&mut rx, &carrier(hz, 60.0));
+            assert!(ev.is_empty(), "a carrier at {hz} Hz started something: {ev:?}");
+        }
+    }
+
+    /// The start tone can be lost under a carrier or a fade; the phasing signal
+    /// behind it is what is left, and a page begins from that alone — with the
+    /// rest of the signal left out of the picture.
+    #[test]
+    fn the_phasing_signal_alone_begins_a_page() {
+        let mut rx = WefaxRx::new(RATE);
+        let mut audio = fm(&phasing(12, 0.95, 0.05, 1.0), BLACK_HZ, WHITE_HZ);
+        audio.extend(fm(&ramp(20), BLACK_HZ, WHITE_HZ));
+        let ev = feed(&mut rx, &audio);
+        assert!(ev.iter().any(|e| matches!(e, WefaxEvent::Start { auto: true, .. })), "{ev:?}");
+        let l = lines(&ev);
+        assert!(l.len() >= 15, "only {} lines", l.len());
+        // The first row is the ramp, not a black phasing line.
+        let mean = l[0].1.iter().map(|&g| f64::from(g)).sum::<f64>() / l[0].1.len() as f64 / 255.0;
+        assert!(mean > 0.3, "the page opens on the phasing signal: {mean:.2}");
+    }
+
+    /// A weak signal's pulse is a scatter of blips a fifth of a line wide, not a
+    /// clean five per cent. It still locks, and the picture is placed by the
+    /// pulse's middle.
+    #[test]
+    fn a_wide_noisy_pulse_is_found_and_the_picture_placed_by_its_middle() {
+        let mut rx = WefaxRx::new(RATE);
+        let audio = fm(&phasing(14, 0.10, 0.25, 0.6), BLACK_HZ, WHITE_HZ);
+        let ev = feed(&mut rx, &audio);
+        let skew = ev
+            .iter()
+            .find_map(|e| match e {
+                WefaxEvent::Phased { skew } => Some(*skew),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("a wide noisy pulse was not found: {ev:?}"));
+        // The pulse runs from 0.10 to 0.35 of the line: its middle is 0.225 and
+        // the picture starts half a standard pulse after that.
+        let want = (0.225 + 0.025) * per() as f64;
+        assert!((f64::from(skew) - want).abs() < 0.03 * per() as f64, "skew {skew}, wanted {want}");
+    }
+
+    /// A transmission that has drifted — a receiver a hundred hertz off tune, or
+    /// the path's Doppler — puts black and white somewhere other than 1500 and
+    /// 2300 Hz. The phasing signal says where, and the chart is read against it.
+    #[test]
+    fn black_and_white_follow_a_subcarrier_that_has_moved() {
+        for shift in [-100.0, 100.0] {
+            let (black, white) = (BLACK_HZ + shift, WHITE_HZ + shift);
+            let mut rx = WefaxRx::new(RATE);
+            let mut audio = fm(&phasing(10, 0.95, 0.05, 1.0), black, white);
+            audio.extend(fm(&ramp(12), black, white));
+            let l = lines(&feed(&mut rx, &audio));
+            assert!(l.len() >= 6, "shift {shift}: only {} lines", l.len());
+            let row = &l[l.len() / 2].1;
+            let (lo, hi) = (row[10], row[row.len() - 10]);
+            assert!(lo < 12 && hi > 243, "shift {shift}: a black-to-white ramp read {lo}..{hi}");
+        }
+    }
+
+    /// Discriminator noise on a weak chart crosses mid-grey as often as a stop
+    /// tone does, and in a real recording ended the page that way. A stop tone
+    /// is *periodic*; noise at its rate is not.
+    #[test]
+    fn noise_at_the_stop_tones_rate_is_not_a_stop_tone() {
+        let mut rx = WefaxRx::new(RATE);
+        let mut out = Vec::new();
+        rx.start_manual(&mut out);
+        let mut audio = fm(&phasing(8, 0.95, 0.05, 1.0), BLACK_HZ, WHITE_HZ);
+        audio.extend(fm(&ramp(20), BLACK_HZ, WHITE_HZ));
+        // Ten seconds of random black and white, a symbol every seven samples
+        // (1714 a second): a crossing every other symbol, which is the stop
+        // tone's own count of nine hundred a second give or take.
+        let mut seed = 7u32;
+        let symbol = 7;
+        let mut noise = Vec::new();
+        while noise.len() < (RATE * 10.0) as usize {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let level = if seed >> 31 == 0 { 0.0 } else { 1.0 };
+            noise.extend(std::iter::repeat_n(level, symbol));
+        }
+        audio.extend(fm(&noise, BLACK_HZ, WHITE_HZ));
+        let ev = feed(&mut rx, &audio);
+        assert!(
+            !ev.iter().any(|e| matches!(e, WefaxEvent::Complete { .. })),
+            "noise was taken for a stop tone"
+        );
+    }
+
+    /// A carrier left on after the chart is blank wherever it sits. Only one
+    /// above white read as white, so one that had drifted down into the scale
+    /// kept the page open for good.
+    #[test]
+    fn a_carrier_below_white_still_ends_an_automatic_page() {
+        let mut rx = WefaxRx::new(RATE);
+        let mut audio = fm(&phasing(12, 0.95, 0.05, 1.0), BLACK_HZ, WHITE_HZ);
+        audio.extend(fm(&ramp(30), BLACK_HZ, WHITE_HZ));
+        audio.extend(carrier(2100.0, 80.0));
+        let ev = feed(&mut rx, &audio);
+        assert!(
+            ev.iter().any(|e| matches!(e, WefaxEvent::Complete { by_tone: false, .. })),
+            "a steady carrier at 2100 Hz did not end the page"
+        );
+    }
+
+    /// The few seconds of phasing-like lines a chart ends on are not the start
+    /// of another transmission, and nor is anything right after a page.
+    #[test]
+    fn nothing_begins_a_page_straight_after_one_ends() {
+        let mut rx = WefaxRx::new(RATE);
+        let mut audio = fm(&phasing(12, 0.95, 0.05, 1.0), BLACK_HZ, WHITE_HZ);
+        audio.extend(fm(&ramp(20), BLACK_HZ, WHITE_HZ));
+        let first = feed(&mut rx, &audio);
+        // Stop it by hand, then phasing at once.
+        let mut out = Vec::new();
+        rx.stop_manual(&mut out);
+        assert!(out.iter().any(|e| matches!(e, WefaxEvent::Complete { .. })), "{first:?}");
+        let ev = feed(&mut rx, &fm(&phasing(8, 0.95, 0.05, 1.0), BLACK_HZ, WHITE_HZ));
+        assert!(
+            !ev.iter().any(|e| matches!(e, WefaxEvent::Start { .. })),
+            "phasing straight after a page began another: {ev:?}"
+        );
     }
 }
