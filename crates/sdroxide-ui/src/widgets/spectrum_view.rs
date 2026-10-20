@@ -1382,6 +1382,8 @@ pub fn show_ext(
     // shifting, because the direction of it is the whole feature and it is the
     // kind of thing to get backwards exactly once. Empty when nothing is locked.
     sat_bands: &[sdroxide_types::SatBand],
+    // How many memory marks may be stacked on the waterfall's edge (issue #127).
+    mem_max_lanes: usize,
     cmds: &mut Vec<Command>,
 ) {
     let cursor_hz = cursor.map(|c| c.hz);
@@ -1476,8 +1478,15 @@ pub fn show_ext(
     // waterfall is painted. The strip depth they stack inwards from is asked
     // for separately rather than taken from the draw call's return.
     let mem_strip_h = crate::widgets::bandplan::height(view, &wf_rect, panel_below);
-    let mem_boxes =
-        crate::widgets::memories::layout(&painter, view, &wf_rect, mem, mem_strip_h, panel_below);
+    let mem_boxes = crate::widgets::memories::layout(
+        &painter,
+        view,
+        &wf_rect,
+        mem,
+        mem_strip_h,
+        panel_below,
+        mem_max_lanes,
+    );
 
     // --- interactions -----------------------------------------------------
     // Model: grabbing a filter edge (left button, spectrum strip) always

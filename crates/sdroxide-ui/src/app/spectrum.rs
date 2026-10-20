@@ -742,13 +742,18 @@ impl SdroxideApp {
                     .folder
                     .and_then(|id| self.mem_folders.iter().find(|f| f.id == id))
                     .map(|f| f.name.as_str());
+                let text = if self.ui_settings.memory_waterfall_show_folder {
+                    match folder {
+                        Some(f) => format!("Mem: {f} / {}", m.name),
+                        None => format!("Mem: {}", m.name),
+                    }
+                } else {
+                    format!("Mem: {}", m.name)
+                };
                 crate::widgets::memories::MemMark {
                     id: m.id,
                     freq_hz: m.freq_hz,
-                    text: match folder {
-                        Some(f) => format!("Mem: {f} / {}", m.name),
-                        None => format!("Mem: {}", m.name),
-                    },
+                    text,
                 }
             })
             .collect()

@@ -926,6 +926,15 @@ pub struct UiSettings {
     /// Read that order backwards — Z to A, highest frequency first, and
     /// newest-stored first for [`crate::MemorySort::Stored`].
     pub memory_sort_desc: bool,
+    /// How many memory marks may be stacked vertically on the waterfall's edge.
+    /// `4` is the stock depth; a deeper stack buries the picture, so it is
+    /// capped and offered as a switch rather than left to the list's length.
+    #[serde(default = "default_memory_waterfall_lanes")]
+    pub memory_waterfall_lanes: usize,
+    /// Whether a memory's folder name is written on its waterfall mark
+    /// (`Mem: folder / name`) or only the station name (`Mem: name`).
+    #[serde(default = "default_true")]
+    pub memory_waterfall_show_folder: bool,
     /// How the FT8/FT4 decode list orders the stations. This screen's
     /// preference like [`UiSettings::memory_sort`] above, and for the same
     /// reason: the decodes are the station's, the order they are read in is
@@ -1355,6 +1364,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_memory_waterfall_lanes() -> usize {
+    4
+}
+
 /// The fill under the spectrum trace starts as the line's own cyan.
 fn default_spectrum_fill_color() -> [u8; 3] {
     [120, 220, 255]
@@ -1523,6 +1536,8 @@ impl Default for UiSettings {
             update_check: true,
             memory_sort: crate::MemorySort::Stored,
             memory_sort_desc: false,
+            memory_waterfall_lanes: 4,
+            memory_waterfall_show_folder: true,
             decode_sort: crate::DecodeSort::None,
             // Strongest and farthest first, which is the useful end of both
             // numbers; the Country order flips this when it is picked.
