@@ -43,6 +43,56 @@ The four things that cost the evening by hand — wrong mode, fldigi left in TX,
 wrong audio centre, saturated capture — are all decided by the script. See
 `tools/bench/README.md`.
 
+### Tomorrow's first task: a sample of every mode fldigi can send
+
+**The goal is the thing we lacked all of yesterday** — a recording per mode with
+**known text**. Everything that cost time on 2026-10-20 was, at bottom, "we do
+not know what this signal is". One sweep fixes that for the whole list.
+
+fldigi reports **169 modes** over `modem.get_names()`, and XML-RPC can set any of
+them (`modem.set_by_name`), send text (`text.add_tx`, `main.tx`, `main.rx`), and
+report what it settled on. Extend `tools/bench/bench.py` into a sweep:
+
+```sh
+cd ~/sdroxide/tools/bench
+./sweep.py --only "OLIVIA|MFSK|THOR|DOMEX|HELL|PSK|RTTY|MT63|CONTESTIA"
+```
+
+Write `~/Downloads/sounds/our-captures/fldigi/<mode>.wav` plus a
+**`manifest.json`** carrying, per mode: the mode name fldigi reported, tones and
+bandwidth, the audio centre found, the level, the text sent, and **whether our
+decoder recovered it**. That manifest is the database — it says at a glance which
+modes we can read and which we cannot, and it is regenerable.
+
+#### The traps, all of them met already
+
+- **Not every mode is text.** Skip `WEFAX*`, `IFKP` (pictures), and the utility
+  entries: `ANALYSIS`, `FMT`, `WWV`, `SSB`, `NULL`, `RSID_EOT`, `SCAMP*`,
+  `SCFSK*`, `SCOOK*`. Hex/8PSK and the `*R`/`*C*` PSK variants are text and are
+  fair game.
+- **Speeds differ by two orders of magnitude.** Olivia 16/500 is ~2 characters a
+  second; BPSK31 is five; MFSK128 is dozens. A fixed transmit window either
+  truncates the slow ones or wastes a minute on the fast ones — compute it from
+  the mode, with a floor.
+- **Some modes need a minimum length** to fill their interleaver (MT63's long
+  interleave is 2.5 s per block). Send the text twice for anything with a `L` in
+  its name or an Olivia-style block.
+- **fldigi will happily stay in TX.** Always `main.rx()` afterwards — Olivia's
+  idle tones never end on their own. This is what left the carrier up for ninety
+  seconds.
+- **VOX is level-sensitive and the modes differ.** PSK31 is one narrow carrier at
+  low amplitude; MFSK is wide and loud. Watch for a mode that transmits nothing
+  and raise the sound card's `PCM` or the rig's VOX rather than assuming the mode
+  is broken.
+- **The tail matters.** The engine (and any pipeline) runs about a second behind
+  the audio, so the recording must keep going for two or three seconds after the
+  text ends — `decode_file` pads, the *capture* must too.
+- **Run it in batches by family.** An hour-long sweep that dies at mode 90 is
+  worse than eight ten-minute ones, and the manifest makes them cumulative.
+
+**What it buys:** every decoder written from here starts with a fixture instead
+of a hunt, and the manifest turns "does our X work?" into a lookup.
+
 ### First five minutes, before anything new
 
 1. **Check last night's two fixes on the RSP1.** The wheel now tunes and Shift
