@@ -5831,7 +5831,7 @@ impl SdrPlayModel {
         !matches!(self, SdrPlayModel::Rsp1 | SdrPlayModel::Unknown)
     }
 
-    /// Whether the model has the FM-broadcast notch filter.
+    /// Whether the model has the FM/MW-broadcast notch filter.
     pub fn has_rf_notch(self) -> bool {
         !matches!(self, SdrPlayModel::Rsp1 | SdrPlayModel::Unknown)
     }
