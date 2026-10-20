@@ -402,7 +402,19 @@ fn ctr_settle(
     win_center: f64,
     win_span: f64,
 ) -> CtrSettle {
+    // A view the operator has moved since is theirs, and the pending request is
+    // dropped. But a *zoom* (the span changed) is not a settled gesture: it is
+    // still in flight, and re-asking the front end on every frame of it is what
+    // made CTR chase left and right during a rapid zoom. Keep the request
+    // pending until the zoom ends, so the front end is asked at most once.
     if (view.view_lo_hz - ask.view_lo).abs() > 1.0 || (view.view_hi_hz - ask.view_hi).abs() > 1.0 {
+        let view_span = view.view_hi_hz - view.view_lo_hz;
+        let ask_span = ask.view_hi - ask.view_lo;
+        if ask_span.abs() > 0.0
+            && (view_span - ask_span).abs() > ask_span.abs() * ZOOM_EPS
+        {
+            return CtrSettle::Waiting;
+        }
         return CtrSettle::Done { refitted: false };
     }
     if (dev_center - ask.center).abs() < 0.5 {
@@ -2198,7 +2210,11 @@ pub fn show_ext(
             }
         }
         let centred_at: Option<(f64, f64)> = ui.data(|d| d.get_temp(centring_id)).unwrap_or(None);
-        if centring_due(centred_at, vfo, view.span()) {
+        // Only re-centre when no front-end request is still in flight: a rapid
+        // zoom used to re-arm `asked` every frame, which made CTR chase left
+        // and right. With a request pending we let the view zoom locally and
+        // wait for it to settle.
+        if asked.is_none() && centring_due(centred_at, vfo, view.span()) {
             let over = center_on_dial(view, vfo, zoom_center, zoom_span, rect.width());
             let before = dev_center;
             pan_center(&mut dev_center, state, over, pan, cmds);
