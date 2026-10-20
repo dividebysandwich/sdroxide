@@ -817,6 +817,13 @@ pub struct SdroxideApp {
     pub(in crate::app) schedule: crate::app::schedule::ScheduleUi,
     /// Favourite broadcast stations, by name (`broadcast_favourites.json`).
     pub(in crate::app) broadcast_favs: Vec<String>,
+    /// Set by the SCHEDULE panel's ALL chip: every station of the active
+    /// schedule is a favourite for this session. Session-only on purpose —
+    /// `broadcast_favs` is what is kept, so after a restart the stars are still
+    /// there and this is off again. Its other job is the waterfall: while it is
+    /// on, a favourited station's name is drawn permanently rather than only
+    /// when the dial is within a kilohertz (see `spot_visible`).
+    pub(in crate::app) broadcast_all: bool,
     /// The operator's own HFDL channels, in kHz (`hfdl_channels.json`) — the
     /// busy assigned frequencies that are not in the published plan, drawn as
     /// one-click chips beside it in the HFDL panel.
@@ -1981,6 +1988,7 @@ impl SdroxideApp {
             swl_filter: Default::default(),
             schedule: Default::default(),
             broadcast_favs: load_broadcast_favourites(storage),
+            broadcast_all: false,
             hfdl_channels: load_hfdl_channels(storage),
             recording_jobs: load_recording_jobs(storage),
             jobs: Default::default(),
