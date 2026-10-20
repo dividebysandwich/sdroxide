@@ -1156,26 +1156,41 @@ mod tests {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(1700.0);
-        let mut rx = HellRx::new(8000.0, carrier, HellVariant::Feld, 0.05);
+        let variant = match std::env::var("SDROXIDE_HELL_VARIANT").as_deref() {
+            Ok("slow") => HellVariant::Slow,
+            Ok("x5") => HellVariant::X5,
+            Ok("x9") => HellVariant::X9,
+            Ok("fsk245") => HellVariant::Fsk245,
+            Ok("fsk105") => HellVariant::Fsk105,
+            Ok("hell80") => HellVariant::Hell80,
+            _ => HellVariant::Feld,
+        };
+        eprintln!("variant {variant:?}, carrier {carrier} Hz");
+        let agc: f32 =
+            std::env::var("SDROXIDE_HELL_AGC").ok().and_then(|v| v.parse().ok()).unwrap_or(0.05);
+        let mut rx = HellRx::new(8000.0, carrier, variant, agc);
         let mut px = Vec::new();
         for chunk in audio.chunks(512) {
             rx.process(chunk, &mut px);
         }
-        let cols = px.len() / HELL_ROWS;
+        // The row count belongs to the variant: Hell 80 sends seven rows, not
+        // fourteen, and reading its stream at fourteen interleaves two pictures.
+        let rows = variant.rows();
+        let cols = px.len() / rows;
         let lit = px.iter().filter(|&&v| v > 96).count();
         eprintln!(
-            "{cols} columns of {HELL_ROWS} dots, {lit} lit, max {}",
+            "{cols} columns of {rows} dots, {lit} lit, max {}",
             px.iter().copied().max().unwrap_or(0)
         );
         const STRIP: usize = 104;
         for start in (0..cols).step_by(STRIP) {
             let end = (start + STRIP).min(cols);
-            for row in 0..HELL_ROWS {
+            for row in 0..rows {
                 // Hell staggers alternate rows by half a column, which is what
                 // turns a lattice of dots into letter shapes.
                 let lead = if row % 2 == 1 { " " } else { "" };
                 let line: String = (start..end)
-                    .map(|c| match px[c * HELL_ROWS + row] {
+                    .map(|c| match px[c * rows + row] {
                         v if v > 128 => '#',
                         v if v > 48 => '+',
                         _ => ' ',
