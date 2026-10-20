@@ -880,29 +880,50 @@ mod tests {
         // The bank is searched across the whole passband: the recording's comb
         // sits wherever the receiver's dial put it, and different captures sit
         // in different places (the Avalon recordings centre near 1478 Hz).
+        // Geometry and expected words are overridable so that one test serves
+        // any capture, not only the Avalon 16/500 network.
+        //
+        // `SDROXIDE_OLIVIA_HZ` pins the tone bank's centre and skips the search.
+        // That matters: the search is 260 decodes of the whole file, which is
+        // minutes, and a fixture whose centre is already known — any signal we
+        // recorded ourselves against a known dial — should not pay for one.
+        let tones: usize =
+            std::env::var("SDROXIDE_OLIVIA_TONES").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
+        let bw: f64 =
+            std::env::var("SDROXIDE_OLIVIA_BW").ok().and_then(|v| v.parse().ok()).unwrap_or(500.0);
+        let want: Vec<String> = match std::env::var("SDROXIDE_OLIVIA_TEXT") {
+            Ok(t) => t.split_whitespace().map(str::to_owned).collect(),
+            Err(_) => vec!["SouthWest".to_owned(), "G7LEE".to_owned()],
+        };
+        let hits = |s: &str| want.iter().map(|w| s.matches(w.as_str()).count()).sum::<usize>();
+        let pinned: Option<f64> =
+            std::env::var("SDROXIDE_OLIVIA_HZ").ok().and_then(|v| v.parse().ok());
         let mut best = String::new();
-        let mut hz = 600.0;
-        while hz <= 1900.0 {
-            let mut rx = OliviaRx::new(8000.0, hz, 16, 500.0);
+        let mut hz = pinned.unwrap_or(600.0);
+        let stop = pinned.unwrap_or(1900.0);
+        while hz <= stop {
+            let mut rx = OliviaRx::new(8000.0, hz, tones, bw);
             let mut got = String::new();
             for chunk in audio.chunks(512) {
                 got.push_str(&rx.process(chunk));
             }
-            let score = got.matches("SouthWest").count() * 100 + got.matches("G7LEE").count();
-            if score > best.matches("SouthWest").count() * 100 + best.matches("G7LEE").count() {
+            if hits(&got) > hits(&best) {
                 best = got;
+            }
+            if pinned.is_some() {
+                break;
             }
             hz += 5.0;
         }
         let decoded = best;
-        eprintln!("decoded {} chars: {decoded:?}", decoded.len());
+        eprintln!("decoded {} chars at {tones}/{bw}: {decoded:?}", decoded.len());
         // The Avalon SW Net recording's known text: "CQ SouthWest NET … de G7LEE
         // G7LEE G7LEE". A real interop test asserts the *content*, not merely
         // that something printable came out — the previous version passed on
         // garbage, which is how the Walsh bug survived.
         assert!(
-            decoded.contains("SouthWest") && decoded.contains("G7LEE"),
-            "off-air Olivia did not recover the known text: {decoded:?}"
+            want.iter().all(|w| decoded.contains(w.as_str())),
+            "off-air Olivia did not recover {want:?}: {decoded:?}"
         );
     }
 
