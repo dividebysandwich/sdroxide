@@ -52,3 +52,36 @@ SDROXIDE_OLIVIA_TONES=16 SDROXIDE_OLIVIA_BW=500 SDROXIDE_OLIVIA_HZ=1718 \
 SDROXIDE_OLIVIA_REVERSE=1 SDROXIDE_OLIVIA_TEXT="EAGLE LANDED" \
   cargo test -p sdroxide-olivia --release -- --ignored --nocapture
 ```
+
+## The probe
+
+`tools/olivia_probe.cpp` dumps the demodulator's internals for a given capture, so
+a Rust port can be **diffed against measured numbers** rather than written from a
+reading of `pj_mfsk.h` — which is how three earlier attempts went wrong.
+
+```sh
+cd crates/sdroxide-olivia/tools
+g++ -O2 -std=c++14 -I ../cxx olivia_probe.cpp -o /tmp/olivia_probe
+
+# a WAV the decoder can read, as raw floats
+ffmpeg -i capture.wav -f f32le -acodec pcm_f32le -ac 1 /tmp/capture.f32
+
+# <file> <tones> <bw> <rate> <centre> [rev] [slice] [freq offset] [phase] [symbols]
+/tmp/olivia_probe /tmp/capture.f32 16 500 8000 1718 1 0 0 0 200
+```
+
+It prints:
+
+```
+SYM <n> <slice> <foff> <soft bits...>   what the demodulator hands the decoder
+CHR <n> <char codes...>                  what the decoder makes of a block
+```
+
+For our 16/500 capture it opens as `SymbolLen 512, SymbolSepar 256, FirstCarrier
+126 (1968.8 Hz)`, sixteen carriers 31.25 Hz apart — the geometry every entry in
+`MODE-ROADMAP.md` was trying to derive by hand.
+
+**The next half is a matching dump on our side**: the same env var, the same
+lines, from `OliviaRx`'s own front end. Then the diff says whether our fault is
+in the tone extraction or in the bit mapping, in an afternoon, and a port becomes
+a mechanical exercise.
