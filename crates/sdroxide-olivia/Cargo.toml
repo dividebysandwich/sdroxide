@@ -1,0 +1,15 @@
+[package]
+name = "sdroxide-olivia"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Native-only: Olivia decoded by Pawel Jalocha's `MFSK_Receiver`, vendored under
+# `cxx/`. See README.md for why, and for the provenance and licence of the
+# vendored sources. Not linked by the wasm client.
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+hound = "3"

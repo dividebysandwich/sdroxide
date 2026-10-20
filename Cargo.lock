@@ -5449,6 +5449,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdroxide-olivia"
+version = "2.0.13"
+dependencies = [
+ "cc",
+ "hound",
+]
+
+[[package]]
 name = "sdroxide-pluto"
 version = "2.0.13"
 dependencies = [

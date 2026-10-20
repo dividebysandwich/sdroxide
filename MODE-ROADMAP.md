@@ -123,6 +123,40 @@ Recordings: `QPSK31/63/125/250-1000_Hz` in `~/Downloads/sounds`, named for a
 | **ORBCOMM** | partially pub | `ORBCOMM` | satellite SDPSK; needs a wideband lane and its own band |
 | **STANAG 4539** | pub | — | 110B-class, own preamble and equaliser |
 
+### Olivia, 2026-10-20 (done): the vendored engine decodes it — and the capture was inverted
+
+`crates/sdroxide-olivia` vendors Pawel Jalocha's `MFSK_Receiver` (fldigi's
+`src/include/jalocha/pj_*.h`, GPL-2.0-or-later, unmodified) behind a small C++
+shim, with `OlivaDecoder::new(rate, centre, tones, bw, reverse)`.
+
+**It reads the fixture**: `TEST TEST THE EAGLE HAS LANDED 12345`, exactly, with
+a couple of junk characters at the start while the synchroniser locks. It also
+reads the MultiPSK 32/1k recording our own decoder has failed on for days — 121
+characters of readable English.
+
+**And it produced the finding that explains two days of confusion: our captures
+were spectrally inverted.** The engine decodes your over only with `reverse` set,
+and the same was true of the first RTTY capture — which needed `reverse` too and
+was recorded at the time as a decoder polarity quirk. It was not: the recordings
+were extracted as **USB** from a rig that was almost certainly in **LSB** on 11 m.
+Our own `OliviaRx` has no reverse at all, so it could never have read them, and
+the MultiPSK sample — which reads fine with reverse *off* — was the one case where
+the inversion was not in play, which is why that one looked like a decoder fault
+and this one looked like a signal fault.
+
+**The rule to carry:** when a capture will not decode, check the sideband before
+suspecting the demodulator. `reverse` is not a curiosity, it is the difference
+between reading a station and reading noise.
+
+**Note, and it is the operator's:** if F4NRM (Kevin) has a working Olivia pushed
+during the freeze, **this function is not pushed** — his work takes precedence and
+this crate stays unpublished rather than competing with it.
+
+**Still to do:** `text_modem`'s `RxModem::Olivia` still holds our `OliviaRx`, so
+the menu does not use the vendored engine yet. That swap is the user-visible step:
+the crate is proven, the wiring is mechanical, and `magnitude()` for the S-meter
+has to come from the audio envelope since the engine does not report one.
+
 ### Olivia, 2026-10-20 (the verdict): stop reimplementing it, vendor the engine
 
 A faithful reimplementation of the reference front end was written and run against
