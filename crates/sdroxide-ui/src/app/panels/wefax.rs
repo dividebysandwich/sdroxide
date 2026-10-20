@@ -157,9 +157,11 @@ impl SdroxideApp {
             let auto_start = self.digi_cfg_edit.wefax_auto_start;
             if crate::chrome::chip(ui, auto_start, "AUTO START")
                 .on_hover_text(
-                    "Begin a chart when the 300 Hz (IOC 576) or 675 Hz start tone is heard \
-                     — and end the one in progress and phase the new one when the next \
-                     transmission arrives, whether or not a stop tone came first.",
+                    "Begin a chart when the 300 Hz (IOC 576) or 675 Hz start tone is heard, \
+                     or, if the tone was lost in a fade or under a carrier, when a few \
+                     seconds of the phasing signal arrive — and end the one in progress and \
+                     phase the new one when the next transmission arrives, whether or not a \
+                     stop tone came first. A carrier on the channel starts nothing.",
                 )
                 .clicked()
             {
@@ -402,13 +404,14 @@ impl SdroxideApp {
                             None => {
                                 ui.centered_and_justified(|ui| {
                                     ui.label(
-                                    RichText::new(
-                                        "Tune a fax schedule in USB and wait for a start tone, or \
-                                     press START to begin mid-chart.",
-                                    )
-                                    .color(theme::LINE_LIT())
-                                    .size(11.5),
-                                );
+                                        RichText::new(
+                                            "Tune a fax schedule in USB and wait for the chart to \
+                                     begin (start tone or phasing signal), or press START to \
+                                     begin mid-chart.",
+                                        )
+                                        .color(theme::LINE_LIT())
+                                        .size(11.5),
+                                    );
                                 });
                             }
                         }

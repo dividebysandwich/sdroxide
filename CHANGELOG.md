@@ -17,6 +17,10 @@ and the [README](https://github.com/madmedicnl/sdroxide-brown#readme).
 - **The browser client gets its sound back after a long spell in the background.** A playback context the browser had stopped was never replaced, so the page stayed silent for the rest of the session with nothing on screen to say why.
 - **The browser client follows the output device when one is connected while the page is open** — a headset brought in mid-session left the sound on the device the page had started on, with nothing to say why.
 - **DAB plays at the other modes' level**, 9 dB down from where it was, and its VU meter swings with the music instead of sitting between 0 and +4.
+- **WEFAX starts on its own phasing signal, with no start tone**, and a carrier standing on the channel starts nothing — a real recording under a 2.3 kHz carrier never started, or started on the chart's own detail.
+- **WEFAX no longer ends a page on noise** — discriminator noise at the stop tone's rate cut a real chart 7 minutes early; a stop tone has to be periodic now.
+- **WEFAX follows a subcarrier that has drifted** — black and white are re-measured from the phasing signal, so ±100 Hz of tuning error or Doppler does not wash the chart out.
+- **WEFAX ends on a carrier left on after the chart at any frequency**, not only one above white.
 
 ### Added
 - **The S-meter calibration is back, at ±5 S-units** — Kevin's original revision of the per-radio correction, which he says worked perfectly. Per radio, display only, saved with the radio.
@@ -27,6 +31,9 @@ and the [README](https://github.com/madmedicnl/sdroxide-brown#readme).
 
 ### Added
 - **`SDROXIDE_SETTINGS_TRACE=1` labels every settings row with its own y-coordinate**, so an overlap in a screenshot is a number rather than an argument. Off unless the variable is set.
+
+### Needs feedback
+- **WEFAX on your own recordings.** Put a recording in the recordings folder, play it from PLAYBACK in WEFAX mode, and tell me whether the page starts by itself and ends at the stop tone — especially with a carrier on the channel or a weak start tone.
 
 ## [2.0.13.1_brown] - 2026-10-16
 

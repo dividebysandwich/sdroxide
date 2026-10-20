@@ -5159,6 +5159,13 @@ one already in progress: press **START** to begin recording mid-chart, and
 **STOP** to end it and save. Turn **AUTO STOP** off to record straight through a
 station sending several charts back to back.
 
+A start tone can be lost too — in a fade, or under a carrier standing on the
+channel — so AUTO START also begins a chart from the **phasing signal alone**: a
+few seconds of it is enough, and nothing else on a fax channel looks like it. A
+carrier on its own starts nothing, at any frequency. With no tone to say so, the
+**IOC** you have set is used. A subcarrier a hundred hertz or so off tune is
+corrected from that same signal, so the chart is not washed out or too dark.
+
 A stop tone is five seconds long and it is the first thing a fade takes, so
 AUTO START does not wait for one: while a chart is being drawn sdroxide also
 listens for the *next* transmission — its start tone, and failing that the
