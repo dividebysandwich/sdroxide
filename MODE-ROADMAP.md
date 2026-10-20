@@ -25,6 +25,24 @@ pushed** — his takes precedence.
 Fixtures and the method are in `~/Downloads/sounds/our-captures/` with a README:
 how each was made, its centre, width, level and text, and the command to run it.
 
+### The bench is automated now — start here
+
+`tools/bench/bench.py` sends a mode from fldigi over XML-RPC, records it on the
+RSP1, extracts the audio, decodes it with the **same engine the band menu uses**,
+and prints PASS or FAIL. It was written at the end of the 2026-10-20 session and
+the decoder half is verified (it recovers the full phrase from the Olivia
+fixture); **the radio half has not yet been run end to end** — that is the first
+job, and it needs the rig on VOX with fldigi running:
+
+```sh
+cd ~/sdroxide/tools/bench
+./bench.py --mode OLIVIA-16/500 --tones 16 --bw 500 --reverse 1
+```
+
+The four things that cost the evening by hand — wrong mode, fldigi left in TX,
+wrong audio centre, saturated capture — are all decided by the script. See
+`tools/bench/README.md`.
+
 ### First five minutes, before anything new
 
 1. **Check last night's two fixes on the RSP1.** The wheel now tunes and Shift
