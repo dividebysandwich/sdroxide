@@ -1943,6 +1943,7 @@ impl SdroxideApp {
                 wf_tuning,
                 panel_below,
                 &sat_bands,
+                self.ui_settings.memory_waterfall_lanes,
                 cmds,
             );
             // The ATS Mini tunes by stepping its own band cycle, so the dial can
