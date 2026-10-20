@@ -849,6 +849,9 @@ pub struct SdroxideApp {
     /// [`sdroxide_types::SlotFollower`]. FT8, FT4 and FT2 only; the clock's bar
     /// is the answer wherever this has nothing to say.
     slot_follow: sdroxide_types::SlotFollower,
+    /// The mode the follower was last told about, so a change *to* FT8, FT4 or
+    /// FT2 restarts it from the start of the bar.
+    slot_follow_mode: Option<Mode>,
     /// Whether the CW panel's message-button editor is open (issue #374).
     /// Screen state, not the operator's: the buttons themselves live in
     /// `DigiConfig`.
@@ -2052,6 +2055,7 @@ impl SdroxideApp {
             aprs_lon_buf: String::new(),
             digi_cfg_seeded: false,
             slot_follow: sdroxide_types::SlotFollower::default(),
+            slot_follow_mode: None,
             cw_macro_edit: false,
             text_macro_edit: false,
             cw_straight: false,
@@ -4769,6 +4773,45 @@ mod tests {
         })
         .drop_without_applying_deltas();
         assert_eq!(bar(&app, t0 + 13.0), vec![white, crate::theme::GREEN()]);
+    }
+
+    /// Changing to FT8 puts the radio in the middle of a frame with nothing to
+    /// say where it began. The bar must start from nothing and run — white, as
+    /// something the sound is doing — rather than show the clock's guess.
+    #[test]
+    fn a_change_to_ft8_starts_the_bar_from_nothing_and_runs() {
+        use crate::multi::frame_test_lock;
+        let _guard = frame_test_lock();
+        let queue = std::rc::Rc::new(std::cell::RefCell::new(std::collections::VecDeque::new()));
+        let ctx = egui::Context::default();
+        let mut app = SdroxideApp::new_tab(
+            &ctx,
+            None,
+            None,
+            Box::new(SharedController(queue.clone())),
+            0,
+            true,
+        );
+        app.state.rx[0].mode = sdroxide_types::Mode::Ft8;
+        let started = crate::time::now_unix_f64();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.ui(ui, &mut eframe::Frame::_new_kittest());
+        })
+        .drop_without_applying_deltas();
+        let mut out =
+            ctx.run_ui(egui::RawInput::default(), |ui| app.slot_progress_at(ui, started + 3.0));
+        let fills: Vec<egui::Color32> = std::mem::take(&mut out.shapes)
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Rect(r) if r.rect.height() == 5.0 && r.rect.width() > 0.0 => {
+                    Some(r.fill)
+                }
+                _ => None,
+            })
+            .skip(1)
+            .collect();
+        out.drop_without_applying_deltas();
+        assert_eq!(fills, vec![crate::theme::gray(235)], "the bar did not start from nothing");
     }
 
     /// The split arithmetic the undocked mode rests on: a part that is undocked
