@@ -123,6 +123,38 @@ Recordings: `QPSK31/63/125/250-1000_Hz` in `~/Downloads/sounds`, named for a
 | **ORBCOMM** | partially pub | `ORBCOMM` | satellite SDPSK; needs a wideband lane and its own band |
 | **STANAG 4539** | pub | — | 110B-class, own preamble and equaliser |
 
+### Olivia, 2026-10-20 (final): the recording is good, the decoder is not — and here is what it lacks
+
+**The oracle question is answered, and it went against us.** The 16/500 capture was
+played into fldigi through a PipeWire null sink (fldigi's input on `default`, the
+capture shifted so the bank centred on its 1500 Hz carrier) and **fldigi read it
+perfectly**. So the recording is genuine Olivia, the transmitter path is clean, and
+our decoder is the fault. No more blaming the signal.
+
+Reading the receiver half of `pj_mfsk.h` — the part that was truncated the first
+time — gives the three things ours does not do:
+
+1. **An input equaliser runs before anything else.** `MFSK_InputProcessor`, an
+   8192-sample window: the spectrum is peak-limited three times
+   (`LimitSpectraPeaks`), averaged, and each bin scaled by `1/sqrt(energy)`. That
+   whitens the band and flattens level differences before the demodulator sees
+   them. We feed the raw audio straight in.
+2. **Two slices per symbol, each a 512-sample `1−cos` window.** The shaped window
+   is zero at both ends, so it reads the *middle* of the symbol; the second slice
+   is 128 samples on and reads the other half. Which slice is used is decided per
+   symbol by the decoder's own score, not by a magnitude proxy. Ours takes one
+   rectangular 256-sample window and picks its phase by peak magnitude.
+3. **`DecodeMargin` and a frequency-offset search.** `SoftDecode` is run for every
+   offset from `−FreqOffsets/2` to `+FreqOffsets/2`, the best is chosen per symbol,
+   and the block phase advances per slice.
+
+**What this means for the work.** This is not a bug hunt any more, it is a front
+end to port: `olivia.rs`'s `OliviaRx` needs the shaped window, the two slices with
+scored selection, and ideally the equaliser. The fixtures make it checkable in 1.8
+seconds, and **fldigi is now a usable oracle** — our own capture fed back into it
+decodes, so any change can be validated against a recording whose answer two
+independent implementations agree on.
+
 ### Olivia, 2026-10-20 (later): the reference is read, and the next question is the signal
 
 The reference implementation has now been read rather than remembered
