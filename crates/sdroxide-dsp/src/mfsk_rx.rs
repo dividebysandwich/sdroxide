@@ -79,7 +79,7 @@ const MF_LEN: [u8; 256] = [
 
 /// The bit pattern for a character, leading `1` included, as the modulator sends
 /// it. Unknown bytes fall back to NUL's word, as fldigi's `varienc` does.
-fn mfsk_word(c: u8) -> (u16, u8) {
+pub(crate) fn mfsk_word(c: u8) -> (u16, u8) {
     (MF_CODE[c as usize], MF_LEN[c as usize])
 }
 
@@ -1093,6 +1093,39 @@ mod tests {
     fn gray_and_its_inverse_are_a_pair() {
         for k in 0..64u32 {
             assert_eq!(binary(gray(k)), k, "gray round trip at {k}");
+        }
+    }
+
+
+    /// The reference's interleaver must invert: a stream pushed through the
+    /// transmitter's table and then the receiver's comes back, one full latency
+    /// (`size × depth` words) later.
+    #[test]
+    fn the_interleaver_inverts_itself() {
+        for (size, depth) in [(2usize, 40usize), (4, 10), (2, 2)] {
+            let mut tx = Interleaver::new(size, depth, true);
+            let mut rx = Interleaver::new(size, depth, false);
+            // Measured against the table: a value leaves the receiver `size − 1`
+            // rows later, each of which is `depth` sub-interleavers deep.
+            let latency = (size - 1) * depth;
+            let mut ok = 0;
+            let mut total = 0;
+            let mut sent: Vec<Vec<u8>> = Vec::new();
+            let mut got: Vec<Vec<u8>> = Vec::new();
+            for n in 0..(latency * 3) as u32 {
+                let mut w: Vec<u8> = (0..size).map(|i| ((n * 7 + i as u32 * 13) % 251) as u8).collect();
+                sent.push(w.clone());
+                tx.symbols(&mut w);
+                rx.symbols(&mut w);
+                got.push(w);
+            }
+            for n in latency..got.len() - latency {
+                total += 1;
+                if got[n + latency] == sent[n] {
+                    ok += 1;
+                }
+            }
+            assert_eq!(ok, total, "size {size} depth {depth}: {ok} of {total} inverted");
         }
     }
 

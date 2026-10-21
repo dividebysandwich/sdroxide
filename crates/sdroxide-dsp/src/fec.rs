@@ -138,6 +138,15 @@ impl ConvCode {
     /// The pair this module's own [`conv_encode`]/[`viterbi_decode`] use.
     pub const THOR: ConvCode = ConvCode { poly_a: G1, poly_b: G2, invert_b: false };
 
+    /// The **PSK robust** code — the one BPSK63F and the whole `R`/`RC` family
+    /// carry. fldigi's `PSKR_K`/`PSKR_POLY1`/`PSKR_POLY2` (`src/psk/psk.cxx`):
+    /// constraint length 7, polynomials `0x6d` and `0x4f`.
+    ///
+    /// This is *not* [`ConvCode::THOR`]'s pair with a different name — the
+    /// standard K=7 code is `0o155`/`0o117` and this one is another code
+    /// entirely. Both outputs are sent as they are, so nothing is inverted.
+    pub const PSK_R: ConvCode = ConvCode { poly_a: 0x6d, poly_b: 0x4f, invert_b: false };
+
     /// PSK31's **QPSK** code: constraint length 5, polynomials `0x17` and
     /// `0x19`. Same construction as [`ConvCode::THOR`] at two fewer bits, which
     /// is why the rest of this module serves it with no new machinery.
@@ -308,6 +317,11 @@ pub struct ViterbiStream {
     ring: VecDeque<u64>,
     depth: usize,
     started: bool,
+    /// Smoothed growth of the best path's metric, which is how well the incoming
+    /// symbols fit *a* trellis path. Two decoders fed the same symbols in
+    /// different pairings can therefore be told apart, which is what the PSK
+    /// robust modes need to find their bit alignment.
+    quality: f32,
 }
 
 impl ViterbiStream {
@@ -321,6 +335,7 @@ impl ViterbiStream {
             ring: VecDeque::new(),
             depth: (5 * code.k()) as usize,
             started: false,
+            quality: 0.0,
         }
     }
 
@@ -328,6 +343,14 @@ impl ViterbiStream {
         self.metric.iter_mut().for_each(|m| *m = 0.0);
         self.ring.clear();
         self.started = false;
+        self.quality = 0.0;
+    }
+
+    /// How well the recent symbols fit a trellis path, in the units of one
+    /// symbol pair's correlation (about `+2` for a clean aligned stream, about
+    /// `0` for a pairing that carries no code).
+    pub fn quality(&self) -> f32 {
+        self.quality
     }
 
     fn best_state(&self) -> usize {
@@ -376,6 +399,7 @@ impl ViterbiStream {
         // Only differences matter, and the absolute values would run away.
         let best = next.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         if best.is_finite() {
+            self.quality += 0.02 * (best - self.quality);
             next.iter_mut().for_each(|m| *m -= best);
         }
         self.metric = next;

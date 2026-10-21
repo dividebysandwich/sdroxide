@@ -658,6 +658,34 @@ whose data repeats.
 station known to be sending Edition 1** — a naval broadcast, or one of Sigmira's
 examples. Given one, the remaining work is bounded and in this order:
 
+> **Read [`STANAG4285-EDITION1.md`](STANAG4285-EDITION1.md) before anything else
+> here** — the standard is now transcribed into the tree, from a declassified
+> 68-page Edition 1. Three things in it change this section:
+>
+> * **The shift-register convention is pinned, so "twenty conventions" was twenty
+>   too many.** The sync generator is **x⁵ + x² + 1**, the register is initialised
+>   to **`11010`** at the start of every frame, **the first symbol is the least
+>   significant bit of that value**, and the remaining 79 come from clocking 79
+>   times. The data scrambling is **x⁹ + x⁴ + 1** initialised to **1**, three bits
+>   per symbol (`n = 4x2 + 2x1 + x0`, `Bk = e^(jnπ/4)`), shifted three positions per
+>   symbol.
+> * **Annex F is the standard's own acquisition recipe**: a **matched filter**
+>   against PN31 — `v(i) = g(i) ∘ xpnref(i)`, with at least 2·1500/2400 samples per
+>   PN symbol — a **cyclic-shift** reference, detection accepted on an **error
+>   count below a threshold**, and Doppler from the **phase between the two channel
+>   impulse responses** across **three Doppler channels** for the ±75 Hz allowance.
+>   So the folded-frame search is not the method the standard describes, and a
+>   correlation of 0.291 against a 0.11 floor is what a *wrong* convention looks
+>   like.
+> * **Do not take a sample out of Sigmira's installer.** Its EULA forbids using its
+>   benchmarking results "for your own competing software development activities",
+>   and its example files ship inside that distribution. The recording to make is
+>   our own, off the bench.
+>
+> Still wanted, and unchanged: **a recording of a station known to be sending
+> Edition 1.** The standard tells us how to acquire; only a real station says what
+> its Doppler and multipath look like.
+
 1. **Carrier and timing tracking per frame**, from the 48 reference symbols. Both
    move: the offset across this recording wanders by tens of Hz, and the frame
    phase drifts.

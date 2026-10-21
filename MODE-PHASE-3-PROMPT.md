@@ -123,6 +123,11 @@ own FEC, interleaved across carriers.
    structure at any centre, spacing or speed, and nothing has ever read it back.
 5. **ARDOP control-frame names** — `ctrl 0x??` today; `ardopcf`'s `FrameInfo` table
    is the source.
+6. **STANAG 4285** (roadmap item 4) — the standard is now transcribed in
+   [`STANAG4285-EDITION1.md`](STANAG4285-EDITION1.md): both generators, the
+   transcoding tables, the frame and Annex F's acquisition method. What it still
+   wants is a **recording of a station known to be sending Edition 1**, made on the
+   bench rather than taken from a proprietary decoder's installer.
 
 ## Sample policy
 

@@ -17,6 +17,7 @@ use std::f32::consts::PI;
 
 use crate::Complex32;
 use crate::fec::{ConvCode, ConvEncoder, ViterbiStream};
+use crate::mfsk_rx::{Interleaver, MfskVaricodeRx};
 use crate::fir::{ComplexFir, bandpass_taps};
 
 /// The rate PSK31 is defined at, and the default for every constructor that
@@ -445,6 +446,12 @@ pub struct BpskCore {
     qpsk: bool,
     /// The code the QPSK modes carry. Unused in BPSK, where a symbol is a bit.
     fec: ViterbiStream,
+    /// The PSK **robust** modes: every symbol is a *soft* value for a
+    /// convolutional decoder rather than a hard differential bit for the
+    /// varicode, so the bit stream is queued for [`PskrRx`] instead of decoded
+    /// here.
+    pskr: bool,
+    soft: Vec<u8>,
 }
 
 impl BpskCore {
@@ -480,7 +487,26 @@ impl BpskCore {
             gate: true,
             qpsk: false,
             fec: ViterbiStream::new(ConvCode::PSK_QPSK),
+            pskr: false,
+            soft: Vec::new(),
         }
+    }
+
+    /// Switch to the PSK robust path: symbols leave as soft values, one per
+    /// symbol, and nothing is decoded here.
+    pub fn set_pskr(&mut self, on: bool) {
+        if self.pskr == on {
+            return;
+        }
+        self.pskr = on;
+        self.soft.clear();
+    }
+
+    /// Take the soft values accumulated since the last call, 0..=255 with 128
+    /// as an erasure — fldigi's own representation, which the interleaver's
+    /// puncture fill is written in.
+    pub fn take_soft(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.soft)
     }
 
     /// Switch between BPSK and QPSK.
@@ -574,7 +600,20 @@ impl BpskCore {
             let dn = d.norm();
             self.mag += 0.05 * (curr.norm() - self.mag);
             self.prev_sym = curr;
-            let bit = if self.qpsk {
+            let bit = if self.pskr {
+                // The soft value is the differential product projected on the
+                // real axis, which is exactly the confidence the decoder wants:
+                // a clean symbol sits at ±1, an erasure at 0. `128` is the
+                // midpoint so that an interleaver puncture (which fills with
+                // `128`) is neutral rather than a hard zero.
+                if dn > 1e-20 {
+                    self.coherence += COHERENCE_SMOOTH * (d.re.abs() / dn - self.coherence);
+                    self.soft.push((128.0 + 127.0 * (d.re / dn)).clamp(0.0, 255.0) as u8);
+                } else {
+                    self.soft.push(128);
+                }
+                None
+            } else if self.qpsk {
                 // A QPSK symbol *is* the encoder's output pair, so it carries
                 // one data bit rather than two — the FEC is what halves it.
                 //
@@ -694,6 +733,18 @@ impl PskRx {
         self.core.set_qpsk(on);
     }
 
+    /// Switch to the PSK robust path, where symbols leave as soft values for a
+    /// convolutional decoder instead of being turned into varicode text.
+    pub fn set_pskr(&mut self, on: bool) {
+        self.core.set_pskr(on);
+    }
+
+    /// The soft values accumulated since the last call. Non-empty only in the
+    /// PSK robust path.
+    pub fn take_soft(&mut self) -> Vec<u8> {
+        self.core.take_soft()
+    }
+
     /// Rough tuning/quality magnitude (average symbol amplitude).
     pub fn magnitude(&self) -> f32 {
         self.core.magnitude()
@@ -722,6 +773,166 @@ impl PskRx {
             self.dcount = 0;
             self.core.push(z, &mut out);
         }
+        out
+    }
+}
+
+
+// ─────────────────────────── PSK robust (FEC) ───────────────────────────
+
+/// One PSK **robust** receiver: the same differential BPSK front end, then the
+/// convolutional decoder, the interleaver and the MFSK varicode.
+///
+/// This is fldigi's `_pskr` path, and it is what BPSK63F and every `R`/`RC`
+/// variant carry. Three things differ from plain BPSK and each of them has to be
+/// right or nothing decodes at all:
+///
+/// * fldigi's `PSKR_K`/`PSKR_POLY1`/`PSKR_POLY2` rate-1/2 code
+///   ([`ConvCode::PSK_R`]), fed one soft value per transmitted symbol;
+/// * the `2x2xN` bit interleaver (`idepth` per mode), which BPSK63F alone
+///   **skips** — its `idepth` is 2 in the reference and the reference then
+///   doesn't call it;
+/// * the **MFSK** varicode, not PSK31's. Same alphabet the MFSK modes use, which
+///   is why it lives in `mfsk_rx`.
+///
+/// Two decoders run in lockstep one symbol apart, because a differential
+/// receiver has no idea where a pair of coded bits starts. They are voted by
+/// their Viterbi metrics, exactly as the reference's `fecmet`/`fecmet2` pair is,
+/// and the loser contributes nothing — which works because a mis-paired stream
+/// produces varicode words that are not in the table rather than letters.
+pub struct PskrRx {
+    rx: PskRx,
+    chains: [PskrChain; 2],
+    /// Whether the mode interleaves. BPSK63F does not.
+    interleaved: bool,
+    text: String,
+    /// Which chain takes the next symbol; they alternate.
+    turn: bool,
+}
+
+struct PskrChain {
+    inlv: Interleaver,
+    vit: ViterbiStream,
+    vr: MfskVaricodeRx,
+    prev: Option<u8>,
+}
+
+impl PskrChain {
+    fn new(idepth: usize, interleaved: bool) -> Self {
+        PskrChain {
+            inlv: Interleaver::new(2, idepth, false),
+            vit: ViterbiStream::new(ConvCode::PSK_R),
+            vr: MfskVaricodeRx::new(),
+            prev: None,
+        }
+    }
+
+    /// Feed one soft symbol. Every symbol is seen, so the pair is always two
+    /// *adjacent* symbols, but a pair is only completed on this chain's turn —
+    /// the two chains take alternate symbols, which is what makes them one
+    /// symbol apart in alignment.
+    ///
+    /// The pair is read newest-first and handed to the deinterleaver in that
+    /// order, then presented to the decoder oldest-first: the reference's own
+    /// sequence (`psk::rx_pskr`), which its interleaver's indexing is written
+    /// against.
+    fn push(&mut self, sym: u8, active: bool, interleaved: bool) -> Option<char> {
+        let prev = self.prev.replace(sym);
+        if !active {
+            return None;
+        }
+        let prev = prev?;
+        let mut pair = [sym, prev];
+        if interleaved {
+            self.inlv.symbols(&mut pair);
+        }
+        let soft = |v: u8| (v as f32 - 128.0) / 127.0;
+        let bit = self.vit.push(soft(pair[1]), soft(pair[0]))?;
+        self.vr.push_bit(bit)
+    }
+
+    /// Drain what is still inside the traceback window. A transmission's last
+    /// few characters are only decidable once the audio has stopped, so without
+    /// this the tail of every over is lost.
+    fn flush(&mut self) -> String {
+        let mut out = String::new();
+        for bit in self.vit.flush() {
+            if let Some(c) = self.vr.push_bit(bit) {
+                out.push(c);
+            }
+        }
+        out
+    }
+}
+
+impl PskrRx {
+    /// `idepth` is the mode's interleave depth; `None` for a mode that does not
+    /// interleave (BPSK63F).
+    pub fn new(rate: f64, carrier_hz: f64, baud: f64, idepth: Option<usize>) -> Self {
+        let mut rx = PskRx::new_baud(rate, carrier_hz, baud);
+        rx.set_pskr(true);
+        let interleaved = idepth.is_some();
+        let depth = idepth.unwrap_or(2);
+        PskrRx {
+            rx,
+            chains: [PskrChain::new(depth, interleaved), PskrChain::new(depth, interleaved)],
+            interleaved,
+            text: String::new(),
+            turn: false,
+        }
+    }
+
+    pub fn set_carrier(&mut self, carrier_hz: f64) {
+        self.rx.set_carrier(carrier_hz);
+    }
+
+    pub fn baud(&self) -> f64 {
+        self.rx.baud()
+    }
+
+    /// Everything decoded so far.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// How well the winning chain's symbols fit the code, in the units of one
+    /// symbol pair's correlation.
+    pub fn quality(&self) -> f32 {
+        self.chains[0].vit.quality().max(self.chains[1].vit.quality())
+    }
+
+    /// Drain the decoders at the end of an over, from the chain that was
+    /// winning — the other one's tail is noise by definition.
+    pub fn flush(&mut self) -> String {
+        let winner = if self.chains[1].vit.quality() > self.chains[0].vit.quality() { 1 } else { 0 };
+        let out = self.chains[winner].flush();
+        self.text.push_str(&out);
+        out
+    }
+
+    pub fn process(&mut self, audio: &[f32]) -> String {
+        let _ = self.rx.process(audio);
+        let syms = self.rx.take_soft();
+        let mut out = String::new();
+        for sym in syms {
+            let mut got = [None, None];
+            let even = !self.turn;
+            self.turn = !self.turn;
+            for i in 0..2 {
+                let active = (i == 0) == even;
+                got[i] = self.chains[i].push(sym, active, self.interleaved);
+            }
+            for i in 0..2 {
+                let Some(c) = got[i] else { continue };
+                let mine = self.chains[i].vit.quality();
+                let other = self.chains[1 - i].vit.quality();
+                let wins = if i == 0 { mine >= other } else { mine > other };
+                if wins {
+                    out.push(c);
+                }
+            }
+        }
+        self.text.push_str(&out);
         out
     }
 }
@@ -866,6 +1077,199 @@ mod tests {
             "no text came out: {letters} letters, {spaces} spaces from {} characters",
             text.len()
         );
+    }
+
+
+
+    /// The PSK robust chain end to end in the bit domain: varicode → code →
+    /// interleaver → soft symbols → back. This is the plumbing test; whether the
+    /// *air* reads is the corpus gate below.
+    #[test]
+    fn the_pskr_chain_round_trips_its_own_bits() {
+        for depth in [None, Some(40usize)] {
+            let msg = "THE EAGLE HAS LANDED 12345";
+            // The reference transmits a preamble of alternating bits, which is
+            // what fills the interleaver before any text goes out.
+            let mut bits: Vec<u8> = (0..200).map(|i| (i % 2 == 0) as u8).collect();
+            for c in msg.bytes() {
+                let (code, len) = crate::mfsk_rx::mfsk_word(c);
+                for i in (0..len).rev() {
+                    bits.push(((code >> i) & 1) as u8);
+                }
+            }
+            // The reference flushes with a run of 1 bits, which is also what
+            // completes the last character's varicode word: its `00` terminator
+            // needs the next word's leading `1` to make the `001` the receiver
+            // looks for.
+            bits.extend(std::iter::repeat_n(1u8, 200));
+            let mut enc = ConvEncoder::new(ConvCode::PSK_R);
+            let mut inlv = Interleaver::new(2, depth.unwrap_or(2), true);
+            let mut soft = Vec::new();
+            for &b in &bits {
+                let pair = enc.push(b);
+                // The reference interleaves the pair as `[o2, o1]` and then
+                // transmits the array backwards, so the wire order is `o1, o2`
+                // — which is what `tx_bit` does with `(bitshreg & 1)` first.
+                let mut s = [0u8; 2];
+                s[0] = if pair >> 1 & 1 == 1 { 255 } else { 0 };
+                s[1] = if pair & 1 == 1 { 255 } else { 0 };
+                if depth.is_some() {
+                    inlv.symbols(&mut s);
+                }
+                soft.push(s[1]);
+                soft.push(s[0]);
+            }
+            let mut chain = PskrChain::new(depth.unwrap_or(2), depth.is_some());
+            let mut out = String::new();
+            for (n, v) in soft.into_iter().enumerate() {
+                if let Some(c) = chain.push(v, n % 2 == 1, depth.is_some()) {
+                    out.push(c);
+                }
+            }
+            out.push_str(&chain.flush());
+            assert!(
+                out.contains("EAGLE HAS LANDED 12345"),
+                "depth {depth:?} read {out:?} from {msg:?}"
+            );
+        }
+    }
+
+
+    #[test]
+    fn pskr_diag() {
+        let bits: Vec<u8> = (0..200u32).map(|i| ((i * 7 + i / 3) % 2) as u8).collect();
+        let mut enc = ConvEncoder::new(ConvCode::PSK_R);
+        let mut coded = Vec::new();
+        for &b in &bits {
+            let p = enc.push(b);
+            coded.push(p & 1);
+            coded.push((p >> 1) & 1);
+        }
+        let mut v = ViterbiStream::new(ConvCode::PSK_R);
+        let mut got = Vec::new();
+        for pair in coded.chunks(2) {
+            let a = if pair[0] == 1 { 1.0 } else { -1.0 };
+            let b = if pair[1] == 1 { 1.0 } else { -1.0 };
+            if let Some(x) = v.push(a, b) { got.push(x); }
+        }
+        got.extend(v.flush());
+        let errs = got.iter().zip(&bits).filter(|(a, b)| a != b).count();
+        println!("bit errors {errs} of {}", bits.len());
+
+        // interleaver round trip on soft bytes
+        let mut fwd = Interleaver::new(2, 40, true);
+        let mut rev = Interleaver::new(2, 40, false);
+        let mut ok = 0;
+        let mut total = 0;
+        for i in 0..2000u32 {
+            let s = [((i * 37) % 251) as u8, ((i * 91 + 7) % 251) as u8];
+            let mut a = s;
+            fwd.symbols(&mut a);
+            rev.symbols(&mut a);
+            // the deinterleaver has a latency of one full depth; compare after
+            // the pipeline is warm by feeding through and checking later
+            total += 1;
+            if a == s { ok += 1; }
+        }
+        println!("interleaver immediate round trip {ok}/{total}");
+    }
+
+
+    #[test]
+    fn pskr_diag2() {
+        let msg = "THE EAGLE HAS LANDED 12345";
+        let mut bits = Vec::new();
+        for c in msg.bytes() {
+            let (code, len) = crate::mfsk_rx::mfsk_word(c);
+            for i in (0..len).rev() { bits.push(((code >> i) & 1) as u8); }
+        }
+        let mut enc = ConvEncoder::new(ConvCode::PSK_R);
+        let mut soft = Vec::new();
+        for &b in &bits { let p = enc.push(b); soft.push(if p & 1 == 1 {255u8} else {0}); soft.push(if p>>1 & 1 == 1 {255} else {0}); }
+        // recover bits directly
+        let mut v = ViterbiStream::new(ConvCode::PSK_R);
+        let mut got = Vec::new();
+        for pair in soft.chunks(2) {
+            let a = pair[0] as f32; let b = pair[1] as f32;
+            let a = (a - 128.0)/127.0; let b = (b - 128.0)/127.0;
+            if let Some(x) = v.push(a,b) { got.push(x); }
+        }
+        got.extend(v.flush());
+        let errs = got.iter().zip(&bits).filter(|(a,b)| a != b).count();
+        println!("direct: {} got vs {} sent, errors {}", got.len(), bits.len(), errs);
+        let mut chain = PskrChain::new(2, false);
+        chain.vit = ViterbiStream::new(ConvCode::PSK_R);
+        let mut out = String::new();
+        let mut cbits = Vec::new();
+        for (n, v) in soft.into_iter().enumerate() {
+            if n % 2 == 1 && let Some(prev) = chain.prev.replace(v) {
+                let mut pair = [v, prev];
+                if false { chain.inlv.symbols(&mut pair); }
+                let sf = |x: u8| (x as f32 - 128.0) / 127.0;
+                if let Some(bit) = chain.vit.push(sf(pair[1]), sf(pair[0])) {
+                    cbits.push(bit);
+                    if let Some(c) = chain.vr.push_bit(bit) { out.push(c); }
+                }
+            }
+        }
+        let errs = cbits.iter().zip(&bits).filter(|(a,b)| a != b).count();
+        println!("chain bits {} vs {}, errors {}", cbits.len(), bits.len(), errs);
+        println!("chain out: {out:?}");
+    }
+
+    /// The PSK **robust** samples — BPSK63F and the `R`/`RC` family — measured
+    /// the way the rest of the corpus is: the decoder is given the recording and
+    /// has to produce the sample's own text.
+    ///
+    /// It searches the centre because the manifest's is a block estimate (the
+    /// carrier of every one of these sits at the middle of its band), and it
+    /// counts words rather than asserting on a first attempt, so a run prints
+    /// what it measured even when that is nothing.
+    #[test]
+    #[ignore]
+    fn the_corpus_pskr_samples_are_measured() {
+        use std::path::Path;
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi");
+        let cases: &[(&str, f64, Option<usize>)] = &[
+            ("BPSK63F", 62.5, None),
+            ("PSK125R", 125.0, Some(40)),
+            ("PSK250R", 250.0, Some(80)),
+            ("PSK500R", 500.0, Some(160)),
+            ("PSK1000R", 1000.0, Some(160)),
+        ];
+        let want: Vec<&str> = "EAGLE LANDED SDRBROWN".split_whitespace().collect();
+        for &(name, baud, idepth) in cases {
+            let path = format!("{root}/{name}.wav");
+            if !Path::new(&path).exists() {
+                eprintln!("{name}: no sample");
+                continue;
+            }
+            let mut reader = hound::WavReader::open(&path).expect("open");
+            let spec = reader.spec();
+            let audio: Vec<f32> =
+                reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+            let mut best = (0usize, 0.0f64, String::new(), 0.0f32);
+            for hz in (1550..=1950).step_by(2).map(|h| h as f64) {
+                let mut rx = PskrRx::new(spec.sample_rate as f64, hz, baud, idepth);
+                let mut out = String::new();
+                for chunk in audio.chunks(512) {
+                    out.push_str(&rx.process(chunk));
+                }
+                out.push_str(&rx.process(&vec![0.0f32; 16000]));
+                let hits = want.iter().filter(|w| out.contains(**w)).count();
+                if hits > best.0 {
+                    best = (hits, hz, out, rx.quality());
+                }
+            }
+            eprintln!(
+                "{name} at {baud} baud: {}/{} at {:.0} Hz (quality {:.2}): {:?}",
+                best.0,
+                want.len(),
+                best.1,
+                best.3,
+                best.2.chars().take(200).collect::<String>()
+            );
+        }
     }
 
     /// Every PSK sample in the corpus, at its own baud, centred on the carrier
