@@ -50,6 +50,26 @@
 //! angle is only known modulo half a turn, so the bits may come out upside
 //! down; the phase code's sync word sorts that out.
 //!
+//! # Clicks
+//!
+//! Long wave is full of them — static, and every switching supply and LED
+//! driver nearby — and everything here is an average, which a click a
+//! hundred times the noise's size moves as far as a hundred samples of
+//! honest noise would. So before anything else each millisecond's sample is
+//! held against the usual size of one, and one far larger than that is
+//! blanked: set to nothing, which takes its share of carrier with it but
+//! nothing else.
+//!
+//! The usual size is a quantile of the samples' sizes, which clicks cannot
+//! drag up until they are as common as the samples above it. Which quantile
+//! depends on the station: it has to sit below the full carrier, or a clean
+//! signal's full carrier would look like a click against its reduced one. So
+//! it is the one half the full-carrier samples lie above — the median for a
+//! carrier that is never reduced (ALS162), higher for one that spends much
+//! of each second reduced (WWVB, JJY). The limit is then set where Gaussian
+//! noise alone reaches once in a million samples or so, and the carrier
+//! never does; a click does every time.
+//!
 //! # Where each sample is
 //!
 //! Every filter here is a plain average — symmetric, so its delay is exactly
@@ -86,6 +106,20 @@ const PLL_ZETA: f64 = 0.707;
 const PLL_SEED: u32 = 500;
 /// The power average the loop's error is normalised by: a second.
 const POWER_TC: f32 = 1000.0;
+/// A decimated sample larger than this many standard deviations of the
+/// noise in one of its quadratures is a click: Gaussian noise alone is that
+/// size once in a few million samples.
+const BLANK_SIGMAS: f64 = 5.5;
+/// How far the usual size moves for each sample above or below it, as a
+/// fraction of itself: slow enough to average over a second's keying, and a
+/// step of 6 dB is still followed in a few seconds.
+const BLANK_STEP: f32 = 0.002;
+/// Samples whose quantile seeds the usual size.
+const BLANK_SEED: usize = 101;
+/// Consecutive samples blanked, 100 ms, after which it is not clicks but the
+/// signal that has grown — audio that started silent, a receiver unmuted —
+/// and the usual size is seeded again.
+const BLANK_RUN_MAX: u32 = 100;
 
 /// What a station keys, and so what the front end reads off its carrier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,6 +242,14 @@ pub struct FrontEnd {
     pll: Option<PhaseLoop>,
     moves_seen: u32,
     moved_at: f64,
+    /// The usual size of a decimated sample — a running quantile of them —
+    /// the quantile, the first few samples, which seed it, and the multiple
+    /// of it that is a click.
+    usual: f32,
+    quantile: f32,
+    seed: Vec<f32>,
+    blank_ratio: f32,
+    blank_run: u32,
 }
 
 impl FrontEnd {
@@ -234,7 +276,48 @@ impl FrontEnd {
             pll: phase_code.then(|| PhaseLoop::new(env_rate)),
             moves_seen: 0,
             moved_at: 0.0,
+            usual: 0.0,
+            quantile: 0.5,
+            seed: Vec::with_capacity(BLANK_SEED),
+            blank_ratio: blank_ratio(0.5),
+            blank_run: 0,
         }
+    }
+
+    /// Sets the click blanker for a carrier at full level `full_share` of
+    /// the time, 0 to 1.
+    pub fn with_full_share(mut self, full_share: f64) -> Self {
+        let q = (1.0 - full_share.clamp(0.0, 1.0) / 2.0).clamp(0.5, 0.9);
+        self.quantile = q as f32;
+        self.blank_ratio = blank_ratio(q);
+        self
+    }
+
+    /// Blanks `y` if it is a click. The usual size steps up for every sample
+    /// above it and down for every one below, in the proportion that settles
+    /// it on its quantile however large the samples above it are.
+    fn blank(&mut self, y: Complex32) -> Complex32 {
+        let a = y.norm();
+        if self.seed.len() < BLANK_SEED {
+            self.seed.push(a);
+            if self.seed.len() == BLANK_SEED {
+                self.seed.sort_by(f32::total_cmp);
+                self.usual = self.seed[(self.quantile * (BLANK_SEED - 1) as f32) as usize];
+            }
+            return y;
+        }
+        let blank = a > self.blank_ratio * self.usual;
+        self.blank_run = if blank { self.blank_run + 1 } else { 0 };
+        if self.blank_run > BLANK_RUN_MAX {
+            self.blank_run = 0;
+            self.seed.clear();
+        }
+        self.usual *= if a > self.usual {
+            1.0 + BLANK_STEP * self.quantile
+        } else {
+            1.0 - BLANK_STEP * (1.0 - self.quantile)
+        };
+        if blank { Complex32::new(0.0, 0.0) } else { y }
     }
 
     /// The input sample the carrier was last found somewhere new at: nothing
@@ -275,7 +358,7 @@ impl FrontEnd {
             }
             self.acc_n += 1;
             if self.acc_n == self.m {
-                let y = self.acc / self.m as f32;
+                let y = self.blank(self.acc / self.m as f32);
                 self.acc = Complex32::new(0.0, 0.0);
                 self.acc_n = 0;
                 self.block(y, out);
@@ -362,6 +445,13 @@ impl FrontEnd {
     }
 }
 
+/// The click limit as a multiple of quantile `q` of the samples' sizes, for
+/// noise alone: complex Gaussian noise's size is Rayleigh distributed, whose
+/// quantile `q` is σ √(−2 ln(1 − q)).
+fn blank_ratio(q: f64) -> f32 {
+    (BLANK_SIGMAS / (-2.0 * (1.0 - q).ln()).sqrt()) as f32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,6 +480,20 @@ mod tests {
                 assert!(e.mag > 0.13 && e.mag < 0.153, "{rate}: {}", e.mag);
             }
         }
+    }
+
+    /// Audio that starts silent, then a carrier: the carrier is not taken
+    /// for a click for longer than it takes to measure it again.
+    #[test]
+    fn a_signal_after_silence_is_not_blanked() {
+        let rate = 12_000.0;
+        let mut x = vec![0.0f32; (2.0 * rate) as usize];
+        x.extend(tone(rate, 1000.0, 10.0));
+        let mut fe = FrontEnd::new(rate, 1000.0, Keying::Amplitude);
+        let mut out = Vec::new();
+        fe.process(&x, &mut out);
+        let tail = &out[out.len() - 100..];
+        assert!(tail.iter().all(|e| e.mag > 0.13), "the carrier is still blanked");
     }
 
     #[test]

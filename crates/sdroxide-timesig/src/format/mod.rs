@@ -23,7 +23,7 @@
 //! something.
 
 pub mod als162;
-mod dcf77;
+pub(crate) mod dcf77;
 mod jjy;
 mod msf;
 mod wwv;

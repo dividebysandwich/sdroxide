@@ -169,6 +169,36 @@ fn put(b: &mut [bool], at: usize, field: &[bool]) {
     b[at..at + field.len()].copy_from_slice(field);
 }
 
+/// The first second of the time of day in the layout, and of the date.
+pub(crate) const TIME_FROM: usize = 21;
+pub(crate) const DATE_FROM: usize = 36;
+/// The zone bits: CEST, CET.
+pub(crate) const ZONE: [usize; 2] = [17, 18];
+
+/// Seconds 21–35 of a minute in DCF77's layout naming the local time
+/// `hour:minute`, parities included: bit `i` is second 21 + `i`.
+pub(crate) fn time_field(hour: u32, minute: u32) -> u16 {
+    let mut b = [false; 15];
+    b[..7].copy_from_slice(&to_bcd(minute, &MIN_W));
+    b[7] = parity(b[..7].iter().copied());
+    b[8..14].copy_from_slice(&to_bcd(hour, &HOUR_W));
+    b[14] = parity(b[8..14].iter().copied());
+    b.iter().enumerate().fold(0, |acc, (i, &x)| acc | (u16::from(x) << i))
+}
+
+/// Seconds 36–58 for the local date at `local` (Unix seconds as if the zone
+/// were UTC), day of the week and parity included: bit `i` is second 36 + `i`.
+pub(crate) fn date_field(local: i64) -> u32 {
+    let (y, mo, d, ..) = utc_ymd_hms(local);
+    let mut b = [false; 23];
+    b[..6].copy_from_slice(&to_bcd(d, &DAY_W));
+    b[6..9].copy_from_slice(&to_bcd(iso_weekday(local), &DOW_W));
+    b[9..14].copy_from_slice(&to_bcd(mo, &MON_W));
+    b[14..22].copy_from_slice(&to_bcd((y % 100) as u32, &YEAR_W));
+    b[22] = parity(b[..22].iter().copied());
+    b.iter().enumerate().fold(0, |acc, (i, &x)| acc | (u32::from(x) << i))
+}
+
 fn decode(w: &[Sym], _ctx: &Context) -> Result<TimeFrame, FrameError> {
     if w.len() != 60 || !w[59].marker || w[..59].iter().any(|s| s.marker) {
         return Err(FrameError::Framing);

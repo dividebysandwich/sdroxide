@@ -1,5 +1,5 @@
 //! Runs a synthetic station through the decoder and prints what it found.
-//! `cargo run -p sdroxide-timesig --release --example timesig_probe -- dcf77 -15 187 40 [seed] [seconds]`
+//! `cargo run -p sdroxide-timesig --release --example timesig_probe -- dcf77 -15 187 40 [seed] [seconds] [clicks/s] [click dB]`
 use sdroxide_timesig::{Decoder, Event, synth::Synth};
 use sdroxide_types::TimeStation;
 
@@ -24,6 +24,12 @@ fn main() {
     s.tone_hz += off;
     s.rate_error_ppm = ppm;
     s.seed = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(3);
+    // Clicks a second, and their level against the carrier in dB.
+    if let (Some(per_s), Some(level_db)) =
+        (args.get(7).and_then(|s| s.parse().ok()), args.get(8).and_then(|s| s.parse().ok()))
+    {
+        s.impulses = Some(sdroxide_timesig::synth::Impulses { per_s, level_db });
+    }
     let start = sdroxide_types::ymd_hms_to_unix(2026, 10, 18, 12, 36, 23) as f64 + 0.4;
     let secs: f64 = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(200.0);
     let audio = s.render(start, secs);

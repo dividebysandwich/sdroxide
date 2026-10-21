@@ -25,6 +25,7 @@ mod decoder;
 pub mod format;
 mod frontend;
 mod hf;
+mod integrate;
 mod search;
 pub mod synth;
 mod tracker;
@@ -254,6 +255,46 @@ mod tests {
         assert!(!ev.iter().any(|e| matches!(e, Event::BadFrame { .. })), "a filled minute failed");
     }
 
+    /// Too weak for any one minute to read — DCF77 at −16 dB reads none on
+    /// its own — and still named, minute after minute, from several.
+    #[test]
+    fn minutes_too_weak_to_read_are_named_from_several() {
+        for (station, snr) in [(TimeStation::Dcf77, -16.0), (TimeStation::Als162, -14.0)] {
+            let mut s = synth::Synth::new(station, 8_000.0);
+            s.snr_db = Some(snr);
+            s.seed = 7;
+            let ev = run(&s, start(), 1200.0);
+            let f = frames(&ev);
+            assert!(f.len() >= 8, "{station:?}: {} frames in twenty minutes", f.len());
+            for (pos, utc) in f {
+                let err_ms = (start() + pos / s.rate - utc as f64) * 1000.0;
+                assert!(err_ms.abs() < 10.0, "{station:?}: frame {err_ms:.3} ms out");
+            }
+        }
+    }
+
+    /// Another station's seconds lock as well as this one's would — MSF's
+    /// carrier drops at every second too — but its minute is laid out
+    /// differently, and nothing in it must add up to a minute of this one's.
+    #[test]
+    fn another_stations_code_is_never_named() {
+        for (sent, heard) in [
+            (TimeStation::Msf, TimeStation::Dcf77),
+            (TimeStation::Wwvb, TimeStation::Dcf77),
+            (TimeStation::Dcf77, TimeStation::Als162),
+        ] {
+            let mut s = synth::Synth::new(sent, 8_000.0);
+            s.snr_db = Some(0.0);
+            let audio = s.render(start(), 1200.0);
+            let mut dec = Decoder::new(heard, s.rate);
+            let mut ev = Vec::new();
+            for block in audio.chunks(160) {
+                dec.process(block, &mut ev);
+            }
+            assert!(frames(&ev).is_empty(), "{heard:?} named a minute from {sent:?}");
+        }
+    }
+
     #[test]
     fn the_tracker_believes_two_agreeing_minutes() {
         let s = synth::Synth::new(TimeStation::Dcf77, 12_000.0);
@@ -337,6 +378,50 @@ mod tests {
             assert_eq!(total, 0, "{station:?}: frames from six hours of noise");
             assert_eq!(total_locks, 0, "{station:?}: seconds found in six hours of noise");
         }
+    }
+
+    /// The integrator's reach, and that it never names a wrong minute: forty
+    /// minutes at a time, from where single minutes read down to where the
+    /// seconds can no longer be held.
+    ///
+    /// `cargo test -p sdroxide-timesig --release -- --ignored --nocapture integration_sweep`
+    #[test]
+    #[ignore]
+    fn integration_sweep() {
+        let mut wrong_total = 0;
+        for station in [TimeStation::Dcf77, TimeStation::Als162] {
+            for snr in [-12.0, -14.0, -16.0, -18.0, -20.0, -22.0, -24.0] {
+                let (mut got, mut wrong, mut first) = (0usize, 0usize, Vec::new());
+                let seeds = 6;
+                for seed in 0..seeds {
+                    let mut s = synth::Synth::new(station, 8_000.0);
+                    s.snr_db = Some(snr);
+                    s.seed = 40 + seed;
+                    let ev = run(&s, start(), 2400.0);
+                    let f = frames(&ev);
+                    if let Some(&(pos, _)) = f.first() {
+                        first.push(pos / s.rate / 60.0);
+                    }
+                    for (pos, utc) in f {
+                        let err = (start() + pos / s.rate - utc as f64) * 1000.0;
+                        if err.abs() < 500.0 {
+                            got += 1;
+                        } else {
+                            wrong += 1;
+                        }
+                    }
+                }
+                first.sort_by(f64::total_cmp);
+                let median = first.get(first.len() / 2).map_or(f64::NAN, |m| *m);
+                println!(
+                    "{:<7} {snr:>6} dB: {got:>3}/{} minutes, {wrong} wrong, first after {median:.0} min",
+                    station.label(),
+                    40 * seeds
+                );
+                wrong_total += wrong;
+            }
+        }
+        assert_eq!(wrong_total, 0, "minutes named wrong");
     }
 
     /// How decoding holds up as the signal fades: the share of minutes that

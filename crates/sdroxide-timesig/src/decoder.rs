@@ -78,9 +78,12 @@
 //! format fills them in first. WWVB's phase bits are tried every second, since a minute of them is
 //! found by its sync word rather than by a marker; the two codes name the
 //! same minute and are merged into one frame, so nothing downstream ever sees
-//! a minute twice. The instant a frame names is tied to the input sample its
-//! second began on — and that sample, not the computer's clock, is what
-//! leaves here.
+//! a minute twice. DCF77 and ALS162 also hand every second, read or not, to
+//! the integrator ([`crate::integrate`]) as likelihoods, which names the
+//! minutes too weak to read one at a time from several together; where the
+//! two both name a minute they have to agree. The instant a frame names is
+//! tied to the input sample its second began on — and that sample, not the
+//! computer's clock, is what leaves here.
 
 use std::collections::VecDeque;
 
@@ -89,6 +92,7 @@ use sdroxide_types::{TIMESIG_TONE_HZ, TimeCode, TimeFrame, TimeStation};
 use crate::format::{Context, Format, FrameError, Sym, Template, als162, wwvb_phase};
 use crate::frontend::{EnvSample, FrontEnd, Keying};
 use crate::hf::HfFrontEnd;
+use crate::integrate::{Integrator, Soft};
 
 /// Bins in the fold: one a millisecond.
 const NB: usize = 1000;
@@ -219,6 +223,11 @@ const PHASE_NOISE_BETA: f32 = 0.05;
 /// Seconds of phase read before any is believed: the noise estimate needs a
 /// few to mean anything.
 const PHASE_WARMUP: u32 = 5;
+/// How fast the noise the integrator's ratios are scaled by follows, per
+/// second, and how many seconds of it are measured before any ratio is
+/// handed over.
+const PILOT_BETA: f32 = 0.05;
+const PILOT_WARMUP: u32 = 10;
 
 /// One second, read.
 #[derive(Debug, Clone, Copy)]
@@ -642,24 +651,36 @@ pub struct Decoder {
     phase_level: f32,
     /// Which way up the phase bits are, from the last minute's sync.
     polarity: Option<f32>,
+    /// DCF77 and ALS162: minutes read several at a time, for the ones too
+    /// weak to read alone.
+    integ: Option<Integrator>,
+    /// The level each slot is at in every pattern the station sends, where
+    /// they all agree — what the noise is measured on.
+    pilot: [Option<f32>; 10],
+    /// The noise in one normalised reading, as a variance, and how many
+    /// seconds it has been measured over.
+    pilot_var: f32,
+    pilot_seconds: u32,
 }
 
 impl Decoder {
     pub fn new(station: TimeStation, rate: f64) -> Self {
         let fmt = Format::for_station(station);
         let tone = f64::from(TIMESIG_TONE_HZ);
+        let full = full_share(fmt);
         let (fe, timing) = match station {
             _ if station.is_hf() => (Fe::Hf(HfFrontEnd::new(station, rate, tone)), Timing::Tick),
-            TimeStation::Als162 => {
-                (Fe::Lf(FrontEnd::new(rate, tone, Keying::Phase)), Timing::Element)
-            }
+            TimeStation::Als162 => (
+                Fe::Lf(FrontEnd::new(rate, tone, Keying::Phase).with_full_share(full)),
+                Timing::Element,
+            ),
             // WWVB keys its carrier's phase as well: see the front end.
             TimeStation::Wwvb => (
-                Fe::Lf(FrontEnd::new(rate, tone, Keying::AmplitudeAndSign)),
+                Fe::Lf(FrontEnd::new(rate, tone, Keying::AmplitudeAndSign).with_full_share(full)),
                 Timing::Edge { rising: fmt.rising_edge },
             ),
             _ => (
-                Fe::Lf(FrontEnd::new(rate, tone, Keying::Amplitude)),
+                Fe::Lf(FrontEnd::new(rate, tone, Keying::Amplitude).with_full_share(full)),
                 Timing::Edge { rising: fmt.rising_edge },
             ),
         };
@@ -667,6 +688,15 @@ impl Decoder {
             (Fe::Lf(f), Timing::Element) => Some(MatchedFold::new(f.env_rate())),
             _ => None,
         };
+        let integ = matches!(station, TimeStation::Dcf77 | TimeStation::Als162)
+            .then(|| Integrator::new(fmt, rate));
+        let mut pilot = [None; 10];
+        for (k, p) in pilot.iter_mut().enumerate() {
+            let low = fmt.templates[0].low[k];
+            if fmt.templates.iter().all(|t| t.low[k] == low) {
+                *p = Some(if low { 0.0 } else { 1.0 });
+            }
+        }
         Decoder {
             fmt,
             rate,
@@ -704,6 +734,10 @@ impl Decoder {
             phase_seconds: 0,
             phase_level: 0.0,
             polarity: None,
+            integ,
+            pilot,
+            pilot_var: 0.0,
+            pilot_seconds: 0,
         }
     }
 
@@ -785,6 +819,10 @@ impl Decoder {
         self.syms.clear();
         self.polarity = None;
         self.phase_seconds = 0;
+        if let Some(it) = &mut self.integ {
+            it.reset();
+        }
+        self.pilot_seconds = 0;
     }
 
     /// The sample clock's drift against the station, seconds per second, from
@@ -928,7 +966,7 @@ impl Decoder {
     /// ALS162's second starting at `start`: how much of an element there is
     /// on the second and a tenth of a second after it, in units of one, to
     /// the number of elements the second carried.
-    fn read_elements(&mut self, start: f64) -> Option<(Sym, f32)> {
+    fn read_elements(&mut self, start: f64) -> (Option<(Sym, f32)>, Option<Soft>) {
         let (mut a, mut w2) = ([0.0f32; 2], [0.0f32; 2]);
         for e in &self.env {
             let r = e.pos / self.rate - start;
@@ -939,9 +977,23 @@ impl Decoder {
             }
         }
         if w2.contains(&0.0) || self.hi <= 0.0 {
-            return None;
+            return (None, None);
         }
         let y = [a[0] / w2[0] / self.hi, a[1] / w2[1] / self.hi];
+        let fit = |sym: Sym| {
+            let n = als162::elements(sym);
+            (0..2)
+                .map(|k| {
+                    let want = if k < n { 1.0 } else { 0.0 };
+                    (y[k] - want) * (y[k] - want)
+                })
+                .sum::<f32>()
+        };
+        // The first element is there in every second but the marker: how far
+        // it is from one is the noise.
+        let pilot = (fit(Sym::MARKER) > fit(Sym::ZERO).min(fit(Sym::ONE)))
+            .then_some((y[0] - 1.0) * (y[0] - 1.0));
+        let soft = self.soft(|sym| Some(fit(sym)), pilot);
         let mut costs: Vec<(f32, f32, Sym)> = als162::SYMBOLS
             .iter()
             .map(|&(sym, n)| {
@@ -962,7 +1014,7 @@ impl Decoder {
         let margin = costs[1].0 - best;
         let max_cost = ELEMENT_MAX_COST.max(ELEMENT_MAX_COST_NOISE * 2.0 * self.misfit);
         if margin < MIN_MARGIN || fit > max_cost {
-            return None;
+            return (None, soft);
         }
         // Each element read says what the size of one is now.
         let n = als162::elements(sym);
@@ -971,12 +1023,42 @@ impl Decoder {
             self.hi += LEVEL_BETA * (seen - self.hi);
         }
         self.misfit += 0.1 * (fit / 2.0 - self.misfit);
-        Some((sym, margin))
+        (Some((sym, margin)), soft)
+    }
+
+    /// What the integrator is handed for a second: each pattern's misfit
+    /// (`cost`, squared normalised units) as a log-likelihood, against the
+    /// noise measured where every pattern agrees — `pilot`, this second's
+    /// squared deviation there, if it has such a place.
+    ///
+    /// Measured on the pilot rather than taken from how well the chosen
+    /// pattern fits: on a weak signal the best fit is partly the noise's own
+    /// doing, and the seconds that fit worst are the ones not read at all, so
+    /// the fit says the noise is less than it is — and ratios scaled by it
+    /// claim more than they know.
+    fn soft(&mut self, cost: impl Fn(Sym) -> Option<f32>, pilot: Option<f32>) -> Option<Soft> {
+        self.integ.as_ref()?;
+        if let Some(r) = pilot {
+            self.pilot_var = if self.pilot_seconds == 0 {
+                r
+            } else {
+                self.pilot_var + PILOT_BETA * (r - self.pilot_var)
+            };
+            self.pilot_seconds += 1;
+        }
+        if self.pilot_seconds < PILOT_WARMUP {
+            return None;
+        }
+        let scale = 0.5 / self.pilot_var.max(1e-4);
+        let l = |sym: Sym| cost(sym).map(|c| -c * scale);
+        let (zero, one, marker) = (l(Sym::ZERO)?, l(Sym::ONE)?, l(Sym::MARKER)?);
+        Some(Soft { bit: one - zero, marker: marker - zero.max(one) })
     }
 
     fn read_second(&mut self, start: f64, events: &mut Vec<Event>) {
         if matches!(self.timing, Timing::Element) {
-            let read = self.read_elements(start);
+            let (read, soft) = self.read_elements(start);
+            let named = self.integ.as_mut().and_then(|it| it.push(start * self.rate, soft));
             self.unread = if read.is_some() { 0 } else { self.unread + 1 };
             if self.unread >= RESEED_AFTER {
                 self.unread = 0;
@@ -989,13 +1071,30 @@ impl Decoder {
                 phase: None,
                 phase_bit: None,
             };
-            self.push_second(second, events);
+            self.push_second(second, named, events);
             return;
         }
         let (sum, n) = self.slots(start);
+        let mut soft = None;
         let read = if n.iter().all(|&c| c > 0) && self.hi > self.lo {
             let span = self.hi - self.lo;
             let y: Vec<f32> = (0..10).map(|k| (sum[k] / n[k] as f32 - self.lo) / span).collect();
+            let fmt = self.fmt;
+            let fit = |sym: Sym| {
+                fmt.template(sym).map(|t| {
+                    (0..10)
+                        .map(|k| {
+                            let want = if t.low[k] { 0.0 } else { 1.0 };
+                            (y[k] - want) * (y[k] - want)
+                        })
+                        .sum::<f32>()
+                })
+            };
+            let pilot: Vec<f32> = (0..10)
+                .filter_map(|k| self.pilot[k].map(|want| (y[k] - want) * (y[k] - want)))
+                .collect();
+            let pilot = (!pilot.is_empty()).then(|| pilot.iter().sum::<f32>() / pilot.len() as f32);
+            soft = self.soft(fit, pilot);
             let mut costs: Vec<(f32, usize)> = self
                 .fmt
                 .templates
@@ -1041,6 +1140,7 @@ impl Decoder {
         } else {
             None
         };
+        let named = self.integ.as_mut().and_then(|it| it.push(start * self.rate, soft));
         self.unread = if read.is_some() { 0 } else { self.unread + 1 };
         if self.unread >= RESEED_AFTER {
             self.unread = 0;
@@ -1055,11 +1155,12 @@ impl Decoder {
             phase,
             phase_bit: phase.zip(self.polarity).and_then(|(s, p)| wwvb_phase::bit(s, p)),
         };
-        self.push_second(second, events);
+        self.push_second(second, named, events);
     }
 
     /// A second read: reported, kept, and — if it ends a minute — decoded.
-    fn push_second(&mut self, second: Second, events: &mut Vec<Event>) {
+    /// `named` is the minute the integrator says starts after it.
+    fn push_second(&mut self, second: Second, named: Option<i64>, events: &mut Vec<Event>) {
         events.push(Event::Second(second));
         if self.syms.len() == SYMS_KEPT {
             self.syms.pop_front();
@@ -1068,7 +1169,14 @@ impl Decoder {
         let amplitude =
             if second.sym.is_some_and(|s| s.marker) { self.amplitude_frame() } else { None };
         let phase = if self.phase_code { self.phase_frame() } else { None };
-        self.report(amplitude, phase, events);
+        // The integrator names a minute by its bits as the station sends
+        // them, so the format reads it back the same way any minute is read.
+        let integrated = named.and_then(|utc| {
+            let sent = (self.fmt.encode)(utc - 60);
+            let frame = (self.fmt.decode)(&sent, &self.ctx).ok()?;
+            (frame.utc == utc).then_some((second.pos + self.rate, frame))
+        });
+        self.report(amplitude, phase, integrated, events);
     }
 
     /// The phase bit of the second starting at `start`, as a soft value: the
@@ -1201,11 +1309,13 @@ impl Decoder {
         }
     }
 
-    /// One minute's verdict from whatever codes read it.
+    /// One minute's verdict from whatever codes read it, and from the
+    /// integrator.
     fn report(
         &mut self,
         amplitude: Option<(f64, Result<TimeFrame, FrameError>)>,
         phase: Option<(f64, Result<TimeFrame, FrameError>)>,
+        integrated: Option<(f64, TimeFrame)>,
         events: &mut Vec<Event>,
     ) {
         let found = match (amplitude, phase) {
@@ -1222,7 +1332,22 @@ impl Decoder {
             // where it reads and the amplitude code does not, it is believed.
             (_, Some((pos, Ok(p)))) => Ok((pos, p, TimeCode::Phase)),
             (Some((pos, Err(e))), _) | (None, Some((pos, Err(e)))) => Err((pos, e)),
-            (None, None) => return,
+            (None, None) => match &integrated {
+                Some((pos, frame)) => Ok((*pos, frame.clone(), TimeCode::Amplitude)),
+                None => return,
+            },
+        };
+        let found = match (found, integrated) {
+            // Read in full and integrated, to different minutes: one of them
+            // is wrong, and nothing says which.
+            (Ok((pos, read, _)), Some((_, i))) if read.utc != i.utc => {
+                Err((pos, FrameError::Range("the minute read and the minutes integrated disagree")))
+            }
+            // A minute that did not read is still named by the minutes
+            // around it. Its flags are the encoder's, from the rules — a
+            // leap second's announcement is the one thing it cannot know.
+            (Err(_), Some((pos, frame))) => Ok((pos, frame, TimeCode::Amplitude)),
+            (found, _) => found,
         };
         match found {
             Ok((pos, frame, code)) => {
@@ -1284,6 +1409,18 @@ impl Decoder {
     pub fn credible(z: f32) -> bool {
         z >= MIN_EDGE_Z
     }
+}
+
+/// How much of a typical minute the station's carrier is at full level: the
+/// share of slots its encoder's patterns hold high over one minute.
+fn full_share(fmt: &Format) -> f64 {
+    let sent = (fmt.encode)(1_800_000_000);
+    let high: usize = sent
+        .iter()
+        .filter_map(|&sym| fmt.template(sym))
+        .map(|t| t.low.iter().filter(|&&low| !low).count())
+        .sum();
+    high as f64 / (10 * sent.len()) as f64
 }
 
 /// The second boundary nearest `t` for a second starting at fraction `phase`.

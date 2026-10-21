@@ -67,14 +67,24 @@ fn header(
             ui.label(
                 RichText::new(format!("{:.0} dB", st.snr_db)).size(10.0).color(theme::CYAN_DIM()),
             )
-            .on_hover_text(if st.station == TimeStation::Als162 {
-                "How cleanly the seconds read: the size of one swing of the carrier's phase \
-                 against the scatter of its reading. Below about 10 dB, minutes start to fail \
-                 their checks."
-            } else {
-                "How cleanly the keying reads: the gap between full and reduced carrier \
-                 against the scatter of a 100 ms reading. Below about 10 dB, minutes start to \
-                 fail their checks."
+            .on_hover_text(match st.station {
+                TimeStation::Als162 => {
+                    "How cleanly the seconds read: the size of one swing of the carrier's phase \
+                     against the scatter of its reading. Below about 10 dB, single minutes start \
+                     to fail their checks, and the minute is named from several read together \
+                     instead — down to about 7 dB, after a few minutes of listening."
+                }
+                TimeStation::Dcf77 => {
+                    "How cleanly the keying reads: the gap between full and reduced carrier \
+                     against the scatter of a 100 ms reading. Below about 10 dB, single minutes \
+                     start to fail their checks, and the minute is named from several read \
+                     together instead — down to about 7 dB, after a few minutes of listening."
+                }
+                _ => {
+                    "How cleanly the keying reads: the gap between full and reduced carrier \
+                     against the scatter of a 100 ms reading. Below about 10 dB, minutes start \
+                     to fail their checks."
+                }
             });
         } else {
             ui.label(RichText::new("hunting").weak())
@@ -118,7 +128,9 @@ fn ribbon(ui: &mut egui::Ui, st: &TimeSigStatus) {
         "This minute, one cell a second: dim for a 0, green for a 1 (MSF's two bits show green \
          for either), cyan for a marker — and for WWV's empty second 0 — red for a second that \
          could not be read. One red cell costs the minute — except on DCF77 and ALS162, whose \
-         parity can stand in for a red cell or two once a minute has already been decoded.",
+         parity can stand in for a red cell or two once a minute has already been decoded, and \
+         which name a minute too weak to read alone from the evidence of several, misread and \
+         red cells and all.",
     );
     if !st.phase_symbols.is_empty() {
         let resp = cells(ui, &st.phase_symbols, st.second_of_minute, 0.8);
@@ -249,6 +261,12 @@ impl SdroxideApp {
                     }
                     (Some(f), _) => {
                         format!("{}{by} · waiting for the next minute to agree", frame_text(f))
+                    }
+                    (None, _)
+                        if st.second_lock
+                            && matches!(st.station, TimeStation::Dcf77 | TimeStation::Als162) =>
+                    {
+                        "reading the minute… a weak signal is read over several minutes".to_string()
                     }
                     (None, _) if st.second_lock => "reading the minute…".to_string(),
                     (None, _) => String::new(),

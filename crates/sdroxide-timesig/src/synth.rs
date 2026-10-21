@@ -55,6 +55,16 @@ const SUB_LOW: f64 = 0.0316;
 /// The standard tones' modulation depth.
 const TONE_DEPTH: f64 = 0.5;
 
+/// Clicks on top of the noise — static, or a switching supply nearby: each a
+/// millisecond and a half of noise far louder than the rest.
+#[derive(Debug, Clone, Copy)]
+pub struct Impulses {
+    /// How many a second, on average, at random.
+    pub per_s: f64,
+    /// Each one's level against the carrier, dB.
+    pub level_db: f64,
+}
+
 /// The other short-wave station, heard on the same frequency.
 #[derive(Debug, Clone, Copy)]
 pub struct Sibling {
@@ -84,6 +94,7 @@ pub struct Synth {
     /// The carrier alone, with nothing on it: a transmitter on the air whose
     /// time code has stopped, which must decode as nothing.
     pub dead_air: bool,
+    pub impulses: Option<Impulses>,
 }
 
 impl Synth {
@@ -98,6 +109,7 @@ impl Synth {
             fade_hz: None,
             sibling: None,
             dead_air: false,
+            impulses: None,
         }
     }
 
@@ -116,6 +128,10 @@ impl Synth {
             [Hf::new(self.station), Hf::new(self.station.sibling().unwrap_or(self.station))];
         let n = (secs * self.rate) as usize;
         let mut out = Vec::with_capacity(n);
+        // Clicks: a chance per sample, and how many samples one lasts.
+        let click_len = (0.0015 * self.rate).ceil() as usize;
+        let mut click_rng = Rng(self.seed.wrapping_mul(0x9e37_79b9).max(1));
+        let mut click_left = 0usize;
         for i in 0..n {
             let t = start + i as f64 / true_rate;
             let wc = std::f64::consts::TAU * self.tone_hz * i as f64 / self.rate;
@@ -137,7 +153,17 @@ impl Synth {
                 let (a, phase) = lf.sample(t);
                 a * (wc + phase).cos()
             };
-            let noise = sigma.map_or(0.0, |s| s * rng.gauss());
+            let mut noise = sigma.map_or(0.0, |s| s * rng.gauss());
+            if let Some(imp) = self.impulses {
+                if click_left == 0 && click_rng.next_f64() < imp.per_s / self.rate {
+                    click_left = click_len;
+                }
+                if click_left > 0 {
+                    click_left -= 1;
+                    let level = amp * 10f64.powf(imp.level_db / 20.0);
+                    noise += level * click_rng.gauss();
+                }
+            }
             out.push((amp * fade * signal + noise) as f32);
         }
         out
