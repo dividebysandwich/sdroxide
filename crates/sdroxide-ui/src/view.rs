@@ -963,7 +963,7 @@ mod tests {
         let mut v = ViewState { wide_waterfall: false, ..ViewState::default() };
         v.spot_kinds_shown[3] = false; // PSK off
         let back: ViewState = ron::from_str(&ron::to_string(&v).unwrap()).unwrap();
-        assert_eq!(back.spot_kinds_shown, [true, true, true, false, true, true, true]);
+        assert_eq!(back.spot_kinds_shown, [true, true, true, false, true, true, true, true]);
         assert!(!back.wide_waterfall);
     }
 

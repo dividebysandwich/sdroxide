@@ -40,13 +40,17 @@ pub enum SpotKind {
     /// field (see `spot_visible` and the snapshot in `sdroxide-net`); it is a
     /// map overlay only. Appended last, as above.
     HeardMe,
+    /// A Reverse Beacon Network skimmer spot: a skimmer decoded a station at
+    /// a known frequency. Appended last so the postcard discriminants above
+    /// never move.
+    Rbn,
 }
 
 impl SpotKind {
     /// Every kind, in the order the SPOTS window's filter chips, the settings
     /// colour pickers and [`SpotKind::index`] all use. Anything indexed by kind
     /// — the filter array, [`crate::UiSettings::spot_colors`] — is this wide.
-    pub const ALL: [SpotKind; 7] = [
+    pub const ALL: [SpotKind; 8] = [
         SpotKind::DxCluster,
         SpotKind::Pota,
         SpotKind::Sota,
@@ -54,6 +58,7 @@ impl SpotKind {
         SpotKind::FreeDv,
         SpotKind::Broadcast,
         SpotKind::HeardMe,
+        SpotKind::Rbn,
     ];
 
     /// How many kinds there are, i.e. the width of every per-kind array.
@@ -69,6 +74,7 @@ impl SpotKind {
             SpotKind::FreeDv => 4,
             SpotKind::Broadcast => 5,
             SpotKind::HeardMe => 6,
+            SpotKind::Rbn => 7,
         }
     }
 
@@ -81,6 +87,7 @@ impl SpotKind {
             SpotKind::FreeDv => "FREEDV",
             SpotKind::Broadcast => "BC",
             SpotKind::HeardMe => "HEARD ME",
+            SpotKind::Rbn => "RBN",
         }
     }
 
@@ -108,6 +115,7 @@ impl SpotKind {
             // PSK Reporter's violet that a reporter ring is not read as a band
             // spot when both are on the map at once.
             SpotKind::HeardMe => (255, 100, 220),
+            SpotKind::Rbn => (100, 220, 180),
         }
     }
 }
