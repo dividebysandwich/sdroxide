@@ -131,9 +131,34 @@ So the next move is not another theory: print `sym[]` immediately before
 not, the text is coming from somewhere other than the path I think it is, which is
 the Olivia lesson in a new costume.
 
+**And the sideband was not the answer either.** The sweep recorded MFSK16 on
+**USB** (`~/Downloads/sounds/our-captures/fldigi/MFSK16.wav`) and the port gives
+garbage on it too. What that capture *does* show is the realignment **wandering to
+its limits**: at centres 1700/1730/1760 Hz it settled at −46.9, +31.2 and −7.8 Hz
+against a range of ±46.9. An alignment that runs to the edge of its range and
+stays there is not finding the signal — it is chasing something, and every soft
+symbol after it inherits the error.
+
+So the suspect is now **the symbol clock and the realignment**, not the mapping.
+The maps are proved self-consistent by the loopback; the front end is proved
+right by the synthetic-tone test; what is left is the thing between them, which is
+timing.
+
 **Do not re-try the sign and pairing guesses blind** — `SDROXIDE_MFSK_SIGN=-1` and
 `SDROXIDE_MFSK_ODD` were both tried and both give different garbage. The trace is
 the instrument now, not the text.
+
+**The first three moves of the next session**, in order:
+
+1. Print, per symbol, the alignment and the value it scored — the same way the
+   tone trace was added. If the alignment is at a limit from the first symbol, the
+   initial `align` or the hop counter is wrong, not the search.
+2. Print `sym[]` before `decode_symbol`. The `mirror` switch did not change the
+   text, which cannot be true if those values reach the decoder — settle that
+   first, because it says whether the soft symbols are the path at all.
+3. Compare the **timing** with the capture: the burst is ~50 s of audio and the
+   text is 53 characters, so the symbol count should be ~265 at 15.625 baud. Count
+   what the receiver decides. A count that is not close is the whole answer.
 
 ### The rule for adding a mode: port it, do not vendor it
 
