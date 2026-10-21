@@ -114,6 +114,11 @@ Gate: `cargo test -p sdroxide-olivia --release --lib the_corpus_contestia_varian
 See the MT63 table above: 2KS, 2KL and 500S decode. The old "one Hadamard row high" reading was a tuning fault, not a phase fault — the centre is searched now. 1KS/1KL/500L are not offered: their lock needs a centre search that can prefer the right answer.
 
 ### PSK family
+
+> **Superseded in part by "Phase 3 — the PSK coded families" below** (2026-10-22).
+> BPSK63F and the whole `R` family now decode, and 18 of the 26 multi-carrier
+> `C`/`RC` modes read their whole text. The rows here are the state before that
+> work, kept as the record.
 | mode | state | measurement |
 |---|---|---|
 | BPSK31 | **partial** | 2/3 words: the phrase reads with one or two words corrupted, so the demodulator locks but the sample or the timing costs the rest. |
