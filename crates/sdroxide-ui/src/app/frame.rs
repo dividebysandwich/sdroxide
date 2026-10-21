@@ -2986,6 +2986,7 @@ impl SdroxideApp {
                     let prev_mode = self.state.rx[0].mode;
                     let prev_band = self.state.band;
                     self.state = s;
+                    let band_changed = self.state.band != prev_band;
                     if self.state.rx[0].mode != prev_mode {
                         self.clear_digi_rx();
                         // The outgoing buffer too, and only here: the engine
@@ -3015,7 +3016,7 @@ impl SdroxideApp {
                     {
                         self.clear_digi_band_rx();
                     }
-                    self.recenter_if_tuned_away(prev_vfo, prev_rate);
+                    self.recenter_if_tuned_away(prev_vfo, prev_rate, band_changed);
                     // The announcer diffs *this* — the engine's own snapshot —
                     // rather than `self.state` per frame, because the UI
                     // mutates that optimistically before the engine confirms

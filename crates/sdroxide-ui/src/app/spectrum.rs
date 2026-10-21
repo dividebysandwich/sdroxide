@@ -750,11 +750,7 @@ impl SdroxideApp {
                 } else {
                     format!("Mem: {}", m.name)
                 };
-                crate::widgets::memories::MemMark {
-                    id: m.id,
-                    freq_hz: m.freq_hz,
-                    text,
-                }
+                crate::widgets::memories::MemMark { id: m.id, freq_hz: m.freq_hz, text }
             })
             .collect()
     }
@@ -1030,7 +1026,7 @@ impl SdroxideApp {
     /// memory recall, startup) — i.e. whenever the tuning changed AND left
     /// the visible span. Deliberate pans away from the VFO are never
     /// snapped back, and drag-tuning keeps the VFO in view by itself.
-    pub(in crate::app) fn recenter_if_tuned_away(&mut self, prev_vfo: f64, prev_rate: f64) {
+    pub(in crate::app) fn recenter_if_tuned_away(&mut self, prev_vfo: f64, prev_rate: f64, band_changed: bool) {
         let vfo = self.state.active_freq_hz();
         let first = !self.seen_first_state;
         self.seen_first_state = true;
@@ -1083,9 +1079,9 @@ impl SdroxideApp {
         // out of the window it had just been clicked in. `moved` stays on the
         // dial, because that is the question it asks: did the tuning change.
         let focus = self.panadapter_focus_hz();
-        let moved = (vfo - prev_vfo).abs() > 0.5;
+        let moved = (vfo - prev_vfo).abs() > 0.5 || band_changed;
         let outside = !(self.view.view_lo_hz..=self.view.view_hi_hz).contains(&focus);
-        if (moved || first) && outside {
+        if (moved || first || band_changed) && (outside || band_changed) {
             let span = self.view.span().min(self.state.sample_rate);
             self.view.view_lo_hz = focus - span / 2.0;
             self.view.view_hi_hz = focus + span / 2.0;
