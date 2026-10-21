@@ -133,6 +133,10 @@ pub struct SdroxideApp {
     /// Scrolling history behind the full-band strip.
     wide_wf: crate::widgets::wide_spectrum::WideWaterfall,
     meters: Option<Meters>,
+    /// The last SWR the radio reported while on the air — kept after the over
+    /// ends, so the tune box can still show what the antenna was matched to.
+    /// Cleared when a different radio is connected.
+    last_swr: Option<f32>,
     memories: Vec<MemoryChannel>,
     mem_folders: Vec<MemoryFolder>,
     /// The scanner's settings, mirrored from the engine and edited in place —
@@ -1387,6 +1391,7 @@ impl SdroxideApp {
             wide_frame: None,
             wide_wf: Default::default(),
             meters: None,
+            last_swr: None,
             memories: Vec::new(),
             mem_folders: Vec::new(),
             scanner: sdroxide_types::ScannerConfig::default(),

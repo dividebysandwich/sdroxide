@@ -135,6 +135,117 @@ fn the_rate_is_not_claimed_before_the_radio_sends_it() {
     assert_eq!(h.actual_rate_hz(), 192_000.0, "the rate change never showed up");
 }
 
+/// [`atu_reports`], also collecting the radio's reports of keying itself.
+fn atu_reports_and(
+    h: &FlexHandle,
+    done: impl Fn(&sdroxide_types::AtuState) -> bool,
+    rig_tx: &mut Vec<bool>,
+) -> Vec<sdroxide_types::AtuState> {
+    let mut seen = Vec::new();
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while std::time::Instant::now() < deadline {
+        for u in h.poll_updates() {
+            match u {
+                FlexUpdate::Atu(Some(a)) => seen.push(a),
+                FlexUpdate::RigTx(on) => rig_tx.push(on),
+                _ => {}
+            }
+        }
+        if seen.last().is_some_and(&done) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    seen
+}
+
+/// Collect tuner reports until `done` holds for one or patience runs out.
+fn atu_reports(
+    h: &FlexHandle,
+    done: impl Fn(&sdroxide_types::AtuState) -> bool,
+) -> Vec<sdroxide_types::AtuState> {
+    let mut seen = Vec::new();
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while std::time::Instant::now() < deadline {
+        for u in h.poll_updates() {
+            if let FlexUpdate::Atu(Some(a)) = u {
+                seen.push(a);
+            }
+        }
+        if seen.last().is_some_and(&done) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    seen
+}
+
+#[test]
+fn drives_the_radios_antenna_tuner() {
+    use sdroxide_types::AtuStatus;
+    let sim = SimRadio::start(SimConfig { atu: true, ..SimConfig::default() }).expect("start");
+    let h = connect(&sim, 48_000.0);
+
+    assert_eq!(h.ident.atu_present, Some(true), "`info` should say there is a tuner");
+    let first = atu_reports(&h, |_| true);
+    assert!(!first.is_empty(), "the subscription burst should report the tuner");
+
+    h.atu_start();
+    let mut rig_tx = Vec::new();
+    let tune = atu_reports_and(&h, |a| a.status == AtuStatus::Tuned, &mut rig_tx);
+    assert!(sim.stats.saw_command("atu start"), "never asked the radio to tune");
+    assert!(
+        tune.iter().any(|a| a.status == AtuStatus::Tuning),
+        "a tune in progress should be reported: {tune:?}"
+    );
+    // Still in circuit after the copy of the report that leaves `atu_enabled`
+    // out, which the simulator sends last, as the radio does.
+    std::thread::sleep(Duration::from_millis(100));
+    let after = atu_reports_and(&h, |_| true, &mut rig_tx);
+    let last = after.last().or(tune.last()).copied();
+    assert_eq!(last.map(|a| (a.status, a.enabled)), Some((AtuStatus::Tuned, true)));
+    // The radio keyed itself for the tune and said so: on the air, then off it.
+    assert_eq!(rig_tx, vec![true, false], "the tune's own over should be reported");
+
+    h.atu_bypass();
+    let bypass = atu_reports(&h, |a| a.status == AtuStatus::Bypass);
+    assert!(sim.stats.saw_command("atu bypass"));
+    assert_eq!(bypass.last().map(|a| (a.status, a.enabled)), Some((AtuStatus::Bypass, false)));
+}
+
+/// An over of sdroxide's own goes out on the same interlock, and must not come
+/// back as the radio keying itself: the engine would mute for it and refuse
+/// the next key-down as somebody else's.
+#[test]
+fn our_own_over_is_not_the_radio_keying_itself() {
+    let sim = sim();
+    let h = connect(&sim, 48_000.0);
+    h.tx_begin(14_074_000.0);
+    std::thread::sleep(Duration::from_millis(200));
+    h.tx_end();
+    std::thread::sleep(Duration::from_millis(300));
+    let rig_tx: Vec<bool> = h
+        .poll_updates()
+        .into_iter()
+        .filter_map(|u| if let FlexUpdate::RigTx(on) = u { Some(on) } else { None })
+        .collect();
+    assert!(sim.stats.saw_command("xmit 1") && sim.stats.saw_command("xmit 0"));
+    assert!(!rig_tx.contains(&true), "our own over read back as the radio's: {rig_tx:?}");
+}
+
+#[test]
+fn offers_no_tuner_on_a_radio_without_one() {
+    let sim = sim();
+    let h = connect(&sim, 48_000.0);
+
+    assert_eq!(h.ident.atu_present, Some(false));
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        !h.poll_updates().into_iter().any(|u| matches!(u, FlexUpdate::Atu(Some(_)))),
+        "a radio without a tuner must not grow one"
+    );
+}
+
 #[test]
 fn tuning_moves_the_radios_slice() {
     let sim = sim();
@@ -297,18 +408,62 @@ fn swr_telemetry_arrives_while_keyed() {
 
     // Meter ids are per-session, so this only works if the client learned them
     // from the `meter` definition status — the `#`-separated one.
+    // The definitions carry descriptions with spaces in them, as a real
+    // radio's do — which is what once left every meter nameless.
     let deadline = std::time::Instant::now() + PATIENCE;
-    let mut swr = None;
-    while std::time::Instant::now() < deadline && swr.is_none() {
+    let (mut swr, mut fwd_w) = (None, None);
+    while std::time::Instant::now() < deadline && (swr.is_none() || fwd_w.is_none()) {
         if let Some(t) = h.poll_telemetry() {
-            swr = t.swr;
+            swr = swr.or(t.swr);
+            fwd_w = fwd_w.or(t.fwd_w);
         }
         std::thread::sleep(Duration::from_millis(10));
     }
     let swr = swr.expect("no SWR reading arrived while transmitting");
     assert!((swr - 1.3).abs() < 0.05, "SWR {swr}, expected ≈1.3");
+    // Half drive: 47 dBm on the wire, which is 50 W and not 47.
+    let fwd_w = fwd_w.expect("no forward power arrived while transmitting");
+    assert!((fwd_w - 50.0).abs() < 2.0, "forward power {fwd_w} W, expected ≈50");
 
     h.tx_end();
+}
+
+/// The SWR belongs to the over, not to the audio queue. The engine hands TX
+/// audio over in blocks and the queue runs dry between them, so a reading that
+/// lands in one of those gaps is still a reading from the over — and with the
+/// meter following the queue, a FLEX-8400 reported 1.5:1 at 13 W for a whole
+/// over and not one reading reached the screen. Keyed with nothing queued at
+/// all, the over is still on the air.
+#[test]
+fn swr_follows_the_over_not_the_audio_queue() {
+    let sim = sim();
+    let mut h = connect(&sim, 48_000.0);
+    collect_iq(&mut h, 512);
+
+    h.set_drive(0.5);
+    h.tx_begin(14_074_000.0);
+    let deadline = std::time::Instant::now() + PATIENCE;
+    let mut swr = None;
+    while std::time::Instant::now() < deadline && swr.is_none() {
+        if let Some(t) = h.poll_telemetry() {
+            swr = swr.or(t.swr);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let swr = swr.expect("no SWR reading arrived while keyed with an empty audio queue");
+    assert!((swr - 1.3).abs() < 0.05, "SWR {swr}, expected ≈1.3");
+
+    // Unkeyed, the meter is cleared rather than left frozen on its last reading.
+    h.tx_end();
+    let deadline = std::time::Instant::now() + PATIENCE;
+    let mut cleared = false;
+    while std::time::Instant::now() < deadline && !cleared {
+        if let Some(t) = h.poll_telemetry() {
+            cleared = t.swr.is_none() && t.fwd_w.is_none();
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(cleared, "the meter should be cleared at the end of the over");
 }
 
 #[test]

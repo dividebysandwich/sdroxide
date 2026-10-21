@@ -47,6 +47,22 @@ const LINK_GAP: f32 = 4.0;
 /// What the RIG box's receiving-antenna chip says, in the one place the width
 /// measurement and the chip itself both read it from.
 const RX_ANT_LABEL: &str = "RX ANT";
+/// What the RIG box's antenna-tuner chips say, read by the width measurement
+/// and the chips alike. The tune chip wears the second while a tune runs, so
+/// the box is measured against the wider of the two.
+const ATU_TUNE_LABEL: &str = "TUNE";
+const ATU_TUNING_LABEL: &str = "TUNING";
+const ATU_BYPASS_LABEL: &str = "BYP";
+/// The tune box's SWR bar: how wide it is drawn, and the reading that fills it.
+/// 3:1 is where a transmitter's own protection usually starts folding back, and
+/// past it the colour has already said everything the length could.
+const SWR_BAR_W: f32 = 72.0;
+const SWR_BAR_TOP: f32 = 3.0;
+/// Below this the match is unremarkable, and the bar is green.
+const SWR_GOOD: f32 = 1.5;
+/// The readout beside the bar is measured against this, so the box does not
+/// change width as the reading does.
+const SWR_READOUT_W: &str = "99.9";
 /// Width of the frequency box's right column (inactive VFO + band/mode chip).
 const RIGHT_W: f32 = 96.0;
 /// Width of the S-meter box at its design size. It has no ceiling: the bar and
@@ -1294,7 +1310,10 @@ impl SdroxideApp {
     /// The RIG menu, shown only on a radio with an aerial selector or a power
     /// switch this end can reach.
     fn rig_menu(&mut self, ui: &mut egui::Ui, btn: egui::Response, cmds: &mut Vec<Command>) {
-        let btn = btn.on_hover_text("The transceiver's own aerial socket, and its power switch");
+        let btn = btn.on_hover_text(
+            "The transceiver's own aerial socket, its antenna tuner and SWR, and its power \
+             switch",
+        );
         crate::chrome::menu_popup(ui, &btn, |ui| {
             crate::chrome::menu_caption(ui, "Radio");
             self.rig_controls(ui, cmds, true);
@@ -3962,11 +3981,40 @@ impl SdroxideApp {
         self.caps.as_ref().filter(|c| c.has_rx_antenna).map(|_| self.state.rx_antenna)
     }
 
+    /// The radio's built-in antenna tuner and what it last said, or `None`
+    /// where it has none.
+    fn rig_atu(&self) -> Option<sdroxide_types::AtuState> {
+        self.caps.as_ref().filter(|c| c.has_atu).map(|_| self.state.atu)
+    }
+
+    /// Whether the tune box carries an SWR bar: on every FLEX, with a tuner or
+    /// without — without one is when watching the match matters most, an
+    /// external tuner being turned by hand.
+    ///
+    /// The FLEX alone for now: it is the radio the tune box was made for, and
+    /// the one whose SWR is known to arrive whoever keyed the over. Any radio
+    /// with `has_swr_sensor` could carry it.
+    fn tune_box_swr(&self) -> bool {
+        self.caps.as_ref().is_some_and(|c| c.driver == "smartsdr" && c.has_swr_sensor)
+    }
+
+    /// Whether the tuner shares the aerial row rather than taking one of its
+    /// own. The box is two rows tall, so it does exactly when the aerials and
+    /// the power switch already hold both — it is an aerial-side control, so
+    /// that is the row it belongs beside.
+    fn atu_in_ant_row(&self) -> bool {
+        (!self.rig_antennas().is_empty() || self.rig_rx_antenna().is_some()) && self.rig_power()
+    }
+
     /// Whether the RIG box has anything to carry. Like DIV and SUB, it appears
     /// only for hardware that has what it drives — a strip is too narrow to
     /// hold controls for a radio that would ignore them.
     fn rig_box_shown(&self) -> bool {
-        !self.rig_antennas().is_empty() || self.rig_rx_antenna().is_some() || self.rig_power()
+        !self.rig_antennas().is_empty()
+            || self.rig_rx_antenna().is_some()
+            || self.rig_power()
+            || self.rig_atu().is_some()
+            || self.tune_box_swr()
     }
 
     /// The RIG box's natural width: the wider of its two rows.
@@ -3993,8 +4041,23 @@ impl SdroxideApp {
         if top > 0.0 {
             top += crate::chrome::text_width(ui, "ANT", body.clone());
         }
+        // The tuner: its label, the tune chip at the wider of its two labels,
+        // and the bypass chip — on the aerial row or on a row of its own.
+        let mut atu_row = 0.0f32;
+        if self.rig_atu().is_some() {
+            atu_row = crate::chrome::text_width(ui, "ATU", body.clone())
+                + gap
+                + crate::chrome::chip_width(ui, ATU_TUNE_LABEL, None)
+                    .max(crate::chrome::chip_width(ui, ATU_TUNING_LABEL, None))
+                + gap
+                + crate::chrome::chip_width(ui, ATU_BYPASS_LABEL, None);
+            if self.atu_in_ant_row() {
+                top += gap + atu_row;
+                atu_row = 0.0;
+            }
+        }
         let bottom = if self.rig_power() {
-            crate::chrome::text_width(ui, "PWR", body)
+            crate::chrome::text_width(ui, "PWR", body.clone())
                 + gap
                 + crate::chrome::chip_width(ui, "ON", None)
                 + gap
@@ -4002,7 +4065,16 @@ impl SdroxideApp {
         } else {
             0.0
         };
-        top.max(bottom) + 2.0 * crate::chrome::MODULE_MARGIN_X
+        let swr_row = if self.tune_box_swr() {
+            crate::chrome::text_width(ui, "SWR", body.clone())
+                + gap
+                + SWR_BAR_W
+                + gap
+                + crate::chrome::text_width(ui, SWR_READOUT_W, body)
+        } else {
+            0.0
+        };
+        top.max(bottom).max(atu_row).max(swr_row) + 2.0 * crate::chrome::MODULE_MARGIN_X
     }
 
     /// The RIG box: the radio's aerial socket and its power switch.
@@ -4085,7 +4157,33 @@ impl SdroxideApp {
                     self.state.rx_antenna = !on; // optimistic echo
                     cmds.push(Command::SetRxAntenna(!on));
                 }
+                if let Some(atu) = self.rig_atu()
+                    && self.atu_in_ant_row()
+                {
+                    Self::atu_chips(ui, cmds, atu);
+                }
             });
+        }
+        if let Some(atu) = self.rig_atu()
+            && !self.atu_in_ant_row()
+        {
+            crate::chrome::control_row(ui, narrow, |ui| Self::atu_chips(ui, cmds, atu));
+        }
+        // Under the tuner it reports on. A FLEX has no aerial row and no power
+        // switch here, so the two of them are the box's two rows.
+        if self.tune_box_swr() {
+            let live = self.meters.as_ref().and_then(|m| m.tx).map(|t| t.swr.filter(|s| *s >= 1.0));
+            // On the air, the reading in hand — or, between the radio keying and
+            // its first reading, the last one; off the air, the last one dimmed.
+            let (swr, on_air) = match live {
+                Some(now) => (now.or(self.last_swr), true),
+                None => (self.last_swr, false),
+            };
+            // The SWR guard's own limit, so the bar turns red where the guard
+            // would trip. `0.0` until the engine has said, as in `TxState`.
+            let limit =
+                Some(self.state.tx.swr_limit).filter(|l| *l > SWR_GOOD).unwrap_or(SWR_BAR_TOP);
+            crate::chrome::control_row(ui, narrow, |ui| Self::swr_bar(ui, swr, on_air, limit));
         }
         if self.rig_power() {
             crate::chrome::control_row(ui, narrow, |ui| {
@@ -4110,6 +4208,90 @@ impl SdroxideApp {
                     cmds.push(Command::SetRigPower(false));
                 }
             });
+        }
+    }
+
+    /// The tune box's SWR row: a bar from 1:1 to [`SWR_BAR_TOP`] and the
+    /// reading beside it, live while on the air and dimmed afterwards.
+    fn swr_bar(ui: &mut egui::Ui, swr: Option<f32>, on_air: bool, limit: f32) {
+        use egui::{CornerRadius, Stroke, StrokeKind};
+        let hover = format!(
+            "The match the antenna presents, as the radio measures it — live while the \
+             radio is on the air, whoever keyed it: an ATU tune, TUNE, PTT or the radio \
+             itself. Dimmed, it is the last reading, from the last over.\n\n\
+             Green to {SWR_GOOD:.1}:1; yellow up to the SWR guard's {limit:.1}:1; red past \
+             it. With an external tuner, bypass the internal one and tune for the \
+             shortest bar."
+        );
+        ui.label("SWR").on_hover_text(&hover);
+        let h = (ui.text_style_height(&egui::TextStyle::Body) * 0.6).max(6.0);
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(SWR_BAR_W, h), egui::Sense::hover());
+        resp.on_hover_text(&hover);
+        let p = ui.painter();
+        let r = CornerRadius::same(2);
+        p.rect_filled(rect, r, crate::theme::INPUT_BG());
+        if let Some(s) = swr {
+            let colour = if s <= SWR_GOOD {
+                crate::theme::GREEN()
+            } else if s <= limit {
+                crate::theme::YELLOW()
+            } else {
+                crate::theme::ALERT()
+            };
+            let colour = if on_air { colour } else { colour.gamma_multiply(0.45) };
+            // Never quite empty: a perfect match is a reading too, and an empty
+            // bar would read as no reading at all.
+            let frac = ((s - 1.0) / (SWR_BAR_TOP - 1.0)).clamp(0.04, 1.0);
+            let mut fill = rect;
+            fill.set_width(rect.width() * frac);
+            p.rect_filled(fill, r, colour);
+        }
+        p.rect_stroke(rect, r, Stroke::new(1.0, crate::theme::LINE()), StrokeKind::Inside);
+        let text = swr.map_or_else(|| "—".to_string(), |s| format!("{s:.1}"));
+        let ink = if on_air { crate::theme::TEXT_STRONG() } else { crate::theme::TEXT() };
+        let w =
+            crate::chrome::text_width(ui, SWR_READOUT_W, egui::TextStyle::Body.resolve(ui.style()));
+        ui.add_sized([w, h], egui::Label::new(RichText::new(text).color(ink)))
+            .on_hover_text(&hover);
+    }
+
+    /// The antenna tuner's label and its two chips.
+    ///
+    /// Neither chip echoes optimistically. A tune is the radio's to run and to
+    /// judge — it keys its own carrier, takes as long as the match takes, and
+    /// may fail — so what the chips show is only ever what it last reported.
+    fn atu_chips(ui: &mut egui::Ui, cmds: &mut Vec<Command>, atu: sdroxide_types::AtuState) {
+        use sdroxide_types::AtuStatus;
+        let state = match atu.status {
+            AtuStatus::Idle => "No tune since the radio started.",
+            AtuStatus::Tuning => "Tuning — the radio is transmitting a carrier into the tuner.",
+            AtuStatus::Tuned if atu.using_memory => {
+                "Matched, from the tuner's memory for this frequency."
+            }
+            AtuStatus::Tuned => "Matched.",
+            AtuStatus::Bypass => "Out of circuit.",
+            AtuStatus::Failed => "The last tune found no match.",
+            AtuStatus::Aborted => "The last tune was cut short.",
+        };
+        ui.label("ATU").on_hover_text(format!("The radio's built-in antenna tuner.\n\n{state}"));
+        let tuning = atu.status == AtuStatus::Tuning;
+        let matched = atu.enabled && atu.status == AtuStatus::Tuned;
+        let label = if tuning { ATU_TUNING_LABEL } else { ATU_TUNE_LABEL };
+        if crate::chrome::chip(ui, tuning || matched, label)
+            .on_hover_text(
+                "Start a tune. The radio keys itself with a carrier for as long as the \
+                 match takes, at its tune power (the Tune level), so the antenna must be \
+                 connected. Lit while the match it found is in circuit.",
+            )
+            .clicked()
+        {
+            cmds.push(Command::AtuTune);
+        }
+        if crate::chrome::chip(ui, !atu.enabled, ATU_BYPASS_LABEL)
+            .on_hover_text("Take the tuner out of circuit. Lit while it is.")
+            .clicked()
+        {
+            cmds.push(Command::AtuBypass);
         }
     }
 

@@ -295,6 +295,25 @@ pub trait IqSource: Send {
     /// Not an assertion: what comes back is adopted. Free on a front end with
     /// nothing to ask.
     fn reread_rx_antenna(&mut self) {}
+    /// Whether this radio has a built-in antenna tuner sdroxide can drive, and
+    /// what it is doing.
+    ///
+    /// `None` — the default — where it has none, or has not said yet. `Some`
+    /// becomes `DeviceCaps::has_atu` and `RadioState::atu`, the same way
+    /// [`Self::rx_antenna`] becomes its pair. Asked on every pass of the engine
+    /// loop, so it must not allocate or block.
+    fn atu(&self) -> Option<sdroxide_types::AtuState> {
+        None
+    }
+    /// Start a tune. The radio keys its own carrier for it; sdroxide transmits
+    /// nothing.
+    fn atu_tune(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// Take the tuner out of circuit.
+    fn atu_bypass(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// Whether the receive port is the source's own to decide, so a remembered
     /// one must not be restored over the top of it.
     ///
@@ -1499,6 +1518,17 @@ impl IqSource for ConvertedSource {
     }
     fn reread_rx_antenna(&mut self) {
         self.inner.reread_rx_antenna();
+    }
+    /// The tuner sits between the radio and its aerial, behind any converter
+    /// on the receive side, so it is the inner radio's.
+    fn atu(&self) -> Option<sdroxide_types::AtuState> {
+        self.inner.atu()
+    }
+    fn atu_tune(&mut self) -> Result<()> {
+        self.inner.atu_tune()
+    }
+    fn atu_bypass(&mut self) -> Result<()> {
+        self.inner.atu_bypass()
     }
 
     fn owns_rx_antenna(&self) -> bool {

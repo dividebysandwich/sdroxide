@@ -84,6 +84,9 @@ pub struct SmartSdrSource {
     /// The rate asked for, which is what [`IqSource::sample_rate`] answers until
     /// the radio has sent a packet to say otherwise.
     requested_rate: f64,
+    /// The radio's built-in antenna tuner as it last reported itself, or
+    /// `None` where it has none (or has not said yet).
+    atu: Option<sdroxide_types::AtuState>,
 }
 
 impl SmartSdrSource {
@@ -168,6 +171,7 @@ impl SmartSdrSource {
             warning,
             swap_iq: cfg.swap_iq,
             requested_rate: cfg.iq_sample_rate_hz,
+            atu: None,
         })
     }
 
@@ -279,16 +283,37 @@ impl IqSource for SmartSdrSource {
     }
 
     fn poll_control(&mut self) -> Vec<ControlUpdate> {
-        self.handle
-            .poll_updates()
-            .into_iter()
-            .map(|u| match u {
-                FlexUpdate::Freq(hz) => ControlUpdate::Freq(hz),
-                FlexUpdate::Mode(m) => ControlUpdate::Mode(m),
-                FlexUpdate::TxDrive(f) => ControlUpdate::TxDrive(f),
-                FlexUpdate::TuneDrive(f) => ControlUpdate::TuneDrive(f),
-            })
-            .collect()
+        let mut out = Vec::new();
+        for u in self.handle.poll_updates() {
+            match u {
+                FlexUpdate::Freq(hz) => out.push(ControlUpdate::Freq(hz)),
+                FlexUpdate::Mode(m) => out.push(ControlUpdate::Mode(m)),
+                FlexUpdate::TxDrive(f) => out.push(ControlUpdate::TxDrive(f)),
+                FlexUpdate::TuneDrive(f) => out.push(ControlUpdate::TuneDrive(f)),
+                // Held rather than passed on: the engine asks for it through
+                // `atu`, the way it asks after a receiving antenna.
+                FlexUpdate::Atu(a) => self.atu = a,
+                // An ATU tune, or SmartSDR or the front panel keying the
+                // radio: the engine mutes the receiver and stays off the air
+                // for the length of it, as for any over the radio keys itself.
+                FlexUpdate::RigTx(on) => out.push(ControlUpdate::RigTx(on)),
+            }
+        }
+        out
+    }
+
+    fn atu(&self) -> Option<sdroxide_types::AtuState> {
+        self.atu
+    }
+
+    fn atu_tune(&mut self) -> Result<()> {
+        self.handle.atu_start();
+        Ok(())
+    }
+
+    fn atu_bypass(&mut self) -> Result<()> {
+        self.handle.atu_bypass();
+        Ok(())
     }
 
     fn tx_begin(&mut self, center_hz: f64, _rate: f64) -> Result<f64> {

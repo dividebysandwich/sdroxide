@@ -511,6 +511,46 @@ pub struct RadioState {
     /// postcard numbers fields by position.
     #[serde(default)]
     pub hfdl: crate::HfdlSettings,
+    /// What the radio's built-in antenna tuner is doing.
+    ///
+    /// Meaningful only where [`crate::DeviceCaps::has_atu`]. Only ever read
+    /// from the radio: the tuner decides for itself when a tune has finished
+    /// and whether it worked, and sdroxide's part is the button that starts
+    /// one. Appended last: postcard numbers fields by position.
+    #[serde(default)]
+    pub atu: AtuState,
+}
+
+/// Where a radio's built-in antenna tuner stands, as the radio reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AtuStatus {
+    /// Nothing has been tried since the radio started, or it is not saying.
+    #[default]
+    Idle,
+    /// A tune is running: the radio is transmitting a carrier into the tuner.
+    Tuning,
+    /// The last tune found a match, and that network is in circuit.
+    Tuned,
+    /// The tuner is out of circuit — on request, or because it was never
+    /// asked to tune on this band.
+    Bypass,
+    /// The last tune found no match.
+    Failed,
+    /// The last tune was cut short before it finished.
+    Aborted,
+}
+
+/// A radio's built-in antenna tuner: what it is doing, and whether it is in
+/// circuit at all. See [`RadioState::atu`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct AtuState {
+    pub status: AtuStatus,
+    /// Whether the tuner is in the transmit path. Off is a bypass.
+    pub enabled: bool,
+    /// Whether the radio recalled a stored match for this frequency rather
+    /// than tuning for it — the tuner's memories, kept and applied by the
+    /// radio itself.
+    pub using_memory: bool,
 }
 
 impl Default for RadioState {
@@ -561,6 +601,7 @@ impl Default for RadioState {
             // knows, and it says so in the first state it sends.
             hd_radio_unavailable: None,
             hfdl: crate::HfdlSettings::default(),
+            atu: AtuState::default(),
         }
     }
 }

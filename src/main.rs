@@ -2814,6 +2814,9 @@ fn smartsdr_caps(model: &str, label: String) -> DeviceCaps {
         tx_audio: true,
         freq_ranges_rx: vec![(30_000.0, rx_top)],
         freq_ranges_tx: tx,
+        // Every FLEX has a directional coupler and reports SWR on its `SWR`
+        // meter, which the backend passes on while it is on the air.
+        has_swr_sensor: true,
         sample_rates: sdroxide_types::SmartSdrConfig::IQ_RATES.to_vec(),
         // No RX gain elements: a FLEX has no user-settable front-end gain in the
         // sense this list means. Its `display pan rfgain` is a per-panadapter

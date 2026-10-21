@@ -3934,6 +3934,7 @@ fn engine_thread(
     caps.commands_squelch = source.commands_squelch();
     caps.commands_rig_power = source.commands_rig_power();
     caps.has_rx_antenna = source.rx_antenna().is_some();
+    caps.has_atu = source.atu().is_some();
     caps.wide_span_hz = source.wide_span_hz();
     // `Engine::filters_at_the_rig`, before there is an engine to ask.
     caps.agc_off_unavailable = (caps.audio_mode || caps.rx_audio_external) && source.commands_agc();
@@ -4891,6 +4892,9 @@ fn engine_thread(
         // answers once its control link has been open a round trip.
         engine.refresh_antennas();
         engine.refresh_rx_antenna();
+        // …and its tuner, which a FLEX reports in the status burst after it
+        // has connected rather than in anything the open waits for.
+        engine.refresh_atu();
         engine.refresh_receive_path();
 
         // Drive the FT8/FT4 slot machine (runs in both RX and TX). Returns
@@ -9074,6 +9078,32 @@ impl Engine {
                 if self.state.rx_antenna != on {
                     self.state.rx_antenna = on;
                     let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+                }
+            }
+            // The radio's own tuner. It keys its own carrier for the tune, so
+            // sdroxide's transmit chain has no part in it — and the one thing to
+            // refuse is starting it on top of an over of ours, which would hand
+            // the transmitter to the radio mid-word.
+            AtuTune => {
+                if !self.caps.has_atu {
+                    return;
+                }
+                if self.tx_active {
+                    self.notice("The tuner keys the radio itself — not while transmitting.");
+                    return;
+                }
+                if let Err(e) = self.source.atu_tune() {
+                    warn!("starting the antenna tuner: {e}");
+                    self.notice(&format!("The radio would not start its tuner: {e}"));
+                }
+            }
+            AtuBypass => {
+                if !self.caps.has_atu {
+                    return;
+                }
+                if let Err(e) = self.source.atu_bypass() {
+                    warn!("bypassing the antenna tuner: {e}");
+                    self.notice(&format!("The radio would not bypass its tuner: {e}"));
                 }
             }
             SetAntenna { dir, name } => {
@@ -15012,6 +15042,37 @@ impl Engine {
         }
     }
 
+    /// Follow the radio's built-in antenna tuner: whether there is one, and
+    /// what it says it is doing. The [`Self::refresh_rx_antenna`] shape, and
+    /// for the same reason both halves move together — a client drawing the
+    /// ATU control for the first time must not show a default that only means
+    /// nothing has arrived yet.
+    fn refresh_atu(&mut self) {
+        let now = self.source.atu();
+        let mut state_changed = false;
+        if let Some(atu) = now
+            && self.state.atu != atu
+        {
+            // A failed tune is worth a sentence: the chip only stops being lit,
+            // which is easy to miss with a carrier just gone off the air.
+            if atu.status == sdroxide_types::AtuStatus::Failed
+                && self.state.atu.status != sdroxide_types::AtuStatus::Failed
+            {
+                self.notice("The antenna tuner found no match.");
+            }
+            self.state.atu = atu;
+            state_changed = true;
+        }
+        if now.is_some() != self.caps.has_atu {
+            self.caps.has_atu = now.is_some();
+            let _ = self.event_tx.send(RadioEvent::CapabilitiesUpdated(self.caps.clone()));
+            state_changed = true;
+        }
+        if state_changed {
+            let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+        }
+    }
+
     /// Re-publish the RX gain ranges when what they depend on has moved.
     ///
     /// The same shape as [`Engine::refresh_antennas`], and there for a
@@ -16024,6 +16085,7 @@ impl Engine {
         self.caps.commands_squelch = self.source.commands_squelch();
         self.caps.commands_rig_power = self.source.commands_rig_power();
         self.caps.has_rx_antenna = self.source.rx_antenna().is_some();
+        self.caps.has_atu = self.source.atu().is_some();
         self.caps.wide_span_hz = self.source.wide_span_hz();
         self.audio_mode = self.caps.audio_mode;
         self.caps.agc_off_unavailable = self.agc_off_unavailable();

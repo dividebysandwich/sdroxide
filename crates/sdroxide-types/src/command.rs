@@ -1212,4 +1212,20 @@ pub enum Command {
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     SetRigPowerStep(u8),
+
+    /// Start the radio's built-in antenna tuner. The radio keys itself with a
+    /// carrier for the length of the tune and reports the outcome in
+    /// [`crate::RadioState::atu`]; nothing of sdroxide's transmit chain runs.
+    ///
+    /// Ignored where [`crate::DeviceCaps::has_atu`] is false.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    AtuTune,
+
+    /// Take the radio's built-in antenna tuner out of circuit.
+    ///
+    /// Ignored where [`crate::DeviceCaps::has_atu`] is false.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    AtuBypass,
 }

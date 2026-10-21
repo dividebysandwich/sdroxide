@@ -1601,7 +1601,13 @@ use sdroxide_types::{
 /// `SetRigPowerStep`, `ServerMsg` gains `AmpStatus`, `StationConfig` gains
 /// `amp` on its tail, and `AmpAlerts` carries `from_amp`, for the amplifier's
 /// own lights — all appended, so a v184 peer reads them out of step.
-pub const PROTO_VERSION: u16 = 185;
+///
+/// v186: a radio's built-in antenna tuner. [`sdroxide_types::Command`] gains
+/// `AtuTune` and `AtuBypass`, [`sdroxide_types::DeviceCaps`] gains `has_atu`
+/// and [`sdroxide_types::RadioState`] gains `atu`
+/// ([`sdroxide_types::AtuState`]), each on its tail. `DeviceCaps` and
+/// `RadioState` ride whole, so a v185 peer reads the extra bytes out of step.
+pub const PROTO_VERSION: u16 = 186;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

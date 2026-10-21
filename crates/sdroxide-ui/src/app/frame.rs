@@ -1229,6 +1229,8 @@ impl SdroxideApp {
                     // A different interface on this radio: the stored zoom
                     // was taken in another span and means nothing in this one.
                     if self.view.adopt_driver(&c.driver) {
+                        // Nor does the last SWR another radio was matched to.
+                        self.last_swr = None;
                         tracing::debug!(
                             target: "sdroxide::panadapter",
                             driver = %c.driver,
@@ -1334,6 +1336,11 @@ impl SdroxideApp {
                 RadioEvent::Meters(m) => {
                     if self.focused {
                         self.speech.announcer.on_meters(&m, &self.state, now);
+                    }
+                    // Below 1.0 is not a reading but a radio that has not
+                    // measured one yet; the engine's own guard reads it so.
+                    if let Some(swr) = m.tx.and_then(|t| t.swr).filter(|s| *s >= 1.0) {
+                        self.last_swr = Some(swr);
                     }
                     self.meters = Some(m);
                 }

@@ -352,6 +352,16 @@ pub struct DeviceCaps {
     /// field already on the wire keeps its number.
     #[serde(default)]
     pub agc_off_unavailable: bool,
+    /// The radio has a built-in antenna tuner sdroxide can start and bypass
+    /// ([`crate::Command::AtuTune`], [`crate::Command::AtuBypass`]), and
+    /// reports what it is doing in [`crate::RadioState::atu`].
+    ///
+    /// Learned rather than claimed, like [`Self::has_rx_antenna`]: a FLEX
+    /// answers whether it has one (`atu_present`), and the control appears
+    /// once it has. Appended last, so every field already on the wire keeps
+    /// its number.
+    #[serde(default)]
+    pub has_atu: bool,
 }
 
 impl DeviceCaps {

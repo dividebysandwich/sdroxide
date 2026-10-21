@@ -272,6 +272,8 @@ impl PanadapterSource {
             // The engine's to decide, from whose audio is being heard and
             // whether the transceiver's AGC can be reached (`commands_agc`).
             agc_off_unavailable: false,
+            // The transceiver's tuner, for the same reason.
+            has_atu: ctrl.has_atu,
         }
     }
 
@@ -875,6 +877,19 @@ impl IqSource for PanadapterSource {
 
     fn reread_rx_antenna(&mut self) {
         self.ctrl.reread_rx_antenna();
+    }
+
+    /// The transceiver's tuner: it is the radio that transmits.
+    fn atu(&self) -> Option<sdroxide_types::AtuState> {
+        self.ctrl.atu()
+    }
+
+    fn atu_tune(&mut self) -> Result<()> {
+        self.ctrl.atu_tune()
+    }
+
+    fn atu_bypass(&mut self) -> Result<()> {
+        self.ctrl.atu_bypass()
     }
 
     /// Gated on the same test, so the two answers cannot disagree: a level that
