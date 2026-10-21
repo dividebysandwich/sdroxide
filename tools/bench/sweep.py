@@ -44,7 +44,7 @@ TEXT = " AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ "
 SHORT_TEXT = " AAA SDRBROWN TEST "
 # Longest transmission worth making for one sample. Past this, the text is
 # shortened instead — a three-minute key-down to prove a point is not worth it.
-MAX_WINDOW_S = 180.0
+MAX_WINDOW_S = 240.0
 
 # Modes that do not carry text, with the reason recorded in the manifest.
 NOT_TEXT = {
@@ -133,7 +133,9 @@ def tx_window(p, text, fallback):
     #
     # Returns the per-character time as well, because the sample is judged
     # against the *text's* own duration and not against this window's margin.
-    return min(300.0, max(10.0, secs * len(text) * 1.06 + 2.5)), secs
+    # A truncated sample is worse than a long one, so the margin is a safety
+    # factor rather than a tight fit.
+    return min(MAX_WINDOW_S, max(12.0, secs * len(text) * 1.5 + 5.0)), secs
 
 
 def entry_is_tx(p):
@@ -247,9 +249,16 @@ def sweep_one(p, mode, args, index, total):
         # fldigi refused the mode or fell back — worth knowing, not worth guessing.
         entry["note"] = f"fldigi reported {entry['fldigi_mode']}"
 
-    tx_seconds, secs_per_char = tx_window(p, args.text, args.secs_per_char)
+    # A long interleave costs far more than the reported rate says: MFSK64L is
+    # named for being fast and is one of the slowest things fldigi sends. Its own
+    # rate said 0.52 s/char, the window came out at 40 s, and the operator saw a
+    # few characters on the air. A trailing L, and the modes that are slow by
+    # nature, are treated as slow whatever the rate claims.
+    long_interleave = bool(re.search(r"L$", mode)) or mode.startswith(("OLIVIA", "Cont"))
+    fallback = args.secs_per_char * (3.0 if long_interleave else 1.0)
+    tx_seconds, secs_per_char = tx_window(p, args.text, fallback)
     text = args.text
-    if tx_seconds >= MAX_WINDOW_S - 1.0:
+    if long_interleave or tx_seconds >= MAX_WINDOW_S - 1.0:
         # Too slow for the long message: fall back to the short one, which fits
         # in every mode fldigi has.
         text = getattr(args, "short_text", None) or SHORT_TEXT
@@ -304,7 +313,13 @@ def sweep_one(p, mode, args, index, total):
         w.setframerate(8000)
         w.writeframes(np.clip(wav * 32767, -32768, 32767).astype("<i2").tobytes())
     expected = secs_per_char * len(text)
-    if burst < expected * 0.9:
+    if not parsed:
+        # No decoder, so nothing has confirmed the text went out. The rate that
+        # sized the window is the same number that would judge it, and a verdict
+        # from that is circular - which is exactly how MFSK64L came out "ok" with
+        # a few characters actually sent.
+        verdict = "unverified"
+    elif burst < expected * 0.9:
         verdict = "TRUNCATED"
     elif burst > expected * 1.8:
         verdict = "long tail"

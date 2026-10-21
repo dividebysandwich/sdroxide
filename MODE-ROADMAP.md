@@ -85,6 +85,31 @@ for `symlen` samples as a plain cosine.
 (and the sweep is filling in MFSK4 through MFSK128 as this is written, so there
 will be one per variant).
 
+### MFSK16 port: the front end is in and verified, the decoder is not
+
+`crates/sdroxide-dsp/src/mfsk_rx.rs`, written from the spec above. It builds
+silent and its own tests pass:
+
+- **the sliding DFT bank is verified against a known tone** — a synthetic carrier
+  at a bin is found at that bin, and still found with a quarter of a bin of
+  mistuning, which is what the four sub-bin paths are for;
+- the variants table, the Gray round trip, the interleaver's permutation, the
+  varicode's shape (starts with 1, no `00` inside, ends with 1) and silence
+  producing nothing.
+
+**Against the real capture it runs but gives the wrong letters:** 67 characters,
+plausible word lengths and spaces in the right places, 11.3 dB, locked — and
+garbage. The realignment settles exactly **one tone** off (`offset 15.6 Hz`) in
+every polarity and both Viterbi pairings tried, which points between the soft
+symbols and the de-interleaver rather than at the front end.
+
+**The next step is a modulator, not more guessing on the decoder.** With a
+transmitter that shares these tables, a loopback tells us which stage diverges;
+without one, every experiment changes two things at once. That is how the Olivia
+year was lost. `ConvEncoder` is already in the tree, so it is the varicode, the
+interleaver and the tone generator, and then the receive path can be compared
+symbol by symbol.
+
 ### The rule for adding a mode: port it, do not vendor it
 
 **Operator's standing instruction, 2026-10-21: vendoring is not the preference.**

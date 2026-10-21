@@ -28,6 +28,7 @@ mod interp;
 mod iqcorrect;
 pub mod jtty;
 mod mfsk;
+pub mod mfsk_rx;
 mod modulator;
 mod navtex;
 mod nb;
