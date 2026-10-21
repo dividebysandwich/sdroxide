@@ -23,9 +23,111 @@
 //! and is a separate job.
 
 use crate::fec::{ConvCode, ViterbiStream};
-use crate::psk::{VaricodeRx, varicode};
 
 const PI: f64 = std::f64::consts::PI;
+
+// ---------------------------------------------------------------- the varicode
+//
+// MFSK's alphabet is **not** PSK31's. It is the IZ8BLY MFSK varicode
+// (`qsl.net/zl1bpu/MFSK/Varicode.html`), which fldigi carries as
+// `src/mfsk/mfskvaricode.cxx`: every code starts with `1` and ends with `00`,
+// but the words themselves differ from PSK31's for almost every character —
+// space is `100` here and `1` there, `A` is `10111100` and `1111101`. A port
+// that borrows PSK's table decodes structure with the wrong letters, and a
+// loopback still passes because both halves use the same wrong table. That is
+// exactly what happened here before this table was added.
+//
+// `CODE` is the bit pattern of each word (the leading `1` included) and `LEN`
+// its length; the transmit side sends them most significant bit first and the
+// receive side accumulates until the last three bits are `001` — the end of one
+// word (`00`) plus the leading `1` of the next — then matches the word.
+const MF_CODE: [u16; 256] = [
+    0x75C, 0x760, 0x768, 0x76C, 0x770, 0x774, 0x778, 0x77C, 0xA8, 0x780, 0x7A0, 0x7A8, 0x7AC, 0xAC,
+    0x7B0, 0x7B4, 0x7B8, 0x7BC, 0x7C0, 0x7D0, 0x7D4, 0x7D8, 0x7DC, 0x7E0, 0x7E8, 0x7EC, 0x7F0,
+    0x7F4, 0x7F8, 0x7FC, 0x800, 0xA00, 0x4, 0x1C0, 0x1FC, 0x2D8, 0x2A8, 0x2A0, 0x200, 0x1BC, 0x1F4,
+    0x1F0, 0x2B4, 0x1E0, 0xA0, 0x1D8, 0x1D4, 0x1E8, 0xE0, 0xF0, 0x140, 0x154, 0x174, 0x160, 0x16C,
+    0x1A0, 0x180, 0x1AC, 0x1EC, 0x1F8, 0x2C0, 0x1DC, 0x2BC, 0x1D0, 0x280, 0xBC, 0x100, 0xD4, 0xDC,
+    0xB8, 0xF8, 0x150, 0x158, 0xC0, 0x1B4, 0x17C, 0xF4, 0xE8, 0xFC, 0xD0, 0xEC, 0x1B0, 0xD8, 0xB4,
+    0xB0, 0x15C, 0x1A8, 0x168, 0x170, 0x178, 0x1B8, 0x2E8, 0x2D0, 0x2EC, 0x2D4, 0x2B0, 0x2AC, 0x14,
+    0x60, 0x38, 0x34, 0x8, 0x50, 0x58, 0x30, 0x18, 0x80, 0x70, 0x2C, 0x40, 0x1C, 0x10, 0x54, 0x78,
+    0x20, 0x28, 0xC, 0x3C, 0x6C, 0x68, 0x74, 0x5C, 0x7C, 0x2DC, 0x2B8, 0x2E0, 0x2F0, 0xA80, 0xAA0,
+    0xAA8, 0xAAC, 0xAB0, 0xAB4, 0xAB8, 0xABC, 0xAC0, 0xAD0, 0xAD4, 0xAD8, 0xADC, 0xAE0, 0xAE8,
+    0xAEC, 0xAF0, 0xAF4, 0xAF8, 0xAFC, 0xB00, 0xB40, 0xB50, 0xB54, 0xB58, 0xB5C, 0xB60, 0xB68,
+    0xB6C, 0xB70, 0xB74, 0xB78, 0xB7C, 0x2F4, 0x2F8, 0x2FC, 0x300, 0x340, 0x350, 0x354, 0x358,
+    0x35C, 0x360, 0x368, 0x36C, 0x370, 0x374, 0x378, 0x37C, 0x380, 0x3A0, 0x3A8, 0x3AC, 0x3B0,
+    0x3B4, 0x3B8, 0x3BC, 0x3C0, 0x3D0, 0x3D4, 0x3D8, 0x3DC, 0x3E0, 0x3E8, 0x3EC, 0x3F0, 0x3F4,
+    0x3F8, 0x3FC, 0x400, 0x500, 0x540, 0x550, 0x554, 0x558, 0x55C, 0x560, 0x568, 0x56C, 0x570,
+    0x574, 0x578, 0x57C, 0x580, 0x5A0, 0x5A8, 0x5AC, 0x5B0, 0x5B4, 0x5B8, 0x5BC, 0x5C0, 0x5D0,
+    0x5D4, 0x5D8, 0x5DC, 0x5E0, 0x5E8, 0x5EC, 0x5F0, 0x5F4, 0x5F8, 0x5FC, 0x600, 0x680, 0x6A0,
+    0x6A8, 0x6AC, 0x6B0, 0x6B4, 0x6B8, 0x6BC, 0x6C0, 0x6D0, 0x6D4, 0x6D8, 0x6DC, 0x6E0, 0x6E8,
+    0x6EC, 0x6F0, 0x6F4, 0x6F8, 0x6FC, 0x700, 0x740, 0x750, 0x754, 0x758,
+];
+
+const MF_LEN: [u8; 256] = [
+    11, 11, 11, 11, 11, 11, 11, 11, 8, 11, 11, 11, 11, 8, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
+    11, 11, 11, 11, 11, 11, 12, 12, 3, 9, 9, 10, 10, 10, 10, 9, 9, 9, 10, 9, 8, 9, 9, 9, 8, 8, 9,
+    9, 9, 9, 9, 9, 9, 9, 9, 9, 10, 9, 10, 9, 10, 8, 9, 8, 8, 8, 8, 9, 9, 8, 9, 9, 8, 8, 8, 8, 8, 9,
+    8, 8, 8, 9, 9, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 5, 7, 6, 6, 4, 7, 7, 6, 5, 8, 7, 6, 7, 5, 5,
+    7, 7, 6, 6, 4, 6, 7, 7, 7, 7, 7, 10, 10, 10, 10, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 10, 10,
+    10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+    10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
+    11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
+    11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
+];
+
+/// The bit pattern for a character, leading `1` included, as the modulator sends
+/// it. Unknown bytes fall back to NUL's word, as fldigi's `varienc` does.
+fn mfsk_word(c: u8) -> (u16, u8) {
+    (MF_CODE[c as usize], MF_LEN[c as usize])
+}
+
+/// The word for a code, or `None` until enough bits have arrived.
+fn mfsk_char(code: u32) -> Option<char> {
+    MF_CODE.iter().position(|&c| c as u32 == code).and_then(|i| char::from_u32(i as u32))
+}
+
+/// MFSK's varicode receiver, written the way fldigi's `recvbit` is: a character
+/// completes when the last three bits are `001` — the previous word's `00`
+/// terminator plus the next word's leading `1` — and the leading `1` is then
+/// kept as the new register value, so the next word's first data bit is the one
+/// after it.
+///
+/// The register starts at **0**, where fldigi starts it at 1. fldigi's stream
+/// always opens with the encoded zeros of the preamble, so its first real word
+/// is preceded by a terminator; a recording cut inside the text is not, and with
+/// a 1 already in the register the first word keeps an extra leading bit and
+/// decodes as its neighbour (T → Q, which is how this was found). Starting at 0
+/// costs nothing after the first boundary.
+struct MfskVaricodeRx {
+    shreg: u32,
+}
+
+impl MfskVaricodeRx {
+    fn new() -> Self {
+        MfskVaricodeRx { shreg: 0 }
+    }
+
+    fn reset(&mut self) {
+        self.shreg = 0;
+    }
+
+    fn push_bit(&mut self, bit: u8) -> Option<char> {
+        self.shreg = (self.shreg << 1) | (bit & 1) as u32;
+        // A runaway register is a resync, not a word: the longest word here is
+        // twelve bits, so anything past sixteen has no terminator in it.
+        if self.shreg > 0x1_0000 {
+            self.shreg = 1;
+            return None;
+        }
+        if self.shreg & 7 == 1 {
+            let code = self.shreg >> 1;
+            self.shreg = 1;
+            return mfsk_char(code);
+        }
+        None
+    }
+}
 
 /// How many hop phases per symbol the clock is measured at.
 const HOPS: usize = 16;
@@ -47,8 +149,8 @@ pub struct MfskVariant {
     pub preamble: usize,
 }
 
-/// The eight variants, in the order [`MfskVariant::ALL`] documents.
-pub const ALL: [MfskVariant; 8] = [
+/// Every variant fldigi can transmit, in the order it lists them.
+pub const ALL: [MfskVariant; 11] = [
     MfskVariant {
         name: "MFSK4",
         fs: 8000.0,
@@ -121,6 +223,33 @@ pub const ALL: [MfskVariant; 8] = [
         tones: 16,
         preamble: 180,
     },
+    MfskVariant {
+        name: "MFSK64L",
+        fs: 8000.0,
+        symlen: 128,
+        symbits: 4,
+        depth: 400,
+        tones: 16,
+        preamble: 2500,
+    },
+    MfskVariant {
+        name: "MFSK128",
+        fs: 8000.0,
+        symlen: 64,
+        symbits: 4,
+        depth: 20,
+        tones: 16,
+        preamble: 214,
+    },
+    MfskVariant {
+        name: "MFSK128L",
+        fs: 8000.0,
+        symlen: 64,
+        symbits: 4,
+        depth: 800,
+        tones: 16,
+        preamble: 5000,
+    },
 ];
 
 impl MfskVariant {
@@ -140,15 +269,19 @@ impl MfskVariant {
     }
 }
 
-/// Gray code, the direction the modulator applies. The receiver only needs the
-/// inverse; this is here because the modulator will want it and the round-trip
-/// test pins the pair.
-#[cfg_attr(not(test), allow(dead_code))]
+/// Gray code, `k ^ (k >> 1)` — **the receive side's** map.
+///
+/// fldigi's `misc.cxx` names these the other way round from their arithmetic:
+/// its `graydecode()` is this function and its `grayencode()` is [`binary`]. The
+/// modulator therefore sends `binary(value)` and the demodulator reads back
+/// `gray(tone)`, and the pair is self-consistent whichever way round it is
+/// wired — which is exactly why a loopback cannot catch getting them swapped.
+/// The air can, and did.
 fn gray(k: u32) -> u32 {
     k ^ (k >> 1)
 }
 
-/// The inverse of [`gray`]: a tone number back to the value it carries.
+/// [`gray`]'s inverse, `binary(g)` — **the transmit side's** map.
 fn binary(g: u32) -> u32 {
     let mut v = 0;
     let mut g = g;
@@ -325,7 +458,7 @@ pub struct MfskRx {
     e: Vec<f32>,
     interleaver: Interleaver,
     viterbi: Box<ViterbiStream>,
-    varicode: VaricodeRx,
+    varicode: MfskVaricodeRx,
     /// Two soft symbols per bit, taken alternately.
     /// The two most recent soft symbols, 0..255 with 128 unknown.
     pair: [u8; 2],
@@ -375,7 +508,7 @@ impl MfskRx {
             e: Vec::new(),
             interleaver: Interleaver::new(variant.symbits, variant.depth, false),
             viterbi: Box::new(ViterbiStream::new(ConvCode::THOR)),
-            varicode: VaricodeRx::new(),
+            varicode: MfskVaricodeRx::new(),
             pair: [0; 2],
             symcounter: false,
             soft_sign: if std::env::var("SDROXIDE_MFSK_SIGN").as_deref() == Ok("-1") {
@@ -430,7 +563,7 @@ impl MfskRx {
         self.decisions = 0;
         self.interleaver = Interleaver::new(self.variant.symbits, self.variant.depth, false);
         self.viterbi = Box::new(ViterbiStream::new(ConvCode::THOR));
-        self.varicode = VaricodeRx::new();
+        self.varicode = MfskVaricodeRx::new();
         self.pair = [0; 2];
         self.symcounter = false;
         self.metric = 0.0;
@@ -549,10 +682,16 @@ impl MfskRx {
             // takes the tone number back to its value, once. (Applying Gray and
             // then its inverse is the identity, which is what the first version
             // did — it still produced structure and the wrong letters.)
-            let idx = if self.mirror { nt - 1 - i } else { i };
-            let val = binary(idx as u32);
+            //
+            // A mirrored signal is one received on the wrong sideband: the tone
+            // that left as `t` arrives at `nt−1−t`, so the *amplitude* stays in
+            // the bin it was measured in and the *value* is the one belonging to
+            // the mirrored tone. Mirroring the index on both sides instead is a
+            // permutation of the sum, and changes nothing — which is what this
+            // switch did until the tones were compared.
+            let val = gray(if self.mirror { (nt - 1 - i) as u32 } else { i as u32 });
             for (k, bv) in b.iter_mut().enumerate().take(bits) {
-                *bv += if (val >> (bits - k - 1)) & 1 == 1 { m[idx] } else { -m[idx] };
+                *bv += if (val >> (bits - k - 1)) & 1 == 1 { m[i] } else { -m[i] };
             }
         }
         let mut sym = [0u8; 8];
@@ -677,9 +816,11 @@ impl MfskRx {
         }
     }
 
-    /// For a modulator or a test: the varicode word for a character, as bits.
+    /// For a modulator or a test: the varicode word for a character, as bits,
+    /// most significant first — the order the modulator sends them in.
     pub fn varicode_bits(c: char) -> Vec<u8> {
-        varicode(c as u8).bytes().map(|b| b - b'0').collect()
+        let (code, len) = mfsk_word(c as u8);
+        (0..len).rev().map(|i| ((code >> i) & 1) as u8).collect()
     }
 }
 
@@ -696,6 +837,13 @@ impl MfskRx {
 /// **A loopback proves self-consistency, not interoperability.** It cannot show
 /// that this is what a station sends, only that the two halves here agree.
 pub fn encode(variant: MfskVariant, centre: f64, text: &str) -> Vec<f32> {
+    encode_impl(variant, centre, text, false)
+}
+
+/// The same modulator with the tone order reversed, which is what the receiver
+/// sees from a station on the other sideband. Only the tests build this: it is
+/// the signal `mirror` exists to undo.
+fn encode_impl(variant: MfskVariant, centre: f64, text: &str, invert: bool) -> Vec<f32> {
     let spacing = variant.spacing();
     let f0 = centre - variant.bandwidth() / 2.0;
     let bits = variant.symbits;
@@ -716,7 +864,16 @@ pub fn encode(variant: MfskVariant, centre: f64, text: &str) -> Vec<f32> {
             shift = (shift << 1) | ((zero >> i) & 1) as u32;
             filled += 1;
             if filled == bits {
-                push_symbol(&mut out, &mut phase, &mut interleaver, shift, f0, spacing, variant);
+                push_symbol(
+                    &mut out,
+                    &mut phase,
+                    &mut interleaver,
+                    shift,
+                    f0,
+                    spacing,
+                    variant,
+                    invert,
+                );
                 filled = 0;
                 shift = 0;
             }
@@ -731,23 +888,30 @@ pub fn encode(variant: MfskVariant, centre: f64, text: &str) -> Vec<f32> {
             shift = (shift << 1) | ((d >> i) & 1) as u32;
             filled += 1;
             if filled == bits {
-                push_symbol(&mut out, &mut phase, &mut interleaver, shift, f0, spacing, variant);
+                push_symbol(
+                    &mut out,
+                    &mut phase,
+                    &mut interleaver,
+                    shift,
+                    f0,
+                    spacing,
+                    variant,
+                    invert,
+                );
                 filled = 0;
                 shift = 0;
             }
         }
     }
 
-    // CR LF CR, then the text, each character as its varicode word plus the two
-    // terminating zeros.
+    // CR LF CR, then the text, each character as its varicode word. The word
+    // already carries its own `00` terminator, so nothing is appended.
     let mut chars: Vec<u8> = vec![13, 2, 13];
     chars.extend(text.bytes());
     chars.push(2);
     for c in chars {
-        let word = varicode(c);
-        let mut stream: Vec<u8> = word.bytes().map(|b| b - b'0').collect();
-        stream.push(0);
-        stream.push(0);
+        let (code, len) = mfsk_word(c);
+        let stream: Vec<u8> = (0..len).rev().map(|i| ((code >> i) & 1) as u8).collect();
         for b in stream {
             let d = encoder.push(b);
             for i in 0..2 {
@@ -762,6 +926,7 @@ pub fn encode(variant: MfskVariant, centre: f64, text: &str) -> Vec<f32> {
                         f0,
                         spacing,
                         variant,
+                        invert,
                     );
                     filled = 0;
                     shift = 0;
@@ -780,9 +945,13 @@ fn push_symbol(
     f0: f64,
     spacing: f64,
     variant: MfskVariant,
+    invert: bool,
 ) {
     interleaver.bits(&mut word);
-    let tone = gray(word) as usize % variant.tones;
+    let mut tone = binary(word) as usize % variant.tones;
+    if invert {
+        tone = variant.tones - 1 - tone;
+    }
     let w = 2.0 * PI * (f0 + tone as f64 * spacing) / variant.fs;
     for _ in 0..variant.symlen {
         out.push(phase.cos() as f32);
@@ -805,7 +974,7 @@ mod tests {
         assert!((m16.spacing() - 15.625).abs() < 1e-9, "spacing {}", m16.spacing());
         assert!((m16.bandwidth() - 234.375).abs() < 1e-9);
         assert_eq!(MfskVariant::named("mFsk22").map(|v| v.fs), Some(11025.0));
-        assert!(MfskVariant::named("MFSK128").is_none(), "128 is not in this table");
+        assert_eq!(MfskVariant::named("MFSK128").map(|v| v.symlen), Some(64));
     }
 
     #[test]
@@ -947,10 +1116,14 @@ mod tests {
     #[test]
     #[ignore]
     fn an_off_air_capture_decodes() {
-        let Ok(path) = std::env::var("SDROXIDE_MFSK_SAMPLE") else {
-            eprintln!("SDROXIDE_MFSK_SAMPLE unset; skipping");
+        // The corpus sample is the default; `SDROXIDE_MFSK_SAMPLE` overrides it.
+        let path = std::env::var("SDROXIDE_MFSK_SAMPLE").unwrap_or_else(|_| {
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/MFSK16.wav").to_string()
+        });
+        if !std::path::Path::new(&path).exists() {
+            eprintln!("no sample at {path}; skipping");
             return;
-        };
+        }
         let mut reader = hound::WavReader::open(&path).expect("open the sample WAV");
         let spec = reader.spec();
         let audio: Vec<f32> = match spec.sample_format {
@@ -962,50 +1135,113 @@ mod tests {
         let num = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         let name = std::env::var("SDROXIDE_MFSK_VARIANT").unwrap_or_else(|_| "MFSK16".into());
         let variant = MfskVariant::named(&name).expect("a variant name");
-        let hz = num("SDROXIDE_MFSK_HZ", 1730.0);
-
-        let mut rx = MfskRx::new(variant, spec.sample_rate as f64, hz);
-        for chunk in audio.chunks(512) {
-            rx.feed(chunk);
-        }
+        // The centre is the *middle of the measured tones*, not the file name: on
+        // the corpus sample the tones run 1635…1869, so 1752 (the manifest says
+        // 1800, which is 3 tone spacings out and the realignment cannot reach it).
+        let hz = num("SDROXIDE_MFSK_HZ", 1752.0);
+        let skip: f64 = num("SDROXIDE_MFSK_SKIP", 0.0);
+        let start = (skip * spec.sample_rate as f64) as usize;
+        let audio = &audio[start.min(audio.len())..];
         let pad = vec![0.0f32; spec.sample_rate as usize];
-        rx.feed(&pad);
-        eprintln!(
-            "{name} at {hz} Hz (mirror {}): {} chars, snr {:.1} dB, offset {:.1} Hz, locked {}: {:?}",
-            std::env::var("SDROXIDE_MFSK_MIRROR").is_ok(),
-            rx.text().len(),
-            rx.snr_db,
-            rx.offset_hz,
-            rx.locked,
-            rx.text()
-        );
-        if let Ok(want) = std::env::var("SDROXIDE_MFSK_TEXT") {
-            for w in want.split_whitespace() {
-                assert!(rx.text().contains(w), "did not recover {w:?}: {:?}", rx.text());
+        let pinned = std::env::var("SDROXIDE_MFSK_MIRROR").is_ok();
+        // The corpus sample carries this text verbatim (samples/README.md); an
+        // override is for a fixture that does not.
+        let want = std::env::var("SDROXIDE_MFSK_TEXT")
+            .unwrap_or_else(|_| "EAGLE LANDED SDRBROWN 12345".into());
+        let score = |t: &str| want.split_whitespace().filter(|w| t.contains(w)).count();
+
+        let mut best: Option<(usize, String)> = None;
+        for mirror in if pinned { vec![true] } else { vec![false, true] } {
+            let mut rx = MfskRx::new(variant, spec.sample_rate as f64, hz);
+            rx.mirror = mirror;
+            for chunk in audio.chunks(512) {
+                rx.feed(chunk);
             }
+            rx.feed(&pad);
+            eprintln!(
+                "{name} at {hz} Hz (mirror {mirror}): {} chars, snr {:.1} dB, offset {:.1} Hz, locked {}: {:?}",
+                rx.text().len(),
+                rx.snr_db,
+                rx.offset_hz,
+                rx.locked,
+                rx.text()
+            );
+            let hits = score(rx.text());
+            if best.as_ref().is_none_or(|(b, _)| hits > *b) {
+                best = Some((hits, rx.text().to_string()));
+            }
+        }
+        let text = &best.as_ref().expect("a polarity was tried").1;
+        for w in want.split_whitespace() {
+            assert!(text.contains(w), "did not recover {w:?}: {:?}", text);
         }
     }
 
-    /// The varicode tables are the ones the modes use: a character's word must
-    /// start with 1 and end with 00, which is the IZ8BLY rule.
+    /// The varicode is the IZ8BLY MFSK alphabet, every word starting with `1`
+    /// and ending with `00`, and it is **not** PSK31's — space is `100` here and
+    /// `1` there, which is the trap this test names.
     #[test]
     fn every_varicode_word_is_well_formed() {
-        let mut coded = 0;
-        for c in 0u8..=127 {
-            let word = varicode(c);
-            if word.is_empty() {
-                continue; // NUL has no word, which is how the tables are built
-            }
-            coded += 1;
-            assert!(word.starts_with('1'), "{:?} for {c:?} must start with 1", word);
-            assert!(
-                !word.contains("00"),
-                "{:?} for {c:?} must not contain 00 - the terminator is appended, not part of the word",
-                word
-            );
-            assert!(word.ends_with('1'), "{:?} for {c:?} must end with 1", word);
+        for c in 0u8..=255 {
+            let (code, len) = mfsk_word(c);
+            assert!(len >= 3 && len <= 12, "{c}: length {len}");
+            assert_eq!(code >> (len - 1), 1, "{c}: must start with 1");
+            assert_eq!(code & 0b11, 0, "{c}: must end with 00");
+            let bits = MfskRx::varicode_bits(c as char);
+            assert_eq!(bits.len(), len as usize);
+            assert_eq!(bits.iter().fold(0u32, |v, &b| (v << 1) | b as u32), code as u32);
         }
-        assert!(coded > 90, "only {coded} characters have a word");
-        assert_eq!(MfskRx::varicode_bits('A').len(), varicode(b'A').len());
+        // The two alphabets differ, and this is the one that matters.
+        assert_eq!(mfsk_word(b' '), (0b100, 3));
+        assert_eq!(mfsk_word(b'A'), (0b10111100, 8));
+        assert_ne!(mfsk_word(b'A').0, 0b1111101, "PSK31's A is not MFSK's");
+    }
+
+    /// The mirror switch has to be a real transform. A signal from the other
+    /// sideband has its tone order reversed; decoding it with `mirror` on must
+    /// return the text and with it off must not. The switch was a no-op before,
+    /// because it mirrored the value and the amplitude index together — which is
+    /// a permutation of the same sum and changes nothing.
+    #[test]
+    fn an_inverted_transmission_reads_back_with_the_mirror() {
+        let variant = MfskVariant::named("MFSK16").unwrap();
+        let inverted = encode_impl(variant, 1500.0, "TEST 12345 SDRBROWN", true);
+        let mut straight = MfskRx::new(variant, variant.fs, 1500.0);
+        straight.feed(&inverted);
+        straight.feed(&vec![0.0f32; 8000]);
+        assert!(
+            !straight.text().contains("TEST"),
+            "the unmirrored receiver read an inverted signal: {:?}",
+            straight.text()
+        );
+        let mut mirrored = MfskRx::new(variant, variant.fs, 1500.0);
+        mirrored.mirror = true;
+        mirrored.feed(&inverted);
+        mirrored.feed(&vec![0.0f32; 8000]);
+        eprintln!("inverted, mirrored: {:?}", mirrored.text());
+        assert!(
+            mirrored.text().contains("TEST"),
+            "mirror did not undo the inversion: {:?}",
+            mirrored.text()
+        );
+    }
+
+    /// The varicode receiver must give back what the modulator sent, including
+    /// the fldigi boundary rule (the next word's leading 1 ends the last one).
+    #[test]
+    fn the_varicode_receiver_reads_the_transmitter() {
+        let text = "TEST THE EAGLE\r\n";
+        let mut tx_bits = Vec::new();
+        for c in text.bytes() {
+            tx_bits.extend(MfskRx::varicode_bits(c as char));
+        }
+        let mut rx = MfskVaricodeRx::new();
+        let mut got = String::new();
+        for b in tx_bits {
+            if let Some(c) = rx.push_bit(b) {
+                got.push(c);
+            }
+        }
+        assert_eq!(got.trim_end(), "TEST THE EAGLE");
     }
 }
