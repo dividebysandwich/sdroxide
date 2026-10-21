@@ -375,10 +375,28 @@ offered; the chip row says why the other four are missing.
   every character 32 codes out, `EAGLE` as `eagle` — through this receiver, and
   that is a carrier-phase fault at the narrower bandwidths, not the interleaver
   (both interleaves are proved by `the_interleaver_round_trips_a_message`, and
-  2K reads with either). The reference's own receiver tracks a frequency offset
-  and a symbol shift, and this port does neither; that is where to look next, and
-  the two variants are already named in `Mt63Mode` so the fix is an appended
-  variant rather than a new field.
+  2K reads with either). The two are already named in `Mt63Mode` so the fix is an
+  appended variant rather than a new field.
+- **What the reference does that this port does not, read from fldigi 4.2.13's
+  `src/mt63/mt63base.cxx`** (2026-10-21). Its `MT63rx::DataProcess` corrects two
+  things this receiver has no notion of:
+  - a **fractional-bin frequency offset** `FreqOfs`, applied as a progressive
+    phase across the window (`P = -2π·FreqOfs/WindowLen` per sample) before the
+    FFT. The bank itself is quantised to whole bins by both implementations —
+    `FirstDataCarr` is identical here — so without this correction every carrier
+    is sampled at whatever fraction of a bin the signal happens to sit on.
+    Measured, our bank lands **0.63 bins low on 2K (which still reads), 1.75 bins
+    low on 1K and 2 bins low on 500** — so the fractional offset is not by itself
+    the difference, but it is the first thing the reference takes out and we do
+    not.
+  - a **symbol shift** `SyncSymbShift` from its synchroniser, which picks the two
+    data slices at `s1 = … + (SyncSymbShift − SymbPtr·SyncStep)` rather than on a
+    fixed grid. This port searches a fixed set of phases once (the live receiver
+    does that when it locks) and then holds it.
+  Done and rejected as the cause: the interleaver (both patterns round-trip), the
+  band position (measured to ±10 Hz), the two-slice half-symbol offset (identical
+  to the reference's), and the shape resampling (same duration at every
+  bandwidth).
 - **Receive only**, so it is in `is_rx_only`: the panel greys the sending half
   and the refusal names MT63. No modulator yet.
 
