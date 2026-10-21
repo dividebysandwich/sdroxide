@@ -155,6 +155,15 @@ fn target_is_windows_gnu() -> bool {
     os == "windows" && env == "gnu"
 }
 
+/// Whether the *target* is any flavour of Windows (MSVC or MinGW), read from
+/// the target's own configuration rather than the host's `cfg!`. A build script
+/// is compiled for the host, so `cfg!(target_os = "windows")` would be wrong
+/// when cross-compiling; this helper is used for the one define that only makes
+/// sense on Windows (`WIN32`).
+fn target_is_windows() -> bool {
+    std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() == "windows"
+}
+
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
@@ -219,8 +228,12 @@ fn common_defines(build: &mut cc::Build) {
         build.define(def, None);
     }
     // Selects the sound shim in `include/sdrx_sound.h` over a sound card, and
-    // links faad2 directly instead of dlopening it.
-    build.define("WIN32", None);
+    // links faad2 directly instead of dlopening it. `WIN32` is only defined on
+    // Windows targets: defining it unconditionally made the vendored Dream
+    // sources pull in `winsock2.h` on Linux (regression introduced by #134).
+    if target_is_windows() {
+        build.define("WIN32", None);
+    }
     build.define("USE_SDROXIDE_SOUND", None);
     build.define("USE_FAAD2_LIBRARY", None);
     build.define("SDROXIDE_NO_AAC_ENCODER", None);
