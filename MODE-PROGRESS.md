@@ -144,14 +144,53 @@ See the MT63 table above: 2KS and 2KL decode; 1KS/1KL/500S/500L arrive one Hadam
 | PSK800RC2 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
 | PSK1000RC2 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
 
-### Hell — none decode from this corpus
-| FELDHELL | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
-| HELL80 | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
-| HELLX5 | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
-| HELLX9 | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
-| SLOWHELL | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
-| FSKH105 | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
-| FSKH245 | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
+### Hell — **two of seven read as clean copies**, and the old verdict was a measurement fault
+
+The first pass scored every Hell sample against **our own transmit font**, which
+was authored for this project. fldigi transmits with *its* glyph table, so a
+correct decode was being compared with the wrong alphabet: two Hell fonts differ
+in every glyph, and a correct picture scores about 0.1–0.3 against the wrong one —
+the same range as noise-plus-shape, which is why all seven were written off.
+
+Measured against fldigi's own glyphs (`src/feld/Feld7x7-14.cxx`, ported for the
+test in `sdroxide-dsp/src/hell_ref_font.rs`), and per **word** rather than per
+phrase — the senders' and our dot clocks differ by a fraction of a percent, the
+slip accumulates along a line, and after twenty characters a picture that is
+perfect in every word correlates with nothing:
+
+Each carrier is **measured from the audio** (the power-weighted centre of the
+strongest band), not taken from the manifest — whose `centre_hz` is a block
+centre and for HELL80 says 1676 Hz when the signal is a 300 Hz shift about 1600 —
+and each sample is scored word by word:
+
+| mode | correlation | |
+|---|---|---|
+| HELLX5 | **0.869** | clean, asserted |
+| FELDHELL | **0.829** | clean, asserted |
+| HELL80 | 0.483 | reads, weak |
+| SLOWHELL | 0.446 | its sample holds only ~5 s of text |
+| FSKH105 | 0.418 | reads, weak |
+| FSKH245 | 0.406 | reads, weak |
+| HELLX9 | 0.332 | the poor one: 157.5 columns/s wants a very good dot clock |
+
+A clean copy scores 0.75–0.9 on this measure; noise 0.03–0.1. **One caveat on the
+frequency-shifted three:** their strongest line is one *tone* of the shift, not the
+carrier, so the measured centre is off by half the shift (HELL80 measured 1605 Hz
+where the shift is ±150) — worth correcting when they are next picked up. The gate is
+`the_corpus_hell_samples_are_measured`, which asserts the two that are clean and
+prints the rest — a score here is a measurement, not a promise.
+
+**The font itself is a separate question, and it is the operator's.** Our own
+transmissions use the home-made glyphs, so a station running fldigi copies us and
+sees slightly unfamiliar shapes; decoding *them* is unaffected (the loopback still
+scores 0.85+ against our own font, which is what that test is for). Porting
+fldigi's table as the transmit font would make the picture look like everyone
+else's, and changes what an operator sends, so it is offered rather than done.
+
+**The lesson, and it is the fourth of its kind today:** a corpus verdict is only
+as good as the thing it is compared against. The PSK carriers were a sideband
+edge, MT63's narrow variants are still open, and Hell's "none decode" was our own
+font.
 
 ### THOR — none decode
 

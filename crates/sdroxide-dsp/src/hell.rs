@@ -782,6 +782,86 @@ mod tests {
     ///
     /// Hell has no sync, so the recovered stream starts at an unknown dot. Any
     /// honest test of it has to be phase-agnostic.
+    /// Where the signal is, in Hz.
+    ///
+    /// The strongest spectral line, then the power-weighted centre of the band
+    /// around it — the carrier itself for an on/off-keyed variant (whose
+    /// sidebands are symmetric about it) and the middle of the two tones for a
+    /// frequency-shifted one.
+    fn carrier_of(audio: &[f32], rate: f64) -> f64 {
+        use rustfft::FftPlanner;
+        let n = 16_384usize.min(audio.len());
+        if n < 1024 {
+            return 1500.0;
+        }
+        // The strongest *transmitting* stretch, not a fixed middle: a sweep's
+        // file begins and ends in silence and the middle can be a gap.
+        let mut best_at = 0usize;
+        let mut best_power = 0.0f32;
+        for start in (0..audio.len().saturating_sub(n)).step_by(n / 2) {
+            let p: f32 = audio[start..start + n].iter().map(|s| s * s).sum();
+            if p > best_power {
+                best_power = p;
+                best_at = start;
+            }
+        }
+        let mut buf: Vec<rustfft::num_complex::Complex32> = (0..n)
+            .map(|i| {
+                let w = 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n as f32).cos();
+                rustfft::num_complex::Complex32::new(audio[best_at + i] * w, 0.0)
+            })
+            .collect();
+        FftPlanner::<f32>::new().plan_fft_forward(n).process(&mut buf);
+        let power: Vec<f32> = buf[..n / 2].iter().map(|c| c.norm_sqr()).collect();
+        let peak = power.iter().cloned().fold(0.0f32, f32::max);
+        if peak <= 0.0 {
+            return 1500.0;
+        }
+        let bin = rate / n as f64;
+        let (lo, hi) = ((300.0 / bin) as usize, ((3600.0 / bin) as usize).min(power.len() - 1));
+        let Some(at) = (lo..=hi).max_by(|&a, &b| power[a].total_cmp(&power[b])) else {
+            return 1500.0;
+        };
+        let span = (800.0 / bin) as usize;
+        let (a, b) = (at.saturating_sub(span).max(lo), (at + span).min(hi));
+        let floor = peak * 0.02;
+        let mut num = 0.0f64;
+        let mut den = 0.0f64;
+        for (i, &p) in power.iter().enumerate().take(b + 1).skip(a) {
+            if p > floor {
+                num += i as f64 * p as f64;
+                den += p as f64;
+            }
+        }
+        if den <= 0.0 { at as f64 * bin } else { num / den * bin }
+    }
+
+    /// The columns fldigi would have transmitted for `text`.
+    ///
+    /// Its `feld::tx_char` sends a null column, then the glyph's own columns with
+    /// trailing blanks trimmed, then another null; a space is four null columns
+    /// plus that trailing one. Our own font cannot be used for this: it was
+    /// authored here, and two Hell fonts differ in every glyph.
+    fn ref_pattern(text: &str) -> Vec<u16> {
+        use crate::hell_ref_font::REF_GLYPHS;
+        let mut out = Vec::new();
+        for ch in text.to_ascii_uppercase().chars() {
+            out.push(0);
+            if ch == ' ' {
+                out.extend_from_slice(&[0, 0, 0]);
+            } else if (0x20..0x7f).contains(&(ch as u32)) {
+                let cols = REF_GLYPHS[ch as usize - 0x20];
+                let mut width = 5;
+                while width > 0 && cols[width - 1] == 0 {
+                    width -= 1;
+                }
+                out.extend_from_slice(&cols[..width]);
+            }
+            out.push(0);
+        }
+        out
+    }
+
     fn best_correlation(px: &[u8], want: &[u16]) -> (f32, usize) {
         let pat: Vec<f32> = want
             .iter()
@@ -855,7 +935,26 @@ mod tests {
     fn the_corpus_hell_samples_are_measured() {
         use std::path::Path;
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi");
-        let text = " AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ ";
+        // Each sample's **own** text. Two of the seven are shortened by the
+        // sweep because Hell is slow, and comparing a seven-second transmission
+        // against a nineteen-second phrase caps the score however well the
+        // decoder did — which is what made all seven look broken.
+        let manifest =
+            std::fs::read_to_string(format!("{root}/manifest.jsonl")).unwrap_or_default();
+        let text_for = |mode: &str| -> String {
+            manifest
+                .lines()
+                .find(|l| l.contains(&format!("\"mode\": \"{mode}\"")))
+                .and_then(|l| {
+                    let at = l.find("\"text\": \"")?;
+                    let rest = &l[at + 9..];
+                    let end = rest.find("\", \"")?;
+                    Some(rest[..end].to_string())
+                })
+                .unwrap_or_else(|| {
+                    " AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ ".to_string()
+                })
+        };
         let table: &[(&str, HellVariant)] = &[
             ("FELDHELL", HellVariant::Feld),
             ("HELL80", HellVariant::Hell80),
@@ -875,38 +974,66 @@ mod tests {
             let spec = reader.spec();
             let audio: Vec<f32> =
                 reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+            // The carrier is **measured**, not taken from the manifest. The
+            // sweep's `centre_hz` is a block centre — for HELL80 it says 1676 Hz
+            // when the signal is a 300 Hz shift about 1600 — and a Hell decode at
+            // the wrong carrier still produces a picture and still scores, so a
+            // wide search finds noise maxima that look like results. Midpoint of
+            // the occupied band: one line for the on/off-keyed variants, the
+            // middle of the two tones for the frequency-shifted ones.
+            let carrier = carrier_of(&audio, spec.sample_rate as f64);
+            eprintln!("{name}: carrier measured at {carrier:.0} Hz");
+            let scan: Vec<f64> = (-60..=60).step_by(10).map(|d| carrier + d as f64).collect();
             let mut best = (f32::MIN, 0.0f64, Vec::new());
-            for hz in [1500.0f64, 1560.0, 1600.0, 1640.0, 1680.0, 1720.0, 1760.0] {
+            for hz in scan {
+                let text = text_for(name);
                 let mut rx = HellRx::new(spec.sample_rate as f64, hz, variant, 0.6);
                 let mut px = Vec::new();
                 for chunk in audio.chunks(480) {
                     rx.process(chunk, &mut px);
                 }
                 rx.process(&vec![0.0f32; 4800], &mut px);
-                let pattern = render_columns(text);
-                let score = if px.len() > pattern.len() * ROWS {
-                    let (score, _) = best_correlation(&px, &pattern);
-                    score
-                } else {
-                    // Not even one copy came out; the FSK variants that need a
-                    // tone discriminator land here.
-                    f32::MIN
-                };
+                // Each word separately, and the best of them. A whole phrase is
+                // the wrong unit: the sender's and our dot clocks differ by a
+                // fraction of a percent, the slip accumulates along the line, and
+                // after twenty characters a picture that is perfect in every word
+                // correlates with nothing. Words are what a listener reads.
+                let fits = (px.len() / ROWS).saturating_sub(1);
+                let mut score = f32::MIN;
+                for word in text.split_whitespace() {
+                    let mut pattern = ref_pattern(word);
+                    if pattern.len() + 1 >= fits {
+                        continue;
+                    }
+                    if pattern.len() > fits {
+                        pattern.truncate(fits);
+                    }
+                    let (s, _) = best_correlation(&px, &pattern);
+                    score = score.max(s);
+                }
                 if score > best.0 {
                     best = (score, hz, px);
                 }
             }
             eprintln!("{name} ({variant:?}): correlation {:.3} at {} Hz", best.0, best.1);
-            if name == "HELL80" {
+            // The gate is the two that read as clean copies. The rest are named
+            // in `MODE-PROGRESS.md` with their figures: HELLX9 and FSKH245 are
+            // the poor ones left, and a score here is a measurement, not a
+            // promise, so only what has been shown to work is asserted.
+            if name == "FELDHELL" {
+                assert!(best.0 > 0.75, "Feld Hell lost its corpus sample: {:.3}", best.0);
+            }
+            if name == "HELLX5" {
+                assert!(best.0 > 0.75, "HELLX5 lost its corpus sample: {:.3}", best.0);
+            }
+            if std::env::var("HELL_DUMP").is_ok() {
                 let cols = best.2.len() / ROWS;
+                let from = 55.min(cols.saturating_sub(1));
+                let to = (from + 80).min(cols);
+                eprintln!("--- {name}: columns {from}..{to} of {cols}");
                 for r in 0..ROWS {
-                    let line: String = (0..cols)
-                        .map(|c| match best.2[c * ROWS + r] {
-                            0..=63 => ' ',
-                            64..=127 => '.',
-                            128..=191 => '+',
-                            _ => '#',
-                        })
+                    let line: String = (from..to)
+                        .map(|c| if best.2[c * ROWS + r] >= 110 { '#' } else { '.' })
                         .collect();
                     eprintln!("|{line}|");
                 }

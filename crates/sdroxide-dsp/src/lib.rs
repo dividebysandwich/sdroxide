@@ -25,6 +25,10 @@ mod fsq_image;
 pub mod g3ruh;
 mod hell;
 mod hell_font;
+/// fldigi's FelHell glyphs, for the corpus tests: our own font was authored
+/// here, so a recording made by fldigi cannot be scored against it.
+#[cfg(test)]
+mod hell_ref_font;
 pub mod ifk;
 mod interp;
 mod iqcorrect;
