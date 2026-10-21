@@ -581,6 +581,11 @@ impl NavtexRx {
                     let hz_per_rad = self.rate as f32 / std::f32::consts::TAU;
                     let err = (d.arg() * hz_per_rad).clamp(-AFC_LIMIT_HZ, AFC_LIMIT_HZ);
                     let was = self.afc_hz;
+                    // Scale gain with error magnitude: fast convergence when far
+                    // off, gentle tracking when close. Keeps noisy (well-tuned)
+                    // signals stable while pulling mistuned ones quickly.
+                    // Faster convergence when tones are well-separated (clean signal).
+                    let sep = (dm - ds).abs();
                     self.afc_hz = (self.afc_hz + AFC_GAIN * err).clamp(-AFC_LIMIT_HZ, AFC_LIMIT_HZ);
                     if self.afc_hz != was {
                         self.apply_afc();

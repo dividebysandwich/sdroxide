@@ -625,12 +625,15 @@ pub enum DetachableModule {
     /// The **DSC decoder** panel in its own window — the marine Digital Selective
     /// Calling message list and reading pane. Appended last.
     Dsc,
+    /// The **NAVTEX decoder** panel in its own window — the maritime safety
+    /// information message list and reading pane. Appended last.
+    Navtex,
 }
 
 impl DetachableModule {
     /// How many detachable modules there are — the length of
     /// [`UiSettings::detached`], which is an array so `UiSettings` stays `Copy`.
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 8;
 
     /// Every module, so a settings list or a test can walk them all.
     pub const ALL: [DetachableModule; DetachableModule::COUNT] = [
@@ -641,6 +644,7 @@ impl DetachableModule {
         DetachableModule::BandMenu,
         DetachableModule::Rotor,
         DetachableModule::Dsc,
+        DetachableModule::Navtex,
     ];
 
     /// This module's slot in [`UiSettings::detached`]. A plain array rather than
@@ -654,6 +658,7 @@ impl DetachableModule {
             DetachableModule::BandMenu => 4,
             DetachableModule::Rotor => 5,
             DetachableModule::Dsc => 6,
+            DetachableModule::Navtex => 7,
         }
     }
 
@@ -667,6 +672,7 @@ impl DetachableModule {
             DetachableModule::BandMenu => "Band & mode selector",
             DetachableModule::Rotor => "Antenna rotator",
             DetachableModule::Dsc => "DSC decoder",
+            DetachableModule::Navtex => "NAVTEX decoder",
         }
     }
 
@@ -682,6 +688,7 @@ impl DetachableModule {
             DetachableModule::BandMenu => "sdroxide-bandmenu",
             DetachableModule::Rotor => "sdroxide-rotor",
             DetachableModule::Dsc => "sdroxide-dsc",
+            DetachableModule::Navtex => "sdroxide-navtex",
         }
     }
 }
