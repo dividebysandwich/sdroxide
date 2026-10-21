@@ -1,0 +1,7 @@
+{"mode": "BPSK31", "decoder": "psk", "centre": 1623, "decoded": "n  t  AAA TEST | esHE EAGLE HAS LAha2345 SDRBROWN d%e n", "passed": false, "words": ["AAA", "EAGLE", "SDRBROWN"], "words_of": 4}
+{"mode": "BPSK63", "decoder": "psk", "centre": 1728, "decoded": "de     AAA TT THE EAGLE S LANDED 12!45 SDRBROK e)      eo eT", "passed": false, "words": ["AAA", "EAGLE", "LANDED"], "words_of": 4}
+{"mode": "BPSK63F", "decoder": "psk", "centre": 1626, "decoded": "oh e 9", "passed": false, "words": [], "words_of": 4}
+{"mode": "BPSK125", "decoder": "psk", "centre": 1720, "decoded": "ia   e AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ oeOl", "passed": true, "words": ["AAA", "EAGLE", "LANDED", "SDRBROWN"], "words_of": 4}
+{"mode": "BPSK250", "decoder": "psk", "centre": 1695, "decoded": "-o$t AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ et eoehf", "passed": true, "words": ["AAA", "EAGLE", "LANDED", "SDRBROWN"], "words_of": 4}
+{"mode": "BPSK500", "decoder": "psk", "centre": 1666, "decoded": "n  =e AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ e  i", "passed": true, "words": ["AAA", "EAGLE", "LANDED", "SDRBROWN"], "words_of": 4}
+{"mode": "BPSK1000", "decoder": "psk", "centre": 1162, "decoded": "o o  lteadia ai - l i}et-P-a %%    fes>I+osepnae\n onMpeo ot", "passed": false, "words": [], "words_of": 4}
