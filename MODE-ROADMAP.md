@@ -6,6 +6,10 @@ queue.
 
 ## Where to start next (written 2026-10-20, end of the bench session)
 
+> **The state of every mode is in [`MODE-PROGRESS.md`](MODE-PROGRESS.md)** —
+> one line per mode, the measurement that proves it, and the modes still open.
+> Start there rather than here; this file is the queue and the reasoning.
+
 **Nothing is pushed.** The freeze holds, and there is one condition on it: if
 F4NRM (Kevin) pushes a working Olivia during the freeze, **our Olivia is not
 pushed** — his takes precedence.

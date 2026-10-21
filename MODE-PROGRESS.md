@@ -71,25 +71,25 @@ Gate: `cargo test -p sdroxide-olivia --release --lib the_corpus_contestia_varian
 | mode | state | measurement |
 |---|---|---|
 | CONTESTIA | **decodes** | `CONTESTIA.wav` as 4/125 at 1718 Hz, reverse on: the whole text, 3/3. |
-| Cont-4-125 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-4-250 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-4-500 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-4-1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-4-2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-8-125 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-8-250 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-8-500 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-8-1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-8-2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-16-250 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-16-500 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-16-1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-16-2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-32-1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-32-2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-64-500 | **does not decode** | no text at 1720–1780 Hz, either polarity; the other eighteen do. |
-| Cont-64-1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
-| Cont-64-2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-4/125 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-4/250 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-4/500 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-4/1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-4/2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-8/125 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-8/250 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-8/500 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-8/1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-8/2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-16/250 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-16/500 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-16/1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-16/2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-32/1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-32/2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-64/500 | **does not decode** | no text at 1720–1780 Hz, either polarity; the other eighteen do. |
+| Cont-64/1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-64/2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
 
 ### MT63 — 2 of 6 decode
 See the MT63 table above: 2KS and 2KL decode; 1KS/1KL/500S/500L arrive one Hadamard row high.
@@ -150,10 +150,42 @@ See the MT63 table above: 2KS and 2KL decode; 1KS/1KL/500S/500L arrive one Hadam
 | FSKH245 | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
 
 ### THOR — none decode
-The OnAir IFK port is in `ifk.rs`; all 15 samples give no text. The tone trace shows the steps being measured but the nibble stream does not match fldigi's, so one convention (the half-spacing tone offset or the slice pair) is still wrong. Three attempts made: baud/centre sweep, both polarities, and a skip past the previous transmission's tail.
+
+The OnAir IFK port is in `ifk.rs`. Every sample was tried at five centres and both polarities; no text. The tone trace shows the IFK steps being measured but the resulting nibble stream does not match fldigi's, so one convention (the half-spacing tone offset or the two-slice carrier pair) is still wrong. Three attempts made per mode: baud/centre sweep, both polarities, and a start past the previous transmission's tail.
+
+| mode | state | measurement |
+|---|---|---|
+| THORM | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR4 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR5 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR8 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR11 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR16 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR22 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR25 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR32 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR44 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR56 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR25x4 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR50x1 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR50x2 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
+| THOR100 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
 
 ### DominoEX — none decode
-Same port, same trace, all nine samples; DominoEX has no FEC to hide behind, so the step measurement itself is the fault to chase next.
+
+Same port and the same trace, all nine samples; DominoEX has no FEC to hide behind, so the step measurement itself is the fault to chase next.
+
+| mode | state | measurement |
+|---|---|---|
+| DOMEXM | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities. |
+| DOMEX4 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities. |
+| DOMEX5 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities. |
+| DOMEX8 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities. |
+| DOMX11 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities. |
+| DOMX16 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities. |
+| DOMX22 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities. |
+| DOMX44 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities. |
+| DOMX88 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities. |
 
 ### No decoder, by family
 | 8PSK125 | **no decoder** | 8PSK constellation; no slicer; 0 words. |
