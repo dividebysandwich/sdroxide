@@ -439,6 +439,17 @@ pub enum Mode {
     ///
     /// Appended for the same reason as [`Mode::Hell`].
     Dab,
+    /// MFSK — fldigi's IZ8BLY multi-tone family (MFSK4/8/11/16/22/31/32/64/128
+    /// and the two long-interleave variants), a keyboard mode.
+    ///
+    /// The variant is [`crate::DigiConfig::mfsk_mode`], because the eleven are
+    /// one modem at different symbol rates rather than eleven decoders. Every
+    /// variant in the corpus decodes its own recording or is named in
+    /// `MODE-PROGRESS.md`; the transmit side is not built yet, so this is
+    /// receive only for now.
+    ///
+    /// Appended for the same reason as [`Mode::Hell`].
+    Mfsk,
 }
 
 /// The bands on which a mode that keeps phone practice rides the lower
@@ -468,7 +479,7 @@ const SSTV_LSB_BELOW_HZ: f64 = 10_000_000.0;
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 54] = [
+    pub const ALL: [Mode; 55] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -507,6 +518,7 @@ impl Mode {
         Mode::Acars,
         Mode::Olivia,
         Mode::Thor,
+        Mode::Mfsk,
         Mode::Fsq,
         Mode::AtChat,
         Mode::Hell,
@@ -554,7 +566,7 @@ impl Mode {
     /// packet, RF Paint). All are USB underneath except RIFP, VHF packet and
     /// VHF SSTV, which frequency-modulate the carrier, and ACARS, which is
     /// received in AM.
-    pub const DIGITAL: [Mode; 35] = [
+    pub const DIGITAL: [Mode; 36] = [
         Mode::Ft8,
         Mode::Ft4,
         Mode::Ft2,
@@ -572,6 +584,7 @@ impl Mode {
         Mode::RttyFm,
         Mode::Olivia,
         Mode::Thor,
+        Mode::Mfsk,
         Mode::Fsq,
         Mode::AtChat,
         Mode::Hell,
@@ -611,6 +624,7 @@ impl Mode {
                 | Mode::Rifp
                 | Mode::Olivia
                 | Mode::Thor
+                | Mode::Mfsk
                 | Mode::Fsq
                 | Mode::AtChat
                 | Mode::Hell
@@ -788,7 +802,13 @@ impl Mode {
     pub fn is_text_modem(self) -> bool {
         matches!(
             self,
-            Mode::Psk | Mode::Rtty | Mode::RttyFm | Mode::Olivia | Mode::Thor | Mode::Fsq
+            Mode::Psk
+                | Mode::Rtty
+                | Mode::RttyFm
+                | Mode::Olivia
+                | Mode::Thor
+                | Mode::Mfsk
+                | Mode::Fsq
         )
     }
 
@@ -1011,6 +1031,10 @@ impl Mode {
                 | Mode::Fst4
                 | Mode::Q65
                 | Mode::UvPacket
+                // MFSK's decoder is ported and proven against the corpus, but
+                // its modulator is not built yet: the panel greys the sending
+                // half rather than handing text to a modem that has none.
+                | Mode::Mfsk
         )
     }
 
@@ -1079,6 +1103,7 @@ impl Mode {
             Mode::SstvFm => "SSTV-FM",
             Mode::Olivia => "OLIVIA",
             Mode::Thor => "THOR",
+            Mode::Mfsk => "MFSK",
             Mode::Fsq => "FSQ",
             Mode::Hell => "HELL",
             Mode::RfPaint => "RFPAINT",
@@ -1150,6 +1175,7 @@ impl Mode {
                 | Mode::Rtty
                 | Mode::Olivia
                 | Mode::Thor
+                | Mode::Mfsk
                 | Mode::Fsq
                 | Mode::Hell
                 | Mode::RfPaint
@@ -1263,6 +1289,7 @@ impl Mode {
             | Mode::Sstv
             | Mode::Olivia
             | Mode::Thor
+            | Mode::Mfsk
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint => (100.0, 3300.0),
@@ -1449,7 +1476,7 @@ impl Mode {
     /// hertz either side has to have the signal *put* there, which means the
     /// click moves the dial, exactly as CW does with its sidetone pitch.
     pub fn holds_audio_centre(self) -> bool {
-        matches!(self, Mode::Olivia | Mode::Thor | Mode::Fsq)
+        matches!(self, Mode::Olivia | Mode::Thor | Mode::Mfsk | Mode::Fsq)
     }
 
     /// The audio centre those modes listen at, in Hz.
@@ -1547,6 +1574,7 @@ impl Mode {
             | Mode::Fsk441
             | Mode::Olivia
             | Mode::Thor
+            | Mode::Mfsk
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
@@ -1815,6 +1843,7 @@ impl Mode {
             | Mode::Sstv
             | Mode::Olivia
             | Mode::Thor
+            | Mode::Mfsk
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
@@ -2486,6 +2515,8 @@ mod tests {
             (Mode::UvPacket, 51),
             (Mode::Jtty, 52),
             (Mode::Ale, 53),
+            (Mode::Dab, 54),
+            (Mode::Mfsk, 55),
         ];
         for (mode, index) in pinned {
             assert_eq!(mode as u8, index, "{} moved", mode.label());
@@ -2531,14 +2562,22 @@ mod tests {
         // checking is that it is a permutation of the enum, with nothing
         // dropped and nothing listed twice.
         // The last variant *by discriminant*, which is the one appended most
-        // recently — not the one that reads last in the picker. ALE is the
-        // fork's (and the list's) last appended variant, after JTTY.
-        let last = Mode::Ale as u8;
+        // recently — not the one that reads last in the picker. MFSK is the
+        // fork's (and the list's) last appended variant, after ALE.
+        //
+        // **DAB is the one mode deliberately not in `ALL`.** It is reached from
+        // the System box's wideband row (`WIDEBAND_MODES` in the UI) rather
+        // than from the picker or the band menu, because it is a service band
+        // rather than a dial mode. Listing it here would put a chip in the mode
+        // cycle that needs a 1.5 MHz front end to do anything.
+        let absent = [Mode::Dab];
+        let last = Mode::Mfsk as u8;
         for i in 0..=last {
             let present = Mode::ALL.iter().filter(|m| **m as u8 == i).count();
-            assert_eq!(present, 1, "discriminant {i} appears {present} times in Mode::ALL");
+            let want = if absent.iter().any(|m| *m as u8 == i) { 0 } else { 1 };
+            assert_eq!(present, want, "discriminant {i} appears {present} times in Mode::ALL");
         }
-        assert_eq!(Mode::ALL.len(), last as usize + 1);
+        assert_eq!(Mode::ALL.len(), last as usize + 1 - absent.len());
     }
 
     /// Every mode offered in the band/mode menu's **Digital** row must be a

@@ -1876,8 +1876,8 @@ use sdroxide_types::{
 /// BPSK or QPSK, a separate axis from `psk_speed` because QPSK is a different
 /// constellation *and* carries a convolutional code. `PROTO_VERSION`
 /// 217 → 218, `VERSION_BYTE` 0x25 → 0x26. A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 220;
-const VERSION_BYTE: u8 = 0x28;
+pub const PROTO_VERSION: u16 = 221;
+const VERSION_BYTE: u8 = 0x29;
 /// v220: the audio recording's container is the operator's choice.
 /// [`sdroxide_types::RadioState`] gains `recording_format`
 /// ([`sdroxide_types::RecordingFormat`]) at its tail, and `Command` gains
@@ -1885,6 +1885,12 @@ const VERSION_BYTE: u8 = 0x28;
 /// frames whole, so the appended field moves their layout; the same value is
 /// stored in `session.json` so it survives a restart. `PROTO_VERSION` 219 →
 /// 220, `VERSION_BYTE` 0x27 → 0x28. A downstream (fork) change.
+/// v221: MFSK — [`sdroxide_types::Mode::Mfsk`] appended to the mode enum, and
+/// [`sdroxide_types::DigiConfig`] gains `mfsk_mode` and `mfsk_reverse` at its
+/// tail: which of fldigi's eleven variants, and whether the tone order is
+/// inverted. The mode variant alone would have been compatible; the two config
+/// fields ride `DigiConfig` whole, so they are not. `PROTO_VERSION` 220 → 221,
+/// `VERSION_BYTE` 0x28 → 0x29. A downstream (fork) change.
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

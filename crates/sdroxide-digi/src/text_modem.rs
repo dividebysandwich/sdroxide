@@ -10,7 +10,9 @@
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
-use sdroxide_dsp::{MonoResampler, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ThorRx, ThorTx};
+use sdroxide_dsp::{
+    MonoResampler, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ThorRx, ThorTx, mfsk_rx::MfskReceiver,
+};
 use sdroxide_olivia::OliviaReceiver;
 use sdroxide_types::{DigiConfig, DigiStatus, Mode, QsoStep, TranscriptLine};
 
@@ -28,6 +30,7 @@ enum RxModem {
     Rtty(RttyRx),
     Olivia(OliviaReceiver),
     Thor(ThorRx),
+    Mfsk(MfskReceiver),
 }
 
 impl RxModem {
@@ -37,6 +40,7 @@ impl RxModem {
             RxModem::Rtty(r) => r.process(audio),
             RxModem::Olivia(r) => r.process(audio),
             RxModem::Thor(r) => r.process(audio),
+            RxModem::Mfsk(r) => r.process(audio),
         }
     }
     fn magnitude(&self) -> f32 {
@@ -45,6 +49,7 @@ impl RxModem {
             RxModem::Rtty(r) => r.magnitude(),
             RxModem::Olivia(r) => r.magnitude(),
             RxModem::Thor(r) => r.magnitude(),
+            RxModem::Mfsk(r) => r.magnitude(),
         }
     }
 }
@@ -54,6 +59,11 @@ enum TxModem {
     Rtty(RttyTx),
     Olivia(OliviaTx),
     Thor(ThorTx),
+    /// A mode whose modulator is not written yet. It holds the controller's
+    /// shape without pretending: `set_tx_active` refuses a key-up in a
+    /// receive-only mode, so nothing here ever reaches the radio, and this arm
+    /// is what keeps the alternative from being a second controller.
+    Receive,
 }
 
 impl TxModem {
@@ -63,6 +73,9 @@ impl TxModem {
             TxModem::Rtty(m) => m.push_text(t),
             TxModem::Olivia(m) => m.push_text(t),
             TxModem::Thor(m) => m.push_text(t),
+            TxModem::Receive => {
+                let _ = t;
+            }
         }
     }
     fn next_block(&mut self, out: &mut [f32]) {
@@ -79,6 +92,7 @@ impl TxModem {
             TxModem::Thor(m) => {
                 m.next_block(out);
             }
+            TxModem::Receive => out.fill(0.0),
         }
     }
     /// Olivia closes a transmission with tones of its own; the other modes end
@@ -96,6 +110,7 @@ impl TxModem {
             TxModem::Rtty(m) => m.sent_chars(),
             TxModem::Olivia(m) => m.sent_chars(),
             TxModem::Thor(m) => m.sent_chars(),
+            TxModem::Receive => 0,
         }
     }
     fn total_chars(&self) -> usize {
@@ -104,6 +119,7 @@ impl TxModem {
             TxModem::Rtty(m) => m.total_chars(),
             TxModem::Olivia(m) => m.total_chars(),
             TxModem::Thor(m) => m.total_chars(),
+            TxModem::Receive => 0,
         }
     }
     fn clear(&mut self) {
@@ -112,6 +128,7 @@ impl TxModem {
             TxModem::Rtty(m) => m.clear(),
             TxModem::Olivia(m) => m.clear(),
             TxModem::Thor(m) => m.clear(),
+            TxModem::Receive => {}
         }
     }
 }
@@ -187,6 +204,12 @@ impl TextModemController {
                 cfg.olivia_reverse,
             )),
             Mode::Thor => RxModem::Thor(ThorRx::new(MODEM_RATE, audio_hz as f64, t_baud)),
+            Mode::Mfsk => RxModem::Mfsk(MfskReceiver::new(
+                MODEM_RATE,
+                audio_hz as f64,
+                cfg.mfsk_mode,
+                cfg.mfsk_reverse,
+            )),
             _ => {
                 let mut r = PskRx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
                 r.set_qpsk(p_qpsk);
@@ -201,6 +224,10 @@ impl TextModemController {
                 TxModem::Olivia(OliviaTx::new(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
             }
             Mode::Thor => TxModem::Thor(ThorTx::new(MODEM_RATE, audio_hz as f64, t_baud)),
+            // MFSK's decoder is ported and reads the corpus; its modulator is
+            // not written yet, so there is nothing to hand text to and the
+            // controller refuses the key-up with a reason.
+            Mode::Mfsk => TxModem::Receive,
             _ => {
                 let mut t = PskTx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
                 t.set_qpsk(p_qpsk);
@@ -254,6 +281,10 @@ impl TextModemController {
                 r.set_params(hz, o_tones, o_bw as u32);
             }
             RxModem::Thor(r) => r.set_params(hz, t_baud),
+            RxModem::Mfsk(r) => {
+                r.set_mirror(self.cfg.mfsk_reverse);
+                r.set_params(hz, self.cfg.mfsk_mode);
+            }
         }
         match &mut self.tx {
             TxModem::Psk(m) => {
@@ -267,6 +298,7 @@ impl TextModemController {
                 m.set_params(hz, o_tones, o_bw);
             }
             TxModem::Thor(m) => m.set_params(hz, t_baud),
+            TxModem::Receive => {}
         }
     }
 
@@ -295,7 +327,9 @@ impl TextModemController {
             tx_even: false,
             transmitting: self.keyed,
             tx_watchdog: false,
-            tx_refused: None,
+            tx_refused: self.mode.is_rx_only().then(|| {
+                "MFSK is receive only in this build — the modulator is not written yet".to_string()
+            }),
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
             text_rx: self.rx_text.clone(),
@@ -451,7 +485,9 @@ impl DigiEngine for TextModemController {
             || cfg.olivia_reverse != self.cfg.olivia_reverse
             || cfg.thor_mode != self.cfg.thor_mode
             || cfg.psk_speed != self.cfg.psk_speed
-            || cfg.psk_modulation != self.cfg.psk_modulation;
+            || cfg.psk_modulation != self.cfg.psk_modulation
+            || cfg.mfsk_mode != self.cfg.mfsk_mode
+            || cfg.mfsk_reverse != self.cfg.mfsk_reverse;
         self.cfg = cfg;
         if retune {
             self.retune_modems();
@@ -492,6 +528,14 @@ impl DigiEngine for TextModemController {
     }
 
     fn set_tx_active(&mut self, on: bool) {
+        // A receive-only mode refuses the key-up and says why, rather than
+        // arming a latch that would key the radio with nothing to send. The
+        // panel greys the control too; this is the half a remote client sees.
+        if on && self.mode.is_rx_only() {
+            self.tx_active = false;
+            self.status_dirty = true;
+            return;
+        }
         self.tx_active = on;
         // A fresh over: what the last one sent says nothing about this one.
         self.over_had_text = false;
@@ -526,5 +570,69 @@ mod tests {
 
         let psk = TextModemController::new(Mode::Psk, cfg, 48_000.0);
         assert_eq!(psk.audio_hz(), 1000.0);
+    }
+
+    /// MFSK's decoder is ported and reads the corpus; its modulator is not
+    /// written, so the controller must refuse the key-up **and say why** — a
+    /// mode that greys nothing and keys silence is the fault the house rules
+    /// name. The other text modes must not pick up the refusal, which is what
+    /// stops this being a blanket.
+    #[test]
+    fn a_receive_only_mode_refuses_the_key_and_says_why() {
+        let mut mfsk = TextModemController::new(Mode::Mfsk, DigiConfig::default(), 48_000.0);
+        mfsk.set_tx_text("TEST THE EAGLE".into());
+        mfsk.set_tx_active(true);
+        let actions = mfsk.poll(SystemTime::now(), 0.0);
+        let s = mfsk.status();
+        assert!(!s.tx_next, "a receive-only mode armed the transmitter");
+        assert!(!mfsk.tx_burst_active(), "it asked the engine to key");
+        assert!(
+            !actions.iter().any(|a| matches!(a, DigiAction::KeyTx)),
+            "it sent KeyTx to the engine"
+        );
+        assert!(s.tx_refused.is_some(), "it refused in silence");
+        assert!(
+            s.tx_refused.as_deref().unwrap_or("").contains("MFSK"),
+            "the refusal does not name the mode: {:?}",
+            s.tx_refused
+        );
+
+        let mut psk = TextModemController::new(Mode::Psk, DigiConfig::default(), 48_000.0);
+        psk.set_tx_active(true);
+        psk.poll(SystemTime::now(), 0.0);
+        assert!(psk.status().tx_refused.is_none(), "PSK picked up the refusal");
+        assert!(psk.tx_burst_active(), "PSK stopped transmitting");
+    }
+
+    /// The corpus sample through the controller, which is the claim the mode is
+    /// offered on: the same object the console builds, fed the recording it was
+    /// verified against, with only the centre, variant and polarity the journal
+    /// measured.
+    #[test]
+    #[ignore]
+    fn the_mfsk_corpus_sample_decodes_through_the_controller() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/MFSK16.wav");
+        let mut reader = hound::WavReader::open(path).expect("the MFSK16 sample");
+        let spec = reader.spec();
+        let audio: Vec<f32> =
+            reader.samples::<i16>().map(|s| s.expect("sample") as f32 / 32_768.0).collect();
+        // Past the previous transmission's tail into this one's preamble.
+        let skip = (13.0 * 512.0 / 8000.0 + 0.1) * spec.sample_rate as f64;
+        let audio = &audio[(skip as usize).min(audio.len())..];
+
+        let mut cfg = DigiConfig::default();
+        cfg.mfsk_mode = sdroxide_types::MfskMode::Mfsk16;
+        cfg.mfsk_reverse = true;
+        let mut ctl = TextModemController::new(Mode::Mfsk, cfg, spec.sample_rate as f64);
+        ctl.set_audio_hz(1752.0);
+        for chunk in audio.chunks(400) {
+            ctl.on_rx_audio(chunk);
+        }
+        ctl.on_rx_audio(&vec![0.0f32; 16_000]);
+        let text = ctl.status().text_rx;
+        eprintln!("MFSK16 through the controller: {text:?}");
+        for w in ["TEST", "EAGLE", "12345", "SDRBROWN"] {
+            assert!(text.contains(w), "the controller lost {w}: {text:?}");
+        }
     }
 }

@@ -1792,6 +1792,16 @@ impl SdroxideApp {
                 self.digi_status.as_ref().map(|s| s.config.thor_mode.baud()).unwrap_or(15.625);
             let bw = 18.0 * baud;
             vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
+        } else if mode == Mode::Mfsk {
+            // The tone bank is the signal: its edges are where the highest and
+            // lowest tone sit, so a station that is half out of the passband
+            // looks like one.
+            let bw = self
+                .digi_status
+                .as_ref()
+                .map(|s| s.config.mfsk_mode.bandwidth_hz())
+                .unwrap_or_else(|| sdroxide_types::MfskMode::default().bandwidth_hz());
+            vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
         } else if mode == Mode::Js8 {
             // Worth showing: Turbo's 160 Hz footprint against Slow's 25 Hz is
             // what decides whether a frequency is actually free.

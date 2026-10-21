@@ -10,7 +10,7 @@
 //! - [`aprs`] — the APRS station list, map and messages
 //! - [`cw`] — the Morse decode/keyboard panel, the one non-digital mode here
 //! - [`decodes`] — the FT8/FT4/JS8 decode list and the QSO sequencer beside it
-//! - [`text_modem`] — PSK, RTTY, Olivia, THOR, Contestia and Hellschreiber
+//! - [`text_modem`] — PSK, RTTY, Olivia, THOR, MFSK and Hellschreiber
 //! - [`js8`], [`fsq`] — the two keyboard modes with their own message model
 //! - [`sstv`], [`wefax`], [`rf_paint`] — the image modes
 //! - [`wspr`] — the propagation beacon: receptions and the beacon's own cycle

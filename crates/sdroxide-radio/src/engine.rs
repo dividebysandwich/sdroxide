@@ -19671,6 +19671,7 @@ fn rig_mode_class(m: Mode) -> u8 {
         | Mode::Fsk441
         | Mode::Olivia
         | Mode::Thor
+        | Mode::Mfsk
         | Mode::Fsq
         | Mode::Hell
         | Mode::RfPaint

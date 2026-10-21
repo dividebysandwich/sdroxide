@@ -437,6 +437,7 @@ impl Band {
                 Mode::RttyFm,
                 Mode::Olivia,
                 Mode::Thor,
+                Mode::Mfsk,
                 Mode::Fsq,
                 Mode::AtChat,
                 Mode::Hell,

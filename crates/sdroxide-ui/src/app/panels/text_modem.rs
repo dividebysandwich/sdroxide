@@ -1,4 +1,4 @@
-//! The keyboard-mode panel: PSK, RTTY, Olivia, THOR and Contestia, plus
+//! The keyboard-mode panel: PSK, RTTY, Olivia, THOR and MFSK, plus
 //! Hellschreiber's raster.
 //!
 //! All of these are a received-text pane over a transmit buffer, so they share
@@ -40,6 +40,16 @@ impl SdroxideApp {
         // Header: mode + tuning readout / nudges, SETUP + TX indicator.
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(mode.label()).size(11.0).strong().color(crate::theme::CYAN()));
+            if mode.is_rx_only() {
+                ui.label(
+                    RichText::new("RX ONLY").size(10.5).strong().color(crate::theme::YELLOW()),
+                )
+                .on_hover_text(
+                    "This mode's decoder is ported and reads its recordings; its modulator \
+                     is not written yet, so the sending half is off rather than refusing \
+                     after the fact.",
+                );
+            }
             ui.label(
                 RichText::new(format!("{audio_hz:.0} Hz"))
                     .size(11.0)
@@ -170,7 +180,7 @@ impl SdroxideApp {
         // A receiver greys the whole sending half of the panel, box included:
         // this one is labelled "type here to transmit", and every character put
         // in it is handed to a modem that has nothing to hand it to.
-        let tx_ok = self.tx_capable();
+        let tx_ok = self.tx_capable() && !mode.is_rx_only();
         let entered = tx_ok && send_on_enter && crate::chrome::take_return(ui, tx_id);
 
         // Fixed-height box: the multiline TextEdit grows with content, so wrap it
@@ -650,7 +660,10 @@ impl SdroxideApp {
     /// nothing else differs between them — and RTTY, Olivia and THOR for theirs.
     fn text_modem_params_row(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let mode = self.state.rx[0].mode;
-        if !matches!(mode, Mode::Psk | Mode::Rtty | Mode::RttyFm | Mode::Olivia | Mode::Thor) {
+        if !matches!(
+            mode,
+            Mode::Psk | Mode::Rtty | Mode::RttyFm | Mode::Olivia | Mode::Thor | Mode::Mfsk
+        ) {
             return; // anything else has no per-mode settings
         }
         fn cap(ui: &mut egui::Ui, text: &str) {
@@ -771,6 +784,58 @@ impl SdroxideApp {
                             cfg.thor_mode = m;
                             changed = true;
                         }
+                    }
+                }
+                Mode::Mfsk => {
+                    // Eleven variants, one modem: nothing in the signal says
+                    // which is in use, so the operator has to — and a decoder
+                    // tuned to the wrong one hears nothing at all rather than
+                    // something wrong.
+                    cap(ui, "Mode");
+                    for m in sdroxide_types::MfskMode::ALL {
+                        let sel = cfg.mfsk_mode == m;
+                        // The two the corpus only partly carries are named where
+                        // they are picked, so a listener who tries one knows a
+                        // thin decode is the recording rather than the mode.
+                        let caveat = match m {
+                            sdroxide_types::MfskMode::Mfsk8 => {
+                                " — the corpus recording loses one span of its text; \
+                                 the decoder is the one every other variant uses"
+                            }
+                            sdroxide_types::MfskMode::Mfsk11 => {
+                                " — the corpus recording loses its leading group to the \
+                                 resampler's start-up"
+                            }
+                            _ => "",
+                        };
+                        if ui
+                            .selectable_label(sel, m.label())
+                            .on_hover_text(format!(
+                                "{} — {:.1} baud, {} tones, {:.0} Hz wide{caveat}",
+                                m.label(),
+                                m.baud(),
+                                m.tones(),
+                                m.bandwidth_hz()
+                            ))
+                            .clicked()
+                            && !sel
+                        {
+                            cfg.mfsk_mode = m;
+                            changed = true;
+                        }
+                    }
+                    ui.add_space(8.0);
+                    if ui
+                        .selectable_label(cfg.mfsk_reverse, "REVERSE")
+                        .on_hover_text(
+                            "Invert the tone order. A station received on the opposite \
+                             sideband to the one it was sent on arrives mirrored about its \
+                             centre and reads as noise until this is on.",
+                        )
+                        .clicked()
+                    {
+                        cfg.mfsk_reverse = !cfg.mfsk_reverse;
+                        changed = true;
                     }
                 }
                 Mode::Psk => {

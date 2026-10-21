@@ -23,6 +23,7 @@
 //! and is a separate job.
 
 use crate::fec::{ConvCode, ViterbiStream};
+use sdroxide_types::MfskMode;
 
 const PI: f64 = std::f64::consts::PI;
 
@@ -541,6 +542,16 @@ impl MfskRx {
         self.build();
     }
 
+    /// Invert the tone order. A signal from the other sideband has its tones
+    /// mirrored about the centre, and that is the whole of what inversion is.
+    pub fn set_mirror(&mut self, on: bool) {
+        self.mirror = on;
+    }
+
+    pub fn mirror(&self) -> bool {
+        self.mirror
+    }
+
     pub fn text(&self) -> &str {
         &self.text
     }
@@ -963,6 +974,106 @@ fn push_symbol(
     }
 }
 
+// ------------------------------------------------------------ the wire's view
+
+/// The variant behind a [`MfskMode`], looked up by the name the two tables
+/// share. A `MfskMode` with no variant is a spelling mistake rather than a
+/// station, so it panics here where a test will see it, not on the air.
+impl From<MfskMode> for MfskVariant {
+    fn from(m: MfskMode) -> Self {
+        MfskVariant::named(m.label())
+            .unwrap_or_else(|| panic!("no decoder for {}: the two tables disagree", m.label()))
+    }
+}
+
+/// The receiver shaped the way the digi engine expects: `process` returns only
+/// the text that arrived in this block, and `magnitude` is the decayed peak the
+/// S-meter reads.
+///
+/// The bank is narrow — its realignment reaches about three tone spacings — so
+/// this is a fixed-centre mode like Olivia and THOR: the caller puts the signal
+/// at `centre_hz`, and `Mode::holds_audio_centre` is why a click on the
+/// waterfall moves the dial instead of the marker.
+pub struct MfskReceiver {
+    rx: MfskRx,
+    variant: MfskVariant,
+    centre: f64,
+    rate: f64,
+    mirror: bool,
+    /// How much of `rx.text()` has already been handed out.
+    seen: usize,
+    mag: f32,
+}
+
+impl MfskReceiver {
+    pub fn new(rate: f64, centre: f64, mode: MfskMode, mirror: bool) -> Self {
+        let variant: MfskVariant = mode.into();
+        let mut rx = MfskRx::new(variant, rate, centre);
+        rx.set_mirror(mirror);
+        MfskReceiver { rx, variant, centre, rate, mirror, seen: 0, mag: 0.0 }
+    }
+
+    /// Retune, or change variant. A variant change rebuilds the bank, which is
+    /// what fldigi's own `restart()` does; the text already decoded is the
+    /// caller's copy, so nothing is lost on screen.
+    pub fn set_params(&mut self, centre: f64, mode: MfskMode) {
+        let variant: MfskVariant = mode.into();
+        if variant.name != self.variant.name {
+            self.variant = variant;
+            self.centre = centre;
+            self.rx = MfskRx::new(variant, self.rate, centre);
+            self.rx.set_mirror(self.mirror);
+            self.seen = 0;
+            self.mag = 0.0;
+            return;
+        }
+        self.rx.set_centre(centre);
+        self.centre = centre;
+    }
+
+    /// Invert the tone order: a signal received on the wrong sideband arrives
+    /// upside down about its centre and reads as noise until this is set.
+    pub fn set_mirror(&mut self, on: bool) {
+        if on == self.mirror {
+            return;
+        }
+        self.mirror = on;
+        self.rx.set_mirror(on);
+    }
+
+    pub fn mirror(&self) -> bool {
+        self.mirror
+    }
+
+    pub fn process(&mut self, audio: &[f32]) -> String {
+        let peak = audio.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        self.mag += 0.02 * (peak - self.mag);
+        self.rx.feed(audio);
+        let text = self.rx.text();
+        if self.seen >= text.len() {
+            return String::new();
+        }
+        let out = text[self.seen..].to_string();
+        self.seen = text.len();
+        out
+    }
+
+    pub fn magnitude(&self) -> f32 {
+        self.mag
+    }
+
+    /// The decoder's own lock and SNR, for the panel: a tone-per-symbol mode
+    /// measures its own timing cleanly, so this is a real figure rather than a
+    /// level.
+    pub fn snr_db(&self) -> f32 {
+        self.rx.snr_db
+    }
+
+    pub fn variant(&self) -> MfskVariant {
+        self.variant
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1295,6 +1406,96 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "did not read: {failures:?}");
+    }
+
+    /// The wire's [`MfskMode`] and the decoder's [`MfskVariant`] are one table
+    /// seen twice, tied together by the label. A spelling that drifts would
+    /// hand the operator a mode that never decodes, with nothing on screen to
+    /// say why.
+    #[test]
+    fn every_mfsk_mode_names_its_variant() {
+        for m in MfskMode::ALL {
+            let v: MfskVariant = m.into();
+            assert_eq!(v.name, m.label(), "{:?} maps to {}", m, v.name);
+        }
+    }
+
+    /// The wire's [`MfskMode`] also carries the baud, the tone count and the
+    /// width, because the panel's hover and the panadapter's tone-bank edges
+    /// draw from it. Those are the decoder's own table seen twice, and this is
+    /// what stops the two drifting.
+    #[test]
+    fn the_mfsk_mode_table_matches_the_decoder() {
+        for m in MfskMode::ALL {
+            let v: MfskVariant = m.into();
+            assert_eq!(v.tones as u8, m.tones(), "{:?} tone count", m);
+            assert!(
+                (v.spacing() as f32 - m.baud()).abs() < 1e-2,
+                "{:?} says {} baud, the decoder {}",
+                m,
+                m.baud(),
+                v.spacing()
+            );
+            assert!(
+                (v.bandwidth() as f32 - m.bandwidth_hz()).abs() < 0.5,
+                "{:?} says {} Hz wide, the decoder {}",
+                m,
+                m.bandwidth_hz(),
+                v.bandwidth()
+            );
+        }
+    }
+
+    /// The adapter's own promise is only that it hands out each character
+    /// once, in order: what the characters *are* is the receiver's business,
+    /// and the corpus gate above is what settles that. So this compares the
+    /// adapter against the bare receiver over the same audio — a drift here
+    /// would be text lost at a block boundary or handed out twice, which is the
+    /// one fault a block API can add.
+    #[test]
+    fn the_adapter_returns_each_character_once() {
+        let variant = MfskVariant::named("MFSK16").unwrap();
+        let audio = encode(variant, 1500.0, "TEST THE EAGLE 12345 SDRBROWN");
+        let tail = vec![0.0f32; 16_000];
+
+        let mut bare = MfskRx::new(variant, variant.fs, 1500.0);
+        bare.feed(&audio);
+        bare.feed(&tail);
+
+        // Fed in blocks, the way the audio thread delivers it.
+        let mut rx = MfskReceiver::new(variant.fs, 1500.0, MfskMode::Mfsk16, false);
+        let mut out = String::new();
+        for chunk in audio.chunks(400) {
+            out.push_str(&rx.process(chunk));
+        }
+        out.push_str(&rx.process(&tail));
+
+        assert!(!bare.text().is_empty(), "the loopback decoded nothing at all");
+        assert_eq!(out, bare.text(), "the adapter changed the text it was given");
+    }
+
+    /// The same adapter over the corpus recording, which is the gate the mode
+    /// is offered on. MFSK16's sample needs its centre measured (1752 Hz, three
+    /// spacings off the manifest's 1800) and the tone order inverted.
+    #[test]
+    #[ignore]
+    fn the_adapter_reads_the_corpus_mfsk16() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/MFSK16.wav");
+        let mut reader = hound::WavReader::open(path).expect("the MFSK16 sample");
+        let spec = reader.spec();
+        let audio: Vec<f32> =
+            reader.samples::<i16>().map(|s| s.expect("sample") as f32 / 32_768.0).collect();
+        // Past the previous transmission's tail (13 symbols) into the preamble.
+        let skip = (13.0 * 512.0 / 8000.0 + 0.1) * spec.sample_rate as f64;
+        let audio = &audio[(skip as usize).min(audio.len())..];
+        let mut rx = MfskReceiver::new(spec.sample_rate as f64, 1752.0, MfskMode::Mfsk16, true);
+        let mut out = String::new();
+        for chunk in audio.chunks(512) {
+            out.push_str(&rx.process(chunk));
+        }
+        out.push_str(&rx.process(&vec![0.0f32; 8000]));
+        eprintln!("MFSK16 through the adapter: {out:?}");
+        assert!(out.contains("SDRBROWN"), "the adapter lost the corpus sample: {out:?}");
     }
 
     /// The varicode is the IZ8BLY MFSK alphabet, every word starting with `1`

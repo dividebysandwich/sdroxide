@@ -870,5 +870,8 @@ impl Announcer {
 
 /// Whether a mode produces the shared rolling decoded-text buffer.
 fn mode_has_text(m: Mode) -> bool {
-    matches!(m, Mode::Cw | Mode::Rtty | Mode::Psk | Mode::Olivia | Mode::Thor | Mode::Fsq)
+    matches!(
+        m,
+        Mode::Cw | Mode::Rtty | Mode::Psk | Mode::Olivia | Mode::Mfsk | Mode::Thor | Mode::Fsq
+    )
 }

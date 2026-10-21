@@ -205,6 +205,7 @@ pub fn make_demod(mode: Mode, channel_rate: f64) -> Option<Box<dyn Demodulator>>
         | Mode::Fsk441
         | Mode::Olivia
         | Mode::Thor
+        | Mode::Mfsk
         | Mode::Fsq
         | Mode::Hell
         | Mode::RfPaint

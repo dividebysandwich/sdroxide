@@ -1382,6 +1382,98 @@ impl ThorMode {
     }
 }
 
+/// MFSK submode — fldigi's IZ8BLY family: one of eleven symbol rates and tone
+/// counts, sharing one modem.
+///
+/// The numbers that describe each variant (symbol length, tone spacing, tone
+/// count, interleave depth) are protocol constants and live beside the decoder
+/// in `sdroxide_dsp::MfskVariant`; this enum is the part that rides
+/// [`DigiConfig`], and the two are tied together by label so there is only ever
+/// one table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum MfskMode {
+    Mfsk4,
+    Mfsk8,
+    Mfsk11,
+    #[default]
+    Mfsk16,
+    Mfsk22,
+    Mfsk31,
+    Mfsk32,
+    Mfsk64,
+    Mfsk64L,
+    Mfsk128,
+    Mfsk128L,
+}
+
+impl MfskMode {
+    pub const ALL: [MfskMode; 11] = [
+        MfskMode::Mfsk4,
+        MfskMode::Mfsk8,
+        MfskMode::Mfsk11,
+        MfskMode::Mfsk16,
+        MfskMode::Mfsk22,
+        MfskMode::Mfsk31,
+        MfskMode::Mfsk32,
+        MfskMode::Mfsk64,
+        MfskMode::Mfsk64L,
+        MfskMode::Mfsk128,
+        MfskMode::Mfsk128L,
+    ];
+
+    /// The name fldigi spells it, which is also the decoder's key — `MfskVariant`
+    /// is looked up by this string, so a spelling change here would silently
+    /// detune the receiver.
+    pub fn label(self) -> &'static str {
+        match self {
+            MfskMode::Mfsk4 => "MFSK4",
+            MfskMode::Mfsk8 => "MFSK8",
+            MfskMode::Mfsk11 => "MFSK11",
+            MfskMode::Mfsk16 => "MFSK16",
+            MfskMode::Mfsk22 => "MFSK22",
+            MfskMode::Mfsk31 => "MFSK31",
+            MfskMode::Mfsk32 => "MFSK32",
+            MfskMode::Mfsk64 => "MFSK64",
+            MfskMode::Mfsk64L => "MFSK64L",
+            MfskMode::Mfsk128 => "MFSK128",
+            MfskMode::Mfsk128L => "MFSK128L",
+        }
+    }
+
+    /// Tones the variant carries each symbol.
+    pub fn tones(self) -> u8 {
+        match self {
+            MfskMode::Mfsk4 | MfskMode::Mfsk8 => 32,
+            MfskMode::Mfsk31 => 8,
+            _ => 16,
+        }
+    }
+
+    /// Symbol rate, tones per second.
+    ///
+    /// The same numbers the decoder's own table carries, pinned together by
+    /// `the_mfsk_mode_table_matches_the_decoder` in `sdroxide-dsp`: the panel's
+    /// hover text and the panadapter's tone-bank edges read from here, and the
+    /// bank reads from there, so a drift would draw the signal's width wrong.
+    pub fn baud(self) -> f32 {
+        match self {
+            MfskMode::Mfsk4 => 3.90625,
+            MfskMode::Mfsk8 => 7.8125,
+            MfskMode::Mfsk11 => 10.766,
+            MfskMode::Mfsk16 => 15.625,
+            MfskMode::Mfsk22 => 21.533,
+            MfskMode::Mfsk31 | MfskMode::Mfsk32 => 31.25,
+            MfskMode::Mfsk64 | MfskMode::Mfsk64L => 62.5,
+            MfskMode::Mfsk128 | MfskMode::Mfsk128L => 125.0,
+        }
+    }
+
+    /// The occupied width: every tone but the first is one spacing above it.
+    pub fn bandwidth_hz(self) -> f32 {
+        (self.tones() - 1) as f32 * self.baud()
+    }
+}
+
 /// Hellschreiber variant. Feld Hell is the classic on/off-keyed facsimile mode;
 /// X5 and X9 speed it up, Slow Hell crawls for weak signals, and the FSK
 /// variants keep the carrier up and shift it instead of keying it.
@@ -2449,6 +2541,21 @@ pub struct DigiConfig {
     /// Invert Olivia's tone order, receive and transmit.
     #[serde(default)]
     pub olivia_reverse: bool,
+
+    /// MFSK: which of fldigi's eleven variants. MFSK's tone count and symbol
+    /// rate move together in fldigi's table, so this is one choice rather than
+    /// the two Olivia needs; nothing in the signal says which is in use, so the
+    /// operator has to.
+    ///
+    /// Appended last, so this is a wire change (`PROTO_VERSION` 220 → 221).
+    #[serde(default)]
+    pub mfsk_mode: MfskMode,
+    /// MFSK: invert the tone order. A station received on the opposite sideband
+    /// to the one it was sent on arrives mirrored about its centre and reads as
+    /// noise until this is set — the same control, for the same reason, as
+    /// [`Self::olivia_reverse`].
+    #[serde(default)]
+    pub mfsk_reverse: bool,
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2703,6 +2810,8 @@ impl Default for DigiConfig {
             psk_speed: PskSpeed::default(),
             psk_modulation: PskModulation::default(),
             olivia_reverse: false,
+            mfsk_mode: MfskMode::default(),
+            mfsk_reverse: false,
         }
     }
 }

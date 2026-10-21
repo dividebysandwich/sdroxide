@@ -228,6 +228,55 @@ Same port and the same trace, all nine samples; DominoEX has no FEC to hide behi
 
 **Totals, from `manifest.jsonl`'s 157 rows: 54 decode their own text, 7 decode part of it, 96 have a written verdict and no decode.** ARDOP is outside that count — fldigi cannot send it — and it now has its own three-file gate and decodes. The 54 are: ten MFSK, two MT63, fifteen Olivia, nineteen Contestia, six PSK (BPSK125/250/500, QPSK125/250/500), RTTY and CW. The seven partial are MFSK8 (one lost span), BPSK31, BPSK63, QPSK31, QPSK63, SITORB (its sample ends after 8 s) and NAVTEX (a corrupt header). Nothing here is claimed working without its sample, and no mode is pushed.
 
+## Phase 2 (2026-10-21) — the working decoders come into the program
+
+The first pass measured everything and left the working decoders as tests. This
+is the wiring, one family per commit. `PROTO_VERSION` 220 → **221**,
+`VERSION_BYTE` 0x28 → 0x29.
+
+### MFSK — a mode at last (11 variants)
+
+`Mode::Mfsk`, `DigiConfig::mfsk_mode` / `mfsk_reverse`. **One mode with eleven
+chips**, not eleven modes: fldigi's family is one modem at different symbol
+rates, and the tone count moves with the rate, so the pair cannot be chosen
+independently the way Olivia's can.
+
+- **The receiver** is `sdroxide_dsp::mfsk_rx::MfskReceiver`, a block adapter over
+  the ported `MfskRx` — `process` hands out only what arrived in that block, which
+  is the one thing a block API can get wrong. That is pinned by comparing it
+  character-for-character against the bare receiver over our own modulator;
+  what the characters *are* is the receiver's business, and the corpus settles
+  that.
+- **The gate** is the corpus through the console's own controller: MFSK16 at
+  1752 Hz reversed reads `AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ`
+  (`cargo test -p sdroxide-digi --release --lib -- --ignored --nocapture
+  the_mfsk_corpus_sample_decodes_through_the_controller`). The family's own
+  eleven-sample sweep still passes unchanged.
+- **The two the corpus only partly carries say so where they are picked** —
+  MFSK8 loses a span of its recording, MFSK11 its leading group to the
+  resampler's start-up — so a thin decode is not read as a broken mode. That is
+  the whole reason the caveat is on the chip rather than in this file.
+- **The tone bank's edges are drawn** on the panadapter, like Olivia's, from
+  `MfskMode::bandwidth_hz` — pinned against the decoder's own table by
+  `the_mfsk_mode_table_matches_the_decoder`, because a width that drifts is a
+  marker that lies about where the signal is.
+- **Transmit is not built, and the mode says so.** `Mode::Mfsk` is in
+  `is_rx_only`, the panel greys the sending half and shows `RX ONLY`, and the
+  controller refuses the key-up with a reason (`tx_refused`) rather than arming
+  a latch — unit-tested, with PSK as the control so the refusal cannot be a
+  blanket. That is phase B's work, gated on fldigi reading our signal.
+- Every rig dialect (`sdroxide-cat` ×9), TCI, rigctld, SmartSDR and the TX
+  modulator put MFSK with the other sideband data modes, so a rig is told
+  DATA/USB instead of falling through its match to a CW setting; the manual's
+  mode lists and `--mode` name MFSK.
+
+### Next, in the order the prompt gives
+
+MT63 (2K first — 1K/500 are still one Hadamard row high), then Contestia (its
+engine is already vendored and proven, so it is the cheapest of the four), then
+ARDOP (the modem is proven by `ardopcf`'s own recordings; what it needs is a
+panel and, later, the TNC).
+
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:
