@@ -557,6 +557,19 @@ The original program is [sdroxide](https://github.com/dividebysandwich/sdroxide)
 by dividebysandwich; this fork is upstream's work plus the CB and listener
 additions. All of it stands on your work.
 
+**A big thank you to [OnAir](https://github.com/adswill/OnAir) and its author
+[adswill](https://github.com/adswill).** OnAir is a GPL-3.0 receive-first SDR
+program of unusual scope — 142 modes, from DVB-T2 to pagers — and it is the
+reference this fork reads when it adds a keyboard mode. Its MFSK, MT63, Hell,
+SITOR, ARDOP and FSQ implementations are written from the published
+specifications and documented per mode, including an honest list of what has been
+tested on real signals and what has only been tested on generated ones. That
+list, and its signal sample library, are the model this fork's own mode
+roadmap is trying to live up to. Nothing of OnAir's is copied without saying so
+where it lands, and every mode it teaches us is written in Rust here — the port is
+ours, the understanding is theirs. Thank you for publishing it under a licence
+that lets a small fork learn from you.
+
 A special shout-out to the **[Dutch CB Group](https://www.dutchcbgroup.nl/)** and
 **[LOG11DX.net](https://log11dx.com/)** — two of the best CB communities there
 are, and the reason the 11 m side of this fork exists at all. Thanks for the

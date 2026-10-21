@@ -43,6 +43,25 @@ The four things that cost the evening by hand — wrong mode, fldigi left in TX,
 wrong audio centre, saturated capture — are all decided by the script. See
 `tools/bench/README.md`.
 
+### The rule for adding a mode: port it, do not vendor it
+
+**Operator's standing instruction, 2026-10-21: vendoring is not the preference.**
+Write the mode in Rust first. Vendoring is the fallback for a port that has
+actually failed, not a shortcut around the work.
+
+Olivia is the one exception already in the tree, and its reason is on the record:
+three Rust implementations were written here and all three produced nonsense on a
+signal fldigi reads perfectly, from a misreading of the reference that a fourth
+attempt was not going to fix. Even so it is a candidate for a port later, now
+that the engine in the tree can serve as the oracle a port needs.
+
+**Attribution, and where it goes.** No third-party project's name in a filename —
+a module is `mfsk16.rs`, not `onair_mfsk16.rs`. Credit goes in the README's
+Acknowledgements, and a comment at the top of a ported file names what it was
+learned from and under which licence. OnAir (adswill, GPL-3.0) is credited there
+for the keyboard-mode family: its MFSK, MT63, Hell, SITOR, ARDOP and FSQ are the
+reference for the modes this fork has not written.
+
 ### Tomorrow's first task: a sample of every mode fldigi can send
 
 **The goal is the thing we lacked all of yesterday** — a recording per mode with
