@@ -43,6 +43,48 @@ The four things that cost the evening by hand — wrong mode, fldigi left in TX,
 wrong audio centre, saturated capture — are all decided by the script. See
 `tools/bench/README.md`.
 
+### MFSK16: the spec, read out of the reference and ready to port
+
+Read from OnAir's `core/src/hfdig/hfdig_kbd_mfsk.cpp` (307 lines, GPL-3.0) and its
+`hfdig_kbd_dsp.h`. Recorded here so the port is mechanical and nothing has to be
+re-derived. **MFSK16 is variant 3:**
+
+| parameter | value | note |
+|---|---|---|
+| sample rate | 8000 Hz | MFSK11/22 use 11025; the rest 8000 |
+| symbol length | **512** samples | tone spacing = fs / symlen = **15.625 Hz** |
+| tones | **16** (symbits 4) | Gray coded onto the tone number |
+| first tone | `centre − (tones−1)·spacing/2` | so the bank is centred on the operator's frequency, ±117 Hz either side |
+| interleaver | diagonal, `symbits × symbits × depth`, depth **10** | 4 bits per symbol, so 4×4×10 |
+| FEC | **K=7, 0x6d / 0x4f**, rate 1/2 | **we already have it**: `ConvCode::THOR` is `0o155`/`0o117`, which is exactly these |
+| varicode | IZ8BLY, codes start with 1 and end with 00 | **we already have the receiver**: `VaricodeRx` terminates on `00` |
+| preamble | 107 bits of the zero-code, then 107/3 zero bits | sent before the text |
+| TX start | characters 13, 2, 13 (CR LF CR) | fldigi does the same |
+
+**Transmitter:** varicode → bits → conv encode (2 bits out per bit in) → shift into
+`symbits`-wide symbols → diagonal interleave → Gray → one tone per symbol, sent
+for `symlen` samples as a plain cosine.
+
+**Receiver,** and this is the part that differs from every front end we wrote:
+
+1. **A sliding DFT bank** over `tones + 2·margin` positions at **4 sub-bin offsets**
+   (`kPaths`) — a tuning error under a quarter of a bin costs nothing. Margin 3
+   tones each side.
+2. **Symbol clock from 16 hop phases per symbol**, each scoring `peakness =
+   max(tone)/sum(tone)` — an MFSK symbol has one dominant tone, so this is a clean
+   metric (unlike Olivia's 32-tone comb, where I tried it and broke 8/250).
+3. **Soft symbols:** for each bit, `b = Σ ±m(tone)` where the sign is the Gray-
+   decoded bit; scaled to 0..255 by the symbol's total. A burst where *every* tone
+   is above twice the mean sets 128 (a flat "no decision") instead of a guess.
+4. **Realignment every 8 symbols:** the integer shift whose tones show energy
+   *inside* the window and not just outside it, and the sub-bin offset with the best
+   summed peakness.
+5. De-interleave, then **Viterbi**, then the varicode.
+
+**The gate is already recorded:** `~/Downloads/sounds/our-captures/fldigi/mfsk16_cb_eagle.wav`
+(and the sweep is filling in MFSK4 through MFSK128 as this is written, so there
+will be one per variant).
+
 ### The rule for adding a mode: port it, do not vendor it
 
 **Operator's standing instruction, 2026-10-21: vendoring is not the preference.**
