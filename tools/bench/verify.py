@@ -61,6 +61,17 @@ def decoder_for(mode):
     return None
 
 
+def score(out):
+    """Which of the expected words came back, and how many.
+
+    A binary pass hides the useful middle: "3 of 6 words" says the demodulator is
+    working and the framing or the tail is not, which is a different repair from
+    "nothing".
+    """
+
+    return found, len(found)
+
+
 def run(binary, args):
     try:
         res = subprocess.run(binary + args, capture_output=True, text=True, timeout=300)
@@ -74,7 +85,16 @@ def verify_one(row):
     wav = os.path.join(OUT, row.get("wav", ""))
     if not os.path.exists(wav):
         return {"mode": mode, "error": "no wav"}
-    centre = int(row.get("centre_hz") or 0)
+    # Both candidates from the sweep: the strongest block (right for a wide
+    # mode) and the strongest single bin (right for a narrow one). A wrong
+    # centre is a silent failure, so neither is assumed.
+    centres = []
+    for key in ("peak_hz", "block_hz", "centre_hz"):
+        v = row.get(key)
+        if v and int(v) not in centres:
+            centres.append(int(v))
+    if not centres:
+        centres = [1500]
     pick = decoder_for(mode)
     if pick is None:
         return {"mode": mode, "decoder": None, "note": "no decoder for this mode"}
@@ -82,33 +102,54 @@ def verify_one(row):
     if pick[0] == "olivia":
         _, tones, bw = pick
         best = None
-        for reverse in (0, 1):
-            out = run(DECODE_OLIVIA, [wav, str(tones), str(bw), str(centre), str(reverse)])
-            ok = all(w in out for w in WORDS)
-            best = {"decoder": "olivia", "reverse": reverse, "decoded": out[:200], "passed": ok}
-            if ok:
-                return {"mode": mode, **best}
+        for centre in centres:
+            for reverse in (0, 1):
+                out = run(DECODE_OLIVIA, [wav, str(tones), str(bw), str(centre), str(reverse)])
+                found, n = score(out)
+                best = {"decoder": "olivia", "centre": centre, "reverse": reverse,
+                        "decoded": out[:200], "passed": n == len(WORDS), "words": found, "words_of": len(WORDS)}
+                if ok:
+                    return {"mode": mode, **best}
         return {"mode": mode, **best}
 
     if pick[0] == "psk":
         _, baud, extra = pick
-        args = [wav, "psk", str(centre), str(baud)]
-        if extra:
-            args.append(extra)
-        out = run(DECODE_ANY, args)
-        return {"mode": mode, "decoder": "psk", "decoded": out[:200],
-                "passed": all(w in out for w in WORDS)}
+        # PSK is sensitive to a few hertz - ten hertz off and it decodes nothing,
+        # measured - so the centre is swept around each candidate rather than
+        # trusted. This is the trap that made the first BPSK31 sample look like a
+        # broken mode when the signal was fine.
+        swept = []
+        for c in centres:
+            swept.extend(range(c - 80, c + 81, 5))
+        centres = sorted(set(c for c in swept if c > 100))
+        best = None
+        for centre in centres:
+            args = [wav, "psk", str(centre), str(baud)]
+            if extra:
+                args.append(extra)
+            out = run(DECODE_ANY, args)
+            found, n = score(out)
+            best = {"decoder": "psk", "centre": centre, "decoded": out[:200], "passed": n == len(WORDS), "words": found, "words_of": len(WORDS)}
+            if ok:
+                return {"mode": mode, **best}
+        return {"mode": mode, **best}
 
     if pick[0] == "rtty":
         _, baud, shift = pick
+        swept = []
+        for c in centres:
+            swept.extend(range(c - 120, c + 121, 15))
+        centres = sorted(set(c for c in swept if c > 100))
         best = None
-        for extra in ("", "reverse"):
-            args = [wav, "rtty", str(centre), str(baud), str(shift)] + ([extra] if extra else [])
-            out = run(DECODE_ANY, args)
-            ok = all(w in out for w in WORDS)
-            best = {"decoder": "rtty", "reverse": bool(extra), "decoded": out[:200], "passed": ok}
-            if ok:
-                break
+        for centre in centres:
+            for extra in ("", "reverse"):
+                args = [wav, "rtty", str(centre), str(baud), str(shift)] + ([extra] if extra else [])
+                out = run(DECODE_ANY, args)
+                found, n = score(out)
+                best = {"decoder": "rtty", "centre": centre, "reverse": bool(extra),
+                        "decoded": out[:200], "passed": n == len(WORDS), "words": found, "words_of": len(WORDS)}
+                if ok:
+                    return {"mode": mode, **best}
         return {"mode": mode, **best}
 
     return {"mode": mode, "decoder": None}
@@ -138,7 +179,12 @@ def main():
         res.sort(key=lambda r: r["mode"])
         w = max((len(r["mode"]) for r in res), default=8)
         for r in res:
-            state = "PASS" if r.get("passed") else ("none" if r.get("decoder") is None else "fail")
+            if r.get("passed"):
+                state = "PASS"
+            elif r.get("decoder") is None:
+                state = "none"
+            else:
+                state = f"{len(r.get('words') or [])}/{r.get('words_of', 0)}"
             note = ""
             if r.get("passed"):
                 note = f"reverse {r.get('reverse')}" if "reverse" in r else ""

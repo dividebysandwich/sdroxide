@@ -42,7 +42,11 @@ fn main() {
                 rx.set_qpsk(true);
             }
             let mut out = String::new();
-            for chunk in audio.chunks(512) {
+            // The demodulator runs behind the audio and the last characters are
+            // still in its pipeline, so a capture that ends on the final word
+            // loses it. Silence flushes it - the same tail the fixtures need.
+            let pad = vec![0.0f32; (rate as usize).max(8000)];
+            for chunk in audio.iter().chain(pad.iter()).copied().collect::<Vec<_>>().chunks(512) {
                 out.push_str(&rx.process(chunk));
             }
             out
@@ -55,7 +59,8 @@ fn main() {
                 rx.set_reverse(true);
             }
             let mut out = String::new();
-            for chunk in audio.chunks(512) {
+            let pad = vec![0.0f32; (rate as usize).max(8000)];
+            for chunk in audio.iter().chain(pad.iter()).copied().collect::<Vec<_>>().chunks(512) {
                 out.push_str(&rx.process(chunk));
             }
             out

@@ -120,17 +120,55 @@ def tx_window(p, text, fallback):
         secs = 0.0
     if not (0.02 <= secs <= 2.0):
         secs = fallback
-    return min(300.0, max(12.0, secs * len(text) * 1.3 + 6.0))
+    # A tight margin, deliberately. fldigi fills every spare second with idle
+    # characters, so a generous window is a keyed carrier with nothing in it -
+    # which is what the operator sees as "the message has gone but it still
+    # transmits". Enough to cover the text and a little jitter, no more.
+    #
+    # Returns the per-character time as well, because the sample is judged
+    # against the *text's* own duration and not against this window's margin.
+    return min(300.0, max(10.0, secs * len(text) * 1.06 + 2.5)), secs
+
+
+def entry_is_tx(p):
+    """True while fldigi says it is transmitting. Aborting needs to know."""
+    try:
+        return p.main.get_trx_state() != "RX"
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def record(hz, rate, seconds, gain, path):
     if os.path.exists(path):
         os.remove(path)
+    # stderr goes to a log rather than /dev/null: "the RSP1 was busy" was
+    # invisible for a whole run because it was thrown away here.
+    log = open(path + ".log", "wb")
     return subprocess.Popen(
         [RSPCAP, str(hz), str(rate), str(seconds), path, str(gain)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log,
+        stderr=log,
     )
+
+
+def burst_seconds(a, rate):
+    """How long the carrier was up, from the envelope.
+
+    Every sample is judged by this: a burst much shorter than the text needs was
+    truncated, and one much longer is fldigi idling after the text — which is the
+    "message has gone but it still transmits" the operator saw.
+    """
+    win = max(1, int(rate * 0.05))
+    n = a.size // win
+    if n == 0:
+        return 0.0
+    lev = np.abs(a[: n * win].reshape(n, win)).mean(axis=1)
+    if lev.max() <= 0:
+        return 0.0
+    up = np.where(lev > lev.max() * 0.2)[0]
+    if up.size == 0:
+        return 0.0
+    return float((up[-1] - up[0] + 1) * win / rate)
 
 
 def audio_from_iq(path, rate, bandwidth):
@@ -140,18 +178,33 @@ def audio_from_iq(path, rate, bandwidth):
     assumed, because where the signal lands depends on the rig's audio path and
     guessing it wrong is a silent failure.
     """
+    if not os.path.exists(path):
+        log = path + ".log"
+        why = open(log).read().strip() if os.path.exists(log) else "no log"
+        raise RuntimeError(f"the recorder wrote nothing: {why[-300:]}")
     x = np.fromfile(path, dtype=np.complex64)
     if x.size == 0:
-        return None, None, 0.0
+        raise RuntimeError("the recorder wrote an empty file - is the RSP1 free?")
     a = x.real.astype(np.float64)
     a -= a.mean()
     spec = np.abs(np.fft.rfft(a * np.hanning(a.size))) ** 2
     f = np.fft.rfftfreq(a.size, 1.0 / rate)
+
+    # Two candidates, because "where the signal is" means two different things.
+    # A wide mode is a block, and its centre is the middle of the strongest block
+    # of its own width. A narrow one — PSK31 is thirty hertz — has no block to
+    # find, and the strongest block of five hundred hertz was band noise a
+    # kilohertz away, which is exactly why the first BPSK31 sample did not
+    # decode. Both are recorded and the verifier tries each.
+    peak_hz = float(f[int(np.argmax(spec))])
     win = max(1, int(bandwidth * 1.5 / (f[1] - f[0])))
     energy = np.convolve(spec, np.ones(win) / win, "same")
-    centre = float(f[int(np.argmax(energy))])
+    block_hz = float(f[int(np.argmax(energy))])
 
-    keep = (f >= centre - bandwidth) & (f <= centre + bandwidth)
+    # The audio is cut generously around the peak so that whichever candidate a
+    # decoder is given, the samples it needs are in the file.
+    centre = peak_hz
+    keep = (f >= centre - 2500) & (f <= centre + 2500)
     b = np.fft.irfft(np.where(keep, np.fft.rfft(a), 0), n=a.size)
     out = int(round(b.size * 8000.0 / rate))
     X = np.fft.rfft(b)
@@ -163,7 +216,7 @@ def audio_from_iq(path, rate, bandwidth):
     rms = float(wav.std())
     if peak > 0:
         wav = wav / peak * 0.7
-    return centre, wav, 20 * np.log10(max(rms, 1e-9))
+    return peak_hz, block_hz, wav, 20 * np.log10(max(rms, 1e-9)), burst_seconds(a, rate)
 
 
 def sweep_one(p, mode, args, index, total):
@@ -188,7 +241,7 @@ def sweep_one(p, mode, args, index, total):
         # fldigi refused the mode or fell back — worth knowing, not worth guessing.
         entry["note"] = f"fldigi reported {entry['fldigi_mode']}"
 
-    tx_seconds = tx_window(p, args.text, args.tx_seconds)
+    tx_seconds, secs_per_char = tx_window(p, args.text, args.secs_per_char)
     entry["tx_seconds"] = round(tx_seconds, 1)
     capture = tx_seconds + 10.0
     rec = record(args.hz, args.rate, capture, args.gain, iqpath)
@@ -202,10 +255,19 @@ def sweep_one(p, mode, args, index, total):
     finally:
         # fldigi never leaves TX by itself — Olivia's idle tones run for ever and
         # that is what left the carrier up for ninety seconds on 2026-10-20.
-        try:
-            p.main.rx()
-        except Exception:  # noqa: BLE001
-            pass
+        for _ in range(5):
+            try:
+                p.main.rx()
+                if p.main.get_trx_state() == "RX":
+                    break
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(0.6)
+        if entry_is_tx(p):
+            try:
+                p.main.abort()
+            except Exception:  # noqa: BLE001
+                pass
     try:
         rec.wait(timeout=capture + 30)
     except subprocess.TimeoutExpired:
@@ -216,7 +278,7 @@ def sweep_one(p, mode, args, index, total):
     parsed = syllables(mode)
     entry["tones"], entry["bandwidth"] = parsed if parsed else (None, None)
     bw_for_band = parsed[1] if parsed else 500
-    centre, wav, level = audio_from_iq(iqpath, args.rate, bw_for_band)
+    peak_hz, block_hz, wav, level, burst = audio_from_iq(iqpath, args.rate, bw_for_band)
     os.remove(iqpath) if os.path.exists(iqpath) else None
     if wav is None:
         entry.update(error="empty capture - is the RSP1 free?")
@@ -227,7 +289,23 @@ def sweep_one(p, mode, args, index, total):
         w.setsampwidth(2)
         w.setframerate(8000)
         w.writeframes(np.clip(wav * 32767, -32768, 32767).astype("<i2").tobytes())
-    entry.update(wav=os.path.basename(wavpath), centre_hz=round(centre), level_dbfs=round(level, 1))
+    expected = secs_per_char * len(args.text)
+    if burst < expected * 0.9:
+        verdict = "TRUNCATED"
+    elif burst > expected * 1.8:
+        verdict = "long tail"
+    else:
+        verdict = "ok"
+    entry.update(
+        wav=os.path.basename(wavpath),
+        peak_hz=round(peak_hz),
+        block_hz=round(block_hz),
+        centre_hz=round(block_hz),
+        level_dbfs=round(level, 1),
+        burst_seconds=round(burst, 1),
+        expected_seconds=round(expected, 1),
+        verdict=verdict,
+    )
 
     # Silence means nothing went out: the capture is flat, and the manifest
     # should say so rather than record a file that proves nothing.
@@ -266,10 +344,10 @@ def main():
     ap.add_argument("--rate", type=int, default=250_000)
     ap.add_argument("--gain", type=int, default=55)
     ap.add_argument(
-        "--tx-seconds",
+        "--secs-per-char",
         type=float,
-        default=45.0,
-        help="fallback seconds per character when fldigi's own rate is nonsense",
+        default=0.5,
+        help="fallback seconds per character when fldigi's reported rate is nonsense",
     )
     ap.add_argument("--out", default=OUT)
     ap.add_argument("--manifest", default=os.path.join(OUT, "manifest.jsonl"))
@@ -295,7 +373,7 @@ def main():
     if not modes:
         sys.exit("no modes matched")
 
-    print(f"{len(modes)} modes, {args.tx_seconds:.0f}s each, text {args.text!r}", flush=True)
+    print(f"{len(modes)} modes, windows from each mode's rate, text {args.text!r}", flush=True)
     done = 0
     with open(args.manifest, "a") as man:
         for i, mode in enumerate(modes, 1):
