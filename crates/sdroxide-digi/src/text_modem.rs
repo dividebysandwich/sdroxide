@@ -11,11 +11,78 @@ use std::collections::VecDeque;
 use std::time::SystemTime;
 
 use sdroxide_dsp::{
-    MonoResampler, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ThorRx, ThorTx, mfsk_rx::MfskReceiver,
-    mt63::Mt63Receiver,
+    MonoResampler, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ThorRx, ThorTx, ardop,
+    mfsk_rx::MfskReceiver, mt63::Mt63Receiver,
 };
 use sdroxide_olivia::OliviaReceiver;
 use sdroxide_types::{DigiConfig, DigiStatus, Mode, QsoStep, TranscriptLine};
+
+/// ARDOP's front end: the modem runs at 12 kHz and takes the tap directly, so a
+/// receiver of its own rather than a fourth `process(&[f32])` arm. Its
+/// resampler is built from the *tap* rate — the controller keeps the
+/// tap→modem-rate stage out of its path, because ARDOP's grid is fixed at its
+/// own rate and a round trip through 8 kHz would cost half the band for nothing.
+struct ArdopRx {
+    rs: Option<MonoResampler>,
+    rx: ardop::ArdopReceiver,
+    scratch: Vec<f32>,
+    buf: Vec<f32>,
+}
+
+impl ArdopRx {
+    fn new(tap_rate: f64) -> Self {
+        ArdopRx {
+            rs: MonoResampler::new(tap_rate, ardop::SR),
+            rx: ardop::ArdopReceiver::new(),
+            scratch: Vec::new(),
+            buf: Vec::new(),
+        }
+    }
+
+    /// One line per frame: the mode it arrived in and what it carried. ARDOP is a
+    /// frame protocol, so a "decode" is a frame rather than a character and the
+    /// log says which kind it was.
+    fn process(&mut self, audio: &[f32]) -> String {
+        self.buf.clear();
+        match &mut self.rs {
+            Some(r) => {
+                self.scratch.clear();
+                r.push(audio, &mut self.scratch);
+                self.buf.extend_from_slice(&self.scratch);
+            }
+            None => self.buf.extend_from_slice(audio),
+        }
+        let mut out = String::new();
+        for f in self.rx.process(&self.buf) {
+            out.push('[');
+            out.push_str(&ardop::frame_name(f.ftype));
+            out.push(']');
+            match &f.data {
+                Some(data) => {
+                    let text: String = String::from_utf8_lossy(data)
+                        .chars()
+                        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+                        .filter(|c| (' '..='~').contains(c))
+                        .collect();
+                    out.push(' ');
+                    out.push_str(text.trim_end());
+                }
+                None => out.push_str(" (body failed its check)"),
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    fn magnitude(&self) -> f32 {
+        self.rx.magnitude()
+    }
+
+    /// A retune abandons any part-decoded frame: it is not ours any more.
+    fn reset(&mut self) {
+        self.rx.reset();
+    }
+}
 
 use crate::DigiEngine;
 use crate::controller::DigiAction;
@@ -33,6 +100,7 @@ enum RxModem {
     Thor(ThorRx),
     Mfsk(MfskReceiver),
     Mt63(Mt63Receiver),
+    Ardop(ArdopRx),
 }
 
 impl RxModem {
@@ -44,6 +112,7 @@ impl RxModem {
             RxModem::Thor(r) => r.process(audio),
             RxModem::Mfsk(r) => r.process(audio),
             RxModem::Mt63(r) => r.process(audio),
+            RxModem::Ardop(r) => r.process(audio),
         }
     }
     fn magnitude(&self) -> f32 {
@@ -54,6 +123,7 @@ impl RxModem {
             RxModem::Thor(r) => r.magnitude(),
             RxModem::Mfsk(r) => r.magnitude(),
             RxModem::Mt63(r) => r.magnitude(),
+            RxModem::Ardop(r) => r.magnitude(),
         }
     }
 }
@@ -227,6 +297,7 @@ impl TextModemController {
             Mode::Mt63 => {
                 RxModem::Mt63(Mt63Receiver::new(MODEM_RATE, audio_hz as f64, cfg.mt63_mode.into()))
             }
+            Mode::Ardop => RxModem::Ardop(ArdopRx::new(tap_rate)),
             _ => {
                 let mut r = PskRx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
                 r.set_qpsk(p_qpsk);
@@ -246,7 +317,7 @@ impl TextModemController {
             // controller refuses the key-up with a reason. Contestia is the
             // same shape for a different reason: its transmitter still speaks
             // Olivia's scrambler.
-            Mode::Mfsk | Mode::Contestia | Mode::Mt63 => TxModem::Receive,
+            Mode::Mfsk | Mode::Contestia | Mode::Mt63 | Mode::Ardop => TxModem::Receive,
             _ => {
                 let mut t = PskTx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
                 t.set_qpsk(p_qpsk);
@@ -259,7 +330,10 @@ impl TextModemController {
             audio_hz,
             dial_hz: 0.0,
             rx,
-            rx_rs: MonoResampler::new(tap_rate, MODEM_RATE),
+            // ARDOP resamples the tap itself, straight to the modem's 12 kHz.
+            rx_rs: (mode != Mode::Ardop)
+                .then(|| MonoResampler::new(tap_rate, MODEM_RATE))
+                .flatten(),
             rx_text: String::new(),
             sq: crate::squelch::Squelch::new(),
             tx,
@@ -305,6 +379,7 @@ impl TextModemController {
                 r.set_params(hz, self.cfg.mfsk_mode);
             }
             RxModem::Mt63(r) => r.set_params(hz, self.cfg.mt63_mode.into()),
+            RxModem::Ardop(r) => r.reset(),
         }
         match &mut self.tx {
             TxModem::Psk(m) => {
@@ -355,6 +430,11 @@ impl TextModemController {
                 }
                 Mode::Mt63 => {
                     "MT63 is receive only in this build — the modulator is not written yet"
+                        .to_string()
+                }
+                Mode::Ardop => {
+                    "ARDOP is receive only in this build — the modem has no transmitter and the \
+                     ARQ state machine is not ported"
                         .to_string()
                 }
                 _ => "MFSK is receive only in this build — the modulator is not written yet"
@@ -696,6 +776,42 @@ mod tests {
             for w in words {
                 assert!(text.contains(w), "MT63-{} lost {w}: {text:?}", mode.label());
             }
+        }
+    }
+
+    /// ARDOP through the controller, which is the claim the mode is offered on:
+    /// the tap is resampled to the modem's 12 kHz, the frames are found by the
+    /// streaming scanner, and each arrives as a line naming the mode it came in.
+    #[test]
+    #[ignore]
+    fn the_ardop_recordings_decode_through_the_controller() {
+        for (file, want_type) in [
+            ("4psk-1car_known-text.wav", "4PSK"),
+            ("16qam-8car_known-text.wav", "16QAM"),
+            ("4fsk-100bd_known-text.wav", "4FSK"),
+        ] {
+            let path = format!("{}/../../samples/ardop/{file}", env!("CARGO_MANIFEST_DIR"));
+            let mut reader = hound::WavReader::open(&path).expect("an ARDOP recording");
+            let spec = reader.spec();
+            let audio: Vec<f32> =
+                reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+            let mut ctl = TextModemController::new(
+                Mode::Ardop,
+                DigiConfig::default(),
+                spec.sample_rate as f64,
+            );
+            for chunk in audio.chunks(600) {
+                ctl.on_rx_audio(chunk);
+            }
+            let text = ctl.status().text_rx;
+            eprintln!("ARDOP {file}: {text:?}");
+            assert!(
+                text.contains("EAGLE HAS LANDED 12345 SDRBROWN ZZZ"),
+                "{file} lost its text through the controller: {text:?}"
+            );
+            // The line names the mode the frame arrived in — that is what tells
+            // an operator whether the path was carrying 4PSK or 16QAM.
+            assert!(text.contains(want_type), "{file} did not name its mode: {text:?}");
         }
     }
 

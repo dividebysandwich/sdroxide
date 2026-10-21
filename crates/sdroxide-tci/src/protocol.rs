@@ -337,6 +337,7 @@ pub fn mode_to_tci(mode: Mode) -> &'static str {
         | Mode::Mfsk
         | Mode::Contestia
         | Mode::Mt63
+        | Mode::Ardop
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf

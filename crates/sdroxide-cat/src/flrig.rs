@@ -603,6 +603,7 @@ fn candidates(m: Mode) -> &'static [&'static str] {
         | Mode::Mfsk
         | Mode::Contestia
         | Mode::Mt63
+        | Mode::Ardop
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf

@@ -18,7 +18,7 @@ or connects to a remote sdroxide server.
 2. [Basic operation](#2-basic-operation)
     - [2.20 HD Radio (NRSC-5)](#220-hd-radio-nrsc-5)
     - [2.22 QO-100 beacon plugin](#222-qo-100-beacon-plugin)
-3. [Digital modes (FT8, FT4, FT2, JT65, JT9, FST4, MSK144, FSK441, Q65, UVPACKET, JTTY, PSK31, RTTY, Olivia, Contestia, MT63, THOR, MFSK, FSQ, Hellschreiber, SSTV, RIFP, weather fax, JS8, RF Paint, WSPR, PI4, packet, APRS, ADS-B, NAVTEX, DSC, ACARS, VDL2, AIS, HFDL, AtCHAT NET)](#3-digital-modes)
+3. [Digital modes (FT8, FT4, FT2, JT65, JT9, FST4, MSK144, FSK441, Q65, UVPACKET, JTTY, PSK31, RTTY, Olivia, Contestia, MT63, ARDOP, THOR, MFSK, FSQ, Hellschreiber, SSTV, RIFP, weather fax, JS8, RF Paint, WSPR, PI4, packet, APRS, ADS-B, NAVTEX, DSC, ACARS, VDL2, AIS, HFDL, AtCHAT NET)](#3-digital-modes)
     - [3.17 AtCHAT NET](#317-atchat-net)
     - [3.18 ACARS](#318-acars-airline-datalink-on-airband)
     - [3.19 HFDL](#319-hfdl-aircraft-on-the-shortwave-band)
@@ -63,7 +63,7 @@ or connects to a remote sdroxide server.
   **ISB** (independent sideband — two services on one carrier, one in each ear), a
   spectrum-only mode (SPEC), the automatic digital modes **FT8**, **FT4** and
   **FT2**, the
-  keyboard modes **PSK31**, **RTTY**, **SYNOP/SHIP**, **Olivia**, **Contestia**, **MT63**, **THOR**, **MFSK** and **FSQ**, the image
+  keyboard modes **PSK31**, **RTTY**, **SYNOP/SHIP**, **Olivia**, **Contestia**, **MT63**, **ARDOP**, **THOR**, **MFSK** and **FSQ**, the image
   modes **SSTV**, **weather fax** and **RIFP** (draft-dulaunoy-rifp-00, a packetised image
   protocol on its own FSK modem), the transmit-only **RF Paint**
   (spectrum-painting) mode, AX.25 **packet** on HF and VHF, and **APRS** — with
@@ -455,7 +455,7 @@ The **OPERATE** tab's rows:
 - **DIGITAL MODES:** a dropdown that shows the mode in force when a digital one
   is chosen, otherwise reads **Digital modes**. It opens onto the full list —
   `FT8 FT4 FT2 JT65 JT9 FST4 MSK144 FSK441 Q65 UVPACKET JTTY JS8 WSPR PSK RTTY
-  RTTY-FM OLIVIA CONTESTIA MT63 THOR MFSK FSQ ATCHAT HELL SSTV SSTV-FM NAVTEX DSC RIFP RFPAINT RADE
+  RTTY-FM OLIVIA CONTESTIA MT63 ARDOP THOR MFSK FSQ ATCHAT HELL SSTV SSTV-FM NAVTEX DSC RIFP RFPAINT RADE
   PACKET PACKET-HF APRS` and a **Wideband** group `ADS-B VDL2 AIS HFDL DAB` (see
   [Digital modes](#3-digital-modes)). A dropdown rather than three dozen chips on
   the face: a mode is picked once, but it has to be *visible* as a choice.

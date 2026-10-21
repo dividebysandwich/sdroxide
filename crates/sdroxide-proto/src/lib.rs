@@ -1876,8 +1876,8 @@ use sdroxide_types::{
 /// BPSK or QPSK, a separate axis from `psk_speed` because QPSK is a different
 /// constellation *and* carries a convolutional code. `PROTO_VERSION`
 /// 217 → 218, `VERSION_BYTE` 0x25 → 0x26. A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 223;
-const VERSION_BYTE: u8 = 0x2b;
+pub const PROTO_VERSION: u16 = 224;
+const VERSION_BYTE: u8 = 0x2c;
 /// v220: the audio recording's container is the operator's choice.
 /// [`sdroxide_types::RadioState`] gains `recording_format`
 /// ([`sdroxide_types::RecordingFormat`]) at its tail, and `Command` gains
@@ -1902,6 +1902,10 @@ const VERSION_BYTE: u8 = 0x2b;
 /// [`sdroxide_types::DigiConfig`] gains `mt63_mode` at its tail: which of the
 /// 2000 Hz variants, short or long interleave. `PROTO_VERSION` 222 → 223,
 /// `VERSION_BYTE` 0x2A → 0x2B. A downstream (fork) change.
+/// v224: ARDOP — [`sdroxide_types::Mode::Ardop`] appended. It adds no config
+/// fields: an ARDOP frame carries its own leader, type and CRC, and the carrier
+/// grid is fixed, so there is nothing for the operator to set. `PROTO_VERSION`
+/// 223 → 224, `VERSION_BYTE` 0x2B → 0x2C. A downstream (fork) change.
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

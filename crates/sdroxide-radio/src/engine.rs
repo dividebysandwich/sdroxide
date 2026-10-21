@@ -19674,6 +19674,7 @@ fn rig_mode_class(m: Mode) -> u8 {
         | Mode::Mfsk
         | Mode::Contestia
         | Mode::Mt63
+        | Mode::Ardop
         | Mode::Fsq
         | Mode::Hell
         | Mode::RfPaint

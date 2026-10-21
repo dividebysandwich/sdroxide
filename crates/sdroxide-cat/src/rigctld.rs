@@ -98,6 +98,7 @@ fn mode_name(m: Mode) -> &'static str {
         | Mode::Mfsk
         | Mode::Contestia
         | Mode::Mt63
+        | Mode::Ardop
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf

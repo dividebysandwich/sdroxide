@@ -471,6 +471,14 @@ pub enum Mode {
     /// Receive only: there is no modulator yet. Appended for the same reason as
     /// [`Mode::Hell`].
     Mt63,
+    /// ARDOP — the HF data protocol of the Winlink/BPQ world: a leader, a frame
+    /// type, and a body of 4PSK/8PSK/16QAM carriers or a 4-FSK carrier, each
+    /// with Reed–Solomon parity and a CRC.
+    ///
+    /// Receive only, and **the modem only**: the ARQ state machine and the TNC
+    /// host protocol are not ported, so this hears frames and does not answer
+    /// them. Appended for the same reason as [`Mode::Hell`].
+    Ardop,
 }
 
 /// The bands on which a mode that keeps phone practice rides the lower
@@ -500,7 +508,7 @@ const SSTV_LSB_BELOW_HZ: f64 = 10_000_000.0;
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 57] = [
+    pub const ALL: [Mode; 58] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -542,6 +550,7 @@ impl Mode {
         Mode::Mfsk,
         Mode::Contestia,
         Mode::Mt63,
+        Mode::Ardop,
         Mode::Fsq,
         Mode::AtChat,
         Mode::Hell,
@@ -589,7 +598,7 @@ impl Mode {
     /// packet, RF Paint). All are USB underneath except RIFP, VHF packet and
     /// VHF SSTV, which frequency-modulate the carrier, and ACARS, which is
     /// received in AM.
-    pub const DIGITAL: [Mode; 38] = [
+    pub const DIGITAL: [Mode; 39] = [
         Mode::Ft8,
         Mode::Ft4,
         Mode::Ft2,
@@ -610,6 +619,7 @@ impl Mode {
         Mode::Mfsk,
         Mode::Contestia,
         Mode::Mt63,
+        Mode::Ardop,
         Mode::Fsq,
         Mode::AtChat,
         Mode::Hell,
@@ -652,6 +662,7 @@ impl Mode {
                 | Mode::Mfsk
                 | Mode::Contestia
                 | Mode::Mt63
+                | Mode::Ardop
                 | Mode::Fsq
                 | Mode::AtChat
                 | Mode::Hell
@@ -837,6 +848,7 @@ impl Mode {
                 | Mode::Mfsk
                 | Mode::Contestia
                 | Mode::Mt63
+                | Mode::Ardop
                 | Mode::Fsq
         )
     }
@@ -1069,6 +1081,9 @@ impl Mode {
                 | Mode::Contestia
                 // MT63's modulator is not written either.
                 | Mode::Mt63
+                // ARDOP is the modem only, and receive only: no modulator and
+                // no ARQ state machine.
+                | Mode::Ardop
         )
     }
 
@@ -1140,6 +1155,7 @@ impl Mode {
             Mode::Mfsk => "MFSK",
             Mode::Contestia => "CONTESTIA",
             Mode::Mt63 => "MT63",
+            Mode::Ardop => "ARDOP",
             Mode::Fsq => "FSQ",
             Mode::Hell => "HELL",
             Mode::RfPaint => "RFPAINT",
@@ -1214,6 +1230,7 @@ impl Mode {
                 | Mode::Mfsk
                 | Mode::Contestia
                 | Mode::Mt63
+                | Mode::Ardop
                 | Mode::Fsq
                 | Mode::Hell
                 | Mode::RfPaint
@@ -1330,6 +1347,7 @@ impl Mode {
             | Mode::Mfsk
             | Mode::Contestia
             | Mode::Mt63
+            | Mode::Ardop
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint => (100.0, 3300.0),
@@ -1518,7 +1536,13 @@ impl Mode {
     pub fn holds_audio_centre(self) -> bool {
         matches!(
             self,
-            Mode::Olivia | Mode::Thor | Mode::Mfsk | Mode::Contestia | Mode::Mt63 | Mode::Fsq
+            Mode::Olivia
+                | Mode::Thor
+                | Mode::Mfsk
+                | Mode::Contestia
+                | Mode::Mt63
+                | Mode::Ardop
+                | Mode::Fsq
         )
     }
 
@@ -1620,6 +1644,7 @@ impl Mode {
             | Mode::Mfsk
             | Mode::Contestia
             | Mode::Mt63
+            | Mode::Ardop
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
@@ -1891,6 +1916,7 @@ impl Mode {
             | Mode::Mfsk
             | Mode::Contestia
             | Mode::Mt63
+            | Mode::Ardop
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
@@ -2566,6 +2592,7 @@ mod tests {
             (Mode::Mfsk, 55),
             (Mode::Contestia, 56),
             (Mode::Mt63, 57),
+            (Mode::Ardop, 58),
         ];
         for (mode, index) in pinned {
             assert_eq!(mode as u8, index, "{} moved", mode.label());
@@ -2620,7 +2647,7 @@ mod tests {
         // rather than a dial mode. Listing it here would put a chip in the mode
         // cycle that needs a 1.5 MHz front end to do anything.
         let absent = [Mode::Dab];
-        let last = Mode::Mt63 as u8;
+        let last = Mode::Ardop as u8;
         for i in 0..=last {
             let present = Mode::ALL.iter().filter(|m| **m as u8 == i).count();
             let want = if absent.iter().any(|m| *m as u8 == i) { 0 } else { 1 };

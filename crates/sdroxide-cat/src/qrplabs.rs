@@ -200,6 +200,7 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Mfsk
         | Mode::Contestia
         | Mode::Mt63
+        | Mode::Ardop
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf

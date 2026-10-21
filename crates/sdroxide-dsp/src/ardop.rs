@@ -582,9 +582,25 @@ fn type_parity(byte: u8) -> u8 {
     p
 }
 
-/// Decode every frame in `audio` (12 kHz mono), leftmost first.
-pub fn decode_all(audio: &[f32]) -> Vec<Frame> {
-    let mut out = Vec::new();
+/// What one pass over a buffer found.
+///
+/// `decode_all` walks a whole recording with this; a live receiver calls it on a
+/// buffer it owns and uses `safe` to drop what can no longer be part of a frame.
+/// A `find_leader` sweep is the expensive part of this decoder, so the "nothing
+/// here yet" answer has to say how far it looked or a stream would re-scan the
+/// same audio on every block.
+pub enum Scan {
+    /// A frame, and how many samples from the front of the buffer it used.
+    Frame { frame: Frame, used: usize },
+    /// No whole frame yet. `safe` samples at the front cannot contain the start
+    /// of one — but keep everything after them, because a leader may be sitting
+    /// there waiting for its body.
+    Nothing { safe: usize },
+}
+
+/// Decode the first frame in `audio` (12 kHz mono), or say how far it is safe to
+/// drop.
+pub fn scan(audio: &[f32]) -> Scan {
     let mut start = 0usize;
     while let Some(pos) = find_leader(&audio[start..]) {
         let at = start + pos;
@@ -596,12 +612,21 @@ pub fn decode_all(audio: &[f32]) -> Vec<Frame> {
         for extra in (0..=5 * LEAD_SPS).step_by(5) {
             let hstart = at + 11 * LEAD_SPS + extra;
             if hstart + TYPE_LEN > audio.len() {
-                break;
+                // The leader is real but its header is not all here yet.
+                return Scan::Nothing { safe: at };
             }
             let (ftype, conf) = read_type(&audio[hstart..hstart + TYPE_LEN]);
             let Some(ft) = ftype else { continue };
             if mode_of(ft).is_none() && !is_control(ft) {
                 continue;
+            }
+            // A frame whose body has not all arrived cannot be judged: not
+            // having the audio is not the same as failing the CRC, and a stream
+            // reaches this boundary on every frame it hears.
+            if let Some(mode) = mode_of(ft)
+                && hstart + TYPE_LEN + body_len(mode) > audio.len()
+            {
+                return Scan::Nothing { safe: at };
             }
             if fallback.is_none() {
                 fallback = Some((hstart, ft, conf));
@@ -623,8 +648,8 @@ pub fn decode_all(audio: &[f32]) -> Vec<Frame> {
                     None
                 })
             };
-            if data.is_some() {
-                found = Some((hstart, ft, conf, data));
+            if let Some(d) = data {
+                found = Some((hstart, ft, conf, Some(d)));
                 break;
             }
         }
@@ -640,13 +665,107 @@ pub fn decode_all(audio: &[f32]) -> Vec<Frame> {
         };
         // A data mode whose body failed is still reported with no data, so the
         // caller can NAK it; a control type is reported as itself.
-        out.push(Frame { ftype: ft, data, confidence: conf });
-        start = hstart + TYPE_LEN + mode_of(ft).map(body_len).unwrap_or(0);
-        if start >= audio.len() {
-            break;
+        let used = hstart + TYPE_LEN + mode_of(ft).map(body_len).unwrap_or(0);
+        return Scan::Frame { frame: Frame { ftype: ft, data, confidence: conf }, used };
+    }
+    Scan::Nothing { safe: audio.len().saturating_sub(LEAD_LEN.saturating_sub(1)) }
+}
+
+/// Decode every frame in `audio` (12 kHz mono), leftmost first.
+pub fn decode_all(audio: &[f32]) -> Vec<Frame> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    while at < audio.len() {
+        match scan(&audio[at..]) {
+            Scan::Frame { frame, used } => {
+                out.push(frame);
+                at += used.max(1);
+            }
+            Scan::Nothing { .. } => break,
         }
     }
     out
+}
+
+/// The live ARDOP receiver: a rolling buffer and [`scan`], so the expensive
+/// leader search only ever sees audio it has not already looked at.
+///
+/// There is no tuning here and no symbol clock to find: an ARDOP frame carries
+/// its own leader, its frame type and its CRC, and the carrier grid is fixed
+/// around 1500 Hz of audio — which is why the mode is a fixed-centre one.
+pub struct ArdopReceiver {
+    buf: Vec<f32>,
+    mag: f32,
+}
+
+/// How much audio is kept while frames are being resolved. A frame is at most
+/// about two seconds; anything older than this without a frame in it is a false
+/// leader and is dropped rather than remembered.
+const KEEP_S: f64 = 6.0;
+
+impl Default for ArdopReceiver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ArdopReceiver {
+    pub fn new() -> Self {
+        ArdopReceiver { buf: Vec::new(), mag: 0.0 }
+    }
+
+    pub fn magnitude(&self) -> f32 {
+        self.mag
+    }
+
+    /// Forget any partial frame — the operator retuned, so it is not ours.
+    pub fn reset(&mut self) {
+        self.buf.clear();
+        self.mag = 0.0;
+    }
+
+    /// Feed 12 kHz audio; returns every frame completed by it.
+    pub fn process(&mut self, audio: &[f32]) -> Vec<Frame> {
+        let peak = audio.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        self.mag += 0.02 * (peak - self.mag);
+        self.buf.extend_from_slice(audio);
+        let mut out = Vec::new();
+        loop {
+            match scan(&self.buf) {
+                Scan::Frame { frame, used } => {
+                    out.push(frame);
+                    self.buf.drain(..used.min(self.buf.len()));
+                    if self.buf.is_empty() {
+                        break;
+                    }
+                }
+                Scan::Nothing { safe } => {
+                    if safe > 0 {
+                        self.buf.drain(..safe.min(self.buf.len()));
+                    }
+                    break;
+                }
+            }
+        }
+        let keep = (KEEP_S * SR) as usize;
+        if self.buf.len() > keep {
+            let drop = self.buf.len() - keep;
+            self.buf.drain(..drop);
+        }
+        out
+    }
+}
+
+/// What to call a frame type in a log: the data mode's name, or its number when
+/// it is a control frame. The control frames' own names are in `ardopcf`'s
+/// `FrameInfo` table, which this port does not carry yet.
+pub fn frame_name(ftype: u8) -> String {
+    match mode_of(ftype) {
+        Some(m) => m.name.to_string(),
+        None if ftype >= 0xE0 => "ACK".to_string(),
+        None if ftype <= 0x1F => "NAK".to_string(),
+        None => format!("ctrl {ftype:#04x}"),
+    }
 }
 
 /// How many samples a mode's body occupies.
@@ -966,6 +1085,36 @@ mod tests {
             &block[mode.data_len + 3..],
             "the RS parity does not match ardopcf's"
         );
+    }
+
+    /// The live receiver over the same recordings, fed in blocks the way the
+    /// audio thread delivers them. The batch decode and the stream are the same
+    /// `scan`, but a stream has one more way to be wrong: it has to drop what it
+    /// has used without dropping a frame that straddles two blocks.
+    #[test]
+    #[ignore]
+    fn the_live_receiver_reads_the_ardopcf_recordings() {
+        use std::path::Path;
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/ardop");
+        for file in ["4psk-1car_known-text.wav", "16qam-8car_known-text.wav"] {
+            let path = format!("{root}/{file}");
+            if !Path::new(&path).exists() {
+                eprintln!("{file}: missing");
+                continue;
+            }
+            let mut reader = hound::WavReader::open(&path).expect("open");
+            let audio: Vec<f32> =
+                reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+            let mut rx = ArdopReceiver::new();
+            let mut frames = Vec::new();
+            for chunk in audio.chunks(600) {
+                frames.extend(rx.process(chunk));
+            }
+            eprintln!("{file}: {} frame(s) as a stream", frames.len());
+            assert_eq!(frames.len(), 1, "{file} lost its frame in the stream");
+            let text = String::from_utf8_lossy(frames[0].data.as_ref().expect("data")).to_string();
+            assert!(text.contains("EAGLE"), "{file}: {text:?}");
+        }
     }
 
     /// The corpus gate: frames generated by `ardopcf` itself from a known

@@ -1809,6 +1809,11 @@ impl SdroxideApp {
                 .map(|s| s.config.mt63_mode.bandwidth_hz() as f32)
                 .unwrap_or(2000.0);
             vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
+        } else if mode == Mode::Ardop {
+            // The reference's carrier grid runs 800–2200 Hz about its 1500 Hz
+            // centre, so the frame is marked at those edges relative to the
+            // audio centre the mode holds.
+            vec![audio_hz - 700.0, audio_hz + 700.0]
         } else if mode == Mode::Js8 {
             // Worth showing: Turbo's 160 Hz footprint against Slow's 25 Hz is
             // what decides whether a frequency is actually free.

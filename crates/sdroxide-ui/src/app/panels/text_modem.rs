@@ -1,5 +1,5 @@
-//! The keyboard-mode panel: PSK, RTTY, Olivia, Contestia, MT63, THOR and MFSK,
-//! plus Hellschreiber's raster.
+//! The keyboard-mode panel: PSK, RTTY, Olivia, Contestia, MT63, ARDOP, THOR and
+//! MFSK, plus Hellschreiber's raster.
 //!
 //! All of these are a received-text pane over a transmit buffer, so they share
 //! one panel; only the parameter row above it differs by mode. Hell is the

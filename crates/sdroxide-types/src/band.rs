@@ -440,6 +440,7 @@ impl Band {
                 Mode::Mfsk,
                 Mode::Contestia,
                 Mode::Mt63,
+                Mode::Ardop,
                 Mode::Fsq,
                 Mode::AtChat,
                 Mode::Hell,

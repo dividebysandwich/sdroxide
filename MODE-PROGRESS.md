@@ -373,10 +373,51 @@ in a minute.
 
 ### Next
 
-ARDOP — the modem is proven against `ardopcf`'s own three recordings, and it is
-the same shape of job MT63 was: a block decoder needing a frame-level front end,
-plus a panel and, later, the TNC. Then MT63's narrow variants and the PSK
-FEC/robust set.
+The PSK family's gaps — BPSK1000, PSK63F and the R/C/F robust set — need fldigi's
+framing and convolutional code, which the source now on disk has. Then MT63's
+narrow variants. Both are DSP jobs with the reference in hand, and both are the
+last of "modes fldigi can send that this fork cannot read".
+
+Then transmit parity: every mode wired above is receive-only, and the gate there
+is fldigi decoding *our* signal, not a loopback.
+
+### ARDOP — the modem becomes a mode, frames and all
+
+`Mode::Ardop`, no config fields: an ARDOP frame carries its own leader, type and
+CRC, and the carrier grid is fixed about 1500 Hz, so there is nothing for the
+operator to set. The mode is a fixed-centre one for exactly that reason.
+
+- **The work was the front end again, and it found a real bug.** `decode_all`
+  walked a whole recording; it is now built on `scan`, which answers either "a
+  frame, and this many samples used" or "nothing yet, and this much at the front
+  is safe to drop". A live receiver needs the second answer or it re-correlates
+  the same audio on every block.
+- **The bug that fell out of it is the one every streaming port has:** a frame
+  whose *header* had arrived and whose *body* had not was reported as a data-less
+  frame, and the receiver then dropped the samples the body lived in. `scan` now
+  waits when the body has not all arrived — not having the audio is not the same
+  as failing the CRC — and `the_live_receiver_reads_the_ardopcf_recordings` is
+  what holds it. The batch gate passed throughout, which is exactly why the
+  stream needed its own test.
+- **The tap goes straight to 12 kHz.** The controller's usual tap→8 kHz stage is
+  kept out of ARDOP's path: the modem's grid is defined at its own rate and a
+  round trip through 8 kHz costs half the band for nothing. `ArdopRx` owns the
+  resampler and takes the tap rate.
+- **The gate** is all three `ardopcf` recordings through the console's
+  controller, each arriving as a line naming the mode it came in —
+  `[4PSK.200.100] TEST TEST THE EAGLE…`, `[16QAM.2000.100] …`,
+  `[4FSK.500.100] …` (`cargo test -p sdroxide-digi --release --lib -- --ignored
+  --nocapture the_ardop_recordings_decode_through_the_controller`). The names are
+  the reference's own frame types, which is how the log tells a 4PSK path from a
+  16QAM one.
+- **Receive only, and the modem only.** No modulator, no ARQ state machine and no
+  TNC host protocol: the panel greys the sending half and the refusal says so. A
+  frame whose body fails its CRC is shown as `(body failed its check)` rather
+  than dropped — an operator needs to see that a frame arrived and did not read.
+- **Still open:** the control frames are named `ctrl 0x??` because `ardopcf`'s
+  `FrameInfo` name table is not ported. That is a small piece and it is what a
+  real station's log would mostly show (ACKs and ConReqs), so it wants doing
+  before anyone watches ARDOP for an hour.
 
 ## Needs me
 
