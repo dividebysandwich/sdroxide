@@ -140,7 +140,10 @@ impl MfskVariant {
     }
 }
 
-/// Gray code, the direction the modulator applies.
+/// Gray code, the direction the modulator applies. The receiver only needs the
+/// inverse; this is here because the modulator will want it and the round-trip
+/// test pins the pair.
+#[cfg_attr(not(test), allow(dead_code))]
 fn gray(k: u32) -> u32 {
     k ^ (k >> 1)
 }
