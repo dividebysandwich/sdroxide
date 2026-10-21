@@ -845,6 +845,75 @@ mod tests {
         }
     }
 
+    /// The corpus, measured as a picture. Hell carries no text, so the score is
+    /// the correlation between the decoded column ink and the columns the font
+    /// would have drawn for the known phrase — the same measure the loopback
+    /// tests use — plus the raster printed for a human to look at. A correlation
+    /// around 0.8 is a clean copy; noise scores under 0.1.
+    #[test]
+    #[ignore]
+    fn the_corpus_hell_samples_are_measured() {
+        use std::path::Path;
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi");
+        let text = " AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ ";
+        let table: &[(&str, HellVariant)] = &[
+            ("FELDHELL", HellVariant::Feld),
+            ("HELL80", HellVariant::Hell80),
+            ("HELLX5", HellVariant::X5),
+            ("HELLX9", HellVariant::X9),
+            ("SLOWHELL", HellVariant::Slow),
+            ("FSKH105", HellVariant::Fsk105),
+            ("FSKH245", HellVariant::Fsk245),
+        ];
+        for &(name, variant) in table {
+            let path = format!("{root}/{name}.wav");
+            if !Path::new(&path).exists() {
+                eprintln!("{name}: no sample");
+                continue;
+            }
+            let mut reader = hound::WavReader::open(&path).expect("open");
+            let spec = reader.spec();
+            let audio: Vec<f32> =
+                reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+            let mut best = (f32::MIN, 0.0f64, Vec::new());
+            for hz in [1500.0f64, 1560.0, 1600.0, 1640.0, 1680.0, 1720.0, 1760.0] {
+                let mut rx = HellRx::new(spec.sample_rate as f64, hz, variant, 0.6);
+                let mut px = Vec::new();
+                for chunk in audio.chunks(480) {
+                    rx.process(chunk, &mut px);
+                }
+                rx.process(&vec![0.0f32; 4800], &mut px);
+                let pattern = render_columns(text);
+                let score = if px.len() > pattern.len() * ROWS {
+                    let (score, _) = best_correlation(&px, &pattern);
+                    score
+                } else {
+                    // Not even one copy came out; the FSK variants that need a
+                    // tone discriminator land here.
+                    f32::MIN
+                };
+                if score > best.0 {
+                    best = (score, hz, px);
+                }
+            }
+            eprintln!("{name} ({variant:?}): correlation {:.3} at {} Hz", best.0, best.1);
+            if name == "HELL80" {
+                let cols = best.2.len() / ROWS;
+                for r in 0..ROWS {
+                    let line: String = (0..cols)
+                        .map(|c| match best.2[c * ROWS + r] {
+                            0..=63 => ' ',
+                            64..=127 => '.',
+                            128..=191 => '+',
+                            _ => '#',
+                        })
+                        .collect();
+                    eprintln!("|{line}|");
+                }
+            }
+        }
+    }
+
     #[test]
     fn text_survives_a_loopback_round_trip() {
         // The SSB modulator/demodulator pair the engine puts between these two

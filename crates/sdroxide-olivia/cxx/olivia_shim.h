@@ -18,6 +18,12 @@ extern "C" {
 /// cannot allocate.
 void *olivia_new(int tones, int bandwidth, double rate, double centre, int reverse);
 
+/// The same receiver with Contestia's scrambling code and shift instead of
+/// Olivia's. `tones` is the carrier count the engine is given (Contestia's own
+/// setting `n` means `2 << n` carriers).
+void *olivia_new_ex(int tones, int bandwidth, double rate, double centre, int reverse,
+                    int contestia);
+
 /// Decode `n` samples of audio. Returns the number of characters written to
 /// `out` (never more than `outlen`), and the engine's signal-to-noise estimate
 /// in `snr` when it is not NULL.

@@ -99,20 +99,16 @@ fn mfsk_char(code: u32) -> Option<char> {
 /// a 1 already in the register the first word keeps an extra leading bit and
 /// decodes as its neighbour (T → Q, which is how this was found). Starting at 0
 /// costs nothing after the first boundary.
-struct MfskVaricodeRx {
+pub(crate) struct MfskVaricodeRx {
     shreg: u32,
 }
 
 impl MfskVaricodeRx {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         MfskVaricodeRx { shreg: 0 }
     }
 
-    fn reset(&mut self) {
-        self.shreg = 0;
-    }
-
-    fn push_bit(&mut self, bit: u8) -> Option<char> {
+    pub(crate) fn push_bit(&mut self, bit: u8) -> Option<char> {
         self.shreg = (self.shreg << 1) | (bit & 1) as u32;
         // A runaway register is a resync, not a word: the longest word here is
         // twelve bits, so anything past sixteen has no terminator in it.
@@ -305,7 +301,7 @@ fn binary(g: u32) -> u32 {
 /// `X += (x − x_old·e^{jwN})·e^{−jwn}` — the sample leaving the window is taken
 /// out with the phasor it entered with. The rotating phasor is renormalised once
 /// per window so drift cannot creep in over a long transmission.
-struct Bank {
+pub(crate) struct Bank {
     n: usize,
     xr: Vec<f64>,
     xi: Vec<f64>,
@@ -321,7 +317,7 @@ struct Bank {
 }
 
 impl Bank {
-    fn new(n: usize, fs: f64, freqs: &[f64]) -> Self {
+    pub(crate) fn new(n: usize, fs: f64, freqs: &[f64]) -> Self {
         let m = freqs.len();
         let mut b = Bank {
             n,
@@ -347,7 +343,7 @@ impl Bank {
         b
     }
 
-    fn feed(&mut self, x: f64) {
+    pub(crate) fn feed(&mut self, x: f64) {
         let xo = self.ring[self.pos];
         self.ring[self.pos] = x;
         self.pos = (self.pos + 1) % self.n;
@@ -371,12 +367,16 @@ impl Bank {
         }
     }
 
-    fn mag(&self, j: usize) -> f64 {
+    pub(crate) fn mag(&self, j: usize) -> f64 {
         self.xr[j].hypot(self.xi[j])
     }
 
-    fn energy(&self, j: usize) -> f64 {
+    pub(crate) fn energy(&self, j: usize) -> f64 {
         self.xr[j] * self.xr[j] + self.xi[j] * self.xi[j]
+    }
+
+    pub(crate) fn bins(&self) -> usize {
+        self.xr.len()
     }
 }
 
@@ -387,7 +387,7 @@ impl Bank {
 /// Written out the way the reference does it, because the permutation is the
 /// whole point: a burst of errors is spread across `depth` words instead of
 /// destroying one.
-struct Interleaver {
+pub(crate) struct Interleaver {
     size: usize,
     depth: usize,
     forward: bool,
@@ -395,7 +395,7 @@ struct Interleaver {
 }
 
 impl Interleaver {
-    fn new(size: usize, depth: usize, forward: bool) -> Self {
+    pub(crate) fn new(size: usize, depth: usize, forward: bool) -> Self {
         Interleaver {
             size,
             depth,
@@ -419,7 +419,7 @@ impl Interleaver {
     }
 
     /// One step: shift every row along, append the new byte, read out a diagonal.
-    fn symbols(&mut self, p: &mut [u8]) {
+    pub(crate) fn symbols(&mut self, p: &mut [u8]) {
         let (size, depth) = (self.size, self.depth);
         for k in 0..depth {
             let base = size * size * k;
@@ -472,8 +472,6 @@ pub struct MfskRx {
     /// `+1` or `-1` on the soft symbols: two conventions were plausible and only
     /// the air decides. Set by `SDROXIDE_MFSK_SIGN=-1` while that is settled.
     soft_sign: f32,
-    /// Which half of each pair the decoder takes. Same argument.
-    second_half: bool,
     /// Mirror the tone order. An MFSK signal received on the wrong sideband is a
     /// tone set upside down about its centre, and nothing decodes until that is
     /// corrected — for FSK, inversion is exactly "tone i is tone n−1−i".
@@ -522,7 +520,6 @@ impl MfskRx {
             } else {
                 1.0
             },
-            second_half: std::env::var("SDROXIDE_MFSK_ODD").is_ok(),
             mirror: std::env::var("SDROXIDE_MFSK_MIRROR").is_ok(),
             text: String::new(),
             metric: 0.0,
@@ -786,13 +783,6 @@ impl MfskRx {
         self.pair[0] = self.pair[1];
         self.pair[1] = s;
         self.symcounter = !self.symcounter;
-        // The reference decodes on every second soft symbol for four bits per
-        // symbol, which is MFSK16 and its neighbours; the odd variants use the
-        // other decoder for the second half of the pair.
-        let bits = self.variant.symbits;
-        // Four bits per symbol (MFSK16 and its neighbours) takes the second
-        // soft symbol of each pair and decodes one bit; the odd variants take
-        // the other half.
         // Decode on the second soft bit of each pair, always: a rate-1/2 code
         // puts two coded bits on every message bit, and a symbol yields `symbits`
         // soft bits in order. Decoding on the other half is a one-bit shift in
@@ -1265,7 +1255,7 @@ mod tests {
                 continue;
             }
             let mut reader = hound::WavReader::open(&path).expect("open");
-            let spec = reader.spec();
+            let _spec = reader.spec();
             let audio: Vec<f32> =
                 reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
             let variant = MfskVariant::named(name).expect("a variant");

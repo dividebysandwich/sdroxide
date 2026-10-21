@@ -13,13 +13,6 @@ use std::ffi::c_void;
 use std::os::raw::{c_char, c_double, c_float, c_int};
 
 unsafe extern "C" {
-    fn olivia_new(
-        tones: c_int,
-        bandwidth: c_int,
-        rate: c_double,
-        centre: c_double,
-        reverse: c_int,
-    ) -> *mut c_void;
     fn olivia_process(
         handle: *mut c_void,
         audio: *const c_float,
@@ -28,6 +21,14 @@ unsafe extern "C" {
         outlen: c_int,
         snr: *mut c_double,
     ) -> c_int;
+    fn olivia_new_ex(
+        tones: c_int,
+        bandwidth: c_int,
+        rate: c_double,
+        centre: c_double,
+        reverse: c_int,
+        contestia: c_int,
+    ) -> *mut c_void;
     fn olivia_free(handle: *mut c_void);
 }
 
@@ -55,8 +56,40 @@ impl OliviaDecoder {
         bandwidth_hz: u32,
         reverse: bool,
     ) -> Option<Self> {
+        Self::make(rate, centre_hz, tones, bandwidth_hz, reverse, false)
+    }
+
+    /// The same engine, set to Contestia: a different scrambling code
+    /// (`0xEDB88320`) and a five-bit shift instead of thirteen. Contestia's own
+    /// mode settings name `n` where the engine wants `2 << n` carriers, so the
+    /// caller passes the carrier count.
+    pub fn contestia(
+        rate: f64,
+        centre_hz: f64,
+        tones: usize,
+        bandwidth_hz: u32,
+        reverse: bool,
+    ) -> Option<Self> {
+        Self::make(rate, centre_hz, tones, bandwidth_hz, reverse, true)
+    }
+
+    fn make(
+        rate: f64,
+        centre_hz: f64,
+        tones: usize,
+        bandwidth_hz: u32,
+        reverse: bool,
+        contestia: bool,
+    ) -> Option<Self> {
         let handle = unsafe {
-            olivia_new(tones as c_int, bandwidth_hz as c_int, rate, centre_hz, reverse as c_int)
+            olivia_new_ex(
+                tones as c_int,
+                bandwidth_hz as c_int,
+                rate,
+                centre_hz,
+                reverse as c_int,
+                contestia as c_int,
+            )
         };
         if handle.is_null() {
             return None;
@@ -233,5 +266,149 @@ mod tests {
                 assert!(out.contains(w), "did not recover {w:?}: {out:?}");
             }
         }
+    }
+
+    /// The Contestia sample from the corpus. Contestia is the same engine with a
+    /// different scrambling code and a five-bit shift, so the test is really
+    /// "did the flag get set and the bank placed where fldigi places it".
+    ///
+    /// The mode settings are the ones the sample was sent with; the manifest
+    /// records `CONTESTIA` without its variant, so the grid is searched and the
+    /// best is printed. An override pins it.
+    #[test]
+    #[ignore]
+    fn the_corpus_contestia_sample_decodes() {
+        let path = std::env::var("SDROXIDE_CONTESTIA_SAMPLE").unwrap_or_else(|_| {
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/CONTESTIA.wav").to_string()
+        });
+        let mut reader = hound::WavReader::open(&path).expect("open the sample WAV");
+        let spec = reader.spec();
+        let audio: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Float => {
+                reader.samples::<f32>().map(|s| s.expect("sample")).collect()
+            }
+            hound::SampleFormat::Int => {
+                reader.samples::<i16>().map(|s| s.expect("sample") as f32 / 32_768.0).collect()
+            }
+        };
+        let want = "EAGLE LANDED SDRBROWN";
+        let words: Vec<&str> = want.split_whitespace().collect();
+        let pad = vec![0.0f32; (spec.sample_rate as usize).max(8000) * 2];
+        let mut best = (0usize, 0usize, 0u32, 0.0f64, false, String::new());
+        // Contestia's own settings are independent: `tones` n means
+        // `2 << n` carriers and `bw` m means `125 << m` Hz. The paired grid is
+        // the one fldigi's presets use; the cross combinations follow if needed.
+        for n in 0..5u32 {
+            let tones = (4usize) << n;
+            let bw = 125u32 << n;
+            if tones > 64 || bw > 2000 {
+                continue;
+            }
+            for reverse in [false, true] {
+                for hz in [1718.0f64, 1727.0, 1736.0] {
+                    let mut rx =
+                        OliviaDecoder::contestia(spec.sample_rate as f64, hz, tones, bw, reverse)
+                            .expect("allocated");
+                    let mut out = String::new();
+                    for chunk in
+                        audio.iter().chain(pad.iter()).copied().collect::<Vec<_>>().chunks(1024)
+                    {
+                        out.push_str(&rx.process(chunk));
+                    }
+                    let hits = words.iter().filter(|w| out.contains(**w)).count();
+                    eprintln!(
+                        "{tones}/{bw} at {hz} reverse {reverse}: {hits}/{} {:?}",
+                        words.len(),
+                        out
+                    );
+                    if hits > best.0 {
+                        best = (hits, tones, bw, hz, reverse, out);
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "best: {}/{} at {}/{}, {hz} Hz reverse {}: {:?}",
+            best.0,
+            words.len(),
+            best.1,
+            best.2,
+            best.4,
+            best.5,
+            hz = best.3
+        );
+        // The corpus sample is Contestia 4/125 (fldigi's `tones` setting 1
+        // means `2 << 1` carriers), sent on the rig's LSB path, hence reverse.
+        assert_eq!(best.1, 4, "the tone count moved");
+        assert_eq!(best.2, 125, "the bandwidth moved");
+        assert!(best.4, "the sample no longer needs the reversal");
+        assert_eq!(best.0, words.len(), "Contestia did not read its sample: {:?}", best.5);
+    }
+
+    /// Every Contestia variant in the corpus, with the parameters its name
+    /// gives (`Cont-16/1K` is 16 carriers over 1000 Hz) and a small centre
+    /// search. CONTESTIA.wav proved the engine; this says which variants it
+    /// reads.
+    #[test]
+    #[ignore]
+    fn the_corpus_contestia_variants_are_measured() {
+        use std::path::Path;
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi");
+        let table: &[(&str, usize, u32)] = &[
+            ("Cont-4-125", 4, 125),
+            ("Cont-4-250", 4, 250),
+            ("Cont-4-500", 4, 500),
+            ("Cont-4-1K", 4, 1000),
+            ("Cont-4-2K", 4, 2000),
+            ("Cont-8-125", 8, 125),
+            ("Cont-8-250", 8, 250),
+            ("Cont-8-500", 8, 500),
+            ("Cont-8-1K", 8, 1000),
+            ("Cont-8-2K", 8, 2000),
+            ("Cont-16-250", 16, 250),
+            ("Cont-16-500", 16, 500),
+            ("Cont-16-1K", 16, 1000),
+            ("Cont-16-2K", 16, 2000),
+            ("Cont-32-1K", 32, 1000),
+            ("Cont-32-2K", 32, 2000),
+            ("Cont-64-500", 64, 500),
+            ("Cont-64-1K", 64, 1000),
+            ("Cont-64-2K", 64, 2000),
+        ];
+        let mut ok = 0;
+        for &(name, tones, bw) in table {
+            let path = format!("{root}/{name}.wav");
+            if !Path::new(&path).exists() {
+                eprintln!("{name}: no sample");
+                continue;
+            }
+            let mut reader = hound::WavReader::open(&path).expect("open");
+            let spec = reader.spec();
+            let audio: Vec<f32> =
+                reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+            let pad = vec![0.0f32; 16000];
+            let mut best = String::new();
+            for hz in [1720.0f64, 1740.0, 1760.0, 1780.0] {
+                let mut rx = OliviaDecoder::contestia(spec.sample_rate as f64, hz, tones, bw, true)
+                    .expect("allocated");
+                let mut out = String::new();
+                for chunk in
+                    audio.iter().chain(pad.iter()).copied().collect::<Vec<_>>().chunks(1024)
+                {
+                    out.push_str(&rx.process(chunk));
+                }
+                if out.contains("SDRBROWN") || out.contains("EAGLE") {
+                    best = format!("{hz}: {out}");
+                    break;
+                }
+            }
+            if best.is_empty() {
+                eprintln!("{name} ({tones}/{bw}): no decode");
+            } else {
+                ok += 1;
+                eprintln!("{name} ({tones}/{bw}): {best}");
+            }
+        }
+        eprintln!("{ok} of {} decode", table.len());
     }
 }

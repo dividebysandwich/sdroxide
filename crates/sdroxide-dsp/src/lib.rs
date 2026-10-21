@@ -28,6 +28,7 @@ mod interp;
 mod iqcorrect;
 pub mod jtty;
 mod mfsk;
+pub mod ifk;
 pub mod mfsk_rx;
 pub mod mt63;
 mod modulator;

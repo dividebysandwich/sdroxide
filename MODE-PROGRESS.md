@@ -33,3 +33,164 @@ The family gate is `cargo test -p sdroxide-dsp --release --lib the_mfsk_family_r
 | MT63-500L | **does not decode yet** | Fragments only, as 500S. |
 
 The MT63 interleaver, Walsh pair and deinterleaver are separately proved by `the_interleaver_round_trips_a_message`, which recovers `THE EAGLE HAS LANDED 12345` from the encoder's own bits for both the short and the long pattern. The audio front end decodes 2K exactly, so the remaining fault is in the carrier phase for the 4× and 8× windows, not in the coding. Gate: `cargo test -p sdroxide-dsp --release --lib the_corpus_mt63_samples_are_measured -- --ignored`.
+## The rest of the corpus — one line per mode
+
+Measured 2026-10-21 with `cargo run -p sdroxide-dsp --example corpus_survey` (PSK/RTTY/CW/FSQ, which searches the centre and both polarities) and the per-family tests above. `n/m` is how many of the known words the decode contains; the sample is `samples/fldigi/<mode>.wav` in every case.
+
+### MFSK — see above
+All eleven measured in the family table; MFSK16/4/22/31/32/64/128 decode, MFSK64L/128L carry the short text, MFSK11 loses only its leading `AAA`, MFSK8 loses one span of its sample.
+
+### Olivia — 14 of 18 decode
+| mode | state | measurement |
+|---|---|---|
+| OLIVIA | **decodes** | `OLIVIA.wav` as 16/500 at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (its shortened text). |
+| OLIVIA-4/125 | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+| OLIVIA-4/250 | **does not decode** | tried 1700–1780 Hz and both polarities with its own tones/bandwidth; no text. The engine reads the other fourteen, so this is these four samples or their parameters, not the engine. |
+| OLIVIA-4/500 | **does not decode** | tried 1700–1780 Hz and both polarities with its own tones/bandwidth; no text. The engine reads the other fourteen, so this is these four samples or their parameters, not the engine. |
+| OLIVIA-4/1K | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+| OLIVIA-4/2K | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+| OLIVIA-8/125 | **does not decode** | tried 1700–1780 Hz and both polarities with its own tones/bandwidth; no text. The engine reads the other fourteen, so this is these four samples or their parameters, not the engine. |
+| OLIVIA-8/250 | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+| OLIVIA-8/500 | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+| OLIVIA-8/1K | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+| OLIVIA-8/2K | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+| OLIVIA-16/500 | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+| OLIVIA-16/1K | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+| OLIVIA-16/2K | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+| OLIVIA-32/1K | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+| OLIVIA-32/2K | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+| OLIVIA-64/500 | **does not decode** | tried 1700–1780 Hz and both polarities with its own tones/bandwidth; no text. The engine reads the other fourteen, so this is these four samples or their parameters, not the engine. |
+| OLIVIA-64/1K | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+| OLIVIA-64/2K | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
+
+### Contestia — 18 of 19 decode
+| mode | state | measurement |
+|---|---|---|
+| CONTESTIA | **decodes** | `CONTESTIA.wav` as 4/125 at 1718 Hz, reverse on: the whole text, 3/3. |
+| Cont-4-125 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-4-250 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-4-500 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-4-1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-4-2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-8-125 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-8-250 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-8-500 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-8-1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-8-2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-16-250 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-16-500 | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-16-1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-16-2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-32-1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-32-2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-64-500 | **does not decode** | no text at 1720–1780 Hz, either polarity; the other eighteen do. |
+| Cont-64-1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+| Cont-64-2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
+
+### MT63 — 2 of 6 decode
+See the MT63 table above: 2KS and 2KL decode; 1KS/1KL/500S/500L arrive one Hadamard row high.
+
+### PSK family
+| mode | state | measurement |
+|---|---|---|
+| BPSK31 | **partial** | 2/3 words: the phrase reads with one or two words corrupted, so the demodulator locks but the sample or the timing costs the rest. |
+| BPSK63 | **partial** | 2/3 words: the phrase reads with one or two words corrupted, so the demodulator locks but the sample or the timing costs the rest. |
+| BPSK63F | **does not decode** | 0/3 at its own baud and a ±60 Hz centre search; the demodulator runs but the framing is not PSK31's. |
+| BPSK125 | **decodes** | `BPSK125` 3/3 words, its own baud and a searched centre (±60 Hz). |
+| BPSK250 | **decodes** | `BPSK250` 3/3 words, its own baud and a searched centre (±60 Hz). |
+| BPSK500 | **decodes** | `BPSK500` 3/3 words, its own baud and a searched centre (±60 Hz). |
+| BPSK1000 | **does not decode** | 0/3 at its own baud and a ±60 Hz centre search; the demodulator runs but the framing is not PSK31's. |
+| PSK125C12 | **does not decode** | the `C` variants carry a block FEC/interleave; our receiver has neither. |
+| PSK250C6 | **does not decode** | the `C` variants carry a block FEC/interleave; our receiver has neither. |
+| PSK500C2 | **does not decode** | the `C` variants carry a block FEC/interleave; our receiver has neither. |
+| PSK500C4 | **does not decode** | the `C` variants carry a block FEC/interleave; our receiver has neither. |
+| PSK800C2 | **does not decode** | the `C` variants carry a block FEC/interleave; our receiver has neither. |
+| PSK1000C2 | **does not decode** | the `C` variants carry a block FEC/interleave; our receiver has neither. |
+| QPSK31 | **partial** | 1/3 words: the phrase reads with one or two words corrupted, so the demodulator locks but the sample or the timing costs the rest. |
+| QPSK63 | **partial** | 2/3 words: the phrase reads with one or two words corrupted, so the demodulator locks but the sample or the timing costs the rest. |
+| QPSK125 | **decodes** | `QPSK125` 3/3 words, its own baud and a searched centre (±60 Hz). |
+| QPSK250 | **decodes** | `QPSK250` 3/3 words, its own baud and a searched centre (±60 Hz). |
+| QPSK500 | **decodes** | `QPSK500` 3/3 words, its own baud and a searched centre (±60 Hz). |
+| PSK125R | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK250R | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK500R | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK1000R | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK63RC4 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK63RC5 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK63RC10 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK63RC20 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK63RC32 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK125RC4 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK125RC5 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK125RC10 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK125RC12 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK125RC16 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK250RC2 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK250RC3 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK250RC5 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK250RC6 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK250RC7 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK500RC2 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK500RC3 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK500RC4 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK800RC2 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+| PSK1000RC2 | **does not decode** | fldigi's robust/FEC variants carry framing and a convolutional code our PSK receiver does not implement; 0/3 with the demodulator running. |
+
+### Hell — none decode from this corpus
+| FELDHELL | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
+| HELL80 | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
+| HELLX5 | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
+| HELLX9 | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
+| SLOWHELL | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
+| FSKH105 | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
+| FSKH245 | **does not decode** | column correlation with the rendered phrase 0.08–0.15 (a clean copy scores 0.87; noise 0.03–0.06), or no columns at all. The bench capture `samples/bench/hell_feld_cb_27415.wav` still decodes, so the mode works and these sweep files do not. |
+
+### THOR — none decode
+The OnAir IFK port is in `ifk.rs`; all 15 samples give no text. The tone trace shows the steps being measured but the nibble stream does not match fldigi's, so one convention (the half-spacing tone offset or the slice pair) is still wrong. Three attempts made: baud/centre sweep, both polarities, and a skip past the previous transmission's tail.
+
+### DominoEX — none decode
+Same port, same trace, all nine samples; DominoEX has no FEC to hide behind, so the step measurement itself is the fault to chase next.
+
+### No decoder, by family
+| 8PSK125 | **no decoder** | 8PSK constellation; no slicer; 0 words. |
+| 8PSK125FL | **no decoder** | 8PSK; 0 words. |
+| 8PSK125F | **no decoder** | 8PSK; 0 words. |
+| 8PSK250 | **no decoder** | 8PSK; 0 words. |
+| 8PSK250FL | **no decoder** | 8PSK; 0 words. |
+| 8PSK250F | **no decoder** | 8PSK; 0 words. |
+| 8PSK500 | **no decoder** | 8PSK; 0 words. |
+| 8PSK500F | **no decoder** | 8PSK; 0 words. |
+| 8PSK1000 | **no decoder** | 8PSK; 0 words. |
+| 8PSK1000F | **no decoder** | 8PSK; 0 words. |
+| 8PSK1200F | **no decoder** | 8PSK; 0 words. |
+| THROB1 | **no decoder** | multi-tone reeded pulse; not implemented; 0 words. |
+| THROB2 | **no decoder** | same; 0 words. |
+| THROB4 | **no decoder** | same; 0 words. |
+| OFDM500F | **no decoder** | fldigi's OFDM modes; no reference read; 0 words. |
+| OFDM750F | **no decoder** | same; 0 words. |
+| OFDM3500 | **no decoder** | same; 0 words. |
+| SCAMPFSK | **no decoder** | SCAMP analysis modem; not implemented; 0 words. |
+| SCAMPOOK | **no decoder** | same; 0 words. |
+| SCFSKFST | **no decoder** | SCFSK utility mode; not implemented; 0 words. |
+| SCFSKSLW | **no decoder** | same; 0 words. |
+| SCOOKSLW | **no decoder** | same; 0 words. |
+| SCFSKVSL | **no decoder** | same; 0 words. |
+
+### The rest
+| mode | state | measurement |
+|---|---|---|
+| CW | **decodes** | `CW.wav`: 9/10 words (`EAA` for `AAA` at the start); the decoder is `CwRx`. |
+| RTTY | **decodes** | `RTTY.wav`, 45.45 baud, 170 Hz shift, reverse on: 10/10. |
+| SITORB | **partial — sample ends** | `SITORB.wav` carries 8 s of one broadcast: `A TEST TEST THE EAGLE HAS LANDY…` then noise. The decoder is NAVTEX's and reads what is there. |
+| NAVTEX | **partial — start garbled** | `NAVTEX.wav`: `12345 SDRBROWN ZZZ` and `NNNN` read; the `ZCZC` header is corrupt at the lock. |
+| FSQ | **does not decode** | `FSQ.wav`: 0/10 words at 2/4/6/8 baud and the manifest centre; `fsq.rs` borrows PSK's varicode, which FSQ does not use. |
+| ARDOP | **no sample in the corpus** | fldigi cannot send ARDOP (it is `ardopcf`'s mode), and `samples/fldigi/` is what fldigi can send. Nothing to measure; not started. |
+
+**Totals, from `manifest.jsonl`'s 157 rows: 54 decode their own text, 7 decode part of it, 96 have a written verdict and no decode.** The 54 are: ten MFSK, two MT63, fifteen Olivia, nineteen Contestia, six PSK (BPSK125/250/500, QPSK125/250/500), RTTY and CW. The seven partial are MFSK8 (one lost span), BPSK31, BPSK63, QPSK31, QPSK63, SITORB (its sample ends after 8 s) and NAVTEX (a corrupt header). Nothing here is claimed working without its sample, and no mode is pushed.
+
+## Needs me
+
+Nothing blocks the work above — every mode has a measurement. Two things would move the ones that do not decode:
+
+- **A second MFSK8 recording.** The corpus one loses `TEST THE EAGLE HAS LANDED` in one span while the preamble and the tail read at every tuning; the decoder is the one the other seven MFSK variants use.
+- **A known-good fldigi on the same box for the THOR/DominoEX tone-step convention.** The port is in `ifk.rs` and reproduces OnAir's receiver, but the steps do not match the air. The corpus cannot say which side is wrong without a decoder to compare against on the same recording.

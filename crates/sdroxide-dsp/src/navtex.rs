@@ -1038,6 +1038,31 @@ mod tests {
     /// under. Not a sensitivity claim — a synthetic signal cannot make one
     /// (see the DSP notes in `validate-dsp-against-real-signals`) — but a
     /// decoder that only works on a noiseless tone is not one.
+    /// SITOR-B is NAVTEX's broadcast mode, so the corpus file is the decoder's
+    /// own mode and not a new one. The sample is only 8 s, which is part of one
+    /// broadcast, so the score is the words it does carry.
+    #[test]
+    #[ignore]
+    fn the_corpus_sitorb_sample_decodes() {
+        let path = std::env::var("SDROXIDE_SITOR_SAMPLE").unwrap_or_else(|_| {
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/SITORB.wav").to_string()
+        });
+        let mut reader = hound::WavReader::open(&path).expect("open");
+        let spec = reader.spec();
+        let audio: Vec<f32> =
+            reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+        let mut rx = NavtexRx::new(spec.sample_rate as f64);
+        let mut out = String::new();
+        for chunk in audio.chunks(512) {
+            out.push_str(&rx.process(chunk));
+        }
+        out.push_str(&rx.process(&vec![0.0f32; 16000]));
+        eprintln!("SITOR-B: {} chars: {:?}", out.len(), out);
+        for w in ["EAGLE", "LANDED", "SDRBROWN", "12345"] {
+            eprintln!("  {w}: {}", out.contains(w));
+        }
+    }
+
     #[test]
     fn noise_does_not_stop_it() {
         let rate = 8000.0;
