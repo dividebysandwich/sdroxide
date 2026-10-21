@@ -900,10 +900,19 @@ impl SdroxideApp {
                     cap(ui, "Speed");
                     for sp in sdroxide_types::PskSpeed::ALL {
                         let sel = cfg.psk_speed == sp;
-                        if ui
-                            .selectable_label(sel, sp.label())
-                            .on_hover_text(format!("{:.1} baud", sp.baud()))
-                            .clicked()
+                        // The fastest reads from partway in — the receiver's lock
+                        // time is a third of a message at 1000 baud — and the
+                        // chip says so rather than letting a listener think the
+                        // band was dead.
+                        let hint = match sp {
+                            sdroxide_types::PskSpeed::Bps1000 => format!(
+                                "{:.0} baud — reads from about a second in: at this rate the \
+                                 receiver's lock time is a third of a message",
+                                sp.baud()
+                            ),
+                            _ => format!("{:.1} baud", sp.baud()),
+                        };
+                        if ui.selectable_label(sel, sp.label()).on_hover_text(hint).clicked()
                             && !sel
                         {
                             cfg.psk_speed = sp;

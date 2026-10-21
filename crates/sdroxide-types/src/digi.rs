@@ -1294,9 +1294,9 @@ impl PskModulation {
 
 /// PSK31's speed.
 ///
-/// The family is one modulation — differential BPSK — at four symbol rates, and
+/// The family is one modulation — differential BPSK — at six symbol rates, and
 /// nothing else changes between them: the Varicode, the differential encoding
-/// and the idle reversals are the same at 31 baud and at 250.
+/// and the idle reversals are the same at 31 baud and at 1000.
 ///
 /// QPSK is deliberately *not* here. It is not a fourth speed but a different
 /// mode: the PSK31-family QPSK carries a rate-1/2 convolutional code, so it
@@ -1310,11 +1310,28 @@ pub enum PskSpeed {
     Bps63,
     Bps125,
     Bps250,
+    /// BPSK500 — the same modem at 500 baud, which the corpus reads whole. Not a
+    /// fifth "PSK31 speed" in any conventional sense, but the same waveform at a
+    /// rate fldigi sends, and its own chip because a decoder tuned to the wrong
+    /// rate hears nothing.
+    Bps500,
+    /// BPSK1000 — 1000 baud, a kilohertz wide. The corpus reads its **second
+    /// half**: the receiver takes about a second to lock and at this rate that is
+    /// a third of the message, so what arrives late reads and what arrives early
+    /// is lost. Offered because a listener hearing one of these has no other way
+    /// in, and the chip says what it does.
+    Bps1000,
 }
 
 impl PskSpeed {
-    pub const ALL: [PskSpeed; 4] =
-        [PskSpeed::Bps31, PskSpeed::Bps63, PskSpeed::Bps125, PskSpeed::Bps250];
+    pub const ALL: [PskSpeed; 6] = [
+        PskSpeed::Bps31,
+        PskSpeed::Bps63,
+        PskSpeed::Bps125,
+        PskSpeed::Bps250,
+        PskSpeed::Bps500,
+        PskSpeed::Bps1000,
+    ];
 
     pub fn baud(self) -> f64 {
         match self {
@@ -1322,6 +1339,8 @@ impl PskSpeed {
             PskSpeed::Bps63 => 62.5,
             PskSpeed::Bps125 => 125.0,
             PskSpeed::Bps250 => 250.0,
+            PskSpeed::Bps500 => 500.0,
+            PskSpeed::Bps1000 => 1000.0,
         }
     }
 
@@ -1331,6 +1350,8 @@ impl PskSpeed {
             PskSpeed::Bps63 => "BPSK63",
             PskSpeed::Bps125 => "BPSK125",
             PskSpeed::Bps250 => "BPSK250",
+            PskSpeed::Bps500 => "BPSK500",
+            PskSpeed::Bps1000 => "BPSK1000",
         }
     }
 }

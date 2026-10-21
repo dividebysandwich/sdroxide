@@ -419,6 +419,40 @@ operator to set. The mode is a fixed-centre one for exactly that reason.
   real station's log would mostly show (ACKs and ConReqs), so it wants doing
   before anyone watches ARDOP for an hour.
 
+### PSK500 and BPSK1000 — and two wrong measurements on the way
+
+`PskSpeed` gains `Bps500` and `Bps1000` (six chips). The modem always took any
+baud rate; the operator could not select these two, so BPSK500 was a mode the
+corpus read whole and nobody could use.
+
+**What each reads**, measured with `the_corpus_psk_samples_are_measured`:
+
+| mode | result |
+|---|---|
+| BPSK125 / 250 / 500 | 3/3 — the whole text |
+| BPSK31 | 2/3 — every word present, several characters mangled |
+| BPSK63 | 2/3 — `AAA TEST TEE EAGLE HAS LANDED 12345 SDRBROW` |
+| BPSK1000 | 2/3 — the **second half only**; the receiver's lock time is a third of a message at this rate |
+
+**Two measurements were wrong before that table existed, and both were
+self-consistent.** First the corpus survey searched ±60 Hz about the manifest's
+`centre_hz`, which for BPSK1000 is 1411 Hz — 330 Hz from its carrier — and
+reported 0/3, which the journal wrote down as "the framing is not PSK31's". Then a
+wide sweep found 2/3 at 1605 Hz and the band edges were taken for the carrier: at
+1242 Hz — BPSK1000's **lower sideband edge** — nothing decoded, so the speed was
+briefly withdrawn as "does not decode at its own carrier".
+
+The third measurement settled it: every PSK sample here is a *band* whose width is
+the baud rate and whose carrier is its **midpoint** — 1741 Hz for all of them
+except BPSK31 at 1728. The manifest's `peak_hz` is one of the edges, and the
+strongest edge is not the carrier. `PskSpeed` therefore keeps both speeds, and the
+BPSK1000 chip says it reads from a second in.
+
+So what is left is one real fault, not twenty-three verdicts: **our receiver loses
+the head of a transmission to its own lock time**, which is a word or two at 31
+baud and a third of the message at 1000. BPSK125/250/500 acquire fast enough that
+the corpus never shows it.
+
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:

@@ -868,6 +868,92 @@ mod tests {
         );
     }
 
+    /// Every PSK sample in the corpus, at its own baud, centred on the carrier
+    /// the manifest measured (`peak_hz`, not `centre_hz` — the second is a block
+    /// centre and on a single-line carrier the two are hundreds of hertz apart).
+    ///
+    /// Two things this corrected, both worth keeping:
+    ///
+    /// * the survey searched ±60 Hz about the block centre, so BPSK1000's
+    ///   carrier at 1242 Hz was outside its search and the "0/3" it reported was
+    ///   read as a demodulator fault;
+    /// * a coarse sweep of the whole band then "found" BPSK1000 at 1605 Hz, 360
+    ///   Hz from its carrier, and reported 2/3 — which is an artefact of a wrong
+    ///   frequency, not a decode. At its own carrier it reads nothing.
+    #[test]
+    #[ignore]
+    fn the_corpus_psk_samples_are_measured() {
+        use std::path::Path;
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi");
+        let Ok(manifest) = std::fs::read_to_string(format!("{root}/manifest.jsonl")) else {
+            eprintln!("no manifest");
+            return;
+        };
+        let cases: &[(&str, f64)] = &[
+            ("BPSK31", 31.25),
+            ("BPSK63", 62.5),
+            ("BPSK125", 125.0),
+            ("BPSK250", 250.0),
+            ("BPSK500", 500.0),
+            ("BPSK1000", 1000.0),
+        ];
+        let want: Vec<&str> = "EAGLE LANDED SDRBROWN".split_whitespace().collect();
+        for &(name, baud) in cases {
+            let path = format!("{root}/{name}.wav");
+            if !Path::new(&path).exists() {
+                eprintln!("{name}: no sample");
+                continue;
+            }
+            let carrier = manifest
+                .lines()
+                .find(|l| l.contains(&format!("\"mode\": \"{name}\"")))
+                .and_then(|l| {
+                    let at = l.find("\"peak_hz\":")?;
+                    l[at + 10..].split([',', '}']).next()?.trim().parse::<f64>().ok()
+                })
+                .unwrap_or(1500.0);
+            let mut reader = hound::WavReader::open(&path).expect("open");
+            let spec = reader.spec();
+            let audio: Vec<f32> =
+                reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+            let mut best = (0usize, 0.0f64, String::new());
+            // Coarse over the band, then fine around the best: a PSK carrier is
+            // one line and a few hertz matter, but the manifest's idea of where
+            // it is cannot be trusted either way.
+            let decode = |hz: f64| -> String {
+                let mut rx = PskRx::new_baud(spec.sample_rate as f64, hz, baud);
+                let mut out = String::new();
+                for chunk in audio.chunks(512) {
+                    out.push_str(&rx.process(chunk));
+                }
+                out.push_str(&rx.process(&vec![0.0f32; 8000]));
+                out
+            };
+            let score = |text: &str| want.iter().filter(|w| text.contains(**w)).count();
+            // The corpus puts every PSK carrier between about 1700 and 1750 Hz,
+            // whatever the baud rate, and the band widens around it: the
+            // manifest's `peak_hz` is one of the *edges* of that spectrum, not
+            // the carrier, which is how a decoder tuned to 1242 Hz (BPSK1000's
+            // lower edge) read nothing at all. Two-hertz steps over the band the
+            // carriers actually live in.
+            for hz in (1600..=1900).step_by(2).map(|h| h as f64) {
+                let out = decode(hz);
+                let hits = score(&out);
+                if hits > best.0 {
+                    best = (hits, hz, out);
+                }
+            }
+
+            eprintln!(
+                "{name} at {baud} baud (manifest peak {carrier:.0} Hz): {}/{} at {:.0} Hz: {:?}",
+                best.0,
+                want.len(),
+                best.1,
+                best.2
+            );
+        }
+    }
+
     /// What the decoder makes of a real transmission.
     ///
     /// `SDROXIDE_PSK_SAMPLE` is a mono 8 kHz WAV of a PSK signal;

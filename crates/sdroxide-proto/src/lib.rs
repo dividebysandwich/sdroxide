@@ -1876,8 +1876,8 @@ use sdroxide_types::{
 /// BPSK or QPSK, a separate axis from `psk_speed` because QPSK is a different
 /// constellation *and* carries a convolutional code. `PROTO_VERSION`
 /// 217 → 218, `VERSION_BYTE` 0x25 → 0x26. A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 224;
-const VERSION_BYTE: u8 = 0x2c;
+pub const PROTO_VERSION: u16 = 225;
+const VERSION_BYTE: u8 = 0x2d;
 /// v220: the audio recording's container is the operator's choice.
 /// [`sdroxide_types::RadioState`] gains `recording_format`
 /// ([`sdroxide_types::RecordingFormat`]) at its tail, and `Command` gains
@@ -1906,6 +1906,11 @@ const VERSION_BYTE: u8 = 0x2c;
 /// fields: an ARDOP frame carries its own leader, type and CRC, and the carrier
 /// grid is fixed, so there is nothing for the operator to set. `PROTO_VERSION`
 /// 223 → 224, `VERSION_BYTE` 0x2B → 0x2C. A downstream (fork) change.
+/// v225: [`sdroxide_types::PskSpeed`] gains `Bps500` and `Bps1000` at its tail —
+/// the two fast speeds the same modem already runs, now selectable. The enum
+/// rides `DigiConfig`, so a peer that knows four speeds would misread a sixth.
+/// `PROTO_VERSION` 224 → 225, `VERSION_BYTE` 0x2C → 0x2D. A downstream (fork)
+/// change.
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {
