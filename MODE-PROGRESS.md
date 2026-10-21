@@ -180,12 +180,17 @@ where the shift is ±150) — worth correcting when they are next picked up. The
 `the_corpus_hell_samples_are_measured`, which asserts the two that are clean and
 prints the rest — a score here is a measurement, not a promise.
 
-**The font itself is a separate question, and it is the operator's.** Our own
-transmissions use the home-made glyphs, so a station running fldigi copies us and
-sees slightly unfamiliar shapes; decoding *them* is unaffected (the loopback still
-scores 0.85+ against our own font, which is what that test is for). Porting
-fldigi's table as the transmit font would make the picture look like everyone
-else's, and changes what an operator sends, so it is offered rather than done.
+**And the transmit font is now fldigi's too** (2026-10-21, at the operator's word).
+`hell_font.rs` carries the `Feld7x7-14` glyphs, so our pictures look like every
+other Hell station's, and the loopback and the corpus gate are finally comparing
+the same alphabet. Two things the change cost, both worth knowing: fldigi's table
+writes one entry as an **integer char code** (`{ 39, …}` for the apostrophe)
+rather than a character literal, which the first generator silently skipped —
+so the apostrophe came out blank; and the *untrimmed* picture now tracks better on
+its own (denser, more consistent ink), so `a_clock_trim_stops_the_boundary_walking`
+read 5 moves instead of 8 and its fixed 3x ratio failed **on an improvement**. The
+bound is now the ratio the trim actually achieves plus a ceiling on residual
+walking, with both readings recorded in the test.
 
 **The lesson, and it is the fourth of its kind today:** a corpus verdict is only
 as good as the thing it is compared against. The PSK carriers were a sideband

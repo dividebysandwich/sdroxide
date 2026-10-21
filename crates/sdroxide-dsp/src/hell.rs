@@ -1120,7 +1120,7 @@ mod tests {
             let lead = px.len();
 
             tx.push_text("HELLHELLHELLHELLHELLHELL");
-            drain(&mut tx, &mut rx, &mut px, dot * ROWS * 400);
+            drain(&mut tx, &mut rx, &mut px, dot * ROWS * 800);
             run(&mut tx, &mut rx, &mut px, dot * ROWS * 4, false);
 
             // Past the columns drawn before the phasing had anything to work on.
@@ -1161,15 +1161,25 @@ mod tests {
             let dot = (RATE / variant.pixel_rate()) as usize;
             run(&mut tx, &mut rx, &mut px, dot * ROWS * 8, true);
             tx.push_text("HELLHELLHELLHELLHELLHELLHELLHELL");
-            drain(&mut tx, &mut rx, &mut px, dot * ROWS * 400);
+            drain(&mut tx, &mut rx, &mut px, dot * ROWS * 800);
             counts.push((ppm, rx.sync_moves()));
         }
         let untrimmed = counts[0].1;
         let trimmed = counts[1].1;
+        // Set from measurement, twice. With the home-made font this read 8
+        // untrimmed and 2 trimmed; with fldigi's glyphs, which the transmitter
+        // now sends, the *untrimmed* picture tracks better on its own (denser,
+        // more consistent ink) and reads 5 and 2. So the bound is the ratio the
+        // trim actually achieves plus a ceiling on what a trimmed picture may
+        // still do — a fixed 3x would have failed on an improvement.
         assert!(
-            trimmed * 3 < untrimmed.max(1),
+            trimmed * 2 <= untrimmed.max(1),
             "the trim did not stop the boundary walking: {untrimmed} moves untrimmed, {trimmed} with {} ppm",
             counts[1].0
+        );
+        assert!(
+            trimmed <= 2,
+            "{trimmed} re-framings with the trim on: the picture is still walking"
         );
     }
 
