@@ -7,7 +7,12 @@
 > **quotes are left as they were said** — do not rewrite a quote to fix a name.
 >
 > **The mode work is the live queue, and it has its own brief.**
-> [`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md) is what a session starts
+> [`MODE-PHASE-3B-PROMPT.md`](MODE-PHASE-3B-PROMPT.md) is what a session starts
+> with now — day 1 of the PSK coded families landed 2026-10-22 and the journal's
+> "Phase 3" section is its record; the phase's own brief,
+> [`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md), still holds the reference and
+> the rules. The paragraph below describes day 1 and is kept for that reason:
+> [`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md) was what a session started
 > with: the PSK coded families (BPSK63F, the R set, the C/RC multi-carrier
 > modes), then the loose ends behind them. Its "current truth" section is the
 > state — four families wired receive-only, `PROTO_VERSION` 226, one hundred

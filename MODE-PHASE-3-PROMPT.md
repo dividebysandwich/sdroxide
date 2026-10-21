@@ -1,5 +1,11 @@
 # Mode phase 3 — the PSK coded families, and what is left behind them
 
+> **Day 1 is done; day 2 starts in
+> [`MODE-PHASE-3B-PROMPT.md`](MODE-PHASE-3B-PROMPT.md).** That file carries the
+> state after the PSK receivers landed and the order to work tomorrow from — a
+> fresh PSK500R recording first. This one is still the phase's brief: the fldigi
+> reference, the sample policy and the rules are here.
+
 **Paste this whole file into a fresh session, or point the session at it.** It is
 the brief for the work after the receive-parity pass recorded in
 [`MODE-PROGRESS.md`](MODE-PROGRESS.md). That pass wired four families into the

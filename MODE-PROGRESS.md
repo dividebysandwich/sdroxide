@@ -2,7 +2,10 @@
 
 > **The next phase is [`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md)** — the PSK
 > coded families (BPSK63F, the R set, the C/RC multi-carrier modes), then the loose
-> ends behind them. The phase-2 brief, [`MODE-PHASE-2-PROMPT.md`](MODE-PHASE-2-PROMPT.md),
+> ends behind them. **Day 1 of it is done** — see "Phase 3 (2026-10-22)" below — and
+> [`MODE-PHASE-3B-PROMPT.md`](MODE-PHASE-3B-PROMPT.md) is where a session picks it
+> up: a fresh PSK500R recording first, then the modes that still read short, then
+> the wiring. The phase-2 brief, [`MODE-PHASE-2-PROMPT.md`](MODE-PHASE-2-PROMPT.md),
 > is the record of what was asked for there; what it delivered is below.
 >
 > **State at the handover:** `main` is 100 commits ahead of `origin`, none pushed,
