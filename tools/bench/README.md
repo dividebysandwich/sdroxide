@@ -136,3 +136,24 @@ it happened), and `verify.py` scores a sample against **its own** text — a sho
 sample is never marked down for words it was never sent. The point is that every
 sample carries a complete message with a known start and a known end, rather than
 a prefix of a longer one.
+
+## What fldigi does that will waste a day
+
+Recorded during the 2026-10-21 sweep, because each of these looked like a radio
+fault and none of them was:
+
+- **Its window title is the diagnose line.** `fldigi ver4.2.13 - GEEN ROEPNAAM
+  INGESTELD` means **no callsign set**, and its reminder is a modal that steals the
+  main loop — the app looks responsive, the waterfall may even run, and every
+  XML-RPC call times out. Set `MYCALL` in `fldigi_def.xml`.
+- **A PortAudio device that will not open wedges the whole program.** A frozen
+  waterfall *and* dead XML-RPC were one cause: the capture device retrying. `pulse`
+  opens where `default` stalled, and `ls -l /proc/<pid>/fd | grep -c snd` says
+  whether it got both streams — a healthy fldigi holds two.
+- **Device indices are not stable.** The output index moved 3 → 4 between restarts
+  as JACK devices appeared, so a stored index can point at the right sound card one
+  session and the graphics card's HDMI the next. Check `PORTOUTDEVICE` by name, not
+  index.
+- **`ss -ltnp | grep 7362` distinguishes the two failures.** A listening socket
+  with bytes queued in `Recv-Q` means connections arrive and the server thread is
+  stuck — the main loop, not the network.
