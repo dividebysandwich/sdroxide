@@ -686,6 +686,12 @@ examples. Given one, the remaining work is bounded and in this order:
 > Edition 1.** The standard tells us how to acquire; only a real station says what
 > its Doppler and multipath look like.
 
+> **The build brief is [`STANAG4285-HANDOVER.md`](STANAG4285-HANDOVER.md)**, and it
+> carries a prompt a fresh session can be given directly: the receiver's shape, the
+> two nulls that have to be measured on the same buffer, the gates with their
+> numbers, and the order — the modem first, the `Mode` variant only once a capture
+> reads text.
+
 1. **Carrier and timing tracking per frame**, from the 48 reference symbols. Both
    move: the offset across this recording wanders by tens of Hz, and the frame
    phase drifts.

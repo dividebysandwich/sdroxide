@@ -113,7 +113,10 @@
 > ([`FST4W-HANDOVER.md`](FST4W-HANDOVER.md) — planned, not built; the verdict is
 > do not ship as wired). **Olivia** ([`OLIVIA-HANDOVER.md`](OLIVIA-HANDOVER.md)
 > — receive proven on the air; the open item is whether a real fldigi can copy
-> *our* transmission). The **CW keyer is built and benched** (`353d136f`, "all
+> *our* transmission). **STANAG 4285** — not built; the standard is transcribed in
+> [`STANAG4285-EDITION1.md`](STANAG4285-EDITION1.md) and
+> [`STANAG4285-HANDOVER.md`](STANAG4285-HANDOVER.md) carries the state and the
+> **prompt to build it**. The **CW keyer is built and benched** (`353d136f`, "all
 > works!"); its design is [`CW-HANDOVER.md`](CW-HANDOVER.md), its outcome is §10
 > below.
 >

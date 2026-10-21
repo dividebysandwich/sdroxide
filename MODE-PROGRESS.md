@@ -48,7 +48,7 @@ The family gate is `cargo test -p sdroxide-dsp --release --lib the_mfsk_family_r
 | MT63-2KL | **decodes** | `MT63-2KL.wav`, 1740: `AAA SDRBROWN TEST`, 2/2. Long interleave included. |
 | MT63-1KS | **does not decode yet** | `MT63-1KS.wav`, 1740: the text is visible but **every character is one Hadamard row high** — `EAGLE` arrives as `eagle`, `SDRBROWN` as `sdrbrown` with spaces lost, i.e. code +32 throughout. That is a carrier-phase signature (a sign flip across half the bank), not an interleaver fault: the short interleave is proved by the loopback below. |
 | MT63-1KL | **does not decode yet** | Same as 1KS, plus the long interleave; fragments only. |
-| MT63-500S | **does not decode yet** | `MT63-500S.wav`, 1740: `AAA … EAGLE?HASLAN:ED 1B34zSDwBROWN` — most words present but corrupted; the 500 Hz mode's 4096/1600 window/hop has the same phase problem. |
+| MT63-500S | **decodes (live receiver)** | `MT63-500S.wav`, **1690 Hz** — the manifest's 1740 is a block estimate and the decode searched phase and polarity but not the centre. The whole text, 4/4, once the lock scores on the median per-symbol SNR and the fractional bin is derotated; offered as `Mt6500S`. |
 | MT63-500L | **does not decode yet** | Fragments only, as 500S. |
 
 The MT63 interleaver, Walsh pair and deinterleaver are separately proved by `the_interleaver_round_trips_a_message`, which recovers `THE EAGLE HAS LANDED 12345` from the encoder's own bits for both the short and the long pattern. The audio front end decodes 2K exactly, so the remaining fault is in the carrier phase for the 4× and 8× windows, not in the coding. Gate: `cargo test -p sdroxide-dsp --release --lib the_corpus_mt63_samples_are_measured -- --ignored`.
@@ -110,8 +110,8 @@ Gate: `cargo test -p sdroxide-olivia --release --lib the_corpus_contestia_varian
 | Cont-64/1K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
 | Cont-64/2K | **decodes** | vendored engine in Contestia mode at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (shortened). |
 
-### MT63 — 2 of 6 decode
-See the MT63 table above: 2KS and 2KL decode; 1KS/1KL/500S/500L arrive one Hadamard row high.
+### MT63 — 3 of 6 decode
+See the MT63 table above: 2KS, 2KL and 500S decode. The old "one Hadamard row high" reading was a tuning fault, not a phase fault — the centre is searched now. 1KS/1KL/500L are not offered: their lock needs a centre search that can prefer the right answer.
 
 ### PSK family
 | mode | state | measurement |
@@ -690,9 +690,31 @@ fldigi's own `dominoex::decodesymbol`, and the search now has an instrument.
   absolute tone sequence the known text implies, which needs the idle/text
   boundary in the trace.
 
+## STANAG 4285 — the instrument is sound, the material is not
+
+**Not in the program.** No `Mode` variant, no decoder, no wire entry. `tools/s4285-probe/`
+is the instrument and its `README.md` is the long measurement log; the state and the
+brief to build the mode are in [`STANAG4285-HANDOVER.md`](STANAG4285-HANDOVER.md), and
+the standard itself is transcribed in [`STANAG4285-EDITION1.md`](STANAG4285-EDITION1.md).
+
+| question | answer | the measurement |
+|---|---|---|
+| frame geometry | **real** | ACF 1280 samples = 106.67 ms on `4285.WAV`, 0.594 against a 0.065 median |
+| acquisition without the preamble | **works, by folding** | 0.749 over 8 frames |
+| the standard's preamble in the shipped fixtures | **absent** | 0.291 against a 0.11 floor, over 20 conventions and all 256 rotations |
+| a real station | folds at **0.70** | FUO Toulon 5215.6 kHz — but it was **idle**, so it proves the fold and the ramp only |
+| the transcriber | **proven** | round trip exact at 30 / 40 / 60 dB |
+
+Two nulls had to be measured, and both were got wrong first: the
+reference-concentration score reads 0.529 on `4285.WAV` while **its own permutation
+null reads 0.601**, and the fold's noise floor is **0.42–0.46** with eight frames
+rather than the 0.35 the probe assumed — so anything under about 0.55 is no signal.
+
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:
+
+- **A STANAG 4285 capture of a station sending a test tape** (2026-10-21). The French Navy transmits unencrypted RYRY and an ID, in USB at 1800 Hz, on **4232.0 / 5215.6 / 8467.8 / 8478.5 / 12857.0 / 13031.2 / 13411.9 kHz**. Ninety seconds at 48 kHz with the UTC time and the station noted is enough. Everything up to the payload is solved and the payload has never been read from the air; the frequency table and the `rspcap` command are in [`STANAG4285-HANDOVER.md`](STANAG4285-HANDOVER.md).
 
 - **A second MFSK8 recording.** The corpus one loses `TEST THE EAGLE HAS LANDED` in one span while the preamble and the tail read at every tuning; the decoder is the one the other seven MFSK variants use.
 - **A known-good FSQ recording** (new, 2026-10-21). The corpus sample cannot settle FSQ: an FSQ signal is one tone at a time and that recording never has a dominant tone at any centre, spacing or speed, and nothing has ever read it back. Thirty seconds on the bench turns "alphabet fixed, decode unproven" into a gate.
