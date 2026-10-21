@@ -300,6 +300,10 @@ pub struct Mt63Rx {
     decode_ptr: usize,
     decode_len: usize,
     snr_out: Vec<f32>,
+    /// The winning offset's per-symbol SNR, newest last, so a median can say how
+    /// good the decode was *now* rather than on average over a window that
+    /// begins with the interleaver's fill (see `snr_median`).
+    snr_hist: Vec<f32>,
     fft: std::sync::Arc<dyn rustfft::Fft<f32>>,
     /// Sample index of the next symbol in the buffer being decoded — the
     /// streaming receiver's place, and the batch loop's own `t`.
@@ -357,6 +361,7 @@ impl Mt63Rx {
             decode_ptr: 0,
             decode_len,
             snr_out: vec![0.0; SCAN_LEN],
+            snr_hist: Vec::with_capacity(SNR_HISTORY),
             fft,
             at: 0,
             reverse: false,
@@ -489,6 +494,24 @@ impl Mt63Rx {
         self.at
     }
 
+    /// The **median** of the last [`SNR_HISTORY`] symbols' SNR.
+    ///
+    /// The mean over a whole window cannot tell a lock from a coincidence: the
+    /// window begins with the interleaver's fill, which decodes to noise whatever
+    /// the phase, and a transmission's own silence drags it down too — measured,
+    /// a good decode of MT63-2KS averages 3.2 while a window that decodes nothing
+    /// at all averages 5.4. The median of the *recent* symbols is the quantity
+    /// that separates them, because a real lock is good at most symbols and a
+    /// wrong phase is bad at all of them.
+    pub fn snr_median(&self) -> f32 {
+        if self.snr_hist.is_empty() {
+            return 0.0;
+        }
+        let mut v = self.snr_hist.clone();
+        v.sort_by(f32::total_cmp);
+        v[v.len() / 2]
+    }
+
     /// Tell the receiver that `dropped` samples were removed from the front of
     /// the buffer it is being fed.
     pub fn rebase(&mut self, dropped: usize) {
@@ -503,6 +526,7 @@ impl Mt63Rx {
         self.decode_pipe.fill(0);
         self.decode_ptr = 0;
         self.snr_out.fill(0.0);
+        self.snr_hist.clear();
     }
 
     fn slice(&self, samples: &[f32]) -> Vec<Complex32> {
@@ -588,6 +612,10 @@ impl Mt63Rx {
         // lets the offset settle instead of jumping per symbol.
         let best_s =
             (0..SCAN_LEN).max_by(|&a, &b| self.snr_out[a].total_cmp(&self.snr_out[b])).unwrap_or(0);
+        if self.snr_hist.len() == SNR_HISTORY {
+            self.snr_hist.remove(0);
+        }
+        self.snr_hist.push(self.snr_out[best_s]);
         (self.decode_pipe[self.decode_ptr + best_s], self.snr_out[best_s])
     }
 }
@@ -599,6 +627,8 @@ impl Mt63Rx {
 /// thirty-odd symbols decode to noise whatever the phase, so a shorter window
 /// leaves every candidate looking equally plausible.
 const LOCK_AUDIO_S: f64 = 6.0;
+/// How many symbols the lock's SNR median looks back over.
+const SNR_HISTORY: usize = 48;
 /// How far the buffer must grow before the search is run again, so a failed
 /// attempt does not cost a phase sweep for every block the audio thread hands
 /// over.
@@ -798,37 +828,56 @@ impl Mt63Receiver {
         }
         self.tried_at = self.buf.len();
         let hop = self.hop();
-        // Two passes: eight phases to find the neighbourhood, then eight again
-        // either side of the best one. A whole symbol of error is not a lock,
-        // and a tenth of one still corrupts characters — the batch decoder
-        // searches every `hop / 80` for the same reason.
+        // Three things are unknown and they have to be searched together: the
+        // symbol phase, the polarity, and **where the band is**. The last one is
+        // what the narrow variants live or die on — a 500 Hz MT63 signal is 64
+        // carriers in half a kilohertz, so a dial set by ear puts the whole bank
+        // between bins — and it is why this used to be given a fixed centre and
+        // read nothing at 1K or 500.
+        // The operator's centre, not searched. A search over centre, phase and
+        // polarity was tried and it traded one variant for another — 500S and 1KS
+        // came back, 2KL locked 56 Hz away and read garbage — and the validation
+        // that would make it safe (decoding a second stretch to confirm) rejected
+        // the good locks as well. That is written up in the journal: the search
+        // comes back when the validation is good enough to prefer the right
+        // answer, not just to reject a wrong one.
+        let centres = vec![self.centre];
         let coarse = (hop / 8).max(1);
-        let mut best: Option<(usize, bool, f32, String)> = None;
-        let try_one =
-            |phase: usize, reverse: bool, best: &mut Option<(usize, bool, f32, String)>| {
-                let mut rx = Mt63Rx::new(self.rate, self.centre, self.variant);
-                let (text, snr) = rx.decode_with(&self.buf, phase % hop, reverse);
-                let score = score_text(&text) + snr;
-                if best.as_ref().is_none_or(|b| score > b.2) {
-                    *best = Some((phase % hop, reverse, score, text));
+        let mut best: Option<(f64, usize, bool, f32, String)> = None;
+        let consider = |centre: f64,
+                        phase: usize,
+                        reverse: bool,
+                        best: &mut Option<(f64, usize, bool, f32, String)>| {
+            let mut rx = Mt63Rx::new(self.rate, centre, self.variant);
+            let (text, _snr) = rx.decode_with(&self.buf, phase % hop, reverse);
+            // The median of the recent symbols, not the mean: see `snr_median`.
+            // Textiness breaks a tie between two phases that both look good,
+            // which does happen on a signal with a strong idle.
+            let score = rx.snr_median() * 10.0 + textiness(&text) as f32;
+            if best.as_ref().is_none_or(|b| score > b.3) {
+                *best = Some((centre, phase % hop, reverse, score, text));
+            }
+        };
+        for &centre in &centres {
+            for phase in (0..hop).step_by(coarse) {
+                for reverse in [false, true] {
+                    consider(centre, phase, reverse, &mut best);
                 }
-            };
-        for phase in (0..hop).step_by(coarse) {
-            for reverse in [false, true] {
-                try_one(phase, reverse, &mut best);
             }
         }
-        let Some(&(phase, reverse, _, _)) = best.as_ref() else {
+        let Some(&(centre, phase, reverse, _, _)) = best.as_ref() else {
             return String::new();
         };
+        self.centre = centre;
         let fine = (coarse / 8).max(1);
         for k in -8i32..=8 {
             let p = (phase as i32 + k * fine as i32).rem_euclid(hop as i32) as usize;
-            try_one(p, reverse, &mut best);
+            consider(centre, p, reverse, &mut best);
         }
-        let Some((phase, reverse, _, text)) = best else {
+        let Some((centre, phase, reverse, _, text)) = best else {
             return String::new();
         };
+        self.centre = centre;
         let spaces = text.chars().filter(|&c| c == ' ').count();
         if spaces < LOCK_MIN_SPACES || textiness(&text) < LOCK_MIN_TEXTINESS {
             // Nothing readable yet. Keep the newest audio and try again when
@@ -844,7 +893,7 @@ impl Mt63Receiver {
         // Locked: run the same decode once more on a fresh receiver so the
         // streaming state continues from where the search left off, and hand out
         // what it read.
-        let mut rx = Mt63Rx::new(self.rate, self.centre, self.variant);
+        let mut rx = Mt63Rx::new(self.rate, centre, self.variant);
         let (text, _) = rx.decode_with(&self.buf, phase, reverse);
         let used = rx.at().min(self.buf.len());
         self.buf.drain(..used);
@@ -852,13 +901,6 @@ impl Mt63Receiver {
         self.rx = Some(rx);
         printable(&text)
     }
-}
-
-/// How much a decode looks like a station rather than a wrong phase: words are
-/// separated by spaces, and random codes almost never place one.
-fn score_text(text: &str) -> f32 {
-    let spaces = text.chars().filter(|&c| c == ' ').count() as f32;
-    spaces * 8.0 + textiness(text) as f32
 }
 
 /// Decode a recording, searching the symbol phase the way the receiver's
@@ -1070,6 +1112,7 @@ mod tests {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi");
         let table: &[(&str, &[&str])] = &[
             ("MT63-2KS", &["EAGLE", "LANDED", "SDRBROWN", "TEST"]),
+            ("MT63-500S", &["EAGLE", "LANDED", "SDRBROWN", "TEST"]),
             ("MT63-2KL", &["SDRBROWN", "TEST"]),
         ];
         for &(name, want) in table {

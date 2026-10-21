@@ -826,19 +826,19 @@ impl SdroxideApp {
                             changed = true;
                         }
                     }
-                    // The two narrower bandwidths exist in the standard and are
-                    // read by the decoder one Hadamard row high; saying so here
-                    // is where an operator looks for them.
+                    // The rest of the standard, and why it is not here.
                     ui.add_space(8.0);
                     ui.label(
-                        RichText::new("1K and 500 not read yet")
+                        RichText::new("1K and 500L not offered yet")
                             .size(10.5)
                             .color(crate::theme::YELLOW()),
                     )
                     .on_hover_text(
-                        "MT63-1K and MT63-500 arrive one Hadamard row high (every character \
-                         32 codes out) — a carrier-phase fault at the narrower bandwidths, \
-                         recorded in MODE-PROGRESS.md.",
+                        "MT63-1K and the 500 Hz long interleave read with the batch decoder \
+                         but not yet through the live receiver: the lock searches the symbol \
+                         phase and the polarity but not the band centre, and a search that \
+                         does was found to trade one variant for another. See \
+                         MODE-PROGRESS.md.",
                     );
                 }
                 Mode::Mfsk => {

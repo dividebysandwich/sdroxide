@@ -1876,8 +1876,8 @@ use sdroxide_types::{
 /// BPSK or QPSK, a separate axis from `psk_speed` because QPSK is a different
 /// constellation *and* carries a convolutional code. `PROTO_VERSION`
 /// 217 → 218, `VERSION_BYTE` 0x25 → 0x26. A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 225;
-const VERSION_BYTE: u8 = 0x2d;
+pub const PROTO_VERSION: u16 = 226;
+const VERSION_BYTE: u8 = 0x2e;
 /// v220: the audio recording's container is the operator's choice.
 /// [`sdroxide_types::RadioState`] gains `recording_format`
 /// ([`sdroxide_types::RecordingFormat`]) at its tail, and `Command` gains

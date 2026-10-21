@@ -1507,16 +1507,20 @@ pub enum Mt63Mode {
     #[default]
     Mt632KS,
     Mt632KL,
+    /// 500 Hz, short interleave. The narrowest band the mode has, and it reads
+    /// its corpus sample whole through the live receiver.
+    Mt6500S,
 }
 
 impl Mt63Mode {
-    pub const ALL: [Mt63Mode; 2] = [Mt63Mode::Mt632KS, Mt63Mode::Mt632KL];
+    pub const ALL: [Mt63Mode; 3] = [Mt63Mode::Mt632KS, Mt63Mode::Mt632KL, Mt63Mode::Mt6500S];
 
     /// The name fldigi gives the mode, and the corpus file's stem.
     pub fn label(self) -> &'static str {
         match self {
             Mt63Mode::Mt632KS => "2KS",
             Mt63Mode::Mt632KL => "2KL",
+            Mt63Mode::Mt6500S => "500S",
         }
     }
 
@@ -1527,7 +1531,10 @@ impl Mt63Mode {
     }
 
     pub fn bandwidth_hz(self) -> u32 {
-        2000
+        match self {
+            Mt63Mode::Mt6500S => 500,
+            _ => 2000,
+        }
     }
 }
 
