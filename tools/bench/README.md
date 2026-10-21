@@ -59,3 +59,45 @@ The same harness can prove our **transmit** side, which is still open: have
 sdroxide send, and read `text.get_rx()` back from fldigi. That is the test that
 settles whether another program can copy what we send — today it cannot, and the
 `our_transmitter_is_not_yet_readable` test records it.
+
+## The sweep: a sample of every mode
+
+```sh
+./sweep.py --only "^(BPSK|QPSK|PSK)" --tx-seconds 15
+./sweep.py --only "^(OLIVIA|Cont|MT63)" --tx-seconds 45 --resume
+./sweep.py --resume                 # everything not yet in the manifest
+```
+
+Each mode is set on fldigi, transmitted, recorded, measured and saved to
+`~/Downloads/sounds/our-captures/fldigi/<mode>.wav`, with one JSON object per mode
+appended to `manifest.jsonl` as it finishes — so an interrupted sweep keeps what
+it has, and `--resume` carries on.
+
+The text is the operator's, verbatim, spaces included:
+
+```
+ AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ
+```
+
+`--tx-seconds` has to come from the mode: Olivia 16/500 is about two characters a
+second and needs 45, BPSK31 is five and needs 15. Batches by family keep a slow
+mode from starving a fast one, and keep a failure to ten minutes rather than an
+hour.
+
+Read the result with:
+
+```sh
+./summarise.py            # a table, sorted by mode
+./summarise.py --failed   # only the misses
+./summarise.py --markdown  # writes manifest.md beside the manifest
+```
+
+`summarise.py` is the answer to "does our X work?" — one line per mode, with the
+decoder's own output quoted where it passed.
+
+### Only Olivia decodes today
+
+`sweep.py` runs `decode_file` for Olivia and records `decoder: null` for
+everything else, because that is the only modem we have written against the
+vendored engine. The corpus is the point: a recording per mode, with known text
+and measured parameters, so each decoder starts with a fixture instead of a hunt.
