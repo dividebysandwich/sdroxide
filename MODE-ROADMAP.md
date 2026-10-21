@@ -103,12 +103,37 @@ garbage. The realignment settles exactly **one tone** off (`offset 15.6 Hz`) in
 every polarity and both Viterbi pairings tried, which points between the soft
 symbols and the de-interleaver rather than at the front end.
 
-**The next step is a modulator, not more guessing on the decoder.** With a
-transmitter that shares these tables, a loopback tells us which stage diverges;
-without one, every experiment changes two things at once. That is how the Olivia
-year was lost. `ConvEncoder` is already in the tree, so it is the varicode, the
-interleaver and the tone generator, and then the receive path can be compared
-symbol by symbol.
+**The modulator is written** (`encode()` in the same file) and **the loopback
+passes**: our own transmission of `TEST 12345 SDRBROWN` reads back as
+`TEST 1234` — the tail is lost to the Viterbi traceback window, which is expected.
+So the plumbing inside this file is self-consistent, and the disagreement with the
+air is a **convention**, not a wiring fault.
+
+**And the tone traces name the difference.** Running the same receiver over both
+signals and printing the hard decision per symbol:
+
+```
+air  (yesterday's capture): 15, 15, 15, 15, 15, 15, 15, 15, 14, 14, 14, ...
+ours (the modulator)      :  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, ...
+```
+
+The preamble is a fixed pattern, so those two sequences are the *same* signal with
+the tone order reversed — **that capture was recorded yesterday, when the rig was
+on LSB**, so its spectrum is inverted. For an FSK tone set, inversion is exactly
+"tone *i* is tone *n−1−i*".
+
+**The open puzzle, and it is one line from being answered.** A `mirror` switch was
+added to do that reversal in the soft-symbol step, and it is read (the trace
+prints `mirror true`), but **the decoded output does not change at all** — which
+cannot happen if the soft symbols feed the decoder the way the code says they do.
+So the next move is not another theory: print `sym[]` immediately before
+`decode_symbol` with the switch off and on, and see whether it moves. If it does
+not, the text is coming from somewhere other than the path I think it is, which is
+the Olivia lesson in a new costume.
+
+**Do not re-try the sign and pairing guesses blind** — `SDROXIDE_MFSK_SIGN=-1` and
+`SDROXIDE_MFSK_ODD` were both tried and both give different garbage. The trace is
+the instrument now, not the text.
 
 ### The rule for adding a mode: port it, do not vendor it
 

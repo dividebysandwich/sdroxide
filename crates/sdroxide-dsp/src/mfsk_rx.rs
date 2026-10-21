@@ -265,6 +265,20 @@ impl Interleaver {
         }
     }
 
+    /// The bit form: `size` bits in, `size` bits out, through `symbols`.
+    fn bits(&mut self, word: &mut u32) {
+        let mut s = [0u8; 16];
+        for i in 0..self.size {
+            s[i] = ((*word >> (self.size - i - 1)) & 1) as u8;
+        }
+        self.symbols(&mut s[..self.size]);
+        let mut v = 0u32;
+        for i in 0..self.size {
+            v = (v << 1) | s[i] as u32;
+        }
+        *word = v;
+    }
+
     /// One step: shift every row along, append the new byte, read out a diagonal.
     fn symbols(&mut self, p: &mut [u8]) {
         let (size, depth) = (self.size, self.depth);
@@ -321,12 +335,20 @@ pub struct MfskRx {
     soft_sign: f32,
     /// Which half of each pair the decoder takes. Same argument.
     second_half: bool,
+    /// Mirror the tone order. An MFSK signal received on the wrong sideband is a
+    /// tone set upside down about its centre, and nothing decodes until that is
+    /// corrected — for FSK, inversion is exactly "tone i is tone n−1−i".
+    mirror: bool,
     text: String,
     /// A long-run metric, so a signal too weak to trust is not printed as text.
     metric: f64,
     pub locked: bool,
     pub snr_db: f32,
     pub offset_hz: f32,
+    /// The strongest tone of every symbol decided, in order. Kept because the
+    /// only way to find a convention difference between two implementations is
+    /// to compare the sequence, not the output.
+    pub tones: Vec<u8>,
 }
 
 impl MfskRx {
@@ -362,11 +384,13 @@ impl MfskRx {
                 1.0
             },
             second_half: std::env::var("SDROXIDE_MFSK_ODD").is_ok(),
+            mirror: std::env::var("SDROXIDE_MFSK_MIRROR").is_ok(),
             text: String::new(),
             metric: 0.0,
             locked: false,
             snr_db: 0.0,
             offset_hz: 0.0,
+            tones: Vec::new(),
         };
         rx.build();
         rx
@@ -525,9 +549,10 @@ impl MfskRx {
             // takes the tone number back to its value, once. (Applying Gray and
             // then its inverse is the identity, which is what the first version
             // did — it still produced structure and the wrong letters.)
-            let val = binary(i as u32);
+            let idx = if self.mirror { nt - 1 - i } else { i };
+            let val = binary(idx as u32);
             for (k, bv) in b.iter_mut().enumerate().take(bits) {
-                *bv += if (val >> (bits - k - 1)) & 1 == 1 { m[i] } else { -m[i] };
+                *bv += if (val >> (bits - k - 1)) & 1 == 1 { m[idx] } else { -m[idx] };
             }
         }
         let mut sym = [0u8; 8];
@@ -542,9 +567,20 @@ impl MfskRx {
         for k in 0..bits {
             self.decode_symbol(sym[k]);
         }
-        self.locked = self.snr_db > 6.0;
         self.snr_db =
             (20.0 * (mx / ((sum - mx) / (nt as f64 - 1.0)).max(1e-9)).max(1e-6).log10()) as f32;
+        self.locked = self.snr_db > 6.0;
+        // The hard tone decision, kept so that two signals carrying the same text
+        // can be compared tone by tone. The decoded text cannot settle a
+        // convention question - it is the thing being questioned.
+        let mut strongest = 0usize;
+        for i in 1..nt {
+            if m[i] > m[strongest] {
+                strongest = i;
+            }
+        }
+        let shown = if self.mirror { nt - 1 - strongest } else { strongest };
+        self.tones.push(shown as u8);
     }
 
     /// The best integer shift and sub-bin offset: the tones in use show energy
@@ -647,6 +683,116 @@ impl MfskRx {
     }
 }
 
+// ---------------------------------------------------------------- the modulator
+
+/// Encode `text` as this variant's audio, at the variant's own rate.
+///
+/// This exists for the tests. Without a transmitter, every experiment on the
+/// receiver changed two things at once and the stage that diverged could not be
+/// named — which is exactly how the Olivia work was lost. With one, a loopback
+/// says whether the receiver can decode at all, and a disagreement with the real
+/// capture then points at the conventions rather than at the plumbing.
+///
+/// **A loopback proves self-consistency, not interoperability.** It cannot show
+/// that this is what a station sends, only that the two halves here agree.
+pub fn encode(variant: MfskVariant, centre: f64, text: &str) -> Vec<f32> {
+    let spacing = variant.spacing();
+    let f0 = centre - variant.bandwidth() / 2.0;
+    let bits = variant.symbits;
+    let mut out: Vec<f32> = Vec::new();
+    let mut phase: f64 = 0.0;
+
+    let mut encoder = crate::fec::ConvEncoder::new(ConvCode::THOR);
+    let mut interleaver = Interleaver::new(bits, variant.depth, true);
+    let mut shift: u32 = 0;
+    let mut filled = 0usize;
+
+    // The preamble: `preamble` pairs of the zero-code's outputs, written straight
+    // into the symbol shifter, so no data is carried and the receiver's clock has
+    // something steady to lock on.
+    let zero = encoder.push(0);
+    for _ in 0..variant.preamble {
+        for i in 0..2 {
+            shift = (shift << 1) | ((zero >> i) & 1) as u32;
+            filled += 1;
+            if filled == bits {
+                push_symbol(&mut out, &mut phase, &mut interleaver, shift, f0, spacing, variant);
+                filled = 0;
+                shift = 0;
+            }
+        }
+    }
+    encoder.reset();
+    // Then `preamble / 3` encoded zero bits, which is what the reference does
+    // between the preamble and the first character.
+    for _ in 0..(variant.preamble / 3) {
+        let d = encoder.push(0);
+        for i in 0..2 {
+            shift = (shift << 1) | ((d >> i) & 1) as u32;
+            filled += 1;
+            if filled == bits {
+                push_symbol(&mut out, &mut phase, &mut interleaver, shift, f0, spacing, variant);
+                filled = 0;
+                shift = 0;
+            }
+        }
+    }
+
+    // CR LF CR, then the text, each character as its varicode word plus the two
+    // terminating zeros.
+    let mut chars: Vec<u8> = vec![13, 2, 13];
+    chars.extend(text.bytes());
+    chars.push(2);
+    for c in chars {
+        let word = varicode(c);
+        let mut stream: Vec<u8> = word.bytes().map(|b| b - b'0').collect();
+        stream.push(0);
+        stream.push(0);
+        for b in stream {
+            let d = encoder.push(b);
+            for i in 0..2 {
+                shift = (shift << 1) | ((d >> i) & 1) as u32;
+                filled += 1;
+                if filled == bits {
+                    push_symbol(
+                        &mut out,
+                        &mut phase,
+                        &mut interleaver,
+                        shift,
+                        f0,
+                        spacing,
+                        variant,
+                    );
+                    filled = 0;
+                    shift = 0;
+                }
+            }
+        }
+    }
+    out
+}
+
+fn push_symbol(
+    out: &mut Vec<f32>,
+    phase: &mut f64,
+    interleaver: &mut Interleaver,
+    mut word: u32,
+    f0: f64,
+    spacing: f64,
+    variant: MfskVariant,
+) {
+    interleaver.bits(&mut word);
+    let tone = gray(word) as usize % variant.tones;
+    let w = 2.0 * PI * (f0 + tone as f64 * spacing) / variant.fs;
+    for _ in 0..variant.symlen {
+        out.push(phase.cos() as f32);
+        *phase += w;
+        if *phase > 2.0 * PI {
+            *phase -= 2.0 * PI;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -735,6 +881,60 @@ mod tests {
         assert!(rx.text().chars().filter(|c| c.is_alphabetic()).count() < 4, "{:?}", rx.text());
     }
 
+    /// The same receiver over our own signal and over the air capture, tone by
+    /// tone. This is the comparison that names a convention difference: the
+    /// receiver's output text cannot, because it is the thing being questioned.
+    #[test]
+    #[ignore]
+    fn the_capture_and_our_modulator_agree_on_the_tones() {
+        let Ok(path) = std::env::var("SDROXIDE_MFSK_SAMPLE") else {
+            eprintln!("SDROXIDE_MFSK_SAMPLE unset; skipping");
+            return;
+        };
+        let variant = MfskVariant::named("MFSK16").unwrap();
+        let num = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+        let hz = num("SDROXIDE_MFSK_HZ", 1730.0);
+
+        let mut reader = hound::WavReader::open(&path).expect("open the sample WAV");
+        let spec = reader.spec();
+        let audio: Vec<f32> =
+            reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+
+        let mut air = MfskRx::new(variant, spec.sample_rate as f64, hz);
+        for c in audio.chunks(512) {
+            air.feed(c);
+        }
+        let mut mine = MfskRx::new(variant, variant.fs, 1500.0);
+        mine.feed(&encode(variant, 1500.0, "TEST 12345 SDRBROWN"));
+        mine.feed(&vec![0.0f32; 8000]);
+
+        let n = 40.min(air.tones.len()).min(mine.tones.len());
+        eprintln!("air  : {:?}", &air.tones[..n]);
+        eprintln!("ours : {:?}", &mine.tones[..n]);
+        eprintln!("air chars : {:?}", air.text());
+        eprintln!("ours chars: {:?}", mine.text());
+        // The preamble is a fixed pattern, so the two sequences must line up
+        // somewhere within it if the conventions agree.
+    }
+
+    /// Our own modulator into our own receiver.
+    ///
+    /// Self-consistency only — it cannot prove this is what a station sends. It
+    /// can prove the plumbing: if this fails, the fault is inside these two
+    /// functions and has nothing to do with the air.
+    #[test]
+    fn our_own_transmission_reads_back() {
+        let variant = MfskVariant::named("MFSK16").unwrap();
+        let text = "TEST 12345 SDRBROWN";
+        let audio = encode(variant, 1500.0, text);
+        assert!(!audio.is_empty(), "the modulator produced nothing");
+        let mut rx = MfskRx::new(variant, variant.fs, 1500.0);
+        rx.feed(&audio);
+        rx.feed(&vec![0.0f32; 8000]);
+        eprintln!("loopback: {:?}", rx.text());
+        assert!(rx.text().contains("TEST"), "loopback did not read the text: {:?}", rx.text());
+    }
+
     /// Point `SDROXIDE_MFSK_SAMPLE` at a mono 8 kHz WAV of an MFSK
     /// transmission; `_VARIANT`, `_HZ` and `_TEXT` describe it.
     ///
@@ -767,7 +967,8 @@ mod tests {
         let pad = vec![0.0f32; spec.sample_rate as usize];
         rx.feed(&pad);
         eprintln!(
-            "{name} at {hz} Hz: {} chars, snr {:.1} dB, offset {:.1} Hz, locked {}: {:?}",
+            "{name} at {hz} Hz (mirror {}): {} chars, snr {:.1} dB, offset {:.1} Hz, locked {}: {:?}",
+            std::env::var("SDROXIDE_MFSK_MIRROR").is_ok(),
             rx.text().len(),
             rx.snr_db,
             rx.offset_hz,
