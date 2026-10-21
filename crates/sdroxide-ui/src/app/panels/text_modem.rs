@@ -1,5 +1,5 @@
-//! The keyboard-mode panel: PSK, RTTY, Olivia, Contestia, THOR and MFSK, plus
-//! Hellschreiber's raster.
+//! The keyboard-mode panel: PSK, RTTY, Olivia, Contestia, MT63, THOR and MFSK,
+//! plus Hellschreiber's raster.
 //!
 //! All of these are a received-text pane over a transmit buffer, so they share
 //! one panel; only the parameter row above it differs by mode. Hell is the
@@ -667,6 +667,7 @@ impl SdroxideApp {
                 | Mode::RttyFm
                 | Mode::Olivia
                 | Mode::Contestia
+                | Mode::Mt63
                 | Mode::Thor
                 | Mode::Mfsk
         ) {
@@ -802,6 +803,43 @@ impl SdroxideApp {
                             changed = true;
                         }
                     }
+                }
+                Mode::Mt63 => {
+                    cap(ui, "Mode");
+                    for m in sdroxide_types::Mt63Mode::ALL {
+                        let sel = cfg.mt63_mode == m;
+                        if ui
+                            .selectable_label(sel, m.label())
+                            .on_hover_text(format!(
+                                "MT63-{}, {:.0} Hz wide{} — the {} interleave spreads a burst \
+                                 over {} characters",
+                                m.label(),
+                                m.bandwidth_hz() as f32,
+                                if m.long() { "" } else { ", short interleave" },
+                                if m.long() { "long" } else { "short" },
+                                if m.long() { 64 } else { 32 }
+                            ))
+                            .clicked()
+                            && !sel
+                        {
+                            cfg.mt63_mode = m;
+                            changed = true;
+                        }
+                    }
+                    // The two narrower bandwidths exist in the standard and are
+                    // read by the decoder one Hadamard row high; saying so here
+                    // is where an operator looks for them.
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("1K and 500 not read yet")
+                            .size(10.5)
+                            .color(crate::theme::YELLOW()),
+                    )
+                    .on_hover_text(
+                        "MT63-1K and MT63-500 arrive one Hadamard row high (every character \
+                         32 codes out) — a carrier-phase fault at the narrower bandwidths, \
+                         recorded in MODE-PROGRESS.md.",
+                    );
                 }
                 Mode::Mfsk => {
                     // Eleven variants, one modem: nothing in the signal says

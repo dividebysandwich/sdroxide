@@ -165,7 +165,7 @@ pub use digi::{
     ACARS_MESSAGE_MAX, AcarsMessage, AcarsStatus, CONTEST_SERIAL_MAX, ClockHealth, ContestMode,
     CwKeyMode, CwKeySource, CwMacro, CwStatus, DSC_MESSAGE_MAX, DSC_TONE_HZ, Decode, DecodeSort,
     DigiConfig, DigiStatus, DscHeard, DscStatus, DxpedMode, FOX_MAX_SLOTS, FOX_ZONE_MAX_HZ,
-    FoxCaller, FsqHeard, FsqMsg, Ft8Depth, HOUND_ZONE_MAX_HZ, HellVariant, MfskMode,
+    FoxCaller, FsqHeard, FsqMsg, Ft8Depth, HOUND_ZONE_MAX_HZ, HellVariant, MfskMode, Mt63Mode,
     NAVTEX_MESSAGE_MAX, NAVTEX_TONE_HZ, NavtexMessage, NavtexStatus, PACKET_HEARD_MAX,
     PACKET_TERM_LINE_MAX, PACKET_TERM_MAX, PacketBaud, PacketHeard, PacketLink, PacketLinkOwner,
     PacketStatus, PacketTermKind, PacketTermLine, PskModulation, PskSpeed, QsoLive, QsoRecord,

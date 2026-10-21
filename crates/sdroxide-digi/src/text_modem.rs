@@ -12,6 +12,7 @@ use std::time::SystemTime;
 
 use sdroxide_dsp::{
     MonoResampler, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ThorRx, ThorTx, mfsk_rx::MfskReceiver,
+    mt63::Mt63Receiver,
 };
 use sdroxide_olivia::OliviaReceiver;
 use sdroxide_types::{DigiConfig, DigiStatus, Mode, QsoStep, TranscriptLine};
@@ -31,6 +32,7 @@ enum RxModem {
     Olivia(OliviaReceiver),
     Thor(ThorRx),
     Mfsk(MfskReceiver),
+    Mt63(Mt63Receiver),
 }
 
 impl RxModem {
@@ -41,6 +43,7 @@ impl RxModem {
             RxModem::Olivia(r) => r.process(audio),
             RxModem::Thor(r) => r.process(audio),
             RxModem::Mfsk(r) => r.process(audio),
+            RxModem::Mt63(r) => r.process(audio),
         }
     }
     fn magnitude(&self) -> f32 {
@@ -50,6 +53,7 @@ impl RxModem {
             RxModem::Olivia(r) => r.magnitude(),
             RxModem::Thor(r) => r.magnitude(),
             RxModem::Mfsk(r) => r.magnitude(),
+            RxModem::Mt63(r) => r.magnitude(),
         }
     }
 }
@@ -220,6 +224,9 @@ impl TextModemController {
                 cfg.mfsk_mode,
                 cfg.mfsk_reverse,
             )),
+            Mode::Mt63 => {
+                RxModem::Mt63(Mt63Receiver::new(MODEM_RATE, audio_hz as f64, cfg.mt63_mode.into()))
+            }
             _ => {
                 let mut r = PskRx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
                 r.set_qpsk(p_qpsk);
@@ -239,7 +246,7 @@ impl TextModemController {
             // controller refuses the key-up with a reason. Contestia is the
             // same shape for a different reason: its transmitter still speaks
             // Olivia's scrambler.
-            Mode::Mfsk | Mode::Contestia => TxModem::Receive,
+            Mode::Mfsk | Mode::Contestia | Mode::Mt63 => TxModem::Receive,
             _ => {
                 let mut t = PskTx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
                 t.set_qpsk(p_qpsk);
@@ -297,6 +304,7 @@ impl TextModemController {
                 r.set_mirror(self.cfg.mfsk_reverse);
                 r.set_params(hz, self.cfg.mfsk_mode);
             }
+            RxModem::Mt63(r) => r.set_params(hz, self.cfg.mt63_mode.into()),
         }
         match &mut self.tx {
             TxModem::Psk(m) => {
@@ -343,6 +351,10 @@ impl TextModemController {
                 Mode::Contestia => {
                     "Contestia is receive only in this build — the transmitter still sends \
                      Olivia's scrambling code"
+                        .to_string()
+                }
+                Mode::Mt63 => {
+                    "MT63 is receive only in this build — the modulator is not written yet"
                         .to_string()
                 }
                 _ => "MFSK is receive only in this build — the modulator is not written yet"
@@ -505,7 +517,8 @@ impl DigiEngine for TextModemController {
             || cfg.psk_speed != self.cfg.psk_speed
             || cfg.psk_modulation != self.cfg.psk_modulation
             || cfg.mfsk_mode != self.cfg.mfsk_mode
-            || cfg.mfsk_reverse != self.cfg.mfsk_reverse;
+            || cfg.mfsk_reverse != self.cfg.mfsk_reverse
+            || cfg.mt63_mode != self.cfg.mt63_mode;
         self.cfg = cfg;
         if retune {
             self.retune_modems();
@@ -649,6 +662,40 @@ mod tests {
         eprintln!("Contestia through the controller: {text:?}");
         for w in ["EAGLE", "SDRBROWN"] {
             assert!(text.contains(w), "the controller lost {w}: {text:?}");
+        }
+    }
+
+    /// MT63's two 2000 Hz variants through the controller, which is the whole
+    /// claim: a live receiver that has to find the symbol clock and the polarity
+    /// by itself, fed the way the audio thread feeds it.
+    #[test]
+    #[ignore]
+    fn the_mt63_corpus_samples_decode_through_the_controller() {
+        for (mode, words) in [
+            (sdroxide_types::Mt63Mode::Mt632KS, &["EAGLE", "LANDED", "SDRBROWN"][..]),
+            (sdroxide_types::Mt63Mode::Mt632KL, &["SDRBROWN", "TEST"][..]),
+        ] {
+            let path = format!(
+                "{}/../../samples/fldigi/MT63-{}.wav",
+                env!("CARGO_MANIFEST_DIR"),
+                mode.label()
+            );
+            let mut reader = hound::WavReader::open(&path).expect("the MT63 sample");
+            let spec = reader.spec();
+            let audio: Vec<f32> =
+                reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+            let mut cfg = DigiConfig::default();
+            cfg.mt63_mode = mode;
+            let mut ctl = TextModemController::new(Mode::Mt63, cfg, spec.sample_rate as f64);
+            ctl.set_audio_hz(1740.0);
+            for chunk in audio.chunks(400) {
+                ctl.on_rx_audio(chunk);
+            }
+            let text = ctl.status().text_rx;
+            eprintln!("MT63-{} through the controller: {text:?}", mode.label());
+            for w in words {
+                assert!(text.contains(w), "MT63-{} lost {w}: {text:?}", mode.label());
+            }
         }
     }
 

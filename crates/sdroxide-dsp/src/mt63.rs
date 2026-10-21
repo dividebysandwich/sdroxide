@@ -32,6 +32,7 @@
 
 use num_complex::Complex32;
 use rustfft::FftPlanner;
+use sdroxide_types::Mt63Mode;
 
 const CARRIERS: usize = 64;
 /// The reference's FFT length and symbol hop at its own processing rate of
@@ -128,6 +129,15 @@ const LONG_PATTERN: [u8; CARRIERS] = [
     27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
     51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 0,
 ];
+
+/// The variant behind a [`Mt63Mode`]. The wire type names the bandwidth and the
+/// interleave; the decoder wants them as its own struct, and there is one table
+/// for the two so a mode cannot be offered that the decoder does not have.
+impl From<Mt63Mode> for Mt63Variant {
+    fn from(m: Mt63Mode) -> Self {
+        Mt63Variant { bandwidth: m.bandwidth_hz(), long: m.long() }
+    }
+}
 
 /// One MT63 mode: bandwidth in Hz and whether the long interleave is in use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -291,6 +301,12 @@ pub struct Mt63Rx {
     decode_len: usize,
     snr_out: Vec<f32>,
     fft: std::sync::Arc<dyn rustfft::Fft<f32>>,
+    /// Sample index of the next symbol in the buffer being decoded — the
+    /// streaming receiver's place, and the batch loop's own `t`.
+    at: usize,
+    /// Mirror the carrier order; a station received on the other sideband
+    /// arrives with carrier `i` where `63-i` belongs.
+    reverse: bool,
 }
 
 impl Mt63Rx {
@@ -342,6 +358,8 @@ impl Mt63Rx {
             decode_len,
             snr_out: vec![0.0; SCAN_LEN],
             fft,
+            at: 0,
+            reverse: false,
         }
     }
 
@@ -368,60 +386,96 @@ impl Mt63Rx {
     /// sideband has carrier `i` where carrier `63-i` should be, and the Walsh
     /// codeword comes out as a permutation of the right one.
     pub fn decode_with(&mut self, audio: &[f32], phase: usize, reverse: bool) -> (String, f32) {
-        let sig = audio;
         self.reset();
+        self.reverse = reverse;
+        self.at = phase;
         let first = self.first_carrier();
         let mut text = String::new();
         let mut snr_sum = 0.0f32;
         let mut n = 0usize;
-        let mut t = phase;
-        while t + self.window_len + self.hop / 2 < sig.len() {
-            let a = self.slice(&sig[t..t + self.window_len]);
-            let b = self.slice(&sig[t + self.hop / 2..t + self.hop / 2 + self.window_len]);
-            let mut vals = [0.0f32; SCAN];
-            for j in 0..SCAN {
-                let carrier = j as i32 - MARGIN as i32;
-                let c = first + carrier * CARR_SEP as i32;
-                if c < 0 || c as usize >= self.window_len {
-                    vals[j] = 0.0;
-                    continue;
-                }
-                let c = c as usize;
-                // Odd carriers are the second slice, half a symbol later.
-                let odd = carrier & 1 != 0;
-                let (cur, prev) =
-                    if !odd { (a[c], self.prev_a[j]) } else { (b[c], self.prev_b[j]) };
-                if !odd {
-                    self.prev_a[j] = a[c];
-                } else {
-                    self.prev_b[j] = b[c];
-                }
-                // The window advanced by SYMBOL samples, so a carrier at bin c
-                // has turned by 2πc·SYMBOL/WINDOW. Removing that turn leaves the
-                // data's own phase step.
-                let turn = -2.0 * std::f32::consts::PI * c as f32 * self.hop as f32
-                    / self.window_len as f32;
-                let d = cur * prev.conj() * Complex32::new(turn.cos(), turn.sin());
-                let norm = (cur.norm() * prev.norm()).max(1e-12);
-                vals[j] = (d.re / norm).clamp(-1.0, 1.0);
-            }
-            if reverse {
-                let mut r = [0.0f32; SCAN];
-                for j in 0..SCAN {
-                    r[j] = vals[SCAN - 1 - j];
-                }
-                vals = r;
-            }
-            let (code, snr) = self.deinterleave(&vals);
+        while self.at + self.window_len + self.hop / 2 < audio.len() {
+            let (code, snr) = self.symbol(&audio[self.at..], first);
             text.push(code as char);
             snr_sum += snr;
             n += 1;
-            t += self.hop;
+            self.at += self.hop;
         }
         if n > 0 {
             snr_sum /= n as f32;
         }
         (text, snr_sum)
+    }
+
+    /// One symbol: the two overlapping FFT slices, the differential against the
+    /// previous symbol, and the deinterleave. `sig` starts at the symbol's own
+    /// sample; only `window_len + hop / 2` samples are read. Split out of the
+    /// batch loop so a live receiver can decode a symbol at a time.
+    fn symbol(&mut self, sig: &[f32], first: i32) -> (u8, f32) {
+        let a = self.slice(&sig[..self.window_len]);
+        let b = self.slice(&sig[self.hop / 2..self.hop / 2 + self.window_len]);
+        let mut vals = [0.0f32; SCAN];
+        for j in 0..SCAN {
+            let carrier = j as i32 - MARGIN as i32;
+            let c = first + carrier * CARR_SEP as i32;
+            if c < 0 || c as usize >= self.window_len {
+                vals[j] = 0.0;
+                continue;
+            }
+            let c = c as usize;
+            // Odd carriers are the second slice, half a symbol later.
+            let odd = carrier & 1 != 0;
+            let (cur, prev) = if !odd { (a[c], self.prev_a[j]) } else { (b[c], self.prev_b[j]) };
+            if !odd {
+                self.prev_a[j] = a[c];
+            } else {
+                self.prev_b[j] = b[c];
+            }
+            // The window advanced by SYMBOL samples, so a carrier at bin c has
+            // turned by 2πc·SYMBOL/WINDOW. Removing that turn leaves the data's
+            // own phase step.
+            let turn =
+                -2.0 * std::f32::consts::PI * c as f32 * self.hop as f32 / self.window_len as f32;
+            let d = cur * prev.conj() * Complex32::new(turn.cos(), turn.sin());
+            let norm = (cur.norm() * prev.norm()).max(1e-12);
+            vals[j] = (d.re / norm).clamp(-1.0, 1.0);
+        }
+        if self.reverse {
+            let mut r = [0.0f32; SCAN];
+            for j in 0..SCAN {
+                r[j] = vals[SCAN - 1 - j];
+            }
+            vals = r;
+        }
+        self.deinterleave(&vals)
+    }
+
+    /// Continue a decode that is already running: decode every whole symbol the
+    /// buffer holds from `self.at` on, and leave `self.at` at the next one.
+    ///
+    /// The caller keeps the audio from `self.at` onwards, so the buffer it hands
+    /// in always *starts* at the next symbol — which is what lets a live
+    /// receiver drop what it has already used instead of holding a growing
+    /// recording.
+    pub fn decode_more(&mut self, sig: &[f32]) -> String {
+        let first = self.first_carrier();
+        let mut text = String::new();
+        while self.at + self.window_len + self.hop / 2 < sig.len() {
+            let (code, _) = self.symbol(&sig[self.at..], first);
+            text.push(code as char);
+            self.at += self.hop;
+        }
+        text
+    }
+
+    /// Where the next symbol starts, in samples of the buffer last handed in.
+    pub fn at(&self) -> usize {
+        self.at
+    }
+
+    /// Tell the receiver that `dropped` samples were removed from the front of
+    /// the buffer it is being fed.
+    pub fn rebase(&mut self, dropped: usize) {
+        self.at = self.at.saturating_sub(dropped);
     }
 
     fn reset(&mut self) {
@@ -506,6 +560,190 @@ impl Mt63Rx {
             (0..SCAN_LEN).max_by(|&a, &b| self.snr_out[a].total_cmp(&self.snr_out[b])).unwrap_or(0);
         (self.decode_pipe[self.decode_ptr + best_s], self.snr_out[best_s])
     }
+}
+
+/// How much audio a live receiver listens to before it tries to lock.
+///
+/// MT63 has no preamble, so the symbol boundary has to be found from the signal
+/// itself. This is long enough for the interleaver to fill as well: its first
+/// thirty-odd symbols decode to noise whatever the phase, so a shorter window
+/// leaves every candidate looking equally plausible.
+const LOCK_AUDIO_S: f64 = 6.0;
+/// How far the buffer must grow before the search is run again, so a failed
+/// attempt does not cost a phase sweep for every block the audio thread hands
+/// over.
+const LOCK_RETRY_S: f64 = 1.0;
+/// Spaces a decode must carry before it is a lock.
+///
+/// A wrong phase still produces *characters* — the deinterleaved codewords are
+/// simply the wrong ones, and about half of the 128 codes are printable — so a
+/// count of letters cannot tell a station from noise. What random codes do not
+/// produce is spaces where words have them: space is one code in 128, so a
+/// station's window carries a dozen and noise carries none.
+const LOCK_MIN_SPACES: usize = 3;
+/// Letters and digits a decode must carry on top of the spaces.
+///
+/// Spaces alone are a small number — three in a noise window is a coincidence
+/// that happens — so the second half of the test is that the window is mostly
+/// words: a station's window carries tens of alphanumerics, a wrong phase a
+/// handful.
+const LOCK_MIN_TEXTINESS: usize = 40;
+
+/// The live MT63 receiver the digi engine drives: a block [decode] with the
+/// symbol phase and polarity searched once, then the symbols decoded as they
+/// arrive.
+///
+/// The search is the reason this exists rather than a rolling re-decode: MT63
+/// carries no preamble, so the boundary is whichever of `hop` sample offsets
+/// makes the deinterleaved codewords peak, and the polarity is whichever of the
+/// two carrier orders does. Both are settled once on the first few seconds of
+/// signal and then held, because a station's symbol clock and sideband do not
+/// change mid-over.
+pub struct Mt63Receiver {
+    variant: Mt63Variant,
+    rate: f64,
+    centre: f64,
+    buf: Vec<f32>,
+    rx: Option<Mt63Rx>,
+    /// Buffer length at the last failed lock attempt, so a search is not run
+    /// again for every block the audio thread delivers.
+    tried_at: usize,
+    mag: f32,
+}
+
+impl Mt63Receiver {
+    pub fn new(rate: f64, centre: f64, variant: Mt63Variant) -> Self {
+        Mt63Receiver { variant, rate, centre, buf: Vec::new(), rx: None, tried_at: 0, mag: 0.0 }
+    }
+
+    fn hop(&self) -> usize {
+        ((SYMBOL as f64 * self.rate / self.variant.rate()).round() as usize).max(SYMBOL)
+    }
+
+    /// How much audio to listen to before deciding on a phase and polarity.
+    ///
+    /// The long interleave spreads a character over 64 symbols, so it needs
+    /// about twice the audio before a window carries words rather than the
+    /// interleaver's own fill.
+    fn lock_audio_s(&self) -> f64 {
+        if self.variant.long { LOCK_AUDIO_S * 2.0 } else { LOCK_AUDIO_S }
+    }
+
+    /// Retune or change mode. Both invalidate the lock: the bank moves and the
+    /// symbol clock may too.
+    pub fn set_params(&mut self, centre: f64, variant: Mt63Variant) {
+        if (centre - self.centre).abs() < 0.5 && variant == self.variant {
+            return;
+        }
+        self.centre = centre;
+        self.variant = variant;
+        self.rx = None;
+        self.buf.clear();
+        self.tried_at = 0;
+        self.mag = 0.0;
+    }
+
+    pub fn magnitude(&self) -> f32 {
+        self.mag
+    }
+
+    /// True once a symbol clock and polarity have been found, which is when
+    /// text starts arriving.
+    pub fn locked(&self) -> bool {
+        self.rx.is_some()
+    }
+
+    pub fn process(&mut self, audio: &[f32]) -> String {
+        let peak = audio.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        self.mag += 0.02 * (peak - self.mag);
+        self.buf.extend_from_slice(audio);
+
+        if self.rx.is_none() {
+            return self.try_lock();
+        }
+
+        let mut rx = self.rx.take().expect("checked");
+        let text = rx.decode_more(&self.buf);
+        let used = rx.at().min(self.buf.len());
+        if used > 0 {
+            self.buf.drain(..used);
+            rx.rebase(used);
+        }
+        self.rx = Some(rx);
+        printable(&text)
+    }
+
+    /// Search the symbol phase and polarity over what has arrived, and start
+    /// streaming if one of them reads.
+    fn try_lock(&mut self) -> String {
+        let need = ((self.lock_audio_s() * self.rate) as usize).max(2 * self.hop());
+        let grown = (LOCK_RETRY_S * self.rate) as usize;
+        if self.buf.len() < need || self.buf.len() < self.tried_at + grown {
+            return String::new();
+        }
+        self.tried_at = self.buf.len();
+        let hop = self.hop();
+        // Two passes: eight phases to find the neighbourhood, then eight again
+        // either side of the best one. A whole symbol of error is not a lock,
+        // and a tenth of one still corrupts characters — the batch decoder
+        // searches every `hop / 80` for the same reason.
+        let coarse = (hop / 8).max(1);
+        let mut best: Option<(usize, bool, f32, String)> = None;
+        let try_one =
+            |phase: usize, reverse: bool, best: &mut Option<(usize, bool, f32, String)>| {
+                let mut rx = Mt63Rx::new(self.rate, self.centre, self.variant);
+                let (text, snr) = rx.decode_with(&self.buf, phase % hop, reverse);
+                let score = score_text(&text) + snr;
+                if best.as_ref().is_none_or(|b| score > b.2) {
+                    *best = Some((phase % hop, reverse, score, text));
+                }
+            };
+        for phase in (0..hop).step_by(coarse) {
+            for reverse in [false, true] {
+                try_one(phase, reverse, &mut best);
+            }
+        }
+        let Some(&(phase, reverse, _, _)) = best.as_ref() else {
+            return String::new();
+        };
+        let fine = (coarse / 8).max(1);
+        for k in -8i32..=8 {
+            let p = (phase as i32 + k * fine as i32).rem_euclid(hop as i32) as usize;
+            try_one(p, reverse, &mut best);
+        }
+        let Some((phase, reverse, _, text)) = best else {
+            return String::new();
+        };
+        let spaces = text.chars().filter(|&c| c == ' ').count();
+        if spaces < LOCK_MIN_SPACES || textiness(&text) < LOCK_MIN_TEXTINESS {
+            // Nothing readable yet. Keep the newest audio and try again when
+            // more has arrived.
+            let keep = (self.lock_audio_s() * self.rate) as usize * 2;
+            if self.buf.len() > keep {
+                let drop = self.buf.len() - keep;
+                self.buf.drain(..drop);
+                self.tried_at = self.tried_at.saturating_sub(drop);
+            }
+            return String::new();
+        }
+        // Locked: run the same decode once more on a fresh receiver so the
+        // streaming state continues from where the search left off, and hand out
+        // what it read.
+        let mut rx = Mt63Rx::new(self.rate, self.centre, self.variant);
+        let (text, _) = rx.decode_with(&self.buf, phase, reverse);
+        let used = rx.at().min(self.buf.len());
+        self.buf.drain(..used);
+        rx.rebase(used);
+        self.rx = Some(rx);
+        printable(&text)
+    }
+}
+
+/// How much a decode looks like a station rather than a wrong phase: words are
+/// separated by spaces, and random codes almost never place one.
+fn score_text(text: &str) -> f32 {
+    let spaces = text.chars().filter(|&c| c == ' ').count() as f32;
+    spaces * 8.0 + textiness(text) as f32
 }
 
 /// Decode a recording, searching the symbol phase the way the receiver's
@@ -634,8 +872,91 @@ mod tests {
         assert!(failures.is_empty(), "did not read: {failures:?}");
     }
 
+    /// The live receiver, fed the way the audio thread feeds it — blocks of a
+    /// few hundred samples — must find the symbol clock and the polarity on its
+    /// own and then read the recording. This is the mode's gate: the batch
+    /// decoder proving the DSP is not the same thing as a controller getting
+    /// text out of a stream.
+    #[test]
+    #[ignore]
+    fn the_live_receiver_reads_the_corpus_in_blocks() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/MT63-2KS.wav");
+        let mut reader = hound::WavReader::open(path).expect("the MT63-2KS sample");
+        let spec = reader.spec();
+        let audio: Vec<f32> =
+            reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+        let variant = Mt63Variant::named("MT63-2KS").unwrap();
+        let mut rx = Mt63Receiver::new(spec.sample_rate as f64, 1740.0, variant);
+        let mut text = String::new();
+        let mut locked_at = None;
+        for (n, chunk) in audio.chunks(400).enumerate() {
+            text.push_str(&rx.process(chunk));
+            if locked_at.is_none() && rx.locked() {
+                locked_at = Some(n);
+            }
+        }
+        eprintln!("locked after block {locked_at:?}: {:?}", printable(&text));
+        assert!(locked_at.is_some(), "the receiver never found the symbol clock");
+        for w in ["EAGLE", "LANDED", "SDRBROWN"] {
+            assert!(text.contains(w), "the live receiver lost {w}: {text:?}");
+        }
+    }
+
+    /// Noise must not lock: a receiver that prints characters out of a quiet
+    /// band makes the mode look alive when it is not.
+    #[test]
+    fn noise_does_not_lock_the_live_receiver() {
+        let variant = Mt63Variant::named("MT63-2KS").unwrap();
+        let mut rx = Mt63Receiver::new(8000.0, 1740.0, variant);
+        // A deterministic pseudo-random sequence, so the test is repeatable.
+        let mut state = 0x12345678u32;
+        let mut out = String::new();
+        for _ in 0..60 {
+            let block: Vec<f32> = (0..800)
+                .map(|_| {
+                    state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                    (state >> 8) as f32 / 8_388_608.0 - 1.0
+                })
+                .collect();
+            out.push_str(&rx.process(&block));
+        }
+        assert!(!rx.locked(), "the receiver locked onto noise");
+        assert!(out.trim().is_empty(), "noise produced text: {out:?}");
+    }
+
+    /// The stream is a stream: each character is handed out once, and a retune
+    /// drops the lock rather than carrying the old one into a new frequency.
+    #[test]
+    fn a_retune_drops_the_lock() {
+        let variant = Mt63Variant::named("MT63-2KL").unwrap();
+        let mut rx = Mt63Receiver::new(8000.0, 1740.0, variant);
+        let mut state = 7u32;
+        let noise = |state: &mut u32| {
+            *state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            (*state >> 8) as f32 / 8_388_608.0 - 1.0
+        };
+        // Force a lock by hand: what is being tested is the invalidation, not
+        // the search, which the corpus covers.
+        let mut inner = Mt63Rx::new(8000.0, 1740.0, variant);
+        inner.decode_with(&vec![noise(&mut state); 32_000], 0, false);
+        rx.set_params(1750.0, variant);
+        assert!(!rx.locked(), "a retune kept the old lock");
+    }
+
     #[test]
     fn the_variant_names_are_fldigis() {
+        // The wire's names and the decoder's must agree, or a mode is offered
+        // that the receiver has no parameters for.
+        for m in Mt63Mode::ALL {
+            let v: Mt63Variant = m.into();
+            assert_eq!(
+                Mt63Variant::named(&format!("MT63-{}", m.label())),
+                Some(v),
+                "{:?} is not the decoder's MT63-{}",
+                m,
+                m.label()
+            );
+        }
         assert_eq!(
             Mt63Variant::named("MT63-1KS"),
             Some(Mt63Variant { bandwidth: 1000, long: false })

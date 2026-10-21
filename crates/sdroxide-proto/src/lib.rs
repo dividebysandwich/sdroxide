@@ -1876,8 +1876,8 @@ use sdroxide_types::{
 /// BPSK or QPSK, a separate axis from `psk_speed` because QPSK is a different
 /// constellation *and* carries a convolutional code. `PROTO_VERSION`
 /// 217 → 218, `VERSION_BYTE` 0x25 → 0x26. A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 222;
-const VERSION_BYTE: u8 = 0x2a;
+pub const PROTO_VERSION: u16 = 223;
+const VERSION_BYTE: u8 = 0x2b;
 /// v220: the audio recording's container is the operator's choice.
 /// [`sdroxide_types::RadioState`] gains `recording_format`
 /// ([`sdroxide_types::RecordingFormat`]) at its tail, and `Command` gains
@@ -1898,6 +1898,10 @@ const VERSION_BYTE: u8 = 0x2a;
 /// existing discriminant, but both ends must agree on what the number means, so
 /// the register takes the bump. `PROTO_VERSION` 221 → 222, `VERSION_BYTE` 0x29
 /// → 0x2A. A downstream (fork) change.
+/// v223: MT63 — [`sdroxide_types::Mode::Mt63`] appended, and
+/// [`sdroxide_types::DigiConfig`] gains `mt63_mode` at its tail: which of the
+/// 2000 Hz variants, short or long interleave. `PROTO_VERSION` 222 → 223,
+/// `VERSION_BYTE` 0x2A → 0x2B. A downstream (fork) change.
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

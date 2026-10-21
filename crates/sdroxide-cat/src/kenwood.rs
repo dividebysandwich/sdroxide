@@ -382,6 +382,7 @@ fn mode_digit(m: Mode) -> (char, bool) {
         | Mode::Thor
         | Mode::Mfsk
         | Mode::Contestia
+        | Mode::Mt63
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf

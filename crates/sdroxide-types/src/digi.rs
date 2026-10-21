@@ -1474,6 +1474,42 @@ impl MfskMode {
     }
 }
 
+/// MT63 submode — the bandwidth and the interleave depth.
+///
+/// Only the two 2000 Hz variants are offered: MT63-1K and MT63-500 arrive one
+/// Hadamard row high through this receiver (every character 32 codes out), which
+/// is a carrier-phase fault at the narrower bandwidths and is recorded in
+/// `MODE-PROGRESS.md`. They are named here so the day it is fixed they are two
+/// appended variants rather than a new field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Mt63Mode {
+    #[default]
+    Mt632KS,
+    Mt632KL,
+}
+
+impl Mt63Mode {
+    pub const ALL: [Mt63Mode; 2] = [Mt63Mode::Mt632KS, Mt63Mode::Mt632KL];
+
+    /// The name fldigi gives the mode, and the corpus file's stem.
+    pub fn label(self) -> &'static str {
+        match self {
+            Mt63Mode::Mt632KS => "2KS",
+            Mt63Mode::Mt632KL => "2KL",
+        }
+    }
+
+    /// The long interleave: one carrier at a time instead of four, which spreads
+    /// a burst further for a slower decode.
+    pub fn long(self) -> bool {
+        matches!(self, Mt63Mode::Mt632KL)
+    }
+
+    pub fn bandwidth_hz(self) -> u32 {
+        2000
+    }
+}
+
 /// Hellschreiber variant. Feld Hell is the classic on/off-keyed facsimile mode;
 /// X5 and X9 speed it up, Slow Hell crawls for weak signals, and the FSK
 /// variants keep the carrier up and shift it instead of keying it.
@@ -2556,6 +2592,12 @@ pub struct DigiConfig {
     /// [`Self::olivia_reverse`].
     #[serde(default)]
     pub mfsk_reverse: bool,
+    /// MT63: which bandwidth and interleave. Only the 2000 Hz pair is offered —
+    /// see [`Mt63Mode`].
+    ///
+    /// Appended last, so this is a wire change (`PROTO_VERSION` 222 → 223).
+    #[serde(default)]
+    pub mt63_mode: Mt63Mode,
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2812,6 +2854,7 @@ impl Default for DigiConfig {
             olivia_reverse: false,
             mfsk_mode: MfskMode::default(),
             mfsk_reverse: false,
+            mt63_mode: Mt63Mode::default(),
         }
     }
 }

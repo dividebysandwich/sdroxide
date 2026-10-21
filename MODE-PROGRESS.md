@@ -300,6 +300,51 @@ MT63 (2K first — 1K/500 are still one Hadamard row high, and that is a DSP
 chase, not wiring), then ARDOP (the modem is proven by `ardopcf`'s own
 recordings; what it needs is a panel and, later, the TNC).
 
+### MT63 — a live receiver, and the two narrow variants left out
+
+`Mode::Mt63`, `DigiConfig::mt63_mode`. Only **MT63-2KS and MT63-2KL** are
+offered; the chip row says why the other four are missing.
+
+- **The work was the front end, not the decoder.** `Mt63Rx` is a batch decoder
+  over a whole recording, and the console needs a stream. `Mt63Receiver` locks
+  once — the symbol phase searched in two passes, and the polarity, since a
+  reversed station is a permutation of the same codewords — and then decodes a
+  symbol at a time from a rolling buffer. `Mt63Rx` grew `symbol`,
+  `decode_more`, `at` and `rebase` for it, so the batch path and the live path
+  are the same arithmetic.
+- **Locking is measured, and a count of letters cannot do it.** MT63 always
+  produces a character per symbol, so a wrong phase still prints *letters*; what
+  a wrong phase does not print is **spaces** where words have them (space is one
+  code in 128, so a station's window carries a dozen and noise carries none).
+  The window has to be long enough for the interleaver to fill as well, or every
+  candidate looks equally plausible — 6 s for the short interleave and 12 s for
+  the long one, which is the price of the search and worth knowing before
+  someone reports "it takes a while to start".
+- **The gate** is both corpus samples through the controller:
+  `cargo test -p sdroxide-digi --release --lib -- --ignored --nocapture the_mt63`
+  — `EAGLE LANDED SDRBROWN` for 2KS, `SDRBROWN TEST` for 2KL, fed in blocks with
+  only the centre given.
+- **Noise does not lock** (`noise_does_not_lock_the_live_receiver`), which took
+  two attempts: `textiness` alone locked onto noise, and so did spaces alone at
+  three.
+- **MT63-1K and MT63-500 are not offered.** They arrive one Hadamard row high —
+  every character 32 codes out, `EAGLE` as `eagle` — through this receiver, and
+  that is a carrier-phase fault at the narrower bandwidths, not the interleaver
+  (both interleaves are proved by `the_interleaver_round_trips_a_message`, and
+  2K reads with either). The reference's own receiver tracks a frequency offset
+  and a symbol shift, and this port does neither; that is where to look next, and
+  the two variants are already named in `Mt63Mode` so the fix is an appended
+  variant rather than a new field.
+- **Receive only**, so it is in `is_rx_only`: the panel greys the sending half
+  and the refusal names MT63. No modulator yet.
+
+### Next
+
+ARDOP — the modem is proven against `ardopcf`'s own three recordings, and it is
+the same shape of job MT63 was: a block decoder needing a frame-level front end,
+plus a panel and, later, the TNC. Then the near-misses, MT63's narrow variants
+first since they now block two chips.
+
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:
