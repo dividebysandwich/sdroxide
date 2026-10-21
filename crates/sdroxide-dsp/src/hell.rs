@@ -380,6 +380,14 @@ pub struct HellRx {
     peak_acc: f32,
     fsk_acc: f32,
     fsk_n: u32,
+    /// How far the discriminator's deviation actually reaches on this signal, so
+    /// the ink is scaled to what is arriving rather than to the nominal shift.
+    /// A receiver filter of `4 x shift` smears a fast frequency change across
+    /// neighbouring dots, so the deviation that survives is a fraction of the
+    /// shift — and normalising to the nominal value put every dot in a narrow
+    /// grey band, which is why the frequency-shifted variants read as though
+    /// there were no picture at all.
+    fsk_peak: f32,
     prev: Complex32,
 
     col: Vec<u8>,
@@ -445,6 +453,7 @@ impl HellRx {
             peak_acc: 0.0,
             fsk_acc: 0.0,
             fsk_n: 0,
+            fsk_peak: 0.0,
             prev: Complex32::default(),
             col: vec![0; ROWS],
             phase_bins: [0.0; ROWS],
@@ -497,6 +506,7 @@ impl HellRx {
         self.peak_acc = 0.0;
         self.fsk_acc = 0.0;
         self.fsk_n = 0;
+        self.fsk_peak = 0.0;
         self.col.iter_mut().for_each(|v| *v = 0);
         self.phase_bins = [0.0; ROWS];
         self.dots = 0;
@@ -574,8 +584,14 @@ impl HellRx {
                 let mean = if self.fsk_n > 0 { self.fsk_acc / self.fsk_n as f32 } else { 0.0 };
                 self.fsk_acc = 0.0;
                 self.fsk_n = 0;
+                // Track the deviation this signal actually reaches (a fast
+                // attack, slow decay, so it follows a fading station without
+                // pumping), with the nominal half-shift as the ceiling: a real
+                // FSKHell sender never exceeds it.
+                self.fsk_peak = (self.fsk_peak * 0.999).max(mean.abs()).min(1.0);
+                let scale = self.fsk_peak.max(0.15);
                 // Ink is the lower tone, so a negative deviation is a lit dot.
-                (-mean * 0.5 + 0.5).clamp(0.0, 1.0)
+                (-mean / scale * 0.5 + 0.5).clamp(0.0, 1.0)
             } else {
                 self.shade(self.peak_acc)
             };
@@ -1016,6 +1032,19 @@ mod tests {
                 }
             }
             eprintln!("{name} ({variant:?}): correlation {:.3} at {} Hz", best.0, best.1);
+            if std::env::var("HELL_INK").is_ok() {
+                let mut v: Vec<u8> = best.2.clone();
+                v.sort_unstable();
+                let p = |f: f64| v[((v.len() - 1) as f64 * f) as usize];
+                eprintln!(
+                    "  ink percentiles: p5 {} p25 {} p50 {} p75 {} p95 {}",
+                    p(0.05),
+                    p(0.25),
+                    p(0.5),
+                    p(0.75),
+                    p(0.95)
+                );
+            }
             // The gate is the two that read as clean copies. The rest are named
             // in `MODE-PROGRESS.md` with their figures: HELLX9 and FSKH245 are
             // the poor ones left, and a score here is a measurement, not a
