@@ -84,6 +84,49 @@ def proxy():
         sys.exit(f"fldigi XML-RPC unreachable: {exc}")
 
 
+def restart_fldigi(timeout=40.0):
+    """Kill and relaunch fldigi, because a modal dialog steals its main loop.
+
+    fldigi puts up a dialog on a timer — the operator has watched it appear when
+    he leaves the desk — and while it is up, XML-RPC answers nothing: every call
+    times out and the sweep records a run of failures that look like radio
+    faults. Whatever the dialog is, restarting is the recovery that needs no
+    knowledge of it.
+    """
+    print("    fldigi is not answering - restarting it", flush=True)
+    subprocess.run(["pkill", "-x", "fldigi"], check=False)
+    for _ in range(20):
+        if subprocess.run(["pgrep", "-x", "fldigi"], capture_output=True).returncode != 0:
+            break
+        time.sleep(0.5)
+    subprocess.Popen(
+        ["setsid", "fldigi"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(1.5)
+        try:
+            p = proxy()
+            p.modem.get_name()
+            time.sleep(1.0)
+            return p
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def answering(p, wait=3.0):
+    """True when fldigi answers XML-RPC inside `wait` seconds."""
+    try:
+        p.modem.get_name()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def text_modes(p):
     names = p.modem.get_names()
     names = names[0] if isinstance(names, tuple) else names
@@ -409,9 +452,23 @@ def main():
         for i, mode in enumerate(modes, 1):
             print(f"[{i}/{len(modes)}] {mode} … ", end="", flush=True)
             try:
+                if not answering(p):
+                    fresh = restart_fldigi()
+                    if fresh is not None:
+                        p = fresh
                 entry = sweep_one(p, mode, args, i, len(modes))
             except Exception as exc:  # noqa: BLE001 - one mode must not cost the batch
-                entry = {"mode": mode, "error": f"{type(exc).__name__}: {exc}"}
+                # An XML-RPC timeout means a dialog, not a radio fault: restart
+                # fldigi and give the mode one more go before recording a failure.
+                fresh = restart_fldigi()
+                if fresh is not None and "timed out" in str(exc).lower() or fresh is not None:
+                    p = fresh
+                    try:
+                        entry = sweep_one(p, mode, args, i, len(modes))
+                    except Exception as again:  # noqa: BLE001
+                        entry = {"mode": mode, "error": f"{type(again).__name__}: {again}"}
+                else:
+                    entry = {"mode": mode, "error": f"{type(exc).__name__}: {exc}"}
             man.write(json.dumps(entry) + "\n")
             man.flush()
             if entry.get("skipped"):
