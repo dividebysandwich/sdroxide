@@ -143,13 +143,56 @@ pub struct OliviaReceiver {
     tones: usize,
     bandwidth: u32,
     reverse: bool,
+    /// Contestia is the same engine with a different scrambling code, so the
+    /// flag has to survive a rebuild — `set_params` and `set_reverse` both
+    /// reconstruct the decoder, and dropping it here would silently turn a
+    /// Contestia station back into an Olivia one on the first retune.
+    contestia: bool,
     mag: f32,
 }
 
 impl OliviaReceiver {
     pub fn new(rate: f64, centre: f64, tones: usize, bandwidth: u32, reverse: bool) -> Self {
         let engine = OliviaDecoder::new(rate, centre, tones, bandwidth, reverse);
-        OliviaReceiver { engine, rate, centre, tones, bandwidth, reverse, mag: 0.0 }
+        OliviaReceiver {
+            engine,
+            rate,
+            centre,
+            tones,
+            bandwidth,
+            reverse,
+            contestia: false,
+            mag: 0.0,
+        }
+    }
+
+    /// The same receiver set to Contestia.
+    pub fn contestia(rate: f64, centre: f64, tones: usize, bandwidth: u32, reverse: bool) -> Self {
+        let engine = OliviaDecoder::contestia(rate, centre, tones, bandwidth, reverse);
+        OliviaReceiver {
+            engine,
+            rate,
+            centre,
+            tones,
+            bandwidth,
+            reverse,
+            contestia: true,
+            mag: 0.0,
+        }
+    }
+
+    fn build(
+        &self,
+        centre: f64,
+        tones: usize,
+        bandwidth: u32,
+        reverse: bool,
+    ) -> Option<OliviaDecoder> {
+        if self.contestia {
+            OliviaDecoder::contestia(self.rate, centre, tones, bandwidth, reverse)
+        } else {
+            OliviaDecoder::new(self.rate, centre, tones, bandwidth, reverse)
+        }
     }
 
     /// Retune or change mode. The engine is rebuilt, which is what fldigi's own
@@ -162,7 +205,7 @@ impl OliviaReceiver {
         self.centre = centre;
         self.tones = tones;
         self.bandwidth = bandwidth;
-        self.engine = OliviaDecoder::new(self.rate, centre, tones, bandwidth, self.reverse);
+        self.engine = self.build(centre, tones, bandwidth, self.reverse);
         self.mag = 0.0;
     }
 
@@ -173,12 +216,20 @@ impl OliviaReceiver {
             return;
         }
         self.reverse = reverse;
-        self.engine =
-            OliviaDecoder::new(self.rate, self.centre, self.tones, self.bandwidth, reverse);
+        self.engine = self.build(self.centre, self.tones, self.bandwidth, reverse);
     }
 
     pub fn reverse(&self) -> bool {
         self.reverse
+    }
+
+    /// Whether this receiver is running Contestia's scrambling code rather than
+    /// Olivia's. Read by the tests: `set_params` and `set_reverse` rebuild the
+    /// engine, and a flag that is dropped there would turn a Contestia station
+    /// into an Olivia one on the first retune — silently, because both engines
+    /// decode *something*.
+    pub fn is_contestia(&self) -> bool {
+        self.contestia
     }
 
     pub fn process(&mut self, audio: &[f32]) -> String {
@@ -208,7 +259,7 @@ impl Drop for OliviaDecoder {
 
 #[cfg(test)]
 mod tests {
-    use crate::OliviaDecoder;
+    use crate::{OliviaDecoder, OliviaReceiver};
 
     /// A real transmission, decoded by the vendored engine.
     ///
@@ -477,5 +528,23 @@ mod tests {
         }
         eprintln!("{ok} of {} decode", table.len());
         assert_eq!(ok, 18, "the Contestia variant count moved");
+    }
+
+    /// Contestia is a flag on one engine, and every retune rebuilds that engine.
+    /// The flag has to survive the rebuild: both scramblers decode *something*,
+    /// so dropping it makes a Contestia station read as noise with no symptom
+    /// that points at the cause.
+    #[test]
+    fn the_contestia_flag_survives_a_retune_and_a_reversal() {
+        let mut rx = OliviaReceiver::contestia(8000.0, 1500.0, 8, 500, false);
+        assert!(rx.is_contestia());
+        rx.set_params(1700.0, 16, 1000);
+        assert!(rx.is_contestia(), "a retune dropped the scrambler");
+        rx.set_reverse(true);
+        assert!(rx.is_contestia(), "the polarity change dropped the scrambler");
+
+        let mut plain = OliviaReceiver::new(8000.0, 1500.0, 16, 500, false);
+        plain.set_params(1700.0, 8, 250);
+        assert!(!plain.is_contestia(), "an Olivia receiver became Contestia");
     }
 }

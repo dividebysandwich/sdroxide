@@ -1876,8 +1876,8 @@ use sdroxide_types::{
 /// BPSK or QPSK, a separate axis from `psk_speed` because QPSK is a different
 /// constellation *and* carries a convolutional code. `PROTO_VERSION`
 /// 217 → 218, `VERSION_BYTE` 0x25 → 0x26. A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 221;
-const VERSION_BYTE: u8 = 0x29;
+pub const PROTO_VERSION: u16 = 222;
+const VERSION_BYTE: u8 = 0x2a;
 /// v220: the audio recording's container is the operator's choice.
 /// [`sdroxide_types::RadioState`] gains `recording_format`
 /// ([`sdroxide_types::RecordingFormat`]) at its tail, and `Command` gains
@@ -1891,6 +1891,13 @@ const VERSION_BYTE: u8 = 0x29;
 /// inverted. The mode variant alone would have been compatible; the two config
 /// fields ride `DigiConfig` whole, so they are not. `PROTO_VERSION` 220 → 221,
 /// `VERSION_BYTE` 0x28 → 0x29. A downstream (fork) change.
+/// v222: Contestia — [`sdroxide_types::Mode::Contestia`] appended. It is the
+/// same engine as Olivia (a different scrambling code), so it adds no config
+/// fields: its tones, bandwidth and polarity are `olivia_tones`,
+/// `olivia_bw_hz` and `olivia_reverse`. The mode variant alone does not move an
+/// existing discriminant, but both ends must agree on what the number means, so
+/// the register takes the bump. `PROTO_VERSION` 221 → 222, `VERSION_BYTE` 0x29
+/// → 0x2A. A downstream (fork) change.
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

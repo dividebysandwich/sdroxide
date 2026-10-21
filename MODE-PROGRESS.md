@@ -270,12 +270,35 @@ independently the way Olivia's can.
   DATA/USB instead of falling through its match to a CW setting; the manual's
   mode lists and `--mode` name MFSK.
 
+### Contestia — the engine's other scrambler, as a mode
+
+`Mode::Contestia`, no config fields of its own: it is the same vendored engine as
+Olivia with a different scrambling code, so its tones, bandwidth and polarity are
+`olivia_tones`, `olivia_bw_hz` and `olivia_reverse`. The two modes are the same
+waveform and a station switches between them, so one set of numbers that cannot
+disagree is better than two that can.
+
+- **The flag has to survive a rebuild**, which is the one real bug here: every
+  retune and every polarity change reconstructs the engine, and dropping
+  Contestia's flag there turns a Contestia station into an Olivia one silently —
+  both engines decode *something*. `the_contestia_flag_survives_a_retune_and_a_reversal`
+  pins it, with an Olivia receiver as the control.
+- **The gate** is the corpus through the console's controller: `CONTESTIA.wav`
+  as 4/125 at 1718 Hz reversed reads `TEST THE EAGLE HAS LANDED 12345 SDRBROWN`
+  (`cargo test -p sdroxide-digi --release --lib -- --ignored --nocapture
+  the_contestia_corpus_sample_decodes_through_the_controller`).
+- **Contestia's narrowest is four carriers.** The field is shared with Olivia, so
+  a 2 left over from Olivia is raised to 4 by the controller and the chip row
+  says `(Olivia's 2 → 4)` rather than offering a choice that does not exist.
+- **Receive only**, for the same shape as MFSK but a different reason: our
+  transmitter still sends Olivia's scrambling code, so the panel greys the
+  sending half and the refusal names Contestia rather than MFSK.
+
 ### Next, in the order the prompt gives
 
-MT63 (2K first — 1K/500 are still one Hadamard row high), then Contestia (its
-engine is already vendored and proven, so it is the cheapest of the four), then
-ARDOP (the modem is proven by `ardopcf`'s own recordings; what it needs is a
-panel and, later, the TNC).
+MT63 (2K first — 1K/500 are still one Hadamard row high, and that is a DSP
+chase, not wiring), then ARDOP (the modem is proven by `ardopcf`'s own
+recordings; what it needs is a panel and, later, the TNC).
 
 ## Needs me
 

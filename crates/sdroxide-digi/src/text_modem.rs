@@ -203,6 +203,16 @@ impl TextModemController {
                 o_bw as u32,
                 cfg.olivia_reverse,
             )),
+            Mode::Contestia => RxModem::Olivia(OliviaReceiver::contestia(
+                MODEM_RATE,
+                audio_hz as f64,
+                // Contestia's narrowest is four carriers, and this field is
+                // shared with Olivia — a 2 left over from Olivia would ask for
+                // a mode Contestia does not have.
+                o_tones.max(4),
+                o_bw as u32,
+                cfg.olivia_reverse,
+            )),
             Mode::Thor => RxModem::Thor(ThorRx::new(MODEM_RATE, audio_hz as f64, t_baud)),
             Mode::Mfsk => RxModem::Mfsk(MfskReceiver::new(
                 MODEM_RATE,
@@ -226,8 +236,10 @@ impl TextModemController {
             Mode::Thor => TxModem::Thor(ThorTx::new(MODEM_RATE, audio_hz as f64, t_baud)),
             // MFSK's decoder is ported and reads the corpus; its modulator is
             // not written yet, so there is nothing to hand text to and the
-            // controller refuses the key-up with a reason.
-            Mode::Mfsk => TxModem::Receive,
+            // controller refuses the key-up with a reason. Contestia is the
+            // same shape for a different reason: its transmitter still speaks
+            // Olivia's scrambler.
+            Mode::Mfsk | Mode::Contestia => TxModem::Receive,
             _ => {
                 let mut t = PskTx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
                 t.set_qpsk(p_qpsk);
@@ -327,8 +339,14 @@ impl TextModemController {
             tx_even: false,
             transmitting: self.keyed,
             tx_watchdog: false,
-            tx_refused: self.mode.is_rx_only().then(|| {
-                "MFSK is receive only in this build — the modulator is not written yet".to_string()
+            tx_refused: self.mode.is_rx_only().then(|| match self.mode {
+                Mode::Contestia => {
+                    "Contestia is receive only in this build — the transmitter still sends \
+                     Olivia's scrambling code"
+                        .to_string()
+                }
+                _ => "MFSK is receive only in this build — the modulator is not written yet"
+                    .to_string(),
             }),
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
@@ -602,6 +620,36 @@ mod tests {
         psk.poll(SystemTime::now(), 0.0);
         assert!(psk.status().tx_refused.is_none(), "PSK picked up the refusal");
         assert!(psk.tx_burst_active(), "PSK stopped transmitting");
+    }
+
+    /// The Contestia corpus sample through the controller — the same object the
+    /// console builds. Contestia is Olivia's engine with a different scrambling
+    /// code, so what this catches is the flag reaching the constructor and the
+    /// shared tones/bandwidth being placed where fldigi places them.
+    #[test]
+    #[ignore]
+    fn the_contestia_corpus_sample_decodes_through_the_controller() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/CONTESTIA.wav");
+        let mut reader = hound::WavReader::open(path).expect("the Contestia sample");
+        let spec = reader.spec();
+        let audio: Vec<f32> =
+            reader.samples::<i16>().map(|s| s.expect("sample") as f32 / 32_768.0).collect();
+
+        let mut cfg = DigiConfig::default();
+        cfg.olivia_tones = 4;
+        cfg.olivia_bw_hz = 125.0;
+        cfg.olivia_reverse = true;
+        let mut ctl = TextModemController::new(Mode::Contestia, cfg, spec.sample_rate as f64);
+        ctl.set_audio_hz(1718.0);
+        for chunk in audio.chunks(400) {
+            ctl.on_rx_audio(chunk);
+        }
+        ctl.on_rx_audio(&vec![0.0f32; 16_000]);
+        let text = ctl.status().text_rx;
+        eprintln!("Contestia through the controller: {text:?}");
+        for w in ["EAGLE", "SDRBROWN"] {
+            assert!(text.contains(w), "the controller lost {w}: {text:?}");
+        }
     }
 
     /// The corpus sample through the controller, which is the claim the mode is

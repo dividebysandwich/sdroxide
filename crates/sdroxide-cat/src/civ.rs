@@ -80,6 +80,7 @@ pub fn mode_to_civ(m: Mode) -> u8 {
         | Mode::Olivia
         | Mode::Thor
         | Mode::Mfsk
+        | Mode::Contestia
         | Mode::Fsq
         | Mode::Hell
         | Mode::RfPaint

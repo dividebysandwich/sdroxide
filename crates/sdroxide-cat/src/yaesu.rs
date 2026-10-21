@@ -342,6 +342,7 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Olivia
         | Mode::Thor
         | Mode::Mfsk
+        | Mode::Contestia
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf

@@ -1,4 +1,4 @@
-//! The keyboard-mode panel: PSK, RTTY, Olivia, THOR and MFSK, plus
+//! The keyboard-mode panel: PSK, RTTY, Olivia, Contestia, THOR and MFSK, plus
 //! Hellschreiber's raster.
 //!
 //! All of these are a received-text pane over a transmit buffer, so they share
@@ -662,7 +662,13 @@ impl SdroxideApp {
         let mode = self.state.rx[0].mode;
         if !matches!(
             mode,
-            Mode::Psk | Mode::Rtty | Mode::RttyFm | Mode::Olivia | Mode::Thor | Mode::Mfsk
+            Mode::Psk
+                | Mode::Rtty
+                | Mode::RttyFm
+                | Mode::Olivia
+                | Mode::Contestia
+                | Mode::Thor
+                | Mode::Mfsk
         ) {
             return; // anything else has no per-mode settings
         }
@@ -747,13 +753,24 @@ impl SdroxideApp {
                         changed = true;
                     }
                 }
-                Mode::Olivia => {
+                Mode::Olivia | Mode::Contestia => {
+                    let contestia = mode == Mode::Contestia;
                     cap(ui, "Tones");
-                    for t in [2u8, 4, 8, 16, 32, 64] {
+                    // Contestia's narrowest is four carriers. The two modes
+                    // share this field — they are the same engine and the same
+                    // waveform — so a 2 left over from Olivia is raised to 4 by
+                    // the controller, and the row says so rather than showing a
+                    // choice that does not exist.
+                    let tones: &[u8] =
+                        if contestia { &[4, 8, 16, 32, 64] } else { &[2, 4, 8, 16, 32, 64] };
+                    for &t in tones {
                         if ui.selectable_label(cfg.olivia_tones == t, t.to_string()).clicked() {
                             cfg.olivia_tones = t;
                             changed = true;
                         }
+                    }
+                    if contestia && cfg.olivia_tones < 4 {
+                        cap(ui, &format!("(Olivia's {} → 4)", cfg.olivia_tones));
                     }
                     ui.add_space(8.0);
                     cap(ui, "BW");

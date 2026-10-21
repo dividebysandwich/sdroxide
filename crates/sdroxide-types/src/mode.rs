@@ -450,6 +450,16 @@ pub enum Mode {
     ///
     /// Appended for the same reason as [`Mode::Hell`].
     Mfsk,
+    /// Contestia — Olivia's waveform with a different scrambler and a five-bit
+    /// shift, so the two share one engine: the tones and bandwidth come from the
+    /// same `DigiConfig` fields, and this is the flag that says which scrambling
+    /// code to run.
+    ///
+    /// Receive only for now, for the same reason as [`Mode::Mfsk`]: the
+    /// transmitter still speaks Olivia's scrambler.
+    ///
+    /// Appended for the same reason as [`Mode::Hell`].
+    Contestia,
 }
 
 /// The bands on which a mode that keeps phone practice rides the lower
@@ -479,7 +489,7 @@ const SSTV_LSB_BELOW_HZ: f64 = 10_000_000.0;
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 55] = [
+    pub const ALL: [Mode; 56] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -519,6 +529,7 @@ impl Mode {
         Mode::Olivia,
         Mode::Thor,
         Mode::Mfsk,
+        Mode::Contestia,
         Mode::Fsq,
         Mode::AtChat,
         Mode::Hell,
@@ -566,7 +577,7 @@ impl Mode {
     /// packet, RF Paint). All are USB underneath except RIFP, VHF packet and
     /// VHF SSTV, which frequency-modulate the carrier, and ACARS, which is
     /// received in AM.
-    pub const DIGITAL: [Mode; 36] = [
+    pub const DIGITAL: [Mode; 37] = [
         Mode::Ft8,
         Mode::Ft4,
         Mode::Ft2,
@@ -585,6 +596,7 @@ impl Mode {
         Mode::Olivia,
         Mode::Thor,
         Mode::Mfsk,
+        Mode::Contestia,
         Mode::Fsq,
         Mode::AtChat,
         Mode::Hell,
@@ -625,6 +637,7 @@ impl Mode {
                 | Mode::Olivia
                 | Mode::Thor
                 | Mode::Mfsk
+                | Mode::Contestia
                 | Mode::Fsq
                 | Mode::AtChat
                 | Mode::Hell
@@ -808,6 +821,7 @@ impl Mode {
                 | Mode::Olivia
                 | Mode::Thor
                 | Mode::Mfsk
+                | Mode::Contestia
                 | Mode::Fsq
         )
     }
@@ -1035,6 +1049,9 @@ impl Mode {
                 // its modulator is not built yet: the panel greys the sending
                 // half rather than handing text to a modem that has none.
                 | Mode::Mfsk
+                // Contestia's transmitter still sends Olivia's scrambling code,
+                // so it is offered for reading only until that is written.
+                | Mode::Contestia
         )
     }
 
@@ -1104,6 +1121,7 @@ impl Mode {
             Mode::Olivia => "OLIVIA",
             Mode::Thor => "THOR",
             Mode::Mfsk => "MFSK",
+            Mode::Contestia => "CONTESTIA",
             Mode::Fsq => "FSQ",
             Mode::Hell => "HELL",
             Mode::RfPaint => "RFPAINT",
@@ -1176,6 +1194,7 @@ impl Mode {
                 | Mode::Olivia
                 | Mode::Thor
                 | Mode::Mfsk
+                | Mode::Contestia
                 | Mode::Fsq
                 | Mode::Hell
                 | Mode::RfPaint
@@ -1290,6 +1309,7 @@ impl Mode {
             | Mode::Olivia
             | Mode::Thor
             | Mode::Mfsk
+            | Mode::Contestia
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint => (100.0, 3300.0),
@@ -1476,7 +1496,7 @@ impl Mode {
     /// hertz either side has to have the signal *put* there, which means the
     /// click moves the dial, exactly as CW does with its sidetone pitch.
     pub fn holds_audio_centre(self) -> bool {
-        matches!(self, Mode::Olivia | Mode::Thor | Mode::Mfsk | Mode::Fsq)
+        matches!(self, Mode::Olivia | Mode::Thor | Mode::Mfsk | Mode::Contestia | Mode::Fsq)
     }
 
     /// The audio centre those modes listen at, in Hz.
@@ -1575,6 +1595,7 @@ impl Mode {
             | Mode::Olivia
             | Mode::Thor
             | Mode::Mfsk
+            | Mode::Contestia
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
@@ -1844,6 +1865,7 @@ impl Mode {
             | Mode::Olivia
             | Mode::Thor
             | Mode::Mfsk
+            | Mode::Contestia
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
@@ -2517,6 +2539,7 @@ mod tests {
             (Mode::Ale, 53),
             (Mode::Dab, 54),
             (Mode::Mfsk, 55),
+            (Mode::Contestia, 56),
         ];
         for (mode, index) in pinned {
             assert_eq!(mode as u8, index, "{} moved", mode.label());
@@ -2571,7 +2594,7 @@ mod tests {
         // rather than a dial mode. Listing it here would put a chip in the mode
         // cycle that needs a 1.5 MHz front end to do anything.
         let absent = [Mode::Dab];
-        let last = Mode::Mfsk as u8;
+        let last = Mode::Contestia as u8;
         for i in 0..=last {
             let present = Mode::ALL.iter().filter(|m| **m as u8 == i).count();
             let want = if absent.iter().any(|m| *m as u8 == i) { 0 } else { 1 };

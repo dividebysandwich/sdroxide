@@ -1784,7 +1784,7 @@ impl SdroxideApp {
         let markers: Vec<f32> = if mode == Mode::Rtty {
             let sh = self.digi_status.as_ref().map(|s| s.config.rtty_shift_hz).unwrap_or(170.0);
             vec![audio_hz - sh / 2.0, audio_hz + sh / 2.0]
-        } else if mode == Mode::Olivia {
+        } else if mode == Mode::Olivia || mode == Mode::Contestia {
             let bw = self.digi_status.as_ref().map(|s| s.config.olivia_bw_hz).unwrap_or(1000.0);
             vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
         } else if mode == Mode::Thor {

@@ -143,6 +143,7 @@ impl<'a> Speaker<'a> {
             Mode::Olivia => "olivia",
             Mode::Thor => "thor",
             Mode::Mfsk => "m f s k",
+            Mode::Contestia => "contessia",
             Mode::Fsq => "F S Q",
             Mode::RfPaint => "R F paint",
             Mode::Rade => "rade",
