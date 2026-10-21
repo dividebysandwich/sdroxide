@@ -122,3 +122,17 @@ is which, in a table, rather than by memory.
 
 Hell, WEFAX and the other picture modes are not verifiable this way: they deliver
 an image, so there is no text for a script to compare against.
+
+## When a mode is too slow for the text
+
+Past a three-minute transmission the long message is replaced with a short one:
+
+```
+ AAA SDRBROWN TEST
+```
+
+The manifest records which text each sample carried (`text`, plus `shortened` when
+it happened), and `verify.py` scores a sample against **its own** text — a short
+sample is never marked down for words it was never sent. The point is that every
+sample carries a complete message with a known start and a known end, rather than
+a prefix of a longer one.

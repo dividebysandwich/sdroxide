@@ -39,6 +39,12 @@ XMLRPC = "http://127.0.0.1:7362"
 # The operator's text, exactly. Leading and trailing spaces are kept: they give
 # the decoder something to settle on at both ends.
 TEXT = " AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ "
+# For a mode too slow to carry the whole thing: a complete message rather than a
+# prefix of a longer one, so every sample has a known start and a known end.
+SHORT_TEXT = " AAA SDRBROWN TEST "
+# Longest transmission worth making for one sample. Past this, the text is
+# shortened instead — a three-minute key-down to prove a point is not worth it.
+MAX_WINDOW_S = 180.0
 
 # Modes that do not carry text, with the reason recorded in the manifest.
 NOT_TEXT = {
@@ -242,6 +248,14 @@ def sweep_one(p, mode, args, index, total):
         entry["note"] = f"fldigi reported {entry['fldigi_mode']}"
 
     tx_seconds, secs_per_char = tx_window(p, args.text, args.secs_per_char)
+    text = args.text
+    if tx_seconds >= MAX_WINDOW_S - 1.0:
+        # Too slow for the long message: fall back to the short one, which fits
+        # in every mode fldigi has.
+        text = getattr(args, "short_text", None) or SHORT_TEXT
+        tx_seconds, secs_per_char = tx_window(p, text, args.secs_per_char)
+        entry["shortened"] = True
+    entry["text"] = text
     entry["tx_seconds"] = round(tx_seconds, 1)
     capture = tx_seconds + 10.0
     rec = record(args.hz, args.rate, capture, args.gain, iqpath)
@@ -249,7 +263,7 @@ def sweep_one(p, mode, args, index, total):
     try:
         p.main.rx()
         p.text.clear_tx()
-        p.text.add_tx(args.text)
+        p.text.add_tx(text)
         p.main.tx()
         time.sleep(tx_seconds)
     finally:
@@ -289,7 +303,7 @@ def sweep_one(p, mode, args, index, total):
         w.setsampwidth(2)
         w.setframerate(8000)
         w.writeframes(np.clip(wav * 32767, -32768, 32767).astype("<i2").tobytes())
-    expected = secs_per_char * len(args.text)
+    expected = secs_per_char * len(text)
     if burst < expected * 0.9:
         verdict = "TRUNCATED"
     elif burst > expected * 1.8:
@@ -318,7 +332,7 @@ def sweep_one(p, mode, args, index, total):
         for reverse in (0, 1):
             res = subprocess.run(
                 DECODER + [wavpath, str(tones), str(bw), f"{centre:.0f}", str(reverse),
-                           *args.text.split()],
+                           *text.split()],
                 capture_output=True, text=True, timeout=300,
             )
             text = res.stdout.strip()
@@ -340,6 +354,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--resume", action="store_true", help="skip modes already in the manifest")
     ap.add_argument("--text", default=TEXT)
+    ap.add_argument("--short-text", default=SHORT_TEXT, help="used when a mode is too slow")
     ap.add_argument("--hz", type=float, default=27_415_000.0)
     ap.add_argument("--rate", type=int, default=250_000)
     ap.add_argument("--gain", type=int, default=55)

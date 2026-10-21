@@ -30,6 +30,7 @@ DECODE_ANY = os.path.join(ROOT, "target", "release", "examples", "decode_any")
 DECODE_OLIVIA = os.path.join(ROOT, "target", "release", "examples", "decode_file")
 TEXT = " AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ "
 WORDS = "AAA EAGLE LANDED SDRBROWN".split()
+SHORT_WORDS = "AAA SDRBROWN TEST".split()
 
 
 def baud_for(mode):
@@ -61,7 +62,22 @@ def decoder_for(mode):
     return None
 
 
-def score(out):
+def expected_words(row):
+    """The words this sample was supposed to carry.
+
+    Most carry the long message; a mode too slow for it carries the short one,
+    and the manifest says which — so a short sample is not scored against words
+    it never sent.
+    """
+    text = (row.get("text") or "").strip()
+    if "EAGLE" in text:
+        return WORDS
+    if text:
+        return text.split()
+    return WORDS
+
+
+def score(out, words):
     """Which of the expected words came back, and how many.
 
     A binary pass hides the useful middle: "3 of 6 words" says the demodulator is
@@ -80,7 +96,7 @@ def run(binary, args):
         return f"<{type(exc).__name__}>"
 
 
-def verify_one(row):
+def verify_one(row, words):
     mode = row["mode"]
     wav = os.path.join(OUT, row.get("wav", ""))
     if not os.path.exists(wav):
@@ -105,9 +121,10 @@ def verify_one(row):
         for centre in centres:
             for reverse in (0, 1):
                 out = run(DECODE_OLIVIA, [wav, str(tones), str(bw), str(centre), str(reverse)])
-                found, n = score(out)
+                found, n = score(out, words)
                 best = {"decoder": "olivia", "centre": centre, "reverse": reverse,
-                        "decoded": out[:200], "passed": n == len(WORDS), "words": found, "words_of": len(WORDS)}
+                        "decoded": out[:200], "passed": n == len(words), "words": found,
+                        "words_of": len(words)}
                 if ok:
                     return {"mode": mode, **best}
         return {"mode": mode, **best}
@@ -128,8 +145,9 @@ def verify_one(row):
             if extra:
                 args.append(extra)
             out = run(DECODE_ANY, args)
-            found, n = score(out)
-            best = {"decoder": "psk", "centre": centre, "decoded": out[:200], "passed": n == len(WORDS), "words": found, "words_of": len(WORDS)}
+            found, n = score(out, words)
+            best = {"decoder": "psk", "centre": centre, "decoded": out[:200],
+                    "passed": n == len(words), "words": found, "words_of": len(words)}
             if ok:
                 return {"mode": mode, **best}
         return {"mode": mode, **best}
@@ -145,9 +163,10 @@ def verify_one(row):
             for extra in ("", "reverse"):
                 args = [wav, "rtty", str(centre), str(baud), str(shift)] + ([extra] if extra else [])
                 out = run(DECODE_ANY, args)
-                found, n = score(out)
+                found, n = score(out, words)
                 best = {"decoder": "rtty", "centre": centre, "reverse": bool(extra),
-                        "decoded": out[:200], "passed": n == len(WORDS), "words": found, "words_of": len(WORDS)}
+                        "decoded": out[:200], "passed": n == len(words), "words": found,
+                        "words_of": len(words)}
                 if ok:
                     return {"mode": mode, **best}
         return {"mode": mode, **best}
@@ -199,7 +218,7 @@ def main():
         for r in rows:
             if r.get("skipped") or r.get("error"):
                 continue
-            line = json.dumps(verify_one(r))
+            line = json.dumps(verify_one(r, expected_words(r)))
             out.write(line + "\n")
             out.flush()
             state = "PASS" if json.loads(line).get("passed") else "--"
