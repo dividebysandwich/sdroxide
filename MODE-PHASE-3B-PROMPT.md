@@ -19,9 +19,11 @@ rules. This file is what changed yesterday and what to do first today.
 
 `main` carries the PSK coded families, **receive-only and not wired into the
 program** — `PROTO_VERSION` is still **226**, `VERSION_BYTE` **0x2E**,
-**115 commits ahead of `origin`, none pushed**. Five commits from yesterday:
+**116 commits ahead of `origin`, none pushed**. The phase-3 commits so far:
 `5f1498b1` (the receivers), `9fbe3d68` (the multi-carrier passband), `1da2ce8c`
-and `cbfd1a3d` (journal), `4686683e` (`tools/psk-ref`).
+and `cbfd1a3d` (journal), `4686683e` (`tools/psk-ref`), `13f2c105` (this brief).
+Check the count rather than trusting it — another session has been committing in
+this same checkout.
 
 In `psk.rs`, and exported from `sdroxide-dsp`:
 

@@ -15,9 +15,9 @@
 > [`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md) was what a session started
 > with: the PSK coded families (BPSK63F, the R set, the C/RC multi-carrier
 > modes), then the loose ends behind them. Its "current truth" section is the
-> state — four families wired receive-only, `PROTO_VERSION` 226, one hundred
-> commits local and none pushed — and its "do not re-derive" list is the day of
-> measurement traps that cost this phase its time. [`MODE-PROGRESS.md`](MODE-PROGRESS.md)
+> state **as it stood then** — four families wired receive-only, `PROTO_VERSION`
+> 226, a hundred commits local and none pushed — and its "do not re-derive" list
+> is the day of measurement traps that cost this phase its time. [`MODE-PROGRESS.md`](MODE-PROGRESS.md)
 > is the journal, one line per mode. **The dated sections below are a history**,
 > newest first: where they disagree with that brief, the brief is right.
 >
