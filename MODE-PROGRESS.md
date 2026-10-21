@@ -226,7 +226,7 @@ Same port and the same trace, all nine samples; DominoEX has no FEC to hide behi
 
 ## Needs me
 
-Nothing blocks the work above — every mode has a measurement. Two things would move the ones that do not decode:
+Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:
 
 - **A second MFSK8 recording.** The corpus one loses `TEST THE EAGLE HAS LANDED` in one span while the preamble and the tail read at every tuning; the decoder is the one the other seven MFSK variants use.
 - **An off-air ARDOP recording.** The reference-made WAVs prove the modem against `ardopcf`'s own modulator; a live or third-party recording would prove it against a station, and would also exercise the RS correction on real fading.
