@@ -68,6 +68,25 @@ const DOMINO_CODE: [[u8; 3]; 256] = [
     [7, 14, 7], [7, 15, 1], [7, 15, 2], [7, 15, 3], [7, 15, 4], [7, 15, 5], [7, 15, 6], [7, 15, 7],
 ];
 
+/// The symbol a tone step carries.
+///
+/// IFK+ sends `step = 2 + symbol (mod 18)` and the tones sit at *absolute*
+/// positions, so a step that wraps around the bank arrives as a negative
+/// difference: `-16` is symbol 0 and `+1` is symbol 17. Anything outside
+/// `-16..=19` is not a step at all.
+///
+/// fldigi's `dominoex::decodesymbol` is this arithmetic (`c = round(fdiff) - 2`,
+/// `if (c < 0) c += NUMTONES`). An earlier version here instead declared the raw
+/// differences 0 and 1 "out of range", which threw away symbols 16 and 17 — one
+/// symbol in nine, on every transmission.
+fn step_symbol(raw: i32) -> Option<u8> {
+    let mut c = raw - 2;
+    if c < 0 {
+        c += TONES as i32;
+    }
+    (0..TONES as i32).contains(&c).then_some(c as u8)
+}
+
 /// One IFK variant. `ds` is the tone spacing in FFT bins times the reference's
 /// base, `depth` the interleaver depth (THOR only), `k15` the longer code.
 #[derive(Clone, Copy, Debug)]
@@ -575,12 +594,10 @@ impl IfkRx {
             fdiff = -fdiff;
         }
         self.prev_pos = Some(pos);
-        let mut c = fdiff.round() as i32;
-        let out_of_range = fdiff.abs() > 17.5 || c == 0 || c == 1 || c > 17 || c < -16;
-        c -= 2;
-        if c < 0 {
-            c += TONES as i32;
-        }
+        let raw = fdiff.round() as i32;
+        let symbol = step_symbol(raw);
+        let out_of_range = symbol.is_none();
+        let c = symbol.unwrap_or(0) as i32;
         let sig = self.ratio >= LOCK_RATIO;
         if self.variant.thor {
             let mut s = [0u8; 4];
@@ -692,6 +709,27 @@ mod tests {
 
     /// Every THOR recording, measured. The variant table is the reference's; the
     /// corpus has two names it does not (THOR25, THOR44, THOR56, THORM), which
+    /// Every tone step maps to its symbol, including the one that wraps.
+    ///
+    /// The wrap is the half of the alphabet that was missing: with the raw
+    /// differences 0 and 1 called "out of range", symbols 16 and 17 were thrown
+    /// away on every transmission, and this fails on that version.
+    #[test]
+    fn every_step_maps_to_its_symbol_and_the_wrap_is_kept() {
+        for s in 0..TONES as i32 {
+            assert_eq!(step_symbol(2 + s), Some(s as u8), "step {}", 2 + s);
+            assert_eq!(
+                step_symbol(2 + s - TONES as i32),
+                Some(s as u8),
+                "wrapped step {}",
+                2 + s - TONES as i32
+            );
+        }
+        // A bin and a half outside the bank is not a step.
+        assert_eq!(step_symbol(20), None);
+        assert_eq!(step_symbol(-17), None);
+    }
+
     /// are reported by the test rather than guessed at.
     #[test]
     #[ignore]

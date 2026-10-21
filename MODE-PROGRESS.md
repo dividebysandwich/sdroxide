@@ -453,11 +453,37 @@ the head of a transmission to its own lock time**, which is a word or two at 31
 baud and a third of the message at 1000. BPSK125/250/500 acquire fast enough that
 the corpus never shows it.
 
+### THOR / DominoEX — one real bug found, and the fault is narrower
+
+Twenty-four corpus modes still read nothing. One genuine bug is now fixed, from
+fldigi's own `dominoex::decodesymbol`:
+
+- The step is `2 + symbol (mod 18)` and the tones sit at absolute positions, so a
+  step that wraps arrives as a **negative** difference — `-16` is symbol 0 and
+  `+1` is symbol 17. fldigi handles that with `if (c < 0) c += NUMTONES`; this
+  port instead declared the raw differences 0 and 1 "out of range", which threw
+  away symbols 16 and 17 — **one symbol in nine, on every transmission**. The
+  mapping is now the reference's arithmetic (`step_symbol`), and
+  `every_step_maps_to_its_symbol_and_the_wrap_is_kept` was verified failing on
+  the old rule: `step 18 → None, right Some(16)`.
+- **Still 0/24 — but the measurement has moved, which is the point.** THOR16 at
+  1730 Hz shows the front end finding the signal cleanly: 19.5 dB peak-to-mean
+  across the bank and 205 characters of text. So the bank, the spacing and the
+  symbol clock are **not** the fault, which the previous "no text at all" verdict
+  could not tell apart from a broken front end. What comes out is garbage
+  *characters*, so the fault is between the tone positions and the symbols.
+- **Next step, and it is a different method:** dump the per-symbol step trace for
+  one recording and compare it against the reference's `decodesymbol` output on
+  the same audio — the method that settled MFSK16's varicode. A step trace names
+  a convention difference; decoded text cannot.
+- Nothing is claimed for these modes and none of them is offered.
+
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:
 
 - **A second MFSK8 recording.** The corpus one loses `TEST THE EAGLE HAS LANDED` in one span while the preamble and the tail read at every tuning; the decoder is the one the other seven MFSK variants use.
 - **A known-good FSQ recording** (new, 2026-10-21). The corpus sample cannot settle FSQ: an FSQ signal is one tone at a time and that recording never has a dominant tone at any centre, spacing or speed, and nothing has ever read it back. Thirty seconds on the bench turns "alphabet fixed, decode unproven" into a gate.
+- **A bench recording of BPSK1000 for the lock-time question** (2026-10-21). The operator's own offer: the RSP1 can record while fldigi plays into the CRT. What it settles is whether the receiver's lost head is the receiver (a clean, known transmission is decoded from the start) or the sample (the sweep's own window). The rig needs a hand for the frequency and to arm it.
 - **An off-air ARDOP recording.** The reference-made WAVs prove the modem against `ardopcf`'s own modulator; a live or third-party recording would prove it against a station, and would also exercise the RS correction on real fading.
 - **A known-good fldigi on the same box for the THOR/DominoEX tone-step convention.** The port is in `ifk.rs` and reproduces OnAir's receiver, but the steps do not match the air. The corpus cannot say which side is wrong without a decoder to compare against on the same recording.
