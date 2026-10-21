@@ -51,6 +51,9 @@
     // giving back — rebuilding again would churn through contexts and never
     // make a sound, so after a couple of tries the operator is told instead.
     let stalledRebuilds = 0;
+    // Why the restart bar is up, so its wording matches the cause rather
+    // than always blaming a window that was in the background.
+    let restartReason = "stopped";
 
     // --- following the output device ------------------------------------
     //
@@ -131,18 +134,34 @@
     // click anywhere, and this is the only thing on screen that says so.
     let restartBar = null;
 
-    function wantRestartBar() {
+    function restartBarText() {
+        if (restartReason === "device") {
+            return "Audio output changed (new device connected). Click here to start the sound on it.";
+        }
+        if (restartReason === "background") {
+            return "Sound stopped while this window was in the background. Click here to start it again.";
+        }
+        return "Sound stopped. Click here to start it again.";
+    }
+
+    function wantRestartBar(reason) {
+        if (reason) restartReason = reason;
         // The Sound welcome hint is the other thing that occupies the top of a
         // page whose sound is not running; it says what to do, so this would
         // only be a second voice saying it.
-        if (restartBar || hint || location.search.includes("view=solar")) return;
+        if (hint || location.search.includes("view=solar")) return;
+        if (restartBar) {
+            restartBar.textContent = restartBarText();
+            return;
+        }
         const put = () => {
-            if (restartBar) return;
+            if (restartBar) {
+                restartBar.textContent = restartBarText();
+                return;
+            }
             const bar = document.createElement("div");
             bar.style.cssText = BAR_CSS;
-            bar.textContent =
-                "Sound stopped while this window was in the background. " +
-                "Click here to start it again.";
+            bar.textContent = restartBarText();
             bar.addEventListener("click", () => {
                 hideRestartBar();
                 restartAudio("the sound banner was clicked");
@@ -159,6 +178,7 @@
             restartBar.remove();
             restartBar = null;
         }
+        restartReason = "stopped";
     }
 
     // Until the first gesture there is no context at all, so the page is
@@ -332,7 +352,10 @@
                 // Closed, and a hidden page can neither use nor keep a context:
                 // rebuilding now would be work the browser undoes, and the
                 // moment to do it is the moment the operator is back.
-                if (!document.hidden) rebuildAudio("the browser closed the audio context");
+                if (!document.hidden) {
+                    restartReason = document.hidden ? "background" : "stopped";
+                    rebuildAudio("the browser closed the audio context");
+                }
             } else {
                 resumeCtx();
             }
@@ -392,6 +415,7 @@
     /// limit, which exists for a rebuild that cannot succeed.
     function rerouteAudio(reason) {
         rerouteDue = false;
+        restartReason = "device";
         // No playback yet: the first context has not been built, and it will
         // open the current default when the gesture comes.
         if (!ctx) return;
@@ -445,6 +469,7 @@
         // is the answer to it rather than a resume: the context in force is on
         // a device that is gone.
         if (rerouteDue) {
+            restartReason = "device";
             rerouteAudio(reason + ": the output device changed");
             return;
         }
@@ -629,6 +654,7 @@
         if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
             navigator.mediaDevices.addEventListener("devicechange", () => {
                 rerouteDue = true;
+                restartReason = "device";
                 if (document.hidden) return;
                 scheduleReroute();
             });
@@ -638,7 +664,10 @@
         // tears its audio down. Either way the way back is the same, and it is
         // the only moment at which rebuilding is worth attempting.
         document.addEventListener("visibilitychange", () => {
-            if (!document.hidden) cameBack("the page was shown again");
+            if (!document.hidden) {
+                if (!rerouteDue) restartReason = "background";
+                cameBack("the page was shown again");
+            }
         });
         // The Page Lifecycle API: `freeze` stops a hidden page's tasks without
         // unloading it (Chrome does this to background tabs), and `resume` is
