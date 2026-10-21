@@ -946,9 +946,14 @@ pub struct UiSettings {
     #[serde(default = "default_memory_waterfall_lanes")]
     pub memory_waterfall_lanes: usize,
     /// Whether a memory's folder name is written on its waterfall mark
-    /// (`Mem: folder / name`) or only the station name (`Mem: name`).
+    /// (`folder / name`) or only the station name (`name`).
     #[serde(default = "default_true")]
     pub memory_waterfall_show_folder: bool,
+    /// The colour a memory's label is painted in on the waterfall. Defaults to
+    /// the theme's "good" green; the operator may pick another in the MEMORIES
+    /// window, and the choice is kept.
+    #[serde(default = "default_memory_waterfall_color")]
+    pub memory_waterfall_color: [u8; 3],
     /// How the FT8/FT4 decode list orders the stations. This screen's
     /// preference like [`UiSettings::memory_sort`] above, and for the same
     /// reason: the decodes are the station's, the order they are read in is
@@ -1382,6 +1387,10 @@ fn default_memory_waterfall_lanes() -> usize {
     4
 }
 
+fn default_memory_waterfall_color() -> [u8; 3] {
+    [70, 224, 125]
+}
+
 /// The fill under the spectrum trace starts as the line's own cyan.
 fn default_spectrum_fill_color() -> [u8; 3] {
     [120, 220, 255]
@@ -1552,6 +1561,7 @@ impl Default for UiSettings {
             memory_sort_desc: false,
             memory_waterfall_lanes: 4,
             memory_waterfall_show_folder: true,
+            memory_waterfall_color: [70, 224, 125],
             decode_sort: crate::DecodeSort::None,
             // Strongest and farthest first, which is the useful end of both
             // numbers; the Country order flips this when it is picked.

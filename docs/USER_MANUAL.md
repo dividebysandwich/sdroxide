@@ -341,8 +341,8 @@ one region and not another (3.900–4.000 and 7.200–7.300 are broadcasting in
 Regions 1 and 3 and amateur in Region 2).
 
 **Memory marks.** Every stored memory whose frequency falls on the visible span
-is labelled just inside the band-plan strip, reading `Mem: folder / name` — or
-`Mem: name` for one that is not filed in a folder — on a thin green line drawn
+is labelled just inside the band-plan strip, reading `folder / name` — or
+`name` for one that is not filed in a folder — on a thin line drawn
 at the frequency itself. Channels close together stagger into stacked rows
 rather than overprinting; a name too long for its label is cut short with an
 ellipsis, and anything that would need a fifth row is left out.
