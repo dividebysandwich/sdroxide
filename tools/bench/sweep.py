@@ -389,7 +389,7 @@ def sweep_one(p, mode, args, index, total):
         tones, bw = parsed
         for reverse in (0, 1):
             res = subprocess.run(
-                DECODER + [wavpath, str(tones), str(bw), f"{centre:.0f}", str(reverse),
+                DECODER + [wavpath, str(tones), str(bw), f"{block_hz:.0f}", str(reverse),
                            *text.split()],
                 capture_output=True, text=True, timeout=300,
             )

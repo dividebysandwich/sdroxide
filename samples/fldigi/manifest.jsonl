@@ -139,3 +139,19 @@
 {"mode": "OLIVIA-4/125", "error": "ConnectionRefusedError: [Errno 111] Connection refused"}
 {"mode": "OLIVIA-4/250", "error": "ConnectionRefusedError: [Errno 111] Connection refused"}
 {"mode": "OLIVIA-4/500", "error": "ConnectionRefusedError: [Errno 111] Connection refused"}
+{"mode": "OLIVIA-4/1K", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-4/2K", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-8/125", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-8/250", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-8/500", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-8/1K", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-8/2K", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-16/500", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-16/1K", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-16/2K", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-32/1K", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-32/2K", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-64/500", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-64/1K", "error": "NameError: name 'centre' is not defined"}
+{"mode": "OLIVIA-64/2K", "error": "NameError: name 'centre' is not defined"}
+{"mode": "HELLX9", "index": 1, "of": 1, "fldigi_mode": "HELLX9", "text": " AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ ", "tx_seconds": 46.2, "tones": null, "bandwidth": null, "wav": "HELLX9.wav", "peak_hz": 34047, "block_hz": 1552, "centre_hz": 1552, "level_dbfs": -180.0, "burst_seconds": 2.1, "expected_seconds": 27.5, "verdict": "unverified", "error": "nothing transmitted (level -180 dBFS)"}
