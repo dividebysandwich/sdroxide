@@ -36,6 +36,9 @@ pub struct SpotManager {
     /// Latest spots per feed kind (each feed replaces its own set).
     by_kind: HashMap<SpotKind, Vec<Spot>>,
     last_snapshot: Vec<Spot>,
+    /// Rolling RBN spot set, synthesized from the PropPaths RBN emits, so
+    /// the skimmer spots can be drawn on the waterfall. Age-pruned.
+    rbn_spots: Vec<Spot>,
     /// Band-opening analysis over the feeds' raw spots (the 3-hour baseline is
     /// longer than the display age, so this ingests the un-pruned sets), plus
     /// any evidence pushed in by [`SpotManager::feed_openings`].
@@ -119,6 +122,7 @@ impl SpotManager {
             event_rx,
             by_kind: HashMap::new(),
             last_snapshot: Vec::new(),
+            rbn_spots: Vec::new(),
             band_openings: BandOpeningTracker::new(),
             last_band_openings: Vec::new(),
             openings_band: None,
@@ -472,8 +476,61 @@ impl SpotManager {
             self.by_kind.insert(kind, spots);
             got_feed = true;
         }
-        let mut out: Vec<NetEvent> = self.event_rx.try_iter().collect();
-        if got_feed || self.feed_dirty || out.iter().any(|e| matches!(e, NetEvent::Status(_))) {
+    let mut out: Vec<NetEvent> = self.event_rx.try_iter().collect();
+    // Synthesize waterfall spots from RBN propagation paths, so RBN 1/2
+    // labels can be drawn on the panadapter (not only on the propagation map).
+    let mut rbn_changed = false;
+    for ev in &out {
+        if let NetEvent::PropPaths(paths) = ev {
+            for p in paths {
+                let call = p.key.split('>').nth(1).unwrap_or(&p.key).trim().to_string();
+                if call.is_empty() {
+                    continue;
+                }
+                let spot = Spot {
+                    id: Spot::make_id(SpotKind::Rbn, &call, p.freq_hz),
+                    kind: SpotKind::Rbn,
+                    freq_hz: p.freq_hz,
+                    call,
+                    spotter: p.key.split('>').next().unwrap_or("").trim().to_string(),
+                    mode: String::new(),
+                    comment: p.snr_db.map(|s| format!("{s:.0} dB")).unwrap_or_default(),
+                    reference: None,
+                    grid: None,
+                    loc: None,
+                    when_utc: p.at_utc,
+                    snr_db: p.snr_db.map(|s| s.round() as i16),
+                };
+                if let Some(existing) = self.rbn_spots.iter_mut().find(|s| s.id == spot.id) {
+                    *existing = spot;
+                } else {
+                    self.rbn_spots.push(spot);
+                }
+                rbn_changed = true;
+            }
+        }
+    }
+    let now = now_utc();
+    let before = self.rbn_spots.len();
+    self.rbn_spots.retain(|s| now - s.when_utc < 600);
+    if self.rbn_spots.len() != before {
+        rbn_changed = true;
+    }
+    if self.rbn_spots.len() > 200 {
+        let drop = self.rbn_spots.len() - 200;
+        self.rbn_spots.drain(..drop);
+        rbn_changed = true;
+    }
+    if rbn_changed {
+        if self.rbn_spots.is_empty() {
+            self.by_kind.remove(&SpotKind::Rbn);
+        } else {
+            self.by_kind.insert(SpotKind::Rbn, self.rbn_spots.clone());
+        }
+        self.feed_dirty = true;
+    }
+    if got_feed || self.feed_dirty || out.iter().any(|e| matches!(e, NetEvent::Status(_))) {
+
             self.feed_dirty = false;
             let now = now_utc();
             // The band-opening analysis ingests the feeds' own sets — not the
