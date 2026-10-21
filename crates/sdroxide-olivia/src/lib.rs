@@ -345,6 +345,72 @@ mod tests {
         assert_eq!(best.0, words.len(), "Contestia did not read its sample: {:?}", best.5);
     }
 
+    /// Every Olivia variant in the corpus, with its own tones and bandwidth
+    /// read from the name and a small centre search. The four that do not
+    /// decode are named; the rest are the engine's own proof.
+    #[test]
+    #[ignore]
+    fn the_corpus_olivia_variants_are_measured() {
+        use std::path::Path;
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi");
+        let table: &[(&str, usize, u32)] = &[
+            ("OLIVIA-4-125", 4, 125),
+            ("OLIVIA-4-250", 4, 250),
+            ("OLIVIA-4-500", 4, 500),
+            ("OLIVIA-4-1K", 4, 1000),
+            ("OLIVIA-4-2K", 4, 2000),
+            ("OLIVIA-8-125", 8, 125),
+            ("OLIVIA-8-250", 8, 250),
+            ("OLIVIA-8-500", 8, 500),
+            ("OLIVIA-8-1K", 8, 1000),
+            ("OLIVIA-8-2K", 8, 2000),
+            ("OLIVIA-16-500", 16, 500),
+            ("OLIVIA-16-1K", 16, 1000),
+            ("OLIVIA-16-2K", 16, 2000),
+            ("OLIVIA-32-1K", 32, 1000),
+            ("OLIVIA-32-2K", 32, 2000),
+            ("OLIVIA-64-500", 64, 500),
+            ("OLIVIA-64-1K", 64, 1000),
+            ("OLIVIA-64-2K", 64, 2000),
+        ];
+        let mut ok = 0;
+        for &(name, tones, bw) in table {
+            let path = format!("{root}/{name}.wav");
+            if !Path::new(&path).exists() {
+                eprintln!("{name}: no sample");
+                continue;
+            }
+            let mut reader = hound::WavReader::open(&path).expect("open");
+            let spec = reader.spec();
+            let audio: Vec<f32> =
+                reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+            let pad = vec![0.0f32; 16000];
+            let mut best = String::new();
+            for hz in [1720.0f64, 1740.0, 1760.0, 1780.0] {
+                let mut rx = OliviaDecoder::new(spec.sample_rate as f64, hz, tones, bw, true)
+                    .expect("allocated");
+                let mut out = String::new();
+                for chunk in
+                    audio.iter().chain(pad.iter()).copied().collect::<Vec<_>>().chunks(1024)
+                {
+                    out.push_str(&rx.process(chunk));
+                }
+                if out.contains("SDRBROWN") {
+                    best = format!("{hz}: {out}");
+                    break;
+                }
+            }
+            if best.is_empty() {
+                eprintln!("{name} ({tones}/{bw}): no decode");
+            } else {
+                ok += 1;
+                eprintln!("{name} ({tones}/{bw}): {best}");
+            }
+        }
+        eprintln!("{ok} of {} decode", table.len());
+        assert_eq!(ok, 14, "the Olivia variant count moved");
+    }
+
     /// Every Contestia variant in the corpus, with the parameters its name
     /// gives (`Cont-16/1K` is 16 carriers over 1000 Hz) and a small centre
     /// search. CONTESTIA.wav proved the engine; this says which variants it
@@ -410,5 +476,6 @@ mod tests {
             }
         }
         eprintln!("{ok} of {} decode", table.len());
+        assert_eq!(ok, 18, "the Contestia variant count moved");
     }
 }

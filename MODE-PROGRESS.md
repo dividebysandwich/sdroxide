@@ -41,6 +41,8 @@ Measured 2026-10-21 with `cargo run -p sdroxide-dsp --example corpus_survey` (PS
 All eleven measured in the family table; MFSK16/4/22/31/32/64/128 decode, MFSK64L/128L carry the short text, MFSK11 loses only its leading `AAA`, MFSK8 loses one span of its sample.
 
 ### Olivia — 14 of 18 decode
+
+Gate: `cargo test -p sdroxide-olivia --release --lib the_corpus_olivia_variants -- --ignored` (asserts 14 of 18).
 | mode | state | measurement |
 |---|---|---|
 | OLIVIA | **decodes** | `OLIVIA.wav` as 16/500 at 1720 Hz, reverse on: `AAA SDRBROWN TEST` (its shortened text). |
@@ -64,6 +66,8 @@ All eleven measured in the family table; MFSK16/4/22/31/32/64/128 decode, MFSK64
 | OLIVIA-64/2K | **decodes** | vendored engine at 1760 Hz, reverse on: `AAA SDRBROWN TEST`. |
 
 ### Contestia — 18 of 19 decode
+
+Gate: `cargo test -p sdroxide-olivia --release --lib the_corpus_contestia_variants -- --ignored` (asserts 18 of 19), and `the_corpus_contestia_sample_decodes` for `CONTESTIA.wav` itself.
 | mode | state | measurement |
 |---|---|---|
 | CONTESTIA | **decodes** | `CONTESTIA.wav` as 4/125 at 1718 Hz, reverse on: the whole text, 3/3. |

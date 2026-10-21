@@ -292,58 +292,6 @@ mod tests {
         assert!(got.contains(msg), "decoded {got:?} did not contain {msg:?}");
     }
 
-    /// The THOR corpus, measured. THOR's tone count is fixed at 18 and each
-    /// submode name is its symbol rate; the sample's centre is measured from its
-    /// spectrum. The IFK+ increment, the interleave and the alphabet are the
-    /// things this implementation has never been checked against a real
-    /// transmission on, and this is that check.
-    #[test]
-    #[ignore]
-    fn the_corpus_thor_samples_are_measured() {
-        use std::path::Path;
-        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi");
-        let table: &[(&str, f64)] = &[
-            ("THOR4", 4.0),
-            ("THOR5", 5.0),
-            ("THOR8", 8.0),
-            ("THOR11", 11.0),
-            ("THOR16", 16.0),
-            ("THOR22", 22.0),
-            ("THOR25", 25.0),
-            ("THOR32", 32.0),
-            ("THOR44", 44.0),
-            ("THOR56", 56.0),
-            ("THOR100", 100.0),
-            ("THORM", 18.0),
-        ];
-        let words = ["EAGLE", "LANDED", "SDRBROWN", "12345"];
-        for &(name, baud) in table {
-            let path = format!("{root}/{name}.wav");
-            if !Path::new(&path).exists() {
-                eprintln!("{name}: no sample");
-                continue;
-            }
-            let mut reader = hound::WavReader::open(&path).expect("open");
-            let spec = reader.spec();
-            let audio: Vec<f32> =
-                reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
-            let mut best = (0usize, String::new(), 0.0f64);
-            for hz in [1690.0f64, 1710.0, 1730.0, 1750.0, 1770.0] {
-                let mut rx = ThorRx::new(spec.sample_rate as f64, hz, baud);
-                let mut out = String::new();
-                for chunk in audio.chunks(512) {
-                    out.push_str(&rx.process(chunk));
-                }
-                out.push_str(&rx.process(&vec![0.0f32; 16000]));
-                let hits = words.iter().filter(|w| out.contains(**w)).count();
-                if hits > best.0 {
-                    best = (hits, out, hz);
-                }
-            }
-            eprintln!("{name} ({baud} baud): {}/4 at {}: {:?}", best.0, best.2, best.1);
-        }
-    }
-
     #[test]
     fn noise_does_not_panic() {
         // Garbage tone transitions (e.g. a downward step tone 0 after tone 17)
