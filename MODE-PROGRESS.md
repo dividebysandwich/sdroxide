@@ -453,10 +453,10 @@ the head of a transmission to its own lock time**, which is a word or two at 31
 baud and a third of the message at 1000. BPSK125/250/500 acquire fast enough that
 the corpus never shows it.
 
-### THOR / DominoEX — one real bug found, and the fault is narrower
+### THOR / DominoEX — one real bug found, and a trace tool that narrows the rest
 
-Twenty-four corpus modes still read nothing. One genuine bug is now fixed, from
-fldigi's own `dominoex::decodesymbol`:
+Twenty-four corpus modes still read nothing. One genuine bug is fixed, from
+fldigi's own `dominoex::decodesymbol`, and the search now has an instrument.
 
 - The step is `2 + symbol (mod 18)` and the tones sit at absolute positions, so a
   step that wraps arrives as a **negative** difference — `-16` is symbol 0 and
@@ -466,17 +466,25 @@ fldigi's own `dominoex::decodesymbol`:
   mapping is now the reference's arithmetic (`step_symbol`), and
   `every_step_maps_to_its_symbol_and_the_wrap_is_kept` was verified failing on
   the old rule: `step 18 → None, right Some(16)`.
-- **Still 0/24 — but the measurement has moved, which is the point.** THOR16 at
-  1730 Hz shows the front end finding the signal cleanly: 19.5 dB peak-to-mean
-  across the bank and 205 characters of text. So the bank, the spacing and the
-  symbol clock are **not** the fault, which the previous "no text at all" verdict
-  could not tell apart from a broken front end. What comes out is garbage
-  *characters*, so the fault is between the tone positions and the symbols.
-- **Next step, and it is a different method:** dump the per-symbol step trace for
-  one recording and compare it against the reference's `decodesymbol` output on
-  the same audio — the method that settled MFSK16's varicode. A step trace names
-  a convention difference; decoded text cannot.
-- Nothing is claimed for these modes and none of them is offered.
+- **The decoded text cannot diagnose this**, so `IfkRx` now keeps `steps()` and
+  `positions()` — the sequence, as `MfskRx` keeps its tones — and
+  `the_dominoex_steps_carry_the_known_text` scores the trace against the nibble
+  sequence the known text must produce. It prints the best alignment as a
+  fraction, because a receiver that is wrong about one convention still reads
+  almost none of the text while getting most *symbols* right: **chance is 6%,
+  and DOMX16 stands at 36%** — six times chance, from the repeated `7` prefix
+  that every three-nibble character carries. Not a decode, and not noise.
+- **What is ruled out, measured:** the front end finds the signal (19.5 dB
+  peak-to-mean, and the tones measure on a 15.6 Hz grid spanning 1619–1883 Hz as
+  the mode says), the step *rate* is right (879 steps over 750 symbols of signal
+  plus the silence either side), and the raw bank positions give differences that
+  round to whole tone steps. So it is not the bank, the spacing, the clock rate
+  or the tuning.
+- **What is left** is the part between "a peak per symbol" and "the right step" —
+  the window placement inside the symbol (`tphase`), or the bank's sub-bin
+  indexing. The instrument for it exists now: print `positions()` against the
+  absolute tone sequence the known text implies, which needs the idle/text
+  boundary in the trace.
 
 ## Needs me
 

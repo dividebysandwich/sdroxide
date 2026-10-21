@@ -412,6 +412,13 @@ pub struct IfkRx {
     /// The capture was taken on the wrong sideband: the tone steps run the other
     /// way. IFK carries data in the *step*, so this is the only place it matters.
     pub reverse: bool,
+    /// Every step symbol decided, in order, with `0xFF` for one the receiver
+    /// refused. Kept for the same reason `MfskRx::tones` is: the only way to find
+    /// a convention difference between two implementations is to compare the
+    /// sequence, because the decoded text cannot say which symbol was wrong.
+    pub steps: Vec<u8>,
+    /// The raw bank position each step was read from, for the same reason.
+    pub positions: Vec<u32>,
 }
 
 impl IfkRx {
@@ -452,6 +459,8 @@ impl IfkRx {
             locked: false,
             snr_db: 0.0,
             reverse: false,
+            steps: Vec::new(),
+            positions: Vec::new(),
         };
         rx.build();
         rx
@@ -492,6 +501,8 @@ impl IfkRx {
         self.symcounter = false;
         self.varicode = MfskVaricodeRx::new();
         self.decoded.clear();
+        self.steps.clear();
+        self.positions.clear();
         self.nib = 0;
     }
 
@@ -598,6 +609,8 @@ impl IfkRx {
         let symbol = step_symbol(raw);
         let out_of_range = symbol.is_none();
         let c = symbol.unwrap_or(0) as i32;
+        self.steps.push(symbol.unwrap_or(0xFF));
+        self.positions.push(pos as u32);
         let sig = self.ratio >= LOCK_RATIO;
         if self.variant.thor {
             let mut s = [0u8; 4];
@@ -676,6 +689,16 @@ impl IfkRx {
     pub fn text(&self) -> &str {
         &self.decoded
     }
+
+    /// The step symbols this receiver decided, in order.
+    pub fn steps(&self) -> &[u8] {
+        &self.steps
+    }
+
+    /// The raw bank positions the steps came from.
+    pub fn positions(&self) -> &[u32] {
+        &self.positions
+    }
 }
 
 /// The character whose nibble key is `key` — the last nibble lowest, as the
@@ -728,6 +751,105 @@ mod tests {
         // A bin and a half outside the bank is not a step.
         assert_eq!(step_symbol(20), None);
         assert_eq!(step_symbol(-17), None);
+    }
+
+    /// What DominoEX's steps actually are, against the text we know was sent.
+    ///
+    /// This is the measurement the decoded text cannot make. The alphabet maps
+    /// each character to one to three nibbles (`DOMINO_CODE`) and the transmitter
+    /// sends each as `2 + nibble (mod 18)`, so the recording must carry the
+    /// expected nibble sequence inside the step trace. A receiver that is right
+    /// about everything but one convention still reads almost none of the text,
+    /// so the figure to watch is not "does it decode" but **what fraction of the
+    /// expected nibbles are found at the best alignment** — chance is 1/18, and a
+    /// near-miss shows up as a fraction in between.
+    #[test]
+    #[ignore]
+    fn the_dominoex_steps_carry_the_known_text() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/DOMX16.wav");
+        let mut reader = hound::WavReader::open(path).expect("the DOMX16 sample");
+        let spec = reader.spec();
+        let audio: Vec<f32> =
+            reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+        let variant = IfkVariant::named("DOMX16").expect("a variant");
+        let expected: Vec<u8> = "TEST THE EAGLE"
+            .chars()
+            .flat_map(|c| {
+                let code = DOMINO_CODE[c as usize];
+                code.iter().copied().take_while(|&n| n != 0).collect::<Vec<u8>>()
+            })
+            .collect();
+        let mirror: Vec<u8> = expected.iter().map(|n| 17 - n).collect();
+        eprintln!("expected nibbles ({}): {:?}", expected.len(), expected);
+        let mut best = (0.0f32, 0.0f64, false, 0usize);
+        for hz in [1670.0f64, 1700.0, 1730.0, 1760.0, 1790.0] {
+            for reverse in [false, true] {
+                let mut rx = IfkRx::new(spec.sample_rate as f64, hz, variant);
+                rx.reverse = reverse;
+                for chunk in audio.chunks(512) {
+                    rx.feed(chunk);
+                }
+                rx.feed(&vec![0.0f32; 16000]);
+                let steps = rx.steps();
+                if steps.len() < expected.len() {
+                    continue;
+                }
+                for want in [&expected, &mirror] {
+                    for at in 0..=steps.len() - want.len() {
+                        let hit = steps[at..at + want.len()]
+                            .iter()
+                            .zip(want)
+                            .filter(|(a, b)| a == b)
+                            .count();
+                        let frac = hit as f32 / want.len() as f32;
+                        if frac > best.0 {
+                            best = (frac, hz, reverse, at);
+                        }
+                    }
+                }
+            }
+        }
+        // The pattern of the mismatches is what names the fault, so print the
+        // two sequences side by side at the best alignment.
+        for hz in [best.1] {
+            let mut rx = IfkRx::new(spec.sample_rate as f64, hz, variant);
+            rx.reverse = best.2;
+            for chunk in audio.chunks(512) {
+                rx.feed(chunk);
+            }
+            rx.feed(&vec![0.0f32; 16000]);
+            let st = rx.steps();
+            if best.3 + expected.len() <= st.len() {
+                eprintln!("  want: {:?}", expected);
+                eprintln!("  got : {:?}", &st[best.3..best.3 + expected.len()]);
+                let ps = rx.positions();
+                eprintln!("  pos : {:?}", &ps[best.3..(best.3 + 20).min(ps.len())]);
+                let d: Vec<i64> = ps
+                    .windows(2)
+                    .skip(best.3)
+                    .take(20)
+                    .map(|w| w[1] as i64 - w[0] as i64)
+                    .collect();
+                eprintln!("  diffs: {d:?}  (a step of s is {} sub-bins)", variant.ds * 5);
+            }
+        }
+        eprintln!(
+            "best alignment: {:.0}% of the expected nibbles at {:.0} Hz, reverse {}, step {} \
+             (chance is {:.0}%)",
+            best.0 * 100.0,
+            best.1,
+            best.2,
+            best.3,
+            100.0 / 18.0
+        );
+        // Where this stands. When the fraction climbs past about a third, the
+        // convention has been found: make this the gate, with the centre and
+        // polarity it printed.
+        assert!(
+            best.0 < 0.35,
+            "the steps are mostly right now ({:.0}%) — make this the gate",
+            best.0 * 100.0
+        );
     }
 
     /// are reported by the test rather than guessed at.
