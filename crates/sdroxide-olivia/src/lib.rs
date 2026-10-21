@@ -140,7 +140,8 @@ impl OliviaReceiver {
             return;
         }
         self.reverse = reverse;
-        self.engine = OliviaDecoder::new(self.rate, self.centre, self.tones, self.bandwidth, reverse);
+        self.engine =
+            OliviaDecoder::new(self.rate, self.centre, self.tones, self.bandwidth, reverse);
     }
 
     pub fn reverse(&self) -> bool {
@@ -186,10 +187,16 @@ mod tests {
     #[test]
     #[ignore]
     fn an_off_air_capture_decodes() {
-        let Ok(path) = std::env::var("SDROXIDE_OLIVIA_SAMPLE") else {
-            eprintln!("SDROXIDE_OLIVIA_SAMPLE unset; skipping");
+        // Default to the fixture that lives in the repository, so this runs
+        // without any environment set up. `SDROXIDE_OLIVIA_SAMPLE` overrides it.
+        let path = std::env::var("SDROXIDE_OLIVIA_SAMPLE").unwrap_or_else(|_| {
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/bench/olivia_16-500_cb_27415.wav")
+                .to_string()
+        });
+        if !std::path::Path::new(&path).exists() {
+            eprintln!("no sample at {path}; skipping");
             return;
-        };
+        }
         let mut reader = hound::WavReader::open(&path).expect("open the sample WAV");
         let spec = reader.spec();
         let audio: Vec<f32> = match spec.sample_format {
@@ -203,9 +210,13 @@ mod tests {
         let num = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         let tones = num("SDROXIDE_OLIVIA_TONES", 16.0) as usize;
         let bw = num("SDROXIDE_OLIVIA_BW", 500.0) as u32;
-        let hz = num("SDROXIDE_OLIVIA_HZ", 1500.0);
+        // The fixture in the repository is the bench capture: 16/500, centred at
+        // 1705 Hz of audio, and taken while the rig was on LSB, so it needs the
+        // tone order reversed. All three are what the manifest says.
+        let builtin = std::env::var("SDROXIDE_OLIVIA_SAMPLE").is_err();
+        let hz = num("SDROXIDE_OLIVIA_HZ", if builtin { 1705.0 } else { 1500.0 });
 
-        let reverse = std::env::var("SDROXIDE_OLIVIA_REVERSE").is_ok();
+        let reverse = std::env::var("SDROXIDE_OLIVIA_REVERSE").is_ok() || builtin;
         let mut rx = OliviaDecoder::new(spec.sample_rate as f64, hz, tones, bw, reverse)
             .expect("the engine allocated");
         // The engine's pipeline runs about a second behind the audio it is

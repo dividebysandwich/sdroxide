@@ -887,10 +887,14 @@ mod tests {
     #[test]
     #[ignore]
     fn the_capture_and_our_modulator_agree_on_the_tones() {
-        let Ok(path) = std::env::var("SDROXIDE_MFSK_SAMPLE") else {
-            eprintln!("SDROXIDE_MFSK_SAMPLE unset; skipping");
+        // The USB sweep sample, in the repository; SDROXIDE_MFSK_SAMPLE overrides.
+        let path = std::env::var("SDROXIDE_MFSK_SAMPLE").unwrap_or_else(|_| {
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/MFSK16.wav").to_string()
+        });
+        if !std::path::Path::new(&path).exists() {
+            eprintln!("no sample at {path}; skipping");
             return;
-        };
+        }
         let variant = MfskVariant::named("MFSK16").unwrap();
         let num = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         let hz = num("SDROXIDE_MFSK_HZ", 1730.0);
