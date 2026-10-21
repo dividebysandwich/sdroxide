@@ -12,6 +12,11 @@
 > whole family, FSQ's alphabet). `cargo check --workspace --all-targets`
 > is silent and the touched crates' tests are green.
 >
+> ⛔ **Not in scope, and not to be touched: WEFAX, DAB, SSTV and DSC.** F4NRM and
+> his radio group confirm all four working perfectly (2026-10-21). They are not
+> part of the mode work, they do not need a verdict, and a session must not
+> refactor them or "improve" a decode on the way past.
+>
 > This file remains the record of the first pass and the running journal.
 
 One line per mode, appended as it is worked. `samples/fldigi/` is the gate:

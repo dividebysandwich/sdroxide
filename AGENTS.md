@@ -16,6 +16,15 @@
 > is the journal, one line per mode. **The dated sections below are a history**,
 > newest first: where they disagree with that brief, the brief is right.
 >
+> ⛔ **WEFAX, DAB, SSTV and DSC are confirmed working in the field — leave them
+> alone.** F4NRM and his radio group report all four working perfectly
+> (2026-10-21), so **do not refactor them, do not "improve" a decode, do not take
+> them into the mode work and do not re-open their journal entries as work items.**
+> A working mode that a whole radio group has confirmed is worth more than a
+> tidier one, and a change nobody asked for is how that stops being true. If a
+> report ever comes back against one of them, it is a new report about a specific
+> fault: start from the report and reproduce it, not from a tidy-up.
+>
 > **Fresh session, 2026-10-09. Start here.** `main` is green, the whole open
 > queue is merged (#22 SSTV KEEP DIAL, #23 the browser `remember` cookie, #24
 > the ADS-B noise floor), and `2.0.4_brown` is cut and installed.

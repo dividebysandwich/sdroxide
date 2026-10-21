@@ -63,6 +63,12 @@ recordings.
 
 ## The goal, in this order
 
+**Not in scope, and not to be touched: WEFAX, DAB, SSTV and DSC.** F4NRM and his
+radio group report all four working perfectly (2026-10-21). They are shipped
+features, they are not in the corpus this phase works from, and a session must not
+refactor them or "improve" a decode on the way past. A report against one of them
+would be a new report about a specific fault, and it starts there.
+
 ### A. BPSK63F — the smallest piece of FEC, and it proves the wiring
 
 `MODE_PSK63F` is **BPSK63 + a rate-1/2 convolutional code + the MFSK varicode**
