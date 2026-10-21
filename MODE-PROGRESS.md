@@ -338,17 +338,51 @@ offered; the chip row says why the other four are missing.
 - **Receive only**, so it is in `is_rx_only`: the panel greys the sending half
   and the refusal names MT63. No modulator yet.
 
+### FSQ — the alphabet was PSK31's, and the sample cannot settle it
+
+FSQ is already a mode, and it decoded nothing. The cause is now certain, from
+fldigi's own source rather than from a guess:
+
+- **The text does not ride PSK31's varicode.** fldigi carries
+  `fsq_varicode[256][2]`: one or two *nibbles* per character, the second sent
+  only when it is above 28, and the receiver decodes `prev * 32 + curr` out of
+  `wsq_varidecode`. `fsq.rs` borrowed PSK's bit-level table, so it could not have
+  decoded a single character whatever the tuning. Both tables are now generated
+  from `src/fsq/fsq_varicode.cxx`.
+- **The tone grid was invented.** fldigi spaces the 33 tones three bins of a
+  4096-sample frame at 12 kHz — 8.79 Hz, the same at every speed — and the
+  "speeds" are labels: 8192/6144/4096/3072/2048 samples at 12 kHz for
+  1.5/2/3/4.5/6 baud. The port built an orthogonal grid where the spacing *was*
+  the baud rate.
+- **Proven so far:** the nibble table (`the_varicode_is_the_reference_nibble_table`)
+  and a round trip at every speed (`every_speed_round_trips`).
+- **Not proven: the corpus sample does not read, and the sample is the suspect.**
+  An FSQ signal is one tone at a time; this recording never has a dominant tone
+  at any centre (1770–1815 Hz), spacing (5.86 or 8.79 Hz) or speed — the probe
+  `the_corpus_sample_is_measured_not_claimed` prints the sweep and asserts the
+  current state. The manifest agrees that nothing has ever read it back:
+  `decoder: null, verdict: unverified`. A recording of a real station, or thirty
+  seconds of one on the bench, is what turns this into a gate.
+
+**A tool worth having from the start of the next session:** fldigi's source
+answers these conventions and this session only had fragments of it. It is at
+`deb.debian.org/debian/pool/main/f/fldigi/fldigi_4.2.13.orig.tar.gz` (5 MB),
+and `src/include/mt63base.h` plus `src/mt63/symbol.dat` settled MT63's constants
+(`SymbolLen=512`, `SymbolSepar=200`, `DataCarrSep=4`, fixed at every bandwidth)
+in a minute.
+
 ### Next
 
 ARDOP — the modem is proven against `ardopcf`'s own three recordings, and it is
 the same shape of job MT63 was: a block decoder needing a frame-level front end,
-plus a panel and, later, the TNC. Then the near-misses, MT63's narrow variants
-first since they now block two chips.
+plus a panel and, later, the TNC. Then MT63's narrow variants and the PSK
+FEC/robust set.
 
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:
 
 - **A second MFSK8 recording.** The corpus one loses `TEST THE EAGLE HAS LANDED` in one span while the preamble and the tail read at every tuning; the decoder is the one the other seven MFSK variants use.
+- **A known-good FSQ recording** (new, 2026-10-21). The corpus sample cannot settle FSQ: an FSQ signal is one tone at a time and that recording never has a dominant tone at any centre, spacing or speed, and nothing has ever read it back. Thirty seconds on the bench turns "alphabet fixed, decode unproven" into a gate.
 - **An off-air ARDOP recording.** The reference-made WAVs prove the modem against `ardopcf`'s own modulator; a live or third-party recording would prove it against a station, and would also exercise the RS correction on real fading.
 - **A known-good fldigi on the same box for the THOR/DominoEX tone-step convention.** The port is in `ifk.rs` and reproduces OnAir's receiver, but the steps do not match the air. The corpus cannot say which side is wrong without a decoder to compare against on the same recording.
