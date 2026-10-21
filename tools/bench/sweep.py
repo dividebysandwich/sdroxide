@@ -56,9 +56,24 @@ NOT_TEXT = {
 }
 
 
+class TimeoutTransport(xmlrpc.client.Transport):
+    """A socket timeout, so a modal dialog cannot hang a whole batch.
+
+    A dialog steals fldigi's main loop and XML-RPC answers nothing; without this
+    the sweep waits for ever rather than moving on.
+    """
+
+    def make_connection(self, host):
+        conn = super().make_connection(host)
+        conn.timeout = self.hang_up_after
+        return conn
+
+    hang_up_after = 60
+
+
 def proxy():
     try:
-        return xmlrpc.client.ServerProxy(XMLRPC, allow_none=True)
+        return xmlrpc.client.ServerProxy(XMLRPC, transport=TimeoutTransport(), allow_none=True)
     except Exception as exc:  # noqa: BLE001
         sys.exit(f"fldigi XML-RPC unreachable: {exc}")
 
@@ -84,6 +99,28 @@ def syllables(mode):
     bw = m.group(2)
     bw = int(bw) * (1000 if mode.endswith("K") else 1) if len(bw) == 1 else int(bw)
     return tones, bw
+
+
+def tx_window(p, text, fallback):
+    """Seconds needed to send `text` on the mode fldigi is currently in.
+
+    fldigi reports a per-character time over XML-RPC, and it is right for most
+    modes — 0.384 s for BPSK31, 0.448 for Olivia 16/500, 0.114 for Feld Hell. It
+    is nonsense for a few (Olivia 4/125 reports 0.0, THOR4 a small negative), so
+    it is only trusted inside a plausible range and the caller's fallback covers
+    the rest. A fixed window was the first version and it silently truncated every
+    slow mode: twenty seconds of Olivia 4/125 is twenty characters.
+    """
+    secs = 0.0
+    try:
+        rates = p.main.get_char_rates()
+        rates = rates[0] if isinstance(rates, tuple) else rates
+        secs = abs(float(rates[0]))
+    except Exception:  # noqa: BLE001
+        secs = 0.0
+    if not (0.02 <= secs <= 2.0):
+        secs = fallback
+    return min(300.0, max(12.0, secs * len(text) * 1.3 + 6.0))
 
 
 def record(hz, rate, seconds, gain, path):
@@ -151,7 +188,9 @@ def sweep_one(p, mode, args, index, total):
         # fldigi refused the mode or fell back — worth knowing, not worth guessing.
         entry["note"] = f"fldigi reported {entry['fldigi_mode']}"
 
-    capture = args.tx_seconds + 10.0
+    tx_seconds = tx_window(p, args.text, args.tx_seconds)
+    entry["tx_seconds"] = round(tx_seconds, 1)
+    capture = tx_seconds + 10.0
     rec = record(args.hz, args.rate, capture, args.gain, iqpath)
     time.sleep(1.5)
     try:
@@ -159,7 +198,7 @@ def sweep_one(p, mode, args, index, total):
         p.text.clear_tx()
         p.text.add_tx(args.text)
         p.main.tx()
-        time.sleep(args.tx_seconds)
+        time.sleep(tx_seconds)
     finally:
         # fldigi never leaves TX by itself — Olivia's idle tones run for ever and
         # that is what left the carrier up for ninety seconds on 2026-10-20.
@@ -167,7 +206,12 @@ def sweep_one(p, mode, args, index, total):
             p.main.rx()
         except Exception:  # noqa: BLE001
             pass
-    rec.wait(timeout=capture + 30)
+    try:
+        rec.wait(timeout=capture + 30)
+    except subprocess.TimeoutExpired:
+        rec.kill()
+        entry.update(error="the recorder did not finish")
+        return entry
 
     parsed = syllables(mode)
     entry["tones"], entry["bandwidth"] = parsed if parsed else (None, None)
@@ -221,7 +265,12 @@ def main():
     ap.add_argument("--hz", type=float, default=27_415_000.0)
     ap.add_argument("--rate", type=int, default=250_000)
     ap.add_argument("--gain", type=int, default=55)
-    ap.add_argument("--tx-seconds", type=float, default=30.0)
+    ap.add_argument(
+        "--tx-seconds",
+        type=float,
+        default=45.0,
+        help="fallback seconds per character when fldigi's own rate is nonsense",
+    )
     ap.add_argument("--out", default=OUT)
     ap.add_argument("--manifest", default=os.path.join(OUT, "manifest.jsonl"))
     args = ap.parse_args()
@@ -251,7 +300,10 @@ def main():
     with open(args.manifest, "a") as man:
         for i, mode in enumerate(modes, 1):
             print(f"[{i}/{len(modes)}] {mode} … ", end="", flush=True)
-            entry = sweep_one(p, mode, args, i, len(modes))
+            try:
+                entry = sweep_one(p, mode, args, i, len(modes))
+            except Exception as exc:  # noqa: BLE001 - one mode must not cost the batch
+                entry = {"mode": mode, "error": f"{type(exc).__name__}: {exc}"}
             man.write(json.dumps(entry) + "\n")
             man.flush()
             if entry.get("skipped"):

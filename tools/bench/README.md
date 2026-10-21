@@ -101,3 +101,24 @@ decoder's own output quoted where it passed.
 everything else, because that is the only modem we have written against the
 vendored engine. The corpus is the point: a recording per mode, with known text
 and measured parameters, so each decoder starts with a fixture instead of a hunt.
+
+## Verifying what the corpus contains
+
+```sh
+./verify.py                # run our decoders over every swept sample
+./verify.py --only PSK     # one family
+./verify.py --summary      # the table
+```
+
+`sweep.py` records; `verify.py` says what we can read. It picks a decoder from
+each mode's name — Olivia through the vendored engine, BPSK/QPSK through our own
+`PskRx`, RTTY through `RttyRx` — runs it over the saved WAV and appends the result
+to `verify.jsonl`, quoting the text where it worked.
+
+A mode that fails here has **not** been proved impossible, only that the decoder
+we have today does not read it. Several of fldigi's PSK variants carry different
+framing and FEC and we have none of those implemented; the value is knowing which
+is which, in a table, rather than by memory.
+
+Hell, WEFAX and the other picture modes are not verifiable this way: they deliver
+an image, so there is no text for a script to compare against.
