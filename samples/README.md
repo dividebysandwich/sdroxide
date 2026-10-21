@@ -39,6 +39,24 @@ A mode that fails there is not proved impossible; it means the decoder we have
 today does not read it. Several of fldigi's PSK variants carry framing and FEC we
 have never written.
 
+## `ardop/`
+
+ARDOP is not in `fldigi/` because fldigi cannot send it. These four recordings
+were made by the reference implementation, `ardopcf` (MIT), run headless with
+`--writetxwav`, `NOSOUND` and a `TXFRAME` host command; the data is our own
+known string, so the files carry no third-party material.
+
+| file | frame | text |
+|---|---|---|
+| `4psk-1car_known-text.wav` | 0x40 4PSK, 1 carrier | `TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ` |
+| `16qam-8car_known-text.wav` | 0x74 16QAM, 8 carriers | same |
+| `4fsk-100bd_known-text.wav` | 0x4A 4-FSK, 100 baud | same |
+| `conreq-200m.wav` | a leader/tune artefact, **not** a frame | — |
+
+All are 12 kHz mono. The `conreq` file is kept as the record of a dead end: the
+`TXFRAME ConReq200M` path wrote 1.77 s of leader and a sweep, with no header, so
+it cannot gate control-frame detection.
+
 ## `bench/`
 
 The hand-made fixtures from the session that started this, each with its text
