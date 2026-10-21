@@ -402,7 +402,19 @@ fn ctr_settle(
     win_center: f64,
     win_span: f64,
 ) -> CtrSettle {
+    // A view the operator has moved since is theirs, and the pending request is
+    // dropped. But a *zoom* (the span changed) is not a settled gesture: it is
+    // still in flight, and re-asking the front end on every frame of it is what
+    // made CTR chase left and right during a rapid zoom. Keep the request
+    // pending until the zoom ends, so the front end is asked at most once.
     if (view.view_lo_hz - ask.view_lo).abs() > 1.0 || (view.view_hi_hz - ask.view_hi).abs() > 1.0 {
+        let view_span = view.view_hi_hz - view.view_lo_hz;
+        let ask_span = ask.view_hi - ask.view_lo;
+        if ask_span.abs() > 0.0
+            && (view_span - ask_span).abs() > ask_span.abs() * ZOOM_EPS
+        {
+            return CtrSettle::Waiting;
+        }
         return CtrSettle::Done { refitted: false };
     }
     if (dev_center - ask.center).abs() < 0.5 {
@@ -1382,6 +1394,8 @@ pub fn show_ext(
     // shifting, because the direction of it is the whole feature and it is the
     // kind of thing to get backwards exactly once. Empty when nothing is locked.
     sat_bands: &[sdroxide_types::SatBand],
+    // How many memory marks may be stacked on the waterfall's edge (issue #127).
+    mem_max_lanes: usize,
     cmds: &mut Vec<Command>,
 ) {
     let cursor_hz = cursor.map(|c| c.hz);
@@ -1476,8 +1490,15 @@ pub fn show_ext(
     // waterfall is painted. The strip depth they stack inwards from is asked
     // for separately rather than taken from the draw call's return.
     let mem_strip_h = crate::widgets::bandplan::height(view, &wf_rect, panel_below);
-    let mem_boxes =
-        crate::widgets::memories::layout(&painter, view, &wf_rect, mem, mem_strip_h, panel_below);
+    let mem_boxes = crate::widgets::memories::layout(
+        &painter,
+        view,
+        &wf_rect,
+        mem,
+        mem_strip_h,
+        panel_below,
+        mem_max_lanes,
+    );
 
     // --- interactions -----------------------------------------------------
     // Model: grabbing a filter edge (left button, spectrum strip) always
@@ -2189,7 +2210,11 @@ pub fn show_ext(
             }
         }
         let centred_at: Option<(f64, f64)> = ui.data(|d| d.get_temp(centring_id)).unwrap_or(None);
-        if centring_due(centred_at, vfo, view.span()) {
+        // Only re-centre when no front-end request is still in flight: a rapid
+        // zoom used to re-arm `asked` every frame, which made CTR chase left
+        // and right. With a request pending we let the view zoom locally and
+        // wait for it to settle.
+        if asked.is_none() && centring_due(centred_at, vfo, view.span()) {
             let over = center_on_dial(view, vfo, zoom_center, zoom_span, rect.width());
             let before = dev_center;
             pan_center(&mut dev_center, state, over, pan, cmds);
@@ -3180,7 +3205,10 @@ fn faded_label(
 }
 
 /// Format a bandwidth (Hz) as a compact human string.
-fn format_bandwidth(hz: f64) -> String {
+///
+/// Shared with the panadapter's clock stack, so the ruler's own span label and
+/// the readout beneath the clock cannot disagree about how a width is written.
+pub(crate) fn format_bandwidth(hz: f64) -> String {
     if hz >= 1_000_000.0 {
         // The ruler also runs over the full-band strip, where a span of several
         // megahertz is the ordinary case and four digits of kilohertz is not a

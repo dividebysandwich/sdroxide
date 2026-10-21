@@ -887,17 +887,6 @@ impl SdroxideApp {
                                 // here as well as in the decoder — leaving the
                                 // abandoned frame on screen would say the
                                 // button had not worked.
-                                if crate::chrome::chip(ui, false, "Restart RX")
-                                    .on_hover_text(
-                                        "Abandon the picture being received and listen for the                                          next header. For a transmission that started decoding                                          in the wrong mode — the receiver is otherwise committed                                          until that mode runs out.",
-                                    )
-                                    .clicked()
-                                {
-                                    cmds.push(Command::SstvRestartRx);
-                                    self.sstv.rx_color = None;
-                                    self.sstv.rx_tex = None;
-                                }
-
                                 // Who sent it. The FSK ID arrives in tones a
                                 // fraction of a second after the picture, which
                                 // is exactly when the operator is looking at the
@@ -1016,6 +1005,42 @@ impl SdroxideApp {
                                         }
                                     });
                                 }
+                            });
+                            ui.add_space(5.0);
+                            // Restart/Clear sit on their own line inside the
+                            // box: in the signal row they grew that row's
+                            // minimum width past the column and pushed the
+                            // whole panel over the dock (#643). One row for the
+                            // pair keeps them together and wraps.
+                            ui.horizontal_wrapped(|ui| {
+                                if crate::chrome::chip(ui, false, "Restart RX")
+                                    .on_hover_text(
+                                        "Abandon the picture being received and listen for the                                          next header. For a transmission that started decoding                                          in the wrong mode — the receiver is otherwise committed                                          until that mode runs out.",
+                                    )
+                                    .clicked()
+                                {
+                                    cmds.push(Command::SstvRestartRx);
+                                    self.sstv.rx_color = None;
+                                    self.sstv.rx_tex = None;
+                                }
+
+                                // Clear the picture currently shown in LIVE without
+                                // touching the decoder: a completed frame that is
+                                // still on screen is wiped so the next one can be
+                                // seen arriving, and an in-progress decode keeps
+                                // running (use Restart RX to abandon it).
+                                if crate::chrome::chip(ui, false, "Clear Rx")
+                                    .on_hover_text(
+                                        "Clear the picture currently shown in the LIVE view. \
+                                         The decoder keeps running — use Restart RX to abandon \
+                                         an in-progress picture and listen for the next header.",
+                                    )
+                                    .clicked()
+                                {
+                                    self.sstv.rx_color = None;
+                                    self.sstv.rx_tex = None;
+                                }
+
                             });
                         });
                     ui.add_space(6.0);

@@ -25,8 +25,9 @@ use eframe::egui::{self, Color32, ComboBox, DragValue, RichText, Slider};
 use sdroxide_types::{
     AgcMode, BURST_MS_RANGE, Band, Command, CwEngine, DCS_CODES, DIV_FREEZE_ELEMENT,
     DIV_MODE_ELEMENT, DIV_RATE_ELEMENT, DIV_RESET_ELEMENT, DeviceCaps, Direction, DiversityMode,
-    GainElement, GainUnit, MAX_OFFSET_HZ, Mode, NrEngine, NrLevel, NrStrength, RadioState, RxId,
-    Shift, SkimmerKind, SpectrumDetail, SpectrumFillStyle, Speed, SubTone, ToneMode, Vfo,
+    GainElement, GainUnit, MAX_OFFSET_HZ, Mode, NrEngine, NrLevel, NrStrength, RadioState,
+    RecordingFormat, RxId, Shift, SkimmerKind, SpectrumDetail, SpectrumFillStyle, Speed, SubTone,
+    ToneMode, Vfo,
 };
 
 use crate::widgets::{freq_display, smeter};
@@ -1570,6 +1571,7 @@ impl SdroxideApp {
                     self.band_conditions.as_ref(),
                     self.daylight,
                     atsmini,
+                    &mut self.show_ism,
                     cmds,
                 );
             });
@@ -2811,6 +2813,7 @@ impl SdroxideApp {
                 conditions,
                 daylight,
                 atsmini,
+                &mut self.show_ism,
                 cmds,
             );
         });
@@ -2935,6 +2938,7 @@ impl SdroxideApp {
             self.band_conditions.as_ref(),
             self.daylight,
             atsmini,
+            &mut self.show_ism,
             cmds,
         );
     }
@@ -4181,24 +4185,38 @@ impl SdroxideApp {
         let iq = self.state.iq_recording;
 
         crate::chrome::menu_caption(ui, "Record audio");
+        // The container is chosen by picking the chip that starts the
+        // recording, and it is fixed for the life of the file — a WAV's header
+        // cannot be re-cut mid-file. So the two format chips are one control
+        // between them: the one that is recording stops it, the other greys
+        // out, and the choice stands for whatever starts next — a quick clip,
+        // a scheduled recording or auto-record all begin through the engine
+        // with this same field.
         ui.horizontal_wrapped(|ui| {
-            if crate::chrome::chip_accent(
-                ui,
-                audio,
-                if audio { "● MP3" } else { "MP3" },
-                crate::theme::ALERT(),
-                Color32::WHITE,
-            )
-            .on_hover_text(
-                "What you hear, as an MP3: the receiver in one channel and your own transmit in \
-                 the other. This is the recording of a QSO.",
-            )
-            .clicked()
-            {
-                cmds.push(Command::SetRecording(!audio));
+            for format in REC_FORMATS {
+                let chip = rec_format_chip(format, audio, self.state.recording_format);
+                if crate::chrome::chip_accent_enabled(
+                    ui,
+                    chip.enabled,
+                    chip.selected,
+                    chip.label,
+                    None,
+                    crate::theme::ALERT(),
+                    Color32::WHITE,
+                )
+                .on_hover_text(chip.hover)
+                .clicked()
+                {
+                    if chip.selected {
+                        cmds.push(Command::SetRecording(false));
+                    } else {
+                        cmds.push(Command::SetRecordingFormat(format));
+                        cmds.push(Command::SetRecording(true));
+                    }
+                }
             }
             // Channel layout is a property of the *next* recording — the
-            // encoder is initialised with it — so it greys out while one runs.
+            // writer is initialised with it — so it greys out while one runs.
             let mono = self.state.recording_mono;
             let mono_chip =
                 crate::chrome::chip_enabled(ui, !audio, mono, "MONO").on_hover_text(if mono {
@@ -4284,7 +4302,7 @@ impl SdroxideApp {
                     // which is only its own for the first second.
                     let armed = self.recording_stop_at.is_some_and(|(_, s)| s == secs);
                     if crate::chrome::chip(ui, armed, format!("{minutes} min"))
-                        .on_hover_text(format!("Stop the MP3 recording after {minutes} minutes"))
+                        .on_hover_text(format!("Stop the recording after {minutes} minutes"))
                         .clicked()
                     {
                         arm = Some((now + i64::from(secs), secs));
@@ -6343,10 +6361,10 @@ impl SdroxideApp {
         }
     }
 
-    /// The first five window chips — the condensed System box's top row.
+    /// The condensed System box's top row. Slot 5 is the padlock.
     /// `extra` stretches each chip past its label; the popup passes 0.
     pub(in crate::app) fn system_chips_top(&mut self, ui: &mut egui::Ui, extra: f32) {
-        let [log, spots, awards, bands, sat_label, ism] = SYSTEM_CHIPS_TOP;
+        let [log, spots, awards, bands, sat_label, lock_label] = SYSTEM_CHIPS_TOP;
         let simple = self.ui_settings.simple_ui;
         // SWL mode is the listener's screen, and it takes the row the way the
         // listener uses it: award tracking is a ham receive extra they never
@@ -6431,8 +6449,9 @@ impl SdroxideApp {
         // because it shares the window — it is a satellite, and the only reason
         // it ever had a chip of its own was that its calibration arrived first.
         //
-        // The satellite and ISM chips are the two a CB or SWL operator never
-        // opens, so the simple interface leaves them out.
+        // The satellite chip is one a CB or SWL operator never opens, so the
+        // simple interface leaves it out. The padlock (slot 5) stays on every
+        // tier, including Simple UI.
         if !simple {
             let qo100_running = self.state.qo100.enabled;
             let sat_chip = if self.sat_track.is_some() || qo100_running {
@@ -6459,41 +6478,14 @@ impl SdroxideApp {
             {
                 self.show_sat = !self.show_sat;
             }
-            // Accented while the decoder is actually running, like the scanner
-            // and the satellite lock: it is spending CPU on four downconverters
-            // whether or not the window is open.
-            let ism_running = self.state.ism.any_enabled();
-            let ism_chip = if ism_running {
-                accent_chip_stretched(
-                    ui,
-                    true,
-                    ism,
-                    crate::theme::GREEN(),
-                    crate::theme::INK_ON_BRIGHT(),
-                    extra,
-                )
-            } else {
-                chip_stretched(ui, self.show_ism, ism, extra)
-            };
-            if ism_chip
-                .on_hover_text(if ism_running {
-                    // Which is not the same as "this window is open", and the
-                    // chip cannot say so on its own: an operator who closes the
-                    // window and finds the chip still lit has no way to guess
-                    // that the green is the decoder rather than the window, or
-                    // where its switch went. Same wording problem the SAT chip
-                    // solves above.
-                    "ISM-band devices — decoding now, whether or not this window is \
-                     open. Switch it off with DECODING inside the window."
-                } else {
-                    "ISM-band devices — weather sensors, meters and home \
-                     automation heard around you"
-                })
-                .clicked()
-            {
-                self.show_ism = !self.show_ism;
-            }
         }
+        // The padlock: moved out of the ISM slot. It stays on every tier and
+        // in Simple UI, drawn every frame so the lock never self-releases.
+        let size = egui::vec2(
+            crate::chrome::chip_width(ui, lock_label, None) + extra,
+            crate::chrome::chip_height(ui, None),
+        );
+        crate::touch_lock::padlock(ui, size);
     }
 
     /// The remaining window chips — the condensed System box's bottom row.
@@ -6501,9 +6493,9 @@ impl SdroxideApp {
         &mut self,
         ui: &mut egui::Ui,
         extra: f32,
-        cmds: &mut Vec<Command>,
+        _cmds: &mut Vec<Command>,
     ) {
-        let [mail, mem, scan_label, hfdl_label, grid_label, public_sdrs, settings, help] =
+        let [mail, mem, scan_label, extras_label, grid_label, public_sdrs, settings, help] =
             SYSTEM_CHIPS_BOTTOM;
         let simple = self.ui_settings.simple_ui;
         // The MAIL slot. SWL mode offers the signal-identification guide there
@@ -6561,45 +6553,15 @@ impl SdroxideApp {
         {
             self.show_scanner = !self.show_scanner;
         }
-        // HFDL: shortwave aircraft ground network — a listener's tool, so it
-        // sits in the row an operator reaches for the decoder windows from, in
-        // both interfaces. It opens HFDL's own mode, whose panel docks under
-        // the waterfall; accented while the decoder runs, like the ISM chip,
-        // because it spends a downconverter and a worker thread whether or not
-        // the panel is on screen.
-        let hfdl_mode = self.state.rx[0].mode.is_hfdl();
-        let hfdl_running = self.state.hfdl.enabled;
-        let hfdl_chip = if hfdl_running {
-            accent_chip_stretched(
-                ui,
-                true,
-                hfdl_label,
-                crate::theme::GREEN(),
-                crate::theme::INK_ON_BRIGHT(),
-                extra,
-            )
-        } else {
-            chip_stretched(ui, hfdl_mode, hfdl_label, extra)
-        };
-        if hfdl_chip
-            .on_hover_text(if hfdl_mode {
-                "HFDL ground network — the decode log and aircraft map, below the \
-                 waterfall. Switch the decoder on with LISTEN inside the panel."
-            } else if hfdl_running {
-                "HFDL ground network — decoding now. Open the panel."
-            } else {
-                "HFDL ground network — the aircraft shortwave data link, one \
-                 listening channel at a time"
-            })
+        // EXTRAS: a launcher window for the receivers that are not a band's
+        // ordinary modes (DAB for now). A plain window chip — it only opens the
+        // window, so it is never tinted. HFDL, which used to sit here, is
+        // reached from the band/mode menu's wideband row.
+        if chip_stretched(ui, self.show_extras, extras_label, extra)
+            .on_hover_text("EXTRAS — DAB and the other receivers, in a window you can detach")
             .clicked()
         {
-            // The lane follows its own chosen frequency; bring the dial with it
-            // so the panadapter shows the signal being decoded.
-            cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Hfdl });
-            cmds.push(Command::SetVfo {
-                vfo: self.state.active_vfo,
-                hz: self.state.hfdl.frequency_hz,
-            });
+            self.show_extras = !self.show_extras;
         }
         // Grid tracker: worked Maidenhead squares on a map.
         //
@@ -6798,7 +6760,7 @@ impl PttPress {
 /// put this box near the end of a row — and, later, how the public-SDR chip
 /// did, drawn in the top row while a single split index still counted it in the
 /// bottom one.
-const SYSTEM_CHIPS_TOP: [&str; 6] = ["LOG", "SPOTS", "AWARDS", "BANDS", "SAT", "ISM"];
+const SYSTEM_CHIPS_TOP: [&str; 6] = ["LOG", "SPOTS", "AWARDS", "BANDS", "SAT", LOCK_LABEL];
 
 /// The rest of them. See [`SYSTEM_CHIPS_TOP`].
 /// Settings is the **gear glyph alone** here, with no "SETTINGS" beside it — the
@@ -6807,7 +6769,7 @@ const SYSTEM_CHIPS_TOP: [&str; 6] = ["LOG", "SPOTS", "AWARDS", "BANDS", "SAT", "
 /// label here and the label drawn have to be the same string; see
 /// [`SYSTEM_CHIPS_TOP`].
 const SYSTEM_CHIPS_BOTTOM: [&str; 8] =
-    ["MAIL", "MEM", "SCAN", "HFDL", "GRID", "PUBLIC SDR", "⚙", "?"];
+    ["MAIL", "MEM", "SCAN", "EXTRAS", "GRID", "PUBLIC SDR", "⚙", "?"];
 
 /// Which log the main-screen LOG chip opens: the listener's reception log in
 /// SWL mode, the QSO logbook otherwise.
@@ -7884,13 +7846,14 @@ fn system_rows_w(ui: &egui::Ui, simple: bool, swl: bool) -> f32 {
         + crate::chrome::MODULE_STROKE_X
 }
 
-/// The System box's top-row labels. Simple drops the three an SWL or CB
-/// operator does not use: award tracking, satellites and ISM decoding.
+/// The System box's top-row labels. Simple drops the two an SWL or CB
+/// operator does not use: award tracking and satellites. The padlock (slot 5)
+/// stays on every tier, including Simple UI.
 fn system_top_row(simple: bool, swl: bool) -> Vec<&'static str> {
     let mut v: Vec<&'static str> = SYSTEM_CHIPS_TOP
         .iter()
         .enumerate()
-        .filter(|(i, _)| !(simple && matches!(i, 2 | 4 | 5)))
+        .filter(|(i, _)| !(simple && matches!(i, 2 | 4)))
         // SWL takes over the awards slot with the broadcast schedule. The spots
         // slot stays: only the ham feeds inside it are dropped. The LOG chip is
         // relabelled "SWL LOG" — on this screen it opens the reception log and
@@ -8208,6 +8171,76 @@ fn mode_listen_chip(
 /// control.
 const WIDEBAND_MODES: [Mode; 5] = [Mode::Adsb, Mode::Vdl2, Mode::Ais, Mode::Hfdl, Mode::Dab];
 
+/// The wideband lane chips — the five lane modes plus the ISM decoder window —
+/// laid out the same way, but with room for a sixth chip on a wide row. ISM is
+/// not a `Mode` (it is a tool window), so it is drawn here by hand rather than
+/// added to [`WIDEBAND_MODES`], and it keeps the accent it wears in the System
+/// box: green while the decoder is actually running.
+pub(in crate::app) fn wideband_chip_grid(
+    ui: &mut egui::Ui,
+    mode: Mode,
+    band: Band,
+    state: &RadioState,
+    listen: bool,
+    show_ism: &mut bool,
+    cmds: &mut Vec<Command>,
+) {
+    const ISM_LABEL: &str = "ISM";
+    let widest = WIDEBAND_MODES
+        .iter()
+        .map(|m| crate::chrome::chip_width(ui, m.label(), None))
+        .fold(crate::chrome::chip_width(ui, ISM_LABEL, None), f32::max);
+    let cols = chip_row_cols(ui.available_width(), widest, 6);
+    let total = WIDEBAND_MODES.len() + 1; // five lanes + ISM
+    if cols < 2 {
+        ui.horizontal_wrapped(|ui| {
+            for &m in &WIDEBAND_MODES {
+                mode_chip(ui, mode, m, band, state, listen, cmds);
+            }
+            draw_ism_chip(ui, state, show_ism);
+        });
+        return;
+    }
+    let mut start = 0;
+    while start < total {
+        ui.horizontal(|ui| {
+            for i in start..(start + cols).min(total) {
+                if i < WIDEBAND_MODES.len() {
+                    mode_chip(ui, mode, WIDEBAND_MODES[i], band, state, listen, cmds);
+                } else {
+                    draw_ism_chip(ui, state, show_ism);
+                }
+            }
+        });
+        start += cols;
+    }
+}
+
+/// The ISM chip as it appears in the Wideband row: toggles the window, lit when
+/// it is open, green while the decoder is spending CPU on it.
+fn draw_ism_chip(ui: &mut egui::Ui, state: &RadioState, show_ism: &mut bool) {
+    let ism_running = state.ism.any_enabled();
+    let resp = if ism_running {
+        crate::chrome::chip_accent(
+            ui,
+            true,
+            "ISM",
+            crate::theme::GREEN(),
+            crate::theme::INK_ON_BRIGHT(),
+        )
+    } else {
+        crate::chrome::chip(ui, *show_ism, "ISM")
+    };
+    let resp = resp.on_hover_text(if ism_running {
+        "ISM-band devices — decoding now, whether or not this window is open. Switch it off with DECODING inside the window."
+    } else {
+        "ISM-band devices — weather sensors, meters and home automation heard around you"
+    });
+    if resp.clicked() {
+        *show_ism = !*show_ism;
+    }
+}
+
 /// A section of mode chips laid in **rows of five**, left-aligned.
 ///
 /// Plain `ui.horizontal` rows of the chips themselves — **not** an `egui::Grid`
@@ -8240,7 +8273,7 @@ pub(in crate::app) fn mode_chip_grid(
         .iter()
         .map(|m| crate::chrome::chip_width(ui, m.label(), None))
         .fold(0.0_f32, f32::max);
-    let cols = mode_grid_cols(ui.available_width(), widest);
+    let cols = chip_row_cols(ui.available_width(), widest, MODE_GRID_COLS);
     if cols < 2 {
         ui.horizontal_wrapped(|ui| {
             for &m in modes {
@@ -8249,14 +8282,13 @@ pub(in crate::app) fn mode_chip_grid(
         });
         return;
     }
-    // **Wrapped, not a plain horizontal**, and that is the difference between a
-    // column that fits and one chip hanging over its edge. `cols` is a *budget*
-    // — a cell is the widest label plus a slack for the frame the grid cannot
-    // measure in advance — and a budget that is a few points short put the row
-    // past the container (measured in the classic column: a four-wide row
-    // 409 points long inside 382). Wrapped, the grouping is still there and the
-    // row simply breaks one chip earlier when the arithmetic came up short,
-    // which is what the operator asked for in as many words.
+    // Plain rows of `cols` packed chips. A `ui.horizontal` row does not wrap,
+    // so the budget in `chip_row_cols` is what keeps the row inside its
+    // container (the slack covers the frame `chip_width` cannot report). The
+    // earlier note here claiming this was `horizontal_wrapped` was wrong — the
+    // loop has been a plain horizontal since it was introduced; only the
+    // comment changed. Do not "fix" it to wrapped: the #643 guard already
+    // passes on plain rows, and wrapped rows change the row heights.
     let mut start = 0;
     while start < modes.len() {
         ui.horizontal(|ui| {
@@ -8268,13 +8300,41 @@ pub(in crate::app) fn mode_chip_grid(
     }
 }
 
-/// How many columns [`mode_chip_grid`] lays at `avail_w` for chips whose widest
-/// label measures `widest` points — up to [`MODE_GRID_COLS`]. Split out so a test
-/// can pin the five the band **window** gets and the fewer the docked column
-/// does, without driving a frame.
-fn mode_grid_cols(avail_w: f32, widest: f32) -> usize {
-    let cell = widest + MODE_GRID_CELL_SLACK;
-    ((avail_w / cell.max(1.0)).floor() as usize).clamp(1, MODE_GRID_COLS)
+/// How many chips a packed row fits at `avail_w` when the widest label measures
+/// `widest` points — up to `max`. The cell budget is the label plus a slack for
+/// the frame [`chrome::chip_width`] cannot report in advance; a few points short
+/// would put a plain `ui.horizontal` row past its container, which is the #643
+/// class. Split out so a test can pin the five the band **window** gets and the
+/// fewer the docked column does, without driving a frame.
+fn chip_row_cols(avail_w: f32, widest: f32, max: usize) -> usize {
+    let cell = widest + CHIP_ROW_CELL_SLACK;
+    ((avail_w / cell.max(1.0)).floor() as usize).clamp(1, max)
+}
+
+/// Lay `n` chips out in packed rows of at most `cols`, each row a plain
+/// `ui.horizontal` of the chips themselves — no fixed-width cells, no `egui::Grid`
+/// (a Grid sizes every column to the widest label and leaves a gap after every
+/// short one). The chips keep their own widths and the air between them is even,
+/// which is the "comme mode, bien rangé et espacés" the operator asked for. Where
+/// even one column will not fit, a wrapped row reflows instead.
+fn chip_rows(ui: &mut egui::Ui, cols: usize, n: usize, mut draw: impl FnMut(&mut egui::Ui, usize)) {
+    if cols < 2 {
+        ui.horizontal_wrapped(|ui| {
+            for i in 0..n {
+                draw(ui, i);
+            }
+        });
+        return;
+    }
+    let mut start = 0;
+    while start < n {
+        ui.horizontal(|ui| {
+            for i in start..(start + cols).min(n) {
+                draw(ui, i);
+            }
+        });
+        start += cols;
+    }
 }
 
 /// One mode chip — the band-greyed one on OPERATE, the never-greyed one on
@@ -8300,7 +8360,7 @@ const MODE_GRID_COLS: usize = 5;
 /// Slack over the measured label width when budgeting a grid cell: the drawn
 /// chip is wider than [`crate::chrome::chip_width`] reports (its frame), and a
 /// grid that asks wider than its container grows the docked column (#643).
-const MODE_GRID_CELL_SLACK: f32 = 26.0;
+const CHIP_ROW_CELL_SLACK: f32 = 26.0;
 
 /// OPERATE's `Mode` section: the analog and voice modes, the broadcast
 /// demodulators (DRM, HD Radio) among them because that is what they are — a
@@ -8534,53 +8594,17 @@ fn band_pad(
         return;
     }
     let bands: Vec<Band> = bands.collect();
-    let spacing = 6.0_f32;
-    let cell_w = bands
+    let widest = bands
         .iter()
         .map(|b| crate::chrome::chip_width(ui, b.label(), None))
-        .fold(0.0_f32, f32::max)
-        + spacing;
-    let cols = (((ui.available_width() + spacing) / cell_w.max(1.0)).floor() as usize).clamp(1, 6);
-    egui::Grid::new(ui.id().with("band-pad"))
-        .num_columns(cols)
-        .spacing(egui::vec2(spacing, 4.0))
-        .show(ui, |ui| {
-            for (i, b) in bands.into_iter().enumerate() {
-                band_chip(ui, mode, b, state, caps, ranges_stated, conditions, daylight, cmds);
-                if (i + 1) % cols == 0 {
-                    ui.end_row();
-                }
-            }
-        });
-}
-
-/// How many equal columns of chips fit across `ui`, given the longest label —
-/// for the mode and CB rows, which are laid in a fixed grid so they read as a
-/// designed pad rather than a ragged wrap. `max` keeps a two-word label from
-/// being stretched across a very wide window.
-fn chip_grid_cols(ui: &egui::Ui, labels: &[&str], gap: f32, max: usize) -> usize {
-    let cell =
-        labels.iter().map(|l| crate::chrome::chip_width(ui, l, None)).fold(0.0_f32, f32::max) + gap;
-    (((ui.available_width() + gap) / cell.max(1.0)).floor() as usize).clamp(1, max)
-}
-
-/// Lay `n` chips in equal columns — the grid half of the mode and CB rows, kept
-/// out of the rows themselves so the wrap-when-narrow fallback sits in one
-/// place. `draw` is called with each index; a row closes after every `cols`.
-fn chip_grid(
-    ui: &mut egui::Ui,
-    id: &str,
-    cols: usize,
-    n: usize,
-    mut draw: impl FnMut(&mut egui::Ui, usize),
-) {
-    egui::Grid::new(id).num_columns(cols).spacing(egui::vec2(6.0, 4.0)).show(ui, |ui| {
-        for i in 0..n {
-            draw(ui, i);
-            if (i + 1) % cols == 0 {
-                ui.end_row();
-            }
-        }
+        .fold(0.0_f32, f32::max);
+    let cols = chip_row_cols(ui.available_width(), widest, 6);
+    // Wrapped rows reflow where even one column will not fit (narrow dock,
+    // popup); the fixed-column grid is gone — its columns sized to the widest
+    // label and left a gap after every short one.
+    chip_rows(ui, cols, bands.len(), |ui, i| {
+        let b = bands[i];
+        band_chip(ui, mode, b, state, caps, ranges_stated, conditions, daylight, cmds);
     });
 }
 
@@ -8926,6 +8950,9 @@ pub(in crate::app) fn band_mode_menu(
     // The active radio is an ATS Mini, whose bands are the firmware's own — the
     // popup offers those instead of the ham allocations below.
     atsmini: bool,
+    // Whether the ISM decoder window is open — the chip lives in the Wideband
+    // row now, so the menu needs to read and write it.
+    show_ism: &mut bool,
     cmds: &mut Vec<Command>,
 ) {
     if atsmini {
@@ -9072,8 +9099,12 @@ pub(in crate::app) fn band_mode_menu(
                     }
                 });
             } else {
-                let cols = chip_grid_cols(ui, &labels, 6.0, 6);
-                chip_grid(ui, "cb-plan-pad", cols, plans.len(), |ui, i| {
+                let widest = labels
+                    .iter()
+                    .map(|l| crate::chrome::chip_width(ui, l, None))
+                    .fold(0.0_f32, f32::max);
+                let cols = chip_row_cols(ui.available_width(), widest, 6);
+                chip_rows(ui, cols, plans.len(), |ui, i| {
                     let p = plans[i];
                     if crate::chrome::chip(ui, current == p, p.short())
                         .on_hover_text(format!("{} — {}", p.label(), p.modes()))
@@ -9096,7 +9127,7 @@ pub(in crate::app) fn band_mode_menu(
             mode_chip_grid(ui, mode, &digital, band, state, false, cmds);
             ui.add_space(6.0);
             crate::chrome::menu_caption(ui, "Wideband");
-            mode_chip_grid(ui, mode, &WIDEBAND_MODES, band, state, false, cmds);
+            wideband_chip_grid(ui, mode, band, state, false, show_ism, cmds);
             ui.add_space(6.0);
             // Last, and named for what it is. A tester deserves to know that a
             // failure here is a known state rather than something they broke.
@@ -9123,7 +9154,7 @@ pub(in crate::app) fn band_mode_menu(
             mode_chip_grid(ui, mode, &digital, band, state, true, cmds);
             ui.add_space(6.0);
             crate::chrome::menu_caption(ui, "Wideband");
-            mode_chip_grid(ui, mode, &WIDEBAND_MODES, band, state, true, cmds);
+            wideband_chip_grid(ui, mode, band, state, true, show_ism, cmds);
             ui.add_space(6.0);
             crate::chrome::menu_caption(ui, "Experimental (unproven)");
             mode_chip_grid(ui, mode, &Mode::EXPERIMENTAL, band, state, true, cmds);
@@ -9219,6 +9250,48 @@ fn readout_digit_count(
     let earns_extra =
         range_reaches_10ghz || converter_offset_hz.abs() >= 9e9 || active_freq_hz >= 1e10;
     if earns_extra { freq_display::DIGITS_EXT } else { freq_display::DIGITS }
+}
+
+/// The audio formats the REC row offers, in the order it draws them.
+///
+/// MP3 and WAV sit together because they are the same audio in two containers;
+/// MONO follows rather than joining them, because the channel layout is a
+/// property of both. The order is a value so it can be pinned without drawing
+/// the row.
+const REC_FORMATS: [RecordingFormat; 2] = [RecordingFormat::Mp3, RecordingFormat::Wav];
+
+/// One audio-format chip's state, so the pair's one-control behaviour can be
+/// pinned without drawing it.
+///
+/// `audio` is whether an audio recording is running and `active` is the format
+/// it was started with. Idle, both chips are pressable and neither is lit.
+/// Running, the format that is writing is lit and pressable — pressing it stops
+/// the file — and the other greys out, because a container cannot be chosen
+/// mid-file.
+struct RecFormatChip {
+    label: &'static str,
+    hover: &'static str,
+    /// Whether the chip may be pressed: the running format, or either while idle.
+    enabled: bool,
+    /// Whether this is the format currently being written.
+    selected: bool,
+}
+
+fn rec_format_chip(format: RecordingFormat, audio: bool, active: RecordingFormat) -> RecFormatChip {
+    let selected = audio && format == active;
+    let (label, hover) = match format {
+        RecordingFormat::Mp3 => (
+            if selected { "● MP3" } else { "MP3" },
+            "What you hear, as an MP3: the receiver in one channel and your own transmit in \
+             the other. This is the recording of a QSO.",
+        ),
+        RecordingFormat::Wav => (
+            if selected { "● WAV" } else { "WAV" },
+            "The same audio as uncompressed 16-bit PCM at 48 kHz — about 11 MB a minute \
+             stereo. For an editor or a decoder of your own.",
+        ),
+    };
+    RecFormatChip { label, hover, enabled: !audio || selected, selected }
 }
 
 #[cfg(test)]
@@ -10062,7 +10135,7 @@ mod tests {
     fn the_simple_interface_drops_the_advanced_system_chips() {
         assert_eq!(system_top_row(false, false), SYSTEM_CHIPS_TOP.to_vec());
         assert_eq!(system_bottom_row(false, false), SYSTEM_CHIPS_BOTTOM.to_vec());
-        assert_eq!(system_top_row(true, false), vec!["LOG", "SPOTS", "BANDS"]);
+        assert_eq!(system_top_row(true, false), vec!["LOG", "SPOTS", "BANDS", "DISP"]);
         // SWL mode keeps the SPOTS chip (the receive-only networks are a
         // listener's tool) and drops only award tracking, the ham feed being
         // filtered inside the window instead. Its LOG chip is relabelled "SWL
@@ -10080,13 +10153,13 @@ mod tests {
         //
         assert_eq!(
             system_top_row(false, true),
-            vec!["SCHEDULE", "LISTEN", "SWL LOG", "SPOTS", "BANDS", "SAT", "ISM"]
+            vec!["SCHEDULE", "LISTEN", "SWL LOG", "SPOTS", "BANDS", "SAT", "DISP"]
         );
         // HFDL is a decode window, so it sits with the others in the bottom
         // row — where the simple interface keeps it, unlike radio email.
         assert_eq!(
             system_bottom_row(true, false),
-            vec!["MEM", "SCAN", "HFDL", "GRID", "PUBLIC SDR", "⚙", "?"]
+            vec!["MEM", "SCAN", "EXTRAS", "GRID", "PUBLIC SDR", "⚙", "?"]
         );
         // SWL mode puts the signal guide in the MAIL slot, and keeps it even
         // when the simple interface would have dropped radio email. **GRID goes**:
@@ -10095,11 +10168,11 @@ mod tests {
         // window for the listener who also runs FT8.
         assert_eq!(
             system_bottom_row(false, true),
-            vec!["SIG ID", "MEM", "SCAN", "HFDL", "PUBLIC SDR", "⚙", "?"]
+            vec!["SIG ID", "MEM", "SCAN", "EXTRAS", "PUBLIC SDR", "⚙", "?"]
         );
         assert_eq!(
             system_bottom_row(true, true),
-            vec!["SIG ID", "MEM", "SCAN", "HFDL", "PUBLIC SDR", "⚙", "?"]
+            vec!["SIG ID", "MEM", "SCAN", "EXTRAS", "PUBLIC SDR", "⚙", "?"]
         );
     }
 
@@ -11185,6 +11258,7 @@ mod tests {
                     None,
                     true,
                     false,
+                    &mut false,
                     cmds,
                 );
             })
@@ -11260,10 +11334,10 @@ mod tests {
         .drop_without_applying_deltas();
         assert!(widest > 0.0, "measured nothing");
         // The window opens at 560 pt: five across.
-        assert_eq!(mode_grid_cols(560.0, widest), 5, "widest={widest}");
+        assert_eq!(chip_row_cols(560.0, widest, MODE_GRID_COLS), 5, "widest={widest}");
         // The docked column cannot be this wide, so it is fewer — but still a
         // grid, not one wrapped chip a row.
-        let docked = mode_grid_cols(262.0, widest);
+        let docked = chip_row_cols(262.0, widest, MODE_GRID_COLS);
         assert!((2..5).contains(&docked), "docked={docked} widest={widest}");
     }
 
@@ -11294,6 +11368,7 @@ mod tests {
                     None,
                     true,
                     false,
+                    &mut false,
                     &mut Vec::new(),
                 );
             });
@@ -11932,5 +12007,41 @@ mod tests {
         for k in keys {
             assert!(k.max.x <= col + 1.0, "a key painted to {k:?}, past the column");
         }
+    }
+
+    /// The two audio formats are one control between them, and the order is the
+    /// one the operator asked for: WAV sits between MP3 and MONO.
+    #[test]
+    fn the_audio_formats_are_one_control_between_them() {
+        assert_eq!(
+            REC_FORMATS,
+            [RecordingFormat::Mp3, RecordingFormat::Wav],
+            "MP3 then WAV, with MONO drawn after the pair"
+        );
+
+        // Idle: both pressable, neither lit, and their labels carry no dot.
+        for format in REC_FORMATS {
+            let chip = rec_format_chip(format, false, RecordingFormat::Mp3);
+            assert!(chip.enabled, "{format:?} must be pressable while nothing records");
+            assert!(!chip.selected, "{format:?} is not recording");
+            assert_eq!(chip.label, format.label());
+        }
+
+        // An MP3 running: MP3 lit and pressable, WAV greyed out — a container
+        // cannot be chosen mid-file.
+        let mp3 = rec_format_chip(RecordingFormat::Mp3, true, RecordingFormat::Mp3);
+        let wav = rec_format_chip(RecordingFormat::Wav, true, RecordingFormat::Mp3);
+        assert!(mp3.selected && mp3.enabled, "the running format stops the file");
+        assert_eq!(mp3.label, "● MP3");
+        assert!(!wav.selected);
+        assert!(!wav.enabled, "the other container cannot be switched to mid-file");
+        assert_eq!(wav.label, "WAV");
+
+        // And the mirror image, with a WAV running.
+        let mp3 = rec_format_chip(RecordingFormat::Mp3, true, RecordingFormat::Wav);
+        let wav = rec_format_chip(RecordingFormat::Wav, true, RecordingFormat::Wav);
+        assert!(!mp3.enabled, "MP3 greys out while a WAV writes");
+        assert!(wav.selected && wav.enabled);
+        assert_eq!(wav.label, "● WAV");
     }
 }

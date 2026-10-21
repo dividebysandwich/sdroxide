@@ -157,9 +157,11 @@ impl SdroxideApp {
             let auto_start = self.digi_cfg_edit.wefax_auto_start;
             if crate::chrome::chip(ui, auto_start, "AUTO START")
                 .on_hover_text(
-                    "Begin a chart when the 300 Hz (IOC 576) or 675 Hz start tone is heard \
-                     — and end the one in progress and phase the new one when the next \
-                     transmission arrives, whether or not a stop tone came first.",
+                    "Begin a chart when the 300 Hz (IOC 576) or 675 Hz start tone is heard, \
+                     or, if the tone was lost in a fade or under a carrier, when a few \
+                     seconds of the phasing signal arrive — and end the one in progress and \
+                     phase the new one when the next transmission arrives, whether or not a \
+                     stop tone came first. A carrier on the channel starts nothing.",
                 )
                 .clicked()
             {
@@ -285,6 +287,29 @@ impl SdroxideApp {
                 self.wefax.follow = !follow;
             }
 
+            // CLEAR RX drops a reception that is failing — the engine forgets the
+            // chart and goes back to listening for the next start tone — and
+            // SAVE writes the chart on screen to this computer, whichever way
+            // the program is running, on top of the copy the station keeps.
+            let has_chart = st.receiving || self.wefax.has_live();
+            let clear_from = cmds.len();
+            super::clear_rx_chip_at(ui, cmds, has_chart);
+            if cmds.len() > clear_from {
+                self.wefax.clear_live();
+            }
+            let payload = self.wefax.save_payload(crate::time::now_unix());
+            if super::save_chip_with(
+                ui,
+                payload.is_some(),
+                "Save the chart on screen to this computer, as far as it has arrived",
+            )
+            .clicked()
+            {
+                if let Some((name, png)) = &payload {
+                    crate::download::save_as(name, png, crate::download::Mime::Png);
+                }
+            }
+
             if changed && seeded {
                 cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
             }
@@ -379,13 +404,14 @@ impl SdroxideApp {
                             None => {
                                 ui.centered_and_justified(|ui| {
                                     ui.label(
-                                    RichText::new(
-                                        "Tune a fax schedule in USB and wait for a start tone, or \
-                                     press START to begin mid-chart.",
-                                    )
-                                    .color(theme::LINE_LIT())
-                                    .size(11.5),
-                                );
+                                        RichText::new(
+                                            "Tune a fax schedule in USB and wait for the chart to \
+                                     begin (start tone or phasing signal), or press START to \
+                                     begin mid-chart.",
+                                        )
+                                        .color(theme::LINE_LIT())
+                                        .size(11.5),
+                                    );
                                 });
                             }
                         }

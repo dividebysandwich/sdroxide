@@ -7213,3 +7213,68 @@ lines**. His fix removes the start-tone path; nothing in it touches the rephase
 one. The merge was clean, and his new test's fixture needed the same extension as
 the two #276 ones (a page of ~7 s cannot outlive the phasing signal the guard
 protects) — `d485e3c8`.
+
+### WEFAX under a standing carrier, on a real recording (2026-10-20)
+
+F4NRM's own off-air recording (48 kHz mono, 26 min) of a Pinneberg chart: **a
+carrier at 2328 Hz on the channel the whole time** — 28 Hz above white, so it
+reads as a blank page — fading under the signal and back over it. The decoder
+never started on it, or started on chart detail and ended the page at 695 s.
+
+**What the recording actually is, and it is not what it was described as.** One
+chart, **phasing at 39.5 s to a clean stop tone at 1118–1122.7 s**, black after.
+The "end at 13 min 34" was a stretch of the chart's own bottom frame; the long
+"carrier-only" gaps inside it are fades, up to 28 s. The start tone is **not
+recoverable** (it sits under the carrier) and there is **no audio tone at 300,
+450 or 675 Hz anywhere**, so the audio-tone detector of 2026-10-18 cannot start
+anything here. Nothing in the tree had a real recording with a carrier before.
+
+**Four faults, each pinned by a piece of the recording** (`crates/sdroxide-dsp/tests/
+wefax_real_recording.rs`, fixtures in `tests/testdata/wefax/`, under a megabyte):
+
+1. **No start without a tone.** Idle now cuts lines at the line rate on a clock
+   of its own and tests them for the phasing shape, round the circle so the
+   starting point does not matter; three seconds with the pulse in one place
+   begin a page (`idle_phasing`). The pulse in this recording is **a quarter of
+   the line wide**, scattered by noise, and its edge wanders by a tenth of a line
+   from line to line — so the lock is taken on a **stack of lines**
+   (`PhasingStack`), where it stands out cleanly, with a vote that nearly every
+   line carries it. The picture starts at the pulse's **centre plus half of the
+   standard 5 %** — the falling edge for a standard pulse, as before, and within
+   2 % of right for this one (the chart's frame is symmetric about it).
+2. **Noise ended the page.** Discriminator noise crosses mid-grey 450 times a
+   second, the stop tone's rate, for seven windows — and a count of crossings
+   cannot tell it from the tone. A stop (and a start) alternation must now hold
+   a share of the window's energy at its own pitch (`LevelSpectrum`,
+   `PERIODIC_SHARE`); the real stop tone in the same file passes it. The first
+   fixture for this was stored at 6 kHz and **did not reproduce the fault** —
+   band-limiting the audio removes the noise crossings — so that one piece is
+   kept at 12 kHz.
+3. **A start tone announced a page on its own**, wiping the picture on screen for
+   nothing. It arms now and is announced when the phasing locks, which is also
+   where a *consistent* run is required (the old lock averaged any five lines
+   that looked a little like phasing).
+4. **Black and white were fixed at 1500/2300 Hz.** They are re-measured from the
+   phasing signal (`calibrate`, within ±200 Hz) — checked by shifting the whole
+   recording ±100 Hz and through a ±80 Hz drift: the same single 2153-line chart.
+
+Also: the rest of the phasing signal at the head of an idle-started page is left
+out of the picture; nothing begins a page for 15 s after one ends (a chart's own
+closing bars look like phasing); a *flat* line of any brightness counts as blank,
+so a carrier that has drifted below white still ends an automatic page; the
+audio-tone detector judges purity against the low audio only, since a carrier
+dominates the total.
+
+**The replay needed no code, only proof.** Playback already stands the radio down,
+plays the file through the audio path and feeds every decoder; a file with no
+stamp in its name is played in whatever mode the operator picks. What was missing
+was a test that a fax recording comes out as a picture while it plays and that the
+live source is not read meanwhile: `crates/sdroxide-radio/tests/playback_wefax.rs`
+(13 s, real-time paced). A file reaches it by being put in the recordings folder.
+**No wire change, no `PROTO_VERSION` bump** (214 on `main`).
+
+**Lessons worth keeping.** A description of a recording is a claim: the 814 s end
+came from listening, the truth from a timeline of the carrier's share of the
+spectrum. A mutation check found one of the new unit tests passing with its own
+fix removed (noise at 900 symbols a second is 225 crossings per window, not 450) —
+**remove the fix and watch it fail, for every test, every time.**

@@ -209,20 +209,68 @@ fn centred_waterfall_note(ui: &egui::Ui, area: egui::Rect, text: &str) {
     p.galley(box_rect.center() - galley.size() / 2.0, galley, ink);
 }
 
-/// The wall clock, top-right of the panadapter: UTC and the operator's own
-/// local time, so a listener always has both in view (#655). Draw-only over the
-/// picture — it never reflows the strip — and the local half is dropped when
-/// the operator is already on UTC.
-fn paint_panadapter_clock(ui: &egui::Ui, area: egui::Rect) {
-    let text = crate::time::utc_and_local_now(crate::time::now_unix());
+/// The bandwidth line's font size: the clock's 11 pt leaves the bandwidth text
+/// a few points short of the clock's ink, so it is set a touch larger to fill
+/// the shared pill. Measured against Chakra Petch, the app's proportional face.
+const BW_LINE_FONT_PT: f32 = 11.6;
+
+/// Gap between the clock pill and the bandwidth pill.
+const PANADAPTER_PILL_GAP: f32 = 4.0;
+
+/// `BW waterfall · 148.0 kHz`, or `BW waterfall · —` before the first frame has
+/// given the view a window.
+///
+/// The width comes from [`ViewState::span`](crate::view::ViewState::span) — the
+/// same range the frequency ruler is drawn from — not from parsing the ruler's
+/// labels.
+fn waterfall_bw_text(span_hz: f64) -> String {
+    if span_hz.is_finite() && span_hz > 0.0 {
+        format!("BW waterfall · {}", spectrum_view::format_bandwidth(span_hz))
+    } else {
+        "BW waterfall · —".to_owned()
+    }
+}
+
+/// The two pills' rectangles: one shared width, both right-aligned to the
+/// panadapter's 8 pt margin, the bandwidth line 4 pt under the clock.
+///
+/// The width is the wider of the two texts plus the pill's 12 pt of padding, so
+/// neither line is clipped and the boxes line up. The height is the clock's own,
+/// so adding the line cannot change the clock's look.
+fn panadapter_pill_rects(
+    area: egui::Rect,
+    clock_text: egui::Vec2,
+    bw_text: egui::Vec2,
+) -> (egui::Rect, egui::Rect) {
+    let size = egui::vec2(clock_text.x.max(bw_text.x) + 12.0, clock_text.y + 7.0);
+    let clock =
+        egui::Rect::from_min_size(egui::pos2(area.right() - size.x - 8.0, area.top() + 8.0), size);
+    let bw = egui::Rect::from_min_size(
+        egui::pos2(clock.left(), clock.bottom() + PANADAPTER_PILL_GAP),
+        size,
+    );
+    (clock, bw)
+}
+
+/// The wall clock and the waterfall's visible bandwidth, top-right of the
+/// panadapter: UTC and the operator's own local time, so a listener always has
+/// both in view (#655), with the width the ruler spans beneath it.
+///
+/// Draw-only over the picture — it never reflows the strip — and the local half
+/// of the clock is dropped when the operator is already on UTC.
+fn paint_panadapter_clock(ui: &egui::Ui, area: egui::Rect, span_hz: f64) {
+    let clock = crate::time::utc_and_local_now(crate::time::now_unix());
+    let bw = waterfall_bw_text(span_hz);
     let p = ui.painter_at(area);
     let ink = egui::Color32::LIGHT_GRAY;
-    let galley = p.layout_no_wrap(text, egui::FontId::proportional(11.0), ink);
-    let size = galley.size() + egui::vec2(12.0, 7.0);
-    let rect =
-        egui::Rect::from_min_size(egui::pos2(area.right() - size.x - 8.0, area.top() + 8.0), size);
-    p.rect_filled(rect, 4.0, egui::Color32::from_black_alpha(150));
-    p.galley(rect.center() - galley.size() / 2.0, galley, ink);
+    let clock_galley = p.layout_no_wrap(clock, egui::FontId::proportional(11.0), ink);
+    let bw_galley = p.layout_no_wrap(bw, egui::FontId::proportional(BW_LINE_FONT_PT), ink);
+    let (clock_rect, bw_rect) = panadapter_pill_rects(area, clock_galley.size(), bw_galley.size());
+    for rect in [clock_rect, bw_rect] {
+        p.rect_filled(rect, 4.0, egui::Color32::from_black_alpha(150));
+    }
+    p.galley(clock_rect.center() - clock_galley.size() / 2.0, clock_galley, ink);
+    p.galley(bw_rect.center() - bw_galley.size() / 2.0, bw_galley, ink);
 }
 
 /// The dial as a large readout string, MHz with trailing zeros trimmed —
@@ -420,6 +468,7 @@ fn detached_spec(module: sdroxide_types::DetachableModule) -> DetachedWindowSpec
         // A compass wants to be near square: it is a dial with a readout
         // underneath, and a wide window would just be dial with margins.
         M::Rotor => ("antenna rotator", [420.0, 520.0]),
+        M::Dsc => ("DSC", [640.0, 480.0]),
     };
     DetachedWindowSpec {
         viewport_id: egui::ViewportId::from_hash_of(app_id),
@@ -904,6 +953,7 @@ impl eframe::App for SdroxideApp {
                         self.top_bar(ui, &mut cmds);
                     });
                 });
+            self.top_bar_bottom = band_panel.response.rect.bottom();
             if let Some(slot) = band_slot {
                 let window = ctx.content_rect();
                 ui.painter().set(
@@ -941,8 +991,11 @@ impl eframe::App for SdroxideApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mode = self.state.rx[0].mode;
-            let unavailable = self.ui_settings.is_detached(sdroxide_types::DetachableModule::Panel)
-                && !(mode.has_bottom_panel() || mode == Mode::Cw);
+            let unavailable =
+                (self.ui_settings.is_detached(sdroxide_types::DetachableModule::Panel)
+                    || (mode == Mode::Dsc
+                        && self.ui_settings.is_detached(sdroxide_types::DetachableModule::Dsc)))
+                    && !(mode.has_bottom_panel() || mode == Mode::Cw);
             if unavailable {
                 if self.panel_undock_notice_mode != Some(mode) {
                     self.panel_undock_notice_mode = Some(mode);
@@ -1493,6 +1546,7 @@ impl eframe::App for SdroxideApp {
         self.weather_window(&ctx);
         self.poll_playback_list(&mut cmds);
         self.playback_window(&ctx, &mut cmds);
+        self.extras_window(&ctx, &mut cmds);
         self.help.ui(&ctx);
         // Last, so it lands on top of everything else that opened this frame.
         self.oob_tx_window(&ctx);
@@ -1945,6 +1999,7 @@ impl SdroxideApp {
                 wf_tuning,
                 panel_below,
                 &sat_bands,
+                self.ui_settings.memory_waterfall_lanes,
                 cmds,
             );
             // The ATS Mini tunes by stepping its own band cycle, so the dial can
@@ -1962,7 +2017,7 @@ impl SdroxideApp {
                 self.view.auto_fit = false;
             }
             paint_panadapter_chrome(ui, area);
-            paint_panadapter_clock(ui, area);
+            paint_panadapter_clock(ui, area, self.view.span());
             if self.levels_hidden(now) && levels_hidden_chip(ui, spec_area) {
                 self.view.auto_fit = true;
                 self.fit_levels_now(now);
@@ -2258,6 +2313,14 @@ impl SdroxideApp {
                 self.handle_detached_outcome(ctx, module, &spec, outcome);
                 self.dispatch_commands(cmds);
             }
+            M::Dsc => {
+                let outcome = detached_viewport(ctx, &spec, seed, |ui| {
+                    let h = ui.available_height();
+                    self.dsc_panel(ui, &mut cmds, h);
+                });
+                self.handle_detached_outcome(ctx, module, &spec, outcome);
+                self.dispatch_commands(cmds);
+            }
         }
     }
 
@@ -2396,7 +2459,11 @@ impl SdroxideApp {
         body: impl FnOnce(&mut Self, &mut egui::Ui),
     ) -> (bool, bool) {
         let mut win_open = true;
-        let win_id = crate::layout::salted_id(ctx, id).with(TOOL_WINDOW_EPOCH);
+        let place = self.tool_place.take();
+        let mut win_id = crate::layout::salted_id(ctx, id).with(TOOL_WINDOW_EPOCH);
+        if let Some(p) = place {
+            win_id = win_id.with(p.epoch);
+        }
         #[cfg_attr(target_arch = "wasm32", allow(unused))]
         let mut body_top = f32::NAN;
         let mut w = egui::Window::new(title)
@@ -2416,6 +2483,9 @@ impl SdroxideApp {
             // allocation), so a large window is merely large, not broken; this
             // just keeps it sane.
             .max_size(ctx.content_rect().size() * 0.95);
+        if let Some(p) = place {
+            w = w.default_pos(p.pos).default_size(p.size);
+        }
         if min_size[0] > 0.0 {
             w = w
                 .min_width(crate::layout::window_w(ctx, min_size[0]))
@@ -2444,6 +2514,7 @@ impl SdroxideApp {
         #[cfg_attr(target_arch = "wasm32", allow(unused))]
         let mut detach = false;
         if let Some(r) = &resp {
+            self.tool_rect = Some(r.response.rect);
             crate::chrome::paint_window_border(ctx, &r.response);
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -2577,7 +2648,9 @@ impl SdroxideApp {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.ui_settings.is_detached(sdroxide_types::DetachableModule::Panel)
+            (self.ui_settings.is_detached(sdroxide_types::DetachableModule::Panel)
+                || (mode == Mode::Dsc
+                    && self.ui_settings.is_detached(sdroxide_types::DetachableModule::Dsc)))
                 && self.focused
                 && (mode.has_bottom_panel() || mode == Mode::Cw)
         }
@@ -2672,6 +2745,11 @@ impl SdroxideApp {
         self.ui_settings.is_detached(sdroxide_types::DetachableModule::Rotor) && self.focused
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dsc_detached(&self) -> bool {
+        self.ui_settings.is_detached(sdroxide_types::DetachableModule::Dsc) && self.focused
+    }
+
     /// Which of this radio's modules the shell should emit as their own windows
     /// this frame, by [`sdroxide_types::DetachableModule::index`].
     ///
@@ -2692,6 +2770,7 @@ impl SdroxideApp {
             self.module_window_wanted(sdroxide_types::DetachableModule::AuxPanadapter);
         want[sdroxide_types::DetachableModule::BandMenu.index()] = self.band_menu_detached();
         want[sdroxide_types::DetachableModule::Rotor.index()] = self.rotor_detached();
+        want[sdroxide_types::DetachableModule::Dsc.index()] = self.dsc_detached();
         want
     }
 
@@ -2778,6 +2857,48 @@ impl SdroxideApp {
     /// [`crate::multi::MultiApp`]), so a background radio keeps decoding,
     /// logging and reconnecting while another tab is up front. The unbounded
     /// event channel must never be left to back up.
+    /// Restart the slot bar's follower when the radio changes *to* FT8, FT4 or
+    /// FT2 from some other mode: the first frame is joined part-way and nothing
+    /// says where it began, so the bar sweeps from nothing until the first end
+    /// of a frame or the first decode places it. A change away from them just
+    /// forgets what was heard.
+    fn track_slot_mode(&mut self) {
+        let mode = self.state.rx[0].mode;
+        if self.slot_follow_mode == Some(mode) {
+            return;
+        }
+        self.slot_follow_mode = Some(mode);
+        match (matches!(mode, Mode::Ft8 | Mode::Ft4 | Mode::Ft2), self.slot_timing()) {
+            (true, Some(t)) => self.slot_follow.acquire(&t, crate::time::now_unix_f64()),
+            _ => self.slot_follow.reset(),
+        }
+    }
+
+    /// Give the slot bar the frame a batch of decodes came from: its start is
+    /// the slot's boundary, the mode's nominal offset and the DT the stations
+    /// showed (the middle one, so one odd clock does not move it). A decode
+    /// does not depend on level, so it places the bar where QRM leaves the gate
+    /// nothing to find.
+    fn anchor_slot_follow(&mut self, decodes: &[sdroxide_types::Decode]) {
+        if !matches!(self.state.rx[0].mode, Mode::Ft8 | Mode::Ft4 | Mode::Ft2) {
+            return;
+        }
+        let (Some(t), Some(newest)) =
+            (self.slot_timing(), decodes.iter().map(|d| d.slot_utc).max())
+        else {
+            return;
+        };
+        let mut dts: Vec<f32> =
+            decodes.iter().filter(|d| d.slot_utc == newest).map(|d| d.dt).collect();
+        dts.sort_by(|a, b| a.total_cmp(b));
+        let dt = f64::from(dts[dts.len() / 2]);
+        self.slot_follow.anchor(
+            &t,
+            newest as f64 + t.tx_offset_s + dt,
+            crate::time::now_unix_f64(),
+        );
+    }
+
     pub(crate) fn drain_events(&mut self, ctx: &egui::Context, now: f64) {
         // The settings row's explicit "save to profile" / "back to profile",
         // for the same reason as the answers below: the dialog is drawn from
@@ -2809,6 +2930,7 @@ impl SdroxideApp {
         // next one knows it is superseding a picture nothing will ever draw —
         // see the `Spectrum` arm below.
         let mut superseded = false;
+        self.track_slot_mode();
         while let Some(ev) = self.ctrl.poll_event() {
             match ev {
                 RadioEvent::Capabilities(c) => {
@@ -2869,6 +2991,7 @@ impl SdroxideApp {
                     let prev_mode = self.state.rx[0].mode;
                     let prev_band = self.state.band;
                     self.state = s;
+                    let band_changed = self.state.band != prev_band;
                     if self.state.rx[0].mode != prev_mode {
                         self.clear_digi_rx();
                         // The outgoing buffer too, and only here: the engine
@@ -2898,7 +3021,7 @@ impl SdroxideApp {
                     {
                         self.clear_digi_band_rx();
                     }
-                    self.recenter_if_tuned_away(prev_vfo, prev_rate);
+                    self.recenter_if_tuned_away(prev_vfo, prev_rate, band_changed);
                     // The announcer diffs *this* — the engine's own snapshot —
                     // rather than `self.state` per frame, because the UI
                     // mutates that optimistically before the engine confirms
@@ -3065,6 +3188,7 @@ impl SdroxideApp {
                 // shows under the dial while it is true.
                 RadioEvent::AtsMiniTuning(on) => self.atsmini_tuning = on,
                 RadioEvent::Ft8Decodes(d) => {
+                    self.anchor_slot_follow(&d);
                     // **A coded weather report is not a message.** SYNOP and
                     // SHIP arrive on the same RTTY decode path as every other
                     // line, and a decode list showing `BBXX BRAVO 20123 99252…`
@@ -3359,6 +3483,11 @@ impl SdroxideApp {
                                 slide.content_type
                             ),
                         }
+                    }
+                }
+                RadioEvent::HeardFrame(edge) => {
+                    if let Some(t) = self.slot_timing() {
+                        self.slot_follow.edge(&t, edge);
                     }
                 }
                 RadioEvent::Qo100Status(st) => self.qo100_status = Some(st),
@@ -4304,9 +4433,13 @@ impl SdroxideApp {
 
 #[cfg(test)]
 mod tests {
+    use eframe::egui;
     use sdroxide_types::{Band, Mode};
 
-    use super::{BindingsAction, bindings_action, digi_split, qsy_clears_decodes};
+    use super::{
+        BindingsAction, bindings_action, digi_split, panadapter_pill_rects, qsy_clears_decodes,
+        waterfall_bw_text,
+    };
 
     /// The reported bug, in one line: a profile's control bindings reached the
     /// server and were written to disk correctly, survived a restart, and were
@@ -4484,6 +4617,58 @@ mod tests {
         );
         assert!(size.x <= 800.0 && size.y <= 600.0, "grew past the monitor: {size:?}");
         assert_eq!(pos, Some(eframe::egui::pos2(1920.0, 0.0)));
+    }
+
+    /// The line under the clock names the width the ruler spans, in the units
+    /// the ruler itself uses, so the picture and the number cannot disagree.
+    #[test]
+    fn the_bandwidth_line_reads_the_visible_span() {
+        assert_eq!(waterfall_bw_text(148_000.0), "BW waterfall · 148.0 kHz");
+        assert_eq!(waterfall_bw_text(2_400_000.0), "BW waterfall · 2.400 MHz");
+        assert_eq!(waterfall_bw_text(300.0), "BW waterfall · 300 Hz");
+    }
+
+    /// Before the first spectrum frame there is no window yet, and a `--` is
+    /// the one honest reading. A zero, a negative or a non-finite span must
+    /// never print a bandwidth the picture does not have.
+    #[test]
+    fn an_unset_span_reads_as_no_bandwidth() {
+        for span in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(waterfall_bw_text(span), "BW waterfall · —", "{span}");
+        }
+    }
+
+    /// The two pills are one stack: equal width, one right edge, the clock's
+    /// margin above and the bandwidth line 4 pt beneath it.
+    #[test]
+    fn the_clock_pills_share_their_width_and_right_edge() {
+        let area = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(800.0, 400.0));
+        let (clock, bw) =
+            panadapter_pill_rects(area, egui::vec2(221.0, 15.0), egui::vec2(222.0, 16.0));
+        assert_eq!(clock.size(), bw.size(), "the stack must have one width");
+        assert_eq!(clock.left(), bw.left());
+        assert!(
+            (clock.right() - (area.right() - 8.0)).abs() < 1e-3,
+            "the clock's 8 pt right margin moved: {}",
+            clock.right()
+        );
+        assert_eq!(clock.top(), area.top() + 8.0);
+        assert_eq!(bw.top() - clock.bottom(), 4.0, "the line sits under the clock");
+        // The wider text sets the width, plus the pill's 12 pt of padding.
+        assert_eq!(clock.width(), 222.0 + 12.0);
+    }
+
+    /// On UTC the clock drops its local half and is narrower than the
+    /// bandwidth line; the pair takes the wider text's width rather than
+    /// clipping the line or shrinking the pill.
+    #[test]
+    fn the_narrower_text_does_not_shrink_the_pills() {
+        let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 400.0));
+        let (clock, bw) =
+            panadapter_pill_rects(area, egui::vec2(120.0, 15.0), egui::vec2(210.0, 16.0));
+        assert_eq!(clock.width(), 210.0 + 12.0);
+        assert_eq!(bw.width(), clock.width());
+        assert_eq!(clock.right(), bw.right());
     }
 }
 

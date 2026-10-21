@@ -155,6 +155,15 @@ fn target_is_windows_gnu() -> bool {
     os == "windows" && env == "gnu"
 }
 
+/// Whether the *target* is any flavour of Windows (MSVC or MinGW), read from
+/// the target's own configuration rather than the host's `cfg!`. A build script
+/// is compiled for the host, so `cfg!(target_os = "windows")` would be wrong
+/// when cross-compiling; this helper is used for the one define that only makes
+/// sense on Windows (`WIN32`).
+fn target_is_windows() -> bool {
+    std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() == "windows"
+}
+
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
@@ -168,8 +177,24 @@ fn main() {
         panic!("vendored Dream sources are missing at {}", dream.display());
     }
 
-    build_dream(&manifest, &dream, &faad2_include);
+    // Link order, and it runs both ways: GNU ld resolves static archives in
+    // command-line order and never rescans, so every archive has to appear
+    // after everything that uses it. cc prints `rustc-link-lib=static=` in
+    // `.compile()` order, which is the order the archives reach the linker.
+    // (1) The shim before Dream — an archive that *uses* Dream's symbols has
+    // to appear *before* the archive that defines them: `libsdroxide_drm_shim.a`
+    // behind `libsdroxide_dream.a` leaves every `CDRMReceiver`/`CParameter`
+    // reference in the shim unresolved when nothing else pulls Dream in (the
+    // test binaries; the full `sdroxide` binary links because other objects
+    // reference the same archives). (2) The system libraries last of all —
+    // the Dream and shim objects reference libstdc++/winpthread/ws2_32 (and
+    // on unix libm/libdl), so printing those inside `build_shim` put the
+    // runtime *before* Dream's objects and the same no-rescan rule failed the
+    // link from the other side. `emit_system_libs` below is what keeps them
+    // after both archives.
     build_shim(&manifest, &dream, &faad2_include);
+    build_dream(&manifest, &dream, &faad2_include);
+    emit_system_libs();
     generate_bindings(&manifest, &out);
 
     println!("cargo:rerun-if-changed=src/drm_shim.cpp");
@@ -203,7 +228,12 @@ fn common_defines(build: &mut cc::Build) {
         build.define(def, None);
     }
     // Selects the sound shim in `include/sdrx_sound.h` over a sound card, and
-    // links faad2 directly instead of dlopening it.
+    // links faad2 directly instead of dlopening it. `WIN32` is only defined on
+    // Windows targets: defining it unconditionally made the vendored Dream
+    // sources pull in `winsock2.h` on Linux (regression introduced by #134).
+    if target_is_windows() {
+        build.define("WIN32", None);
+    }
     build.define("USE_SDROXIDE_SOUND", None);
     build.define("USE_FAAD2_LIBRARY", None);
     build.define("SDROXIDE_NO_AAC_ENCODER", None);
@@ -251,7 +281,7 @@ fn build_dream(manifest: &Path, dream: &Path, faad2_include: &Path) {
             .warnings(false);
         common_defines(build);
     }
-    cxx.cpp(true).std("gnu++11");
+    cxx.cpp(true).std("c++11");
     if target_is_windows_gnu() {
         // Suppresses cc's own `-lstdc++`; `build_shim` links the C++ runtime
         // statically instead. See the note there.
@@ -273,8 +303,10 @@ fn build_dream(manifest: &Path, dream: &Path, faad2_include: &Path) {
         cxx.file(src.join("linux/Pacer.cpp"));
     }
 
-    c.compile("sdroxide_dream_c");
+    // `dream` before `dream_c`: dream's objects reference DAB_DATAGROUP_DECODER_*
+    // from dream_c, and GNU ld does not rescan.
     cxx.compile("sdroxide_dream");
+    c.compile("sdroxide_dream_c");
 
     // The FFTW stand-in. Its own translation unit so it stays independent of
     // Dream's build flags.
@@ -290,7 +322,7 @@ fn build_shim(manifest: &Path, dream: &Path, faad2_include: &Path) {
     let mut build = cc::Build::new();
     build
         .cpp(true)
-        .std("gnu++11")
+        .std("c++11")
         .file(manifest.join("src/drm_shim.cpp"))
         .include(dream.join("src"))
         .include(manifest.join("include"))
@@ -302,7 +334,15 @@ fn build_shim(manifest: &Path, dream: &Path, faad2_include: &Path) {
         build.cpp_link_stdlib(None::<&str>);
     }
     build.compile("sdroxide_drm_shim");
+}
 
+/// The system libraries the Dream and shim objects reference, printed **after**
+/// both archives and never before them: GNU ld resolves left to right and
+/// never rescans, so a library has to appear after everything that uses it.
+/// Printing them inside `build_shim` put the C++ runtime *before* Dream's
+/// objects, and the same no-rescan rule then failed the link from the other
+/// side (`std::less`, `_Rb_tree`, … undefined out of `newssvcdec_impl.cpp`).
+fn emit_system_libs() {
     // cc links the C++ runtime for the objects it builds; the Dream and shim
     // archives both need it, and on unix Dream's LibraryLoader needs dlopen.
     if cfg!(unix) {

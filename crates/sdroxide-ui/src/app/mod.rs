@@ -33,6 +33,7 @@ pub(in crate::app) mod cw_key;
 pub(in crate::app) mod dial_hold;
 pub(in crate::app) mod drm;
 pub(in crate::app) mod enigma;
+pub(in crate::app) mod extras;
 pub(in crate::app) mod frame;
 pub(in crate::app) mod grid_tracker;
 pub(in crate::app) mod hd;
@@ -165,6 +166,17 @@ pub(crate) struct ToolWindowState {
     pub undocked: bool,
     /// Where its window last was; `None` until it has been open once.
     pub window: Option<sdroxide_types::DetachedWindow>,
+}
+
+/// Where a tool window must open, and which opening this is. Set by a caller
+/// that remembers its window's geometry (EXTRAS) and consumed by
+/// [`SdroxideApp::tool_window_egui`]: the `epoch` goes into the window's id, so
+/// egui has no remembered state for this opening and `pos`/`size` apply.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ToolPlace {
+    pub pos: egui::Pos2,
+    pub size: egui::Vec2,
+    pub epoch: u32,
 }
 
 /// The settings page a client asked for **by name** before the app existed —
@@ -508,6 +520,18 @@ pub struct SdroxideApp {
     /// engine snapshots that have not caught up with them. See [`dial_hold`].
     dial_hold: dial_hold::DialHold,
     show_memories: bool,
+    /// The EXTRAS window — see [`extras`].
+    show_extras: bool,
+    /// The placement the next tool window is to open at; see [`ToolPlace`].
+    tool_place: Option<ToolPlace>,
+    /// Where the docked tool window drawn this frame ended up.
+    tool_rect: Option<egui::Rect>,
+    /// Which opening of the EXTRAS window this is, and whether it was open last
+    /// frame — see [`extras`].
+    extras_epoch: u32,
+    /// Where the top bar ends — the top of the spectrum frame below it.
+    top_bar_bottom: f32,
+    extras_was_open: bool,
     /// The RDS window. Opened from the RDS chip in the receive menu, which only
     /// appears on WFM.
     show_rds: bool,
@@ -799,6 +823,13 @@ pub struct SdroxideApp {
     pub(in crate::app) schedule: crate::app::schedule::ScheduleUi,
     /// Favourite broadcast stations, by name (`broadcast_favourites.json`).
     pub(in crate::app) broadcast_favs: Vec<String>,
+    /// Set by the SCHEDULE panel's ALL chip: every station of the active
+    /// schedule is a favourite for this session. Session-only on purpose —
+    /// `broadcast_favs` is what is kept, so after a restart the stars are still
+    /// there and this is off again. Its other job is the waterfall: while it is
+    /// on, a favourited station's name is drawn permanently rather than only
+    /// when the dial is within a kilohertz (see `spot_visible`).
+    pub(in crate::app) broadcast_all: bool,
     /// The operator's own HFDL channels, in kHz (`hfdl_channels.json`) — the
     /// busy assigned frequencies that are not in the published plan, drawn as
     /// one-click chips beside it in the HFDL panel.
@@ -820,6 +851,13 @@ pub struct SdroxideApp {
     /// by the round-tripped status echo. Seeded once from the first status.
     digi_cfg_edit: sdroxide_types::DigiConfig,
     digi_cfg_seeded: bool,
+    /// Where the slot bar is, as far as the sound in the speakers says — see
+    /// [`sdroxide_types::SlotFollower`]. FT8, FT4 and FT2 only; the clock's bar
+    /// is the answer wherever this has nothing to say.
+    slot_follow: sdroxide_types::SlotFollower,
+    /// The mode the follower was last told about, so a change *to* FT8, FT4 or
+    /// FT2 restarts it from the start of the bar.
+    slot_follow_mode: Option<Mode>,
     /// Whether the CW panel's message-button editor is open (issue #374).
     /// Screen state, not the operator's: the buttons themselves live in
     /// `DigiConfig`.
@@ -1892,6 +1930,12 @@ impl SdroxideApp {
             seen_first_state: false,
             dial_hold: dial_hold::DialHold::default(),
             show_memories: false,
+            show_extras: false,
+            tool_place: None,
+            tool_rect: None,
+            extras_epoch: 0,
+            top_bar_bottom: 0.0,
+            extras_was_open: false,
             show_rds: false,
             show_drm: false,
             drm: None,
@@ -1997,6 +2041,7 @@ impl SdroxideApp {
             swl_filter: Default::default(),
             schedule: Default::default(),
             broadcast_favs: load_broadcast_favourites(storage),
+            broadcast_all: false,
             hfdl_channels: load_hfdl_channels(storage),
             recording_jobs: load_recording_jobs(storage),
             jobs: Default::default(),
@@ -2059,6 +2104,8 @@ impl SdroxideApp {
             aprs_lat_buf: String::new(),
             aprs_lon_buf: String::new(),
             digi_cfg_seeded: false,
+            slot_follow: sdroxide_types::SlotFollower::default(),
+            slot_follow_mode: None,
             cw_macro_edit: false,
             text_macro_edit: false,
             cw_straight: false,
@@ -3821,6 +3868,107 @@ mod tests {
         img.save(&out).expect("write the preview");
         println!("wrote {out}");
     }
+    /// The EXTRAS window opens under the top bar at the right of the frame, and
+    /// a window that was moved and resized comes back at that place and size —
+    /// also from a fresh app built on the saved settings, which is what a new
+    /// session is.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_extras_window_returns_where_it_was_left() {
+        use crate::multi::frame_test_lock;
+        let _guard = frame_test_lock();
+        let dir =
+            std::env::temp_dir().join(format!("sdroxide-extras-place-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        unsafe { std::env::set_var("SDROXIDE_CONFIG_DIR", &dir) };
+        let (w, h) = (1920.0_f32, 720.0_f32);
+        let open_rect = |saved: Option<sdroxide_types::DetachedWindow>| {
+            let controller: Box<dyn RadioController> = Box::new(RecordingController::default());
+            let ctx = egui::Context::default();
+            let mut app = SdroxideApp::new_tab(&ctx, None, None, controller, 0, true);
+            app.ui_settings.extras_window = saved;
+            app.show_extras = true;
+            let mut tex = crate::test_raster::Textures::default();
+            for i in 0..4 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(w, h),
+                    )),
+                    time: Some(10.0 + i as f64 / 30.0),
+                    ..Default::default()
+                };
+                let mut full = ctx.run_ui(input, |ui| {
+                    app.ui(ui, &mut eframe::Frame::_new_kittest());
+                });
+                tex.apply(&full.textures_delta);
+                full.textures_delta.clear();
+            }
+            (app.tool_rect.expect("the window was drawn"), app.top_bar_bottom)
+        };
+        let (r, bar) = open_rect(None);
+        assert!(r.top() >= bar && r.top() < bar + 12.0, "under the top bar: {r:?} vs {bar}");
+        assert!(r.right() > w - 12.0, "at the right of the frame: {r:?}");
+        let saved =
+            sdroxide_types::DetachedWindow { size: [720.0, 230.0], pos: Some([200.0, 300.0]) };
+        let (r, _) = open_rect(Some(saved));
+        assert!((r.min.x - 200.0).abs() < 2.0 && (r.min.y - 300.0).abs() < 2.0, "place: {r:?}");
+        assert!((r.width() - 720.0).abs() < 2.0, "size: {r:?}");
+    }
+
+    /// Render the top bar, with the EXTRAS window open or closed, to a PNG to
+    /// look at. `EXTRAS_OPEN=1` opens the window; `EXTRAS_W` is the window width
+    /// (default 1600); writes `target/extras_preview.png` or `$EXTRAS_PREVIEW`.
+    ///
+    /// ```sh
+    /// EXTRAS_OPEN=1 cargo test -p sdroxide-ui --release --lib extras_preview -- --ignored --nocapture
+    /// ```
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[ignore = "writes a picture to look at; not an assertion"]
+    fn extras_preview() {
+        use crate::multi::frame_test_lock;
+        let _guard = frame_test_lock();
+        let dir =
+            std::env::temp_dir().join(format!("sdroxide-extras-preview-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        unsafe { std::env::set_var("SDROXIDE_CONFIG_DIR", &dir) };
+        let w: f32 = std::env::var("EXTRAS_W").ok().and_then(|v| v.parse().ok()).unwrap_or(1600.0);
+        let h: f32 = std::env::var("EXTRAS_H").ok().and_then(|v| v.parse().ok()).unwrap_or(500.0);
+        let controller: Box<dyn RadioController> = Box::new(RecordingController::default());
+        let ctx = egui::Context::default();
+        let mut app = SdroxideApp::new_tab(&ctx, None, None, controller, 0, true);
+        app.show_extras = std::env::var("EXTRAS_OPEN").is_ok();
+        let mut tex = crate::test_raster::Textures::default();
+        let mut last = None;
+        for i in 0..4 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h))),
+                time: Some(10.0 + i as f64 / 30.0),
+                ..Default::default()
+            };
+            let mut full = ctx.run_ui(input, |ui| {
+                app.ui(ui, &mut eframe::Frame::_new_kittest());
+            });
+            tex.apply(&full.textures_delta);
+            full.textures_delta.clear();
+            last = Some(full);
+        }
+        let img = crate::test_raster::rasterize(
+            &ctx,
+            last.unwrap(),
+            &tex,
+            egui::vec2(w, h),
+            crate::theme::BG_DEEP(),
+        );
+        let out = std::env::var("EXTRAS_PREVIEW").unwrap_or_else(|_| {
+            format!("{}/../../target/extras_preview.png", env!("CARGO_MANIFEST_DIR"))
+        });
+        img.save(&out).expect("write the preview");
+        println!("wrote {out}");
+    }
     /// The DAB meter shows the programme, like a hi-fi's: turned down to 5 %
     /// it moves exactly as at full volume (a report: at low volume it hardly
     /// moved at all).
@@ -4633,6 +4781,112 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The slot bar follows the sound: a frame heard starting puts the bar at
+    /// the start of its white stretch whatever the clock says, the sound
+    /// stopping turns it green at once, and with nothing heard the clock's
+    /// dim bar is what is drawn.
+    #[test]
+    fn the_slot_bar_follows_the_sound_not_the_clock() {
+        use crate::multi::frame_test_lock;
+        let _guard = frame_test_lock();
+        // A slot boundary, so the arithmetic is in whole seconds.
+        let t0 = 1_000_000_005.0f64;
+        let white = crate::theme::gray(235);
+
+        let queue = std::rc::Rc::new(std::cell::RefCell::new(std::collections::VecDeque::new()));
+        let ctx = egui::Context::default();
+        let mut app = SdroxideApp::new_tab(
+            &ctx,
+            None,
+            None,
+            Box::new(SharedController(queue.clone())),
+            0,
+            true,
+        );
+        app.state.rx[0].mode = sdroxide_types::Mode::Ft8;
+
+        let bar = |app: &SdroxideApp, at: f64| -> Vec<egui::Color32> {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| app.slot_progress_at(ui, at));
+            let shapes = std::mem::take(&mut out.shapes);
+            out.drop_without_applying_deltas();
+            let mut fills: Vec<(egui::Rect, egui::Color32)> = shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    egui::Shape::Rect(r) if r.rect.height() == 5.0 => Some((r.rect, r.fill)),
+                    _ => None,
+                })
+                .collect();
+            fills.remove(0); // the track
+            fills.retain(|f| f.0.width() > 0.0);
+            fills.into_iter().map(|f| f.1).collect()
+        };
+
+        // Nothing heard: the clock's bar, dim cyan.
+        assert_eq!(bar(&app, t0 + 3.0), vec![crate::theme::CYAN_DIM()]);
+
+        // A frame heard starting at 0.5 s: by 3.0 s the bar is white.
+        queue.borrow_mut().push_back(RadioEvent::HeardFrame(sdroxide_types::HeardEdge {
+            present: true,
+            at: t0 + 0.5,
+        }));
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.ui(ui, &mut eframe::Frame::_new_kittest());
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(bar(&app, t0 + 3.0), vec![white], "the bar did not follow the sound");
+
+        // The sound stops at 12.9 s: green at once, though the clock's own
+        // burst is not over for another quarter second.
+        queue.borrow_mut().push_back(RadioEvent::HeardFrame(sdroxide_types::HeardEdge {
+            present: false,
+            at: t0 + 12.9,
+        }));
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.ui(ui, &mut eframe::Frame::_new_kittest());
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(bar(&app, t0 + 13.0), vec![white, crate::theme::GREEN()]);
+    }
+
+    /// Changing to FT8 puts the radio in the middle of a frame with nothing to
+    /// say where it began. The bar must start from nothing and run — white, as
+    /// something the sound is doing — rather than show the clock's guess.
+    #[test]
+    fn a_change_to_ft8_starts_the_bar_from_nothing_and_runs() {
+        use crate::multi::frame_test_lock;
+        let _guard = frame_test_lock();
+        let queue = std::rc::Rc::new(std::cell::RefCell::new(std::collections::VecDeque::new()));
+        let ctx = egui::Context::default();
+        let mut app = SdroxideApp::new_tab(
+            &ctx,
+            None,
+            None,
+            Box::new(SharedController(queue.clone())),
+            0,
+            true,
+        );
+        app.state.rx[0].mode = sdroxide_types::Mode::Ft8;
+        let started = crate::time::now_unix_f64();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.ui(ui, &mut eframe::Frame::_new_kittest());
+        })
+        .drop_without_applying_deltas();
+        let mut out =
+            ctx.run_ui(egui::RawInput::default(), |ui| app.slot_progress_at(ui, started + 3.0));
+        let fills: Vec<egui::Color32> = std::mem::take(&mut out.shapes)
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Rect(r) if r.rect.height() == 5.0 && r.rect.width() > 0.0 => {
+                    Some(r.fill)
+                }
+                _ => None,
+            })
+            .skip(1)
+            .collect();
+        out.drop_without_applying_deltas();
+        assert_eq!(fills, vec![crate::theme::gray(235)], "the bar did not start from nothing");
     }
 
     /// The split arithmetic the undocked mode rests on: a part that is undocked

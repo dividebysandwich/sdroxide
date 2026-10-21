@@ -51,6 +51,42 @@
     // giving back — rebuilding again would churn through contexts and never
     // make a sound, so after a couple of tries the operator is told instead.
     let stalledRebuilds = 0;
+    // Why the restart bar is up, so its wording matches the cause rather
+    // than always blaming a window that was in the background.
+    let restartReason = "stopped";
+
+    // --- following the output device ------------------------------------
+    //
+    // Connecting a headset after the page has opened does not move a context
+    // that is already running. Chromium leaves it on the device it was built
+    // with, which the OS has by then deactivated, so the worklet goes on
+    // rendering into nothing and the page is silent with no symptom at all —
+    // the same shape as a frozen context, and undetectable by the watchdog for
+    // the same reason: the render heartbeat is still advancing.
+    //
+    // The one way to follow the new default is a fresh context, so a device
+    // change is treated as a reason to rebuild. Where the browser exposes
+    // `setSinkId`, the fresh context also asks for the default sink explicitly
+    // rather than trusting whatever device it happened to open with.
+    let sinkSupported = false;
+    let sinkId = "";
+    // A Bluetooth headset announces itself more than once, once per profile as
+    // they arrive, so the rebuild waits for the flurry to settle. A change
+    // while the page is hidden is owed to the moment the operator is back.
+    let rerouteDue = false;
+    let rerouteTimer = null;
+    const REROUTE_SETTLE_MS = 400;
+
+    // The browser's own name for the sink a context plays through: an empty
+    // string means the default output, a device id names a specific one, and
+    // an `{ type }` object is where an output has been refused.
+    function readSink(c) {
+        if (!c || !("sinkId" in c)) return "(unsupported)";
+        const s = c.sinkId;
+        if (typeof s === "string") return s || "(default)";
+        if (s && s.type) return s.type;
+        return "(default)";
+    }
 
     // AudioWorklet and getUserMedia are both secure-context-only, and the whole
     // audio path runs through them. Over plain http a browser only treats
@@ -98,18 +134,34 @@
     // click anywhere, and this is the only thing on screen that says so.
     let restartBar = null;
 
-    function wantRestartBar() {
+    function restartBarText() {
+        if (restartReason === "device") {
+            return "Audio output changed (new device connected). Click here to start the sound on it.";
+        }
+        if (restartReason === "background") {
+            return "Sound stopped while this window was in the background. Click here to start it again.";
+        }
+        return "Sound stopped. Click here to start it again.";
+    }
+
+    function wantRestartBar(reason) {
+        if (reason) restartReason = reason;
         // The Sound welcome hint is the other thing that occupies the top of a
         // page whose sound is not running; it says what to do, so this would
         // only be a second voice saying it.
-        if (restartBar || hint || location.search.includes("view=solar")) return;
+        if (hint || location.search.includes("view=solar")) return;
+        if (restartBar) {
+            restartBar.textContent = restartBarText();
+            return;
+        }
         const put = () => {
-            if (restartBar) return;
+            if (restartBar) {
+                restartBar.textContent = restartBarText();
+                return;
+            }
             const bar = document.createElement("div");
             bar.style.cssText = BAR_CSS;
-            bar.textContent =
-                "Sound stopped while this window was in the background. " +
-                "Click here to start it again.";
+            bar.textContent = restartBarText();
             bar.addEventListener("click", () => {
                 hideRestartBar();
                 restartAudio("the sound banner was clicked");
@@ -126,6 +178,7 @@
             restartBar.remove();
             restartBar = null;
         }
+        restartReason = "stopped";
     }
 
     // Until the first gesture there is no context at all, so the page is
@@ -268,6 +321,27 @@
             next = new AudioContext();
         }
         ctx = next;
+        sinkSupported = typeof next.setSinkId === "function";
+        if (sinkSupported) {
+            // A fresh context already opens the current default, but asking for
+            // the empty sink is the difference between "the default when this
+            // context was built" and "the default now" on a browser that keeps
+            // the device it first chose. Refused is not fatal: the context
+            // still plays through the default it opened with, and the rebuild
+            // on the next device change is the other half of the cure.
+            try {
+                next.setSinkId("").then(
+                    () => {
+                        if (gen !== generation) return;
+                        sinkId = readSink(next);
+                        console.log("sdroxide audio: output device", sinkId);
+                    },
+                    (e) => console.warn("sdroxide audio: setSinkId(default) refused:", e)
+                );
+            } catch (e) {
+                console.warn("sdroxide audio: setSinkId is not usable:", e);
+            }
+        }
         next.onstatechange = () => {
             if (gen !== generation) return;
             console.log("sdroxide audio: context state", next.state);
@@ -278,7 +352,10 @@
                 // Closed, and a hidden page can neither use nor keep a context:
                 // rebuilding now would be work the browser undoes, and the
                 // moment to do it is the moment the operator is back.
-                if (!document.hidden) rebuildAudio("the browser closed the audio context");
+                if (!document.hidden) {
+                    restartReason = document.hidden ? "background" : "stopped";
+                    rebuildAudio("the browser closed the audio context");
+                }
             } else {
                 resumeCtx();
             }
@@ -320,13 +397,43 @@
 
     /// Throw the dead context away and build a new one, at most every
     /// [`REBUILD_MIN_MS`] — a rebuild that cannot succeed (no gesture yet)
-    /// would otherwise be attempted once a second.
-    function rebuildAudio(reason) {
+    /// would otherwise be attempted once a second. `force` skips that limit for
+    /// a rebuild the browser has made necessary (a device change), which is not
+    /// an attempt that can fail.
+    function rebuildAudio(reason, force) {
         const now = performance.now();
-        if (now - lastRebuildAt < REBUILD_MIN_MS) return;
+        if (!force && now - lastRebuildAt < REBUILD_MIN_MS) return;
         lastRebuildAt = now;
         console.log("sdroxide audio: rebuilding the playback path:", reason);
         buildAudio();
+    }
+
+    /// The output device changed under a running page, so the context in force
+    /// is on a device the OS has let go. A new context is the only way to
+    /// follow the new default — hence the rebuild — and being a real new fact
+    /// rather than a stalled context, it is not swallowed by the rebuild rate
+    /// limit, which exists for a rebuild that cannot succeed.
+    function rerouteAudio(reason) {
+        rerouteDue = false;
+        restartReason = "device";
+        // No playback yet: the first context has not been built, and it will
+        // open the current default when the gesture comes.
+        if (!ctx) return;
+        // Forced, not rate-limited: zeroing `lastRebuildAt` does not carry it,
+        // because the limit is measured against page load — a change in the
+        // page's first few seconds would be swallowed.
+        rebuildAudio(reason, true);
+    }
+
+    /// A device change is a flurry, not an event: a headset's profiles arrive
+    /// one at a time. Wait for it to settle, then rebuild once.
+    function scheduleReroute() {
+        if (rerouteTimer) clearTimeout(rerouteTimer);
+        rerouteTimer = setTimeout(() => {
+            rerouteTimer = null;
+            if (!ctx || document.hidden) return;
+            rerouteAudio("the output device changed");
+        }, REROUTE_SETTLE_MS);
     }
 
     function resumeCtx() {
@@ -358,6 +465,14 @@
     /// not.
     function cameBack(reason) {
         lastRenderAt = performance.now();
+        // A device change while the page was hidden is owed now, and a rebuild
+        // is the answer to it rather than a resume: the context in force is on
+        // a device that is gone.
+        if (rerouteDue) {
+            restartReason = "device";
+            rerouteAudio(reason + ": the output device changed");
+            return;
+        }
         ensureAudio(reason);
     }
 
@@ -532,12 +647,27 @@
         for (const ev of ["pointerdown", "touchstart", "touchend", "click", "keydown"]) {
             window.addEventListener(ev, onGesture, opts);
         }
+        // The output default itself can move while the page is open — a
+        // headset connected mid-session is the everyday case — and a context
+        // that is already running is not moved with it. Ask to be told and
+        // rebuild; see the note beside `rerouteDue`.
+        if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+            navigator.mediaDevices.addEventListener("devicechange", () => {
+                rerouteDue = true;
+                restartReason = "device";
+                if (document.hidden) return;
+                scheduleReroute();
+            });
+        }
         // iOS suspends the context when the tab goes to the background; a
         // browser that has stopped drawing a minimised window freezes it and
         // tears its audio down. Either way the way back is the same, and it is
         // the only moment at which rebuilding is worth attempting.
         document.addEventListener("visibilitychange", () => {
-            if (!document.hidden) cameBack("the page was shown again");
+            if (!document.hidden) {
+                if (!rerouteDue) restartReason = "background";
+                cameBack("the page was shown again");
+            }
         });
         // The Page Lifecycle API: `freeze` stops a hidden page's tasks without
         // unloading it (Chrome does this to background tabs), and `resume` is
@@ -600,6 +730,12 @@
                 renderAgoMs: lastRenderAt ? Math.round(performance.now() - lastRenderAt) : -1,
                 hidden: document.hidden,
                 microphone: micReady,
+                // Which output the page is playing through, and whether the
+                // browser lets the page choose it at all: the two facts a
+                // report of "no sound in the headset" needs.
+                sink: ctx ? readSink(ctx) : "(none)",
+                sinkSupported: sinkSupported,
+                sinkId: sinkId,
             };
         },
         // Force the audio path back on, for the banner and for a caller that

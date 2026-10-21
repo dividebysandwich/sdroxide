@@ -7317,14 +7317,14 @@ pub(in crate::app) fn settings_sdrplay_tab(
             }
 
             if model.has_rf_notch() {
-                ui.label("FM broadcast notch");
+                ui.label("FM/MW notch");
                 let mut on = cfg.sdrplay.rf_notch;
                 if ui
                     .checkbox(&mut on, "Enable")
                     .on_hover_text(
-                        "Hardware notch over the 88–108 MHz broadcast band, for \
-                     when a local transmitter overloads everything else. \
-                     Applies immediately.",
+                        "Hardware notch over the FM broadcast (88–108 MHz) and \
+                     medium-wave bands, for when a local transmitter overloads \
+                     everything else. Applies immediately.",
                     )
                     .changed()
                 {

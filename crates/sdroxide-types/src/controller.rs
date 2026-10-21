@@ -462,6 +462,14 @@ pub enum RadioEvent {
     /// picture, apart from [`RadioEvent::DabStatus`], which goes out several
     /// times a second. The engine's, so it rides `ServerMsg::DabSlide`.
     DabSlide(Box<crate::DabSlide>),
+    /// A frame of a slotted mode started or stopped sounding in the speakers.
+    ///
+    /// Found where the audio is handed to the output, so it is the sound the
+    /// operator hears and not the clock's idea of it — see
+    /// [`crate::FrameGate`]. Never on the wire: a remote client has the audio
+    /// itself and finds the edges on its own end, which is also where its own
+    /// playout delay is known.
+    HeardFrame(crate::HeardEdge),
 }
 
 /// Snapshot of the frontend's switchable sound devices (native clients).

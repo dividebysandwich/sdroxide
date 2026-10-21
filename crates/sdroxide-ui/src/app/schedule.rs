@@ -129,13 +129,14 @@ impl SdroxideApp {
         let mut tune: Option<BroadcastStation> = None;
         let mut log: Option<BroadcastStation> = None;
         let mut fav_toggle: Option<(String, bool)> = None;
+        let mut all_toggle: Option<bool> = None;
         let open = self.tool_window(
             ctx,
             "schedule",
             "SCHEDULE",
             [SCHEDULE_WINDOW_W, 560.0],
             self.schedule.show,
-            |me, ui| me.schedule_body(ui, &mut tune, &mut log, &mut fav_toggle),
+            |me, ui| me.schedule_body(ui, &mut tune, &mut log, &mut fav_toggle, &mut all_toggle),
         );
         self.schedule.show = open;
 
@@ -144,6 +145,22 @@ impl SdroxideApp {
             if on {
                 self.broadcast_favs.push(name);
                 self.broadcast_favs.sort();
+            }
+            crate::app::persist::persist_broadcast_favourites(&self.broadcast_favs);
+        }
+        if let Some(on) = all_toggle {
+            self.broadcast_all = on;
+            if on {
+                // Favourite every schedule station.
+                self.broadcast_favs.clear();
+                for s in &self.broadcast {
+                    if !self.broadcast_favs.iter().any(|n| n == &s.name) {
+                        self.broadcast_favs.push(s.name.clone());
+                    }
+                }
+                self.broadcast_favs.sort();
+            } else {
+                self.broadcast_favs.clear();
             }
             crate::app::persist::persist_broadcast_favourites(&self.broadcast_favs);
         }
@@ -182,6 +199,7 @@ impl SdroxideApp {
         tune: &mut Option<BroadcastStation>,
         log: &mut Option<BroadcastStation>,
         fav_toggle: &mut Option<(String, bool)>,
+        all_toggle: &mut Option<bool>,
     ) {
         crate::chrome::window_body_bg(ui);
         let now = now_unix() as i64;
@@ -304,6 +322,15 @@ impl SdroxideApp {
                 .clicked()
             {
                 self.schedule.favourites_only = !self.schedule.favourites_only;
+            }
+            if crate::chrome::chip(ui, self.broadcast_all, "⭐ ALL")
+                .on_hover_text(
+                    "Favourite every schedule station, and show their labels on the \
+                     waterfall while it stays on. Click again to clear all favourites.",
+                )
+                .clicked()
+            {
+                *all_toggle = Some(!self.broadcast_all);
             }
             if crate::chrome::chip(ui, self.schedule.solar_time, "SOLAR TIME")
                 .on_hover_text(

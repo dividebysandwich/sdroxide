@@ -69,8 +69,9 @@ const H_GAP: f32 = 6.0;
 /// How far past the label the frequency line runs, so the mark is visible over
 /// the signal it names and not only where it is written down.
 const TICK: f32 = 8.0;
-/// Cap on stacked lanes; a memory that would need a deeper one is dropped.
-const MAX_LANES: usize = 4;
+/// Hard cap on stacked lanes; a memory that would need a deeper one is dropped.
+/// The operator may ask for fewer through the memories window, never more.
+const MAX_LANES: usize = 12;
 /// Widest a label may grow before its text is cut short with an ellipsis. A
 /// memory name is free text and nothing stops it being a sentence.
 const BOX_MAX_W: f32 = 240.0;
@@ -98,6 +99,7 @@ pub fn layout(
     marks: &[MemMark],
     strip_h: f32,
     panel_below: bool,
+    max_lanes: usize,
 ) -> Vec<MemBox> {
     let mut out = Vec::new();
     if marks.is_empty() || view.span() <= 0.0 || wf.height() < 24.0 {
@@ -107,7 +109,7 @@ pub fn layout(
     let box_h = BOX_H * fs;
     let frac = if panel_below { PANEL_MAX_FRAC } else { MAX_FRAC };
     let fit = ((wf.height() * frac - strip_h) / (box_h + LANE_GAP)).floor().max(0.0) as usize;
-    let lanes = fit.min(MAX_LANES);
+    let lanes = fit.min(max_lanes.max(1)).min(MAX_LANES);
     if lanes == 0 {
         return out;
     }

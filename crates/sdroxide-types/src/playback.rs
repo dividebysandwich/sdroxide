@@ -38,13 +38,15 @@ pub fn recording_mode_tag(mode: Mode) -> String {
 /// Read the stamp back out of a recording's name:
 /// `sdroxide[_radioN]_YYYY-MM-DD_HH-MM-SSZ_<MHz>MHz_<MODE>.<ext>`.
 ///
-/// Returns `None` for any other name — a file somebody copied in, or one of
-/// the I/Q captures. A mode tag this build does not know leaves `mode` empty
+/// Something in front of `sdroxide_` (a download's prefix) is ignored. Returns
+/// `None` for any other name — a file somebody copied in, or one of the I/Q
+/// captures. A mode tag this build does not know leaves `mode` empty
 /// rather than refusing the whole stamp: the time and the frequency are still
 /// worth showing.
 pub fn parse_recording_name(name: &str) -> Option<RecordingStamp> {
     let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
-    let rest = stem.strip_prefix("sdroxide")?;
+    // Anything in front is a copy's own doing (a download prefix, "copy of").
+    let rest = &stem[stem.find("sdroxide_")? + "sdroxide".len()..];
     let (radio, rest) = match rest.strip_prefix("_radio") {
         Some(r) => {
             let end = r.find('_')?;
@@ -245,6 +247,24 @@ mod tests {
         ] {
             assert_eq!(parse_recording_name(name), None, "{name}");
         }
+    }
+
+    /// A downloaded or uploaded copy arrives with something in front of the
+    /// name (`487e8df6-sdroxide_…`); the stamp is still the file's own, and
+    /// without it the mode and the dial are left alone and nothing decodes.
+    #[test]
+    fn a_prefixed_copy_keeps_its_stamp() {
+        let s = parse_recording_name("487e8df6-sdroxide_2026-10-18_14-39-56Z_2.185800MHz_DSC.mp3")
+            .expect("the prefixed name is unread");
+        assert_eq!(s.mode, Some(Mode::Dsc));
+        assert!((s.freq_hz - 2_185_800.0).abs() < 0.5);
+        assert_eq!(
+            parse_recording_name(
+                "copy of sdroxide_radio2_2026-10-06_10-00-05Z_27.265000MHz_FT8.mp3"
+            )
+            .map(|s| (s.radio, s.mode)),
+            Some((2, Some(Mode::Ft8)))
+        );
     }
 
     /// A name, never a path: the engine opens files only inside its own

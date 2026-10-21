@@ -571,6 +571,25 @@ impl SdroxideApp {
             );
         });
         self.memory_sort_bar(ui);
+        // How the memory marks are drawn on the waterfall (issue #127): how
+        // many may be stacked vertically, and whether a memory's folder name
+        // rides along with its station name.
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Waterfall").weak().size(11.0));
+            ui.label(RichText::new("stacked").size(11.0));
+            let mut n = self.ui_settings.memory_waterfall_lanes as i32;
+            if crate::chrome::field(ui, egui::DragValue::new(&mut n).range(1..=12).speed(1))
+                .changed()
+            {
+                self.ui_settings.memory_waterfall_lanes = n.clamp(1, 12) as usize;
+            }
+            if ui
+                .checkbox(&mut self.ui_settings.memory_waterfall_show_folder, "folder name")
+                .changed()
+            {
+                // nothing else to do; the mark text is rebuilt each frame
+            }
+        });
         ui.separator();
         if self.memories.is_empty() && self.mem_folders.is_empty() {
             ui.label(RichText::new("no memories yet").color(crate::theme::gray(120)));

@@ -1,8 +1,9 @@
-//! DSC's audio front end: 1200-baud FFSK in, messages out.
+//! DSC's audio front end: FSK in (MF/HF 100 Bd, VHF 1200 Bd), messages out.
 //!
 //! The link layer of Digital Selective Calling is nothing exotic — it is the
-//! same non-coherent binary FSK the packet modes use, at a different tone pair
-//! (mark 1300 Hz, space 2100 Hz) and a fixed 1200 baud. So the detector is
+//! same non-coherent binary FSK the packet modes use. VHF (channel 70) runs
+//! mark 1300 Hz, space 2100 Hz at 1200 baud; MF/HF (2187.5 kHz and the HF
+//! channels) runs 1615/1785 Hz at 100 baud. Both detectors run side by side. So the detector is
 //! [`crate::afsk::AfskRx`] with the [`AfskProfile::Dsc`] profile, and what this
 //! module adds is the one thing packet does not do: it feeds the recovered bits
 //! into [`sdroxide_types::DscFramer`] and hands back messages.
@@ -18,6 +19,12 @@
 //! detector wants the tones well inside its band, so the rate is comfortably
 //! above twice the higher tone — 9600 Hz is 1200 × 8 and puts the 2100 Hz space
 //! tone at a fraction of Nyquist.
+//!
+//! # Limits
+//!
+//! Only the DX characters are read; the RX copy (the same character five
+//! slots later) is not used to repair a DX error. The DX phasing run
+//! (111..104) and the doubled format specifier are skipped by the framer.
 
 use sdroxide_types::{DscFramer, DscMessage};
 
@@ -32,6 +39,10 @@ const DEMOD_RATE: f64 = 9_600.0;
 pub struct DscRx {
     /// The FSK detector, at the DSC tone pair.
     fsk: AfskRx,
+    /// MF/HF DSC: 100 baud, 1615/1785 Hz, run beside the VHF detector.
+    fsk_hf: AfskRx,
+    bits_hf: Vec<bool>,
+    framer_hf: DscFramer,
     /// Resamples the input to [`DEMOD_RATE`]; `None` when it already is.
     rs: Option<MonoResampler>,
     rs_buf: Vec<f32>,
@@ -49,6 +60,9 @@ impl DscRx {
     pub fn new(rate: f64) -> Self {
         DscRx {
             fsk: AfskRx::new(DEMOD_RATE, AfskProfile::Dsc),
+            fsk_hf: AfskRx::new(DEMOD_RATE, AfskProfile::DscHf),
+            bits_hf: Vec::new(),
+            framer_hf: DscFramer::new_hf(),
             rs: MonoResampler::new(rate, DEMOD_RATE),
             rs_buf: Vec::new(),
             bits: Vec::new(),
@@ -70,7 +84,7 @@ impl DscRx {
 
     /// The FSK detector's confidence in its mark/space separation, `0..1`.
     pub fn separation(&self) -> f32 {
-        self.fsk.separation()
+        self.fsk.separation().max(self.fsk_hf.separation())
     }
 
     /// Feed audio and collect every message it completed.
@@ -91,6 +105,8 @@ impl DscRx {
 
         self.bits.clear();
         self.fsk.process(block, &mut self.bits);
+        self.bits_hf.clear();
+        self.fsk_hf.process(block, &mut self.bits_hf);
         self.feed_framer(out);
     }
 
@@ -103,12 +119,15 @@ impl DscRx {
     /// close a sequence.
     pub fn flush(&mut self, out: &mut Vec<DscMessage>) {
         self.bits.clear();
+        self.bits_hf.clear();
         if let Some(rs) = &mut self.rs {
             let mut tail = Vec::new();
             rs.flush(&mut tail);
             self.fsk.process(&tail, &mut self.bits);
+            self.fsk_hf.process(&tail, &mut self.bits_hf);
         }
         self.fsk.flush(&mut self.bits);
+        self.fsk_hf.flush(&mut self.bits_hf);
         self.feed_framer(out);
     }
 
@@ -120,6 +139,13 @@ impl DscRx {
                 self.sequences += 1;
             }
         }
+        for &bit in &self.bits_hf {
+            let before = self.framer_hf.sequences();
+            self.framer_hf.push(u8::from(bit), out);
+            if self.framer_hf.sequences() > before {
+                self.sequences += 1;
+            }
+        }
     }
 }
 
@@ -127,7 +153,7 @@ impl DscRx {
 mod tests {
     use super::*;
     use crate::afsk::{AfskProfile, AfskRx};
-    use sdroxide_types::{DSC_PHASING_SYMBOL, DscFormat, DscNature, dsc_bch};
+    use sdroxide_types::{DSC_PHASING_SYMBOL, DscCategory, DscFormat, DscNature, dsc_bch};
 
     fn char_bits(symbol: u8) -> Vec<bool> {
         let cw = dsc_bch::encode(symbol);
@@ -259,5 +285,49 @@ mod tests {
         assert_eq!(out.len(), 1, "expected one sequence");
         assert_eq!(out[0].format, DscFormat::Individual);
         assert_eq!(out[0].target_mmsi, 244_123_456);
+    }
+
+    /// MF/HF DSC as it is heard on 2187.5 kHz: 100 baud, 1615/1785 Hz (here
+    /// with the sense inverted, as a USB capture delivers it), DX/RX interleaved
+    /// with the phasing character in the RX slots, and the format specifier sent
+    /// twice. Layout taken from a recording of a real coast-station call.
+    #[test]
+    fn an_mf_hf_call_at_100_baud_decodes() {
+        let dx_phasing = [111u8, 110, 109, 108, 107, 106, 105, 104];
+        // format x2, target 002320001, category, self 005030001, two telecommands, EOS
+        let body = [120u8, 120, 0, 23, 20, 0, 10, 100, 0, 50, 30, 0, 10, 100, 126, 127];
+        let mut dx: Vec<u8> = dx_phasing.to_vec();
+        dx.extend(body);
+        let mut bits: Vec<bool> = (0..200).map(|i| i % 2 == 0).collect();
+        for (i, &d) in dx.iter().enumerate() {
+            bits.extend(char_bits(d));
+            let rx = if i < 5 { DSC_PHASING_SYMBOL } else { dx[i - 5] };
+            bits.extend(char_bits(rx));
+        }
+        // 100 baud, tone pair 1615/1785; a set bit is the lower tone.
+        let rate = 48_000.0;
+        let spb = (rate / 100.0) as usize;
+        let mut audio = Vec::new();
+        let mut phase = 0.0f64;
+        for &b in &bits {
+            let f = if b { 1615.0 } else { 1785.0 };
+            for _ in 0..spb {
+                audio.push(phase.sin() as f32);
+                phase += std::f64::consts::TAU * f / rate;
+            }
+        }
+        let mut rx = DscRx::new(rate);
+        let mut out = Vec::new();
+        for chunk in audio.chunks(2048) {
+            rx.process(chunk, &mut out);
+        }
+        rx.flush(&mut out);
+        let m = out.first().expect("no MF/HF sequence decoded");
+        assert_eq!(m.format, DscFormat::Individual);
+        assert_eq!(m.target_mmsi, 2_320_001);
+        assert_eq!(m.self_mmsi, 5_030_001);
+        assert_eq!(m.category, DscCategory::from_symbol(100));
+        assert!(m.clean, "a clean synthetic call must not be flagged marginal");
+        assert_eq!(out.len(), 1);
     }
 }

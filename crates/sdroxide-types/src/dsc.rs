@@ -10,8 +10,9 @@
 //!
 //! # The wire, and the two layers
 //!
-//! ITU-R M.493-15 is the authority. The link layer is 1200-baud FFSK —
-//! mark 1300 Hz, space 2100 Hz — carrying 10-bit characters, each of which
+//! ITU-R M.493-15 is the authority. The link layer is FSK — MF/HF at 100
+//! baud, 1615/1785 Hz (170 Hz shift) about 1700 Hz; VHF channel 70 at 1200
+//! baud, 1300/2100 Hz — carrying 10-bit characters, each of which
 //! is 7 data bits plus a 3-bit BCH(10,7) check. **Every character is sent
 //! twice**: once in the "DX" position and once in the "RX" position,
 //! interleaved on a 20-bit grid. The check is a CRC-3, and because its
@@ -229,44 +230,48 @@ impl DscMessage {
     }
 }
 
-/// The BCH(10,7) check DSC wraps around every 7-bit symbol.
+/// The 10-bit character DSC wraps around every 7-bit symbol.
 ///
-/// ITU-R M.493-15 §3.4: a 10-bit character is 7 data bits followed by 3 check
-/// bits computed as a CRC-3 with generator `g(x) = x³ + x + 1` (binary
-/// `1011`). Despite the "BCH" name the code's minimum distance is 2, so a
-/// single-bit error is reliably *detected* but not reliably *corrected* here;
-/// DSC corrects through the DX/RX redundant pair, which the framer in the DSP
-/// crate owns.
+/// ITU-R M.493: the seven information bits go out **least-significant bit
+/// first**, then three check bits holding, most-significant first, the number
+/// of B-state (`0`) bits among the seven. The first bit sent is the highest bit
+/// of the 10-bit window the framer slides, so `encode` lays the symbol out the
+/// way it travels. The minimum distance is 2: a single-bit error is detected
+/// but not corrected, and DSC recovers through the DX/RX redundant pair.
 pub mod bch {
-    /// Wrap a 7-bit symbol into its 10-bit codeword. Bits above the low 7 are
-    /// masked off.
+    /// Wrap a 7-bit symbol into its 10-bit codeword, first-sent bit highest.
+    /// Bits above the low 7 are masked off.
     pub fn encode(data: u8) -> u16 {
-        let data = (data & 0x7F) as u16;
-        let mut dividend = data << 3;
-        for i in (3..=9).rev() {
-            if dividend & (1 << i) != 0 {
-                dividend ^= 0x0B << (i - 3);
-            }
+        let data = data & 0x7F;
+        let mut cw = 0u16;
+        for k in 0..7 {
+            cw |= u16::from((data >> k) & 1) << (9 - k);
         }
-        (data << 3) | (dividend & 0x7)
+        cw | u16::from(7 - data.count_ones() as u8)
     }
 
     /// The 7 data bits and whether the check passed. On `false` the caller is
     /// expected to fall back to the character's other (RX or DX) copy.
     pub fn check(codeword: u16) -> (u8, bool) {
         let codeword = codeword & 0x3FF;
-        (((codeword >> 3) & 0x7F) as u8, syndrome(codeword) == 0)
+        let mut data = 0u8;
+        for k in 0..7 {
+            data |= (((codeword >> (9 - k)) & 1) as u8) << k;
+        }
+        (data, syndrome(codeword) == 0)
     }
 
-    /// The 3-bit remainder after dividing the codeword by `g(x)`.
+    /// Zero when the three check bits equal the count of zero bits among the
+    /// seven information bits.
     pub fn syndrome(codeword: u16) -> u16 {
-        let mut r = codeword & 0x3FF;
-        for i in (3..=9).rev() {
-            if r & (1 << i) != 0 {
-                r ^= 0x0B << (i - 3);
+        let (data, _) = {
+            let mut d = 0u8;
+            for k in 0..7 {
+                d |= (((codeword >> (9 - k)) & 1) as u8) << k;
             }
-        }
-        r & 0x7
+            (d, ())
+        };
+        (codeword & 0x7) ^ u16::from(7 - data.count_ones() as u8)
     }
 }
 
@@ -405,6 +410,9 @@ pub const MAX_SEQ_SYMBOLS: usize = 40;
 ///
 /// # DX/RX time diversity
 ///
+/// Only DX is read today: the RX copy is not used to repair a DX error, and
+/// the DX phasing characters (111..104) are skipped.
+///
 /// DSC sends each character twice, in the DX and RX positions, interleaved on a
 /// 20-bit grid. This takes the simple path the reference does first: lock the
 /// DX grid on the phasing pattern and read DX only. Comparing each DX character
@@ -437,6 +445,9 @@ pub struct DscFramer {
     bad_in_seq: usize,
     /// Complete sequences seen, for a status line.
     sequences: u64,
+    /// MF/HF stream: the phasing character sits in the RX slots, so the DX grid
+    /// is one character before the grid the hunt locks on.
+    hf: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -449,6 +460,12 @@ enum Framed {
 impl DscFramer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A framer for the MF/HF stream (100 baud), where the phasing sequence
+    /// carries 125 in the RX slots and 111..104 in the DX slots.
+    pub fn new_hf() -> Self {
+        DscFramer { hf: true, ..Self::default() }
     }
 
     /// Feed one wire bit. Bits outside `{0, 1}` are clamped to 1.
@@ -490,7 +507,7 @@ impl DscFramer {
         {
             self.state = Framed::Locked;
             self.inverted = inverted;
-            self.lock_bit = self.nbits;
+            self.lock_bit = if self.hf { self.nbits.wrapping_sub(CHAR_BITS) } else { self.nbits };
             self.started = false;
             self.symbols.clear();
             self.bad_in_seq = 0;
@@ -529,7 +546,7 @@ impl DscFramer {
         let (sym, ok) = bch::check(cw);
 
         if !self.started {
-            if sym == PHASING_SYMBOL {
+            if sym == PHASING_SYMBOL || (104..=111).contains(&sym) {
                 return; // still in the phasing run
             }
             if !ok {
@@ -543,6 +560,11 @@ impl DscFramer {
             self.bad_in_seq = 0;
         }
 
+        // The format specifier goes out twice in a row (M.493); the second
+        // copy is not part of the address.
+        if self.symbols.len() == 1 && sym == self.symbols[0] {
+            return;
+        }
         if !ok {
             self.bad_in_seq += 1;
         }
@@ -576,6 +598,16 @@ impl DscFramer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The character layout is the standard's, not merely self-consistent:
+    /// 125 is `1011111` sent least-significant bit first, then one zero bit
+    /// counted as `001`. Taken from a recording of real MF/HF traffic.
+    #[test]
+    fn the_character_layout_is_the_standards() {
+        assert_eq!(bch::encode(125), 0b10_1111_1001);
+        assert_eq!(bch::check(0b10_1111_1001), (125, true));
+        assert_eq!(bch::check(0b10_1111_1000).1, false);
+    }
 
     /// Bits for one character, most-significant-bit first, matching the wire
     /// order the framer's sliding window expects.

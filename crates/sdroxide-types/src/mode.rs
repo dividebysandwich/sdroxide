@@ -322,7 +322,8 @@ pub enum Mode {
     /// on VHF channel 70 (156.525 MHz) and the MF/HF DSC channels (2187.5,
     /// 4207.5, 6312, 8414.5, 12577, 16804.5 kHz).
     ///
-    /// 1200-baud FFSK, mark 1300 Hz and space 2100 Hz, carrying 10-bit
+    /// MF/HF: 100-baud FSK, 1615/1785 Hz (170 Hz shift) about 1700 Hz; VHF
+    /// channel 70: 1200-baud FFSK, 1300/2100 Hz. Both carry 10-bit
     /// BCH-checked characters sent twice on a DX/RX grid. A distress alert
     /// carries the sender's MMSI, the nature of the distress, a position and a
     /// time; a routine call carries who is calling whom.
@@ -1273,8 +1274,8 @@ impl Mode {
             // either side leaves room for a receiver that is not exactly on the
             // channel, which is the usual state of a signal found by ear.
             Mode::Navtex => (1300.0, 2100.0),
-            // DSC's tones are 1300 and 2100 Hz; the same margin either side
-            // keeps a receiver a little off the channel decoding.
+            // MF/HF DSC sits at 1615/1785 Hz and VHF at 1300/2100 Hz; this
+            // passband holds both, with margin for a receiver a little off.
             Mode::Dsc => (1100.0, 2300.0),
             // ACARS' MSK sits at 1200 and 2400 Hz on the AM carrier, so the
             // passband has to keep both tones and the carrier between them.

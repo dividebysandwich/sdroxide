@@ -35,6 +35,7 @@ mod drm;
 mod dsc;
 mod entity;
 mod entity_flags;
+mod frame_gate;
 mod fsk441;
 mod fst4;
 mod geo;
@@ -188,6 +189,7 @@ pub use dsc::{
 pub use entity::{
     EntityInfo, EntityPlace, all_entities, resolve_callsign, resolve_place, resolve_prefix,
 };
+pub use frame_gate::{Followed, FrameGate, GateEdge, HeardEdge, SlotFollower};
 pub use fsk441::Fsk441Period;
 pub use fst4::Fst4Period;
 pub use geo::{
@@ -283,7 +285,7 @@ pub use rds::{
     RdsClock, RdsData, RdsGroupLog, RdsStandard, RdsStats, RtPlus, af_code_hz, pi_callsign,
     pty_name, rt_plus_class,
 };
-pub use recording::{JobAction, RecordingJob, RecordingKind};
+pub use recording::{JobAction, RecordingFormat, RecordingJob, RecordingKind};
 pub use region::{Region, region, set_region};
 pub use relay::{
     DEFAULT_HOLD_MS, DEFAULT_LEAD_MS, FailSafe, MAX_CHANNEL, RelayBandRow, RelayChannel,

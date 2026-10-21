@@ -41,8 +41,9 @@ use sdroxide_tci::server::{ServerRequest, TciServerController, TciStateSnapshot}
 use sdroxide_types::{
     AgcMode, Band, BandStackEntry, Command, DeviceCaps, DigiConfig, Direction, ImageKind,
     MemoryChannel, MemoryFolder, Meters, Mode, NrEngine, NrLevel, PlaybackCommand, RadioEvent,
-    RadioState, RecordingFile, RecordingListing, RepeaterState, RigctldConfig, RxId, RxState,
-    ScanKind, ScanResume, SpectrumConfig, SpectrumFrame, TciServerConfig, TxEqState, TxMeters, Vfo,
+    RadioState, RecordingFile, RecordingFormat, RecordingListing, RepeaterState, RigctldConfig,
+    RxId, RxState, ScanKind, ScanResume, SpectrumConfig, SpectrumFrame, TciServerConfig, TxEqState,
+    TxMeters, Vfo,
 };
 use sdroxide_vdl2::{Vdl2Action, Vdl2Controller};
 
@@ -1520,7 +1521,22 @@ struct StereoMixer {
     /// has to be where the ring is filled, after ducking and the AF rail have
     /// had their say.
     trim: f32,
+    /// Listens to the speaker path for the start and end of a slotted mode's
+    /// frames, so the slot bar can follow what is heard rather than the clock.
+    /// Present only while one of those modes is on — see [`Self::watch_frames`].
+    gate: Option<sdroxide_types::FrameGate>,
+    /// When the gate was last fed, so a long silence in the pushes (an over
+    /// that stopped the receiver) is not read as a stretch of quiet band.
+    gate_fed: Option<Instant>,
+    /// Edges found and not yet announced; drained by the engine's loop.
+    frame_edges: Vec<sdroxide_types::HeardEdge>,
 }
+
+/// What the sound card still holds between the ring and the air, which the
+/// engine cannot read back. A rough, deliberately small figure: it is added to
+/// the backlog that *is* known, and a bar a few hundredths late is inside what
+/// anyone can see, where one that ignored the card altogether is not.
+const OUTPUT_DEVICE_LATENCY_S: f64 = 0.04;
 
 /// Bound on per-channel queueing (≈¼ s at 48 kHz) so a stalled side can't
 /// grow the other without limit.
@@ -1545,7 +1561,66 @@ impl StereoMixer {
             duck: 1.0,
             tx_muted: false,
             trim: 1.0,
+            gate: None,
+            gate_fed: None,
+            frame_edges: Vec::new(),
         }
+    }
+
+    /// Turn the frame gate on for audio at `rate`, or off.
+    ///
+    /// Off for every mode that keeps no slots: a voice mode would give an edge
+    /// at every syllable, and the gate would be spending a filter on audio
+    /// nobody is asking it about.
+    fn watch_frames(&mut self, on: bool, rate: f64) {
+        match (on, self.gate.as_ref().map(|g| g.rate())) {
+            (true, Some(r)) if (r - rate.max(8_000.0)).abs() < 0.5 => {}
+            (true, _) => self.gate = Some(sdroxide_types::FrameGate::new(rate)),
+            (false, _) => {
+                self.gate = None;
+                self.gate_fed = None;
+                self.frame_edges.clear();
+            }
+        }
+    }
+
+    /// Edges found since the last call.
+    fn take_frame_edges(&mut self) -> Vec<sdroxide_types::HeardEdge> {
+        std::mem::take(&mut self.frame_edges)
+    }
+
+    /// Feed the first `n` samples of the speaker path to the gate, and stamp
+    /// any edge with the moment it will come out of the speakers: now, plus
+    /// what is already queued in front of it, plus the card's own buffer.
+    ///
+    /// Taken before the gain, so turning the volume down does not make a frame
+    /// look like a gap. While the speaker is gagged for our own over there is
+    /// nothing to follow, and the gate starts again afterwards.
+    fn hear(&mut self, n: usize) {
+        let Some(gate) = self.gate.as_mut() else { return };
+        let now = Instant::now();
+        let stale =
+            self.gate_fed.is_some_and(|t| now.duration_since(t) > Duration::from_millis(500));
+        if self.tx_muted || stale {
+            gate.reset();
+        }
+        self.gate_fed = Some(now);
+        if self.tx_muted {
+            return;
+        }
+        let mut found = Vec::new();
+        gate.process(&self.main_q[..n], &mut found);
+        if found.is_empty() {
+            return;
+        }
+        let rate = gate.rate();
+        let queued = (self.out.buffer().capacity() - self.out.slots()) / 2;
+        let heard_end = unix_now_f64() + (queued + n) as f64 / rate + OUTPUT_DEVICE_LATENCY_S;
+        self.frame_edges.extend(
+            found
+                .into_iter()
+                .map(|e| sdroxide_types::HeardEdge { present: e.present, at: heard_end - e.ago_s }),
+        );
     }
 
     /// Set the speaker-path attenuation. See [`StereoMixer::duck`].
@@ -1650,6 +1725,7 @@ impl StereoMixer {
         }
 
         if n > 0 {
+            self.hear(n);
             // Bounded to a quarter second of playout, for every radio: the
             // ring plays what it holds, so a backlog is audio heard late. What
             // does not fit is held back, and the newest audio is what waits.
@@ -2179,6 +2255,71 @@ fn utc_civil(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
     let day = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
     let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
     (if month <= 2 { year + 1 } else { year }, month, day, h, mi, s)
+}
+
+/// `sdroxide_<UTC date>_<UTC time>_<freq>_<mode>.<ext>`, filesystem-safe.
+///
+/// The extension follows the chosen format, and it is the only thing that tells
+/// the two audio containers apart when the recordings are listed — MP3 and WAV
+/// share every other part of the name. Pure, so the shape can be pinned without
+/// building an engine.
+fn recording_filename_for(
+    format: RecordingFormat,
+    instance: u32,
+    freq_hz: f64,
+    mode: Mode,
+    secs: u64,
+) -> String {
+    let (y, mo, d, h, mi, s) = utc_civil(secs);
+    let mhz = freq_hz / 1_000_000.0;
+    // The same tag playback reads back out of the name.
+    let mode = sdroxide_types::playback::recording_mode_tag(mode);
+    // All radios share one recordings directory, so two of them starting a
+    // recording in the same second must not name the same file. Radio 0 keeps
+    // the historical name.
+    let radio = match instance {
+        0 => String::new(),
+        n => format!("_radio{n}"),
+    };
+    let ext = format.extension();
+    format!("sdroxide{radio}_{y:04}-{mo:02}-{d:02}_{h:02}-{mi:02}-{s:02}Z_{mhz:.6}MHz_{mode}.{ext}")
+}
+
+#[cfg(test)]
+mod recording_filename_tests {
+    use super::*;
+
+    /// 2026-08-23 14:32:05 UTC.
+    const SECS: u64 = 1_787_495_525;
+
+    /// The format picks the extension and nothing else, so a WAV and an MP3
+    /// started at the same instant and dial land in the same folder with the
+    /// same stamp and a different tail.
+    #[test]
+    fn the_extension_follows_the_chosen_format() {
+        let mp3 = recording_filename_for(RecordingFormat::Mp3, 0, 14_074_000.0, Mode::Usb, SECS);
+        let wav = recording_filename_for(RecordingFormat::Wav, 0, 14_074_000.0, Mode::Usb, SECS);
+        assert_eq!(
+            mp3, "sdroxide_2026-08-23_14-32-05Z_14.074000MHz_USB.mp3",
+            "the historical MP3 name changed shape"
+        );
+        assert_eq!(
+            wav, "sdroxide_2026-08-23_14-32-05Z_14.074000MHz_USB.wav",
+            "a WAV must be the same name with the WAV extension"
+        );
+        assert_eq!(
+            mp3.trim_end_matches(".mp3"),
+            wav.trim_end_matches(".wav"),
+            "the two formats must differ only in the extension"
+        );
+    }
+
+    /// A second radio is named too, whatever the container.
+    #[test]
+    fn a_second_radio_is_marked_in_the_name() {
+        let name = recording_filename_for(RecordingFormat::Wav, 2, 27_265_000.0, Mode::Lsb, SECS);
+        assert_eq!(name, "sdroxide_radio2_2026-08-23_14-32-05Z_27.265000MHz_LSB.wav");
+    }
 }
 
 impl TxChain {
@@ -4360,6 +4501,7 @@ fn engine_thread(
         // a transmit frequency.
         state.repeater = s.repeater.clamped();
         state.recording_mono = s.recording_mono;
+        state.recording_format = s.recording_format;
     }
     // Every receiver starts on its mode's settings: the mode's defaults with
     // this station's overrides laid over them.
@@ -5225,6 +5367,16 @@ fn engine_thread(
         }
         if now >= next_meters {
             next_meters = now + METER_INTERVAL;
+            // The slot bar follows the sound: say when a frame started or
+            // stopped sounding. Only the slotted modes ask for it.
+            let slotted = matches!(engine.state.rx[0].mode, Mode::Ft8 | Mode::Ft4 | Mode::Ft2);
+            let out_rate = engine.audio_out_rate;
+            if let Some(mixer) = engine.mixer.as_mut() {
+                mixer.watch_frames(slotted, out_rate);
+                for edge in mixer.take_frame_edges() {
+                    let _ = engine.event_tx.send(RadioEvent::HeardFrame(edge));
+                }
+            }
             // A recording that has stopped writing, or stumbled and carried
             // on. Nothing else in the program fails this quietly — the audio
             // plays on, the button stays lit, and the only evidence is a file
@@ -9161,6 +9313,7 @@ impl Engine {
                 }
             }
             SetRecordingMono(on) => self.state.recording_mono = on,
+            SetRecordingFormat(f) => self.state.recording_format = f,
             SetContestSerial(n) => {
                 let n = n.clamp(1, sdroxide_types::CONTEST_SERIAL_MAX);
                 if self.digi_config.contest_serial != n {
@@ -11171,7 +11324,7 @@ impl Engine {
         } else {
             RecordingChannels::Stereo
         };
-        match Recorder::start(path, self.audio_out_rate, channels) {
+        match Recorder::start(path, self.audio_out_rate, channels, self.state.recording_format) {
             Ok((rec, prod)) => {
                 let mixer = self.mixer.as_mut().expect("checked above");
                 mixer.rec_tap = Some(prod);
@@ -11288,25 +11441,19 @@ impl Engine {
         self.state.recording_file = None;
     }
 
-    /// `sdroxide_<UTC date>_<UTC time>_<freq>_<mode>.mp3`, filesystem-safe.
+    /// The audio recording's name, built by [`recording_filename_for`] from the
+    /// state and the clock.
     fn recording_filename(&self) -> String {
         let secs = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let (y, mo, d, h, mi, s) = utc_civil(secs);
-        let mhz = self.state.active_freq_hz() / 1_000_000.0;
-        // The same tag playback reads back out of the name.
-        let mode = sdroxide_types::playback::recording_mode_tag(self.state.rx[0].mode);
-        // All radios share one recordings directory, so two of them starting a
-        // recording in the same second must not name the same file. Radio 0
-        // keeps the historical name.
-        let radio = match self.instance {
-            0 => String::new(),
-            n => format!("_radio{n}"),
-        };
-        format!(
-            "sdroxide{radio}_{y:04}-{mo:02}-{d:02}_{h:02}-{mi:02}-{s:02}Z_{mhz:.6}MHz_{mode}.mp3"
+        recording_filename_for(
+            self.state.recording_format,
+            self.instance,
+            self.state.active_freq_hz(),
+            self.state.rx[0].mode,
+            secs,
         )
     }
 
@@ -16072,6 +16219,7 @@ impl Engine {
             gains: self.want_gains.0.clone(),
             tx_gains: self.want_gains.1.clone(),
             recording_mono: self.state.recording_mono,
+            recording_format: self.state.recording_format,
             band_antenna: self.band_antenna.clone(),
             // The shelf again, with the live socket written into the active
             // slot on the way past for the same reason the modes are.
@@ -20029,7 +20177,6 @@ mod recording_tap_tests {
         assert!(!wants_recording_tap(true, true, true));
         assert!(!wants_recording_tap(false, true, true));
     }
-
 }
 
 #[cfg(test)]
@@ -21975,7 +22122,6 @@ mod cb_opening_tests {
     }
 }
 
-
 #[cfg(test)]
 mod mic_input_tests {
     use super::silent_mic_notice;
@@ -22011,5 +22157,122 @@ mod mic_input_tests {
         let msg = silent_mic_notice("there is no microphone open");
         assert!(msg.starts_with("That over went out with no audio"), "{msg}");
         assert!(msg.contains("there is no microphone open"), "{msg}");
+    }
+}
+
+#[cfg(test)]
+mod frame_watch_tests {
+    use super::*;
+
+    /// Three seconds of tones, then a gap that leaves a faint hiss, then the
+    /// next frame — at 48 kHz, in the 20 ms blocks the engine pushes.
+    fn blocks() -> Vec<Vec<f32>> {
+        let mut seed = 1u32;
+        let mut phase = 0.0f64;
+        let mut all = Vec::new();
+        for (seconds, tones) in [(4.0, 0.3f32), (1.5, 0.0), (3.0, 0.3)] {
+            for _ in 0..(seconds * 48_000.0) as usize {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let noise = ((seed >> 8) as f32 / (1u32 << 23) as f32 - 1.0) * 0.02;
+                phase += 1.0;
+                let t = phase / 48_000.0;
+                let tone: f32 = [900.0, 1_300.0, 1_700.0]
+                    .iter()
+                    .map(|f| (std::f64::consts::TAU * f * t).sin() as f32)
+                    .sum();
+                all.push(noise + tones * tone * 0.3);
+            }
+        }
+        all.chunks(960).map(<[f32]>::to_vec).collect()
+    }
+
+    fn mixer() -> (StereoMixer, rtrb::Consumer<f32>) {
+        let (out, speaker) = rtrb::RingBuffer::<f32>::new(96_000);
+        (StereoMixer::new(out), speaker)
+    }
+
+    fn feed(mixer: &mut StereoMixer, speaker: &mut rtrb::Consumer<f32>) {
+        for b in blocks() {
+            mixer.push(&b, None, &b, None);
+            // The card keeps up, as it does in life.
+            while speaker.pop().is_ok() {}
+        }
+    }
+
+    /// The mixer is where the sound is handed to the speakers, so it is where
+    /// the end of a frame is first known: the stop and then the start of the
+    /// next frame come out of the audio pushed, in that order.
+    #[test]
+    fn the_mixer_reports_the_frames_it_plays() {
+        let (mut m, mut speaker) = mixer();
+        m.watch_frames(true, 48_000.0);
+        feed(&mut m, &mut speaker);
+        let edges = m.take_frame_edges();
+        assert_eq!(
+            edges.iter().map(|e| e.present).collect::<Vec<_>>(),
+            vec![false, true],
+            "the gap between the two frames was not heard: {edges:?}"
+        );
+        assert!(edges[0].at < edges[1].at);
+        // Stamped as it will be heard: just about now, and never wildly off.
+        let now = unix_now_f64();
+        assert!(edges.iter().all(|e| (e.at - now).abs() < 5.0), "{edges:?} against {now}");
+        assert!(m.take_frame_edges().is_empty(), "an edge was announced twice");
+    }
+
+    /// An edge is stamped with the backlog still in front of it: the audio
+    /// the card has not played yet is time the operator has not heard it for.
+    #[test]
+    fn the_stamp_includes_the_audio_still_queued() {
+        let stamp = |queued_first: bool| {
+            let (mut m, mut speaker) = mixer();
+            m.watch_frames(true, 48_000.0);
+            let mut last = None;
+            for (i, b) in blocks().into_iter().enumerate() {
+                if queued_first && i > 0 {
+                    // Leave a quarter second queued in front of what follows.
+                    while speaker.slots() > 12_000 * 2 && speaker.pop().is_ok() {}
+                } else {
+                    while speaker.pop().is_ok() {}
+                }
+                m.push(&b, None, &b, None);
+                if let Some(e) = m.take_frame_edges().first() {
+                    // The block it was found in, so the two runs compare the
+                    // same edge at the same moment.
+                    last = Some((i, e.at - unix_now_f64()));
+                    break;
+                }
+            }
+            last.expect("no edge was found")
+        };
+        let (i_drained, ahead_drained) = stamp(false);
+        let (i_queued, ahead_queued) = stamp(true);
+        assert_eq!(i_drained, i_queued, "the same block finds the same edge");
+        assert!(
+            ahead_queued > ahead_drained + 0.1,
+            "queued {ahead_queued:.3} s ahead, drained {ahead_drained:.3} s: the backlog was ignored"
+        );
+    }
+
+    #[test]
+    fn nothing_is_listened_for_outside_the_slotted_modes() {
+        let (mut m, mut speaker) = mixer();
+        feed(&mut m, &mut speaker);
+        assert!(m.take_frame_edges().is_empty(), "an unwatched mixer found edges");
+        m.watch_frames(true, 48_000.0);
+        m.watch_frames(false, 48_000.0);
+        feed(&mut m, &mut speaker);
+        assert!(m.take_frame_edges().is_empty(), "a mixer switched off still found edges");
+    }
+
+    /// The speaker is gagged for our own over: nothing is heard, and the gate
+    /// does not carry what it learnt before into what follows.
+    #[test]
+    fn nothing_is_heard_while_the_speaker_is_gagged() {
+        let (mut m, mut speaker) = mixer();
+        m.watch_frames(true, 48_000.0);
+        m.tx_muted = true;
+        feed(&mut m, &mut speaker);
+        assert!(m.take_frame_edges().is_empty(), "the gag did not silence the gate");
     }
 }

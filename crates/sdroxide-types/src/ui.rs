@@ -648,12 +648,15 @@ pub enum DetachableModule {
     /// lock already steers the antenna from the SAT window, and this is the
     /// manual half — point at a callsign, a map, or a country. Appended last.
     Rotor,
+    /// The **DSC decoder** panel in its own window — the marine Digital Selective
+    /// Calling message list and reading pane. Appended last.
+    Dsc,
 }
 
 impl DetachableModule {
     /// How many detachable modules there are — the length of
     /// [`UiSettings::detached`], which is an array so `UiSettings` stays `Copy`.
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 7;
 
     /// Every module, so a settings list or a test can walk them all.
     pub const ALL: [DetachableModule; DetachableModule::COUNT] = [
@@ -663,6 +666,7 @@ impl DetachableModule {
         DetachableModule::AuxPanadapter,
         DetachableModule::BandMenu,
         DetachableModule::Rotor,
+        DetachableModule::Dsc,
     ];
 
     /// This module's slot in [`UiSettings::detached`]. A plain array rather than
@@ -675,6 +679,7 @@ impl DetachableModule {
             DetachableModule::AuxPanadapter => 3,
             DetachableModule::BandMenu => 4,
             DetachableModule::Rotor => 5,
+            DetachableModule::Dsc => 6,
         }
     }
 
@@ -687,6 +692,7 @@ impl DetachableModule {
             DetachableModule::AuxPanadapter => "AUX SP (second spectrum)",
             DetachableModule::BandMenu => "Band & mode selector",
             DetachableModule::Rotor => "Antenna rotator",
+            DetachableModule::Dsc => "DSC decoder",
         }
     }
 
@@ -701,6 +707,7 @@ impl DetachableModule {
             DetachableModule::AuxPanadapter => "sdroxide-panadapter-aux",
             DetachableModule::BandMenu => "sdroxide-bandmenu",
             DetachableModule::Rotor => "sdroxide-rotor",
+            DetachableModule::Dsc => "sdroxide-dsc",
         }
     }
 }
@@ -952,6 +959,15 @@ pub struct UiSettings {
     /// Read that order backwards — Z to A, highest frequency first, and
     /// newest-stored first for [`crate::MemorySort::Stored`].
     pub memory_sort_desc: bool,
+    /// How many memory marks may be stacked vertically on the waterfall's edge.
+    /// `4` is the stock depth; a deeper stack buries the picture, so it is
+    /// capped and offered as a switch rather than left to the list's length.
+    #[serde(default = "default_memory_waterfall_lanes")]
+    pub memory_waterfall_lanes: usize,
+    /// Whether a memory's folder name is written on its waterfall mark
+    /// (`Mem: folder / name`) or only the station name (`Mem: name`).
+    #[serde(default = "default_true")]
+    pub memory_waterfall_show_folder: bool,
     /// How the FT8/FT4 decode list orders the stations. This screen's
     /// preference like [`UiSettings::memory_sort`] above, and for the same
     /// reason: the decodes are the station's, the order they are read in is
@@ -1074,6 +1090,17 @@ pub struct UiSettings {
     /// its own.
     #[serde(default)]
     pub solar3d_window: Option<Solar3dWindow>,
+    /// Where the EXTRAS window last was, docked in the main window — size and
+    /// position, so it reopens exactly there on every platform and in every
+    /// session. `None` until it has been moved or resized: it then opens under
+    /// the EXTRAS chip, at the top right of the spectrum frame. Machine-local,
+    /// like [`Self::solar3d_window`].
+    #[serde(default)]
+    pub extras_window: Option<DetachedWindow>,
+    /// The same for the EXTRAS window once detached into its own OS window
+    /// (native only).
+    #[serde(default)]
+    pub extras_os_window: Option<DetachedWindow>,
     /// Also carry this remote client's **control bindings** in the server
     /// profile, as well as its screen (which always travels — see
     /// `ClientScreen`).
@@ -1370,6 +1397,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_memory_waterfall_lanes() -> usize {
+    4
+}
+
 /// The fill under the spectrum trace starts as the line's own cyan.
 fn default_spectrum_fill_color() -> [u8; 3] {
     [120, 220, 255]
@@ -1538,6 +1569,8 @@ impl Default for UiSettings {
             update_check: true,
             memory_sort: crate::MemorySort::Stored,
             memory_sort_desc: false,
+            memory_waterfall_lanes: 4,
+            memory_waterfall_show_folder: true,
             decode_sort: crate::DecodeSort::None,
             // Strongest and farthest first, which is the useful end of both
             // numbers; the Country order flips this when it is picked.
@@ -1554,6 +1587,8 @@ impl Default for UiSettings {
             sound_welcome: true,
             start_swl: false,
             solar3d_window: None,
+            extras_window: None,
+            extras_os_window: None,
             client_share_bindings: false,
             client_bindings_declined: false,
             dismissed_advisories: 0,
