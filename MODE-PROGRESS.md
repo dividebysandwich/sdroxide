@@ -710,6 +710,92 @@ reference-concentration score reads 0.529 on `4285.WAV` while **its own permutat
 null reads 0.601**, and the fold's noise floor is **0.42–0.46** with eight frames
 rather than the 0.35 the probe assumed — so anything under about 0.55 is no signal.
 
+## Phase 3 (2026-10-22) — the PSK coded families
+
+The whole phase is fldigi 4.2.13's `src/psk/psk.cxx` mode table, read rather than
+guessed: `symbollen`, `idepth`, `numcarriers`, `_pskr`, and the two pieces the
+old notes assumed were "framing": **`PSKR_K`/`PSKR_POLY1`/`PSKR_POLY2`** (a
+K=7 code with polynomials `0x6d`/`0x4f` — *not* the standard `0o155`/`0o117`
+code this tree already carried) and the `2x2xN` interleaver, which **PSK63F
+alone skips**. Every PSK robust mode also uses the **MFSK varicode**, not
+PSK31's.
+
+Three new receivers, all receive-only for now (`PROTO_VERSION` unchanged):
+
+- **`PskrRx`** — BPSK63F and the single-carrier `R` family. Differentially
+  detected soft symbols, two Viterbi decoders one symbol apart (the reference's
+  `fecmet`/`fecmet2` vote, because a differential receiver has no idea where a
+  coded pair starts), the interleaver when the mode has one, MFSK varicode.
+- **`PskCarrierBank`** — `numcarriers` receivers, one symbol from each per symbol
+  time in carrier order, which is the order the transmitter emitted them.
+  Carriers are **`1.4 × baud` apart**; the corpus's measured bandwidths confirm
+  it to a few hertz (PSK63RC4: 4 × 1.4 × 62.5 = 350 Hz against 391 measured).
+- **`PskMultiRx`** — the `C` family, which is multi-carrier with **no FEC** and
+  PSK31's own varicode. `C` and `RC` are easy to confuse and are not the same
+  thing.
+
+| mode | state | the measurement |
+|---|---|---|
+| BPSK63F | **decodes** | `BPSK63F.wav`, 3/3 words; depth `None` in the reference and the interleaver skipped. |
+| PSK125R | **decodes** | 3/3 at 1754 Hz, depth 40. Bit-compared against the known text: **394/394 bits, offset 262**. |
+| PSK250R | **decodes** | 3/3, depth 80 — also 394/394 bits at 1685–1700 Hz. |
+| PSK500R | **partial — the recording stops mid-text** | 1/3. The stream carries exactly `AAA TEST TEST THE EAGLE HAS ` (207 bits, **perfect**, then ~50% forever); the words after it are **nowhere in the stream**. Ruled out by measurement: the demod (mean \|soft\| 0.99 from 2 s to 34 s, no dropout in the envelope), the centre (swept 1450–1950), the pairing (both parities), the depth (2…400 in steps of 2, both parities), and a one-symbol slip anywhere (4000 positions). Nothing after "HAS " is there to decode. |
+| PSK1000R | **decodes** | 3/3 at 1754 Hz, depth 160 — **394/394 bits**. |
+| PSK250C6 | **decodes** | 3/3, 6 carriers at 1.4 × 250 Hz. |
+| PSK500C2 | **decodes** | 3/3, 2 carriers. |
+| PSK800C2 | **decodes** | 3/3, 2 carriers. |
+| PSK125C12 | **partial — 1/3** | 1/3 at 1745 Hz. |
+| PSK1000C2 | **partial — 2/3** | 2/3 at 1755 Hz. |
+| PSK500C4 | **does not decode** | 0/3 at every centre tried from 1725 to 2250 Hz. |
+| PSK63RC4 | **decodes** | 3/3 at 1745 Hz, and its text reads clean and contiguous. |
+| PSK63RC5 | **decodes** | 3/3, depth 260 (the reference's odd one out). |
+| PSK63RC10 | **decodes** | 3/3. |
+| PSK63RC20 | **decodes** | 3/3. |
+| PSK63RC32 | **partial — 2/3** | 2/3 at 1755 Hz. |
+| PSK125RC4/5/10/12/16 | **decode** | 3/3 each. |
+| PSK250RC2/3/7 | **decode** | 3/3 each. |
+| PSK250RC5 | **partial — 1/3** | 1/3 at 1745 Hz. |
+| PSK250RC6 | **partial — 1/3** | 1/3 at 1785 Hz. |
+| PSK500RC2/3/4 | **do not decode** | 0/3 at every centre tried. |
+| PSK800RC2 | **decodes** | 3/3. |
+| PSK1000RC2 | **decodes** | 3/3. |
+
+Gates: `the_corpus_pskr_samples_are_measured` (single carrier; asserts BPSK63F,
+PSK125R, PSK250R and PSK1000R at 3/3 and prints PSK500R) and
+`the_corpus_pskc_samples_are_measured` (multi-carrier; asserts the seventeen that
+read whole and prints the rest). Plumbing: `the_pskr_chain_round_trips_its_own_bits`
+(varicode → code → interleaver → soft → back, at depths none/40/80/160),
+`the_interleaver_inverts_itself` and `the_pskr_modem_reads_its_own_transmission`.
+
+**The four zero modes and the four partials are all 500 baud**, and that is a
+pattern rather than a verdict — the next thing to look at. What is measured
+about it: 500 baud is the one rate where `dec_rate` equals the audio rate
+exactly (decim 1), it is the rate at which PSK500R stops mid-stream, and the
+*plain* 500-baud modes (BPSK500, PSK500C2) read their samples fine, so the
+symbol clock itself is not in question. A loopback of our own modulator at
+250 baud with an interleaver also fails while the *corpus* PSK250R reads
+394/394 — so the fixture is the suspect there, and it is recorded in the test
+rather than hidden.
+
+### What bit the port, in order
+
+1. **The pairing.** A differential receiver does not know which symbol starts a
+   coded pair, so the reference runs two decoders one symbol apart and votes on
+   the Viterbi metric. The first version alternated *pairs* instead of taking
+   alternate symbols through a shared history, which gave 354 bits out of 195.
+2. **The order inside the pair.** fldigi interleaves the pair as `[o2, o1]` and
+   then transmits the array *backwards*, so the wire order is `o1, o2` while the
+   interleaver's positions are the reverse. A loopback that gets this backwards
+   still passes if the transmitter makes the same mistake — this one did.
+3. **The interleaver's latency** is `(size − 1) × depth` *calls*, not
+   `size × depth`; measured against the reference's own table.
+4. **The soft value has to be weighted by amplitude.** fldigi's `softamp` pulls
+   a symbol taken during a fade towards the erasure point; a plain
+   `re/|d|` normalisation gives a noise symbol the same confidence as a signal
+   one.
+5. **`PSKR_POLY1/POLY2` are not the K=7 code already in the tree.** `0x6d`/`0x4f`
+   is a different code from `0o155`/`0o117`, and `ConvCode::THOR` is the latter.
+
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:

@@ -1096,7 +1096,6 @@ mod tests {
         }
     }
 
-
     /// The reference's interleaver must invert: a stream pushed through the
     /// transmitter's table and then the receiver's comes back, one full latency
     /// (`size × depth` words) later.
@@ -1113,7 +1112,8 @@ mod tests {
             let mut sent: Vec<Vec<u8>> = Vec::new();
             let mut got: Vec<Vec<u8>> = Vec::new();
             for n in 0..(latency * 3) as u32 {
-                let mut w: Vec<u8> = (0..size).map(|i| ((n * 7 + i as u32 * 13) % 251) as u8).collect();
+                let mut w: Vec<u8> =
+                    (0..size).map(|i| ((n * 7 + i as u32 * 13) % 251) as u8).collect();
                 sent.push(w.clone());
                 tx.symbols(&mut w);
                 rx.symbols(&mut w);
