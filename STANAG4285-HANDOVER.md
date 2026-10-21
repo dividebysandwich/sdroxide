@@ -158,6 +158,30 @@ decoders on these transmissions report the same content:
 closing `NNNN`. **Baudot is upper case only and has no accents**, so match `GEANT`,
 not `GÉANT`, and expect the spacing to vary between tapes.
 
+**If the RSP1 cannot hear it, a receiver closer to the transmitter can.** The tree
+already speaks **KiwiSDR** (`Backend::KiwiSdr`), and a Kiwi's stream is ~12 kHz —
+the modem's own rate — so this is a first-class route rather than a workaround:
+
+```sh
+KIWI_HOST=f6abj-kiwihf.ddns.net:8073 KIWI_FREQ=6348200 KIWI_SECS=10 \
+  cargo run -p sdroxide-kiwisdr --example probe
+```
+
+That prints the receiver's identity, its rate, its S-meter and its waterfall's
+strongest bins, and it says plainly when a host refuses non-browser apps — two
+French receivers did on 2026-10-21 while a third streamed. Then add it as a radio
+(`Backend::KiwiSdr`, that host) and record with the program's own recorder.
+
+**But "closer" is not automatically better, and 6 MHz is the reason.** At night the
+F-layer critical frequency drops below 6 MHz over Europe, so a path of a few hundred
+kilometres from Issoudun can sit *inside* the skip zone while a longer one works —
+which is consistent with the RSP1 measuring Rayleigh noise at 20:10 UTC on the day
+of the sweep. The receiver that wins is the one whose waterfall shows a 2.75 kHz
+buzzsaw, not the one that is nearest; try a few, at different hours.
+
+A Kiwi's audio is a third party's receiver, like the demo recordings: fine as a
+local measurement, never committed.
+
 That is known text on the air, which is exactly what the two shipped fixtures could
 not supply — and `FUE Brest` is **Issoudun**, so 6348 kHz is its channel. Reported
 rather than verified by us: **the first capture that reads it is the proof.**
