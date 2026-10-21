@@ -217,8 +217,22 @@ pub(crate) fn parse_dx_line(line: &str, now: i64) -> Option<Spot> {
     let cleaned: String =
         line.chars().map(|c| if c.is_control() || c == '\u{FFFD}' { ' ' } else { c }).collect();
     let line = cleaned.trim();
-    let rest = line.strip_prefix("DX de ").or_else(|| line.strip_prefix("Dx de "))?;
-    let (spotter, after) = rest.split_once(':')?;
+    if line.is_empty() {
+        return None;
+    }
+    // Live pushed spot: "DX de <spotter>: <freq> <call> <comment> <time>".
+    if let Some(rest) = line
+        .strip_prefix("DX de ")
+        .or_else(|| line.strip_prefix("Dx de "))
+    {
+        let (spotter, after) = rest.split_once(':')?;
+        return build_spot_from_dx_de(spotter, after, now);
+    }
+    // `sh/dx` column output (freq first): "<freq> <call> <date> <time> <comment> <spotter>".
+    parse_sh_dx(line, now)
+}
+
+fn build_spot_from_dx_de(spotter: &str, after: &str, now: i64) -> Option<Spot> {
     let spotter = spotter.trim().to_ascii_uppercase();
     let mut toks = after.split_whitespace();
     let freq_khz: f64 = toks.next()?.parse().ok()?;
@@ -230,7 +244,6 @@ pub(crate) fn parse_dx_line(line: &str, now: i64) -> Option<Spot> {
         return None;
     }
     let mut comment_toks: Vec<&str> = toks.collect();
-    // Drop a trailing time token like "1230Z".
     if comment_toks.last().is_some_and(|t| {
         t.len() >= 4 && t.ends_with('Z') && t[..t.len() - 1].chars().all(|c| c.is_ascii_digit())
     }) {
@@ -253,6 +266,76 @@ pub(crate) fn parse_dx_line(line: &str, now: i64) -> Option<Spot> {
         when_utc: now,
         snr_db: None,
     })
+}
+
+fn parse_sh_dx(line: &str, now: i64) -> Option<Spot> {
+    let toks: Vec<&str> = line.split_whitespace().collect();
+    if toks.len() < 2 {
+        return None;
+    }
+    let freq_khz: f64 = toks[0].parse().ok()?;
+    if !(1.0..=1_500_000.0).contains(&freq_khz) {
+        return None;
+    }
+    let call = toks[1].to_ascii_uppercase();
+    if call.is_empty() {
+        return None;
+    }
+    // spotter is the trailing "<CALL>" token, if present.
+    let mut end = toks.len();
+    let mut spotter = String::new();
+    if let Some(last) = toks.last()
+        && last.starts_with('<')
+        && last.ends_with('>')
+    {
+        spotter = last.trim_matches(|c: char| c == '<' || c == '>').to_ascii_uppercase();
+        end -= 1;
+    }
+    let mut comment_toks: Vec<&str> = Vec::new();
+    for t in &toks[2..end] {
+        // skip a date token like "20-Oct-2026"
+        if is_date_token(t) {
+            continue;
+        }
+        // skip a trailing time token like "2357Z"
+        if t.len() >= 4 && t.ends_with('Z') && t[..t.len() - 1].chars().all(|c| c.is_ascii_digit())
+        {
+            continue;
+        }
+        comment_toks.push(t);
+    }
+    let comment = comment_toks.join(" ");
+    let mode = detect_mode(&comment);
+    let freq_hz = freq_khz * 1000.0;
+    Some(Spot {
+        id: Spot::make_id(SpotKind::DxCluster, &call, freq_hz),
+        kind: SpotKind::DxCluster,
+        freq_hz,
+        call,
+        spotter,
+        mode,
+        comment,
+        reference: None,
+        grid: None,
+        loc: None,
+        when_utc: now,
+        snr_db: None,
+    })
+}
+
+fn is_date_token(t: &str) -> bool {
+    // e.g. "20-Oct-2026" or "4-Oct-2026"
+    let parts: Vec<&str> = t.split('-').collect();
+    if parts.len() != 3 {
+        return false;
+    }
+    if !parts[0].chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    if parts[1].len() != 3 || !parts[1].chars().all(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    parts[2].len() == 4 && parts[2].chars().all(|c| c.is_ascii_digit())
 }
 
 /// Pull a mode token out of a spot comment, if present.
@@ -296,6 +379,31 @@ mod tests {
         let s = parse_dx_line("DX de EA1AB:      7074.0  JA1ZZZ  FT8 -12dB  2359Z", 0).unwrap();
         assert_eq!(s.mode, "FT8");
         assert_eq!(s.freq_hz, 7_074_000.0);
+    }
+
+    #[test]
+    fn parses_sh_dx_columns() {
+        let s = parse_dx_line(
+            " 27680.0  23DA1963    20-Oct-2026 2357Z  73....                      <32DA002>",
+            100,
+        )
+        .unwrap();
+        assert_eq!(s.call, "23DA1963");
+        assert_eq!(s.spotter, "32DA002");
+        assert_eq!(s.freq_hz, 27_680_000.0);
+        assert_eq!(s.comment, "73....");
+    }
+
+    #[test]
+    fn parses_sh_dx_empty_comment() {
+        let s = parse_dx_line(
+            " 27555.0  37KPI084    20-Oct-2026 2336Z                              <3SKD008>",
+            100,
+        )
+        .unwrap();
+        assert_eq!(s.call, "37KPI084");
+        assert_eq!(s.spotter, "3SKD008");
+        assert_eq!(s.freq_hz, 27_555_000.0);
     }
 
     #[test]
