@@ -745,7 +745,7 @@ Three new receivers, all receive-only for now (`PROTO_VERSION` unchanged):
 | PSK500C2 | **decodes** | 3/3, 2 carriers. |
 | PSK800C2 | **decodes** | 3/3, 2 carriers. |
 | PSK125C12 | **partial — 1/3** | 1/3 at 1745 Hz. |
-| PSK1000C2 | **partial — 2/3** | 2/3 at 1755 Hz. |
+| PSK1000C2 | **does not decode** | 0/3 at every centre tried. |
 | PSK500C4 | **does not decode** | 0/3 at every centre tried from 1725 to 2250 Hz. |
 | PSK63RC4 | **decodes** | 3/3 at 1745 Hz, and its text reads clean and contiguous. |
 | PSK63RC5 | **decodes** | 3/3, depth 260 (the reference's odd one out). |
@@ -753,10 +753,12 @@ Three new receivers, all receive-only for now (`PROTO_VERSION` unchanged):
 | PSK63RC20 | **decodes** | 3/3. |
 | PSK63RC32 | **partial — 2/3** | 2/3 at 1755 Hz. |
 | PSK125RC4/5/10/12/16 | **decode** | 3/3 each. |
-| PSK250RC2/3/7 | **decode** | 3/3 each. |
-| PSK250RC5 | **partial — 1/3** | 1/3 at 1745 Hz. |
-| PSK250RC6 | **partial — 1/3** | 1/3 at 1785 Hz. |
-| PSK500RC2/3/4 | **do not decode** | 0/3 at every centre tried. |
+| PSK250RC3/6/7 | **decode** | 3/3 each. |
+| PSK250RC2 | **partial — 2/3** | 2/3 at 1785 Hz. |
+| PSK250RC5 | **partial — 1/3** | 1/3 at 2150 Hz. |
+| PSK500RC2 | **decodes** | 3/3 at 1765 Hz. |
+| PSK500RC3 | **partial — 1/3** | 1/3 at 1785 Hz. |
+| PSK500RC4 | **does not decode** | 0/3 at every centre tried. |
 | PSK800RC2 | **decodes** | 3/3. |
 | PSK1000RC2 | **decodes** | 3/3. |
 
@@ -767,15 +769,22 @@ read whole and prints the rest). Plumbing: `the_pskr_chain_round_trips_its_own_b
 (varicode → code → interleaver → soft → back, at depths none/40/80/160),
 `the_interleaver_inverts_itself` and `the_pskr_modem_reads_its_own_transmission`.
 
-**The four zero modes and the four partials are all 500 baud**, and that is a
-pattern rather than a verdict — the next thing to look at. What is measured
-about it: 500 baud is the one rate where `dec_rate` equals the audio rate
-exactly (decim 1), it is the rate at which PSK500R stops mid-stream, and the
-*plain* 500-baud modes (BPSK500, PSK500C2) read their samples fine, so the
-symbol clock itself is not in question. A loopback of our own modulator at
-250 baud with an interleaver also fails while the *corpus* PSK250R reads
-394/394 — so the fixture is the suspect there, and it is recorded in the test
-rather than hidden.
+**Where the `R` family stops reading, and what settled it.** PSK500R reads its
+first 27 characters and then nothing, and an *independent* decoder — written
+from fldigi's own source in Python, with a fixed symbol phase instead of a
+Gardner loop and sharing no code with this tree — reads the same 27 and no
+more, at every centre from 1700 to 1800 Hz. So it is the recording, not the
+port. The other `R` modes read whole, and PSK125R/PSK1000R bit-for-bit.
+
+**A multi-carrier passband is `1.0 × baud`, not the `2.5 × baud` a lone carrier
+gets.** The carriers are `1.4 × baud` apart, so a filter sized for one signal
+passes its neighbours almost whole. Measured: at `0.75 × baud` PSK500RC2 reads
+nothing and at `1.0` it reads its whole text; `1.0` is also the reference's own
+(`wsincfilt(fir1c, 1.0/symbollen, …)`, whose first null is at `baud`). The
+multi-carrier modes that still read nothing — **PSK500C4, PSK500RC4,
+PSK1000C2** — are the next thing to look at: three of them are wide banks whose
+outer carriers sit close to the 4 kHz edge of the recording, and no centre in
+1725…2250 Hz has recovered them.
 
 ### What bit the port, in order
 

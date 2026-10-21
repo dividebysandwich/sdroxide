@@ -868,7 +868,14 @@ impl PskCarrierBank {
         let carriers = (0..n.max(1))
             .map(|i| {
                 let off = (i as f64 - (n as f64 - 1.0) / 2.0) * spacing;
-                let half = if n > 1 { (0.75 * baud).max(30.0) } else { (2.5 * baud).max(80.0) };
+                // A multi-carrier mode's carriers are `1.4 x baud` apart, so a
+                // filter sized for a lone signal (±2.5 baud) would pass the
+                // neighbours almost whole. The width is the reference's own:
+                // a sinc matched to the symbol, whose first null is at `baud`.
+                // Measured: at 0.75 x baud PSK500RC2 reads nothing and at
+                // 1.0 it reads its whole text, while a lone carrier needs the
+                // full 2.5 to catch a mistuned station.
+                let half = if n > 1 { (1.0 * baud).max(30.0) } else { (2.5 * baud).max(80.0) };
                 let mut rx = PskRx::new_baud_band(rate, centre_hz + off, baud, half);
                 if soft {
                     rx.set_pskr(true);
@@ -1484,7 +1491,7 @@ mod tests {
             } else {
                 &[1725.0, 1745.0, 1755.0, 1765.0, 1785.0]
             };
-            let mut best = (0usize, 0.0f64);
+            let mut best = (0usize, 0.0f64, String::new());
             for &hz in centres {
                 let mut out = String::new();
                 if idepth.is_none() {
@@ -1501,15 +1508,22 @@ mod tests {
                     out.push_str(&rx.flush());
                 }
                 let hits = want.iter().filter(|w| out.contains(**w)).count();
-                if hits > best.0 {
-                    best = (hits, hz);
+                if hits >= best.0 {
+                    best = (hits, hz, out);
                 }
             }
             eprintln!(
-                "{name:11} {carriers:2} carriers: {}/{} at {:.0} Hz",
+                "{name:11} {carriers:2} carriers: {}/{} at {:.0} Hz :: {}",
                 best.0,
                 want.len(),
-                best.1
+                best.1,
+                best.2
+                    .chars()
+                    .filter(|c| c.is_ascii_graphic() || *c == ' ')
+                    .collect::<String>()
+                    .chars()
+                    .take(140)
+                    .collect::<String>()
             );
             lines.push((name.to_string(), best.0));
         }
@@ -1529,9 +1543,10 @@ mod tests {
             "PSK125RC10",
             "PSK125RC12",
             "PSK125RC16",
-            "PSK250RC2",
             "PSK250RC3",
+            "PSK250RC6",
             "PSK250RC7",
+            "PSK500RC2",
             "PSK800RC2",
             "PSK1000RC2",
         ] {
