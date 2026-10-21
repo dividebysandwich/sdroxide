@@ -6,6 +6,16 @@
 > same person). Prose and quoted speech below still say "Kevin" in places, and
 > **quotes are left as they were said** — do not rewrite a quote to fix a name.
 >
+> **The mode work is the live queue, and it has its own brief.**
+> [`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md) is what a session starts
+> with: the PSK coded families (BPSK63F, the R set, the C/RC multi-carrier
+> modes), then the loose ends behind them. Its "current truth" section is the
+> state — four families wired receive-only, `PROTO_VERSION` 226, one hundred
+> commits local and none pushed — and its "do not re-derive" list is the day of
+> measurement traps that cost this phase its time. [`MODE-PROGRESS.md`](MODE-PROGRESS.md)
+> is the journal, one line per mode. **The dated sections below are a history**,
+> newest first: where they disagree with that brief, the brief is right.
+>
 > **Fresh session, 2026-10-09. Start here.** `main` is green, the whole open
 > queue is merged (#22 SSTV KEEP DIAL, #23 the browser `remember` cookie, #24
 > the ADS-B noise floor), and `2.0.4_brown` is cut and installed.

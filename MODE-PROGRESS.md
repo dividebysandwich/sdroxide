@@ -1,8 +1,18 @@
 # Mode backfill — the journal
 
-> **The next phase is [`MODE-PHASE-2-PROMPT.md`](MODE-PHASE-2-PROMPT.md)** — receive
-> parity, then transmit parity, then wiring the working modes in. This file is the
-> record of the first pass.
+> **The next phase is [`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md)** — the PSK
+> coded families (BPSK63F, the R set, the C/RC multi-carrier modes), then the loose
+> ends behind them. The phase-2 brief, [`MODE-PHASE-2-PROMPT.md`](MODE-PHASE-2-PROMPT.md),
+> is the record of what was asked for there; what it delivered is below.
+>
+> **State at the handover:** `main` is 100 commits ahead of `origin`, none pushed,
+> `PROTO_VERSION` 226. Four families are wired and receive-only — MFSK (11
+> variants), Contestia, MT63 (2KS/2KL/500S) and ARDOP — and several corpus verdicts
+> have been corrected against measurement (BPSK1000, MT63's narrow variants, Hell's
+> whole family, FSQ's alphabet). `cargo check --workspace --all-targets`
+> is silent and the touched crates' tests are green.
+>
+> This file remains the record of the first pass and the running journal.
 
 One line per mode, appended as it is worked. `samples/fldigi/` is the gate:
 a mode is **decodes** only when its own recording reads its own known text.
