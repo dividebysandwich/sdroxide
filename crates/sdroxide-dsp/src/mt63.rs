@@ -370,10 +370,27 @@ impl Mt63Rx {
     /// The FFT bin of the first data carrier: `round((centre - bw/2) * 512/R)`,
     /// where `R = 2·bw`, exactly as `MT63rx::Preset` computes it.
     fn first_carrier(&self) -> i32 {
-        ((self.centre - self.variant.bandwidth as f64 / 2.0) * self.window_len as f64
+        self.first_carrier_exact().round() as i32
+    }
+
+    /// Where the lowest carrier really is, in FFT bins — **not** rounded.
+    ///
+    /// The bank can only be read at whole bins, so the receiver derotates the
+    /// window by the fractional part before the transform (see [`Self::slice`]).
+    /// Without that, every carrier sits up to half a bin off its peak: at 500 Hz,
+    /// where a carrier is four bins of a 4096-point frame, that is a quarter of
+    /// the spacing, and it is enough to make the *same* receiver read one variant
+    /// and not another while the dial is a few hertz away. The reference does the
+    /// same thing with its `FreqOfs` (`MT63rx::DataProcess`, fldigi 4.2.13).
+    fn first_carrier_exact(&self) -> f64 {
+        (self.centre - self.variant.bandwidth as f64 / 2.0) * self.window_len as f64
             / self.sample_rate
-            + 0.5)
-            .floor() as i32
+    }
+
+    /// The sub-bin part of the bank's position, in bins, in −0.5..=0.5.
+    fn frac_bin(&self) -> f32 {
+        let exact = self.first_carrier_exact();
+        (exact - exact.round()) as f32
     }
 
     /// Decode one recording at a given symbol phase, returning the text and the
@@ -489,10 +506,23 @@ impl Mt63Rx {
     }
 
     fn slice(&self, samples: &[f32]) -> Vec<Complex32> {
+        // Derotate by the fractional bin the bank sits on, so the carriers land
+        // on whole bins: `exp(-j·2π·frac·i/N)` moves the spectrum down by `frac`.
+        let n = self.window_len as f32;
+        let frac = self.frac_bin();
         let mut buf: Vec<Complex32> = samples
             .iter()
             .zip(self.shape.iter())
-            .map(|(&s, &w)| Complex32::new(s * w, 0.0))
+            .enumerate()
+            .map(|(i, (&s, &w))| {
+                let v = s * w;
+                if frac == 0.0 {
+                    Complex32::new(v, 0.0)
+                } else {
+                    let ph = -std::f32::consts::TAU * frac * i as f32 / n;
+                    Complex32::new(v * ph.cos(), v * ph.sin())
+                }
+            })
             .collect();
         self.fft.process(&mut buf);
         buf
@@ -653,6 +683,22 @@ impl Mt63Receiver {
         self.rx.is_some()
     }
 
+    /// The band centre the receiver is decoding at.
+    pub fn centre_hz(&self) -> f64 {
+        self.centre
+    }
+
+    /// Where the signal's band actually is, measured from the audio.
+    ///
+    /// **Not used by the lock** — tried, and it made 2KL worse while leaving 2KS
+    /// where it was, because the lock's own acceptance is the weak part (see the
+    /// journal). Kept because it is the measurement the narrow variants need
+    /// once that is fixed, and because `MT63-500`'s comb is 500 Hz wide, where a
+    /// dial set by ear is tens of hertz out.
+    pub fn measured_centre_hz(&self) -> f64 {
+        self.measure_centre()
+    }
+
     pub fn process(&mut self, audio: &[f32]) -> String {
         let peak = audio.iter().fold(0.0f32, |m, s| m.max(s.abs()));
         self.mag += 0.02 * (peak - self.mag);
@@ -671,6 +717,75 @@ impl Mt63Receiver {
         }
         self.rx = Some(rx);
         printable(&text)
+    }
+
+    /// Where the signal's band actually is, in Hz.
+    ///
+    /// An MT63 signal is a comb exactly `bandwidth` wide, so the middle of the
+    /// occupied band is the bank's centre — and unlike a single-line carrier it
+    /// can be measured reliably even when the operator has the dial a couple of
+    /// hundred hertz out. This matters most at the narrow bandwidths: the bank is
+    /// only four FFT bins per carrier, a 1000 Hz signal has 64 of them in a
+    /// kilohertz, and tuning it by ear puts the whole comb between bins. Measured
+    /// from the audio at lock time, as fldigi's own receiver tracks it.
+    fn measure_centre(&self) -> f64 {
+        use rustfft::FftPlanner;
+        let n = 8192usize.min(self.buf.len());
+        if n < 2048 {
+            return self.centre;
+        }
+        // The loudest stretch, which is the transmission rather than the silence
+        // either side of it.
+        let mut best_at = 0usize;
+        let mut best_power = 0.0f32;
+        for start in (0..self.buf.len().saturating_sub(n)).step_by(n / 2) {
+            let p: f32 = self.buf[start..start + n].iter().map(|s| s * s).sum();
+            if p > best_power {
+                best_power = p;
+                best_at = start;
+            }
+        }
+        let mut buf: Vec<Complex32> = (0..n)
+            .map(|i| {
+                let w = 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n as f32).cos();
+                Complex32::new(self.buf[best_at + i] * w, 0.0)
+            })
+            .collect();
+        FftPlanner::<f32>::new().plan_fft_forward(n).process(&mut buf);
+        let power: Vec<f32> = buf[..n / 2].iter().map(|c| c.norm_sqr()).collect();
+        let peak = power.iter().cloned().fold(0.0f32, f32::max);
+        if peak <= 0.0 {
+            return self.centre;
+        }
+        let bin = self.rate / n as f64;
+        // The **comb**, not its centre of gravity. Every one of the 64 carriers
+        // is used many times over a whole transmission, so the outermost two are
+        // strong in a long window, and the middle of that pair is the bank's
+        // centre. A centroid was tried first and read 2188 Hz for a 2 kHz signal
+        // at 1730: an MT63 signal is a dense plateau, so anything that averages
+        // over a window wider than the band just measures the window.
+        let bw = self.variant.bandwidth as f64;
+        let lo = ((self.centre - bw) / bin).max(1.0) as usize;
+        let hi = (((self.centre + bw) / bin) as usize).min(power.len() - 2);
+        let Some(peak) = (lo..=hi).map(|i| power[i]).reduce(f32::max) else {
+            return self.centre;
+        };
+        if peak <= 0.0 {
+            return self.centre;
+        }
+        let floor = peak * 0.25;
+        let mut first = None;
+        let mut last = 0usize;
+        for i in (lo + 1)..hi {
+            if power[i] > floor && power[i] >= power[i - 1] && power[i] >= power[i + 1] {
+                first.get_or_insert(i);
+                last = i;
+            }
+        }
+        match first {
+            Some(a) if last > a => (a as f64 + last as f64) / 2.0 * bin,
+            _ => self.centre,
+        }
     }
 
     /// Search the symbol phase and polarity over what has arrived, and start
@@ -941,6 +1056,94 @@ mod tests {
         inner.decode_with(&vec![noise(&mut state); 32_000], 0, false);
         rx.set_params(1750.0, variant);
         assert!(!rx.locked(), "a retune kept the old lock");
+    }
+
+    /// The corpus through the **live** receiver, for the variants the mode
+    /// offers. This is the path the console builds, so it is the one that has to
+    /// read: bank, symbol clock, polarity and — since the narrow variants were
+    /// found to be a *tuning* fault rather than a phase one — the band centre,
+    /// which the receiver now measures from the audio.
+    #[test]
+    #[ignore]
+    fn the_corpus_reads_through_the_live_receiver() {
+        use std::path::Path;
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi");
+        let table: &[(&str, &[&str])] = &[
+            ("MT63-2KS", &["EAGLE", "LANDED", "SDRBROWN", "TEST"]),
+            ("MT63-2KL", &["SDRBROWN", "TEST"]),
+        ];
+        for &(name, want) in table {
+            let path = format!("{root}/{name}.wav");
+            if !Path::new(&path).exists() {
+                continue;
+            }
+            let mut reader = hound::WavReader::open(&path).expect("open");
+            let spec = reader.spec();
+            let audio: Vec<f32> =
+                reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+            let variant = Mt63Variant::named(name).expect("a variant");
+            let mut rx = Mt63Receiver::new(spec.sample_rate as f64, 1740.0, variant);
+            let mut text = String::new();
+            for chunk in audio.chunks(400) {
+                text.push_str(&rx.process(chunk));
+            }
+            text.push_str(&rx.process(&vec![0.0f32; 8000]));
+            let hits = want.iter().filter(|w| text.contains(**w)).count();
+            eprintln!(
+                "{name}: {hits}/{} words at {:.0} Hz, locked {}: {:?}",
+                want.len(),
+                rx.centre_hz(),
+                rx.locked(),
+                printable(&text)
+            );
+            assert_eq!(hits, want.len(), "{name} lost its corpus sample");
+        }
+    }
+
+    /// Every MT63 variant, measured with the batch decoder and a centre sweep —
+    /// which is what says the narrow ones were never a phase fault. Their
+    /// **live** path needs a better lock acceptance before they can be offered
+    /// (see the journal), so the ones that only read here are named, not
+    /// asserted.
+    #[test]
+    #[ignore]
+    fn the_corpus_variants_are_measured() {
+        use std::path::Path;
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi");
+        let table: &[(&str, &[&str], bool)] = &[
+            ("MT63-2KS", &["EAGLE", "LANDED", "SDRBROWN", "TEST"], true),
+            ("MT63-500S", &["EAGLE", "LANDED", "SDRBROWN", "TEST"], true),
+            ("MT63-2KL", &["SDRBROWN", "TEST"], true),
+            ("MT63-500L", &["SDRBROWN", "TEST"], true),
+            ("MT63-1KS", &["LANDED", "SDRBROWN"], false),
+            ("MT63-1KL", &["SDRBROWN", "TEST"], false),
+        ];
+        let mut failures = Vec::new();
+        for &(name, want, must) in table {
+            let path = format!("{root}/{name}.wav");
+            if !Path::new(&path).exists() {
+                continue;
+            }
+            let mut reader = hound::WavReader::open(&path).expect("open");
+            let spec = reader.spec();
+            let audio: Vec<f32> =
+                reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+            let variant = Mt63Variant::named(name).expect("a variant");
+            let mut best = (0usize, 0.0f64, String::new());
+            for hz in (1660..=1760).step_by(5) {
+                let (text, _) = decode(&audio, spec.sample_rate as f64, hz as f64, variant);
+                let p = printable(&text);
+                let hits = want.iter().filter(|w| p.contains(**w)).count();
+                if hits > best.0 {
+                    best = (hits, hz as f64, p);
+                }
+            }
+            eprintln!("{name}: {}/{} at {} Hz: {:?}", best.0, want.len(), best.1, best.2);
+            if must && best.0 != want.len() {
+                failures.push(name);
+            }
+        }
+        assert!(failures.is_empty(), "did not read: {failures:?}");
     }
 
     #[test]

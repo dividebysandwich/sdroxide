@@ -371,6 +371,66 @@ offered; the chip row says why the other four are missing.
 - **Noise does not lock** (`noise_does_not_lock_the_live_receiver`), which took
   two attempts: `textiness` alone locked onto noise, and so did spaces alone at
   three.
+- **The narrow variants were a tuning fault, and the old verdict was wrong.**
+  The journal said 1K and 500 arrive "one Hadamard row high — every character 32
+  codes out". They do not: `decode()` searches the symbol phase and the polarity
+  but **not the centre**, and the manifest's centre is a block estimate. Swept
+  over the centre, at their own best:
+  **MT63-500S reads its whole text** (4/4 at 1690 Hz), 2KL 2/2, 500L 2/2, 1KS 2/2
+  and 2KS 4/4. Only **1KL** reads nothing at any centre. That is a *measurement*
+  fault of the same family as the PSK carriers and the Hell font, and it read
+  like a phase fault for a day.
+- **The reference's fractional-bin correction is implemented** (`first_carrier_exact`,
+  `frac_bin`, and the derotation in `slice`). The bank can only be read at whole
+  bins, so the sub-bin part is taken out as a phase ramp across the window before
+  the transform — fldigi's `FreqOfs` does the same in `MT63rx::DataProcess`.
+  Without it every carrier sits up to half a bin off its peak, which at 500 Hz is
+  a quarter of the carrier spacing.
+- **What still blocks offering the narrow variants is the live lock's
+  acceptance**, not the receiver arithmetic. It scores candidates by spaces and
+  letters, and a wrong phase produces both, so it can lock on garbage: measured,
+  2KL locked at the wrong phase when the centre moved four hertz, and 500S never
+  locks at all. The batch path is unaffected — which is why the four read in the
+  gate and the two offered variants read live. Next step is an **SNR-based
+  acceptance**: the Walsh peak's own signal-to-noise is the quantity that
+  separates a real lock from a lucky one, and `deinterleave` already computes it.
+- **Not ported, and the same weakness from the other side:** fldigi's
+  synchroniser moves the two data slices by a *symbol shift*
+  (`SyncSymbShift`) rather than reading them on a fixed grid.
+
+### Next, in the order the prompt gives
+
+MT63 (2K first — 1K/500 are still one Hadamard row high, and that is a DSP
+chase, not wiring), then ARDOP (the modem is proven by `ardopcf`'s own
+recordings; what it needs is a panel and, later, the TNC).
+
+### MT63 — a live receiver, and the two narrow variants left out
+
+`Mode::Mt63`, `DigiConfig::mt63_mode`. Only **MT63-2KS and MT63-2KL** are
+offered; the chip row says why the other four are missing.
+
+- **The work was the front end, not the decoder.** `Mt63Rx` is a batch decoder
+  over a whole recording, and the console needs a stream. `Mt63Receiver` locks
+  once — the symbol phase searched in two passes, and the polarity, since a
+  reversed station is a permutation of the same codewords — and then decodes a
+  symbol at a time from a rolling buffer. `Mt63Rx` grew `symbol`,
+  `decode_more`, `at` and `rebase` for it, so the batch path and the live path
+  are the same arithmetic.
+- **Locking is measured, and a count of letters cannot do it.** MT63 always
+  produces a character per symbol, so a wrong phase still prints *letters*; what
+  a wrong phase does not print is **spaces** where words have them (space is one
+  code in 128, so a station's window carries a dozen and noise carries none).
+  The window has to be long enough for the interleaver to fill as well, or every
+  candidate looks equally plausible — 6 s for the short interleave and 12 s for
+  the long one, which is the price of the search and worth knowing before
+  someone reports "it takes a while to start".
+- **The gate** is both corpus samples through the controller:
+  `cargo test -p sdroxide-digi --release --lib -- --ignored --nocapture the_mt63`
+  — `EAGLE LANDED SDRBROWN` for 2KS, `SDRBROWN TEST` for 2KL, fed in blocks with
+  only the centre given.
+- **Noise does not lock** (`noise_does_not_lock_the_live_receiver`), which took
+  two attempts: `textiness` alone locked onto noise, and so did spaces alone at
+  three.
 - **MT63-1K and MT63-500 are not offered.** They arrive one Hadamard row high —
   every character 32 codes out, `EAGLE` as `eagle` — through this receiver, and
   that is a carrier-phase fault at the narrower bandwidths, not the interleaver
