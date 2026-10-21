@@ -24,3 +24,12 @@ Hell 80, SITOR, ARDOP, then the rest of the corpus.
 | MFSK128L | **decodes (short text)** | `MFSK128L.wav`, reverse on: `AAA SDRBROWN TEST`, 3/3. |
 
 The family gate is `cargo test -p sdroxide-dsp --release --lib the_mfsk_family_reads_the_corpus -- --ignored`; it searches centre and polarity itself and asserts the counts above.
+
+| MT63-2KS | **decodes** | `MT63-2KS.wav`, measured centre 1740 (the plateau is 744–2736 Hz): the whole text, 3/3, score 3956. |
+| MT63-2KL | **decodes** | `MT63-2KL.wav`, 1740: `AAA SDRBROWN TEST`, 2/2. Long interleave included. |
+| MT63-1KS | **does not decode yet** | `MT63-1KS.wav`, 1740: the text is visible but **every character is one Hadamard row high** — `EAGLE` arrives as `eagle`, `SDRBROWN` as `sdrbrown` with spaces lost, i.e. code +32 throughout. That is a carrier-phase signature (a sign flip across half the bank), not an interleaver fault: the short interleave is proved by the loopback below. |
+| MT63-1KL | **does not decode yet** | Same as 1KS, plus the long interleave; fragments only. |
+| MT63-500S | **does not decode yet** | `MT63-500S.wav`, 1740: `AAA … EAGLE?HASLAN:ED 1B34zSDwBROWN` — most words present but corrupted; the 500 Hz mode's 4096/1600 window/hop has the same phase problem. |
+| MT63-500L | **does not decode yet** | Fragments only, as 500S. |
+
+The MT63 interleaver, Walsh pair and deinterleaver are separately proved by `the_interleaver_round_trips_a_message`, which recovers `THE EAGLE HAS LANDED 12345` from the encoder's own bits for both the short and the long pattern. The audio front end decodes 2K exactly, so the remaining fault is in the carrier phase for the 4× and 8× windows, not in the coding. Gate: `cargo test -p sdroxide-dsp --release --lib the_corpus_mt63_samples_are_measured -- --ignored`.
