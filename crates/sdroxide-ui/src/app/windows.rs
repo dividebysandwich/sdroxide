@@ -578,11 +578,8 @@ impl SdroxideApp {
             ui.label(RichText::new("Waterfall").weak().size(11.0));
             ui.label(RichText::new("stacked").size(11.0));
             let mut n = self.ui_settings.memory_waterfall_lanes as i32;
-            if crate::chrome::field(
-                ui,
-                egui::DragValue::new(&mut n).range(1..=12).speed(1),
-            )
-            .changed()
+            if crate::chrome::field(ui, egui::DragValue::new(&mut n).range(1..=12).speed(1))
+                .changed()
             {
                 self.ui_settings.memory_waterfall_lanes = n.clamp(1, 12) as usize;
             }
@@ -722,6 +719,13 @@ impl SdroxideApp {
             .clicked()
             {
                 desc = !desc;
+            }
+            let color_changed = ui
+                .color_edit_button_srgb(&mut self.ui_settings.memory_waterfall_color)
+                .on_hover_text("Colour of the memory labels on the waterfall")
+                .changed();
+            if color_changed {
+                crate::app::persist::persist_ui_settings(&self.ui_settings);
             }
         });
         if (sort, desc) != (was_sort, was_desc) {
