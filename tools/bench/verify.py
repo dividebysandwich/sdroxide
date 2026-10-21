@@ -26,8 +26,8 @@ import sys
 HOME = os.path.expanduser("~")
 ROOT = os.path.join(HOME, "sdroxide")
 OUT = os.path.join(HOME, "Downloads", "sounds", "our-captures", "fldigi")
-DECODE_ANY = os.path.join(ROOT, "target", "release", "examples", "decode_any")
-DECODE_OLIVIA = os.path.join(ROOT, "target", "release", "examples", "decode_file")
+DECODE_ANY = [os.path.join(ROOT, "target", "release", "examples", "decode_any")]
+DECODE_OLIVIA = [os.path.join(ROOT, "target", "release", "examples", "decode_file")]
 TEXT = " AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ "
 WORDS = "AAA EAGLE LANDED SDRBROWN".split()
 SHORT_WORDS = "AAA SDRBROWN TEST".split()
@@ -84,7 +84,7 @@ def score(out, words):
     working and the framing or the tail is not, which is a different repair from
     "nothing".
     """
-
+    found = [w for w in words if w in out]
     return found, len(found)
 
 
@@ -122,11 +122,13 @@ def verify_one(row, words):
             for reverse in (0, 1):
                 out = run(DECODE_OLIVIA, [wav, str(tones), str(bw), str(centre), str(reverse)])
                 found, n = score(out, words)
-                best = {"decoder": "olivia", "centre": centre, "reverse": reverse,
+                cand = {"decoder": "olivia", "centre": centre, "reverse": reverse,
                         "decoded": out[:200], "passed": n == len(words), "words": found,
                         "words_of": len(words)}
-                if ok:
-                    return {"mode": mode, **best}
+                if best is None or n > len(best.get("words") or []):
+                    best = cand
+                if n == len(words):
+                    return {"mode": mode, **cand}
         return {"mode": mode, **best}
 
     if pick[0] == "psk":
@@ -146,10 +148,12 @@ def verify_one(row, words):
                 args.append(extra)
             out = run(DECODE_ANY, args)
             found, n = score(out, words)
-            best = {"decoder": "psk", "centre": centre, "decoded": out[:200],
+            cand = {"decoder": "psk", "centre": centre, "decoded": out[:200],
                     "passed": n == len(words), "words": found, "words_of": len(words)}
-            if ok:
-                return {"mode": mode, **best}
+            if best is None or n > len(best.get("words") or []):
+                best = cand
+            if n == len(words):
+                return {"mode": mode, **cand}
         return {"mode": mode, **best}
 
     if pick[0] == "rtty":
@@ -164,11 +168,13 @@ def verify_one(row, words):
                 args = [wav, "rtty", str(centre), str(baud), str(shift)] + ([extra] if extra else [])
                 out = run(DECODE_ANY, args)
                 found, n = score(out, words)
-                best = {"decoder": "rtty", "centre": centre, "reverse": bool(extra),
+                cand = {"decoder": "rtty", "centre": centre, "reverse": bool(extra),
                         "decoded": out[:200], "passed": n == len(words), "words": found,
                         "words_of": len(words)}
-                if ok:
-                    return {"mode": mode, **best}
+                if best is None or n > len(best.get("words") or []):
+                    best = cand
+                if n == len(words):
+                    return {"mode": mode, **cand}
         return {"mode": mode, **best}
 
     return {"mode": mode, "decoder": None}
