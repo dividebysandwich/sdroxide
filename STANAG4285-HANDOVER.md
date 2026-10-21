@@ -148,6 +148,25 @@ station; the ID is the known part. A minute and a half is enough, and if the
 station is idle the fold will say so — 0.70 with one tight cluster means "try
 again later", not "the decoder is broken".
 
+**What the tape sends, and this is the gate.** Two independent people running
+decoders on these transmissions report the same content:
+
+> `VOYEZ VOUS LE BRICK GEANT QUE J EXAMINE PRES DU GRAND WHARF`
+
+— the French quick-brown-fox, repeated, with `RYRYRY` and `SGSGSG` as diddles, an
+`ALL DE FUE … TESTING` opener and an ID in the shape `FI DE FUE … MCI COOP … AR`,
+closing `NNNN`. **Baudot is upper case only and has no accents**, so match `GEANT`,
+not `GÉANT`, and expect the spacing to vary between tapes.
+
+That is known text on the air, which is exactly what the two shipped fixtures could
+not supply — and `FUE Brest` is **Issoudun**, so 6348 kHz is its channel. Reported
+rather than verified by us: **the first capture that reads it is the proof.**
+
+**Do not rip the demo videos either.** There are several on YouTube of MultiPSK and
+Sorcerer decoding a French Navy tape, and they are somebody's re-encoded screen
+capture of a 2018 transmission — not the RF, and not ours. The recording to make is
+our own, off the bench.
+
 ---
 
 # The prompt
@@ -315,7 +334,9 @@ through the probe**. Then wire it, in the order the last four modes were wired
 Either **a bench capture reads its RYRY and ID and the mode is wired and green**,
 or **the receiver locks, reports its diagnostics and the file says exactly which
 test failed on which material** — with the probe committed so the next session
-starts from a number instead of from this prose. Write it in
+starts from a number instead of from this prose. The tape's known text is the
+French pangram `VOYEZ VOUS LE BRICK GEANT QUE J EXAMINE PRES DU GRAND WHARF` with
+`RYRYRY` and an `FI DE FUE` ID; matching it is what "reads" means. Write it in
 `MODE-PROGRESS.md` under STANAG 4285, one line per stage, with the measurement
 beside it, and add a "Needs me" line for the capture if there is none.
 
