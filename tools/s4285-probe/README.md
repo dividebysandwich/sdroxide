@@ -296,3 +296,29 @@ one was idle.
 | `s4285_fold.py` | **acquisition by folding** — phase and carrier offset together, no pattern assumed |
 | `s4285_decode.py` | frame-by-frame decode once a lock exists |
 | `s4285_sim.py` | round trip from the spec; decodes exactly at 30 dB and above |
+
+## The verdict tool, and why the sync number is not one (2026-10-22)
+
+`s4285_verdict.py <file.wav> [centre]`, or `--record [seconds] [centre]` to capture
+the default sink's monitor and analyse it directly. Two statistics, each with its
+own null measured on the same audio:
+
+| measure | known-good `4285.WAV` | 60 s of band noise (Twente, 6348.2) |
+|---|---|---|
+| frame ACF at 106.67 ms | **0.479**, 34.6x its null | 0.016, 1.8x |
+| 8th-power line | **34.5 dB** over the median | 13.6 dB |
+| best lag in 60-160 ms | 106.9 ms | **75.0 ms** |
+
+**The sync correlation is not a verdict.** It is a maximum over every offset and
+sub-phase in the file, and on 60 s of white noise that maximum reaches **0.738**
+(band-limited noise: 0.758). The "0.2-0.4 when there is nothing to find" in
+`s4285_sync.py` is a *single-window* figure; read as a whole-file answer it is a
+false positive waiting to happen.
+
+The capture that proved it: 60 s of an empty 6348.2 kHz on the Twente WebSDR,
+taken from the browser's own audio. `s4285_sync.py` scored it **0.900**. It is
+noise — band 0-2.7 kHz, |symbol| std/mean 1.0 (Rayleigh), no 8th-power line, and
+the strongest period is **75 ms**, which is the WebSDR client's 13 Hz audio
+striping and not a frame. So print the frame and the carrier line against their
+nulls, and print the best lag: a period that is not 106.67 ms is the quickest way
+to see that the *material* is wrong rather than the decoder.

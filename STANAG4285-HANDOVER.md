@@ -184,12 +184,17 @@ local measurement, never committed.
 
 **The Twente WebSDR is the best *eyes* and cannot be the recorder.** It is a
 PA3FWM WebSDR rather than a KiwiSDR, so it is browser-only — no backend here, no
-scripted capture — and it runs a **rotating single band**: on 2026-10-21 at 22:00
-UTC its own band config said one band, 29 kHz wide, centred on **14 579.8 kHz**, so
-6348 was not on it at all. When it is on 6 MHz it is the clearest presence check
-there is: tune **6348.2 USB**, open the filter to ~4 kHz, and the tape is an
-unmistakable 2.75 kHz flat-top buzzsaw. Use it to decide *whether*, and the RSP1 or
-a Kiwi to decide *what*.
+scripted capture. What its band config actually says (read 2026-10-21) is one band
+spanning **0–29.16 MHz** on a wide-band receiver: a 29 159.6 kHz sample rate, a
+default tuning of 14 579.8 kHz. **Those numbers are in kHz**, and reading the span
+as 29 kHz is the mistake this paragraph made first — it concluded the receiver was
+parked on 20 m and left the operator looking at nothing. 6348.2 is covered and
+tunable.
+
+Use it to decide *whether*: tune **6348.2 USB**, open the filter to ~4 kHz, and the
+tape is an unmistakable 2.75 kHz flat-top buzzsaw. **But an idle channel looks
+exactly like it** — a flat band across the filter — so confirm on a recording with
+`tools/s4285-probe/s4285_verdict.py` rather than by eye.
 
 That is known text on the air, which is exactly what the two shipped fixtures could
 not supply — and `FUE Brest` is **Issoudun**, so 6348 kHz is its channel. Reported
