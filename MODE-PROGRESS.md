@@ -811,6 +811,12 @@ Nothing blocks the work above — every mode has a measurement. These would move
 
 - **A STANAG 4285 capture of a station sending a test tape** (2026-10-21). The French Navy transmits unencrypted RYRY, an ID and the French pangram (`VOYEZ VOUS LE BRICK GEANT QUE J EXAMINE PRES DU GRAND WHARF`), in USB at 1800 Hz, on **4232.0 / 5215.6 / 8467.8 / 8478.5 / 12857.0 / 13031.2 / 13411.9 / 6348.0 kHz**. Ninety seconds at 48 kHz with the UTC time and the station noted is enough. Everything up to the payload is solved and the payload has never been read from the air; the frequency table, the expected text and the `rspcap` command are in [`STANAG4285-HANDOVER.md`](STANAG4285-HANDOVER.md).
 
+- **A fresh PSK500R recording (new, 2026-10-22).** The corpus one carries only
+  `AAA TEST TEST THE EAGLE HAS ` and nothing after it — proved twice, once in
+  Rust and once by an independent decoder written from fldigi's source in
+  Python. Thirty seconds of fldigi on the bench would turn the R family's last
+  unread sample into a gate, and would also say whether the 500-baud `C`/`RC`
+  samples (PSK500C4, PSK500RC4, PSK1000C2) were recorded in the same session.
 - **A second MFSK8 recording.** The corpus one loses `TEST THE EAGLE HAS LANDED` in one span while the preamble and the tail read at every tuning; the decoder is the one the other seven MFSK variants use.
 - **A known-good FSQ recording** (new, 2026-10-21). The corpus sample cannot settle FSQ: an FSQ signal is one tone at a time and that recording never has a dominant tone at any centre, spacing or speed, and nothing has ever read it back. Thirty seconds on the bench turns "alphabet fixed, decode unproven" into a gate.
 - **A bench recording of BPSK1000 for the lock-time question** (2026-10-21). The operator's own offer: the RSP1 can record while fldigi plays into the CRT. What it settles is whether the receiver's lost head is the receiver (a clean, known transmission is decoded from the start) or the sample (the sweep's own window). The rig needs a hand for the frequency and to arm it.
