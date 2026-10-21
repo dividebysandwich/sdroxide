@@ -1,5 +1,9 @@
 # Mode backfill — the journal
 
+> **The next phase is [`MODE-PHASE-2-PROMPT.md`](MODE-PHASE-2-PROMPT.md)** — receive
+> parity, then transmit parity, then wiring the working modes in. This file is the
+> record of the first pass.
+
 One line per mode, appended as it is worked. `samples/fldigi/` is the gate:
 a mode is **decodes** only when its own recording reads its own known text.
 Everything else says what was measured and why not. The long form — the
