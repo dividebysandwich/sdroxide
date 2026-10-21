@@ -468,6 +468,7 @@ fn detached_spec(module: sdroxide_types::DetachableModule) -> DetachedWindowSpec
         // A compass wants to be near square: it is a dial with a readout
         // underneath, and a wide window would just be dial with margins.
         M::Rotor => ("antenna rotator", [420.0, 520.0]),
+        M::Dsc => ("DSC", [640.0, 480.0]),
     };
     DetachedWindowSpec {
         viewport_id: egui::ViewportId::from_hash_of(app_id),
@@ -990,7 +991,9 @@ impl eframe::App for SdroxideApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mode = self.state.rx[0].mode;
-            let unavailable = self.ui_settings.is_detached(sdroxide_types::DetachableModule::Panel)
+            let unavailable = (self.ui_settings.is_detached(sdroxide_types::DetachableModule::Panel)
+                || (mode == Mode::Dsc
+                    && self.ui_settings.is_detached(sdroxide_types::DetachableModule::Dsc)))
                 && !(mode.has_bottom_panel() || mode == Mode::Cw);
             if unavailable {
                 if self.panel_undock_notice_mode != Some(mode) {
@@ -2305,6 +2308,14 @@ impl SdroxideApp {
                 self.handle_detached_outcome(ctx, module, &spec, outcome);
                 self.dispatch_commands(cmds);
             }
+            M::Dsc => {
+                let outcome = detached_viewport(ctx, &spec, seed, |ui| {
+                    let h = ui.available_height();
+                    self.dsc_panel(ui, &mut cmds, h);
+                });
+                self.handle_detached_outcome(ctx, module, &spec, outcome);
+                self.dispatch_commands(cmds);
+            }
         }
     }
 
@@ -2632,7 +2643,9 @@ impl SdroxideApp {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.ui_settings.is_detached(sdroxide_types::DetachableModule::Panel)
+            (self.ui_settings.is_detached(sdroxide_types::DetachableModule::Panel)
+                || (mode == Mode::Dsc
+                    && self.ui_settings.is_detached(sdroxide_types::DetachableModule::Dsc)))
                 && self.focused
                 && (mode.has_bottom_panel() || mode == Mode::Cw)
         }
@@ -2727,6 +2740,11 @@ impl SdroxideApp {
         self.ui_settings.is_detached(sdroxide_types::DetachableModule::Rotor) && self.focused
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dsc_detached(&self) -> bool {
+        self.ui_settings.is_detached(sdroxide_types::DetachableModule::Dsc) && self.focused
+    }
+
     /// Which of this radio's modules the shell should emit as their own windows
     /// this frame, by [`sdroxide_types::DetachableModule::index`].
     ///
@@ -2747,6 +2765,7 @@ impl SdroxideApp {
             self.module_window_wanted(sdroxide_types::DetachableModule::AuxPanadapter);
         want[sdroxide_types::DetachableModule::BandMenu.index()] = self.band_menu_detached();
         want[sdroxide_types::DetachableModule::Rotor.index()] = self.rotor_detached();
+        want[sdroxide_types::DetachableModule::Dsc.index()] = self.dsc_detached();
         want
     }
 
