@@ -385,3 +385,27 @@ descramble, the recording is not Edition 1 — check the sync error count and sa
 "variant" rather than chasing the decoder. If nothing locks at all, measure the
 envelope first: Rayleigh statistics mean there is no signal on that frequency at
 that hour, which is the answer, not a fault.
+
+## Watching for it overnight
+
+Nobody can sit on 6348 kHz until the tape starts, and the tapes are intermittent:
+`tools/s4285-watch/` does it instead. It holds the radio, sweeps a list of
+frequencies, and scores **the 106.67 ms frame period** on each — the sync is sent
+every frame, so the frame is there whether the station is sending text, a test
+tape, or idling, and noise does not have one. On a match it writes the dwell it
+holds plus thirty seconds as a WAV and moves on; when nothing is there, nothing is
+written.
+
+```sh
+cd tools/s4285-watch && cargo build --release
+./target/release/s4285watch 6348000,5215600,5155000,4232000,12857000 62500 /tmp/opencode/s4285
+```
+
+Ask for **62500**, not 48000 — an RSP1 refuses 48 kHz and silently keeps its own
+2 Msps, which overflows the read buffer. It prints a line per frequency, so a
+night that finds nothing leaves a log that says so.
+
+`s4285-watch/README.md` carries the frequency table, the thresholds and the
+caveats; `s4285-probe/s4285_verdict.py` reads a file back and says whether it is a
+tape or an idle carrier. **Not yet proved on a real tape** — that is what the next
+watch is for.

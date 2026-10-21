@@ -1,0 +1,16 @@
+[package]
+name = "s4285watch"
+version = "0.1.0"
+edition = "2021"
+
+# A standalone build, not a member of the root workspace -- same reason as
+# tools/rsp1-capture: cargo would otherwise walk up to the root manifest and
+# refuse, and `--workspace` at the root must never build this.
+[workspace]
+
+[dependencies]
+soapysdr = { path = "../../vendor/soapysdr" }
+num-complex = "0.4"
+
+[profile.release]
+opt-level = 2

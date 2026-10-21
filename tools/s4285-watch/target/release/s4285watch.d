@@ -1,0 +1,1 @@
+/home/druid/sdroxide/tools/s4285-watch/target/release/s4285watch: /home/druid/sdroxide/tools/s4285-watch/src/main.rs /home/druid/sdroxide/vendor/soapysdr/src/arginfo.rs /home/druid/sdroxide/vendor/soapysdr/src/args.rs /home/druid/sdroxide/vendor/soapysdr/src/device.rs /home/druid/sdroxide/vendor/soapysdr/src/format.rs /home/druid/sdroxide/vendor/soapysdr/src/lib.rs
