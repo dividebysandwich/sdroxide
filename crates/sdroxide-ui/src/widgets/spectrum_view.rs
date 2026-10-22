@@ -410,9 +410,7 @@ fn ctr_settle(
     if (view.view_lo_hz - ask.view_lo).abs() > 1.0 || (view.view_hi_hz - ask.view_hi).abs() > 1.0 {
         let view_span = view.view_hi_hz - view.view_lo_hz;
         let ask_span = ask.view_hi - ask.view_lo;
-        if ask_span.abs() > 0.0
-            && (view_span - ask_span).abs() > ask_span.abs() * ZOOM_EPS
-        {
+        if ask_span.abs() > 0.0 && (view_span - ask_span).abs() > ask_span.abs() * ZOOM_EPS {
             return CtrSettle::Waiting;
         }
         return CtrSettle::Done { refitted: false };

@@ -89,7 +89,9 @@ impl SdroxideApp {
                 "Annex E's start-of-message pattern, and how close the decoder's output has \
                  come to it. Noise sits near 16 of 32; a coded transmission reaches the \
                  twenties even when a fade stops it matching, and a match is what names the \
-                 coded rate and starts a message.",
+                 coded rate and starts a message. The code and interleaver decode a \
+                 generated signal exactly but no coded station has been read off the air \
+                 yet, so a match here is the first thing to expect when one is.",
             );
         });
     }

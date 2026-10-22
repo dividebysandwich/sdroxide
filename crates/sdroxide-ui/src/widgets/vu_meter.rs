@@ -70,12 +70,7 @@ pub struct VuBallistics {
 
 impl Default for VuBallistics {
     fn default() -> Self {
-        VuBallistics {
-            level: [FLOOR_VU; 2],
-            peak: [FLOOR_VU; 2],
-            peak_age: [0.0; 2],
-            mean: None,
-        }
+        VuBallistics { level: [FLOOR_VU; 2], peak: [FLOOR_VU; 2], peak_age: [0.0; 2], mean: None }
     }
 }
 

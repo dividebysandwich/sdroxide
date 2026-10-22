@@ -8078,17 +8078,39 @@ const OLIVIA_UNCONFIRMED: &str = "OLIVIA — receive works, transmit untested ag
 
 /// The DAB chip's hover.
 ///
-/// **The bandwidth is the whole note.** A DAB Mode I ensemble occupies about
-/// 1.536 MHz, and that is the *floor*: at it the front end — the SDRplay in
-/// particular — sits on its ADC floor and drops samples, and an OFDM decode
-/// needs a continuous stream, so one splice stops sync and there is no audio at
-/// all. `sdroxide_dab::DAB_GOOD_RATE_HZ` (2.5 Msps, confirmed on a Pluto) is
-/// the reference. Said here rather than in a manual, because this is where an
-/// operator chooses the mode and this is the first thing that will go wrong.
-const DAB_EXPERIMENTAL: &str = "DAB / DAB+. It needs 2.5 Msps of bandwidth at the front end \
-     before there is any audio: at the 1.536 MHz an ensemble occupies the receiver is at its \
-     ADC floor and drops samples, and a DAB decode needs a continuous stream, so the ensemble \
-     never locks and you hear nothing. Set the radio's sample rate to 2.500 Msps first.";
+/// **The bandwidth is the whole note, and it is not a warning about the mode.**
+/// DAB / DAB+ is **proven on the air** — a PlutoSDR at 2.5 Msps decodes it
+/// cleanly, slideshow and station text included — so nothing here may call it
+/// experimental. What an operator needs to know at the moment of picking it is
+/// the one thing that stops it working: a Mode I ensemble occupies about
+/// 1.536 MHz, and that is the *floor* — at it the front end, the SDRplay in
+/// particular, sits on its ADC floor and drops samples, and an OFDM decode needs
+/// a continuous stream, so one splice stops sync and there is no audio at all.
+/// `sdroxide_dab::DAB_GOOD_RATE_HZ` (2.5 Msps, confirmed on a Pluto) is the
+/// reference.
+const DAB_BANDWIDTH: &str = "DAB / DAB+, proven on the air. It needs 2.5 Msps of bandwidth at \
+     the front end before there is any audio: at the 1.536 MHz an ensemble occupies the \
+     receiver is at its ADC floor and drops samples, and a DAB decode needs a continuous \
+     stream, so the ensemble never locks and you hear nothing. Set the radio's sample rate to \
+     2.500 Msps first.";
+
+/// The STANAG 4285 chip's hover.
+///
+/// **What is proven, and what is not, said where the mode is picked.** Every
+/// station this has been pointed at — twenty off-air captures — locks, shows its
+/// frame rate and collapses its reference blocks, so "there is a 4285 here and it
+/// is sending 1200 baud BPSK" is a measurement. The *text* of a coded
+/// transmission is not: the code, the interleaver and the framing are built and
+/// decode a generated signal bit-exactly, but no coded station has been read off
+/// the air, and the bench rig that could have made the test transmission cannot
+/// pass the waveform's bandwidth.
+const STANAG_UNPROVEN: &str = "STANAG 4285 — receive only. Identification is proven off the \
+     air: a 4285 locks, its 106.67 ms frame is measured, and its reference blocks collapse, so \
+     the panel can say what is on the frequency and at what rate. Reading its *text* is not \
+     proven off the air: the Annex E code and interleaver decode a generated signal exactly, \
+     but no coded station has been copied yet. A coded text that does appear is real; no text \
+     at all means the station is uncoded or carrying encrypted traffic, which is the usual \
+     case.";
 
 fn mode_band_chip(
     ui: &mut egui::Ui,
@@ -8122,7 +8144,8 @@ fn mode_band_chip(
     };
     let resp = match m {
         Mode::Olivia => resp.on_hover_text(OLIVIA_UNCONFIRMED),
-        Mode::Dab => resp.on_hover_text(DAB_EXPERIMENTAL),
+        Mode::Dab => resp.on_hover_text(DAB_BANDWIDTH),
+        Mode::Stanag4285 => resp.on_hover_text(STANAG_UNPROVEN),
         _ => resp,
     };
     if resp.clicked() {
@@ -8157,7 +8180,8 @@ fn mode_listen_chip(
     let resp = match station_why {
         Some(why) => resp.on_disabled_hover_text(why),
         None if m == Mode::Olivia => resp.on_hover_text(OLIVIA_UNCONFIRMED),
-        None if m == Mode::Dab => resp.on_hover_text(DAB_EXPERIMENTAL),
+        None if m == Mode::Dab => resp.on_hover_text(DAB_BANDWIDTH),
+        None if m == Mode::Stanag4285 => resp.on_hover_text(STANAG_UNPROVEN),
         None => resp,
     };
     if resp.clicked() {
