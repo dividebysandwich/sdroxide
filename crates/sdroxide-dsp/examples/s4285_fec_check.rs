@@ -64,7 +64,7 @@ fn main() {
         }
     }
     println!("{}: {} frames, {} soft decisions at {}", a[0], frames, soft.len(), carrier);
-    if soft.len() < 20_000 {
+    if soft.len() < 5_000 {
         println!("  too little to judge");
         return;
     }
