@@ -52,6 +52,7 @@
 //! that shows as bits rather than as silence.
 
 use crate::rtty::BaudotRx;
+use crate::stanag4285_fec as fec;
 use std::f32::consts::TAU;
 
 /// Symbol rate, fixed by the standard.
@@ -180,6 +181,18 @@ pub struct S4285Frame {
     pub bits: Vec<u8>,
 }
 
+/// A message the Annex E layer assembled.
+#[derive(Debug, Clone, PartialEq)]
+pub struct S4285Message {
+    /// Which coded rate produced it — the start-of-message correlation is what
+    /// tells the four BPSK rates apart, since their constellations are identical.
+    pub rate: fec::CodedRate,
+    /// The message bits between the SOM and the EOM, oldest first.
+    pub bits: Vec<u8>,
+    /// An EOM was actually seen. Otherwise this is whatever had arrived.
+    pub closed: bool,
+}
+
 /// Something the receiver produced.
 #[derive(Debug, Clone, PartialEq)]
 pub enum S4285Event {
@@ -189,6 +202,9 @@ pub enum S4285Event {
     /// synchronous bit stream, so this is a best reading of it — the raw bits are
     /// on the frame event for anything that is not ITA2.
     Text(String),
+    /// A coded message came out of the Annex E chain, with the rate that
+    /// produced it.
+    Message(S4285Message),
 }
 
 /// The receiver's standing state, for a panel or a probe.
@@ -222,6 +238,15 @@ pub struct S4285Report {
     pub constellation: [f32; 3],
     /// The sampling phase being tracked, in symbols (0..1).
     pub timing: f32,
+    /// The coded rate a start-of-message pattern has been seen for. `None` until
+    /// one has, because the four BPSK rates are identical at the constellation.
+    pub coded: Option<fec::CodedRate>,
+    /// Coded messages assembled by the Annex E layer this session.
+    pub messages: u64,
+    /// The closest the decoder's output has come to the start-of-message pattern,
+    /// in matching bits out of 32. Noise gives about 16; a working decode on real
+    /// traffic gets into the twenties even when a fade stops it matching.
+    pub best_som: u8,
 }
 
 impl Default for S4285Report {
@@ -237,6 +262,9 @@ impl Default for S4285Report {
             reference: [0.0; 3],
             constellation: [0.0; 3],
             timing: 0.0,
+            coded: None,
+            messages: 0,
+            best_som: 0,
         }
     }
 }
@@ -345,6 +373,79 @@ impl Lowpass {
     }
 }
 
+/// One coded-rate branch: deinterleaved soft bits in, decoded bits into a
+/// message framer.
+///
+/// The four BPSK rates share one deinterleaved stream — the interleaver's `j` is
+/// 12 for all of them — and differ only in how many repetitions of each coded
+/// pair are averaged back. Two signs are run because the frame's absolute phase
+/// is only known up to ±π until a start-of-message pattern says otherwise; a
+/// flipped stream decodes to noise, so the branch that never sees an SOM costs
+/// nothing but cycles.
+const CHUNK_PAIRS: usize = 256;
+
+struct CodedChain {
+    rate: fec::CodedRate,
+    times: usize,
+    sign: f32,
+    deint: fec::ConvInterleaver,
+    /// Deinterleaved soft values not yet decoded.
+    soft: Vec<f32>,
+    consumed: usize,
+    framer: fec::MessageFramer,
+    /// Messages this branch has framed; the first one is what names the rate.
+    messages: u64,
+}
+
+impl CodedChain {
+    fn new(rate: fec::CodedRate, sign: f32) -> Self {
+        CodedChain {
+            rate,
+            times: rate.repeat(),
+            sign,
+            deint: fec::ConvInterleaver::deinterleaver(rate.j()),
+            soft: Vec::new(),
+            consumed: 0,
+            framer: fec::MessageFramer::new(rate),
+            messages: 0,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.deint.reset();
+        self.soft.clear();
+        self.consumed = 0;
+        self.framer.reset();
+    }
+
+    /// One soft decision from the demodulator (positive means a zero).
+    fn push(&mut self, v: f32, out: &mut Vec<S4285Message>) {
+        self.soft.push(self.deint.push(v * self.sign));
+        // A chunk of `CHUNK_PAIRS` coded pairs, plus an overlap so the decoder's
+        // traceback settles on real bits rather than on the erasures it starts
+        // from. Only the chunk's own decisions are used.
+        let need = (CHUNK_PAIRS + 64) * 2 * self.times;
+        while self.soft.len() - self.consumed >= need {
+            let slice = &self.soft[self.consumed..self.consumed + need];
+            let pairs = fec::average_pairs(slice, self.times);
+            let bits = fec::viterbi_decode(&pairs);
+            for b in bits.iter().take(CHUNK_PAIRS) {
+                if let Some(m) = self.framer.push(*b) {
+                    self.messages += 1;
+                    out.push(S4285Message { rate: m.rate, bits: m.bits, closed: m.closed });
+                }
+            }
+            self.consumed += CHUNK_PAIRS * 2 * self.times;
+        }
+        // Keep the buffer from growing without bound: everything before
+        // `consumed` has been decoded and is dead weight.
+        if self.consumed > 64 * 1024 {
+            self.soft.drain(..self.consumed);
+            self.consumed = 0;
+        }
+    }
+}
+
 /// Where the frame head sits, once acquisition has found it.
 #[derive(Debug, Clone, Copy)]
 struct Lock {
@@ -378,6 +479,14 @@ pub struct S4285Receiver {
     scrambling: [C; SCRAMBLED],
     sync_diff: [f32; SYNC - 1],
     baudot: BaudotRx,
+    /// The eight Annex E branches: four BPSK rates, each with both signs.
+    coded: Vec<CodedChain>,
+    /// The rate a start-of-message pattern has been seen for, once one has.
+    coded_rate: Option<fec::CodedRate>,
+    /// Messages the coded layer has assembled.
+    coded_messages: u64,
+    /// Messages ready to be handed out by the next `process` call.
+    pending: Vec<S4285Message>,
     bit_run: Vec<u8>,
     /// Characters decoded but not yet handed out.
     events_text: String,
@@ -410,6 +519,10 @@ impl S4285Receiver {
             scrambling: scrambling(),
             sync_diff: sync_differential(),
             baudot: BaudotRx::new(),
+            coded: Vec::new(),
+            coded_rate: None,
+            coded_messages: 0,
+            pending: Vec::new(),
             bit_run: Vec::new(),
             events_text: String::new(),
             report: S4285Report::default(),
@@ -447,6 +560,10 @@ impl S4285Receiver {
         self.acq_wait = 0;
         self.lock = None;
         self.timing = 0.0;
+        for c in self.coded.iter_mut() {
+            c.reset();
+        }
+        self.coded_rate = None;
         self.bit_run.clear();
         self.report = S4285Report::default();
     }
@@ -515,13 +632,19 @@ impl S4285Receiver {
     /// The frame-period autocorrelation of the baseband: how much of a frame
     /// repeats one frame later. Independent of the sampling phase, which is why it
     /// can be reported before acquisition has found one.
+    ///
+    /// It is taken over **everything buffered**, not over one frame. One frame's
+    /// worth of a modulated signal is 1280 samples of a statistic that has to see
+    /// many frames to mean anything: measured on a live 12.857 MHz capture, one
+    /// frame's estimate read 0.06 where the whole 6-second buffer read 0.355
+    /// against its own null of 0.019 — the instrument, not the signal.
     fn frame_acf(&self) -> f32 {
         let lag = FRAME * SPS;
         let n = self.bb.len();
         if n < lag + FRAME * SPS {
             return 0.0;
         }
-        let take = (n - lag).min(FRAME * SPS);
+        let take = n - lag;
         let mut acc = C::default();
         let (mut ea, mut eb) = (0.0f32, 0.0f32);
         for k in 0..take {
@@ -640,6 +763,17 @@ impl S4285Receiver {
             match frame {
                 Some(f) => {
                     events.push(S4285Event::Frame(f.clone()));
+                    for m in self.pending.drain(..) {
+                        // The character layer, if the message reads as text. A
+                        // reading that does not pass the test stays silent: letters
+                        // that mean nothing are the one failure a listener cannot
+                        // check.
+                        if let Some(t) = fec::message_text(&m.bits) {
+                            self.events_text.push_str(&t);
+                            events.push(S4285Event::Text(std::mem::take(&mut self.events_text)));
+                        }
+                        events.push(S4285Event::Message(m));
+                    }
                     // Text only from a frame whose constellation is resolved: an
                     // unresolved one produces letters that look plausible and mean
                     // nothing, which is the one failure a listener cannot see. The
@@ -715,6 +849,26 @@ impl S4285Receiver {
             }
         }
         let (score, phase, reversed, offset) = best?;
+        // Annex E's chains are fed from the frame *before* the reference gate: the
+        // stream into the interleaver has to be continuous, and a frame too poor to
+        // report is still a frame's worth of soft decisions that the code can use.
+        // A frame that is missing altogether breaks the stream, so the chains are
+        // reset wherever one is skipped.
+        let mut coded_msgs = Vec::new();
+        if score >= MIN_CODED_REFERENCE {
+            self.feed_coded(start, phase, reversed, offset, &mut coded_msgs);
+        } else {
+            self.reset_coded();
+        }
+        for m in coded_msgs {
+            self.coded_messages += 1;
+            self.report.messages = self.coded_messages;
+            if self.coded_rate.is_none() {
+                self.coded_rate = Some(m.rate);
+                self.report.coded = Some(m.rate);
+            }
+            self.pending.push(m);
+        }
         if score < MIN_REFERENCE {
             return None;
         }
@@ -832,6 +986,66 @@ impl S4285Receiver {
         })
     }
 
+    /// Descramble one frame's data again for the Annex E chains and push its 128
+    /// soft decisions into each branch.
+    ///
+    /// The chain runs on the *raw* constellation, not on the rate verdict: the
+    /// four BPSK rates are identical at the constellation, and the SOM is what
+    /// tells them apart.
+    fn feed_coded(
+        &mut self,
+        start: u64,
+        phase: f32,
+        reversed: bool,
+        offset: f32,
+        out: &mut Vec<S4285Message>,
+    ) {
+        let frame = self.frame_symbols(start, phase);
+        let mut data: Vec<C> = Vec::with_capacity(128);
+        let mut sum = 0.0f32;
+        for &(lo, hi) in &DATA_BLOCKS {
+            for k in lo..hi {
+                let sc = if reversed { self.scrambling[k].conj() } else { self.scrambling[k] };
+                let t = k as f32 / BAUD as f32;
+                let c = frame[SYNC + k].mul(sc.conj()).mul(C::from_phase(-offset * TAU * t));
+                sum += c.norm();
+                data.push(c);
+            }
+        }
+        if sum <= 1e-9 {
+            return;
+        }
+        // A BPSK symbol's soft decision is its real part, scaled so a clean
+        // symbol is ±1 — Annex E's "linear distance from the decision boundary".
+        let scale = data.len() as f32 / sum;
+        if self.coded.is_empty() {
+            for r in fec::CodedRate::BPSK {
+                for sign in [1.0f32, -1.0] {
+                    self.coded.push(CodedChain::new(r, sign));
+                }
+            }
+        }
+        for chain in self.coded.iter_mut() {
+            for c in &data {
+                chain.push(c.re * scale, out);
+            }
+            if chain.framer.best_som > self.report.best_som {
+                self.report.best_som = chain.framer.best_som;
+            }
+        }
+        if let Some(rate) = self.coded_rate {
+            // Only the branch that has produced a message is worth decoding; the
+            // others are noise by definition once the rate is known.
+            self.coded.retain(|c| c.rate == rate && c.messages > 0);
+        }
+    }
+
+    fn reset_coded(&mut self) {
+        for c in self.coded.iter_mut() {
+            c.reset();
+        }
+    }
+
     /// Keep only what the next frame and the acquisition window need.
     fn trim(&mut self) {
         let need = match self.lock {
@@ -863,6 +1077,11 @@ impl S4285Receiver {
 /// is wrongly accepted is visible in the three numbers, while one wrongly rejected
 /// is silence.
 const MIN_REFERENCE: f32 = 0.45;
+
+/// The reference concentration below which a frame's soft decisions are too poor
+/// to be worth handing to the code, but above which they still are: the reported
+/// three numbers and the coded stream want different things from a fading frame.
+const MIN_CODED_REFERENCE: f32 = 0.30;
 
 /// The folded sync correlation a lock needs, and the margin over its own null.
 ///
@@ -1077,6 +1296,61 @@ mod tests {
             assert!(*c > 0.85, "reference block {i} read {c:.3}, and it should collapse");
         }
         assert!(r.frame_acf > 0.25, "frame ACF {:.3}", r.frame_acf);
+    }
+
+    /// The whole coded chain, end to end: SOM + payload + EOM, convolutional
+    /// code, pair repetition, interleaver, BPSK modulation — through the receiver,
+    /// the deinterleaver, the Viterbi decoder and the framer.
+    ///
+    /// This is the regression test for the plumbing. It cannot prove the
+    /// interleaver's row structure against the standard (a loopback shares whatever
+    /// convention both halves use); what proves that is a start-of-message pattern
+    /// on real traffic, which is what the off-air captures are for.
+    #[test]
+    fn a_coded_message_survives_the_whole_chain() {
+        use super::fec::{self, CodedRate};
+        let rate = CodedRate::Bps600;
+        // A payload whose bits are not all the same, so a decoder that drops
+        // them cannot pass by luck.
+        let payload: Vec<u8> = (0..128u32).map(|i| ((i * 5 + (i >> 2)) % 3 == 0) as u8).collect();
+        let mut msg = vec![0u8; 6]; // six zero bits, so the SOM is not at the head
+        for k in (0..32).rev() {
+            msg.push(((fec::SOM >> k) & 1) as u8);
+        }
+        msg.extend_from_slice(&payload);
+        for k in (0..32).rev() {
+            msg.push(((fec::EOM >> k) & 1) as u8);
+        }
+        // Annex E's flush: zeros to the interleaver's delay plus 102.
+        msg.extend(std::iter::repeat_n(0u8, 6246));
+
+        let coded = fec::encode(&msg);
+        let repeated = fec::repeat_pairs(&coded, rate.repeat());
+        let mut il = fec::ConvInterleaver::interleaver(rate.j());
+        let sent: Vec<u8> = repeated
+            .iter()
+            .map(|b| {
+                let v = il.push(if *b == 1 { -1.0 } else { 1.0 });
+                if v < 0.0 { 1 } else { 0 }
+            })
+            .collect();
+        // One frame's worth of padding so the last bits are carried.
+        let frames = sent.len() / 128 + 2;
+        let audio = modulate(&sent, frames, 12000.0);
+
+        let mut rx = S4285Receiver::new(12000.0, 1800.0);
+        let mut got: Vec<S4285Message> = Vec::new();
+        for chunk in audio.chunks(1024) {
+            for ev in rx.process(chunk) {
+                if let S4285Event::Message(m) = ev {
+                    got.push(m);
+                }
+            }
+        }
+        let m = got.first().unwrap_or_else(|| panic!("no coded message: {:?}", rx.report()));
+        assert_eq!(m.rate, rate, "the wrong rate named the message");
+        assert!(m.closed, "the EOM did not close the message");
+        assert_eq!(m.bits, payload, "the message bits are not the ones that were sent");
     }
 
     /// The negative that makes the lock a detector rather than a lamp: noise must

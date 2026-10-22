@@ -27,6 +27,22 @@ fn read_wav(path: &str) -> (Vec<f32>, f64) {
     (audio, spec.sample_rate as f64)
 }
 
+fn hex(bits: &[u8], n: usize) -> String {
+    let take = bits.len().min(n * 8);
+    let mut s = String::new();
+    for byte in bits[..take].chunks(8) {
+        let mut v = 0u8;
+        for (i, b) in byte.iter().enumerate() {
+            v |= b << (7 - i);
+        }
+        s.push_str(&format!("{v:02x}"));
+    }
+    if bits.len() > take {
+        s.push('…');
+    }
+    s
+}
+
 fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     if a.is_empty() {
@@ -46,6 +62,7 @@ fn main() {
     let mut rx = sdroxide_dsp::stanag4285::S4285Receiver::new(rate, carrier);
     let mut frames = Vec::new();
     let mut text = String::new();
+    let mut messages = 0usize;
     for chunk in audio.chunks(4096) {
         for ev in rx.process(chunk) {
             match ev {
@@ -54,6 +71,18 @@ fn main() {
                     text.push_str(&t);
                     for ch in t.chars() {
                         print!("{ch}");
+                    }
+                }
+                sdroxide_dsp::stanag4285::S4285Event::Message(m) => {
+                    messages += 1;
+                    if messages <= 6 {
+                        println!(
+                            "\nmessage via {} ({} bits, {}): {}",
+                            m.rate.label(),
+                            m.bits.len(),
+                            if m.closed { "SOM..EOM" } else { "no EOM" },
+                            hex(&m.bits, 24)
+                        );
                     }
                 }
             }
@@ -105,6 +134,12 @@ fn main() {
             f.bits.len()
         );
     }
+    println!(
+        "coded: rate {} | {} messages | best SOM {}/32",
+        r.coded.map(|c| c.label()).unwrap_or("none seen"),
+        r.messages,
+        r.best_som
+    );
     println!("payload bits so far: {}", rx.bits().len());
     if let Some(path) = std::env::var("S4285_BITS_OUT").ok() {
         let s: String = rx.bits().iter().map(|b| if *b == 1 { '1' } else { '0' }).collect();

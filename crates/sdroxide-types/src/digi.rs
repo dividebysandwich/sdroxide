@@ -619,6 +619,12 @@ pub struct StanagStatus {
     pub offset_hz: f32,
     /// Frames demodulated this session.
     pub frames: u64,
+    /// Coded messages the Annex E layer has assembled this session.
+    pub messages: u64,
+    /// The closest the decoder's output has come to the start-of-message pattern,
+    /// in matching bits out of 32. Noise sits near 16; a working decode on real
+    /// traffic reaches the twenties even when a fade stops it matching exactly.
+    pub best_som: u8,
 }
 
 /// The running detail of the contact in progress: when it started and what has
@@ -4452,6 +4458,8 @@ mod stanag_status_tests {
             rate: "1200 BPSK uncoded, or a coded BPSK rate".into(),
             offset_hz: 55.0,
             frames: 215,
+            messages: 3,
+            best_som: 31,
         });
         let bytes = postcard::to_stdvec(&st).expect("encode");
         let back: DigiStatus = postcard::from_bytes(&bytes).expect("decode");

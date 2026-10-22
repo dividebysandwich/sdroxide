@@ -208,11 +208,11 @@ here because it is the thing to look at when starting a session.
    path (modem, `Mode` variant, `DigiConfig` field).
 4. ~~**STANAG 4285**~~ — **built 2026-10-22**: the receiver locks real off-air
    captures (the folded sync 0.85 against a 0.14 null, the reference blocks
-   0.64/0.75/0.62), the mode is wired with a panel of measurements, and the
-   negative controls refuse. **The text is not readable**, and the reason is not
-   the receiver: the night's captures are encrypted or idle, and a test tape's
-   75 baud is a *coded* rate, so the next job is **Annex E** — see
-   [`STANAG4285-HANDOVER.md`](STANAG4285-HANDOVER.md).
+   0.64/0.75/0.62), the mode is wired with a panel of measurements, the negative
+   controls refuse, and **Annex E is transcribed and built** — the code, the
+   interleaver, SOM/EOM and an ITA2 reading, proven on a loopback. What it needs
+   now is a **real coded transmission**: the night's captures are uncoded or idle
+   and produce no SOM. See [`STANAG4285-HANDOVER.md`](STANAG4285-HANDOVER.md).
 5. **One item from the hours table per day** after that: Contestia (after the
    Olivia fix, not before), MT63, DominoEX, RS_ID.
 

@@ -518,9 +518,17 @@ impl TextModemController {
                         frame_acf: rep.frame_acf,
                         reference: rep.reference,
                         constellation: rep.constellation,
-                        rate: rep.rate.label().to_string(),
+                        // The coded rate wins when the start-of-message pattern
+                        // has named one: the constellation cannot tell the four
+                        // BPSK rates apart, and a decode can.
+                        rate: rep
+                            .coded
+                            .map(|c| c.label().to_string())
+                            .unwrap_or_else(|| rep.rate.label().to_string()),
                         offset_hz: rep.carrier_offset_hz,
                         frames: rep.frames,
+                        messages: rep.messages,
+                        best_som: rep.best_som,
                     })
                 }
                 _ => None,

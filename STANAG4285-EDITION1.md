@@ -177,6 +177,125 @@ question this project's entry in `MODE-ROADMAP.md` calls the acquisition fold.
   between the two channel impulse responses**. Because the allowance is ±75 Hz,
   those calculations are performed **in three separate Doppler channels**.
 
+## Annex E — error correction, interleaving and the message protocol
+
+Transcribed 2026-10-22 from the same scan (PDF pages 50–64 = E-1 … E-3-1;
+Appendix 1 is E-1-1 and E-1-2, and Appendices 2 and 3 are performance tables).
+**None of this is cryptography.** It is forward error correction, an interleaver
+and a start/end-of-message convention; the traffic's own encryption, where there
+is any, sits above this layer and is not described by the standard.
+
+### The code (E-1, E-2)
+
+* **Constraint length 7, rate 1/2 convolutional encoder**, both summing nodes
+  modulo-2 — the ordinary NASA/CCSDS code.
+* Generator polynomials, **T1 first**:
+  `G1 = x⁶ + x⁴ + x³ + x + 1` = **133 octal**;
+  `G2 = x⁶ + x⁵ + x³ + x² + 1` = **171 octal**.
+* The output switch runs at **twice** the input bit rate, T1 then T2.
+* For rates below 600 bps the lower coded rate is made by **repeating the
+  *pairs* of output bits** — T1,T2,T1,T2,… — never T1 repeated then T2 repeated.
+
+| coded data rate | waveform | effective code rate | how |
+|---|---|---|---|
+| 2400 bps | 8-phase (3600 bps) | 2/3 | rate 1/2 **punctured** to 2/3 |
+| 1200 bps | 4-phase (2400 bps) | 1/2 | unmodified |
+| 600 bps | 2-phase (1200 bps) | 1/2 | unmodified |
+| 300 bps | 2-phase (1200 bps) | 1/4 | rate 1/2 repeated 2× |
+| 150 bps | 2-phase (1200 bps) | 1/8 | rate 1/2 repeated 4× |
+| 75 bps | 2-phase (1200 bps) | 1/16 | rate 1/2 repeated 8× |
+
+So a **BPSK (1200 bps) transmission is 600, 300, 150 or 75 bps of data** — the
+constellation cannot tell which, and the SOM's correlation at the decoder output
+is what does.
+
+The puncturing to 2/3 happens **after** the interleaver, so a 2400 bps link puts
+4800 bps into the interleaver and takes 3600 out. (The scan does not say *which*
+bit of each four is dropped; that is the one parameter here that is still a
+guess.)
+
+### The interleaver (E-2 … E-5)
+
+A convolutional interleaver, slightly modified:
+
+* **32 rows, I = 32, at every rate.**
+* Row `r` holds **r·j bits** — "each shift-register has j more bits of storage
+  than the one above it", row 0 having none.
+* **j**, i.e. the delay increment per row:
+
+| data rate | long interleave (10.24 s) | short interleave (0.853 s) |
+|---|---|---|
+| 2400 bps | **48** | 4 |
+| 1200 bps | **24** | (scaled by rate) |
+| 600–75 bps | **12** | (scaled by rate) |
+
+* **The commutators at the interleaver's input and the deinterleaver's output
+  are non-sequential**: the normal 0…31 multiplied by 9 modulo 32 —
+  `0, 9, 18, 27, 4, 13, 22, 31, 8, 17, 26, 3, 12, 21, 30, 7, 16, 25, 2, 11,
+  20, 29, 6, 15, 24, 1, 10, 19, 28, 5, 14, 23`.
+* **The output commutator is the normal 0…31** at every rate except 2400, where
+  it takes 24 bits out of the 32 rows per cycle — every fourth row skipped:
+  `0,1,2,4,5,6,8,9,10,12,13,14,16,17,18,20,21,22,24,25,26,28,29,30` — repeated for
+  every eight 8-PSK symbols.
+* **All rows shift together** after each complete cycle of the commutators, which
+  is what keeps the input and output bit timing related.
+* **Synchronisation:** the top (0th) row is always the starting position for the
+  first bit of every data frame of the starting waveform, and **every frame of
+  the transmitted waveform holds an integer multiple of 32 data bits**. That is
+  the only synchronisation the interleaver needs.
+
+### Message framing (E-5, E-6)
+
+* The encoder and interleaver registers are **set to zero** before any message.
+* **SOM = `03873C3C`** (hex, leftmost bit sent first) is inserted before the
+  first message bit.
+* **EOM = `4B65A5B2`** is appended after the last.
+* Then **zeros equal to the interleaver delay plus 102** flush the interleaver
+  and the decoder, and the transmission may stop:
+
+| data rate | flush zeros, 10.24 s interleave | short interleave |
+|---|---|---|
+| 2400 | 24678 | 2150 |
+| 1200 | 12390 | 1126 |
+| 600 | 6246 | 614 |
+| 300 | 3174 | 358 |
+| 150 | 1638 | 230 |
+| 75 | 870 | 166 |
+
+(The 102 is the maximum practical traceback delay of the decoder, which is why
+the count is the delay plus 102 rather than the delay.)
+
+### Decoding (Appendix 1, E-1-1 and E-1-2)
+
+* **Soft decisions, and a soft-decision Viterbi decoder.** The standard says so
+  in as many words: "excellent performance … is achieved if maximum likelihood
+  decoding (Viterbi algorithm) of soft bit decisions is utilized".
+* The soft value starts as the **linear distance from the decision boundary** —
+  for BPSK, the real component — and is normalised by the average squared
+  distance from the ideal points, with a time constant of about **100 ms**.
+  Positive means a 0, negative a 1.
+* **For 2400 bps a fourth soft decision is made per 3-bit 8-PSK symbol, and its
+  value is zero — a complete erasure**, standing for the punctured bit. That is
+  what makes 3600 received bits 4800 soft decisions and a rate-1/2 decode.
+* The **deinterleaver takes soft decisions in the normal order and gives them
+  out in the ×9 order**, and is **pre-filled with zeros (erasures)**.
+  2400/1200/600 take two soft decisions at a time; **300/150/75 take 4, 8 and 16
+  at a time and average the even and odd ones separately** into two values.
+* **The last 26 bits of the SOM are correlated against the decoder output** until
+  they match; that is the start of the message. If no SOM appears within
+  (flush zeros + 32) bits, the output is taken anyway.
+* The output is then watched for the **EOM**; reception ends there, or when the
+  80-symbol sync has not been seen for one interleaver delay.
+
+### What performance to expect (Appendices 2 and 3)
+
+600 bps on a single non-fading path reaches a bit-error rate of 3.4×10⁻⁴ at
+**10 dB** signal-to-noise in 3 kHz, and 0 at 15 dB; 1200 bps is 3.2×10⁻² at 10 dB
+and 0 at 15; 2400 bps needs about 20 dB for 4.5×10⁻⁴. Two equal Rayleigh paths
+2 ms apart cost roughly 5 dB. **A rate-1/2 coded link is therefore readable at
+SNRs where the raw constellation is barely readable** — which is what the
+interleaver and the code are for.
+
 ## What this settles, and what it does not
 
 **Settled against the standard itself**, so nothing here needs re-deriving from a

@@ -8,14 +8,16 @@ constrain it, and a prompt for the session that builds the mode.
 
 ## Where the work stands
 
-**The state, briefly (2026-10-22, second session).** The receiver exists
+**The state, briefly (2026-10-22, third session).** The receiver exists
 (`crates/sdroxide-dsp/src/stanag4285.rs`), it locks real off-air captures with the
-reference blocks collapsed, and the mode is wired: `Mode::Stanag4285`, a panel
-that shows every measurement, `PROTO_VERSION` 227 — see the last section. **The
-text is still not readable**, and the reason is not the receiver: the payloads on
-the night's captures are encrypted or idle, and a test tape's 75 baud is a
-*coded* rate, which needs Annex E. `tools/s4285-probe/` remains the Python
-measurement log, deliberately outside the build.
+reference blocks collapsed, the mode is wired (`Mode::Stanag4285`, a panel of
+measurements, `PROTO_VERSION` 227), and **Annex E is transcribed and built**
+(`stanag4285_fec.rs`): the convolutional code, the interleaver, the SOM/EOM framing
+and an ITA2 reading, proven end to end on a loopback. What is still missing is a
+*real coded transmission* to decode — the night's captures are uncoded or idle, and
+the daytime ones were not 4285 at all. See the last section.
+`tools/s4285-probe/` remains the Python measurement log, deliberately outside the
+build.
 
 What the probes established, and what each was measured on:
 
@@ -523,3 +525,113 @@ synthetic carrier landed at 1200 Hz and nothing could lock.
 * The **carrier offset is searched per frame**, ±150 Hz in 1 Hz steps after a
   5 Hz sweep. It has never been outside ±130 Hz on these captures, but a station
   further off the dial would still read as no frame.
+
+## 2026-10-22, third session — Annex E, transcribed and built
+
+**The operator's question first, because it is the one that decides whether any of
+this is ours to build: no, Annex E is not cryptography.** Its first page is a
+constraint-length-7 rate-1/2 convolutional encoder with the published 133/171
+polynomials, followed by a convolutional interleaver and a SOM/EOM message
+convention — the same class of forward error correction that is in DVB, Wi-Fi and
+deep-space telemetry. Encryption on these links is a separate layer the users
+apply above the modem; the standard does not describe it and nothing here touches
+it. The full transcription is in [`STANAG4285-EDITION1.md`](STANAG4285-EDITION1.md),
+"Annex E".
+
+### What was transcribed (PDF pages 50–64)
+
+The functional content is E-1 … E-6 plus Appendix 1 (E-1-1, E-1-2); Appendices 2
+and 3 are bit-error-rate tables. In brief:
+
+* **Rate 1/2, K=7, G1=133, G2=171 octal, T1 first.** Below 600 bps the *pairs* of
+  output bits are repeated 2, 4 and 8 times — never the first bit repeated and
+  then the second.
+* **A BPSK (1200 channel bit) transmission is therefore 600, 300, 150 or 75 bps**
+  of data, and the constellation cannot tell which. 1200 bps data is QPSK and 2400
+  is punctured 8-PSK.
+* **Convolutional interleaver, 32 rows**, row `r` holding `r·j` entries and the
+  deinterleaver's holding `(I-1-r)·j` — which is what makes the pair a constant
+  delay. Input commutator `n·9 mod 32`; output commutator normal, except 24 of the
+  32 rows at 2400 bps.
+* **SOM `03873C3C`, EOM `4B65A5B2`**, then `delay + 102` zeros to flush.
+* **Soft-decision Viterbi**, soft value = distance from the decision boundary,
+  positive for a zero; the deinterleaver pre-filled with erasures; 4/8/16 soft
+  values averaged in even and odd halves for the three lowest rates.
+
+### What was built
+
+`crates/sdroxide-dsp/src/stanag4285_fec.rs`: the encoder, the pair repeater and
+averager, the interleaver pair, the Viterbi decoder and the SOM/EOM framer, with
+an ITA2 reader for the message (`message_text`, both synchronous groups and
+5N1.5 framing). Wired into the receiver: every frame above a **0.30** reference
+concentration feeds 128 soft decisions into eight branches — four BPSK rates × both
+signs, because the frame phase is known only up to ±π until a SOM says otherwise —
+and the first branch to frame a message names the rate.
+
+**Verified end to end on a loopback**: SOM + 128-bit payload + EOM through the
+encoder, the pair repeater, the interleaver, BPSK modulation, the real receiver,
+the deinterleaver, the Viterbi decoder and the framer, and the payload comes back
+bit-exact with the right rate
+(`a_coded_message_survives_the_whole_chain`). A loopback cannot prove the
+interleaver's structure against the standard — both halves share whatever
+convention they use — which is why the SOM on real traffic is the real test.
+
+### Two faults found in the writing, both worth keeping
+
+* **The Viterbi traceback cannot remember the input bit alone.** This code's state
+  transition drops the oldest bit, so the received state and the input bit leave
+  *two* possible predecessors; the first version picked the first match and decoded
+  a clean signal 30 % wrong. The traceback now stores the previous state.
+* **The interleaver's two halves are not the same shape.** Given both rows as
+  `r·j`, the pair delays by `2r·j` and returns a permutation, not the message. The
+  deinterleaver's rows are `(I-1-r)·j`, which is what the annex says in its own
+  words ("j fewer bits of storage than the preceding one") and what makes the total
+  `(I-1)·j` constant. Measured after the fix: one constant delay of 992 for j=1.
+* And two in the fixtures: a multiplicative hash has period 256 and makes frame
+  *n+1* the complement of frame *n*; and `TAU*f*i` in f32 loses its fractional part
+  within a second, putting a synthetic carrier at 1200 Hz.
+
+### Bench, 2026-10-22 daytime — the wire antenna is back, and the finding is the instrument
+
+The operator reconnected the wire antenna to the RSP1 at 11:38 UTC, so the watcher
+was run over eight frequencies. **18 captures of a 100 ms periodic signal at
+12.8578 MHz**, and *none of them is a 4285*:
+
+* the frame period in the file is **100.00 ms**, not 106.67 — exactly 15/16 of it;
+* rewritten with a 11719 Hz header the ACF moves to 0.36, but the folded sync is
+  only 0.42 against a null of 0.24 and the lock refuses;
+* **no 2400 baud line anywhere**: the squared envelope has its strongest line at
+  1825 Hz, and the night capture measured with the same method shows a clean
+  2400.0 Hz line, so the method is sound;
+* the spectrum peaks at 2700 Hz and spans 0..3841 Hz, and the rms is 0.0032
+  against 0.017 for a night capture — 15 dB weaker.
+
+So either the capture rate is wrong by 15/16 or the signal is not a 4285, and the
+two are told apart by the baud line, which says not-4285. **The watcher's trigger
+is a frame-period autocorrelation and it will happily trigger on any 100 ms
+periodicity**, which is the same lesson as "a strong carrier is not a 4285" wearing
+a new coat. Not fixed here: the next session should record a known 4285 (6348 kHz
+at night) through the same path and confirm the rate read-back before trusting a
+daytime trigger.
+
+Also recorded: one stale note in the code said the frame ACF was taken over one
+frame's worth of baseband. One frame of a modulated signal is 1280 samples of a
+statistic that needs many frames — it read **0.06 where the whole buffer read
+0.355**, the instrument rather than the signal. It now averages over everything
+buffered.
+
+### Still open
+
+* **No real coded transmission has been decoded.** The night's captures produce no
+  SOM at all (best 27–29 of 32, which is what noise gives), and their channel bits
+  are 82 % ones on the idle file — an uncoded 1200 bps stream, which is a legal
+  configuration that only Annex A describes. A coded station is what the branch
+  needs; the panel now reports `SOM n/32` so the operator can see whether one is
+  being worked on.
+* **The punctured 2/3 rate for 2400 bps is not built**: the annex does not say
+  which of each four bits is dropped, and a guessed demapper is indistinguishable
+  from a decode.
+* **The character layer is a best reading**, not a specification: Annex E calls
+  what it carries "message bits" and names no character set. ITA2 5N1.5 is what a
+  75 baud tape should be, and the reader refuses a reading that does not look like
+  text rather than printing letters that mean nothing.

@@ -80,6 +80,17 @@ impl SdroxideApp {
                 "The carrier offset the reference blocks agree on, and how many frames have \
                  been demodulated this session.",
             );
+            ui.label(
+                RichText::new(format!("SOM {}/32 · {} msg", s.best_som, s.messages))
+                    .size(10.5)
+                    .color(dim),
+            )
+            .on_hover_text(
+                "Annex E's start-of-message pattern, and how close the decoder's output has \
+                 come to it. Noise sits near 16 of 32; a coded transmission reaches the \
+                 twenties even when a fade stops it matching, and a match is what names the \
+                 coded rate and starts a message.",
+            );
         });
     }
 

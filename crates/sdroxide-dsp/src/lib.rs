@@ -61,11 +61,12 @@ mod spectrum;
 mod spectrum_paint;
 mod sstv;
 mod sstv_slant;
+pub mod stanag4285;
+pub mod stanag4285_fec;
 mod thor;
 mod tonegen;
 mod wbddc;
 mod wbspectrum;
-pub mod stanag4285;
 pub mod wefax;
 mod window;
 
