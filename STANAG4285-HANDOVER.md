@@ -620,14 +620,36 @@ statistic that needs many frames — it read **0.06 where the whole buffer read
 0.355**, the instrument rather than the signal. It now averages over everything
 buffered.
 
+### Are the captures coded at all? Measured: no
+
+`examples/s4285_fec_check.rs` answers the question the constellation cannot, and
+does it with its own null. Every uncoded rate shares a modulation with a coded
+one, so the only evidence is whether the stream satisfies the code's trellis after
+deinterleaving. The statistic is the decoder's metric against **the same values
+shuffled** — shuffling destroys the trellis and nothing else.
+
+Every branch on every night capture:
+
+| capture | 600 (1/2) | 300 (1/4) | 150 (1/8) | 75 (1/16) |
+|---|---|---|---|---|
+| `6348-…045545Z` | **0.95×** | 0.98× | 0.98× | 0.99× |
+| `6348-…050318Z` | **0.97×** | 0.98× | — | — |
+| `5215.6-…024501Z` | **0.97×** | 0.97× | — | — |
+
+A coded stream beats its null by a wide margin (`the_decoder_metric_separates_a_coded_stream_from_a_shuffled_one`
+pins that on a synthetic one). Ratios of 0.95–0.99 are the null.
+
+**So the night's captures are uncoded 1200 bps** — Annex A's own rate, not one of
+Annex E's — carrying encrypted traffic or an idle line. Nothing about the coded
+chain is implicated: it has never seen a coded transmission. When one turns up, the
+branch that is right will stand well above its null, and the probe is the tool that
+says so.
+
 ### Still open
 
-* **No real coded transmission has been decoded.** The night's captures produce no
-  SOM at all (best 27–29 of 32, which is what noise gives), and their channel bits
-  are 82 % ones on the idle file — an uncoded 1200 bps stream, which is a legal
-  configuration that only Annex A describes. A coded station is what the branch
-  needs; the panel now reports `SOM n/32` so the operator can see whether one is
-  being worked on.
+* **No real coded transmission has been decoded**, and the metric test above says
+  the ones on disk are not coded. A coded station is what the branch needs; the
+  panel now reports `SOM n/32` so the operator can see one being worked on.
 * **The punctured 2/3 rate for 2400 bps is not built**: the annex does not say
   which of each four bits is dropped, and a guessed demapper is indistinguishable
   from a decode.

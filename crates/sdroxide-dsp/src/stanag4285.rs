@@ -179,6 +179,10 @@ pub struct S4285Frame {
     pub constellation: [f32; 3],
     /// Payload bits of this frame, oldest first.
     pub bits: Vec<u8>,
+    /// The frame's 128 soft decisions, positive for a zero — the values the
+    /// Annex E chains are fed from. Exposed so a probe can ask whether a capture
+    /// carries the code at all, which the hard bits cannot answer.
+    pub soft: Vec<f32>,
 }
 
 /// A message the Annex E layer assembled.
@@ -855,8 +859,9 @@ impl S4285Receiver {
         // A frame that is missing altogether breaks the stream, so the chains are
         // reset wherever one is skipped.
         let mut coded_msgs = Vec::new();
+        let mut soft = Vec::new();
         if score >= MIN_CODED_REFERENCE {
-            self.feed_coded(start, phase, reversed, offset, &mut coded_msgs);
+            soft = self.feed_coded(start, phase, reversed, offset, &mut coded_msgs);
         } else {
             self.reset_coded();
         }
@@ -983,6 +988,7 @@ impl S4285Receiver {
             phases_used,
             constellation,
             bits,
+            soft,
         })
     }
 
@@ -999,7 +1005,7 @@ impl S4285Receiver {
         reversed: bool,
         offset: f32,
         out: &mut Vec<S4285Message>,
-    ) {
+    ) -> Vec<f32> {
         let frame = self.frame_symbols(start, phase);
         let mut data: Vec<C> = Vec::with_capacity(128);
         let mut sum = 0.0f32;
@@ -1013,7 +1019,7 @@ impl S4285Receiver {
             }
         }
         if sum <= 1e-9 {
-            return;
+            return Vec::new();
         }
         // A BPSK symbol's soft decision is its real part, scaled so a clean
         // symbol is ±1 — Annex E's "linear distance from the decision boundary".
@@ -1025,9 +1031,10 @@ impl S4285Receiver {
                 }
             }
         }
+        let soft: Vec<f32> = data.iter().map(|c| c.re * scale).collect();
         for chain in self.coded.iter_mut() {
-            for c in &data {
-                chain.push(c.re * scale, out);
+            for v in &soft {
+                chain.push(*v, out);
             }
             if chain.framer.best_som > self.report.best_som {
                 self.report.best_som = chain.framer.best_som;
@@ -1038,6 +1045,7 @@ impl S4285Receiver {
             // others are noise by definition once the rate is known.
             self.coded.retain(|c| c.rate == rate && c.messages > 0);
         }
+        soft
     }
 
     fn reset_coded(&mut self) {

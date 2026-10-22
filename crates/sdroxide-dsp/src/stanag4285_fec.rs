@@ -265,8 +265,15 @@ impl ConvInterleaver {
 /// input alone picks the wrong one half the time, which is a decode that looks
 /// plausible and is 30 % wrong.
 pub fn viterbi_decode(soft: &[f32]) -> Vec<u8> {
+    viterbi_decode_with_metric(soft).0
+}
+
+/// The decoder and the best path's metric, which is what says whether the stream
+/// carries this code at all: a stream that does has a metric far above the same
+/// values shuffled, because shuffling destroys the trellis and nothing else.
+pub fn viterbi_decode_with_metric(soft: &[f32]) -> (Vec<u8>, f32) {
     if soft.len() < 2 {
-        return Vec::new();
+        return (Vec::new(), 0.0);
     }
     let steps = soft.len() / 2;
     let mut expected = [[0.0f32; 2]; STATES * 2];
@@ -307,13 +314,14 @@ pub fn viterbi_decode(soft: &[f32]) -> Vec<u8> {
     let mut s = (0..STATES)
         .max_by(|a, b| metric[*a].partial_cmp(&metric[*b]).unwrap_or(std::cmp::Ordering::Equal))
         .unwrap_or(0);
+    let metric_best = metric[s];
     let mut out = vec![0u8; steps];
     for t in (0..steps).rev() {
         // The input bit is the low bit of the state we have arrived in.
         out[t] = (s & 1) as u8;
         s = from[t][s] as usize;
     }
-    out
+    (out, metric_best)
 }
 
 /// What the message layer found.
@@ -662,6 +670,42 @@ mod tests {
             })
             .collect();
         assert_eq!(message_text(&noise), None, "noise read as text");
+    }
+
+    /// The metric-versus-null test that says whether a stream carries the code at
+    /// all. A coded stream has to beat the same values shuffled; an uncoded one
+    /// must not, and that is the half that matters — it is what says a real
+    /// capture is uncoded rather than that the decoder is broken.
+    #[test]
+    fn the_decoder_metric_separates_a_coded_stream_from_a_shuffled_one() {
+        let mut seed = 0xDEAD_BEEFu32;
+        let bits: Vec<u8> = (0..4000)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                (seed & 1) as u8
+            })
+            .collect();
+        let coded = encode(&bits);
+        let soft: Vec<f32> = coded.iter().map(|b| if *b == 1 { -1.0 } else { 1.0 }).collect();
+        let (_, coded_metric) = viterbi_decode_with_metric(&soft);
+        // The null: the same values shuffled, so the trellis is gone and nothing
+        // else has changed.
+        let mut shuffled = soft.clone();
+        let mut s = 0x9E37_79B9u32;
+        for i in (1..shuffled.len()).rev() {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let j = (s as usize) % (i + 1);
+            shuffled.swap(i, j);
+        }
+        let (_, null_metric) = viterbi_decode_with_metric(&shuffled);
+        assert!(
+            coded_metric > null_metric * 1.2,
+            "the metric does not separate a coded stream ({coded_metric}) from its null ({null_metric})"
+        );
     }
 
     /// The SOM is found at the decoder output and the EOM closes the message.
