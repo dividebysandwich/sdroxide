@@ -16,12 +16,14 @@
 > * **THOR reads**, in the program as well as in the tests: eleven of fifteen
 >   variants whole, both halves replaced (the program was wired to a second IFK
 >   implementation that read nothing).
-> * **MFSK transmits** (eleven variants) and **Contestia transmits**; both read back
->   through the console's own controller.
-> * **Next in the brief's order: MT63 TX**, then wiring the PSK coded families
->   (BPSK63F, the `R` set, the `C`/`RC` banks — they decode and no chip reaches
->   them) and DominoEX as its own mode. Then 8PSK / OFDM / THROB / SCAMP, then
->   RS_ID / DTMF, then TX for the remaining receive-only set.
+> * **TX works for Contestia, MFSK (eleven variants) and MT63**, each read back
+>   through the console's own objects, and **QPSK is selectable for the first
+>   time** — `psk_modulation` had no UI at all.
+> * **Items 1, 2 and 3 of the brief are done.** 32 coded PSK waveforms and
+>   DominoEX are reachable from the panel.
+> * **Next: item 4** — 8PSK, OFDM, THROB and SCAMP, which need a modem written from
+>   fldigi's source and then their recordings; then RS_ID / CALL_ID and DTMF
+>   (item 5), then TX for the remaining receive-only set (item 6).
 >
 > ⛔ **Not in scope, and not to be touched: WEFAX, DAB, SSTV and DSC.** F4NRM and
 > his radio group confirm all four working perfectly (2026-10-21). They are not

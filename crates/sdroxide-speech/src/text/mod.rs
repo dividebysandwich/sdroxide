@@ -147,7 +147,10 @@ impl<'a> Speaker<'a> {
             Mode::Contestia => "contessia",
             Mode::Mt63 => "m t sixty three",
             Mode::Ardop => "ar dop",
-            Mode::Stanag4285 => "STANAG 4285",
+            // The number is said, not printed: the mode is never called "stanag"
+            // alone, and a synthesiser handed digits reads them out one at a time
+            // in whatever language it likes.
+            Mode::Stanag4285 => "stanag four two eight five",
             Mode::Fsq => "F S Q",
             Mode::RfPaint => "R F paint",
             Mode::Rade => "rade",
