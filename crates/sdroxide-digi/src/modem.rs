@@ -60,6 +60,40 @@ fn ft8_decoder(
     d
 }
 
+/// One FT8 slot at 12 kHz.
+const FT8_SLOT_SAMPLES: usize = 180_000;
+
+/// How much of an FT8 slot the quick early pass runs on, in 12 kHz samples:
+/// 13.536 s, `jt9`'s 47th half-symbol, the second of mfsk-core's checkpoints.
+///
+/// Measured with `examples/ft8_early_bench.rs` on ft8_lib's 58 off-air slots,
+/// moved to put their median DT at 0: cutting the audio at 13.5 s the quick
+/// pass still finds 99.2% of what it finds in the whole slot, against 97.7% at
+/// 13.2 s and 92.7% at WSJT-X's first checkpoint, 11.8 s. It runs 36 ms later
+/// than that, on checkpoint B, so at `Deep` one job does both.
+pub const QUICK_PASS_AT: usize = 162_432;
+
+/// FT8's checkpointed decode of the slot being received (`Deep`): one
+/// `Decoder` kept from the first checkpoint to the boundary, so each call
+/// carries on from what the last one found and subtracted.
+struct StagedSlot {
+    slot: i64,
+    decoder: Decoder<mfsk_core::Ft8>,
+    /// Checkpoint A ran. Without it the boundary has nothing to carry on from
+    /// and decodes the slot the ordinary way, quick pass first.
+    checkpoint_a: bool,
+}
+
+/// Point a kept decoder at this call's station and frequency. mfsk-core pins
+/// the search at a period's first call and reads these at every one, as
+/// WSJT-X's GUI refills them for each checkpoint.
+fn aim(d: &mut Decoder<mfsk_core::Ft8>, ap: &ApHints, listening_hz: f32) {
+    d.set_ap_hint(ap.ft8());
+    let p = d.params_mut();
+    p.rx_freq_hz = Some(listening_hz);
+    p.tx_freq_hz = Some(listening_hz);
+}
+
 /// The EU VHF contest exchange, for [`MessageFilter::AlsoAccept`].
 fn is_eu_vhf(m: &Wsjt77Fields) -> bool {
     matches!(m, Wsjt77Fields::EuVhfContest { .. })
@@ -190,6 +224,9 @@ pub struct Ft8Modem {
     /// How hard the FT8 decoder works for weak signals — see
     /// [`Ft8Depth`]. Only the FT8 path reads it.
     ft8_depth: Ft8Depth,
+    /// The slot whose checkpointed decode is under way, from its first early
+    /// call to its boundary decode — see [`Self::decode_slot_early`].
+    staged: Option<StagedSlot>,
 }
 
 impl Ft8Modem {
@@ -199,6 +236,7 @@ impl Ft8Modem {
             hashes: CallsignHashTable::new(),
             eu_hashes: eu_vhf::Hashes::default(),
             ft8_depth: Ft8Depth::default(),
+            staged: None,
         }
     }
 
@@ -252,6 +290,99 @@ impl Ft8Modem {
         all
     }
 
+    /// Where in a slot [`Self::decode_slot_early`] has work, in 12 kHz samples
+    /// of the slot so far, in order: FT8's checkpoints A and B at `Deep`, the
+    /// quick pass's [`QUICK_PASS_AT`] at the other depths, nothing for any
+    /// other mode.
+    pub fn early_points(&self) -> &'static [usize] {
+        match (self.mode, self.ft8_depth) {
+            (Mode::Ft8, Ft8Depth::Deep) => {
+                ft8_decoder(Ft8Strategy::SicEarly, None, 0.0).prefix_points()
+            }
+            (Mode::Ft8, _) => &[QUICK_PASS_AT],
+            _ => &[],
+        }
+    }
+
+    /// Decode the FT8 slot still being received, at one of
+    /// [`Self::early_points`], so a reply can be decided before the boundary
+    /// (#667). `audio` is the slot so far, that point's worth of samples.
+    ///
+    /// At [`QUICK_PASS_AT`], at every depth, the quick pass runs on the audio
+    /// padded out with silence: one pass with the a-priori hint. At `Deep` each
+    /// point is also a call of mfsk-core's checkpointed decode. Checkpoint A, at
+    /// 11.8 s, reports what three subtraction passes find in the slot so far; B,
+    /// after the quick pass, only subtracts; and the boundary decode
+    /// ([`Self::decode_slot_streaming`]) then finishes that search instead of
+    /// starting one.
+    ///
+    /// The quick pass stays at `Deep` because checkpoint A runs no a-priori
+    /// pass. A reply to us 21 dB down, synthesised into noise, decoded in 7 of
+    /// 20 draws at A and in all 20 from the quick pass with the hint; at
+    /// −22 dB, 2 against 15.
+    pub fn decode_slot_early(
+        &mut self,
+        audio: &[i16],
+        slot_idx: i64,
+        slot_utc: i64,
+        ap: &ApHints,
+        listening_hz: f32,
+        emit: &(dyn Fn(Vec<Decode>) + Sync),
+    ) {
+        if self.mode != Mode::Ft8 {
+            return;
+        }
+        if audio.len() >= QUICK_PASS_AT {
+            let mut padded = audio.to_vec();
+            padded.resize(FT8_SLOT_SAMPLES, 0);
+            let depth = std::mem::replace(&mut self.ft8_depth, Ft8Depth::Fast);
+            self.decode_slot_streaming(
+                &padded,
+                slot_idx,
+                slot_utc,
+                ap,
+                listening_hz,
+                &|| false,
+                emit,
+            );
+            self.ft8_depth = depth;
+        }
+        if self.ft8_depth != Ft8Depth::Deep {
+            return;
+        }
+        if !matches!(&self.staged, Some(st) if st.slot == slot_idx) {
+            self.staged = Some(StagedSlot {
+                slot: slot_idx,
+                decoder: ft8_decoder(Ft8Strategy::SicEarly, None, listening_hz),
+                checkpoint_a: false,
+            });
+        }
+        let Ft8Modem { staged, hashes, eu_hashes, .. } = self;
+        let st = staged.as_mut().expect("set above");
+        aim(&mut st.decoder, ap, listening_hz);
+        if let &[a, b, ..] = st.decoder.prefix_points() {
+            st.checkpoint_a |= (a..b).contains(&audio.len());
+        }
+        let sent = std::sync::Mutex::new(Vec::new());
+        let on_row = |row: &Row<DecodeResult>| {
+            let r = &row.native;
+            let at = (r.snr_db, r.dt_sec, r.freq_hz);
+            if let Some(d) =
+                build_decode(r.message77(), at.0, at.1, at.2, slot_utc, hashes, eu_hashes)
+            {
+                sent.lock().unwrap().push(d.clone());
+                emit(vec![d]);
+            }
+        };
+        let _ = st.decoder.decode_prefix_with(&SlotInput::i16(audio).period(slot_idx), &on_row);
+        for d in sent.into_inner().unwrap() {
+            for call in [d.to.as_deref(), d.from.as_deref()].into_iter().flatten() {
+                hashes.insert(call);
+                eu_hashes.insert(call);
+            }
+        }
+    }
+
     /// Decode a slot and hand each result over as it is found (#667).
     ///
     /// For FT8 the quick single pass is emitted as one batch the moment it is
@@ -262,13 +393,20 @@ impl Ft8Modem {
     /// machine that cannot keep up with Deep falls behind by at most one pass,
     /// not by a growing queue of slots. Every other mode emits its whole decode
     /// once, as [`Self::decode_slot_staged`] would.
+    ///
+    /// At `Deep`, a slot whose checkpoint A ran early ([`Self::decode_slot_early`])
+    /// is finished from there instead: the rest of the checkpointed search, with
+    /// the a-priori passes, emitting only what the checkpoints did not, and
+    /// bounded by `stop` candidate by candidate rather than skipped.
+    #[allow(clippy::too_many_arguments)]
     pub fn decode_slot_streaming(
         &mut self,
         audio_12k: &[i16],
+        slot_idx: i64,
         slot_utc: i64,
         ap: &ApHints,
         listening_hz: f32,
-        stop: &dyn Fn() -> bool,
+        stop: &(dyn Fn() -> bool + Sync),
         emit: &(dyn Fn(Vec<Decode>) + Sync),
     ) {
         if self.mode != Mode::Ft8 {
@@ -279,65 +417,72 @@ impl Ft8Modem {
             }
             return;
         }
+        let deep = self.ft8_depth == Ft8Depth::Deep;
+        let staged = self.staged.take_if(|st| deep && st.slot == slot_idx && st.checkpoint_a);
         let hint = ap.ft8();
         let slot = SlotInput::i16(audio_12k);
         let sent: std::sync::Mutex<Vec<Decode>> = std::sync::Mutex::new(Vec::new());
         {
             let ht = &self.hashes;
             let eu = &self.eu_hashes;
-            // The quick pass, whole: a single pass reports from many threads
-            // before it deduplicates, so it is taken as its result.
-            let mut quick: Vec<Decode> = Vec::new();
-            let quick_raw = natives(
-                ft8_decoder(Ft8Strategy::SinglePass, hint.as_ref(), listening_hz)
-                    .decode(&slot)
-                    .rows,
-            );
-            for r in &quick_raw {
-                if let Some(d) =
-                    build_decode(r.message77(), r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
-                    && !quick.iter().any(|o| same_signal(o, &d))
-                {
-                    quick.push(d);
+            let on_row = |row: &Row<DecodeResult>| {
+                let r = &row.native;
+                let at = (r.snr_db, r.dt_sec, r.freq_hz);
+                let Some(d) = build_decode(r.message77(), at.0, at.1, at.2, slot_utc, ht, eu)
+                else {
+                    return;
+                };
+                let mut s = sent.lock().unwrap();
+                if !s.iter().any(|o| same_signal(o, &d)) {
+                    s.push(d.clone());
+                    drop(s);
+                    emit(vec![d]);
                 }
-            }
-            sent.lock().unwrap().extend(quick.iter().cloned());
-            emit(quick);
-
-            // The subtraction pass, one decode at a time as it is accepted.
-            //
-            // It starts from scratch, finding the quick pass's strong signals
-            // again before the weak ones. Handing it those as `known` saved
-            // `Deep` about a fifth of its time, but mfsk-core 0.13 took `known`
-            // out of the API; what it offers in its place is the checkpointed
-            // early decode (`Decoder::decode_prefix`, mfsk-core #572).
-            if self.ft8_depth != Ft8Depth::Fast && !stop() {
-                let on_row = |row: &Row<DecodeResult>| {
-                    let r = &row.native;
-                    let Some(d) = build_decode(
-                        r.message77(),
-                        r.snr_db,
-                        r.dt_sec,
-                        r.freq_hz,
-                        slot_utc,
-                        ht,
-                        eu,
-                    ) else {
-                        return;
-                    };
-                    let mut s = sent.lock().unwrap();
-                    if !s.iter().any(|o| same_signal(o, &d)) {
-                        s.push(d.clone());
-                        drop(s);
-                        emit(vec![d]);
+            };
+            if let Some(mut st) = staged {
+                // The final call: the whole period, exactly, or mfsk-core takes
+                // it for one more prefix and does nothing.
+                let mut whole = audio_12k.to_vec();
+                whole.resize(FT8_SLOT_SAMPLES, 0);
+                aim(&mut st.decoder, ap, listening_hz);
+                let go = || !stop();
+                let _ = st.decoder.decode_prefix_with(
+                    &SlotInput::i16(&whole).period(slot_idx).budget(&go),
+                    &on_row,
+                );
+            } else {
+                // The quick pass, whole: a single pass reports from many threads
+                // before it deduplicates, so it is taken as its result.
+                let mut quick: Vec<Decode> = Vec::new();
+                let quick_raw = natives(
+                    ft8_decoder(Ft8Strategy::SinglePass, hint.as_ref(), listening_hz)
+                        .decode(&slot)
+                        .rows,
+                );
+                for r in &quick_raw {
+                    if let Some(d) =
+                        build_decode(r.message77(), r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
+                        && !quick.iter().any(|o| same_signal(o, &d))
+                    {
+                        quick.push(d);
                     }
-                };
-                let strategy = match self.ft8_depth {
-                    Ft8Depth::Normal => Ft8Strategy::SicRounds(2),
-                    _ => Ft8Strategy::SicEarly,
-                };
-                let _ =
-                    ft8_decoder(strategy, hint.as_ref(), listening_hz).decode_with(&slot, &on_row);
+                }
+                sent.lock().unwrap().extend(quick.iter().cloned());
+                emit(quick);
+
+                // The subtraction pass, one decode at a time as it is accepted.
+                // It starts from scratch, finding the quick pass's strong
+                // signals again before the weak ones: mfsk-core 0.13 took out
+                // the `known` that let it skip them, and a slot whose
+                // checkpoints ran early does not come this way at all.
+                if self.ft8_depth != Ft8Depth::Fast && !stop() {
+                    let strategy = match self.ft8_depth {
+                        Ft8Depth::Normal => Ft8Strategy::SicRounds(2),
+                        _ => Ft8Strategy::SicEarly,
+                    };
+                    let _ = ft8_decoder(strategy, hint.as_ref(), listening_hz)
+                        .decode_with(&slot, &on_row);
+                }
             }
 
             // The EU VHF contest rescue, as one more batch — see
@@ -2658,6 +2803,7 @@ mod tests {
         Ft8Modem::new(Mode::Ft8).decode_slot_streaming(
             &buf,
             0,
+            0,
             &ApHints::default(),
             2310.0,
             &|| false,
@@ -2682,11 +2828,68 @@ mod tests {
         Ft8Modem::new(Mode::Ft8).decode_slot_streaming(
             &buf,
             0,
+            0,
             &ApHints::default(),
             2310.0,
             &|| true,
             &emit,
         );
         assert_eq!(batches.into_inner().unwrap().len(), 1);
+    }
+
+    /// At `Deep` the slot is decoded at mfsk-core's checkpoints as it arrives,
+    /// and the boundary finishes that search instead of starting over.
+    /// Checkpoint A's subtraction passes already find the weak signal the quick
+    /// pass alone misses (`ft8_streams_the_quick_batch_before_subtraction`),
+    /// and the boundary hands back neither signal again. A slot whose
+    /// checkpoint A did not run (the worker was behind) is decoded the ordinary
+    /// way at the boundary, quick pass first.
+    #[test]
+    fn deep_finishes_at_the_boundary_what_the_checkpoints_began() {
+        let modem = Ft8Modem::new(Mode::Ft8);
+        let (strong, _) = modem.encode_burst_12k("CQ AB1CD FN42", 2310.0, 0.5).unwrap();
+        let weak_amp = 0.5f32 * 10f32.powf(-14.0 / 20.0);
+        let (weak, _) = modem.encode_burst_12k("CQ W9XYZ EN52", 2320.0, weak_amp).unwrap();
+        let mut out = vec![0.0f32; FT8_SLOT_SAMPLES];
+        for (i, &x) in strong.iter().enumerate() {
+            out[6_000 + i] += x;
+        }
+        for (i, &x) in weak.iter().enumerate() {
+            out[6_000 + i] += x;
+        }
+        let buf: Vec<i16> = out.iter().map(|&x| (x * 12_000.0) as i16).collect();
+        let both = ["CQ AB1CD FN42", "CQ W9XYZ EN52"];
+
+        let mut m = Ft8Modem::new(Mode::Ft8);
+        assert_eq!(m.ft8_depth(), Ft8Depth::Deep);
+        let points = m.early_points();
+        assert_eq!(points.len(), 2, "checkpoints A and B: {points:?}");
+        assert_eq!(points[1], QUICK_PASS_AT, "the quick pass rides checkpoint B");
+
+        let collect = |run: &mut dyn FnMut(&(dyn Fn(Vec<Decode>) + Sync))| {
+            let got = std::sync::Mutex::new(Vec::<String>::new());
+            run(&|d: Vec<Decode>| got.lock().unwrap().extend(d.into_iter().map(|d| d.message)));
+            got.into_inner().unwrap()
+        };
+        let ap = ApHints::default();
+        let at_a = collect(&mut |e| m.decode_slot_early(&buf[..points[0]], 7, 0, &ap, 2310.0, e));
+        for msg in both {
+            assert!(at_a.iter().any(|t| t == msg), "checkpoint A found no {msg}: {at_a:?}");
+        }
+        let at_b = collect(&mut |e| m.decode_slot_early(&buf[..points[1]], 7, 0, &ap, 2310.0, e));
+        assert!(at_b.iter().any(|t| t == both[0]), "the quick pass at B: {at_b:?}");
+        let at_end =
+            collect(&mut |e| m.decode_slot_streaming(&buf, 7, 0, &ap, 2310.0, &|| false, e));
+        assert!(at_end.is_empty(), "the boundary repeated the checkpoints' decodes: {at_end:?}");
+
+        // Checkpoint B alone, as when the worker was behind at A: the boundary
+        // decodes the slot itself.
+        let mut m = Ft8Modem::new(Mode::Ft8);
+        let _ = collect(&mut |e| m.decode_slot_early(&buf[..points[1]], 8, 0, &ap, 2310.0, e));
+        let at_end =
+            collect(&mut |e| m.decode_slot_streaming(&buf, 8, 0, &ap, 2310.0, &|| false, e));
+        for msg in both {
+            assert!(at_end.iter().any(|t| t == msg), "no checkpoint A, no {msg}: {at_end:?}");
+        }
     }
 }

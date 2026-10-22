@@ -11,7 +11,7 @@
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use sdroxide_digi::{DigiAction, DigiController, Ft8Modem};
-use sdroxide_types::{DigiConfig, Mode};
+use sdroxide_types::{DigiConfig, Ft8Depth, Mode};
 
 const TICK_S: f64 = 0.05;
 const RX_RATE: f64 = 12_000.0;
@@ -125,11 +125,38 @@ fn a_slot_decodes_before_it_ends_and_only_once() {
         },
     );
     assert_eq!(seen.len(), 1, "reported exactly once, got it at {seen:?} s");
+    // From FT8's first checkpoint, 11.8 s in, at the default depth (`Deep`),
+    // ahead of the quick pass at 13.5 s.
     let into = seen[0] - SLOT_S;
     assert!(
-        (13.5..SLOT_S).contains(&into),
-        "decoded {into:.2} s into its slot — before the boundary, not after"
+        (11.8..13.5).contains(&into),
+        "decoded {into:.2} s into its slot — at checkpoint A, before the boundary"
     );
+}
+
+/// `Fast` and `Normal` have no checkpoints; the quick pass at 13.5 s is their
+/// early decode, and it still lands before the boundary, once.
+#[test]
+fn every_depth_decodes_before_the_boundary() {
+    for depth in [Ft8Depth::Fast, Ft8Depth::Normal] {
+        let mut ctl =
+            DigiController::new(Mode::Ft8, DigiConfig { ft8_depth: depth, ..cfg() }, RX_RATE);
+        let mut seen = Vec::new();
+        run(
+            &mut ctl,
+            3,
+            ("CQ W9XYZ EM48", 1),
+            |_| true,
+            |_, since, acted| {
+                for _ in 0..decoded(acted, "CQ W9XYZ EM48") {
+                    seen.push(since);
+                }
+            },
+        );
+        assert_eq!(seen.len(), 1, "{depth:?}: reported exactly once, got it at {seen:?} s");
+        let into = seen[0] - SLOT_S;
+        assert!((13.5..SLOT_S).contains(&into), "{depth:?}: decoded {into:.2} s into its slot");
+    }
 }
 
 /// The answer to our CQ is acted on in our next turn even when the boundary
