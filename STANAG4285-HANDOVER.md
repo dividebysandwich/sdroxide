@@ -305,3 +305,36 @@ Three rejections worth keeping, because each is a different lesson:
 
 Read any of them with `tools/s4285-probe/s4285_verdict.py`, and prefer these over
 the demo recordings: they are ours, they are on the air, and the frame is measured.
+
+## 2026-10-22 — the receiver exists, and it locks on both the signal and the control
+
+`crates/sdroxide-dsp/src/stanag4285.rs` (new, receive-only, uncoded rates only) and
+`examples/s4285_probe.rs`, with the standard's two generators transcribed:
+PN31 from `x⁵ + x² + 1` at `11010` (80 symbols, LSB first) and the 176-symbol
+scrambler from `x⁹ + x⁴ + 1`, three bits per symbol, `Bk = e^(jnπ/4)`. Front end
+mixes down, **filters at the input rate**, then resamples to 5 samples/symbol;
+detection is differential and a frame is only accepted when the correlation peak
+**recurs 256 symbols later**.
+
+**It locks on the real capture** — `8467.800kHz-20261021-225334Z.wav` at 1800 Hz
+gives sync **0.787**, offset −0.9 Hz, 70 frames. And **it locks on the negative
+control too**: `4232.000kHz-20261021-232139Z.wav` gives sync 0.461. So the
+recurrence test as written does not discriminate, and by the handover's own
+standard (frame ACF 0.347 against 0.03) it is not yet a detector.
+
+Two things the numbers already say about why, both worth picking up first:
+
+* **The reference concentrations are no higher on the real capture** (0.26 / 0.47
+  / 0.35) than on the control (0.39 / 0.29 / 0.47), and the README's explanation
+  is the missing piece: a capture carrying a *ramp* smears each 16-symbol block,
+  so the concentration has to be measured **with a phase-ramp correction inside
+  the block**, which this does not do yet. Without it, three numbers that should
+  be 0.7–0.9 sit at 0.3 on both files.
+* The recurrence gate is a ratio against a creeping floor and 0.461 passes it. The
+  discriminator that was measured to work is the **frame-period ACF**, reported
+  beside the sync correlation — 0.347 on the signal, ~0.03 on the control — and
+  the lock should be gated on that, not on the correlation alone.
+
+Text is decoded through `BaudotRx` and is nonsense on both, which is the expected
+consequence of the concentrations above; the raw bits are on the frame event and
+`bits()` so a mis-decode is visible as bits rather than as silence.

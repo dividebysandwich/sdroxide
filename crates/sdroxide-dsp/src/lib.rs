@@ -65,6 +65,7 @@ mod thor;
 mod tonegen;
 mod wbddc;
 mod wbspectrum;
+pub mod stanag4285;
 pub mod wefax;
 mod window;
 
