@@ -917,7 +917,14 @@ mod tests {
         );
     }
 
-    /// are reported by the test rather than guessed at.
+    /// What each recording gives, measured, and what must hold.
+    ///
+    /// State 2026-10-22, after fldigi's own alphabet and `paths = 5`: the DominoEX
+    /// half **reads text** — `DOMX11` its whole message, and five more read most of
+    /// theirs — and **every THOR variant still reads nothing**. THOR is the FEC
+    /// branch (interleaver, K = 7 Viterbi, MFSK varicode) and a THOR recording
+    /// produces no characters at all, which is one fault in that branch rather than
+    /// something in the audio front end it shares with DominoEX.
     #[test]
     #[ignore]
     fn the_corpus_ifk_samples_are_measured() {
@@ -958,6 +965,22 @@ mod tests {
                 }
             }
             eprintln!("{name}: {}/4 at {}: {:?}", best.0, best.2, best.1);
+            if name == "DOMX11" {
+                assert!(
+                    best.0 == words.len(),
+                    "DOMX11 read {}/4 — the DominoEX half of this family decodes, and this \
+                     recording is what pins it",
+                    best.0
+                );
+            }
+            if name.starts_with("THOR") {
+                assert!(
+                    best.0 == 0,
+                    "{name} read {}/4 — if THOR has started working, say so in \
+                     MODE-PROGRESS.md and take this assertion out",
+                    best.0
+                );
+            }
         }
     }
 }

@@ -52,6 +52,10 @@ fn main() {
     );
     println!("steps[:80] {:?}", &steps[..steps.len().min(80)]);
     println!("positions[:80] {:?}", &pos[..pos.len().min(80)]);
+    if let Ok(path) = std::env::var("IFK_POS_OUT") {
+        let t: String = pos.iter().map(|s| format!("{s},")).collect();
+        std::fs::write(path, t).expect("write the positions");
+    }
     if let Ok(path) = std::env::var("IFK_STEPS_OUT") {
         let t: String = steps.iter().map(|s| format!("{s},")).collect();
         std::fs::write(path, t).expect("write the steps");
