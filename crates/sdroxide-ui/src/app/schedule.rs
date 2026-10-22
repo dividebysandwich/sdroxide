@@ -149,20 +149,7 @@ impl SdroxideApp {
             crate::app::persist::persist_broadcast_favourites(&self.broadcast_favs);
         }
         if let Some(on) = all_toggle {
-            self.broadcast_all = on;
-            if on {
-                // Favourite every schedule station.
-                self.broadcast_favs.clear();
-                for s in &self.broadcast {
-                    if !self.broadcast_favs.iter().any(|n| n == &s.name) {
-                        self.broadcast_favs.push(s.name.clone());
-                    }
-                }
-                self.broadcast_favs.sort();
-            } else {
-                self.broadcast_favs.clear();
-            }
-            crate::app::persist::persist_broadcast_favourites(&self.broadcast_favs);
+            self.set_broadcast_all(on);
         }
         if let Some(s) = tune {
             cmds.push(Command::SetVfo { vfo: Vfo::A, hz: s.freq_hz() });
