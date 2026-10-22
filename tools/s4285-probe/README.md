@@ -322,3 +322,21 @@ the strongest period is **75 ms**, which is the WebSDR client's 13 Hz audio
 striping and not a frame. So print the frame and the carrier line against their
 nulls, and print the best lag: a period that is not 106.67 ms is the quickest way
 to see that the *material* is wrong rather than the decoder.
+
+## The frame check, and the 80/256 number (2026-10-22)
+
+`s4285_frame_check.py <wav>` asks whether Edition 1's frame is really in a
+recording, and where it starts. Two measurements decide it:
+
+* **the sync correlation profile recurs every 256 symbols** — a single peak means
+  nothing (see the verdict section above), a peak that repeats at the frame
+  period is the signal;
+* **the reference blocks collapse per block**, not as one point: they are 16
+  symbols after each of the first three data blocks, so a channel that rotates
+  inside 106.67 ms separates the blocks while leaving each one coherent.
+  `s4285_lock.py`'s single-point test is why it declines files that carry a frame.
+
+And one number worth keeping: **if only the 80-symbol sync repeats and the 176
+data/reference symbols are random, the frame ACF is about 80/256 = 0.31.** So a
+recording that scores 0.347 at 106.67 ms is exactly what Edition 1 looks like, and
+one that scores 0.03 is not — regardless of how strong its carrier is.
