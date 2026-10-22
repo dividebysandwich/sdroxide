@@ -30,3 +30,6 @@ received/
 # undoing ec129ebe). The topic handovers beside it — ALE-, CW-, DAB-HANDOVER.md
 # — are part of the tree and stay tracked, because AGENTS.md points at them.
 /HANDOVER.md
+
+# Python bytecode from the tools
+__pycache__/

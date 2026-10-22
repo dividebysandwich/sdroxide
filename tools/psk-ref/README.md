@@ -16,11 +16,24 @@ every centre from 1700 to 1800 Hz.
 # mode, baud, interleave depth, audio centre
 python3 tools/psk-ref/psk_ref.py samples/fldigi/PSK125R.wav 125 40 1754
 python3 tools/psk-ref/psk_ref.py samples/fldigi/BPSK63F.wav 62.5 2 1738 none
+
+# the C family (multi-carrier, no FEC): baud, "carriers", count, audio centre
+python3 tools/psk-ref/psk_ref.py samples/fldigi/PSK500C2.wav 500 carriers 2 1700
 ```
 
-The last argument is `none` for a mode whose reference does not interleave
-(BPSK63F alone). The output is `hits/3 parity <n>: "<text>"`, where `hits`
-counts `EAGLE`, `LANDED` and `SDRBROWN`.
+The `R`/`RC` form takes its interleave depth, and the last argument is `none`
+for a mode whose reference does not interleave (BPSK63F alone). The output is
+`hits/3 parity <n>: "<text>"`, where `hits` counts `EAGLE`, `LANDED` and
+`SDRBROWN`.
+
+**The `C` form is a different front end on purpose.** The `C` family is
+`numcarriers` differential BPSK signals `1.4 x baud` apart carrying PSK31's
+varicode, and the reference decodes them with **one symbol clock for the whole
+bank** (`psk::rx_process` keeps a single `bitclk` and estimates its error from
+the *mean* magnitude of every carrier, then reads all of them at that instant).
+So does this: a fixed phase shared by all carriers, no timing loop anywhere,
+which means it cannot drift between carriers. It settled the three `C`/`RC`
+samples that read nothing — see `MODE-PROGRESS.md`.
 
 Two things it is not:
 

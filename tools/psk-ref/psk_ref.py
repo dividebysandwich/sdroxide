@@ -125,6 +125,86 @@ def viterbi(soft_a, soft_b, poly1=0x6D, poly2=0x4F, k=7):
     return bits
 
 
+# PSK31's varicode for the printable ASCII range, from fldigi's
+# src/psk/pskvaricode.cxx. The `C` family (multi-carrier, no FEC) carries this
+# alphabet; the `R`/`RC` families carry MFSK's, which is the table above.
+PSK31_CODES = [
+    "1", "111111111", "101011111", "111110101", "111011011", "1011010101", "1010111011",
+    "101111111", "11111011", "11110111", "101101111", "111011111", "1110101", "110101",
+    "1010111", "110101111", "10110111", "10111101", "11101101", "11111111", "101110111",
+    "101011011", "101101011", "110101101", "110101011", "110110111", "11110101", "110111101",
+    "111101101", "1010101", "111010111", "1010101111", "1010111101", "1111101", "11101011",
+    "10101101", "10110101", "1110111", "11011011", "11111101", "101010101", "1111111",
+    "111111101", "101111101", "11010111", "10111011", "11011101", "10101011", "11010101",
+    "111011101", "10101111", "1101111", "1101101", "101010111", "110110101", "101011101",
+    "101110101", "101111011", "1010101101", "111110111", "111101111", "111111011",
+    "1010111111", "101101101", "1011011111", "1011", "1011111", "101111", "101101", "11",
+    "111101", "1011011", "101011", "1101", "111101011", "10111111", "11011", "111011", "1111",
+    "111", "111111", "110111111", "10101", "10111", "101", "110111", "1111011", "1101011",
+    "11011111", "1011101", "111010101", "1010110111", "110111011", "1010110101", "1011010111",
+]
+PSK31_TABLE = {c: PSK31_CODES[c - 32] for c in range(32, 127)}
+
+
+def psk31_text(bits):
+    """PSK31 varicode: a character ends on two zeros, exactly as fldigi reads it
+    (`if ((shreg & 3) == 0) psk_varicode_decode(shreg >> 2)`)."""
+    table = {v: k for k, v in PSK31_TABLE.items()}
+    bits = np.asarray(bits, dtype=np.uint8)
+    # The stream must be read as a bit string: `00` boundaries cannot span a
+    # character, so a sliding window over the packed bits is not enough.
+    text = ""
+    word = ""
+    for b in bits:
+        word += "1" if b else "0"
+        if word.endswith("00"):
+            code = word[:-2]
+            if code and code in table:
+                text += chr(table[code])
+            elif code:
+                text += "?"
+            word = ""
+        elif len(word) > 20:
+            word = ""
+    return text
+
+
+def decode_carriers(path, baud, carriers, fc):
+    """The `C` family: `carriers` differential BPSK signals `1.4 x baud` apart,
+    their bits taken in turn into PSK31's varicode.
+
+    One symbol clock for the whole bank and a fixed phase, which is the
+    reference's arrangement (`psk::rx_process` keeps a single `bitclk` and
+    estimates its error from the *mean* magnitude of all the carriers). Nothing
+    here has a timing loop, so it cannot drift between carriers.
+    """
+    x, fs = read_wav(path)
+    sps = int(round(fs / baud))
+    ic = 1.4 * baud
+    zs = []
+    for i in range(carriers):
+        f = fc + (i - (carriers - 1) / 2) * ic
+        zs.append(baseband(x, fs, f, baud))
+    best = None
+    for phase in range(sps):
+        streams = []
+        for z in zs:
+            s = z[phase::sps]
+            d = s[1:] * np.conj(s[:-1])
+            streams.append((d.real >= 0).astype(np.uint8))
+        n = min(len(s) for s in streams)
+        inter = np.empty(n * carriers, dtype=np.uint8)
+        for k in range(n):
+            for c in range(carriers):
+                inter[k * carriers + c] = streams[c][k]
+        text = psk31_text(inter)
+        hits = sum(w in text for w in ("EAGLE", "LANDED", "SDRBROWN"))
+        clean = "".join(ch if ch.isprintable() else "." for ch in text)
+        if best is None or hits > best[0]:
+            best = (hits, phase, clean)
+    return best
+
+
 def decode(path, baud, depth, fc, interleaved=True):
     x, fs = read_wav(path)
     z = baseband(x, fs, fc, baud)
@@ -172,6 +252,12 @@ def decode(path, baud, depth, fc, interleaved=True):
 if __name__ == "__main__":
     path = sys.argv[1]
     baud = float(sys.argv[2])
+    if sys.argv[3] == "carriers":
+        carriers = int(sys.argv[4])
+        fc = float(sys.argv[5])
+        hits, phase, text = decode_carriers(path, baud, carriers, fc)
+        print(f"{hits}/3 phase {phase}: {text[:300]!r}")
+        sys.exit(0)
     depth = int(sys.argv[3])
     fc = float(sys.argv[4])
     interleaved = sys.argv[5] != "none" if len(sys.argv) > 5 else True
