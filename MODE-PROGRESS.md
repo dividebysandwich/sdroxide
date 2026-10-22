@@ -1171,14 +1171,26 @@ garbage pattern (`caecaecae…`, `cc cc cc…`) rather than text. Measured, not
 guessed — `the_corpus_8psk_samples_are_measured` prints the known-word hits *and*
 the most text any centre produced.
 
-**The next thing to read is the front end, not the slicer.** `PskRx` is PSK31's
-receiver: a decision-directed **BPSK** Costas loop and a Hann matched filter.
-fldigi's 8PSK has neither — it uses a vestigial-sideband filter (an 11-bin sfft
-around the carrier) and an 8-point decision for its carrier recovery, and the
-repeating pattern is what a BPSK loop does to an 8-point constellation: it drags
-the phase to two of the eight positions and leaves the rest unreachable. Trying
-the phase alignment and the index polarity (four combinations) changed nothing,
-which is the evidence for that reading.
+**The slicer is right, and a synthetic transmission proves it.**
+`a_synthetic_8psk_transmission_reads_back` builds the signal from the receiver's
+own mapping inverted — three bits least significant first, `π/4` steps, the π
+rotation, the MFSK varicode — and the receiver reads `EST THE EAGLE HAS LANDED`
+(the head lost to the timing loop's acquisition, exactly as BPSK1000 loses its
+first second). So the mapping, the differential detection and the varicode are all
+correct, and the corpus is what disagrees.
+
+**What is left is the vestigial sideband, and it is a real one.** fldigi's 8PSK is
+*vestigial*: the transmitter suppresses one sideband (`vestigial = true`, an 11-bin
+sfft filter around the carrier) to fit a 125-baud signal into a narrow slot, and
+its receiver applies the matching filter. A single-sidebanded PSK signal is not a
+double-sidebanded one — the phase trajectory that differential detection reads is
+changed by the missing half — so a plain receiver sees a distorted constellation,
+which is exactly the garbage measured here. Four bauds (62.5, 125, 250, 500) at
+every centre from 1200 to 2200 Hz in 10 Hz steps all read nothing, so it is not a
+tuning error either.
+
+**The next step is therefore specific:** an asymmetric (vestigial) filter on the
+front end, 11 bins of a 16 kHz sfft about the carrier, as `psk.cxx` builds it.
 
 ### DTMF — eight tones, and two things the reference leaves to its squelch
 

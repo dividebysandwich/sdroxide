@@ -1684,6 +1684,59 @@ mod tests {
         }
     }
 
+    /// A synthetic 8PSK transmission, built from the receiver's own mapping
+    /// inverted — the loopback that says whether the *slicer* is right before the
+    /// recordings are blamed.
+    ///
+    /// The transmit side here is deliberately trivial (a phase accumulator and a
+    /// cosine); what it is testing is the mapping: three bits least significant
+    /// first, `π/4` steps, the π rotation.
+    #[test]
+    fn a_synthetic_8psk_transmission_reads_back() {
+        use crate::mfsk_rx::MfskRx;
+        let (rate, baud, hz) = (8000.0f64, 125.0f64, 1500.0f64);
+        let text = "TEST THE EAGLE HAS LANDED";
+        // Bits, least significant first per symbol, from the MFSK varicode.
+        let mut bits: Vec<u8> = vec![1, 0, 1, 0]; // run-up
+        for c in text.chars() {
+            bits.extend(MfskRx::varicode_bits(c));
+        }
+        // The mode's own idle character after the text, so the last character's
+        // varicode completes: a run of zeros never terminates one, and this is
+        // what a station actually sends when it stops typing.
+        for _ in 0..8 {
+            bits.extend(MfskRx::varicode_bits('\0'));
+        }
+        let sps = (rate / baud) as usize;
+        let mut phase = 0.0f64;
+        let mut audio: Vec<f32> = Vec::new();
+        // Silence first, so the timing loop starts from nothing.
+        audio.extend(std::iter::repeat(0.0f32).take(sps * 8));
+        for group in bits.chunks(3) {
+            let mut idx = 0u8;
+            for (i, b) in group.iter().enumerate() {
+                idx |= (b & 1) << i;
+            }
+            // The receiver reads `arg(prev* · curr) - π` as the step, so emit a
+            // step of `π + idx·π/4`.
+            phase += std::f64::consts::PI + idx as f64 * std::f64::consts::FRAC_PI_4;
+            for _ in 0..sps {
+                audio.push((0.5 * phase.cos()) as f32);
+                phase += std::f64::consts::TAU * hz / rate;
+            }
+        }
+        let mut rx = PskRx::new_baud(rate, hz, baud);
+        rx.set_psk8(true);
+        let mut got = String::new();
+        for chunk in audio.chunks(512) {
+            got.push_str(&rx.process(chunk));
+        }
+        assert!(
+            got.contains("EAGLE") && got.contains("LANDED"),
+            "the synthetic 8PSK transmission did not read back: {got:?}"
+        );
+    }
+
     /// The 8PSK modes without FEC, against their corpus recordings.
     ///
     /// A symbol is one of eight phase steps and carries three bits; the text is
