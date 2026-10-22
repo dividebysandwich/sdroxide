@@ -2676,6 +2676,14 @@ pub struct DigiConfig {
     /// Appended last, so this is a wire change (`PROTO_VERSION` 222 → 223).
     #[serde(default)]
     pub mt63_mode: Mt63Mode,
+    /// THOR: invert the tone *steps*. IFK+ carries its data in the step between
+    /// successive tones, so a signal received on the opposite sideband has every
+    /// step negative — the one polarity control that is not about the tone
+    /// order but about the sign of the data.
+    ///
+    /// Appended last, so this is a wire change (`PROTO_VERSION` 227 → 228).
+    #[serde(default)]
+    pub thor_reverse: bool,
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2933,6 +2941,7 @@ impl Default for DigiConfig {
             mfsk_mode: MfskMode::default(),
             mfsk_reverse: false,
             mt63_mode: Mt63Mode::default(),
+            thor_reverse: false,
         }
     }
 }

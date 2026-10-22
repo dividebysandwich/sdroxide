@@ -11,13 +11,14 @@ use std::collections::VecDeque;
 use std::time::SystemTime;
 
 use sdroxide_dsp::{
-    MonoResampler, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ThorRx, ThorTx, ardop,
+    MonoResampler, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ardop,
+    ifk::{IfkRx, IfkTx, IfkVariant},
     mfsk_rx::{MfskReceiver, MfskTx, MfskVariant},
     mt63::Mt63Receiver,
     stanag4285,
 };
 use sdroxide_olivia::OliviaReceiver;
-use sdroxide_types::{DigiConfig, DigiStatus, Mode, QsoStep, TranscriptLine};
+use sdroxide_types::{DigiConfig, DigiStatus, Mode, QsoStep, ThorMode, TranscriptLine};
 
 /// ARDOP's front end: the modem runs at 12 kHz and takes the tap directly, so a
 /// receiver of its own rather than a fourth `process(&[f32])` arm. Its
@@ -184,7 +185,7 @@ enum TxModem {
     Psk(PskTx),
     Rtty(RttyTx),
     Olivia(OliviaTx),
-    Thor(ThorTx),
+    Thor(IfkTx),
     Mfsk(MfskTx),
     /// A mode whose modulator is not written yet. It holds the controller's
     /// shape without pretending: `set_tx_active` refuses a key-up in a
@@ -267,6 +268,67 @@ impl TxModem {
     }
 }
 
+/// THOR's receiver: the IFK port in `sdroxide-dsp::ifk`, which is the one that
+/// reads the corpus.
+///
+/// It replaces a second, earlier IFK receiver that lived in `sdroxide-dsp::thor`
+/// and read nothing at all — every THOR corpus sample, in every variant, both
+/// polarities, five centres. Two implementations of one waveform is how the
+/// working one stayed a test; this is the one the journal's measurements are on.
+struct ThorRx {
+    rx: IfkRx,
+    variant: IfkVariant,
+    centre: f64,
+    rate: f64,
+    emitted: usize,
+}
+
+impl ThorRx {
+    fn new(rate: f64, audio_hz: f64, mode: ThorMode) -> Self {
+        let variant = IfkVariant::named(mode.label()).expect("the THOR tables agree");
+        ThorRx {
+            rx: IfkRx::new(rate, audio_hz, variant),
+            variant,
+            centre: audio_hz,
+            rate,
+            emitted: 0,
+        }
+    }
+
+    /// Retune, or change variant. The bank is built once around a centre, so a
+    /// move **rebuilds** it — leaving the old bank in place and only moving a
+    /// number is how a receiver listens to 1000 Hz while the operator looks at
+    /// 1600, and the corruption reads exactly like a wrong convention.
+    fn set_params(&mut self, audio_hz: f64, mode: ThorMode) {
+        let variant = IfkVariant::named(mode.label()).expect("the THOR tables agree");
+        if variant.name != self.variant.name || (audio_hz - self.centre).abs() > 0.5 {
+            self.variant = variant;
+            self.rx = IfkRx::new(self.rate, audio_hz, variant);
+        }
+        self.centre = audio_hz;
+        self.emitted = 0;
+    }
+
+    fn set_reverse(&mut self, on: bool) {
+        self.rx.reverse = on;
+    }
+
+    fn magnitude(&self) -> f32 {
+        self.rx.snr_db
+    }
+
+    fn process(&mut self, audio: &[f32]) -> String {
+        self.rx.feed(audio);
+        let text = self.rx.text();
+        if self.emitted >= text.len() {
+            return String::new();
+        }
+        let out = text[self.emitted..].to_string();
+        self.emitted = text.len();
+        out
+    }
+}
+
 pub struct TextModemController {
     mode: Mode,
     cfg: DigiConfig,
@@ -320,7 +382,6 @@ impl TextModemController {
         };
         let (baud, shift) = (cfg.rtty_baud as f64, cfg.rtty_shift_hz as f64);
         let (o_tones, o_bw) = (cfg.olivia_tones as usize, cfg.olivia_bw_hz as f64);
-        let t_baud = cfg.thor_mode.baud() as f64;
         let p_baud = cfg.psk_speed.baud();
         let p_qpsk = cfg.psk_modulation == sdroxide_types::PskModulation::Qpsk;
         let rx = match mode {
@@ -347,7 +408,11 @@ impl TextModemController {
                 o_bw as u32,
                 cfg.olivia_reverse,
             )),
-            Mode::Thor => RxModem::Thor(ThorRx::new(MODEM_RATE, audio_hz as f64, t_baud)),
+            Mode::Thor => {
+                let mut r = ThorRx::new(MODEM_RATE, audio_hz as f64, cfg.thor_mode);
+                r.set_reverse(cfg.thor_reverse);
+                RxModem::Thor(r)
+            }
             Mode::Mfsk => RxModem::Mfsk(MfskReceiver::new(
                 MODEM_RATE,
                 audio_hz as f64,
@@ -378,7 +443,11 @@ impl TextModemController {
             Mode::Contestia => {
                 TxModem::Olivia(OliviaTx::contestia(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
             }
-            Mode::Thor => TxModem::Thor(ThorTx::new(MODEM_RATE, audio_hz as f64, t_baud)),
+            Mode::Thor => TxModem::Thor(IfkTx::new(
+                IfkVariant::named(cfg.thor_mode.label()).expect("the THOR tables agree"),
+                MODEM_RATE,
+                audio_hz as f64,
+            )),
             // MFSK is one modem at eleven symbol rates, so the transmitter takes
             // the variant the config names, exactly as the receiver does.
             Mode::Mfsk => TxModem::Mfsk(MfskTx::new(
@@ -424,7 +493,6 @@ impl TextModemController {
         let hz = self.audio_hz as f64;
         let (baud, shift) = (self.cfg.rtty_baud as f64, self.cfg.rtty_shift_hz as f64);
         let (o_tones, o_bw) = (self.cfg.olivia_tones as usize, self.cfg.olivia_bw_hz as f64);
-        let t_baud = self.cfg.thor_mode.baud() as f64;
         let p_baud = self.cfg.psk_speed.baud();
         let p_qpsk = self.cfg.psk_modulation == sdroxide_types::PskModulation::Qpsk;
         match &mut self.rx {
@@ -442,7 +510,10 @@ impl TextModemController {
                 r.set_reverse(self.cfg.olivia_reverse);
                 r.set_params(hz, o_tones, o_bw as u32);
             }
-            RxModem::Thor(r) => r.set_params(hz, t_baud),
+            RxModem::Thor(r) => {
+                r.set_params(hz, self.cfg.thor_mode);
+                r.set_reverse(self.cfg.thor_reverse);
+            }
             RxModem::Mfsk(r) => {
                 r.set_mirror(self.cfg.mfsk_reverse);
                 r.set_params(hz, self.cfg.mfsk_mode);
@@ -465,7 +536,10 @@ impl TextModemController {
                 m.set_reverse(self.cfg.olivia_reverse);
                 m.set_params(hz, o_tones, o_bw);
             }
-            TxModem::Thor(m) => m.set_params(hz, t_baud),
+            TxModem::Thor(m) => m.set_params(
+                hz,
+                IfkVariant::named(self.cfg.thor_mode.label()).expect("the THOR tables agree"),
+            ),
             TxModem::Mfsk(m) => m.set_params(
                 hz,
                 MfskVariant::named(self.cfg.mfsk_mode.label()).expect("the MFSK tables agree"),
@@ -697,6 +771,7 @@ impl DigiEngine for TextModemController {
             || cfg.olivia_bw_hz != self.cfg.olivia_bw_hz
             || cfg.olivia_reverse != self.cfg.olivia_reverse
             || cfg.thor_mode != self.cfg.thor_mode
+            || cfg.thor_reverse != self.cfg.thor_reverse
             || cfg.psk_speed != self.cfg.psk_speed
             || cfg.psk_modulation != self.cfg.psk_modulation
             || cfg.mfsk_mode != self.cfg.mfsk_mode
@@ -845,6 +920,77 @@ mod tests {
 
         let psk = TextModemController::new(Mode::Psk, cfg, 48_000.0);
         assert_eq!(psk.audio_hz(), 1000.0);
+    }
+
+    /// THOR's transmitter into its receiver, through the console's own objects.
+    ///
+    /// Both halves were replaced: the receiver with the IFK port that reads the
+    /// corpus, and the transmitter with fldigi's own `sendchar` path. The pair it
+    /// replaces agreed only with each other — the old transmitter's module notes
+    /// admitted its interleaving was "not yet bit-matched to fldigi", so it could
+    /// not have been read by a real station either.
+    #[test]
+    fn a_thor_transmission_reads_back_through_the_controller() {
+        use sdroxide_types::ThorMode;
+        let rate = 8000.0;
+        let mut cfg = DigiConfig::default();
+        cfg.thor_mode = ThorMode::Thor16;
+        let mut tx_ctl = TextModemController::new(Mode::Thor, cfg.clone(), rate);
+        tx_ctl.set_audio_hz(1500.0);
+        tx_ctl.set_tx_text("TEST THE EAGLE HAS LANDED".into());
+        tx_ctl.set_tx_active(true);
+        tx_ctl.poll(SystemTime::now(), 0.0);
+        let mut sig = Vec::new();
+        let mut block = vec![0.0f32; 512];
+        let mut guard = 0;
+        while !tx_ctl.fill_tx_block(&mut block) && guard < 100_000 {
+            sig.extend_from_slice(&block);
+            guard += 1;
+        }
+        sig.extend_from_slice(&block);
+        let mut rx_ctl = TextModemController::new(Mode::Thor, cfg, OUT_RATE);
+        rx_ctl.set_audio_hz(1500.0);
+        for chunk in sig.chunks(512) {
+            rx_ctl.on_rx_audio(chunk);
+        }
+        let text = rx_ctl.status().text_rx.to_uppercase();
+        assert!(
+            text.contains("EAGLE") && text.contains("LANDED"),
+            "the THOR transmission did not read back: {text:?}"
+        );
+    }
+
+    /// THOR through the console's own controller — the gate that says the program
+    /// now reads it.
+    ///
+    /// The corpus sample is the one at 1600 Hz with the steps reversed; the
+    /// decoder is `sdroxide_dsp::ifk::IfkRx`, which reads eleven of the fifteen
+    /// variants. Before this, `Mode::Thor` was wired to a second IFK receiver
+    /// that read nothing at all — the journal's "0/4, it has never read a real
+    /// signal" was measured on that one.
+    #[test]
+    #[ignore]
+    fn the_thor_corpus_sample_decodes_through_the_controller() {
+        use sdroxide_types::ThorMode;
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/THOR16.wav");
+        let mut reader = hound::WavReader::open(path).expect("the THOR16 sample");
+        let spec = reader.spec();
+        let audio: Vec<f32> =
+            reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+        let mut cfg = DigiConfig::default();
+        cfg.thor_mode = ThorMode::Thor16;
+        cfg.thor_reverse = true;
+        let mut ctl = TextModemController::new(Mode::Thor, cfg, spec.sample_rate as f64);
+        ctl.set_audio_hz(1600.0);
+        for chunk in audio.chunks(512) {
+            ctl.on_rx_audio(chunk);
+        }
+        let text = ctl.status().text_rx.to_uppercase();
+        eprintln!("THOR16 through the controller: {text:?}");
+        assert!(
+            text.contains("EAGLE") && text.contains("LANDED") && text.contains("SDRBROWN"),
+            "the THOR16 sample did not read back: {text:?}"
+        );
     }
 
     /// MT63's modulator is not written, so the controller must refuse the key-up

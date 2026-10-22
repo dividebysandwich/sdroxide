@@ -1034,7 +1034,10 @@ impl MfskTx {
             q: VecDeque::new(),
             total: 0,
             sent: 0,
-            drain: 8,
+            // The interleaver's latency is `(size - 1) × depth` symbols, and a
+            // character is about two symbols here; without enough idle after the
+            // last one the tail never leaves it.
+            drain: ((variant.symbits - 1) * variant.depth / 2).max(8),
             pending: [0; 2],
             pending_at: 0,
         }
@@ -1087,6 +1090,7 @@ impl MfskTx {
         self.shift = 0;
         self.filled = 0;
         self.pending_at = 2;
+        self.drain = ((self.variant.symbits - 1) * self.variant.depth / 2).max(8);
         self.enc.reset();
         self.inlv = Interleaver::new(self.variant.symbits, self.variant.depth, true);
         self.out.clear();

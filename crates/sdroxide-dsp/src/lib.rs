@@ -63,7 +63,6 @@ mod sstv;
 mod sstv_slant;
 pub mod stanag4285;
 pub mod stanag4285_fec;
-mod thor;
 mod tonegen;
 mod wbddc;
 mod wbspectrum;
@@ -139,7 +138,6 @@ pub use spectrum_paint::{
     SpectrumPaintTx, TX_PEAK as RF_PAINT_TX_PEAK,
 };
 pub use sstv::{SstvEvent, SstvRx, SstvTx};
-pub use thor::{ThorRx, ThorTx};
 pub use tonegen::{BURST_LEVEL, SUB_TONE_LEVEL, SubToneGen, ToneBurst};
 pub use wbddc::{WbDdc, clamp_center_hz, reachable_range_hz};
 pub use wbspectrum::WideSpectrum;

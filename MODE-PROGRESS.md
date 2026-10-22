@@ -984,6 +984,33 @@ Gates: `cargo test -p sdroxide-dsp --release --lib ifk:: -- --include-ignored`
 **100 %** of the known text's nibbles as a subsequence (it was a diagnostic that
 asked to become a gate; it said 36 % before, and chance is 6 %).
 
+### THOR in the program — both halves were the wrong implementation
+
+The journal's THOR rows were measured on `sdroxide-dsp::ifk`; the **program** was
+wired to a second IFK receiver and transmitter in `sdroxide-dsp/src/thor.rs`,
+which read nothing at all and whose own module notes admitted its interleaving was
+"not yet bit-matched to fldigi". Both halves are now the reference pair, and the
+old file is **deleted** — a second implementation of one waveform is how the
+working one stayed a test.
+
+* **Receiver** → `ifk::IfkRx`, chosen by `DigiConfig::thor_mode`. The bank is
+  built around a centre, so `set_params` **rebuilds** it on a retune; leaving the
+  old bank and moving only a number is how it listened to 1000 Hz while the
+  operator looked at 1600, and the corruption read like a wrong convention.
+* **Transmitter** → `ifk::IfkTx`, fldigi's `sendchar` path, with a drain sized to
+  the interleaver's latency. It reads back through the receiver now; the old one
+  did not.
+* **`DigiConfig::thor_reverse`** (appended, `PROTO_VERSION` 227 → 228,
+  `VERSION_BYTE` 0x2F → 0x30): IFK+ carries its data in the *step*, so a station
+  received on the opposite sideband has every step negative. Every corpus reading
+  needed it on, which is why the chip exists.
+* Gates: `the_thor_corpus_sample_decodes_through_the_controller` (the real
+  sample, 1600 Hz, reversed — reads `AAA TEST TEST THE EAGLE HAS LANDED 12345
+  SDRBROWN ZZZ`), `a_thor_transmission_reads_back_through_the_controller`, and
+  `a_thor_transmission_reads_back` at four variants including a K = 15 one.
+* The dead hard-decision FEC it used (`fec::viterbi_decode`, `ConvEnc`) went with
+  it; the soft decoder and its stream are what every mode here uses.
+
 ### Contestia TX — the Walsh sign is Olivia's *opposite*, and that is the fix
 
 Contestia has had a transmitter for one commit and it decoded as idle characters.

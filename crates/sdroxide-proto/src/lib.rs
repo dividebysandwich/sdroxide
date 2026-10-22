@@ -1921,8 +1921,13 @@ use sdroxide_types::{
 /// reference concentrations, the constellation and the rate verdict) rather than
 /// a lamp. `PROTO_VERSION` 226 → 227, `VERSION_BYTE` 0x2E → 0x2F. A downstream
 /// (fork) change.
-pub const PROTO_VERSION: u16 = 227;
-const VERSION_BYTE: u8 = 0x2f;
+/// v228: `DigiConfig::thor_reverse` — THOR's tone *steps* inverted, for a station
+/// received on the other sideband (IFK+ carries its data in the step, so a
+/// mirrored signal has every step negative). Appended last, so `PROTO_VERSION`
+/// 227 → 228, `VERSION_BYTE` 0x2F → 0x30. A downstream (fork) change: the field
+/// rides `SetDigiConfig`/`DigiStatus` whole.
+pub const PROTO_VERSION: u16 = 228;
+const VERSION_BYTE: u8 = 0x30;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

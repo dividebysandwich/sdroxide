@@ -889,6 +889,19 @@ impl SdroxideApp {
                             changed = true;
                         }
                     }
+                    ui.add_space(8.0);
+                    if ui
+                        .selectable_label(cfg.thor_reverse, "REVERSE")
+                        .on_hover_text(
+                            "Invert the tone steps. IFK+ carries its data in the step between \
+                             successive tones, so a station received on the opposite sideband \
+                             has every step negative and reads as noise until this is on.",
+                        )
+                        .clicked()
+                    {
+                        cfg.thor_reverse = !cfg.thor_reverse;
+                        changed = true;
+                    }
                 }
                 Mode::Mt63 => {
                     cap(ui, "Mode");

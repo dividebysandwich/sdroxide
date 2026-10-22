@@ -21,6 +21,8 @@
 //! three for a wider one, with the symbol clock taken from the peak sharpness
 //! at sixteen hop phases.
 
+use std::collections::VecDeque;
+
 use crate::MonoResampler;
 use crate::fec::{ConvCode, ConvEncoder};
 use crate::mfsk_rx::{Bank, Interleaver, MfskRx, MfskVaricodeRx};
@@ -1003,6 +1005,259 @@ impl Tx {
     }
 }
 
+/// The THOR transmitter: the streaming form of [`encode`].
+///
+/// fldigi's `sendchar` path — varicode, the K = 7 (or K = 15) code, the
+/// `4 × 4 × depth` interleaver, and the step `2 + nibble` — with the framing the
+/// corpus decoder expects: a preamble of sixteen two-tone steps, one idle
+/// character, `CR STX CR`, the text, `EOT CR`, then idle characters until the
+/// interleaver has drained.
+///
+/// It replaces a second THOR transmitter that had its own conventions and was
+/// **not readable by this receiver** (nor by fldigi, which its own module notes
+/// admitted). A loopback between two halves that agree only with each other is
+/// how that survived.
+pub struct IfkTx {
+    variant: IfkVariant,
+    centre: f64,
+    spacing: f64,
+    prev_tone: usize,
+    phase: f64,
+    rate_out: Option<MonoResampler>,
+    out: VecDeque<f32>,
+    sym: Vec<f32>,
+    res: Vec<f32>,
+    enc: ConvEncoder,
+    inlv: Interleaver,
+    sh: [u8; 4],
+    filled: usize,
+    /// Preamble steps still to send, each a step of two tones.
+    pre: usize,
+    stage: TxStage,
+    q: VecDeque<(u8, Option<usize>)>,
+    total: usize,
+    sent: usize,
+    drain: usize,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum TxStage {
+    Preamble,
+    Start,
+    Data,
+    End,
+    Drain,
+    Done,
+}
+
+impl IfkTx {
+    pub fn new(variant: IfkVariant, out_rate: f64, centre: f64) -> Self {
+        let rate_out = if (out_rate - variant.fs).abs() > 0.5 {
+            MonoResampler::new(variant.fs, out_rate)
+        } else {
+            None
+        };
+        let code = Self::code(variant);
+        IfkTx {
+            variant,
+            centre,
+            spacing: variant.spacing(),
+            prev_tone: 0,
+            phase: 0.0,
+            rate_out,
+            out: VecDeque::new(),
+            sym: Vec::new(),
+            res: Vec::new(),
+            enc: ConvEncoder::new(code),
+            inlv: Interleaver::new(4, variant.depth.max(1), true),
+            sh: [0; 4],
+            filled: 0,
+            pre: 16,
+            stage: TxStage::Preamble,
+            q: VecDeque::new(),
+            total: 0,
+            sent: 0,
+            // Enough idle characters to push the last one through the interleaver:
+            // its latency is `(size - 1) × depth` symbols and a character is about
+            // four symbols here.
+            drain: (3 * variant.depth.max(1) / 4).max(8),
+        }
+    }
+
+    fn code(variant: IfkVariant) -> ConvCode {
+        if variant.k15 {
+            ConvCode { poly_a: 0o44735, poly_b: 0o63057, invert_b: false }
+        } else {
+            ConvCode { poly_a: 0o155, poly_b: 0o117, invert_b: false }
+        }
+    }
+
+    pub fn variant(&self) -> IfkVariant {
+        self.variant
+    }
+
+    /// Rebuild for a new centre or variant. The tone grid is fixed at the
+    /// variant's rate, so a variant change rebuilds everything.
+    pub fn set_params(&mut self, centre: f64, variant: IfkVariant) {
+        if variant.name != self.variant.name {
+            let q = std::mem::take(&mut self.q);
+            let (total, sent) = (self.total, self.sent);
+            let out_rate = if self.rate_out.is_some() { 0.0 } else { self.variant.fs };
+            *self = IfkTx::new(variant, out_rate, centre);
+            self.q = q;
+            self.total = total;
+            self.sent = sent;
+            return;
+        }
+        self.centre = centre;
+    }
+
+    pub fn push_text(&mut self, text: &str) {
+        for ch in text.chars() {
+            let byte = if ch.is_ascii() && ch != '\r' && ch != '\n' { ch as u8 } else { b' ' };
+            self.q.push_back((byte, Some(self.total)));
+            self.total += 1;
+        }
+    }
+
+    pub fn sent_chars(&self) -> usize {
+        self.sent
+    }
+
+    pub fn total_chars(&self) -> usize {
+        self.total
+    }
+
+    pub fn clear(&mut self) {
+        self.q.clear();
+        self.total = 0;
+        self.sent = 0;
+        self.pre = 16;
+        self.stage = TxStage::Preamble;
+        self.drain = (3 * self.variant.depth.max(1) / 4).max(8);
+        self.filled = 0;
+        self.sh = [0; 4];
+        self.enc = ConvEncoder::new(Self::code(self.variant));
+        self.inlv = Interleaver::new(4, self.variant.depth.max(1), true);
+        self.out.clear();
+    }
+
+    pub fn drained(&self) -> bool {
+        self.stage == TxStage::Done && self.out.is_empty()
+    }
+
+    /// One character through the code and the interleaver, four bits per symbol.
+    fn push_char(&mut self, c: char) {
+        for bit in MfskRx::varicode_bits(c) {
+            let d = self.enc.push(bit);
+            for i in 0..2 {
+                self.sh[self.filled] = (d >> i) & 1;
+                self.filled += 1;
+                if self.filled == 4 {
+                    let mut syms = self.sh;
+                    self.inlv.symbols(&mut syms);
+                    let nib = syms.iter().fold(0u8, |v, &b| (v << 1) | (b & 1));
+                    self.symbol(nib);
+                    self.filled = 0;
+                }
+            }
+        }
+    }
+
+    /// One IFK+ symbol: the tone is `2 + nibble` above the previous one.
+    fn symbol(&mut self, nibble: u8) {
+        let tone = (self.prev_tone + 2 + nibble as usize) % TONES;
+        self.prev_tone = tone;
+        let f =
+            self.centre - TONES as f64 * self.spacing / 2.0 + (tone as f64 + 0.5) * self.spacing;
+        let step = 2.0 * std::f64::consts::PI * f / self.variant.fs;
+        self.sym.clear();
+        self.sym.reserve(self.variant.symlen);
+        for _ in 0..self.variant.symlen {
+            self.sym.push(self.phase.cos() as f32);
+            self.phase += step;
+            if self.phase > std::f64::consts::TAU {
+                self.phase -= std::f64::consts::TAU;
+            }
+        }
+        self.res.clear();
+        match &mut self.rate_out {
+            Some(r) => r.push(&self.sym, &mut self.res),
+            None => self.res.extend_from_slice(&self.sym),
+        }
+        self.out.extend(self.res.iter().copied());
+    }
+
+    /// Advance the framing and send one more character, or report the end.
+    fn next_char(&mut self) -> bool {
+        match self.stage {
+            TxStage::Done => false,
+            TxStage::Preamble => {
+                self.stage = TxStage::Start;
+                true
+            }
+            TxStage::Start => {
+                for c in ['\r', '\u{2}', '\r'] {
+                    self.push_char(c);
+                }
+                self.stage = TxStage::Data;
+                true
+            }
+            TxStage::Data => match self.q.pop_front() {
+                Some((b, idx)) => {
+                    self.push_char(b as char);
+                    if let Some(i) = idx {
+                        self.sent = self.sent.max(i + 1);
+                    }
+                    if self.q.is_empty() {
+                        self.stage = TxStage::End;
+                    }
+                    true
+                }
+                None => {
+                    self.stage = TxStage::End;
+                    true
+                }
+            },
+            TxStage::End => {
+                self.push_char('\u{4}');
+                self.push_char('\r');
+                self.stage = TxStage::Drain;
+                true
+            }
+            TxStage::Drain if self.drain > 0 => {
+                self.drain -= 1;
+                self.push_char('\0');
+                if self.drain == 0 {
+                    self.stage = TxStage::Done;
+                }
+                true
+            }
+            TxStage::Drain => {
+                self.stage = TxStage::Done;
+                false
+            }
+        }
+    }
+
+    pub fn next_block(&mut self, out: &mut [f32]) -> usize {
+        while self.out.len() < out.len() {
+            if self.stage == TxStage::Preamble && self.pre > 0 {
+                self.pre -= 1;
+                self.symbol(0);
+                continue;
+            }
+            if !self.next_char() {
+                break;
+            }
+        }
+        for s in out.iter_mut() {
+            *s = self.out.pop_front().unwrap_or(0.0);
+        }
+        out.len()
+    }
+}
+
 /// The character whose nibble key is `key` — the last nibble lowest, as the
 /// reference builds it.
 fn domino_char(key: usize) -> Option<char> {
@@ -1041,6 +1296,50 @@ mod tests {
             s = (reg as usize) & (n - 1);
         }
         out
+    }
+
+    /// The transmitter into the receiver, audio and all, at two variants and one
+    /// at 11.025 kHz.
+    ///
+    /// The pair it replaces agreed only with itself: its own module notes said the
+    /// interleaving was "not yet bit-matched to fldigi", so a loopback proved
+    /// nothing about interop and no station could read it. This one is the
+    /// reference's `sendchar` path, and the corpus gate beside it is what says the
+    /// conventions are the air's.
+    #[test]
+    fn a_thor_transmission_reads_back() {
+        for name in ["THOR16", "THOR8", "THOR11", "THOR50x2"] {
+            let variant = IfkVariant::named(name).expect("a variant");
+            // The K = 15 variants trace back 180 bits before they emit anything,
+            // so a short message is entirely inside the warm-up. fldigi has the
+            // same window (`settraceback(15 * 12)`), and its slowest submodes are
+            // used for exactly this reason: long overs.
+            let text = if variant.k15 {
+                "TEST THE EAGLE HAS LANDED TEST THE EAGLE HAS LANDED TEST THE EAGLE HAS LANDED"
+            } else {
+                "TEST THE EAGLE HAS LANDED"
+            };
+            let mut tx = IfkTx::new(variant, variant.fs, 1500.0);
+            tx.push_text(text);
+            let mut audio = Vec::new();
+            let mut block = vec![0.0f32; 400];
+            let mut guard = 0;
+            while !tx.drained() && guard < 200_000 {
+                tx.next_block(&mut block);
+                audio.extend_from_slice(&block);
+                guard += 1;
+            }
+            assert!(tx.drained(), "{name} never finished its transmission");
+            let mut rx = IfkRx::new(variant.fs, 1500.0, variant);
+            for chunk in audio.chunks(512) {
+                rx.feed(chunk);
+            }
+            assert!(
+                rx.text().contains("EAGLE") && rx.text().contains("LANDED"),
+                "{name} did not read its own transmission back: {:?}",
+                rx.text()
+            );
+        }
     }
 
     /// The whole THOR branch, without the air: bits → code → interleaver → soft
@@ -1321,7 +1620,7 @@ mod tests {
             let spec = reader.spec();
             let audio: Vec<f32> =
                 reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
-            let mut best = (0usize, String::new(), 0.0f64);
+            let mut best = (0usize, String::new(), 0.0f64, false);
             // The corpus gives each file a *block* centre, and these recordings
             // were tuned by hand across a wide spread — the wide variants read at
             // 1150 Hz where the manifest says 1704. The search is the measurement,
@@ -1337,12 +1636,12 @@ mod tests {
                     rx.feed(&vec![0.0f32; 16000]);
                     let hits = words.iter().filter(|w| rx.text().contains(**w)).count();
                     if hits > best.0 {
-                        best = (hits, rx.text().to_string(), hz);
+                        best = (hits, rx.text().to_string(), hz, reverse);
                     }
                     hz += 20.0;
                 }
             }
-            eprintln!("{name}: {}/4 at {}: {:?}", best.0, best.2, best.1);
+            eprintln!("{name}: {}/4 at {} rev {}: {:?}", best.0, best.2, best.3, best.1);
             // What each recording gives, measured 2026-10-22 after the FEC branch
             // was fixed. Eleven of the fifteen THOR variants read their whole
             // text; the exceptions say why they do not.
