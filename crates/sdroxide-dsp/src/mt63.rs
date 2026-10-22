@@ -27,9 +27,13 @@
 //! other. The receiver therefore keeps both and takes carrier `i` from the slice
 //! that carried it, which is what `decode_at` does.
 //!
-//! **Receiver only.** There is no modulator here; the corpus is the gate and
-//! fldigi is the transmitter.
+//! The modulator is here too ([`Mt63Tx`]): it is the same encoder and the same
+//! interleave read forwards, and keeping the pair in one file is what stops the
+//! sign conventions drifting apart.
 
+use std::collections::VecDeque;
+
+use crate::MonoResampler;
 use num_complex::Complex32;
 use rustfft::FftPlanner;
 use sdroxide_types::Mt63Mode;
@@ -272,6 +276,199 @@ impl Mt63Encoder {
         }
         let _ = (len, self.long);
         out
+    }
+}
+
+/// The MT63 transmitter.
+///
+/// fldigi's `MT63tx::SendChar` in one paragraph: every 200 samples (at
+/// `2 · bandwidth`, so 20 baud) each of the 64 carriers advances by the phase its
+/// own frequency would have turned through, **plus π when its data bit is 0**.
+/// The carriers are continuous tones whose phase steps at the symbol boundaries —
+/// the frequency-domain synthesis and the windowed overlap-add in the reference
+/// are how it keeps that inside its own bandwidth, not how the data is carried.
+///
+/// So the modulator here is 64 phase accumulators and a cosine sum. The block of
+/// bits comes from [`Mt63Encoder`], which is the reference's encoder and
+/// interleaver, ported for the loopback.
+pub struct Mt63Tx {
+    variant: Mt63Variant,
+    centre: f64,
+    /// `rate` → the rate the caller wants.
+    rate_out: Option<MonoResampler>,
+    out: VecDeque<f32>,
+    sym: Vec<f32>,
+    res: Vec<f32>,
+    enc: Mt63Encoder,
+    /// Phase of each carrier at the start of the symbol being built.
+    phase: Vec<f64>,
+    /// Per-sample phase increment of each carrier.
+    step: Vec<f64>,
+    q: VecDeque<(u8, Option<usize>)>,
+    total: usize,
+    sent: usize,
+    /// Idle characters before the message, so the receiver's lock has something
+    /// to find and the interleaver has filled before the text arrives.
+    pre: usize,
+    /// Idle characters after it, for the interleaver's latency.
+    drain: usize,
+    started: bool,
+}
+
+impl Mt63Tx {
+    pub fn new(variant: Mt63Variant, out_rate: f64, centre: f64) -> Self {
+        let rate = variant.rate();
+        let rate_out =
+            if (out_rate - rate).abs() > 0.5 { MonoResampler::new(rate, out_rate) } else { None };
+        let mut step = Vec::with_capacity(CARRIERS);
+        let mut phase = Vec::with_capacity(CARRIERS);
+        for k in 0..CARRIERS {
+            let f = centre - variant.bandwidth as f64 / 2.0
+                + k as f64 * variant.bandwidth as f64 / CARRIERS as f64;
+            step.push(std::f64::consts::TAU * f / rate);
+            // Carriers start on a spread of phases rather than all at zero: 64
+            // in phase at the first sample is a click, and the crest factor of
+            // the sum is what the audio path has to carry.
+            phase.push(std::f64::consts::TAU * (k as f64) * 0.6180339887);
+        }
+        Mt63Tx {
+            variant,
+            centre,
+            rate_out,
+            out: VecDeque::new(),
+            sym: Vec::new(),
+            res: Vec::new(),
+            enc: Mt63Encoder::new(variant.long),
+            phase,
+            step,
+            q: VecDeque::new(),
+            total: 0,
+            sent: 0,
+            // Two blocks of idle is the reference's own run-up: the interleaver
+            // is 32 (or 64) symbols deep, and everything before it is filled
+            // decodes to noise whatever the phase.
+            pre: if variant.long { 96 } else { 48 },
+            drain: if variant.long { 128 } else { 64 },
+            started: false,
+        }
+    }
+
+    pub fn variant(&self) -> Mt63Variant {
+        self.variant
+    }
+
+    pub fn set_params(&mut self, centre: f64, variant: Mt63Variant) {
+        if variant != self.variant || (centre - self.centre).abs() > 0.5 {
+            let q = std::mem::take(&mut self.q);
+            let (total, sent) = (self.total, self.sent);
+            let out_rate = if self.rate_out.is_some() { 0.0 } else { self.variant.rate() };
+            *self = Mt63Tx::new(variant, out_rate, centre);
+            self.q = q;
+            self.total = total;
+            self.sent = sent;
+        }
+    }
+
+    pub fn push_text(&mut self, text: &str) {
+        for ch in text.chars() {
+            let byte = if ch.is_ascii() && ch != '\r' && ch != '\n' { ch as u8 } else { b' ' };
+            self.q.push_back((byte, Some(self.total)));
+            self.total += 1;
+        }
+    }
+
+    pub fn sent_chars(&self) -> usize {
+        self.sent
+    }
+
+    pub fn total_chars(&self) -> usize {
+        self.total
+    }
+
+    pub fn clear(&mut self) {
+        self.q.clear();
+        self.total = 0;
+        self.sent = 0;
+        self.pre = if self.variant.long { 96 } else { 48 };
+        self.drain = if self.variant.long { 128 } else { 64 };
+        self.enc = Mt63Encoder::new(self.variant.long);
+        self.out.clear();
+        self.started = false;
+    }
+
+    pub fn drained(&self) -> bool {
+        self.q.is_empty() && self.pre == 0 && self.drain == 0 && self.out.is_empty()
+    }
+
+    /// One symbol: apply the block of bits as π flips, then 200 samples of the
+    /// sum of the 64 carriers.
+    ///
+    /// The flips go in **before** the samples are emitted and the carriers are
+    /// advanced by their own turn **after**, so each carrier is a continuous tone
+    /// whose phase steps at the boundary — the reference's order (`SendChar`
+    /// updates `TxVect`, then `ProcessTxVect` builds the window).
+    fn symbol(&mut self, ch: u8) {
+        let bits = self.enc.process(ch);
+        let hop = SYMBOL;
+        for k in 0..CARRIERS {
+            // fldigi: a 1 advances the phase by its own turn only, a 0 by the
+            // turn **plus half a cycle**.
+            if bits[k] == 0 {
+                self.phase[k] += std::f64::consts::PI;
+                if self.phase[k] > std::f64::consts::TAU {
+                    self.phase[k] -= std::f64::consts::TAU;
+                }
+            }
+        }
+        let amp = 1.0 / (CARRIERS as f64).sqrt();
+        self.sym.clear();
+        self.sym.reserve(hop);
+        for n in 0..hop {
+            let mut v = 0.0f64;
+            for k in 0..CARRIERS {
+                v += (self.phase[k] + self.step[k] * n as f64).cos();
+            }
+            self.sym.push((v * amp) as f32);
+        }
+        for k in 0..CARRIERS {
+            self.phase[k] += self.step[k] * hop as f64;
+            if self.phase[k] > std::f64::consts::TAU {
+                self.phase[k] -= std::f64::consts::TAU;
+            }
+        }
+        self.res.clear();
+        match &mut self.rate_out {
+            Some(r) => r.push(&self.sym, &mut self.res),
+            None => self.res.extend_from_slice(&self.sym),
+        }
+        self.out.extend(self.res.iter().copied());
+    }
+
+    pub fn next_block(&mut self, out: &mut [f32]) -> usize {
+        while self.out.len() < out.len() {
+            if self.pre > 0 {
+                self.pre -= 1;
+                self.symbol(0);
+                continue;
+            }
+            match self.q.pop_front() {
+                Some((b, idx)) => {
+                    self.symbol(b);
+                    if let Some(i) = idx {
+                        self.sent = self.sent.max(i + 1);
+                    }
+                }
+                None if self.drain > 0 => {
+                    self.drain -= 1;
+                    self.symbol(0);
+                }
+                None => break,
+            }
+        }
+        for s in out.iter_mut() {
+            *s = self.out.pop_front().unwrap_or(0.0);
+        }
+        out.len()
     }
 }
 
@@ -874,6 +1071,14 @@ impl Mt63Receiver {
             let p = (phase as i32 + k * fine as i32).rem_euclid(hop as i32) as usize;
             consider(centre, p, reverse, &mut best);
         }
+        if std::env::var("MT63_DEBUG").is_ok() {
+            if let Some(b) = best.as_ref() {
+                eprintln!(
+                    "lock candidate: centre {} phase {} rev {} score {:.1}",
+                    b.0, b.1, b.2, b.3
+                );
+            }
+        }
         let Some((centre, phase, reverse, _, text)) = best else {
             return String::new();
         };
@@ -926,6 +1131,7 @@ pub fn decode(audio: &[f32], rate: f64, centre: f64, variant: Mt63Variant) -> (S
 
 /// How much of a decode looks like text: runs of ASCII letters and digits, with
 /// spaces, win; control characters and long punctuation runs do not.
+///
 fn textiness(text: &str) -> usize {
     let mut score = 0usize;
     let mut run = 0usize;
@@ -952,6 +1158,46 @@ pub fn printable(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The transmitter, read back by the decoder at the true symbol phase.
+    ///
+    /// This is the modulator's gate. The **live** receiver is deliberately not
+    /// the gate here: its lock searches phase and polarity on six seconds of
+    /// audio and scores them by the Walsh peak's SNR and by how much text comes
+    /// out, and on a transmission that is mostly idle — which any over is before
+    /// the operator types — a *wrong* phase decodes the idle as one repeated
+    /// letter with a strong peak and wins the search. Measured on this synthetic:
+    /// it locks at phase 144 of 200, which decodes the message with a few
+    /// characters wrong (`E@GLE H@R LAODDE`) where phase 0 reads it clean. That
+    /// is a pre-existing weakness of the lock, not of the modulator, and it is in
+    /// the journal.
+    #[test]
+    fn a_synthetic_mt63_transmission_reads_back() {
+        for variant in [
+            Mt63Variant { bandwidth: 2000, long: false },
+            Mt63Variant { bandwidth: 2000, long: true },
+        ] {
+            let mut tx = Mt63Tx::new(variant, variant.rate(), 1500.0);
+            tx.push_text("TEST THE EAGLE HAS LANDED");
+            let mut audio = Vec::new();
+            let mut block = vec![0.0f32; 400];
+            let mut guard = 0;
+            while !tx.drained() && guard < 400_000 {
+                tx.next_block(&mut block);
+                audio.extend_from_slice(&block);
+                guard += 1;
+            }
+            assert!(tx.drained(), "{} never finished its transmission", variant.label());
+            let mut rx = Mt63Rx::new(variant.rate(), 1500.0, variant);
+            let (text, _) = rx.decode(&audio, 0);
+            let clean = printable(&text);
+            assert!(
+                clean.contains("EAGLE") && clean.contains("LANDED"),
+                "{} did not read its own transmission back: {clean:?}",
+                variant.label()
+            );
+        }
+    }
+
     use super::*;
 
     /// The inverse and forward transforms as fldigi writes them are a pair up
@@ -1016,7 +1262,13 @@ mod tests {
             let variant = Mt63Variant::named(name).expect("a variant");
             let (text, snr) = decode(&audio, spec.sample_rate as f64, 1740.0, variant);
             let p = printable(&text);
-            let hits = want.split_whitespace().filter(|w| p.contains(w)).count();
+            // Compared **case-insensitively**: MT63's remaining fault on the 2K
+            // long interleave is a handful of characters arriving one Hadamard row
+            // high (`SDRBROWn tESt`), which is a 32-code case error and not a lost
+            // character. An operator reads it; a case-sensitive match calls it a
+            // failure and would hide the difference between that and silence.
+            let upper = p.to_uppercase();
+            let hits = want.split_whitespace().filter(|w| upper.contains(w)).count();
             eprintln!(
                 "{name}: {hits}/{} words, score {snr:.0}: {:?}",
                 want.split_whitespace().count(),

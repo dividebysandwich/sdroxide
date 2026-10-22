@@ -1094,8 +1094,6 @@ impl Mode {
                 | Mode::Fst4
                 | Mode::Q65
                 | Mode::UvPacket
-                // MT63's modulator is not written either.
-                | Mode::Mt63
                 // ARDOP is the modem only, and receive only: no modulator and
                 // no ARQ state machine.
                 | Mode::Ardop

@@ -14,7 +14,7 @@ use sdroxide_dsp::{
     MonoResampler, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ardop,
     ifk::{IfkRx, IfkTx, IfkVariant},
     mfsk_rx::{MfskReceiver, MfskTx, MfskVariant},
-    mt63::Mt63Receiver,
+    mt63::{Mt63Receiver, Mt63Tx},
     stanag4285,
 };
 use sdroxide_olivia::OliviaReceiver;
@@ -186,6 +186,7 @@ enum TxModem {
     Rtty(RttyTx),
     Olivia(OliviaTx),
     Thor(IfkTx),
+    Mt63(Mt63Tx),
     Mfsk(MfskTx),
     /// A mode whose modulator is not written yet. It holds the controller's
     /// shape without pretending: `set_tx_active` refuses a key-up in a
@@ -202,6 +203,7 @@ impl TxModem {
             TxModem::Olivia(m) => m.push_text(t),
             TxModem::Thor(m) => m.push_text(t),
             TxModem::Mfsk(m) => m.push_text(t),
+            TxModem::Mt63(m) => m.push_text(t),
             TxModem::Receive => {
                 let _ = t;
             }
@@ -224,6 +226,9 @@ impl TxModem {
             TxModem::Mfsk(m) => {
                 m.next_block(out);
             }
+            TxModem::Mt63(m) => {
+                m.next_block(out);
+            }
             TxModem::Receive => out.fill(0.0),
         }
     }
@@ -243,6 +248,7 @@ impl TxModem {
             TxModem::Olivia(m) => m.sent_chars(),
             TxModem::Thor(m) => m.sent_chars(),
             TxModem::Mfsk(m) => m.sent_chars(),
+            TxModem::Mt63(m) => m.sent_chars(),
             TxModem::Receive => 0,
         }
     }
@@ -253,6 +259,7 @@ impl TxModem {
             TxModem::Olivia(m) => m.total_chars(),
             TxModem::Thor(m) => m.total_chars(),
             TxModem::Mfsk(m) => m.total_chars(),
+            TxModem::Mt63(m) => m.total_chars(),
             TxModem::Receive => 0,
         }
     }
@@ -263,6 +270,7 @@ impl TxModem {
             TxModem::Olivia(m) => m.clear(),
             TxModem::Thor(m) => m.clear(),
             TxModem::Mfsk(m) => m.clear(),
+            TxModem::Mt63(m) => m.clear(),
             TxModem::Receive => {}
         }
     }
@@ -455,7 +463,10 @@ impl TextModemController {
                 MODEM_RATE,
                 audio_hz as f64,
             )),
-            Mode::Mt63 | Mode::Ardop | Mode::Stanag4285 => TxModem::Receive,
+            Mode::Mt63 => {
+                TxModem::Mt63(Mt63Tx::new(cfg.mt63_mode.into(), MODEM_RATE, audio_hz as f64))
+            }
+            Mode::Ardop | Mode::Stanag4285 => TxModem::Receive,
             _ => {
                 let mut t = PskTx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
                 t.set_qpsk(p_qpsk);
@@ -544,6 +555,7 @@ impl TextModemController {
                 hz,
                 MfskVariant::named(self.cfg.mfsk_mode.label()).expect("the MFSK tables agree"),
             ),
+            TxModem::Mt63(m) => m.set_params(hz, self.cfg.mt63_mode.into()),
             TxModem::Receive => {}
         }
     }
@@ -574,10 +586,6 @@ impl TextModemController {
             transmitting: self.keyed,
             tx_watchdog: false,
             tx_refused: self.mode.is_rx_only().then(|| match self.mode {
-                Mode::Mt63 => {
-                    "MT63 is receive only in this build — the modulator is not written yet"
-                        .to_string()
-                }
                 Mode::Ardop => {
                     "ARDOP is receive only in this build — the modem has no transmitter and the \
                      ARQ state machine is not ported"
@@ -993,26 +1001,58 @@ mod tests {
         );
     }
 
-    /// MT63's modulator is not written, so the controller must refuse the key-up
-    /// **and say why** — a mode that greys nothing and keys silence is the fault
-    /// the house rules name. The modes that do transmit must not pick up the
-    /// refusal, which is what stops this being a blanket.
+    /// MT63 keys the transmitter and produces the audio it should.
+    ///
+    /// The modulator is gated at the modem level (`a_synthetic_mt63_transmission_reads_back`,
+    /// decoded at the true symbol phase). What this adds is the wiring: the mode
+    /// is no longer receive-only, the controller arms it, and audio comes out at
+    /// the length a transmission takes — 20 baud at 2 kHz, so a 24-character
+    /// message plus the idle either side is a few seconds of it.
+    #[test]
+    fn mt63_keys_the_transmitter() {
+        assert!(!Mode::Mt63.is_rx_only(), "MT63 is still receive only");
+        let mut c = TextModemController::new(Mode::Mt63, DigiConfig::default(), 48_000.0);
+        c.set_tx_text("TEST THE EAGLE HAS LANDED".into());
+        c.set_tx_active(true);
+        c.poll(SystemTime::now(), 0.0);
+        assert!(c.status().tx_refused.is_none(), "it refused the key-up");
+        assert!(c.tx_burst_active(), "it did not arm the transmitter");
+        let mut block = vec![0.0f32; 512];
+        let mut peak = 0.0f32;
+        let mut samples = 0usize;
+        let mut guard = 0;
+        while !c.fill_tx_block(&mut block) && guard < 100_000 {
+            peak = block.iter().fold(peak, |m, s| m.max(s.abs()));
+            samples += block.len();
+            guard += 1;
+        }
+        assert!(peak > 0.01, "the transmitter produced silence (peak {peak})");
+        assert!(
+            samples > 48_000,
+            "only {samples} samples came out — too short to be a transmission"
+        );
+    }
+
+    /// ARDOP is the modem only — no modulator and no ARQ — so the controller must
+    /// refuse the key-up **and say why**: a mode that greys nothing and keys
+    /// silence is the fault the house rules name. The modes that do transmit must
+    /// not pick up the refusal, which is what stops this being a blanket.
     #[test]
     fn a_receive_only_mode_refuses_the_key_and_says_why() {
-        let mut mt63 = TextModemController::new(Mode::Mt63, DigiConfig::default(), 48_000.0);
-        mt63.set_tx_text("TEST THE EAGLE".into());
-        mt63.set_tx_active(true);
-        let actions = mt63.poll(SystemTime::now(), 0.0);
-        let s = mt63.status();
+        let mut ardop = TextModemController::new(Mode::Ardop, DigiConfig::default(), 48_000.0);
+        ardop.set_tx_text("TEST THE EAGLE".into());
+        ardop.set_tx_active(true);
+        let actions = ardop.poll(SystemTime::now(), 0.0);
+        let s = ardop.status();
         assert!(!s.tx_next, "a receive-only mode armed the transmitter");
-        assert!(!mt63.tx_burst_active(), "it asked the engine to key");
+        assert!(!ardop.tx_burst_active(), "it asked the engine to key");
         assert!(
             !actions.iter().any(|a| matches!(a, DigiAction::KeyTx)),
             "it sent KeyTx to the engine"
         );
         assert!(s.tx_refused.is_some(), "it refused in silence");
         assert!(
-            s.tx_refused.as_deref().unwrap_or("").contains("MT63"),
+            s.tx_refused.as_deref().unwrap_or("").contains("ARDOP"),
             "the refusal does not name the mode: {:?}",
             s.tx_refused
         );

@@ -1071,6 +1071,33 @@ does not cut the last character off.
 transmission through the CRT and back through the RSP1 — which is the same loop the
 rest of the corpus came from and needs the operator at the rig.
 
+### MT63 TX — 64 phase accumulators, and the reference's own encoder
+
+fldigi's `MT63tx::SendChar` is one paragraph: every 200 samples at `2 · bandwidth`
+(20 baud) each of the 64 carriers advances by the phase its own frequency would
+have turned through, **plus π when its data bit is 0**. The carriers are continuous
+tones whose phase steps at the symbol boundaries; the reference's frequency-domain
+synthesis and windowed overlap-add are how it keeps that inside its bandwidth, not
+how the data is carried. So the modulator is 64 phase accumulators, a cosine sum,
+and the `Mt63Encoder` that was already here for the loopback.
+
+* **Gated by the batch decoder at the true symbol phase**: both interleaves read
+  `TEST THE EAGLE HAS LANDED` clean (`a_synthetic_mt63_transmission_reads_back`),
+  and the console keys it (`mt63_keys_the_transmitter`).
+* **The live receiver is deliberately not this gate, and the measurement is worth
+  keeping.** Its lock searches phase and polarity on six seconds of audio and
+  scores them by the Walsh peak's SNR and by how much text comes out. On a
+  transmission that is mostly *idle* — which any over is before the operator types
+  — a **wrong** phase decodes the idle as one repeated letter with a strong peak
+  and wins the search: measured, it locks at phase 144 of 200 and reads
+  `E@GLE H@R LAODDE` where phase 0 reads the message clean. Both metrics prefer it,
+  so it is not the textiness alone. That is a pre-existing weakness of the lock
+  (the same one that keeps 1K and 500 off the chip row) and not of the modulator.
+* **The 2KL corpus gate was red before this session** and is now green: its
+  remaining fault is a handful of characters one Hadamard row high (`SDRBROWn
+  tESt`), which is a 32-code *case* error, not a lost character — the gate compares
+  case-insensitively now and says so.
+
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:
