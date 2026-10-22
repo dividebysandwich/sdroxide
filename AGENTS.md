@@ -7,11 +7,15 @@
 > **quotes are left as they were said** — do not rewrite a quote to fix a name.
 >
 > **The mode work is the live queue, and it has its own brief.**
-> [`MODE-PHASE-3B-PROMPT.md`](MODE-PHASE-3B-PROMPT.md) is what a session starts
-> with now — day 1 of the PSK coded families landed 2026-10-22 and the journal's
-> "Phase 3" section is its record; the phase's own brief,
-> [`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md), still holds the reference and
-> the rules. The paragraph below describes day 1 and is kept for that reason:
+> [`MODE-PHASE-4-PROMPT.md`](MODE-PHASE-4-PROMPT.md) is what a session starts with
+> now: **finish the missing modes and get TX working for everything fldigi can
+> transmit**, and **vendor a mode when the port and the bench have both been
+> exhausted** — which supersedes the "port it, do not vendor it" rule of 2026-10-21,
+> at the operator's instruction. It ends with a table of every mode we ship, five
+> columns, and the mode phase it follows is
+> [`MODE-PHASE-3B-PROMPT.md`](MODE-PHASE-3B-PROMPT.md) (done; its day-1 record is
+> [`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md)). The paragraph below
+> describes that earlier day and is kept for that reason:
 > [`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md) was what a session started
 > with: the PSK coded families (BPSK63F, the R set, the C/RC multi-carrier
 > modes), then the loose ends behind them. Its "current truth" section is the
