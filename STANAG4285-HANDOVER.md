@@ -645,11 +645,64 @@ chain is implicated: it has never seen a coded transmission. When one turns up, 
 branch that is right will stand well above its null, and the probe is the tool that
 says so.
 
+### The bench loopback, 2026-10-22 afternoon — the chain reads a file, not the rig
+
+With the RSP1 back on an antenna and the bench rig on **27.415 USB at 2 W**,
+`examples/s4285_test_signal.rs` generates an Annex E coded transmission as a WAV
+(lead-in, SOM, ITA2 text, EOM, flush), `aplay` into the rig keys it by VOX, and
+`rspcap` records it off the air. Four transmissions were made.
+
+**Through a file the chain is exact.** Fed straight to the receiver, the same WAV
+gives `RYRY TEST RYRY`, one message, `SOM 32/32`, references 0.998/0.997/0.998,
+and the 112 message bits match the encoder's byte for byte. A 280-bit message does
+too. That is the coded chain proved end to end — code, pair repetition,
+interleaver, framing and the ITA2 reading.
+
+**Over the air it does not decode, and this is where it stands.** Measured on the
+recording:
+
+* the frame period is **106.72 ms → 2400 baud** ✓, so the waveform and the symbol
+  clock survive the rig;
+* the three **reference blocks read 0.87–0.91**, and stay there across 300 Hz of
+  carrier, which is the trap this file already records: sixteen identical symbols
+  have no ISI to suffer, so they collapse whether or not the *data* is readable;
+* the **data does not**: the 2-fold concentration sits near 0.25 where a clean
+  BPSK frame reads 0.9, and the decoder's metric is 0.94–0.99 of its own shuffled
+  null, i.e. no trellis structure at all;
+* the rig's audio path is **not flat** — the received spectrum runs 400–3050 Hz
+  with a 6–7 dB tilt — and its carrier sits **+221 Hz** off the RSP1's dial,
+  measured with two tones (800→1021, 1600→1821), which is outside the receiver's
+  ±150 Hz ramp search.
+
+So the likely causes are named and none is measured as *the* one: a shaped
+transmit passband (which is what Annex C's and D's equalisers exist for, and this
+receiver has a channel estimate only for phase), and a carrier offset larger than
+the standard's ±75 Hz allows for. **Not proved, and not claimed.**
+
+### A real bug the bench found: the decoder's chunk overlap was on the wrong end
+
+The Viterbi is run over fixed chunks, each decoded with every metric on state zero
+and traced back from the end. The bits the forced start distorts are therefore the
+**opening** of a chunk, and the first version used exactly those — the overlap
+was placed behind the chunk instead of in front of it. On the generated file that
+put a burst of errors every 256 bits: a 112-bit message came back with bytes 3–4
+wrong and everything else right, which looks like a bad demodulator and is the
+decoder's own plumbing. With the overlap in front and the opening discarded, the
+same file decodes exactly.
+
+That is the sort of fault a loopback is for: it is invisible in the text (the
+message is short), invisible in the references (0.998), and only shows when the
+decoded bits are compared with the bits that were sent.
+
 ### Still open
 
 * **No real coded transmission has been decoded**, and the metric test above says
   the ones on disk are not coded. A coded station is what the branch needs; the
   panel now reports `SOM n/32` so the operator can see one being worked on.
+* **The over-the-air loopback**, which needs either an equaliser (Annex C/D — a
+  channel estimate at the four reference points, amplitude as well as phase) or a
+  bench path with a flatter passband. The rig's transmit filter is the current
+  suspect and the measurement above is what says so.
 * **The punctured 2/3 rate for 2400 bps is not built**: the annex does not say
   which of each four bits is dropped, and a guessed demapper is indistinguishable
   from a decode.

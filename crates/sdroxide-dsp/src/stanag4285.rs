@@ -387,6 +387,9 @@ impl Lowpass {
 /// flipped stream decodes to noise, so the branch that never sees an SOM costs
 /// nothing but cycles.
 const CHUNK_PAIRS: usize = 256;
+/// Bits decoded at the front of each chunk and discarded, so the decoder's
+/// forced start state has left the trace before the decisions are used.
+const VITERBI_OVERLAP: usize = 64;
 
 struct CodedChain {
     rate: fec::CodedRate,
@@ -425,15 +428,21 @@ impl CodedChain {
     /// One soft decision from the demodulator (positive means a zero).
     fn push(&mut self, v: f32, out: &mut Vec<S4285Message>) {
         self.soft.push(self.deint.push(v * self.sign));
-        // A chunk of `CHUNK_PAIRS` coded pairs, plus an overlap so the decoder's
-        // traceback settles on real bits rather than on the erasures it starts
-        // from. Only the chunk's own decisions are used.
-        let need = (CHUNK_PAIRS + 64) * 2 * self.times;
+        // A chunk of `CHUNK_PAIRS` coded pairs, plus an overlap in front of it
+        // that is decoded and **thrown away**.
+        //
+        // The overlap is in front, not behind, and that is the whole point: the
+        // decoder is started with all its metric on state zero, and the traceback
+        // runs backwards from the end, so the *opening* of a chunk is the part the
+        // forced start distorts. Using the first `CHUNK_PAIRS` decisions threw
+        // away the good ones and kept the bad: on a clean generated signal it put
+        // a burst of errors in the middle of every message, 256 bits apart.
+        let need = (CHUNK_PAIRS + VITERBI_OVERLAP) * 2 * self.times;
         while self.soft.len() - self.consumed >= need {
             let slice = &self.soft[self.consumed..self.consumed + need];
             let pairs = fec::average_pairs(slice, self.times);
             let bits = fec::viterbi_decode(&pairs);
-            for b in bits.iter().take(CHUNK_PAIRS) {
+            for b in bits.iter().skip(VITERBI_OVERLAP).take(CHUNK_PAIRS) {
                 if let Some(m) = self.framer.push(*b) {
                     self.messages += 1;
                     out.push(S4285Message { rate: m.rate, bits: m.bits, closed: m.closed });
@@ -815,8 +824,14 @@ impl S4285Receiver {
 
     /// Demodulate the frame whose head is at absolute sample `start`.
     fn take_frame(&mut self, start: u64) -> Option<S4285Frame> {
+        // The sampling phase is searched over **most of a symbol**, not over a
+        // fifth of one. Acquisition answers it to a tenth of a symbol, and a
+        // tracked value that starts half a symbol out never recovers if the
+        // per-frame search can only reach ±0.2: on a clean generated signal that
+        // cost a handful of bit errors in the middle of a message, which is
+        // exactly how a decode looks when it is nearly right.
         let mut best: Option<(f32, f32, bool, f32)> = None;
-        for step in -4i32..=4 {
+        for step in -9i32..=9 {
             let phase = self.timing + step as f32 * 0.05;
             let frame = self.frame_symbols(start, phase);
             for &sign in &[1.0f32, -1.0f32] {
@@ -1292,7 +1307,29 @@ mod tests {
                 (seed & 1) as u8
             })
             .collect();
-        let audio = modulate(&bits, 18, 12000.0);
+        // Noise, because a noiseless loopback hides the decoder's own faults: a
+        // chunk's forced start state is corrected by the metric within a few
+        // constraint lengths when the symbols are perfect, and only bites when
+        // they are not. Ten decibels is what Annex E's own tables say a 600 bps
+        // rate needs (BER 3.4e-4 at 10 dB in 3 kHz).
+        let mut audio = modulate(&bits, 40, 12000.0);
+        let rms = (audio.iter().map(|v| v * v).sum::<f32>() / audio.len() as f32).sqrt();
+        let noise = rms / 10f32.powf(10.0 / 20.0) * 1.4;
+        let mut seed = 0x5EED_1234u32;
+        for v in audio.iter_mut() {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            // A sum of four uniforms is close enough to Gaussian for a floor.
+            let mut n = 0.0f32;
+            for _ in 0..4 {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                n += (seed >> 8) as f32 / 16_777_216.0 - 0.5;
+            }
+            *v += noise * n;
+        }
         let mut rx = S4285Receiver::new(12000.0, 1800.0);
         for chunk in audio.chunks(1024) {
             rx.process(chunk);
@@ -1320,7 +1357,10 @@ mod tests {
         let rate = CodedRate::Bps600;
         // A payload whose bits are not all the same, so a decoder that drops
         // them cannot pass by luck.
-        let payload: Vec<u8> = (0..128u32).map(|i| ((i * 5 + (i >> 2)) % 3 == 0) as u8).collect();
+        // Long enough to cross several of the decoder's chunks: the overlap that
+        // protects a chunk's opening is only exercised when a message spans more
+        // than one, and a 128-bit payload fits inside a single 256-pair chunk.
+        let payload: Vec<u8> = (0..600u32).map(|i| ((i * 5 + (i >> 2)) % 3 == 0) as u8).collect();
         let mut msg = vec![0u8; 6]; // six zero bits, so the SOM is not at the head
         for k in (0..32).rev() {
             msg.push(((fec::SOM >> k) & 1) as u8);
@@ -1344,7 +1384,28 @@ mod tests {
             .collect();
         // One frame's worth of padding so the last bits are carried.
         let frames = sent.len() / 128 + 2;
-        let audio = modulate(&sent, frames, 12000.0);
+        let mut audio = modulate(&sent, frames, 12000.0);
+        // Noise, because a noiseless loopback hides the decoder's own faults: the
+        // forced start state at the front of each chunk is pulled right by the
+        // metric within a few constraint lengths when the symbols are perfect, and
+        // only bites when they are not. Ten decibels is what Annex E's own tables
+        // say 600 bps needs (3.4e-4 at 10 dB in 3 kHz).
+        {
+            let rms = (audio.iter().map(|v| v * v).sum::<f32>() / audio.len() as f32).sqrt();
+            // The sum of four uniforms has σ = 1/√3, so scale to a real 10 dB.
+            let amp = rms / 10f32.powf(10.0 / 20.0) / (4.0f32 / 12.0).sqrt();
+            let mut seed = 0x5EED_1234u32;
+            for v in audio.iter_mut() {
+                let mut n = 0.0f32;
+                for _ in 0..4 {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    n += (seed >> 8) as f32 / 16_777_216.0 - 0.5;
+                }
+                *v += amp * n;
+            }
+        }
 
         let mut rx = S4285Receiver::new(12000.0, 1800.0);
         let mut got: Vec<S4285Message> = Vec::new();
