@@ -113,10 +113,36 @@ impl SdroxideApp {
         self.front_end_overload_warning(ui);
         let pane = self.phone_pane(ui, sdroxide_types::Mode::Navtex);
 
+        // MF NAVTEX: the two medium-frequency services. The button is labelled
+        // with the published channel frequency, but the VFO lands 1.710 kHz
+        // below it (USB), because NAVTEX is a 170 Hz FSK signal 1.5 kHz above
+        // the suppressed carrier.
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("MF").size(10.0).weak());
+            for (label, vfo_hz) in [("490", 488_290.0), ("518", 516_290.0)] {
+                let active_vfo_hz = match self.state.active_vfo {
+                    Vfo::A => self.state.vfo_a_hz,
+                    Vfo::B => self.state.vfo_b_hz,
+                };
+                let is_active = (active_vfo_hz - vfo_hz).abs() < 1.0;
+                if crate::chrome::chip(ui, is_active, RichText::new(format!("{label} kHz")).size(10.0))
+                    .on_hover_text("Tune the dial here (USB, 1.710 kHz below the channel).")
+                    .clicked()
+                {
+                    cmds.push(Command::SetVfo { vfo: Vfo::A, hz: vfo_hz });
+                }
+            }
+        });
+
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("CHANNEL").size(10.0).weak());
             for (hz, label) in CHANNELS {
-                if crate::chrome::chip(ui, false, RichText::new(*label).size(10.0))
+                let active_vfo_hz = match self.state.active_vfo {
+                    Vfo::A => self.state.vfo_a_hz,
+                    Vfo::B => self.state.vfo_b_hz,
+                };
+                let is_active = (active_vfo_hz - *hz).abs() < 1.0;
+                if crate::chrome::chip(ui, is_active, RichText::new(*label).size(10.0))
                     .on_hover_text("Tune the dial here.")
                     .clicked()
                 {
