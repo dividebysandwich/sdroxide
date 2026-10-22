@@ -1,19 +1,27 @@
 # Mode backfill — the journal
 
-> **The next phase is [`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md)** — the PSK
-> coded families (BPSK63F, the R set, the C/RC multi-carrier modes), then the loose
-> ends behind them. **Day 1 of it is done** — see "Phase 3 (2026-10-22)" below — and
-> [`MODE-PHASE-3B-PROMPT.md`](MODE-PHASE-3B-PROMPT.md) is where a session picks it
-> up: a fresh PSK500R recording first, then the modes that still read short, then
-> the wiring. The phase-2 brief, [`MODE-PHASE-2-PROMPT.md`](MODE-PHASE-2-PROMPT.md),
-> is the record of what was asked for there; what it delivered is below.
+> **The live queue is [`MODE-PHASE-4-PROMPT.md`](MODE-PHASE-4-PROMPT.md)** — finish
+> the missing modes and get TX working for everything fldigi can transmit, with
+> **vendor** now allowed once the port and the bench are both exhausted. Day 1 of it
+> is in "Phase 4 (2026-10-22)" below. The phase-3 briefs
+> ([`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md),
+> [`MODE-PHASE-3B-PROMPT.md`](MODE-PHASE-3B-PROMPT.md)) are the record of the PSK
+> work, which is done.
 >
-> **State at the handover:** `main` is 100 commits ahead of `origin`, none pushed,
-> `PROTO_VERSION` 226. Four families are wired and receive-only — MFSK (11
-> variants), Contestia, MT63 (2KS/2KL/500S) and ARDOP — and several corpus verdicts
-> have been corrected against measurement (BPSK1000, MT63's narrow variants, Hell's
-> whole family, FSQ's alphabet). `cargo check --workspace --all-targets`
-> is silent and the touched crates' tests are green.
+> **State after phase 4, day 1:** `main` is local and unpushed, `PROTO_VERSION`
+> **228** (THOR's `thor_reverse`). `cargo check --workspace --all-targets` is silent,
+> `cargo fmt` is clean on everything touched, and the dsp/digi/types/ui/proto tests
+> are green.
+>
+> * **THOR reads**, in the program as well as in the tests: eleven of fifteen
+>   variants whole, both halves replaced (the program was wired to a second IFK
+>   implementation that read nothing).
+> * **MFSK transmits** (eleven variants) and **Contestia transmits**; both read back
+>   through the console's own controller.
+> * **Next in the brief's order: MT63 TX**, then wiring the PSK coded families
+>   (BPSK63F, the `R` set, the `C`/`RC` banks — they decode and no chip reaches
+>   them) and DominoEX as its own mode. Then 8PSK / OFDM / THROB / SCAMP, then
+>   RS_ID / DTMF, then TX for the remaining receive-only set.
 >
 > ⛔ **Not in scope, and not to be touched: WEFAX, DAB, SSTV and DSC.** F4NRM and
 > his radio group confirm all four working perfectly (2026-10-21). They are not
