@@ -497,6 +497,20 @@ pub enum Mode {
     /// carrier offset are all right. Appended for the same reason as
     /// [`Mode::Hell`].
     Stanag4285,
+    /// DominoEX — the IFK+ family's other half: incremental frequency keying with
+    /// no forward error correction, one to three nibbles per character.
+    ///
+    /// It shares THOR's front end and its whole audio path, and differs in what
+    /// the steps mean: THOR sends the IZ8BLY word bits through a K = 7 code and an
+    /// interleaver, DominoEX sends its own alphabet straight through. The variant
+    /// is [`crate::DigiConfig::domino_mode`].
+    ///
+    /// Receive only for now: there is no modulator. Six of the nine variants read
+    /// their corpus recordings whole (`DOMEX8`, `DOMX11`, `DOMX16`, `DOMX22`,
+    /// `DOMX44`, `DOMX88`), `DOMEX5` reads most of its text, `DOMEX4` a quarter,
+    /// and `DOMEXM` — two symbols a second — nothing from a 56-second sample.
+    /// Appended for the same reason as [`Mode::Hell`].
+    DominoEx,
 }
 
 /// The bands on which a mode that keeps phone practice rides the lower
@@ -526,7 +540,7 @@ const SSTV_LSB_BELOW_HZ: f64 = 10_000_000.0;
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 59] = [
+    pub const ALL: [Mode; 60] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -565,6 +579,7 @@ impl Mode {
         Mode::Acars,
         Mode::Olivia,
         Mode::Thor,
+        Mode::DominoEx,
         Mode::Mfsk,
         Mode::Contestia,
         Mode::Mt63,
@@ -617,7 +632,7 @@ impl Mode {
     /// packet, RF Paint). All are USB underneath except RIFP, VHF packet and
     /// VHF SSTV, which frequency-modulate the carrier, and ACARS, which is
     /// received in AM.
-    pub const DIGITAL: [Mode; 40] = [
+    pub const DIGITAL: [Mode; 41] = [
         Mode::Ft8,
         Mode::Ft4,
         Mode::Ft2,
@@ -658,6 +673,7 @@ impl Mode {
         Mode::UvPacket,
         Mode::Jtty,
         Mode::Ale,
+        Mode::DominoEx,
     ];
 
     /// True for modes that use a dedicated decode/QSO layer over USB.
@@ -679,6 +695,7 @@ impl Mode {
                 | Mode::Rifp
                 | Mode::Olivia
                 | Mode::Thor
+                | Mode::DominoEx
                 | Mode::Mfsk
                 | Mode::Contestia
                 | Mode::Mt63
@@ -866,6 +883,7 @@ impl Mode {
                 | Mode::RttyFm
                 | Mode::Olivia
                 | Mode::Thor
+                | Mode::DominoEx
                 | Mode::Mfsk
                 | Mode::Contestia
                 | Mode::Mt63
@@ -1100,6 +1118,10 @@ impl Mode {
                 // STANAG 4285 has no modulator either, and its coded rates are
                 // not built at all: receive only in both senses.
                 | Mode::Stanag4285
+                // DominoEX has a receiver that reads its corpus and no modulator:
+                // the panel greys the sending half rather than handing text to a
+                // modem that has none.
+                | Mode::DominoEx
         )
     }
 
@@ -1168,6 +1190,7 @@ impl Mode {
             Mode::SstvFm => "SSTV-FM",
             Mode::Olivia => "OLIVIA",
             Mode::Thor => "THOR",
+            Mode::DominoEx => "DOMINOEX",
             Mode::Mfsk => "MFSK",
             Mode::Contestia => "CONTESTIA",
             Mode::Mt63 => "MT63",
@@ -1362,6 +1385,7 @@ impl Mode {
             | Mode::Sstv
             | Mode::Olivia
             | Mode::Thor
+            | Mode::DominoEx
             | Mode::Mfsk
             | Mode::Contestia
             | Mode::Mt63
@@ -1663,6 +1687,7 @@ impl Mode {
             | Mode::Fsk441
             | Mode::Olivia
             | Mode::Thor
+            | Mode::DominoEx
             | Mode::Mfsk
             | Mode::Contestia
             | Mode::Mt63
@@ -1936,6 +1961,7 @@ impl Mode {
             | Mode::Sstv
             | Mode::Olivia
             | Mode::Thor
+            | Mode::DominoEx
             | Mode::Mfsk
             | Mode::Contestia
             | Mode::Mt63
@@ -2663,7 +2689,7 @@ mod tests {
         // checking is that it is a permutation of the enum, with nothing
         // dropped and nothing listed twice.
         // The last variant *by discriminant*, which is the one appended most
-        // recently — not the one that reads last in the picker. MFSK is the
+        // recently — not the one that reads last in the picker. DominoEX is the
         // fork's (and the list's) last appended variant, after ALE.
         //
         // **DAB is the one mode deliberately not in `ALL`.** It is reached from
@@ -2672,7 +2698,7 @@ mod tests {
         // rather than a dial mode. Listing it here would put a chip in the mode
         // cycle that needs a 1.5 MHz front end to do anything.
         let absent = [Mode::Dab];
-        let last = Mode::Stanag4285 as u8;
+        let last = Mode::DominoEx as u8;
         for i in 0..=last {
             let present = Mode::ALL.iter().filter(|m| **m as u8 == i).count();
             let want = if absent.iter().any(|m| *m as u8 == i) { 0 } else { 1 };

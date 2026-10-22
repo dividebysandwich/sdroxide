@@ -197,6 +197,7 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Rtty
         | Mode::Olivia
         | Mode::Thor
+        | Mode::DominoEx
         | Mode::Mfsk
         | Mode::Contestia
         | Mode::Mt63

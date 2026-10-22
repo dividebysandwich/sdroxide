@@ -4683,7 +4683,13 @@ not to have sent the mistake. Each mode's submode is chosen on its setup page
 - **THOR** — a DominoEX-family 18-tone mode using incremental frequency keying
   (IFK+) with convolutional forward error correction. Choose a submode
   (**THOR4 … THOR32**); THOR16 is the usual default. The tone bank edges are drawn
-  on the waterfall.
+  on the waterfall. **REVERSE** inverts the tone *steps*, which is what a station
+  received on the opposite sideband needs — IFK+ carries its data in the step, so
+  a mirrored signal has every step negative.
+- **DOMINOEX** — the other half of the same family: IFK+ with **no** forward error
+  correction, one to three nibbles per character. Nine variants
+  (**DOMINOEX 4 … 88**, plus **MICRO**); it shares THOR's front end and its
+  **REVERSE** control. Receive only in this build — there is no modulator yet.
 
 **FSQ** (Fast Simple QSO) has its own panel for the directed **FSQCALL** layer.
 It is a 33-tone incremental-FSK mode; choose the **speed** (FSQ-2/3/4.5/6) and an
@@ -18233,6 +18239,7 @@ using. Bind them under **Speech** on the Controls tab:
 | OLIVIA | Robust MFSK keyboard mode (selectable tones/bandwidth). |
 | STANAG 4285 | The NATO single-tone HF modem the naval stations use: 2400 baud PSK on an 1800 Hz sub-carrier in a 3000 Hz footprint, a 256-symbol frame every 106.67 ms. **Receive only.** The mode identifies a 4285 off the air and shows what the receiver measures — the folded sync against its own null, the frame autocorrelation, the three reference blocks collapsing, the carrier offset and the rate (1200 BPSK, 2400 QPSK or 3600 8PSK). **Its text is not yet proven off the air**: the Annex E code, interleaver and message framing decode a generated signal bit-exactly, but no coded station has been copied, and the traffic on these frequencies is usually encrypted anyway — an identification and a rate are what a listener usually wants from it. |
 | THOR | DominoEX-family IFK keyboard mode with FEC (THOR4…THOR32). |
+| DOMINOEX | The same family without the code (DOMINOEX 4…88, MICRO). Receive only. |
 | FSQ | Fast Simple QSO — 33-tone IFK with directed (FSQCALL) messaging and images. |
 | HELL | Hellschreiber — facsimile "dot" mode read by eye, not decoded (Feld Hell, Slow, X5, X9, FSK Hell 245/105, Hell 80). |
 | SSTV | Slow-scan TV image mode (Scottie, Martin, Robot), on a sideband — LSB on 160/80/40 m, USB above. |

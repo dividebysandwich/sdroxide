@@ -207,7 +207,7 @@ client — are in [`docs/images/`](docs/images).
   **HD Radio** (FM, stereo), and the receive-only utility decoders **ADS-B**,
   **VDL2**, **ACARS**, **HFDL**, **NAVTEX**, **DSC**, **weather fax**.
 - **Digital modes** — **FT8/FT4/FT2**, **JT65/JT9**, **FST4**, **MSK144**, **FSK441**, **Q65**, **UVPACKET**, **JTTY** (experimental), **JS8**, **WSPR**, **PSK31/RTTY**,
-  **Olivia/THOR/FSQ**, **Hellschreiber**, **SSTV**, **RIFP**, **RF Paint**,
+  **Olivia/THOR/DominoEX/FSQ**, **Hellschreiber**, **SSTV**, **RIFP**, **RF Paint**,
   **RADE** digital voice, **packet/APRS**, **AtCHAT NET**, **Winlink** email.
   Details and setup are in the [manual's digital-modes chapter](docs/USER_MANUAL.md#3-digital-modes).
 - **Receiver** — hang AGC, draggable filter edges, noise blanker, auto-notch,

@@ -79,6 +79,7 @@ pub fn mode_to_civ(m: Mode) -> u8 {
         | Mode::Jtty | Mode::Ale
         | Mode::Olivia
         | Mode::Thor
+        | Mode::DominoEx
         | Mode::Mfsk
         | Mode::Contestia
         | Mode::Mt63

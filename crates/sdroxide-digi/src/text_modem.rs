@@ -18,7 +18,7 @@ use sdroxide_dsp::{
     stanag4285,
 };
 use sdroxide_olivia::OliviaReceiver;
-use sdroxide_types::{DigiConfig, DigiStatus, Mode, PskCoded, QsoStep, ThorMode, TranscriptLine};
+use sdroxide_types::{DigiConfig, DigiStatus, Mode, PskCoded, QsoStep, TranscriptLine};
 
 /// ARDOP's front end: the modem runs at 12 kHz and takes the tap directly, so a
 /// receiver of its own rather than a fourth `process(&[f32])` arm. Its
@@ -148,6 +148,7 @@ enum RxModem {
     Rtty(RttyRx),
     Olivia(OliviaReceiver),
     Thor(ThorRx),
+    Domino(ThorRx),
     Mfsk(MfskReceiver),
     Mt63(Mt63Receiver),
     Ardop(ArdopRx),
@@ -192,6 +193,7 @@ impl RxModem {
             RxModem::Rtty(r) => r.process(audio),
             RxModem::Olivia(r) => r.process(audio),
             RxModem::Thor(r) => r.process(audio),
+            RxModem::Domino(r) => r.process(audio),
             RxModem::Mfsk(r) => r.process(audio),
             RxModem::Mt63(r) => r.process(audio),
             RxModem::Ardop(r) => r.process(audio),
@@ -206,6 +208,7 @@ impl RxModem {
             RxModem::Rtty(r) => r.magnitude(),
             RxModem::Olivia(r) => r.magnitude(),
             RxModem::Thor(r) => r.magnitude(),
+            RxModem::Domino(r) => r.magnitude(),
             RxModem::Mfsk(r) => r.magnitude(),
             RxModem::Mt63(r) => r.magnitude(),
             RxModem::Ardop(r) => r.magnitude(),
@@ -309,13 +312,16 @@ impl TxModem {
     }
 }
 
-/// THOR's receiver: the IFK port in `sdroxide-dsp::ifk`, which is the one that
-/// reads the corpus.
+/// THOR's and DominoEX's receiver: the IFK port in `sdroxide-dsp::ifk`, which is
+/// the one that reads the corpus.
 ///
 /// It replaces a second, earlier IFK receiver that lived in `sdroxide-dsp::thor`
 /// and read nothing at all — every THOR corpus sample, in every variant, both
 /// polarities, five centres. Two implementations of one waveform is how the
 /// working one stayed a test; this is the one the journal's measurements are on.
+///
+/// One adapter serves both modes because they are one front end: they differ only
+/// in what the steps mean, which is `IfkRx`'s own business.
 struct ThorRx {
     rx: IfkRx,
     variant: IfkVariant,
@@ -325,8 +331,7 @@ struct ThorRx {
 }
 
 impl ThorRx {
-    fn new(rate: f64, audio_hz: f64, mode: ThorMode) -> Self {
-        let variant = IfkVariant::named(mode.label()).expect("the THOR tables agree");
+    fn new(rate: f64, audio_hz: f64, variant: IfkVariant) -> Self {
         ThorRx {
             rx: IfkRx::new(rate, audio_hz, variant),
             variant,
@@ -340,8 +345,7 @@ impl ThorRx {
     /// move **rebuilds** it — leaving the old bank in place and only moving a
     /// number is how a receiver listens to 1000 Hz while the operator looks at
     /// 1600, and the corruption reads exactly like a wrong convention.
-    fn set_params(&mut self, audio_hz: f64, mode: ThorMode) {
-        let variant = IfkVariant::named(mode.label()).expect("the THOR tables agree");
+    fn set_params(&mut self, audio_hz: f64, variant: IfkVariant) {
         if variant.name != self.variant.name || (audio_hz - self.centre).abs() > 0.5 {
             self.variant = variant;
             self.rx = IfkRx::new(self.rate, audio_hz, variant);
@@ -450,9 +454,25 @@ impl TextModemController {
                 cfg.olivia_reverse,
             )),
             Mode::Thor => {
-                let mut r = ThorRx::new(MODEM_RATE, audio_hz as f64, cfg.thor_mode);
+                let mut r = ThorRx::new(
+                    MODEM_RATE,
+                    audio_hz as f64,
+                    IfkVariant::named(cfg.thor_mode.label()).expect("the THOR tables agree"),
+                );
                 r.set_reverse(cfg.thor_reverse);
                 RxModem::Thor(r)
+            }
+            Mode::DominoEx => {
+                // The same front end as THOR, and the same polarity control: IFK+
+                // carries its data in the step, so a station received on the other
+                // sideband has every step negative.
+                let mut r = ThorRx::new(
+                    MODEM_RATE,
+                    audio_hz as f64,
+                    IfkVariant::named(cfg.domino_mode.label()).expect("the DominoEX tables agree"),
+                );
+                r.set_reverse(cfg.thor_reverse);
+                RxModem::Domino(r)
             }
             Mode::Mfsk => RxModem::Mfsk(MfskReceiver::new(
                 MODEM_RATE,
@@ -581,7 +601,18 @@ impl TextModemController {
                 r.set_params(hz, o_tones, o_bw as u32);
             }
             RxModem::Thor(r) => {
-                r.set_params(hz, self.cfg.thor_mode);
+                r.set_params(
+                    hz,
+                    IfkVariant::named(self.cfg.thor_mode.label()).expect("the THOR tables agree"),
+                );
+                r.set_reverse(self.cfg.thor_reverse);
+            }
+            RxModem::Domino(r) => {
+                r.set_params(
+                    hz,
+                    IfkVariant::named(self.cfg.domino_mode.label())
+                        .expect("the DominoEX tables agree"),
+                );
                 r.set_reverse(self.cfg.thor_reverse);
             }
             RxModem::Mfsk(r) => {
@@ -855,6 +886,7 @@ impl DigiEngine for TextModemController {
             || cfg.olivia_reverse != self.cfg.olivia_reverse
             || cfg.thor_mode != self.cfg.thor_mode
             || cfg.thor_reverse != self.cfg.thor_reverse
+            || cfg.domino_mode != self.cfg.domino_mode
             || cfg.psk_speed != self.cfg.psk_speed
             || cfg.psk_modulation != self.cfg.psk_modulation
             || cfg.mfsk_mode != self.cfg.mfsk_mode
@@ -1040,6 +1072,59 @@ mod tests {
         assert!(
             text.contains("EAGLE") && text.contains("LANDED"),
             "the THOR transmission did not read back: {text:?}"
+        );
+    }
+
+    /// The mode tables and the decoder's table must agree, by label.
+    ///
+    /// `DigiConfig` carries an enum and the decoder carries the protocol
+    /// constants; they are tied by the string in between, so a spelling change on
+    /// either side silently retunes the receiver to a variant that does not exist
+    /// — or worse, to a different one.
+    #[test]
+    fn the_ifk_mode_labels_are_the_decoders() {
+        for m in sdroxide_types::DominoMode::ALL {
+            let v = IfkVariant::named(m.label())
+                .unwrap_or_else(|| panic!("no decoder variant for {}", m.label()));
+            assert_eq!(v.name, m.label(), "the decoder spells {} differently", m.label());
+            assert!(!v.thor, "{} resolved to a THOR variant", m.label());
+        }
+        for m in sdroxide_types::ThorMode::ALL {
+            let v = IfkVariant::named(m.label())
+                .unwrap_or_else(|| panic!("no decoder variant for {}", m.label()));
+            assert_eq!(v.name, m.label(), "the decoder spells {} differently", m.label());
+            assert!(v.thor, "{} resolved to a DominoEX variant", m.label());
+        }
+    }
+
+    /// DominoEX through the console's own controller — the mode as its own
+    /// choice rather than a THOR variant.
+    ///
+    /// `DOMX11` reads its whole corpus message; the chip row is nine variants of
+    /// one modem, and `the_domino_mode_labels_are_the_decoders` pins the names
+    /// against the decoder's own table so a spelling cannot silently retune it.
+    #[test]
+    #[ignore]
+    fn the_dominoex_corpus_sample_decodes_through_the_controller() {
+        use sdroxide_types::DominoMode;
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/DOMX11.wav");
+        let mut reader = hound::WavReader::open(path).expect("the DOMX11 sample");
+        let spec = reader.spec();
+        let audio: Vec<f32> =
+            reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+        let mut cfg = DigiConfig::default();
+        cfg.domino_mode = DominoMode::Dom11;
+        cfg.thor_reverse = true;
+        let mut ctl = TextModemController::new(Mode::DominoEx, cfg, spec.sample_rate as f64);
+        ctl.set_audio_hz(1730.0);
+        for chunk in audio.chunks(512) {
+            ctl.on_rx_audio(chunk);
+        }
+        let text = ctl.status().text_rx.to_uppercase();
+        eprintln!("DOMX11 through the controller: {text:?}");
+        assert!(
+            text.contains("EAGLE") && text.contains("LANDED") && text.contains("SDRBROWN"),
+            "the DOMX11 sample did not read back: {text:?}"
         );
     }
 

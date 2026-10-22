@@ -110,9 +110,7 @@ fn config_after(start: DigiConfig, cmds: Vec<Command>) -> DigiConfig {
     let mut h = start_engine(Box::new(SilentRig), caps(), EngineConfig::default());
     let thread = h.thread.take();
     std::thread::sleep(Duration::from_millis(200));
-    h.cmd_tx
-        .send(Command::SetMode { rx: RxId::Main, mode: Mode::Ft8 })
-        .expect("engine gone");
+    h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::Ft8 }).expect("engine gone");
     std::thread::sleep(Duration::from_millis(80));
     h.cmd_tx.send(Command::SetDigiConfig(start)).expect("engine gone");
     std::thread::sleep(Duration::from_millis(80));
@@ -153,10 +151,7 @@ fn config_after(start: DigiConfig, cmds: Vec<Command>) -> DigiConfig {
 /// command cannot carry a field it does not name, so it cannot roll one back.
 #[test]
 fn starting_a_session_leaves_the_ft8_contest_layout_and_the_rest_alone() {
-    let after = config_after(
-        operators_station(),
-        vec![Command::SetDigiContest(ContestMode::None)],
-    );
+    let after = config_after(operators_station(), vec![Command::SetDigiContest(ContestMode::None)]);
 
     assert_eq!(
         after.contest,
@@ -189,7 +184,8 @@ fn starting_a_session_leaves_the_ft8_contest_layout_and_the_rest_alone() {
 /// not clobber; this one proves it is not inert.
 #[test]
 fn a_session_with_an_ft8_layout_sets_it_and_touches_nothing_else() {
-    let after = config_after(operators_station(), vec![Command::SetDigiContest(ContestMode::EuVhf)]);
+    let after =
+        config_after(operators_station(), vec![Command::SetDigiContest(ContestMode::EuVhf)]);
     assert_eq!(after.contest, ContestMode::EuVhf);
     assert_eq!(after.my_call, "OE1XYZ");
     assert_eq!(after.fsk441_period, sdroxide_types::Fsk441Period::P30);
@@ -214,10 +210,7 @@ fn a_whole_config_write_from_a_stale_copy_is_what_the_narrow_command_exists_to_a
     let after = config_after(
         operators_station(),
         // Exactly what the panel sent: its own copy, with one field changed.
-        vec![Command::SetDigiConfig(DigiConfig {
-            contest: ContestMode::None,
-            ..stale
-        })],
+        vec![Command::SetDigiConfig(DigiConfig { contest: ContestMode::None, ..stale })],
     );
 
     assert_eq!(after.contest, ContestMode::None);

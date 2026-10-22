@@ -605,6 +605,7 @@ fn candidates(m: Mode) -> &'static [&'static str] {
         | Mode::Rtty
         | Mode::Olivia
         | Mode::Thor
+        | Mode::DominoEx
         | Mode::Mfsk
         | Mode::Contestia
         | Mode::Mt63

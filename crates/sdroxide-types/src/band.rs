@@ -440,6 +440,7 @@ impl Band {
                 Mode::RttyFm,
                 Mode::Olivia,
                 Mode::Thor,
+                Mode::DominoEx,
                 Mode::Mfsk,
                 Mode::Contestia,
                 Mode::Mt63,

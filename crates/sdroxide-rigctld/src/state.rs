@@ -165,6 +165,7 @@ pub fn to_hamlib_mode(m: Mode) -> &'static str {
         | Mode::Ale
         | Mode::Olivia
         | Mode::Thor
+        | Mode::DominoEx
         | Mode::Mfsk
         | Mode::Contestia
         | Mode::Mt63

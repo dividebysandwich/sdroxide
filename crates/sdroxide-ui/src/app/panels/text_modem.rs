@@ -755,6 +755,7 @@ impl SdroxideApp {
                 | Mode::Contestia
                 | Mode::Mt63
                 | Mode::Thor
+                | Mode::DominoEx
                 | Mode::Mfsk
         ) {
             return; // anything else has no per-mode settings
@@ -886,6 +887,39 @@ impl SdroxideApp {
                     for m in sdroxide_types::ThorMode::ALL {
                         if ui.selectable_label(cfg.thor_mode == m, m.label()).clicked() {
                             cfg.thor_mode = m;
+                            changed = true;
+                        }
+                    }
+                    ui.add_space(8.0);
+                    if ui
+                        .selectable_label(cfg.thor_reverse, "REVERSE")
+                        .on_hover_text(
+                            "Invert the tone steps. IFK+ carries its data in the step between \
+                             successive tones, so a station received on the opposite sideband \
+                             has every step negative and reads as noise until this is on.",
+                        )
+                        .clicked()
+                    {
+                        cfg.thor_reverse = !cfg.thor_reverse;
+                        changed = true;
+                    }
+                }
+                Mode::DominoEx => {
+                    // Nine variants of one modem at different symbol rates.
+                    // Nothing in the signal says which, and a decoder tuned to
+                    // the wrong one hears nothing rather than something wrong.
+                    cap(ui, "Mode");
+                    for m in sdroxide_types::DominoMode::ALL {
+                        let sel = cfg.domino_mode == m;
+                        let hint = format!(
+                            "{} — {:.1} baud, 18 tones, incremental frequency keying with no \
+                             forward error correction",
+                            m.name(),
+                            m.baud()
+                        );
+                        if ui.selectable_label(sel, m.name()).on_hover_text(hint).clicked() && !sel
+                        {
+                            cfg.domino_mode = m;
                             changed = true;
                         }
                     }

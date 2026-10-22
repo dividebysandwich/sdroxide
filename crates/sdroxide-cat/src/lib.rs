@@ -3858,10 +3858,8 @@ fn serial_thread(
             // whatever the stream is actually at — a stale 7812 while the radio
             // sends 3906 comes out an octave low.
             if streaming {
-                stream_rx_rate_hz.store(
-                    protocol.rx_audio_rate_hz(),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
+                stream_rx_rate_hz
+                    .store(protocol.rx_audio_rate_hz(), std::sync::atomic::Ordering::Relaxed);
             }
 
             std::thread::sleep(Duration::from_millis(5));

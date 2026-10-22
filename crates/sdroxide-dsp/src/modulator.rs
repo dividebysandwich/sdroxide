@@ -53,6 +53,7 @@ pub fn make_modulator(mode: Mode, rate: f64, passband: (f32, f32)) -> Option<Box
         | Mode::Navtex
         | Mode::Olivia
         | Mode::Thor
+        | Mode::DominoEx
         | Mode::Mfsk
         | Mode::Contestia
         | Mode::Mt63

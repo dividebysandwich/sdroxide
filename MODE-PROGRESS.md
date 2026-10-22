@@ -1124,6 +1124,29 @@ with the chips.
   sample at 1754 Hz reads `AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ`)
   and `a_coded_psk_selection_refuses_the_key_by_name`.
 
+### DominoEX — its own mode, and the last of the IFK family
+
+DominoEX's decoder read six of its nine corpus recordings and **the program had
+no such mode**: its audio path was THOR's, and its alphabet was not reachable.
+`Mode::DominoEx` (appended, `PROTO_VERSION` 229 → 230, `VERSION_BYTE` 0x31 →
+0x32) and `DigiConfig::domino_mode` (nine variants) are the wiring; the receiver
+is the same `IfkRx` adapter THOR uses, because they are one front end and differ
+only in what the steps mean.
+
+* **The chip row is nine variants** — DOMINOEX 4 … 88 and MICRO — with **REVERSE**
+  shared with THOR, since IFK+ carries its data in the step and a mirrored signal
+  has every step negative.
+* **The mode tables are the ripple**: nine CAT dialects, TCI, rigctld, SmartSDR,
+  speech, the engine's mode class, the band lists and the 11 m set all had to
+  learn it, and `Mode::ALL`/`DIGITAL`/`is_digital`/`is_text_modem` are checked by
+  the type tests rather than by the compiler.
+* **Gates**: `the_dominoex_corpus_sample_decodes_through_the_controller` (DOMX11
+  at 1730 Hz reversed reads `AA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN
+  ZZZ`) and `the_ifk_mode_labels_are_the_decoders`, which pins every THOR and
+  DominoEX label against the decoder's own table so a spelling cannot silently
+  retune a receiver.
+* **Receive only**: no modulator, so `is_rx_only` says so on the chip.
+
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:
