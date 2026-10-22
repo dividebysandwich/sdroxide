@@ -1179,18 +1179,21 @@ rotation, the MFSK varicode — and the receiver reads `EST THE EAGLE HAS LANDED
 first second). So the mapping, the differential detection and the varicode are all
 correct, and the corpus is what disagrees.
 
-**What is left is the vestigial sideband, and it is a real one.** fldigi's 8PSK is
-*vestigial*: the transmitter suppresses one sideband (`vestigial = true`, an 11-bin
-sfft filter around the carrier) to fit a 125-baud signal into a narrow slot, and
-its receiver applies the matching filter. A single-sidebanded PSK signal is not a
-double-sidebanded one — the phase trajectory that differential detection reads is
-changed by the missing half — so a plain receiver sees a distorted constellation,
-which is exactly the garbage measured here. Four bauds (62.5, 125, 250, 500) at
-every centre from 1200 to 2200 Hz in 10 Hz steps all read nothing, so it is not a
-tuning error either.
+**What is *not* the explanation, checked after the fact:** the vestigial filter.
+`psk.cxx` builds an 11-bin sfft about the carrier when `vestigial` is set, but it
+runs **only for AFC** — `if (numcarriers == 1 && vestigial && progdefaults.pskpilot)`
+— and the data path is the ordinary `fir1`/`fir2` chain. A VSB-shaped signal is
+therefore not what a plain receiver is missing, and an earlier version of this note
+said it was. The filter also lands ~11 Hz wide, which could not pass a 125-baud
+signal at all; that is what sent the claim back to the source.
 
-**The next step is therefore specific:** an asymmetric (vestigial) filter on the
-front end, 11 bins of a 16 kHz sfft about the carrier, as `psk.cxx` builds it.
+**Where it stands, measured:** four bauds (62.5, 125, 250, 500) × every centre
+from 1200 to 2200 Hz in 10 Hz steps, all reading nothing, while the synthetic at
+125 baud reads. Frequency offset is ruled out as the whole story by 8PSK1000 (a
+1 kHz-wide signal has ±31 Hz of differential tolerance and still fails). The next
+thing to measure is what the recording actually contains — its occupied bandwidth
+against the 125 Hz a 8PSK125 should occupy — because a recording that is not that
+signal cannot be decoded by any slicer.
 
 ### DTMF — eight tones, and two things the reference leaves to its squelch
 
