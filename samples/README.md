@@ -71,6 +71,25 @@ recorded in `our-captures/README.md` before they moved here:
 | `olivia_32-1k_cb_knowntext.wav` | Olivia 32/1k | `THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789` |
 | `mfsk16_cb_eagle.wav` | MFSK16 | `TEST TEST THE EAGLE HAS LANDED 1234567890` |
 
+### Samples that are evidence of a fault, not gates
+
+`psk500r_truncated_2026-10-21.wav` is the corpus sample for PSK500R as it was
+recorded on 2026-10-21. It carries exactly
+`AAA TEST TEST THE EAGLE HAS ` and then nothing decodable — proved twice, once
+by our receiver and once by an independent decoder written from fldigi's own
+source. It is kept because it is the evidence for a verdict, not because it is
+usable: the mode now has a fresh recording in `fldigi/` that reads its whole
+text, and this file is what made "the sample, not the port" a measurement.
+
+`pskc4_27415_2026-10-22.wav`, `psk1000c2_…`, `psk125c12_…` and `psk500rc4_…`
+are the same four wide multi-carrier modes recorded again off the bench on
+2026-10-22, through a properly tuned antenna at 4 W, twenty seconds each around
+the burst. None of them decodes, and they are here because that is the finding:
+a fresh, strong recording is no better than the corpus one — `PSK500C4` scores
+**0.767** of the known text against the corpus sample's 0.841, where a clean
+synthetic bank of the same shape measures 1.000. So for these four the fault is
+not the recording. The measurement is `tools/psk-ref/psk_text_match.py`.
+
 ## Using them
 
 The decoders' tests take a path from the environment, and default to here:

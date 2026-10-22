@@ -247,10 +247,21 @@ def audio_from_iq(path, rate, bandwidth):
     # find, and the strongest block of five hundred hertz was band noise a
     # kilohertz away, which is exactly why the first BPSK31 sample did not
     # decode. Both are recorded and the verifier tries each.
-    peak_hz = float(f[int(np.argmax(spec))])
+    #
+    # **The search is confined to the audio band, and that is not a refinement.**
+    # A rig's transmit audio is 300–3000 Hz by design, so nothing the operator
+    # sends can be outside it — but the RSP1 has a fixed spur 44–72 kHz up from
+    # its centre that is far stronger than any signal. Searching the whole
+    # ±125 kHz let the spur win: the cut then kept 69–74 kHz, the resampler threw
+    # all of it away, and the file was a band of amplified noise reported as
+    # "nothing transmitted". One PSK500R sweep was lost to that before the peak
+    # was printed beside the level.
+    audio_lo, audio_hi = 100.0, 3800.0
+    in_band = (f >= audio_lo) & (f <= audio_hi)
+    peak_hz = float(f[int(np.argmax(np.where(in_band, spec, 0.0)))])
     win = max(1, int(bandwidth * 1.5 / (f[1] - f[0])))
     energy = np.convolve(spec, np.ones(win) / win, "same")
-    block_hz = float(f[int(np.argmax(energy))])
+    block_hz = float(f[int(np.argmax(np.where(in_band, energy, 0.0)))])
 
     # The audio is cut generously around the peak so that whichever candidate a
     # decoder is given, the samples it needs are in the file.
@@ -263,11 +274,16 @@ def audio_from_iq(path, rate, bandwidth):
     k = min(len(Y), len(X))
     Y[:k] = X[:k]
     wav = np.fft.irfft(Y, n=out)
+    # The burst is measured on the *extracted audio*, not on the raw IQ: a
+    # constant spur in the IQ gives a flat envelope, which reads as a carrier
+    # that was up for the whole file. Whatever is in the band is the only thing
+    # that can carry a transmission.
+    burst = burst_seconds(wav, 8000.0)
     peak = np.abs(wav).max()
     rms = float(wav.std())
     if peak > 0:
         wav = wav / peak * 0.7
-    return peak_hz, block_hz, wav, 20 * np.log10(max(rms, 1e-9)), burst_seconds(a, rate)
+    return peak_hz, block_hz, wav, 20 * np.log10(max(rms, 1e-9)), burst
 
 
 def sweep_one(p, mode, args, index, total):

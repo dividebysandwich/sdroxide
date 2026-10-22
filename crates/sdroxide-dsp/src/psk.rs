@@ -1564,14 +1564,14 @@ mod tests {
     /// carriers measured from the audio are 1738 (BPSK63F) and 1754–1758 (the
     /// `R` set), which is where the search lands.
     ///
-    /// **PSK500R reads its first 27 characters and nothing after them**, and the
-    /// fault is in the recording, not the code: the audio is clean throughout
-    /// (mean |soft| 0.99 from two seconds to thirty-four), a depth sweep from 2
-    /// to 400 in both pairings finds no better alignment, and inserting a
-    /// one-symbol slip anywhere in the stream does not recover it either. What
-    /// the stream carries is exactly `AAA TEST TEST THE EAGLE HAS ` — the words
-    /// after it appear nowhere in it. The same receiver reads PSK125R, PSK250R
-    /// and PSK1000R whole.
+    /// **PSK500R was the family's last unread sample, and the fault was the
+    /// recording.** The 2026-10-21 sample carries exactly
+    /// `AAA TEST TEST THE EAGLE HAS ` (207 bits, perfect, then ~50 % forever) and
+    /// the words after it appear nowhere in it — proved twice, once here and
+    /// once with an independent decoder written from fldigi's source. It is kept
+    /// as `samples/bench/psk500r_truncated_2026-10-21.wav`. A fresh transmission
+    /// off the bench on 2026-10-22 reads the whole text at 3/3 from 1700 to
+    /// 1780 Hz, and **all five now read their whole sample**.
     #[test]
     #[ignore]
     fn the_corpus_pskr_samples_are_measured() {
@@ -1619,7 +1619,7 @@ mod tests {
         for l in &lines {
             eprintln!("{l}");
         }
-        for name in ["BPSK63F", "PSK125R", "PSK250R", "PSK1000R"] {
+        for name in ["BPSK63F", "PSK125R", "PSK250R", "PSK500R", "PSK1000R"] {
             let line = lines.iter().find(|l| l.starts_with(name)).expect("every sample measured");
             assert!(line.contains("3/3"), "{line}");
         }
