@@ -43,6 +43,9 @@ mod remote;
 /// Asking egui for the next frame at the rate actually asked for.
 pub mod repaint;
 mod rf_paint;
+/// Headless-ish screenshot capture (see `--screenshot`). Uses only the egui
+/// screenshot API, so it builds for wasm32 too.
+pub mod screenshot;
 /// Solar-system 3D view. A second OS window natively, a second browser tab on
 /// the web; the sole consumer of depth/MSAA/vertex buffers either way.
 mod solar3d;
@@ -76,6 +79,7 @@ pub use app::SdroxideApp;
 // `app::set_open_settings_tab`.
 pub use app::set_open_settings_tab;
 pub use multi::{MultiApp, RadioFactory, RadioTab, RemoteFactory};
+pub use screenshot::{ScreenshotApp, ScreenshotResult};
 #[cfg(feature = "remote")]
 pub use remote::{AudioBridge, RemoteController};
 /// The solar-system view as a standalone app, for the browser tab the ☀ 3D
