@@ -60,8 +60,27 @@ fn js8_personally_addressed(m: &sdroxide_types::Js8Msg) -> bool {
     m.to_me && !m.to.eq_ignore_ascii_case("@ALLCALL")
 }
 
+fn js8_is_outgoing(m: &sdroxide_types::Js8Msg, my_call: &str) -> bool {
+    !my_call.is_empty() && m.from.eq_ignore_ascii_case(my_call)
+}
+
+/// Clicking our own line continues the conversation with its recipient,
+/// rather than drafting a reply addressed back to ourselves.
+fn js8_conversation_target<'a>(m: &'a sdroxide_types::Js8Msg, my_call: &str) -> Option<&'a str> {
+    let call = if js8_is_outgoing(m, my_call) {
+        if m.to.eq_ignore_ascii_case("@ALLCALL") {
+            return None;
+        }
+        &m.to
+    } else {
+        &m.from
+    };
+    non_empty(call)
+}
+
 /// What the composer can quote about our own station when it drafts a reply.
 struct Js8Me {
+    call: String,
     grid: String,
     status: String,
     /// Callsigns heard recently, most recent first — the answer to `HEARING?`.
@@ -874,8 +893,9 @@ impl SdroxideApp {
                     ui.label(RichText::new("— no messages —").weak());
                 }
                 for (i, m) in js8.messages.iter().enumerate() {
-                    let selected =
-                        !m.from.is_empty() && self.js8_target.eq_ignore_ascii_case(&m.from);
+                    let outgoing = js8_is_outgoing(m, &me.call);
+                    let peer = js8_conversation_target(m, &me.call);
+                    let selected = peer.is_some_and(|p| self.js8_target.eq_ignore_ascii_case(p));
                     let to_me = js8_personally_addressed(m);
                     let inner = egui::Frame::new()
                         .fill(if to_me { crate::theme::TOME_BG() } else { crate::theme::ROW_BG() })
@@ -889,6 +909,15 @@ impl SdroxideApp {
                                 ui.label(
                                     RichText::new(format!("{h:02}:{mi:02}")).monospace().weak(),
                                 );
+                                if outgoing {
+                                    ui.label(
+                                        RichText::new("TX")
+                                            .monospace()
+                                            .strong()
+                                            .color(crate::theme::GREEN()),
+                                    )
+                                    .on_hover_text("Transmitted by this station");
+                                }
                                 // Which of the four waveforms carried this.
                                 // Only where it is a question: with one speed
                                 // running every row is that speed and a column
@@ -904,7 +933,11 @@ impl SdroxideApp {
                                             .monospace()
                                             .color(crate::theme::PINK()),
                                     )
-                                    .on_hover_text(format!("Decoded at {}", m.speed.label()));
+                                    .on_hover_text(format!(
+                                        "{} at {}",
+                                        if outgoing { "Sent" } else { "Decoded" },
+                                        m.speed.label()
+                                    ));
                                 }
                                 if to_me {
                                     ui.label(RichText::new("★").color(crate::theme::YELLOW()));
@@ -912,7 +945,9 @@ impl SdroxideApp {
                                 let who = if m.from.is_empty() { "…" } else { &m.from };
                                 ui.label(
                                     RichText::new(format!("{who}:")).monospace().strong().color(
-                                        if to_me {
+                                        if outgoing {
+                                            crate::theme::GREEN()
+                                        } else if to_me {
                                             crate::theme::CYAN()
                                         } else {
                                             crate::theme::CYAN_DIM()
@@ -946,7 +981,12 @@ impl SdroxideApp {
                                 ui.label(if m.complete { body } else { body.weak() });
                                 if !m.complete {
                                     ui.label(
-                                        RichText::new(format!("… ({} frames)", m.frames)).weak(),
+                                        RichText::new(if outgoing {
+                                            format!("partial ({} frames sent)", m.frames)
+                                        } else {
+                                            format!("… ({} frames)", m.frames)
+                                        })
+                                        .weak(),
                                     );
                                 }
                             });
@@ -964,14 +1004,14 @@ impl SdroxideApp {
                     let mut row = ui.interact(r, ui.id().with(("js8m", i)), egui::Sense::click());
                     // Drafted only for the row under the cursor: the log holds
                     // two hundred of these and every draft is an allocation.
-                    if !m.from.is_empty() && (row.hovered() || row.clicked()) {
-                        let draft = js8_reply_for(m, &me);
+                    if let Some(peer) = peer.filter(|_| row.hovered() || row.clicked()) {
+                        let draft = if outgoing { None } else { js8_reply_for(m, &me) };
                         row = row.on_hover_text(match &draft {
-                            Some(d) => format!("Reply to {}: “{d}”", m.from),
-                            None => format!("Address the composer at {}", m.from),
+                            Some(d) => format!("Reply to {peer}: “{d}”"),
+                            None => format!("Address the composer at {peer}"),
                         });
                         if row.clicked() {
-                            pick = Some((m.from.clone(), draft));
+                            pick = Some((peer.to_string(), draft));
                         }
                     }
                     if selected || row.hovered() {
@@ -1001,6 +1041,7 @@ impl SdroxideApp {
     fn js8_me(&self, js8: &sdroxide_types::Js8Status) -> Js8Me {
         let cfg = self.digi_status.as_ref().map(|s| &s.config).unwrap_or(&self.digi_cfg_edit);
         Js8Me {
+            call: if cfg.js8_call.is_empty() { &cfg.my_call } else { &cfg.js8_call }.to_uppercase(),
             grid: cfg.my_grid.to_uppercase(),
             status: cfg.js8_status.clone(),
             hearing: js8.heard.iter().take(4).map(|h| h.call.clone()).collect(),
@@ -1201,11 +1242,15 @@ mod js8_panel_tests {
         assert_eq!(js8_frame_estimate("   "), 1);
     }
 
-    use super::{Js8Me, js8_msg_summary, js8_personally_addressed, js8_reply_for};
+    use super::{
+        Js8Me, js8_conversation_target, js8_is_outgoing, js8_msg_summary, js8_personally_addressed,
+        js8_reply_for,
+    };
     use sdroxide_types::Js8Msg;
 
     fn me() -> Js8Me {
         Js8Me {
+            call: "N0JDS".into(),
             grid: "FN42".into(),
             status: "PORTABLE".into(),
             hearing: vec!["KN4CRD".into(), "VK3ABC".into()],
@@ -1228,6 +1273,33 @@ mod js8_panel_tests {
             to_me: true,
             speed: sdroxide_types::Js8Speed::Normal,
         }
+    }
+
+    #[test]
+    fn only_messages_from_our_configured_call_are_marked_tx() {
+        let mut m = msg(Some("SNR"), "KN4CRD");
+        m.from = "W1ABC".into();
+        assert!(js8_is_outgoing(&m, "w1abc"));
+        assert!(!js8_is_outgoing(&m, "N0JDS"));
+        assert!(!js8_is_outgoing(&m, ""));
+        m.from.clear();
+        assert!(!js8_is_outgoing(&m, ""));
+    }
+
+    #[test]
+    fn clicking_our_transmission_selects_its_recipient() {
+        let mut m = msg(Some("HEARTBEAT SNR"), "KN4CRD");
+        m.from = "N0JDS".into();
+        m.to_me = false;
+        assert_eq!(js8_conversation_target(&m, "n0jds"), Some("KN4CRD"));
+        m.to = "@ALLCALL".into();
+        assert_eq!(js8_conversation_target(&m, "N0JDS"), None);
+        m.to = "@JS8NET".into();
+        assert_eq!(js8_conversation_target(&m, "N0JDS"), Some("@JS8NET"));
+        m.to.clear();
+        assert_eq!(js8_conversation_target(&m, "N0JDS"), None);
+        let incoming = msg(Some("SNR?"), "N0JDS");
+        assert_eq!(js8_conversation_target(&incoming, "N0JDS"), Some("KN4CRD"));
     }
 
     #[test]

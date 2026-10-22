@@ -249,7 +249,7 @@ impl Js8Assembler {
     pub fn in_progress(&self) -> Vec<Js8Msg> {
         self.partials
             .iter()
-            .filter(|p| !p.text.is_empty())
+            .filter(|p| !p.text.is_empty() || !p.from.is_empty())
             .map(|p| p.to_msg(false, &self.my_call, &self.my_groups))
             .collect()
     }
@@ -284,6 +284,25 @@ mod tests {
         }
         .pack()
         .expect("packs")
+    }
+
+    #[test]
+    fn a_directed_header_is_visible_before_its_text_arrives() {
+        let mut a = Js8Assembler::new("N0JDS");
+        let head = decode(directed("KN4CRD", "N0JDS", " STATUS"), Js8Flags::FIRST, 1500.0);
+        assert!(a.push(&head, 1000).is_none());
+        let partial = a.in_progress();
+        assert_eq!(partial.len(), 1, "a header with no text must still be visible");
+        assert_eq!(partial[0].from, "KN4CRD");
+        assert_eq!(partial[0].to, "N0JDS");
+        assert_eq!(partial[0].cmd.as_deref(), Some("STATUS"));
+        assert!(partial[0].text.is_empty());
+        assert!(!partial[0].complete);
+        let (body, _) = pack_data("PORTABLE").expect("packs");
+        let msg = a.push(&decode(body, Js8Flags::LAST, 1500.0), 1015).expect("completes");
+        assert_eq!(msg.text.trim(), "PORTABLE");
+        assert!(msg.complete);
+        assert!(a.in_progress().is_empty());
     }
 
     #[test]

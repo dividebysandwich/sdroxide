@@ -231,6 +231,11 @@ pub struct Js8Controller {
     heard: Vec<Js8Heard>,
     messages: Vec<Js8Msg>,
 
+    /// Reassemble only frames whose burst finished. Keeping this separate from
+    /// RX prevents our own text from generating replies or heard-station spots.
+    tx_assembler: Js8Assembler,
+    tx_inflight: Option<(Js8Decode, i64)>,
+
     /// Frames still to go out, one per slot.
     tx_frames: VecDeque<TxFrame>,
     tx_total: u8,
@@ -309,6 +314,8 @@ impl Js8Controller {
             assembler,
             heard: Vec::new(),
             messages: Vec::new(),
+            tx_assembler: Js8Assembler::new(""),
+            tx_inflight: None,
             tx_frames: VecDeque::new(),
             tx_total: 0,
             tx_fired_slot: i64::MIN,
@@ -352,6 +359,39 @@ impl Js8Controller {
         self.tx_frames = frames.into_iter().map(TxFrame::working).collect();
         self.tx_total = self.tx_frames.len().min(255) as u8;
         self.status_dirty = true;
+    }
+
+    fn remember_message(&mut self, msg: Js8Msg) {
+        self.messages.push(msg);
+        if self.messages.len() > MSG_CAP {
+            self.messages.remove(0);
+        }
+    }
+
+    fn outgoing_message(&self, mut msg: Js8Msg) -> Js8Msg {
+        // Undirected text has no sender on the wire; we know who sent it.
+        if msg.from.is_empty() {
+            msg.from = self.my_call();
+        }
+        msg.to_me = false;
+        msg
+    }
+
+    fn finish_partial_tx(&mut self) {
+        for msg in self.tx_assembler.in_progress() {
+            self.remember_message(self.outgoing_message(msg));
+        }
+        self.tx_assembler = Js8Assembler::new("");
+    }
+
+    fn message_history(&self) -> Vec<Js8Msg> {
+        let mut messages = self.messages.clone();
+        messages
+            .extend(self.tx_assembler.in_progress().into_iter().map(|m| self.outgoing_message(m)));
+        if messages.len() > MSG_CAP {
+            messages.drain(..messages.len() - MSG_CAP);
+        }
+        messages
     }
 
     /// The heartbeat someone asked for by typing it.
@@ -490,7 +530,9 @@ impl Js8Controller {
 
     /// The frames an auto-reply becomes.
     fn frames_for_reply(&self, reply: Js8Reply) -> Vec<Js8Payload> {
-        let Some(head) = reply.directed.pack() else { return Vec::new() };
+        let Some(head) = reply.directed.pack() else {
+            return Vec::new();
+        };
         let mut out = vec![head];
         if let Some(body) = reply.body.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
             out.extend(self.data_frames(&body.to_ascii_uppercase()));
@@ -503,7 +545,9 @@ impl Js8Controller {
         let mut out = Vec::new();
         let mut rest = text.to_ascii_uppercase();
         while !rest.trim().is_empty() && out.len() < 32 {
-            let Some((payload, used)) = frame::pack_data(&rest) else { break };
+            let Some((payload, used)) = frame::pack_data(&rest) else {
+                break;
+            };
             if used == 0 {
                 break;
             }
@@ -859,7 +903,9 @@ impl DigiEngine for Js8Controller {
     }
 
     fn on_rx_audio(&mut self, tap: &[f32]) {
-        let Some(rs) = self.resampler.as_mut() else { return };
+        let Some(rs) = self.resampler.as_mut() else {
+            return;
+        };
         self.tap_scratch.clear();
         rs.push(tap, &mut self.tap_scratch);
         // Resampled once and handed to each speed being listened for: the
@@ -930,10 +976,7 @@ impl DigiEngine for Js8Controller {
                             self.note_hb_ack(&msg.from, unix_now);
                         }
                     }
-                    self.messages.push(msg);
-                    if self.messages.len() > MSG_CAP {
-                        self.messages.remove(0);
-                    }
+                    self.remember_message(msg);
                 }
                 // The activity list shows the raw frame; the conversation
                 // view shows the reassembled message. Callsign parsing happens
@@ -963,7 +1006,7 @@ impl DigiEngine for Js8Controller {
         }
 
         for expired in self.assembler.expire(unix_now) {
-            self.messages.push(expired);
+            self.remember_message(expired);
             self.status_dirty = true;
         }
 
@@ -973,7 +1016,9 @@ impl DigiEngine for Js8Controller {
         //    own clock, because a Turbo slot is not a sixth of a Normal one.
         let cap = self.rx_slots.len() * MAX_JOBS_PER_SPEED;
         for slot in &mut self.rx_slots {
-            let Some(job) = slot.take_finished(now) else { continue };
+            let Some(job) = slot.take_finished(now) else {
+                continue;
+            };
             // A dropped job costs one slot of decodes; a queue that grows
             // without bound costs the whole session.
             if self.jobs_queued.load(Ordering::Relaxed) >= cap {
@@ -1005,6 +1050,18 @@ impl DigiEngine for Js8Controller {
                         _ => self.audio_hz,
                     };
                     if let Some(b) = self.synth_burst_48k(frame.payload, hz) {
+                        self.tx_inflight = Some((
+                            Js8Decode {
+                                payload: frame.payload,
+                                audio_hz: hz,
+                                dt_sec: 0.0,
+                                snr_db: 0.0,
+                                sync_score: 0.0,
+                                hard_errors: 0,
+                                speed: self.speed,
+                            },
+                            self.scheduler.slot_start_unix(idx) as i64,
+                        ));
                         if frame.band == TxBand::Beacon {
                             self.hb_hz = Some(hz);
                         }
@@ -1051,6 +1108,16 @@ impl DigiEngine for Js8Controller {
     }
 
     fn on_burst_done(&mut self) {
+        // KeyTx can still be refused by the radio engine. Logging here, after
+        // the audio has drained, avoids calling queued or rejected text sent.
+        if let Some((frame, slot_utc)) = self.tx_inflight.take() {
+            if Js8Flags(frame.payload.frame_type).is_first() {
+                self.finish_partial_tx();
+            }
+            if let Some(msg) = self.tx_assembler.push(&frame, slot_utc) {
+                self.remember_message(self.outgoing_message(msg));
+            }
+        }
         self.burst = None;
         self.keyed = false;
         if self.tx_frames.is_empty() {
@@ -1067,6 +1134,10 @@ impl DigiEngine for Js8Controller {
     }
 
     fn abort_tx(&mut self) {
+        self.tx_inflight = None;
+        // Retain the prefix that really went out, marked incomplete, without
+        // claiming the interrupted frame or the unsent queue was delivered.
+        self.finish_partial_tx();
         self.burst = None;
         self.keyed = false;
         self.tx_frames.clear();
@@ -1177,7 +1248,7 @@ impl DigiEngine for Js8Controller {
             js8: Some(Js8Status {
                 speed: self.speed,
                 heard: self.heard.clone(),
-                messages: self.messages.clone(),
+                messages: self.message_history(),
                 tx_frames_pending: self.tx_frames.len().min(255) as u8,
                 tx_frames_total: self.tx_total,
                 next_hb_in_s: self.hb_countdown_s,
@@ -1211,6 +1282,231 @@ mod tests {
             js8_speed: Js8Speed::Normal,
             ..Default::default()
         }
+    }
+
+    fn conversation(c: &Js8Controller) -> Vec<Js8Msg> {
+        c.status().js8.expect("JS8 status").messages
+    }
+
+    fn finish_burst(c: &mut Js8Controller) {
+        let mut audio = [0.0; 4096];
+        while !c.fill_tx_block(&mut audio) {}
+        c.on_burst_done();
+    }
+
+    fn transmit_frame(c: &mut Js8Controller, slot_utc: i64) {
+        let actions = c.poll(at(slot_utc as f64 + 1.0), 7_078_000.0);
+        assert!(actions.iter().any(|a| matches!(a, DigiAction::KeyTx)));
+        finish_burst(c);
+    }
+
+    #[test]
+    fn sent_text_enters_history_only_after_its_burst_finishes() {
+        let mut c = Js8Controller::new(cfg(), 48_000.0);
+        c.send_text("KN4CRD SNR -12".into());
+        assert!(conversation(&c).is_empty(), "queued is not sent");
+        c.poll(at(1_700_000_010.5), 7_078_000.0);
+        assert!(conversation(&c).is_empty(), "keying is not completion");
+        finish_burst(&mut c);
+        let history = conversation(&c);
+        assert_eq!(history.len(), 1);
+        let msg = &history[0];
+        assert_eq!(msg.from, "N0JDS");
+        assert_eq!(msg.to, "KN4CRD");
+        assert_eq!(msg.cmd.as_deref(), Some("SNR"));
+        assert_eq!(msg.text, "-12");
+        assert_eq!(msg.last_slot_utc, 1_700_000_010);
+        assert_eq!(msg.audio_hz, 1500.0);
+        assert!(msg.complete);
+        assert!(!msg.to_me);
+        assert!(c.heard.is_empty(), "our own TX must not become a received spot");
+        c.clear_rx();
+        assert!(conversation(&c).is_empty());
+    }
+
+    #[test]
+    fn a_sent_multi_frame_message_is_one_history_entry() {
+        let mut c = Js8Controller::new(cfg(), 48_000.0);
+        let text = "HELLO FROM THE HILLS THIS IS A LONG MESSAGE THAT NEEDS SEVERAL FRAMES";
+        c.send_text(format!("KN4CRD {text}"));
+        let frames = c.tx_frames.len();
+        assert!(frames > 2);
+        for i in 0..frames {
+            transmit_frame(&mut c, 1_700_000_010 + i as i64 * 15);
+            let history = conversation(&c);
+            assert_eq!(history.len(), 1, "frame {i} duplicated the message");
+            assert_eq!(history[0].complete, i == frames - 1);
+            assert_eq!(history[0].frames as usize, i + 1);
+        }
+        let history = conversation(&c);
+        assert_eq!(history[0].from, "N0JDS");
+        assert_eq!(history[0].to, "KN4CRD");
+        assert_eq!(history[0].text.trim(), text);
+    }
+
+    #[test]
+    fn abort_keeps_only_the_frames_that_finished() {
+        let mut c = Js8Controller::new(cfg(), 48_000.0);
+        c.send_text("KN4CRD SNR -12".into());
+        c.abort_tx();
+        assert!(conversation(&c).is_empty());
+        c.send_text("KN4CRD SNR -12".into());
+        c.poll(at(1_700_000_010.5), 7_078_000.0);
+        c.abort_tx(); // Includes a KeyTx refused by the engine's safety rails.
+        assert!(conversation(&c).is_empty());
+
+        let text = "HELLO FROM THE HILLS THIS IS A LONG MESSAGE THAT NEEDS SEVERAL FRAMES";
+        c.send_text(format!("KN4CRD {text}"));
+        transmit_frame(&mut c, 1_700_000_025);
+        transmit_frame(&mut c, 1_700_000_040);
+        let prefix = conversation(&c)[0].text.clone();
+        assert!(!prefix.trim().is_empty());
+        assert!(text.starts_with(prefix.trim()));
+        assert_ne!(prefix.trim(), text);
+        c.poll(at(1_700_000_055.5), 7_078_000.0);
+        c.abort_tx();
+        let history = conversation(&c);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].frames, 2);
+        assert!(!history[0].complete);
+        assert_eq!(history[0].text, prefix, "an interrupted frame was counted as sent");
+
+        c.send_text("KN4CRD SNR -5".into());
+        transmit_frame(&mut c, 1_700_000_070);
+        assert_eq!(conversation(&c).len(), 2);
+        assert_eq!(conversation(&c)[1].text, "-5");
+    }
+
+    #[test]
+    fn broadcasts_and_undirected_text_also_enter_sent_history() {
+        let mut c = Js8Controller::new(cfg(), 48_000.0);
+        for (i, text) in ["HB", "CQ", "HELLO WORLD"].into_iter().enumerate() {
+            c.send_text(text.into());
+            transmit_frame(&mut c, 1_700_000_010 + i as i64 * 15);
+        }
+        let history = conversation(&c);
+        assert_eq!(history.len(), 3);
+        assert!(history.iter().all(|m| m.from == "N0JDS" && m.complete && !m.to_me));
+        assert_eq!(history[0].cmd.as_deref(), Some("HB"));
+        assert_eq!(history[1].cmd.as_deref(), Some("CQ"));
+        assert_eq!(history[2].text.trim(), "HELLO WORLD");
+    }
+
+    #[test]
+    fn automatic_query_replies_are_recorded_with_the_received_question() {
+        // Directed queries already work on main, so this test is independent
+        // of the separate fix for receiving compound heartbeat frames.
+        for (query, command, text) in [
+            (" SNR?", "SNR", "-11"),
+            (" GRID?", "GRID", "FN42"),
+            (" STATUS?", "STATUS", "PORTABLE"),
+        ] {
+            let mut c =
+                Js8Controller::new(DigiConfig { js8_status: "PORTABLE".into(), ..cfg() }, 48_000.0);
+            let payload = Directed {
+                from: "KN4CRD".into(),
+                to: "N0JDS".into(),
+                cmd: frame::cmd_code(query).expect("command"),
+                num: None,
+                portable_from: false,
+                portable_to: false,
+            }
+            .pack()
+            .expect("packs");
+            let (tx, rx) = std::sync::mpsc::channel();
+            c.res_rx = rx;
+            tx.send((
+                1_700_000_010,
+                vec![Js8Decode {
+                    payload: Js8Controller::single(payload),
+                    audio_hz: 1250.0,
+                    dt_sec: 0.0,
+                    snr_db: -11.0,
+                    sync_score: 3.0,
+                    hard_errors: 0,
+                    speed: Js8Speed::Normal,
+                }],
+            ))
+            .expect("delivered");
+            c.poll(at(1_700_000_025.0), 7_078_000.0);
+            assert_eq!(conversation(&c).len(), 1, "an unsent answer was logged");
+            let frames = c.tx_frames.len();
+            assert!(frames > 0);
+            for i in 0..frames {
+                transmit_frame(&mut c, 1_700_000_025 + i as i64 * 15);
+            }
+            let history = conversation(&c);
+            assert_eq!(history.len(), 2, "{query}");
+            assert_eq!(history[0].from, "KN4CRD");
+            assert_eq!(history[1].from, "N0JDS");
+            assert_eq!(history[1].to, "KN4CRD");
+            assert_eq!(history[1].cmd.as_deref(), Some(command));
+            assert_eq!(history[1].text.trim(), text);
+            assert!(history[1].complete);
+            assert_eq!(c.heard.len(), 1, "TX must not create a heard station");
+        }
+    }
+
+    #[test]
+    fn a_transmitted_heartbeat_acknowledgement_keeps_its_report_and_beacon_frequency() {
+        let mut c = Js8Controller::new(DigiConfig { js8_hb_ack: true, ..cfg() }, 48_000.0);
+        // Use the existing directed-reply fixture: heartbeat reception is
+        // covered by the separate heartbeat patch, not a prerequisite here.
+        let reply = auto_reply(
+            &heartbeat_from("KN4CRD", -11),
+            &c.station(),
+            ReplyPolicy { auto_reply: true, hb_ack: true },
+        )
+        .expect("reply");
+        c.tx_frames.extend(c.frames_for_reply(reply).into_iter().map(TxFrame::beacon));
+        transmit_frame(&mut c, 1_700_000_010);
+        let history = conversation(&c);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].from, "N0JDS");
+        assert_eq!(history[0].to, "KN4CRD");
+        assert_eq!(history[0].cmd.as_deref(), Some("HEARTBEAT SNR"));
+        assert_eq!(history[0].text, "-11");
+        assert_eq!(Some(history[0].audio_hz), c.hb_hz);
+        assert!(history[0].audio_hz >= HB_BAND_LO_HZ);
+        assert!(history[0].audio_hz < HB_BAND_HI_HZ);
+        assert!(history[0].complete);
+    }
+
+    #[test]
+    fn sent_history_preserves_the_selected_speed_and_js8_callsign() {
+        for speed in Js8Speed::ALL {
+            let mut c = Js8Controller::new(
+                DigiConfig { js8_speed: speed, js8_call: "W1ABC".into(), ..cfg() },
+                48_000.0,
+            );
+            c.send_text("KN4CRD SNR -3".into());
+            transmit_frame(&mut c, 1_700_000_040);
+            let history = conversation(&c);
+            assert_eq!(history.len(), 1);
+            assert_eq!(history[0].from, "W1ABC");
+            assert_eq!(history[0].speed, speed);
+            assert_eq!(history[0].first_slot_utc, 1_700_000_040);
+            assert_eq!(history[0].last_slot_utc, 1_700_000_040);
+        }
+    }
+
+    #[test]
+    fn sent_history_evicts_the_oldest_message_when_full() {
+        let mut c = Js8Controller::new(cfg(), 48_000.0);
+        c.messages = (0..MSG_CAP)
+            .map(|i| {
+                let mut m = heartbeat_from("KN4CRD", -11);
+                m.last_slot_utc = i as i64;
+                m
+            })
+            .collect();
+        c.send_text("KN4CRD SNR -7".into());
+        transmit_frame(&mut c, 1_700_000_010);
+        let history = conversation(&c);
+        assert_eq!(history.len(), MSG_CAP);
+        assert_eq!(history[0].last_slot_utc, 1);
+        assert_eq!(history.last().expect("newest").from, "N0JDS");
+        assert_eq!(history.last().expect("newest").text, "-7");
     }
 
     /// What a receiver makes of a frame sequence — the only measure of whether
