@@ -1,7 +1,7 @@
 //! Stored frequency memories, marked along the bottom of the waterfall.
 //!
 //! One label per memory whose dial lands in the visible span, reading
-//! `Mem: folder / name` — or `Mem: name` for an unfiled one — hung on a thin
+//! `folder / name` — or just `name` for an unfiled one — hung on a thin
 //! vertical line at the frequency itself.
 //!
 //! Stacked inwards from the band-plan strip rather than over it, and packed
@@ -43,8 +43,10 @@ pub struct MemMark {
     pub id: u32,
     /// The memory's dial frequency.
     pub freq_hz: f64,
-    /// Already formatted — `Mem: folder / name`.
+    /// Already formatted — `folder / name` (or just `name`).
     pub text: String,
+    /// The colour the mark is painted in.
+    pub color: Color32,
 }
 
 /// One mark, placed. Produced by [`layout`] and consumed by [`draw`], with the
@@ -54,6 +56,8 @@ pub struct MemBox {
     pub rect: Rect,
     /// Which mark in the slice this was laid out from.
     pub idx: usize,
+    /// The colour the mark is painted in.
+    pub color: Color32,
     /// The frequency line, from the strip edge out past the label.
     tick: [eframe::egui::Pos2; 2],
     galley: std::sync::Arc<eframe::egui::Galley>,
@@ -114,7 +118,6 @@ pub fn layout(
         return out;
     }
 
-    let ink = crate::theme::scope().good;
     let font = FontId::proportional(PT * fs);
 
     // In screen order, so packing a label into a lane only ever has to look
@@ -133,6 +136,7 @@ pub fn layout(
     for (x, idx, m) in vis {
         // Truncated rather than clipped, so a name too long for the box says so
         // with an ellipsis instead of stopping mid-word.
+        let ink = m.color;
         let mut job = LayoutJob::single_section(
             m.text.clone(),
             TextFormat { font_id: font.clone(), color: ink, ..Default::default() },
@@ -167,6 +171,7 @@ pub fn layout(
         out.push(MemBox {
             rect: Rect::from_min_size(pos2(left, top), vec2(w, box_h)),
             idx,
+            color: ink,
             tick: [pos2(x, edge), pos2(x, tip)],
             galley,
         });
@@ -177,9 +182,9 @@ pub fn layout(
 /// Paint what [`layout`] placed. `hovered` is the box the pointer is over, if
 /// any — it brightens, because a mark that can be pressed has to say so.
 pub fn draw(p: &Painter, boxes: &[MemBox], hovered: Option<usize>) {
-    let ink = crate::theme::scope().good;
-    let line = Color32::from_rgba_unmultiplied(ink.r(), ink.g(), ink.b(), 140);
     for (k, b) in boxes.iter().enumerate() {
+        let ink = b.color;
+        let line = Color32::from_rgba_unmultiplied(ink.r(), ink.g(), ink.b(), 140);
         let on = hovered == Some(k);
         let edge = if on { ink } else { line };
         p.line_segment(b.tick, Stroke::new(1.0, edge));

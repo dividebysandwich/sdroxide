@@ -720,6 +720,13 @@ impl SdroxideApp {
             {
                 desc = !desc;
             }
+            let color_changed = ui
+                .color_edit_button_srgb(&mut self.ui_settings.memory_waterfall_color)
+                .on_hover_text("Colour of the memory labels on the waterfall")
+                .changed();
+            if color_changed {
+                crate::app::persist::persist_ui_settings(&self.ui_settings);
+            }
         });
         if (sort, desc) != (was_sort, was_desc) {
             self.ui_settings.memory_sort = sort;

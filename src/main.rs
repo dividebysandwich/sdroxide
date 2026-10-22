@@ -212,6 +212,35 @@ struct Cli {
     /// frequency and an interference complaint.
     #[arg(long)]
     oob_tx: bool,
+
+    /// Render N frames of the UI to a PNG file, then exit. The window is placed
+    /// off-screen so nothing flashes on the operator's display. Use --siggen
+    /// for a visible signal. Useful for generating previews of UI changes.
+    #[arg(long, value_name = "PATH")]
+    screenshot: Option<std::path::PathBuf>,
+
+    /// Capture at the physical (native) resolution without resizing. Produces
+    /// the most detailed PNG for human review. Implies --screenshot.
+    #[arg(long, value_name = "PATH")]
+    screenshot_native: Option<std::path::PathBuf>,
+
+    /// Path to an actions file (one action per line) executed before capture.
+    /// Actions: open <dialog>, click <element>, hover <element>, tab <name>,
+    /// wait <ms>, capture. Requires --screenshot or --screenshot-native.
+    #[arg(long, value_name = "PATH")]
+    screenshot_actions: Option<std::path::PathBuf>,
+
+    /// Frames to render before capturing (lets fonts and layout settle).
+    #[arg(long, default_value_t = 10)]
+    screenshot_frames: usize,
+
+    /// Width of the captured window in pixels.
+    #[arg(long, default_value_t = 1280)]
+    screenshot_width: u32,
+
+    /// Height of the captured window in pixels.
+    #[arg(long, default_value_t = 800)]
+    screenshot_height: u32,
 }
 
 impl Cli {
@@ -375,6 +404,36 @@ fn main() -> anyhow::Result<()> {
     if let Some(w) = &other_instance {
         tracing::warn!("{w}");
     }
+    // Screenshot mode: render N frames to a PNG, then exit. Takes the same
+    // radio roster as the GUI; pair with --siggen for a visible signal.
+    let screenshot_path = cli.screenshot.clone().or_else(|| cli.screenshot_native.clone());
+    let screenshot_native = cli.screenshot_native.is_some();
+    if let Some(path) = screenshot_path {
+        // Load actions file if provided.
+        let actions = if let Some(actions_path) = &cli.screenshot_actions {
+            let content = std::fs::read_to_string(actions_path)
+                .map_err(|e| anyhow::anyhow!("reading actions file {}: {e}", actions_path.display()))?;
+            sdroxide_ui::screenshot::parse_actions(&content)
+                .map_err(|e| anyhow::anyhow!("parsing actions file {}: {e}", actions_path.display()))?
+        } else {
+            Vec::new()
+        };
+        let radios = boot_radios(&mut cli, &settings)?;
+        let factory_cli = secondary_cli(&cli);
+        return gui_main::run_screenshot(
+            radios,
+            &settings,
+            cli.tx_ham_only(&settings),
+            factory_cli,
+            path,
+            cli.screenshot_frames,
+            cli.screenshot_width,
+            cli.screenshot_height,
+            screenshot_native,
+            actions,
+        );
+    }
+
     let radios = boot_radios(&mut cli, &settings)?;
     let factory_cli = secondary_cli(&cli);
     gui_main::run_multi(radios, &settings, cli.tx_ham_only(&settings), factory_cli, other_instance)

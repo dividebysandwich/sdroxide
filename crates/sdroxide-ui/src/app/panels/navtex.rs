@@ -11,10 +11,21 @@
 //! receiver reads and whether to show the loose text below the message list.
 
 use eframe::egui::{self, RichText};
-use sdroxide_types::{Command, NavtexMessage, NavtexStatus};
+use sdroxide_types::{Command, NavtexMessage, NavtexStatus, Vfo};
 
 use crate::app::SdroxideApp;
 use crate::theme;
+
+/// The NAVTEX channels the panel offers, as dial frequencies — see
+/// `panels::mode_dials`. The MF/HF service is the one a shortwave listener
+/// reaches.
+const CHANNELS: &[(f64, &str)] = &[
+    (6_314_000.0, "6314"),
+    (8_416_500.0, "8416.5"),
+    (12_579_000.0, "12579"),
+    (16_806_500.0, "16806.5"),
+    (22_376_000.0, "22376"),
+];
 
 /// The message list's header row: the count, the sync state, what the time
 /// diversity repaired, SAVE and REV. Returns whether REV was pressed; `rev` is
@@ -26,6 +37,7 @@ pub(super) fn navtex_list_header(
     ui: &mut egui::Ui,
     st: &NavtexStatus,
     status: Option<&sdroxide_types::DigiStatus>,
+    cmds: &mut Vec<Command>,
     rev: bool,
 ) -> bool {
     let mut flip = false;
@@ -67,6 +79,7 @@ pub(super) fn navtex_list_header(
             );
         }
         crate::chrome::row_tail(ui, |ui| {
+            super::clear_rx_chip_at(ui, cmds, !st.messages.is_empty() || st.live.is_some());
             super::save_rx_chip_for(ui, status);
             if crate::chrome::chip(ui, rev, RichText::new("REV").size(10.5))
                 .on_hover_text(
@@ -100,6 +113,44 @@ impl SdroxideApp {
         self.front_end_overload_warning(ui);
         let pane = self.phone_pane(ui, sdroxide_types::Mode::Navtex);
 
+        // MF NAVTEX: the two medium-frequency services. The button is labelled
+        // with the published channel frequency, but the VFO lands 1.710 kHz
+        // below it (USB), because NAVTEX is a 170 Hz FSK signal 1.5 kHz above
+        // the suppressed carrier.
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("MF").size(10.0).weak());
+            for (label, vfo_hz) in [("490", 488_290.0), ("518", 516_290.0)] {
+                let active_vfo_hz = match self.state.active_vfo {
+                    Vfo::A => self.state.vfo_a_hz,
+                    Vfo::B => self.state.vfo_b_hz,
+                };
+                let is_active = (active_vfo_hz - vfo_hz).abs() < 1.0;
+                if crate::chrome::chip(ui, is_active, RichText::new(format!("{label} kHz")).size(10.0))
+                    .on_hover_text("Tune the dial here (USB, 1.710 kHz below the channel).")
+                    .clicked()
+                {
+                    cmds.push(Command::SetVfo { vfo: Vfo::A, hz: vfo_hz });
+                }
+            }
+        });
+
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("CHANNEL").size(10.0).weak());
+            for (hz, label) in CHANNELS {
+                let active_vfo_hz = match self.state.active_vfo {
+                    Vfo::A => self.state.vfo_a_hz,
+                    Vfo::B => self.state.vfo_b_hz,
+                };
+                let is_active = (active_vfo_hz - *hz).abs() < 1.0;
+                if crate::chrome::chip(ui, is_active, RichText::new(*label).size(10.0))
+                    .on_hover_text("Tune the dial here.")
+                    .clicked()
+                {
+                    cmds.push(Command::SetVfo { vfo: Vfo::A, hz: *hz });
+                }
+            }
+        });
+
         ui.horizontal(|ui| {
             if pane.is_none_or(|p| p == 0) {
                 ui.vertical(|ui| {
@@ -128,7 +179,7 @@ impl SdroxideApp {
         st: &NavtexStatus,
         panel_h: f32,
     ) {
-        if navtex_list_header(ui, st, self.digi_status.as_ref(), self.digi_cfg_edit.navtex_reverse)
+        if navtex_list_header(ui, st, self.digi_status.as_ref(), cmds, self.digi_cfg_edit.navtex_reverse)
         {
             self.digi_cfg_edit.navtex_reverse = !self.digi_cfg_edit.navtex_reverse;
             if self.digi_cfg_seeded {

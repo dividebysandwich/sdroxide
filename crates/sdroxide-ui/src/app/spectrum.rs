@@ -744,13 +744,22 @@ impl SdroxideApp {
                     .map(|f| f.name.as_str());
                 let text = if self.ui_settings.memory_waterfall_show_folder {
                     match folder {
-                        Some(f) => format!("Mem: {f} / {}", m.name),
-                        None => format!("Mem: {}", m.name),
+                        Some(f) => format!("{f} / {}", m.name),
+                        None => m.name.clone(),
                     }
                 } else {
-                    format!("Mem: {}", m.name)
+                    m.name.clone()
                 };
-                crate::widgets::memories::MemMark { id: m.id, freq_hz: m.freq_hz, text }
+                crate::widgets::memories::MemMark {
+                    id: m.id,
+                    freq_hz: m.freq_hz,
+                    text,
+                    color: eframe::egui::Color32::from_rgb(
+                        self.ui_settings.memory_waterfall_color[0],
+                        self.ui_settings.memory_waterfall_color[1],
+                        self.ui_settings.memory_waterfall_color[2],
+                    ),
+                }
             })
             .collect()
     }

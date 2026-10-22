@@ -243,6 +243,7 @@ fn module_window_name(m: sdroxide_types::DetachableModule) -> &'static str {
         M::BandMenu => "Band & mode",
         M::Rotor => "Antenna rotator",
         M::Dsc => "DSC decoder",
+        M::Navtex => "NAVTEX decoder",
     }
 }
 
@@ -402,6 +403,52 @@ impl MultiApp {
     /// reading the same radios. On every tab because the collision is the
     /// station's, not one radio's — and the tab the operator is listening on
     /// is the one that has to say why the sound breaks up.
+    /// Open the settings dialog on the focused radio, optionally on a named tab.
+    /// Used by the screenshot action driver.
+    pub fn open_settings(&mut self, tab: Option<&str>) {
+        let app = &mut self.tabs[self.focused].app;
+        match tab {
+            Some(t) => app.open_settings_tab(t),
+            None => app.open_radio_settings(),
+        }
+    }
+
+    /// Switch to the tab whose name matches (case-insensitive).
+    pub fn switch_tab(&mut self, name: &str) {
+        for (i, tab) in self.tabs.iter().enumerate() {
+            if tab.name.eq_ignore_ascii_case(name) {
+                self.focused = i;
+                return;
+            }
+        }
+    }
+
+    /// Switch the settings tab on the focused radio (if settings is open).
+    pub fn set_settings_tab(&mut self, name: &str) {
+        self.tabs[self.focused].app.set_settings_tab(name);
+    }
+
+    /// Open a dialog/window by name.
+    pub fn open_dialog(&mut self, name: &str) {
+        let name_lower = name.to_lowercase();
+        let app = &mut self.tabs[self.focused].app;
+        if name_lower == "schedule" {
+            app.open_schedule();
+        } else if name_lower == "settings" {
+            app.open_radio_settings();
+        }
+    }
+
+    /// Toggle the ALL chip on the SCHEDULE window.
+    pub fn toggle_all_chip(&mut self) {
+        self.tabs[self.focused].app.toggle_all_chip();
+    }
+
+    /// Toggle the FAVS chip on the SCHEDULE window.
+    pub fn toggle_fav_chip(&mut self) {
+        self.tabs[self.focused].app.toggle_fav_chip();
+    }
+
     pub fn warn_other_instance(&mut self, text: String) {
         for tab in &mut self.tabs {
             tab.app.warn_other_instance(text.clone());

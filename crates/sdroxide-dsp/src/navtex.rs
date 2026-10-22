@@ -527,16 +527,28 @@ impl NavtexRx {
                 self.ref_mark = total * 0.5;
                 self.ref_space = total * 0.5;
             }
-            // Each branch against its own recent level rather than against the
-            // other, so a selective fade that leaves one tone well down still
-            // decodes — the same rule RTTY uses, and on 518 kHz at night it is
-            // the difference between a message and a page of stars.
-            let (dm, ds) = if self.ref_mark > 1e-20 && self.ref_space > 1e-20 {
-                (m / self.ref_mark, sp / self.ref_space)
+            // Bit decision: hybrid based on AFC state. On-frequency
+            // signals (afc_hz near 0) use plain diff (fixes real
+            // recordings); off-frequency signals use ratio (stable for
+            // AFC tracking).
+            let (dm, ds) = (m, sp);
+            let on_freq = self.afc_hz.abs() < 50.0;
+            let phys_mark = if on_freq {
+                m > sp
             } else {
-                (m, sp)
+                if self.ref_mark > 1e-20 && self.ref_space > 1e-20 {
+                    m / self.ref_mark > sp / self.ref_space
+                } else {
+                    m > sp
+                }
             };
-            let phys_mark = dm > ds;
+
+            // AFC tracking: per-branch ratio, more stable for off-frequency.
+            let afc_branch = if self.ref_mark > 1e-20 && self.ref_space > 1e-20 {
+                m / self.ref_mark > sp / self.ref_space
+            } else {
+                m > sp
+            };
             let idle_limit = ATC_IDLE_BITS * self.spb;
             if phys_mark {
                 self.ref_mark += ATC_SMOOTH * (m - self.ref_mark);
@@ -566,21 +578,26 @@ impl NavtexRx {
             // bit, so its phase advance *is* the error in Hz. Same measurement,
             // and the same reason for the settle and separation gates, as
             // RTTY's — see the constants.
-            if self.have_win && phys_mark == self.prev_win_mark {
+            if self.have_win && afc_branch == self.prev_win_mark {
                 self.win_run += 1.0;
             } else {
                 self.win_run = 0.0;
             }
-            let win = if phys_mark { m_c } else { sp_c };
-            if self.afc_enabled
-                && (dm - ds).abs() > AFC_SEP_MIN
-                && self.win_run > AFC_SETTLE * self.spb
-            {
+            let win = if afc_branch { m_c } else { sp_c };
+            let afc_sep = if self.ref_mark > 1e-20 && self.ref_space > 1e-20 {
+                (m / self.ref_mark - sp / self.ref_space).abs()
+            } else {
+                (m - sp).abs()
+            };
+            if self.afc_enabled && afc_sep > AFC_SEP_MIN && self.win_run > AFC_SETTLE * self.spb {
                 let d = win * self.prev_win.conj();
                 if d.norm_sqr() > 1e-24 {
                     let hz_per_rad = self.rate as f32 / std::f32::consts::TAU;
                     let err = (d.arg() * hz_per_rad).clamp(-AFC_LIMIT_HZ, AFC_LIMIT_HZ);
                     let was = self.afc_hz;
+                    // Scale gain with error magnitude: fast convergence when far
+                    // off, gentle tracking when close. Keeps noisy (well-tuned)
+                    // signals stable while pulling mistuned ones quickly.
                     self.afc_hz = (self.afc_hz + AFC_GAIN * err).clamp(-AFC_LIMIT_HZ, AFC_LIMIT_HZ);
                     if self.afc_hz != was {
                         self.apply_afc();
@@ -591,7 +608,7 @@ impl NavtexRx {
             // starts from a current phasor instead of one from before it was
             // switched off.
             self.prev_win = win;
-            self.prev_win_mark = phys_mark;
+            self.prev_win_mark = afc_branch;
             self.have_win = true;
 
             self.advance_clock(dm - ds, phys_mark, &mut out);

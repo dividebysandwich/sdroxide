@@ -1579,7 +1579,7 @@ mod tests {
                 let s = Some(&status);
                 let r = ui.scope(|ui| acars::acars_header(ui, &acars, s, &mut cmds));
                 rows.push(("ACARS", r.response.rect));
-                let r = ui.scope(|ui| navtex::navtex_list_header(ui, &navtex, s, true));
+                let r = ui.scope(|ui| navtex::navtex_list_header(ui, &navtex, s, &mut cmds, true));
                 rows.push(("NAVTEX", r.response.rect));
                 let r =
                     ui.scope(|ui| packet::packet_monitor_header(ui, &packet, s, true, &mut cmds));

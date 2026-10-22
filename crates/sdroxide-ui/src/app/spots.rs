@@ -607,6 +607,7 @@ impl SdroxideApp {
             (SpotKind::PskReporter, "PSK"),
             (SpotKind::FreeDv, "FREEDV"),
             (SpotKind::Broadcast, "BC"),
+            (SpotKind::Rbn, "RBN"),
         ];
         ui.horizontal(|ui| {
             for (i, (kind, label)) in labels.iter().enumerate() {

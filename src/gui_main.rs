@@ -2,6 +2,7 @@
 //! window with a tab per radio.
 
 use anyhow::Result;
+use eframe::egui;
 use sdroxide_config::Settings;
 use sdroxide_radio::{
     AudioParams, EngineConfig, IqSource, RadeWatch, StoreSync, TrSwitch, TxGate, start_engine,
@@ -359,6 +360,165 @@ impl sdroxide_ui::AudioBridge for CpalBridge {
         s.audio_routing = self.routing;
         if let Err(e) = s.save() {
             warn!("saving audio routing: {e}");
+        }
+    }
+}
+
+/// Render N frames of the UI to a PNG file, then exit.
+///
+/// The window is placed off-screen (see the viewport builder below) so nothing
+/// flashes on the operator's display, but it is still *rendered* — eframe does
+/// not paint a hidden window, so `with_visible(true)` is required.
+pub fn run_screenshot(
+    radios: Vec<RadioBoot>,
+    settings: &Settings,
+    tx_ham_only: bool,
+    factory_cli: crate::Cli,
+    output_path: std::path::PathBuf,
+    frames: usize,
+    width: u32,
+    height: u32,
+    native: bool,
+    actions: Vec<sdroxide_ui::screenshot::ScreenshotAction>,
+) -> Result<()> {
+    use std::sync::{Arc, Mutex};
+
+    let gate = Arc::new(TxGate::new());
+    let sync = Arc::new(StoreSync::new());
+    let rade = Arc::new(RadeWatch::new());
+    let tr = Arc::new(TrSwitch::new());
+
+    let mut tabs = Vec::new();
+    for (i, boot) in radios.into_iter().enumerate() {
+        let id = boot.id;
+        let name = boot.name.clone();
+        let enabled = boot.enabled;
+        let ctrl = build_controller(boot, settings, tx_ham_only, i == 0, &gate, &sync, &rade, &tr);
+        tabs.push(sdroxide_ui::RadioTab { id, name, enabled, ctrl: Box::new(ctrl) });
+    }
+
+    let factory_gate = gate.clone();
+    let factory_sync = sync.clone();
+    let factory_rade = rade.clone();
+    let factory_tr = tr.clone();
+    let factory: sdroxide_ui::RadioFactory = Box::new(move || {
+        let slot = sdroxide_config::create_radio("").map_err(|e| e.to_string())?;
+        let settings = Settings::load();
+        let store = sdroxide_config::Store::radio(slot.id);
+        let mut c = factory_cli.clone();
+        let initial_mode = c.apply_session(store.load_session());
+        let (source, caps) =
+            match crate::open_converted_source(&store.load_radio_config(), &c, &settings) {
+                Ok(pair) => pair,
+                Err(e) => (
+                    Box::new(crate::null_source::NullSource::new(c.center_hz(), format!("{e}")))
+                        as Box<dyn IqSource>,
+                    crate::synthetic_caps("No radio"),
+                ),
+            };
+        let boot = RadioBoot {
+            id: slot.id,
+            name: slot.name.clone(),
+            enabled: true,
+            source,
+            caps,
+            initial_mode,
+            initial_antenna: (None, None),
+            reopen: Some(crate::reopen_factory_for(&c, store.clone(), slot.id)),
+            store,
+            record_iq: None,
+        };
+        let ctrl = build_controller(
+            boot,
+            &settings,
+            tx_ham_only,
+            false,
+            &factory_gate,
+            &factory_sync,
+            &factory_rade,
+            &factory_tr,
+        );
+        Ok(sdroxide_ui::RadioTab {
+            id: slot.id,
+            name: slot.name,
+            enabled: true,
+            ctrl: Box::new(ctrl),
+        })
+    });
+
+    sdroxide_ui::install_renderer_panic_note();
+
+    // Make the process DPI-unaware so `with_inner_size` sets physical pixels
+    // directly. Otherwise Windows scales the logical size by the monitor's DPI
+    // factor (1.75 on this machine) and the window renders at 2240x1400
+    // instead of 1280x800.
+    #[cfg(target_os = "windows")]
+    {
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn SetProcessDpiAwarenessContext(value: isize) -> i32;
+        }
+        // DPI_AWARENESS_CONTEXT_UNAWARE = -4
+        unsafe { SetProcessDpiAwarenessContext(-4); }
+    }
+
+    let result: sdroxide_ui::ScreenshotResult = Arc::new(Mutex::new(None));
+
+    let frames = frames.max(1);
+    let out_path = output_path.clone();
+    let result_clone = result.clone();
+
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        wgpu_options: sdroxide_ui::wgpu_options(),
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_inner_size([width as f32, height as f32])
+            .with_position(egui::pos2(100.0, 100.0))
+            .with_maximized(false)
+            .with_fullscreen(false)
+            .with_resizable(false)
+            .with_visible(true)
+            .with_app_id("sdroxide")
+            .with_icon(sdroxide_ui::app_icon())
+            .with_title(sdroxide_ui::window_title("")),
+        centered: false,
+        ..Default::default()
+    };
+
+    let run_result = sdroxide_ui::event_loop::run(
+        "sdroxide",
+        options,
+        Box::new(move |cc| {
+            let multi = sdroxide_ui::MultiApp::new(cc, tabs, Some(factory), Some(remote_factory()));
+            Ok(Box::new(sdroxide_ui::ScreenshotApp::new(
+                multi,
+                frames,
+                width,
+                height,
+                out_path,
+                result_clone,
+                native,
+                actions,
+            )))
+        }),
+    );
+
+    // Report the screenshot outcome.
+    match result.lock().unwrap().take() {
+        Some(Ok(())) => {
+            println!("Screenshot saved to {}", output_path.display());
+            Ok(())
+        }
+        Some(Err(e)) => Err(anyhow::anyhow!("screenshot failed: {e}")),
+        None => {
+            // The window closed without producing a screenshot.
+            if let Err(e) = run_result {
+                Err(anyhow::anyhow!("eframe: {e}"))
+            } else {
+                Err(anyhow::anyhow!(
+                    "screenshot was not captured (window closed before the capture frame)"
+                ))
+            }
         }
     }
 }

@@ -2724,9 +2724,61 @@ impl SdroxideApp {
         self.ctrl.reopen_source();
     }
 
-    pub(crate) fn open_radio_settings(&mut self) {
+    pub fn open_radio_settings(&mut self) {
         self.show_settings = true;
         self.settings_tab = SettingsTab::Radio;
+    }
+
+    /// Open the settings dialog on a specific tab (by key name).
+    pub fn open_settings_tab(&mut self, tab_key: &str) {
+        self.show_settings = true;
+        if let Some(tab) = SettingsTab::from_key(tab_key) {
+            self.settings_tab = tab;
+        }
+    }
+
+    /// Open the SCHEDULE window.
+    pub fn open_schedule(&mut self) {
+        self.schedule.show = true;
+    }
+
+    /// Set the ALL state (favourite all / clear all). Shared by the SCHEDULE
+    /// chip click handler and the screenshot action driver, so the logic lives
+    /// in one place.
+    pub fn set_broadcast_all(&mut self, on: bool) {
+        self.broadcast_all = on;
+        if on {
+            self.broadcast_favs.clear();
+            for s in &self.broadcast {
+                if !self.broadcast_favs.iter().any(|n| n == &s.name) {
+                    self.broadcast_favs.push(s.name.clone());
+                }
+            }
+            self.broadcast_favs.sort();
+        } else {
+            self.broadcast_favs.clear();
+        }
+        crate::app::persist::persist_broadcast_favourites(&self.broadcast_favs);
+    }
+
+    /// Toggle the ALL chip on the SCHEDULE window (favourite all / clear all).
+    /// Delegates to `set_broadcast_all`.
+    pub fn toggle_all_chip(&mut self) {
+        self.set_broadcast_all(!self.broadcast_all);
+    }
+
+    /// Toggle the FAVS chip on the SCHEDULE window.
+    pub fn toggle_fav_chip(&mut self) {
+        self.schedule.favourites_only = !self.schedule.favourites_only;
+    }
+
+    /// Switch the settings tab if the settings dialog is open.
+    pub fn set_settings_tab(&mut self, tab_key: &str) {
+        if self.show_settings {
+            if let Some(tab) = SettingsTab::from_key(tab_key) {
+                self.settings_tab = tab;
+            }
+        }
     }
 
     /// Close the Settings dialog — the shell moves it to another tab when the
