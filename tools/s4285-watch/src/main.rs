@@ -244,12 +244,19 @@ fn acf_at(buf: &[Complex32], lag: usize) -> f32 {
     num.norm() / (da * db).sqrt().max(1e-20)
 }
 
-/// 16-bit mono PCM, decimated to about 12 kHz. The audio is the real part of the
-/// baseband, which is what a USB demodulator would produce from the same IQ.
+/// 16-bit mono PCM at about 12 kHz, properly filtered.
+///
+/// The first version averaged groups of samples, which is a box filter: its
+/// stopband is only about -13 dB, so anything strong in the rest of the 62.5 kHz
+/// band folded straight into the audio. A capture of 6348 kHz came back as a flat
+/// mess across the whole band because of it -- the signal is 3 kHz wide and the
+/// file was 6 kHz of aliased noise. A windowed-sinc low-pass first, then take
+/// every nth sample.
 fn write_wav(path: &std::path::Path, iq: &[Complex32], rate: f64) -> std::io::Result<(f64, u32)> {
     let factor = ((rate / 12_000.0).round() as usize).max(1);
     let out_rate = (rate / factor as f64).round() as u32;
-    let n = iq.len() / factor;
+    let filtered = lowpass(iq, out_rate as f64);
+    let n = filtered.len() / factor;
     let data_len = (n * 2) as u32;
     let mut f = std::fs::File::create(path)?;
     f.write_all(b"RIFF")?;
@@ -265,18 +272,48 @@ fn write_wav(path: &std::path::Path, iq: &[Complex32], rate: f64) -> std::io::Re
     f.write_all(b"data")?;
     f.write_all(&data_len.to_le_bytes())?;
     let mut bytes: Vec<u8> = Vec::with_capacity(n * 2);
-    for group in iq.chunks_exact(factor) {
-        // Box average over the group: a crude anti-alias, which is enough here
-        // because the signal is a few kHz wide inside a much higher rate.
-        let mut acc = Complex32::new(0.0, 0.0);
-        for s in group {
-            acc += *s;
-        }
-        let v = (acc.re / factor as f32).clamp(-1.0, 1.0);
+    for group in filtered.chunks_exact(factor) {
+        let v = group[0].re.clamp(-1.0, 1.0);
         bytes.extend_from_slice(&((v * 32767.0) as i16).to_le_bytes());
     }
     f.write_all(&bytes)?;
     Ok((n as f64 / out_rate as f64, out_rate))
+}
+
+/// A 127-tap windowed-sinc low-pass with its corner just under the new Nyquist.
+fn lowpass(iq: &[Complex32], out_rate: f64) -> Vec<Complex32> {
+    let taps = 127usize;
+    let half = (taps / 2) as isize;
+    let fc = 0.45; // fraction of the output Nyquist
+    let mut h = Vec::with_capacity(taps);
+    let mut sum = 0.0f32;
+    for i in 0..taps {
+        let x = i as f32 - half as f32;
+        let sinc = if x == 0.0 {
+            fc
+        } else {
+            (std::f32::consts::PI * fc * x).sin() / (std::f32::consts::PI * x)
+        };
+        let w = 0.54 - 0.46 * (2.0 * std::f32::consts::PI * i as f32 / (taps - 1) as f32).cos();
+        h.push(sinc * w);
+        sum += sinc * w;
+    }
+    for v in h.iter_mut() {
+        *v /= sum;
+    }
+    let mut out = Vec::with_capacity(iq.len());
+    for (i, s) in iq.iter().enumerate() {
+        let mut acc = Complex32::new(0.0, 0.0);
+        for (k, w) in h.iter().enumerate() {
+            let j = i as isize + k as isize - half;
+            if j >= 0 && (j as usize) < iq.len() {
+                acc += iq[j as usize] * *w;
+            }
+        }
+        let _ = s;
+        out.push(acc);
+    }
+    out
 }
 
 fn utc_stamp() -> String {
