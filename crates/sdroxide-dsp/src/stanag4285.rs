@@ -463,7 +463,13 @@ impl CodedChain {
 #[derive(Debug, Clone, Copy)]
 struct Lock {
     /// Absolute index, in baseband samples, of the next frame's first symbol.
-    next: u64,
+    ///
+    /// Fractional, because the frame **step** is tracked and not fixed: two sound
+    /// cards' clocks differ by far more than the standard's 10 ppm, and a fixed
+    /// 256-symbol stride walks out of the timing window after a handful of frames
+    /// — measured at ~500 ppm on this bench, which is one symbol every eight
+    /// frames.
+    next: f64,
 }
 
 /// The receiver. Feed it audio at `rate_hz`; it acquires on a fold of the
@@ -500,6 +506,10 @@ pub struct S4285Receiver {
     coded_messages: u64,
     /// Messages ready to be handed out by the next `process` call.
     pending: Vec<S4285Message>,
+    /// The last frame reached the coded-chain floor, whether or not it was good
+    /// enough to report. A frame that is merely poor must not cost the lock: the
+    /// lock is about the frame *position*, which such a frame still proves.
+    last_frame_usable: bool,
     bit_run: Vec<u8>,
     /// Characters decoded but not yet handed out.
     events_text: String,
@@ -536,6 +546,7 @@ impl S4285Receiver {
             coded_rate: None,
             coded_messages: 0,
             pending: Vec::new(),
+            last_frame_usable: false,
             bit_run: Vec::new(),
             events_text: String::new(),
             report: S4285Report::default(),
@@ -761,7 +772,7 @@ impl S4285Receiver {
         }
         // The fold says where the frame head is; from here every frame is taken at
         // a fixed stride and refines its own timing.
-        self.lock = Some(Lock { next: start + (offset * SPS) as u64 });
+        self.lock = Some(Lock { next: (start + (offset * SPS) as u64) as f64 });
         self.timing = phase;
         self.report.locked = true;
     }
@@ -769,10 +780,10 @@ impl S4285Receiver {
     fn drain_frames(&mut self, events: &mut Vec<S4285Event>) {
         loop {
             let Some(lock) = self.lock else { return };
-            if lock.next + (FRAME * SPS) as u64 > self.base + self.bb.len() as u64 {
+            if lock.next + (FRAME * SPS) as f64 > (self.base + self.bb.len() as u64) as f64 {
                 return;
             }
-            let frame = self.take_frame(lock.next);
+            let frame = self.take_frame(lock.next.round() as u64);
             match frame {
                 Some(f) => {
                     events.push(S4285Event::Frame(f.clone()));
@@ -807,12 +818,23 @@ impl S4285Receiver {
                         events.push(S4285Event::Text(t));
                     }
                     if let Some(l) = self.lock.as_mut() {
-                        l.next += (FRAME * SPS) as u64;
+                        l.next += (FRAME * SPS) as f64;
                     }
                 }
                 None => {
-                    // The frame did not stand up: let go and acquire again from
-                    // what is still buffered rather than demodulating a lie.
+                    // Poor enough to report nothing — but if it still reached the
+                    // coded floor its *position* is sound and the lock stands, with
+                    // its 128 soft decisions already in the chains as erasures.
+                    // Letting go here would restart the interleaver on the first
+                    // fade of every message.
+                    if self.last_frame_usable {
+                        if let Some(l) = self.lock.as_mut() {
+                            l.next += (FRAME * SPS) as f64;
+                        }
+                        continue;
+                    }
+                    // The frame did not stand up at all: let go and acquire again
+                    // from what is still buffered rather than demodulating a lie.
                     self.report.locked = false;
                     self.lock = None;
                     self.acq_wait = 0;
@@ -832,7 +854,11 @@ impl S4285Receiver {
         // exactly how a decode looks when it is nearly right.
         let mut best: Option<(f32, f32, bool, f32)> = None;
         for step in -9i32..=9 {
-            let phase = self.timing + step as f32 * 0.05;
+            // The window is anchored at **half a symbol inside the frame**, not on
+            // the last frame's answer: it is the clock tracker below that keeps the
+            // true sampling instant there, and a window that follows its own
+            // previous answer simply walks away with it.
+            let phase = 0.5 + step as f32 * 0.05;
             let frame = self.frame_symbols(start, phase);
             for &sign in &[1.0f32, -1.0f32] {
                 let mut z = [C::default(); SCRAMBLED];
@@ -868,6 +894,7 @@ impl S4285Receiver {
             }
         }
         let (score, mut phase, reversed, offset) = best?;
+        self.last_frame_usable = score >= MIN_CODED_REFERENCE;
         // **The sampling instant has to come from the data, not from the
         // references.** Sixteen identical symbols score equally well anywhere
         // across them, so a phase search that maximises the reference
@@ -891,21 +918,32 @@ impl S4285Receiver {
                     let t = k as f32 / BAUD as f32;
                     z[k] = frame[SYNC + k].mul(sc.conj()).mul(C::from_phase(-offset * TAU * t));
                 }
-                let mut data: Vec<C> = Vec::with_capacity(128);
-                for &(lo, hi) in &DATA_BLOCKS {
-                    data.extend_from_slice(&z[lo..hi]);
-                }
-                // The best of the 2-, 4- and 8-point concentrations: whichever
-                // constellation this is, its own order is the one that tightens.
+                // The channel line first, then the data: on a real path the three
+                // reference blocks differ in phase, and a concentration measured
+                // on the raw data is dominated by that rotation rather than by the
+                // sampling instant — which makes the sweep answer noise.
+                let (m, b) = channel_line(&z);
                 let (mut c2, mut c4, mut c8) = (C::default(), C::default(), C::default());
-                for c in &data {
-                    let a = c.arg();
-                    c2 = c2.add(C::from_phase(2.0 * a));
-                    c4 = c4.add(C::from_phase(4.0 * a));
-                    c8 = c8.add(C::from_phase(8.0 * a));
+                let mut n = 0.0f32;
+                for &(lo, hi) in &DATA_BLOCKS {
+                    for k in lo..hi {
+                        let c = z[k].mul(C::from_phase(-(m * k as f32 + b)));
+                        let a = c.arg();
+                        c2 = c2.add(C::from_phase(2.0 * a));
+                        c4 = c4.add(C::from_phase(4.0 * a));
+                        c8 = c8.add(C::from_phase(8.0 * a));
+                        n += 1.0;
+                    }
                 }
-                let n = data.len().max(1) as f32;
-                let v = (c2.norm() / n).max(c4.norm() / n).max(c8.norm() / n);
+                let data_conc = (c2.norm() / n).max(c4.norm() / n).max(c8.norm() / n);
+                // The references are added in, not used alone. The data is what
+                // decides where the eye is open — sixteen identical symbols
+                // cannot — but the reference concentration is the number the
+                // panel shows and the gate reads, and it does vary a little with
+                // the instant; scoring both keeps the reported figure honest at
+                // the instant the data wants.
+                let refs = ramp_concentrations(&z, 0.0);
+                let v = data_conc + (refs[0] + refs[1] + refs[2]) / 3.0;
                 if v > tight.0 {
                     tight = (v, p);
                 }
@@ -922,7 +960,13 @@ impl S4285Receiver {
         if score >= MIN_CODED_REFERENCE {
             soft = self.feed_coded(start, phase, reversed, offset, &mut coded_msgs);
         } else {
-            self.reset_coded();
+            // A frame too poor to decode is **not** a reason to start the chains
+            // again: its position in the stream is known, so its 128 missing soft
+            // decisions go in as erasures. A zero contributes nothing to either
+            // hypothesis, which is what an erasure is — and a restart would throw
+            // away the ten seconds of interleaver that precede this frame, which
+            // on a fading path means never completing a message at all.
+            self.feed_erasures(&mut coded_msgs);
         }
         for m in coded_msgs {
             self.coded_messages += 1;
@@ -948,36 +992,31 @@ impl S4285Receiver {
             z[k] = frame[SYNC + k].mul(s.conj()).mul(C::from_phase(-offset * TAU * t));
         }
         let reference = ramp_concentrations(&z, 0.0);
-        // Track the sampling phase slowly: a per-frame jump is a measurement, a
-        // moving average is what keeps a fading capture's eye open.
-        let delta = phase - self.timing;
-        self.timing += (delta * 0.25).clamp(-0.05, 0.05);
-        if self.timing < 0.0 {
-            self.timing += 1.0;
-        } else if self.timing >= 1.0 {
-            self.timing -= 1.0;
+        // **Track the symbol clock, not only the phase.** The frame stride is a
+        // number of samples, and two clocks that differ by even a few hundred ppm
+        // walk that stride out of the ±0.45-symbol window in a handful of frames.
+        // The best sampling phase inside a frame is the error signal: it sits at
+        // 0.5 when the stride is right, and its departure from 0.5 is how far the
+        // next frame head has to move.
+        // The error is taken **modulo one symbol**: the phase sweep can answer
+        // outside 0..1 (it reaches ±0.5 past the window's centre), and an error of
+        // −0.6 read literally walks the frame head the wrong way every frame until
+        // the timing runs away.
+        let mut err = phase - 0.5;
+        if err > 0.5 {
+            err -= 1.0;
+        } else if err < -0.5 {
+            err += 1.0;
         }
-
-        // The channel inside the frame: the three reference blocks give its phase
-        // at three points, and the data blocks between them interpolate.
-        let centres = [
-            (REF_BLOCKS[0].0 + REF_BLOCKS[0].1 - 1) as f32 / 2.0,
-            (REF_BLOCKS[1].0 + REF_BLOCKS[1].1 - 1) as f32 / 2.0,
-            (REF_BLOCKS[2].0 + REF_BLOCKS[2].1 - 1) as f32 / 2.0,
-        ];
-        let mut ph = [0.0f32; 3];
-        for (i, &(lo, hi)) in REF_BLOCKS.iter().enumerate() {
-            let mut acc = C::default();
-            for k in lo..hi {
-                acc = acc.add(z[k]);
+        if let Some(l) = self.lock.as_mut() {
+            if err.abs() < 0.45 {
+                l.next += (err * SPS as f32 * 0.5).clamp(-2.0, 2.0) as f64;
             }
-            ph[i] = acc.arg();
         }
-        // Least-squares slope through the three centres.
-        let m = ((ph[1] - ph[0]) * (centres[1] - centres[0])
-            + (ph[2] - ph[1]) * (centres[2] - centres[1]))
-            / ((centres[1] - centres[0]).powi(2) + (centres[2] - centres[1]).powi(2));
-        let b = (ph[0] + ph[1] + ph[2]) / 3.0 - m * (centres[0] + centres[1] + centres[2]) / 3.0;
+        self.timing = phase.rem_euclid(1.0);
+
+        // The channel inside the frame, from its three reference blocks.
+        let (m, b) = channel_line(&z);
 
         let mut used = [false; 8];
         let mut data: Vec<C> = Vec::with_capacity(128);
@@ -1107,16 +1146,23 @@ impl S4285Receiver {
         soft
     }
 
-    fn reset_coded(&mut self) {
-        for c in self.coded.iter_mut() {
-            c.reset();
+    /// One frame's worth of soft decisions as erasures, to keep the Annex E
+    /// chains aligned with the frame index when a frame is too poor to read.
+    fn feed_erasures(&mut self, out: &mut Vec<S4285Message>) {
+        if self.coded.is_empty() {
+            return;
+        }
+        for chain in self.coded.iter_mut() {
+            for _ in 0..128 {
+                chain.push(0.0, out);
+            }
         }
     }
 
     /// Keep only what the next frame and the acquisition window need.
     fn trim(&mut self) {
         let need = match self.lock {
-            Some(l) => l.next.saturating_sub(self.base),
+            Some(l) => (l.next as u64).saturating_sub(self.base),
             None => 0,
         };
         let keep_from = need.min(self.bb.len() as u64) as usize;
@@ -1164,6 +1210,36 @@ const MIN_SYNC: f32 = 0.40;
 /// strong PSK carrier of another mode measures ~0.03, both measured. 0.12 sits
 /// between them with room for a fading capture.
 const MIN_FRAME_ACF: f32 = 0.12;
+
+/// The channel across one frame, from its three reference blocks: the phase at
+/// each block, and the least-squares line through them.
+///
+/// This is what the reference symbols are *for*. A single ramp corrects a carrier
+/// offset; it does not correct a channel whose phase at the third block is not
+/// where the first two predict — and on a real path it usually is not. The data
+/// has to be derotated by the line, not by the ramp alone, or every data block
+/// after the first is rotated by whatever the channel did between them. On a
+/// clean file that difference is nil, which is exactly why it survived so long.
+fn channel_line(z: &[C; SCRAMBLED]) -> (f32, f32) {
+    let centres = [
+        (REF_BLOCKS[0].0 + REF_BLOCKS[0].1 - 1) as f32 / 2.0,
+        (REF_BLOCKS[1].0 + REF_BLOCKS[1].1 - 1) as f32 / 2.0,
+        (REF_BLOCKS[2].0 + REF_BLOCKS[2].1 - 1) as f32 / 2.0,
+    ];
+    let mut ph = [0.0f32; 3];
+    for (i, &(lo, hi)) in REF_BLOCKS.iter().enumerate() {
+        let mut acc = C::default();
+        for k in lo..hi {
+            acc = acc.add(z[k]);
+        }
+        ph[i] = acc.arg();
+    }
+    let m = ((ph[1] - ph[0]) * (centres[1] - centres[0])
+        + (ph[2] - ph[1]) * (centres[2] - centres[1]))
+        / ((centres[1] - centres[0]).powi(2) + (centres[2] - centres[1]).powi(2));
+    let b = (ph[0] + ph[1] + ph[2]) / 3.0 - m * (centres[0] + centres[1] + centres[2]) / 3.0;
+    (m, b)
+}
 
 /// The three reference blocks' concentrations with a carrier offset removed
 /// inside each block.

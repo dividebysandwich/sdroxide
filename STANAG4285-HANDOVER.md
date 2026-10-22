@@ -707,6 +707,36 @@ That is the sort of fault a loopback is for: it is invisible in the text (the
 message is short), invisible in the references (0.998), and only shows when the
 decoded bits are compared with the bits that were sent.
 
+### Four more faults the bench found, all in the receiver
+
+Chasing the air recording turned up four things that are wrong on any path and
+invisible on a clean file, and each is now fixed:
+
+* **the coded soft decisions ignored the channel line.** `take_frame` derotated
+  the data by the per-block phase estimated from the three reference blocks; the
+  Annex E chains were fed soft decisions derotated by the *ramp only*. On a clean
+  file the block phases are equal and the two agree; on any real path they are
+  not, so every data block after the first arrived rotated by whatever the channel
+  moved by — **50 % wrong bits with the reference blocks reading 0.95**, which is
+  exactly what the bench showed and what no amount of staring at the constellation
+  would explain. Both paths now use one `channel_line`.
+* **the symbol clock was not tracked.** The frame stride was a fixed 256 symbols.
+  Two sound cards' clocks differ by far more than the standard's 10 ppm — measured
+  at ~500 ppm here, one symbol every eight frames — so the receiver walked out of
+  its own timing window and re-acquired every few frames. The best sampling phase
+  inside a frame is now the error signal that nudges the stride, with the error
+  taken **modulo one symbol**: read literally, an error of −0.6 walks the head the
+  wrong way every frame and the timing runs away.
+* **a frame too poor to report dropped the lock**, which restarted the coded
+  chains — on a fading path that means never completing a message. A poor frame
+  still proves the frame *position*, so it keeps the lock and feeds 128 erasures.
+* **the phase is chosen from the data, and the channel line comes first.** A
+  concentration measured on the raw data is dominated by the block rotation, so
+  the sweep answered noise.
+
+The off-air gate still passes (references 0.61/0.70/0.57 over 287 frames) and the
+generated file still decodes bit-exactly.
+
 ### The timing came from the wrong place, and that is now fixed
 
 A second fault, found while chasing the air capture and of exactly the shape this

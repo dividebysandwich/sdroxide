@@ -97,6 +97,11 @@ fn main() {
         })
         .collect();
 
+    if let Ok(path) = std::env::var("S4285_TX_STREAM") {
+        let t: String = stream.iter().map(|b| if *b == 1 { '1' } else { '0' }).collect();
+        std::fs::write(path, t).expect("write the stream");
+    }
+
     // 4285 framing: 80 sync symbols, then 32 data + 16 reference three times and a
     // final 32 data — all scrambled except the sync.
     let sync = sdroxide_dsp::stanag4285::sync_symbols();
@@ -177,7 +182,9 @@ fn main() {
                 .unwrap_or(1500.0);
             let ph = (std::f32::consts::TAU as f64 * carrier * i as f64 / out_rate)
                 .rem_euclid(std::f32::consts::TAU as f64) as f32;
-            0.05 * z.mul(sdroxide_dsp::stanag4285::C::from_phase(ph)).re
+            let level: f32 =
+                std::env::var("S4285_TX_LEVEL").ok().and_then(|v| v.parse().ok()).unwrap_or(0.05);
+            level * z.mul(sdroxide_dsp::stanag4285::C::from_phase(ph)).re
         })
         .collect();
 

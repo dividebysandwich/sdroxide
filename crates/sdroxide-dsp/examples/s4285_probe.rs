@@ -66,7 +66,20 @@ fn main() {
     for chunk in audio.chunks(4096) {
         for ev in rx.process(chunk) {
             match ev {
-                sdroxide_dsp::stanag4285::S4285Event::Frame(f) => frames.push(f),
+                sdroxide_dsp::stanag4285::S4285Event::Frame(f) => {
+                    if let Ok(path) = std::env::var("S4285_SOFT_OUT") {
+                        use std::io::Write;
+                        let mut fh = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&path)
+                            .expect("open the soft dump");
+                        for v in &f.soft {
+                            write!(fh, "{v:.4} ").expect("write");
+                        }
+                    }
+                    frames.push(f)
+                }
                 sdroxide_dsp::stanag4285::S4285Event::Text(t) => {
                     text.push_str(&t);
                     for ch in t.chars() {
