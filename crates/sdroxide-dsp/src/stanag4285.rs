@@ -867,7 +867,51 @@ impl S4285Receiver {
                 }
             }
         }
-        let (score, phase, reversed, offset) = best?;
+        let (score, mut phase, reversed, offset) = best?;
+        // **The sampling instant has to come from the data, not from the
+        // references.** Sixteen identical symbols score equally well anywhere
+        // across them, so a phase search that maximises the reference
+        // concentration is flat in time — it cannot tell a correct sampling
+        // instant from half a symbol out, and on a real path a frame decoded half
+        // a symbol late has every data symbol smeared while its reference blocks
+        // still read 0.9. That is exactly the shape of the failure this cost on
+        // the bench.
+        //
+        // So once the sign and the carrier offset are known, the phase is chosen
+        // again — this time by how tightly the *data* symbols land on the
+        // constellation.
+        {
+            let mut tight = (0.0f32, phase);
+            for step in -10i32..=10 {
+                let p = phase + step as f32 * 0.05;
+                let frame = self.frame_symbols(start, p);
+                let mut z = [C::default(); SCRAMBLED];
+                for k in 0..SCRAMBLED {
+                    let sc = if reversed { self.scrambling[k].conj() } else { self.scrambling[k] };
+                    let t = k as f32 / BAUD as f32;
+                    z[k] = frame[SYNC + k].mul(sc.conj()).mul(C::from_phase(-offset * TAU * t));
+                }
+                let mut data: Vec<C> = Vec::with_capacity(128);
+                for &(lo, hi) in &DATA_BLOCKS {
+                    data.extend_from_slice(&z[lo..hi]);
+                }
+                // The best of the 2-, 4- and 8-point concentrations: whichever
+                // constellation this is, its own order is the one that tightens.
+                let (mut c2, mut c4, mut c8) = (C::default(), C::default(), C::default());
+                for c in &data {
+                    let a = c.arg();
+                    c2 = c2.add(C::from_phase(2.0 * a));
+                    c4 = c4.add(C::from_phase(4.0 * a));
+                    c8 = c8.add(C::from_phase(8.0 * a));
+                }
+                let n = data.len().max(1) as f32;
+                let v = (c2.norm() / n).max(c4.norm() / n).max(c8.norm() / n);
+                if v > tight.0 {
+                    tight = (v, p);
+                }
+            }
+            phase = tight.1;
+        }
         // Annex E's chains are fed from the frame *before* the reference gate: the
         // stream into the interleaver has to be continuous, and a frame too poor to
         // report is still a frame's worth of soft decisions that the code can use.

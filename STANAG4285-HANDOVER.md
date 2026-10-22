@@ -694,6 +694,27 @@ That is the sort of fault a loopback is for: it is invisible in the text (the
 message is short), invisible in the references (0.998), and only shows when the
 decoded bits are compared with the bits that were sent.
 
+### The timing came from the wrong place, and that is now fixed
+
+A second fault, found while chasing the air capture and of exactly the shape this
+file already warns about: **the reference symbols cannot resolve the sampling
+instant.** Sixteen identical symbols score equally well anywhere across them, so a
+per-frame phase search that maximises the *reference* concentration is flat in
+time — it cannot tell a correct sampling instant from half a symbol out. On a
+clean file it lands well by luck; on a real path a frame sampled half a symbol
+late has every data symbol smeared while its reference blocks still read 0.9,
+which is precisely what the air recordings showed.
+
+The phase is now chosen from the **data**: once the sign and carrier offset are
+known, the frame is re-sampled across ±0.5 symbol and the one that lands the data
+symbols most tightly on a constellation wins (the best of the 2-, 4- and 8-point
+concentrations, so it works whatever the order). The generated file still decodes
+exactly, and its data concentration rose to **0.993**.
+
+On the air capture the same change takes the data from 0.25 to **0.384** — better,
+still not the ~0.9 a clean frame gives, so the smear is real and the path is doing
+it.
+
 ### Still open
 
 * **No real coded transmission has been decoded**, and the metric test above says
