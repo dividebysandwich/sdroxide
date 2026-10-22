@@ -21,9 +21,12 @@
 >   time** — `psk_modulation` had no UI at all.
 > * **Items 1, 2 and 3 of the brief are done.** 32 coded PSK waveforms and
 >   DominoEX are reachable from the panel.
-> * **Item 4 is started**: 8PSK's no-FEC slicer is in and *does not read its
->   recordings yet* — the measurement and the reading (the front end, not the
->   slicer) are in the journal. OFDM, THROB and SCAMP are untouched.
+> * **Item 4 is started and blocked on evidence**: 8PSK's slicer is proven on a
+>   synthetic and reads none of its four recordings at any baud or centre, and the
+>   recordings measure 20–46 Hz wide where the mode is 125 Hz — so the next
+>   measurement is what the files contain. OFDM, THROB and SCAMP are untouched.
+> * **DTMF is done** (item 5's easy half): the touch tones decode, all sixteen keys,
+>   with noise silent. RS_ID and CALL_ID are not started.
 > * **Next**: finish 8PSK's front end (a vestigial filter and an 8-point carrier
 >   recovery, which PSK31's BPSK loop is not), then OFDM / THROB / SCAMP; then
 >   RS_ID / CALL_ID and DTMF (item 5), then TX for the remaining receive-only set
@@ -1278,7 +1281,7 @@ us** — the only one that proves interop).
 | Hell (HELL80, SLOWHELL, FSKH105/245, HELLX9) | recording | loopback | — | 0.33–0.48 — reads, weak |
 | CW | recording | loopback + bench | — | 9/10 words; keyer benched on the rig, iambic A and B |
 | DTMF | loopback | no | — | all 16 keys once each from the touch-tone specification; noise silent |
-| 8PSK125/250/500/1000 | **no** | no | — | 0/4 — the slicer is in, the front end is not |
+| 8PSK125/250/500/1000 | **no** | no | — | the synthetic reads at 125 baud; the recordings read at no baud or centre, and measure 20–46 Hz wide where the mode is 125 Hz |
 
 ### Already shipped and outside this phase
 
