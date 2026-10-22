@@ -270,3 +270,38 @@ Two things learned, both now fixed or recorded:
 
 The gain is 45 on this build, which is **attenuation-ordered** (35 is louder than
 50), and with the 1:49 EFHW the peaks sit about 8 dB below full scale there.
+
+## The keepers (2026-10-22)
+
+The night produced 35 captures. **22 are usable**, kept in
+`~/s4285-captures/keepers/` with a `MANIFEST.md` beside them — off-air material, so
+out of the tree, the same rule as every other recording here.
+
+The test is the frame ACF at 106.67 ms: **at least 0.25 and at least 15x its own
+null**. It was chosen because the frame period is *carrier-offset independent*, so
+it is the one number that can be compared across captures with different tunings and
+different paths.
+
+| frequency | kept | frame ACF |
+|---|---|---|
+| 6348.000 kHz | 16 | 0.26 – 0.51 |
+| 8467.800 kHz (FUV) | 3 | 0.34 – 0.40 |
+| 8478.500 kHz (FUF) | 2 | 0.33 – 0.37 |
+
+**The best single file is `6348.000kHz-20261022-050450Z.wav`** — frame 0.505 at 30x
+its null, and its spectrogram is the clean 2.6 kHz plateau a 4285 should have, with
+none of the aliasing the pre-04:11 files still carry.
+
+Three rejections worth keeping, because each is a different lesson:
+
+* **5215.6 kHz had the highest frame ACF of the night, 0.554, and was rejected** —
+  only 2.4x its null, because a steady carrier autocorrelates at every lag. A high
+  number is not a frame; the ratio is.
+* **4232.0 kHz carries a 47 dB PSK carrier and no frame at all** (0.06 – 0.09). A
+  strong carrier is not a 4285, which is the same lesson the 80/256 rule gives from
+  the other side.
+* **The four 6348 captures from before 04:11 are the aliased ones** — the box
+  decimation, not the band.
+
+Read any of them with `tools/s4285-probe/s4285_verdict.py`, and prefer these over
+the demo recordings: they are ours, they are on the air, and the frame is measured.
