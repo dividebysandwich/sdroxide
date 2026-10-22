@@ -1149,6 +1149,33 @@ only in what the steps mean.
   retune a receiver.
 * **Receive only**: no modulator, so `is_rx_only` says so on the chip.
 
+### 8PSK — the slicer is in, and it does not read its recordings yet
+
+Item 4 of the brief, started. fldigi's no-FEC 8PSK is the tractable end of that
+family — four recordings, no code — and the reference is unambiguous about it:
+
+* a symbol is one of **eight phase steps** `π/4` apart, taken as the differential
+  phase, and the constellation is rotated by **π** in the no-FEC modes
+  (`if (_disablefec && (... || _8psk ...)) phase -= M_PI`);
+* the three bits go to the **MFSK varicode**, **least significant first**
+  (`rx_bit(bits & bitmask)`), and fldigi's Gray table is only for the *coded*
+  variants, where the bits are soft values for the Viterbi decoder.
+
+That is `BpskCore::set_psk8`, and it is in. **It reads nothing**: at every centre
+from 1000 to 2600 Hz in 5 Hz steps, all four recordings decode to a repeating
+garbage pattern (`caecaecae…`, `cc cc cc…`) rather than text. Measured, not
+guessed — `the_corpus_8psk_samples_are_measured` prints the known-word hits *and*
+the most text any centre produced.
+
+**The next thing to read is the front end, not the slicer.** `PskRx` is PSK31's
+receiver: a decision-directed **BPSK** Costas loop and a Hann matched filter.
+fldigi's 8PSK has neither — it uses a vestigial-sideband filter (an 11-bin sfft
+around the carrier) and an 8-point decision for its carrier recovery, and the
+repeating pattern is what a BPSK loop does to an 8-point constellation: it drags
+the phase to two of the eight positions and leaves the rest unreachable. Trying
+the phase alignment and the index polarity (four combinations) changed nothing,
+which is the evidence for that reading.
+
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:

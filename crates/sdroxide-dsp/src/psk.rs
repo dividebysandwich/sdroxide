@@ -456,6 +456,10 @@ pub struct BpskCore {
     /// one stream after collecting one bit from each carrier.
     tap: bool,
     bits: Vec<u8>,
+    /// fldigi's **8PSK** modes without FEC: a symbol is one of eight phase
+    /// steps carrying three bits, and the text is the **MFSK** varicode.
+    psk8: bool,
+    mfsk: MfskVaricodeRx,
 }
 
 impl BpskCore {
@@ -495,7 +499,25 @@ impl BpskCore {
             soft: Vec::new(),
             tap: false,
             bits: Vec::new(),
+            psk8: false,
+            mfsk: MfskVaricodeRx::new(),
         }
+    }
+
+    /// Switch to the 8PSK constellation — three bits per symbol, no FEC.
+    ///
+    /// fldigi's no-FEC 8PSK does **not** use its Gray table: it feeds the raw
+    /// phase index to the varicode three bits at a time, least significant first
+    /// (`psk.cxx`: `rx_bit(bits & bitmask)` in a loop). The Gray table is only
+    /// for the *coded* variants, where the bits are soft values for the Viterbi
+    /// decoder. This is the same split as everywhere else in this file: a hard
+    /// bit for the varicode, a soft value for a decoder.
+    pub fn set_psk8(&mut self, on: bool) {
+        if self.psk8 == on {
+            return;
+        }
+        self.psk8 = on;
+        self.mfsk = MfskVaricodeRx::new();
     }
 
     /// Emit raw differential bits instead of decoding varicode here. A
@@ -621,7 +643,28 @@ impl BpskCore {
             let dn = d.norm();
             self.mag += 0.05 * (curr.norm() - self.mag);
             self.prev_sym = curr;
-            let bit = if self.tap {
+            let bit = if self.psk8 {
+                // Eight phase steps, `π/4` apart, and the constellation is
+                // rotated by π in the no-FEC modes — fldigi's own alignment
+                // (`if (_disablefec && (... || _8psk ...)) phase -= M_PI`).
+                let mut phase = d.arg() - std::f32::consts::PI;
+                if phase < 0.0 {
+                    phase += std::f32::consts::TAU;
+                }
+                let idx = ((phase / std::f32::consts::FRAC_PI_4 + 0.5) as i32).rem_euclid(8) as u8;
+                if dn > 1e-20 {
+                    self.coherence += COHERENCE_SMOOTH * (d.re.abs() / dn - self.coherence);
+                }
+                for i in 0..3 {
+                    let b = (idx >> i) & 1;
+                    if let Some(c) = self.mfsk.push_bit(b)
+                        && (!self.gate || self.coherence >= COHERENCE_GATE)
+                    {
+                        out.push(c);
+                    }
+                }
+                None
+            } else if self.tap {
                 let b = u8::from(d.re >= 0.0);
                 if dn > 1e-20 {
                     self.coherence += COHERENCE_SMOOTH * (d.re.abs() / dn - self.coherence);
@@ -781,6 +824,12 @@ impl PskRx {
     /// passthrough — the two modes share every stage above it.
     pub fn set_qpsk(&mut self, on: bool) {
         self.core.set_qpsk(on);
+    }
+
+    /// Switch to the 8PSK constellation, three bits per symbol and the MFSK
+    /// varicode. See [`BpskCore::set_psk8`].
+    pub fn set_psk8(&mut self, on: bool) {
+        self.core.set_psk8(on);
     }
 
     /// Switch to the PSK robust path, where symbols leave as soft values for a
@@ -1622,6 +1671,61 @@ mod tests {
         for name in ["BPSK63F", "PSK125R", "PSK250R", "PSK500R", "PSK1000R"] {
             let line = lines.iter().find(|l| l.starts_with(name)).expect("every sample measured");
             assert!(line.contains("3/3"), "{line}");
+        }
+    }
+
+    /// The 8PSK modes without FEC, against their corpus recordings.
+    ///
+    /// A symbol is one of eight phase steps and carries three bits; the text is
+    /// the MFSK varicode, not PSK31's. The constellation is rotated by π in the
+    /// no-FEC modes and the bits go in **least significant first**, which is what
+    /// `psk.cxx` does — its Gray table is only for the coded variants.
+    #[test]
+    #[ignore]
+    fn the_corpus_8psk_samples_are_measured() {
+        use std::path::Path;
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi");
+        let want: Vec<&str> = "EAGLE LANDED SDRBROWN".split_whitespace().collect();
+        for (name, baud) in
+            [("8PSK125", 125.0), ("8PSK250", 250.0), ("8PSK500", 500.0), ("8PSK1000", 1000.0)]
+        {
+            let path = format!("{root}/{name}.wav");
+            if !Path::new(&path).exists() {
+                eprintln!("{name}: no sample");
+                continue;
+            }
+            let mut reader = hound::WavReader::open(&path).expect("open");
+            let spec = reader.spec();
+            let audio: Vec<f32> =
+                reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+            let mut best = (0usize, String::new(), 0.0f64);
+            let mut any = (0usize, String::new(), 0.0f64);
+            let mut hz = 1000.0f64;
+            while hz <= 2600.0 {
+                let mut rx = PskRx::new_baud(spec.sample_rate as f64, hz, baud);
+                rx.set_psk8(true);
+                let mut text = String::new();
+                for chunk in audio.chunks(512) {
+                    text.push_str(&rx.process(chunk));
+                }
+                let hits = want.iter().filter(|w| text.contains(**w)).count();
+                if hits > best.0 {
+                    best = (hits, text.clone(), hz);
+                }
+                let printable = text.chars().filter(|c| c.is_ascii_graphic()).count();
+                if printable > any.0 {
+                    any = (printable, text, hz);
+                }
+                hz += 5.0;
+            }
+            eprintln!(
+                "{name} at {baud:.0} baud: {}/3 at {:.0} Hz; most text {} chars at {:.0} Hz: {:?}",
+                best.0,
+                best.2,
+                any.0,
+                any.2,
+                &any.1[..any.1.len().min(120)]
+            );
         }
     }
 
