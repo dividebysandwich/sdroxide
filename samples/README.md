@@ -90,6 +90,17 @@ a fresh, strong recording is no better than the corpus one — `PSK500C4` scores
 synthetic bank of the same shape measures 1.000. So for these four the fault is
 not the recording. The measurement is `tools/psk-ref/psk_text_match.py`.
 
+`fsq_27415_2026-10-22.wav` is the first known-good FSQ recording this project
+has: fldigi sending the corpus text at 27.415 MHz, nine seconds around the burst.
+Our FSQ receiver still reads **0/10** of it, so it is not a gate yet — it is the
+material a gate can be built on, which is what the corpus sample could never be
+(that one has no dominant tone at any centre, spacing or speed).
+
+`mfsk8_27415_2026-10-22.wav` is a second MFSK8 recording, made for the same
+reason: the corpus sample loses `TEST THE EAGLE HAS LANDED` in one span while its
+preamble and tail read at every tuning. This one has not been measured through
+the controller yet.
+
 ## Using them
 
 The decoders' tests take a path from the environment, and default to here:
