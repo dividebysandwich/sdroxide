@@ -63,7 +63,7 @@ or connects to a remote sdroxide server.
   **ISB** (independent sideband — two services on one carrier, one in each ear), a
   spectrum-only mode (SPEC), the automatic digital modes **FT8**, **FT4** and
   **FT2**, the
-  keyboard modes **PSK31**, **RTTY**, **SYNOP/SHIP**, **Olivia**, **Contestia**, **MT63**, **ARDOP**, **THOR**, **MFSK** and **FSQ**, the image
+  keyboard modes **PSK31**, **RTTY**, **SYNOP/SHIP**, **Olivia**, **Contestia**, **MT63**, **ARDOP**, **THOR**, **MFSK** and **FSQ**, the naval **STANAG 4285** data mode (receive only), the image
   modes **SSTV**, **weather fax** and **RIFP** (draft-dulaunoy-rifp-00, a packetised image
   protocol on its own FSK modem), the transmit-only **RF Paint**
   (spectrum-painting) mode, AX.25 **packet** on HF and VHF, and **APRS** — with
@@ -18231,6 +18231,7 @@ using. Bind them under **Speech** on the Controls tab:
 | JTTY | **Experimental.** The WSJT-X 3.2 asynchronous RTTY-like text mode: no T/R slots, ~1.888-second frames of 4-GFSK about 125 Hz wide carrying free text or typed contest atoms behind a tail-biting convolutional code. Sends a message once. See [3.28](#328-jtty). |
 | FSK441 | The original meteor-scatter mode on 6 m and 2 m: 4-FSK at 441 baud carrying free text and the `R26`/`R27`/`RRR`/`73` single-tone shorthand, in a 15/30-second period. The decoder hunts the period for meteor-trail pings; transmit repeats the message for the length of the over. See [3.27](#327-fsk441). |
 | OLIVIA | Robust MFSK keyboard mode (selectable tones/bandwidth). |
+| STANAG 4285 | The NATO single-tone HF modem the naval stations use: 2400 baud PSK on an 1800 Hz sub-carrier in a 3000 Hz footprint, a 256-symbol frame every 106.67 ms. **Receive only.** The mode identifies a 4285 off the air and shows what the receiver measures — the folded sync against its own null, the frame autocorrelation, the three reference blocks collapsing, the carrier offset and the rate (1200 BPSK, 2400 QPSK or 3600 8PSK). **Its text is not yet proven off the air**: the Annex E code, interleaver and message framing decode a generated signal bit-exactly, but no coded station has been copied, and the traffic on these frequencies is usually encrypted anyway — an identification and a rate are what a listener usually wants from it. |
 | THOR | DominoEX-family IFK keyboard mode with FEC (THOR4…THOR32). |
 | FSQ | Fast Simple QSO — 33-tone IFK with directed (FSQCALL) messaging and images. |
 | HELL | Hellschreiber — facsimile "dot" mode read by eye, not decoded (Feld Hell, Slow, X5, X9, FSK Hell 245/105, Hell 80). |
