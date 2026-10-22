@@ -1321,6 +1321,22 @@ pub enum Command {
     ///
     /// Appended last, for the usual reason.
     SetRecordingFormat(crate::RecordingFormat),
+
+    /// Set the colour a single memory's label is painted in on the waterfall.
+    /// `None` clears it, so the memory falls back to the global memory label
+    /// colour — the same as a memory written before the field existed.
+    ///
+    /// Its own command rather than a field on [`Command::EditMemory`] because
+    /// the two are edited in different places: the colour is a one-click change
+    /// on a row, while the rest is the edit form. Riding it on EditMemory would
+    /// make every colour change rewrite the name, frequency and mode too.
+    ///
+    /// Appended last, for the usual reason — postcard numbers variants by
+    /// position.
+    SetMemoryColor {
+        id: u32,
+        color: Option<[u8; 3]>,
+    },
 }
 
 /// What a [`Command::GetKnownCalls`] was answered with.

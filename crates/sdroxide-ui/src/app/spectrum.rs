@@ -755,9 +755,9 @@ impl SdroxideApp {
                     freq_hz: m.freq_hz,
                     text,
                     color: eframe::egui::Color32::from_rgb(
-                        self.ui_settings.memory_waterfall_color[0],
-                        self.ui_settings.memory_waterfall_color[1],
-                        self.ui_settings.memory_waterfall_color[2],
+                        m.color.map(|c| c[0]).unwrap_or(self.ui_settings.memory_waterfall_color[0]),
+                        m.color.map(|c| c[1]).unwrap_or(self.ui_settings.memory_waterfall_color[1]),
+                        m.color.map(|c| c[2]).unwrap_or(self.ui_settings.memory_waterfall_color[2]),
                     ),
                 }
             })
@@ -1035,7 +1035,12 @@ impl SdroxideApp {
     /// memory recall, startup) — i.e. whenever the tuning changed AND left
     /// the visible span. Deliberate pans away from the VFO are never
     /// snapped back, and drag-tuning keeps the VFO in view by itself.
-    pub(in crate::app) fn recenter_if_tuned_away(&mut self, prev_vfo: f64, prev_rate: f64, band_changed: bool) {
+    pub(in crate::app) fn recenter_if_tuned_away(
+        &mut self,
+        prev_vfo: f64,
+        prev_rate: f64,
+        band_changed: bool,
+    ) {
         let vfo = self.state.active_freq_hz();
         let first = !self.seen_first_state;
         self.seen_first_state = true;
