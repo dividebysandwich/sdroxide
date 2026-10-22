@@ -1857,8 +1857,8 @@ use sdroxide_types::{
 /// frames whole, so the appended field moves their layout; the same value is
 /// stored in `session.json` so it survives a restart. `PROTO_VERSION` 213 →
 /// 214, `VERSION_BYTE` 0x21 → 0x22. A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 214;
-const VERSION_BYTE: u8 = 0x22;
+pub const PROTO_VERSION: u16 = 215;
+const VERSION_BYTE: u8 = 0x23;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

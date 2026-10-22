@@ -115,6 +115,7 @@ fn memory_row(
     edit: &mut Option<MemoryEdit>,
     focus: &mut bool,
     antennas: &[String],
+    global_color: [u8; 3],
     cmds: &mut Vec<Command>,
 ) {
     if matches!(edit, Some(e) if e.id == m.id) {
@@ -149,6 +150,12 @@ fn memory_row(
             {
                 *edit = Some(MemoryEdit::of(m));
                 *focus = true;
+            }
+            // Per-memory label colour on the waterfall: a small coloured chip
+            // that opens the palette on click. None = use the global colour.
+            let mut col = m.color.unwrap_or(global_color);
+            if ui.color_edit_button_srgb(&mut col).changed() {
+                cmds.push(Command::SetMemoryColor { id: m.id, color: Some(col) });
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.dnd_drag_source(
@@ -662,6 +669,7 @@ impl SdroxideApp {
                             &mut self.mem_edit,
                             &mut self.mem_edit_focus,
                             &antennas,
+                            self.ui_settings.memory_waterfall_color,
                             cmds,
                         );
                         any = true;
@@ -815,6 +823,7 @@ impl SdroxideApp {
                                 &mut self.mem_edit,
                                 &mut self.mem_edit_focus,
                                 antennas,
+                                self.ui_settings.memory_waterfall_color,
                                 cmds,
                             );
                         }

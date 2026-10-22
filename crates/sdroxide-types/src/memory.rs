@@ -53,6 +53,11 @@ pub struct MemoryChannel {
     /// move a relay every time one was recalled (issue #235).
     #[serde(default)]
     pub antenna: Option<String>,
+    /// The colour this memory's label is painted in on the waterfall, as sRGB.
+    /// `None` means "use the global memory label colour" — which is what every
+    /// memory written before this existed means, so nothing changes for them.
+    #[serde(default)]
+    pub color: Option<[u8; 3]>,
 }
 
 /// The RTTY modem setup captured alongside a memory stored in RTTY mode.
