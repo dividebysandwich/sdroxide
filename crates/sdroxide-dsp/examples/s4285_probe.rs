@@ -73,6 +73,10 @@ fn main() {
         r.carrier_offset_hz
     );
     println!(
+        "frame ACF {:.3} (a correct 4285 repeats 80 of its 256 symbols, so ~0.31; another mode ~0.03)",
+        r.frame_acf
+    );
+    println!(
         "last reference blocks: {:.3} {:.3} {:.3} (1.0 collapses, 0.25 is sixteen symbols of noise)",
         r.reference[0], r.reference[1], r.reference[2]
     );

@@ -171,6 +171,13 @@ pub struct S4285Report {
     pub sync_quality: f32,
     /// The running noise estimate the correlation is judged against.
     pub correlation_floor: f32,
+    /// The frame-period autocorrelation at the lock: how much of a frame repeats
+    /// one frame later. **This is the detector's real discriminator.** A correct
+    /// 4285 measures about **0.31-0.35** — only the 80 sync symbols repeat, the
+    /// other 176 are random — while a strong PSK carrier that is a different mode
+    /// measures about **0.03**. Measured off the air, and the reason a sync
+    /// correlation alone cannot tell the two apart.
+    pub frame_acf: f32,
     /// Carrier offset measured from the reference blocks, in hertz.
     pub carrier_offset_hz: f32,
     /// Frames demodulated since the last reset.
@@ -187,6 +194,7 @@ impl Default for S4285Report {
             locked: false,
             sync_quality: 0.0,
             correlation_floor: 0.0,
+            frame_acf: 0.0,
             carrier_offset_hz: 0.0,
             frames: 0,
             rate: S4285Rate::Unknown,
@@ -198,9 +206,14 @@ impl Default for S4285Report {
 /// A Fibonacci LFSR, least-significant bit first, as both of the standard's
 /// generators are specified: the output is `x₀`, the feedback is the XOR of the
 /// tapped stages, and the register shifts one position per output bit.
-fn lfsr(taps: &[usize], n: usize, init: u32) -> Vec<u8> {
-    let len = taps.iter().copied().max().unwrap_or(0) + 1;
-    let mut state: Vec<u8> = (0..len).map(|i| ((init >> i) & 1) as u8).collect();
+fn lfsr(stages: usize, taps: &[usize], n: usize, init: u32) -> Vec<u8> {
+    // The stage count is the polynomial's degree, **not** one more than its
+    // highest tap. `x⁵ + x² + 1` is five stages with taps {0, 2} and `x⁹ + x⁴ + 1`
+    // is nine with taps {0, 4}; giving either a stage too many makes the register
+    // empty out and stay at zero, which produced a sync sequence of period 16 and
+    // a scrambler that was a constant — and the references then could not
+    // collapse, which read as "no frame".
+    let mut state: Vec<u8> = (0..stages).map(|i| ((init >> i) & 1) as u8).collect();
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         out.push(state[0]);
@@ -216,7 +229,7 @@ fn lfsr(taps: &[usize], n: usize, init: u32) -> Vec<u8> {
 
 /// The 80-symbol synchronisation sequence as ±1, PN31 clocked from `11010`.
 pub fn sync_symbols() -> [f32; SYNC] {
-    let bits = lfsr(&[2, 5], SYNC, 0b11010);
+    let bits = lfsr(5, &[0, 2], SYNC, 0b11010);
     let mut out = [0.0f32; SYNC];
     for (o, b) in out.iter_mut().zip(&bits) {
         *o = if *b == 1 { 1.0 } else { -1.0 };
@@ -238,7 +251,7 @@ pub fn sync_differential() -> [f32; SYNC - 1] {
 /// The 176-symbol scrambling sequence, `Bk = e^(jnπ/4)` with
 /// `n = 4x₂ + 2x₁ + x₀`, the register advancing three positions per symbol.
 pub fn scrambling() -> [C; SCRAMBLED] {
-    let bits = lfsr(&[4, 9], SCRAMBLED * 3, 1);
+    let bits = lfsr(9, &[0, 4], SCRAMBLED * 3, 1);
     let mut out = [C::default(); SCRAMBLED];
     for (k, o) in out.iter_mut().enumerate() {
         let n = 4 * bits[3 * k + 2] as i32 + 2 * bits[3 * k + 1] as i32 + bits[3 * k] as i32;
@@ -480,6 +493,40 @@ impl S4285Receiver {
         // ~0.2-0.4 and a maximum over every offset on noise reaches 0.738.
         self.floor = if self.floor == 0.0 { score } else { self.floor * 0.9995 + score * 0.0005 };
         self.report.correlation_floor = self.floor;
+        // The ACF is the number that says whether a *frame* is there, so it is
+        // reported whether or not a lock was accepted — a file that does not lock
+        // has to say why, and "ACF 0.03" is a different answer from "no carrier".
+        if self.diff.len() % 16 == 0 {
+            self.report.frame_acf = self.frame_acf();
+        }
+    }
+
+    /// How much of the last two frames repeats one frame later.
+    ///
+    /// Normalised so it is independent of level: `|sum s[k] conj(s[k-256])|` over
+    /// the geometric mean of the two energies. A correct 4285 repeats only its 80
+    /// sync symbols, so the ceiling is about 80/256 = 0.31 plus the correlation of
+    /// the random part; a different mode repeats nothing and sits near zero.
+    fn frame_acf(&self) -> f32 {
+        let n = self.syms.len();
+        if n < FRAME + 1 {
+            return 0.0;
+        }
+        let take = (n - FRAME).min(FRAME);
+        let mut acc = C::default();
+        let (mut ea, mut eb) = (0.0f32, 0.0f32);
+        for k in 0..take {
+            let a = self.syms[n - take - FRAME + k];
+            let b = self.syms[n - take + k];
+            acc = acc.add(b.mul(a.conj()));
+            ea += a.norm() * a.norm();
+            eb += b.norm() * b.norm();
+        }
+        let denom = (ea * eb).sqrt();
+        if denom <= 1e-20 {
+            return 0.0;
+        }
+        (acc.norm() / denom).min(1.0)
     }
 
     fn try_lock(&mut self) {
@@ -491,6 +538,15 @@ impl S4285Receiver {
         let before = self.corr[l - 1 - FRAME];
         let floor = self.floor.max(0.15);
         if now > 0.45 && now > floor * 1.6 && before > floor * 1.4 {
+            // ...but a correlation that recurs is still not proof. The frame
+            // period repeats only because 80 of its 256 symbols are the sync
+            // sequence, which is 0.31-0.35 of it; a different mode with a strong
+            // carrier measures ~0.03. Gate on that, not on the correlation.
+            let acf = self.frame_acf();
+            self.report.frame_acf = acf;
+            if acf < MIN_FRAME_ACF {
+                return;
+            }
             self.report.locked = true;
             self.report.sync_quality = now;
             // The correlation's window ends on the last sync symbol, so the next
@@ -509,7 +565,7 @@ impl S4285Receiver {
         // The scrambled part, with both scrambler signs tried: a receiver on the
         // opposite sideband sees the conjugate sequence, and picking the sign that
         // collapses the references costs nothing.
-        let mut best: Option<(f32, bool, [C; SCRAMBLED])> = None;
+        let mut best: Option<(f32, bool, f32, [C; SCRAMBLED])> = None;
         for &sign in &[1.0f32, -1.0f32] {
             let mut z = [C::default(); SCRAMBLED];
             for k in 0..SCRAMBLED {
@@ -517,27 +573,29 @@ impl S4285Receiver {
                 let s = if sign > 0.0 { s } else { s.conj() };
                 z[k] = frame[SYNC + k].mul(s.conj());
             }
-            let r: f32 =
-                REF_BLOCKS.iter().map(|&(lo, hi)| concentration(&z[lo..hi])).sum::<f32>() / 3.0;
-            if best.as_ref().is_none_or(|(b, _, _)| r > *b) {
-                best = Some((r, sign < 0.0, z));
+            // The residual carrier offset has to be taken out **inside** each
+            // block before the concentration can mean anything. A ramp spreads a
+            // 16-symbol block across the circle, which is why three numbers that
+            // should read 0.7-0.9 read 0.3 on a perfectly good capture — the trap
+            // the probe's README recorded and this reproduces exactly.
+            let mut hz = -150.0f32;
+            while hz <= 150.0 {
+                let c = ramp_concentrations(&z, hz);
+                let r = (c[0] + c[1] + c[2]) / 3.0;
+                if best.as_ref().is_none_or(|(b, _, _, _)| r > *b) {
+                    best = Some((r, sign < 0.0, hz, z));
+                }
+                hz += 1.0;
             }
         }
-        let (score, reversed, z) = best?;
+        let (score, reversed, offset, z) = best?;
         // A frame whose references do not collapse is not a frame. This is the
         // gate that keeps a mistuned or mis-scrambled block from being reported
         // as a demodulation; the three blocks are printed whatever it decides.
         if score < MIN_REFERENCE {
             return None;
         }
-        let reference = [
-            concentration(&z[REF_BLOCKS[0].0..REF_BLOCKS[0].1]),
-            concentration(&z[REF_BLOCKS[1].0..REF_BLOCKS[1].1]),
-            concentration(&z[REF_BLOCKS[2].0..REF_BLOCKS[2].1]),
-        ];
-        // The carrier offset is what the reference blocks say it is: their mean
-        // phase should be zero, and its rotation across the frame is the residual.
-        let offset = reference_offset(&z);
+        let reference = ramp_concentrations(&z, offset);
 
         // Rate from the descrambled data symbols only — scrambling makes them
         // uniform otherwise, which would read as 8PSK on every frame.
@@ -545,7 +603,8 @@ impl S4285Receiver {
         let mut data: Vec<C> = Vec::with_capacity(128);
         for &(lo, hi) in &DATA_BLOCKS {
             for k in lo..hi {
-                let s = &z[k];
+                let s = z[k].mul(C::from_phase(-offset * TAU * k as f32 / BAUD as f32));
+                let s = &s;
                 let idx = (s.arg() / std::f32::consts::FRAC_PI_4).round() as i32;
                 let idx = idx.rem_euclid(8) as usize;
                 used[idx] = true;
@@ -587,71 +646,31 @@ impl S4285Receiver {
 /// visible in the three numbers, while one wrongly rejected is silence.
 const MIN_REFERENCE: f32 = 0.35;
 
-/// How tightly a block of symbols collapses onto one point, 0..1.
+/// The frame-period autocorrelation a lock needs.
 ///
-/// The coherence of a mean, not a carrier-to-noise estimate: it is 1.0 when every
-/// symbol sits on the reference phase and about `1/sqrt(n)` for noise, which for
-/// sixteen symbols is 0.25. It needs no knowledge of the sync pattern, so a
-/// plausible-looking correlation cannot fool it.
-fn concentration(block: &[C]) -> f32 {
-    let n = block.len();
-    if n == 0 {
-        return 0.0;
-    }
-    let mut sum = C::default();
-    let mut mag = 0.0f32;
-    for z in block {
-        sum = sum.add(*z);
-        mag += z.norm();
-    }
-    if mag <= 1e-12 {
-        return 0.0;
-    }
-    (sum.norm() / mag).min(1.0)
-}
+/// A correct 4285 measures 0.31-0.35 (only its 80 sync symbols repeat out of 256)
+/// and a strong PSK carrier of another mode measures ~0.03, both measured. 0.12
+/// sits between them with room for a fading capture: the night-time file that
+/// started this work measures 0.347 across its whole 36 s.
+const MIN_FRAME_ACF: f32 = 0.12;
 
-/// The residual carrier offset in hertz, from the reference blocks' own rotation
-/// across the frame.
-///
-/// The references are all symbol 0 before scrambling, so after descrambling their
-/// mean phase is the residual rotation at their position in the frame. Three
-/// blocks spanning 176 symbols give the slope: a straight line through their
-/// phases, in hertz.
-fn reference_offset(z: &[C]) -> f32 {
-    let mut points = [(0.0f32, 0.0f32); 3];
+/// The three reference blocks' concentrations with a carrier offset removed
+/// inside each block, and their mean in slot 0 of the return? No — the mean is
+/// returned separately by the caller; this returns the three.
+fn ramp_concentrations(z: &[C], hz: f32) -> [f32; 3] {
+    let mut out = [0.0f32; 3];
     for (i, &(lo, hi)) in REF_BLOCKS.iter().enumerate() {
         let mut sum = C::default();
-        for s in &z[lo..hi] {
-            sum = sum.add(*s);
+        let mut mag = 0.0f32;
+        for k in lo..hi {
+            let t = k as f32 / BAUD as f32;
+            let c = z[k].mul(C::from_phase(-hz * TAU * t));
+            sum = sum.add(c);
+            mag += c.norm();
         }
-        let mid = (lo + hi) as f32 / 2.0;
-        points[i] = (mid / BAUD as f32, sum.arg());
+        out[i] = if mag > 1e-12 { (sum.norm() / mag).min(1.0) } else { 0.0 };
     }
-    // Unwrap around the first point, then least-squares the slope.
-    let mut y = [0.0f32; 3];
-    y[0] = points[0].1;
-    for i in 1..3 {
-        let mut d = points[i].1 - y[i - 1];
-        while d > std::f32::consts::PI {
-            d -= TAU;
-        }
-        while d < -std::f32::consts::PI {
-            d += TAU;
-        }
-        y[i] = y[i - 1] + d;
-    }
-    let xs: [f32; 3] = [points[0].0, points[1].0, points[2].0];
-    let n = 3.0f32;
-    let sx: f32 = xs.iter().sum();
-    let sy: f32 = y.iter().sum();
-    let sxx: f32 = xs.iter().map(|x| x * x).sum();
-    let sxy: f32 = xs.iter().zip(&y).map(|(x, v)| x * v).sum();
-    let denom = n * sxx - sx * sx;
-    if denom.abs() < 1e-9 {
-        return 0.0;
-    }
-    let slope = (n * sxy - sx * sy) / denom;
-    slope / TAU
+    out
 }
 
 /// Symbol phases to payload bits, oldest first, by Annex A's tables.
@@ -687,4 +706,39 @@ fn transcode(data: &[C], rate: S4285Rate) -> Vec<u8> {
         }
     }
     bits
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Both generators are the standard's, and both were got wrong once: a
+    /// register given one stage too many empties out and stays at zero, which
+    /// made the sync sequence periodic with 16 and the scrambler a constant.
+    /// Nothing failed loudly — the sync correlated *better* against the
+    /// degenerate pattern and the references simply never collapsed, which read
+    /// as "no frame in this file".
+    #[test]
+    fn the_generators_are_maximal_and_match_the_standard() {
+        let sync = sync_symbols();
+        // PN31: two periods plus the first 18, and the period really is 31.
+        let bits: Vec<i8> = sync.iter().map(|v| if *v > 0.0 { 1 } else { 0 }).collect();
+        assert_eq!(&bits[..31], &bits[31..62], "the sync is not periodic with 31");
+        assert_ne!(&bits[..31], &bits[16..47], "the sync has a shorter period than 31");
+        // The first ten symbols, from the register `11010` clocked as specified.
+        assert_eq!(&bits[..10], &[0, 1, 0, 1, 1, 0, 0, 1, 1, 1], "sync head");
+
+        let scr = scrambling();
+        // A 511-length maximal sequence: over one frame's worth of symbols all
+        // eight phases appear, and the sequence is not constant.
+        let mut seen = [false; 8];
+        for z in scr {
+            let n = ((z.arg() / std::f32::consts::FRAC_PI_4).round() as i32).rem_euclid(8) as usize;
+            seen[n] = true;
+        }
+        assert!(seen.iter().filter(|s| **s).count() >= 7, "the scrambler is not maximal");
+        // The first symbol of the sequence: the register is all zeros but its
+        // lowest stage, so n = 1 and the phase is one step.
+        assert_eq!(((scr[0].arg() / std::f32::consts::FRAC_PI_4).round() as i32) & 7, 1);
+    }
 }

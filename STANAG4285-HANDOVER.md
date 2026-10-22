@@ -338,3 +338,36 @@ Two things the numbers already say about why, both worth picking up first:
 Text is decoded through `BaudotRx` and is nonsense on both, which is the expected
 consequence of the concentrations above; the raw bits are on the frame event and
 `bits()` so a mis-decode is visible as bits rather than as silence.
+
+### Later the same day — the lock discriminates, and both generators were wrong
+
+Two fixes, and the second is the one that mattered.
+
+**The generators had one stage too many.** `x⁵ + x² + 1` is **five** stages and
+`x⁹ + x⁴ + 1` is **nine** — not "highest tap + 1". With ten stages the scrambler
+emptied out and stayed at zero, so it was a constant; with six, the sync sequence
+had period 16 and stopped being PN31. Nothing failed loudly: the degenerate sync
+correlated *better* (0.814 against 0.547 for the true one) and the references
+simply never collapsed, which read as "no frame here". `the_generators_are_maximal_
+and_match_the_standard` now pins the 31-symbol period, the first ten sync symbols
+and a near-uniform scrambler, so it cannot happen quietly again.
+
+**The lock is gated on the frame ACF**, not on the sync correlation: 80 of a
+frame's 256 symbols repeat, so a real 4285 measures about 0.31 and another mode
+about 0.03. Both are reported whether or not a lock is accepted, because a file
+that does not lock has to say why.
+
+Measured after both fixes, on the two files the handover named:
+
+| | frame ACF | lock | sync | reference blocks |
+|---|---|---|---|---|
+| **8467.800 kHz** (FUV Djibouti) | **0.400** | yes, 163 frames | 0.547 | 0.485 / 0.281 / 0.299 |
+| **4232.000 kHz** (control) | **0.042** | **no** | — | — |
+
+The ACF reproduces the two documented figures (0.347 on this file, ~0.03 on the
+control) closely enough to be the same measurement, and the control is now
+refused. The offset estimate lands at −106 Hz, near the edge of the ±150 Hz
+search, and the reference concentrations are 0.28–0.49 where a clean lock should
+give 0.7–0.9 — so the **frame phase and the block alignment are the next thing to
+check**, not the generators. Text is still nonsense, which follows from the
+concentrations: the payload cannot be right if the references do not collapse.
