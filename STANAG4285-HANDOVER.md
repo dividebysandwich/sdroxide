@@ -687,6 +687,14 @@ is written: **15 `TONE` — "Choose SSB TX bandwidth"**, and **`NRC`**, a *TX/RX
 noise-reduction processor whose own description says it is for speech. A data
 signal wants the widest `TONE` and `NRC` off.
 
+**Power and level are not it either.** Four more transmissions at 1 W and at two
+audio levels (0.05 and 0.02 FS) give the same data concentration — 0.12 to 0.16
+where the same waveform reads 0.99 from a file — and the rig's own carrier is
+clean to **0.8 Hz** over four seconds, so it is not phase noise and not the RSP1's
+front end compressing. What is left, and it is what the manual's 450–2500 Hz says,
+is the **SSB crystal filter**: `TONE = Hi 4K` did not change the measurement, so it
+is probably a microphone tone rather than the filter's width.
+
 The +221 Hz carrier offset is real as well (two tones, 800→1021 and 1600→1821) and
 is inside a real receiver's business — ±150 Hz is a search range this receiver
 chose, not a limit of the standard, which allows ±75 Hz of carrier error *from the
