@@ -1013,6 +1013,29 @@ needs **four blocks of tail**, because the receiver integrates `SyncIntegLen`
 FEC blocks and a transmission that stops the instant its last character is out
 decodes only up to the block before it) and `contestia_keys_the_transmitter`.
 
+### MFSK TX — the receiver's own tables, read the other way
+
+The modulator is `MfskTx` in `sdroxide-dsp/src/mfsk_rx.rs`, next to the receiver
+it has to agree with: varicode → the K = 7 code → the `symbits × symbits × depth`
+interleaver → one tone per symbol, with the preamble of encoded zeros, `CR STX CR`,
+the text, `STX`, and eight idle characters of drain so the interleaver's latency
+does not cut the last character off.
+
+* **The audio is generated at the variant's own rate and resampled to 8 kHz**,
+  because the eleven variants do not share one: MFSK11/22/44/88 run at 11.025 kHz
+  and the whole tone grid is defined there. Building at 8 kHz and "adjusting" the
+  spacing is the mistake this avoids.
+* **Gates**: `a_synthetic_mfsk_transmission_reads_back` (MFSK4, MFSK16, MFSK32 and
+  MFSK11 — the last being the resampled case) and
+  `an_mfsk_transmission_reads_back_through_the_controller`, which drives the
+  console's own transmitter out to 48 kHz and back in through the console's own
+  receiver, resamplers and all.
+* `Mode::Mfsk` is out of `is_rx_only`; the panel no longer greys the sending half.
+
+**Not on the air.** The next measurement for this one is a bench recording — our
+transmission through the CRT and back through the RSP1 — which is the same loop the
+rest of the corpus came from and needs the operator at the rig.
+
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:

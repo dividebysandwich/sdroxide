@@ -445,8 +445,7 @@ pub enum Mode {
     /// The variant is [`crate::DigiConfig::mfsk_mode`], because the eleven are
     /// one modem at different symbol rates rather than eleven decoders. Every
     /// variant in the corpus decodes its own recording or is named in
-    /// `MODE-PROGRESS.md`; the transmit side is not built yet, so this is
-    /// receive only for now.
+    /// `MODE-PROGRESS.md`, and both halves are built.
     ///
     /// Appended for the same reason as [`Mode::Hell`].
     Mfsk,
@@ -1095,10 +1094,6 @@ impl Mode {
                 | Mode::Fst4
                 | Mode::Q65
                 | Mode::UvPacket
-                // MFSK's decoder is ported and proven against the corpus, but
-                // its modulator is not built yet: the panel greys the sending
-                // half rather than handing text to a modem that has none.
-                | Mode::Mfsk
                 // MT63's modulator is not written either.
                 | Mode::Mt63
                 // ARDOP is the modem only, and receive only: no modulator and

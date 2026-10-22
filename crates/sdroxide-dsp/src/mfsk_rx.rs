@@ -19,10 +19,13 @@
 //! offsets, a symbol clock taken from sixteen hop phases, soft symbols from the
 //! tone amplitudes, the diagonal interleaver, and the glue down to text.
 //!
-//! **Receiver only.** MFSK's transmit side is a modulator over the same tables
-//! and is a separate job.
+//! The transmitter is here too ([`MfskTx`]): it is the same tables read the
+//! other way round, and keeping the two in one file is what stops them drifting.
 
-use crate::fec::{ConvCode, ViterbiStream};
+use std::collections::VecDeque;
+
+use crate::MonoResampler;
+use crate::fec::{ConvCode, ConvEncoder, ViterbiStream};
 use sdroxide_types::MfskMode;
 
 const PI: f64 = std::f64::consts::PI;
@@ -949,6 +952,306 @@ fn encode_impl(variant: MfskVariant, centre: f64, text: &str, invert: bool) -> V
     out
 }
 
+// ---------------------------------------------------------------- the modulator
+
+/// The MFSK transmitter: the streaming form of [`encode`].
+///
+/// The reference is fldigi's `MFSK_Transmitter` — varicode bits through the
+/// K = 7 code, the `symbits × symbits × depth` interleaver, one tone per symbol —
+/// and the block structure is this tree's own, which is what the corpus decoder
+/// reads: a preamble of encoded zeros, `CR STX CR`, the text, `STX`, then idle
+/// characters until the interleaver has drained.
+///
+/// Audio is generated at the variant's own rate and resampled to `out_rate`,
+/// because the variants do not share one: MFSK11/22/44/88 run at 11.025 kHz and
+/// everything else at 8 kHz, and the whole tone grid is defined at the variant's
+/// rate.
+pub struct MfskTx {
+    variant: MfskVariant,
+    centre: f64,
+    /// `variant.fs` → `out_rate`; `None` when they are the same.
+    rate_out: Option<MonoResampler>,
+    /// Audio ready to hand out, at `out_rate`.
+    out: VecDeque<f32>,
+    /// Scratch for one symbol at `variant.fs`, and for its resampled form.
+    sym: Vec<f32>,
+    res: Vec<f32>,
+    enc: ConvEncoder,
+    inlv: Interleaver,
+    shift: u32,
+    filled: usize,
+    phase: f64,
+    /// The preamble: `pairs` repeats of one encoded zero, then `zeros` encoded
+    /// zeros. Both are the reference's, and skipping either leaves the receiver's
+    /// clock nothing steady to lock on.
+    pre_pairs: usize,
+    pre_zeros: usize,
+    /// The framing around the message: `CR STX CR` before it, `STX` after.
+    stage: TxStage,
+    q: VecDeque<(u8, Option<usize>)>,
+    total: usize,
+    sent: usize,
+    /// Idle characters after the last one, so the interleaver's `(size - 1) ×
+    /// depth` symbols of latency are filled with something rather than cut off.
+    drain: usize,
+    /// The two bits of the current encoder push, and which of them is next.
+    pending: [u8; 2],
+    pending_at: usize,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum TxStage {
+    Preamble,
+    Start,
+    Data,
+    End,
+    Drain,
+    Done,
+}
+
+impl MfskTx {
+    pub fn new(variant: MfskVariant, out_rate: f64, centre: f64) -> Self {
+        let resampler = if (out_rate - variant.fs).abs() > 0.5 {
+            MonoResampler::new(variant.fs, out_rate)
+        } else {
+            None
+        };
+        MfskTx {
+            variant,
+            centre,
+            rate_out: resampler,
+            out: VecDeque::new(),
+            sym: Vec::new(),
+            res: Vec::new(),
+            enc: ConvEncoder::new(ConvCode::THOR),
+            inlv: Interleaver::new(variant.symbits, variant.depth, true),
+            shift: 0,
+            filled: 0,
+            phase: 0.0,
+            pre_pairs: variant.preamble,
+            pre_zeros: variant.preamble / 3,
+            stage: TxStage::Preamble,
+            q: VecDeque::new(),
+            total: 0,
+            sent: 0,
+            drain: 8,
+            pending: [0; 2],
+            pending_at: 0,
+        }
+    }
+
+    pub fn variant(&self) -> MfskVariant {
+        self.variant
+    }
+
+    pub fn set_params(&mut self, centre: f64, variant: MfskVariant) {
+        if variant.name != self.variant.name {
+            let q = std::mem::take(&mut self.q);
+            let (total, sent) = (self.total, self.sent);
+            *self = MfskTx::new(variant, self.out_rate(), centre);
+            self.q = q;
+            self.total = total;
+            self.sent = sent;
+            return;
+        }
+        self.centre = centre;
+    }
+
+    fn out_rate(&self) -> f64 {
+        if self.rate_out.is_some() { 0.0 } else { self.variant.fs }
+    }
+
+    pub fn push_text(&mut self, text: &str) {
+        for ch in text.chars() {
+            let byte = if ch.is_ascii() && ch != '\r' && ch != '\n' { ch as u8 } else { b' ' };
+            self.q.push_back((byte, Some(self.total)));
+            self.total += 1;
+        }
+    }
+
+    pub fn sent_chars(&self) -> usize {
+        self.sent
+    }
+
+    pub fn total_chars(&self) -> usize {
+        self.total
+    }
+
+    pub fn clear(&mut self) {
+        self.q.clear();
+        self.total = 0;
+        self.sent = 0;
+        self.stage = TxStage::Preamble;
+        self.pre_pairs = self.variant.preamble;
+        self.pre_zeros = self.variant.preamble / 3;
+        self.shift = 0;
+        self.filled = 0;
+        self.pending_at = 2;
+        self.enc.reset();
+        self.inlv = Interleaver::new(self.variant.symbits, self.variant.depth, true);
+        self.out.clear();
+    }
+
+    /// Nothing left to send *and* nothing left to play.
+    pub fn drained(&self) -> bool {
+        self.stage == TxStage::Done && self.out.is_empty()
+    }
+
+    /// The next bit of the **preamble**, or `None` once it is over. The framing
+    /// and the characters go through [`Self::push_char`], which feeds the shifter
+    /// directly — they are not one bit at a time.
+    fn preamble_bit(&mut self) -> Option<u8> {
+        loop {
+            if self.pending_at < 2 {
+                let b = self.pending[self.pending_at];
+                self.pending_at += 1;
+                return Some(b);
+            }
+            if self.pre_pairs > 0 {
+                self.pre_pairs -= 1;
+                if self.pre_pairs == 0 {
+                    // `encode_impl` restarts the code between the two runs.
+                    self.enc.reset();
+                }
+                let zero = self.enc.push(0);
+                // The reference's own preamble: the *same* pair, repeated.
+                self.pending = [zero & 1, (zero >> 1) & 1];
+                self.pending_at = 0;
+                continue;
+            }
+            if self.pre_zeros > 0 {
+                self.pre_zeros -= 1;
+                let d = self.enc.push(0);
+                self.pending = [d & 1, (d >> 1) & 1];
+                self.pending_at = 0;
+                continue;
+            }
+            return None;
+        }
+    }
+
+    /// One character's worth of bits into the shifter.
+    fn push_char(&mut self, c: char) {
+        for bit in MfskRx::varicode_bits(c) {
+            let d = self.enc.push(bit);
+            self.shift_in(d & 1);
+            self.shift_in((d >> 1) & 1);
+        }
+    }
+
+    /// Advance the framing and put the next character's bits through the shifter.
+    /// Returns false when the transmission has nothing left to send.
+    fn next_char(&mut self) -> bool {
+        match self.stage {
+            TxStage::Done => false,
+            TxStage::Preamble => {
+                self.stage = TxStage::Start;
+                true
+            }
+            TxStage::Start => {
+                for c in ['\r', '\u{2}', '\r'] {
+                    self.push_char(c);
+                }
+                self.stage = TxStage::Data;
+                true
+            }
+            TxStage::Data => match self.q.pop_front() {
+                Some((b, idx)) => {
+                    self.push_char(b as char);
+                    if let Some(i) = idx {
+                        self.sent = self.sent.max(i + 1);
+                    }
+                    if self.q.is_empty() {
+                        self.stage = TxStage::End;
+                    }
+                    true
+                }
+                None => {
+                    self.stage = TxStage::End;
+                    true
+                }
+            },
+            TxStage::End => {
+                self.push_char('\u{4}');
+                self.stage = TxStage::Drain;
+                true
+            }
+            TxStage::Drain if self.drain > 0 => {
+                self.drain -= 1;
+                self.push_char('\0');
+                if self.drain == 0 {
+                    self.stage = TxStage::Done;
+                }
+                true
+            }
+            TxStage::Drain => {
+                self.stage = TxStage::Done;
+                false
+            }
+        }
+    }
+
+    fn shift_in(&mut self, bit: u8) {
+        self.shift = (self.shift << 1) | (bit & 1) as u32;
+        self.filled += 1;
+        if self.filled >= self.variant.symbits {
+            self.emit_symbol();
+            self.filled = 0;
+            self.shift = 0;
+        }
+    }
+
+    fn emit_symbol(&mut self) {
+        let mut word = self.shift;
+        self.inlv.bits(&mut word);
+        let mut tone = binary(word) as usize % self.variant.tones;
+        tone = tone.min(self.variant.tones - 1);
+        let f0 = self.centre - self.variant.bandwidth() / 2.0;
+        let w = 2.0 * PI * (f0 + tone as f64 * self.variant.spacing()) / self.variant.fs;
+        self.sym.clear();
+        self.sym.reserve(self.variant.symlen);
+        for _ in 0..self.variant.symlen {
+            self.sym.push(self.phase.cos() as f32);
+            self.phase += w;
+            if self.phase > 2.0 * PI {
+                self.phase -= 2.0 * PI;
+            }
+        }
+        self.res.clear();
+        match &mut self.rate_out {
+            Some(r) => r.push(&self.sym, &mut self.res),
+            None => self.res.extend_from_slice(&self.sym),
+        }
+        self.out.extend(self.res.iter().copied());
+    }
+
+    /// Fill `out` with audio. Always fills it — a transmission that has ended
+    /// emits silence, which is what the caller's buffer wants.
+    pub fn next_block(&mut self, out: &mut [f32]) -> usize {
+        while self.out.len() < out.len() {
+            if self.stage == TxStage::Preamble {
+                match self.preamble_bit() {
+                    Some(bit) => {
+                        self.shift_in(bit);
+                        continue;
+                    }
+                    None => {
+                        self.stage = TxStage::Start;
+                        continue;
+                    }
+                }
+            }
+            if !self.next_char() {
+                break;
+            }
+        }
+        for s in out.iter_mut() {
+            *s = self.out.pop_front().unwrap_or(0.0);
+        }
+        out.len()
+    }
+}
+
 fn push_symbol(
     out: &mut Vec<f32>,
     phase: &mut f64,
@@ -1076,6 +1379,42 @@ impl MfskReceiver {
 
 #[cfg(test)]
 mod tests {
+
+    /// The transmitter into the receiver, at four variants — including one at
+    /// 11.025 kHz, which is the case the resampler exists for.
+    ///
+    /// A loopback proves the two halves agree with each other, which is all it
+    /// can prove. What it does catch is the things that are easy to get wrong and
+    /// invisible otherwise: a preamble that does not fill the interleaver, a
+    /// missing tail that cuts the last character off, and a tone grid built at
+    /// the wrong rate.
+    #[test]
+    fn a_synthetic_mfsk_transmission_reads_back() {
+        let text = "TEST THE EAGLE HAS LANDED 12345";
+        for name in ["MFSK4", "MFSK16", "MFSK32", "MFSK11"] {
+            let variant = MfskVariant::named(name).expect("a variant");
+            let mut tx = MfskTx::new(variant, 8000.0, 1750.0);
+            tx.push_text(text);
+            let mut audio = Vec::new();
+            let mut block = vec![0.0f32; 400];
+            let mut guard = 0;
+            while !tx.drained() && guard < 200_000 {
+                tx.next_block(&mut block);
+                audio.extend_from_slice(&block);
+                guard += 1;
+            }
+            assert!(tx.drained(), "{name} never finished its transmission");
+            let mut rx = MfskRx::new(variant, 8000.0, 1750.0);
+            for chunk in audio.chunks(512) {
+                rx.feed(chunk);
+            }
+            assert!(
+                rx.text().contains("EAGLE") && rx.text().contains("LANDED"),
+                "{name} did not read its own transmission back: {:?}",
+                rx.text()
+            );
+        }
+    }
     use super::*;
 
     #[test]
