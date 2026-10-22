@@ -455,8 +455,11 @@ pub enum Mode {
     /// same `DigiConfig` fields, and this is the flag that says which scrambling
     /// code to run.
     ///
-    /// Receive only for now, for the same reason as [`Mode::Mfsk`]: the
-    /// transmitter still speaks Olivia's scrambler.
+    /// Both halves are built. The transmitter emits the **opposite Walsh sign**
+    /// to Olivia's, because the two are read by different receivers: Contestia by
+    /// the vendored Jalocha engine (fldigi's own code, which takes a negative
+    /// peak as the upper half of the alphabet) and Olivia by this tree's, which
+    /// was measured against an off-air capture to vote the other way.
     ///
     /// Appended for the same reason as [`Mode::Hell`].
     Contestia,
@@ -1096,9 +1099,6 @@ impl Mode {
                 // its modulator is not built yet: the panel greys the sending
                 // half rather than handing text to a modem that has none.
                 | Mode::Mfsk
-                // Contestia's transmitter still sends Olivia's scrambling code,
-                // so it is offered for reading only until that is written.
-                | Mode::Contestia
                 // MT63's modulator is not written either.
                 | Mode::Mt63
                 // ARDOP is the modem only, and receive only: no modulator and

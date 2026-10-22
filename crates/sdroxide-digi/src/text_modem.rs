@@ -362,15 +362,17 @@ impl TextModemController {
             Mode::Olivia => {
                 TxModem::Olivia(OliviaTx::new(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
             }
+            // Contestia is Olivia's engine with a different scrambler, a 32-symbol
+            // block and a five-bit shift. It emits the opposite Walsh sign, for
+            // the reason spelled out on `OliviaTx::contestia`.
+            Mode::Contestia => {
+                TxModem::Olivia(OliviaTx::contestia(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
+            }
             Mode::Thor => TxModem::Thor(ThorTx::new(MODEM_RATE, audio_hz as f64, t_baud)),
             // MFSK's decoder is ported and reads the corpus; its modulator is
             // not written yet, so there is nothing to hand text to and the
-            // controller refuses the key-up with a reason. Contestia is the
-            // same shape for a different reason: its transmitter still speaks
-            // Olivia's scrambler.
-            Mode::Mfsk | Mode::Contestia | Mode::Mt63 | Mode::Ardop | Mode::Stanag4285 => {
-                TxModem::Receive
-            }
+            // controller refuses the key-up with a reason.
+            Mode::Mfsk | Mode::Mt63 | Mode::Ardop | Mode::Stanag4285 => TxModem::Receive,
             _ => {
                 let mut t = PskTx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
                 t.set_qpsk(p_qpsk);
@@ -480,11 +482,6 @@ impl TextModemController {
             transmitting: self.keyed,
             tx_watchdog: false,
             tx_refused: self.mode.is_rx_only().then(|| match self.mode {
-                Mode::Contestia => {
-                    "Contestia is receive only in this build — the transmitter still sends \
-                     Olivia's scrambling code"
-                        .to_string()
-                }
                 Mode::Mt63 => {
                     "MT63 is receive only in this build — the modulator is not written yet"
                         .to_string()
@@ -750,23 +747,24 @@ impl DigiEngine for TextModemController {
 mod tests {
     use super::*;
 
-    /// **Contestia transmits — not yet.** The receiver has decoded Contestia for
-    /// years and
+    /// **Contestia transmits.** The receiver has decoded Contestia for years and
     /// the transmitter did not exist, so the mode was receive-only for a reason
     /// that was not principled: Contestia is Olivia's engine with six bits per
     /// character, a 32-symbol block and the CRC-32 scrambler. This drives the
     /// console's own transmitter into the console's own receiver — the same
     /// objects the band menu builds — and reads the text back.
     ///
-    /// **The state, 2026-10-22: the transmitter is built and the loopback reads
-    /// nothing.** The scaffolding is fldigi's — six bits per character, a
-    /// 32-symbol block, the CRC-32 scrambler, the five-bit shift and the bank half
-    /// a spacing lower — and the signal it makes decodes as idle characters, so
-    /// one convention is still wrong. Ignored rather than deleted because the test
-    /// is what will say when it is right, and because the transmitter is not wired
-    /// into the panel yet (`Mode::Contestia` still refuses the key-up).
+    /// **The fault was the Walsh-domain sign, and it is Olivia's opposite here
+    /// on purpose.** Contestia is decoded by the vendored Jalocha engine, which
+    /// is fldigi's own code: it reads a *negative* peak as the upper half of the
+    /// alphabet (`if (Peak < 0) Char += SymbolsPerBlock`), so a transmitter that
+    /// follows fldigi's `EncodeBlock` (`FHT_Buffer < 0`) is what it expects.
+    /// Olivia's receiver is this tree's own and was measured on an off-air
+    /// capture to vote the other way, so the two modes cannot share one sign.
+    /// Emitting Olivia's polarity decoded every Contestia character as its
+    /// bit-5 twin — idle, in the console — for as long as the transmitter
+    /// existed.
     #[test]
-    #[ignore]
     fn a_contestia_transmission_reads_back_through_the_controller() {
         use sdroxide_dsp::OliviaTx;
         let (rate, audio) = (8000.0, 1500.0);
@@ -792,7 +790,10 @@ mod tests {
             sig.extend_from_slice(&b);
             guard += 1;
         }
-        let mut tail = vec![0.0f32; 8_000];
+        // Four blocks of tail: the receiver integrates `SyncIntegLen` FEC blocks,
+        // so a transmission that stops the instant its last character is out is
+        // decoded only up to the block before it.
+        let mut tail = vec![0.0f32; 48_000];
         tx.next_block(&mut tail);
         sig.extend_from_slice(&tail);
 
@@ -857,6 +858,24 @@ mod tests {
         psk.poll(SystemTime::now(), 0.0);
         assert!(psk.status().tx_refused.is_none(), "PSK picked up the refusal");
         assert!(psk.tx_burst_active(), "PSK stopped transmitting");
+    }
+
+    /// Contestia keys the transmitter, and it is the only mode that changed
+    /// sides: the panel greyed its sending half for as long as the Walsh sign was
+    /// Olivia's, so this pins both the capability and the controller.
+    #[test]
+    fn contestia_keys_the_transmitter() {
+        assert!(!Mode::Contestia.is_rx_only(), "Contestia is still receive only");
+        let mut c = TextModemController::new(Mode::Contestia, DigiConfig::default(), 48_000.0);
+        c.set_tx_text("TEST".into());
+        c.set_tx_active(true);
+        let actions = c.poll(SystemTime::now(), 0.0);
+        assert!(c.status().tx_refused.is_none(), "it refused the key-up");
+        assert!(c.tx_burst_active(), "it did not arm the transmitter");
+        assert!(
+            actions.iter().any(|a| matches!(a, DigiAction::KeyTx)),
+            "no KeyTx reached the engine"
+        );
     }
 
     /// The Contestia corpus sample through the controller — the same object the

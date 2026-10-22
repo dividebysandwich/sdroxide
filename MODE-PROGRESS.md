@@ -940,6 +940,79 @@ any future sweep: `pa_devs` (a five-line PortAudio lister) names the indices and
 5. **`PSKR_POLY1/POLY2` are not the K=7 code already in the tree.** `0x6d`/`0x4f`
    is a different code from `0o155`/`0o117`, and `ConvCode::THOR` is the latter.
 
+## Phase 4 (2026-10-22) — THOR's FEC branch, and Contestia's voice
+
+### THOR — eleven of fifteen variants read, and it was four faults
+
+Before: **0 of 15 THOR variants read a word.** After: **11 of 15 read their whole
+text.** The DominoEX half gained too (1 → 6 whole), because two of the four faults
+were in the audio front end both modes share.
+
+| fault | the measurement that found it |
+|---|---|
+| **The Viterbi traceback walked its survivor ring in write order.** The ring is written oldest slot first, so the oldest survivor was applied to the newest state and every bit after the first came out of a chain that does not exist. | `the_thor_chain_reads_back_the_bits_it_was_given` — bits → code → interleaver → soft → back — fails on the old walk at **295 of 555 bits**, passes at 100 % now. |
+| **The first symbol was never consumed.** `prev_pos` started `None`, so the first decision only seeded it and produced no step; fldigi starts with `prev1symbol = 0` and always consumes one. One symbol lost flips the code's symbol *pairs* for the rest of the over. | the same loopback read `",rpaw_wOe…"` with the pairing one symbol out. |
+| **The timing loop's target was half a symbol wrong.** The bank is a matched filter over one symbol, so a tone's energy peaks when its window exactly spans it — at the symbol's **end**, not its middle. | `IFK_DEBUG` printed the previous tone's energy hump centred at ring index 15 of 32, not 8. |
+| **And its sign was positive feedback.** Measured in the ring's own order, a clock running late puts the peak *earlier*; the correction has to be added. | With the sign flipped and the target fixed, the loopback reads 439 of 440 steps at **THOR16, THOR8, THOR4, THOR22, THOR25, THOR32, THOR44, THOR56 and THOR50x2 (K = 15)**. |
+| *(found on the way)* the tone index for the timing loop did not subtract the `EXTRA` nine tones, so it looked up tone 19, 21, 25 — never a real tone. | `IFK_DEBUG` printed `prev_tone=19 21 23 25`. |
+
+Also in this pass: **THOR32, THOR44 and THOR56 added** (fldigi has them and the
+corpus carries them), and **THOR25 corrected** — it is its own mode (320 samples,
+*single* spaced, a 25-deep interleave), not THOR25x4 under another name.
+
+The corpus, measured over centres 1100–2000 Hz in 20 Hz steps and both
+polarities (`the_corpus_ifk_samples_are_measured`):
+
+| variant | words | | variant | words |
+|---|---|---|---|---|
+| THOR5 / 8 / 11 / 16 / 22 | 4/4 | | THOR25x4 | 4/4 |
+| THOR32 / 50x1 / 50x2 / 56 / 100 | 4/4 | | DOMEX8 / DOMX11 / DOMX16 / DOMX22 / DOMX44 / DOMX88 | 4/4 |
+| THOR4 | **2/4 — the recording** | | DOMEX5 | 2/4 |
+| THORM | **0/4 — the recording** | | DOMEX4 | 1/4 |
+| THOR25, THOR44 | **0/4 — the recordings** | | DOMEXM | 0/4 |
+
+**The three that do not read are the recordings, and each says why.** THOR4 is 3.9
+symbols a second: its 56-second sample stops mid-transmission just after
+`LANDED`, and its own loopback reads the whole text. THORM at two symbols a second
+cannot carry a 50-character message in 56 s at all. THOR25 and THOR44 read nothing
+at any centre or polarity while their own loopbacks read **439 of 440 steps** each
+— so a fresh bench recording is the item, not the decoder.
+
+Gates: `cargo test -p sdroxide-dsp --release --lib ifk:: -- --include-ignored`
+(14 minutes: the wide variants are searched over 46 centres), and
+`the_dominoex_steps_carry_the_known_text` now asserts the step trace carries
+**100 %** of the known text's nibbles as a subsequence (it was a diagnostic that
+asked to become a gate; it said 36 % before, and chance is 6 %).
+
+### Contestia TX — the Walsh sign is Olivia's *opposite*, and that is the fix
+
+Contestia has had a transmitter for one commit and it decoded as idle characters.
+One convention was wrong, and it is the sign where the code bit is written:
+
+* **Contestia is read by the vendored Jalocha engine** (`crates/sdroxide-olivia`,
+  fldigi's own code), which takes a **negative** peak as the upper half of the
+  alphabet — `if (Peak < 0) Char += SymbolsPerBlock`. So a transmitter that
+  follows fldigi's `EncodeBlock` (`FHT_Buffer[TimeBit] < 0`) is what it expects.
+* **Olivia is read by this tree's own receiver**, which was measured against an
+  off-air capture to vote the *positive* way. The two modes therefore cannot
+  share one sign, and the shared `OliviaTx` was emitting Olivia's for both.
+
+Measured through the vendored receiver, at every geometry the config can name:
+
+| | before | after |
+|---|---|---|
+| 8/500 | `2:@@@4(%;%!',%;(!3;,!.$%$…` | `THE EAGLE HAS LANDED THE EAGLE HAS LANDED` |
+| 4/125 | `@@4(%;%!',%;(!3;,!.$%$@` | `THE EAGLE HAS LANDED THE EAGLE HAS LANDED` |
+| 16/500 | `,32OTHE ` | `THE EAGLE HAS LANDED THE EAGLE HAS LANDED` |
+| 32/1000 | `)O8IZ` | `THE EAGLE HAS LANDED THE EAGLE HAS LANDED` |
+
+Wired: `Mode::Contestia` is out of `is_rx_only`, the controller builds
+`OliviaTx::contestia`, and the panel no longer greys the sending half. Gates:
+`a_contestia_transmission_reads_back_through_the_controller` (now un-ignored; it
+needs **four blocks of tail**, because the receiver integrates `SyncIntegLen`
+FEC blocks and a transmission that stops the instant its last character is out
+decodes only up to the block before it) and `contestia_keys_the_transmitter`.
+
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:
@@ -955,6 +1028,11 @@ Nothing blocks the work above — every mode has a measurement. These would move
   demodulator's carrier separation (see "Day 2, the bench" — the reference
   filters *after* decimating, we filter at 8 kHz). The recordings are kept in
   `samples/bench/` as the evidence.
+- **A THOR25 and a THOR44 recording** (2026-10-22). Both decode their own
+  transmissions (439 of 440 steps each) and both read nothing from the corpus
+  sample at any centre or polarity — like PSK500R, which turned out to be the
+  recording. THOR44 is 43 symbols a second, so ten seconds on the bench settles
+  it.
 - **A second MFSK8 recording.** The corpus one loses `TEST THE EAGLE HAS LANDED` in one span while the preamble and the tail read at every tuning; the decoder is the one the other seven MFSK variants use.
 - **A known-good FSQ recording** (new, 2026-10-21). The corpus sample cannot settle FSQ: an FSQ signal is one tone at a time and that recording never has a dominant tone at any centre, spacing or speed, and nothing has ever read it back. Thirty seconds on the bench turns "alphabet fixed, decode unproven" into a gate.
 - **A bench recording of BPSK1000 for the lock-time question** (2026-10-21). The operator's own offer: the RSP1 can record while fldigi plays into the CRT. What it settles is whether the receiver's lost head is the receiver (a clean, known transmission is decoded from the start) or the sample (the sweep's own window). The rig needs a hand for the frequency and to arm it.

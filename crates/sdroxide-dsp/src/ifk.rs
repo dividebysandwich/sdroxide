@@ -22,7 +22,8 @@
 //! at sixteen hop phases.
 
 use crate::MonoResampler;
-use crate::mfsk_rx::{Bank, Interleaver, MfskVaricodeRx};
+use crate::fec::{ConvCode, ConvEncoder};
+use crate::mfsk_rx::{Bank, Interleaver, MfskRx, MfskVaricodeRx};
 
 const TONES: usize = 18;
 const HOPS: usize = 16;
@@ -110,7 +111,7 @@ pub struct IfkVariant {
     pub k15: bool,
 }
 
-pub const THOR: [IfkVariant; 12] = [
+pub const THOR: [IfkVariant; 15] = [
     IfkVariant {
         name: "THOR4",
         thor: true,
@@ -193,12 +194,50 @@ pub const THOR: [IfkVariant; 12] = [
         k15: true,
     },
     IfkVariant { name: "THOR100", thor: true, fs: 8000.0, symlen: 80, ds: 1, depth: 50, k15: true },
+    // The three the corpus has and this table did not (`src/thor/thor.cxx`): 256
+    // samples at 8 kHz and at 11.025 kHz, and 290 at 16 kHz.
+    IfkVariant {
+        name: "THOR32",
+        thor: true,
+        fs: 8000.0,
+        symlen: 256,
+        ds: 1,
+        depth: 10,
+        k15: false,
+    },
+    IfkVariant {
+        name: "THOR44",
+        thor: true,
+        fs: 11025.0,
+        symlen: 256,
+        ds: 2,
+        depth: 10,
+        k15: false,
+    },
+    IfkVariant {
+        name: "THOR56",
+        thor: true,
+        fs: 16000.0,
+        symlen: 290,
+        ds: 1,
+        depth: 10,
+        k15: false,
+    },
     // fldigi's micro submode: a 4000-sample symbol at 8 kHz and a short
     // interleave; the corpus's THORM is this one.
     IfkVariant { name: "THORM", thor: true, fs: 8000.0, symlen: 4000, ds: 1, depth: 4, k15: false },
-    // The corpus lists THOR25 separately from THOR25x4; fldigi's own table has
-    // only 25x4, so the two are the same signal to this receiver.
-    IfkVariant { name: "THOR25", thor: true, fs: 8000.0, symlen: 320, ds: 4, depth: 50, k15: true },
+    // fldigi's THOR25 is its own mode — 320 samples, *single* spaced, and a
+    // 25-deep interleave (its `idepth = 25; // 1 sec interleave`). It is not
+    // THOR25x4 under another name.
+    IfkVariant {
+        name: "THOR25",
+        thor: true,
+        fs: 8000.0,
+        symlen: 320,
+        ds: 1,
+        depth: 25,
+        k15: false,
+    },
 ];
 
 pub const DOMINO: [IfkVariant; 9] = [
@@ -320,6 +359,9 @@ struct SoftViterbi {
     ptr: usize,
     depth: usize,
     started: bool,
+    /// Steps pushed. The traceback is only worth reading once the ring is full;
+    /// before that it walks through slots that were never written.
+    pushed: usize,
 }
 
 impl SoftViterbi {
@@ -335,6 +377,7 @@ impl SoftViterbi {
             ptr: 0,
             depth,
             started: false,
+            pushed: 0,
         }
     }
 
@@ -377,15 +420,24 @@ impl SoftViterbi {
         }
         self.metric = next;
         self.ptr = (self.ptr + 1) % self.depth;
-        if !self.started || self.hist.len() < self.depth {
+        self.pushed += 1;
+        if self.pushed < self.depth {
             return None;
         }
-        // Trace back from the best current state through the whole ring.
+        // Trace back from the best current state through the whole ring, **newest
+        // step first**, and hand out the bit the oldest step settled on.
+        //
+        // This walk is the one thing a streaming Viterbi gets wrong silently: the
+        // ring is written oldest-slot-first, so stepping through it in write order
+        // applies the oldest survivor to the newest state and every bit after the
+        // first comes out of a chain that does not exist. THOR read no characters
+        // at all on that version, and the DominoEX half — which has no code — was
+        // unaffected, which is what made it look like a framing problem.
         let mut s =
             (0..self.n).max_by(|&x, &y| self.metric[x].total_cmp(&self.metric[y])).unwrap_or(0);
         let mut bit = 0u8;
         for step in 0..self.depth {
-            let idx = (self.ptr + step) % self.depth;
+            let idx = (self.ptr + self.depth - 1 - step) % self.depth;
             bit = (s & 1) as u8;
             s = (s >> 1) | ((self.hist[idx][s] as usize) * (self.n / 2));
         }
@@ -519,7 +571,12 @@ impl IfkRx {
         for row in self.hist.iter_mut() {
             row.iter_mut().for_each(|v| *v = 0.0);
         }
-        self.prev_pos = None;
+        // **Not `None`.** fldigi starts its receiver with `prev1symbol = 0`, so
+        // the very first symbol still produces a step — a bad one, which is
+        // punctured, but the symbol *count* is what pairs the code. Skipping it
+        // shifts every soft-symbol pair by one for the rest of the over and THOR
+        // then decodes noise however clean the signal is.
+        self.prev_pos = Some(0);
         self.ratio = 1.0;
         self.interleaver = Interleaver::new(4, self.variant.depth.max(1), false);
         let k = if self.variant.k15 { 15 } else { 7 };
@@ -625,26 +682,71 @@ impl IfkRx {
         // first once rotated by `hist_pos`, and the previous symbol occupies its
         // first half, so its middle sits at HOPS/2.
         if let Some(tone) = self.prev_tone {
+            // The previous symbol's centre, as the energy centroid of its own
+            // tone over the older half of the ring. An argmax is quantised to a
+            // whole hop and a loop fed a quantised error limit-cycles around it;
+            // the centroid is smooth, and a symbol is 16 hops wide so a half-hop
+            // of smoothing costs nothing.
+            let mut num = 0.0;
+            let mut den = 0.0;
             let mut best = (0.0f32, 0usize);
             for k in 0..(2 * HOPS) {
                 let idx = (self.hist_pos + k) % (2 * HOPS);
-                let v = self.hist[idx][tone.min(TONES - 1)];
-                if v > best.0 {
-                    best = (v, k);
+                let v = self.hist[idx][tone.min(TONES - 1)] as f64;
+                num += v * k as f64;
+                den += v;
+                if v as f32 > best.0 {
+                    best = (v as f32, k);
                 }
             }
-            let err = best.1 as f64 - (HOPS / 2) as f64;
+            let centre = if den > 1e-12 { num / den } else { best.1 as f64 };
+            // The bank is a matched filter over one symbol, so a tone's energy
+            // peaks when its window exactly spans that tone — at the symbol's
+            // **end**, not its middle. Measured against the middle, the loop pulls
+            // itself half a symbol late and every decision lands on a boundary.
+            let err = centre - (HOPS - 1) as f64;
+            if std::env::var("IFK_DEBUG").is_ok() {
+                let row: Vec<u8> = (0..2 * HOPS)
+                    .map(|k| {
+                        (self.hist[(self.hist_pos + k) % (2 * HOPS)][tone.min(TONES - 1)]
+                            .min(255.0)) as u8
+                    })
+                    .collect();
+                eprintln!(
+                    "dec hop={} next={:.2} tone={} centre={:.2} err={:.2} sync={:.2} row={:?}",
+                    self.hop_idx, self.next_dec, tone, centre, err, self.sync_err, row
+                );
+            }
+            if std::env::var("IFK_DEBUG").is_ok() {
+                eprintln!(
+                    "dec hop_idx={} next_dec={:.2} prev_tone={} best_idx={} err={:.1} sync={:.2}",
+                    self.hop_idx, self.next_dec, tone, best.1, err, self.sync_err
+                );
+            }
             if err.abs() <= HOPS as f64 / 2.0 {
                 // A slow filter: one symbol's measurement is noisy, and a loop that
                 // believes each one is a loop that jitters.
                 self.sync_err += (err - self.sync_err) * 0.1;
             }
         }
-        self.prev_tone = Some(pos / (self.variant.ds * self.paths));
+        // The bank carries `EXTRA` tones either side of the alphabet, so the
+        // peak's slot has to have them taken off before it names a tone — without
+        // it the clock looks at tone 19, 21, 25 (never a real tone) and the
+        // timing loop has nothing to measure, which is what it did.
+        let slot = pos / (self.variant.ds * self.paths);
+        self.prev_tone = Some(slot.saturating_sub(EXTRA).min(TONES - 1));
         // The correction is a fraction of a hop per symbol, so the position has to
         // stay fractional — truncating it every decision stalls the loop a whole
         // hop short, the same fixed-point trap per-column flattening hit.
-        self.next_dec += HOPS as f64 - self.sync_err * 0.5;
+        // **The sign is the whole loop.** Measured in the ring's own order, a
+        // clock running late puts the previous symbol's peak *earlier* in the
+        // window, so the correction has to be added: applied with the other sign
+        // it is positive feedback, and the clock walks itself off the symbols
+        // within a second of audio.
+        // Clamped: an unclamped correction can shorten a symbol by half, and a
+        // decision taken twice inside one symbol puts a *zero step* in the stream
+        // — a symbol that carries no data and shifts everything after it.
+        self.next_dec += HOPS as f64 + (self.sync_err * 0.5).clamp(-1.5, 1.5);
         if self.next_dec < self.hop_idx as f64 {
             self.next_dec = self.hop_idx as f64 + 1.0;
         }
@@ -766,6 +868,141 @@ impl IfkRx {
     }
 }
 
+/// Synthesise `text` as this variant's audio, at the variant's own rate.
+///
+/// This is fldigi's `sendchar`/`sendsymbol` path: the MFSK varicode bits, the
+/// K = 7 or K = 15 convolutional code, the 4 × 4 × depth interleaver, and the
+/// IFK+ step `2 + nibble`. It exists for the same reason the MFSK modulator
+/// does — a receiver can only be debugged against a signal whose every bit is
+/// known, and the corpus recordings cannot say which side of a disagreement is
+/// wrong.
+///
+/// **A loopback proves self-consistency, not interoperability.** What it proves
+/// here is that the front end, the clock and the FEC branch agree with each
+/// other; that the corpus reads is the separate, real-path measurement.
+pub fn encode(variant: IfkVariant, centre: f64, text: &str) -> Vec<f32> {
+    encode_with_steps(variant, centre, text).0
+}
+
+/// The same, and the step nibble it sent at each symbol — the sequence a
+/// receiver has to reproduce, which the text alone cannot name.
+pub fn encode_with_steps(variant: IfkVariant, centre: f64, text: &str) -> (Vec<f32>, Vec<u8>) {
+    let spacing = variant.spacing();
+    let code = if variant.k15 {
+        ConvCode { poly_a: 0o44735, poly_b: 0o63057, invert_b: false }
+    } else {
+        ConvCode { poly_a: 0o155, poly_b: 0o117, invert_b: false }
+    };
+    let mut tx = Tx {
+        variant,
+        centre,
+        spacing,
+        prev_tone: 0,
+        phase: 0.0,
+        out: Vec::new(),
+        enc: ConvEncoder::new(code),
+        inlv: Interleaver::new(4, variant.depth.max(1), true),
+        sh: [0; 4],
+        filled: 0,
+        steps: Vec::new(),
+    };
+    // `Clearbits`: 1400 encoded zeros into the interleaver, not transmitted. It
+    // leaves the interleaver holding the same filler the receiver's does.
+    for _ in 0..1400 {
+        let d = tx.enc.push(0);
+        tx.prime_bit(d & 1);
+        tx.prime_bit((d >> 1) & 1);
+    }
+    // Sixteen steps of two tones each: the preamble the receiver's clock locks on.
+    for _ in 0..16 {
+        tx.symbol(0);
+    }
+    // The idle character, then the reference's CR STX CR, then the text.
+    tx.push_char('\0');
+    for c in ['\r', '\u{2}', '\r'] {
+        tx.push_char(c);
+    }
+    for c in text.chars() {
+        tx.push_char(c);
+    }
+    tx.push_char('\r');
+    tx.push_char('\u{4}');
+    tx.push_char('\r');
+    // A tail of idle characters, so the last character drains the interleaver
+    // and the decoder's traceback window instead of being cut in half.
+    for _ in 0..8 {
+        tx.push_char('\0');
+    }
+    (tx.out, tx.steps)
+}
+
+struct Tx {
+    variant: IfkVariant,
+    centre: f64,
+    spacing: f64,
+    prev_tone: usize,
+    phase: f64,
+    out: Vec<f32>,
+    enc: ConvEncoder,
+    inlv: Interleaver,
+    sh: [u8; 4],
+    filled: usize,
+    steps: Vec<u8>,
+}
+
+impl Tx {
+    fn prime_bit(&mut self, bit: u8) {
+        self.sh[self.filled] = bit;
+        self.filled += 1;
+        if self.filled == 4 {
+            let mut syms = self.sh;
+            self.inlv.symbols(&mut syms);
+            self.sh = syms;
+            self.filled = 0;
+        }
+    }
+
+    fn push_char(&mut self, c: char) {
+        for bit in MfskRx::varicode_bits(c) {
+            let d = self.enc.push(bit);
+            // `sendchar` writes bit 0 of the code word first.
+            self.push_bit(d & 1);
+            self.push_bit((d >> 1) & 1);
+        }
+    }
+
+    fn push_bit(&mut self, bit: u8) {
+        self.sh[self.filled] = bit;
+        self.filled += 1;
+        if self.filled == 4 {
+            let mut syms = self.sh;
+            self.inlv.symbols(&mut syms);
+            let nib = syms.iter().fold(0u8, |v, &b| (v << 1) | (b & 1));
+            self.symbol(nib);
+            self.filled = 0;
+        }
+    }
+
+    /// One symbol: the tone is `2 + nibble` above the previous one, and it is
+    /// held for `symlen` samples at the variant's rate.
+    fn symbol(&mut self, nibble: u8) {
+        self.steps.push(nibble);
+        let tone = (self.prev_tone + 2 + nibble as usize) % TONES;
+        self.prev_tone = tone;
+        let f =
+            self.centre - TONES as f64 * self.spacing / 2.0 + (tone as f64 + 0.5) * self.spacing;
+        let step = 2.0 * std::f64::consts::PI * f / self.variant.fs;
+        let n = self.variant.symlen;
+        for _ in 0..n {
+            self.out.push(self.phase.cos() as f32);
+            self.phase += step;
+            if self.phase > std::f64::consts::TAU {
+                self.phase -= std::f64::consts::TAU;
+            }
+        }
+    }
+}
+
 /// The character whose nibble key is `key` — the last nibble lowest, as the
 /// reference builds it.
 fn domino_char(key: usize) -> Option<char> {
@@ -786,6 +1023,145 @@ fn domino_char(key: usize) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fec::ConvCode;
+
+    /// Encode a bit stream with a code, the way the transmitter does: the state's
+    /// low bit is the newest input bit and the code word is the parity of the
+    /// register against each polynomial (fldigi's `encoder`/`viterbi::output`).
+    fn encode_bits(bits: &[u8], code: ConvCode) -> Vec<(u8, u8)> {
+        let n = code.states();
+        let mut s = 0usize;
+        let mut out = Vec::with_capacity(bits.len());
+        for &b in bits {
+            let reg = ((s as u32) << 1) | b as u32;
+            out.push((
+                (reg & code.poly_a).count_ones() as u8 & 1,
+                ((reg & code.poly_b).count_ones() as u8 & 1) ^ code.invert_b as u8,
+            ));
+            s = (reg as usize) & (n - 1);
+        }
+        out
+    }
+
+    /// The whole THOR branch, without the air: bits → code → interleaver → soft
+    /// symbols → interleaver → paired Viterbi → bits.
+    ///
+    /// This is the gate for the traceback. The ring is written oldest slot first,
+    /// so walking it in write order applies the oldest survivor to the newest state
+    /// and every bit after the first is nonsense — which reads exactly like "THOR
+    /// has a framing problem" and is why it went unnoticed: the DominoEX half of
+    /// this file has no code and decoded perfectly throughout.
+    #[test]
+    fn the_thor_chain_reads_back_the_bits_it_was_given() {
+        // A pseudo-random stream, so a decoder that merely favours zeros cannot pass.
+        let mut seed = 0x1234_5678u32;
+        let bits: Vec<u8> = (0..1200)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                ((seed >> 16) & 1) as u8
+            })
+            .collect();
+        for (label, code, depth, tb) in [
+            (
+                "THOR's K = 7",
+                ConvCode { poly_a: 0o155, poly_b: 0o117, invert_b: false },
+                10usize,
+                45usize,
+            ),
+            (
+                "THOR's K = 15",
+                ConvCode { poly_a: 0o44735, poly_b: 0o63057, invert_b: false },
+                50,
+                180,
+            ),
+        ] {
+            let coded = encode_bits(&bits, code);
+            // The transmitter's own order: the two outputs of a bit go out as
+            // `[o1, o2]`, four of those make one symbol, and the word's most
+            // significant bit is the first one sent (`sendchar` → `bits()`).
+            let flat: Vec<u8> = coded.iter().flat_map(|&(a, b)| [a, b]).collect();
+            let mut tx = Interleaver::new(4, depth, true);
+            let mut rx = Interleaver::new(4, depth, false);
+            let k = code.k() as usize;
+            let mut viterbi = SoftViterbi::new(k, code.poly_a, code.poly_b, tb);
+            let mut pair = [128u8; 2];
+            let mut counter = false;
+            let mut got = Vec::new();
+            // The transmitter packs four code words per symbol, most significant
+            // first (`decodesymbol`'s own order), and interleaves them.
+            for group in flat.chunks(4) {
+                let mut syms = [128u8; 4];
+                for (i, &bit) in group.iter().enumerate() {
+                    syms[i] = if bit == 1 { 255 } else { 0 };
+                }
+                tx.symbols(&mut syms);
+                rx.symbols(&mut syms);
+                for sv in syms {
+                    pair[0] = pair[1];
+                    pair[1] = sv;
+                    counter = !counter;
+                    if counter {
+                        continue;
+                    }
+                    let a = (pair[0] as f32 - 128.0) / 128.0;
+                    let b = (pair[1] as f32 - 128.0) / 128.0;
+                    if let Some(bit) = viterbi.push(a, b) {
+                        got.push(bit);
+                    }
+                }
+            }
+            let lag = (0..got.len().min(400))
+                .max_by_key(|&lag| {
+                    bits.iter().zip(&got[lag..]).take(600).filter(|(a, b)| *a == *b).count()
+                })
+                .expect("a lag");
+            let same = bits.iter().zip(&got[lag..]).filter(|(a, b)| *a == *b).count();
+            let compared = bits.len().min(got.len() - lag);
+            assert!(
+                same == compared,
+                "{label}: {same} of {compared} bits came back (lag {lag}) — the traceback \
+                 walks the ring in the wrong order"
+            );
+        }
+    }
+
+    /// The receiver against a signal built from the reference's own transmit
+    /// path: varicode → code → interleaver → steps → tones.
+    ///
+    /// This is the experiment the corpus cannot do. A clean synthetic that reads
+    /// says the front end, the clock and the FEC branch agree, and that a
+    /// recording which does not read is either marginal or tuned elsewhere; a
+    /// synthetic that does not read is a receiver fault with no noise in it to
+    /// blame.
+    #[test]
+    fn a_synthetic_thor_transmission_reads_back() {
+        for name in [
+            "THOR16", "THOR8", "THOR4", "THOR22", "THOR25", "THOR32", "THOR44", "THOR56",
+            "THOR50x2",
+        ] {
+            let variant = IfkVariant::named(name).expect("a variant");
+            let text = "TEST THE EAGLE HAS LANDED 12345 TEST THE EAGLE HAS LANDED 12345 TEST THE EAGLE HAS LANDED 12345";
+            let (audio, sent) = encode_with_steps(variant, 1740.0, text);
+            let mut rx = IfkRx::new(variant.fs, 1740.0, variant);
+            for chunk in audio.chunks(512) {
+                rx.feed(chunk);
+            }
+            rx.feed(&vec![0.0f32; 16_000]);
+            eprintln!("{name}: {:?}", rx.text());
+            let got = rx.steps();
+            eprintln!("  sent[..40] {:?}", &sent[..40.min(sent.len())]);
+            eprintln!("  got [..40] {:?}", &got[..40.min(got.len())]);
+            let hit = sent.iter().zip(got).filter(|(a, b)| a == b).count();
+            eprintln!("  {hit} of {} steps agree", sent.len().min(got.len()));
+            for word in ["EAGLE", "LANDED", "12345"] {
+                assert!(
+                    rx.text().contains(word),
+                    "{name} read {:?} from its own transmission, which should carry {text}",
+                    rx.text()
+                );
+            }
+        }
+    }
 
     #[test]
     fn the_family_names_resolve() {
@@ -828,15 +1204,42 @@ mod tests {
     /// so the figure to watch is not "does it decode" but **what fraction of the
     /// expected nibbles are found at the best alignment** — chance is 1/18, and a
     /// near-miss shows up as a fraction in between.
+    /// The longest run of the expected nibbles that appears, in order, in the
+    /// trace. A plain sliding window cannot score a trace that drops or doubles a
+    /// symbol — one slip at the front destroys every comparison after it — and the
+    /// question here is how much of the text the *symbols* carry, not whether they
+    /// landed on one grid.
+    fn lcs(a: &[u8], b: &[u8]) -> usize {
+        let mut prev = vec![0usize; b.len() + 1];
+        let mut cur = vec![0usize; b.len() + 1];
+        for &x in a {
+            for (j, &y) in b.iter().enumerate() {
+                cur[j + 1] = if x == y { prev[j] + 1 } else { cur[j].max(prev[j + 1]) };
+            }
+            std::mem::swap(&mut prev, &mut cur);
+        }
+        prev[b.len()]
+    }
+
+    /// What DominoEX's steps actually are, against the text we know was sent.
+    ///
+    /// This is the measurement the decoded text cannot make. The alphabet maps
+    /// each character to one to three nibbles (`DOMINO_CODE`) and the transmitter
+    /// sends each as `2 + nibble (mod 18)`, so the recording must carry the
+    /// expected nibble sequence inside the step trace. A receiver that is right
+    /// about everything but one convention still reads almost none of the text,
+    /// so the figure to watch is **what share of the expected nibbles the trace
+    /// carries**, scored as a subsequence: chance is 1/18, and a near-miss shows
+    /// up as a fraction in between.
     #[test]
     #[ignore]
     fn the_dominoex_steps_carry_the_known_text() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/DOMX16.wav");
-        let mut reader = hound::WavReader::open(path).expect("the DOMX16 sample");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/DOMX11.wav");
+        let mut reader = hound::WavReader::open(path).expect("the DOMX11 sample");
         let spec = reader.spec();
         let audio: Vec<f32> =
             reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
-        let variant = IfkVariant::named("DOMX16").expect("a variant");
+        let variant = IfkVariant::named("DOMX11").expect("a variant");
         let expected: Vec<u8> = "TEST THE EAGLE"
             .chars()
             .flat_map(|c| {
@@ -845,8 +1248,7 @@ mod tests {
             })
             .collect();
         let mirror: Vec<u8> = expected.iter().map(|n| 17 - n).collect();
-        eprintln!("expected nibbles ({}): {:?}", expected.len(), expected);
-        let mut best = (0.0f32, 0.0f64, false, 0usize);
+        let mut best = (0.0f32, 0.0f64, false, Vec::new());
         for hz in [1670.0f64, 1700.0, 1730.0, 1760.0, 1790.0] {
             for reverse in [false, true] {
                 let mut rx = IfkRx::new(spec.sample_rate as f64, hz, variant);
@@ -856,75 +1258,40 @@ mod tests {
                 }
                 rx.feed(&vec![0.0f32; 16000]);
                 let steps = rx.steps();
-                if steps.len() < expected.len() {
-                    continue;
-                }
                 for want in [&expected, &mirror] {
-                    for at in 0..=steps.len() - want.len() {
-                        let hit = steps[at..at + want.len()]
-                            .iter()
-                            .zip(want)
-                            .filter(|(a, b)| a == b)
-                            .count();
-                        let frac = hit as f32 / want.len() as f32;
-                        if frac > best.0 {
-                            best = (frac, hz, reverse, at);
-                        }
+                    let frac = lcs(want, steps) as f32 / want.len() as f32;
+                    if frac > best.0 {
+                        best = (frac, hz, reverse, steps.to_vec());
                     }
                 }
             }
         }
-        // The pattern of the mismatches is what names the fault, so print the
-        // two sequences side by side at the best alignment.
-        for hz in [best.1] {
-            let mut rx = IfkRx::new(spec.sample_rate as f64, hz, variant);
-            rx.reverse = best.2;
-            for chunk in audio.chunks(512) {
-                rx.feed(chunk);
-            }
-            rx.feed(&vec![0.0f32; 16000]);
-            let st = rx.steps();
-            if best.3 + expected.len() <= st.len() {
-                eprintln!("  want: {:?}", expected);
-                eprintln!("  got : {:?}", &st[best.3..best.3 + expected.len()]);
-                let ps = rx.positions();
-                eprintln!("  pos : {:?}", &ps[best.3..(best.3 + 20).min(ps.len())]);
-                let d: Vec<i64> = ps
-                    .windows(2)
-                    .skip(best.3)
-                    .take(20)
-                    .map(|w| w[1] as i64 - w[0] as i64)
-                    .collect();
-                eprintln!("  diffs: {d:?}  (a step of s is {} sub-bins)", variant.ds * 5);
-            }
-        }
+        eprintln!("  want: {:?}", expected);
+        eprintln!("  got : {:?}", &best.3[..best.3.len().min(60)]);
         eprintln!(
-            "best alignment: {:.0}% of the expected nibbles at {:.0} Hz, reverse {}, step {} \
-             (chance is {:.0}%)",
+            "best: {:.0}% of the expected nibbles at {:.0} Hz, reverse {} (chance is {:.0}%)",
             best.0 * 100.0,
             best.1,
             best.2,
-            best.3,
             100.0 / 18.0
         );
-        // Where this stands. When the fraction climbs past about a third, the
-        // convention has been found: make this the gate, with the centre and
-        // polarity it printed.
+        // **The gate.** DOMX11 reads its whole message through the corpus gate, so
+        // its own step trace must carry the known text's nibbles; anything under
+        // this and the front end has regressed, whatever the text says.
         assert!(
-            best.0 < 0.35,
-            "the steps are mostly right now ({:.0}%) — make this the gate",
+            best.0 > 0.9,
+            "the steps carry only {:.0}% of the expected nibbles",
             best.0 * 100.0
         );
     }
 
     /// What each recording gives, measured, and what must hold.
     ///
-    /// State 2026-10-22, after fldigi's own alphabet and `paths = 5`: the DominoEX
-    /// half **reads text** — `DOMX11` its whole message, and five more read most of
-    /// theirs — and **every THOR variant still reads nothing**. THOR is the FEC
-    /// branch (interleaver, K = 7 Viterbi, MFSK varicode) and a THOR recording
-    /// produces no characters at all, which is one fault in that branch rather than
-    /// something in the audio front end it shares with DominoEX.
+    /// State 2026-10-22, after the four faults in "THOR" below were fixed: **eleven
+    /// of the fifteen THOR variants read their whole text** (THOR4's sample stops
+    /// 56 s in, mid-transmission) and **six of nine DominoEX** do. `IFK_ONLY=a,b`
+    /// runs a subset; the full sweep is fourteen minutes because the wide variants
+    /// are searched over 46 centres in both polarities.
     #[test]
     #[ignore]
     fn the_corpus_ifk_samples_are_measured() {
@@ -936,6 +1303,11 @@ mod tests {
             "THOR32", "THOR44", "THOR50x1", "THOR50x2", "THOR56", "THOR100", "THORM", "DOMEX4",
             "DOMEX5", "DOMEX8", "DOMEXM", "DOMX11", "DOMX16", "DOMX22", "DOMX44", "DOMX88",
         ] {
+            if let Ok(only) = std::env::var("IFK_ONLY") {
+                if !only.split(',').any(|o| o.eq_ignore_ascii_case(name)) {
+                    continue;
+                }
+            }
             let Some(variant) = IfkVariant::named(name) else {
                 eprintln!("{name}: no reference variant");
                 continue;
@@ -950,8 +1322,13 @@ mod tests {
             let audio: Vec<f32> =
                 reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
             let mut best = (0usize, String::new(), 0.0f64);
+            // The corpus gives each file a *block* centre, and these recordings
+            // were tuned by hand across a wide spread — the wide variants read at
+            // 1150 Hz where the manifest says 1704. The search is the measurement,
+            // so it is wide.
             for reverse in [false, true] {
-                for hz in [1670.0f64, 1700.0, 1730.0, 1760.0, 1790.0] {
+                let mut hz = 1100.0f64;
+                while hz <= 2000.0 {
                     let mut rx = IfkRx::new(spec.sample_rate as f64, hz, variant);
                     rx.reverse = reverse;
                     for chunk in audio.chunks(512) {
@@ -962,23 +1339,36 @@ mod tests {
                     if hits > best.0 {
                         best = (hits, rx.text().to_string(), hz);
                     }
+                    hz += 20.0;
                 }
             }
             eprintln!("{name}: {}/4 at {}: {:?}", best.0, best.2, best.1);
-            if name == "DOMX11" {
-                assert!(
-                    best.0 == words.len(),
-                    "DOMX11 read {}/4 — the DominoEX half of this family decodes, and this \
-                     recording is what pins it",
-                    best.0
-                );
-            }
-            if name.starts_with("THOR") {
-                assert!(
-                    best.0 == 0,
-                    "{name} read {}/4 — if THOR has started working, say so in \
-                     MODE-PROGRESS.md and take this assertion out",
-                    best.0
+            // What each recording gives, measured 2026-10-22 after the FEC branch
+            // was fixed. Eleven of the fifteen THOR variants read their whole
+            // text; the exceptions say why they do not.
+            let want = match name {
+                "THOR5" | "THOR8" | "THOR11" | "THOR16" | "THOR22" | "THOR25x4" | "THOR32"
+                | "THOR50x1" | "THOR50x2" | "THOR56" | "THOR100" => Some(4usize),
+                // DominoEX reads six of its nine whole once the timing loop was
+                // fixed (it was pulling half a symbol late, and the three that
+                // read nothing before — DOMEX8, DOMX16, DOMX44 — all read now).
+                "DOMX11" | "DOMEX8" | "DOMX16" | "DOMX22" | "DOMX44" | "DOMX88" => Some(4usize),
+                "DOMEX5" => Some(2),
+                "DOMEX4" => Some(1),
+                // THOR4 runs at 3.9 symbols a second: its sample stops 56 s in,
+                // mid-transmission, just after `LANDED`. Its own loopback reads the
+                // whole text, so this is the length of the recording.
+                "THOR4" => Some(2),
+                // THOR25 and THOR44 read nothing at any centre or polarity while
+                // their own transmissions read 439 of 440 steps — the recording is
+                // the suspect, and a fresh one is in the journal's "Needs me".
+                _ => None,
+            };
+            if let Some(want) = want {
+                assert_eq!(
+                    best.0, want,
+                    "{name} read {}/4 words, expected {want}: {:?}",
+                    best.0, best.1
                 );
             }
         }

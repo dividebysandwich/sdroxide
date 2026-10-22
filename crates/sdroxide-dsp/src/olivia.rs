@@ -536,7 +536,17 @@ impl OliviaTx {
                 if scramble_bit_contestia(p, i) {
                     f[i] = -f[i];
                 }
-                if f[i] > 0.0 {
+                // **The opposite sign to Olivia's**, and it is not a slip: the
+                // two modes have different receivers here. Contestia is decoded
+                // by the vendored Jalocha engine, which is fldigi's own code and
+                // reads a *negative* peak as the character in the upper half
+                // (`if (Peak < 0) Char += SymbolsPerBlock`), so a transmitter
+                // that follows fldigi's `EncodeBlock` (`FHT_Buffer < 0`) is what
+                // it expects. Olivia's receiver is this crate's own, and it was
+                // measured against an off-air capture to vote the other way.
+                // Emitting Olivia's polarity here decoded every Contestia
+                // character as its bit-5 twin — idle, in the console.
+                if f[i] < 0.0 {
                     out[i] |= 1 << ((p + i) % self.g.planes);
                 }
             }
