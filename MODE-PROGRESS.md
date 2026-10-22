@@ -1187,13 +1187,25 @@ therefore not what a plain receiver is missing, and an earlier version of this n
 said it was. The filter also lands ~11 Hz wide, which could not pass a 125-baud
 signal at all; that is what sent the claim back to the source.
 
-**Where it stands, measured:** four bauds (62.5, 125, 250, 500) × every centre
-from 1200 to 2200 Hz in 10 Hz steps, all reading nothing, while the synthetic at
-125 baud reads. Frequency offset is ruled out as the whole story by 8PSK1000 (a
-1 kHz-wide signal has ±31 Hz of differential tolerance and still fails). The next
-thing to measure is what the recording actually contains — its occupied bandwidth
-against the 125 Hz a 8PSK125 should occupy — because a recording that is not that
-signal cannot be decoded by any slicer.
+**Where it stands, measured.** Four bauds (62.5, 125, 250, 500) × every centre from
+1200 to 2200 Hz, and 31.25 baud at half-hertz steps about the measured carrier,
+all reading nothing, while the synthetic at 125 baud reads. Frequency offset is
+ruled out as the whole story by 8PSK1000 — a 1 kHz-wide signal has ±31 Hz of
+differential tolerance and still fails.
+
+**And the recording does not look like the signal the mode describes.** Measured
+half-second by half-second, `8PSK125.wav` settles on a carrier at **1806 Hz**
+(1808 for `F`-family files, 1700 for 250, 2008 for 500, 2258 for 1000) whose
+occupied width is **20–46 Hz at −20 dB** — where a 125-baud PSK signal is about
+125 Hz wide and an 8PSK one is wider still. Its first two seconds are a *different*
+carrier at 1224 Hz at 24 dB SNR, then the signal appears at 1810 Hz at 60 dB.
+
+So the next measurement is not the decoder at all: it is **what these files
+contain**. A signal 30 Hz wide cannot carry 125 baud of phase changes, and no
+slicer will read it until that is explained — a band-limited chain, a wrong sample
+rate in the header, or a recording of something other than the mode's own
+waveform. The same measurement taken before another port attempt is what stops a
+fourth receiver being written against the wrong signal.
 
 ### DTMF — eight tones, and two things the reference leaves to its squelch
 
