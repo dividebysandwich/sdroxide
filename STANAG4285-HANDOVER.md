@@ -674,10 +674,23 @@ recording:
   measured with two tones (800→1021, 1600→1821), which is outside the receiver's
   ±150 Hz ramp search.
 
-So the likely causes are named and none is measured as *the* one: a shaped
-transmit passband (which is what Annex C's and D's equalisers exist for, and this
-receiver has a channel estimate only for phase), and a carrier offset larger than
-the standard's ±75 Hz allows for. **Not proved, and not claimed.**
+**And the rig's own manual answers it.** The CRT SS9900V's specifications give
+**SSB frequency response 450 to 2500 Hz** — 2.05 kHz of transmit passband, against
+a 2400-baud signal that occupies about 2.4–2.7 kHz and a standard that specifies
+3000 Hz. So the waveform is truncated at both edges before it reaches the
+antenna, which is ISI by construction, and ISI is invisible in a run of sixteen
+identical symbols and fatal to the data. That is the measurement the three
+symptoms above were pointing at, and it is not a fault in this receiver.
+
+Two menu items in the same manual may help and are worth trying before any code
+is written: **15 `TONE` — "Choose SSB TX bandwidth"**, and **`NRC`**, a *TX/RX*
+noise-reduction processor whose own description says it is for speech. A data
+signal wants the widest `TONE` and `NRC` off.
+
+The +221 Hz carrier offset is real as well (two tones, 800→1021 and 1600→1821) and
+is inside a real receiver's business — ±150 Hz is a search range this receiver
+chose, not a limit of the standard, which allows ±75 Hz of carrier error *from the
+transmitter*. A bench path 221 Hz off is the tuning, not the modem.
 
 ### A real bug the bench found: the decoder's chunk overlap was on the wrong end
 
