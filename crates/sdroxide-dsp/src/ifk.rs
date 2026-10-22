@@ -405,8 +405,18 @@ pub struct IfkRx {
     hop: usize,
     count: usize,
     hop_idx: usize,
-    next_dec: usize,
-    phase: [f32; HOPS],
+    /// Where the next decision falls, in hops — **fractional**, because the timing
+    /// loop corrects by a fraction of a hop and rounding it away every decision is
+    /// how a loop stalls short of its own target.
+    next_dec: f64,
+    /// The last two symbols of tone energies, one row per hop: this is the
+    /// reference's `pipe`, the thing a transition can be found in.
+    hist: Vec<Vec<f32>>,
+    hist_pos: usize,
+    /// The filtered timing error, in hops.
+    sync_err: f64,
+    /// The tone of the symbol decided immediately before, if any.
+    prev_tone: Option<usize>,
     prev_pos: Option<usize>,
     ratio: f64,
     interleaver: Interleaver,
@@ -458,8 +468,11 @@ impl IfkRx {
             hop,
             count: 0,
             hop_idx: 0,
-            next_dec: HOPS,
-            phase: [0.0; HOPS],
+            next_dec: HOPS as f64,
+            hist: vec![vec![0.0; TONES]; 2 * HOPS],
+            hist_pos: 0,
+            sync_err: 0.0,
+            prev_tone: None,
             prev_pos: None,
             ratio: 1.0,
             interleaver,
@@ -497,10 +510,15 @@ impl IfkRx {
             }
         }
         self.bank = Bank::new(self.variant.symlen, self.variant.fs, &freqs);
-        self.phase = [0.0; HOPS];
         self.count = 0;
         self.hop_idx = 0;
-        self.next_dec = HOPS;
+        self.next_dec = HOPS as f64;
+        self.hist_pos = 0;
+        self.sync_err = 0.0;
+        self.prev_tone = None;
+        for row in self.hist.iter_mut() {
+            row.iter_mut().for_each(|v| *v = 0.0);
+        }
         self.prev_pos = None;
         self.ratio = 1.0;
         self.interleaver = Interleaver::new(4, self.variant.depth.max(1), false);
@@ -566,37 +584,70 @@ impl IfkRx {
         (pos, mx, sum)
     }
 
+    /// One hop of the bank: record the tone energies, and decide a symbol when the
+    /// clock says so.
+    ///
+    /// The timing loop is the reference's, not a "which sample looks sharpest"
+    /// search. `dominoex::synchronize()` keeps two symbols of FFT vectors and, when
+    /// the tone changes, finds the offset at which the **previous** tone's energy is
+    /// greatest — the middle of the symbol that has just gone by. That offset is the
+    /// error signal, filtered and applied slowly. Chasing peak sharpness instead
+    /// gives a loop with nothing to lock to: it walks, corrects, and walks back,
+    /// which is exactly the periodic slip this receiver used to show.
     fn hop_step(&mut self) {
         self.hop_idx += 1;
-        let p = (self.hop_idx) % HOPS;
-        let (_, mx, sum) = self.peak();
-        let peakness = if sum > 1e-12 { (mx / sum) as f32 } else { 0.0 };
-        self.phase[p] += 0.1 * (peakness - self.phase[p]);
-        if self.hop_idx < self.next_dec {
+        // Record this hop's eighteen tone energies.
+        {
+            let dbins = self.variant.ds * self.paths;
+            let base = EXTRA * self.paths * self.variant.ds;
+            let bins = self.bins();
+            let hp = self.hist_pos;
+            for t in 0..TONES {
+                let lo = base + t * dbins;
+                let mut best = 0.0f64;
+                for m in lo..(lo + dbins).min(bins) {
+                    let a = self.bank.mag(m);
+                    if a > best {
+                        best = a;
+                    }
+                }
+                self.hist[hp][t] = best as f32;
+            }
+            self.hist_pos = (self.hist_pos + 1) % (2 * HOPS);
+        }
+        if (self.hop_idx as f64) < self.next_dec {
             return;
         }
         let (pos, mx, sum) = self.peak();
         self.decide(pos, mx, sum);
-        let mut best = 0;
-        for i in 1..HOPS {
-            if self.phase[i] > self.phase[best] {
-                best = i;
+
+        // Where did the symbol before this one actually peak? The ring is oldest
+        // first once rotated by `hist_pos`, and the previous symbol occupies its
+        // first half, so its middle sits at HOPS/2.
+        if let Some(tone) = self.prev_tone {
+            let mut best = (0.0f32, 0usize);
+            for k in 0..(2 * HOPS) {
+                let idx = (self.hist_pos + k) % (2 * HOPS);
+                let v = self.hist[idx][tone.min(TONES - 1)];
+                if v > best.0 {
+                    best = (v, k);
+                }
+            }
+            let err = best.1 as f64 - (HOPS / 2) as f64;
+            if err.abs() <= HOPS as f64 / 2.0 {
+                // A slow filter: one symbol's measurement is noisy, and a loop that
+                // believes each one is a loop that jitters.
+                self.sync_err += (err - self.sync_err) * 0.1;
             }
         }
-        let cur = self.next_dec % HOPS;
-        let mut d = best as i32 - cur as i32;
-        if d > (HOPS / 2) as i32 {
-            d -= HOPS as i32;
+        self.prev_tone = Some(pos / (self.variant.ds * self.paths));
+        // The correction is a fraction of a hop per symbol, so the position has to
+        // stay fractional — truncating it every decision stalls the loop a whole
+        // hop short, the same fixed-point trap per-column flattening hit.
+        self.next_dec += HOPS as f64 - self.sync_err * 0.5;
+        if self.next_dec < self.hop_idx as f64 {
+            self.next_dec = self.hop_idx as f64 + 1.0;
         }
-        if d < -((HOPS / 2) as i32) {
-            d += HOPS as i32;
-        }
-        let adj = if d != 0 && self.phase[best] > self.phase[cur] * 1.03 + 1e-5 {
-            if d > 0 { 1 } else { -1 }
-        } else {
-            0
-        };
-        self.next_dec = (self.next_dec as i32 + HOPS as i32 + adj).max(1) as usize;
     }
 
     fn decide(&mut self, pos: usize, mx: f64, sum: f64) {

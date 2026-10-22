@@ -48,7 +48,7 @@ Hell 80, SITOR, ARDOP, then the rest of the corpus.
 The family gate is `cargo test -p sdroxide-dsp --release --lib the_mfsk_family_reads_the_corpus -- --ignored`; it searches centre and polarity itself and asserts the counts above.
 
 | MT63-2KS | **decodes** | `MT63-2KS.wav`, measured centre 1740 (the plateau is 744–2736 Hz): the whole text, 3/3, score 3956. |
-| MT63-2KL | **decodes** | `MT63-2KL.wav`, 1740: `AAA SDRBROWN TEST`, 2/2. Long interleave included. |
+| MT63-2KL | **partial — a few characters one Hadamard row high** | `MT63-2KL.wav`, 1740, re-measured 2026-10-22: `AAa SDRBROWn tESt`. The whole message is there and a handful of characters are 32 codes high, which is a symbol's polarity flipped — its codeword negated, since row `c+32` is `-row c`. So the long interleave works and the audio front end is nearly right; the earlier "decodes, 2/2" was measured on a run that did not have these errors. |
 | MT63-1KS | **does not decode yet** | `MT63-1KS.wav`, 1740: the text is visible but **every character is one Hadamard row high** — `EAGLE` arrives as `eagle`, `SDRBROWN` as `sdrbrown` with spaces lost, i.e. code +32 throughout. That is a carrier-phase signature (a sign flip across half the bank), not an interleaver fault: the short interleave is proved by the loopback below. |
 | MT63-1KL | **does not decode yet** | Same as 1KS, plus the long interleave; fragments only. |
 | MT63-500S | **decodes (live receiver)** | `MT63-500S.wav`, **1690 Hz** — the manifest's 1740 is a block estimate and the decode searched phase and polarity but not the centre. The whole text, 4/4, once the lock scores on the median per-symbol SNR and the fractional bin is derotated; offered as `Mt6500S`. |

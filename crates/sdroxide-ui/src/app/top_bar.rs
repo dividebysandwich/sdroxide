@@ -8112,6 +8112,18 @@ const STANAG_UNPROVEN: &str = "STANAG 4285 — receive only. Identification is p
      at all means the station is uncoded or carrying encrypted traffic, which is the usual \
      case.";
 
+/// The THOR chip's hover.
+///
+/// THOR has never read a real transmission: its decoder was built against its own
+/// modulator, and the fldigi corpus reads 0 of 4 words on every variant. The
+/// reference-faithful port exists (`sdroxide-dsp/src/ifk.rs`) and two of its three
+/// faults are fixed; the symbol-timing loop is still being ported. Saying so here
+/// is the rule this fork applies to Olivia and STANAG 4285 — a mode that does not
+/// do what its chip promises must not be the last to say so.
+const THOR_UNPROVEN: &str = "THOR — the receive side does not read fldigi transmissions yet. \
+     The decoder works against its own modulator but no off-air or reference recording has \
+     been copied, so treat what appears as provisional.";
+
 fn mode_band_chip(
     ui: &mut egui::Ui,
     cur: Mode,
@@ -8146,6 +8158,7 @@ fn mode_band_chip(
         Mode::Olivia => resp.on_hover_text(OLIVIA_UNCONFIRMED),
         Mode::Dab => resp.on_hover_text(DAB_BANDWIDTH),
         Mode::Stanag4285 => resp.on_hover_text(STANAG_UNPROVEN),
+        Mode::Thor => resp.on_hover_text(THOR_UNPROVEN),
         _ => resp,
     };
     if resp.clicked() {
@@ -8182,6 +8195,7 @@ fn mode_listen_chip(
         None if m == Mode::Olivia => resp.on_hover_text(OLIVIA_UNCONFIRMED),
         None if m == Mode::Dab => resp.on_hover_text(DAB_BANDWIDTH),
         None if m == Mode::Stanag4285 => resp.on_hover_text(STANAG_UNPROVEN),
+        None if m == Mode::Thor => resp.on_hover_text(THOR_UNPROVEN),
         None => resp,
     };
     if resp.clicked() {
