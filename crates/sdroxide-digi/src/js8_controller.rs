@@ -1699,6 +1699,77 @@ mod tests {
         assert_eq!(grid_of(&hb("HELLO", "HB")), None);
     }
 
+    #[test]
+    fn a_decoded_heartbeat_is_answered_only_when_allowed() {
+        // Exercise the real compound-frame receive path, not a hand-built
+        // Js8Msg whose to_me flag already assumes the assembler is correct.
+        for grid in [Some("EM73"), None] {
+            for speed in Js8Speed::ALL {
+                for auto in [false, true] {
+                    for acknowledge in [false, true] {
+                        for from in ["KN4CRD", "N0JDS"] {
+                            let mut c = Js8Controller::new(
+                                DigiConfig {
+                                    js8_speed: speed,
+                                    js8_auto_reply: auto,
+                                    js8_hb_ack: acknowledge,
+                                    ..cfg()
+                                },
+                                48_000.0,
+                            );
+                            let (tx, rx) = std::sync::mpsc::channel();
+                            c.res_rx = rx;
+                            let payload = Compound::heartbeat(from, grid).pack().expect("packs");
+                            let decode = Js8Decode {
+                                payload: Js8Payload {
+                                    bits: payload.bits,
+                                    frame_type: Js8Flags::FIRST | Js8Flags::LAST,
+                                },
+                                audio_hz: 750.0,
+                                dt_sec: 0.0,
+                                snr_db: -11.0,
+                                sync_score: 3.0,
+                                hard_errors: 0,
+                                speed,
+                            };
+                            // Divisible by every JS8 slot length; poll before
+                            // TX can start so the exact reply can be inspected.
+                            let t0 = 1_700_000_040;
+                            tx.send((t0 - speed.slot_s() as i64, vec![decode])).expect("delivered");
+                            c.poll(at(t0 as f64), 7_078_000.0);
+                            let answer =
+                                auto && acknowledge && speed.allows_heartbeat() && from != "N0JDS";
+                            assert_eq!(c.messages.len(), 1);
+                            assert_eq!(c.messages[0].to, "@ALLCALL");
+                            assert!(c.messages[0].to_me);
+                            assert_eq!(
+                                c.tx_frames.len(),
+                                usize::from(answer),
+                                "grid={grid:?}, speed={speed:?}, auto={auto}, ack={acknowledge}, from={from}"
+                            );
+                            if answer {
+                                let queued = c.tx_frames.front().expect("reply queued");
+                                assert_eq!(queued.band, TxBand::Beacon);
+                                let reply = Directed::unpack(&queued.payload).expect("directed");
+                                assert_eq!(reply.from, "N0JDS");
+                                assert_eq!(reply.to, from);
+                                assert_eq!(frame::cmd_text(reply.cmd), Some(" HEARTBEAT SNR"));
+                                assert_eq!(reply.num, Some(-11));
+                            }
+                            let actions = c.poll(at(t0 as f64 + 1.0), 7_078_000.0);
+                            assert_eq!(
+                                actions.iter().any(|a| matches!(a, DigiAction::KeyTx)),
+                                answer
+                            );
+                            assert_eq!(c.tx_burst_active(), answer);
+                            c.abort_tx();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// A heartbeat message, as the assembler hands one over.
     fn heartbeat_from(call: &str, snr: i16) -> Js8Msg {
         Js8Msg {
