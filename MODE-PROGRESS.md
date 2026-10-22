@@ -747,7 +747,7 @@ Three new receivers, all receive-only for now (`PROTO_VERSION` unchanged):
 | BPSK63F | **decodes** | `BPSK63F.wav`, 3/3 words; depth `None` in the reference and the interleaver skipped. |
 | PSK125R | **decodes** | 3/3 at 1754 Hz, depth 40. Bit-compared against the known text: **394/394 bits, offset 262**. |
 | PSK250R | **decodes** | 3/3, depth 80 — also 394/394 bits at 1685–1700 Hz. |
-| PSK500R | **partial — the recording stops mid-text** | 1/3. The stream carries exactly `AAA TEST TEST THE EAGLE HAS ` (207 bits, **perfect**, then ~50% forever); the words after it are **nowhere in the stream**. Ruled out by measurement: the demod (mean \|soft\| 0.99 from 2 s to 34 s, no dropout in the envelope), the centre (swept 1450–1950), the pairing (both parities), the depth (2…400 in steps of 2, both parities), and a one-symbol slip anywhere (4000 positions). Nothing after "HAS " is there to decode. |
+| PSK500R | **decodes — re-recorded 2026-10-22** | 3/3 at 1700–1780 Hz on a fresh bench recording. The corpus sample carried exactly `AAA TEST TEST THE EAGLE HAS ` and nothing decodable — the recording, not the port; it is kept in `samples/bench/`. |
 | PSK1000R | **decodes** | 3/3 at 1754 Hz, depth 160 — **394/394 bits**. |
 | PSK250C6 | **decodes** | 3/3, 6 carriers at 1.4 × 250 Hz. |
 | PSK500C2 | **decodes** | 3/3, 2 carriers. |
@@ -856,6 +856,71 @@ behind its neighbours — and it reads as a sample fault (0.87 on a signal that 
 calibration caught it only because the synthetic bank was there to be wrong
 about.
 
+### Day 2, the bench — PSK500R is proved, and the wide banks are not the recording
+
+The RSP1 and the CRT SS9900v were available, so the R family's last unread sample
+was re-recorded rather than argued about: fldigi sending the corpus text, the rig
+on VOX at 27.415 MHz USB, the RSP1 recording at 250 ksps.
+
+**PSK500R reads its whole text.** `AAA TEST TEST THE EAGLE HAS LANDED 12345
+SDRBROWN` at **3/3 from 1700 to 1780 Hz**, on four separate centre offsets, so it
+is not a lucky alignment. The gate now asserts all five `R` samples and the
+2026-10-21 sample — the one that carried only `AAA TEST TEST THE EAGLE HAS ` —
+is kept in `samples/bench/psk500r_truncated_2026-10-21.wav` as the evidence.
+**The `R` family has no unread sample left.**
+
+**The four wide multi-carrier modes were re-recorded too, and none of them
+decodes either.** This is the useful half: it retires "the samples are bad" for
+those, which is what the corpus measurements pointed at.
+
+| mode | old corpus sample | fresh, 4 W | fresh, 2 W |
+|---|---|---|---|
+| PSK500C4 | 0.841 | 0.767 | **0.841** |
+| PSK1000C2 | 0.848 | 0.809 | **0.830** |
+| PSK125C12 | 0.630 | (not measured) | (not measured) |
+| PSK500RC4 | not measurable (FEC) | 0/3 | 0/3 |
+
+(The figures are `tools/psk-ref/psk_text_match.py`: the fraction of the known
+text's bits the recording carries. 1.000 is clean, 0.5 is noise.)
+
+Two things fell out of that table:
+
+* **Power matters, and 2 W is cleaner than 4 W** — C4 goes 0.767 → 0.841 when the
+  rig is turned down, which is receiver overload, and it is worth knowing for
+  every future sweep. The RSP1 sits close enough to be desensed by our own rig.
+* **It plateaus at ~0.84.** Half a dozen independent recordings of a 4-carrier
+  500-baud bank, old and new, strong and quiet, all carry about 84 % of their
+  bits. A clean synthetic bank of the same shape measures **1.000** through the
+  same instrument. So the remaining 16 % is not the recording, not the level and
+  not the tuning: it is either the demodulator's carrier separation or the rig's
+  audio chain, and the demodulator is the one we can change.
+
+**The concrete next step, and it is a real difference found in the reference:**
+fldigi filters **after** decimating (`fir1[i]->init(FIRLEN+1, symbollen/16, …)`
+— 200 taps at `symbollen/16` of the sample rate), while `PskCarrierBank` filters
+at 8 kHz with 129 taps. In hertz the reference's transition band is ~40 Hz at
+125 baud where ours is ~248 Hz, which is wider than the carrier spacing itself
+(175 Hz at 125 baud, 700 at 500). That is the first thing to try, and it needs no
+bench: `tools/psk-ref/psk_text_match.py` scores any change to the front end in
+one run.
+
+**Two harness faults were fixed on the way, and both would have rejected any
+recording.** `sweep.py` took the strongest bin in the whole ±125 kHz as "where
+the signal is" and the RSP1's own spur at +44–72 kHz won, so the cut kept an empty
+band and the file came back as amplified noise reported as *"nothing transmitted
+(level −180 dBFS)"*; and it measured the burst length on the raw IQ, where that
+same spur gives a flat envelope, so every capture read as a carrier that was up
+for the whole file. The peak search is now confined to 100–3800 Hz and the burst
+is measured on the extracted audio.
+
+**fldigi's own settings were two traps, one new.** Its PortAudio output index had
+moved to an **HDMI** device when the sound card was reconnected — the configured
+name said AB13X and the index said HDMI 3 — so it "transmitted" in silence; and
+every PSK mode is stored in `mode_state.prefs` at **−30 dB TX level**, so even
+with the right device VOX had a whisper to hear. Both are worth checking before
+any future sweep: `pa_devs` (a five-line PortAudio lister) names the indices and
+`rg '^PSK.*tx_' ~/.fldigi/mode_state.prefs` shows the levels.
+
 ### What bit the port, in order
 
 1. **The pairing.** A differential receiver does not know which symbol starts a
@@ -881,20 +946,15 @@ Nothing blocks the work above — every mode has a measurement. These would move
 
 - **A STANAG 4285 capture of a station sending a test tape** (2026-10-21). The French Navy transmits unencrypted RYRY, an ID and the French pangram (`VOYEZ VOUS LE BRICK GEANT QUE J EXAMINE PRES DU GRAND WHARF`), in USB at 1800 Hz, on **4232.0 / 5215.6 / 8467.8 / 8478.5 / 12857.0 / 13031.2 / 13411.9 / 6348.0 kHz**. Ninety seconds at 48 kHz with the UTC time and the station noted is enough. Everything up to the payload is solved and the payload has never been read from the air; the frequency table, the expected text and the `rspcap` command are in [`STANAG4285-HANDOVER.md`](STANAG4285-HANDOVER.md).
 
-- **A fresh PSK500R recording (new, 2026-10-22).** The corpus one carries only
-  `AAA TEST TEST THE EAGLE HAS ` and nothing after it — proved twice, once in
-  Rust and once by an independent decoder written from fldigi's source in
-  Python. Thirty seconds of fldigi on the bench would turn the R family's last
-  unread sample into a gate, and would also say whether the 500-baud `C`/`RC`
-  samples (PSK500C4, PSK500RC4, PSK1000C2) were recorded in the same session.
-- **A re-recording of the wide `C` banks, which is now a named bench job
-  (2026-10-22).** PSK500C4, PSK1000C2 and PSK125C12 carry only 84 %, 85 % and
-  63 % of their known text (a clean bank measures 1.000), so no receiver without
-  FEC can read them and ours is not the fault. The same goes for PSK500RC4, the
-  fourth of that sweep's failures. One bench session recording those four again
-  would either give the family four more gates or prove the fault is in the rig's
-  audio path — and PSK125C12 is the one to record first, because 0.63 is far
-  below its siblings and it may be a different problem.
+- **Nothing more for the wide `C` banks — they were re-recorded on 2026-10-22
+  and still do not decode.** PSK500C4, PSK1000C2, PSK125C12 and PSK500RC4 were
+  recorded off the bench through a tuned antenna at 2 W and carry **0.841, 0.830,
+  0.63 and 0/3** of their known text — the same as the corpus samples, against
+  1.000 for a clean synthetic bank. So for those four the recording is not the
+  fault and another bench session would not help; the next move is the
+  demodulator's carrier separation (see "Day 2, the bench" — the reference
+  filters *after* decimating, we filter at 8 kHz). The recordings are kept in
+  `samples/bench/` as the evidence.
 - **A second MFSK8 recording.** The corpus one loses `TEST THE EAGLE HAS LANDED` in one span while the preamble and the tail read at every tuning; the decoder is the one the other seven MFSK variants use.
 - **A known-good FSQ recording** (new, 2026-10-21). The corpus sample cannot settle FSQ: an FSQ signal is one tone at a time and that recording never has a dominant tone at any centre, spacing or speed, and nothing has ever read it back. Thirty seconds on the bench turns "alphabet fixed, decode unproven" into a gate.
 - **A bench recording of BPSK1000 for the lock-time question** (2026-10-21). The operator's own offer: the RSP1 can record while fldigi plays into the CRT. What it settles is whether the receiver's lost head is the receiver (a clean, known transmission is decoded from the start) or the sample (the sweep's own window). The rig needs a hand for the frequency and to arm it.
