@@ -100,10 +100,41 @@ const FRAMING_DATA: u8 = 1;
 /// documentation gives.
 const SCRAMBLE: u64 = 0xE257_E6D0_2915_74EC;
 
+/// Contestia's scrambling sequence — the CRC-32 polynomial, `0xEDB88320`, in
+/// place of Olivia's. It is a separate table, not a shift of the same one.
+const SCRAMBLE_CONTESTIA: u64 = 0xEDB8_8320;
+
 /// The bit of [`SCRAMBLE`] that scrambles position `i` of character `c`'s
 /// Walsh function.
 fn scramble_bit(c: usize, i: usize) -> bool {
     (SCRAMBLE >> ((13 * c + i) & (BLOCK - 1))) & 1 == 1
+}
+
+/// The same for Contestia: **32 characters to a block**, scrambled five bits
+/// apart out of `0xEDB88320` (`MFSK_Encoder::Preset` and `EncodeBlock`'s
+/// `nShift = bContestia ? 5 : 13`).
+fn scramble_bit_contestia(c: usize, i: usize) -> bool {
+    (SCRAMBLE_CONTESTIA >> ((5 * c + i) & (CONTESTIA_BLOCK - 1))) & 1 == 1
+}
+
+/// Contestia's block: six bits per character, so `2^(6-1)` symbols.
+const CONTESTIA_BLOCK: usize = 32;
+
+/// Contestia's own character map, from fldigi's `EncodeCharacter`: upper case
+/// only, space and the line endings moved into the top of the range, and
+/// printable ASCII counted from 33. Characters 32..63 are sent as the *negative*
+/// row of the Walsh function, exactly as Olivia's bit 6 is.
+fn contestia_char(b: u8) -> u8 {
+    match b {
+        b'a'..=b'z' => b - 32,
+        b' ' => 59,
+        b'\r' => 60,
+        b'\n' => 0,
+        33..=90 => b - 32,
+        8 => 61,
+        0 => 0,
+        _ => b'?' - 32,
+    }
 }
 
 /// Resolved Olivia geometry for a (tones, bandwidth) pair at a sample rate.
@@ -125,6 +156,16 @@ impl Geom {
         // Centre the tone bank on the audio frequency.
         let base_hz = audio_hz - bw / 2.0 + spacing / 2.0;
         Geom { tones, planes, spacing, sps, base_hz }
+    }
+
+    /// Contestia's bank sits **half a tone spacing lower**: fldigi puts its first
+    /// carrier on the band edge (`fc_offset = bandwidth / 2.0`) where Olivia puts
+    /// it half a spacing inside (`bandwidth * (1 - 0.5/tones) / 2`). Same engine,
+    /// same spacing, shifted grid — and a transmitter on Olivia's grid decodes to
+    /// noise on a Contestia receiver, which is exactly what the first loopback
+    /// did.
+    fn shift_for_contestia(&mut self) {
+        self.base_hz -= self.spacing / 2.0;
     }
 
     fn tone_hz(&self, k: usize) -> f64 {
@@ -222,6 +263,11 @@ pub struct OliviaTx {
     /// Invert the tone order. A station sending reversed reads as noise until
     /// this matches it, and the same switch applies to what we send.
     reverse: bool,
+    /// Send **Contestia** rather than Olivia: the same engine with six bits per
+    /// character, a 32-symbol block and the CRC-32 scrambler. Olivia's own
+    /// transmitter decodes to noise on a Contestia receiver and the other way
+    /// round, so the flag has to reach the encoder and not only the geometry.
+    contestia: bool,
 }
 
 impl OliviaTx {
@@ -242,7 +288,23 @@ impl OliviaTx {
             tail_pos: 0,
             tail_done: false,
             reverse: false,
+            contestia: false,
         }
+    }
+
+    /// A **Contestia** transmitter: Olivia's engine, Contestia's scrambler and
+    /// six bits per character. Receive was the only half for years because this
+    /// cost a second table and a block size, not a second modem.
+    pub fn contestia(rate: f64, audio_hz: f64, tones: usize, bw: f64) -> Self {
+        let mut tx = OliviaTx::new(rate, audio_hz, tones, bw);
+        tx.contestia = true;
+        tx.g.shift_for_contestia();
+        tx
+    }
+
+    /// Which scrambler this one speaks.
+    pub fn is_contestia(&self) -> bool {
+        self.contestia
     }
 
     /// Invert the tone order, the mirror of the receiver's `set_reverse`.
@@ -252,6 +314,9 @@ impl OliviaTx {
 
     pub fn set_params(&mut self, audio_hz: f64, tones: usize, bw: f64) {
         self.g = Geom::new(self.rate, audio_hz, tones, bw);
+        if self.contestia {
+            self.g.shift_for_contestia();
+        }
     }
 
     pub fn push_text(&mut self, text: &str) {
@@ -368,7 +433,7 @@ impl OliviaTx {
         self.cur.clear();
         self.cur_pos = 0;
         self.cur_done = done;
-        for i in 0..BLOCK {
+        for i in 0..out.len() {
             let tone = gray(out[i]) as usize % self.g.tones;
             let tone = if self.reverse { self.g.tones - 1 - tone } else { tone };
             self.tonegen.emit(self.g.tone_hz(tone), self.g.sps, OUT_AMP, &mut self.cur);
@@ -384,7 +449,10 @@ impl OliviaTx {
     /// consecutive bits of the same symbol. The scrambler flips the **sign** of
     /// a codeword — a Walsh-domain sign flip, not a rotation of the tone number —
     /// at bit `13 * p + i` of [`SCRAMBLE`].
-    fn encode_block(&mut self) -> ([u32; BLOCK], Option<usize>) {
+    fn encode_block(&mut self) -> (Vec<u32>, Option<usize>) {
+        if self.contestia {
+            return self.encode_block_contestia();
+        }
         // Take up to `planes` characters; pad with NUL idle fill.
         let mut chars = [0u8; 6];
         let mut done: Option<usize> = None;
@@ -431,6 +499,43 @@ impl OliviaTx {
                 // Negating the delta instead of this test is the same signal;
                 // testing the sign where the bit is decided keeps the one
                 // measured fact visible.
+                if f[i] > 0.0 {
+                    out[i] |= 1 << ((p + i) % self.g.planes);
+                }
+            }
+        }
+        (out.to_vec(), done)
+    }
+
+    /// One Contestia block: six bits per character, 32 symbols, the CRC-32
+    /// scrambler. The structure is [`Self::encode_block`]'s — a Walsh code per
+    /// character, interleaved so character `p` lands on bit `(p + i) % planes` of
+    /// symbol `i` — with fldigi's own numbers for this mode.
+    fn encode_block_contestia(&mut self) -> (Vec<u32>, Option<usize>) {
+        let mut chars = [0u8; 6];
+        let mut done: Option<usize> = None;
+        for slot in chars.iter_mut().take(self.g.planes) {
+            if let Some((b, idx)) = self.q.pop_front() {
+                *slot = b;
+                if let Some(i) = idx {
+                    done = Some(done.map_or(i, |d| d.max(i)));
+                }
+            }
+        }
+        let mut out = vec![0u32; CONTESTIA_BLOCK];
+        for (p, &raw) in chars.iter().enumerate().take(self.g.planes) {
+            let c = contestia_char(raw) as usize;
+            let mut f = [0.0f32; CONTESTIA_BLOCK];
+            if c < CONTESTIA_BLOCK {
+                f[c] = 1.0;
+            } else {
+                f[c - CONTESTIA_BLOCK] = -1.0;
+            }
+            ifht(&mut f);
+            for i in 0..CONTESTIA_BLOCK {
+                if scramble_bit_contestia(p, i) {
+                    f[i] = -f[i];
+                }
                 if f[i] > 0.0 {
                     out[i] |= 1 << ((p + i) % self.g.planes);
                 }

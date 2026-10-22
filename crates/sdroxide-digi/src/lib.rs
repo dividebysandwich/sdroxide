@@ -31,6 +31,7 @@ pub mod hell_controller;
 pub mod js8;
 pub mod js8_controller;
 pub mod jt_controller;
+pub mod jtty_controller;
 pub mod modem;
 pub mod navtex_controller;
 mod packet_controller;
@@ -48,7 +49,6 @@ pub mod squelch;
 pub mod sstv_controller;
 pub mod text_modem;
 pub mod uvpacket_controller;
-pub mod jtty_controller;
 pub mod wefax_controller;
 pub mod wspr;
 pub mod wspr_controller;
@@ -68,6 +68,7 @@ pub use fst4_controller::Fst4Controller;
 pub use hell_controller::HellController;
 pub use js8_controller::Js8Controller;
 pub use jt_controller::JtController;
+pub use jtty_controller::JttyController;
 pub use modem::{
     ApHints, Ft8Modem, decode_fsk441_slot, decode_fst4_slot, decode_jt_slot, decode_msk144_slot,
     decode_q65_slot, decode_uvpacket,
@@ -84,7 +85,6 @@ pub use rifp_controller::RifpController;
 pub use scheduler::SlotScheduler;
 pub use sstv_controller::SstvController;
 pub use text_modem::TextModemController;
-pub use jtty_controller::JttyController;
 pub use uvpacket_controller::UvPacketController;
 pub use wefax_controller::WefaxController;
 pub use wspr_controller::WsprController;

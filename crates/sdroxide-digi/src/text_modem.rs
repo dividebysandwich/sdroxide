@@ -750,6 +750,63 @@ impl DigiEngine for TextModemController {
 mod tests {
     use super::*;
 
+    /// **Contestia transmits — not yet.** The receiver has decoded Contestia for
+    /// years and
+    /// the transmitter did not exist, so the mode was receive-only for a reason
+    /// that was not principled: Contestia is Olivia's engine with six bits per
+    /// character, a 32-symbol block and the CRC-32 scrambler. This drives the
+    /// console's own transmitter into the console's own receiver — the same
+    /// objects the band menu builds — and reads the text back.
+    ///
+    /// **The state, 2026-10-22: the transmitter is built and the loopback reads
+    /// nothing.** The scaffolding is fldigi's — six bits per character, a
+    /// 32-symbol block, the CRC-32 scrambler, the five-bit shift and the bank half
+    /// a spacing lower — and the signal it makes decodes as idle characters, so
+    /// one convention is still wrong. Ignored rather than deleted because the test
+    /// is what will say when it is right, and because the transmitter is not wired
+    /// into the panel yet (`Mode::Contestia` still refuses the key-up).
+    #[test]
+    #[ignore]
+    fn a_contestia_transmission_reads_back_through_the_controller() {
+        use sdroxide_dsp::OliviaTx;
+        let (rate, audio) = (8000.0, 1500.0);
+        // The controller builds its receiver from `DigiConfig`, so the
+        // transmitter has to speak the geometry the config asks for — a
+        // mismatch here is a test that fails for a reason unrelated to the
+        // scrambler, which is what the first version of this did.
+        let cfg = DigiConfig::default();
+        let (tones, bw) = (cfg.olivia_tones as usize, cfg.olivia_bw_hz as f64);
+        let mut tx = OliviaTx::contestia(rate, audio, tones, bw);
+        assert!(tx.is_contestia(), "the transmitter is not in Contestia mode");
+        let mut sig = Vec::new();
+        // A runway so the receiver acquires timing and block alignment, the way
+        // the Olivia loopback does.
+        let mut warm = vec![0.0f32; 20_000];
+        tx.next_block(&mut warm);
+        sig.extend_from_slice(&warm);
+        tx.push_text("THE EAGLE HAS LANDED");
+        let mut guard = 0;
+        while tx.sent_chars() < tx.total_chars() && guard < 40_000 {
+            let mut b = [0.0f32; 2048];
+            tx.next_block(&mut b);
+            sig.extend_from_slice(&b);
+            guard += 1;
+        }
+        let mut tail = vec![0.0f32; 8_000];
+        tx.next_block(&mut tail);
+        sig.extend_from_slice(&tail);
+
+        let mut ctl = TextModemController::new(Mode::Contestia, cfg, rate);
+        for chunk in sig.chunks(512) {
+            ctl.on_rx_audio(chunk);
+        }
+        let text = ctl.status().text_rx.to_uppercase();
+        assert!(
+            text.contains("EAGLE") && text.contains("LANDED"),
+            "the Contestia transmission did not read back: {text:?}"
+        );
+    }
+
     /// RTTY's tone pair is a standard, not a convenience: 2125 and 2295 Hz at
     /// the 170 Hz amateur shift, which is what every other RTTY program sends
     /// and expects. It used to start at 915/1085 — decodable here, but low in
