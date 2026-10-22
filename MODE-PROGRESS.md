@@ -21,9 +21,13 @@
 >   time** — `psk_modulation` had no UI at all.
 > * **Items 1, 2 and 3 of the brief are done.** 32 coded PSK waveforms and
 >   DominoEX are reachable from the panel.
-> * **Next: item 4** — 8PSK, OFDM, THROB and SCAMP, which need a modem written from
->   fldigi's source and then their recordings; then RS_ID / CALL_ID and DTMF
->   (item 5), then TX for the remaining receive-only set (item 6).
+> * **Item 4 is started**: 8PSK's no-FEC slicer is in and *does not read its
+>   recordings yet* — the measurement and the reading (the front end, not the
+>   slicer) are in the journal. OFDM, THROB and SCAMP are untouched.
+> * **Next**: finish 8PSK's front end (a vestigial filter and an 8-point carrier
+>   recovery, which PSK31's BPSK loop is not), then OFDM / THROB / SCAMP; then
+>   RS_ID / CALL_ID and DTMF (item 5), then TX for the remaining receive-only set
+>   (item 6).
 >
 > ⛔ **Not in scope, and not to be touched: WEFAX, DAB, SSTV and DSC.** F4NRM and
 > his radio group confirm all four working perfectly (2026-10-21). They are not
