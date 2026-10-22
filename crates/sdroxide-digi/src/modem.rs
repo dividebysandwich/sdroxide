@@ -3,12 +3,72 @@
 //! decode-result fields** — if the crate's field names change, only
 //! `decode_slot` needs updating.
 
-use mfsk_core::msg::decode_request::DecodeRequest;
+use mfsk_core::decoder::{
+    ApMode, DecodeParams, Decoder, Depth, Ft4Strategy, Ft8Strategy, MessageFilter, Row,
+    SearchTuning, SlotInput, Tuning,
+};
+use mfsk_core::engine::pipeline::DecodeResult;
+use mfsk_core::engine::tx::{message_to_tones, synthesize};
+use mfsk_core::msg::ApHint;
 use mfsk_core::msg::hash_table::CallsignHashTable;
-use mfsk_core::msg::wsjt77;
+use mfsk_core::msg::wsjt77::{self, Wsjt77Fields};
 use sdroxide_types::{Decode, Ft8Depth, Mode};
 
 use crate::params::{AUDIO_MAX_HZ, AUDIO_MIN_HZ, MAX_CAND, SYNC_MIN};
+
+/// The parameter block every FT8 and FT4 decode here starts from: our band,
+/// and no a-priori input but the hint [`ApHints`] builds.
+///
+/// `Depth::Deep`, because what [`tuned`] does not pin it leaves at its fullest
+/// (the nsync floor of a full-depth search, the one the request API used).
+/// AP `Off`, because mfsk-core's own QSO-context AP would otherwise try `CQ`
+/// hypotheses on every slot; a decoder whose extras carry a hint uses that
+/// instead and ignores this. `rx_freq_hz` and `tx_freq_hz` are where we listen,
+/// WSJT-X's `nfqso` and `nftx`: since 0.14 an AP hypothesis locking both
+/// callsigns — the reply from the station we are working — is tried only
+/// within 50 Hz of one of them, and not at all without.
+fn frame_params(listening_hz: f32) -> DecodeParams {
+    DecodeParams::for_band((AUDIO_MIN_HZ, AUDIO_MAX_HZ))
+        .depth(Depth::Deep)
+        .ap(ApMode::Off)
+        .rx_freq(listening_hz)
+        .tx_freq(listening_hz)
+}
+
+/// Pin the search to ours: [`SYNC_MIN`], [`MAX_CAND`], OSD on, and `strategy`.
+fn tuned<S>(t: &mut Tuning<S>, strategy: S) {
+    t.sync_min = Some(SYNC_MIN);
+    t.max_cand = Some(MAX_CAND);
+    t.osd = Some(true);
+    t.strategy = Some(strategy);
+}
+
+/// An FT8 decoder for one slot: our search under `strategy`, with `hint` as
+/// its a-priori input.
+///
+/// Built per slot rather than kept: what a `Decoder` carries across periods is
+/// a callsign table [`Ft8Modem`] already keeps and an a7 list it is not asked
+/// for, so a fresh one decodes exactly as a kept one would.
+fn ft8_decoder(
+    strategy: Ft8Strategy,
+    hint: Option<&ApHint>,
+    listening_hz: f32,
+) -> Decoder<mfsk_core::Ft8> {
+    let mut d = Decoder::<mfsk_core::Ft8>::new(frame_params(listening_hz));
+    tuned(&mut d.extras_mut().tuning, strategy);
+    d.set_ap_hint(hint.cloned());
+    d
+}
+
+/// The EU VHF contest exchange, for [`MessageFilter::AlsoAccept`].
+fn is_eu_vhf(m: &Wsjt77Fields) -> bool {
+    matches!(m, Wsjt77Fields::EuVhfContest { .. })
+}
+
+/// The engine results of a decode, in the order it found them.
+fn natives(rows: Vec<Row<DecodeResult>>) -> Vec<DecodeResult> {
+    rows.into_iter().map(|r| r.native).collect()
+}
 
 /// Which of the 77-bit message layouts a decode came from, read straight from
 /// the `i3`/`n3` type bits. Guessing this from the text can't work — free text
@@ -102,22 +162,19 @@ impl ApHints {
         Some((me, self.dx_call.as_deref().map(str::trim).filter(|c| !c.is_empty())))
     }
 
-    fn ft8(&self) -> Option<mfsk_core::ft8::decode::ApHint> {
+    fn ft8(&self) -> Option<ApHint> {
         let (me, dx) = self.calls_for_hint()?;
-        let h = mfsk_core::ft8::decode::ApHint::new().with_call1(me);
+        let h = ApHint::new().with_call1(me);
         Some(match dx {
             Some(dx) => h.with_call2(dx),
             None => h,
         })
     }
 
-    fn ft4(&self) -> Option<mfsk_core::msg::ApHint> {
-        let (me, dx) = self.calls_for_hint()?;
-        let h = mfsk_core::msg::ApHint::new().with_call1(me);
-        Some(match dx {
-            Some(dx) => h.with_call2(dx),
-            None => h,
-        })
+    /// FT4's hint is FT8's: since mfsk-core 0.14 the two take the same one,
+    /// over the same wide-band pass.
+    fn ft4(&self) -> Option<ApHint> {
+        self.ft8()
     }
 }
 
@@ -171,16 +228,14 @@ impl Ft8Modem {
 
     /// Decode one full receive slot of 12 kHz mono i16 audio.
     ///
-    /// FT8 and FT4 take different routes through mfsk-core — only FT8 has a
-    /// wide-band a-priori pass — so each is mapped to our stable [`Decode`]
-    /// inside its own arm, the only place that reads raw mfsk-core fields.
-    /// (The two shared one result type as of mfsk-core 0.8; before that they
-    /// were separate types, which is why the arms were split to begin with.)
+    /// FT8 and FT4 take different routes through mfsk-core — FT8 in two
+    /// stages, FT4 in one — so each is mapped to our stable [`Decode`] inside
+    /// its own arm, the only place that reads raw mfsk-core fields.
     ///
     /// `ap` is what we already know about the message we are waiting for (see
-    /// [`ApHints`]); `listening_hz` is where we are tuned, which is the only
-    /// place FT4's a-priori pass can search. The FT8 pass applies the hint
-    /// across the whole band, so it ignores `listening_hz`.
+    /// [`ApHints`]); `listening_hz` is where we are tuned. Both modes apply the
+    /// hint across the whole band, but the hypothesis that locks both calls is
+    /// tried only within 50 Hz of `listening_hz` (see `frame_params`).
     ///
     /// Takes `&mut self` because every callsign heard is folded into the hash
     /// table, which is what lets a later `<...>` message name a real station.
@@ -225,20 +280,7 @@ impl Ft8Modem {
             return;
         }
         let hint = ap.ft8();
-        let request = || {
-            let req = DecodeRequest::<mfsk_core::Ft8>::new(
-                audio_12k,
-                AUDIO_MIN_HZ,
-                AUDIO_MAX_HZ,
-                SYNC_MIN,
-                MAX_CAND,
-            )
-            .osd(true);
-            match hint.as_ref() {
-                Some(h) => req.ap_hint(h),
-                None => req,
-            }
-        };
+        let slot = SlotInput::i16(audio_12k);
         let sent: std::sync::Mutex<Vec<Decode>> = std::sync::Mutex::new(Vec::new());
         {
             let ht = &self.hashes;
@@ -246,12 +288,14 @@ impl Ft8Modem {
             // The quick pass, whole: a single pass reports from many threads
             // before it deduplicates, so it is taken as its result.
             let mut quick: Vec<Decode> = Vec::new();
-            // Its raw results too, for the `Deep` pass to start from.
-            let quick_raw = request().decode().results;
+            let quick_raw = natives(
+                ft8_decoder(Ft8Strategy::SinglePass, hint.as_ref(), listening_hz)
+                    .decode(&slot)
+                    .rows,
+            );
             for r in &quick_raw {
-                let Ok(bits) = <[u8; 77]>::try_from(r.message77()) else { continue };
                 if let Some(d) =
-                    build_decode(&bits, r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
+                    build_decode(r.message77(), r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
                     && !quick.iter().any(|o| same_signal(o, &d))
                 {
                     quick.push(d);
@@ -262,23 +306,23 @@ impl Ft8Modem {
 
             // The subtraction pass, one decode at a time as it is accepted.
             //
-            // `Deep` is handed the quick pass's results as `known`, so it
-            // subtracts those signals up front instead of finding them all over
-            // again. Measured on 60 of ft8_lib's off-air test slots, 58 of them
-            // scored against WSJT-X's own decodes (`examples/ft8_known_bench.rs`):
-            // the pass takes about 20% less time, single-threaded or not, and
-            // finds the same reference decodes to within one (1094 → 1093 of
-            // 1241), with six more that WSJT-X did not report (242 → 248).
-            // `Normal` is left alone: there the up-front subtraction makes the
-            // pass about half as slow again, two thirds of what it adds are
-            // decodes WSJT-X did not report (20 more hits, 43 more of those), and
-            // the operator choosing `Normal` is choosing speed.
+            // It starts from scratch, finding the quick pass's strong signals
+            // again before the weak ones. Handing it those as `known` saved
+            // `Deep` about a fifth of its time, but mfsk-core 0.13 took `known`
+            // out of the API; what it offers in its place is the checkpointed
+            // early decode (`Decoder::decode_prefix`, mfsk-core #572).
             if self.ft8_depth != Ft8Depth::Fast && !stop() {
-                let on_result = |r: &mfsk_core::ft8::decode::DecodeResult| {
-                    let Ok(bits) = <[u8; 77]>::try_from(r.message77()) else { return };
-                    let Some(d) =
-                        build_decode(&bits, r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
-                    else {
+                let on_row = |row: &Row<DecodeResult>| {
+                    let r = &row.native;
+                    let Some(d) = build_decode(
+                        r.message77(),
+                        r.snr_db,
+                        r.dt_sec,
+                        r.freq_hz,
+                        slot_utc,
+                        ht,
+                        eu,
+                    ) else {
                         return;
                     };
                     let mut s = sent.lock().unwrap();
@@ -288,12 +332,12 @@ impl Ft8Modem {
                         emit(vec![d]);
                     }
                 };
-                let req = request();
-                let req = match self.ft8_depth {
-                    Ft8Depth::Normal => req.sic_rounds(2),
-                    _ => req.sic_early().known(&quick_raw),
+                let strategy = match self.ft8_depth {
+                    Ft8Depth::Normal => Ft8Strategy::SicRounds(2),
+                    _ => Ft8Strategy::SicEarly,
                 };
-                let _ = req.on_result(&on_result).decode();
+                let _ =
+                    ft8_decoder(strategy, hint.as_ref(), listening_hz).decode_with(&slot, &on_row);
             }
 
             // The EU VHF contest rescue, as one more batch — see
@@ -334,7 +378,7 @@ impl Ft8Modem {
     /// Decode a slot in two stages for FT8, for a caller that must act on the
     /// quick result before the slow one lands.
     ///
-    /// The problem: `.sic_early()` is one call that does the whole
+    /// The problem: `SicEarly` is one call that does the whole
     /// checkpointed multi-pass and returns only at the end — about 1.15 s on a
     /// busy slot against FT8's 0.5 s transmit offset — so an auto-sequenced
     /// reply decided from its result goes out a cycle late. So the plain
@@ -356,36 +400,33 @@ impl Ft8Modem {
         // For FT8 the quick single-pass result is emitted first and the SIC
         // extras held back; every other mode has empty `extras`.
         let mut extras: Vec<Decode> = Vec::new();
-        let mut decodes: Vec<Decode> = match mode {
+        let decodes: Vec<Decode> = match mode {
             Mode::Ft8 => {
                 let hint = ap.ft8();
                 // The operator's chosen depth — see `Ft8Depth` — governs only
                 // the extras: `Fast` skips them, `Normal` runs flat multi-pass
                 // SIC, `Deep` the checkpointed pass (~1.2 s on a busy slot).
                 let run = |depth: Ft8Depth| -> Vec<Decode> {
-                    let req = DecodeRequest::<mfsk_core::Ft8>::new(
-                        audio_12k,
-                        AUDIO_MIN_HZ,
-                        AUDIO_MAX_HZ,
-                        SYNC_MIN,
-                        MAX_CAND,
-                    )
-                    .osd(true);
-                    let req = match depth {
-                        Ft8Depth::Fast => req,
-                        Ft8Depth::Normal => req.sic_rounds(2),
-                        Ft8Depth::Deep => req.sic_early(),
+                    let strategy = match depth {
+                        Ft8Depth::Fast => Ft8Strategy::SinglePass,
+                        Ft8Depth::Normal => Ft8Strategy::SicRounds(2),
+                        Ft8Depth::Deep => Ft8Strategy::SicEarly,
                     };
-                    let req = match hint.as_ref() {
-                        Some(h) => req.ap_hint(h),
-                        None => req,
-                    };
-                    req.decode()
-                        .results
-                        .into_iter()
-                        .filter_map(|r| {
-                            let bits: [u8; 77] = r.message77().try_into().ok()?;
-                            build_decode(&bits, r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
+                    ft8_decoder(strategy, hint.as_ref(), listening_hz)
+                        .decode(&SlotInput::i16(audio_12k))
+                        .rows
+                        .iter()
+                        .filter_map(|row| {
+                            let r = &row.native;
+                            build_decode(
+                                r.message77(),
+                                r.snr_db,
+                                r.dt_sec,
+                                r.freq_hz,
+                                slot_utc,
+                                ht,
+                                eu,
+                            )
                         })
                         .collect()
                 };
@@ -399,32 +440,42 @@ impl Ft8Modem {
                 }
                 quick
             }
-            Mode::Ft4 => DecodeRequest::<mfsk_core::Ft4>::new(
-                audio_12k,
-                AUDIO_MIN_HZ,
-                AUDIO_MAX_HZ,
-                SYNC_MIN,
-                MAX_CAND,
-            )
-            .osd(true)
-            // Subtraction, so a weak signal inside a stronger neighbour's
-            // occupied bandwidth is still decoded — FT4's whole reason for
-            // multi-pass SIC, and what WSJT-X/WSJT-CB run by default. The
-            // default strategy is single-pass: without this a busy slot
-            // reports only the strongest signal at each audio offset, which
-            // is the "they don't stack" report against WSJT-X. Two rounds are
-            // the measured choice (mfsk-core's FT4 WSJT-X sample: 11/14
-            // without, 14/14 with `.sic_rounds(2)`, nothing more from a
-            // third; 5 ms → 71 ms against a 7.5 s slot).
-            .sic_rounds(2)
-            .decode()
-            .results
-            .into_iter()
-            .filter_map(|r| {
-                let bits: [u8; 77] = r.message77().try_into().ok()?;
-                build_decode(&bits, r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
-            })
-            .collect(),
+            Mode::Ft4 => {
+                let mut d = Decoder::<mfsk_core::Ft4>::new(frame_params(listening_hz));
+                let e = d.extras_mut();
+                // Subtraction, so a weak signal inside a stronger neighbour's
+                // occupied bandwidth is still decoded — FT4's whole reason for
+                // multi-pass SIC, and what WSJT-X/WSJT-CB run by default.
+                // Without it a busy slot reports only the strongest signal at
+                // each audio offset, which is the "they don't stack" report
+                // against WSJT-X. Two rounds are the measured choice
+                // (mfsk-core's FT4 WSJT-X sample: 11/14 single-pass, 14/14
+                // with two rounds, nothing more from a third; 5 ms → 71 ms
+                // against a 7.5 s slot).
+                tuned(&mut e.tuning, Ft4Strategy::SicRounds(2));
+                // The hint, over the whole band as FT8's: mfsk-core 0.14 runs
+                // FT4's a-priori pass in the wide decode, where before it had
+                // only the sniper's ±250 Hz around `listening_hz`, run as a
+                // second pass. The reply hypothesis, both calls locked, is
+                // still tried only near `listening_hz` (see `frame_params`).
+                e.ap_hint = ap.ft4();
+                // Since 0.14 FT4 unpacks each message and drops what does not
+                // read as plausible, which an EU VHF exchange never does on its
+                // own: both its calls are hashes, unresolved at that point.
+                // Keep the layout while the contest is selected, as FT4 always
+                // did before; `build_decode` resolves the calls.
+                if ap.eu_vhf {
+                    e.filter = MessageFilter::AlsoAccept(is_eu_vhf);
+                }
+                d.decode(&SlotInput::i16(audio_12k))
+                    .rows
+                    .iter()
+                    .filter_map(|row| {
+                        let r = &row.native;
+                        build_decode(r.message77(), r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
+                    })
+                    .collect()
+            }
             // FT2 is FT4 at double the symbol rate, but mfsk-core ships no FT2
             // protocol, so the pipeline is reassembled from its public generic
             // stages in [`crate::ft2`]. No a-priori pass yet — the sniper entry
@@ -439,64 +490,24 @@ impl Ft8Modem {
             )
             .into_iter()
             .filter_map(|r| {
-                let bits: [u8; 77] = r.message77().try_into().ok()?;
-                build_decode(&bits, r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
+                build_decode(r.message77(), r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
             })
             .collect(),
             _ => {
                 // FT8 is handled in `decode_slot_staged` above, in two stages;
                 // this arm is the plain single-pass fallback for any other
                 // protocol that reaches here.
-                let hint = ap.ft8();
-                let req = DecodeRequest::<mfsk_core::Ft8>::new(
-                    audio_12k,
-                    AUDIO_MIN_HZ,
-                    AUDIO_MAX_HZ,
-                    SYNC_MIN,
-                    MAX_CAND,
-                )
-                .osd(true);
-                let req = match hint.as_ref() {
-                    Some(h) => req.ap_hint(h),
-                    None => req,
-                };
-                req.decode()
-                    .results
-                    .into_iter()
-                    .filter_map(|r| {
-                        let bits: [u8; 77] = r.message77().try_into().ok()?;
-                        build_decode(&bits, r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
+                ft8_decoder(Ft8Strategy::SinglePass, ap.ft8().as_ref(), listening_hz)
+                    .decode(&SlotInput::i16(audio_12k))
+                    .rows
+                    .iter()
+                    .filter_map(|row| {
+                        let r = &row.native;
+                        build_decode(r.message77(), r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
                     })
                     .collect()
             }
         };
-        // FT4 has no wide-band a-priori pass, only a targeted one. Aim it where
-        // we are listening — in a QSO that is the station whose reply the hint
-        // describes — and keep whatever it finds that the wide pass missed.
-        if mode == Mode::Ft4 {
-            if let Some(hint) = ap.ft4() {
-                let extra =
-                    DecodeRequest::<mfsk_core::Ft4>::sniper(audio_12k, listening_hz, MAX_CAND)
-                        // The threshold the old `decode_sniper_ap` entry point applied
-                        // for us, and looser than the sniper default: with the hint's
-                        // bits locked the FEC can carry a candidate whose coarse sync
-                        // would never qualify on its own.
-                        .sync_min(0.5)
-                        .osd(true)
-                        .eq_mode(mfsk_core::engine::equalize::EqMode::Off)
-                        .ap_hint(&hint)
-                        .decode()
-                        .results
-                        .into_iter()
-                        .filter_map(|r| {
-                            let bits: [u8; 77] = r.message77().try_into().ok()?;
-                            build_decode(&bits, r.snr_db, r.dt_sec, r.freq_hz, slot_utc, ht, eu)
-                        })
-                        .filter(|d| !decodes.iter().any(|o| same_signal(o, d)))
-                        .collect::<Vec<_>>();
-                decodes.extend(extra);
-            }
-        }
         // The EU VHF contest exchange, which mfsk-core's FT8 decoder drops
         // inside itself — see [`crate::ft8_eu`] for why there is nothing to
         // filter and no hook to catch it with (issue #223). A second pass over
@@ -504,9 +515,9 @@ impl Ft8Modem {
         // about what the first one does, and one that can only ever return the
         // `i3 = 5` layout the first pass is structurally unable to produce.
         //
-        // FT8 alone. FT4 and FT2 go through a pipeline that never unpacks and
-        // so never drops the layout; that is exactly why the exchange was
-        // reported working there and nowhere else.
+        // FT8 alone. FT2's pipeline never unpacks and so never drops the
+        // layout, and FT4's is told to keep it (see its arm above); that is why
+        // the exchange was reported working there and nowhere else.
         if ap.eu_vhf && !matches!(mode, Mode::Ft4 | Mode::Ft2) {
             let rescued = crate::ft8_eu::decode_slot(
                 audio_12k,
@@ -552,16 +563,16 @@ impl Ft8Modem {
         let (msg77, sent) = pack_message(text)?;
         let audio = match self.mode {
             Mode::Ft4 => {
-                let tones = mfsk_core::ft4::encode::message_to_tones(&msg77);
-                mfsk_core::ft4::encode::tones_to_f32(&tones, audio_hz, amplitude)
+                let tones = message_to_tones::<mfsk_core::Ft4>(&msg77);
+                synthesize::<mfsk_core::Ft4>(&tones, 12_000, audio_hz, amplitude)
             }
             Mode::Ft2 => {
                 let tones = crate::ft2::encode::message_to_tones(&msg77);
                 crate::ft2::encode::tones_to_f32(&tones, audio_hz, amplitude)
             }
             _ => {
-                let tones = mfsk_core::ft8::wave_gen::message_to_tones(&msg77);
-                mfsk_core::ft8::wave_gen::tones_to_f32(&tones, audio_hz, amplitude)
+                let tones = message_to_tones::<mfsk_core::Ft8>(&msg77);
+                synthesize::<mfsk_core::Ft8>(&tones, 12_000, audio_hz, amplitude)
             }
         };
         Some((audio, sent))
@@ -587,65 +598,71 @@ impl Ft8Modem {
 /// `dt` is reported from there, as WSJT-X's DT column is: an on-time station
 /// reads about 0.
 pub fn decode_jt_slot(audio_12k: &[i16], mode: Mode, slot_utc: i64) -> Vec<Decode> {
-    let audio: Vec<f32> = audio_12k.iter().map(|&s| f32::from(s) / 28_000.0).collect();
-    let nominal_s = JT_TX_OFFSET_SAMPLES as f32 / DECODE_RATE_U32 as f32;
+    let slot = SlotInput::i16(audio_12k);
     match mode {
         Mode::Jt65 => {
-            let params = mfsk_core::jt65::search::SearchParams {
-                // mfsk-core's default window is 1000–2000 Hz; a JT65 signal
-                // can sit anywhere a receiver passes, and its 65 tones run
-                // ~180 Hz up from the sync tone the search places.
-                freq_min_hz: JT_FREQ_MIN_HZ,
-                freq_max_hz: AUDIO_MAX_HZ - JT65_WIDTH_HZ,
-                // Every candidate costs a full decode attempt; over the whole
-                // passband the default eight would cap a busy slot at eight
-                // stations.
-                max_candidates: 20,
-                ..Default::default()
-            };
-            mfsk_core::jt65::decode_scan(&audio, DECODE_RATE_U32, JT_TX_OFFSET_SAMPLES, &params)
+            // mfsk-core's default window is 1000–2000 Hz; a JT65 signal can sit
+            // anywhere a receiver passes, and its 65 tones run ~180 Hz up from
+            // the sync tone the search places.
+            let mut d = Decoder::<mfsk_core::Jt65>::new(
+                DecodeParams::for_band((JT_FREQ_MIN_HZ, AUDIO_MAX_HZ - JT65_WIDTH_HZ))
+                    .ap(ApMode::Off),
+            );
+            // Every candidate costs a full decode attempt; over the whole
+            // passband the default eight would cap a busy slot at eight
+            // stations.
+            let search = &mut d.extras_mut().search;
+            search.max_candidates = Some(20);
+            jt_window(search, mfsk_core::jt65::search::default_search_params());
+            d.decode(&slot)
+                .rows
                 .into_iter()
-                .filter_map(|r| {
-                    jt_decode(r.message, r.snr_db, r.dt_sec - nominal_s, r.freq_hz, slot_utc)
+                .filter_map(|row| {
+                    let r = row.native;
+                    jt_decode(r.message, r.snr_db, r.dt_sec - JT_TX_OFFSET_S, r.freq_hz, slot_utc)
                 })
                 .collect()
         }
-        Mode::Jt9 => mfsk_core::jt9::decode_scan(
-            &audio,
-            DECODE_RATE_U32,
-            JT_TX_OFFSET_SAMPLES,
+        Mode::Jt9 => {
             // JT9's default window is already jt9's own 200–4000 Hz.
-            &mfsk_core::jt9::search::SearchParams::default(),
-        )
-        .into_iter()
-        .filter_map(|r| {
-            // JT9 exposes only the start index, from the start of the buffer.
-            let dt = r.start_sample as f32 / DECODE_RATE_U32 as f32 - nominal_s;
-            jt_decode(r.message, r.snr_db, dt, r.freq_hz, slot_utc)
-        })
-        .collect(),
+            let mut d = Decoder::<mfsk_core::Jt9>::with_defaults();
+            jt_window(&mut d.extras_mut().search, mfsk_core::jt9::search::default_search_params());
+            d.decode(&slot)
+                .rows
+                .into_iter()
+                .filter_map(|row| {
+                    let r = row.native;
+                    jt_decode(r.message, r.snr_db, r.dt_sec - JT_TX_OFFSET_S, r.freq_hz, slot_utc)
+                })
+                .collect()
+        }
         _ => Vec::new(),
     }
 }
 
 /// JT65 and JT9 key one second into their 60-second slot, as WSJT-X does.
-const JT_TX_OFFSET_SAMPLES: usize = 12_000;
+const JT_TX_OFFSET_S: f32 = 1.0;
+
+/// Centre a JT search on [`JT_TX_OFFSET_S`]: mfsk-core's `Decoder`s put both
+/// modes' nominal start at the top of the minute and search `base`'s
+/// tolerance around it, which for JT9 (±1.7 s) would miss a station keying a
+/// second late. `dt` comes back from the top of the minute too.
+fn jt_window(t: &mut SearchTuning, base: mfsk_core::engine::search::SearchParams) {
+    t.time_tolerance_early_sec = Some(base.time_tolerance_early_sec - JT_TX_OFFSET_S);
+    t.time_tolerance_late_sec = Some(base.time_tolerance_late_sec + JT_TX_OFFSET_S);
+}
+
 /// The lowest sync tone the JT65 scan looks for, Hz.
 const JT_FREQ_MIN_HZ: f32 = 200.0;
 /// A JT65A signal's width above its sync tone: 65 tones at 2.69 Hz.
 const JT65_WIDTH_HZ: f32 = 180.0;
 
-/// mfsk-core's JT and Q65 entry points take a `u32` rate; the workspace's is
-/// `f64`.
-const DECODE_RATE_U32: u32 = 12_000;
-
 /// Map one mfsk-core JT message onto the stable [`Decode`].
 ///
-/// The 72-bit message has two shapes: the everyday `<to> <from> <grid|report>`
-/// and an `Unsupported` catch-all for compound callsigns and free text, which
-/// this build does not unpack — it is skipped rather than shown as a row of
-/// hex, because a decode list a listener cannot read is worse than a shorter
-/// one.
+/// Only the everyday `<to> <from> <grid|report>` shape is shown. Compound
+/// callsigns and free text are skipped, as they were while mfsk-core could not
+/// unpack them; it renders them as `jt9` does since 0.14 (`Compound`,
+/// `FreeText`), which is a row this build could show and does not yet.
 fn jt_decode(
     message: mfsk_core::msg::Jt72Message,
     snr_db: f32,
@@ -1141,7 +1158,7 @@ pub const MSK144_TOLERANCE_HZ: f32 = 200.0;
 /// the decode call, so there are no raw 77 bits for us to unpack: the text is
 /// already a `String`, and [`parse_text_decode`] reads it.
 pub fn decode_msk144_slot(audio_12k: &[i16], audio_hz: f32, slot_utc: i64) -> Vec<Decode> {
-    use mfsk_core::msk144::decode::{Depth, decode_slot};
+    use mfsk_core::msk144::decode::decode_slot;
     decode_slot(audio_12k, audio_hz, MSK144_TOLERANCE_HZ, Depth::Deep)
         .into_iter()
         .map(|r| {
@@ -1166,8 +1183,7 @@ pub fn decode_msk144_slot(audio_12k: &[i16], audio_hz: f32, slot_utc: i64) -> Ve
 
 /// Decode one full FST4 slot of 12 kHz mono i16 audio at the chosen period.
 ///
-/// FST4 goes through the same generic [`DecodeRequest`] as FT4 and shares its
-/// 77-bit message, so the mapping to [`Decode`] is FT4's; only the protocol
+/// FST4 goes through the same `Decoder` as FT4 and shares its 77-bit message, so the mapping to [`Decode`] is FT4's; only the protocol
 /// type parameter differs, and the five periods are five types rather than a
 /// runtime width. The slot length is the period the operator chose — the
 /// caller must hand in that many seconds of audio, which is what
@@ -1177,7 +1193,6 @@ pub fn decode_fst4_slot(
     period: sdroxide_types::Fst4Period,
     slot_utc: i64,
 ) -> Vec<Decode> {
-    use mfsk_core::msg::decode_request::DecodeRequest;
     // FST4's own example uses a sync floor of 0.8 and a small candidate cap:
     // it is a deep, sparse mode, so there are few signals and a lower bar is
     // safe. The FT8 family's 1.5 would hide the weak ones this mode exists
@@ -1185,37 +1200,39 @@ pub fn decode_fst4_slot(
     const FST4_SYNC_MIN: f32 = 0.8;
     const FST4_MAX_CAND: usize = 30;
     // The five periods are five protocol types rather than a runtime width, so
-    // the request cannot be built once behind a generic closure; the macro
+    // the decoder cannot be built once behind a generic closure; the macro
     // writes the arms out instead, exactly as the crate's own example does.
+    // No a-priori input, as before mfsk-core's `Decoder` offered one.
     macro_rules! run {
-        ($p:ty) => {
-            DecodeRequest::<$p>::new(
-                audio_12k,
-                AUDIO_MIN_HZ,
-                AUDIO_MAX_HZ,
-                FST4_SYNC_MIN,
-                FST4_MAX_CAND,
-            )
-            .decode()
-            .results
-            .into_iter()
-            .filter_map(|r| {
-                let bits: [u8; 77] = r.message77().try_into().ok()?;
-                // FST4 carries the same 77-bit message as FT8, hashed-callsign
-                // layouts included. No session hash table is kept for it, so a
-                // hashed callsign reads as `<...>` rather than being resolved.
-                build_decode(
-                    &bits,
-                    r.snr_db,
-                    r.dt_sec,
-                    r.freq_hz,
-                    slot_utc,
-                    &CallsignHashTable::new(),
-                    &eu_vhf::Hashes::default(),
-                )
-            })
-            .collect()
-        };
+        ($p:ty) => {{
+            let mut d = Decoder::<$p>::new(
+                DecodeParams::for_band((AUDIO_MIN_HZ, AUDIO_MAX_HZ))
+                    .depth(Depth::Deep)
+                    .ap(ApMode::Off),
+            );
+            let t = &mut d.extras_mut().tuning;
+            t.sync_min = Some(FST4_SYNC_MIN);
+            t.max_cand = Some(FST4_MAX_CAND);
+            d.decode(&SlotInput::i16(audio_12k))
+                .rows
+                .iter()
+                .filter_map(|row| {
+                    let r = &row.native;
+                    // FST4 carries the same 77-bit message as FT8, hashed-callsign
+                    // layouts included. No session hash table is kept for it, so a
+                    // hashed callsign reads as `<...>` rather than being resolved.
+                    build_decode(
+                        r.message77(),
+                        r.snr_db,
+                        r.dt_sec,
+                        r.freq_hz,
+                        slot_utc,
+                        &CallsignHashTable::new(),
+                        &eu_vhf::Hashes::default(),
+                    )
+                })
+                .collect()
+        }};
     }
     match period {
         sdroxide_types::Fst4Period::P15 => run!(mfsk_core::fst4::Fst4s15),
@@ -1228,39 +1245,33 @@ pub fn decode_fst4_slot(
 
 /// Decode one full Q65 slot of 12 kHz mono i16 audio at the chosen sub-mode.
 ///
-/// Q65 goes through mfsk-core's `q65::DecodeRequest`, which takes f32 audio
-/// and a `SearchParams`; the ten sub-modes are ten protocol types, so the
-/// request is built per sub-mode. The result carries the message text already
-/// unpacked, so it maps through the same parser every other mode uses.
+/// The ten sub-modes are ten protocol types, so the `Decoder` is built per
+/// sub-mode. The result carries the message text already unpacked, so it maps
+/// through the same parser every other mode uses.
 pub fn decode_q65_slot(
     audio_12k: &[i16],
     mode: sdroxide_types::Q65Mode,
     slot_utc: i64,
 ) -> Vec<Decode> {
-    use mfsk_core::q65::DecodeRequest;
-    use mfsk_core::q65::search::SearchParams;
-
-    let audio: Vec<f32> = audio_12k.iter().map(|&s| f32::from(s) / 28_000.0).collect();
     // The scan searches around where this sub-mode keys — half a second in for
-    // 15A and 30A, one second for the rest — and its own asymmetric
-    // `SearchParams` window carries the tolerance. mfsk-core reports each
-    // frame's start from the start of the buffer, so the nominal start comes
-    // off it to give WSJT-X's DT.
-    let nominal_start = (mode.start_delay_s() * f64::from(DECODE_RATE_U32)).round() as usize;
-    let nominal_s = mode.start_delay_s() as f32;
-    let params = SearchParams::default();
-
+    // 15A and 30A, one second for the rest — and reports each frame's start
+    // from there, which is WSJT-X's DT. The band is the 200–3000 Hz mfsk-core's
+    // Q65 search has always used; no a-priori input, as before mfsk-core's
+    // `Decoder` offered one.
+    let slot = SlotInput::i16(audio_12k);
     macro_rules! run {
         ($p:ty) => {
-            DecodeRequest::<$p>::new(&audio, DECODE_RATE_U32, nominal_start, params)
-                .decode()
+            Decoder::<$p>::new(DecodeParams::for_band((200.0, 3000.0)).ap(ApMode::Off))
+                .decode(&slot)
+                .rows
                 .into_iter()
-                .map(|r| {
+                .map(|row| {
+                    let r = row.native;
                     let p = parse_text_decode(&r.message);
                     Decode {
                         slot_utc,
                         snr_db: r.snr_db.round() as i16,
-                        dt: r.dt_sec - nominal_s,
+                        dt: r.dt_sec,
                         audio_hz: r.freq_hz,
                         message: r.message,
                         to: p.to,
@@ -1832,15 +1843,17 @@ mod tests {
         use sdroxide_types::Fst4Period;
         for period in Fst4Period::ALL {
             let msg77 = mfsk_core::msg::wsjt77::pack77("CQ", "K1ABC", "FN42").expect("pack77");
-            let itone = mfsk_core::fst4::encode::message_to_tones(&msg77);
-            let cfg = match period {
-                Fst4Period::P15 => &mfsk_core::fst4::encode::FST4_15_GFSK,
-                Fst4Period::P30 => &mfsk_core::fst4::encode::FST4_30_GFSK,
-                Fst4Period::P60 => &mfsk_core::fst4::encode::FST4_60A_GFSK,
-                Fst4Period::P120 => &mfsk_core::fst4::encode::FST4_120_GFSK,
-                Fst4Period::P300 => &mfsk_core::fst4::encode::FST4_300_GFSK,
+            // FST4's tones are the same at every period; only the waveform
+            // they are synthesised into is the period's.
+            use mfsk_core::fst4::{Fst4s15, Fst4s30, Fst4s60, Fst4s120, Fst4s300};
+            let itone = message_to_tones::<Fst4s60>(&msg77);
+            let burst = match period {
+                Fst4Period::P15 => synthesize::<Fst4s15>(&itone, 12_000, 1000.0, 0.3),
+                Fst4Period::P30 => synthesize::<Fst4s30>(&itone, 12_000, 1000.0, 0.3),
+                Fst4Period::P60 => synthesize::<Fst4s60>(&itone, 12_000, 1000.0, 0.3),
+                Fst4Period::P120 => synthesize::<Fst4s120>(&itone, 12_000, 1000.0, 0.3),
+                Fst4Period::P300 => synthesize::<Fst4s300>(&itone, 12_000, 1000.0, 0.3),
             };
-            let burst = mfsk_core::fst4::encode::tones_to_f32_with_gfsk(&itone, 1000.0, 0.3, cfg);
             // Pad into a whole slot at the period's TX offset.
             let mut slot = vec![0.0f32; (period.start_delay_s() * 12_000.0).round() as usize];
             slot.extend_from_slice(&burst);
@@ -1896,7 +1909,7 @@ mod tests {
 
     /// Synthesize a `CQ K1ABC FN42` at sub-mode `m`, pad it into a whole slot at
     /// the sub-mode's own TX offset, and assert it decodes back on time.
-    fn q65_round_trip<P: mfsk_core::engine::ModulationParams>(m: sdroxide_types::Q65Mode) {
+    fn q65_round_trip<P: mfsk_core::engine::tx::FskWaveform>(m: sdroxide_types::Q65Mode) {
         let burst = mfsk_core::q65::tx::synthesize_standard_for::<P>(
             "CQ", "K1ABC", "FN42", 12_000, 1000.0, 0.3,
         )
@@ -2377,11 +2390,11 @@ mod tests {
         );
     }
 
-    /// FT4's hint takes the other path — a targeted sniper decode aimed where
-    /// we are listening, run *after* the wide pass and merged into it. Same
-    /// guarantee as FT8's, and the one that would break silently if the sniper
-    /// were ever aimed, thresholded or de-duplicated wrongly: the wide pass's
-    /// decodes must all survive.
+    /// FT4's hint rides the wide decode, as FT8's does, with the reply
+    /// hypothesis aimed where we are listening. Same guarantee as FT8's, and
+    /// one that would break silently if the hint ever displaced the ordinary
+    /// search instead of following it: every decode without the hint must
+    /// survive with it.
     #[test]
     fn an_ft4_a_priori_hint_only_ever_adds_decodes() {
         let ap = ApHints {

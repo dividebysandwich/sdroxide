@@ -213,8 +213,8 @@ pub const NAVTEX_TONE_HZ: f32 = 1700.0;
 /// How hard the FT8 decoder works for weak signals, and what it costs.
 ///
 /// FT8's recall comes from signal subtraction, and the most thorough pass —
-/// WSJT-X's checkpointed multi-pass (mfsk-core's `.sic_early()`, a recall
-/// superset of the flat `.sic_rounds(n)`) — is **sequential by construction**,
+/// WSJT-X's checkpointed multi-pass (mfsk-core's `Ft8Strategy::SicEarly`, a
+/// recall superset of the flat `SicRounds(n)`) — is **sequential by construction**,
 /// so it can neither be spread across cores nor made cheap. It was measured at
 /// ~1.2 s on a busy slot against FT8's 0.5 s transmit offset, so an operator who
 /// wants the reply to go out on time should be able to trade a few weak decodes

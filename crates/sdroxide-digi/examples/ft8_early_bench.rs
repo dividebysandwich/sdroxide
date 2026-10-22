@@ -20,24 +20,31 @@
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
-use mfsk_core::msg::decode_request::DecodeRequest;
+use mfsk_core::decoder::{ApMode, DecodeParams, Decoder, Depth, Ft8Strategy, SlotInput};
 use sdroxide_digi::params::{AUDIO_MAX_HZ, AUDIO_MIN_HZ, MAX_CAND, SYNC_MIN};
 
 const RATE: f64 = 12_000.0;
 const SLOT: usize = 180_000;
 const CUTS: [f64; 7] = [11.8, 12.4, 12.8, 13.2, 13.5, 14.0, 14.4];
 
+/// The quick pass as the decode worker runs it: one pass, our search.
 fn quick(audio: &[i16]) -> (Duration, BTreeSet<String>) {
+    let mut d = Decoder::<mfsk_core::Ft8>::new(
+        DecodeParams::for_band((AUDIO_MIN_HZ, AUDIO_MAX_HZ)).depth(Depth::Deep).ap(ApMode::Off),
+    );
+    let t = &mut d.extras_mut().tuning;
+    t.sync_min = Some(SYNC_MIN);
+    t.max_cand = Some(MAX_CAND);
+    t.osd = Some(true);
+    t.strategy = Some(Ft8Strategy::SinglePass);
     let t = Instant::now();
-    let r =
-        DecodeRequest::<mfsk_core::Ft8>::new(audio, AUDIO_MIN_HZ, AUDIO_MAX_HZ, SYNC_MIN, MAX_CAND)
-            .osd(true)
-            .decode()
-            .results;
+    let r = d.decode(&SlotInput::i16(audio)).rows;
     let el = t.elapsed();
     let set = r
         .iter()
-        .map(|d| mfsk_core::msg::wsjt77::unpack77(&d.message77()).unwrap_or_else(|| "?".into()))
+        .map(|row| {
+            mfsk_core::msg::wsjt77::unpack77(row.native.message77()).unwrap_or_else(|| "?".into())
+        })
         .collect();
     (el, set)
 }
