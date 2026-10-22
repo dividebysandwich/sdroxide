@@ -1098,6 +1098,32 @@ and the `Mt63Encoder` that was already here for the loopback.
   tESt`), which is a 32-code *case* error, not a lost character — the gate compares
   case-insensitively now and says so.
 
+### PSK's coded families — 32 waveforms, and the QPSK chip that was never there
+
+BPSK63F, the `R` set and the `C`/`RC` banks all decode their corpus samples and
+**no chip reached any of them**: `Mode::Psk` offered six speeds and one
+constellation. `DigiConfig::psk_coded` (appended, `PROTO_VERSION` 228 → 229,
+`VERSION_BYTE` 0x30 → 0x31) is the selector, one enum carrying the whole of
+fldigi's table — baud, carrier count, `2 × 2 × idepth` and whether the mode has
+the code at all — so the receiver is built from one table and cannot disagree
+with the chips.
+
+* **Three receivers behind one arm** (`PskAny`): `PskrRx` for the code (one
+  carrier for BPSK63F and the `R` set, several for `RC`), `PskMultiRx` for the
+  `C` banks, which have carriers and **no** code, and PSK31's own `PskRx`.
+* **The panel groups by family** — PLAIN / BPSK63F / R / C / RC — then shows that
+  family's variants: 32 chips in one row is a menu, not a control.
+* **`psk_modulation` had no UI at all**, so QPSK31/63/125/250/500 were
+  unreachable too. There is a **Modulation** row now.
+* **A coded selection refuses the key-up by name** — *"PSK63RC4 is receive only in
+  this build — the coded PSK transmitter is not written"* — because it is a
+  *setting* rather than a mode, and quietly sending PSK31 to an operator who
+  selected PSK125R would put the wrong waveform on the air. Plain PSK still keys,
+  which is what stops the refusal being a blanket.
+* Gates: `a_coded_psk_sample_decodes_through_the_controller` (PSK125R's corpus
+  sample at 1754 Hz reads `AAA TEST TEST THE EAGLE HAS LANDED 12345 SDRBROWN ZZZ`)
+  and `a_coded_psk_selection_refuses_the_key_by_name`.
+
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:

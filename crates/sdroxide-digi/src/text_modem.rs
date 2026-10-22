@@ -11,14 +11,14 @@ use std::collections::VecDeque;
 use std::time::SystemTime;
 
 use sdroxide_dsp::{
-    MonoResampler, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ardop,
+    MonoResampler, OliviaTx, PskMultiRx, PskRx, PskTx, PskrRx, RttyRx, RttyTx, ardop,
     ifk::{IfkRx, IfkTx, IfkVariant},
     mfsk_rx::{MfskReceiver, MfskTx, MfskVariant},
     mt63::{Mt63Receiver, Mt63Tx},
     stanag4285,
 };
 use sdroxide_olivia::OliviaReceiver;
-use sdroxide_types::{DigiConfig, DigiStatus, Mode, QsoStep, ThorMode, TranscriptLine};
+use sdroxide_types::{DigiConfig, DigiStatus, Mode, PskCoded, QsoStep, ThorMode, TranscriptLine};
 
 /// ARDOP's front end: the modem runs at 12 kHz and takes the tap directly, so a
 /// receiver of its own rather than a fourth `process(&[f32])` arm. Its
@@ -144,7 +144,7 @@ const OUT_RATE: f64 = 48_000.0;
 const RX_TEXT_CAP: usize = 8000;
 
 enum RxModem {
-    Psk(PskRx),
+    Psk(PskAny),
     Rtty(RttyRx),
     Olivia(OliviaReceiver),
     Thor(ThorRx),
@@ -152,6 +152,37 @@ enum RxModem {
     Mt63(Mt63Receiver),
     Ardop(ArdopRx),
     Stanag(StanagRx),
+}
+
+/// PSK's three receivers behind one arm.
+///
+/// PSK31's family is one differential carrier with no code. fldigi's coded
+/// families are three different receivers — `PskrRx` for the code (with one
+/// carrier for BPSK63F and the `R` set, several for `RC`), `PskMultiRx` for the
+/// `C` banks, which have carriers and **no** code — and the operator picks
+/// between them with `DigiConfig::psk_coded`.
+enum PskAny {
+    Plain(PskRx),
+    Coded(PskrRx),
+    Multi(PskMultiRx),
+}
+
+impl PskAny {
+    fn process(&mut self, audio: &[f32]) -> String {
+        match self {
+            PskAny::Plain(r) => r.process(audio),
+            PskAny::Coded(r) => r.process(audio),
+            PskAny::Multi(r) => r.process(audio),
+        }
+    }
+
+    fn set_carrier(&mut self, hz: f64) {
+        match self {
+            PskAny::Plain(r) => r.set_carrier(hz),
+            PskAny::Coded(r) => r.set_carrier(hz),
+            PskAny::Multi(r) => r.set_carrier(hz),
+        }
+    }
 }
 
 impl RxModem {
@@ -169,7 +200,9 @@ impl RxModem {
     }
     fn magnitude(&self) -> f32 {
         match self {
-            RxModem::Psk(r) => r.magnitude(),
+            // The coded receivers do not publish a level; the controller's
+            // squelch reads this, and PSK is self-gating anyway.
+            RxModem::Psk(_) => 1.0,
             RxModem::Rtty(r) => r.magnitude(),
             RxModem::Olivia(r) => r.magnitude(),
             RxModem::Thor(r) => r.magnitude(),
@@ -433,9 +466,33 @@ impl TextModemController {
             Mode::Ardop => RxModem::Ardop(ArdopRx::new(tap_rate)),
             Mode::Stanag4285 => RxModem::Stanag(StanagRx::new(MODEM_RATE)),
             _ => {
-                let mut r = PskRx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
-                r.set_qpsk(p_qpsk);
-                RxModem::Psk(r)
+                // A coded variant is a different waveform, not a setting on
+                // PSK31's modem: it gets its own receiver, built from the
+                // table in `PskCoded`.
+                let coded = cfg.psk_coded;
+                if coded != PskCoded::Off {
+                    let any = if coded.fec() {
+                        PskAny::Coded(PskrRx::with_carriers(
+                            MODEM_RATE,
+                            audio_hz as f64,
+                            coded.baud(),
+                            coded.carriers(),
+                            coded.depth(),
+                        ))
+                    } else {
+                        PskAny::Multi(PskMultiRx::new(
+                            MODEM_RATE,
+                            audio_hz as f64,
+                            coded.baud(),
+                            coded.carriers(),
+                        ))
+                    };
+                    RxModem::Psk(any)
+                } else {
+                    let mut r = PskRx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
+                    r.set_qpsk(p_qpsk);
+                    RxModem::Psk(PskAny::Plain(r))
+                }
             }
         };
         let tx = match mode {
@@ -509,8 +566,10 @@ impl TextModemController {
         match &mut self.rx {
             RxModem::Psk(r) => {
                 r.set_carrier(hz);
-                r.set_baud(p_baud);
-                r.set_qpsk(p_qpsk);
+                if let PskAny::Plain(p) = r {
+                    p.set_baud(p_baud);
+                    p.set_qpsk(p_qpsk);
+                }
             }
             RxModem::Rtty(r) => {
                 r.set_tuning(hz, baud, shift);
@@ -585,21 +644,7 @@ impl TextModemController {
             tx_even: false,
             transmitting: self.keyed,
             tx_watchdog: false,
-            tx_refused: self.mode.is_rx_only().then(|| match self.mode {
-                Mode::Ardop => {
-                    "ARDOP is receive only in this build — the modem has no transmitter and the \
-                     ARQ state machine is not ported"
-                        .to_string()
-                }
-                Mode::Stanag4285 => {
-                    "STANAG 4285 is receive only in this build — there is no modulator, and the \
-                     coded rates need Annex E, which is not transcribed"
-                        .to_string()
-                }
-                other => {
-                    format!("{} is receive only in this build", other.label())
-                }
-            }),
+            tx_refused: tx_refusal_text(self.mode, &self.cfg),
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
             text_rx: self.rx_text.clone(),
@@ -651,6 +696,36 @@ impl TextModemController {
             qso: None,
         }
     }
+}
+
+/// Why this configuration cannot key up, if it cannot.
+///
+/// Two things answer: a mode that is receive-only by capability, and PSK
+/// set to one of fldigi's **coded** families, whose transmitters are not
+/// written. The second is a *setting* rather than a mode, and refusing it is
+/// the difference between a control that does nothing and one that says so —
+/// silently sending PSK31 to an operator who selected PSK125R would put the
+/// wrong waveform on the air.
+fn tx_refusal_text(mode: Mode, cfg: &DigiConfig) -> Option<String> {
+    if mode.is_rx_only() {
+        return Some(match mode {
+            Mode::Ardop => "ARDOP is receive only in this build — the modem has no \
+                            transmitter and the ARQ state machine is not ported"
+                .to_string(),
+            Mode::Stanag4285 => "STANAG 4285 is receive only in this build — there is no \
+                                 modulator, and the coded rates need Annex E, which is not \
+                                 transcribed"
+                .to_string(),
+            other => format!("{} is receive only in this build", other.label()),
+        });
+    }
+    if mode == Mode::Psk && cfg.psk_coded != PskCoded::Off {
+        return Some(format!(
+            "{} is receive only in this build — the coded PSK transmitter is not written",
+            cfg.psk_coded.label()
+        ));
+    }
+    None
 }
 
 impl DigiEngine for TextModemController {
@@ -828,7 +903,7 @@ impl DigiEngine for TextModemController {
         // A receive-only mode refuses the key-up and says why, rather than
         // arming a latch that would key the radio with nothing to send. The
         // panel greys the control too; this is the half a remote client sees.
-        if on && self.mode.is_rx_only() {
+        if on && tx_refusal_text(self.mode, &self.cfg).is_some() {
             self.tx_active = false;
             self.status_dirty = true;
             return;
@@ -966,6 +1041,60 @@ mod tests {
             text.contains("EAGLE") && text.contains("LANDED"),
             "the THOR transmission did not read back: {text:?}"
         );
+    }
+
+    /// A coded PSK mode through the console's own controller: PSK125R, the
+    /// single-carrier robust one, on its corpus sample.
+    ///
+    /// The receivers were proven against the corpus in `sdroxide-dsp`; what this
+    /// pins is the wiring — `DigiConfig::psk_coded` reaching the right receiver
+    /// at the right baud, carrier count and interleave depth — and that a coded
+    /// selection **refuses the key-up by name** instead of quietly sending
+    /// PSK31, which is the failure mode a setting rather than a mode invites.
+    #[test]
+    #[ignore]
+    fn a_coded_psk_sample_decodes_through_the_controller() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/PSK125R.wav");
+        let mut reader = hound::WavReader::open(path).expect("the PSK125R sample");
+        let spec = reader.spec();
+        let audio: Vec<f32> =
+            reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
+        let mut cfg = DigiConfig::default();
+        cfg.psk_coded = PskCoded::Psk125R;
+        let mut ctl = TextModemController::new(Mode::Psk, cfg, spec.sample_rate as f64);
+        ctl.set_audio_hz(1754.0);
+        for chunk in audio.chunks(512) {
+            ctl.on_rx_audio(chunk);
+        }
+        let text = ctl.status().text_rx.to_uppercase();
+        eprintln!("PSK125R through the controller: {text:?}");
+        assert!(
+            text.contains("EAGLE") && text.contains("LANDED") && text.contains("SDRBROWN"),
+            "the PSK125R sample did not read back: {text:?}"
+        );
+    }
+
+    /// A coded PSK selection cannot key up, and says which one it is.
+    #[test]
+    fn a_coded_psk_selection_refuses_the_key_by_name() {
+        let mut cfg = DigiConfig::default();
+        cfg.psk_coded = PskCoded::Psk63Rc4;
+        let mut c = TextModemController::new(Mode::Psk, cfg, 48_000.0);
+        c.set_tx_text("TEST".into());
+        c.set_tx_active(true);
+        c.poll(SystemTime::now(), 0.0);
+        let s = c.status();
+        assert!(!s.tx_next, "a coded PSK selection armed the transmitter");
+        assert!(!c.tx_burst_active(), "it asked the engine to key");
+        let reason = s.tx_refused.expect("it refused in silence");
+        assert!(reason.contains("PSK63RC4"), "the refusal does not name the variant: {reason:?}");
+
+        // Plain PSK still keys, so this is not a blanket.
+        let mut plain = TextModemController::new(Mode::Psk, DigiConfig::default(), 48_000.0);
+        plain.set_tx_active(true);
+        plain.poll(SystemTime::now(), 0.0);
+        assert!(plain.status().tx_refused.is_none(), "plain PSK picked up the refusal");
+        assert!(plain.tx_burst_active(), "plain PSK stopped transmitting");
     }
 
     /// THOR through the console's own controller — the gate that says the program

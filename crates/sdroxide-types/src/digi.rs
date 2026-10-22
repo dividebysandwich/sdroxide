@@ -1342,6 +1342,323 @@ impl PskModulation {
     }
 }
 
+/// Which member of fldigi's **coded** PSK families is selected.
+///
+/// `Mode::Psk` on its own is PSK31's family: one differential carrier at six
+/// speeds and two constellations, with **no** forward error correction. fldigi's
+/// other PSK modes are different waveforms that share the modulator's front end
+/// and nothing else — a convolutional code, a bit interleaver, several carriers,
+/// or all three — so the operator has to say which one is on the air, exactly as
+/// they have to for MFSK.
+///
+/// The table is fldigi 4.2.13's `src/psk/psk.cxx`: `symbollen`, `idepth`,
+/// `numcarriers` and `_pskr`. Three facts it settles, each of which was once
+/// guessed wrong here:
+///
+/// * **The code is not the standard K = 7 one.** `PSKR_POLY1`/`POLY2` are `0x6d`
+///   and `0x4f`, and the interleaver is `2 × 2 × idepth` — which **BPSK63F alone
+///   skips**, so it is a coded mode with no interleave.
+/// * **The `C` family has no FEC at all** and uses PSK31's varicode; the `R` and
+///   `RC` families use the MFSK varicode. `C` and `RC` are easy to confuse and
+///   are not the same thing.
+/// * **Carriers are `1.4 × baud` apart**, so a bank is `1.4 × baud × (n − 1)`
+///   wide before its own bandwidth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PskCoded {
+    /// PSK31's own family — the six speeds and two constellations above.
+    #[default]
+    Off,
+    /// BPSK63F: the robust code, a single carrier, and **no interleaver**.
+    Bpsk63F,
+    Psk125R,
+    Psk250R,
+    Psk500R,
+    Psk1000R,
+    Psk125C12,
+    Psk250C6,
+    Psk500C2,
+    Psk500C4,
+    Psk800C2,
+    Psk1000C2,
+    Psk63Rc4,
+    Psk63Rc5,
+    Psk63Rc10,
+    Psk63Rc20,
+    Psk63Rc32,
+    Psk125Rc4,
+    Psk125Rc5,
+    Psk125Rc10,
+    Psk125Rc12,
+    Psk125Rc16,
+    Psk250Rc2,
+    Psk250Rc3,
+    Psk250Rc5,
+    Psk250Rc6,
+    Psk250Rc7,
+    Psk500Rc2,
+    Psk500Rc3,
+    Psk500Rc4,
+    Psk800Rc2,
+    Psk1000Rc2,
+}
+
+/// The family a [`PskCoded`] belongs to, which is what the panel groups by: 32
+/// chips in one row is a menu, not a control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PskFamily {
+    /// PSK31's own speeds and constellations.
+    Plain,
+    /// The one coded mode with no interleaver.
+    Bpsk63F,
+    /// Single carrier, coded.
+    Robust,
+    /// Several carriers, no code.
+    MultiCarrier,
+    /// Several carriers and the code.
+    RobustMulti,
+}
+
+impl PskFamily {
+    pub const ALL: [PskFamily; 5] = [
+        PskFamily::Plain,
+        PskFamily::Bpsk63F,
+        PskFamily::Robust,
+        PskFamily::MultiCarrier,
+        PskFamily::RobustMulti,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PskFamily::Plain => "PLAIN",
+            PskFamily::Bpsk63F => "BPSK63F",
+            PskFamily::Robust => "R",
+            PskFamily::MultiCarrier => "C",
+            PskFamily::RobustMulti => "RC",
+        }
+    }
+
+    /// The variant this family's first chip is, so picking a family lands on
+    /// something that decodes rather than on an empty row.
+    pub fn first(self) -> PskCoded {
+        match self {
+            PskFamily::Plain => PskCoded::Off,
+            PskFamily::Bpsk63F => PskCoded::Bpsk63F,
+            PskFamily::Robust => PskCoded::Psk125R,
+            PskFamily::MultiCarrier => PskCoded::Psk250C6,
+            PskFamily::RobustMulti => PskCoded::Psk63Rc4,
+        }
+    }
+}
+
+impl PskCoded {
+    pub const ALL: [PskCoded; 32] = [
+        PskCoded::Off,
+        PskCoded::Bpsk63F,
+        PskCoded::Psk125R,
+        PskCoded::Psk250R,
+        PskCoded::Psk500R,
+        PskCoded::Psk1000R,
+        PskCoded::Psk125C12,
+        PskCoded::Psk250C6,
+        PskCoded::Psk500C2,
+        PskCoded::Psk500C4,
+        PskCoded::Psk800C2,
+        PskCoded::Psk1000C2,
+        PskCoded::Psk63Rc4,
+        PskCoded::Psk63Rc5,
+        PskCoded::Psk63Rc10,
+        PskCoded::Psk63Rc20,
+        PskCoded::Psk63Rc32,
+        PskCoded::Psk125Rc4,
+        PskCoded::Psk125Rc5,
+        PskCoded::Psk125Rc10,
+        PskCoded::Psk125Rc12,
+        PskCoded::Psk125Rc16,
+        PskCoded::Psk250Rc2,
+        PskCoded::Psk250Rc3,
+        PskCoded::Psk250Rc5,
+        PskCoded::Psk250Rc6,
+        PskCoded::Psk250Rc7,
+        PskCoded::Psk500Rc2,
+        PskCoded::Psk500Rc3,
+        PskCoded::Psk500Rc4,
+        PskCoded::Psk800Rc2,
+        PskCoded::Psk1000Rc2,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PskCoded::Off => "PLAIN",
+            PskCoded::Bpsk63F => "BPSK63F",
+            PskCoded::Psk125R => "PSK125R",
+            PskCoded::Psk250R => "PSK250R",
+            PskCoded::Psk500R => "PSK500R",
+            PskCoded::Psk1000R => "PSK1000R",
+            PskCoded::Psk125C12 => "PSK125C12",
+            PskCoded::Psk250C6 => "PSK250C6",
+            PskCoded::Psk500C2 => "PSK500C2",
+            PskCoded::Psk500C4 => "PSK500C4",
+            PskCoded::Psk800C2 => "PSK800C2",
+            PskCoded::Psk1000C2 => "PSK1000C2",
+            PskCoded::Psk63Rc4 => "PSK63RC4",
+            PskCoded::Psk63Rc5 => "PSK63RC5",
+            PskCoded::Psk63Rc10 => "PSK63RC10",
+            PskCoded::Psk63Rc20 => "PSK63RC20",
+            PskCoded::Psk63Rc32 => "PSK63RC32",
+            PskCoded::Psk125Rc4 => "PSK125RC4",
+            PskCoded::Psk125Rc5 => "PSK125RC5",
+            PskCoded::Psk125Rc10 => "PSK125RC10",
+            PskCoded::Psk125Rc12 => "PSK125RC12",
+            PskCoded::Psk125Rc16 => "PSK125RC16",
+            PskCoded::Psk250Rc2 => "PSK250RC2",
+            PskCoded::Psk250Rc3 => "PSK250RC3",
+            PskCoded::Psk250Rc5 => "PSK250RC5",
+            PskCoded::Psk250Rc6 => "PSK250RC6",
+            PskCoded::Psk250Rc7 => "PSK250RC7",
+            PskCoded::Psk500Rc2 => "PSK500RC2",
+            PskCoded::Psk500Rc3 => "PSK500RC3",
+            PskCoded::Psk500Rc4 => "PSK500RC4",
+            PskCoded::Psk800Rc2 => "PSK800RC2",
+            PskCoded::Psk1000Rc2 => "PSK1000RC2",
+        }
+    }
+
+    pub fn baud(self) -> f64 {
+        match self {
+            PskCoded::Off | PskCoded::Bpsk63F => 62.5,
+            PskCoded::Psk125R
+            | PskCoded::Psk125C12
+            | PskCoded::Psk125Rc4
+            | PskCoded::Psk125Rc5
+            | PskCoded::Psk125Rc10
+            | PskCoded::Psk125Rc12
+            | PskCoded::Psk125Rc16 => 125.0,
+            PskCoded::Psk250R
+            | PskCoded::Psk250C6
+            | PskCoded::Psk250Rc2
+            | PskCoded::Psk250Rc3
+            | PskCoded::Psk250Rc5
+            | PskCoded::Psk250Rc6
+            | PskCoded::Psk250Rc7 => 250.0,
+            PskCoded::Psk500R
+            | PskCoded::Psk500C2
+            | PskCoded::Psk500C4
+            | PskCoded::Psk500Rc2
+            | PskCoded::Psk500Rc3
+            | PskCoded::Psk500Rc4 => 500.0,
+            PskCoded::Psk800C2 | PskCoded::Psk800Rc2 => 800.0,
+            PskCoded::Psk1000R | PskCoded::Psk1000C2 | PskCoded::Psk1000Rc2 => 1000.0,
+            PskCoded::Psk63Rc4
+            | PskCoded::Psk63Rc5
+            | PskCoded::Psk63Rc10
+            | PskCoded::Psk63Rc20
+            | PskCoded::Psk63Rc32 => 62.5,
+        }
+    }
+
+    /// How many carriers the bank has. One for PSK31's family and the `R` set,
+    /// `numcarriers` for the rest.
+    pub fn carriers(self) -> usize {
+        match self {
+            PskCoded::Off | PskCoded::Bpsk63F => 1,
+            PskCoded::Psk125R
+            | PskCoded::Psk250R
+            | PskCoded::Psk500R
+            | PskCoded::Psk1000R
+            | PskCoded::Psk500C2
+            | PskCoded::Psk800C2
+            | PskCoded::Psk1000C2
+            | PskCoded::Psk250Rc2
+            | PskCoded::Psk500Rc2
+            | PskCoded::Psk800Rc2
+            | PskCoded::Psk1000Rc2 => {
+                if matches!(
+                    self,
+                    PskCoded::Psk125R | PskCoded::Psk250R | PskCoded::Psk500R | PskCoded::Psk1000R
+                ) {
+                    1
+                } else {
+                    2
+                }
+            }
+            PskCoded::Psk250Rc3 | PskCoded::Psk500Rc3 => 3,
+            PskCoded::Psk500C4 | PskCoded::Psk63Rc4 | PskCoded::Psk125Rc4 => 4,
+            PskCoded::Psk63Rc5
+            | PskCoded::Psk125Rc5
+            | PskCoded::Psk250Rc5
+            | PskCoded::Psk500Rc4 => 5,
+            PskCoded::Psk250C6 | PskCoded::Psk250Rc6 => 6,
+            PskCoded::Psk250Rc7 => 7,
+            PskCoded::Psk63Rc10 | PskCoded::Psk125Rc10 => 10,
+            PskCoded::Psk125C12 | PskCoded::Psk125Rc12 => 12,
+            PskCoded::Psk125Rc16 => 16,
+            PskCoded::Psk63Rc20 => 20,
+            PskCoded::Psk63Rc32 => 32,
+        }
+    }
+
+    /// The `2 × 2 × idepth` interleaver's depth, or `None` where the mode does not
+    /// interleave — which is the `C` family (no code at all) and BPSK63F.
+    pub fn depth(self) -> Option<usize> {
+        match self {
+            PskCoded::Off | PskCoded::Bpsk63F => None,
+            PskCoded::Psk125R => Some(40),
+            PskCoded::Psk250R => Some(80),
+            PskCoded::Psk500R | PskCoded::Psk1000R => Some(160),
+            PskCoded::Psk125C12
+            | PskCoded::Psk250C6
+            | PskCoded::Psk500C2
+            | PskCoded::Psk500C4
+            | PskCoded::Psk800C2
+            | PskCoded::Psk1000C2 => None,
+            PskCoded::Psk63Rc4 | PskCoded::Psk125Rc4 => Some(80),
+            PskCoded::Psk63Rc5 => Some(260),
+            _ => Some(160),
+        }
+    }
+
+    /// Whether the mode carries the convolutional code. `C` alone does not.
+    pub fn fec(self) -> bool {
+        !matches!(
+            self,
+            PskCoded::Psk125C12
+                | PskCoded::Psk250C6
+                | PskCoded::Psk500C2
+                | PskCoded::Psk500C4
+                | PskCoded::Psk800C2
+                | PskCoded::Psk1000C2
+        )
+    }
+
+    pub fn family(self) -> PskFamily {
+        match self {
+            PskCoded::Off => PskFamily::Plain,
+            PskCoded::Bpsk63F => PskFamily::Bpsk63F,
+            PskCoded::Psk125R | PskCoded::Psk250R | PskCoded::Psk500R | PskCoded::Psk1000R => {
+                PskFamily::Robust
+            }
+            PskCoded::Psk125C12
+            | PskCoded::Psk250C6
+            | PskCoded::Psk500C2
+            | PskCoded::Psk500C4
+            | PskCoded::Psk800C2
+            | PskCoded::Psk1000C2 => PskFamily::MultiCarrier,
+            _ => PskFamily::RobustMulti,
+        }
+    }
+
+    /// The variants in one family, in the order the panel shows them.
+    pub fn in_family(family: PskFamily) -> Vec<PskCoded> {
+        PskCoded::ALL.iter().copied().filter(|c| c.family() == family).collect()
+    }
+
+    /// The band the signal occupies, `1.4 × baud` between carriers plus one
+    /// carrier's own width — used by the panadapter and the transmit lockout.
+    pub fn bandwidth_hz(self) -> f64 {
+        1.4 * self.baud() * (self.carriers() as f64 - 1.0) + self.baud()
+    }
+}
+
 /// PSK31's speed.
 ///
 /// The family is one modulation — differential BPSK — at six symbol rates, and
@@ -2684,6 +3001,14 @@ pub struct DigiConfig {
     /// Appended last, so this is a wire change (`PROTO_VERSION` 227 → 228).
     #[serde(default)]
     pub thor_reverse: bool,
+    /// PSK: which of fldigi's **coded** families, if any. `Off` is PSK31's own
+    /// six speeds and two constellations; anything else is a different waveform
+    /// that shares the front end and adds a code, an interleaver or several
+    /// carriers.
+    ///
+    /// Appended last, so this is a wire change (`PROTO_VERSION` 228 → 229).
+    #[serde(default)]
+    pub psk_coded: PskCoded,
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2942,6 +3267,7 @@ impl Default for DigiConfig {
             mfsk_reverse: false,
             mt63_mode: Mt63Mode::default(),
             thor_reverse: false,
+            psk_coded: PskCoded::default(),
         }
     }
 }

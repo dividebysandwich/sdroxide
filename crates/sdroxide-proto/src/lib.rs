@@ -1926,8 +1926,12 @@ use sdroxide_types::{
 /// mirrored signal has every step negative). Appended last, so `PROTO_VERSION`
 /// 227 → 228, `VERSION_BYTE` 0x2F → 0x30. A downstream (fork) change: the field
 /// rides `SetDigiConfig`/`DigiStatus` whole.
-pub const PROTO_VERSION: u16 = 228;
-const VERSION_BYTE: u8 = 0x30;
+/// v229: `DigiConfig::psk_coded` — fldigi's coded PSK families (BPSK63F, the `R`
+/// set and the `C`/`RC` banks) as one appended enum, so 32 waveforms ride
+/// `SetDigiConfig`/`DigiStatus` whole. `PROTO_VERSION` 228 → 229, `VERSION_BYTE`
+/// 0x30 → 0x31. A downstream (fork) change.
+pub const PROTO_VERSION: u16 = 229;
+const VERSION_BYTE: u8 = 0x31;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

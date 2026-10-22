@@ -993,29 +993,108 @@ impl SdroxideApp {
                     }
                 }
                 Mode::Psk => {
-                    // Nothing in the signal says which speed it is, so the
-                    // operator has to — and a decoder tuned to the wrong one
-                    // hears nothing at all rather than something wrong.
-                    cap(ui, "Speed");
-                    for sp in sdroxide_types::PskSpeed::ALL {
-                        let sel = cfg.psk_speed == sp;
-                        // The fastest reads from partway in — the receiver's lock
-                        // time is a third of a message at 1000 baud — and the
-                        // chip says so rather than letting a listener think the
-                        // band was dead.
-                        let hint = match sp {
-                            sdroxide_types::PskSpeed::Bps1000 => format!(
-                                "{:.0} baud — reads from about a second in: at this rate the \
-                                 receiver's lock time is a third of a message",
-                                sp.baud()
-                            ),
-                            _ => format!("{:.1} baud", sp.baud()),
+                    use sdroxide_types::{PskCoded, PskFamily, PskModulation, PskSpeed};
+                    // PSK31's family and fldigi's coded ones are different
+                    // waveforms, so the family comes first and the variants of
+                    // the chosen family follow. Thirty-two chips in one row is a
+                    // menu, not a control.
+                    cap(ui, "Family");
+                    for f in PskFamily::ALL {
+                        let sel = cfg.psk_coded.family() == f;
+                        let hint = match f {
+                            PskFamily::Plain => {
+                                "PSK31's own family: one differential carrier, no forward error \
+                                 correction"
+                            }
+                            PskFamily::Bpsk63F => {
+                                "The robust code at 62.5 baud, with no interleaver — the one coded \
+                                 mode fldigi sends without one"
+                            }
+                            PskFamily::Robust => {
+                                "One carrier with the robust code and a 2x2xN interleaver"
+                            }
+                            PskFamily::MultiCarrier => {
+                                "Several carriers, PSK31's varicode and **no** code — wider and \
+                                 faster, and it needs a clean signal"
+                            }
+                            PskFamily::RobustMulti => {
+                                "Several carriers **and** the robust code: the widest and the most \
+                                 robust of the PSK modes"
+                            }
                         };
-                        if ui.selectable_label(sel, sp.label()).on_hover_text(hint).clicked()
-                            && !sel
+                        if ui.selectable_label(sel, f.label()).on_hover_text(hint).clicked() && !sel
                         {
-                            cfg.psk_speed = sp;
+                            cfg.psk_coded = f.first();
                             changed = true;
+                        }
+                    }
+                    ui.add_space(8.0);
+                    if cfg.psk_coded == PskCoded::Off {
+                        // Nothing in the signal says which speed it is, so the
+                        // operator has to — and a decoder tuned to the wrong one
+                        // hears nothing at all rather than something wrong.
+                        cap(ui, "Speed");
+                        for sp in PskSpeed::ALL {
+                            let sel = cfg.psk_speed == sp;
+                            // The fastest reads from partway in — the receiver's
+                            // lock time is a third of a message at 1000 baud —
+                            // and the chip says so rather than letting a listener
+                            // think the band was dead.
+                            let hint = match sp {
+                                PskSpeed::Bps1000 => format!(
+                                    "{:.0} baud — reads from about a second in: at this rate the \
+                                     receiver's lock time is a third of a message",
+                                    sp.baud()
+                                ),
+                                _ => format!("{:.1} baud", sp.baud()),
+                            };
+                            if ui.selectable_label(sel, sp.label()).on_hover_text(hint).clicked()
+                                && !sel
+                            {
+                                cfg.psk_speed = sp;
+                                changed = true;
+                            }
+                        }
+                        ui.add_space(8.0);
+                        cap(ui, "Modulation");
+                        for m in PskModulation::ALL {
+                            let sel = cfg.psk_modulation == m;
+                            let hint = match m {
+                                PskModulation::Bpsk => {
+                                    "One bit per symbol, differentially detected"
+                                }
+                                PskModulation::Qpsk => {
+                                    "Two bits per symbol with a rate-1/2 code, so one data bit per \
+                                     symbol: the same text rate as BPSK at the same speed, with \
+                                     half the errors"
+                                }
+                            };
+                            if ui.selectable_label(sel, m.label()).on_hover_text(hint).clicked()
+                                && !sel
+                            {
+                                cfg.psk_modulation = m;
+                                changed = true;
+                            }
+                        }
+                    } else {
+                        cap(ui, "Mode");
+                        for v in PskCoded::in_family(cfg.psk_coded.family()) {
+                            let sel = cfg.psk_coded == v;
+                            let code = if v.fec() { "coded" } else { "no code" };
+                            let hint = format!(
+                                "{:.1} baud, {} carrier{}, {code}, {:.0} Hz wide — receive only: \
+                                 the coded PSK transmitter is not written",
+                                v.baud(),
+                                v.carriers(),
+                                if v.carriers() == 1 { "" } else { "s" },
+                                v.bandwidth_hz()
+                            );
+                            if ui.selectable_label(sel, v.label()).on_hover_text(hint).clicked()
+                                && !sel
+                            {
+                                cfg.psk_coded = v;
+                                changed = true;
+                            }
                         }
                     }
                 }
