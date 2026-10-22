@@ -99,28 +99,31 @@ manifest is what catches it) — then this is a harness fault, and the manifest
 line will say so: a burst much shorter than the text needs. Check that field
 before blaming the decoder.
 
-### 2. The three that read nothing: `PSK500C4`, `PSK500RC4`, `PSK1000C2`
+### 2. ✅ **DONE 2026-10-22** — the three that read nothing: `PSK500C4`, `PSK500RC4`, `PSK1000C2`
+
+The band edges were measured first and **every carrier is inside the file** (the
+widest is 744–3741 Hz of an 8 kHz recording), so the brief's own hypothesis is
+out. The independent `C` decoder in `tools/psk-ref` reads nothing from them
+either, and the new `tools/psk-ref/psk_text_match.py` scores what each recording
+actually carries: **0.841 and 0.848** of the known text's bits against 0.993 for
+a sample that decodes, and 1.000 for a clean synthetic bank. A `C` mode has no
+FEC, so ~15 % of bits wrong is unreadable. **These are recordings, not the
+decoder** — the verdict per mode is in `MODE-PROGRESS.md`.
 
 All three are wide banks, and two of them put their outer carriers close to the
-4 kHz edge of an 8 kHz recording. Before touching code: **measure the band edges
-of the recording** (the analysis used yesterday: average power spectrum over the
-active part, edges at −5 % of the peak) and check whether every carrier the
-mode wants actually exists in the file. A carrier outside the recording cannot
-be decoded and is not a decoder fault.
+4 kHz edge of an 8 kHz recording — which is why the band edges were the first
+thing measured. The `RC` member, `PSK500RC4`, has no bit score because its wire
+carries encoded bits; it is the same sweep and the same width as `PSK500C4`,
+which measures 0.841.
 
-If the carriers are all present, the likely culprit is the bank's *lock time*:
-each carrier has its own timing loop, and the search space is 8 kHz of audio
-before any text. The measured fact to start from is that the same code reads
-`PSK500C2` (2 carriers, no FEC) whole and `PSK500RC2` (2 carriers, with FEC)
-whole, so it is not "500 baud" in general.
+### 3. ✅ **DONE 2026-10-22** — the five partials
 
-### 3. The five partials
-
-`PSK125C12` (1/3), `PSK63RC32` (2/3), `PSK250RC2` (2/3), `PSK250RC5` (1/3),
-`PSK500RC3` (1/3). Same question, cheaper: print the *whole* decoded text at the
-best centre and see **which words are missing and where** — at the start (lock
-time), at the end (interleaver drain), or one word in the middle (a burst). The
-gate already prints the text; the journal entry is one line per mode.
+Read out in full text with `psk_coded_probe` at the centre the gate reports:
+**two lock late** (`PSK250RC2` starts at `EAGLE`, `PSK63RC32` at `LANDED`),
+**two lose the stream halfway** (`PSK250RC5` and `PSK500RC3` after
+`THE EAGLE H`), and `PSK125C12` barely locks at all (its recording scores 0.630
+of the text). **None loses its tail**, so the interleaver's drain is not the
+fault. One line per mode is in `MODE-PROGRESS.md`.
 
 ### 4. Then wire it — one mode with chips, as MFSK has
 
@@ -174,8 +177,22 @@ names.
 - **The manifest's `centre_hz` is a block estimate and `peak_hz` is a sideband
   edge.** The decoders search; the carriers measured from the audio are 1738 for
   BPSK63F and 1754–1760 for the `R` set.
+- **A bank is read with ONE symbol clock.** fldigi's `psk::rx_process` keeps a
+  single `bitclk` for the whole bank and estimates its error from the **mean
+  magnitude of every carrier**, then reads them all at that instant;
+  `PskCarrierBank` runs a Gardner loop per carrier instead. Not what makes the
+  three bad samples fail (the independent decoder has the reference's clock and
+  reads them no better), but the first thing to change if a *clean* wide bank
+  ever fails.
+- **A sampling phase chosen per carrier permutes the interleave** — one carrier
+  ends up a symbol behind its neighbours — and it reads exactly like a bad
+  sample. The phase is chosen once, for the whole bank. It cost the measuring
+  instrument an afternoon.
 - **When a sample will not read, prove which side is wrong.**
   `tools/psk-ref` exists for exactly that and it is what settled PSK500R.
+  `psk_text_match.py` goes further: it says **how much** of the text the
+  recording carries (1.000 clean, 0.5 noise) and calibrates itself against a
+  synthetic bank first.
 - **A loopback passes on two halves that share a wrong convention.** Yesterday's
   fixture fails at 250 baud where the corpus reads 394/394 — that is recorded in
   the test rather than hidden, and it means the *fixture* is the suspect there,
