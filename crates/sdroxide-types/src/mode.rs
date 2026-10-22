@@ -1581,6 +1581,7 @@ impl Mode {
             self,
             Mode::Olivia
                 | Mode::Thor
+                | Mode::DominoEx
                 | Mode::Mfsk
                 | Mode::Contestia
                 | Mode::Mt63
