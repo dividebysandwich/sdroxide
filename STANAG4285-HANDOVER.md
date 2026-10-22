@@ -371,3 +371,21 @@ search, and the reference concentrations are 0.28–0.49 where a clean lock shou
 give 0.7–0.9 — so the **frame phase and the block alignment are the next thing to
 check**, not the generators. Text is still nonsense, which follows from the
 concentrations: the payload cannot be right if the references do not collapse.
+
+### The night's captures, measured with the receiver (2026-10-22)
+
+Thirty-five files in `~/s4285-captures/`, and **27 lock**. Frame ACF, best first:
+`6348.000kHz-…045545Z` **0.588**, `…054415Z` 0.512, `…051325Z` 0.476,
+`…051457Z` 0.430, `…051154Z` 0.422 (sync 0.911 is on `…051457Z`, and a reference
+block already reaches 0.715 on `…051154Z`), `8467.800-…225334Z` 0.400,
+`8478.500-…063227Z` 0.395, `5215.600-…024501Z` 0.392.
+
+**Eight refuse**: the five `4232.000kHz` files (ACF 0.012–0.072), three `6348.000kHz`
+files at 0317Z/0336Z/0342Z (0.020/0.047/0.007), and `6348.000kHz-…032809Z` at
+**0.140** — just inside the 0.12 gate, so it is the best test the threshold has:
+either a fading 4285 the gate rejects, or the other mode the gate nearly accepts.
+
+So the material for reading text has been on the disk since last night, and the
+note that the 6348 captures were "a flat mess" is history — that was the WAV
+writer, before it was filtered. The reference collapse (0.2–0.7, needing 0.7–0.9)
+is the remaining fault, and it is in the code.

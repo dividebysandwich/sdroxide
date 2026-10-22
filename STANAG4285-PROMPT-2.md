@@ -93,15 +93,42 @@ When the three numbers are 0.7 up, the text is the next thing to look at — and
 until they are, **text is not worth reading**. Printing plausible letters off a
 frame whose references do not collapse is how a wrong demodulation looks right.
 
-### 2. Read a station
+### 2. Read a station — the material is already on the disk
 
-The Djibouti capture may be an idle station (`an idle station still sends the
-sync`), in which case it proves the lock and nothing more, and that is a result —
-say so. For text, the frequencies the Navy uses for test tapes are in the
-handover: **4232.0 / 5215.6 / 8467.8 / 8478.5 / 12857.0 / 13031.2 / 13411.9 /
-6348.0 kHz**. Ninety seconds with the UTC time and the station noted is enough.
-A capture is the operator's job (see "Needs me"); the receiver reading one is
-yours.
+**Thirty-five captures from the night of 2026-10-22 are in `~/s4285-captures/`,
+36 s each at 12.5 kHz, and the receiver locks 27 of them.** Nothing has to be
+recorded to make progress. Measured with `s4285_probe` at 1800 Hz, best first:
+
+| capture | ACF | sync | frames | reference blocks |
+|---|---|---|---|---|
+| `6348.000kHz-20261022-045545Z.wav` | **0.588** | 0.862 | 180 | 0.240 / 0.626 / 0.219 |
+| `6348.000kHz-20261022-054415Z.wav` | 0.512 | 0.608 | 194 | 0.362 / 0.342 / 0.413 |
+| `6348.000kHz-20261022-051325Z.wav` | 0.476 | 0.727 | 187 | 0.494 / 0.372 / 0.473 |
+| `6348.000kHz-20261022-051457Z.wav` | 0.430 | **0.911** | 165 | 0.411 / 0.499 / 0.509 |
+| `6348.000kHz-20261022-051154Z.wav` | 0.422 | 0.532 | 172 | **0.715** / 0.226 / 0.481 |
+| `8467.800kHz-20261021-225334Z.wav` | 0.400 | 0.547 | 163 | 0.485 / 0.281 / 0.299 |
+| `8478.500kHz-20261022-063227Z.wav` | 0.395 | 0.663 | 150 | 0.210 / 0.481 / 0.401 |
+| `5215.600kHz-20261022-024501Z.wav` | 0.392 | 0.610 | 180 | 0.401 / 0.179 / 0.580 |
+
+**Eight refuse**, which is the other half of the measurement and the reason the
+detector can be trusted: the five `4232.000kHz` files (ACF 0.012–0.072),
+`6348.000kHz` at 0336Z, 0317Z and 0342Z (0.047, 0.020, 0.007), and — the one to
+**look at first** — `6348.000kHz-20261022-032809Z.wav` at **0.140**, just inside
+the 0.12 gate. A capture that sits on the threshold is the best test the gate has:
+either it is a fading 4285 that should lock and the gate is too high, or it is the
+other mode and the gate is too low, and one of those two is a measurement away.
+
+`6348 kHz` carries the strongest captures of the night, so **the handover's note
+that its captures are "a flat mess" is history** — that was before the WAV writer
+was filtered. Start there.
+
+An idle station still sends the sync (`an idle station still sends the sync`), so
+a lock is "a 4285 is on this frequency" and not yet "there is text in it" — but
+with 27 lockers and references already reaching 0.715, the material to read text
+from is in hand. The station frequencies for a future capture are in the handover
+(**4232.0 / 5215.6 / 8467.8 / 8478.5 / 12857.0 / 13031.2 / 13411.9 / 6348.0 kHz**),
+and a capture is only wanted if the collapse fix needs a *cleaner* file rather
+than a better receiver — which is a measurement to make first, not an assumption.
 
 ### 3. Then, and only then, wire it
 
@@ -184,11 +211,17 @@ are HF. What matters is the receiver: `tools/rsp1-capture/target/release/rspcap
 
 ## Needs me
 
-- **A capture of a station sending a test tape.** The frequencies are above and in
-  the handover. This is the only thing that turns "the receiver works" into "we
-  read a station", and it needs somebody at the radio.
-- **The coded rates**: Annex E is not transcribed. If they are ever wanted, say so
-  and it is a transcription job first, and the panel keeps saying both until then.
+Nothing, to start. The captures are on the disk, the receiver locks them, and the
+reference collapse is a code fault with a number attached.
+
+- **A capture is only worth asking for once it is shown to be the limit** — e.g. if
+  the collapse fix gives 0.9 on the cleanest file and the faded ones still read
+  nothing, then a stronger recording of a station sending a **test tape** (RYRY,
+  an ID, the French pangram) would be the next thing. The frequencies are in the
+  handover. Ask then, with that sentence as the reason.
+- **The coded rates**: Annex E is not transcribed. If they are ever wanted, that is
+  a transcription job first, and the panel keeps saying "3600 8PSK uncoded, or a
+  coded rate" until the bits are proven.
 
 ## Stop when
 
