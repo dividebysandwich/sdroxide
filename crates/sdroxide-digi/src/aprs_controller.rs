@@ -615,6 +615,7 @@ impl AprsController {
 
     fn digi_status(&self) -> DigiStatus {
         DigiStatus {
+            stanag: None,
             mode: Mode::Aprs,
             step: QsoStep::Idle,
             dx_call: None,

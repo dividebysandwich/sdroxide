@@ -1152,6 +1152,7 @@ impl DigiEngine for Js8Controller {
 
     fn status(&self) -> DigiStatus {
         DigiStatus {
+            stanag: None,
             mode: Mode::Js8,
             step: QsoStep::Idle,
             dx_call: None,

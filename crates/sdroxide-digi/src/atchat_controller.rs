@@ -141,6 +141,7 @@ fn build_status(cfg: &DigiConfig, session: &AtChatSession) -> DigiStatus {
     };
 
     DigiStatus {
+        stanag: None,
         mode: Mode::AtChat,
         step: QsoStep::Idle,
         dx_call: None,

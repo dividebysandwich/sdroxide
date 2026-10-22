@@ -105,6 +105,7 @@ fn build_status(
     dx_call: Option<String>,
 ) -> DigiStatus {
     DigiStatus {
+        stanag: None,
         mode: Mode::Rade,
         step: QsoStep::Idle,
         dx_call,

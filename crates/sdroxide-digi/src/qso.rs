@@ -1587,12 +1587,12 @@ impl QsoMachine {
         // asked to be keyed at.
         let repeats = self.cfg.max_tx_repeats;
         let calling_cq = self.step == QsoStep::CallingCq && self.cb;
-        let calling_dx = matches!(self.step, QsoStep::TxGrid | QsoStep::TxReport | QsoStep::TxRReport);
+        let calling_dx =
+            matches!(self.step, QsoStep::TxGrid | QsoStep::TxReport | QsoStep::TxRReport);
         if repeats > 0 && self.tx_since_progress >= repeats && (calling_dx || calling_cq) {
             if calling_cq {
-                self.transcript.push(TranscriptLine::note(format!(
-                    "no answer after {repeats} CQ calls"
-                )));
+                self.transcript
+                    .push(TranscriptLine::note(format!("no answer after {repeats} CQ calls")));
                 // As after the watchdog: a station calling from here is not
                 // picked up on its own, so say what to do rather than leave the
                 // operator watching a decode go by.
@@ -1602,8 +1602,9 @@ impl QsoMachine {
                 ));
             } else {
                 let call = self.dx.as_ref().map(|d| d.call.clone()).unwrap_or_default();
-                self.transcript
-                    .push(TranscriptLine::note(format!("no reply from {call} after {repeats} calls")));
+                self.transcript.push(TranscriptLine::note(format!(
+                    "no reply from {call} after {repeats} calls"
+                )));
             }
             self.step = QsoStep::Idle;
             return;
@@ -1626,6 +1627,7 @@ impl QsoMachine {
 
     pub fn status(&self, transmitting: bool) -> DigiStatus {
         DigiStatus {
+            stanag: None,
             mode: self.mode,
             step: self.step,
             dx_call: self.dx.as_ref().map(|d| d.call.clone()),

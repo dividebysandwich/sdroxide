@@ -1,17 +1,18 @@
 //! Run the STANAG 4285 receiver over a WAV and print what it found.
 //!
 //!     cargo run --release -p sdroxide-dsp --example s4285_probe -- \
-//!         ~/s4285-captures/8467.800kHz-20261021-225334Z.wav 1800
+//!         ~/s4285-captures/6348.000kHz-20261022-045545Z.wav 1800
 //!
-//! Arguments: `<wav> [<carrier_hz>] [<text_carrier>]`. The first carrier is the
-//! audio frequency of the suppressed carrier (1800 Hz when the dial is on it,
-//! which is the standard's own figure). A fixed-frequency log entry can be a
-//! kilohertz out, so it is a parameter rather than an assumption.
+//! Arguments: `<wav> [<carrier_hz>]`. The carrier is the audio frequency of the
+//! suppressed carrier (1800 Hz when the dial is on it, which is the standard's
+//! own figure). A fixed-frequency log entry can be a kilohertz off, so it is a
+//! parameter rather than an assumption.
 //!
-//! The point of this probe is the **report**, not the text: a lock, a frame
-//! phase, the three reference concentrations and a rate verdict are the
-//! difference between "a 4285 is on this frequency" and a guess. Text is printed
-//! when it comes, and the raw payload bits are always available.
+//! The point of this probe is the **report**, not the text: a lock, the folded
+//! sync correlation and its null, the frame ACF, the three reference
+//! concentrations and a rate verdict are the difference between "a 4285 is on
+//! this frequency" and a guess. Text is printed when it comes, and the raw
+//! payload bits are always available.
 
 fn read_wav(path: &str) -> (Vec<f32>, f64) {
     let mut reader = hound::WavReader::open(path).expect("open the wav");
@@ -64,23 +65,38 @@ fn main() {
 
     let r = rx.report();
     println!(
-        "locked {} | sync {:.3} | floor {:.3} | frames {} | rate {} | offset {:+.1} Hz",
+        "locked {} | sync {:.3} (null {:.3}) | frame ACF {:.3} | frames {} | rate {}",
         r.locked,
         r.sync_quality,
         r.correlation_floor,
+        r.frame_acf,
         r.frames,
-        r.rate.label(),
-        r.carrier_offset_hz
-    );
-    println!(
-        "frame ACF {:.3} (a correct 4285 repeats 80 of its 256 symbols, so ~0.31; another mode ~0.03)",
-        r.frame_acf
+        r.rate.label()
     );
     println!(
         "last reference blocks: {:.3} {:.3} {:.3} (1.0 collapses, 0.25 is sixteen symbols of noise)",
         r.reference[0], r.reference[1], r.reference[2]
     );
-    if let Some(f) = frames.last() {
+    println!(
+        "constellation 2/4/8-fold: {:.3} {:.3} {:.3} | offset {:+.1} Hz | timing {:.2}",
+        r.constellation[0], r.constellation[1], r.constellation[2], r.carrier_offset_hz, r.timing
+    );
+    if !frames.is_empty() {
+        let mean = |i: usize| {
+            frames
+                .iter()
+                .map(|f: &sdroxide_dsp::stanag4285::S4285Frame| f.reference[i])
+                .sum::<f32>()
+                / frames.len() as f32
+        };
+        println!(
+            "mean reference over {} frames: {:.3} {:.3} {:.3}",
+            frames.len(),
+            mean(0),
+            mean(1),
+            mean(2)
+        );
+        let f = frames.last().unwrap();
         println!(
             "last frame: {} phases used {}, scrambler {}, {} bits",
             f.rate.label(),
@@ -90,12 +106,13 @@ fn main() {
         );
     }
     println!("payload bits so far: {}", rx.bits().len());
-    if !frames.is_empty() {
-        // The first 64 bits, so a frame that is not ITA2 is visible as bits.
-        let head: String = frames
-            .last()
-            .map(|f| f.bits.iter().take(64).map(|b| if *b == 1 { '1' } else { '0' }).collect())
-            .unwrap_or_default();
+    if let Some(path) = std::env::var("S4285_BITS_OUT").ok() {
+        let s: String = rx.bits().iter().map(|b| if *b == 1 { '1' } else { '0' }).collect();
+        std::fs::write(path, s).expect("write bits");
+    }
+    if let Some(f) = frames.last() {
+        let head: String =
+            f.bits.iter().take(64).map(|b| if *b == 1 { '1' } else { '0' }).collect();
         println!("first 64 bits of the last frame: {head}");
     }
 }

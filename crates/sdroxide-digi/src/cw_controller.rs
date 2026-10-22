@@ -619,6 +619,7 @@ impl CwController {
     /// is — is the same instant the decision to send one was made against.
     fn build_status(&self, now: SystemTime) -> DigiStatus {
         DigiStatus {
+            stanag: None,
             mode: Mode::Cw,
             step: QsoStep::Idle,
             dx_call: None,

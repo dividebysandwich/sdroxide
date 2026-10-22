@@ -880,6 +880,7 @@ fn mode_has_text(m: Mode) -> bool {
             | Mode::Contestia
             | Mode::Mt63
             | Mode::Ardop
+            | Mode::Stanag4285
             | Mode::Thor
             | Mode::Fsq
     )

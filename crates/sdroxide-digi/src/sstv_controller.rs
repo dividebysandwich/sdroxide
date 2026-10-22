@@ -122,6 +122,7 @@ impl SstvController {
     /// A minimal FT8-style status; SSTV state travels via `DigiAction::SstvStatus`.
     fn digi_status(&self) -> DigiStatus {
         DigiStatus {
+            stanag: None,
             mode: self.mode,
             step: QsoStep::Idle,
             dx_call: None,

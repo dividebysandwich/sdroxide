@@ -945,6 +945,7 @@ impl PacketController {
 
     fn digi_status(&self) -> DigiStatus {
         DigiStatus {
+            stanag: None,
             mode: self.mode,
             step: QsoStep::Idle,
             dx_call: None,

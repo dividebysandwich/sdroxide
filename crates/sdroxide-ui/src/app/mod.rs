@@ -4670,6 +4670,9 @@ mod tests {
                 sdroxide_types::Mode::Rifp,
                 sdroxide_types::Mode::Olivia,
                 sdroxide_types::Mode::Ft8,
+                // The 4285 panel draws a measurement row of its own above the
+                // text, so it is a second wrapping row in the same column.
+                sdroxide_types::Mode::Stanag4285,
             ] {
                 // Both with the panadapter in-window and with it detached: the
                 // detached case is the undocked mode's oracle — the panel takes

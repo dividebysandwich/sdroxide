@@ -332,7 +332,8 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Msk144
         | Mode::Q65
         | Mode::UvPacket
-        | Mode::Jtty | Mode::Ale
+        | Mode::Jtty
+        | Mode::Ale
         | Mode::Fsk441
         | Mode::RfPaint
         | Mode::Digu
@@ -350,6 +351,7 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Contestia
         | Mode::Mt63
         | Mode::Ardop
+        | Mode::Stanag4285
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
@@ -1024,10 +1026,8 @@ mod tests {
     #[test]
     fn a_sound_card_ng_rig_keeps_the_nominal_rate() {
         use sdroxide_types::TRUSDX_RX_RATE_HZ;
-        let mut p = TrUsdx::new_ng(
-            false,
-            NgLevel { volume: 20, agc: TrUsdxNgAgc::Auto, speaker: true },
-        );
+        let mut p =
+            TrUsdx::new_ng(false, NgLevel { volume: 20, agc: TrUsdxNgAgc::Auto, speaker: true });
         p.set_mode(Mode::Cw);
         assert_eq!(p.rx_audio_rate_hz(), TRUSDX_RX_RATE_HZ);
     }
@@ -1099,10 +1099,8 @@ mod tests {
         assert_eq!(p.ptt(true), b"TX;".to_vec());
         assert!(p.tx_stream_close().is_empty());
         // The sound-card path has no stream to open or close in either family.
-        let p = TrUsdx::new_ng(
-            false,
-            NgLevel { volume: 20, agc: TrUsdxNgAgc::Auto, speaker: true },
-        );
+        let p =
+            TrUsdx::new_ng(false, NgLevel { volume: 20, agc: TrUsdxNgAgc::Auto, speaker: true });
         assert_eq!(p.ptt(true), b"TX;".to_vec());
         assert!(p.tx_stream_close().is_empty());
     }
@@ -1214,10 +1212,8 @@ mod tests {
     #[test]
     fn only_ng_one_cable_caps_the_poll_rate() {
         assert_eq!(ng(20, TrUsdxNgAgc::Auto, true).poll_hz_ceiling(), Some(1.0));
-        let sound_card = TrUsdx::new_ng(
-            false,
-            NgLevel { volume: 20, agc: TrUsdxNgAgc::Auto, speaker: true },
-        );
+        let sound_card =
+            TrUsdx::new_ng(false, NgLevel { volume: 20, agc: TrUsdxNgAgc::Auto, speaker: true });
         assert_eq!(sound_card.poll_hz_ceiling(), None);
         // 2.00x polls nothing in-band and is uncapped on a sound card.
         assert_eq!(TrUsdx::new(true).poll_hz_ceiling(), None);

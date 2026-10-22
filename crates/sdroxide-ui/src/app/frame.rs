@@ -1809,6 +1809,10 @@ impl SdroxideApp {
                 .map(|s| s.config.mt63_mode.bandwidth_hz() as f32)
                 .unwrap_or(2000.0);
             vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
+        } else if mode == Mode::Stanag4285 {
+            // The standard's occupied bandwidth is 3000 Hz about the 1800 Hz
+            // carrier, so the picture's edges are where the signal should end.
+            vec![audio_hz - 1500.0, audio_hz + 1500.0]
         } else if mode == Mode::Ardop {
             // The reference's carrier grid runs 800–2200 Hz about its 1500 Hz
             // centre, so the frame is marked at those edges relative to the

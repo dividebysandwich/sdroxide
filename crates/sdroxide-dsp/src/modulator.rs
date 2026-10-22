@@ -57,6 +57,7 @@ pub fn make_modulator(mode: Mode, rate: f64, passband: (f32, f32)) -> Option<Box
         | Mode::Contestia
         | Mode::Mt63
         | Mode::Ardop
+        | Mode::Stanag4285
         | Mode::Fsq
         | Mode::Hell
         | Mode::RfPaint

@@ -192,6 +192,7 @@ impl FsqController {
 
     fn build_status(&self) -> DigiStatus {
         DigiStatus {
+            stanag: None,
             mode: Mode::Fsq,
             step: QsoStep::Idle,
             dx_call: None,

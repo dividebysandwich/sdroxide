@@ -60,6 +60,7 @@ impl AcarsController {
 
     fn digi_status(&self) -> DigiStatus {
         DigiStatus {
+            stanag: None,
             mode: Mode::Acars,
             step: QsoStep::Idle,
             dx_call: None,

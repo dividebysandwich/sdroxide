@@ -201,6 +201,7 @@ impl NavtexController {
 
     fn digi_status(&self) -> DigiStatus {
         DigiStatus {
+            stanag: None,
             mode: Mode::Navtex,
             step: QsoStep::Idle,
             dx_call: None,

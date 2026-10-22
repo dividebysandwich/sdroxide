@@ -12,7 +12,7 @@ use std::time::SystemTime;
 
 use sdroxide_dsp::{
     MonoResampler, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ThorRx, ThorTx, ardop,
-    mfsk_rx::MfskReceiver, mt63::Mt63Receiver,
+    mfsk_rx::MfskReceiver, mt63::Mt63Receiver, stanag4285,
 };
 use sdroxide_olivia::OliviaReceiver;
 use sdroxide_types::{DigiConfig, DigiStatus, Mode, QsoStep, TranscriptLine};
@@ -84,6 +84,53 @@ impl ArdopRx {
     }
 }
 
+/// STANAG 4285's front end. The modem takes audio at the controller's own modem
+/// rate and finds its 1800 Hz carrier in it, so it needs no resampler of its own —
+/// but its report does need carrying, because the panel's job is to show what the
+/// receiver measured rather than a lamp that lit.
+struct StanagRx {
+    rx: stanag4285::S4285Receiver,
+    level: f32,
+}
+
+impl StanagRx {
+    fn new(tap_rate: f64) -> Self {
+        StanagRx {
+            rx: stanag4285::S4285Receiver::new(
+                tap_rate,
+                sdroxide_types::Mode::Stanag4285.audio_centre_hz() as f64,
+            ),
+            level: 0.0,
+        }
+    }
+
+    fn process(&mut self, audio: &[f32]) -> String {
+        let mut out = String::new();
+        for ev in self.rx.process(audio) {
+            if let stanag4285::S4285Event::Text(t) = ev {
+                out.push_str(&t);
+            }
+        }
+        let rms = (audio.iter().map(|v| v * v).sum::<f32>() / audio.len().max(1) as f32).sqrt();
+        self.level = (0.98 * self.level + 0.02 * (rms * 8.0).min(1.0)).min(1.0);
+        out
+    }
+
+    /// A crude input level: the modem's own report says whether it is locked, and
+    /// the squelch wants a number that follows the audio.
+    fn magnitude(&self) -> f32 {
+        self.level
+    }
+
+    fn reset(&mut self) {
+        self.rx.reset();
+    }
+
+    fn report(&self) -> &stanag4285::S4285Report {
+        self.rx.report()
+    }
+}
+
 use crate::DigiEngine;
 use crate::controller::DigiAction;
 
@@ -101,6 +148,7 @@ enum RxModem {
     Mfsk(MfskReceiver),
     Mt63(Mt63Receiver),
     Ardop(ArdopRx),
+    Stanag(StanagRx),
 }
 
 impl RxModem {
@@ -113,6 +161,7 @@ impl RxModem {
             RxModem::Mfsk(r) => r.process(audio),
             RxModem::Mt63(r) => r.process(audio),
             RxModem::Ardop(r) => r.process(audio),
+            RxModem::Stanag(r) => r.process(audio),
         }
     }
     fn magnitude(&self) -> f32 {
@@ -124,6 +173,7 @@ impl RxModem {
             RxModem::Mfsk(r) => r.magnitude(),
             RxModem::Mt63(r) => r.magnitude(),
             RxModem::Ardop(r) => r.magnitude(),
+            RxModem::Stanag(r) => r.magnitude(),
         }
     }
 }
@@ -298,6 +348,7 @@ impl TextModemController {
                 RxModem::Mt63(Mt63Receiver::new(MODEM_RATE, audio_hz as f64, cfg.mt63_mode.into()))
             }
             Mode::Ardop => RxModem::Ardop(ArdopRx::new(tap_rate)),
+            Mode::Stanag4285 => RxModem::Stanag(StanagRx::new(MODEM_RATE)),
             _ => {
                 let mut r = PskRx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
                 r.set_qpsk(p_qpsk);
@@ -317,7 +368,9 @@ impl TextModemController {
             // controller refuses the key-up with a reason. Contestia is the
             // same shape for a different reason: its transmitter still speaks
             // Olivia's scrambler.
-            Mode::Mfsk | Mode::Contestia | Mode::Mt63 | Mode::Ardop => TxModem::Receive,
+            Mode::Mfsk | Mode::Contestia | Mode::Mt63 | Mode::Ardop | Mode::Stanag4285 => {
+                TxModem::Receive
+            }
             _ => {
                 let mut t = PskTx::new_baud(MODEM_RATE, audio_hz as f64, p_baud);
                 t.set_qpsk(p_qpsk);
@@ -380,6 +433,10 @@ impl TextModemController {
             }
             RxModem::Mt63(r) => r.set_params(hz, self.cfg.mt63_mode.into()),
             RxModem::Ardop(r) => r.reset(),
+            // The carrier is the standard's own 1800 Hz, so a retune of the
+            // operator's cursor changes nothing inside the modem; a reset is
+            // what a new signal needs.
+            RxModem::Stanag(r) => r.reset(),
         }
         match &mut self.tx {
             TxModem::Psk(m) => {
@@ -437,6 +494,11 @@ impl TextModemController {
                      ARQ state machine is not ported"
                         .to_string()
                 }
+                Mode::Stanag4285 => {
+                    "STANAG 4285 is receive only in this build — there is no modulator, and the \
+                     coded rates need Annex E, which is not transcribed"
+                        .to_string()
+                }
                 _ => "MFSK is receive only in this build — the modulator is not written yet"
                     .to_string(),
             }),
@@ -446,6 +508,23 @@ impl TextModemController {
             tx_sent: self.tx.sent_chars(),
             fsq_heard: Vec::new(),
             fsq_messages: Vec::new(),
+            stanag: match &self.rx {
+                RxModem::Stanag(r) => {
+                    let rep = r.report();
+                    Some(sdroxide_types::StanagStatus {
+                        locked: rep.locked,
+                        sync: rep.sync_quality,
+                        sync_null: rep.correlation_floor,
+                        frame_acf: rep.frame_acf,
+                        reference: rep.reference,
+                        constellation: rep.constellation,
+                        rate: rep.rate.label().to_string(),
+                        offset_hz: rep.carrier_offset_hz,
+                        frames: rep.frames,
+                    })
+                }
+                _ => None,
+            },
             rade: None,
             packet: None,
             navtex: None,
@@ -777,6 +856,30 @@ mod tests {
                 assert!(text.contains(w), "MT63-{} lost {w}: {text:?}", mode.label());
             }
         }
+    }
+
+    /// The 4285 receiver's report reaches the status even with nothing to lock on,
+    /// and the mode refuses the key-up with a reason rather than silently.
+    ///
+    /// A panel that shows a lamp and no numbers cannot be checked against the air,
+    /// which is why the report is on the wire at all — and a receive-only mode
+    /// that produced no reason would leave the sending half dead with no
+    /// explanation, the thing this house does not ship.
+    #[test]
+    fn the_stanag_report_reaches_the_status_even_with_nothing_to_lock_on() {
+        let mut ctl = TextModemController::new(Mode::Stanag4285, DigiConfig::default(), 48_000.0);
+        for _ in 0..40 {
+            ctl.on_rx_audio(&vec![0.0f32; 960]);
+        }
+        let st = ctl.status();
+        let s = st.stanag.expect("the 4285 report is not on the status");
+        assert!(!s.locked, "silence locked");
+        assert!(s.frames == 0, "silence produced {} frames", s.frames);
+        assert!(
+            st.tx_refused.as_deref().unwrap_or_default().contains("Annex E"),
+            "the receive-only reason does not name the coded rates: {:?}",
+            st.tx_refused
+        );
     }
 
     /// ARDOP through the controller, which is the claim the mode is offered on:

@@ -405,6 +405,9 @@ impl Band {
                 Mode::Drm,
                 Mode::Hfdl,
                 Mode::Dsc,
+                // The navies' single-tone data service, which is what the
+                // utility frequencies across this band carry.
+                Mode::Stanag4285,
             ]),
             // FM broadcast: WFM, with the stereo pilot and RDS its own business
             // — and HD Radio's FM hybrid, which shares these channels.

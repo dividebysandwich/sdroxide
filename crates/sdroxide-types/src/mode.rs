@@ -479,6 +479,22 @@ pub enum Mode {
     /// host protocol are not ported, so this hears frames and does not answer
     /// them. Appended for the same reason as [`Mode::Hell`].
     Ardop,
+    /// STANAG 4285 — the NATO single-tone HF modem the French Navy and others
+    /// use: 2400 baud PSK on an 1800 Hz sub-carrier, a 3000 Hz footprint, and a
+    /// frame every 106.67 ms made of an 80-symbol PN31 sync, 48 reference
+    /// symbols and 128 data symbols.
+    ///
+    /// Receive only, and **only the three uncoded rates** (1200 BPSK, 2400 QPSK,
+    /// 3600 8PSK): the coded rates are Annex E's FEC and interleaver, which are
+    /// not transcribed. A constellation cannot tell an uncoded rate from the
+    /// coded one that shares it, so the panel says both.
+    ///
+    /// What a listener wants from it is the identification: an 80-symbol sync
+    /// repeating every 106.67 ms is a measurement, not a guess, and the 48
+    /// reference symbols collapse only if the frame phase, the scrambler and the
+    /// carrier offset are all right. Appended for the same reason as
+    /// [`Mode::Hell`].
+    Stanag4285,
 }
 
 /// The bands on which a mode that keeps phone practice rides the lower
@@ -508,7 +524,7 @@ const SSTV_LSB_BELOW_HZ: f64 = 10_000_000.0;
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 58] = [
+    pub const ALL: [Mode; 59] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -551,6 +567,7 @@ impl Mode {
         Mode::Contestia,
         Mode::Mt63,
         Mode::Ardop,
+        Mode::Stanag4285,
         Mode::Fsq,
         Mode::AtChat,
         Mode::Hell,
@@ -598,7 +615,7 @@ impl Mode {
     /// packet, RF Paint). All are USB underneath except RIFP, VHF packet and
     /// VHF SSTV, which frequency-modulate the carrier, and ACARS, which is
     /// received in AM.
-    pub const DIGITAL: [Mode; 39] = [
+    pub const DIGITAL: [Mode; 40] = [
         Mode::Ft8,
         Mode::Ft4,
         Mode::Ft2,
@@ -620,6 +637,7 @@ impl Mode {
         Mode::Contestia,
         Mode::Mt63,
         Mode::Ardop,
+        Mode::Stanag4285,
         Mode::Fsq,
         Mode::AtChat,
         Mode::Hell,
@@ -663,6 +681,7 @@ impl Mode {
                 | Mode::Contestia
                 | Mode::Mt63
                 | Mode::Ardop
+                | Mode::Stanag4285
                 | Mode::Fsq
                 | Mode::AtChat
                 | Mode::Hell
@@ -849,6 +868,7 @@ impl Mode {
                 | Mode::Contestia
                 | Mode::Mt63
                 | Mode::Ardop
+                | Mode::Stanag4285
                 | Mode::Fsq
         )
     }
@@ -1084,6 +1104,9 @@ impl Mode {
                 // ARDOP is the modem only, and receive only: no modulator and
                 // no ARQ state machine.
                 | Mode::Ardop
+                // STANAG 4285 has no modulator either, and its coded rates are
+                // not built at all: receive only in both senses.
+                | Mode::Stanag4285
         )
     }
 
@@ -1156,6 +1179,7 @@ impl Mode {
             Mode::Contestia => "CONTESTIA",
             Mode::Mt63 => "MT63",
             Mode::Ardop => "ARDOP",
+            Mode::Stanag4285 => "STANAG 4285",
             Mode::Fsq => "FSQ",
             Mode::Hell => "HELL",
             Mode::RfPaint => "RFPAINT",
@@ -1231,6 +1255,7 @@ impl Mode {
                 | Mode::Contestia
                 | Mode::Mt63
                 | Mode::Ardop
+                | Mode::Stanag4285
                 | Mode::Fsq
                 | Mode::Hell
                 | Mode::RfPaint
@@ -1348,6 +1373,7 @@ impl Mode {
             | Mode::Contestia
             | Mode::Mt63
             | Mode::Ardop
+            | Mode::Stanag4285
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint => (100.0, 3300.0),
@@ -1542,13 +1568,16 @@ impl Mode {
                 | Mode::Contestia
                 | Mode::Mt63
                 | Mode::Ardop
+                | Mode::Stanag4285
                 | Mode::Fsq
         )
     }
 
     /// The audio centre those modes listen at, in Hz.
     pub fn audio_centre_hz(self) -> f32 {
-        1500.0
+        // The standard puts STANAG 4285's suppressed carrier at 1800 Hz; it is
+        // the one mode here whose centre is a number of its own.
+        if self == Mode::Stanag4285 { 1800.0 } else { 1500.0 }
     }
 
     /// True where the audio offset belongs to the *mode* rather than to the
@@ -1645,6 +1674,7 @@ impl Mode {
             | Mode::Contestia
             | Mode::Mt63
             | Mode::Ardop
+            | Mode::Stanag4285
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
@@ -1917,6 +1947,7 @@ impl Mode {
             | Mode::Contestia
             | Mode::Mt63
             | Mode::Ardop
+            | Mode::Stanag4285
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
@@ -2593,6 +2624,7 @@ mod tests {
             (Mode::Contestia, 56),
             (Mode::Mt63, 57),
             (Mode::Ardop, 58),
+            (Mode::Stanag4285, 59),
         ];
         for (mode, index) in pinned {
             assert_eq!(mode as u8, index, "{} moved", mode.label());
@@ -2647,7 +2679,7 @@ mod tests {
         // rather than a dial mode. Listing it here would put a chip in the mode
         // cycle that needs a 1.5 MHz front end to do anything.
         let absent = [Mode::Dab];
-        let last = Mode::Ardop as u8;
+        let last = Mode::Stanag4285 as u8;
         for i in 0..=last {
             let present = Mode::ALL.iter().filter(|m| **m as u8 == i).count();
             let want = if absent.iter().any(|m| *m as u8 == i) { 0 } else { 1 };

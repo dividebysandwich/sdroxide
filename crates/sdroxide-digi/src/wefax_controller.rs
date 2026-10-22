@@ -172,6 +172,7 @@ impl WefaxController {
 
     fn digi_status(&self) -> DigiStatus {
         DigiStatus {
+            stanag: None,
             mode: Mode::Wefax,
             step: QsoStep::Idle,
             dx_call: None,

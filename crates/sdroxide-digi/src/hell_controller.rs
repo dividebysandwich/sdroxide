@@ -125,6 +125,7 @@ impl HellController {
 
     fn build_status(&self) -> DigiStatus {
         DigiStatus {
+            stanag: None,
             mode: Mode::Hell,
             step: QsoStep::Idle,
             dx_call: None,

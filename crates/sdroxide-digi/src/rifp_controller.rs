@@ -185,6 +185,7 @@ impl RifpController {
     /// [`DigiAction::RifpStatus`].
     fn digi_status(&self) -> DigiStatus {
         DigiStatus {
+            stanag: None,
             mode: Mode::Rifp,
             step: QsoStep::Idle,
             dx_call: None,

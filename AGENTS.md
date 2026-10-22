@@ -118,12 +118,12 @@
 > ([`FST4W-HANDOVER.md`](FST4W-HANDOVER.md) — planned, not built; the verdict is
 > do not ship as wired). **Olivia** ([`OLIVIA-HANDOVER.md`](OLIVIA-HANDOVER.md)
 > — receive proven on the air; the open item is whether a real fldigi can copy
-> *our* transmission). **STANAG 4285** — not built; the standard is transcribed in
+> *our* transmission). **STANAG 4285** — receive built and locking real
+> captures; the payload needs Annex E. The standard is transcribed in
 > [`STANAG4285-EDITION1.md`](STANAG4285-EDITION1.md) and
-> [`STANAG4285-HANDOVER.md`](STANAG4285-HANDOVER.md) carries the state and the
-> **prompt to build it**. The **CW keyer is built and benched** (`353d136f`, "all
-> works!"); its design is [`CW-HANDOVER.md`](CW-HANDOVER.md), its outcome is §10
-> below.
+> [`STANAG4285-HANDOVER.md`](STANAG4285-HANDOVER.md) carries the state.
+> The **CW keyer is built and benched** (`353d136f`, "all works!"); its design is
+> [`CW-HANDOVER.md`](CW-HANDOVER.md), its outcome is §10 below.
 >
 > **Phone UI is delegated — off our list** (2026-10-09). The 1.9.17 phone
 > *crash* is real and this fork's own phone layouts are still documented in the
@@ -206,10 +206,13 @@ here because it is the thing to look at when starting a session.
 3. **MFSK8/16** — the cleanest *new* mode: fldigi is GPL-3, Shortwave Radiogram
    sends MFSK32 every week, and it is the first run through the "add a mode"
    path (modem, `Mode` variant, `DigiConfig` field).
-4. **STANAG 4285** — transcription proven by round trip, acquisition folds at
-   0.749, and the fixture does **not** carry Edition 1's preamble. **It needs a
-   recording of a station known to be sending Edition 1** before the per-frame
-   tracking work is worth doing.
+4. ~~**STANAG 4285**~~ — **built 2026-10-22**: the receiver locks real off-air
+   captures (the folded sync 0.85 against a 0.14 null, the reference blocks
+   0.64/0.75/0.62), the mode is wired with a panel of measurements, and the
+   negative controls refuse. **The text is not readable**, and the reason is not
+   the receiver: the night's captures are encrypted or idle, and a test tape's
+   75 baud is a *coded* rate, so the next job is **Annex E** — see
+   [`STANAG4285-HANDOVER.md`](STANAG4285-HANDOVER.md).
 5. **One item from the hours table per day** after that: Contestia (after the
    Olivia fix, not before), MT63, DominoEX, RS_ID.
 

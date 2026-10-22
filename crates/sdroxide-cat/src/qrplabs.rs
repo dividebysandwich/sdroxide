@@ -201,6 +201,7 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Contestia
         | Mode::Mt63
         | Mode::Ardop
+        | Mode::Stanag4285
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
@@ -233,7 +234,8 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Navtex
         | Mode::Dsc
         | Mode::UvPacket
-        | Mode::Jtty | Mode::Ale
+        | Mode::Jtty
+        | Mode::Ale
         | Mode::RfPaint => '2',
     }
 }

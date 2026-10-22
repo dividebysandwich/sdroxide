@@ -1915,8 +1915,14 @@ use sdroxide_types::{
 /// lock scores on the median per-symbol SNR. The enum rides `DigiConfig`, so a
 /// peer that knows two variants would misread a third. `PROTO_VERSION` 225 →
 /// 226, `VERSION_BYTE` 0x2D → 0x2E. A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 226;
-const VERSION_BYTE: u8 = 0x2e;
+/// v227: STANAG 4285 — [`sdroxide_types::Mode::Stanag4285`] appended, and
+/// [`sdroxide_types::DigiStatus`] gains `stanag` at its tail: the receiver's own
+/// measurements (the folded sync and its null, the frame ACF, the three
+/// reference concentrations, the constellation and the rate verdict) rather than
+/// a lamp. `PROTO_VERSION` 226 → 227, `VERSION_BYTE` 0x2E → 0x2F. A downstream
+/// (fork) change.
+pub const PROTO_VERSION: u16 = 227;
+const VERSION_BYTE: u8 = 0x2f;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

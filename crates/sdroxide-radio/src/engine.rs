@@ -5798,7 +5798,9 @@ fn dab_audio_ready(fifo_len: usize, block: usize, fifo_r_len: usize) -> bool {
 /// string, because a test that assembles its own copy of a message passes
 /// whether or not the program still says it.
 fn silent_mic_notice(what: &str) -> String {
-    format!("That over went out with no audio — {what}. Pick the right input under Settings → Audio.")
+    format!(
+        "That over went out with no audio — {what}. Pick the right input under Settings → Audio."
+    )
 }
 
 impl Engine {
@@ -16751,7 +16753,8 @@ impl Engine {
     fn stored_channels_from_here(&self) -> Vec<f64> {
         // Station-wide, not this radio's scope: one channel list for the
         // station, which is where the operator put their QO-100 frequencies.
-        let mut all = sdroxide_config::load_memories().iter().map(|m| m.freq_hz).collect::<Vec<_>>();
+        let mut all =
+            sdroxide_config::load_memories().iter().map(|m| m.freq_hz).collect::<Vec<_>>();
         let n = all.len();
         if n > 0 {
             all.rotate_left(self.channel_attempt % n);
@@ -16952,7 +16955,8 @@ impl Engine {
                     self.retry_every = RETRY_FIRST;
                     self.retry_at = None;
                     info!(source = %source.describe(), "radio interface connected");
-                    let (asked, fell_back_to) = (self.retry_asked_hz, self.retry_fell_back_to.take());
+                    let (asked, fell_back_to) =
+                        (self.retry_asked_hz, self.retry_fell_back_to.take());
                     let at = source.center_hz();
                     self.note_opened(at);
                     self.adopt_source(source, caps);
@@ -19675,6 +19679,7 @@ fn rig_mode_class(m: Mode) -> u8 {
         | Mode::Contestia
         | Mode::Mt63
         | Mode::Ardop
+        | Mode::Stanag4285
         | Mode::Fsq
         | Mode::Hell
         | Mode::RfPaint

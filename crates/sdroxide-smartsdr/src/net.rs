@@ -1641,7 +1641,7 @@ fn mode_to_flex(m: Mode) -> &'static str {
         | Mode::SstvFm
         | Mode::RttyFm
         | Mode::Adsb
-                | Mode::Dab
+        | Mode::Dab
         | Mode::Vdl2
         | Mode::Ais
         | Mode::Hfdl
@@ -1668,6 +1668,7 @@ fn mode_to_flex(m: Mode) -> &'static str {
         | Mode::Contestia
         | Mode::Mt63
         | Mode::Ardop
+        | Mode::Stanag4285
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
@@ -1679,7 +1680,8 @@ fn mode_to_flex(m: Mode) -> &'static str {
         | Mode::Navtex
         | Mode::Dsc
         | Mode::UvPacket
-        | Mode::Jtty | Mode::Ale
+        | Mode::Jtty
+        | Mode::Ale
         | Mode::RfPaint
         | Mode::Spec => "USB",
     }

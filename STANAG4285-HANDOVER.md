@@ -8,11 +8,14 @@ constrain it, and a prompt for the session that builds the mode.
 
 ## Where the work stands
 
-**None of STANAG 4285 is in the program.** There is no `Mode` variant, no
-decoder, no panel, no `PROTO_VERSION` entry. What exists is an instrument:
-`tools/s4285-probe/` — Python probes, deliberately outside the build, whose
-`README.md` is the measurement log. Read it before running anything; it is longer
-than this file and it is where the numbers live.
+**The state, briefly (2026-10-22, second session).** The receiver exists
+(`crates/sdroxide-dsp/src/stanag4285.rs`), it locks real off-air captures with the
+reference blocks collapsed, and the mode is wired: `Mode::Stanag4285`, a panel
+that shows every measurement, `PROTO_VERSION` 227 — see the last section. **The
+text is still not readable**, and the reason is not the receiver: the payloads on
+the night's captures are encrypted or idle, and a test tape's 75 baud is a
+*coded* rate, which needs Annex E. `tools/s4285-probe/` remains the Python
+measurement log, deliberately outside the build.
 
 What the probes established, and what each was measured on:
 
@@ -389,3 +392,134 @@ So the material for reading text has been on the disk since last night, and the
 note that the 6348 captures were "a flat mess" is history — that was the WAV
 writer, before it was filtered. The reference collapse (0.2–0.7, needing 0.7–0.9)
 is the remaining fault, and it is in the code.
+
+## 2026-10-22, second session — the references collapse, and the payload is not text
+
+The reference blocks now collapse: **0.64 / 0.75 / 0.62 averaged over 215 frames**
+on `6348.000kHz-20261022-045545Z.wav`, against 0.24 / 0.63 / 0.22 from one frame of
+the same file before. Two faults, both in acquisition, and neither was the
+generators or the block layout.
+
+### The fold, not the peak
+
+The synchronisation repeats every frame, so the correlation is a **periodic**
+statistic and the right question is "at which of the 256 symbol phases does this
+average over *many* frames stand up". The old code took one frame's maximum over
+every offset as the lock and its position as the frame head; measured, the
+folded statistic reads **0.85** on a real capture against a median of **0.104**
+over the 256 phases, and **0.14** on the 4232 kHz control (its own null 0.13, so
+no margin at all). A single peak, by contrast, reaches 0.738 on white noise —
+which is why the old lock could not discriminate.
+
+The provenances that came with the fold, and both are measured:
+
+* **an off-by-one in the fold.** `corr[k]` covers symbols `k-79 ..= k`, so the
+  frame head is `k-79`, not `k`. Folding on the wrong index puts every block half
+  a symbol out.
+* **the sampling phase.** Ten sub-symbol phases are searched, and each frame
+  refines its own within ±0.2. On the Djibouti capture the best phase moved the
+  sync correlation from 0.71 to **0.94** — the receiver was sampling anywhere
+  inside the symbol, and a tenth of a symbol is 42 µs.
+
+### The carrier offset has to come off the symbols, not just the score
+
+The ramp search already found **+55 Hz** on the 6348 captures, but the symbols
+handed to the channel estimator still carried it. `+55 Hz` turns a whole circle
+every 48 symbols, so the three reference blocks are ~2π apart and the linear fit
+across the frame is meaningless without unwrapping. Applying the chosen ramp to
+`z` before reading the block phases is what turns the constellation from uniform
+into a readable BPSK one.
+
+### The layout was right, and it was measured rather than trusted
+
+Sweeping the reference-block offset over ±3 symbols gives **0.702 at offset 0**
+against 0.649 at −1 and 0.684 at +1, so `32 data + 16 reference` three times then
+32 data is exactly where the standard puts it.
+
+### The night's 35 captures, measured with the fixed receiver
+
+35 files, **16 lock**, and every one of the five `4232.000 kHz` controls refuses
+(ACF 0.024–0.108, folded sync 0.00). Best first by folded sync:
+
+| capture | folded sync | null | frame ACF | refs (mean) | rate verdict |
+|---|---|---|---|---|---|
+| `5215.600-…024501Z` | **0.966** | 0.090 | 0.485 | 0.71/0.79/0.69 | unknown |
+| `6348.000-…050318Z` | 0.875 | 0.101 | 0.520 | 0.65/0.76/0.62 | 1200 BPSK |
+| `6348.000-…051154Z` | 0.851 | 0.104 | 0.591 | 0.67/0.78/0.63 | 1200 BPSK |
+| `6348.000-…045313Z` | 0.842 | 0.103 | 0.604 | 0.65/0.76/0.62 | 1200 BPSK |
+| `6348.000-…045545Z` | 0.793 | 0.105 | 0.502 | 0.64/0.75/0.62 | 1200 BPSK |
+| `8467.800-…225334Z` | 0.613 | 0.096 | 0.524 | 0.53/0.40/0.49 | unknown |
+
+`5215.6 kHz` — the file the first night called "a carrier rather than a frame" —
+is the **strongest** lock of the set at 0.966, so that verdict was another
+consequence of the single-peak lock.
+
+### The payload is not plain ITA2, and this is the day's hard finding
+
+Every one of those locks produces bits, and none of them produces text:
+
+* The constellation is **BPSK**: the 2-, 4- and 8-fold concentrations are
+  typically 0.19–0.37 / 0.02–0.10 / 0.04–0.10. A 4- or 8-point lattice would show
+  its own order dominating; it does not.
+* The bits are **statistically random**: the 5-bit histogram is uniform
+  (min 170, max 350 against 242 expected) at every alignment, the bit transition
+  rate is 0.49, and there is no periodicity at 5, 10, 16, 31, 32, 64 or 128.
+* One file (`…050318Z`) is **82 % ones** frame after frame, which is an idle
+  transmitter sending the all-ones idle character — exactly what the ZL2AFP
+  receiver's own help says these transmissions are: *"Invariably the traffic is
+  encrypted, except perhaps during test transmissions."*
+
+So a lock is "a 4285 is on this frequency", and the night's captures carry either
+encrypted traffic or an idle carrier. **The material for reading text was not on
+the disk**, and the previous session's inference from "27 lock" to "the material
+to read text is in hand" was the mistake.
+
+Two routes to text remain, and neither is today's:
+
+1. **Annex E** (error correction, interleaving, protocols). Every uncoded rate
+   shares its constellation with a coded one — 1200 BPSK with the 75–600 bps
+   rates at 1/16…1/2 — and a test tape is normally sent at **75 baud, rate
+   1/16**. A constellation can never tell those apart, and the coded payload is
+   not readable without the FEC. Annex E is in the scan (`/tmp/opencode/
+   s4285_full.pdf`, Annex C ends at PDF page 30, Annex E-3-3 is page 64) and is
+   **not transcribed**.
+2. **A capture of a tape transmitted uncoded**, if such a thing is still sent.
+
+The panel says the honest thing rather than pretending: `1200 BPSK uncoded, or a
+coded BPSK rate`, and the bit stream is exposed so a wrong demodulation shows as
+bits rather than as plausible letters.
+
+### The mode, wired
+
+`Mode::Stanag4285` (discriminant 59) as a receive-only text modem, `PROTO_VERSION`
+226 → **227** / `VERSION_BYTE` 0x2E → **0x2F**, with `DigiStatus::stanag`
+appended: the folded sync and its null, the frame ACF, the three reference
+concentrations, the 2/4/8 constellation concentrations, the rate string, the
+offset and the frame count. The panel draws them as a wrapping row above the text
+pane, each with a hover saying what the number means and what it does not. The
+transmit half refuses with the reason (no modulator; the coded rates need Annex
+E), the panadapter marks the standard's 3000 Hz footprint, and the SW band accepts
+it.
+
+Tests: a frame-accurate synthetic BPSK transmitter (raised cosine, 30 % excess
+bandwidth) that must lock with all three references above 0.85; noise and a plain
+carrier that must **not** lock; the off-air gate
+`SDROXIDE_S4285_SAMPLE=… cargo test -p sdroxide-dsp --release -- --ignored`
+which requires the mean references above 0.55; and the controller test that the
+report reaches `DigiStatus` and the refusal names Annex E.
+
+**Two traps met while testing, both in the fixture rather than the receiver:** a
+multiplicative-hash bit generator has period 256 here and makes frame *n+1* the
+exact complement of frame *n*, which cancels the sync in the frame ACF; and
+`TAU * f * i` evaluated in f32 loses its fractional part within a second, so the
+synthetic carrier landed at 1200 Hz and nothing could lock.
+
+### Still open
+
+* **Annex E**, for the coded rates — the only route to a test tape's text.
+* A **single-peak lock is still used once**, inside the acquisition window, to
+  pin the frame head after the fold has found its phase; the fold's index is a
+  symbol-resolution answer and the per-frame timing search does the rest.
+* The **carrier offset is searched per frame**, ±150 Hz in 1 Hz steps after a
+  5 Hz sweep. It has never been outside ±130 Hz on these captures, but a station
+  further off the dial would still read as no frame.

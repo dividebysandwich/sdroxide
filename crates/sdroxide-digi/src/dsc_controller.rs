@@ -71,6 +71,7 @@ impl DscController {
 
     fn digi_status(&self) -> DigiStatus {
         DigiStatus {
+            stanag: None,
             mode: Mode::Dsc,
             step: QsoStep::Idle,
             dx_call: None,

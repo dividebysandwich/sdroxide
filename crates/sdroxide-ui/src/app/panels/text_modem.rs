@@ -14,6 +14,75 @@ use crate::theme::ThemedScroll;
 use crate::app::{SdroxideApp, tx_gated};
 
 impl SdroxideApp {
+    /// STANAG 4285's measurements, because a lock is a number and not a lamp.
+    ///
+    /// Every figure here is what the receiver measured, and each says something
+    /// the others cannot: the **folded sync** against its own null is "a 4285 is
+    /// on this frequency", the **frame ACF** is "and the 106.67 ms frame is
+    /// really there", and the **references** are "and the frame phase, the
+    /// scrambler and the carrier offset are all right". A frame whose references
+    /// do not collapse cannot carry a readable payload, which is why they are
+    /// shown rather than a green light.
+    fn stanag_readout(&self, ui: &mut egui::Ui, s: Option<&sdroxide_types::StanagStatus>) {
+        let dim = crate::theme::gray(150);
+        let Some(s) = s else {
+            ui.label(RichText::new("waiting for the modem…").size(10.5).color(dim));
+            return;
+        };
+        let (word, ink) = if s.locked {
+            ("LOCKED", crate::theme::GREEN())
+        } else {
+            ("NO FRAME", crate::theme::YELLOW())
+        };
+        let r = s.reference;
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(word).size(11.0).strong().color(ink)).on_hover_text(
+                "A frame is being tracked. It is accepted only when the sync correlation, \
+                 folded over twelve frames, stands clear of its own null and the frame-period \
+                 autocorrelation says a frame is present.",
+            );
+            ui.label(
+                RichText::new(format!("sync {:.2} (null {:.2})", s.sync, s.sync_null))
+                    .size(10.5)
+                    .color(dim),
+            )
+            .on_hover_text(
+                "The differential sync correlation folded over every frame phase, and the \
+                 median over those phases — the null it has to beat. Measured off the air: \
+                 0.85 on a 4285 against 0.14 on a strong PSK carrier of another mode.",
+            );
+            ui.label(RichText::new(format!("frame {:.2}", s.frame_acf)).size(10.5).color(dim))
+                .on_hover_text(
+                    "How much of a frame repeats one frame later. A 4285 repeats its 80 sync \
+                     symbols, so 0.3-0.6; another mode's carrier measures about 0.03.",
+                );
+            ui.label(
+                RichText::new(format!("refs {:.2}/{:.2}/{:.2}", r[0], r[1], r[2]))
+                    .size(10.5)
+                    .color(dim),
+            )
+            .on_hover_text(
+                "The three reference blocks' concentrations after descrambling. They are all \
+                 symbol 0 before scrambling, so a correct frame collapses each of them onto \
+                 one point — 0.7 and up. Sixteen symbols of noise give 0.25.",
+            );
+            ui.label(RichText::new(&s.rate).size(10.5).color(dim)).on_hover_text(
+                "What the constellation can say. Each uncoded rate shares its constellation \
+                 with a coded one, so the coded rates need Annex E to be told apart — and \
+                 their payload needs Annex E's FEC to be read.",
+            );
+            ui.label(
+                RichText::new(format!("{:+.0} Hz · {} frames", s.offset_hz, s.frames))
+                    .size(10.5)
+                    .color(dim),
+            )
+            .on_hover_text(
+                "The carrier offset the reference blocks agree on, and how many frames have \
+                 been demodulated this session.",
+            );
+        });
+    }
+
     /// PSK/RTTY keyboard-mode panel: the decoded RX stream on top, then a
     /// streaming TX input (already-sent characters shown green) and controls.
     /// `panel_h` is the real bounded height (the surrounding frame reports an
@@ -79,6 +148,10 @@ impl SdroxideApp {
             });
         });
         ui.add_space(4.0);
+        if mode == Mode::Stanag4285 {
+            self.stanag_readout(ui, status.as_ref().and_then(|s| s.stanag.as_ref()));
+            ui.add_space(2.0);
+        }
 
         // Reserve the input + button rows at the bottom; RX stream gets the rest.
         // Sized against the real panel bottom (not the unbounded available_height)

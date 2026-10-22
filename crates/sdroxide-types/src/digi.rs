@@ -576,6 +576,49 @@ pub struct DigiStatus {
     /// as the rest of these are. Appended after `jtty`.
     #[serde(default)]
     pub ale: Option<crate::AleStatus>,
+    /// STANAG 4285: what the receiver actually measures, when that mode is
+    /// active. `None` in every other mode, so the panel that draws it is its own
+    /// "are we in 4285?" test — the same rule [`DigiStatus::rade`] follows.
+    ///
+    /// A mode whose only evidence is a loopback is forbidden here, so the report
+    /// carries the measurements and not a lamp: a frame is accepted only when the
+    /// folded sync correlation stands clear of its own null, the frame-period
+    /// autocorrelation says a frame is present, and the three reference blocks
+    /// collapse.
+    #[serde(default)]
+    pub stanag: Option<StanagStatus>,
+}
+
+/// STANAG 4285's receiver report, as a panel has to show it.
+///
+/// Every number here is a measurement, and each says something different: the
+/// **folded sync** is "a 4285 is on this frequency", the **frame ACF** is "and
+/// its 106.67 ms frame is really there", and the **reference blocks** are "and
+/// the frame phase, the scrambler and the carrier offset are all right" — a
+/// frame whose references do not collapse cannot carry a readable payload.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct StanagStatus {
+    /// A frame is being tracked.
+    pub locked: bool,
+    /// The folded differential sync correlation, 0..1.
+    pub sync: f32,
+    /// That correlation's median over the 256 frame phases — the null it has to
+    /// stand clear of.
+    pub sync_null: f32,
+    /// The frame-period autocorrelation: ~0.3-0.6 for a 4285, ~0.03 for another
+    /// mode's carrier.
+    pub frame_acf: f32,
+    /// The three reference blocks' concentrations after descrambling.
+    pub reference: [f32; 3],
+    /// The data constellation's 2-, 4- and 8-point concentrations.
+    pub constellation: [f32; 3],
+    /// The rate as a constellation can read it — the same string the panel
+    /// shows, including the "or a coded rate" half.
+    pub rate: String,
+    /// Carrier offset measured from the reference blocks, in hertz.
+    pub offset_hz: f32,
+    /// Frames demodulated this session.
+    pub frames: u64,
 }
 
 /// The running detail of the contact in progress: when it started and what has
@@ -1134,6 +1177,7 @@ impl DigiStatus {
             wspr: None,
             pi4: None,
             qso: None,
+            stanag: None,
         }
     }
 }
@@ -4384,5 +4428,40 @@ mod cw_macro_tests {
         // trimming, no case folding, nothing.
         let plain = CwMacro { label: String::new(), text: "  TNX 73 GL  ".into() };
         assert_eq!(plain.expand("OE1XYZ", "JN88"), "  TNX 73 GL  ");
+    }
+}
+
+#[cfg(test)]
+mod stanag_status_tests {
+    use super::{DigiConfig, DigiStatus, Mode, StanagStatus};
+
+    /// The 4285 report rides `DigiStatus` whole, so postcard is not
+    /// self-describing: the field appended at the tail has to survive the trip,
+    /// and a peer that knows the layout has to read what this one wrote.
+    #[test]
+    fn the_stanag_report_survives_a_postcard_round_trip() {
+        let mut st = DigiStatus::idle(DigiConfig::default());
+        st.mode = Mode::Stanag4285;
+        st.stanag = Some(StanagStatus {
+            locked: true,
+            sync: 0.793,
+            sync_null: 0.105,
+            frame_acf: 0.502,
+            reference: [0.744, 0.832, 0.656],
+            constellation: [0.188, 0.046, 0.057],
+            rate: "1200 BPSK uncoded, or a coded BPSK rate".into(),
+            offset_hz: 55.0,
+            frames: 215,
+        });
+        let bytes = postcard::to_stdvec(&st).expect("encode");
+        let back: DigiStatus = postcard::from_bytes(&bytes).expect("decode");
+        assert_eq!(back, st);
+        // And the absent case is a `None`, not a defaulted report: an operator in
+        // another mode must not read zeros as a measurement.
+        let mut idle = st.clone();
+        idle.stanag = None;
+        let bytes = postcard::to_stdvec(&idle).expect("encode");
+        let back: DigiStatus = postcard::from_bytes(&bytes).expect("decode");
+        assert_eq!(back.stanag, None);
     }
 }
