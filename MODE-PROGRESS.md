@@ -752,21 +752,21 @@ Three new receivers, all receive-only for now (`PROTO_VERSION` unchanged):
 | PSK250C6 | **decodes** | 3/3, 6 carriers at 1.4 × 250 Hz. |
 | PSK500C2 | **decodes** | 3/3, 2 carriers. |
 | PSK800C2 | **decodes** | 3/3, 2 carriers. |
-| PSK125C12 | **partial — 1/3** | 1/3 at 1745 Hz. |
-| PSK1000C2 | **does not decode** | 0/3 at every centre tried. |
-| PSK500C4 | **does not decode** | 0/3 at every centre tried from 1725 to 2250 Hz. |
+| PSK125C12 | **no lock — the recording** | 1/3 at 1745 Hz, and that one word is all: the sample carries **0.630** of the known text's bits (a clean bank measures 1.000). Day 2 measured it. |
+| PSK1000C2 | **no lock — the recording** | 0/3 at every centre; the sample carries **0.848** of the text's bits against 1.000 for a clean bank, and both carriers are inside the file (546–3343 Hz). |
+| PSK500C4 | **no lock — the recording** | 0/3 at every centre; **0.841** of the text's bits, all four carriers inside the file (744–3741 Hz), and the independent `C` decoder reads it no better. |
 | PSK63RC4 | **decodes** | 3/3 at 1745 Hz, and its text reads clean and contiguous. |
 | PSK63RC5 | **decodes** | 3/3, depth 260 (the reference's odd one out). |
 | PSK63RC10 | **decodes** | 3/3. |
 | PSK63RC20 | **decodes** | 3/3. |
-| PSK63RC32 | **partial — 2/3** | 2/3 at 1755 Hz. |
+| PSK63RC32 | **partial — 2/3** | 2/3 at 1755 Hz; locks at `LANDED`, so the **start of the message is missing** (lock time). |
 | PSK125RC4/5/10/12/16 | **decode** | 3/3 each. |
 | PSK250RC3/6/7 | **decode** | 3/3 each. |
-| PSK250RC2 | **partial — 2/3** | 2/3 at 1785 Hz. |
-| PSK250RC5 | **partial — 1/3** | 1/3 at 2150 Hz. |
+| PSK250RC2 | **partial — 2/3** | 2/3 at 1785 Hz; locks at `EAGLE` (`fyGLE HAS LANDED …`), so the **start is missing** (lock time). |
+| PSK250RC5 | **partial — 1/3** | 1/3 at 2150 Hz; reads `AAA TEST TEST THE EAGLE HA` and then garbage — **loses lock mid-message**. |
 | PSK500RC2 | **decodes** | 3/3 at 1765 Hz. |
-| PSK500RC3 | **partial — 1/3** | 1/3 at 1785 Hz. |
-| PSK500RC4 | **does not decode** | 0/3 at every centre tried. |
+| PSK500RC3 | **partial — 1/3** | 1/3 at 1785 Hz; reads `AAA TEST TEST THE EAGLE H` and then garbage — **loses lock mid-message**. |
+| PSK500RC4 | **does not decode** | 0/3 at every centre; the same sweep and the same width as PSK500C4, whose sample measures 0.841 of the text. Its own bit score is not measured: the `RC` wire carries encoded bits, so the text cannot be correlated directly. |
 | PSK800RC2 | **decodes** | 3/3. |
 | PSK1000RC2 | **decodes** | 3/3. |
 
@@ -788,11 +788,73 @@ port. The other `R` modes read whole, and PSK125R/PSK1000R bit-for-bit.
 gets.** The carriers are `1.4 × baud` apart, so a filter sized for one signal
 passes its neighbours almost whole. Measured: at `0.75 × baud` PSK500RC2 reads
 nothing and at `1.0` it reads its whole text; `1.0` is also the reference's own
-(`wsincfilt(fir1c, 1.0/symbollen, …)`, whose first null is at `baud`). The
-multi-carrier modes that still read nothing — **PSK500C4, PSK500RC4,
-PSK1000C2** — are the next thing to look at: three of them are wide banks whose
-outer carriers sit close to the 4 kHz edge of the recording, and no centre in
-1725…2250 Hz has recovered them.
+(`wsincfilt(fir1c, 1.0/symbollen, …)`, whose first null is at `baud`).
+
+### Day 2 — the three that read nothing are the samples, and the five partials have a shape
+
+`tools/psk-ref/psk_text_match.py` is the instrument, and it is the one thing here
+that can answer a question a decoder cannot answer about itself. It builds the
+bit stream a mode implies, slides the known text's varicode along it and reports
+the best fraction of bits that match, so **1.000 is a clean sample and 0.5 is
+noise**. It calibrates itself (`--calibrate`, and the same check was run for
+every shape in play): synthetic banks of 1×500, 2×500, 3×500, 2×1000, 4×500,
+12×125 and 32×62.5 all read **1.000**. So a reading in between is the
+recording's own quality, not the instrument's ceiling.
+
+| sample | reads | text in the recording | the band |
+|---|---|---|---|
+| PSK500C2 | 3/3 | **0.993** | 1143–2358 Hz |
+| PSK250C6 | 3/3 | **0.989** | 743–2761 Hz |
+| PSK500C4 | 0/3 | **0.841** | 744–3741 Hz, all four carriers inside 8 kHz |
+| PSK1000C2 | 0/3 | **0.848** | 546–3343 Hz, both carriers inside |
+| PSK125C12 | 1/3 | **0.630** | 718–2775 Hz, all twelve inside |
+
+**So the three that read nothing are recordings, not a decoder.** The band edges
+were measured first, as the brief asked, and they rule the brief's own hypothesis
+out: every carrier the mode wants is inside the file (the widest, PSK500C4 at
+3.0 kHz, sits in 744–3741 of an 8 kHz recording). The independent `C` decoder in
+`tools/psk-ref` — a fixed shared phase, no timing loop, no code in common with
+this tree — reads nothing from the same three at any centre either. What settles
+it is the bit score: they carry **84 %, 85 % and 63 %** of the known text's bits
+where the samples that decode carry 99 %. A `C` mode has no FEC, so ~15 % of bits
+wrong is unreadable by anyone, and the two that *do* read are the two that
+measure clean. Three samples of one sweep are simply worse than their siblings.
+
+That last number is worth one line of suspicion: 0.63 is far below the other two,
+so PSK125C12's recording is the worst of the corpus rather than borderline.
+
+**The five partials, from the whole decoded text rather than the word count**
+(`psk_coded_probe`, at the centre the gate reports):
+
+| mode | state | where it stops |
+|---|---|---|
+| PSK250RC2 | 2/3 | locks at `EAGLE`, reads `fyGLE HAS LANDED 12345 SDRBROWN ZZZ` — **the start is missing** (lock time) |
+| PSK63RC32 | 2/3 | locks at `LANDED`, the last two words only — **the start is missing** |
+| PSK250RC5 | 1/3 | reads `AAA TEST TEST THE EAGLE HA`, then garbage — **loses lock mid-message** |
+| PSK500RC3 | 1/3 | reads `AAA TEST TEST THE EAGLE H`, then garbage — **loses lock mid-message** |
+| PSK125C12 | 1/3 | no `AAA`, no `EAGLE`, no `LANDED`; one word at char 244 — **no lock at all** |
+
+None of them loses its tail, so the interleaver's drain is not the fault and is
+not worth chasing. Two are late lock and two lose the stream halfway, which is
+what a marginal recording looks like from the inside — and matches their bit
+scores (0.63 for the worst).
+
+**One thing to know before touching the bank: the reference uses ONE symbol
+clock for the whole bank.** `psk::rx_process` keeps a single `bitclk` and
+estimates its timing error from the **mean magnitude of every carrier**, then
+reads all of them at that instant. `PskCarrierBank` runs one `PskRx` with its own
+Gardner loop per carrier instead. That is a real deviation and it may matter on a
+weak signal, but it is **not** what these three are: the independent decoder has
+the reference's shared clock and reads nothing from them either. Recorded so it
+is not re-derived — and as the first thing to change if a clean wide bank ever
+fails to read.
+
+**And the trap that cost the instrument an afternoon:** choosing the sampling
+phase *per carrier* permutes the interleave — one carrier then sits a symbol
+behind its neighbours — and it reads as a sample fault (0.87 on a signal that is
+1.000 clean). The phase has to be chosen once, for the whole bank, and the
+calibration caught it only because the synthetic bank was there to be wrong
+about.
 
 ### What bit the port, in order
 
@@ -825,6 +887,14 @@ Nothing blocks the work above — every mode has a measurement. These would move
   Python. Thirty seconds of fldigi on the bench would turn the R family's last
   unread sample into a gate, and would also say whether the 500-baud `C`/`RC`
   samples (PSK500C4, PSK500RC4, PSK1000C2) were recorded in the same session.
+- **A re-recording of the wide `C` banks, which is now a named bench job
+  (2026-10-22).** PSK500C4, PSK1000C2 and PSK125C12 carry only 84 %, 85 % and
+  63 % of their known text (a clean bank measures 1.000), so no receiver without
+  FEC can read them and ours is not the fault. The same goes for PSK500RC4, the
+  fourth of that sweep's failures. One bench session recording those four again
+  would either give the family four more gates or prove the fault is in the rig's
+  audio path — and PSK125C12 is the one to record first, because 0.63 is far
+  below its siblings and it may be a different problem.
 - **A second MFSK8 recording.** The corpus one loses `TEST THE EAGLE HAS LANDED` in one span while the preamble and the tail read at every tuning; the decoder is the one the other seven MFSK variants use.
 - **A known-good FSQ recording** (new, 2026-10-21). The corpus sample cannot settle FSQ: an FSQ signal is one tone at a time and that recording never has a dominant tone at any centre, spacing or speed, and nothing has ever read it back. Thirty seconds on the bench turns "alphabet fixed, decode unproven" into a gate.
 - **A bench recording of BPSK1000 for the lock-time question** (2026-10-21). The operator's own offer: the RSP1 can record while fldigi plays into the CRT. What it settles is whether the receiver's lost head is the receiver (a clean, known transmission is decoded from the start) or the sample (the sweep's own window). The rig needs a hand for the frequency and to arm it.
