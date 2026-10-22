@@ -409,3 +409,35 @@ night that finds nothing leaves a log that says so.
 caveats; `s4285-probe/s4285_verdict.py` reads a file back and says whether it is a
 tape or an idle carrier. **Not yet proved on a real tape** — that is what the next
 watch is for.
+
+## The first night's watch (2026-10-21/22)
+
+The watcher ran from 22:17Z to 04:08Z on ten frequencies and wrote **nine
+captures**. One of them is the material this file has been asking for.
+
+| capture | what it is |
+|---|---|
+| **8467.800 kHz, 22:53Z** | **the frame is there**: |ACF| at 106.67 ms **0.347** against a null of 0.015 (22.7x), 8PSK carrier line **47 dB**, and a visible signal across 1–4 kHz with the fading and drift a night-time HF path has |
+| 5215.600 kHz, 02:45Z | frame 0.427 but the null is 0.173, so 2.5x — a carrier rather than a frame; the spectrogram is flat |
+| 4232.000 kHz x3 | 8PSK carrier **47 dB** with **no** 106.67 ms frame (0.03–0.05): a PSK signal of some other shape, not Edition 1 |
+| 6348.000 kHz x4 | a flat mess across the whole 6 kHz band with a 100 ms stripe — **the capture was at fault, not the band** |
+
+Two things learned, both now fixed or recorded:
+
+* **The WAV writer aliased.** It decimated by averaging groups of five samples, a
+  box filter whose stopband is only about −13 dB, so everything strong in the
+  rest of the 62.5 kHz band folded into the audio. That is what the 6348 files
+  are: a 3 kHz mode that arrives as 6 kHz of junk, with a 10 Hz stripe from
+  whatever was strong elsewhere. It now runs a 127-tap windowed-sinc low-pass
+  first. **A capture that looks impossible is worth suspecting the instrument
+  over the band** — the same lesson as the probe's 0.900 sync.
+* **`s4285_lock.py` will not call this a frame, and it may be right to wait.**
+  On the 8467.8 capture it reports fold 0.483, reference concentration R = 0.378
+  against a 0.12 noise ceiling, and then "no frame in hand". The reference
+  symbols are 16 per block and repeat three times a frame, so on a rotating
+  channel they collapse *per block*, not onto one point — the single-point test
+  may simply be too strict for a real night-time path. That is the next thing to
+  measure, and it is measurable now.
+
+The gain is 45 on this build, which is **attenuation-ordered** (35 is louder than
+50), and with the 1:49 EFHW the peaks sit about 8 dB below full scale there.
