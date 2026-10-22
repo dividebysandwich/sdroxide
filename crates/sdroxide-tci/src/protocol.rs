@@ -342,6 +342,7 @@ pub fn mode_to_tci(mode: Mode) -> &'static str {
         | Mode::Olivia
         | Mode::Thor
         | Mode::DominoEx
+        | Mode::Dtmf
         | Mode::Mfsk
         | Mode::Contestia
         | Mode::Mt63

@@ -103,6 +103,7 @@ fn mode_name(m: Mode) -> &'static str {
         | Mode::Olivia
         | Mode::Thor
         | Mode::DominoEx
+        | Mode::Dtmf
         | Mode::Mfsk
         | Mode::Contestia
         | Mode::Mt63

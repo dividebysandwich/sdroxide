@@ -19676,6 +19676,7 @@ fn rig_mode_class(m: Mode) -> u8 {
         | Mode::Olivia
         | Mode::Thor
         | Mode::DominoEx
+        | Mode::Dtmf
         | Mode::Mfsk
         | Mode::Contestia
         | Mode::Mt63

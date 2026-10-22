@@ -458,6 +458,11 @@ pub struct BpskCore {
     bits: Vec<u8>,
     /// fldigi's **8PSK** modes without FEC: a symbol is one of eight phase
     /// steps carrying three bits, and the text is the **MFSK** varicode.
+    ///
+    /// It does **not** read its corpus yet — see `the_corpus_8psk_samples_are_measured`
+    /// and the journal: the front end here is PSK31's, with a decision-directed
+    /// BPSK carrier loop, and that loop pulls the phase onto the real axis, which
+    /// an eight-point constellation can never leave.
     psk8: bool,
     mfsk: MfskVaricodeRx,
 }
@@ -508,10 +513,9 @@ impl BpskCore {
     ///
     /// fldigi's no-FEC 8PSK does **not** use its Gray table: it feeds the raw
     /// phase index to the varicode three bits at a time, least significant first
-    /// (`psk.cxx`: `rx_bit(bits & bitmask)` in a loop). The Gray table is only
-    /// for the *coded* variants, where the bits are soft values for the Viterbi
-    /// decoder. This is the same split as everywhere else in this file: a hard
-    /// bit for the varicode, a soft value for a decoder.
+    /// (`psk.cxx`: `rx_bit(bits & bitmask)` in a loop). The Gray table is only for
+    /// the *coded* variants, where the bits are soft values for the Viterbi
+    /// decoder — the same split as everywhere else in this file.
     pub fn set_psk8(&mut self, on: bool) {
         if self.psk8 == on {
             return;
@@ -520,9 +524,6 @@ impl BpskCore {
         self.mfsk = MfskVaricodeRx::new();
     }
 
-    /// Emit raw differential bits instead of decoding varicode here. A
-    /// multi-carrier mode's text comes from the bits of *all* its carriers in
-    /// turn, so no single carrier can decode on its own.
     pub fn set_bit_tap(&mut self, on: bool) {
         if self.tap == on {
             return;
@@ -644,16 +645,25 @@ impl BpskCore {
             self.mag += 0.05 * (curr.norm() - self.mag);
             self.prev_sym = curr;
             let bit = if self.psk8 {
-                // Eight phase steps, `π/4` apart, and the constellation is
-                // rotated by π in the no-FEC modes — fldigi's own alignment
-                // (`if (_disablefec && (... || _8psk ...)) phase -= M_PI`).
+                // Eight phase steps, `π/4` apart, rotated by π in the no-FEC
+                // modes — fldigi's own alignment.
                 let mut phase = d.arg() - std::f32::consts::PI;
                 if phase < 0.0 {
                     phase += std::f32::consts::TAU;
                 }
                 let idx = ((phase / std::f32::consts::FRAC_PI_4 + 0.5) as i32).rem_euclid(8) as u8;
                 if dn > 1e-20 {
-                    self.coherence += COHERENCE_SMOOTH * (d.re.abs() / dn - self.coherence);
+                    // How close the symbol sat to its own point, not its
+                    // projection on the real axis: an 8PSK symbol is only ever
+                    // `cos(k·π/4)` from it, and six of the eight are below the
+                    // BPSK-calibrated gate.
+                    let resid = phase - idx as f32 * std::f32::consts::FRAC_PI_4;
+                    let resid = if resid > std::f32::consts::PI {
+                        resid - std::f32::consts::TAU
+                    } else {
+                        resid
+                    };
+                    self.coherence += COHERENCE_SMOOTH * (resid.cos() - self.coherence);
                 }
                 for i in 0..3 {
                     let b = (idx >> i) & 1;
@@ -1700,6 +1710,7 @@ mod tests {
                 reader.samples::<i16>().map(|s| s.expect("s") as f32 / 32_768.0).collect();
             let mut best = (0usize, String::new(), 0.0f64);
             let mut any = (0usize, String::new(), 0.0f64);
+            let step = 5.0f64;
             let mut hz = 1000.0f64;
             while hz <= 2600.0 {
                 let mut rx = PskRx::new_baud(spec.sample_rate as f64, hz, baud);
@@ -1716,7 +1727,7 @@ mod tests {
                 if printable > any.0 {
                     any = (printable, text, hz);
                 }
-                hz += 5.0;
+                hz += step;
             }
             eprintln!(
                 "{name} at {baud:.0} baud: {}/3 at {:.0} Hz; most text {} chars at {:.0} Hz: {:?}",

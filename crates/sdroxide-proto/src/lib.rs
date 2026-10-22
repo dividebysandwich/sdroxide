@@ -1930,8 +1930,15 @@ use sdroxide_types::{
 /// set and the `C`/`RC` banks) as one appended enum, so 32 waveforms ride
 /// `SetDigiConfig`/`DigiStatus` whole. `PROTO_VERSION` 228 → 229, `VERSION_BYTE`
 /// 0x30 → 0x31. A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 229;
-const VERSION_BYTE: u8 = 0x31;
+/// v230: [`sdroxide_types::Mode::DominoEx`] appended — the IFK family's other
+/// half, nine variants on [`sdroxide_types::DigiConfig::domino_mode`].
+/// `PROTO_VERSION` 229 → 230, `VERSION_BYTE` 0x31 → 0x32. A downstream (fork)
+/// change. `DigiConfig` gained `domino_mode`; `Mode` is an enum on the wire.
+/// v231: [`sdroxide_types::Mode::Dtmf`] appended — the eight touch tones, decoded
+/// to the digits they carry. `PROTO_VERSION` 230 → 231, `VERSION_BYTE` 0x32 →
+/// 0x33. A downstream (fork) change.
+pub const PROTO_VERSION: u16 = 231;
+const VERSION_BYTE: u8 = 0x33;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

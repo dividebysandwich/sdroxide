@@ -1180,6 +1180,37 @@ the phase to two of the eight positions and leaves the rest unreachable. Trying
 the phase alignment and the index polarity (four combinations) changed nothing,
 which is the evidence for that reading.
 
+### DTMF — eight tones, and two things the reference leaves to its squelch
+
+A small mode, done whole. fldigi's `src/dtmf/dtmf.cxx`: four row tones and four
+column tones, a Goertzel filter on each, the character is the strongest row paired
+with the strongest column, and the alphabet is `123A456B789C*0#D`.
+
+Two additions, both of which a receiver without a squelch knob needs:
+
+* **A ratio test, not a maximum.** Eight Goertzel outputs always have a largest, so
+  a plain argmax prints a digit for noise. The winning tone must be **5×** the
+  runner-up in its own group (30 ms frames put the bin 33 Hz wide and the rows
+  73 Hz apart, so a real press clears that easily) and the pair must carry 30 % of
+  the frame. Measured: at 3× a single digit got through in three seconds of noise;
+  at 5× none did.
+* **A debounce.** A key press is 40 ms or more and the frame is 30 ms, so a naive
+  per-frame decoder prints each digit two or three times. A digit is emitted once
+  per press, with two clear frames meaning release — one is not enough, because a
+  frame boundary can land inside a press.
+
+**Modes and wiring:** `Mode::Dtmf` (appended, `PROTO_VERSION` 230 → 231,
+`VERSION_BYTE` 0x32 → 0x33) with the whole mode-table ripple; receive only, since
+there is no keypad to send from. It deliberately does **not** join
+`holds_audio_centre`: the eight tones are absolute in the passband, so a cursor
+anywhere decodes them, and the console's own test tunes the cursor 600 Hz away to
+prove it.
+
+Gates: `every_key_press_reads_back_once` (all sixteen keys, in order, from a
+transmitter that is the touch-tone specification rather than one of ours),
+`noise_does_not_produce_digits`, `a_held_key_is_one_digit`, and
+`a_dtmf_key_press_reads_through_the_controller`.
+
 ## Needs me
 
 Nothing blocks the work above — every mode has a measurement. These would move the ones that do not decode, or prove the ones that do further:

@@ -15,6 +15,7 @@ mod demod;
 mod dfnr;
 mod diversity;
 pub mod dsc;
+pub mod dtmf;
 mod eq;
 mod fec;
 mod fir;

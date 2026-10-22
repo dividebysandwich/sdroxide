@@ -12,6 +12,7 @@ use std::time::SystemTime;
 
 use sdroxide_dsp::{
     MonoResampler, OliviaTx, PskMultiRx, PskRx, PskTx, PskrRx, RttyRx, RttyTx, ardop,
+    dtmf::DtmfRx,
     ifk::{IfkRx, IfkTx, IfkVariant},
     mfsk_rx::{MfskReceiver, MfskTx, MfskVariant},
     mt63::{Mt63Receiver, Mt63Tx},
@@ -149,6 +150,7 @@ enum RxModem {
     Olivia(OliviaReceiver),
     Thor(ThorRx),
     Domino(ThorRx),
+    Dtmf(DtmfRx),
     Mfsk(MfskReceiver),
     Mt63(Mt63Receiver),
     Ardop(ArdopRx),
@@ -194,6 +196,7 @@ impl RxModem {
             RxModem::Olivia(r) => r.process(audio),
             RxModem::Thor(r) => r.process(audio),
             RxModem::Domino(r) => r.process(audio),
+            RxModem::Dtmf(r) => r.process(audio),
             RxModem::Mfsk(r) => r.process(audio),
             RxModem::Mt63(r) => r.process(audio),
             RxModem::Ardop(r) => r.process(audio),
@@ -209,6 +212,7 @@ impl RxModem {
             RxModem::Olivia(r) => r.magnitude(),
             RxModem::Thor(r) => r.magnitude(),
             RxModem::Domino(r) => r.magnitude(),
+            RxModem::Dtmf(r) => r.magnitude(),
             RxModem::Mfsk(r) => r.magnitude(),
             RxModem::Mt63(r) => r.magnitude(),
             RxModem::Ardop(r) => r.magnitude(),
@@ -483,6 +487,10 @@ impl TextModemController {
             Mode::Mt63 => {
                 RxModem::Mt63(Mt63Receiver::new(MODEM_RATE, audio_hz as f64, cfg.mt63_mode.into()))
             }
+            // DTMF's eight tones are absolute in the passband, so there is no
+            // centre to tune: whatever the operator's cursor is doing, a digit is
+            // two tones where they are.
+            Mode::Dtmf => RxModem::Dtmf(DtmfRx::new(MODEM_RATE)),
             Mode::Ardop => RxModem::Ardop(ArdopRx::new(tap_rate)),
             Mode::Stanag4285 => RxModem::Stanag(StanagRx::new(MODEM_RATE)),
             _ => {
@@ -607,6 +615,8 @@ impl TextModemController {
                 );
                 r.set_reverse(self.cfg.thor_reverse);
             }
+            // DTMF tunes itself: its frequencies do not move with the cursor.
+            RxModem::Dtmf(_) => {}
             RxModem::Domino(r) => {
                 r.set_params(
                     hz,
@@ -1095,6 +1105,35 @@ mod tests {
             assert_eq!(v.name, m.label(), "the decoder spells {} differently", m.label());
             assert!(v.thor, "{} resolved to a DominoEX variant", m.label());
         }
+    }
+
+    /// DTMF through the console's own controller: a key press, decoded.
+    ///
+    /// The decoder's own tests cover the alphabet and the noise floor; what this
+    /// pins is the wiring — that the mode is a text modem at all, that its tones
+    /// are absolute in the passband (so a cursor anywhere decodes them), and that
+    /// one press is one character rather than one per frame.
+    #[test]
+    fn a_dtmf_key_press_reads_through_the_controller() {
+        let rate = 8000.0f64;
+        let mut ctl = TextModemController::new(Mode::Dtmf, DigiConfig::default(), rate);
+        // The operator's cursor is nowhere near the tones and it must not matter.
+        ctl.set_audio_hz(2100.0);
+        let mut audio: Vec<f32> = vec![0.0f32; 4000];
+        for (row, col) in [(697.0f64, 1209.0f64), (852.0, 1477.0)] {
+            for k in 0..((rate * 0.1) as usize) {
+                let t = k as f64 / rate;
+                let v = (std::f64::consts::TAU * row * t).sin()
+                    + (std::f64::consts::TAU * col * t).sin();
+                audio.push((0.4 * v) as f32);
+            }
+            audio.extend(std::iter::repeat(0.0f32).take((rate * 0.06) as usize));
+        }
+        for chunk in audio.chunks(256) {
+            ctl.on_rx_audio(chunk);
+        }
+        let text = ctl.status().text_rx.clone();
+        assert_eq!(text, "19", "the key presses decoded as {text:?}");
     }
 
     /// DominoEX through the console's own controller — the mode as its own
