@@ -1937,8 +1937,22 @@ use sdroxide_types::{
 /// v231: [`sdroxide_types::Mode::Dtmf`] appended — the eight touch tones, decoded
 /// to the digits they carry. `PROTO_VERSION` 230 → 231, `VERSION_BYTE` 0x32 →
 /// 0x33. A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 231;
-const VERSION_BYTE: u8 = 0x33;
+/// v232: [`sdroxide_types::MemoryChannel`] gains a `color` field at its tail
+/// (per-memory label colour on the waterfall) and `Command` gains
+/// `SetMemoryColor { id, color }` last. `MemoryChannel` rides the memory list
+/// whole, so the appended field moves its layout. `#[serde(default)]`, so a
+/// memory written before this existed loads unchanged. `PROTO_VERSION` 231 →
+/// 232, `VERSION_BYTE` 0x33 → 0x34. F4NRM's, renumbered above this fork's
+/// register (his branch numbered it 215, from a base before the mode work).
+/// v233: [`sdroxide_types::RadioConfig`] gains `swap_iq` at its tail — a per-radio
+/// I/Q inversion flag for receivers whose I and Q are the other way round, so
+/// SSB comes out on the wrong sideband. `RadioConfig` rides
+/// `ServerMsg::RadioConfig` and `Command::SetRadioConfig` whole, so the appended
+/// field moves their layout. `#[serde(default)]`, so a `radio.json` written
+/// before this existed loads unchanged. `PROTO_VERSION` 232 → 233,
+/// `VERSION_BYTE` 0x34 → 0x35. F4NRM's, renumbered like v232.
+pub const PROTO_VERSION: u16 = 233;
+const VERSION_BYTE: u8 = 0x35;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

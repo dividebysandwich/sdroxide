@@ -755,9 +755,9 @@ impl SdroxideApp {
                     freq_hz: m.freq_hz,
                     text,
                     color: eframe::egui::Color32::from_rgb(
-                        self.ui_settings.memory_waterfall_color[0],
-                        self.ui_settings.memory_waterfall_color[1],
-                        self.ui_settings.memory_waterfall_color[2],
+                        m.color.map(|c| c[0]).unwrap_or(self.ui_settings.memory_waterfall_color[0]),
+                        m.color.map(|c| c[1]).unwrap_or(self.ui_settings.memory_waterfall_color[1]),
+                        m.color.map(|c| c[2]).unwrap_or(self.ui_settings.memory_waterfall_color[2]),
                     ),
                 }
             })

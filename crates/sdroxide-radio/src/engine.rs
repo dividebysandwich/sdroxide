@@ -2655,6 +2655,10 @@ struct Engine {
     source: Box<dyn IqSource>,
     caps: DeviceCaps,
     state: RadioState,
+    /// Invert this receiver's I/Q before demodulation. A per-radio flag
+    /// (from `RadioConfig::swap_iq`) for receivers whose I and Q are the
+    /// other way round.
+    swap_iq: bool,
     cfg: SpectrumConfig,
     /// Where the centre has been, newest last, for a front end whose samples
     /// arrive later than the command that moved them
@@ -4614,6 +4618,7 @@ fn engine_thread(
         drive_trim: radio_cfg.tx_drive_trim.clone(),
         tx_drive_max: radio_cfg.tx_drive_ceiling(),
         rx_af_gain_db: radio_cfg.rx_audio_gain_db,
+        swap_iq: radio_cfg.swap_iq,
         tx_center_hz: 0.0,
         tx_ham_only: engine_cfg.tx_ham_only,
         cb_tx_allowed: engine_cfg.cb_tx_allowed,
@@ -5204,6 +5209,11 @@ fn engine_thread(
             // over on the air as chirps. See `IqSource::read_available`.
             if engine.caps.full_duplex && !engine.audio_mode {
                 if let Ok(n @ 1..) = engine.source.read_available(&mut buf) {
+                    if engine.swap_iq {
+                        for s in &mut buf[..n] {
+                            s.im = -s.im;
+                        }
+                    }
                     engine.samples_read += n as u64;
                     engine.last_block = n as u64;
                     engine.adc.observe(&buf[..n]);
@@ -5215,6 +5225,11 @@ fn engine_thread(
             match engine.source.read(&mut buf) {
                 Ok(0) => continue, // timeout
                 Ok(n) if engine.audio_mode => {
+                    if engine.swap_iq {
+                        for s in &mut buf[..n] {
+                            s.im = -s.im;
+                        }
+                    }
                     lane_samples += n as u64;
                     engine.samples_read += n as u64;
                     engine.last_block = n as u64;
@@ -5222,6 +5237,11 @@ fn engine_thread(
                     engine.run_audio_mode(&buf[..n]);
                 }
                 Ok(n) => {
+                    if engine.swap_iq {
+                        for s in &mut buf[..n] {
+                            s.im = -s.im;
+                        }
+                    }
                     lane_samples += n as u64;
                     // Where on the stream we are, for a front end whose retunes
                     // land later than they are given — see `center_trail`.
@@ -9621,6 +9641,7 @@ impl Engine {
                     // to leave the relay alone — see `MemoryChannel::antenna`.
                     antenna: (self.caps.antennas_rx.len() > 1 && !self.state.antenna_rx.is_empty())
                         .then(|| self.state.antenna_rx.clone()),
+                    color: None,
                 });
                 self.save_memories();
             }
@@ -9768,6 +9789,12 @@ impl Engine {
                     // reads as "leave the antenna alone", which is what an
                     // absent field means anyway.
                     m.antenna = antenna.filter(|n| self.caps.antennas_rx.contains(n));
+                    self.save_memories();
+                }
+            }
+            SetMemoryColor { id, color } => {
+                if let Some(m) = self.memories.iter_mut().find(|m| m.id == id) {
+                    m.color = color;
                     self.save_memories();
                 }
             }
@@ -10973,6 +11000,7 @@ impl Engine {
                 // at the next reopen, because an operator setting it is
                 // listening to the radio while they drag the control.
                 self.rx_af_gain_db = cfg.rx_audio_gain_db;
+                self.swap_iq = cfg.swap_iq;
                 self.refresh_af_trim();
                 // The UDP audio sink is rebuilt rather than poked: the address
                 // is where it goes, so a change is a new socket, and the old

@@ -24,6 +24,7 @@ fn chan(id: u32, name: &str, hz: f64) -> MemoryChannel {
         rtty: None,
         repeater: None,
         antenna: None,
+        color: None,
     }
 }
 

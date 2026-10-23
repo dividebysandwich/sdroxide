@@ -277,6 +277,7 @@ pub fn chirp_csv_to_memories(text: &str) -> (Vec<MemoryChannel>, usize) {
             // Not in the format, and a socket invented for an imported channel
             // would move a relay the operator never asked to move.
             antenna: None,
+            color: None,
         });
     }
     (out, skipped)

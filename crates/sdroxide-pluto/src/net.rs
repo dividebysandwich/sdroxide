@@ -437,12 +437,14 @@ impl PlutoRig {
         // TDD is one direction at a time in the silicon, so the link is no
         // longer what decides this — the part is.
         let full_duplex = if tr.tdd && cfg.full_duplex {
-            let msg = "PlutoSDR: full duplex is off — TDD enables one direction at a time, \
-                       and that is what the GPO transmit-receive pins key from. Set the PTT \
-                       pins to Off and the duplex to FDD to listen through an over"
-                .to_string();
-            tracing::warn!("{msg}");
-            warnings.push(msg);
+            // The operator is told through the settings tooltip on the Duplex
+            // row instead of a banner on the main window: this is expected
+            // behaviour whenever TDD is in use, not a fault to acknowledge.
+            tracing::warn!(
+                "PlutoSDR: full duplex is off — TDD enables one direction at a time, \
+                 and that is what the GPO transmit-receive pins key from. Set the PTT \
+                 pins to Off and the duplex to FDD to listen through an over"
+            );
             false
         } else {
             cfg.full_duplex

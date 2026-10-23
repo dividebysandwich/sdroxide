@@ -169,6 +169,7 @@ fn store_channels(channels: &[(f64, &str)]) {
             rtty: None,
             repeater: None,
             antenna: None,
+            color: None,
         })
         .collect();
     sdroxide_config::save_memories(&m).unwrap();

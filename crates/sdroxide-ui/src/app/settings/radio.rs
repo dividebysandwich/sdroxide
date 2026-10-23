@@ -3696,13 +3696,24 @@ pub(in crate::app) fn settings_pluto_tab(
         // Below Full duplex because the two argue: TDD is one direction at a
         // time in the silicon, so it settles the question the checkbox above
         // asks about the link.
-        ui.label("Duplex").on_hover_text(
+        let mut duplex = cfg.pluto.duplex;
+        let duplex_hover = if duplex == PlutoDuplex::Tdd {
             "Whether the AD9361 runs both directions at once (FDD, which is how a Pluto \
              boots and what sdroxide has always left it in) or one at a time (TDD).\n\n\
              Leave this on FDD unless you want the PTT pins below — TDD is what those \
-             key from, and it rules out Full duplex above. Takes effect on Apply.",
-        );
-        let mut duplex = cfg.pluto.duplex;
+             key from, and it rules out Full duplex above. Takes effect on Apply.\n\n\
+             PlutoSDR: full duplex is off — TDD enables one direction at a time, and \
+             that is what the GPO transmit-receive pins key from. Set the PTT pins to \
+             Off and the duplex to FDD to listen through an over."
+                .to_string()
+        } else {
+            "Whether the AD9361 runs both directions at once (FDD, which is how a Pluto \
+             boots and what sdroxide has always left it in) or one at a time (TDD).\n\n\
+             Leave this on FDD unless you want the PTT pins below — TDD is what those \
+             key from, and it rules out Full duplex above. Takes effect on Apply."
+                .to_string()
+        };
+        ui.label("Duplex").on_hover_text(duplex_hover);
         enum_combo(ui, "pluto_duplex", &mut duplex, &PlutoDuplex::ALL, PlutoDuplex::label);
         cfg.pluto.duplex = duplex;
         ui.end_row();
