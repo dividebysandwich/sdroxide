@@ -246,6 +246,7 @@ fn mode_digit(m: Mode) -> char {
         Mode::Usb
         | Mode::Spec
         | Mode::Hfdl
+        | Mode::Jtty
         | Mode::Sstv
         | Mode::Wefax
         | Mode::Navtex

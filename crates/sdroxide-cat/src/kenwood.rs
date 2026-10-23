@@ -379,6 +379,7 @@ fn mode_digit(m: Mode) -> (char, bool) {
         Mode::Usb
         | Mode::Spec
         | Mode::Hfdl
+        | Mode::Jtty
         | Mode::Sstv
         | Mode::Wefax
         | Mode::Navtex

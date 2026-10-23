@@ -1601,7 +1601,15 @@ use sdroxide_types::{
 /// `SetRigPowerStep`, `ServerMsg` gains `AmpStatus`, `StationConfig` gains
 /// `amp` on its tail, and `AmpAlerts` carries `from_amp`, for the amplifier's
 /// own lights — all appended, so a v184 peer reads them out of step.
-pub const PROTO_VERSION: u16 = 185;
+///
+/// v186: JTTY, the WSJT-X 3.2 asynchronous RTTY-like text mode. `Mode::Jtty`
+/// is appended to that enum, so no surviving discriminant moves, and
+/// `DigiStatus` gains `jtty` (`Option<JttyStatus>`) on its tail — the messages
+/// decoded and the smoothed audio level. `DigiStatus` rides `RadioState` whole,
+/// so a v185 peer reads the extra bytes as the start of the next field and
+/// fails to decode every digital status, the same break as every appended field
+/// before it.
+pub const PROTO_VERSION: u16 = 186;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

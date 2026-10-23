@@ -29,6 +29,7 @@ pub mod hell_controller;
 pub mod js8;
 pub mod js8_controller;
 pub mod jt_controller;
+pub mod jtty_controller;
 pub mod modem;
 pub mod msk144_controller;
 pub mod navtex_controller;
@@ -63,6 +64,7 @@ pub use fst4_controller::Fst4Controller;
 pub use hell_controller::HellController;
 pub use js8_controller::Js8Controller;
 pub use jt_controller::JtController;
+pub use jtty_controller::JttyController;
 pub use modem::{
     ApHints, Ft8Modem, decode_fsk441_slot, decode_fst4_slot, decode_jt_slot, decode_msk144_slot,
     decode_q65_slot,
