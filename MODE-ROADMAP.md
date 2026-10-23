@@ -1,6 +1,6 @@
 # Modes we do not ship — a todo, cheapest first
 
-**Local only.** Written 2026-10-19. Read with `MODE-DECODERS-HANDOVER.md`, which
+**Local only.** Written 2026-10-19. Read with `MODE-PROGRESS.md`, which
 has the instruments, the measurements and the per-mode state; this file is the
 queue.
 

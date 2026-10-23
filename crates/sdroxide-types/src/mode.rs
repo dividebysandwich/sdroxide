@@ -624,7 +624,7 @@ impl Mode {
     ///
     /// * **Olivia** — locks but its symbol clock wanders; it fails the
     ///   independent corpus, and the fault is diagnosed in
-    ///   `MODE-DECODERS-HANDOVER.md` §4.
+    ///   `MODE-PROGRESS.md` §4.
     /// * **THOR** — fails the same corpus and is not diagnosed at all.
     /// * **RIFP** — a draft specification (`draft-dulaunoy-rifp-00`), which has
     ///   never been seen on the air by this project.

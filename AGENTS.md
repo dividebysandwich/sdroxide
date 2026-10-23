@@ -13,10 +13,10 @@
 > exhausted** — which supersedes the "port it, do not vendor it" rule of 2026-10-21,
 > at the operator's instruction. It ends with a table of every mode we ship, five
 > columns, and the mode phase it follows is
-> [`MODE-PHASE-3B-PROMPT.md`](MODE-PHASE-3B-PROMPT.md) (done; its day-1 record is
-> [`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md)). The paragraph below
+> MODE-PHASE-3B-PROMPT.md (removed) (done; its day-1 record is
+> MODE-PHASE-3-PROMPT.md (removed)). The paragraph below
 > describes that earlier day and is kept for that reason:
-> [`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md) was what a session started
+> MODE-PHASE-3-PROMPT.md (removed) was what a session started
 > with: the PSK coded families (BPSK63F, the R set, the C/RC multi-carrier
 > modes), then the loose ends behind them. Its "current truth" section is the
 > state **as it stood then** — four families wired receive-only, `PROTO_VERSION`

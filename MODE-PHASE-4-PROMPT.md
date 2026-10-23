@@ -1,8 +1,7 @@
 # Mode phase 4 — finish the modes, then give them a voice
 
-**Paste this whole file into a fresh session.** It follows the PSK phase
-([`MODE-PHASE-3-PROMPT.md`](MODE-PHASE-3-PROMPT.md), [`MODE-PHASE-3B-PROMPT.md`](MODE-PHASE-3B-PROMPT.md)),
-which is done; what that phase left behind is in [`MODE-PROGRESS.md`](MODE-PROGRESS.md).
+**Paste this whole file into a fresh session.** It follows the PSK phase, which is done; what that phase left behind is in
+[`MODE-PROGRESS.md`](MODE-PROGRESS.md).
 
 ## The goal, in the operator's words
 

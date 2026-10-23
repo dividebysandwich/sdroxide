@@ -4,7 +4,7 @@ Standalone Python probes for reading a STANAG 4285 recording. **Not part of the
 build** — nothing here is compiled or tested by `cargo`, and it is here so the
 measurements survive instead of living in a scratch directory.
 
-The waveform itself is transcribed in `MODE-DECODERS-HANDOVER.md` §6b, from the
+The waveform itself is transcribed in `MODE-PROGRESS.md` §6b, from the
 **declassified** standard (Edition 1, 16 February 1989, downgraded to NATO
 UNCLASSIFIED by MAS/59-EL/4285 of 9 February 1993). Read that section first: it
 has the frame, the transcoding tables, and both generators in closed form.
