@@ -1857,15 +1857,21 @@ use sdroxide_types::{
 /// frames whole, so the appended field moves their layout; the same value is
 /// stored in `session.json` so it survives a restart. `PROTO_VERSION` 213 →
 /// 214, `VERSION_BYTE` 0x21 → 0x22. A downstream (fork) change.
-/// v215: [`sdroxide_types::RadioConfig`] gains `swap_iq` at its tail — a per-radio
+/// v215: [`sdroxide_types::MemoryChannel`] gains a `color` field at its tail
+/// (per-memory label colour on the waterfall) and `Command` gains
+/// `SetMemoryColor { id, color }` last. `MemoryChannel` rides the memory list
+/// whole, so the appended field moves its layout. `#[serde(default)]`, so a
+/// memory written before this existed loads unchanged. `PROTO_VERSION` 214 →
+/// 215, `VERSION_BYTE` 0x22 → 0x23. A downstream (fork) change.
+/// v216: [`sdroxide_types::RadioConfig`] gains `swap_iq` at its tail — a per-radio
 /// I/Q inversion flag for receivers whose I and Q are the other way round, so
 /// SSB comes out on the wrong sideband. `RadioConfig` rides
 /// `ServerMsg::RadioConfig` and `Command::SetRadioConfig` whole, so the appended
 /// field moves their layout. `#[serde(default)]`, so a `radio.json` written
-/// before this existed loads unchanged. `PROTO_VERSION` 214 → 215,
-/// `VERSION_BYTE` 0x22 → 0x23. A downstream (fork) change.
-pub const PROTO_VERSION: u16 = 215;
-const VERSION_BYTE: u8 = 0x23;
+/// before this existed loads unchanged. `PROTO_VERSION` 215 → 216,
+/// `VERSION_BYTE` 0x23 → 0x24. A downstream (fork) change.
+pub const PROTO_VERSION: u16 = 216;
+const VERSION_BYTE: u8 = 0x24;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {
