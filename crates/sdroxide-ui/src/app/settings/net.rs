@@ -295,6 +295,43 @@ pub(in crate::app) fn broadcast_stations_settings(
             {
                 *refetch_source = Some(source);
             }
+            // **The same file, handed over by hand.** Aoki's is published on a
+            // site whose path changes with the season, so the automatic download
+            // is the part that breaks — and an operator who has the file already
+            // should not be stopped by that. The file is read, checked and cached
+            // exactly as a download is, so what happens next is the same code.
+            // HFCC has no button: its names live in a package of three files, and
+            // a schedule of codes is worse than none.
+            if matches!(
+                source,
+                sdroxide_types::ScheduleSource::Eibi | sdroxide_types::ScheduleSource::Aoki
+            ) && ui
+                .add_enabled(!fetching, egui::Button::new("From file…"))
+                .on_hover_text(match source {
+                    sdroxide_types::ScheduleSource::Aoki => {
+                        "Take Aoki's schedule from a file you saved yourself — the .zip \
+                         Aoki publishes, or the .txt from inside it. Its site moves with \
+                         the season, which is why this is here."
+                    }
+                    _ => "Take EiBi's schedule from its sked .csv, saved on this machine",
+                })
+                .clicked()
+                && let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Aoki schedule", &["zip", "txt"])
+                    .add_filter("EiBi schedule", &["csv"])
+                    .pick_file()
+            {
+                *import = Some(match sdroxide_config::import_schedule_file(&path) {
+                    Ok(got) => Ok(format!(
+                        "{} {} — {} transmissions, now in the store",
+                        got.source.label(),
+                        got.season,
+                        got.stations
+                    )),
+                    Err(e) => Err(e),
+                });
+                *reload = true;
+            }
         });
     }
 

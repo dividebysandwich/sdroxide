@@ -2562,9 +2562,20 @@ fn cached_text_from_bytes(
     }
 }
 
-/// Read the schedule out of Aoki's zip: the one entry ending `.txt`.
+/// Read the schedule out of Aoki's zip — or out of a file that **is** the `.txt`,
+/// as an operator who saved one by hand has.
+///
+/// The two arrive at the same place because they are the same schedule: the
+/// downloader caches the zip it fetched, and [`import_schedule_file`] caches the
+/// zip or the text the operator gave it, under the same name. The zip's own
+/// magic number decides which, so a reader cannot be handed the wrong one by a
+/// file extension.
 fn aoki_text_from_zip(bytes: &[u8], season: &str) -> Result<String, String> {
-    let text = aoki_schedule_entry(bytes, season)?;
+    let text = if bytes.starts_with(b"PK\x03\x04") {
+        aoki_schedule_entry(bytes, season)?
+    } else {
+        bytes.to_vec()
+    };
     // Shift-JIS (CP932). `encoding_rs` is already in the tree via
     // symphonia-metadata, so this costs nothing new.
     let (cow, _, had_errors) = encoding_rs::SHIFT_JIS.decode(&text);
@@ -3018,6 +3029,131 @@ pub fn import_broadcast_stations(path: &std::path::Path) -> Result<usize, String
     )
     .map_err(|e| e.to_string())?;
     Ok(n)
+}
+
+/// What [`import_schedule_file`] found in the file it was handed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedSchedule {
+    /// Which publisher's list it is — the one whose cache it was filed under.
+    pub source: sdroxide_types::ScheduleSource,
+    /// The season the cache file is named for, which is what the reader looks
+    /// for: Aoki's own for Aoki (`xta26`), ours for EiBi.
+    pub season: String,
+    pub stations: usize,
+}
+
+/// Take a published schedule from a file the operator saved themselves.
+///
+/// **Aoki is the reason this exists.** Its short-wave list lives on a personal
+/// site whose path changes with the season, so the automatic download is the one
+/// part that can break — and when it does, the program is the one that cannot do
+/// what it says. So the same file is accepted from disk: either the `.zip` Aoki
+/// publishes (the one the downloader would have fetched) or the `.txt` from
+/// inside it. EiBi's `.csv` is read too, because it is one file and the operation
+/// is the same one; HFCC is not offered, since its names live in a package of
+/// three files and half of it is worse than none.
+///
+/// The bytes go into **the same cache the downloader writes, under the same
+/// name**, so everything downstream — the Shift-JIS decode, the parser, the merge
+/// with the other sources, the operator's own corrections — is the code that
+/// already runs. There is no second schedule path here, and a file imported by
+/// hand and one downloaded are the same file as far as the rest of the program
+/// is concerned.
+pub fn import_schedule_file(path: &std::path::Path) -> Result<ImportedSchedule, String> {
+    use sdroxide_types::ScheduleSource as S;
+
+    let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if bytes.is_empty() {
+        return Err(format!("{} is empty", path.display()));
+    }
+    let ours = sdroxide_types::broadcast::season_file(now_unix());
+    // **Told apart by what is in the file, not by what it is called.** A browser
+    // saves Aoki's `xta26.zip` and `xta26.txt` with the same stem, and an
+    // operator who renamed either should still get the right reader.
+    let (source, season) = if bytes.starts_with(b"PK\x03\x04") {
+        (S::Aoki, aoki_season_from_path(path).unwrap_or_else(|| format!("xt{ours}")))
+    } else {
+        let head = sdroxide_types::broadcast::decode_latin1(&bytes[..bytes.len().min(512)]);
+        // Aoki's title line says "… Frequecy List" (their spelling), and the
+        // column header under it says `FRE STATION … UTC`, which is what the
+        // parser itself looks for — so a file saved without its first line is
+        // still recognised as Aoki's.
+        let aoki_head = head.contains("Frequecy List")
+            || head.contains("Frequency List")
+            || (head.contains("STATION") && head.contains("UTC"));
+        if aoki_head {
+            (S::Aoki, aoki_season_from_path(path).unwrap_or_else(|| format!("xt{ours}")))
+        } else if head.contains("kHz:") && head.contains(';') {
+            (S::Eibi, ours)
+        } else {
+            return Err(format!(
+                "{} is not a schedule this program knows: an Aoki file is the \
+                 .zip Aoki publishes or the .txt from inside it, and an EiBi file is \
+                 its sked .csv.",
+                path.display()
+            ));
+        }
+    };
+
+    // Read it exactly the way the cache is read, so a file that would not work
+    // from the cache does not look fine here and fail after the restart.
+    let text = cached_text_from_bytes(source, &season, &bytes)?;
+    let stations =
+        sdroxide_types::broadcast::parse_from(source, &text).map_err(|e| e.to_string())?;
+    if stations.len() < MIN_SCHEDULE_ROWS {
+        return Err(format!(
+            "{} parses to {} transmissions, which is not a schedule — a truncated \
+             download or the wrong file",
+            path.display(),
+            stations.len()
+        ));
+    }
+
+    let cache = broadcast_cache_path_for(&season, source).map_err(|e| e.to_string())?;
+    if let Some(dir) = cache.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    fs::write(&cache, &bytes).map_err(|e| e.to_string())?;
+    // **One Aoki file, so the reader cannot pick the stale one.** The cache is
+    // read by asking what Aoki files are on disk and taking the newest by name;
+    // a season named with a letter that sorts below last year's would lose to it
+    // and the import would look like it did nothing.
+    if source == S::Aoki
+        && let Some(dir) = cache.parent()
+        && let Ok(entries) = fs::read_dir(dir)
+    {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p != cache
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("aoki-") && n.ends_with(".txt"))
+            {
+                let _ = fs::remove_file(p);
+            }
+        }
+    }
+    info!(
+        "imported the {season} {source:?} broadcast schedule from {}: {} transmissions",
+        path.display(),
+        stations.len()
+    );
+    Ok(ImportedSchedule { source, season, stations: stations.len() })
+}
+
+/// The season an Aoki file names itself with: `xta26` for `xta26.zip`, `b26` for
+/// `ncb26.txt`, and nothing when the name says nothing (`schedule.zip`), which
+/// leaves the caller to fall back to the season we are in.
+fn aoki_season_from_path(path: &std::path::Path) -> Option<String> {
+    let stem = path.file_stem()?.to_str()?;
+    let clean: String = stem
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(8)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let named = clean.starts_with("xt") || clean.starts_with("nc") || clean.starts_with("b2");
+    (named && clean.chars().any(|c| c.is_ascii_digit())).then_some(clean)
 }
 
 /// HFCC's cached package, unpacked and parsed.

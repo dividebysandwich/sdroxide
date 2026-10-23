@@ -307,13 +307,25 @@ impl SdroxideApp {
 
     /// With ALL on, a favourite is named wherever it sits on the dial; without
     /// it the ±1 kHz gate applies to every broadcast station.
+    ///
+    /// `every` is the operator's own preference — [`UiSettings::
+    /// broadcast_labels_all`](sdroxide_types::UiSettings::broadcast_labels_all),
+    /// switched from the SPOTS window — and it names **everything** the
+    /// schedule has on air now, which is the whole-band view for someone
+    /// browsing rather than listening. It is passed in rather than read here
+    /// so the two halves stay a pure function of the dial, the favourites and
+    /// the choice.
     pub(in crate::app) fn broadcast_visible_at(
         dial_hz: f64,
         station_hz: f64,
         call: &str,
         favs: &[String],
         all: bool,
+        every: bool,
     ) -> bool {
+        if every {
+            return true;
+        }
         if all && favs.iter().any(|n| n == call) {
             return true;
         }
@@ -396,13 +408,25 @@ impl SdroxideApp {
         // A band panel already labels a couple of dozen stations at once, and on
         // 11 m that is a wall of names over the passband you are trying to read.
         // One name, for the thing you are listening to.
+        //
+        // **The category chip still owns whether broadcasters are shown at
+        // all.** This branch used to return before that check, so the BC chip
+        // was the one chip in the row that did nothing — a control that cannot
+        // do the thing it names is a bug here whatever the default is. And the
+        // operator's own preference (`broadcast_labels_all`, on the SPOTS
+        // window) chooses between the tuned-only rule and the whole band, which
+        // is the choice bebepip's rule deserves to be.
         if s.kind == SpotKind::Broadcast {
+            if !self.view.spot_kinds_shown[SpotKind::Broadcast.index()] {
+                return false;
+            }
             return Self::broadcast_visible_at(
                 self.state.rx_freq_hz(),
                 s.freq_hz,
                 &s.call,
                 &self.broadcast_favs,
                 self.broadcast_all,
+                self.ui_settings.broadcast_labels_all,
             );
         }
         if !self.view.spot_kinds_shown[s.kind.index()] {
@@ -724,6 +748,32 @@ impl SdroxideApp {
             {
                 self.spot_search.clear();
             }
+            // **What the waterfall names.** The tuned-only rule is bebepip's and
+            // it stays the default, but it is a preference and this is where an
+            // operator looking at the live band comes to change it. It sits on
+            // this row rather than among the category chips because that row is
+            // already at its width — the last chip added there shoved ⚙ SETUP
+            // out of the window.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let all = self.ui_settings.broadcast_labels_all;
+                let label = if all { "BC ALL" } else { "BC TUNED" };
+                if crate::chrome::chip(ui, all, label)
+                    .on_hover_text(
+                        "Which broadcasters the **waterfall** names.\n\n\
+                         **BC TUNED** is the default and bebepip's rule: the name on the \
+                         station you are tuned to, and nothing else — a band labelled end to \
+                         end is a wall of names over the passband you are trying to read.\n\n\
+                         **BC ALL** names every station the schedule has on air now, wherever \
+                         it sits, which is what you want while browsing a band rather than \
+                         listening to one station. It says nothing about whether the BC chip \
+                         above shows broadcasters at all.",
+                    )
+                    .clicked()
+                {
+                    self.ui_settings.broadcast_labels_all = !all;
+                    crate::app::persist::persist_ui_settings(&self.ui_settings);
+                }
+            });
         });
         if let Some(s) = &self.net_status {
             ui.label(RichText::new(s).size(11.0).color(crate::theme::gray(150)));
@@ -863,6 +913,7 @@ mod broadcast_only_the_tuned_tests {
                 9_582_000.0,
                 "BBC World Service",
                 &favs,
+                false,
                 false
             ),
             "2 kHz off, ALL off: unnamed"
@@ -875,7 +926,14 @@ mod broadcast_only_the_tuned_tests {
         let dial = 9_580_000.0;
         let favs = vec!["BBC World Service".to_string()];
         assert!(
-            SdroxideApp::broadcast_visible_at(dial, 9_582_000.0, "BBC World Service", &favs, true),
+            SdroxideApp::broadcast_visible_at(
+                dial,
+                9_582_000.0,
+                "BBC World Service",
+                &favs,
+                true,
+                false
+            ),
             "2 kHz off, ALL on, favourite: named"
         );
     }
@@ -886,8 +944,48 @@ mod broadcast_only_the_tuned_tests {
         let dial = 9_580_000.0;
         let favs: Vec<String> = Vec::new();
         assert!(
-            !SdroxideApp::broadcast_visible_at(dial, 9_582_000.0, "BBC World Service", &favs, true),
+            !SdroxideApp::broadcast_visible_at(
+                dial,
+                9_582_000.0,
+                "BBC World Service",
+                &favs,
+                true,
+                false
+            ),
             "non-favourite off the dial stays unnamed"
+        );
+    }
+
+    /// **BC ALL names the band, which is the whole point of it.**
+    ///
+    /// The tuned-only rule is right for a listener on one station and wrong for
+    /// one browsing a band, and the operator who reported it wants both without
+    /// having to star the entire schedule first — which is what the old answer
+    /// was and is why this exists. `every` ignores the dial, the favourites and
+    /// the window; it is the preference, and nothing else about a broadcaster
+    /// can keep it off the waterfall.
+    #[test]
+    fn every_broadcaster_is_named_when_the_operator_asks_for_the_band() {
+        let dial = 9_580_000.0;
+        let favs: Vec<String> = Vec::new();
+        for hz in [9_582_000.0, 6_070_000.0, 15_490_000.0] {
+            assert!(
+                SdroxideApp::broadcast_visible_at(dial, hz, "Any station", &favs, false, true),
+                "{hz} Hz is a broadcaster and BC ALL is on, so it is named"
+            );
+        }
+        // And the tuned-only rule is untouched when it is off: the same call
+        // with the preference off names one station, not three.
+        assert!(
+            !SdroxideApp::broadcast_visible_at(
+                dial,
+                6_070_000.0,
+                "Any station",
+                &favs,
+                false,
+                false
+            ),
+            "BC TUNED is still one station"
         );
     }
 }

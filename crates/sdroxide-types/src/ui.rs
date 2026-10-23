@@ -1222,6 +1222,21 @@ pub struct UiSettings {
     /// before the choice existed.
     #[serde(default)]
     pub broadcast_scope: BroadcastScope,
+    /// **Which broadcasters the waterfall names**: the one the dial is on, or
+    /// every station the schedule has on air now.
+    ///
+    /// The tuned-only rule is bebepip's (`#69`) and it is the default: one name,
+    /// for the thing you are listening to, rather than a wall of names over the
+    /// passband. It is also a preference, and the operator who asked for it
+    /// knows better than the default does when he is browsing a band instead of
+    /// listening to one station — so the choice sits on the SPOTS window, beside
+    /// the BC chip that decides whether broadcasters are shown at all.
+    ///
+    /// Off the waterfall this changes nothing: the list, the map and the
+    /// SCHEDULE window read [`Self::broadcast_scope`], which is a different
+    /// question (how far from the dial a *screen* may look).
+    #[serde(default)]
+    pub broadcast_labels_all: bool,
     /// How the **survey maps** are painted — the aircraft picture today, and
     /// the shipping and datalink ones if they take it up.
     ///
@@ -1637,6 +1652,7 @@ impl Default for UiSettings {
             panadapter_detached_legacy: false,
             panadapter_window_legacy: None,
             broadcast_scope: BroadcastScope::default(),
+            broadcast_labels_all: false,
             survey_map_style: MapStyle::default(),
             classic_ui: false,
             classic_sections: String::new(),
