@@ -8,8 +8,10 @@
 > [`MODE-PHASE-3B-PROMPT.md`](MODE-PHASE-3B-PROMPT.md)) are the record of the PSK
 > work, which is done.
 >
-> **State after phase 4, day 1:** `main` is local and unpushed, `PROTO_VERSION`
-> **228** (THOR's `thor_reverse`). `cargo check --workspace --all-targets` is silent,
+> **State after phase 4, day 1:** `PROTO_VERSION` was **228** (THOR's
+> `thor_reverse`) then and is **234** now (the waterfall's broadcast-labels key,
+> v234; before it, mode work took it to 233). `main` was local and unpushed at
+> the time of writing and is pushed now. `cargo check --workspace --all-targets` is silent,
 > `cargo fmt` is clean on everything touched, and the dsp/digi/types/ui/proto tests
 > are green.
 >
@@ -239,6 +241,14 @@ font.
 
 ### THOR — none decode
 
+> **Superseded (2026-10-23).** These two tables are the *first pass*, before the
+> program was moved from the second IFK receiver to `ifk::IfkRx` and THOR's four
+> faults were found (see "Phase 4", below). **THOR reads fourteen of fifteen
+> variants and DominoEX six of nine**, re-measured today with
+> `IFK_ONLY=THOR8,THOR22,THOR56,DOMX11,DOMEX8 … the_corpus_ifk_samples_are_measured`
+> — every one of those five returns **4/4 words**. The tables are kept as the
+> record of what the first port did, not as the state.
+
 The OnAir IFK port is in `ifk.rs`. Every sample was tried at five centres and both polarities; no text. The tone trace shows the IFK steps being measured but the resulting nibble stream does not match fldigi's, so one convention (the half-spacing tone offset or the two-slice carrier pair) is still wrong. Three attempts made per mode: baud/centre sweep, both polarities, and a start past the previous transmission's tail.
 
 | mode | state | measurement |
@@ -260,6 +270,8 @@ The OnAir IFK port is in `ifk.rs`. Every sample was tried at five centres and bo
 | THOR100 | **does not decode** | 0/4 words at 1670–1790 Hz, both polarities; the port's step trace runs. |
 
 ### DominoEX — none decode
+
+> **Superseded too** — see the note above: six of the nine read their text now.
 
 Same port and the same trace, all nine samples; DominoEX has no FEC to hide behind, so the step measurement itself is the fault to chase next.
 
