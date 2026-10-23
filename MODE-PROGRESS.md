@@ -1241,73 +1241,104 @@ transmitter that is the touch-tone specification rather than one of ours),
 `noise_does_not_produce_digits`, `a_held_key_is_one_digit`, and
 `a_dtmf_key_press_reads_through_the_controller`.
 
-## The table — every mode we ship, as it stands (2026-10-22)
+## The table — every mode we carry, as it stands (2026-10-23)
 
-The brief's deliverable, written now because the phase is long and the state should
-be readable without reading the journal. It is **not final** — item 4 is unfinished
-— and every row carries the measurement, not a promise.
+The brief's deliverable, now covering **everything the program ships** rather than
+the families this phase touched. Every row carries the measurement or says plainly
+that there is none; `—` in `vendored` means the code is ours.
 
-`rx`: `no` · `loopback` (our transmitter into our receiver) · `recording` (its own
-corpus sample reads) · `air` (an off-air capture or a working station).
-`tx`: `no` · `loopback` · `recording` · `air` (**another station or program copied
-us** — the only one that proves interop).
+`rx`: `no` · `loopback` (our own transmission into our own receiver) ·
+`recording` (its own corpus/off-air sample reads) · `air` (a real station or
+signal). `tx`: `no` · `loopback` · `recording` · `air` (**another station or
+program copied us** — the only one that proves interop).
 
-### The families this phase is about
+### Voice, broadcast and the demodulators
 
 | mode | rx | tx | vendored | tested |
 |---|---|---|---|---|
-| THOR4/5/8/11/16/22/25x4/32/50x1/50x2/56/100 | recording | loopback | — | 4/4 words each, 11 of 15 variants |
-| THOR25, THOR44 | no | loopback | — | their own transmissions read 439/440 steps; the corpus samples read nothing at any centre |
-| THORM | no | loopback | — | 2 symbols/s cannot carry the text in a 56 s sample |
-| DOMEX8, DOMX11, DOMX16, DOMX22, DOMX44, DOMX88 | recording | no | — | 4/4 words each |
-| DOMEX5 | recording | no | — | 2/4; DOMEX4 1/4; DOMEXM 0 (too slow for the sample) |
-| MFSK4/16/22/31/32/64/64L/128/128L | recording | loopback | — | 9/9 words; MFSK11 loses its first word, MFSK8 one span of its sample |
-| Contestia (18 of 19) | recording | loopback | Jalocha `MFSK_Receiver`, GPL-3, `crates/sdroxide-olivia` | 3/3 words; 64/500 never reads |
-| Olivia (14 of 18) | **air** | loopback | Jalocha `MFSK_Receiver`, GPL-3, `crates/sdroxide-olivia` | two off-air captures read their known text (Avalon 16/500, Wikipedia 32/1000) |
-| MT63-2KS | recording | loopback | — | 3/3 words, batch and live |
-| MT63-2KL | recording | loopback | — | 2/2 words, with a few characters one Hadamard row high (case errors) |
-| MT63-500S | recording | loopback | — | 4/4 words, live receiver |
-| MT63-1KS/1KL/500L | no | loopback | — | not offered: the live lock needs a centre search that trades one variant for another |
-| BPSK125/250/500, QPSK125/250/500 | recording | loopback | — | 3/3 words |
-| BPSK31/63, QPSK31/63 | recording | loopback | — | 2/3 words (31: 1/3) — the lock time costs the head |
-| BPSK1000 | recording | loopback | — | 2/3 — reads from a second in |
-| BPSK63F + PSK125R/250R/500R/1000R | recording | no | — | **394/394 bits** against the known text |
-| PSK125C12/250C6/500C2/800C2 + 14 RC variants | recording | no | — | 3/3 words each |
-| PSK500C4, PSK1000C2, PSK500RC4 | no | no | — | the recordings carry 0.84/0.85/0.83 of the text's bits; a clean bank measures 1.000 |
-| PSK63RC32, PSK250RC2 | recording | no | — | 2/3 — late lock |
-| PSK250RC5, PSK500RC3 | recording | no | — | 1/3 — loses lock mid-message |
-| RTTY 45/50/75 | recording | loopback | — | 10/10 words at 45.45 baud, 170 Hz |
-| Hell (HELLX5, FELDHELL) | recording | loopback | — | correlation 0.87 and 0.83 against fldigi's own glyphs |
-| Hell (HELL80, SLOWHELL, FSKH105/245, HELLX9) | recording | loopback | — | 0.33–0.48 — reads, weak |
+| LSB, USB, DIGU, DIGL, DSB | air | air | — | the radio's own modulator; the bench pair |
+| AM, SAM, NFM, WFM | air | air | — | as above; WFM carries RDS/RBDS |
 | CW | recording | loopback + bench | — | 9/10 words; keyer benched on the rig, iambic A and B |
-| DTMF | loopback | no | — | all 16 keys once each from the touch-tone specification; noise silent |
-| 8PSK125/250/500/1000 | **no** | no | — | the synthetic reads at 125 baud; the recordings read at no baud or centre, and measure 20–46 Hz wide where the mode is 125 Hz |
+| C-QUAM (AM stereo) | air | no | — | receive-only by capability; decodes a real stereo station on the bench |
+| ISB | air | no | — | receive-only by capability — two modulators into one amplifier is not a radio we drive |
+| SPEC (spectrum only) | air | no | — | a display mode; no modulation of its own |
+| DRM | air | no | `vendor/dream` | a real broadcast decodes |
+| HD Radio | recording | no | `nrsc5` + faad2 | the sample decodes; **no HD station has been heard here** |
 
-### Already shipped and outside this phase
+### Keyboard and text modes
 
 | mode | rx | tx | vendored | tested |
 |---|---|---|---|---|
-| FT8 / FT4 / FT2 / JS8 | air | air | `mfsk-core` 0.11 | contacts made on the air |
-| WSPR | air | air | `mfsk-core` | spots on the air |
-| JT65 / JT9 / FST4 / Q65 / MSK144 / FSK441 | recording | loopback (FSK441 loops the over) | `mfsk-core` | corpus recordings |
-| SSTV / SSTV-FM / RIFP / RF Paint | air | air | — | field-confirmed by a radio group (2026-10-21) |
-| WEFAX | air | no | — | a real off-air chart, 2153 lines |
-| DAB / DAB+ | air | no | `dabradio` (MIT) + faad2 | field-confirmed, PlutoSDR at 2.5 Msps |
-| DRM | air | no | `vendor/dream` | decodes a real broadcast |
-| HD Radio | recording | no | `nrsc5` + faad2 | no decodable HD station has been heard here |
-| RADE | air | air | `vendor/rade_c` | digital-voice contacts on the air |
-| ADS-B / AIS / VDL2 / HFDL / ACARS / DSC / NAVTEX | air | no | HFDL: `xng` (MIT/Apache) | real traffic on each |
-| Packet / APRS / AtChat | air | air | — | on the air |
-| JTTY / UVPacket / ALE | recording / no / no | loopback / no / no | — | their own gates |
+| BPSK31/63/125/250/500/1000, QPSK31/63/125/250/500 | recording | loopback | — | 3/3 words at 125/250/500; 31 and 63 lose a word; 1000 reads from a second in |
+| BPSK63F, PSK125R/250R/500R/1000R | recording | no | — | **394/394 bits** against the known text |
+| PSK125C12/250C6/500C2/800C2 + 14 `RC` variants | recording | no | — | 3/3 words each |
+| PSK500C4, PSK1000C2, PSK500RC4 | no | no | — | the recordings carry 0.84/0.85/0.83 of the text's bits; a clean bank measures 1.000 |
+| PSK63RC32, PSK250RC2, PSK250RC5, PSK500RC3 | recording | no | — | 1–2 of 3 words: late lock or a lost lock mid-message |
+| Olivia (18 variants) | air | loopback | Jalocha `MFSK_Receiver`, GPL-3, `crates/sdroxide-olivia` | 14/18 corpus; two off-air captures read their known text |
+| Contestia (19 variants) | recording | loopback | Jalocha `MFSK_Receiver`, GPL-3 | 18/19 — only 64/500 never reads |
+| THOR4/5/8/11/16/22/32 (the six chips; 15 in the table) | recording | loopback | — | 4/4 words in 11 of 15 variants; THOR4 and THORM are too slow for their samples, THOR25/44 read nothing (samples suspect) |
+| DominoEX 4/5/8/11/16/22/MICRO/44/88 | recording | no | — | 6/9 whole; DOMEX5 2/4, DOMEX4 1/4, DOMEXM 0 |
+| MFSK4/8/11/16/22/31/32/64/64L/128/128L | recording | loopback | — | 9/11 whole; MFSK8 loses one span of its sample, MFSK11 its first word |
+| MT63-2KS, 2KL, 500S | recording | loopback | — | 2KS and 500S whole, 2KL with a few characters one Hadamard row high |
+| MT63-1KS/1KL/500L | no | loopback | — | not offered: the live lock needs a centre search that trades one variant for another |
+| RTTY 45/50/75 | recording | loopback | — | 10/10 words at 45.45 baud, 170 Hz shift |
+| Hell (HELLX5, FELDHELL) | recording | loopback | — | correlation 0.87 / 0.83 against fldigi's own glyphs |
+| Hell (HELL80, SLOWHELL, FSKH105/245, HELLX9) | recording | loopback | — | 0.33–0.48 — reads, weak |
+| DTMF | loopback | no | — | all 16 keys once each from the touch-tone specification; noise silent |
+| FSQ | no | loopback | — | the alphabet is fldigi's; the one corpus sample has never read back |
 | ARDOP | recording | no | — | three `ardopcf` recordings decode byte-exactly |
 | STANAG 4285 | recording | no | — | the instrument reads real idle captures; the Annex E payload is proven on a loopback only |
-| FSQ | no | loopback | — | the alphabet is fldigi's; the one corpus sample has never read back |
+| AtChat | air | air | — | the NET mode, in use on the bench |
+| JTTY | recording | loopback | — | its own golden-vector gate |
+| ALE | in flight | in flight | — | see [`ALE-HANDOVER.md`](ALE-HANDOVER.md) — mid-flight, not claimed |
+| 8PSK125/250/500/1000 | **no** | no | — | 0/4: the slicer is proven on a synthetic; the recordings measure 20–46 Hz wide where the mode is 125 Hz |
 
-### Not started
+### Slotted and weak-signal
 
-`OFDM500F`/`OFDM750F`/`OFDM3500`, `THROB1/2/4`, `SCAMPFSK`/`SCAMPOOK` (six
-recordings), `RS_ID`/`CALL_ID`, and transmit for ARDOP, STANAG 4285 and the coded
-PSK families.
+| mode | rx | tx | vendored | tested |
+|---|---|---|---|---|
+| FT8, FT4, FT2, JS8 | air | air | `mfsk-core` 0.11 | contacts made on the air; FT8 runs signal subtraction |
+| WSPR | air | air | `mfsk-core` 0.11 | spots uploaded from the bench |
+| JT65, JT9, FST4, Q65, MSK144 | recording | no | `mfsk-core` 0.11 | corpus recordings; transmit not wired in this build |
+| FSK441 | recording | loopback | ported from FSK441-PLUS (MIT) | a real meteor ping from YO2NAA decodes |
+| PI4 | no | no | — | a decoder for the beacon network's signal, not a beacon |
+
+### Images
+
+| mode | rx | tx | vendored | tested |
+|---|---|---|---|---|
+| SSTV, SSTV-FM | air | air | — | **field-confirmed by a radio group** (2026-10-21) — do not touch |
+| RIFP | air | air | — | as above |
+| RF Paint | air | air | — | the bench |
+| WEFAX | air | no | — | a real off-air chart, 2153 lines |
+
+### Wideband lanes — receive only, by nature
+
+| mode | rx | tx | vendored | tested |
+|---|---|---|---|---|
+| ADS-B (1090 MHz) | air | no | — | real aircraft on the bench |
+| AIS (161.975/162.025 MHz) | air | no | — | real traffic |
+| VDL2 | air | no | — | real traffic; 14 channels from one lane |
+| HFDL | air | no | `xng` (MIT/Apache) | a real ground-station squitter |
+| DAB / DAB+ | air | no | `dabradio` (MIT) + faad2 | **field-confirmed on a PlutoSDR** — do not touch |
+| ACARS | recording | no | — | `acarsdec`'s own `test.wav` decodes a real frame |
+| NAVTEX | air | no | — | reads the `SITOR-B` sample from the point it locks |
+| DSC | air | no | — | the MF/HF distress format decodes |
+
+### Packet and networking
+
+| mode | rx | tx | vendored | tested |
+|---|---|---|---|---|
+| PACKET (VHF AX.25), PACKET-HF | air | air | — | the bench; KISS over the radio's own link |
+| APRS | air | air | — | the bench |
+| UVPacket | no | no | — | receive-only; the burst format decodes a generated frame |
+
+### The count
+
+61 `Mode` variants, of which **38 can key a transmitter** and 23 cannot (checked by
+`is_rx_only`, and `the_lanes_with_no_transmitter_do_not_offer_one` pins the ones
+whose own docs say they have none). 32 coded-PSK variants and 9 DominoEX variants
+are one `Mode` each.
 
 ## Needs me
 

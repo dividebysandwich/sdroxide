@@ -1139,6 +1139,15 @@ impl Mode {
                 | Mode::DominoEx
                 // DTMF is decoded and has no keypad to send from yet.
                 | Mode::Dtmf
+                // Two broadcast lanes that were never *in* this list and never
+                // should have offered a transmit UI. DRM's own doc says "no
+                // transmit, no QSO, no transcript"; HFDL's says "has neither
+                // audio nor a transmitter". Both were showing the strip's
+                // transmit controls, which is the house rule's "a control that
+                // cannot do the thing must say so" — found while writing the
+                // mode table, where the two columns disagreed with the docs.
+                | Mode::Drm
+                | Mode::Hfdl
         )
     }
 
@@ -2697,6 +2706,29 @@ mod tests {
         assert!(Mode::Rtty.holds_standard_tones());
         assert!(!Mode::Psk.holds_standard_tones());
         assert!(!Mode::Ft8.holds_standard_tones());
+    }
+
+    /// **A mode whose own doc says it has no transmitter must not offer one.**
+    ///
+    /// `is_rx_only` is what greys the strip's transmit controls and what makes
+    /// the engine refuse a key-up, so a mode missing from it shows PTT, CALL CQ
+    /// and a TX level for a radio path that does not exist. DRM's doc comment
+    /// says "no transmit, no QSO, no transcript" and HFDL's says "has neither
+    /// audio nor a transmitter"; both were absent from the list until the mode
+    /// table was written and the two columns disagreed with the docs.
+    #[test]
+    fn the_lanes_with_no_transmitter_do_not_offer_one() {
+        for mode in [Mode::Drm, Mode::Hfdl, Mode::Wefax, Mode::Adsb, Mode::Vdl2, Mode::Ais] {
+            assert!(
+                mode.is_rx_only(),
+                "{mode:?} says it has no transmitter and offers a transmit UI"
+            );
+        }
+        // The control case: the modes beside them in the picker do transmit, so
+        // this is not "everything is receive only".
+        for mode in [Mode::Usb, Mode::Psk, Mode::Rtty, Mode::Ft8, Mode::Ale] {
+            assert!(!mode.is_rx_only(), "{mode:?} stopped transmitting");
+        }
     }
 
     /// A mode missing from [`Mode::ALL`] compiles, persists and decodes — and
