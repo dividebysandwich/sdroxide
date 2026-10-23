@@ -133,6 +133,49 @@ p.lead { margin: 0 0 18px; color: #c6cdd5; }
 }
 
 .card h4 { margin: 0 0 7px; font-size: 16px; }
+
+/* ── the mode table ─────────────────────────────────── */
+
+.modes-wrap { overflow-x: auto; margin-top: 14px; }
+
+table.modes {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+table.modes th, table.modes td {
+  text-align: left;
+  vertical-align: top;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+}
+table.modes th {
+  color: var(--brown-lit);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  border-bottom-color: var(--brown);
+  white-space: nowrap;
+}
+table.modes td:first-child { color: var(--ink); }
+table.modes td:nth-child(2), table.modes td:nth-child(3) { white-space: nowrap; }
+table.modes td { color: var(--dim); }
+table.modes b { color: var(--ink); font-weight: 600; }
+/* air is the strongest evidence, so it reads green; recording and loopback are
+   real but narrower, so they take the link blue; no is a plain absence, not a
+   fault, so it stays grey rather than the red the build check uses. */
+table.modes .yes { color: #7ee08a; }
+table.modes .no { color: #6e7681; }
+table.modes .mid { color: var(--blue); }
+table.modes caption {
+  caption-side: top;
+  text-align: left;
+  color: var(--dim);
+  font-size: 12.5px;
+  padding: 0 0 8px;
+}
 .card p { margin: 0; font-size: 14.5px; color: var(--dim); }
 
 ul.tight { margin: 0; padding-left: 19px; }
@@ -229,6 +272,7 @@ footer a { color: var(--dim); text-decoration: underline; }
       <a href="#which">Which build am I?</a>
       <a href="#what">What's different</a>
       <a href="#11m">11 m</a>
+    <a href="#modes">Modes</a>
       <a href="#get">Download</a>
       <a href="#help">Get help</a>
       <a href="https://github.com/madmedicnl/sdroxide-brown/releases/latest">Releases</a>
@@ -296,7 +340,7 @@ footer a { color: var(--dim); text-decoration: underline; }
     <h4>Run this and read the line</h4>
     <code>sdroxide --version</code>
     <p style="margin:0">
-      <span class="yes">SDR Oxide Brown &hellip; 2.0.12_brown</span> &nbsp;← Brown, this site<br>
+      <span class="yes">SDR Oxide Brown &hellip; 2.0.13_brown</span> &nbsp;← Brown, this site<br>
       <span class="no">SDR Oxide &hellip; 1.6.10</span> &nbsp;← upstream, a different program
     </p>
     <p style="margin:11px 0 0;color:#9198a1;font-size:14px">
@@ -348,6 +392,84 @@ footer a { color: var(--dim); text-decoration: underline; }
     <figcaption>27.265&nbsp;MHz, 11&nbsp;m FT8 &mdash; station&nbsp;26. The callsigns are the
     community's own numbering, and the band and mode selector is docked beside the waterfall.</figcaption>
   </figure>
+</section>
+
+<section id="modes">
+  <h3>Every mode it carries</h3>
+  <p class="lead">The whole list, counted. <b>(n)</b> is how many variants the program
+  offers for that mode. <b>rx</b> is how it was proven to receive — <span class="yes">air</span>
+  for a real station, <code>recording</code> for its own sample, <code>loopback</code> for our
+  own transmitter. <b>tx</b> is how it was proven to transmit — <span class="yes">air</span>
+  only where another station or program copied us.</p>
+
+  <div class="modes-wrap">
+  <table class="modes">
+    <caption>A variant is a speed, a tone count, a constellation or an interleave — whatever
+    you pick on the mode's own chip row. 61 modes, 38 of which can key a transmitter.</caption>
+    <thead>
+      <tr><th>mode</th><th>rx</th><th>tx</th><th>vendored</th><th>tested</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>LSB, USB, DIGU, DIGL, DSB <b>(1 each)</b></td><td class="yes">air</td><td class="yes">air</td><td>—</td><td>the radio's own modulator; bench pair</td></tr>
+      <tr><td>AM, SAM, NFM, WFM <b>(1 each)</b></td><td class="yes">air</td><td class="yes">air</td><td>—</td><td>as above; FM carries RDS/RBDS</td></tr>
+      <tr><td>CW <b>(1)</b></td><td class="mid">recording</td><td class="mid">loopback + bench</td><td>—</td><td>9/10 words; keyer benched iambic A and B</td></tr>
+      <tr><td>C-QUAM AM stereo <b>(1)</b></td><td class="yes">air</td><td class="no">no</td><td>—</td><td>receive-only by capability</td></tr>
+      <tr><td>ISB <b>(1)</b></td><td class="yes">air</td><td class="no">no</td><td>—</td><td>receive-only: two modulators into one amplifier</td></tr>
+      <tr><td>SPEC <b>(1)</b></td><td class="yes">air</td><td class="no">no</td><td>—</td><td>display only</td></tr>
+      <tr><td>DRM <b>(1)</b></td><td class="yes">air</td><td class="no">no</td><td>dream</td><td>a real broadcast decodes</td></tr>
+      <tr><td>HD Radio <b>(1)</b></td><td class="mid">recording</td><td class="no">no</td><td>nrsc5 + faad2</td><td>sample decodes; no HD station heard here yet</td></tr>
+
+      <tr><td>PSK, BPSK and QPSK <b>(12)</b></td><td class="mid">recording</td><td class="mid">loopback</td><td>—</td><td>3/3 words at 125/250/500; 31 and 63 lose a word; 1000 reads from a second in</td></tr>
+      <tr><td>PSK coded — BPSK63F and the R set <b>(5)</b></td><td class="mid">recording</td><td class="no">no</td><td>—</td><td><b>394/394 bits</b> against the known text</td></tr>
+      <tr><td>PSK coded — the C and RC banks <b>(18)</b></td><td class="mid">recording</td><td class="no">no</td><td>—</td><td>3/3 words each for 14 of them; 4 read 1–2 of 3</td></tr>
+      <tr><td>PSK coded — the wide banks <b>(3)</b></td><td class="no">no</td><td class="no">no</td><td>—</td><td>their recordings carry 0.83–0.85 of the text's bits against 1.000 clean</td></tr>
+      <tr><td>Olivia <b>(30)</b></td><td class="yes">air</td><td class="mid">loopback</td><td>Jalocha engine, GPL-3</td><td>18 measured: two off-air captures read their known text</td></tr>
+      <tr><td>Contestia <b>(25)</b></td><td class="mid">recording</td><td class="mid">loopback</td><td>Jalocha engine, GPL-3</td><td>19 measured: 18 whole</td></tr>
+      <tr><td>THOR <b>(6 chips, 15 decoded)</b></td><td class="mid">recording</td><td class="mid">loopback</td><td>—</td><td>11 of 15 variants whole</td></tr>
+      <tr><td>DominoEX <b>(9)</b></td><td class="mid">recording</td><td class="no">no</td><td>—</td><td>6 of 9 whole</td></tr>
+      <tr><td>MFSK <b>(11)</b></td><td class="mid">recording</td><td class="mid">loopback</td><td>—</td><td>9 of 11 whole</td></tr>
+      <tr><td>MT63 <b>(3 offered, 6 decoded)</b></td><td class="mid">recording</td><td class="mid">loopback</td><td>—</td><td>2KS and 500S whole; 2KL a few characters high</td></tr>
+      <tr><td>RTTY <b>(3)</b></td><td class="mid">recording</td><td class="mid">loopback</td><td>—</td><td>10/10 words at 45.45 baud, 170 Hz shift</td></tr>
+      <tr><td>Hellschreiber <b>(7)</b></td><td class="mid">recording</td><td class="mid">loopback</td><td>—</td><td>two clean (0.87, 0.83 against fldigi's glyphs), five weak</td></tr>
+      <tr><td>DTMF <b>(16 keys)</b></td><td class="mid">loopback</td><td class="no">no</td><td>—</td><td>every key once from the touch-tone specification; noise silent</td></tr>
+      <tr><td>FSQ <b>(5 speeds)</b></td><td class="no">no</td><td class="mid">loopback</td><td>—</td><td>alphabet is fldigi's; the one sample has never read back</td></tr>
+      <tr><td>ARDOP <b>(1)</b></td><td class="mid">recording</td><td class="no">no</td><td>—</td><td>three recordings by the reference modem decode byte-exactly</td></tr>
+      <tr><td>STANAG 4285 <b>(3 uncoded rates)</b></td><td class="mid">recording</td><td class="no">no</td><td>—</td><td>idle captures fold at 0.85 against a 0.14 null; the payload is loopback-proven</td></tr>
+      <tr><td>AtChat <b>(1)</b></td><td class="yes">air</td><td class="yes">air</td><td>—</td><td>the NET mode, in use on the bench</td></tr>
+      <tr><td>JTTY <b>(1)</b></td><td class="mid">recording</td><td class="mid">loopback</td><td>—</td><td>its own golden-vector gate</td></tr>
+      <tr><td>ALE <b>(1)</b></td><td class="no">in flight</td><td class="no">in flight</td><td>—</td><td>mid-flight; not claimed</td></tr>
+
+      <tr><td>FT8, FT4, FT2, JS8 <b>(1 each)</b></td><td class="yes">air</td><td class="yes">air</td><td>mfsk-core 0.11</td><td>contacts made on the air</td></tr>
+      <tr><td>WSPR <b>(1)</b></td><td class="yes">air</td><td class="yes">air</td><td>mfsk-core 0.11</td><td>spots uploaded from the bench</td></tr>
+      <tr><td>JT65, JT9, FST4, Q65, MSK144 <b>(1 each)</b></td><td class="mid">recording</td><td class="no">no</td><td>mfsk-core 0.11</td><td>corpus recordings; transmit not wired in this build</td></tr>
+      <tr><td>FSK441 <b>(2 periods)</b></td><td class="mid">recording</td><td class="mid">loopback</td><td>FSK441-PLUS, MIT</td><td>a real meteor ping from YO2NAA decodes</td></tr>
+      <tr><td>PI4 <b>(1)</b></td><td class="no">no</td><td class="no">no</td><td>—</td><td>a decoder for the beacon network's signal, not a beacon</td></tr>
+
+      <tr><td>SSTV, SSTV-FM <b>(16 each)</b></td><td class="yes">air</td><td class="yes">air</td><td>—</td><td>field-confirmed by a radio group</td></tr>
+      <tr><td>RIFP <b>(1)</b></td><td class="yes">air</td><td class="yes">air</td><td>—</td><td>field-confirmed by a radio group</td></tr>
+      <tr><td>RF Paint <b>(1)</b></td><td class="yes">air</td><td class="yes">air</td><td>—</td><td>the bench</td></tr>
+      <tr><td>WEFAX <b>(2 LPM)</b></td><td class="yes">air</td><td class="no">no</td><td>—</td><td>a real off-air chart, 2153 lines</td></tr>
+
+      <tr><td>ADS-B <b>(1)</b></td><td class="yes">air</td><td class="no">no</td><td>—</td><td>real aircraft on the bench</td></tr>
+      <tr><td>AIS <b>(2 channels)</b></td><td class="yes">air</td><td class="no">no</td><td>—</td><td>real traffic</td></tr>
+      <tr><td>VDL2 <b>(14 channels)</b></td><td class="yes">air</td><td class="no">no</td><td>—</td><td>all fourteen channels from one lane</td></tr>
+      <tr><td>HFDL <b>(13 frequencies)</b></td><td class="yes">air</td><td class="no">no</td><td>xng, MIT/Apache</td><td>a real ground-station squitter</td></tr>
+      <tr><td>DAB / DAB+ <b>(1)</b></td><td class="yes">air</td><td class="no">no</td><td>dabradio, MIT + faad2</td><td>field-confirmed on a PlutoSDR at 2.5 Msps</td></tr>
+      <tr><td>ACARS <b>(1)</b></td><td class="mid">recording</td><td class="no">no</td><td>—</td><td>the reference decoder's own test recording decodes</td></tr>
+      <tr><td>NAVTEX <b>(3 channels)</b></td><td class="yes">air</td><td class="no">no</td><td>—</td><td>reads its sample from the point it locks</td></tr>
+      <tr><td>DSC <b>(2 bands)</b></td><td class="yes">air</td><td class="no">no</td><td>—</td><td>the MF/HF distress format decodes</td></tr>
+
+      <tr><td>PACKET, PACKET-HF <b>(1 each)</b></td><td class="yes">air</td><td class="yes">air</td><td>—</td><td>the bench, KISS over the radio's own link</td></tr>
+      <tr><td>APRS <b>(1)</b></td><td class="yes">air</td><td class="yes">air</td><td>—</td><td>the bench</td></tr>
+      <tr><td>UVPacket <b>(1)</b></td><td class="no">no</td><td class="no">no</td><td>—</td><td>receive-only; a generated frame decodes</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="margin-top:14px;color:#9198a1;font-size:13.5px">
+    Two honest gaps, rather than blank rows: <b>8PSK</b> is ported and tested against a
+    synthetic signal but reads none of its four recordings, so it does not ship; and
+    <b>ALE</b> is mid-flight. Everything else above either works or says what stopped it.
+  </p>
 </section>
 
 <section id="get">
