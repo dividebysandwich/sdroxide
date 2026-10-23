@@ -396,8 +396,8 @@ footer a { color: var(--dim); text-decoration: underline; }
 
 <section id="modes">
   <h3>Every mode it carries</h3>
-  <p class="lead">The whole list, counted. <b>(n)</b> is how many variants the program
-  offers for that mode. <b>rx</b> is how it was proven to receive — <span class="yes">air</span>
+  <p class="lead">The whole list, counted, as it stands for <b>2.1 Brown</b> &mdash; the
+  build in testing now. <b>(n)</b> is how many variants the program offers for that mode. <b>rx</b> is how it was proven to receive — <span class="yes">air</span>
   for a real station, <code>recording</code> for its own sample, <code>loopback</code> for our
   own transmitter. <b>tx</b> is how it was proven to transmit — <span class="yes">air</span>
   only where another station or program copied us.</p>
@@ -465,6 +465,16 @@ footer a { color: var(--dim); text-decoration: underline; }
     </tbody>
   </table>
   </div>
+  <div class="card" style="margin-top:16px">
+    <h4>New in 2.1 Brown</h4>
+    <p><b>THOR decodes real signals</b> for the first time &mdash; eleven of its fifteen
+    variants whole &middot; <b>MFSK, Contestia and MT63 transmit</b> &middot; fldigi's
+    <b>32 coded PSK waveforms</b> and <b>DominoEX</b> reach their own chips, and QPSK is
+    selectable at all for the first time &middot; <b>DTMF</b> decodes touch tones &middot;
+    the mode panel no longer draws its chips over each other, the frequency digits behave
+    with the mouse wheel in a digital mode, and the band menu's <b>LISTEN</b> tab can hide
+    the transmit controls and remembers that it did.</p>
+  </div>
   <p style="margin-top:14px;color:#9198a1;font-size:13.5px">
     Two honest gaps, rather than blank rows: <b>8PSK</b> is ported and tested against a
     synthetic signal but reads none of its four recordings, so it does not ship; and
@@ -474,7 +484,8 @@ footer a { color: var(--dim); text-decoration: underline; }
 
 <section id="get">
   <h3>Download</h3>
-  <p class="lead">Windows, macOS and Linux. A release each Friday, with a nightly in between.</p>
+  <p class="lead">Windows, macOS and Linux. Releases are cut when they are ready and
+  tested, not on a schedule &mdash; <b>2.1 Brown</b> is with the testers now.</p>
   <p style="margin:0 0 10px">
     <a class="btn" href="https://github.com/madmedicnl/sdroxide-brown/releases/latest">Latest release</a>
     <a class="btn ghost" href="https://github.com/madmedicnl/sdroxide-brown/releases">All releases</a>
