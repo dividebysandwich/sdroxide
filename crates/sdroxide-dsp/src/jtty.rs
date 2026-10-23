@@ -1265,19 +1265,27 @@ fn erf(x: f32) -> f32 {
     sign * y
 }
 
-/// Synthesize one JTTY frame's audio at [`JTTY_RATE`] — sync + coded symbols —
-/// for a tone sequence. This is the reference's `gen_jttywave`: the same
-/// GFSK-smoothed frequency ramp the mode is defined by, used here to test the
-/// receiver round-trip and available to callers that want transmit audio later.
+/// Synthesize JTTY audio at [`JTTY_RATE`] for a tone sequence — one frame's
+/// 59 tones, or a whole message's frames back to back. This is the reference's
+/// `gen_jttywave`: the GFSK-smoothed frequency ramp the mode is defined by,
+/// one continuous phase across every symbol, and a raised-cosine ramp over the
+/// first and last eighth of a symbol.
+///
+/// A message is synthesized in one call, as the reference does. Frames made
+/// one at a time restart the phase at each boundary, and with no ramp there
+/// that is a click every 1.888 s.
 #[allow(clippy::needless_range_loop)] // symbol/sample indices drive parallel arrays
 pub fn synthesize_frame(tones: &[u8], f0: f32) -> Vec<f32> {
     let nsps = JTTY_NSPS;
     let nsym = tones.len();
+    if nsym == 0 {
+        return Vec::new();
+    }
     let bt = 2.0f32;
     let mut dphi = vec![0.0f32; (nsym + 2) * nsps];
     let peak = TAU / nsps as f32;
     // Build the smoothed frequency ramp: each symbol's pulse spreads over
-    // three symbol windows.
+    // three symbol windows, centred on the middle one.
     let mut pulse = vec![0.0f32; 3 * nsps];
     for (i, p) in pulse.iter_mut().enumerate() {
         let tt = (i as f32 - 1.5 * nsps as f32) / nsps as f32;
@@ -1292,19 +1300,24 @@ pub fn synthesize_frame(tones: &[u8], f0: f32) -> Vec<f32> {
     // Dummy symbols at each end, matching the reference.
     for k in 0..2 * nsps {
         dphi[k] += peak * tones[0] as f32 * pulse[nsps + k];
-        let end = (nsym) * nsps + k;
-        if end < dphi.len() {
-            dphi[end] += peak * tones[nsym - 1] as f32 * pulse[k];
-        }
+        dphi[nsym * nsps + k] += peak * tones[nsym - 1] as f32 * pulse[k];
     }
-    // Convert phase increments to samples, offset by f0, starting 2 symbols in.
+    // Symbol `j`'s pulse peaks in window `j + 1`, so the audio is windows
+    // 1..=nsym: the dummy symbols either side are not sent. Starting a
+    // window later dropped the first sync tone and sent a dummy in its place.
     let mut out = Vec::with_capacity(nsym * nsps);
     let mut phi = 0.0f32;
-    let dt = 1.0 / JTTY_RATE as f32;
-    let base = TAU * f0 * dt;
-    for k in 2 * nsps..(nsym + 2) * nsps {
-        phi += base + dphi[k];
-        out.push(phi.cos());
+    let base = TAU * f0 / JTTY_RATE as f32;
+    for k in nsps..(nsym + 1) * nsps {
+        out.push(phi.sin());
+        phi = (phi + base + dphi[k]).rem_euclid(TAU);
+    }
+    let nramp = nsps / 8;
+    for i in 0..nramp {
+        let up = (1.0 - (TAU * i as f32 / (2 * nramp) as f32).cos()) / 2.0;
+        out[i] *= up;
+        let k = out.len() - nramp + i;
+        out[k] *= 1.0 - up;
     }
     out
 }
@@ -1753,6 +1766,38 @@ mod tests {
         let energies = payload_energies(&buf, &sync);
         let decoded = decode_tones(&energies, 32, 2).expect("payload decode");
         assert_eq!(decoded.payload, payload, "source bits round-tripped");
+    }
+
+    /// Symbol `j` of the synthesized audio is window `j`, as the reference's
+    /// `gen_jttywave` lays it out: the sync's first tone is the first thing
+    /// sent, not a window late with the dummy symbol in its place.
+    #[test]
+    fn each_symbol_sits_in_its_own_window() {
+        let payload = payload_from("0100100000010110100011011111011110");
+        let mut tones = Vec::new();
+        tones.extend_from_slice(&JTTY_SYNC);
+        tones.extend_from_slice(&encode_tones(&payload));
+        let audio = synthesize_frame(&tones, JTTY_BASE_HZ);
+        assert_eq!(audio.len(), tones.len() * JTTY_NSPS);
+        let c = analytic_signal(&audio);
+        let refs = tone_references(JTTY_BASE_HZ);
+        for (j, &want) in tones.iter().enumerate() {
+            let i0 = j * JTTY_NSPS;
+            let pow: Vec<f32> = refs
+                .iter()
+                .map(|row| {
+                    let mut z = Complex32::new(0.0, 0.0);
+                    for k in 0..JTTY_NSPS {
+                        z += c[i0 + k] * row[k].conj();
+                    }
+                    z.norm_sqr()
+                })
+                .collect();
+            let got = (0..4).max_by(|&a, &b| pow[a].total_cmp(&pow[b])).unwrap();
+            assert_eq!(got as u8, want, "symbol {j}");
+        }
+        // Ramped in and out: no step at either end of the burst.
+        assert!(audio[0].abs() < 1e-6 && audio[audio.len() - 1].abs() < 0.05);
     }
 
     /// The four tones sit where the reference puts them: at the audio centre

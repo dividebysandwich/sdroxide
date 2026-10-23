@@ -137,16 +137,14 @@ impl JttyController {
         // The modem synthesizes at the signal's audio centre, the same
         // 1500 Hz the receiver searches.
         let f0 = sdroxide_dsp::jtty::JTTY_BASE_HZ;
-        let mut at6 = Vec::new();
+        // The whole message is one waveform, as the reference sends it: one
+        // continuous phase across the frames and a ramp only at either end.
+        let mut tones = Vec::with_capacity(frames.len() * jtty::JTTY_FRAME_SYMBOLS);
         for p in &frames {
-            let coded = sdroxide_dsp::jtty::encode_tones(p);
-            let mut tones = Vec::with_capacity(
-                sdroxide_dsp::jtty::JTTY_SYNC_SYMBOLS + sdroxide_dsp::jtty::INFORMATION_BITS,
-            );
-            tones.extend_from_slice(&sdroxide_dsp::jtty::JTTY_SYNC);
-            tones.extend_from_slice(&coded);
-            at6.extend_from_slice(&sdroxide_dsp::jtty::synthesize_frame(&tones, f0));
+            tones.extend_from_slice(&jtty::JTTY_SYNC);
+            tones.extend_from_slice(&jtty::encode_tones(p));
         }
+        let mut at6 = jtty::synthesize_frame(&tones, f0);
         // Resample the 6 kHz burst to the 48 kHz the transmit seam expects,
         // through a resampler of its own each time. The resampler works in
         // whole chunks and holds the remainder back, so a shared one kept the
