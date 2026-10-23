@@ -405,6 +405,10 @@ pub struct SdroxideApp {
     /// the per-radio switch in Settings → Radio clears it, so the operator's
     /// explicit per-radio choice is what governs once they have made one.
     swl_start: bool,
+    /// The LISTEN tab is in force and the operator's setting asks the menu to
+    /// hide the transmit controls — **session only**, so a tab click can never
+    /// leave a station unable to transmit tomorrow.
+    listen_tab_swl: bool,
     /// The theme and chrome styles last written into the egui context, so the
     /// top-of-frame check in `frame.rs` can re-apply the visuals the moment
     /// the settings dialog changes any of them — no restart.
@@ -1883,6 +1887,7 @@ impl SdroxideApp {
             // move to per-radio SWL mode. The Radio tab's switch is the one
             // that persists now.
             swl_start: ui_settings.start_swl || ui_settings.swl || sdroxide_types::force_swl(),
+            listen_tab_swl: false,
             applied_look: (ui_settings.theme, ui_settings.button_style, ui_settings.window_style),
             classic_collapsed: false,
             applied_ui_font: ui_settings.menu_font_size,
@@ -2847,6 +2852,7 @@ impl SdroxideApp {
     pub(in crate::app) fn swl_mode(&self) -> bool {
         sdroxide_types::force_swl()
             || self.swl_start
+            || self.listen_tab_swl
             || self.radio_cfg.as_ref().is_some_and(|c| c.hide_tx)
     }
 
@@ -3682,6 +3688,50 @@ mod tests {
             );
             full.drop_without_applying_deltas();
         }
+    }
+
+    /// **The LISTEN tab hides the transmit controls; it never grants them.**
+    ///
+    /// Issue #146 asks for the band/mode tabs to carry the listener's screen, and
+    /// the reason it sat unbuilt for a while is the other half of that sentence:
+    /// an "OPERATE = TRANSMIT" reading would let a tab grant a transmitter. This
+    /// is the half that cannot: the tab only sets a session flag that `swl_mode`
+    /// already ORs in, so a station whose own setting says receive-only is
+    /// unaffected whatever the tab does.
+    #[test]
+    fn the_listen_tab_hides_transmit_and_never_grants_it() {
+        use crate::multi::frame_test_lock;
+        let _guard = frame_test_lock();
+        let dir = std::env::temp_dir().join(format!("sdroxide-listen-tab-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        unsafe { std::env::set_var("SDROXIDE_CONFIG_DIR", &dir) };
+
+        let controller: Box<dyn RadioController> = Box::new(RecordingController::default());
+        let ctx = egui::Context::default();
+        crate::layout::set_tier(&ctx, crate::layout::Tier::Desktop);
+        let mut app = SdroxideApp::new_tab(&ctx, None, None, controller, 0, true);
+        app.ui_settings.listen_tab_hides_tx = true;
+
+        // A transceiver: the tab hides, and going back to OPERATE restores the
+        // radio's own setting rather than granting anything new.
+        app.radio_cfg = Some(sdroxide_types::RadioConfig { hide_tx: false, ..Default::default() });
+        app.listen_tab_swl = false;
+        assert!(!app.swl_mode(), "a transceiver starts with its transmit controls");
+        app.listen_tab_swl = true;
+        assert!(app.swl_mode(), "the LISTEN tab must hide them");
+        app.listen_tab_swl = false;
+        assert!(!app.swl_mode(), "OPERATE restores the radio's own setting");
+
+        // A station configured receive-only stays receive-only whichever tab is
+        // picked: the tab is a view switch and not a licence.
+        app.radio_cfg = Some(sdroxide_types::RadioConfig { hide_tx: true, ..Default::default() });
+        assert!(app.swl_mode(), "a receive-only radio has no transmit controls to show");
+        app.listen_tab_swl = false;
+        assert!(
+            app.swl_mode(),
+            "picking OPERATE must not grant a transmitter to a receive-only station"
+        );
     }
 
     /// Text shapes a mode's frame draws, with their rects.

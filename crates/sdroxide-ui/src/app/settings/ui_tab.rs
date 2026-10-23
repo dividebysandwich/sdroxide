@@ -632,6 +632,84 @@ pub(in crate::app) fn settings_ui_tab(
         crate::chrome::checkbox(ui, &mut cfg.start_swl, "start with SWL mode on");
         ui.end_row();
 
+        // Issue #146: the LISTEN tab in the band/mode menu carrying the listening
+        // screen. **It hides; it never grants.** Off by default, and it asks once
+        // — the reporter's own words were "I accept this operating mode at my own
+        // risk", and the person who wrote them is the one who has to read what it
+        // does not do.
+        ui.label("LISTEN tab hides transmit").on_hover_text(
+            "Picking **LISTEN** in the band/mode menu hides every transmit control on \
+             that tab, and picking **OPERATE** puts back whatever this radio's own \
+             setting says.\n\n\
+             It cannot turn a transmitter on. A radio configured receive-only stays \
+             receive-only, the band lockout and the out-of-band warning are untouched, \
+             and the hiding ends with the session — so a tab click can never leave a \
+             station unable to transmit tomorrow.\n\n\
+             Off by default because it changes what the tab means; it asks once.",
+        );
+        {
+            let confirm_id = egui::Id::new("listen-tab-hides-tx-confirm");
+            let mut shown = cfg.listen_tab_hides_tx;
+            let resp = crate::chrome::checkbox(ui, &mut shown, "hide TX on the LISTEN tab");
+            let was = cfg.listen_tab_hides_tx;
+            if resp.changed() {
+                if shown && !was {
+                    ui.data_mut(|d| d.insert_temp(confirm_id, true));
+                } else {
+                    cfg.listen_tab_hides_tx = shown;
+                }
+            }
+            let confirming: bool = ui.data(|d| d.get_temp(confirm_id)).unwrap_or(false);
+            if confirming {
+                let mut enable = false;
+                let mut cancel = false;
+                egui::Modal::new(egui::Id::new("listen-tab-hides-tx-modal")).show(
+                    ui.ctx(),
+                    |ui| {
+                        ui.set_max_width(470.0);
+                        ui.heading(
+                            RichText::new("The LISTEN tab will hide the transmit controls")
+                                .color(crate::theme::ALERT()),
+                        );
+                        ui.add_space(6.0);
+                        ui.label(
+                            "On the LISTEN tab the transmit controls disappear; on OPERATE \
+                             they come back exactly as this radio's own setting left them.\n\n\
+                             It does not enable anything. It is a view of the same station, \
+                             so the band lockout, the out-of-band warning and the transmit \
+                             rails are untouched, and the hiding ends when the program does.\n\n\
+                             Worth knowing: a station left on LISTEN still receives on \
+                             whatever the tab has tuned, and a control that is hidden is \
+                             not a control that is off — transmission is off because the \
+                             settings say so, not because the button is out of sight.",
+                        );
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(
+                                    RichText::new("I understand — hide them on LISTEN")
+                                        .color(crate::theme::ALERT()),
+                                )
+                                .clicked()
+                            {
+                                enable = true;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                cancel = true;
+                            }
+                        });
+                    },
+                );
+                if enable {
+                    cfg.listen_tab_hides_tx = true;
+                }
+                if enable || cancel {
+                    ui.data_mut(|d| d.remove_temp::<bool>(confirm_id));
+                }
+            }
+        }
+        ui.end_row();
+
         // The switch itself, not only the seed: the same per-radio
         // `RadioConfig::hide_tx` that Settings → Radio → Transmit controls
         // writes, reachable here because a listener looks for it in the UI

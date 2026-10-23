@@ -1046,6 +1046,18 @@ pub struct UiSettings {
     /// nobody else is changed.
     #[serde(default)]
     pub start_swl: bool,
+    /// Whether picking the **LISTEN** tab in the band/mode menu also hides the
+    /// transmit controls, for as long as the operator stays on that tab.
+    ///
+    /// **It hides; it never grants.** The tab is a view switch, not a licence:
+    /// going back to OPERATE restores whatever this radio's own setting says,
+    /// so a station configured receive-only stays receive-only and the band
+    /// lockout, the out-of-band warning and the transmit rails are untouched.
+    /// That distinction is the whole reason this is a setting rather than the
+    /// "OPERATE = TRANSMIT" the issue first proposed, and it is why it is off by
+    /// default and asks once before it is switched on.
+    #[serde(default)]
+    pub listen_tab_hides_tx: bool,
     /// Whether the operator has told the out-of-band transmit warning not to
     /// come up again on this screen.
     ///
@@ -1603,6 +1615,7 @@ impl Default for UiSettings {
             keep_screen_on: false,
             sound_welcome: true,
             start_swl: false,
+            listen_tab_hides_tx: false,
             solar3d_window: None,
             extras_window: None,
             extras_os_window: None,

@@ -1901,7 +1901,7 @@ impl SdroxideApp {
             // Big frequency readout, centred vertically by measured height.
             // On the air through a repeater it is the transmit frequency — see
             // [`Self::readout`].
-            let (shown, ink, offset) = self.readout();
+            let (shown, ink, _offset) = self.readout();
             let map = self.readout_map_back();
             let mut new_hz = None;
             let readout = ui.allocate_ui_with_layout(
@@ -2091,7 +2091,7 @@ impl SdroxideApp {
         let box_w = fixed + fit.width(size) + if band_mode { 8.0 + bm_w } else { 0.0 };
         crate::chrome::module_bare_h(ui, box_w, PHONE_FREQ_H, |ui| {
             ui.spacing_mut().item_spacing.x = 0.0; // control every gap explicitly
-            let (shown, ink, offset) = self.readout();
+            let (shown, ink, _offset) = self.readout();
             let map = self.readout_map_back();
             ui.label(
                 RichText::new(tag)
@@ -2942,6 +2942,7 @@ impl SdroxideApp {
     /// docked column and by [`Self::band_menu_fill`], so a change to the menu
     /// reaches both.
     pub(in crate::app) fn band_menu_body(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let before = self.band_menu_tab;
         let mode = self.state.rx[0].mode;
         let stated = self.radio_cfg.as_ref().is_some_and(|c| !c.freq_ranges_rx.is_empty());
         let atsmini =
@@ -2960,6 +2961,17 @@ impl SdroxideApp {
             &mut self.show_ism,
             cmds,
         );
+        // **LISTEN hides the transmit controls; OPERATE never grants them.**
+        // Issue #146 asks for the tab to carry the listening screen, and this is
+        // the half of it that cannot loosen anything: the tab sets a
+        // *session-only* flag that the app already ORs into `swl_mode()`, so a
+        // radio whose own setting says receive-only is unaffected, the band
+        // lockout and the out-of-band warning are untouched, and going back to
+        // OPERATE restores exactly the state the operator had. Off by default;
+        // the setting asks once before it is switched on.
+        if self.band_menu_tab != before && self.ui_settings.listen_tab_hides_tx {
+            self.listen_tab_swl = self.band_menu_tab == BandMenuTab::Listen;
+        }
     }
 
     /// The band keypad against this radio's state — the console's RX-control
