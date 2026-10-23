@@ -1013,7 +1013,11 @@ pub fn normalize_text(msg: &str) -> String {
             }
             prev_space = true;
         } else {
-            let ch = if source_index(up as u8).is_some() { up } else { '#' };
+            // `as u8` keeps only the low byte, so a non-ASCII letter whose low
+            // byte happens to be in the alphabet (Ł is U+0141, 'A') passed as
+            // itself — and the packer, which slices the text by byte, then
+            // panicked inside the character.
+            let ch = if up.is_ascii() && source_index(up as u8).is_some() { up } else { '#' };
             out.push(ch);
             prev_space = false;
         }
@@ -1855,6 +1859,10 @@ mod tests {
         assert_eq!(normalize_text("hello"), "HELLO");
         // An unsupported char becomes '#'.
         assert_eq!(normalize_text("hi~there"), "HI#THERE");
+        // Non-ASCII folds to '#' too, even where its low byte is a letter
+        // (Ł = U+0141, 'A'), and packing it must not panic on a char boundary.
+        assert_eq!(normalize_text("Łodz"), "#ODZ");
+        let _ = pack_message("ŁA ő CQ");
     }
 
     /// The frame timing constants the mode is defined by.

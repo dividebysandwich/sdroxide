@@ -38,6 +38,10 @@ const WINDOW_S: f64 = 12.0;
 const SCAN_STEP_S: f64 = 0.5;
 /// How long a decoded-message hash suppresses a repeat, in seconds.
 const DEDUP_TTL_S: u64 = 15;
+/// Silence (6 kHz samples) pushed after a transmit burst to flush the
+/// resampler: one of its 1024-sample input chunks, so nothing real is left
+/// behind in it.
+const TX_RESAMPLE_PAD: usize = 1024;
 
 /// One window handed to the decode worker.
 struct DecodeJob {
@@ -67,8 +71,6 @@ pub struct JttyController {
     tx_text: String,
     /// The whole message as 48 kHz audio, ready to play once.
     tx_audio: Vec<f32>,
-    /// Resamples the synthesized 6 kHz burst up to 48 kHz on key.
-    tx_rs: Option<MonoResampler>,
     /// Where the one-shot transmit has reached in [`Self::tx_audio`].
     tx_pos: usize,
     /// The operator is holding transmit (or a one-shot is being sent).
@@ -96,7 +98,6 @@ impl JttyController {
         JttyController {
             cfg,
             resampler: MonoResampler::new(tap_rate, JTTY_RATE),
-            tx_rs: MonoResampler::new(JTTY_RATE, 48_000.0),
             buf: Vec::new(),
             tap_scratch: Vec::new(),
             level: 0.0,
@@ -146,10 +147,21 @@ impl JttyController {
             tones.extend_from_slice(&coded);
             at6.extend_from_slice(&sdroxide_dsp::jtty::synthesize_frame(&tones, f0));
         }
-        // Resample the 6 kHz burst to the 48 kHz the transmit seam expects.
-        let mut out48 = Vec::new();
-        match &mut self.tx_rs {
-            Some(r) => r.push(&at6, &mut out48),
+        // Resample the 6 kHz burst to the 48 kHz the transmit seam expects,
+        // through a resampler of its own each time. The resampler works in
+        // whole chunks and holds the remainder back, so a shared one kept the
+        // last part of the final frame for the *next* rebuild — the burst lost
+        // its tail and the next message began with the previous one's. A
+        // chunk of silence pushes the whole burst through; what the padding
+        // adds past the burst's own length is trimmed off again.
+        let want = at6.len() * 8;
+        let mut out48 = Vec::with_capacity(want + 8 * TX_RESAMPLE_PAD);
+        match MonoResampler::new(JTTY_RATE, 48_000.0) {
+            Some(mut r) => {
+                at6.extend(std::iter::repeat_n(0.0, TX_RESAMPLE_PAD));
+                r.push(&at6, &mut out48);
+                out48.truncate(want);
+            }
             None => out48 = at6,
         }
         self.tx_audio = out48;
@@ -184,6 +196,9 @@ impl JttyController {
         let mut s = DigiStatus::idle(self.cfg.clone());
         s.mode = Mode::Jtty;
         s.step = QsoStep::Idle;
+        // What the panel's SENDING chip and everything else watching the
+        // status read: without it a burst on the air reported idle.
+        s.transmitting = self.keyed;
         s.jtty = Some(JttyStatus {
             level: self.level,
             messages: self.messages.clone(),

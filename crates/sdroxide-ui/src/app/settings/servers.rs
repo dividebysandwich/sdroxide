@@ -599,8 +599,7 @@ pub(in crate::app) fn settings_tci_server_tab(
         match status {
             Some(s) if s.client_connected => {
                 ui.label(
-                    RichText::new("● TCI Client connected")
-                        .color(Color32::from_rgb(90, 200, 110)),
+                    RichText::new("● TCI Client connected").color(Color32::from_rgb(90, 200, 110)),
                 );
             }
             Some(s) => match &s.client_error {

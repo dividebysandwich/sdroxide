@@ -126,8 +126,14 @@ impl SdroxideApp {
             })
             .clicked()
             {
-                cmds.push(Command::DigiTxText(self.text_tx.clone()));
-                cmds.push(Command::DigiTxActive(!tx_on));
+                if tx_on {
+                    // A burst plays to its end whatever `tx_active` says, so
+                    // releasing TX would not stop it; abort is what does.
+                    cmds.push(Command::DigiAbortTx);
+                } else {
+                    cmds.push(Command::DigiTxText(self.text_tx.clone()));
+                    cmds.push(Command::DigiTxActive(true));
+                }
             }
             if tx_gated(ui, tx_ok, |ui| {
                 crate::chrome::chip_accent(
