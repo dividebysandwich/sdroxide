@@ -7685,6 +7685,16 @@ pub struct RadioConfig {
     /// the wire requires.
     #[serde(default)]
     pub udp_audio: String,
+    /// Invert this receiver's I/Q: multiply Q by -1 before any demodulation.
+    /// For receivers whose I and Q are the other way round, so SSB comes out on
+    /// the wrong sideband (LSB heard as USB) and the spectrum is mirrored about
+    /// the dial. Off by default, and `#[serde(default)]` so a `radio.json`
+    /// written before this existed loads unchanged.
+    ///
+    /// Per radio, on the server with the rest of `radio.json`, because it is a
+    /// property of the hardware. Appended last, as the wire requires.
+    #[serde(default)]
+    pub swap_iq: bool,
 }
 
 /// The lowest S-meter calibration offered, in S-units.
