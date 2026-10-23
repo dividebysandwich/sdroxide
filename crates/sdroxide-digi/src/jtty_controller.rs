@@ -130,6 +130,9 @@ pub struct JttyController {
     tx_active: bool,
     /// Currently keyed.
     keyed: bool,
+    /// Why the last press sent nothing, shown until the next press: an empty
+    /// box, or text too long to pack.
+    tx_refused: Option<&'static str>,
 }
 
 impl JttyController {
@@ -180,6 +183,7 @@ impl JttyController {
             tx_pos: 0,
             tx_active: false,
             keyed: false,
+            tx_refused: None,
         }
     }
 
@@ -372,6 +376,7 @@ impl JttyController {
         // What the panel's SENDING chip and everything else watching the
         // status read: without it a burst on the air reported idle.
         s.transmitting = self.keyed;
+        s.tx_refused = self.tx_refused.map(str::to_string);
         s.jtty = Some(JttyStatus {
             level: self.level,
             messages: self.log.iter().map(|(_, m)| m.clone()).collect(),
@@ -436,6 +441,11 @@ impl DigiEngine for JttyController {
                 actions.push(DigiAction::KeyTx);
             } else {
                 self.tx_active = false;
+                self.tx_refused = Some(if self.tx_text.trim().is_empty() {
+                    "type a message to transmit"
+                } else {
+                    "too long for one JTTY message — at most 16 frames"
+                });
                 self.status_dirty = true;
             }
         }
@@ -492,6 +502,7 @@ impl DigiEngine for JttyController {
     fn abort_tx(&mut self) {
         self.keyed = false;
         self.tx_active = false;
+        self.tx_refused = None;
         self.tx_pos = 0;
         self.status_dirty = true;
     }
@@ -508,6 +519,10 @@ impl DigiEngine for JttyController {
 
     fn set_tx_active(&mut self, on: bool) {
         self.tx_active = on;
+        if on {
+            // A fresh press answers the last refusal.
+            self.tx_refused = None;
+        }
         self.status_dirty = true;
     }
 
@@ -709,6 +724,7 @@ mod tests {
             c.poll(SystemTime::now(), 0.0).into_iter().any(|a| matches!(a, DigiAction::KeyTx));
         assert!(!keyed, "an empty box must not key");
         assert!(!c.tx_burst_active());
+        assert!(c.status().tx_refused.is_some(), "the refusal is said, not silent");
         // A keystroke after a refused press still does not key.
         c.set_tx_text("W1ABC".into());
         let keyed =

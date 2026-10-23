@@ -1038,6 +1038,7 @@ impl Mode {
                 | Mode::Fst4
                 | Mode::Q65
                 | Mode::Fsk441
+                | Mode::Jtty
         );
         crate::ModeProfile {
             agc: Some(if weak_digi { AgcMode::Slow } else { AgcMode::Med }),

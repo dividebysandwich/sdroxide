@@ -4,9 +4,10 @@
 //! a table: one line per message with its UTC stamp, audio frequency and SNR.
 //! A message is free text — a callsign CQ, a `599` exchange, a grid, a control
 //! phrase — so there are no per-field columns to break it into; the line is the
-//! text.
+//! text. A message of several frames is one line that grows as its frames
+//! arrive, dimmed until its end-of-message frame is heard.
 //!
-//! Receive only: there is no transmit row here yet.
+//! The transmit row sits under the log and sends the typed line once.
 
 use eframe::egui::{self, Color32, RichText};
 use sdroxide_types::{Command, JttyStatus};
@@ -19,14 +20,14 @@ impl SdroxideApp {
         &mut self,
         ui: &mut egui::Ui,
         cmds: &mut Vec<Command>,
-        _panel_h: f32,
+        panel_h: f32,
     ) {
         let st: Option<JttyStatus> = self.digi_status.as_ref().and_then(|s| s.jtty.clone());
         // The transmit row is drawn whatever the receiver has heard — on a
         // quiet band there are no messages, and returning early here left the
         // whole TX row missing, which is the only thing the operator wanted.
         if let Some(st) = &st {
-            self.jtty_log(ui, st);
+            self.jtty_log(ui, st, panel_h);
         } else {
             ui.label(RichText::new("starting the JTTY receiver…").weak());
         }
@@ -34,7 +35,7 @@ impl SdroxideApp {
     }
 
     /// The rolling log of messages heard.
-    fn jtty_log(&mut self, ui: &mut egui::Ui, st: &JttyStatus) {
+    fn jtty_log(&mut self, ui: &mut egui::Ui, st: &JttyStatus, panel_h: f32) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("JTTY").strong().color(theme::CYAN()));
             // The audio level: an asynchronous mode is bursts between silences,
@@ -67,31 +68,39 @@ impl SdroxideApp {
             return;
         }
 
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            for m in st.messages.iter().rev() {
-                let secs = m.at_unix.rem_euclid(86_400);
-                let stamp = format!("{:02}:{:02}:{:02}", secs / 3600, (secs / 60) % 60, secs % 60);
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(stamp).monospace().size(11.0).color(theme::gray(120)));
-                    ui.label(
-                        RichText::new(format!("{:>5.0}", m.audio_hz))
-                            .monospace()
-                            .size(11.0)
-                            .color(theme::gray(120)),
-                    );
-                    ui.label(
-                        RichText::new(format!("{:>3}", m.snr_db))
-                            .monospace()
-                            .size(11.0)
-                            .color(theme::CYAN_DIM()),
-                    );
-                    // A partial message (no end-of-message flag) is dimmed, so a
-                    // run cut off by the next transmission reads as incomplete.
-                    let color = if m.complete { theme::TEXT() } else { theme::gray(140) };
-                    ui.label(RichText::new(&m.text).monospace().size(12.5).color(color));
-                });
-            }
-        });
+        // Capped, so a full log leaves room for the transmit row beneath it:
+        // the header above and the row below take about a hundred points.
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .max_height((panel_h - 100.0).max(60.0))
+            .show(ui, |ui| {
+                for m in st.messages.iter().rev() {
+                    let secs = m.at_unix.rem_euclid(86_400);
+                    let stamp =
+                        format!("{:02}:{:02}:{:02}", secs / 3600, (secs / 60) % 60, secs % 60);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new(stamp).monospace().size(11.0).color(theme::gray(120)),
+                        );
+                        ui.label(
+                            RichText::new(format!("{:>5.0}", m.audio_hz))
+                                .monospace()
+                                .size(11.0)
+                                .color(theme::gray(120)),
+                        );
+                        ui.label(
+                            RichText::new(format!("{:>3}", m.snr_db))
+                                .monospace()
+                                .size(11.0)
+                                .color(theme::CYAN_DIM()),
+                        );
+                        // A partial message (no end-of-message flag) is dimmed, so a
+                        // run cut off by the next transmission reads as incomplete.
+                        let color = if m.complete { theme::TEXT() } else { theme::gray(140) };
+                        ui.label(RichText::new(&m.text).monospace().size(12.5).color(color));
+                    });
+                }
+            });
     }
 
     /// JTTY's transmit row, under its message log.
@@ -101,6 +110,7 @@ impl SdroxideApp {
     /// sequencing. The over ends on its own when the burst is done.
     fn jtty_tx_row(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let tx_on = self.digi_status.as_ref().is_some_and(|s| s.transmitting);
+        let refused = self.digi_status.as_ref().and_then(|s| s.tx_refused.clone());
         let tx_ok = self.tx_capable();
         ui.add_space(4.0);
         ui.separator();
@@ -158,6 +168,9 @@ impl SdroxideApp {
                 cmds.push(Command::DigiTxActive(true));
             }
         });
+        if let Some(why) = refused {
+            ui.label(RichText::new(why).size(10.0).color(theme::ALERT()));
+        }
         ui.label(
             RichText::new(
                 "The message is sent once when you press TX — JTTY is asynchronous, \
