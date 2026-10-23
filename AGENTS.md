@@ -192,6 +192,44 @@
 > the workflow are in "The standing queue and how to check it" below. A tag or a
 > nightly runs the full gate before it is cut — see "Cutting a release".
 
+## Session 2026-10-23: three UI fixes from the operator's own screenshots
+
+**The mode parameter row drew its chips on top of each other.** Reported from
+eleven screenshots of the installed build: in PSK, `BPSK63` sat on `BPSK31` and
+`SAVE` on both. Two layouts, one mistake — the params row was a
+`horizontal_wrapped` **nested inside** the header's `horizontal_wrapped`, and the
+tail (`SAVE`/`CLEAR RX`/`ENIGMA`/`SQL`) was a `row_tail`, i.e. a right-to-left
+layout, also inside it. Both are laid out against the line they start on and then
+paint downward, so when the row wrapped, lines two and three landed on line one.
+
+**The rule**: a wrapped row is one flow. Draw into the caller's row, never a
+wrapped row of its own, and let a tail flow at the end of it instead of being
+pushed to the right edge. Guarded by
+`the_mode_parameter_row_does_not_draw_on_itself`, a **collision test on the text
+shapes** swept 420–1200 pt. Two things about that test are worth keeping: it needs
+**Classic UI on** in the harness (the column is what makes the panel narrow enough
+to wrap — without it the first version passed on the broken code), and it must
+measure **chips, not captions** (a `ui.label` in a wrapped row reports the rest of
+its line as its rect, so "Family" claims 318 pt for a 40 pt word).
+
+**Issue #156 — the readout moved the dial by the mode's tone offset.**
+`readout_for_audio` returned one number doing two jobs: `shown - dial`, which an
+edit subtracts, and the gap to where the signal is, which the annotation shows.
+They coincide for a repeater shift and for CW QRG and **not** for a digital mode,
+whose readout *is* the dial. Returning the tone offset as the map-back made every
+wheel step and typed digit move the VFO by 1500–1700 Hz, which on a mode working
+below the dial is a one-way ratchet — exactly the report. Now two numbers:
+`map_back` (zero for a digital mode) and `note`.
+
+**Issue #146 — the LISTEN tab hides the transmit controls, and never grants
+them.** `UiSettings::listen_tab_hides_tx` (off by default, asked once) makes
+picking LISTEN in the band/mode menu set a **session-only** flag that
+`swl_mode()` already ORs in; OPERATE clears it and the radio's own setting decides
+again. The rejected reading was "OPERATE = TRANSMIT", which would make a
+transmitter one click away; this half cannot loosen anything — a receive-only
+station stays receive-only whichever tab is chosen, and the flag dies with the
+session.
+
 ## The mode roadmap — what to build next, in order (2026-10-19)
 
 **The queue, cheapest first.** Detail, measurements and the reasoning are in
