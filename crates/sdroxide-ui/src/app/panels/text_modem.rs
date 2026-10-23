@@ -145,20 +145,24 @@ impl SdroxideApp {
             }
             crate::app::panels::on_air_readout(ui, on_air);
             self.digi_freq_chip(ui, cmds);
-            // Mode parameters inline next to the tune buttons (RTTY shift/baud,
-            // Olivia tones/bandwidth, THOR submode) — no separate setup dialog.
+            // Mode parameters (RTTY shift/baud, Olivia tones/bandwidth, THOR and
+            // DominoEX submodes, PSK's family and variants, MT63's mode) — no
+            // separate setup dialog.
             self.text_modem_params_row(ui, cmds);
-            crate::chrome::row_tail(ui, |ui| {
-                if transmitting {
-                    ui.label(
-                        RichText::new("● TX").size(11.0).strong().color(crate::theme::ALERT()),
-                    );
-                }
-                self.digi_squelch_slider(ui, cmds);
-                self.enigma_chip(ui);
-                self.clear_rx_chip(ui, cmds);
-                self.save_rx_chip(ui);
-            });
+            // The tail **flows** at the end of this row rather than being pushed
+            // to its right edge. `row_tail`'s `right_to_left` inside a wrapped row
+            // is the other half of the overlap: it takes the width left on the
+            // current line and packs from its right, so when the row wraps the
+            // tail is painted over whatever landed on the line below. Measured on
+            // PSK, whose family row is the longest in the panel — `SAVE` sat on
+            // top of `BPSK63`.
+            if transmitting {
+                ui.label(RichText::new("● TX").size(11.0).strong().color(crate::theme::ALERT()));
+            }
+            self.digi_squelch_slider(ui, cmds);
+            self.enigma_chip(ui);
+            self.clear_rx_chip(ui, cmds);
+            self.save_rx_chip(ui);
         });
         ui.add_space(4.0);
         if mode == Mode::Stanag4285 {
@@ -766,13 +770,14 @@ impl SdroxideApp {
         let cfg = &mut self.digi_cfg_edit;
         let mut changed = false;
         ui.add_space(6.0);
-        // Wrapped, not `horizontal`: this row sits inside the panel header, whose
-        // width is the column it is laid out in — an unwrapped row here grows the
-        // panel to whatever its content wants, which is issue #643: Olivia's caveat
-        // line alone is about a thousand points long, so the panel painted off the
-        // window and over the dock.
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
+        // Drawn **into the caller's row**, which is already wrapped, rather than
+        // into a `horizontal_wrapped` of its own. A wrapped row nested inside a
+        // wrapped row is laid out against the width left on the outer row's
+        // current line and then paints its own lines downward, while the outer row
+        // has already fixed its height — so lines two and three land on line one.
+        // Measured on PSK, whose family row is the longest in the panel: `BPSK63`
+        // sat on top of `BPSK31`.
+        {
             match mode {
                 Mode::Rtty | Mode::RttyFm => {
                     // 450 is what the Deutscher Wetterdienst broadcasts use and
@@ -1134,7 +1139,7 @@ impl SdroxideApp {
                 }
                 _ => {}
             }
-        });
+        }
         if changed {
             cmds.push(Command::SetDigiConfig(cfg.clone()));
         }

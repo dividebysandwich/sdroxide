@@ -79,9 +79,9 @@ pub use app::SdroxideApp;
 // `app::set_open_settings_tab`.
 pub use app::set_open_settings_tab;
 pub use multi::{MultiApp, RadioFactory, RadioTab, RemoteFactory};
-pub use screenshot::{ScreenshotApp, ScreenshotResult};
 #[cfg(feature = "remote")]
 pub use remote::{AudioBridge, RemoteController};
+pub use screenshot::{ScreenshotApp, ScreenshotResult};
 /// The solar-system view as a standalone app, for the browser tab the ☀ 3D
 /// chip opens. Natively the same view is a child viewport of the main window
 /// instead — see `solar3d::Solar3d`.

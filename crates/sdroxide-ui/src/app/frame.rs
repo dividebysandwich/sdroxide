@@ -995,12 +995,13 @@ impl eframe::App for SdroxideApp {
             // Both of the modes with a detachable own panel are named: DSC's and
             // NAVTEX's, each raised by its own window. The generic Panel module
             // covers every other one.
-            let unavailable = (self.ui_settings.is_detached(sdroxide_types::DetachableModule::Panel)
-                || (mode == Mode::Dsc
-                    && self.ui_settings.is_detached(sdroxide_types::DetachableModule::Dsc))
-                || (mode == Mode::Navtex
-                    && self.ui_settings.is_detached(sdroxide_types::DetachableModule::Navtex)))
-                && !(mode.has_bottom_panel() || mode == Mode::Cw);
+            let unavailable =
+                (self.ui_settings.is_detached(sdroxide_types::DetachableModule::Panel)
+                    || (mode == Mode::Dsc
+                        && self.ui_settings.is_detached(sdroxide_types::DetachableModule::Dsc))
+                    || (mode == Mode::Navtex
+                        && self.ui_settings.is_detached(sdroxide_types::DetachableModule::Navtex)))
+                    && !(mode.has_bottom_panel() || mode == Mode::Cw);
             if unavailable {
                 if self.panel_undock_notice_mode != Some(mode) {
                     self.panel_undock_notice_mode = Some(mode);

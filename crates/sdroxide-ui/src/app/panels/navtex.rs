@@ -125,9 +125,13 @@ impl SdroxideApp {
                     Vfo::B => self.state.vfo_b_hz,
                 };
                 let is_active = (active_vfo_hz - vfo_hz).abs() < 1.0;
-                if crate::chrome::chip(ui, is_active, RichText::new(format!("{label} kHz")).size(10.0))
-                    .on_hover_text("Tune the dial here (USB, 1.710 kHz below the channel).")
-                    .clicked()
+                if crate::chrome::chip(
+                    ui,
+                    is_active,
+                    RichText::new(format!("{label} kHz")).size(10.0),
+                )
+                .on_hover_text("Tune the dial here (USB, 1.710 kHz below the channel).")
+                .clicked()
                 {
                     cmds.push(Command::SetVfo { vfo: Vfo::A, hz: vfo_hz });
                 }
@@ -179,8 +183,13 @@ impl SdroxideApp {
         st: &NavtexStatus,
         panel_h: f32,
     ) {
-        if navtex_list_header(ui, st, self.digi_status.as_ref(), cmds, self.digi_cfg_edit.navtex_reverse)
-        {
+        if navtex_list_header(
+            ui,
+            st,
+            self.digi_status.as_ref(),
+            cmds,
+            self.digi_cfg_edit.navtex_reverse,
+        ) {
             self.digi_cfg_edit.navtex_reverse = !self.digi_cfg_edit.navtex_reverse;
             if self.digi_cfg_seeded {
                 cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));

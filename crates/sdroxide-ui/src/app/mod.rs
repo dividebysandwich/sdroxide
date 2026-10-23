@@ -3684,6 +3684,121 @@ mod tests {
         }
     }
 
+    /// Text shapes a mode's frame draws, with their rects.
+    ///
+    /// The smallest harness that can answer "is anything drawn on top of
+    /// anything else": chips are text, and two chips in one column never share
+    /// space unless the layout has gone wrong.
+    fn panel_text_rects(mode: sdroxide_types::Mode, w: f32) -> Vec<(String, egui::Rect)> {
+        let dir = std::env::temp_dir().join(format!("sdroxide-text-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        unsafe { std::env::set_var("SDROXIDE_CONFIG_DIR", &dir) };
+
+        let controller: Box<dyn RadioController> = Box::new(RecordingController::default());
+        let ctx = egui::Context::default();
+        crate::layout::set_tier(&ctx, crate::layout::Tier::Desktop);
+        let mut app = SdroxideApp::new_tab(&ctx, None, None, controller, 0, true);
+        // The operator's own arrangement: the classic column takes ~280 pt off
+        // the left, which is what makes the panel narrow enough to wrap. Without
+        // it the panel is as wide as the window and the row does not wrap at all
+        // — measured, which is why the first version of this test passed on the
+        // broken code.
+        app.ui_settings.classic_ui = true;
+        app.state.rx[0].mode = mode;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, 1000.0))),
+            ..Default::default()
+        };
+        let mut texts = Vec::new();
+        // Twice: the first frame settles the fonts, and a panel that sizes itself
+        // from its own last frame would be measured before it exists.
+        for _ in 0..2 {
+            let out = ctx.run_ui(input.clone(), |ui| {
+                app.ui(ui, &mut eframe::Frame::_new_kittest());
+            });
+            texts.clear();
+            fn walk(s: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+                match s {
+                    egui::Shape::Text(t) => out.push((
+                        t.galley.text().to_string(),
+                        t.galley.rect.translate(t.pos.to_vec2()),
+                    )),
+                    egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                    _ => {}
+                }
+            }
+            for c in &out.shapes {
+                walk(&c.shape, &mut texts);
+            }
+            out.drop_without_applying_deltas();
+        }
+        texts
+    }
+
+    /// **A wrapped row must not draw its lines on top of each other.**
+    ///
+    /// The row carrying a mode's own settings wraps in a narrow column, and PSK's
+    /// is the longest in the panel (five families, then six speeds, then two
+    /// modulations). Two layouts broke it, and both are the same mistake: a
+    /// wrapped row nested inside another wrapped row, and a `right_to_left` tail
+    /// inside one. Each is laid out against the line it starts on and then paints
+    /// downward, so lines two and three land on line one — measured on PSK,
+    /// `BPSK63` sat on top of `BPSK31` and `SAVE` on top of both.
+    ///
+    /// This is a collision test on the text shapes rather than a width test: the
+    /// #643 guard beside it proves the panel stays inside its column, and a panel
+    /// can do that perfectly while painting every chip at the same y.
+    ///
+    /// **What it caught on the old code, and how the report got here.** Verified
+    /// failing with the layouts reverted, at 600 pt: only four of the sixteen
+    /// chips were drawn at all — the rest had been pushed out of the panel by the
+    /// nested wrap. The operator's own window is the same fault at a scale that
+    /// made it a collision instead: 1920 physical at 2x, so a ~325 pt logical
+    /// panel, where the wrapped lines and the right-aligned tail landed on each
+    /// other.
+    #[test]
+    fn the_mode_parameter_row_does_not_draw_on_itself() {
+        use crate::multi::frame_test_lock;
+        let _guard = frame_test_lock();
+        // The chips only, not the captions. A `ui.label` in a wrapped row is
+        // allocated the rest of its line and its galley rect is *that*, not the
+        // ink — so "Family" reports x 10..328 for a word forty points wide, and
+        // including it would fail on correct code. A chip is allocated its own
+        // size, which is what makes a collision between two of them real.
+        let labels = [
+            "PLAIN", "BPSK63F", "R", "C", "RC", "BPSK31", "BPSK63", "BPSK125", "BPSK250",
+            "BPSK500", "BPSK1000", "BPSK", "QPSK", "SAVE", "CLEAR RX", "ENIGMA",
+        ];
+        // Swept, not sampled: where a wrapped row breaks depends on where its
+        // last chip lands, so a test at one width can step straight over it.
+        for w in (420..=1200).step_by(20).map(|w| w as f32) {
+            let texts = panel_text_rects(sdroxide_types::Mode::Psk, w);
+            let mine: Vec<(String, egui::Rect)> =
+                texts.into_iter().filter(|(t, _)| labels.contains(&t.as_str())).collect();
+            assert!(mine.len() >= 12, "the PSK params row is missing at {w:.0} pt: {mine:?}");
+            for i in 0..mine.len() {
+                for j in i + 1..mine.len() {
+                    let (a, ra) = &mine[i];
+                    let (b, rb) = &mine[j];
+                    // Shrunk, so two chips that merely touch are not a collision.
+                    assert!(
+                        !ra.shrink(0.5).intersects(rb.shrink(0.5)),
+                        "{a:?} at x {}..{} y {}..{} is drawn over {b:?} at x {}..{} y {}..{} in a {w:.0} pt window",
+                        ra.min.x,
+                        ra.max.x,
+                        ra.min.y,
+                        ra.max.y,
+                        rb.min.x,
+                        rb.max.x,
+                        rb.min.y,
+                        rb.max.y
+                    );
+                }
+            }
+        }
+    }
+
     /// Drive one desktop frame with the band dock requested, and hand back its
     /// shape rectangles — (rect, drawn) where drawn means an opaque fill or a
     /// stroke, i.e. ink an operator can see — plus the dock column

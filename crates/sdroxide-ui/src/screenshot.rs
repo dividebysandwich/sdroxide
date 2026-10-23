@@ -157,7 +157,10 @@ impl ScreenshotApp {
                 } else if name_lower == "schedule" {
                     self.inner.open_dialog("schedule");
                 } else {
-                    return Err(format!("'open {}': unknown dialog (try 'settings' or 'schedule')", name));
+                    return Err(format!(
+                        "'open {}': unknown dialog (try 'settings' or 'schedule')",
+                        name
+                    ));
                 }
                 self.action_index += 1;
                 self.wait_frames = 2;
@@ -242,9 +245,7 @@ impl ScreenshotApp {
             }
             ScreenshotAction::Capture => {
                 self.action_index += 1;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
-                    egui::UserData::default(),
-                ));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
                 self.requested = true;
                 self.actions_done = true;
             }
@@ -260,9 +261,10 @@ impl eframe::App for ScreenshotApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         if !self.resized {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(
-                egui::vec2(self.width as f32, self.height as f32),
-            ));
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                self.width as f32,
+                self.height as f32,
+            )));
             self.resized = true;
         }
 
