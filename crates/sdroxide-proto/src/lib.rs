@@ -1958,8 +1958,12 @@ use sdroxide_types::{
 /// even though appending it moves nothing else. No new message and no new field.
 /// `PROTO_VERSION` 233 → 234, `VERSION_BYTE` 0x35 → 0x36. A downstream (fork)
 /// change.
-pub const PROTO_VERSION: u16 = 234;
-const VERSION_BYTE: u8 = 0x36;
+/// v235: `DigiConfig` gains `sstv_rx_sensitivity` (i8) and `sstv_rx_auto`
+/// (bool) on its tail — SSTV receive sensitivity control (-5..=+5) with Auto.
+/// `PROTO_VERSION` 234 → 235, `VERSION_BYTE` 0x36 → 0x37. A downstream (fork)
+/// change.
+pub const PROTO_VERSION: u16 = 235;
+const VERSION_BYTE: u8 = 0x37;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

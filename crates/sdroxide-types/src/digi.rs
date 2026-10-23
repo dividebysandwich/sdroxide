@@ -3098,6 +3098,15 @@ pub struct DigiConfig {
     /// Appended last, so this is a wire change (`PROTO_VERSION` 229 → 230).
     #[serde(default)]
     pub domino_mode: DominoMode,
+    /// SSTV receive sensitivity, -5..=+5. 0 = current automatic level (Auto).
+    /// Adjusts the signal level fed to the decoder: negative attenuates,
+    /// positive boosts. Does not change the decoder itself.
+    #[serde(default)]
+    pub sstv_rx_sensitivity: i8,
+    /// SSTV receive is in automatic level mode. When true, `sstv_rx_sensitivity`
+    /// is ignored and the slider sits at 0. Moving the slider off 0 clears this.
+    #[serde(default = "yes")]
+    pub sstv_rx_auto: bool,
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -3358,6 +3367,8 @@ impl Default for DigiConfig {
             thor_reverse: false,
             psk_coded: PskCoded::default(),
             domino_mode: DominoMode::default(),
+            sstv_rx_sensitivity: 0,
+            sstv_rx_auto: true,
         }
     }
 }

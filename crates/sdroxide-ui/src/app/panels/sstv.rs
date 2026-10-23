@@ -1041,6 +1041,40 @@ impl SdroxideApp {
                                     self.sstv.rx_tex = None;
                                 }
 
+                                // Receive sensitivity: a manual gain on the audio fed to
+                                // the decoder. 0 (Auto) leaves the level untouched; the
+                                // decoder itself is not changed. Persisted in DigiConfig.
+                                ui.label(RichText::new("Sensitivity").size(10.0).weak());
+                                {
+                                    let mut v = self.digi_cfg_edit.sstv_rx_sensitivity;
+                                    let resp = crate::chrome::slider(
+                                        ui,
+                                        egui::Slider::new(&mut v, -5..=5).fixed_decimals(0),
+                                    )
+                                    .on_hover_text(
+                                        "Adjusts the signal level fed to the SSTV decoder. \
+                                         0 = current automatic level (Auto). Negative values \
+                                         attenuate, positive values boost. Click Auto to return \
+                                         to the automatic level.",
+                                    );
+                                    if resp.changed() {
+                                        self.digi_cfg_edit.sstv_rx_sensitivity = v;
+                                        self.digi_cfg_edit.sstv_rx_auto = v == 0;
+                                        cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+                                    }
+                                }
+                                if crate::chrome::chip(ui, self.digi_cfg_edit.sstv_rx_auto, "Auto")
+                                    .on_hover_text(
+                                        "Returns to the automatic level (reference 0) and \
+                                         disables manual adjustment. Highlighted while active.",
+                                    )
+                                    .clicked()
+                                {
+                                    self.digi_cfg_edit.sstv_rx_auto = true;
+                                    self.digi_cfg_edit.sstv_rx_sensitivity = 0;
+                                    cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+                                }
+
                             });
                         });
                     ui.add_space(6.0);

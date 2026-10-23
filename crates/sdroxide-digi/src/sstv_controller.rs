@@ -168,9 +168,22 @@ impl DigiEngine for SstvController {
     }
 
     fn on_rx_audio(&mut self, tap: &[f32]) {
+        // Receive sensitivity: a manual gain on the audio fed to the decoder.
+        // Auto (or 0) leaves the level untouched; the decoder itself is not
+        // changed. Persisted through DigiConfig.
+        let gain = if self.cfg.sstv_rx_auto || self.cfg.sstv_rx_sensitivity == 0 {
+            1.0f32
+        } else {
+            10f32.powf(self.cfg.sstv_rx_sensitivity as f32 * 2.0 / 20.0)
+        };
         self.rx_scratch.clear();
         let mut events = std::mem::take(&mut self.rx_scratch);
-        self.rx.process(tap, &mut events);
+        if (gain - 1.0).abs() < f32::EPSILON {
+            self.rx.process(tap, &mut events);
+        } else {
+            let scaled: Vec<f32> = tap.iter().map(|&s| s * gain).collect();
+            self.rx.process(&scaled, &mut events);
+        }
         for e in events.drain(..) {
             match e {
                 SstvEvent::ModeDetected(mode) => {
