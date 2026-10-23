@@ -662,8 +662,11 @@ pub fn decode_atom(payload: &[u8; PAYLOAD_BITS]) -> Option<JttyAtom> {
         2 => render_struct30(payload).map(|text| JttyAtom { text, structured: true }),
         3 => {
             // TEXT5: bits 1-30 are five six-bit characters, bits 31-32 = 11.
-            // Verbatim — no implicit separator, and the trailing padding is not
-            // part of the message.
+            // Verbatim, spaces and all: an interior TEXT5 carries exactly five
+            // characters, so a space it ends with is the space between two
+            // words. Only the message's final padding is dropped, and that is
+            // [`decode_source`]'s to drop — trimming here ran `THIS IS` into
+            // `THISIS`.
             let mut s = String::new();
             for k in 0..5 {
                 let mut v = 0u8;
@@ -672,7 +675,7 @@ pub fn decode_atom(payload: &[u8; PAYLOAD_BITS]) -> Option<JttyAtom> {
                 }
                 s.push(JTTY_CHARSET[v as usize] as char);
             }
-            Some(JttyAtom { text: s.trim_end().to_string(), structured: false })
+            Some(JttyAtom { text: s, structured: false })
         }
         _ => None,
     }
@@ -683,7 +686,7 @@ pub fn decode_atom(payload: &[u8; PAYLOAD_BITS]) -> Option<JttyAtom> {
 /// This is a single atom; a whole message is a sequence of frames, the last
 /// carrying the EOM bit. Use [`decode_source`] for a message.
 pub fn decode_word(payload: &[u8; PAYLOAD_BITS]) -> Option<String> {
-    decode_atom(payload).map(|a| a.text)
+    decode_atom(payload).map(|a| a.text.trim_end().to_string())
 }
 
 /// True if the word carries the end-of-message flag (bit 34).
@@ -1064,6 +1067,13 @@ pub fn pack_message(msg: &str) -> Option<PackedMessage> {
                         dp: &mut Vec<usize>,
                         succ: &mut Vec<usize>,
                         choice: &mut Vec<Option<Atom>>| {
+            // Only an atom that packs: a four-letter word is offered as a
+            // GRID4 because it renders as itself, and "TEXT" is no grid. Taken
+            // on the cheapest path, it failed at the very end and refused the
+            // whole message, which TEXT5 would have carried.
+            if pack_atom(&atom).is_none() {
+                return;
+            }
             let cost = 1 + dp[next];
             if cost <= dp[i] {
                 dp[i] = cost;
@@ -1728,6 +1738,20 @@ mod tests {
         let last = payload_from("1000000000000001111011000000001001");
         assert!(!is_eom(&not_last));
         assert!(is_eom(&last));
+    }
+
+    /// Plain text with a four-letter word packs, and reads back as typed. The
+    /// word used to be taken as a GRID4 it is not, and the message refused.
+    #[test]
+    fn a_four_letter_word_is_not_taken_for_a_grid() {
+        for text in ["THIS IS A MUCH LONGER TEXT", "CQ W1ABC W1ABC FN42 GOOD LUCK"] {
+            let frames = pack_message(text).unwrap_or_else(|| panic!("{text:?} did not pack"));
+            let frames: Vec<JttyFrame> =
+                frames.into_iter().map(|payload| JttyFrame { payload }).collect();
+            let msg = decode_source(&frames).expect("renders");
+            assert_eq!(msg.text, text);
+            assert!(msg.complete);
+        }
     }
 
     /// The synthetic transmitter and the receive front end agree: a
