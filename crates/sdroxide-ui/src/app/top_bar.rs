@@ -1081,6 +1081,7 @@ impl SdroxideApp {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
                 ui.horizontal(|ui| {
                     let (shown, ink, offset) = self.readout();
+                    let map = self.readout_map_back();
                     ui.label(
                         RichText::new(tag)
                             .size(13.0)
@@ -1095,7 +1096,7 @@ impl SdroxideApp {
                         ink,
                         self.readout_digits(),
                     ) {
-                        cmds.push(Command::SetVfo { vfo: active, hz: hz - offset });
+                        cmds.push(Command::SetVfo { vfo: active, hz: hz - map });
                     }
                     // The dial is what is shown, because a typed or turned
                     // frequency has to map back to it. When the mode works the
@@ -1901,6 +1902,7 @@ impl SdroxideApp {
             // On the air through a repeater it is the transmit frequency — see
             // [`Self::readout`].
             let (shown, ink, offset) = self.readout();
+            let map = self.readout_map_back();
             let mut new_hz = None;
             let readout = ui.allocate_ui_with_layout(
                 egui::vec2(readout_w, full_h),
@@ -1953,7 +1955,7 @@ impl SdroxideApp {
                 );
             }
             if let Some(hz) = new_hz {
-                cmds.push(Command::SetVfo { vfo: active, hz: hz - offset });
+                cmds.push(Command::SetVfo { vfo: active, hz: hz - map });
             }
             ui.add_space(12.0);
 
@@ -2090,6 +2092,7 @@ impl SdroxideApp {
         crate::chrome::module_bare_h(ui, box_w, PHONE_FREQ_H, |ui| {
             ui.spacing_mut().item_spacing.x = 0.0; // control every gap explicitly
             let (shown, ink, offset) = self.readout();
+            let map = self.readout_map_back();
             ui.label(
                 RichText::new(tag)
                     .size(13.0)
@@ -2106,7 +2109,7 @@ impl SdroxideApp {
                 self.readout_digits(),
             );
             if let Some(hz) = new_hz {
-                cmds.push(Command::SetVfo { vfo: active, hz: hz - offset });
+                cmds.push(Command::SetVfo { vfo: active, hz: hz - map });
             }
             if band_mode {
                 ui.add_space(8.0);
@@ -2138,6 +2141,21 @@ impl SdroxideApp {
     /// alone: split has always left this readout on the dial, and this is not
     /// the place to change that.
     fn readout(&self) -> (f64, Option<Color32>, f64) {
+        let (shown, ink, _map, note) = readout_for_audio(
+            &self.state,
+            self.tab_tx_on(),
+            self.ui_settings.cw_qrg,
+            self.cw_pitch_hz(),
+            self.digi_audio_hz(),
+        );
+        (shown, ink, note)
+    }
+
+    /// What an edit on the readout has to subtract to get back to the dial.
+    ///
+    /// Separate from [`Self::readout`]'s note because they differ for a digital
+    /// mode: the readout is the dial there, so an edit maps one to one.
+    fn readout_map_back(&self) -> f64 {
         readout_for_audio(
             &self.state,
             self.tab_tx_on(),
@@ -2145,6 +2163,7 @@ impl SdroxideApp {
             self.cw_pitch_hz(),
             self.digi_audio_hz(),
         )
+        .2
     }
 
     /// The band/mode chip's label, e.g. `20m · USB`.
@@ -7621,26 +7640,38 @@ fn readout_for(
     cw_qrg: bool,
     cw_pitch_hz: f32,
 ) -> (f64, Option<Color32>, f64) {
-    readout_for_audio(state, tx_on, cw_qrg, cw_pitch_hz, 0.0)
+    let (shown, ink, _map, note) = readout_for_audio(state, tx_on, cw_qrg, cw_pitch_hz, 0.0);
+    (shown, ink, note)
 }
 ///
 /// The cursor lives in [`DigiStatus`], which is app state rather than
 /// [`RadioState`], and this function is deliberately pure over the radio state
 /// so the arithmetic can be tested without an app around it. Threading the
 /// number in keeps that property instead of reaching for the app.
+/// `(shown, ink, map_back, note)`.
+///
+/// **`map_back` and `note` are two different numbers and confusing them is a
+/// bug that ships.** `map_back` is what an edit on the shown value has to
+/// subtract to get back to the dial — so it is `shown - dial`, and for a
+/// digital mode, whose readout *is* the dial, it is **zero**. `note` is the gap
+/// to where the signal actually is, which is what the annotation beside the
+/// readout says. Returning the signal gap as `map_back` made every wheel step
+/// and every typed digit move the dial by the mode's tone offset: on NAVTEX
+/// (−1700 Hz) the dial could only ever go down, which is exactly what issue
+/// #156 reports.
 fn readout_for_audio(
     state: &RadioState,
     tx_on: bool,
     cw_qrg: bool,
     cw_pitch_hz: f32,
     audio_hz: f32,
-) -> (f64, Option<Color32>, f64) {
+) -> (f64, Option<Color32>, f64, f64) {
     let dial = state.active_freq_hz();
     // The transmit case first: while a repeater shift is putting RF somewhere
     // else, where it is going matters more than anything below.
     if tx_on && state.repeater.shift != Shift::Simplex {
         let offset = state.tx_freq_hz() - dial;
-        return (dial + offset, Some(crate::theme::ALERT()), offset);
+        return (dial + offset, Some(crate::theme::ALERT()), offset, offset);
     }
     // CW read as the signal rather than as the dial, when asked for. A CW dial
     // sits a sidetone pitch below what is being copied, so this is the number
@@ -7649,7 +7680,8 @@ fn readout_for_audio(
     // turn or a typed frequency still moves the dial by what the operator
     // changed rather than jumping it by the pitch.
     if cw_qrg && state.rx[0].mode == Mode::Cw {
-        return (dial + f64::from(cw_pitch_hz), None, f64::from(cw_pitch_hz));
+        let pitch = f64::from(cw_pitch_hz);
+        return (dial + pitch, None, pitch, pitch);
     }
     // A digital mode is off the dial too, and unlike CW it is not a setting:
     // the offset is a fact about the mode, so there is nothing to switch on. The
@@ -7666,11 +7698,13 @@ fn readout_for_audio(
         if audio_hz != 0.0 {
             let offset = mode.on_air_hz(dial, audio_hz as f32) - dial;
             if offset != 0.0 {
-                return (dial, None, offset);
+                // The readout is the dial, so an edit maps back with no offset;
+                // the gap is only a note.
+                return (dial, None, 0.0, offset);
             }
         }
     }
-    (dial, None, 0.0)
+    (dial, None, 0.0, 0.0)
 }
 
 /// One row of the SPEC popup: a caption naming the setting, then a chip per
@@ -11159,7 +11193,7 @@ mod tests {
         state.vfo_b_hz = 14_074_000.0;
         state.rx[0].mode = Mode::Ft8;
 
-        let (shown, ink, offset) = readout_for_audio(&state, false, false, 700.0, 1500.0);
+        let (shown, ink, map, offset) = readout_for_audio(&state, false, false, 700.0, 1500.0);
         assert_eq!(
             shown, 14_074_000.0,
             "the readout stays the dial, so an edit still maps back to it"
@@ -11168,6 +11202,14 @@ mod tests {
             offset, 1500.0,
             "FT8 transmits 1500 Hz above the dial and the readout must say so"
         );
+        // **The bug from issue #156.** The readout shows the dial, so an edit on
+        // it must map back with *no* offset; returning the tone offset here made
+        // every wheel step and every typed digit move the dial by 1500 Hz, so on
+        // a mode that works below the dial the frequency could only ever go down.
+        assert_eq!(
+            map, 0.0,
+            "a digital mode's readout IS the dial — an edit on it must not shift the VFO"
+        );
         assert_eq!(ink, None, "an off-dial mode is a fact to explain, not an alert condition");
         // It agrees with the one number everything else already uses.
         assert_eq!(shown + offset, Mode::Ft8.on_air_hz(state.active_freq_hz(), 1500.0));
@@ -11175,7 +11217,7 @@ mod tests {
         // CW is the same fact and is not double-counted: the setting above
         // already covers it, so the digit read must not appear twice.
         state.rx[0].mode = Mode::Cw;
-        let (_, _, cw_offset) = readout_for_audio(&state, false, true, 700.0, 1500.0);
+        let (_, _, _, cw_offset) = readout_for_audio(&state, false, true, 700.0, 1500.0);
         assert_eq!(cw_offset, 700.0, "CW reports the pitch, once");
 
         // A mode that sits on the dial says nothing: an offset that is always
@@ -11183,8 +11225,24 @@ mod tests {
         state.rx[0].mode = Mode::Usb;
         assert_eq!(
             readout_for_audio(&state, false, false, 700.0, 1500.0),
-            (14_074_000.0, None, 0.0)
+            (14_074_000.0, None, 0.0, 0.0)
         );
+        // The reporter's own mode, and the arithmetic the readout widget does with
+        // these two numbers: the widget hands back the *shown* value plus the
+        // step, and the command subtracts `map`. On NAVTEX, which works 1700 Hz
+        // above the dial, the old code moved the dial by 10 − 1700 every step.
+        state.rx[0].mode = Mode::Navtex;
+        let (shown, _, map, note) = readout_for_audio(&state, false, false, 700.0, 1700.0);
+        assert_eq!(shown, state.active_freq_hz(), "the readout is the dial");
+        assert_eq!(note, 1700.0, "and the note says where the signal is");
+        for step in [10.0f64, -10.0, 1000.0] {
+            assert_eq!(
+                shown + step - map,
+                state.active_freq_hz() + step,
+                "a {step:+.0} Hz step must move the dial by that much"
+            );
+        }
+
         // No audio cursor yet — a mode that has not reported one annotates
         // nothing rather than guessing at the default.
         state.rx[0].mode = Mode::Ft8;
