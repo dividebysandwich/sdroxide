@@ -2963,14 +2963,19 @@ impl SdroxideApp {
         );
         // **LISTEN hides the transmit controls; OPERATE never grants them.**
         // Issue #146 asks for the tab to carry the listening screen, and this is
-        // the half of it that cannot loosen anything: the tab sets a
-        // *session-only* flag that the app already ORs into `swl_mode()`, so a
-        // radio whose own setting says receive-only is unaffected, the band
-        // lockout and the out-of-band warning are untouched, and going back to
-        // OPERATE restores exactly the state the operator had. Off by default;
-        // the setting asks once before it is switched on.
+        // the half of it that cannot loosen anything: the tab sets a flag that
+        // the app already ORs into `swl_mode()`, so a radio whose own setting
+        // says receive-only is unaffected, and the band lockout and the
+        // out-of-band warning are untouched. Going back to OPERATE restores
+        // exactly the state the operator had. Off by default, asked once, and
+        // remembered across a restart.
         if self.band_menu_tab != before && self.ui_settings.listen_tab_hides_tx {
             self.listen_tab_swl = self.band_menu_tab == BandMenuTab::Listen;
+            // Remembered, not session-only: the operator asked for the listening
+            // screen to survive a restart. The radio's own setting still decides
+            // what OPERATE means, so this can hide transmit and cannot grant it.
+            self.ui_settings.band_menu_listen = self.listen_tab_swl;
+            crate::app::persist::persist_ui_settings(&self.ui_settings);
         }
     }
 

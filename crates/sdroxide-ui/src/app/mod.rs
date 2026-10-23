@@ -406,8 +406,10 @@ pub struct SdroxideApp {
     /// explicit per-radio choice is what governs once they have made one.
     swl_start: bool,
     /// The LISTEN tab is in force and the operator's setting asks the menu to
-    /// hide the transmit controls — **session only**, so a tab click can never
-    /// leave a station unable to transmit tomorrow.
+    /// hide the transmit controls. Remembered across a restart through
+    /// [`sdroxide_types::UiSettings::band_menu_listen`], which is what the
+    /// operator asked for — the *radio's* own setting still decides what the
+    /// OPERATE tab means, so a receive-only station stays that way.
     listen_tab_swl: bool,
     /// The theme and chrome styles last written into the egui context, so the
     /// top-of-frame check in `frame.rs` can re-apply the visuals the moment
@@ -1887,7 +1889,7 @@ impl SdroxideApp {
             // move to per-radio SWL mode. The Radio tab's switch is the one
             // that persists now.
             swl_start: ui_settings.start_swl || ui_settings.swl || sdroxide_types::force_swl(),
-            listen_tab_swl: false,
+            listen_tab_swl: ui_settings.listen_tab_hides_tx && ui_settings.band_menu_listen,
             applied_look: (ui_settings.theme, ui_settings.button_style, ui_settings.window_style),
             classic_collapsed: false,
             applied_ui_font: ui_settings.menu_font_size,
@@ -1986,7 +1988,11 @@ impl SdroxideApp {
             },
             #[cfg(not(target_arch = "wasm32"))]
             update_dismissed: false,
-            band_menu_tab: top_bar::BandMenuTab::Operate,
+            band_menu_tab: if ui_settings.band_menu_listen {
+                top_bar::BandMenuTab::Listen
+            } else {
+                top_bar::BandMenuTab::Operate
+            },
             band_filter: top_bar::BandFilter::default(),
             fft_popup_since: None,
             skimmer_popup_since: None,
@@ -3732,6 +3738,23 @@ mod tests {
             app.swl_mode(),
             "picking OPERATE must not grant a transmitter to a receive-only station"
         );
+
+        // **Remembered across a restart** — the operator asked for that. The
+        // saved tab is what puts the next session back on LISTEN, and the
+        // setting is what says the tab should hide anything at all.
+        app.ui_settings.listen_tab_hides_tx = true;
+        app.ui_settings.band_menu_listen = true;
+        sdroxide_config::save_ui_settings(&app.ui_settings).expect("save the settings");
+        // A fresh start, the way the program really comes up: `new_tab` loads the
+        // settings itself, so this is the saved tab doing the work and not a hand
+        // seeded flag.
+        let rebound: Box<dyn RadioController> = Box::new(RecordingController::default());
+        let mut again = SdroxideApp::new_tab(&ctx, None, None, rebound, 0, true);
+        again.radio_cfg =
+            Some(sdroxide_types::RadioConfig { hide_tx: false, ..Default::default() });
+        assert!(again.swl_mode(), "a station left on the LISTEN tab must come back listening");
+        again.listen_tab_swl = false;
+        assert!(!again.swl_mode(), "and OPERATE must bring the transmit controls back");
     }
 
     /// Text shapes a mode's frame draws, with their rects.

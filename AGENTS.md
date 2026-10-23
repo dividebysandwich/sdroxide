@@ -223,12 +223,13 @@ below the dial is a one-way ratchet — exactly the report. Now two numbers:
 
 **Issue #146 — the LISTEN tab hides the transmit controls, and never grants
 them.** `UiSettings::listen_tab_hides_tx` (off by default, asked once) makes
-picking LISTEN in the band/mode menu set a **session-only** flag that
-`swl_mode()` already ORs in; OPERATE clears it and the radio's own setting decides
-again. The rejected reading was "OPERATE = TRANSMIT", which would make a
+picking LISTEN in the band/mode menu set a flag that `swl_mode()` already ORs in;
+OPERATE clears it and the radio's own setting decides again. **The tab is
+remembered** (`UiSettings::band_menu_listen`, the operator's call on 2026-10-23),
+so a station left listening comes back listening with the transmit controls still
+hidden. The rejected reading was "OPERATE = TRANSMIT", which would make a
 transmitter one click away; this half cannot loosen anything — a receive-only
-station stays receive-only whichever tab is chosen, and the flag dies with the
-session.
+station stays receive-only whichever tab is chosen.
 
 ## The mode roadmap — what to build next, in order (2026-10-19)
 

@@ -1058,6 +1058,15 @@ pub struct UiSettings {
     /// default and asks once before it is switched on.
     #[serde(default)]
     pub listen_tab_hides_tx: bool,
+    /// Whether the band/mode menu was left on its **LISTEN** tab.
+    ///
+    /// Remembered, so the listening screen survives a restart once the operator
+    /// has asked for it: with [`Self::listen_tab_hides_tx`] on, that is where the
+    /// transmit controls come back hidden at the next launch. The *radio's* own
+    /// setting still decides what "OPERATE" means, so a receive-only station is
+    /// unaffected and nothing here can grant a transmitter.
+    #[serde(default)]
+    pub band_menu_listen: bool,
     /// Whether the operator has told the out-of-band transmit warning not to
     /// come up again on this screen.
     ///
@@ -1616,6 +1625,7 @@ impl Default for UiSettings {
             sound_welcome: true,
             start_swl: false,
             listen_tab_hides_tx: false,
+            band_menu_listen: false,
             solar3d_window: None,
             extras_window: None,
             extras_os_window: None,

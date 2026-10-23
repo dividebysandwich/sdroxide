@@ -642,10 +642,12 @@ pub(in crate::app) fn settings_ui_tab(
              that tab, and picking **OPERATE** puts back whatever this radio's own \
              setting says.\n\n\
              It cannot turn a transmitter on. A radio configured receive-only stays \
-             receive-only, the band lockout and the out-of-band warning are untouched, \
-             and the hiding ends with the session — so a tab click can never leave a \
-             station unable to transmit tomorrow.\n\n\
-             Off by default because it changes what the tab means; it asks once.",
+             receive-only, and the band lockout and the out-of-band warning are \
+             untouched.\n\n\
+             The band menu remembers which tab it was left on, so a station left \
+             listening comes back listening — the transmit controls are hidden at \
+             the next start too, and picking OPERATE brings them back. Off by \
+             default because it changes what the tab means; it asks once.",
         );
         {
             let confirm_id = egui::Id::new("listen-tab-hides-tx-confirm");
@@ -677,7 +679,9 @@ pub(in crate::app) fn settings_ui_tab(
                              they come back exactly as this radio's own setting left them.\n\n\
                              It does not enable anything. It is a view of the same station, \
                              so the band lockout, the out-of-band warning and the transmit \
-                             rails are untouched, and the hiding ends when the program does.\n\n\
+                             rails are untouched.\n\n\
+                             The tab is remembered: a station left on LISTEN starts on LISTEN, \
+                             with the transmit controls still hidden, until OPERATE is picked.\n\n\
                              Worth knowing: a station left on LISTEN still receives on \
                              whatever the tab has tuned, and a control that is hidden is \
                              not a control that is off — transmission is off because the \
