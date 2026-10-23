@@ -66,6 +66,33 @@ pub(in crate::app) fn settings_ui_tab(
                  holds with a position on it, which is what a listener browsing a band is \
                  looking for — at the cost of a busier map.",
             );
+        // The **other** question about broadcasters, and the one the operator kept
+        // having to answer with ⭐ ALL: whether the waterfall names the station the
+        // dial is on or the whole band. The chip is in the SPOTS window, where it
+        // is used; this is beside the scope combo because that is where a
+        // preference is looked for.
+        ui.label("Waterfall labels");
+        ui.horizontal(|ui| {
+            if crate::chrome::chip(ui, !cfg.broadcast_labels_all, "Tuned only")
+                .on_hover_text(
+                    "Name the station you are tuned to, and nothing else — one name, for the \
+                     thing you are listening to, rather than a wall of names over a passband.",
+                )
+                .clicked()
+            {
+                cfg.broadcast_labels_all = false;
+            }
+            if crate::chrome::chip(ui, cfg.broadcast_labels_all, "The whole band")
+                .on_hover_text(
+                    "Name every broadcaster the schedule has on air now, wherever it sits. \
+                     What you want while browsing a band rather than listening to one \
+                     station, and busier for it. Also on the SPOTS window, as BC ALL.",
+                )
+                .clicked()
+            {
+                cfg.broadcast_labels_all = true;
+            }
+        });
     }
     ui.add_space(6.0);
     // Said here because this is where they used to be, and where an operator
