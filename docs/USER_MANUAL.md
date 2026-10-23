@@ -6534,9 +6534,10 @@ the mode has always been.
 ### 3.26 JTTY
 
 > **Experimental.** JTTY is new — it arrived in the WSJT-X 3.2 release — and
-> this implementation has been checked against the reference encoder and
-> decoder, bit for bit on its vectors, but **not yet decoded off the air**.
-> Treat a decode as worth a second look and a first contact as a test.
+> this implementation has been checked against the reference encoder bit for
+> bit on its vectors and decoded from its own transmissions in noise, but
+> **not yet off the air**. Treat a decode as worth a second look and a first
+> contact as a test.
 
 Choose **JTTY** from the DIGITAL row. JTTY is the **asynchronous keyboard
 mode** from the WSJT-X 3.2 release: it is worked like RTTY — either side types
@@ -6545,35 +6546,40 @@ that would be marginal and error-prone as 45.45-baud RTTY still copies. It is
 about 125 Hz wide, small enough to tuck into a gap in a crowded band.
 
 **It is not slotted.** Unlike FT8/FT4 there is no even/odd turn and no period to
-agree on: a transmission starts at any instant and lasts a few seconds, so there
-is no clock to watch and nothing to synchronise. A message appears in the list a
-moment after it is heard.
+agree on: a transmission starts at any instant, so there is no clock to watch
+and nothing to synchronise. A message is sent as one or more frames of about
+1.9 s each, back to back.
 
 **What you see.** A rolling log of the messages heard, each with its UTC time,
 audio frequency and SNR. The text is what was decoded: a CQ (`CQ K1ABC CQ`), a
-call, a contest exchange (`599 123`, `1D EMA`, `599 FN42`), or a control phrase
-such as `AGN?` or `TU`. A partial message — one whose end was not heard — is
-shown dimmed, so a run cut off by the next transmission reads as incomplete.
+call, a contest exchange (`599 123`, `1D EMA`, `599 FN42`), a control phrase
+such as `AGN?` or `TU`, or plain text. A message of several frames is **one
+line that grows** as its frames arrive, and stays dimmed until its last frame
+has been heard; a message whose end was lost stays dimmed. Several stations
+sending at once are separate lines.
+
+**Where in the audio it sits.** The audio frequency is the signal's **lowest
+tone**, as in WSJT-X, and defaults to **1500 Hz** (tones 1500–1594 Hz). The
+receiver always searches **1200–1800 Hz** for the lowest tone, plus 50 Hz
+either side of your own audio frequency, so in **USB** most signals near the
+middle of the passband decode without you doing anything. To hear or work a
+station outside that band, click it on the waterfall or set the audio offset as
+in the other digital modes; you transmit on that same frequency. As with FT8,
+the offset is remembered per band.
 
 **Transmitting.** The **TX** row under the log is a single line: type the
 message (`W1ABC W9XYZ FN42`, or one of the exchange forms above) and press
 **TX**; **CALL CQ** fills the box with `CQ <your call> CQ` and sends it. The
 message is sent **once** — JTTY is asynchronous, so there is no period to wait
-for and nothing repeats; the over ends when the burst is done. The message is
-packed for the air automatically: a callsign, a contest exchange or a control
-phrase is sent as its compact typed form, and anything else is sent as plain
-text.
+for and nothing repeats; the over ends when the burst is done, and pressing
+**SENDING** stops it early. The message is packed for the air automatically: a
+callsign, a contest exchange or a control phrase is sent as its compact typed
+form, and anything else as plain text, five characters a frame. A message can
+be at most 16 frames (about 30 s); if the text is longer, or the box is empty,
+nothing is sent and the reason is shown under the row.
 
 **Where to find it.** There is no calling frequency and the mode is very new;
-tune where the station you want says it will be, and leave the audio cursor
-where the signals are — the decoder searches the passband itself.
-
-**Where in the audio it sits.** Like the reference, JTTY is centred at
-**1500 Hz**, its four tones running 1500–1594 Hz — a 127 Hz signal inside a
-normal SSB passband. So in **USB** with the cursor near 1500 Hz it is where you
-would expect; it will not appear at the bottom of the passband, and a receiver
-or filter set to cut below about 1400 Hz will pass the audio but lose the
-signal. This build sends and receives at that centre.
+tune where the station you want says it will be.
 
 ## 4. Skimmers
 
