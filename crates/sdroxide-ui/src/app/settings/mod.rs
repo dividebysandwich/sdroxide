@@ -2848,6 +2848,21 @@ impl SdroxideApp {
                     );
                     ui.end_row();
 
+                    // Invert this receiver's I/Q before demodulation: for a
+                    // receiver whose I and Q are the other way round, so SSB
+                    // comes out on the wrong sideband (LSB heard as USB) and the
+                    // spectrum is mirrored about the dial.
+                    ui.label(RichText::new("Swap I/Q").strong());
+                    ui.end_row();
+                    crate::chrome::checkbox(ui, &mut cfg.swap_iq, "Swap I/Q").on_hover_text(
+                        "Invert the I/Q of this receiver before demodulation. Use it \
+                         when a receiver's I and Q are the other way round and SSB \
+                         comes out on the wrong sideband (LSB heard as USB), with \
+                         the spectrum mirrored about the dial.\n\nA property of the \
+                         hardware, not of who is signed in.\n\nTakes effect on Apply.",
+                    );
+                    ui.end_row();
+
                     // SWL mode is a property of the radio, not the screen: the
                     // listening set stays a listener's while the transceiver
                     // beside it keeps its PTT.
