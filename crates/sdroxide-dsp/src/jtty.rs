@@ -7,9 +7,9 @@
 // JTTY was designed by the WSJT development team (Joe Taylor K1JT, Steve
 // Franke K9AN, Bill Somerville G4WJS and others). The forward-error-correction
 // profile, the source grammar and the receive shape below are theirs; the Rust
-// translation and the circular Viterbi decoder are this fork's.
+// translation and the circular Viterbi decoder are sdroxide's.
 
-//! JTTY — the WSJT-X 3.2 RTTY-like asynchronous text mode, receive side.
+//! JTTY — the WSJT-X 3.2 RTTY-like asynchronous text mode.
 //!
 //! JTTY is not one of the slotted weak-signal modes: a transmission can start
 //! at any instant, so there is no T/R period and no frame boundary to lock the
@@ -42,7 +42,7 @@
 //! # Why this is not mfsk-core
 //!
 //! JTTY is not in mfsk-core and not on WSJT-X's `master`; it lives only in the
-//! v3.2 release branch. So this is the fork's own decoder, like FSK441.
+//! v3.2 release branch. So this is sdroxide's own decoder, like FSK441.
 
 /// The decoder's working sample rate. The reference runs its DSP at 6 kHz —
 /// 31.25 baud is exactly 192 samples a symbol — and hands the receiver 12 kHz
@@ -55,13 +55,14 @@ pub const JTTY_BAUD: f32 = 31.25;
 pub const JTTY_NSPS: usize = 192;
 /// Tone spacing in Hz — equal to the baud rate, as the reference tone grid is.
 pub const JTTY_TONE_SPACING_HZ: f32 = 31.25;
-/// Audio centre of the signal: the **lowest** of the four tones, in Hz.
+/// The default audio frequency, in Hz: the **lowest** of the four tones.
 ///
 /// The reference places JTTY at 1500 Hz, so the four tones run
 /// 1500 / 1531.25 / 1562.5 / 1593.75 Hz — 127 Hz wide in a normal SSB
-/// passband, the same place WSJT-X uses. This is a frequency, **not** the tone
-/// spacing: passing the spacing here put the signal at 31…125 Hz, below the
-/// 100 Hz filter edge, so it could neither be heard nor decoded on the air.
+/// passband. The operator can move it, as in WSJT-X. This is a frequency,
+/// **not** the tone spacing: passing the spacing here put the signal at
+/// 31…125 Hz, below the 100 Hz filter edge, so it could neither be heard nor
+/// decoded on the air.
 pub const JTTY_BASE_HZ: f32 = 1500.0;
 /// Symbols per frame: 13 sync + 46 coded.
 pub const JTTY_SYNC_SYMBOLS: usize = 13;
@@ -139,7 +140,7 @@ pub fn information_bits(payload: &[u8; PAYLOAD_BITS]) -> [u8; INFORMATION_BITS] 
 }
 
 /// Encode a payload into 46 tone symbols. This is the reference's `tbcc_encode`
-/// and is used to test the decoder (the fork is receive-only for JTTY for now).
+/// and what transmit sends.
 pub fn encode_tones(payload: &[u8; PAYLOAD_BITS]) -> [u8; INFORMATION_BITS] {
     let info = information_bits(payload);
     let mut state: u32 = 0;
@@ -1335,10 +1336,6 @@ pub fn synthesize_frame(tones: &[u8], f0: f32) -> Vec<f32> {
 /// The complex analytic signal of a real 6 kHz buffer (positive frequencies
 /// only), the reference's `ana64a`. A Hilbert transform via FFT: zero the
 /// negative-frequency half and double the positive one.
-///
-/// Public so a caller scanning many candidate frames can compute it once and
-/// hand it to [`find_sync_near_in`] — the FFT is the mode's dominant cost and
-/// is over the whole window.
 pub fn analytic_signal(x: &[f32]) -> Vec<Complex32> {
     use rustfft::FftPlanner;
     let n = x.len().next_power_of_two();
@@ -1377,6 +1374,7 @@ pub struct JttySync {
 
 /// Four unit-amplitude tone references over one symbol, for the audio base
 /// frequency `f0` (the lowest tone). Tone `i` sits at `f0 + i·baud`.
+#[cfg(test)]
 fn tone_references(f0: f32) -> [[Complex32; JTTY_NSPS]; 4] {
     let mut t = [[Complex32::new(0.0, 0.0); JTTY_NSPS]; 4];
     for (tone, row) in t.iter_mut().enumerate() {
@@ -1389,177 +1387,207 @@ fn tone_references(f0: f32) -> [[Complex32; JTTY_NSPS]; 4] {
     t
 }
 
-/// Find a JTTY frame in a 6 kHz real buffer, or `None`.
-///
-/// Correlates the analytic signal against the reference sync waveform across
-/// candidate starts and a coaxially-swept audio base frequency, and requires
-/// most of the 13 sync tones to be readable. The reference searches a shifted
-/// spectrum; this is the same decision at the symbol level, which is compact
-/// and adequate for a first cut.
-pub fn find_sync(x: &[f32], ftol: f32) -> Option<JttySync> {
-    if x.len() < JTTY_FRAME_SYMBOLS * JTTY_NSPS {
-        return None;
-    }
-    let c = analytic_signal(x);
-    let nsps = JTTY_NSPS;
-    let max_start = x.len() - JTTY_FRAME_SYMBOLS * nsps;
-    let step = nsps / 4; // quarter-symbol start granularity
-    // The audio base is the signal's centre (1500 Hz), swept either side for
-    // tuning error. The tone *spacing* is not the base: at 31.25 Hz the whole
-    // signal sat below the filter edge.
-    let f0_centre = JTTY_BASE_HZ;
-    let f0_step = 5.0f32;
-    let f0_lo = (f0_centre - ftol).max(1.0);
-    let f0_hi = f0_centre + ftol;
+/// Frequency step of the receive search: a quarter of the tone spacing, so a
+/// signal anywhere is at most an eighth of a tone off a search bin.
+pub const JTTY_SEARCH_DF_HZ: f32 = JTTY_TONE_SPACING_HZ / SEARCH_OVERSAMPLE as f32;
+/// Time step of the receive search, in samples: an eighth of a symbol.
+pub const JTTY_SEARCH_STEP: usize = JTTY_NSPS / 8;
+/// How many search bins one tone spacing is.
+const SEARCH_OVERSAMPLE: usize = 4;
+/// A symbol window zero-padded to this length gives [`JTTY_SEARCH_DF_HZ`] bins.
+const SEARCH_NFFT: usize = JTTY_NSPS * SEARCH_OVERSAMPLE;
+/// Sync tones that must read correctly by hard decision: the reference's
+/// `nsync > 6`.
+pub const JTTY_MIN_SYNC_HITS: usize = 7;
+/// Minimum sync SNR, dB: the reference's `smin`.
+pub const JTTY_MIN_SYNC_SNR_DB: f32 = 4.6;
 
-    let mut best: Option<JttySync> = None;
-    let mut f0 = f0_lo;
-    while f0 <= f0_hi {
-        let tone_ref = tone_references(f0);
-        let mut start = 0usize;
-        while start <= max_start {
-            let mut hits = 0usize;
-            let mut pt = 0.0f32;
-            let mut pa = 0.0f32;
-            for j in 0..JTTY_SYNC_SYMBOLS {
-                let i0 = start + j * nsps;
-                let mut pow = [0.0f32; 4];
-                for (tone, row) in tone_ref.iter().enumerate() {
-                    let mut z = Complex32::new(0.0, 0.0);
-                    for k in 0..nsps {
-                        z += c[i0 + k] * row[k].conj();
+/// The power at every search frequency of every one-symbol window on an
+/// eighth-symbol grid: one short FFT per grid step, computed once per scan.
+///
+/// The bin `b` window starting at row `r` is the correlation of samples
+/// `r·STEP .. r·STEP + nsps` with a tone of `b · DF` Hz at zero phase — the
+/// same figure [`tone_references`] gives — so a sync candidate at any start
+/// and any base frequency is 13 × 4 table lookups, and its payload 46 × 4
+/// more. That is what lets the receiver search a band of frequencies rather
+/// than one exact base, which a real signal off by more than a few hertz needs.
+pub struct ToneSpectrum {
+    /// Lowest bin kept.
+    bin_lo: usize,
+    /// Bins kept per row.
+    nbins: usize,
+    /// Rows: one per [`JTTY_SEARCH_STEP`] whose window fits in the buffer.
+    rows: usize,
+    /// `pow[row * nbins + (bin - bin_lo)]`.
+    pow: Vec<f32>,
+}
+
+impl ToneSpectrum {
+    /// Build over an analytic signal `len` samples long, for base (lowest-
+    /// tone) frequencies from `f_lo` to `f_hi` Hz.
+    pub fn new(c: &[Complex32], len: usize, f_lo: f32, f_hi: f32) -> Self {
+        use rustfft::FftPlanner;
+        let nsps = JTTY_NSPS;
+        let len = len.min(c.len());
+        let nyq = SEARCH_NFFT / 2 - 1;
+        let bin_lo = ((f_lo.max(0.0) / JTTY_SEARCH_DF_HZ).floor() as usize).min(nyq);
+        let bin_hi = ((f_hi.max(0.0) / JTTY_SEARCH_DF_HZ).ceil() as usize + 3 * SEARCH_OVERSAMPLE)
+            .clamp(bin_lo, nyq);
+        let nbins = bin_hi - bin_lo + 1;
+        let rows = if len >= nsps { (len - nsps) / JTTY_SEARCH_STEP + 1 } else { 0 };
+        let fft = FftPlanner::<f32>::new().plan_fft_forward(SEARCH_NFFT);
+        let mut scratch = vec![Complex32::new(0.0, 0.0); fft.get_inplace_scratch_len()];
+        let mut buf = vec![Complex32::new(0.0, 0.0); SEARCH_NFFT];
+        let mut pow = Vec::with_capacity(rows * nbins);
+        for r in 0..rows {
+            let i0 = r * JTTY_SEARCH_STEP;
+            buf[..nsps].copy_from_slice(&c[i0..i0 + nsps]);
+            buf[nsps..].fill(Complex32::new(0.0, 0.0));
+            fft.process_with_scratch(&mut buf, &mut scratch);
+            pow.extend(buf[bin_lo..bin_lo + nbins].iter().map(|z| z.norm_sqr()));
+        }
+        ToneSpectrum { bin_lo, nbins, rows, pow }
+    }
+
+    /// The four tone powers of the window at `row` for a base at `bin`.
+    fn tones(&self, row: usize, bin: usize) -> [f32; 4] {
+        let at = row * self.nbins + (bin - self.bin_lo);
+        std::array::from_fn(|t| self.pow[at + t * SEARCH_OVERSAMPLE])
+    }
+
+    /// Sync candidates starting at samples `from .. to` (rounded to the grid)
+    /// with a base from `f_lo` to `f_hi` Hz, strongest first and at most
+    /// `max` of them.
+    ///
+    /// A candidate passes the reference's gate — at least
+    /// [`JTTY_MIN_SYNC_HITS`] of the 13 sync tones by hard decision and a sync
+    /// SNR above [`JTTY_MIN_SYNC_SNR_DB`] — and is the strongest within a
+    /// symbol and a signal's width of every other kept. Strongest rather than
+    /// earliest: a frame also passes a weaker sync an eighth of a symbol or so
+    /// either side of its own, and a symbol and a half early can still read
+    /// six tones, so the first acceptable start is not the frame's.
+    pub fn candidates(
+        &self,
+        from: usize,
+        to: usize,
+        f_lo: f32,
+        f_hi: f32,
+        max: usize,
+    ) -> Vec<JttySync> {
+        let sym = JTTY_NSPS / JTTY_SEARCH_STEP;
+        let span = JTTY_FRAME_SYMBOLS * sym;
+        // The last row a frame's final symbol window can start on.
+        let Some(r_max) = (self.rows + sym).checked_sub(span + 1) else {
+            return Vec::new();
+        };
+        let r_lo = from.div_ceil(JTTY_SEARCH_STEP);
+        let r_end = to.div_ceil(JTTY_SEARCH_STEP).min(r_max + 1);
+        let b_lo = ((f_lo / JTTY_SEARCH_DF_HZ).round().max(0.0) as usize).max(self.bin_lo);
+        let Some(b_max) = (self.bin_lo + self.nbins).checked_sub(3 * SEARCH_OVERSAMPLE + 1) else {
+            return Vec::new();
+        };
+        let b_hi = ((f_hi / JTTY_SEARCH_DF_HZ).round().max(0.0) as usize).min(b_max);
+        let mut all = Vec::new();
+        for r in r_lo..r_end {
+            for b in b_lo..=b_hi {
+                let mut hits = 0usize;
+                let mut pt = 0.0f32;
+                let mut pa = 0.0f32;
+                for (j, &want) in JTTY_SYNC.iter().enumerate() {
+                    let pow = self.tones(r + j * sym, b);
+                    let best = (0..4).max_by(|&x, &y| pow[x].total_cmp(&pow[y])).unwrap();
+                    if best as u8 == want {
+                        hits += 1;
                     }
-                    pow[tone] = z.norm_sqr();
+                    pt += pow[want as usize];
+                    pa += pow.iter().sum::<f32>();
                 }
-                let (best_tone, _) =
-                    pow.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).unwrap();
-                if best_tone as u8 == JTTY_SYNC[j] {
-                    hits += 1;
+                if hits < JTTY_MIN_SYNC_HITS {
+                    continue;
                 }
-                pt += pow[JTTY_SYNC[j] as usize];
-                pa += pow.iter().sum::<f32>();
-            }
-            let pn = (pa - pt) / 3.0;
-            let snr = if pn > 0.0 { 10.0 * (pt / pn).log10() } else { -99.0 };
-            if hits > 6 {
-                let cand = JttySync { start, f0, sync_hits: hits, snr_db: snr };
-                // Prefer the strongest sync; ties break on the earliest start.
-                // The scanner resumes after each decoded frame, so a strong
-                // later sync cannot make it skip a frame that has already been
-                // stepped over.
-                let better = match &best {
-                    None => true,
-                    Some(b) => {
-                        cand.sync_hits > b.sync_hits
-                            || (cand.sync_hits == b.sync_hits
-                                && (cand.snr_db > b.snr_db
-                                    || (cand.snr_db == b.snr_db && cand.start < b.start)))
-                    }
-                };
-                if better {
-                    best = Some(cand);
+                let pn = (pa - pt) / 3.0;
+                let snr = if pn > 0.0 { 10.0 * (pt / pn).log10() } else { 99.0 };
+                if snr > JTTY_MIN_SYNC_SNR_DB {
+                    all.push(JttySync {
+                        start: r * JTTY_SEARCH_STEP,
+                        f0: b as f32 * JTTY_SEARCH_DF_HZ,
+                        sync_hits: hits,
+                        snr_db: snr,
+                    });
                 }
             }
-            start += step;
         }
-        f0 += f0_step;
+        all.sort_by(|a, b| b.snr_db.total_cmp(&a.snr_db));
+        // One per signal: a signal is about four tones wide, a sync about one
+        // symbol long either way.
+        let near_hz = 4.0 * JTTY_TONE_SPACING_HZ;
+        let mut kept: Vec<JttySync> = Vec::new();
+        for c in all {
+            if kept.len() >= max {
+                break;
+            }
+            let clash = kept
+                .iter()
+                .any(|k| k.start.abs_diff(c.start) < JTTY_NSPS && (k.f0 - c.f0).abs() < near_hz);
+            if !clash {
+                kept.push(c);
+            }
+        }
+        kept
     }
-    best
+
+    /// Tone amplitudes for the 46 coded symbols after a sync this found.
+    pub fn payload_energies(&self, sync: &JttySync) -> ToneEnergies {
+        let sym = JTTY_NSPS / JTTY_SEARCH_STEP;
+        let r0 = sync.start / JTTY_SEARCH_STEP + JTTY_SYNC_SYMBOLS * sym;
+        let bin = (sync.f0 / JTTY_SEARCH_DF_HZ).round() as usize;
+        let mut energies = [[0.0f32; 4]; INFORMATION_BITS];
+        for (t, e) in energies.iter_mut().enumerate() {
+            let r = r0 + t * sym;
+            if r >= self.rows {
+                break;
+            }
+            *e = self.tones(r, bin).map(f32::sqrt);
+        }
+        energies
+    }
 }
 
-/// Find the earliest acceptable sync near `from`, at a fixed base frequency.
+/// One frame the receive search decoded: where it starts in the buffer, its
+/// base frequency, its sync SNR and its payload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JttyDecoded {
+    pub start: usize,
+    pub f0: f32,
+    pub snr_db: f32,
+    pub frame: JttyFrame,
+}
+
+/// Decode every JTTY frame that starts at samples `from .. to` of a 6 kHz
+/// buffer with a base from `f_lo` to `f_hi` Hz. The buffer must run a whole
+/// frame past `to` for a frame starting there to be read.
 ///
-/// A frame-by-frame scanner uses this: once the first frame fixes `f0`, each
-/// following frame is searched only in a short window after the previous one,
-/// which is both faster than the whole-buffer search and correct — the global
-/// search can return a later frame's sync and skip the one in between.
-pub fn find_sync_near(
-    x: &[f32],
-    f0: f32,
-    from: usize,
-    window: usize,
-    min_hits: usize,
-) -> Option<JttySync> {
+/// Each candidate's payload goes through the FEC and must also be a valid
+/// source word — the reference's `source_valid` — since a CRC of 12 bits
+/// passes about one random list path in four thousand.
+pub fn decode_frames(x: &[f32], from: usize, to: usize, f_lo: f32, f_hi: f32) -> Vec<JttyDecoded> {
+    /// More candidates than stations: a busy band has a few frames starting in
+    /// any half second, and each costs one list decode.
+    const MAX_CANDIDATES: usize = 12;
     let c = analytic_signal(x);
-    find_sync_near_in(&c, x.len(), f0, from, window, min_hits)
-}
-
-/// [`find_sync_near`] against an analytic signal the caller already has.
-///
-/// A frame-by-frame scan calls this once per frame found, and the FFT is over
-/// the whole window every time — the dominant cost of the mode. Computing it
-/// once in the caller and passing it here is what keeps a selected JTTY off a
-/// permanently busy core.
-pub fn find_sync_near_in(
-    c: &[Complex32],
-    len: usize,
-    f0: f32,
-    from: usize,
-    window: usize,
-    min_hits: usize,
-) -> Option<JttySync> {
-    let nsps = JTTY_NSPS;
-    let frame = JTTY_FRAME_SYMBOLS * nsps;
-    if from + frame > len {
-        return None;
-    }
-    let end = (from + window).min(len - frame);
-    let tone_ref = tone_references(f0);
-    let step = nsps / 8;
-    let mut start = from;
-    while start <= end {
-        let mut hits = 0usize;
-        let mut pt = 0.0f32;
-        let mut pa = 0.0f32;
-        for j in 0..JTTY_SYNC_SYMBOLS {
-            let i0 = start + j * nsps;
-            let mut pow = [0.0f32; 4];
-            for (tone, row) in tone_ref.iter().enumerate() {
-                let mut z = Complex32::new(0.0, 0.0);
-                for k in 0..nsps {
-                    z += c[i0 + k] * row[k].conj();
-                }
-                pow[tone] = z.norm_sqr();
-            }
-            let (best_tone, _) = pow.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).unwrap();
-            if best_tone as u8 == JTTY_SYNC[j] {
-                hits += 1;
-            }
-            pt += pow[JTTY_SYNC[j] as usize];
-            pa += pow.iter().sum::<f32>();
-        }
-        if hits >= min_hits {
-            let pn = (pa - pt) / 3.0;
-            let snr = if pn > 0.0 { 10.0 * (pt / pn).log10() } else { -99.0 };
-            return Some(JttySync { start, f0, sync_hits: hits, snr_db: snr });
-        }
-        start += step;
-    }
-    None
-}
-
-/// Tone energies for the 46 coded symbols following a sync, for the decoder.
-#[allow(clippy::needless_range_loop)] // symbol index selects the energy row
-pub fn payload_energies(x: &[f32], sync: &JttySync) -> ToneEnergies {
-    let c = analytic_signal(x);
-    let nsps = JTTY_NSPS;
-    let tone_ref = tone_references(sync.f0);
-    let mut energies = [[0.0f32; 4]; INFORMATION_BITS];
-    let payload_start = sync.start + JTTY_SYNC_SYMBOLS * nsps;
-    for t in 0..INFORMATION_BITS {
-        let i0 = payload_start + t * nsps;
-        if i0 + nsps > c.len() {
-            break;
-        }
-        for (tone, row) in tone_ref.iter().enumerate() {
-            let mut z = Complex32::new(0.0, 0.0);
-            for k in 0..nsps {
-                z += c[i0 + k] * row[k].conj();
-            }
-            energies[t][tone] = z.norm();
+    let spec = ToneSpectrum::new(&c, x.len(), f_lo, f_hi);
+    let table = incoming_tones();
+    let mut out = Vec::new();
+    for sync in spec.candidates(from, to, f_lo, f_hi, MAX_CANDIDATES) {
+        let energies = spec.payload_energies(&sync);
+        if let Some(frame) = decode_with_table(&energies, 32, 2, &table)
+            && decode_atom(&frame.payload).is_some()
+        {
+            out.push(JttyDecoded { start: sync.start, f0: sync.f0, snr_db: sync.snr_db, frame });
         }
     }
-    energies
+    out.sort_by_key(|d| d.start);
+    out
 }
 
 #[cfg(test)]
@@ -1754,42 +1782,74 @@ mod tests {
         }
     }
 
-    /// The synthetic transmitter and the receive front end agree: a
-    /// synthesized frame is found by the sync search and its payload decodes
-    /// back to the source bits.
+    /// Deterministic white noise at `amp`, for the receive-search tests.
+    fn noise(len: usize, amp: f32, seed: u32) -> Vec<f32> {
+        let mut state = seed.wrapping_mul(0x9e37_79b9) | 1;
+        (0..len)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                ((state >> 8) as f32 / 8_388_608.0 - 1.0) * amp
+            })
+            .collect()
+    }
+
+    /// One frame's audio for `payload` at base `f0`.
+    fn frame_audio(payload: &[u8; PAYLOAD_BITS], f0: f32) -> Vec<f32> {
+        let mut tones = Vec::new();
+        tones.extend_from_slice(&JTTY_SYNC);
+        tones.extend_from_slice(&encode_tones(payload));
+        synthesize_frame(&tones, f0)
+    }
+
+    fn mix_at(buf: &mut [f32], at: usize, sig: &[f32]) {
+        for (d, s) in buf[at..].iter_mut().zip(sig) {
+            *d += s;
+        }
+    }
+
+    /// A station off the nominal base by a fraction of a tone, starting off
+    /// the search grid, in noise, decodes — and is reported where it is. The
+    /// receive used to correlate at exactly 1500 Hz from the earliest start
+    /// that read six sync tones, which a signal a few hertz off never passed.
     #[test]
-    fn a_synthesized_frame_decodes() {
-        let payload = payload_from("0100100000010110100011011111011110");
-        let coded = encode_tones(&payload);
-        // Frame = sync tones then coded tones.
-        let mut frame_tones = Vec::new();
-        frame_tones.extend_from_slice(&JTTY_SYNC);
-        frame_tones.extend_from_slice(&coded);
-        // Synthesized at the signal's audio centre, where the reference puts
-        // it, so the four tones sit at 1500/1531.25/1562.5/1593.75 Hz.
-        let audio = synthesize_frame(&frame_tones, JTTY_BASE_HZ);
-        // Pad so the sync search has room either side.
-        let mut buf = vec![0.0f32; JTTY_NSPS * 4];
-        buf.extend_from_slice(&audio);
-        buf.extend(std::iter::repeat_n(0.0, JTTY_NSPS * 4));
-        let sync = find_sync(&buf, 200.0);
-        assert!(sync.is_some(), "sync not found");
-        let sync = sync.unwrap();
-        assert!(sync.sync_hits > 6, "only {} sync tones matched", sync.sync_hits);
-        // The base the search settled on is the signal's audio centre, and it
-        // must be one an SSB receiver can pass. This is the assertion that
-        // failed when the tone spacing was used as the base: the round-trip
-        // above still passed, because it searched at whatever it synthesised
-        // at, so a signal at 31…125 Hz read back perfectly and was inaudible.
-        assert!(
-            sync.f0 > 1000.0 && sync.f0 < 2000.0,
-            "JTTY sat at {} Hz, below a passband a receiver can pass",
-            sync.f0
-        );
-        // End to end: payload energies -> FEC -> the source bits.
-        let energies = payload_energies(&buf, &sync);
-        let decoded = decode_tones(&energies, 32, 2).expect("payload decode");
-        assert_eq!(decoded.payload, payload, "source bits round-tripped");
+    fn an_off_frequency_frame_in_noise_decodes() {
+        let payload = payload_from("0000100110111101111000110101000001");
+        for (f0, at) in [(1523.0f32, 1039usize), (1500.0, 744), (1287.5, 5000), (1771.0, 23)] {
+            let mut buf = noise(JTTY_NSPS * 90, 2.0, 7);
+            mix_at(&mut buf, at, &frame_audio(&payload, f0));
+            let got = decode_frames(&buf, 0, buf.len(), 1200.0, 1800.0);
+            assert_eq!(got.len(), 1, "{f0} Hz at {at}: {got:?}");
+            assert_eq!(got[0].frame.payload, payload);
+            assert!(got[0].start.abs_diff(at) <= JTTY_SEARCH_STEP, "{} vs {at}", got[0].start);
+            assert!((got[0].f0 - f0).abs() <= JTTY_SEARCH_DF_HZ, "{} vs {f0}", got[0].f0);
+        }
+    }
+
+    /// Two stations overlapping in time at different frequencies both decode:
+    /// the search is not one frame at a time.
+    #[test]
+    fn two_overlapping_stations_both_decode() {
+        let a = payload_from("0000100110111101111000110101000001");
+        let b = payload_from("1000000000000001111011000000001001");
+        let mut buf = noise(JTTY_NSPS * 90, 1.0, 3);
+        mix_at(&mut buf, 400, &frame_audio(&a, 1300.0));
+        mix_at(&mut buf, 3100, &frame_audio(&b, 1650.0));
+        let got = decode_frames(&buf, 0, buf.len(), 1200.0, 1800.0);
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!(got[0].frame.payload, a);
+        assert_eq!(got[1].frame.payload, b);
+    }
+
+    /// A minute of noise decodes nothing. Each candidate is a list decode with
+    /// a 12-bit CRC, so the sync gate and the source-word check are what keep
+    /// the log clean.
+    #[test]
+    fn noise_alone_decodes_nothing() {
+        for seed in 1..4 {
+            let buf = noise(60 * JTTY_RATE as usize, 1.0, seed);
+            let got = decode_frames(&buf, 0, buf.len(), 1200.0, 1800.0);
+            assert!(got.is_empty(), "seed {seed}: {got:?}");
+        }
     }
 
     /// Symbol `j` of the synthesized audio is window `j`, as the reference's

@@ -732,7 +732,7 @@ impl Mode {
     /// Used by the transmit lockout, which needs to know how far above the
     /// carrier the emission actually reaches. The figures are tones times tone
     /// spacing: FT8 is 8 × 6.25, FT4 is 4 × 20.833, FT2 is 4 × 41.667 (see
-    /// `Ft2::TONE_SPACING_HZ`), WSPR is 4 × 1.4648.
+    /// `Ft2::TONE_SPACING_HZ`), WSPR is 4 × 1.4648, JTTY is 4 × 31.25.
     ///
     /// JS8 is given its WIDEST speed, Turbo's 160 Hz, because a `Mode` does not
     /// know which speed is set — [`crate::Js8Speed::bandwidth_hz`] does, and is
@@ -746,6 +746,7 @@ impl Mode {
             Mode::Ft2 => Some(166.7),
             Mode::Js8 => Some(crate::Js8Speed::Turbo.bandwidth_hz()),
             Mode::Wspr => Some(6.0),
+            Mode::Jtty => Some(125.0),
             _ => None,
         }
     }
@@ -1126,7 +1127,8 @@ impl Mode {
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
-            | Mode::Fsk441 | Mode::Jtty => (100.0, 3300.0),
+            | Mode::Fsk441
+            | Mode::Jtty => (100.0, 3300.0),
             // The fax subcarrier is 1900 Hz ± 400; the wider passband leaves
             // room for a receiver tuned a few hundred hertz off, which is the
             // normal state of affairs on a chart found by ear.
@@ -1372,7 +1374,8 @@ impl Mode {
             | Mode::Jt9
             | Mode::Fst4
             | Mode::Q65
-            | Mode::Fsk441 | Mode::Jtty => C::Data,
+            | Mode::Fsk441
+            | Mode::Jtty => C::Data,
         }
     }
 
@@ -1612,7 +1615,8 @@ impl Mode {
             | Mode::Jt9
             | Mode::Fst4
             | Mode::Q65
-            | Mode::Fsk441 | Mode::Jtty => &[],
+            | Mode::Fsk441
+            | Mode::Jtty => &[],
         }
     }
 }

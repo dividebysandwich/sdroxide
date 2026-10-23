@@ -1,25 +1,25 @@
-//! `JttyController` — the JTTY asynchronous text receiver, receive only.
+//! `JttyController` — the JTTY asynchronous text mode, receive and transmit.
 //!
 //! JTTY is not a slotted mode: a transmission can start at any instant, so
-//! there is no T/R period and no frame boundary to lock to. Like
-//! [`crate::UvPacketController`] and the ACARS/DSC controllers, this holds a
-//! rolling window of audio and re-scans it as it advances, then keeps a
-//! short-lived set of decoded-message hashes so an overlapping window does not
-//! file the same message twice.
+//! there is no T/R period and no frame boundary to lock to. The receiver holds
+//! a rolling buffer of audio and, every half second, searches the starts it
+//! has not searched yet — each start once, with a frame's worth of audio after
+//! it — across the audio band the reference searches (1200–1800 Hz for the
+//! lowest tone) and the operator's own frequency either side.
 //!
 //! # Messages, not frames
 //!
-//! A JTTY **message** is one or more ~1.888 s **frames**; the last carries the
-//! end-of-message flag. The receiver searches the window for a frame, decodes
-//! it, and appends it to a message until EOM or until the run breaks. What the
-//! panel shows is that accumulated text.
+//! A JTTY **message** is one or more ~1.888 s **frames** sent back to back; the
+//! last carries the end-of-message flag. Each decoded frame is filed against
+//! the run it continues — the one at the same frequency whose next frame was
+//! due exactly where this one starts — so two stations never merge, a message
+//! longer than the buffer still completes, and the log shows one line per
+//! message that grows as its frames arrive rather than one line per glimpse.
 //!
-//! Receive only in this build. Transmit needs the source-grammar packer and the
-//! asynchronous keying path, which is the next stage — as FSK441 shipped
-//! receive before transmit.
+//! Transmit packs the typed line, synthesizes the burst at the operator's
+//! audio frequency and sends it once.
 
 use std::collections::VecDeque;
-use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::SystemTime;
 
@@ -32,36 +32,89 @@ use sdroxide_types::{
 use crate::DigiEngine;
 use crate::controller::DigiAction;
 
-/// Audio window scanned, in seconds. Long enough for a several-frame message.
+/// Most audio buffered, in seconds: the frame being searched and room for the
+/// worker to fall behind.
 const WINDOW_S: f64 = 12.0;
-/// How much new audio accumulates before the window is scanned again.
+/// How much new audio accumulates before it is searched.
 const SCAN_STEP_S: f64 = 0.5;
-/// How long a decoded-message hash suppresses a repeat, in seconds.
-const DEDUP_TTL_S: u64 = 15;
+/// Audio kept either side of what is searched, so the FFT-based Hilbert
+/// transform's wrap-around at the buffer ends lands outside it. Two symbols,
+/// a whole number of search steps.
+const EDGE: usize = 2 * jtty::JTTY_NSPS;
+/// One frame, in samples.
+const FRAME_LEN: usize = jtty::JTTY_FRAME_SYMBOLS * jtty::JTTY_NSPS;
+/// Default audio frequency: the lowest tone where the reference puts it.
+const DEFAULT_AUDIO_HZ: f32 = jtty::JTTY_BASE_HZ;
+/// The band the reference always searches for the lowest tone, Hz.
+const WIDE_LO_HZ: f32 = 1200.0;
+const WIDE_HI_HZ: f32 = 1800.0;
+/// How far either side of the operator's own frequency is searched, Hz.
+const FTOL_HZ: f32 = 50.0;
+/// Two decodes this close in frequency are the same station.
+const SAME_STATION_HZ: f32 = 2.0 * jtty::JTTY_TONE_SPACING_HZ;
 /// Silence (6 kHz samples) pushed after a transmit burst to flush the
 /// resampler: one of its 1024-sample input chunks, so nothing real is left
 /// behind in it.
 const TX_RESAMPLE_PAD: usize = 1024;
 
-/// One window handed to the decode worker.
+/// One stretch of audio handed to the decode worker.
 struct DecodeJob {
+    /// Which receive this belongs to; a result from before an abort is dropped.
+    generation: u64,
     audio: Vec<f32>,
-    at: i64,
+    /// Absolute sample index of `audio[0]`.
+    base: u64,
+    /// Frame starts to search, as indices into `audio`.
+    from: usize,
+    to: usize,
+    f_lo: f32,
+    f_hi: f32,
+}
+
+/// What the worker found in a job.
+struct DecodeResult {
+    generation: u64,
+    base: u64,
+    /// Absolute sample index the search reached: every start before it has
+    /// been looked at.
+    searched_to: u64,
+    frames: Vec<jtty::JttyDecoded>,
+}
+
+/// A message being received: the frames so far, and where the next is due.
+struct Run {
+    id: u64,
+    frames: Vec<jtty::JttyFrame>,
+    /// Absolute sample index the next frame would start at.
+    next: u64,
+    hz: f32,
 }
 
 pub struct JttyController {
     cfg: DigiConfig,
     resampler: Option<MonoResampler>,
+    /// Received audio at 6 kHz; `buf[0]` is absolute sample `buf_at`.
     buf: Vec<f32>,
+    buf_at: u64,
+    /// The first frame start not yet searched, absolute.
+    next_search: u64,
     tap_scratch: Vec<f32>,
     level: f32,
-    messages: Vec<JttyMessage>,
+    /// The log, newest last, each line keyed by its run.
+    log: Vec<(u64, JttyMessage)>,
+    next_id: u64,
     total: u64,
-    seen: VecDeque<(u64, SystemTime)>,
-    since_scan: usize,
+    /// Runs still waiting for their next frame.
+    runs: Vec<Run>,
+    /// Frames already filed (absolute start, Hz): the searches overlap at
+    /// their edges, so a frame can be found twice.
+    recent: VecDeque<(u64, f32)>,
+    /// The operator's audio frequency: the lowest tone, transmit and receive.
+    audio_hz: f32,
+    generation: u64,
 
     job_tx: Sender<DecodeJob>,
-    res_rx: Receiver<Vec<JttyMessage>>,
+    res_rx: Receiver<DecodeResult>,
     _worker: std::thread::JoinHandle<()>,
     pending: bool,
     status_dirty: bool,
@@ -82,13 +135,20 @@ pub struct JttyController {
 impl JttyController {
     pub fn new(cfg: DigiConfig, tap_rate: f64) -> Self {
         let (job_tx, job_rx) = std::sync::mpsc::channel::<DecodeJob>();
-        let (res_tx, res_rx) = std::sync::mpsc::channel::<Vec<JttyMessage>>();
+        let (res_tx, res_rx) = std::sync::mpsc::channel::<DecodeResult>();
         let worker = std::thread::Builder::new()
             .name("sdroxide-jtty-decode".into())
             .spawn(move || {
                 while let Ok(job) = job_rx.recv() {
-                    let msgs = decode_window(&job.audio, job.at);
-                    if res_tx.send(msgs).is_err() {
+                    let frames =
+                        jtty::decode_frames(&job.audio, job.from, job.to, job.f_lo, job.f_hi);
+                    let result = DecodeResult {
+                        generation: job.generation,
+                        base: job.base,
+                        searched_to: job.base + job.to as u64,
+                        frames,
+                    };
+                    if res_tx.send(result).is_err() {
                         break;
                     }
                 }
@@ -99,12 +159,17 @@ impl JttyController {
             cfg,
             resampler: MonoResampler::new(tap_rate, JTTY_RATE),
             buf: Vec::new(),
+            buf_at: 0,
+            next_search: 0,
             tap_scratch: Vec::new(),
             level: 0.0,
-            messages: Vec::new(),
+            log: Vec::new(),
+            next_id: 0,
             total: 0,
-            seen: VecDeque::new(),
-            since_scan: 0,
+            runs: Vec::new(),
+            recent: VecDeque::new(),
+            audio_hz: DEFAULT_AUDIO_HZ,
+            generation: 0,
             job_tx,
             res_rx,
             _worker: worker,
@@ -134,9 +199,7 @@ impl JttyController {
         let Some(frames) = sdroxide_dsp::jtty::pack_message(&self.tx_text) else {
             return;
         };
-        // The modem synthesizes at the signal's audio centre, the same
-        // 1500 Hz the receiver searches.
-        let f0 = sdroxide_dsp::jtty::JTTY_BASE_HZ;
+        let f0 = self.audio_hz;
         // The whole message is one waveform, as the reference sends it: one
         // continuous phase across the frames and a ramp only at either end.
         let mut tones = Vec::with_capacity(frames.len() * jtty::JTTY_FRAME_SYMBOLS);
@@ -173,136 +236,153 @@ impl JttyController {
         (SCAN_STEP_S * JTTY_RATE) as usize
     }
 
-    fn seen_recently(&self, hash: u64, now: SystemTime) -> bool {
-        self.seen.iter().any(|&(h, t)| {
-            h == hash && now.duration_since(t).map(|d| d.as_secs() < DEDUP_TTL_S).unwrap_or(false)
-        })
+    /// The lowest-tone frequencies searched: the reference's band and the
+    /// operator's own frequency either side, as one range.
+    fn search_range(&self) -> (f32, f32) {
+        let lo = WIDE_LO_HZ.min(self.audio_hz - FTOL_HZ).max(100.0);
+        let hi = WIDE_HI_HZ.max(self.audio_hz + FTOL_HZ).min(2800.0);
+        (lo, hi)
     }
 
-    fn prune_seen(&mut self, now: SystemTime) {
-        while let Some(&(_, t)) = self.seen.front() {
-            let expired = now.duration_since(t).map(|d| d.as_secs() >= DEDUP_TTL_S).unwrap_or(true);
-            if expired {
-                self.seen.pop_front();
-            } else {
-                break;
-            }
+    /// Hand the worker every start not yet searched that has a whole frame of
+    /// audio after it, once half a second of them has built up.
+    fn schedule_search(&mut self) {
+        let step = jtty::JTTY_SEARCH_STEP as u64;
+        let written = self.buf_at + self.buf.len() as u64;
+        // Fell behind the buffer (a stalled worker): pick up where audio is.
+        let from = self.next_search.max(self.buf_at + EDGE as u64).div_ceil(step) * step;
+        let Some(last) = written.checked_sub((FRAME_LEN + EDGE) as u64) else {
+            return;
+        };
+        let to = last / step * step;
+        if to < from + Self::step_samples() as u64 {
+            return;
         }
+        let start = from - EDGE as u64;
+        let audio = self.buf[(start - self.buf_at) as usize..].to_vec();
+        let (f_lo, f_hi) = self.search_range();
+        let job = DecodeJob {
+            generation: self.generation,
+            audio,
+            base: start,
+            from: EDGE,
+            to: (to - start) as usize,
+            f_lo,
+            f_hi,
+        };
+        if self.job_tx.send(job).is_ok() {
+            self.pending = true;
+            self.next_search = to;
+        }
+    }
+
+    /// File one decoded frame: drop it if it is one already filed, add it to
+    /// the run it continues, or start a new message with it.
+    fn file_frame(&mut self, at: u64, found: jtty::JttyDecoded, now: SystemTime) {
+        let nsps = jtty::JTTY_NSPS as u64;
+        let hz = found.f0;
+        if self
+            .recent
+            .iter()
+            .any(|&(a, h)| a.abs_diff(at) < nsps && (h - hz).abs() < SAME_STATION_HZ)
+        {
+            return;
+        }
+        self.recent.push_back((at, hz));
+        while self.recent.len() > 256 {
+            self.recent.pop_front();
+        }
+
+        // A frame continues a run when it starts where that run's next frame
+        // was due, at the same frequency.
+        if let Some(i) = self
+            .runs
+            .iter()
+            .position(|r| r.next.abs_diff(at) <= nsps / 2 && (r.hz - hz).abs() < SAME_STATION_HZ)
+        {
+            let mut frames = self.runs[i].frames.clone();
+            frames.push(found.frame.clone());
+            if let Some(msg) = jtty::decode_source(&frames) {
+                let run = &mut self.runs[i];
+                run.frames = frames;
+                run.next = at + FRAME_LEN as u64;
+                let id = run.id;
+                if msg.complete {
+                    self.runs.remove(i);
+                }
+                if let Some((_, line)) = self.log.iter_mut().rev().find(|(k, _)| *k == id) {
+                    line.text = msg.text;
+                    line.complete = msg.complete;
+                    line.at_unix = now_unix(now);
+                }
+                self.status_dirty = true;
+                return;
+            }
+            // It does not read on the end of that run: the run is over, and
+            // this frame may be the start of something else.
+            self.runs.remove(i);
+        }
+
+        let Some(msg) = jtty::decode_source(std::slice::from_ref(&found.frame)) else {
+            return;
+        };
+        let id = self.next_id;
+        self.next_id += 1;
+        self.log.push((
+            id,
+            JttyMessage {
+                at_unix: now_unix(now),
+                text: msg.text,
+                audio_hz: hz,
+                snr_db: found.snr_db.round() as i16,
+                complete: msg.complete,
+            },
+        ));
+        if self.log.len() > JTTY_MESSAGE_MAX {
+            let excess = self.log.len() - JTTY_MESSAGE_MAX;
+            self.log.drain(..excess);
+        }
+        self.total += 1;
+        if !msg.complete {
+            self.runs.push(Run { id, frames: vec![found.frame], next: at + FRAME_LEN as u64, hz });
+        }
+        self.status_dirty = true;
+    }
+
+    fn take_result(&mut self, res: DecodeResult, now: SystemTime) {
+        self.pending = false;
+        if res.generation != self.generation {
+            return;
+        }
+        for found in res.frames {
+            let at = res.base + found.start as u64;
+            self.file_frame(at, found, now);
+        }
+        // A run whose next frame was due inside what has now been searched,
+        // and did not come, is over: the line stays, marked incomplete.
+        let nsps = jtty::JTTY_NSPS as u64;
+        self.runs.retain(|r| r.next + nsps > res.searched_to);
     }
 
     fn digi_status(&self) -> DigiStatus {
         let mut s = DigiStatus::idle(self.cfg.clone());
         s.mode = Mode::Jtty;
         s.step = QsoStep::Idle;
+        s.audio_hz = self.audio_hz;
         // What the panel's SENDING chip and everything else watching the
         // status read: without it a burst on the air reported idle.
         s.transmitting = self.keyed;
         s.jtty = Some(JttyStatus {
             level: self.level,
-            messages: self.messages.clone(),
+            messages: self.log.iter().map(|(_, m)| m.clone()).collect(),
             total: self.total,
         });
         s
     }
 }
 
-/// Hash over the identifying content of a message, for the recent-seen set.
-fn message_hash(m: &JttyMessage) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    m.text.hash(&mut h);
-    h.finish()
-}
-
 fn now_unix(now: SystemTime) -> i64 {
     now.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
-}
-
-/// Scan a window of 6 kHz audio for JTTY frames and assemble messages.
-///
-/// A JTTY frame is 59 symbols of 4-GFSK with a known 13-symbol sync, so the
-/// window is swept a symbol at a time; at each candidate the sync is scored and,
-/// when it is strong enough, the following 46 symbols are decoded. Candidate
-/// frames are collected with their absolute positions and sorted, then
-/// assembled: consecutive frames accumulate into one message until one carries
-/// the end-of-message flag. This slide-and-collect form is robust to frames
-/// touching each other (a message is several frames back to back) because it
-/// never has to guess where the next frame begins.
-pub fn decode_window(x: &[f32], at: i64) -> Vec<JttyMessage> {
-    let nsps = jtty::JTTY_NSPS;
-    let slot = (jtty::JTTY_SYNC_SYMBOLS + jtty::INFORMATION_BITS) * nsps;
-    if x.len() < slot {
-        return Vec::new();
-    }
-
-    // Collect decoded frames with their start positions.
-    let mut found: Vec<(usize, jtty::JttyFrame, f32, f32)> = Vec::new();
-    // One Hilbert transform for the whole window: the sync search below is
-    // called once per frame found, and transforming each time made it the
-    // mode's dominant cost — a selected JTTY held a core busy.
-    let analytic = jtty::analytic_signal(x);
-    let mut pos = 0usize;
-    while pos + slot <= x.len() {
-        // Find the EARLIEST acceptable sync at or after `pos`, at the mode's
-        // fixed audio base. `find_sync_near` scans ascending and returns the
-        // first candidate, so a stronger frame later in the buffer cannot make
-        // the scanner skip an earlier one.
-        let Some(sync) =
-            jtty::find_sync_near_in(&analytic, x.len(), jtty::JTTY_BASE_HZ, pos, x.len(), 6)
-        else {
-            break;
-        };
-        let abs = sync.start;
-        let energies = jtty::payload_energies(x, &sync);
-        match jtty::decode_tones(&energies, 32, 2) {
-            Some(frame) => {
-                found.push((abs, frame, sync.f0, sync.snr_db));
-                pos = abs + slot;
-            }
-            None => {
-                // Not a frame here; step past the sync start and keep looking.
-                pos = abs + nsps;
-            }
-        }
-    }
-
-    // Assemble: consecutive frames run into one message until EOM.
-    found.sort_by_key(|&(p, _, _, _)| p);
-    let mut out = Vec::new();
-    let mut acc: Vec<jtty::JttyFrame> = Vec::new();
-    let mut first_hz = 0.0f32;
-    let mut first_snr = 0.0f32;
-    for (_, frame, f0, snr) in found {
-        if acc.is_empty() {
-            first_hz = f0;
-            first_snr = snr;
-        }
-        let eom = jtty::is_eom(&frame.payload);
-        acc.push(frame);
-        if eom {
-            if let Some(msg) = jtty::decode_source(&acc) {
-                out.push(JttyMessage {
-                    at_unix: at,
-                    text: msg.text,
-                    audio_hz: first_hz,
-                    snr_db: first_snr.round() as i16,
-                    complete: msg.complete,
-                });
-            }
-            acc.clear();
-        }
-    }
-    if !acc.is_empty()
-        && let Some(msg) = jtty::decode_source(&acc)
-    {
-        out.push(JttyMessage {
-            at_unix: at,
-            text: msg.text,
-            audio_hz: first_hz,
-            snr_db: first_snr.round() as i16,
-            complete: msg.complete,
-        });
-    }
-    out
 }
 
 impl DigiEngine for JttyController {
@@ -317,12 +397,14 @@ impl DigiEngine for JttyController {
             None => self.tap_scratch.extend_from_slice(tap),
         }
         self.buf.extend_from_slice(&self.tap_scratch);
+        // Trimmed back to the window only once it has doubled, so the move
+        // happens every twelve seconds rather than on every audio block.
         let cap = Self::window_samples();
-        if self.buf.len() > cap {
+        if self.buf.len() > 2 * cap {
             let excess = self.buf.len() - cap;
             self.buf.drain(..excess);
+            self.buf_at += excess as u64;
         }
-        self.since_scan += self.tap_scratch.len();
 
         if !tap.is_empty() {
             let energy = tap.iter().map(|s| s * s).sum::<f32>() / tap.len() as f32;
@@ -333,29 +415,11 @@ impl DigiEngine for JttyController {
     fn poll(&mut self, now: SystemTime, _dial_hz: f64) -> Vec<DigiAction> {
         let mut actions = Vec::new();
 
-        while let Ok(msgs) = self.res_rx.try_recv() {
-            self.pending = false;
-            for m in msgs {
-                let hash = message_hash(&m);
-                if !self.seen_recently(hash, now) {
-                    self.seen.push_back((hash, now));
-                    self.messages.push(m);
-                    self.total += 1;
-                    self.status_dirty = true;
-                }
-            }
-            if self.messages.len() > JTTY_MESSAGE_MAX {
-                let excess = self.messages.len() - JTTY_MESSAGE_MAX;
-                self.messages.drain(..excess);
-            }
-            self.prune_seen(now);
+        while let Ok(res) = self.res_rx.try_recv() {
+            self.take_result(res, now);
         }
-
-        if !self.pending && self.since_scan >= Self::step_samples() {
-            self.since_scan = 0;
-            let audio = self.buf.clone();
-            self.pending = true;
-            let _ = self.job_tx.send(DecodeJob { audio, at: now_unix(now) });
+        if !self.pending {
+            self.schedule_search();
         }
 
         // Key on the operator's transmit. JTTY is asynchronous: a press sends
@@ -417,8 +481,11 @@ impl DigiEngine for JttyController {
     }
 
     fn abort(&mut self) {
+        self.buf_at += self.buf.len() as u64;
         self.buf.clear();
-        self.since_scan = 0;
+        self.next_search = self.buf_at;
+        self.runs.clear();
+        self.generation += 1;
         self.status_dirty = true;
     }
 
@@ -450,18 +517,29 @@ impl DigiEngine for JttyController {
     }
 
     fn clear_rx(&mut self) {
-        self.messages.clear();
+        self.log.clear();
+        self.runs.clear();
+        self.recent.clear();
         self.total = 0;
-        self.seen.clear();
         self.status_dirty = true;
     }
 
-    fn set_audio_hz(&mut self, _hz: f32) {}
+    /// The lowest tone, as the reference's own frequency is: the transmit
+    /// sits there and the receiver searches either side of it as well as its
+    /// fixed band. Clamped so the four tones stay inside an SSB passband.
+    fn set_audio_hz(&mut self, hz: f32) {
+        let hz = hz.clamp(200.0, 2800.0);
+        if hz != self.audio_hz {
+            self.audio_hz = hz;
+            if !self.keyed {
+                self.rebuild_tx_audio();
+            }
+            self.status_dirty = true;
+        }
+    }
 
-    /// Fixed by the mode: the reference demodulates a candidate-centred
-    /// baseband, so there is no operator tone to set.
     fn audio_hz(&self) -> f32 {
-        1500.0
+        self.audio_hz
     }
 
     fn status(&self) -> DigiStatus {
@@ -473,77 +551,109 @@ impl DigiEngine for JttyController {
 mod tests {
     use super::*;
 
-    /// A synthesized two-frame message decodes through the controller's window
-    /// scanner: frame one non-EOM, frame two EOM, accumulated into one message.
-    #[test]
-    fn a_synthesized_message_is_assembled() {
-        use sdroxide_dsp::jtty::{JTTY_SYNC, encode_tones, synthesize_frame};
-        // `CQ K1ABC CQ` is one atom; send it twice with EOM only on the second
-        // to exercise accumulation. Use the spec's CQ vector.
-        let cq = {
-            let bits = "0000100110111101111000110101000001";
-            let mut p = [0u8; jtty::PAYLOAD_BITS];
-            for (i, c) in bits.chars().enumerate() {
-                p[i] = c.to_digit(2).unwrap() as u8;
-            }
-            p
-        };
-        // Payload bit 34 is the EOM flag: clear it on the first frame, set it
-        // on the second so the two accumulate into one message.
-        let mut first = cq;
-        first[33] = 0;
-        let mut last = cq;
-        last[33] = 1;
-
-        let mut frame_tones = Vec::new();
-        frame_tones.extend_from_slice(&JTTY_SYNC);
-        frame_tones.extend_from_slice(&encode_tones(&first));
-        frame_tones.extend_from_slice(&JTTY_SYNC);
-        frame_tones.extend_from_slice(&encode_tones(&last));
-
-        let audio = synthesize_frame(&frame_tones, jtty::JTTY_BASE_HZ);
-        let mut buf = vec![0.0f32; jtty::JTTY_NSPS * 4];
-        buf.extend_from_slice(&audio);
-        buf.extend(std::iter::repeat_n(0.0, jtty::JTTY_NSPS * 8));
-
-        let msgs = decode_window(&buf, 0);
-        assert!(!msgs.is_empty(), "no message decoded");
-        assert!(msgs.iter().any(|m| m.text.contains("K1ABC")), "{msgs:?}");
+    /// Deterministic white noise at `amp`.
+    fn noise(len: usize, amp: f32, seed: u32) -> Vec<f32> {
+        let mut state = seed.wrapping_mul(0x9e37_79b9) | 1;
+        (0..len)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                ((state >> 8) as f32 / 8_388_608.0 - 1.0) * amp
+            })
+            .collect()
     }
 
-    /// The whole transmit chain in one test: set the text, key, play the burst
-    /// the controller hands the engine, and decode it back through the
-    /// receiver. This is the loop an operator actually makes.
-    #[test]
-    fn a_transmitted_message_decodes_back() {
-        use sdroxide_dsp::jtty::JTTY_RATE;
+    /// The 48 kHz burst a controller hands the engine for `text` sent at
+    /// `hz`, keyed the way the engine keys it.
+    fn tx_burst(text: &str, hz: f32) -> Vec<f32> {
         let mut c = JttyController::new(DigiConfig::default(), 48_000.0);
-        c.set_tx_text("W1ABC W9XYZ FN42".into());
+        c.set_audio_hz(hz);
+        c.set_tx_text(text.into());
         c.set_tx_active(true);
-        // The first poll keys the radio.
         let keyed =
             c.poll(SystemTime::now(), 0.0).into_iter().any(|a| matches!(a, DigiAction::KeyTx));
-        assert!(keyed, "a message should key the radio");
-        assert!(c.tx_burst_active());
-
-        // Play the whole burst the controller hands the engine, at 48 kHz.
-        let mut tx48 = Vec::new();
-        let mut block = vec![0.0f32; 48_000];
+        assert!(keyed, "{text:?} should key the radio");
+        let mut out = Vec::new();
+        let mut block = vec![0.0f32; 4800];
         loop {
             let done = c.fill_tx_block(&mut block);
-            tx48.extend_from_slice(&block);
+            out.extend_from_slice(&block);
             if done {
                 break;
             }
         }
-        // The audio the controller actually hands the engine is in an SSB
-        // passband, not down at the tone spacing. A loopback alone cannot see
-        // this: it synthesises and searches at the same (wrong) frequency and
-        // passes happily, which is exactly how a signal at 31…125 Hz shipped.
-        // The probe frequencies are literal, not read back from the constant
-        // under test — asking the constant where it points answers nothing.
+        out
+    }
+
+    /// Play 48 kHz audio into a receiver in 0.1 s blocks, polling as the engine
+    /// does and letting each search finish, so the result is deterministic.
+    fn receive(c: &mut JttyController, audio: &[f32]) {
+        for block in audio.chunks(4800) {
+            c.on_rx_audio(block);
+            c.poll(SystemTime::now(), 0.0);
+            while c.pending {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                c.poll(SystemTime::now(), 0.0);
+            }
+        }
+    }
+
+    /// Air: `secs` of noise with each burst mixed in at its start time.
+    fn air(secs: f32, bursts: &[(f32, &[f32])]) -> Vec<f32> {
+        let mut out = noise((secs * 48_000.0) as usize, 0.5, 11);
+        for &(at, b) in bursts {
+            let i0 = (at * 48_000.0) as usize;
+            for (d, s) in out[i0..].iter_mut().zip(b) {
+                *d += s;
+            }
+        }
+        out
+    }
+
+    fn lines(c: &JttyController) -> Vec<JttyMessage> {
+        c.digi_status().jtty.unwrap().messages
+    }
+
+    /// A message of many frames is one line, filed once and completed — not
+    /// one line per frame seen and per re-scan, and not cut off where the
+    /// buffer ends: this one is longer than the whole buffer.
+    #[test]
+    fn a_long_message_is_one_complete_line() {
+        let text = "CQ W1ABC W1ABC FN42 THIS IS A LONGER MESSAGE";
+        let burst = tx_burst(text, 1500.0);
+        assert!(burst.len() as f64 > WINDOW_S * 48_000.0, "{} s", burst.len() / 48_000);
+        let mut c = JttyController::new(DigiConfig::default(), 48_000.0);
+        receive(&mut c, &air(burst.len() as f32 / 48_000.0 + 6.0, &[(1.3, &burst)]));
+        let got = lines(&c);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].complete);
+        assert_eq!(got[0].text, text);
+        assert!((got[0].audio_hz - 1500.0).abs() < 8.0, "{}", got[0].audio_hz);
+    }
+
+    /// Two stations sending at once, a few hundred hertz apart, are two lines:
+    /// a frame is filed against the run at its own frequency, never joined
+    /// onto whichever came before it in time.
+    #[test]
+    fn two_stations_at_once_are_two_lines() {
+        let a = tx_burst("CQ K1ABC CQ", 1320.0);
+        let b = tx_burst("W9XYZ 599 123", 1660.0);
+        let mut c = JttyController::new(DigiConfig::default(), 48_000.0);
+        receive(&mut c, &air(10.0, &[(0.7, &a), (1.6, &b)]));
+        let mut got: Vec<_> = lines(&c).into_iter().map(|m| (m.text, m.complete)).collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![("CQ K1ABC CQ".to_string(), true), ("W9XYZ 599 123".to_string(), true)]
+        );
+    }
+
+    /// A station off the reference band is heard once the operator's own
+    /// frequency is set near it, and transmit goes out there.
+    #[test]
+    fn the_operator_frequency_is_searched_and_sent_on() {
+        let burst = tx_burst("CQ K1ABC CQ", 2210.0);
         let power_at = |sig: &[f32], hz: f32| -> f64 {
-            let w: f64 = std::f64::consts::TAU * hz as f64 / 48_000.0;
+            let w = std::f64::consts::TAU * hz as f64 / 48_000.0;
             let (mut re, mut im) = (0.0f64, 0.0f64);
             for (k, &s) in sig.iter().enumerate() {
                 let ph = w * k as f64;
@@ -552,28 +662,41 @@ mod tests {
             }
             (re * re + im * im) / sig.len() as f64
         };
-        let at_1500 = power_at(&tx48, 1500.0);
-        let at_31 = power_at(&tx48, 31.25);
-        assert!(
-            at_1500 > at_31 * 10.0,
-            "the transmitted burst must sit at the reference's 1500 Hz audio centre, but {} at 1500 Hz vs {} at the 31.25 Hz spacing",
-            at_1500,
-            at_31
-        );
-        // Down to the decoder's rate with the same resampler the receive path
-        // uses, then decode the loop the operator actually makes: transmit,
-        // resample both ways, and read the message back off the air.
-        let mut at6 = Vec::new();
-        let mut down = MonoResampler::new(48_000.0, JTTY_RATE).expect("resampler");
-        down.push(&tx48, &mut at6);
-        let mut buf = vec![0.0f32; sdroxide_dsp::jtty::JTTY_NSPS * 4];
-        buf.extend_from_slice(&at6);
-        buf.extend(std::iter::repeat_n(0.0, sdroxide_dsp::jtty::JTTY_NSPS * 4));
-        let msgs = decode_window(&buf, 0);
-        assert!(
-            msgs.iter().any(|m| m.text == "W1ABC W9XYZ FN42"),
-            "the transmitted message did not decode: {msgs:?}"
-        );
+        // Probed at literal frequencies, not at the constant under test.
+        assert!(power_at(&burst, 2210.0) > 10.0 * power_at(&burst, 1500.0));
+
+        let on_air = air(6.0, &[(0.5, &burst)]);
+        let mut wide = JttyController::new(DigiConfig::default(), 48_000.0);
+        receive(&mut wide, &on_air);
+        assert!(lines(&wide).is_empty(), "2210 Hz is outside 1500 ± 50 and 1200–1800");
+
+        let mut tuned = JttyController::new(DigiConfig::default(), 48_000.0);
+        tuned.set_audio_hz(2190.0);
+        receive(&mut tuned, &on_air);
+        let got = lines(&tuned);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].text, "CQ K1ABC CQ");
+    }
+
+    /// The transmit chain end to end: the burst the controller hands the engine,
+    /// resampled down the receive path, reads back as the message typed.
+    #[test]
+    fn a_transmitted_message_decodes_back() {
+        let burst = tx_burst("W1ABC W9XYZ FN42", 1500.0);
+        let mut c = JttyController::new(DigiConfig::default(), 48_000.0);
+        receive(&mut c, &air(8.0, &[(0.2, &burst)]));
+        let got = lines(&c);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].text, "W1ABC W9XYZ FN42");
+        assert!(got[0].complete);
+    }
+
+    /// Noise alone files nothing.
+    #[test]
+    fn noise_alone_files_nothing() {
+        let mut c = JttyController::new(DigiConfig::default(), 48_000.0);
+        receive(&mut c, &noise(30 * 48_000, 1.0, 5));
+        assert!(lines(&c).is_empty(), "{:?}", lines(&c));
     }
 
     /// An empty box is refused and dropped: nothing keys, and a later keystroke

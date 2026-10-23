@@ -558,14 +558,14 @@ pub struct DigiStatus {
     /// peer that matches the protocol version but not this build.
     #[serde(default)]
     pub acars: Option<AcarsStatus>,
-/// Why a key-up was refused or is armed with nothing to send — an empty
+    /// Why a key-up was refused or is armed with nothing to send — an empty
     /// message box, most often. `None` when there is nothing to say. A message
     /// rather than a flag so each mode can name its own reason.
     #[serde(default)]
     pub tx_refused: Option<String>,
     /// JTTY: the asynchronous text messages received and the smoothed audio
     /// level. `None` in every other mode, as the rest of these are. Appended
-    /// after `acars` for the same positional reason.
+    /// after `tx_refused` for the same positional reason.
     #[serde(default)]
     pub jtty: Option<crate::JttyStatus>,
 }
