@@ -4349,6 +4349,7 @@ impl SdroxideApp {
     fn control_inputs(&mut self, ctx: &egui::Context, now: f64, cmds: &mut Vec<Command>) {
         let mut speech_acts: Vec<sdroxide_types::Action> = Vec::new();
         let mut open_workspaces = false;
+        let mut flip_broadcast_labels = false;
         // Destructured rather than borrowed field-by-field: the runtime needs
         // `state` and the window flags mutably at the same time, and they are
         // disjoint parts of `self`.
@@ -4388,6 +4389,7 @@ impl SdroxideApp {
             memories: show_memories,
             voice: show_voice,
             workspaces: &mut open_workspaces,
+            broadcast_labels: &mut flip_broadcast_labels,
             speech: &mut speech_acts,
             rig_squelch,
             zoom_out,
@@ -4401,6 +4403,13 @@ impl SdroxideApp {
             // saved window arrangements live.
             self.show_settings = true;
             self.settings_tab = crate::app::SettingsTab::Ui;
+        }
+        if flip_broadcast_labels {
+            // The same write the SPOTS window's BC chip makes, and persisted the
+            // same way — a bound key that forgot itself at the next start would
+            // be a switch that works once.
+            self.ui_settings.broadcast_labels_all = !self.ui_settings.broadcast_labels_all;
+            crate::app::persist::persist_ui_settings(&self.ui_settings);
         }
         for act in speech_acts {
             self.apply_speech_action(act, now);
@@ -4472,6 +4481,7 @@ impl SdroxideApp {
             // ask for the workspaces. The sink's field is still filled so the
             // two constructions cannot drift apart.
             workspaces: &mut false,
+            broadcast_labels: &mut false,
             speech: &mut Vec::new(),
             rig_squelch,
             // Releasing held keys never pans or zooms, so the passband will do.

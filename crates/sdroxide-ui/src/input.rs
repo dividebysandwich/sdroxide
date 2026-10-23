@@ -42,6 +42,13 @@ pub(crate) struct UiSink<'a> {
     /// as `speech`: the workspaces are edited on a settings page, and choosing
     /// that page is this module's caller's to make.
     pub workspaces: &'a mut bool,
+    /// [`Action::BroadcastLabels`] pressed this frame — a request to **flip**
+    /// [`sdroxide_types::UiSettings::broadcast_labels_all`].
+    ///
+    /// A request rather than a value because the setting does not live here:
+    /// this module has no `UiSettings`, and the write has to be persisted by the
+    /// caller that owns it, exactly as a chip on the SPOTS window does.
+    pub broadcast_labels: &'a mut bool,
     /// Speech actions triggered this frame, for the caller to act on.
     ///
     /// Collected rather than applied here because answering them needs the
@@ -450,6 +457,7 @@ pub(crate) fn apply_action(
         ToggleMemories => *ui.memories = !*ui.memories,
         ToggleVoice => *ui.voice = !*ui.voice,
         Workspaces => *ui.workspaces = true,
+        BroadcastLabels => *ui.broadcast_labels = true,
         SpeakStatus | SpeakRepeat | SpeechSilence | SpeechToggle => ui.speech.push(act),
         _ => {}
     }
@@ -1146,7 +1154,7 @@ mod tests {
 
     fn sink<'a>(
         view: &'a mut ViewState,
-        flags: &'a mut [bool; 7],
+        flags: &'a mut [bool; 8],
         speech: &'a mut Vec<Action>,
     ) -> UiSink<'a> {
         let (help, rest) = flags.split_at_mut(1);
@@ -1155,7 +1163,8 @@ mod tests {
         let (spots, rest) = rest.split_at_mut(1);
         let (memories, rest) = rest.split_at_mut(1);
         let (voice, rest) = rest.split_at_mut(1);
-        let (workspaces, _) = rest.split_at_mut(1);
+        let (workspaces, rest) = rest.split_at_mut(1);
+        let (broadcast_labels, _) = rest.split_at_mut(1);
         UiSink {
             view,
             help: &mut help[0],
@@ -1165,6 +1174,7 @@ mod tests {
             memories: &mut memories[0],
             voice: &mut voice[0],
             workspaces: &mut workspaces[0],
+            broadcast_labels: &mut broadcast_labels[0],
             speech,
             rig_squelch: false,
             // The clamp these tests exercise is a no-op at zero span, which is
@@ -1182,7 +1192,7 @@ mod tests {
         let mut state =
             RadioState { vfo_a_hz: 14_074_000.0, active_vfo: Vfo::A, ..RadioState::default() };
         let mut view = ViewState::default();
-        let mut flags = [false; 7];
+        let mut flags = [false; 8];
         let mut speech_acts = Vec::new();
         let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
         let mut cmds = Vec::new();
@@ -1208,7 +1218,7 @@ mod tests {
             state.rx[0].mode = from;
             state.hd_radio_unavailable = unavailable.then(|| "no libnrsc5 here".to_string());
             let mut view = ViewState::default();
-            let mut flags = [false; 7];
+            let mut flags = [false; 8];
             let mut speech_acts = Vec::new();
             let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
             let mut cmds = Vec::new();
@@ -1243,7 +1253,7 @@ mod tests {
             let mut state =
                 RadioState { vfo_a_hz: hz, active_vfo: Vfo::A, ..RadioState::default() };
             let mut view = ViewState::default();
-            let mut flags = [false; 7];
+            let mut flags = [false; 8];
             let mut speech_acts = Vec::new();
             let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
             let mut cmds = Vec::new();
@@ -1286,7 +1296,7 @@ mod tests {
     fn tuning_never_goes_negative() {
         let mut state = RadioState { vfo_a_hz: 100.0, ..RadioState::default() };
         let mut view = ViewState::default();
-        let mut flags = [false; 7];
+        let mut flags = [false; 8];
         let mut speech_acts = Vec::new();
         let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
         let mut cmds = Vec::new();
@@ -1305,7 +1315,7 @@ mod tests {
     fn momentary_ptt_follows_the_button() {
         let mut state = RadioState::default();
         let mut view = ViewState::default();
-        let mut flags = [false; 7];
+        let mut flags = [false; 8];
         let mut speech_acts = Vec::new();
         let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
         let mut cmds = Vec::new();
@@ -1336,7 +1346,7 @@ mod tests {
         state.tx.ptt = true;
 
         let mut view = ViewState::default();
-        let mut flags = [false; 7];
+        let mut flags = [false; 8];
         let mut speech_acts = Vec::new();
         let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
         let mut cmds = Vec::new();
@@ -1367,7 +1377,7 @@ mod tests {
     fn one_shot_actions_ignore_release() {
         let mut state = RadioState::default();
         let mut view = ViewState::default();
-        let mut flags = [false; 7];
+        let mut flags = [false; 8];
         let mut speech_acts = Vec::new();
         let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
         let mut cmds = Vec::new();
@@ -1394,7 +1404,7 @@ mod tests {
     fn absolute_fader_maps_into_range() {
         let mut state = RadioState::default();
         let mut view = ViewState::default();
-        let mut flags = [false; 7];
+        let mut flags = [false; 8];
         let mut speech_acts = Vec::new();
         let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
         let mut cmds = Vec::new();
@@ -1417,7 +1427,7 @@ mod tests {
         let mut state = RadioState::default();
         let before = state.vfo_a_hz;
         let mut view = ViewState::default();
-        let mut flags = [false; 7];
+        let mut flags = [false; 8];
         let mut speech_acts = Vec::new();
         let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
         let mut cmds = Vec::new();
@@ -1439,7 +1449,7 @@ mod tests {
         state.rx[0] = sdroxide_types::RxState::with_mode(Mode::Usb);
 
         let mut view = ViewState::default();
-        let mut flags = [false; 7];
+        let mut flags = [false; 8];
         let mut speech_acts = Vec::new();
         let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
         let mut cmds = Vec::new();
@@ -1497,7 +1507,7 @@ mod tests {
     fn ui_only_actions_emit_no_commands() {
         let mut state = RadioState::default();
         let mut view = ViewState::default();
-        let mut flags = [false; 7];
+        let mut flags = [false; 8];
         let mut cmds = Vec::new();
         {
             let mut speech_acts = Vec::new();
@@ -1532,7 +1542,7 @@ mod tests {
     fn the_workspaces_action_asks_for_the_ui_page_rather_than_toggling() {
         let mut state = RadioState::default();
         let mut view = ViewState::default();
-        let mut flags = [false; 7];
+        let mut flags = [false; 8];
         let mut speech_acts = Vec::new();
         let mut cmds = Vec::new();
         {
@@ -1550,6 +1560,33 @@ mod tests {
             assert!(!flags[1], "settings must not be toggled by the shortcut");
         }
         assert!(flags[6], "the caller must be told to open the workspaces");
+        assert!(cmds.is_empty(), "this is client-local: nothing reaches the engine");
+    }
+
+    /// The broadcast-labels key is a **request to flip**, not a value: this
+    /// module has no `UiSettings`, so it raises the flag and the app that owns
+    /// the setting writes and persists it. It must not reach the engine either —
+    /// what the waterfall names is this client's business.
+    #[test]
+    fn the_broadcast_labels_key_asks_the_app_rather_than_toggling_a_window() {
+        let mut state = RadioState::default();
+        let mut view = ViewState::default();
+        let mut flags = [false; 8];
+        let mut speech_acts = Vec::new();
+        let mut cmds = Vec::new();
+        {
+            let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
+            apply_action(
+                Action::BroadcastLabels,
+                ActionInput::Press,
+                ButtonMode::Toggle,
+                &mut state,
+                &mut ui,
+                &mut cmds,
+            );
+        }
+        assert!(flags[7], "the app is told to flip the labels");
+        assert!(!flags[..7].iter().any(|f| *f), "and no window was opened or closed on the way");
         assert!(cmds.is_empty(), "this is client-local: nothing reaches the engine");
     }
 

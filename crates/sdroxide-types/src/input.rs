@@ -125,6 +125,15 @@ pub enum Action {
     SpeechSilence,
     /// Announcements on/off, with a spoken confirmation either way.
     SpeechToggle,
+    /// **What the waterfall names**: every broadcaster the schedule has on air
+    /// now, or only the one the dial is on.
+    ///
+    /// The same switch as the SPOTS window's BC chip, for an operator who works
+    /// with the waterfall rather than with a window: browsing a band wants the
+    /// whole band named, listening to one station wants one name. Client-local —
+    /// it writes [`crate::UiSettings::broadcast_labels_all`] and never reaches
+    /// the engine.
+    BroadcastLabels,
 }
 
 /// Whether an action is driven by a value or by a button.
@@ -160,9 +169,8 @@ impl Action {
             Ptt | TuneCarrier | TxDrive | TuneDrive | MicGain | DigiAudioFreq | AbortTx
             | CwStraight | VoicePlay(_) | VoiceStop | ToneBurst => "Transmit",
             SpectrumZoom | SpectrumPan | SpectrumFloorDb | SpectrumCeilDb | FitSpan | ZoomIn
-            | ZoomOut | PeakHold | SpectrumCollapse | WaterfallCollapse | WaterfallFlip => {
-                "Display"
-            }
+            | ZoomOut | PeakHold | SpectrumCollapse | WaterfallCollapse | WaterfallFlip
+            | BroadcastLabels => "Display",
             ToggleHelp | ToggleSettings | ToggleLogbook | ToggleSpots | ToggleMemories
             | ToggleVoice | Workspaces => "Windows",
             SpeakStatus | SpeakRepeat | SpeechSilence | SpeechToggle => "Speech",
@@ -234,6 +242,7 @@ impl Action {
             SpeakRepeat => "Repeat last announcement",
             SpeechSilence => "Stop speaking",
             SpeechToggle => "Announcements on/off",
+            BroadcastLabels => "Broadcast labels (tuned / whole band)",
             VfoSelect(v) => return format!("Select VFO {}", if v == Vfo::A { "A" } else { "B" }),
             BandSelect(b) => return format!("Band {}", b.label()),
             ModeSelect(m) => return format!("Mode {}", m.label()),
@@ -328,6 +337,7 @@ impl Action {
             SpeakRepeat,
             SpeechSilence,
             SpeechToggle,
+            BroadcastLabels,
         ]);
         v
     }
@@ -560,6 +570,13 @@ impl KeyBinding {
             KeyBinding::toggle(
                 KeyChord { key: "W".to_string(), ctrl: true, ..KeyChord::default() },
                 Action::Workspaces,
+            ),
+            // The waterfall's broadcast names. Ctrl+B rather than a bare letter:
+            // a plain key types itself in every field, and this one is worth a
+            // chord because it is a preference rather than an operating control.
+            KeyBinding::toggle(
+                KeyChord { key: "B".to_string(), ctrl: true, ..KeyChord::default() },
+                Action::BroadcastLabels,
             ),
         ];
         // Numpad 1–9 then 0 play slots 1–10; numpad "−" stops a message early.
@@ -957,7 +974,7 @@ impl InputSettings {
     /// The current shipped-defaults generation. Bumped whenever a release adds
     /// a *new* default binding — see [`Self::migrate`] for why that is not
     /// free.
-    pub const SCHEMA: u32 = 3;
+    pub const SCHEMA: u32 = 4;
 
     /// Bindings introduced at each schema step, so a saved file picks up a new
     /// action's default instead of silently losing the key.
@@ -974,7 +991,8 @@ impl InputSettings {
     /// action at all — a binding they moved, disabled or deleted after the
     /// migration ran is theirs, and the stamped `schema` is what stops this
     /// putting it back.
-    const ADDED: &'static [(u32, Action)] = &[(1, Action::CwStraight), (3, Action::Workspaces)];
+    const ADDED: &'static [(u32, Action)] =
+        &[(1, Action::CwStraight), (3, Action::Workspaces), (4, Action::BroadcastLabels)];
 
     /// Bring a loaded file up to [`Self::SCHEMA`], reporting whether it had to
     /// be touched — and so whether it is worth writing back. The stamp is
@@ -1240,6 +1258,40 @@ mod tests {
         // ...and the stamp is what stops it coming back a second time.
         assert!(!cfg.migrate());
         assert_eq!(cfg.keys.iter().filter(|b| b.action == Action::Workspaces).count(), 1);
+    }
+
+    /// **Ctrl+B is the waterfall's broadcast labels**, and the bound action is
+    /// offered in the editor. Without the binding the shortcut does not exist;
+    /// without the editor entry it cannot be changed.
+    #[test]
+    fn the_broadcast_labels_are_bound_and_offered() {
+        let b = KeyBinding::defaults()
+            .into_iter()
+            .find(|b| b.action == Action::BroadcastLabels)
+            .expect("Ctrl+B ships bound to the broadcast labels");
+        assert!(b.chord.ctrl, "the shortcut is Ctrl+B: {:?}", b.chord);
+        assert_eq!(b.chord.key, "B");
+        assert!(
+            Action::all().contains(&Action::BroadcastLabels),
+            "and it is in the list the bindings editor draws"
+        );
+    }
+
+    /// An `input.json` written before Ctrl+B existed picks it up, and the stamp
+    /// keeps it from coming back after the operator unbinds it.
+    #[test]
+    fn an_existing_file_picks_up_the_broadcast_labels_key() {
+        let mut cfg = InputSettings::default();
+        cfg.keys.retain(|b| b.action != Action::BroadcastLabels);
+        cfg.schema = 3;
+        assert!(cfg.migrate(), "an older stamp means a write-back");
+        let got: Vec<_> = cfg.keys.iter().filter(|b| b.action == Action::BroadcastLabels).collect();
+        assert_eq!(got.len(), 1, "exactly one binding for the action");
+        assert_eq!(got[0].chord.label(), "Ctrl+B");
+
+        cfg.keys.retain(|b| b.action != Action::BroadcastLabels);
+        assert!(!cfg.migrate(), "the stamp is what stops it coming back");
+        assert!(!cfg.keys.iter().any(|b| b.action == Action::BroadcastLabels), "stays unbound");
     }
 
     /// The new variant rides the wire inside `InputSettings`; the register's

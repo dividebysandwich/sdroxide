@@ -1951,8 +1951,15 @@ use sdroxide_types::{
 /// field moves their layout. `#[serde(default)]`, so a `radio.json` written
 /// before this existed loads unchanged. `PROTO_VERSION` 232 → 233,
 /// `VERSION_BYTE` 0x34 → 0x35. F4NRM's, renumbered like v232.
-pub const PROTO_VERSION: u16 = 233;
-const VERSION_BYTE: u8 = 0x35;
+/// v234: [`sdroxide_types::Action::BroadcastLabels`] appended — a bindable key
+/// for what the waterfall names, between the tuned station and the whole band.
+/// `Action`'s discriminants are positional and `InputSettings` rides
+/// `SetClientBindings`/`ClientBindings` whole, so a new variant is a wire change
+/// even though appending it moves nothing else. No new message and no new field.
+/// `PROTO_VERSION` 233 → 234, `VERSION_BYTE` 0x35 → 0x36. A downstream (fork)
+/// change.
+pub const PROTO_VERSION: u16 = 234;
+const VERSION_BYTE: u8 = 0x36;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtoError {

@@ -18162,6 +18162,7 @@ floating RTS is the *receive* state, and test it.
 | − (numpad) | Stop a voice-keyer message. |
 | Space (CW, with **KEY** on) | The straight key: carrier while held, and re-bindable as **CW straight key** in Settings → Controls ([2.14](#214-cw-decoding-and-keyboard-sending)). |
 | Ctrl+W | Open Settings on the **UI** page, where saved window arrangements (**Workspaces**) are listed ([6.4](#64-controls-keyboard-mouse-and-midi)). |
+| Ctrl+B | Switch the waterfall's broadcast names between the station you are tuned to and the whole band (the **BC TUNED** / **BC ALL** chip in the SPOTS window). |
 | F1 | Open this manual (works even while typing). |
 
 Shortcuts are ignored while typing in a text field.
