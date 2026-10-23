@@ -3007,7 +3007,17 @@ impl SdroxideApp {
         let side = full_w >= keypad_side_by_side_w(ui);
         if side {
             let kpw = keypad_w(ui);
-            let menu_w = (full_w - kpw - KEYPAD_LIST_GAP).max(180.0);
+            // **The row's own spacing is part of the budget.** The keypad, the
+            // `add_space` gap and the menu are three items of one
+            // `horizontal_top`, so egui also inserts `item_spacing.x` between
+            // them; budgeting only the keypad and the explicit gap handed the
+            // menu a rect whose right edge sat *past* the window. It went
+            // unnoticed while the menu's rows left dead space at their ends —
+            // the ink never reached the edge it had been given. Now that the
+            // rows fill it (2026-10-23), the overrun is visible, and the guard
+            // `the_console_band_area_stays_inside_its_window` reports it: *"the
+            // console's band area paints to x=607 in a 600 pt window"*.
+            let menu_w = (full_w - kpw - KEYPAD_LIST_GAP - ui.spacing().item_spacing.x).max(180.0);
             let h = ui.available_height();
             ui.horizontal_top(|ui| {
                 ui.allocate_ui_with_layout(
@@ -8275,34 +8285,18 @@ pub(in crate::app) fn wideband_chip_grid(
     cmds: &mut Vec<Command>,
 ) {
     const ISM_LABEL: &str = "ISM";
-    let widest = WIDEBAND_MODES
-        .iter()
-        .map(|m| crate::chrome::chip_width(ui, m.label(), None))
-        .fold(crate::chrome::chip_width(ui, ISM_LABEL, None), f32::max);
-    let cols = chip_row_cols(ui.available_width(), widest, 6);
+    let mut widths: Vec<f32> =
+        WIDEBAND_MODES.iter().map(|m| crate::chrome::chip_width(ui, m.label(), None)).collect();
+    widths.push(crate::chrome::chip_width(ui, ISM_LABEL, None));
     let total = WIDEBAND_MODES.len() + 1; // five lanes + ISM
-    if cols < 2 {
-        ui.horizontal_wrapped(|ui| {
-            for &m in &WIDEBAND_MODES {
-                mode_chip(ui, mode, m, band, state, listen, cmds);
-            }
+    chip_lines(ui, &widths, |ui, i| {
+        if i < WIDEBAND_MODES.len() {
+            mode_chip(ui, mode, WIDEBAND_MODES[i], band, state, listen, cmds);
+        } else {
             draw_ism_chip(ui, state, show_ism);
-        });
-        return;
-    }
-    let mut start = 0;
-    while start < total {
-        ui.horizontal(|ui| {
-            for i in start..(start + cols).min(total) {
-                if i < WIDEBAND_MODES.len() {
-                    mode_chip(ui, mode, WIDEBAND_MODES[i], band, state, listen, cmds);
-                } else {
-                    draw_ism_chip(ui, state, show_ism);
-                }
-            }
-        });
-        start += cols;
-    }
+        }
+    });
+    debug_assert_eq!(widths.len(), total);
 }
 
 /// The ISM chip as it appears in the Wideband row: toggles the window, lit when
@@ -8332,14 +8326,17 @@ fn draw_ism_chip(ui: &mut egui::Ui, state: &RadioState, show_ism: &mut bool) {
 
 /// A section of mode chips laid in **rows of five**, left-aligned.
 ///
-/// Plain `ui.horizontal` rows of the chips themselves — **not** an `egui::Grid`
+/// Plain `ui.horizontal` lines of the chips themselves — **not** an `egui::Grid`
 /// and **not** fixed-width cells. A Grid here asked its container wider than it
 /// was and grew the docked column over the operating panel below it (the #643
 /// guard caught it on RIFP and FT8); and fixed-width cells sized every chip to
 /// the section's widest label, so a short `AM` or `CW` sat in a wide cell with a
-/// gap after it (the operator: *"remove the alignment"*). The chips pack tight
-/// and the row simply holds up to [`MODE_GRID_COLS`] of them; where even one
-/// column will not fit, a wrapped row reflows instead.
+/// gap after it (the operator: *"remove the alignment"*).
+///
+/// The lines are laid by [`chip_lines`]: as many chips as fit, in their own
+/// widths, with the slack on a full line shared between them so the line ends
+/// at the right edge. A wrapped row is still the fallback for a column narrower
+/// than one label, where there is no slack to share.
 /// `list` without the modes that are still on the experimental bench.
 ///
 /// Split out so the menus can draw them under their own caption and nowhere
@@ -8358,71 +8355,69 @@ pub(in crate::app) fn mode_chip_grid(
     listen: bool,
     cmds: &mut Vec<Command>,
 ) {
-    let widest = modes
-        .iter()
-        .map(|m| crate::chrome::chip_width(ui, m.label(), None))
-        .fold(0.0_f32, f32::max);
-    let cols = chip_row_cols(ui.available_width(), widest, MODE_GRID_COLS);
-    if cols < 2 {
-        ui.horizontal_wrapped(|ui| {
-            for &m in modes {
-                mode_chip(ui, cur, m, band, state, listen, cmds);
-            }
-        });
-        return;
-    }
-    // Plain rows of `cols` packed chips. A `ui.horizontal` row does not wrap,
-    // so the budget in `chip_row_cols` is what keeps the row inside its
-    // container (the slack covers the frame `chip_width` cannot report). The
-    // earlier note here claiming this was `horizontal_wrapped` was wrong — the
-    // loop has been a plain horizontal since it was introduced; only the
-    // comment changed. Do not "fix" it to wrapped: the #643 guard already
-    // passes on plain rows, and wrapped rows change the row heights.
+    let widths: Vec<f32> =
+        modes.iter().map(|m| crate::chrome::chip_width(ui, m.label(), None)).collect();
+    chip_lines(ui, &widths, |ui, i| mode_chip(ui, cur, modes[i], band, state, listen, cmds));
+}
+
+/// How lines of chips pack at `avail_w`: greedy, in the chips' **own** widths,
+/// as `(start, end)` into the list.
+///
+/// Greedy rather than a count derived from the widest label, and that is the
+/// whole point. `chip_row_cols` sized every cell for the widest name in the
+/// group, so one long label — `HD RADIO` beside `AM`, `USB`, `CW` — collapsed
+/// the whole mode grid to three narrow columns and left two thirds of the
+/// column empty, while the band pad above it (whose labels are all the same
+/// length) ran to the edge. The operator saw exactly that on 2026-10-23, in the
+/// classic column and in the docked band panel: *"under show bands the chips
+/// nicely fill up space … but if you look further down that doesn't happen"*.
+fn pack_lines(avail: f32, gap: f32, widths: &[f32]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
     let mut start = 0;
-    while start < modes.len() {
-        ui.horizontal(|ui| {
-            for &m in &modes[start..(start + cols).min(modes.len())] {
-                mode_chip(ui, cur, m, band, state, listen, cmds);
-            }
-        });
-        start += cols;
+    while start < widths.len() {
+        let mut end = start + 1;
+        let mut used = widths[start];
+        while end < widths.len() && used + gap + widths[end] <= avail + 0.5 {
+            used += gap + widths[end];
+            end += 1;
+        }
+        out.push((start, end));
+        start = end;
     }
+    out
 }
 
-/// How many chips a packed row fits at `avail_w` when the widest label measures
-/// `widest` points — up to `max`. The cell budget is the label plus a slack for
-/// the frame [`chrome::chip_width`] cannot report in advance; a few points short
-/// would put a plain `ui.horizontal` row past its container, which is the #643
-/// class. Split out so a test can pin the five the band **window** gets and the
-/// fewer the docked column does, without driving a frame.
-fn chip_row_cols(avail_w: f32, widest: f32, max: usize) -> usize {
-    let cell = widest + CHIP_ROW_CELL_SLACK;
-    ((avail_w / cell.max(1.0)).floor() as usize).clamp(1, max)
-}
-
-/// Lay `n` chips out in packed rows of at most `cols`, each row a plain
-/// `ui.horizontal` of the chips themselves — no fixed-width cells, no `egui::Grid`
-/// (a Grid sizes every column to the widest label and leaves a gap after every
-/// short one). The chips keep their own widths and the air between them is even,
-/// which is the "comme mode, bien rangé et espacés" the operator asked for. Where
-/// even one column will not fit, a wrapped row reflows instead.
-fn chip_rows(ui: &mut egui::Ui, cols: usize, n: usize, mut draw: impl FnMut(&mut egui::Ui, usize)) {
-    if cols < 2 {
+/// Lay chips out in lines that **fill the width they are given**.
+///
+/// As many as fit on a line, in their own widths, at the row's own even spacing
+/// between them — which is exactly what the band pad does, and what makes the
+/// lines below it look like part of the same panel. The ragged right edge is
+/// the point rather than a fault: it is where the next chip did not fit, and it
+/// moves as the column is dragged, so the rows keep filling it.
+///
+/// **Not justified.** Stretching the slack out between the chips fills the last
+/// few points of every line, but it makes one line's gaps 26 pt and the next
+/// one's 7, which reads as an accident. Even air is what the pad already had.
+///
+/// A column narrower than one label falls back to a wrapped row, and so does an
+/// unbounded `ui` (a `ScrollArea` that scrolls sideways has no width to share).
+fn chip_lines(ui: &mut egui::Ui, widths: &[f32], mut draw: impl FnMut(&mut egui::Ui, usize)) {
+    let avail = ui.available_width();
+    let gap = ui.spacing().item_spacing.x;
+    if !avail.is_finite() || widths.iter().copied().fold(0.0_f32, f32::max) > avail {
         ui.horizontal_wrapped(|ui| {
-            for i in 0..n {
+            for i in 0..widths.len() {
                 draw(ui, i);
             }
         });
         return;
     }
-    let mut start = 0;
-    while start < n {
+    for (start, end) in pack_lines(avail, gap, widths) {
         ui.horizontal(|ui| {
-            for i in start..(start + cols).min(n) {
+            for i in start..end {
                 draw(ui, i);
             }
         });
-        start += cols;
     }
 }
 
@@ -8443,13 +8438,6 @@ fn mode_chip(
         mode_band_chip(ui, cur, m, band, state, cmds);
     }
 }
-
-/// The five-across the operator asked for.
-const MODE_GRID_COLS: usize = 5;
-/// Slack over the measured label width when budgeting a grid cell: the drawn
-/// chip is wider than [`crate::chrome::chip_width`] reports (its frame), and a
-/// grid that asks wider than its container grows the docked column (#643).
-const CHIP_ROW_CELL_SLACK: f32 = 26.0;
 
 /// OPERATE's `Mode` section: the analog and voice modes, the broadcast
 /// demodulators (DRM, HD Radio) among them because that is what they are — a
@@ -8683,17 +8671,13 @@ fn band_pad(
         return;
     }
     let bands: Vec<Band> = bands.collect();
-    let widest = bands
-        .iter()
-        .map(|b| crate::chrome::chip_width(ui, b.label(), None))
-        .fold(0.0_f32, f32::max);
-    let cols = chip_row_cols(ui.available_width(), widest, 6);
-    // Wrapped rows reflow where even one column will not fit (narrow dock,
-    // popup); the fixed-column grid is gone — its columns sized to the widest
-    // label and left a gap after every short one.
-    chip_rows(ui, cols, bands.len(), |ui, i| {
-        let b = bands[i];
-        band_chip(ui, mode, b, state, caps, ranges_stated, conditions, daylight, cmds);
+    let widths: Vec<f32> =
+        bands.iter().map(|b| crate::chrome::chip_width(ui, b.label(), None)).collect();
+    // The pad fills the column it is in: as many bands as fit on a line, the
+    // slack on a full line shared between them. A column narrower than one
+    // label falls back to a wrapped row (the narrow dock, a phone popup).
+    chip_lines(ui, &widths, |ui, i| {
+        band_chip(ui, mode, bands[i], state, caps, ranges_stated, conditions, daylight, cmds);
     });
 }
 
@@ -9143,19 +9127,26 @@ pub(in crate::app) fn band_mode_menu(
                 if filter.admits(Band::Sw) {
                     ui.add_space(6.0);
                     crate::chrome::menu_caption(ui, "SW metre bands");
-                    ui.horizontal_wrapped(|ui| {
-                        let dial_khz = state.rx_freq_hz() / 1e3;
-                        let here = sdroxide_types::broadcast::metre_band(dial_khz);
-                        for &(name, lo, hi) in sdroxide_types::broadcast::METRE_BANDS {
-                            let lit = state.band == Band::Sw && here == Some(name);
-                            if crate::chrome::chip(ui, lit, name)
-                                .on_hover_text(format!("Tune to the middle of {name} broadcast"))
-                                .clicked()
-                            {
-                                let hz = (lo + hi) * 500.0;
-                                cmds.push(Command::SetVfo { vfo: state.active_vfo, hz });
-                                cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Am });
-                            }
+                    // The same fill as the bands above: a listener's column
+                    // that filled only in some of its rows looked like a
+                    // layout fault rather than a choice (2026-10-23).
+                    let metre = sdroxide_types::broadcast::METRE_BANDS;
+                    let widths: Vec<f32> = metre
+                        .iter()
+                        .map(|&(n, _, _)| crate::chrome::chip_width(ui, n, None))
+                        .collect();
+                    let dial_khz = state.rx_freq_hz() / 1e3;
+                    let here = sdroxide_types::broadcast::metre_band(dial_khz);
+                    chip_lines(ui, &widths, |ui, i| {
+                        let (name, lo, hi) = metre[i];
+                        let lit = state.band == Band::Sw && here == Some(name);
+                        if crate::chrome::chip(ui, lit, name)
+                            .on_hover_text(format!("Tune to the middle of {name} broadcast"))
+                            .clicked()
+                        {
+                            let hz = (lo + hi) * 500.0;
+                            cmds.push(Command::SetVfo { vfo: state.active_vfo, hz });
+                            cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Am });
                         }
                     });
                 }
@@ -9188,12 +9179,9 @@ pub(in crate::app) fn band_mode_menu(
                     }
                 });
             } else {
-                let widest = labels
-                    .iter()
-                    .map(|l| crate::chrome::chip_width(ui, l, None))
-                    .fold(0.0_f32, f32::max);
-                let cols = chip_row_cols(ui.available_width(), widest, 6);
-                chip_rows(ui, cols, plans.len(), |ui, i| {
+                let widths: Vec<f32> =
+                    labels.iter().map(|l| crate::chrome::chip_width(ui, l, None)).collect();
+                chip_lines(ui, &widths, |ui, i| {
                     let p = plans[i];
                     if crate::chrome::chip(ui, current == p, p.short())
                         .on_hover_text(format!("{} — {}", p.label(), p.modes()))
@@ -11430,28 +11418,57 @@ mod tests {
         assert!(picked.is_empty(), "a greyed-out chip asked for {picked:?}");
     }
 
-    /// The band **window** is wide enough for the mode sections in five columns
-    /// — which the docked column, capped so the operating panel below keeps its
-    /// width, is not. That difference is the whole reason the selector has a
-    /// window of its own (SDRUNO-UI-HANDOVER.md, item 1).
+    /// **The chips fill the width they are given, and the band window holds
+    /// more of them than the docked column does.**
+    ///
+    /// The second half is the reason the selector has a window of its own
+    /// (SDRUNO-UI-HANDOVER.md, item 1). The first is what the operator reported
+    /// on 2026-10-23: the band pad ran to the edge of the column while the mode
+    /// rows below it stopped two thirds of the way across, because every cell
+    /// in the old grid was sized for the widest label in its group — one
+    /// `HD RADIO` among `AM` and `CW` — and the grid then held only three a
+    /// line with the rest of the column empty.
+    ///
+    /// `pack_lines` is the layout both now share, so measuring it is measuring
+    /// what is drawn: greedy in the chips' **own** widths, never the widest
+    /// label's.
     #[test]
-    fn the_band_window_lays_the_modes_in_five_columns() {
+    fn the_chips_fill_the_column_and_the_window_holds_more_than_the_dock() {
         let (ctx, _) = desktop_ctx();
-        let mut widest = 0.0_f32;
+        let mut widths: Vec<f32> = Vec::new();
         ctx.run_ui(Default::default(), |ui| {
-            widest = OPERATE_MODES
+            widths = OPERATE_MODES
                 .iter()
                 .map(|m| crate::chrome::chip_width(ui, m.label(), None))
-                .fold(0.0_f32, f32::max);
+                .collect();
         })
         .drop_without_applying_deltas();
-        assert!(widest > 0.0, "measured nothing");
-        // The window opens at 560 pt: five across.
-        assert_eq!(chip_row_cols(560.0, widest, MODE_GRID_COLS), 5, "widest={widest}");
-        // The docked column cannot be this wide, so it is fewer — but still a
-        // grid, not one wrapped chip a row.
-        let docked = chip_row_cols(262.0, widest, MODE_GRID_COLS);
-        assert!((2..5).contains(&docked), "docked={docked} widest={widest}");
+        assert!(widths.iter().all(|w| *w > 0.0), "measured nothing");
+        let gap = 6.0;
+
+        // The band window opens at 560 pt and the docked column is about 262.
+        let window = super::pack_lines(560.0, gap, &widths);
+        let docked = super::pack_lines(262.0, gap, &widths);
+        assert!(
+            window[0].1 - window[0].0 > docked[0].1 - docked[0].0,
+            "the window holds more chips a line than the dock: {window:?} against {docked:?}"
+        );
+
+        // And a line is filled to the edge unless it is the last one: the ink
+        // of the first line plus its gaps must come within a gap of the width.
+        let (start, end) = window[0];
+        let n = end - start;
+        assert_eq!(start, 0);
+        let used: f32 = widths[..end].iter().sum::<f32>() + gap * (n - 1) as f32;
+        assert!(used <= 560.0 + 0.5, "a line must not overrun the column: {used} of 560");
+        // Greedy means the **next** chip genuinely does not fit — which is what
+        // makes the line as full as it can be.
+        if end < widths.len() {
+            assert!(
+                used + gap + widths[end] > 560.0,
+                "a chip was left off a line it would have fitted on"
+            );
+        }
     }
 
     /// Open the band/mode menu on a `screen`-sized viewport and measure the
