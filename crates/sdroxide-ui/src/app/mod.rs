@@ -161,6 +161,11 @@ pub struct SdroxideApp {
     /// this controller has no connection to redial.
     retry_at: Option<f64>,
     retry_backoff: f64,
+    /// The redial is held rather than armed: the connection was refused for a
+    /// certificate nothing trusts, and dialling again would only be refused
+    /// again. Released by the operator trusting it — here, or on another tab
+    /// of the same station — or pressing Reconnect. See [`Self::arm_retry`].
+    cert_hold: bool,
     /// Persistent, non-fatal operator notice (e.g. radio audio input
     /// unavailable / mono card selected for IQ). Shown as a warning banner.
     radio_notice: Option<String>,
@@ -1396,6 +1401,7 @@ impl SdroxideApp {
             error: None,
             retry_at: None,
             retry_backoff: RETRY_MIN_S,
+            cert_hold: false,
             radio_notice: None,
             sent_cfg: None,
             desired_cfg: None,
@@ -2064,6 +2070,13 @@ impl SdroxideApp {
         if self.retry_at.is_some() || !self.ctrl.can_reconnect() {
             return;
         }
+        // A certificate nothing vouches for is refused every time, and a tab
+        // redialling it every thirty seconds would only repaint the same
+        // refusal under the card that asks the operator about it.
+        if self.ctrl.untrusted_cert().is_some() {
+            self.cert_hold = true;
+            return;
+        }
         let stagger = 0.25 * f64::from(self.radio_id % 4);
         self.retry_at = Some(now + self.retry_backoff + stagger);
         // Charged here rather than when the attempt goes out, so the *next*
@@ -2079,6 +2092,7 @@ impl SdroxideApp {
         let now = crate::time::now_unix_f64();
         self.error = None;
         self.retry_at = None;
+        self.cert_hold = false;
         self.frame = None;
         self.wide_frame = None;
         // The new session starts on the engine's own spectrum config, not the
@@ -2094,6 +2108,17 @@ impl SdroxideApp {
         }
     }
 
+    /// Trust the certificate this connection was refused for and dial again.
+    fn trust_cert_and_reconnect(&mut self, sha256: &str) {
+        if let Err(e) = self.ctrl.trust_cert(sha256) {
+            // Still trusted for this run, only not remembered: worth saying,
+            // not worth refusing to connect over.
+            tracing::warn!("trusted certificate could not be saved: {e}");
+        }
+        self.retry_backoff = RETRY_MIN_S;
+        self.reconnect_now();
+    }
+
     /// Redial if the wait is up. Returns whether one is still pending, so the
     /// shell knows to keep asking for frames.
     ///
@@ -2101,6 +2126,14 @@ impl SdroxideApp {
     /// are behind the one being looked at, and a radio nobody is looking at has
     /// to come back on its own — there is no button there to press.
     pub(crate) fn poll_reconnect(&mut self) -> bool {
+        // Held for a certificate that has since been trusted — on another tab
+        // of the same station, most likely, since this one's own button dials
+        // straight away. A station's tabs all meet the same certificate, and
+        // the operator should have to look at it once, not once per radio.
+        if self.cert_hold && self.ctrl.untrusted_cert().is_none() {
+            self.retry_backoff = RETRY_MIN_S;
+            self.reconnect_now();
+        }
         let Some(at) = self.retry_at else { return false };
         let now = crate::time::now_unix_f64();
         // `>=` and the step-backwards guard together: this is a wall clock, and

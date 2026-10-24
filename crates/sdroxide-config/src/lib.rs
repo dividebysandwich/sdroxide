@@ -599,6 +599,19 @@ pub fn save_remote_login(login: Option<&sdroxide_types::RemoteAccess>) -> Result
     }
 }
 
+/// The certificates the operator has said to trust on `wss://` servers that
+/// no public authority vouches for (issue #736): `host:port` to the SHA-256 of
+/// the one certificate accepted there, as 64 lowercase hex digits.
+pub fn load_trusted_certs() -> std::collections::BTreeMap<String, String> {
+    load_json("remote_certs.json")
+}
+
+pub fn save_trusted_certs(
+    certs: &std::collections::BTreeMap<String, String>,
+) -> Result<(), ConfigError> {
+    save_json("remote_certs.json", certs)
+}
+
 mod publicsdr;
 pub use publicsdr::public_sdr_directory;
 
