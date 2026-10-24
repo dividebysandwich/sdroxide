@@ -17,14 +17,16 @@ binary is GPL as before and upstream's code stays under upstream's terms.
 
 ## What is patched
 
+Two changes.
+
 **One error classifier**, in `src/native_tungstenite.rs`. The arm of
 `read_from_socket` that recognises a read timeout is factored out into
 `is_read_timeout` and widened by two `raw_os_error` values; a counter
 (`pending_in_a_row`) is threaded from the two caller loops so the widening
 cannot swallow a socket that is genuinely stuck, and one test pins what the
-classifier lets through. Nothing else is changed: no other upstream line is
-edited, removed or reordered, and `src/web.rs` — the whole of the wasm client's
-path — is untouched.
+classifier lets through. Beyond these two changes no upstream line is edited,
+removed or reordered, and `src/web.rs` — the whole of the wasm client's path —
+is untouched.
 
 Two lines of the manifest change, neither of them about behaviour. The
 `include` list is repointed from `../LICENSE-*` to `LICENSE-*`, because the
@@ -33,6 +35,16 @@ licences sit beside the crate here rather than a directory up; and
 reached through `[patch.crates-io]` is built as a path dependency and so does
 not get the `--cap-lints allow` a registry dependency does — without it three of
 upstream's warnings appear on every build of this workspace.
+
+**One option**, `Options::tls_config` (native, `tls` feature only), with the
+`TlsConfig` newtype it carries and the `dep:rustls` the `tls` feature now
+enables. With it set, `src/native_tungstenite.rs` dials through
+`connect_with_tls` — tungstenite's own `connect_with_config`, step for step,
+with the rustls connector named instead of defaulted, which upstream tungstenite
+has no blocking entry point for. Without it, the upstream call is made exactly
+as before. The `tokio` client ignores the option. It is how sdroxide's remote
+client accepts a station's self-signed certificate once the operator has
+trusted it (issue #736); see `crates/sdroxide-ui/src/remote_tls.rs`.
 
 ## Why the patch exists
 
@@ -70,8 +82,10 @@ produces and is reported as upstream would have reported the first one.
 
 ## How to remove this
 
-When upstream classifies `ERROR_IO_PENDING` as a timeout — or moves off
-`SO_RCVTIMEO` altogether, which its own `read_timeout` docs call a TODO — delete
-`vendor/ewebsock`, drop the `ewebsock` line from `[patch.crates-io]` and from
-the workspace `exclude`, and bump the version in `crates/sdroxide-ui/Cargo.toml`
-to whatever carries it.
+Both changes have to be upstream first. When upstream classifies
+`ERROR_IO_PENDING` as a timeout — or moves off `SO_RCVTIMEO` altogether, which
+its own `read_timeout` docs call a TODO — *and* takes a rustls configuration
+(or a tungstenite `Connector`) of the caller's, delete `vendor/ewebsock`, drop
+the `ewebsock` line from `[patch.crates-io]` and from the workspace `exclude`,
+bump the version in `crates/sdroxide-ui/Cargo.toml` to whatever carries both,
+and point `remote_tls::options_for` at upstream's option.

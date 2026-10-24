@@ -39,6 +39,9 @@ mod multi;
 mod prop_map;
 #[cfg(feature = "remote")]
 mod remote;
+/// Pinned certificates for `wss://` stations nothing public vouches for.
+#[cfg(all(feature = "remote", not(target_arch = "wasm32")))]
+mod remote_tls;
 /// Asking egui for the next frame at the rate actually asked for.
 pub mod repaint;
 mod rf_paint;

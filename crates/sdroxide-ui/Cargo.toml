@@ -69,6 +69,15 @@ rfd = "0.17.2"
 # HTTPS, which is how a station on port 443 is usually reached — is refused
 # outright by a tungstenite built without it. See the note beside that entry.
 ewebsock = { version = "0.8.0", optional = true, features = ["tls"] }
+# ...and the certificate check that rides on it (`remote_tls.rs`): a `wss://`
+# station behind a self-signed certificate is accepted once the operator has
+# trusted that one certificate (issue #736). A custom verifier needs rustls's
+# own types, the same 0.23 tungstenite links; the roots are the ones tungstenite
+# uses by itself, so a server it accepted is still accepted; the pin is a
+# SHA-256. `ring` only — rustls's default would pull in aws-lc as well.
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+webpki-roots = "1"
+ring = "0.17"
 # The OS timezone, for the solar view's local-time clock. `clock` is the only
 # feature that matters here; the browser build asks JavaScript for the offset
 # instead, so chrono never reaches the wasm dependency path.
@@ -102,6 +111,12 @@ wasm-bindgen-futures = "0.4"
 rfd = "0.17.2"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Blob", "BlobPropertyBag", "Url", "Document", "Window", "HtmlAnchorElement", "HtmlElement", "Storage", "File", "FileList", "FileReader", "HtmlInputElement"] }
+
+# The far end of the `wss://` loopback test in `remote_tls.rs`: a WebSocket
+# server behind a self-signed certificate. The tungstenite ewebsock already
+# links, so it adds no build time.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tungstenite = "0.24"
 
 [dev-dependencies]
 # Compiles and validates the WGSL in src/shaders/ as a unit test, so a shader

@@ -14290,6 +14290,25 @@ To open just one radio of a station, name it in the address:
 the **Address** box. `/radios` on the server says which id is which
 ([8.1](#81-start-the-server)).
 
+**A server behind a self-signed certificate.** An HTTPS reverse proxy on a
+private network — the usual way to give the browser client its audio
+([9.3](#93-audio-needs-a-secure-context)) — rarely has a certificate a public
+authority signed. A `wss://` connection to one is refused at first, and the
+radio's tab shows the SHA-256 fingerprint of the certificate the server
+presented, with **Trust this certificate and connect**. Compare the fingerprint
+with your proxy's — for example
+`openssl x509 -noout -fingerprint -sha256 -in cert.pem` — and trust it only if
+the two match. From then on that exact certificate is accepted from that
+`host:port`, by every radio of the station, and any other certificate there is
+refused; name and expiry are not checked against a trusted certificate, but the
+server must still hold its private key. Certificates signed by a public
+authority are accepted as before, without asking.
+
+Trusted certificates are listed at the bottom of **Settings → Remote**, each
+with **Forget**, which goes back to ordinary checking — for a proxy that now has
+a proper certificate, or one whose certificate was renewed and must be trusted
+afresh. They are kept in `remote_certs.json` in the configuration directory.
+
 Either way, a remote client is the full sdroxide GUI running against the server:
 control, state, memories, meters, spectrum, FT8 decodes and logging, and skimmer
 spots all work. Receive audio streams down (48 kHz mono), and your microphone is
