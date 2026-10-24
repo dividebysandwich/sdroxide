@@ -45,7 +45,8 @@ pub mod decode;
 pub mod encode;
 
 use mfsk_core::engine::{
-    FrameLayout, ModulationParams, Protocol, ProtocolId, SpectrumWindow, SyncBlock, SyncMode,
+    FrameLayout, ModulationParams, Protocol, ProtocolId, SpectrumWindow, SyncBlock, SyncFrontEnd,
+    SyncMode,
 };
 use mfsk_core::fec::Ldpc174_91;
 use mfsk_core::msg::Wsjt77Message;
@@ -68,16 +69,6 @@ impl ModulationParams for Ft2 {
     const GRAY_MAP: &'static [u8] = &[0, 1, 3, 2];
     const GFSK_BT: f32 = 1.0;
     const GFSK_HMOD: f32 = 1.0;
-    /// `ft2_params.f90`: `NFFT1 = 1152 = 4 × NSPS`, as FT4's 2304 is 4 × 576.
-    const NFFT_PER_SYMBOL_FACTOR: u32 = 4;
-    /// `ft2_params.f90`: `NSTEP = NSPS`. mfsk-core's FT4 uses half-symbol
-    /// coarse steps; at 24 ms a half step is 12 ms, and the coherent Δt search
-    /// in [`decode`] re-finds the position to a fraction of a sample anyway,
-    /// so the reference's symbol-granular step is kept.
-    const NSTEP_PER_SYMBOL: u32 = 1;
-    /// `ft2_params.f90`: `NDOWN=9` → 1333.3 Hz baseband, double FT4's 666.7
-    /// for double the tone spacing.
-    const NDOWN: u32 = 9;
 
     /// Same reasoning as FT4's: Nuttall is what WSJT-X does, but mfsk-core's
     /// noise-floor estimator misranks the signal bin against its sidelobes on
@@ -112,7 +103,24 @@ impl FrameLayout for Ft2 {
 impl Protocol for Ft2 {
     type Fec = Ldpc174_91;
     type Msg = Wsjt77Message;
+    /// No precomputed Δt phasors: each `df` is built when the search asks for
+    /// it. mfsk-core's FT4 tables are laid out for FT4's 666.7 Hz baseband,
+    /// not this one's 1333.3 Hz.
+    type SyncPhasors = ();
     const ID: ProtocolId = ProtocolId::Ft2;
+}
+
+impl SyncFrontEnd for Ft2 {
+    /// `ft2_params.f90`: `NFFT1 = 1152 = 4 × NSPS`, as FT4's 2304 is 4 × 576.
+    const NFFT_PER_SYMBOL_FACTOR: u32 = 4;
+    /// `ft2_params.f90`: `NSTEP = NSPS`. mfsk-core's FT4 uses half-symbol
+    /// coarse steps; at 24 ms a half step is 12 ms, and the coherent Δt search
+    /// in [`decode`] re-finds the position to a fraction of a sample anyway,
+    /// so the reference's symbol-granular step is kept.
+    const NSTEP_PER_SYMBOL: u32 = 1;
+    /// `ft2_params.f90`: `NDOWN=9` → 1333.3 Hz baseband, double FT4's 666.7
+    /// for double the tone spacing.
+    const NDOWN: u32 = 9;
 }
 
 /// The four Costas-4 arrays, from `genft2.f90` — byte-identical to FT4's

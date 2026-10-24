@@ -38,7 +38,7 @@ use mfsk_core::engine::dsp::subtract::{
 use mfsk_core::engine::llr::{compute_llr, symbol_spectra, sync_quality};
 use mfsk_core::engine::protocol::FecOpts;
 use mfsk_core::engine::sync::{AudioSource, RxGrid, SyncCandidate, coarse_sync, refine_candidate};
-use mfsk_core::engine::{FrameLayout, ModulationParams};
+use mfsk_core::engine::{FrameLayout, ModulationParams, SyncFrontEnd};
 use num_complex::Complex;
 use sdroxide_types::Js8Speed;
 
@@ -367,7 +367,7 @@ fn process_candidate<P: Js8Proto>(
     fft_cache: &[Complex<f32>],
     depth: Js8Depth,
 ) -> Option<Js8Decode> {
-    let ds_rate = DECODE_RATE as f32 / <P as ModulationParams>::NDOWN as f32;
+    let ds_rate = DECODE_RATE as f32 / <P as SyncFrontEnd>::NDOWN as f32;
     let tx_start = <P as FrameLayout>::TX_START_OFFSET_S;
 
     let mut cd0 = downsample_cached(fft_cache, cand.freq_hz, &P::DOWNSAMPLE);

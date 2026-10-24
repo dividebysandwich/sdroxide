@@ -2,8 +2,9 @@
 name = "sdroxide-digi"
 version.workspace = true
 edition.workspace = true
-# GPL because it links mfsk-core (GPL-3.0-or-later). Isolated here so the
-# permissive crates and the wasm client link no GPL code.
+# GPL because it links mfsk-core (GPL-3.0-only since 0.13.1; this crate's own
+# "or later" grant still lets a build containing both go out under GPL-3.0).
+# Isolated here so the permissive crates and the wasm client link no GPL code.
 #
 # The CW panel also links sdroxide-deepcw, which is AGPL-3.0-only. That is a
 # stronger licence than this one and it reaches through: a build containing this
@@ -25,7 +26,7 @@ sdroxide-deepcw.workspace = true
 sdroxide-rade.workspace = true
 # The JS8 candidate loop hands complex baseband between mfsk-core primitives.
 num-complex.workspace = true
-mfsk-core = { version = "0.10.0", default-features = false, features = ["std", "ft8", "ft4", "wspr", "msk144", "jt65", "jt9", "fst4", "q65", "parallel", "fft-rustfft"] }
+mfsk-core = { version = "0.14.0", default-features = false, features = ["std", "ft8", "ft4", "wspr", "msk144", "jt65", "jt9", "fst4", "q65", "parallel", "fft-rustfft"] }
 crossbeam-channel.workspace = true
 # The WSPR candidate search is four-fifths Fano and splits cleanly across
 # candidates. Already in the tree via mfsk-core's `parallel` feature.
