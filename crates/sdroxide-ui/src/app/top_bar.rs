@@ -862,7 +862,7 @@ impl SdroxideApp {
                 _ => false,
             }),
             MenuChip::Sub => true,
-            MenuChip::Tx => self.state.tx.tune,
+            MenuChip::Tx => self.state.tx.tune || self.show_tx_window,
             // Nothing here reads back: the socket is a name rather than an
             // on/off, and a radio that is switched off answers nothing at all.
             MenuChip::Rig | MenuChip::Rx | MenuChip::Disp | MenuChip::Sys => false,
@@ -1079,8 +1079,9 @@ impl SdroxideApp {
                 let cell2 = egui::vec2(plan.cell2_w, chip_h);
                 ui.horizontal(|ui| {
                     if tx_capable {
-                        let btn = crate::chrome::chip_sized(ui, self.state.tx.tune, "TX", cell2);
-                        self.tx_menu(ui, btn, cmds);
+                        let lit = self.state.tx.tune || self.show_tx_window;
+                        let btn = crate::chrome::chip_sized(ui, lit, "TX", cell2);
+                        self.tx_menu(btn);
                     }
                     let btn = crate::chrome::chip_sized(ui, false, "DISP", cell2);
                     self.disp_menu(ui, btn, cmds);
@@ -1242,7 +1243,7 @@ impl SdroxideApp {
                 MenuChip::Div => self.div_menu(ui, btn, cmds),
                 MenuChip::Sub => self.sub_menu(ui, btn, cmds),
                 MenuChip::Rig => self.rig_menu(ui, btn, cmds),
-                MenuChip::Tx => self.tx_menu(ui, btn, cmds),
+                MenuChip::Tx => self.tx_menu(btn),
                 MenuChip::Disp => self.disp_menu(ui, btn, cmds),
                 MenuChip::Sys => self.sys_menu(ui, btn, cmds),
             }
@@ -1322,26 +1323,58 @@ impl SdroxideApp {
         });
     }
 
-    /// The TX menu: tune, the voice keyer, and the drive and mic levels.
-    fn tx_menu(&mut self, ui: &mut egui::Ui, btn: egui::Response, cmds: &mut Vec<Command>) {
+    /// The TX chip: opens and closes the TRANSMIT window — tune, the voice
+    /// keyer, and the drive and mic levels.
+    ///
+    /// A window rather than the drop-down the other menu chips open, because
+    /// the drop-down hangs from the chip straight over the S-meter, and the
+    /// S-meter is exactly what an operator is watching while they set drive
+    /// and tune (issue #525). A window can be dragged clear of it, and stays
+    /// open through an over instead of closing at the first click elsewhere.
+    fn tx_menu(&mut self, btn: egui::Response) {
         let btn = btn.on_hover_text(tr!("topbar-tune-voice-keyer-drive-mic"));
-        crate::chrome::menu_popup(ui, &btn, |ui| {
-            crate::chrome::menu_caption(ui, &tr!("topbar-transmit"));
-            // PTT is on the strip already; TUNE rides with the levels it is
-            // set up with.
-            self.tx_controls(ui, cmds, true);
-            if crate::chrome::chip_accent(
-                ui,
-                self.state.tx.tune,
-                RichText::new(tr!("topbar-tune")).size(15.0),
-                crate::theme::YELLOW(),
-                crate::theme::INK_ON_CYAN(),
-            )
-            .clicked()
-            {
-                cmds.push(Command::SetTune(!self.state.tx.tune));
-            }
-        });
+        if btn.clicked() {
+            self.show_tx_window = !self.show_tx_window;
+        }
+    }
+
+    /// The TRANSMIT window the TX chip opens. See [`Self::tx_menu`].
+    pub(in crate::app) fn tx_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
+        if !self.show_tx_window {
+            return;
+        }
+        let mut open = self.show_tx_window;
+        let resp = egui::Window::new(tr!("topbar-transmit"))
+            .id(crate::layout::salted_id(ctx, "TRANSMIT"))
+            .open(&mut open)
+            .frame(crate::chrome::window_frame())
+            .resizable(false)
+            .collapsible(true)
+            .show(ctx, |ui| {
+                crate::chrome::window_body_bg(ui);
+                // PTT is on the strip already; TUNE rides with the levels it
+                // is set up with.
+                self.tx_controls(ui, cmds, true);
+                ui.horizontal(|ui| {
+                    let tx = self.state.tx;
+                    if crate::chrome::chip_accent(
+                        ui,
+                        tx.tune && !tx.two_tone,
+                        RichText::new(tr!("topbar-tune")).size(15.0),
+                        crate::theme::YELLOW(),
+                        crate::theme::INK_ON_CYAN(),
+                    )
+                    .clicked()
+                    {
+                        tune_clicked(tx, false, cmds);
+                    }
+                    self.tx_two_tone_chip(ui, cmds);
+                });
+            });
+        if let Some(r) = &resp {
+            crate::chrome::paint_window_border(ctx, &r.response);
+        }
+        self.show_tx_window = open;
     }
 
     /// The DISP menu: waterfall, spectrum and skimmer controls.
@@ -4997,7 +5030,7 @@ impl SdroxideApp {
         let tx = self.state.tx;
         if crate::chrome::chip_accent_sized(
             ui,
-            tx.tune,
+            tx.tune && !tx.two_tone,
             RichText::new(tr!("topbar-tune")).size(15.0),
             crate::theme::YELLOW(),
             crate::theme::INK_ON_CYAN(),
@@ -5005,7 +5038,28 @@ impl SdroxideApp {
         )
         .clicked()
         {
-            cmds.push(Command::SetTune(!tx.tune));
+            tune_clicked(tx, false, cmds);
+        }
+        self.tx_two_tone_chip(ui, cmds);
+    }
+
+    /// The two-tone chip beside TUNE (issue #525): one click keys the
+    /// two-tone test signal at the tune level, another unkeys it — what other
+    /// SDR programs call their "Tone" button. Lit only while that is what is
+    /// on the air, so it and TUNE never both read as keyed.
+    fn tx_two_tone_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let tx = self.state.tx;
+        if crate::chrome::chip_accent(
+            ui,
+            tx.tune && tx.two_tone,
+            RichText::new(tr!("topbar-two-tone")).size(15.0),
+            crate::theme::YELLOW(),
+            crate::theme::INK_ON_CYAN(),
+        )
+        .on_hover_text(tr!("topbar-two-tone-hover"))
+        .clicked()
+        {
+            tune_clicked(tx, true, cmds);
         }
     }
 
@@ -7043,6 +7097,19 @@ const DISPLAY_TOOL_CHIPS: [&str; 4] = ["FIT", "CTR", "SKIM", "FFT"];
 /// The caption under the FDM-DUO's power presets (AJ3G, 18 Oct 2026).
 const DUO_PRESETS_CAPTION: &str = "ELAD FDM-DUO TX PWR";
 
+/// What a click on TUNE (`two_tone` false) or on the two-tone chip (`true`)
+/// sends. Clicking the one that is lit unkeys; clicking the other keys with
+/// that waveform — switching over without unkeying if TUNE was already down,
+/// since the waveform is all that differs.
+fn tune_clicked(tx: sdroxide_types::TxState, two_tone: bool, cmds: &mut Vec<Command>) {
+    if tx.tune && tx.two_tone == two_tone {
+        cmds.push(Command::SetTune(false));
+    } else {
+        cmds.push(Command::SetTuneTwoTone(two_tone));
+        cmds.push(Command::SetTune(true));
+    }
+}
+
 /// The keying chips' shared size: PTT and TUNE drawn to the wider of the two
 /// labels, so the chips match and the level blocks beside them start on the
 /// same column.
@@ -7064,7 +7131,8 @@ fn tx_rows_fixed_w(ui: &egui::Ui, keyer: bool) -> (f32, f32) {
         |s: &str| crate::chrome::text_width(ui, s, egui::TextStyle::Body.resolve(ui.style()));
     let keyer_w = if keyer { crate::chrome::chip_width(ui, " ▶ ", Some(15.0)) + g } else { 0.0 };
     let row1 = key_w + g + keyer_w + label(&tr!("topbar-drive")) + g + g + TX_SLIDER_VALUE_W;
-    let row2 = key_w + g + label(&tr!("topbar-tune-2")) + g + g + TX_SLIDER_VALUE_W;
+    let two_tone_w = crate::chrome::chip_width(ui, &tr!("topbar-two-tone"), Some(15.0)) + g;
+    let row2 = key_w + g + two_tone_w + label(&tr!("topbar-tune-2")) + g + g + TX_SLIDER_VALUE_W;
     (row1, row2)
 }
 
@@ -9700,6 +9768,13 @@ mod tests {
                             crate::theme::YELLOW(),
                             crate::theme::INK_ON_CYAN(),
                             size,
+                        );
+                        crate::chrome::chip_accent(
+                            ui,
+                            false,
+                            RichText::new(tr!("topbar-two-tone")).size(15.0),
+                            crate::theme::YELLOW(),
+                            crate::theme::INK_ON_CYAN(),
                         );
                         ui.label("Tune");
                         crate::chrome::slider_readout(
