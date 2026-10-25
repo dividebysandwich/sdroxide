@@ -1634,7 +1634,12 @@ use sdroxide_types::{
 /// its tail, and the radio configuration rides whole in both a command and an
 /// event, so a v190 peer reads the extra bytes as the start of the next field
 /// and fails to decode either.
-pub const PROTO_VERSION: u16 = 191;
+///
+/// v192: TUNE can send a two-tone test signal (issue #525). `TxState` gains
+/// `two_tone` on its tail and `Command` gains a trailing `SetTuneTwoTone`;
+/// `TxState` rides whole inside `RadioState`, so a v191 peer reads the extra
+/// byte as the start of the next field and fails to decode every state.
+pub const PROTO_VERSION: u16 = 192;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

@@ -1018,6 +1018,7 @@ impl eframe::App for SdroxideApp {
         self.hd_window(&ctx, &mut cmds);
         self.voice_window(&ctx, &mut cmds);
         self.tx_audio_window(&ctx, &mut cmds);
+        self.tx_window(&ctx, &mut cmds);
         self.settings_window(&ctx, &mut cmds);
         self.digi_settings_window(&ctx, &mut cmds);
         self.logbook_window(&ctx, &mut cmds);

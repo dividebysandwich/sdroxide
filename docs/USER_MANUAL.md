@@ -9659,7 +9659,11 @@ itself rather than leaving it to a second tab (issue #525). **Used for** offers:
   what comes out is straight. It needs **Full duplex** on and the **PTT pins**
   off, because the coupler is only heard while receive keeps running through
   the over; the correction shows on the PS meter and in the log while you
-  transmit, and stays at unity until the feedback lines up.
+  transmit, and stays at unity until the feedback lines up. The **2T** chip
+  beside **TUNE** is the easiest thing to learn from: it transmits the classic
+  two-tone test signal (700 Hz and 1900 Hz together) at the Tune level until
+  clicked again. A steady carrier has only one amplitude, so it teaches
+  PureSignal nothing, and a silent microphone teaches it less.
 
 **RX2 gain** is a fixed gain (RX2's AGC is turned off): for diversity, set it
 so both aerials show about the same noise floor; for PureSignal, start at the
@@ -14693,7 +14697,7 @@ row of menu buttons:
 | **RX** | Volume, front-end gain, AGC, squelch, the filter width and edges, NB, ANC, NR, BIN |
 | **VFO** | A↔B, A→B, SPLIT, SUB, and the RIT/XIT offsets |
 | **SUB** | The second receiver's frequency, mode, filter and level (only while it is running) |
-| **TX** | TUNE, the voice keyer, and the drive, tune and mic levels |
+| **TX** | TUNE, 2T (two-tone), the voice keyer, and the drive, tune and mic levels — in a **TRANSMIT** window you can drag clear of the S-meter, which stays open through an over until you close it or tap **TX** again |
 | **DISP** | ☀ 3D, WIDE, FIT, CTR, the panadapter boxes (the spectrum and waterfall switches, peak hold, their speeds and the detail), the skimmers, and the spectrum floor/ceiling and FFT size |
 | **SYS** | LOG, SPOTS, AWARDS, BANDS, SAT, ISM, PUBLIC SDR, MAIL, MEM, SCAN, SETTINGS, HELP |
 
