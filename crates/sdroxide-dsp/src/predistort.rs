@@ -126,6 +126,13 @@ pub struct PureSignal {
     check_every: u64,
     /// How much history to keep, which bounds the delay that can be found.
     keep: usize,
+    /// Feedback samples since the last search for the alignment while there
+    /// is none, and how many must pass between searches. A search costs the
+    /// whole history times the block, so searching on *every* block while
+    /// unlocked — fine over a tenth of a second of history — is a gigaflop a
+    /// second over the second of history a networked radio needs.
+    since_locate: u64,
+    locate_every: u64,
 
     /// De-rotation and envelope scratch, kept to avoid allocating per block.
     scratch: Vec<Complex32>,
@@ -137,12 +144,30 @@ impl PureSignal {
     /// `sample_rate_hz` sizes the reference history: the loop delay is mostly
     /// the transmit FIFO, so the history has to span it.
     pub fn new(bins: usize, rate: f32, sample_rate_hz: f64) -> PureSignal {
-        let bins = bins.clamp(4, 256);
         // A tenth of a second of history, bounded so a fast device does not
         // cost eight megabytes: the transmit FIFO is what the delay is made
         // of, and the engine paces the over to keep it at tens of
         // milliseconds.
         let keep = ((sample_rate_hz * 0.1) as usize).clamp(1 << 16, 1 << 19);
+        Self::with_keep(bins, rate, sample_rate_hz, keep)
+    }
+
+    /// The same, for a radio whose loop delay is longer than a tenth of a
+    /// second — one reached over a network, where the samples pass through a
+    /// host ring, the device's own DMA buffers and back again before the
+    /// feedback arrives (a Pluto, issue #525). `history_s` is how far back the
+    /// alignment may look; past what it covers the loop simply never locks.
+    pub fn with_history(bins: usize, rate: f32, sample_rate_hz: f64, history_s: f64) -> PureSignal {
+        let keep = ((sample_rate_hz * history_s.max(0.1)) as usize).clamp(1 << 16, 1 << 22);
+        Self::with_keep(bins, rate, sample_rate_hz, keep)
+    }
+
+    fn with_keep(bins: usize, rate: f32, sample_rate_hz: f64, keep: usize) -> PureSignal {
+        let bins = bins.clamp(4, 256);
+        let check_every = (sample_rate_hz * 0.5) as u64;
+        // Eight tries a second while unlocked: quick enough that an over is
+        // found within its first syllable, rare enough to cost nothing.
+        let locate_every = (check_every / 4).max(1);
         PureSignal {
             table: vec![Complex32::new(1.0, 0.0); bins],
             alpha: Self::alpha_for_rate(rate),
@@ -156,8 +181,11 @@ impl PureSignal {
             score: 0.0,
             since_check: 0,
             // Twice a second at any rate people transmit at.
-            check_every: (sample_rate_hz * 0.5) as u64,
+            check_every,
             keep,
+            // So that the very first block is searched at once.
+            since_locate: locate_every,
+            locate_every,
             scratch: Vec::new(),
             fenv: Vec::new(),
         }
@@ -234,6 +262,8 @@ impl PureSignal {
         self.offset = None;
         self.score = 0.0;
         self.since_check = 0;
+        // Search on the first feedback block of the new over, not a slot later.
+        self.since_locate = self.locate_every;
     }
 
     /// Bend one block on its way to the transmitter, and keep what was wanted.
@@ -320,9 +350,12 @@ impl PureSignal {
         self.fb_total += m as u64;
 
         self.since_check += m as u64;
+        self.since_locate += m as u64;
         let recheck = self.since_check >= self.check_every;
-        if self.offset.is_none() || recheck {
+        let searching = self.offset.is_none() && self.since_locate >= self.locate_every;
+        if searching || recheck {
             self.since_check = 0;
+            self.since_locate = 0;
             self.locate(start, m);
         }
         let Some(off) = self.offset else { return false };
@@ -634,6 +667,37 @@ mod tests {
             "distortion went from {before:.1} dB to {after:.1} dB — not an improvement worth \
              the trouble"
         );
+    }
+
+    /// A networked radio's loop delay — a Pluto over Ethernet, issue #525 —
+    /// is hundreds of milliseconds, far past the default history: the
+    /// default never locks on it, and a history long enough does. Run at a
+    /// low rate so the test stays quick; what matters is delay against
+    /// history, not the rate.
+    #[test]
+    fn a_long_loop_delay_locks_with_a_long_enough_history() {
+        let rate = 200_000.0;
+        // 0.8 s. The default keeps at least 65536 samples and holds up to
+        // twice that, so at this low rate it reaches 0.65 s; this is past
+        // that and inside the one-second history.
+        let delay = 160_000usize;
+        let run = |mut ps: PureSignal| {
+            let mut line: Vec<Complex32> = vec![Complex32::new(0.0, 0.0); delay];
+            let coupler = Complex32::from_polar(0.11, 1.0);
+            for round in 0..70 {
+                let mut block = source(8192, 300 + round);
+                ps.predistort(&mut block);
+                line.extend(block.iter().map(|s| amplifier(*s) * coupler));
+                let fb: Vec<Complex32> = line.drain(..8192).collect();
+                ps.feed_back(&fb, 0.0, rate);
+            }
+            ps
+        };
+        let short = run(PureSignal::new(32, 0.9, rate));
+        assert!(!short.locked(), "the default history should not reach a 0.8 s delay");
+        let long = run(PureSignal::with_history(32, 0.9, rate, 1.0));
+        assert!(long.locked(), "a one-second history never found it (score {:.2})", long.score());
+        assert!(long.correction_db() > 0.5, "locked, but learned nothing");
     }
 
     /// Feedback that is not the transmission — an unconnected coupler, a

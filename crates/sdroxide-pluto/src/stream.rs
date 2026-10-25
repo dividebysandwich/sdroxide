@@ -14,7 +14,7 @@ use rtrb::{Consumer, Producer};
 
 use crate::error::Error;
 use crate::iiod::Connection;
-use crate::net::{CONNECT_TIMEOUT, STATS_INTERVAL, Shared};
+use crate::net::{CONNECT_TIMEOUT, NO_PAIR, STATS_INTERVAL, Shared};
 
 /// I and Q of the transmit buffer's one pair. `Phy::probe` guarantees it sits
 /// at scan indices 0 and 1; a 2R2T device's second transmit pair stays
@@ -303,19 +303,76 @@ impl Stats {
 /// decides how a full ring is accounted for — a fault, or the normal cost of
 /// transmitting. It is deliberately not a reason to skip the push: the samples
 /// are still offered, and it is the reader's business whether it wants them.
-fn push_iq(ring: &mut Producer<f32>, iq: &[f32], stats: &mut Stats, paused: bool) {
+fn push_iq(ring: &mut Producer<f32>, iq: &[f32], stats: &mut Stats, paused: bool) -> bool {
     let Ok(mut chunk) = ring.write_chunk(iq.len()) else {
         if paused {
             stats.on_dropped_keyed(iq.len() / 2);
         } else {
             stats.on_dropped(iq.len() / 2);
         }
-        return;
+        return false;
     };
     let (head, tail) = chunk.as_mut_slices();
     head.copy_from_slice(&iq[..head.len()]);
     tail.copy_from_slice(&iq[head.len()..]);
     chunk.commit_all();
+    true
+}
+
+/// Push one buffer to both chains' rings or to neither, for a second chain
+/// that is chain 0's own auxiliary receiver (issue #525).
+///
+/// Everything the reader relies on is kept here. A ring without room for its
+/// half costs *both* halves, because committing one alone would put the pair
+/// a buffer out of step for the rest of the session — a combiner fed the
+/// wrong instants learns nothing, and says so only as a null that never
+/// deepens. The first pair records where chain 1 starts in chain 0's count,
+/// and records it before chain 0's half is committed, so a reader that sees
+/// those samples also sees the origin.
+///
+/// A one-pair buffer — the moments between the auxiliary stream attaching and
+/// the buffer reopening wide — has no twin to keep. Before the first pair it is
+/// simply chain 0's audio; after it, it would break the count, so it is
+/// dropped (it cannot happen then short of the width changing under a running
+/// pair, which the attach and detach paths do not do).
+fn push_lockstep(
+    shared: &Shared,
+    ring0: &mut Producer<f32>,
+    ring1: Option<&mut Producer<f32>>,
+    iq: &[f32],
+    iq1: &[f32],
+    stats: &mut Stats,
+    paused: bool,
+) {
+    let origin = shared.pair_origin.load(Ordering::SeqCst);
+    let (Some(ring1), false) = (ring1, iq1.is_empty()) else {
+        if origin == NO_PAIR {
+            if push_iq(ring0, iq, stats, paused) {
+                shared.pushed0.fetch_add(iq.len() as u64, Ordering::SeqCst);
+            }
+        } else if paused {
+            stats.on_dropped_keyed(iq.len() / 2);
+        } else {
+            stats.on_dropped(iq.len() / 2);
+        }
+        return;
+    };
+    if ring0.slots() < iq.len() || ring1.slots() < iq1.len() || iq.len() != iq1.len() {
+        if paused {
+            stats.on_dropped_keyed(iq.len() / 2);
+        } else {
+            stats.on_dropped(iq.len() / 2);
+        }
+        return;
+    }
+    if origin == NO_PAIR {
+        shared.pair_origin.store(shared.pushed0.load(Ordering::SeqCst), Ordering::SeqCst);
+    }
+    // Room was checked above and only this thread writes either ring, so
+    // neither push can fail now.
+    push_iq(ring0, iq, stats, paused);
+    shared.pushed0.fetch_add(iq.len() as u64, Ordering::SeqCst);
+    push_iq(ring1, iq1, stats, paused);
 }
 
 /// Replace the receive socket after it has failed, without taking the rest of
@@ -589,20 +646,33 @@ pub(crate) fn rx_thread(mut conn: Connection, shared: Arc<Shared>, mut ring: Pro
             }
         }
         let paused = shared.rx_paused.load(Ordering::Relaxed);
-        push_iq(&mut ring, &iq, &mut stats, paused);
+        // The second chain's ring, held across both pushes when the two must
+        // stay in step — see `PlutoRx::rx_read_paired`.
+        let mut slot = shared.ring1.lock().unwrap_or_else(|e| e.into_inner());
+        let lockstep = shared.lockstep.load(Ordering::SeqCst) && slot.is_some();
+        if lockstep {
+            push_lockstep(&shared, &mut ring, slot.as_mut(), &iq, &iq1, &mut stats, paused);
+            if open_pairs == 2 {
+                shared.stamp_rx1();
+            }
+        } else {
+            if push_iq(&mut ring, &iq, &mut stats, paused) {
+                shared.pushed0.fetch_add(iq.len() as u64, Ordering::SeqCst);
+            }
+            if open_pairs == 2 {
+                // The second chain's radio may not have attached its ring yet
+                // (or may just have dropped it); its samples then fall on the
+                // floor, which is what "nobody is listening" should cost.
+                if let Some(r1) = slot.as_mut() {
+                    push_iq(r1, &iq1, &mut stats, paused);
+                    shared.stamp_rx1();
+                }
+            }
+        }
+        drop(slot);
         // Stamped by this thread rather than by the reader, so an over — during
         // which nothing drains the ring — is not read as a dead radio.
         shared.stamp_rx();
-        if open_pairs == 2 {
-            // The second chain's radio may not have attached its ring yet (or
-            // may just have dropped it); its samples then fall on the floor,
-            // which is what "nobody is listening" should cost.
-            let mut slot = shared.ring1.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(r1) = slot.as_mut() {
-                push_iq(r1, &iq1, &mut stats, paused);
-                shared.stamp_rx1();
-            }
-        }
         stats.on_buffer(sets);
         stats.tick();
     }
