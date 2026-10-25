@@ -2003,6 +2003,14 @@ settings-radio-automatic-board-receives-switched-transmit = On Automatic the boa
 settings-radio-limesdr-support-has-not-been = LimeSDR support has not been verified against hardware. This is the last session's trace, for an issue report.
 settings-radio-gains-filters-corrections-antenna-sockets = Gains, filters, corrections, the antenna sockets and every LimeRFE control — its connectors, band, relays, attenuator, notch and fan — apply immediately. The board, the receive chain, the sample rate, arming transmit and the LimeRFE's connection take effect on Apply.
 
+## Settings window, Radio tab: the PlutoSDR's second receive chain (issue #525).
+## Its other controls share the LimeSDR's second-chain messages above.
+
+settings-radio-pluto-rx2 = Second receive chain (RX2)
+settings-radio-pluto-rx2-intro = On a 2R2T board (Pluto+, PlutoSky R2 with 2R2T firmware) this radio can keep RX2 for itself: as a second aerial, or as a sample of your own transmitter for PureSignal. RX2 shares the oscillator and the clock with RX1, so it hears the same span at the same instant, and it runs at a fixed gain with its AGC off. While it is used here it is not free for a second radio tab. Changing what it is used for takes effect on Apply.
+settings-radio-pluto-rx2-gain = RX2 gain
+settings-radio-pluto-ps-needs-full-duplex = PureSignal needs Full duplex on and the PTT pins off: the coupler is only heard while receive keeps running through the over.
+
 ## Settings window, Radio tab: messages with values
 
 settings-radio-fill-from = FILL FROM { $name }
