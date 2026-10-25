@@ -14029,6 +14029,18 @@ impl Engine {
         let (lo, hi) = mode.default_filter_at(dial);
         (r.filter_lo, r.filter_hi) = (lo, hi);
         let snapshot = *r;
+        // **A transmitter already on the air does not stay keyed into a
+        // receive-only mode.** Selecting WEFAX mid-over would otherwise leave
+        // PTT or TUNE latched with the only controls that could release them
+        // gone from the screen, which is the state an operator cannot get out
+        // of — on a channel that mode exists to listen to, usually a broadcast
+        // one.
+        if rx == RxId::Main && mode.is_rx_only() && (self.state.tx.ptt || self.state.tx.tune) {
+            self.state.tx.ptt = false;
+            self.state.tx.tune = false;
+            self.sync_tx_state();
+            self.notice(&format!("{} is receive-only — the transmitter was unkeyed", mode.label()));
+        }
         if let Some(c) = self.chain_mut(rx) {
             c.build_for_mode(&snapshot, dial);
         }
@@ -16813,6 +16825,22 @@ impl Engine {
             return;
         }
         if want_tx {
+            // **A receive-only mode cannot be keyed, by any route.** The chrome
+            // stops offering a PTT in WEFAX, NAVTEX, DSC and the rest (issue
+            // #239), and this is the half that makes the refusal true rather
+            // than cosmetic: a keyboard binding, a MIDI button, an external PTT
+            // line, a TCI client, a remote `SetPtt` or a digital burst all end
+            // here, and none of them can put a carrier on a broadcast channel
+            // whose mode has nothing to modulate.
+            //
+            // It is asked of the *transmitting* receiver — the main one — for
+            // the reason the whole transmit chain asks it: the sub receiver is
+            // a second pair of ears, and what it is listening to never decides
+            // what is sent.
+            if self.state.rx[0].mode.is_rx_only() {
+                let mode = self.state.rx[0].mode;
+                return self.deny_tx(&format!("{} is a receive-only mode", mode.label()));
+            }
             // The SWR latch comes before every other rail, including the
             // station interlock. It is a pure state check with no side effects
             // to unwind, and it is the one refusal that says the antenna system
