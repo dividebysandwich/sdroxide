@@ -22,13 +22,24 @@
 //! SoapySDR path does for the same reason — it asks the engine to park the LO a
 //! quarter-span away ([`IqSource::lo_offset_hz`]) and DC-blocks the stream
 //! before anything downstream sees it.
+//!
+//! # The second chain as this radio's own (issue #525)
+//!
+//! On a 2R2T board the RX1 radio can keep RX2 for itself instead of leaving it
+//! to a second tab — as a second aerial, combined with the first by the same
+//! adaptive filter a LimeSDR's second chain uses, or as the transmit coupler
+//! PureSignal learns the amplifier from. Both chains arrive in one device
+//! buffer, so this is the best-aligned pair any backend here has: the
+//! hardware interleaves the two, and `PlutoRx::rx_read_paired` keeps them that
+//! way on the host. PureSignal also needs full duplex, since the coupler is
+//! only heard while receive keeps running through the over.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use sdroxide_dsp::ComplexDcBlock;
+use sdroxide_dsp::{ComplexDcBlock, Diversity, PureSignal};
 use sdroxide_pluto::{PlutoRig, PlutoRx};
 use sdroxide_radio::{Complex32, ControlUpdate, DC_BLOCK_HZ, IqSource, Result, lo_offset_for};
-use sdroxide_types::{PlutoAgc, PlutoConfig};
+use sdroxide_types::{DiversityMode, LimeAuxRole, PlutoAgc, PlutoAuxConfig, PlutoConfig};
 
 use crate::device_registry::{DeviceKey, SharedDevice, registry};
 
@@ -55,6 +66,40 @@ impl SharedDevice for PlutoRig {
 /// teardown here.
 const SILENCE_BEFORE_REOPEN: Duration = Duration::from_secs(10);
 
+/// How often the diversity filter's null depth, or the predistortion loop's
+/// state, reaches the log — the same cadence the LimeSDR backend keeps.
+const AUX_LOG_INTERVAL: Duration = Duration::from_secs(10);
+
+/// How far back PureSignal may look for the transmission in RX2's samples.
+///
+/// The LimeSDR's tenth of a second is far too short here, and that is what a
+/// first test on a PlutoSky R2 showed as `PS --` on every over: between the
+/// predistorter and the coupler's samples coming back lie the host's transmit
+/// ring, the board's DMA buffers in both directions, the network twice, and
+/// the receive ring — easily a few hundred milliseconds. One second covers it
+/// with room to spare; the search is throttled so the longer history costs
+/// nothing while unlocked.
+const PS_HISTORY_S: f64 = 1.0;
+
+/// The second receive chain, borrowed by the RX1 radio (issue #525).
+struct Aux {
+    rx: PlutoRx,
+    /// Interleaved floats as they come off the ring, and the same as complex.
+    raw: Vec<f32>,
+    iq: Vec<Complex32>,
+    /// The second chain's own DC blocker: it is a separate zero-IF front end
+    /// with an offset of its own, and handing that to the canceller would have
+    /// it spend taps subtracting one chain's artefact from the other's.
+    dc: ComplexDcBlock,
+    diversity: Option<Diversity>,
+    puresignal: Option<PureSignal>,
+    cfg: PlutoAuxConfig,
+    last_log: Instant,
+    /// Said once per over: past the edge of the span the coupler cannot be
+    /// heard.
+    warned_offset: bool,
+}
+
 pub struct PlutoSource {
     /// The shared connection and this source's stream on it. `None` after
     /// [`IqSource::release`]: the stream is given back so a rebuilt source
@@ -75,6 +120,18 @@ pub struct PlutoSource {
     /// gain so a panel can tell that the gain register is the AD9361's while
     /// an attack mode runs, and a gain slider moves nothing (issue #417).
     agc: PlutoAgc,
+    /// RX2 as this radio's second aerial or PureSignal coupler, when
+    /// configured and available.
+    aux: Option<Aux>,
+    /// Why the second chain is not running although it was asked for — shown
+    /// beside the connection's own open status.
+    aux_note: Option<String>,
+    /// The transmit oscillator of the over in progress, from `tx_begin`: the
+    /// coupler's signal lands at its distance from the receive centre.
+    tx_hz: f64,
+    transmitting: bool,
+    /// The transmit block, predistorted, as complex.
+    ps_scratch: Vec<Complex32>,
 }
 
 impl PlutoSource {
@@ -110,7 +167,13 @@ impl PlutoSource {
             "PlutoSDR source ready: {label}, centre {center_hz:.0} Hz, \
              LO offset {lo_offset:.0} Hz (0 = LO on the VFO)"
         );
+        let (aux, aux_note) = Self::open_aux(&rig, cfg, rate);
         Ok(PlutoSource {
+            aux,
+            aux_note,
+            tx_hz: center_hz,
+            transmitting: false,
+            ps_scratch: Vec::new(),
             center: center_hz,
             rx_scratch: Vec::new(),
             tx_scratch: Vec::new(),
@@ -122,6 +185,106 @@ impl PlutoSource {
             rig: Some(rig),
             agc: cfg.agc,
         })
+    }
+
+    /// Borrow RX2 for this radio, if its configuration asks for it and the
+    /// board and the link can give it. Anything short of that is a note, not
+    /// a failed open: the operator still has their receiver.
+    fn open_aux(rig: &PlutoRig, cfg: &PlutoConfig, rate: f64) -> (Option<Aux>, Option<String>) {
+        let role = cfg.aux.role;
+        if role == LimeAuxRole::Off {
+            return (None, None);
+        }
+        let refuse = |why: String| {
+            tracing::warn!("PlutoSDR: {why}");
+            (None, Some(why))
+        };
+        if cfg.rx != 0 {
+            return refuse(
+                "the second receive chain is set up on the RX1 radio, not on RX2's — \
+                 this radio is RX2 itself"
+                    .into(),
+            );
+        }
+        if rig.rx_chains() < 2 {
+            return refuse(
+                "this firmware streams one receive chain, so there is no second one for \
+                 diversity or PureSignal — a 2R2T firmware is needed"
+                    .into(),
+            );
+        }
+        if role == LimeAuxRole::PureSignal && !rig.full_duplex() {
+            return refuse(
+                "PureSignal is off: it listens to the coupler while you transmit, so it \
+                 needs Full duplex on (and FDD, with the PTT pins off)"
+                    .into(),
+            );
+        }
+        let rx = match rig.aux_rx() {
+            Ok(rx) => rx,
+            Err(e) => return refuse(format!("the second receive chain was not opened: {e}")),
+        };
+        // A fixed gain, whatever the main chain's AGC is doing. An AGC on the
+        // coupler would re-scale the feedback the predistorter is measuring,
+        // and one on a second aerial would move the balance the combiner has
+        // just learned.
+        rx.set_agc_mode(PlutoAgc::Manual.iio_name());
+        let mut rx = rx;
+        rx.set_rx_gain_db(cfg.aux.gain_db);
+        let diversity = (role == LimeAuxRole::Diversity).then(|| {
+            Diversity::new(div_mode(cfg.aux.mode), usize::from(cfg.aux.taps), cfg.aux.rate)
+        });
+        let puresignal = (role == LimeAuxRole::PureSignal).then(|| {
+            let mut ps = PureSignal::with_history(
+                usize::from(cfg.aux.ps_bins),
+                cfg.aux.ps_rate,
+                rate,
+                PS_HISTORY_S,
+            );
+            ps.set_frozen(cfg.aux.ps_frozen);
+            ps
+        });
+        let mut diversity = diversity;
+        if let Some(d) = diversity.as_mut() {
+            d.set_frozen(cfg.aux.frozen);
+            tracing::info!(
+                "PlutoSDR: diversity is on — second aerial on RX2, {} filter, {} taps, \
+                 {} dB fixed gain",
+                match cfg.aux.mode {
+                    DiversityMode::Cancel => "cancelling",
+                    DiversityMode::Combine => "combining",
+                },
+                cfg.aux.taps,
+                cfg.aux.gain_db
+            );
+        }
+        if puresignal.is_some() {
+            tracing::info!(
+                "PlutoSDR: PureSignal is on — transmit feedback on RX2 at {} dB, {} table \
+                 steps; the correction stays at unity until the feedback lines up with \
+                 what was sent",
+                cfg.aux.gain_db,
+                cfg.aux.ps_bins
+            );
+        }
+        let aux = Aux {
+            rx,
+            raw: Vec::new(),
+            iq: Vec::new(),
+            dc: ComplexDcBlock::new(DC_BLOCK_HZ, rate),
+            diversity,
+            puresignal,
+            cfg: cfg.aux.clone(),
+            last_log: Instant::now(),
+            warned_offset: false,
+        };
+        (Some(aux), None)
+    }
+
+    /// Whether a diversity filter is running, so the main window's DIV strip
+    /// is shown for this radio.
+    pub fn diversity_running(&self) -> bool {
+        self.aux.as_ref().is_some_and(|a| a.diversity.is_some())
     }
 
     /// What the device says it can do — the source of every figure in
@@ -149,7 +312,15 @@ impl PlutoSource {
         if self.rx_scratch.len() < need {
             self.rx_scratch.resize(need, 0.0);
         }
-        let n = rx.rx_read(&mut self.rx_scratch[..need]);
+        let (n, paired) = match self.aux.as_mut() {
+            Some(aux) => {
+                if aux.raw.len() < need {
+                    aux.raw.resize(need, 0.0);
+                }
+                rx.rx_read_paired(&mut aux.rx, &mut self.rx_scratch[..need], &mut aux.raw[..need])
+            }
+            None => (rx.rx_read(&mut self.rx_scratch[..need]), 0),
+        };
         let pairs = n / 2;
         if pairs == 0 {
             if wait {
@@ -165,7 +336,187 @@ impl PlutoSource {
         // the hardware, not of the stream, so carrying the estimate avoids a
         // re-convergence transient every time receive resumes.
         self.dc.process(&mut buf[..pairs]);
+        if paired == n {
+            self.use_aux(&mut buf[..pairs]);
+        }
+        self.log_aux();
         Ok(pairs)
+    }
+
+    /// Give the second chain's samples of the block in `main` to whichever
+    /// loop is running on them. `aux.raw` holds exactly `main.len()` pairs.
+    fn use_aux(&mut self, main: &mut [Complex32]) {
+        let Some(aux) = self.aux.as_mut() else { return };
+        let pairs = main.len();
+        aux.iq.clear();
+        aux.iq.extend((0..pairs).map(|p| Complex32::new(aux.raw[2 * p], aux.raw[2 * p + 1])));
+        if let Some(d) = aux.diversity.as_mut() {
+            // Each chain's own DC offset out first: they are artefacts of two
+            // separate front ends and have nothing in common.
+            aux.dc.process(&mut aux.iq);
+            d.process(main, &aux.iq);
+        }
+        if let Some(ps) = aux.puresignal.as_mut() {
+            // Only while keyed: the loop measures its delay once per over and
+            // holds it, so the feedback it sees must be one unbroken stretch
+            // of the transmission, not the receiver's idle noise either side.
+            if !self.transmitting {
+                aux.warned_offset = false;
+                return;
+            }
+            // The two synthesisers are set separately — the transmit one on the
+            // carrier, the receive one a quarter span off the dial — so the
+            // coupled signal lands at their difference, which is known exactly
+            // and spun back out inside the loop.
+            let offset = self.tx_hz - self.center;
+            if offset.abs() > self.rate * 0.45 {
+                if !aux.warned_offset {
+                    aux.warned_offset = true;
+                    tracing::warn!(
+                        "PlutoSDR: the transmit frequency is {:.3} MHz from the receive \
+                         centre, outside the captured span — PureSignal cannot hear the \
+                         coupler this over",
+                        offset / 1e6
+                    );
+                }
+                return;
+            }
+            ps.feed_back(&aux.iq, offset, self.rate);
+        }
+    }
+
+    /// Say how the second chain's loop is doing, now and then. The null depth
+    /// and the predistortion lock are the numbers that say whether any of it
+    /// works, and the log is where the LimeSDR backend puts them too.
+    fn log_aux(&mut self) {
+        let transmitting = self.transmitting;
+        let Some(aux) = self.aux.as_mut() else { return };
+        if aux.last_log.elapsed() < AUX_LOG_INTERVAL {
+            return;
+        }
+        if let Some(d) = aux.diversity.as_ref() {
+            aux.last_log = Instant::now();
+            if let Some(db) = d.depth_db() {
+                tracing::info!(
+                    "PlutoSDR diversity: {db:.1} dB of the main aerial's signal is being \
+                     cancelled{}",
+                    if d.frozen() { ", filter held" } else { "" }
+                );
+            }
+        }
+        if let Some(ps) = aux.puresignal.as_ref().filter(|_| transmitting) {
+            aux.last_log = Instant::now();
+            if ps.locked() {
+                tracing::info!(
+                    "PlutoSDR PureSignal: correcting {:.1} dB of compression (feedback \
+                     matched at {:.2}){}",
+                    ps.correction_db(),
+                    ps.score(),
+                    if ps.frozen() { ", table held" } else { "" }
+                );
+            } else {
+                tracing::info!(
+                    "PlutoSDR PureSignal: the transmission has not been found on RX2 (best \
+                     match {:.2}) — the transmitter is uncorrected. Check the coupler, and \
+                     that RX2's gain is low enough not to be driven into compression",
+                    ps.score()
+                );
+            }
+        }
+    }
+
+    /// The second chain's pseudo-elements. Answers whether `name` was one.
+    fn set_aux_element(&mut self, name: &str, v: f64) -> bool {
+        let Some(aux) = self.aux.as_mut() else {
+            return matches!(
+                name,
+                PlutoConfig::AUX_GAIN_ELEMENT
+                    | PlutoConfig::DIV_MODE_ELEMENT
+                    | PlutoConfig::DIV_RATE_ELEMENT
+                    | PlutoConfig::DIV_TAPS_ELEMENT
+                    | PlutoConfig::DIV_FREEZE_ELEMENT
+                    | PlutoConfig::DIV_RESET_ELEMENT
+                    | PlutoConfig::PS_BINS_ELEMENT
+                    | PlutoConfig::PS_RATE_ELEMENT
+                    | PlutoConfig::PS_FREEZE_ELEMENT
+                    | PlutoConfig::PS_RESET_ELEMENT
+            );
+        };
+        let on = v >= 0.5;
+        match name {
+            PlutoConfig::AUX_GAIN_ELEMENT => {
+                aux.cfg.gain_db = v;
+                aux.rx.set_rx_gain_db(v);
+            }
+            PlutoConfig::DIV_MODE_ELEMENT => {
+                aux.cfg.mode = if on { DiversityMode::Combine } else { DiversityMode::Cancel };
+                if let Some(d) = aux.diversity.as_mut() {
+                    d.set_mode(div_mode(aux.cfg.mode));
+                }
+            }
+            PlutoConfig::DIV_RATE_ELEMENT => {
+                aux.cfg.rate = v as f32;
+                if let Some(d) = aux.diversity.as_mut() {
+                    d.set_rate(v as f32);
+                }
+            }
+            PlutoConfig::DIV_TAPS_ELEMENT => {
+                let taps = v.round().clamp(1.0, f64::from(PlutoAuxConfig::MAX_TAPS)) as u8;
+                aux.cfg.taps = taps;
+                if let Some(d) = aux.diversity.as_mut() {
+                    // Starts the filter again: the taps mean different delays.
+                    d.set_taps(usize::from(taps));
+                }
+            }
+            PlutoConfig::DIV_FREEZE_ELEMENT => {
+                aux.cfg.frozen = on;
+                if let Some(d) = aux.diversity.as_mut() {
+                    d.set_frozen(on);
+                }
+            }
+            PlutoConfig::DIV_RESET_ELEMENT => {
+                if let Some(d) = aux.diversity.as_mut().filter(|_| on) {
+                    d.reset();
+                }
+            }
+            PlutoConfig::PS_RATE_ELEMENT => {
+                aux.cfg.ps_rate = v as f32;
+                if let Some(ps) = aux.puresignal.as_mut() {
+                    ps.set_rate(v as f32);
+                }
+            }
+            PlutoConfig::PS_FREEZE_ELEMENT => {
+                aux.cfg.ps_frozen = on;
+                if let Some(ps) = aux.puresignal.as_mut() {
+                    ps.set_frozen(on);
+                }
+            }
+            PlutoConfig::PS_RESET_ELEMENT => {
+                if let Some(ps) = aux.puresignal.as_mut().filter(|_| on) {
+                    ps.reset();
+                }
+            }
+            PlutoConfig::PS_BINS_ELEMENT => {
+                let bins = v.round().clamp(
+                    f64::from(PlutoAuxConfig::PS_MIN_BINS),
+                    f64::from(PlutoAuxConfig::PS_MAX_BINS),
+                ) as u8;
+                aux.cfg.ps_bins = bins;
+                if aux.puresignal.is_some() {
+                    // A new table means learning it again.
+                    let mut ps = PureSignal::with_history(
+                        usize::from(bins),
+                        aux.cfg.ps_rate,
+                        self.rate,
+                        PS_HISTORY_S,
+                    );
+                    ps.set_frozen(aux.cfg.ps_frozen);
+                    aux.puresignal = Some(ps);
+                }
+            }
+            _ => return false,
+        }
+        true
     }
 
     /// How many receive chains this firmware streams.
@@ -202,6 +553,12 @@ impl IqSource for PlutoSource {
     /// the engine to adopt — the chains share the one synthesiser, so this
     /// source's span moved whether its operator asked or not.
     fn poll_control(&mut self) -> Vec<ControlUpdate> {
+        // The borrowed chain is told about LO moves like any stream, but it
+        // follows this radio's centre by construction — so its notices are
+        // only drained, or they would pile up for the life of the session.
+        if let Some(aux) = self.aux.as_ref() {
+            let _ = aux.rx.poll_lo_moves();
+        }
         let Some(rx) = self.rx.as_ref() else { return Vec::new() };
         rx.poll_lo_moves()
             .into_iter()
@@ -241,7 +598,9 @@ impl IqSource for PlutoSource {
                 rx.set_agc_mode(self.agc.iio_name());
             }
             PlutoConfig::PPM_ELEMENT => rx.set_ppm(db),
-            _ => {}
+            other => {
+                self.set_aux_element(other, db);
+            }
         }
         Ok(())
     }
@@ -298,6 +657,15 @@ impl IqSource for PlutoSource {
     }
 
     fn tx_begin(&mut self, center_hz: f64, _rate: f64) -> Result<f64> {
+        self.tx_hz = center_hz;
+        self.transmitting = true;
+        // A new over: the table (the amplifier's curve) carries over, but the
+        // two sample counts the alignment is measured between restart here,
+        // so the delay is found afresh rather than inherited from an over
+        // whose tail never reached the coupler.
+        if let Some(ps) = self.aux.as_mut().and_then(|a| a.puresignal.as_mut()) {
+            ps.unlock();
+        }
         match self.rx.as_ref() {
             Some(rx) => Ok(rx.tx_begin(center_hz)),
             None => Ok(0.0),
@@ -306,6 +674,18 @@ impl IqSource for PlutoSource {
 
     fn tx_write(&mut self, samples: &[Complex32]) -> Result<()> {
         let Some(rx) = self.rx.as_mut() else { return Ok(()) };
+        // Bent by the inverse of the amplifier's curve when PureSignal is
+        // running. The loop keeps its own copy of what was *wanted*, which is
+        // what the feedback is compared with.
+        let samples = match self.aux.as_mut().and_then(|a| a.puresignal.as_mut()) {
+            Some(ps) => {
+                self.ps_scratch.clear();
+                self.ps_scratch.extend_from_slice(samples);
+                ps.predistort(&mut self.ps_scratch);
+                &self.ps_scratch[..]
+            }
+            None => samples,
+        };
         self.tx_scratch.clear();
         self.tx_scratch.reserve(samples.len() * 2);
         for s in samples {
@@ -329,6 +709,7 @@ impl IqSource for PlutoSource {
     }
 
     fn tx_end(&mut self) -> Result<()> {
+        self.transmitting = false;
         if let Some(rx) = self.rx.as_ref() {
             rx.tx_end();
         }
@@ -346,8 +727,12 @@ impl IqSource for PlutoSource {
         if self.full_duplex() {
             return;
         }
-        if let Some(rx) = self.rx.as_mut() {
-            rx.discard_pending_rx();
+        // With the second chain borrowed the pair is thrown away together, or
+        // the two rings would come out of step by whatever was queued.
+        match (self.rx.as_mut(), self.aux.as_mut()) {
+            (Some(rx), Some(aux)) => rx.discard_pending_paired(&mut aux.rx),
+            (Some(rx), None) => rx.discard_pending_rx(),
+            _ => {}
         }
     }
 
@@ -363,7 +748,22 @@ impl IqSource for PlutoSource {
     }
 
     fn open_status(&self) -> Option<String> {
-        self.rig.as_deref().and_then(PlutoRig::open_status)
+        let rig = self.rig.as_deref().and_then(PlutoRig::open_status);
+        match (rig, self.aux_note.clone()) {
+            (Some(a), Some(b)) => Some(format!("{a}; {b}")),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// What the predistortion loop on RX2 is doing, for the meter.
+    fn puresignal(&mut self) -> Option<sdroxide_types::PsMeter> {
+        let ps = self.aux.as_ref()?.puresignal.as_ref()?;
+        Some(sdroxide_types::PsMeter {
+            locked: ps.locked(),
+            correction_db: ps.correction_db(),
+            score: ps.score(),
+            frozen: ps.frozen(),
+        })
     }
 
     /// A Pluto that has stopped delivering samples — unplugged, rebooted, its
@@ -406,11 +806,22 @@ impl IqSource for PlutoSource {
     /// do with what broke the link. Shutting the sockets down here ends that
     /// read at once, whether or not a sibling still holds the `Arc`.
     fn release(&mut self) {
+        // The borrowed chain first, so its ring and the lockstep go before the
+        // stream they were paired with.
+        self.aux = None;
         self.rx = None;
         let Some(rig) = self.rig.take() else { return };
         if !rig.is_alive() {
             rig.release();
         }
         // and the drop below closes a healthy one, if this was the last holder
+    }
+}
+
+/// The configuration's mode, as the DSP crate spells it.
+fn div_mode(mode: DiversityMode) -> sdroxide_dsp::DiversityMode {
+    match mode {
+        DiversityMode::Cancel => sdroxide_dsp::DiversityMode::Cancel,
+        DiversityMode::Combine => sdroxide_dsp::DiversityMode::Combine,
     }
 }
