@@ -1558,9 +1558,16 @@ impl SdroxideApp {
                 }
                 RadioEvent::Ft8QsoLogged(mut r) => {
                     // Another tab may have logged since this copy was read;
-                    // appending to a stale copy would write its QSOs away.
+                    // appending to a stale copy would write its QSOs away. That
+                    // reload needs a store to read: where there is none the log
+                    // in hand is the truth, and treating "no store" as "an empty
+                    // logbook" is what left a three-radio browser station
+                    // exporting a logbook of one contact (issue #236).
                     if self.shared_log {
-                        self.qso_log = crate::app::persist::load_qso_log(None);
+                        self.qso_log = crate::app::persist::after_shared_log(
+                            std::mem::take(&mut self.qso_log),
+                            crate::app::persist::reload_qso_log(None),
+                        );
                     }
                     r.id = self.next_log_id();
                     let call = r.call.clone();
