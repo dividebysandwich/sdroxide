@@ -1706,7 +1706,14 @@ use sdroxide_types::{
 /// `ScannerConfig` gains `stop_snr`, `snr_db` and `pano_usable` after
 /// `follow_squelch`, and `ScanState` gains `sweeps` and `sweep_ms`, which
 /// changes the layout of every state frame.
-pub const PROTO_VERSION: u16 = 206;
+///
+/// v207: the PlutoSDR's second receive chain can serve the RX1 radio as a
+/// second aerial or as PureSignal feedback (issue #525). `PlutoConfig` gains
+/// `aux` (`PlutoAuxConfig`, the same block a LimeSDR's second chain uses) on
+/// its tail, and the radio configuration rides whole in both a command and an
+/// event, so a v206 peer reads the extra bytes as the start of the next field
+/// and fails to decode either.
+pub const PROTO_VERSION: u16 = 207;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

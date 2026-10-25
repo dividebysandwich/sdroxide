@@ -2446,7 +2446,9 @@ pub(in crate::app) fn settings_pluto_tab(
     can_probe: bool,
     cmds: &mut Vec<Command>,
 ) {
-    use sdroxide_types::{PlutoAgc, PlutoConfig, PlutoDuplex, PlutoPtt};
+    use sdroxide_types::{
+        DiversityMode, LimeAuxRole, PlutoAgc, PlutoAuxConfig, PlutoConfig, PlutoDuplex, PlutoPtt,
+    };
     let Some(cfg) = radio_edit.as_mut() else {
         ui.label(tr!("settings-radio-waiting-configuration-machine-radio-attached"));
         return;
@@ -2731,6 +2733,192 @@ pub(in crate::app) fn settings_pluto_tab(
     });
 
     test_result_line(ui, test_result);
+
+    // ---- RX2 as this radio's own second chain (issue #525) -----------------
+    // The same controls, words and pseudo-gain elements as the LimeSDR's second
+    // chain, which this is modelled on; only the heading, the introduction and
+    // the full-duplex warning are the Pluto's own.
+    if cfg.pluto.rx == 0 {
+        ui.add_space(6.0);
+        ui.separator();
+        ui.label(RichText::new(tr!("settings-radio-pluto-rx2")).strong());
+        ui.label(RichText::new(tr!("settings-radio-pluto-rx2-intro")).weak());
+        egui::Grid::new("pluto-aux-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+            ui.label(tr!("settings-radio-used"));
+            egui::ComboBox::from_id_salt("pluto-aux-role")
+                .selected_text(cfg.pluto.aux.role.tr())
+                .show_styled(ui, |ui| {
+                    for r in LimeAuxRole::ALL {
+                        ui.selectable_value(&mut cfg.pluto.aux.role, r, r.tr());
+                    }
+                });
+            ui.end_row();
+
+            if cfg.pluto.aux.role != LimeAuxRole::Off {
+                ui.label(tr!("settings-radio-pluto-rx2-gain"));
+                if crate::chrome::slider(
+                    ui,
+                    Slider::new(&mut cfg.pluto.aux.gain_db, 0.0..=71.0).step_by(1.0).suffix(" dB"),
+                )
+                .on_hover_text(if cfg.pluto.aux.role == LimeAuxRole::PureSignal {
+                    tr!("settings-radio-set-low-coupled-sample-your")
+                } else {
+                    tr!("settings-radio-set-so-both-aerials-show")
+                })
+                .changed()
+                {
+                    push_gain(cmds, PlutoConfig::AUX_GAIN_ELEMENT, cfg.pluto.aux.gain_db);
+                }
+                ui.end_row();
+            }
+
+            if cfg.pluto.aux.role == LimeAuxRole::Diversity {
+                ui.label(tr!("settings-radio-what-do"));
+                egui::ComboBox::from_id_salt("pluto-div-mode")
+                    .selected_text(cfg.pluto.aux.mode.tr())
+                    .show_styled(ui, |ui| {
+                        for m in DiversityMode::ALL {
+                            if ui.selectable_label(cfg.pluto.aux.mode == m, m.tr()).clicked() {
+                                cfg.pluto.aux.mode = m;
+                                push_gain(
+                                    cmds,
+                                    PlutoConfig::DIV_MODE_ELEMENT,
+                                    f64::from(u8::from(m == DiversityMode::Combine)),
+                                );
+                            }
+                        }
+                    });
+                ui.end_row();
+
+                ui.label(tr!("settings-radio-filter-length"));
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            DragValue::new(&mut cfg.pluto.aux.taps)
+                                .speed(1.0)
+                                .range(1..=PlutoAuxConfig::MAX_TAPS)
+                                .suffix(tr!("settings-radio-taps")),
+                        )
+                        .on_hover_text(tr!("settings-radio-one-tap-gain-phase-null-2"))
+                        .changed()
+                    {
+                        push_gain(
+                            cmds,
+                            PlutoConfig::DIV_TAPS_ELEMENT,
+                            f64::from(cfg.pluto.aux.taps),
+                        );
+                    }
+                    ui.label(
+                        RichText::new(PlutoAuxConfig::cost_note(
+                            cfg.pluto.aux.taps,
+                            cfg.pluto.sample_rate_hz,
+                        ))
+                        .weak(),
+                    );
+                });
+                ui.end_row();
+
+                ui.label(tr!("settings-radio-adaptation-2"));
+                ui.horizontal(|ui| {
+                    if crate::chrome::slider(
+                        ui,
+                        Slider::new(&mut cfg.pluto.aux.rate, 0.0..=1.0).show_value(false),
+                    )
+                    .on_hover_text(tr!("settings-radio-slow-steady-left-converging-inside"))
+                    .changed()
+                    {
+                        push_gain(
+                            cmds,
+                            PlutoConfig::DIV_RATE_ELEMENT,
+                            f64::from(cfg.pluto.aux.rate),
+                        );
+                    }
+                    if ui
+                        .checkbox(&mut cfg.pluto.aux.frozen, tr!("settings-radio-hold"))
+                        .on_hover_text(tr!("settings-radio-stop-filter-moving-reach-moment"))
+                        .changed()
+                    {
+                        push_gain(
+                            cmds,
+                            PlutoConfig::DIV_FREEZE_ELEMENT,
+                            f64::from(u8::from(cfg.pluto.aux.frozen)),
+                        );
+                    }
+                    if ui
+                        .button(tr!("settings-radio-restart"))
+                        .on_hover_text(tr!("settings-radio-zero-filter-find-null-again"))
+                        .clicked()
+                    {
+                        push_gain(cmds, PlutoConfig::DIV_RESET_ELEMENT, 1.0);
+                    }
+                });
+                ui.end_row();
+            }
+
+            if cfg.pluto.aux.role == LimeAuxRole::PureSignal {
+                ui.label(tr!("settings-radio-table-steps-2"));
+                if ui
+                    .add(
+                        DragValue::new(&mut cfg.pluto.aux.ps_bins)
+                            .speed(1.0)
+                            .range(PlutoAuxConfig::PS_MIN_BINS..=PlutoAuxConfig::PS_MAX_BINS),
+                    )
+                    .on_hover_text(tr!("settings-radio-how-finely-correction-follows-amplifier"))
+                    .changed()
+                {
+                    push_gain(cmds, PlutoConfig::PS_BINS_ELEMENT, f64::from(cfg.pluto.aux.ps_bins));
+                }
+                ui.end_row();
+
+                ui.label(tr!("settings-radio-adaptation-2"));
+                ui.horizontal(|ui| {
+                    if crate::chrome::slider(
+                        ui,
+                        Slider::new(&mut cfg.pluto.aux.ps_rate, 0.0..=1.0).show_value(false),
+                    )
+                    .on_hover_text(tr!("settings-radio-how-hard-each-block-feedback"))
+                    .changed()
+                    {
+                        push_gain(
+                            cmds,
+                            PlutoConfig::PS_RATE_ELEMENT,
+                            f64::from(cfg.pluto.aux.ps_rate),
+                        );
+                    }
+                    if ui
+                        .checkbox(&mut cfg.pluto.aux.ps_frozen, tr!("settings-radio-hold"))
+                        .on_hover_text(tr!("settings-radio-keep-correction-curve-learned-clean"))
+                        .changed()
+                    {
+                        push_gain(
+                            cmds,
+                            PlutoConfig::PS_FREEZE_ELEMENT,
+                            f64::from(u8::from(cfg.pluto.aux.ps_frozen)),
+                        );
+                    }
+                    if ui
+                        .button(tr!("settings-radio-restart"))
+                        .on_hover_text(tr!("settings-radio-forget-correction-learn-again"))
+                        .clicked()
+                    {
+                        push_gain(cmds, PlutoConfig::PS_RESET_ELEMENT, 1.0);
+                    }
+                });
+                ui.end_row();
+            }
+        });
+        if cfg.pluto.aux.role == LimeAuxRole::PureSignal {
+            ui.label(
+                RichText::new(tr!("settings-radio-directional-coupler-amplifier-s-output")).weak(),
+            );
+            if !cfg.pluto.full_duplex || cfg.pluto.ptt_gpo != PlutoPtt::Off {
+                ui.label(
+                    RichText::new(tr!("settings-radio-pluto-ps-needs-full-duplex"))
+                        .color(crate::theme::YELLOW()),
+                );
+            }
+        }
+    }
 
     ui.add_space(6.0);
     ui.label(RichText::new(tr!("settings-radio-wideband-iq-receive-transmit-half")).weak());

@@ -2452,6 +2452,9 @@ fn pluto_caps(src: &pluto_source::PlutoSource, rx: u8) -> DeviceCaps {
         // sibling radio's retune moves this radio's centre too (and vice
         // versa). Stated only when a sibling is possible.
         shared_lo_rx: src.rx_chains() > 1,
+        // RX2 borrowed as a second aerial: what puts the filter's controls on
+        // the main window's DIV strip (issue #525).
+        diversity: src.diversity_running(),
         ..DeviceCaps::default()
     }
 }
