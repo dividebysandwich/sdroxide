@@ -938,6 +938,11 @@ pub struct SdroxideApp {
     /// The RADIOSONDES window, its map and the SondeHub layer — see
     /// [`sonde::SondeUi`].
     sonde: sonde::SondeUi,
+    /// The TRANSMIT window — what the compact strip's TX chip opens. A window
+    /// rather than a drop-down so it can be dragged off whatever it would
+    /// otherwise cover (the S-meter, on most layouts) and left open through an
+    /// over (issue #525).
+    show_tx_window: bool,
     /// The propagation field rendered to pixels, rebuilt only when it moves.
     prop_heat: crate::prop_map::PropHeat,
     /// The grey-line (night/twilight) overlay rendered to pixels, rebuilt at
@@ -1862,6 +1867,7 @@ impl SdroxideApp {
             playback: playback::PlaybackUi::default(),
             wxsat: wxsat::WxsatUi::default(),
             sonde: sonde::SondeUi::default(),
+            show_tx_window: false,
             digi_stations: Default::default(),
             prop: Default::default(),
             prop_heat: Default::default(),
