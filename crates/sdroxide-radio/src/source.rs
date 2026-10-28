@@ -110,6 +110,10 @@ pub enum ControlUpdate {
     /// So the engine *observes* it: the meter follows the over and shows its
     /// SWR, and sdroxide will not key on top of it. It does not transmit.
     RigTx(bool),
+    /// Latest verified AH-4 tuner status. None means unavailable.
+    TunerStatus(Option<u8>),
+    /// Latched AH-4 discovery result; None means not yet determined.
+    TunerPresence(Option<bool>),
 }
 
 /// Anything that produces a stream of complex baseband samples: a live
@@ -311,6 +315,47 @@ pub trait IqSource: Send {
 
     // Transmit path — implemented by transmit-capable devices only.
     // Half-duplex sequencing (pausing RX) is the implementation's job.
+
+    /// Whether this source explicitly supports AH-4 tuner control.
+    ///
+    /// This is a capability declaration, not confirmation that a tuner is
+    /// connected or ready. The default is conservative.
+    fn supports_ah4_tuner(&self) -> bool {
+        false
+    }
+    /// Whether the AH-4 status is currently fresh and available.
+    ///
+    /// The default is conservative: sources without an AH-4 status
+    /// implementation cannot authorise or sustain AH-4 RF.
+    fn ah4_status_fresh(&self) -> bool {
+        false
+    }
+    /// Request an AH-4 tuning cycle without keying the transmitter.
+    ///
+    /// Success means only that the request was submitted. The engine must
+    /// wait for fresh tuner status before enabling RF.
+    fn tuner_start(&mut self) -> Result<()> {
+        Err(crate::RadioError::Msg(
+            "this source does not support AH-4 tuner control".into(),
+        ))
+    }
+
+    /// Request AH-4 bypass without enabling transmit RF.
+    fn tuner_bypass(&mut self) -> Result<()> {
+        Err(crate::RadioError::Msg(
+            "this source does not support AH-4 tuner control".into(),
+        ))
+    }
+
+    /// Request recovery of an AH-4 tuner with a latched fault.
+    ///
+    /// This requests a bypass operation but does not enable transmit RF.
+    /// Recovery is successful only after a fresh idle status is confirmed.
+    fn tuner_recover(&mut self) -> Result<()> {
+        Err(crate::RadioError::Msg(
+            "this source does not support AH-4 tuner recovery".into(),
+        ))
+    }
 
     /// Start transmitting: tune the TX LO, apply TX gains, activate the TX
     /// stream. Returns the actual TX sample rate.
@@ -1524,6 +1569,26 @@ impl IqSource for ConvertedSource {
                     .into(),
             )),
         }
+    }
+
+    fn supports_ah4_tuner(&self) -> bool {
+        self.inner.supports_ah4_tuner()
+    }
+
+    fn ah4_status_fresh(&self) -> bool {
+        self.inner.ah4_status_fresh()
+    }
+
+    fn tuner_start(&mut self) -> Result<()> {
+        self.inner.tuner_start()
+    }
+
+    fn tuner_bypass(&mut self) -> Result<()> {
+        self.inner.tuner_bypass()
+    }
+
+    fn tuner_recover(&mut self) -> Result<()> {
+        self.inner.tuner_recover()
     }
 
     fn tx_write(&mut self, samples: &[Complex32]) -> Result<()> {

@@ -2548,6 +2548,13 @@ fn chosen(name: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ah4LastOperation {
+    Unknown,
+    Tune,
+    Bypass,
+}
+
 struct Engine {
     source: Box<dyn IqSource>,
     caps: DeviceCaps,
@@ -2701,6 +2708,27 @@ struct Engine {
     tx_live_pace: LivePacer,
     tx: Option<TxChain>,
     tx_active: bool,
+    /// An AH-4 tuning cycle has been requested and has not yet completed.
+    ah4_tuning: bool,
+    /// Last operation confirmed by a subsequent tuner status.
+    ah4_last_operation: Ah4LastOperation,
+    /// A bypass request was sent and is awaiting status confirmation.
+    ah4_bypass_pending: bool,
+    /// An AH-4 fault-recovery request is awaiting status confirmation.
+    ah4_recovery_pending: bool,
+    /// Last AH-4 operation-busy state published to radio event subscribers.
+    ah4_busy_published: bool,
+    /// RF is permitted only while the latest tuner status is fresh and 0xEE.
+    ah4_rf_permitted: bool,
+    /// Whether the current AH-4 tuning cycle has received a 0xEE RF request.
+    /// Unlike ah4_rf_permitted, this remains true after RF is withdrawn.
+    ah4_saw_rf_request: bool,
+    /// Time at which the AH-4 start request was submitted.
+    ah4_started_at: Option<Instant>,
+    /// Latest tuner status reported by the source; None means unavailable.
+    ah4_status: Option<u8>,
+    /// Latched discovery result, independent of status freshness.
+    ah4_presence: Option<bool>,
     /// The loudest the microphone got this over, and how many blocks of it were
     /// modulated — see [`Engine::report_silent_microphone`].
     voice_peak: f32,
@@ -4366,6 +4394,16 @@ fn engine_thread(
         tx_live_pace: LivePacer::default(),
         tx: None,
         tx_active: false,
+        ah4_tuning: false,
+        ah4_last_operation: Ah4LastOperation::Unknown,
+        ah4_bypass_pending: false,
+        ah4_recovery_pending: false,
+        ah4_busy_published: false,
+        ah4_rf_permitted: false,
+        ah4_saw_rf_request: false,
+        ah4_started_at: None,
+        ah4_status: None,
+        ah4_presence: None,
         voice_peak: 0.0,
         voice_blocks: 0,
         hw_ptt: false,
@@ -4883,6 +4921,13 @@ fn engine_thread(
         for u in updates {
             engine.apply_control(u);
         }
+
+        if engine.ah4_rf_permitted && !engine.source.ah4_status_fresh() {
+            engine.abort_ah4_tuning();
+            engine.notice("AH-4 tuning aborted: tuner status is stale or unavailable");
+        }
+
+        engine.poll_ah4_tuning_timeout();
         // Asked after them, because one of those updates may be the answer:
         // whether the front end's centre is a dial we can move is not fixed for
         // every source (see `Self::refresh_center_is_dial`).
@@ -6419,6 +6464,149 @@ impl Engine {
                 }
             }
             ControlUpdate::Ptt(closed) => self.apply_hw_ptt(closed),
+            ControlUpdate::TunerPresence(presence) => {
+                self.ah4_presence = presence;
+                let _ = self.event_tx.send(RadioEvent::TunerPresence(presence));
+            }
+            ControlUpdate::TunerStatus(status) => {
+                self.ah4_status = status;
+
+                if self.ah4_tuning {
+                    match status {
+                        Some(0xEE) => {
+                            // Remember that this cycle reached the RF-request
+                            // state, even if a later intermediate status
+                            // withdraws RF permission.
+                            self.ah4_saw_rf_request = true;
+
+                            // Only this fresh status grants permission to transmit.
+                            self.ah4_rf_permitted = true;
+                            self.sync_tx_state();
+
+                            // A failed TX startup is reported by the existing TX rails.
+                            // Do not leave the AH-4 request armed after a refusal.
+                            if self.ah4_tuning && !self.tx_active {
+                                self.abort_ah4_tuning();
+                            }
+                        }
+                        Some(0x00) => {
+                            let saw_rf_request = self.ah4_saw_rf_request;
+
+                            if saw_rf_request {
+                                self.ah4_last_operation = Ah4LastOperation::Tune;
+                            }
+
+                            self.abort_ah4_tuning();
+
+                            if saw_rf_request {
+                                self.notice("AH-4 tuning complete");
+                            } else {
+                                self.notice(
+                                    "AH-4 tuner returned idle without requesting RF"
+                                );
+                            }
+                        }
+                        Some(s) if s >= 0xF0 => {
+                            self.abort_ah4_tuning();
+                            self.notice(&format!(
+                                "AH-4 tuning aborted: tuner reported status 0x{s:02X}"
+                            ));
+                        }
+                        None => {
+                            // A missing status cannot authorise RF, but it
+                            // does not by itself prove the tuner operation failed.
+                            // Keep waiting for a terminal status or the overall
+                            // tuning timeout.
+                            let had_rf_permission = self.ah4_rf_permitted;
+                            self.ah4_rf_permitted = false;
+                            if had_rf_permission {
+                                self.sync_tx_state();
+                            }
+                        }
+                        Some(0x04..=0x07) => {
+                            // Intermediate tuner states do not end the host
+                            // operation. They must, however, withdraw RF
+                            // permission immediately if it was previously granted.
+                            let had_rf_permission = self.ah4_rf_permitted;
+                            self.ah4_rf_permitted = false;
+                            if had_rf_permission {
+                                self.sync_tx_state();
+                            }
+                        }
+                        Some(_s) => {
+                            // Other non-terminal statuses are not completion.
+                            // Withdraw RF permission and keep polling until
+                            // 0x00, a failure status, or the overall timeout.
+                            let had_rf_permission = self.ah4_rf_permitted;
+                            self.ah4_rf_permitted = false;
+                            if had_rf_permission {
+                                self.sync_tx_state();
+                            }
+                        }
+                    }
+                } else if self.ah4_recovery_pending {
+                    match status {
+                        Some(0x00) => {
+                            self.ah4_recovery_pending = false;
+                            self.ah4_started_at = None;
+                            self.ah4_last_operation = Ah4LastOperation::Bypass;
+                            self.ah4_rf_permitted = false;
+                            self.notice("AH-4 recovery confirmed; tuner idle");
+                        }
+                        Some(s) if s >= 0xF0 => {
+                            self.ah4_recovery_pending = false;
+                            self.ah4_started_at = None;
+                            self.ah4_rf_permitted = false;
+                            self.notice(&format!(
+                                "AH-4 recovery failed: tuner reported status 0x{s:02X}"
+                            ));
+                        }
+                        None => {
+                            // Status can temporarily be unavailable while the I/O board
+                            // is recovering. Keep waiting for a definitive result or timeout.
+                            self.ah4_rf_permitted = false;
+                        }
+                        // Intermediate statuses do not confirm recovery.
+                        // In particular, they must never authorise RF.
+                        Some(_) => {}
+                    }
+                } else if self.ah4_bypass_pending {
+                    match status {
+                        Some(0x00) => {
+                            self.ah4_bypass_pending = false;
+                            self.ah4_started_at = None;
+                            self.ah4_last_operation = Ah4LastOperation::Bypass;
+                            self.notice("AH-4 bypass confirmed");
+                        }
+                        Some(s) if s >= 0xF0 => {
+                            self.ah4_bypass_pending = false;
+                            self.ah4_started_at = None;
+                            self.notice(&format!(
+                                "AH-4 bypass failed: tuner reported status 0x{s:02X}"
+                            ));
+                        }
+                        None => {
+                            self.ah4_bypass_pending = false;
+                            self.ah4_started_at = None;
+                            // Confirmed absence is reported by the presence event
+                            // in the UI. Preserve the unavailable-status warning
+                            // when discovery has not established absence.
+                            if self.ah4_presence == Some(true) {
+                                self.notice("AH-4 bypass failed: tuner status unavailable");
+                            }
+                        }
+                        // Intermediate statuses are not confirmation.
+                        Some(_) => {}
+                    }
+                } else if self.ah4_last_operation == Ah4LastOperation::Unknown
+                    && status == Some(0x00)
+                {
+                    // Startup performs and verifies bypass before monitoring.
+                    self.ah4_last_operation = Ah4LastOperation::Bypass;
+                }
+                self.sync_ah4_busy_state();
+                let _ = self.event_tx.send(RadioEvent::TunerStatus(status));
+            }
             // An over the operator started at the radio. Recorded, never
             // answered: see [`ControlUpdate::RigTx`] for why keying along with
             // it would talk over the person holding the microphone.
@@ -8852,8 +9040,10 @@ impl Engine {
             SetRepeater(r) => self.set_repeater(r.clamped()),
             ToneBurst => self.fire_tone_burst(),
             SetPtt(on) => self.set_ptt(on),
+            Ah4Tune => self.start_ah4_tuning(),
             SetTune(on) => {
                 // As with PTT, an operator TUNE takes the transmitter back.
+                self.abort_ah4_tuning();
                 self.end_tci_tx();
                 self.cancel_voice_play();
                 self.state.tx.tune = on;
@@ -14792,6 +14982,7 @@ impl Engine {
         warn!("TX refused on radio {} ({:?}): {reason}", self.instance + 1, self.state.rx[0].mode);
         self.state.tx.ptt = false;
         self.state.tx.tune = false;
+        self.cancel_ah4_tuning();
         // Every deny happens before the transmitter keyed, so a gate claimed
         // moments ago by the rail sequence has to be handed back — and if this
         // radio never held it, releasing is a no-op by contract.
@@ -16009,6 +16200,10 @@ impl Engine {
     /// The operator's speaker/mic (mixer + mic feed) are untouched — only the
     /// radio interface swaps.
     fn adopt_source(&mut self, source: Box<dyn IqSource>, caps: DeviceCaps) {
+        // AH-4 permission must never carry across a radio-source change.
+        self.cancel_ah4_tuning();
+        self.ah4_status = None;
+        self.ah4_presence = None;
         // Never carry a keyed transmit across the swap.
         if self.tx_active {
             let _ = self.source.tx_end();
@@ -16616,10 +16811,238 @@ impl Engine {
         self.calibrated(self.state.tx.tune_drive)
     }
 
+    /// Publish AH-4 busy state only when it changes.
+    fn sync_ah4_busy_state(&mut self) {
+        let busy =
+            self.ah4_tuning || self.ah4_bypass_pending || self.ah4_recovery_pending;
+
+        if busy != self.ah4_busy_published {
+            self.ah4_busy_published = busy;
+            let _ = self.event_tx.send(RadioEvent::Ah4Busy(busy));
+        }
+    }
+
+    /// Request an AH-4 tuning cycle without enabling RF.
+    fn start_ah4_tuning(&mut self) {
+        // Ignore duplicate Tune commands while tuning is in progress.
+        // A second click must not abort the active AH-4 tuning cycle.
+        if self.ah4_tuning {
+            self.notice("AH-4 tuning is already in progress");
+            return;
+        }
+
+        if self.ah4_bypass_pending {
+            self.notice("AH-4 bypass confirmation is pending");
+            return;
+        }
+
+        if self.ah4_recovery_pending {
+            self.notice("AH-4 recovery confirmation is pending");
+            return;
+        }
+
+        // A recognised fault takes priority over the normal
+        // tune/bypass toggle.
+        if matches!(self.ah4_status, Some(0xF0..=0xFF)) {
+            self.request_ah4_recovery();
+            return;
+        }
+
+        if self.ah4_last_operation == Ah4LastOperation::Tune {
+            self.request_ah4_bypass();
+            return;
+        }
+
+        if !self.source.supports_ah4_tuner() {
+            self.notice("The selected radio source does not support AH-4 tuning");
+            return;
+        }
+
+        if self.ah4_presence != Some(true) {
+            self.notice("Auto tuner has not been positively detected");
+            return;
+        }
+
+        if self.audio_mode || self.caps.tx_audio {
+            self.notice("AH-4 tuning requires an IQ transmit source");
+            return;
+        }
+
+        if self.tx_active
+            || self.state.tx.ptt
+            || self.state.tx.tune
+            || self.digi_tx
+            || self.rig_tx
+        {
+            self.notice("AH-4 tuning requires an idle transmitter");
+            return;
+        }
+
+        if self.ah4_status != Some(0x00) {
+            self.notice("AH-4 tuner is not confirmed idle; check tuner status");
+            return;
+        }
+
+        if let Err(e) = self.source.tuner_start() {
+            self.notice(&format!("AH-4 start request failed: {e}"));
+            return;
+        }
+
+        // The previous idle status cannot authorise RF for this cycle.
+        // Wait for a subsequent status update from the source.
+        self.ah4_status = None;
+        self.ah4_rf_permitted = false;
+        self.ah4_saw_rf_request = false;
+        self.ah4_started_at = Some(Instant::now());
+        self.ah4_tuning = true;
+        self.sync_ah4_busy_state();
+        self.notice("AH-4 start requested; waiting for tuner status");
+    }
+
+    /// Request recovery from a recognised AH-4 fault.
+    ///
+    /// Recovery requests bypass and never authorises transmit RF.
+    fn request_ah4_recovery(&mut self) {
+        if !self.source.supports_ah4_tuner() {
+            self.notice("The selected radio source does not support AH-4 recovery");
+            return;
+        }
+
+        if self.audio_mode || self.caps.tx_audio {
+            self.notice("AH-4 recovery requires an IQ transmit source");
+            return;
+        }
+
+        if self.tx_active
+            || self.state.tx.ptt
+            || self.state.tx.tune
+            || self.digi_tx
+            || self.rig_tx
+        {
+            self.notice("AH-4 recovery requires an idle transmitter");
+            return;
+        }
+
+        if !matches!(self.ah4_status, Some(0xF0..=0xFF)) {
+            self.notice("AH-4 recovery requires a recognised tuner fault");
+            return;
+        }
+
+        if let Err(e) = self.source.tuner_recover() {
+            self.notice(&format!("AH-4 recovery request failed: {e}"));
+            return;
+        }
+
+        // Do not treat the previous fault status as confirmation.
+        // Only a subsequent status update can complete recovery.
+        self.ah4_status = None;
+        self.ah4_rf_permitted = false;
+        self.ah4_recovery_pending = true;
+        self.ah4_started_at = Some(Instant::now());
+        self.sync_ah4_busy_state();
+        self.notice("AH-4 recovery requested; waiting for tuner status");
+    }
+
+    /// Request bypass after a confirmed tune. The last-operation state is
+    /// changed only when a subsequent tuner status confirms the result.
+    fn request_ah4_bypass(&mut self) {
+        if !self.source.supports_ah4_tuner() {
+            self.notice("The selected radio source does not support AH-4 tuning");
+            return;
+        }
+
+        if self.audio_mode || self.caps.tx_audio {
+            self.notice("AH-4 bypass requires an IQ transmit source");
+            return;
+        }
+
+        if self.tx_active
+            || self.state.tx.ptt
+            || self.state.tx.tune
+            || self.digi_tx
+            || self.rig_tx
+        {
+            self.notice("AH-4 bypass requires an idle transmitter");
+            return;
+        }
+
+        if self.ah4_status != Some(0x00) {
+            self.notice("AH-4 tuner is not confirmed idle; bypass not requested");
+            return;
+        }
+
+        if let Err(e) = self.source.tuner_bypass() {
+            self.notice(&format!("AH-4 bypass request failed: {e}"));
+            return;
+        }
+
+        // Require a subsequent status; the old idle status cannot confirm
+        // the command just submitted.
+        self.ah4_status = None;
+        self.ah4_bypass_pending = true;
+        self.ah4_started_at = Some(Instant::now());
+        self.sync_ah4_busy_state();
+        self.notice("AH-4 bypass requested; waiting for tuner status");
+    }
+
+    /// Abort an AH-4 request that has not completed within four seconds.
+    fn poll_ah4_tuning_timeout(&mut self) {
+        let expired = (
+            self.ah4_tuning
+                || self.ah4_bypass_pending
+                || self.ah4_recovery_pending
+        )
+            && self.ah4_started_at.is_some_and(|started| {
+                started.elapsed() >= Duration::from_secs(4)
+            });
+
+        if expired {
+            if self.ah4_tuning {
+                self.abort_ah4_tuning();
+                self.notice("AH-4 tuning timed out after four seconds");
+            } else if self.ah4_bypass_pending {
+                self.ah4_bypass_pending = false;
+                self.ah4_started_at = None;
+                self.notice("AH-4 bypass confirmation timed out");
+            } else {
+                self.ah4_recovery_pending = false;
+                self.ah4_started_at = None;
+                self.ah4_rf_permitted = false;
+                self.notice("AH-4 recovery confirmation timed out");
+            }
+        }
+        self.sync_ah4_busy_state();
+    }
+
+    /// Cancel an AH-4 tuning request and withdraw its RF permission.
+    ///
+    /// The caller remains responsible for the normal TX shutdown lifecycle.
+    /// Preserve the last observed tuner status: clearing it here would not
+    /// make the source publish a fresh status if the value has not changed.
+    fn cancel_ah4_tuning(&mut self) {
+        self.ah4_tuning = false;
+        self.ah4_bypass_pending = false;
+        self.ah4_recovery_pending = false;
+        self.ah4_rf_permitted = false;
+        self.ah4_saw_rf_request = false;
+        self.ah4_started_at = None;
+        self.sync_ah4_busy_state();
+    }
+
+    /// Cancel AH-4 tuning and unkey if it was the sole reason for transmitting.
+    fn abort_ah4_tuning(&mut self) {
+        self.cancel_ah4_tuning();
+
+        if self.tx_active && !self.state.tx.ptt && !self.state.tx.tune {
+            self.sync_tx_state();
+        }
+    }
     /// Key or unkey from an operator PTT — the on-screen button, a MIDI or
     /// keyboard binding, or the radio's own PTT line ([`Self::apply_hw_ptt`]).
     /// Every route lands here so they cannot drift apart.
     fn set_ptt(&mut self, on: bool) {
+        // A manual or hardware PTT action takes precedence over AH-4 tuning.
+        self.abort_ah4_tuning();
         // …and over a burst-only over. A hand on PTT while the 1750 Hz burst is
         // still playing means the operator is about to speak, so the over
         // becomes theirs and the end of the burst must not take it away from
@@ -16731,7 +17154,8 @@ impl Engine {
     /// Reconcile the TX hardware state with `ptt || tune`, enforcing the
     /// safety rails on key-down.
     fn sync_tx_state(&mut self) {
-        let want_tx = self.state.tx.ptt || self.state.tx.tune;
+        let want_tx =
+            self.state.tx.ptt || self.state.tx.tune || self.ah4_rf_permitted;
         if want_tx == self.tx_active {
             return;
         }
@@ -17038,7 +17462,13 @@ impl Engine {
             }
         } else {
             if let Err(e) = self.source.tx_end() {
-                warn!("tx_end: {e}");
+                let message = format!(
+                    "TX-OFF COMMAND FAILED on radio {}: {e}. \
+                     RF MAY STILL BE ACTIVE. Check the radio before transmitting again.",
+                    self.instance + 1
+                );
+                warn!("{message}");
+                self.notice(&message);
             }
             // Immediately after the radio has been told to stop, so the hold
             // times are measured from when the RF actually ends rather than
@@ -17881,7 +18311,10 @@ impl Engine {
         // had gone dead for the rest of the over.
         let bursting = fm && self.burst.is_some();
         // Fill the 48 kHz FIFO from whoever owns this over (mic or TCI client).
-        if !bursting && !self.fill_tx_audio_fifo() {
+        if !bursting
+            && !self.ah4_rf_permitted
+            && !self.fill_tx_audio_fifo()
+        {
             std::thread::sleep(Duration::from_millis(2));
             return Ok(());
         }
@@ -17896,7 +18329,10 @@ impl Engine {
 
         tx.mod_buf.clear();
         let mut burst_done = false;
-        if self.state.tx.tune || tx.modulator.is_none() {
+        if self.state.tx.tune
+            || self.ah4_rf_permitted
+            || tx.modulator.is_none()
+        {
             // Steady carrier at the tune level. A PTT in CW only gets here with
             // no keyer to hold the over for (see `set_ptt`).
             let level = tune_level;

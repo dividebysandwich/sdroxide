@@ -63,6 +63,12 @@ pub struct HpsdrSource {
     /// wants an edge.
     ptt: bool,
     label: String,
+    /// Last AH-4 tuner status reported through poll_control().
+    last_tuner_status: Option<Option<u8>>,
+    /// Last latched discovery outcome; None is not positive detection.
+    last_tuner_presence: Option<Option<bool>>,
+    /// Timestamp baseline for confirmation of an accepted AH-4 command.
+    tuner_status_after_us: Option<u64>,
     /// See [`sdroxide_types::HpsdrConfig::tx_latency_ms`].
     tx_latency_ms: f64,
 
@@ -92,6 +98,91 @@ pub struct HpsdrSource {
     /// as the receive antenna — see [`HpsdrSource::io_inputs_offered`]. `None`
     /// on every other board and configuration.
     io_rx_input: Option<sdroxide_types::HpsdrIoRxInput>,
+}
+
+/// Decide whether the latest AH-4 status should be published to the radio
+/// engine. A successful status read after an accepted command must be
+/// published even when its status byte is identical to the previously
+/// published byte.
+fn take_tuner_status_update(
+    last_tuner_status: &mut Option<Option<u8>>,
+    tuner_status_after_us: &mut Option<u64>,
+    tuner_snapshot: Option<(Option<u8>, u64)>,
+) -> Option<Option<u8>> {
+    let tuner_status = tuner_snapshot.and_then(|(status, _)| status);
+
+    let confirmed_new_status = match (*tuner_status_after_us, tuner_snapshot) {
+        (Some(baseline), Some((Some(_), published_at_us)))
+            if published_at_us > baseline =>
+        {
+            *tuner_status_after_us = None;
+            true
+        }
+        _ => false,
+    };
+
+    if confirmed_new_status || *last_tuner_status != Some(tuner_status) {
+        *last_tuner_status = Some(tuner_status);
+        Some(tuner_status)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tuner_status_publication_tests {
+    use super::take_tuner_status_update;
+
+    #[test]
+    fn unchanged_status_is_not_confirmation_until_timestamp_advances() {
+        let mut last_status = Some(Some(0x00));
+        let mut baseline = Some(100);
+
+        assert_eq!(
+            take_tuner_status_update(
+                &mut last_status, &mut baseline, Some((Some(0x00), 100))
+            ),
+            None,
+        );
+        assert_eq!(baseline, Some(100));
+
+        assert_eq!(
+            take_tuner_status_update(
+                &mut last_status, &mut baseline, Some((Some(0x00), 101))
+            ),
+            Some(Some(0x00)),
+        );
+        assert_eq!(baseline, None);
+        assert_eq!(last_status, Some(Some(0x00)));
+    }
+
+    #[test]
+    fn changed_status_without_fresh_timestamp_keeps_confirmation_pending() {
+        let mut last_status = Some(Some(0x00));
+        let mut baseline = Some(100);
+
+        assert_eq!(
+            take_tuner_status_update(
+                &mut last_status, &mut baseline, Some((Some(0xEE), 100))
+            ),
+            Some(Some(0xEE)),
+        );
+        assert_eq!(baseline, Some(100));
+    }
+
+    #[test]
+    fn unavailable_status_does_not_confirm_a_command() {
+        let mut last_status = Some(Some(0x00));
+        let mut baseline = Some(100);
+
+        assert_eq!(
+            take_tuner_status_update(
+                &mut last_status, &mut baseline, Some((None, 101))
+            ),
+            Some(None),
+        );
+        assert_eq!(baseline, Some(100));
+    }
 }
 
 impl HpsdrSource {
@@ -257,6 +348,9 @@ impl HpsdrSource {
             ps_log_at: Instant::now(),
             ps_warned_offset: false,
             io_rx_input,
+            last_tuner_status: None,
+            last_tuner_presence: None,
+            tuner_status_after_us: None,
         })
     }
 
@@ -550,12 +644,34 @@ impl IqSource for HpsdrSource {
     /// Only changes are reported. A released stream answers `false`, which
     /// unkeys rather than leaving an over hanging on a line nobody is reading.
     fn poll_control(&mut self) -> Vec<ControlUpdate> {
+        let mut updates = Vec::new();
+
         let ptt = self.rx.as_ref().is_some_and(|rx| rx.radio_ptt());
-        if ptt == self.ptt {
-            return Vec::new();
+        if ptt != self.ptt {
+            self.ptt = ptt;
+            updates.push(ControlUpdate::Ptt(ptt));
         }
-        self.ptt = ptt;
-        vec![ControlUpdate::Ptt(ptt)]
+
+        let presence = self.rx.as_ref().and_then(|rx| rx.tuner_presence());
+        if self.last_tuner_presence != Some(presence) {
+            self.last_tuner_presence = Some(presence);
+            updates.push(ControlUpdate::TunerPresence(presence));
+        }
+
+        let tuner_snapshot = self
+            .rx
+            .as_ref()
+            .map(|rx| rx.tuner_status_snapshot());
+
+        if let Some(status) = take_tuner_status_update(
+            &mut self.last_tuner_status,
+            &mut self.tuner_status_after_us,
+            tuner_snapshot,
+        ) {
+            updates.push(ControlUpdate::TunerStatus(status));
+        }
+
+        updates
     }
 
     /// Load the transmit frequency while receiving, so an HL2IOBoard on the
@@ -567,25 +683,91 @@ impl IqSource for HpsdrSource {
         }
     }
 
+    fn supports_ah4_tuner(&self) -> bool {
+        true
+    }
+
+    fn ah4_status_fresh(&self) -> bool {
+        self.rx
+            .as_ref()
+            .and_then(|rx| rx.tuner_status())
+            == Some(0xEE)
+    }
+
+    fn tuner_start(&mut self) -> Result<()> {
+        let Some(rx) = self.rx.as_ref() else {
+            return Err(sdroxide_radio::RadioError::Msg(
+                "HPSDR source is not connected".into(),
+            ));
+        };
+
+        // Capture the current status timestamp before submitting the command.
+        let baseline = rx.tuner_status_snapshot().1;
+
+        rx.tuner_start()
+            .map_err(|e| sdroxide_radio::RadioError::Msg(e.to_string()))?;
+
+        self.tuner_status_after_us = Some(baseline);
+        Ok(())
+    }
+
+    fn tuner_bypass(&mut self) -> Result<()> {
+        let Some(rx) = self.rx.as_ref() else {
+            return Err(sdroxide_radio::RadioError::Msg(
+                "HPSDR source is not connected".into(),
+            ));
+        };
+
+        let baseline = rx.tuner_status_snapshot().1;
+
+        rx.tuner_bypass()
+            .map_err(|e| sdroxide_radio::RadioError::Msg(e.to_string()))?;
+
+        self.tuner_status_after_us = Some(baseline);
+        Ok(())
+    }
+
+    fn tuner_recover(&mut self) -> Result<()> {
+        let Some(rx) = self.rx.as_ref() else {
+            return Err(sdroxide_radio::RadioError::Msg(
+                "HPSDR source is not connected".into(),
+            ));
+        };
+
+        let baseline = rx.tuner_status_snapshot().1;
+
+        rx.tuner_recover()
+            .map_err(|e| sdroxide_radio::RadioError::Msg(e.to_string()))?;
+
+        self.tuner_status_after_us = Some(baseline);
+        Ok(())
+    }
+
     fn tx_begin(&mut self, center_hz: f64, _rate: f64) -> Result<f64> {
-        // Where the feedback will be, relative to the receiver — see
-        // `pump_feedback`. The un-trimmed frequency on both sides: the ppm
-        // correction is the same multiplier on each, so the difference the
-        // loop needs is the same either way, and mixing the two would put a
-        // few hertz of error into it.
         self.ps_tx_hz = center_hz;
-        // A new over is a new alignment: the delay through the transmit FIFO,
-        // the converters and the amplifier is constant *within* an over and
-        // has no reason to be the same across a gap. The table itself is kept,
-        // which is the point of having learned it.
+
         if let Some(ps) = self.puresignal.as_mut() {
             ps.unlock();
         }
+
         match self.rx.as_ref() {
-            Some(rx) => {
-                Ok(rx.tx_begin(sdroxide_types::HpsdrConfig::apply_ppm(center_hz, self.ppm)))
-            }
-            None => Ok(self.tx_rate),
+            Some(rx) => rx
+                .tx_begin(sdroxide_types::HpsdrConfig::apply_ppm(center_hz, self.ppm))
+                .map_err(|e| sdroxide_radio::RadioError::Msg(e.to_string())),
+            None => Err(sdroxide_radio::RadioError::Msg(
+                "HPSDR source is not connected".into(),
+            )),
+        }
+    }
+
+    fn tx_end(&mut self) -> Result<()> {
+        self.ps_tx_hz = 0.0;
+
+        match self.rx.as_ref() {
+            Some(rx) => rx
+                .tx_end()
+                .map_err(|e| sdroxide_radio::RadioError::Msg(e.to_string())),
+            None => Ok(()),
         }
     }
 
@@ -618,14 +800,6 @@ impl IqSource for HpsdrSource {
         }
         let Some(rx) = self.rx.as_mut() else { return Ok(()) };
         rx.tx_write(&self.tx_scratch);
-        Ok(())
-    }
-
-    fn tx_end(&mut self) -> Result<()> {
-        if let Some(rx) = self.rx.as_ref() {
-            rx.tx_end();
-        }
-        self.ps_tx_hz = 0.0;
         Ok(())
     }
 

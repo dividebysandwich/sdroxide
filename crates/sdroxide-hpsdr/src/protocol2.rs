@@ -895,6 +895,9 @@ impl P2Thread {
                     // The HL2IOBoard is a Hermes-Lite accessory on Protocol 1's
                     // I2C tunnel; nothing here to switch.
                     Ctrl::IoRxInput(_) => {}
+                    // AH-4 commands use the Hermes-Lite Protocol 1 I2C tunnel.
+                    // Protocol 2 has no corresponding accessory-bus operation.
+                    Ctrl::TunerStart | Ctrl::TunerBypass | Ctrl::TunerRecover => {}
                     // The open collectors follow the dial here exactly as they
                     // do on Protocol 1: a band decoder switches for the signal
                     // on the air, not for the I.F. a transverter left the radio

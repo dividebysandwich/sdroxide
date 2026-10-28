@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU16, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -461,6 +461,15 @@ pub(crate) enum Ctrl {
     TxFreq(f64),
     TxOn(f64),
     TxOff,
+    /// Request AH-4 tuning through the HL2 I/O board.
+    /// Does not enable MOX or transmit RF.
+    TunerStart,
+    /// Request AH-4 bypass through the HL2 I/O board.
+    /// Does not enable MOX or transmit RF.
+    TunerBypass,
+    /// Request recovery of a faulted AH-4 tuner via the HL2 I/O board.
+    /// Does not enable MOX or transmit RF.
+    TunerRecover,
     Shutdown,
 }
 
@@ -666,6 +675,9 @@ pub(crate) struct ThreadCtx {
     pub rev_power_raw: Arc<AtomicU16>,
     pub tx: Consumer<f32>,
     pub ctrl: Receiver<Ctrl>,
+    pub tuner_status: Arc<AtomicU64>,
+    /// 0 = discovery pending, 1 = absent, 2 = present. Independent of status freshness.
+    pub tuner_presence: Arc<AtomicU8>,
 }
 
 /// What [`ThreadCtx::temp_centi_c`] holds before a board has reported a
@@ -688,6 +700,43 @@ const HL2_SWR_GAMMA_CAL: f32 = 1.23;
 /// the top of the range the SWR guard can be set to, so a pegged bridge trips
 /// it at any limit. The same ceiling the Icom meter curve ends at.
 const HL2_SWR_MAX: f32 = sdroxide_types::SWR_LIMIT_MAX;
+
+
+/// Maximum age of an AH-4 status accepted by the live transmit-control path.
+const TUNER_STATUS_MAX_AGE_US: u64 = 200_000;
+
+/// Pack a verified status and its publication time into one atomic value.
+/// The low nine bits hold the status; 0x100 remains the unavailable sentinel.
+pub(crate) fn encode_tuner_status(status: u16, elapsed_us: u64) -> u64 {
+    if status > u8::MAX as u16 {
+        0x100
+    } else {
+        (elapsed_us << 9) | u64::from(status)
+    }
+}
+
+/// Reject unavailable, stale, or disconnected tuner status.
+fn decode_tuner_status(
+    published: u64,
+    alive: bool,
+    now_elapsed_us: u64,
+) -> Option<u8> {
+    if !alive {
+        return None;
+    }
+
+    let status = (published & 0x1ff) as u16;
+    if status > u8::MAX as u16 {
+        return None;
+    }
+
+    let published_at_us = published >> 9;
+    if now_elapsed_us.saturating_sub(published_at_us) > TUNER_STATUS_MAX_AGE_US {
+        return None;
+    }
+
+    Some(status as u8)
+}
 
 /// What every stream of one connection shares. Dropping the last handle stops
 /// the stream and shuts the network thread down.
@@ -730,6 +779,10 @@ struct DevInner {
     temp_centi_c: Arc<AtomicI32>,
     fwd_power_raw: Arc<AtomicU16>,
     rev_power_raw: Arc<AtomicU16>,
+    /// Latest verified AH-4 tuner status; 0x100 means unavailable.
+    tuner_status: Arc<AtomicU64>,
+    /// Latched discovery result: 0 = pending, 1 = absent, 2 = present.
+    tuner_presence: Arc<AtomicU8>,
     /// The TX ring's feed end, claimable exactly once — by DDC 0's stream.
     tx_endpoint: Mutex<Option<Producer<f32>>>,
     /// Which DDCs have a live [`HpsdrRx`], so one cannot be vended twice: two
@@ -772,6 +825,8 @@ impl HpsdrBoard {
         io_rx_input: HpsdrIoRxInput,
         auto_gain: AutoGain,
     ) -> Result<HpsdrBoard, HpsdrError> {
+        let tuner_status = Arc::new(AtomicU64::new(0x100));
+        let tuner_presence = Arc::new(AtomicU8::new(0));
         tracing::info!("HPSDR: opening {ip}, requested RX rate {sample_rate_hz:.0} Hz");
         let (board, protocol) = match discovery::probe(ip, Duration::from_millis(800)) {
             Some(dev) => {
@@ -896,6 +951,8 @@ impl HpsdrBoard {
             );
         }
         let ctx = ThreadCtx {
+            tuner_status: Arc::clone(&tuner_status),
+            tuner_presence: Arc::clone(&tuner_presence),
             socket,
             radio: IpAddr::V4(ip),
             opened_at,
@@ -951,6 +1008,8 @@ impl HpsdrBoard {
                 temp_centi_c,
                 fwd_power_raw,
                 rev_power_raw,
+                tuner_status,
+                tuner_presence,
                 tx_endpoint: Mutex::new(Some(tx_prod)),
                 attached: Mutex::new(std::collections::HashSet::new()),
             }),
@@ -1246,19 +1305,84 @@ impl HpsdrRx {
     }
 
     /// Begin transmitting at `tx_freq_hz`; returns the TX I/Q rate to feed
-    /// [`Self::tx_write`]. The transmitter is DDC 0's — a no-op on any other
-    /// stream, which the engine never asks anyway (their capabilities carry no
-    /// TX).
-    pub fn tx_begin(&self, tx_freq_hz: f64) -> f64 {
-        if self.tx.is_some() {
-            tracing::info!(
-                "HPSDR: TX begin at {tx_freq_hz:.0} Hz ({:.0} Hz I/Q)",
-                self.dev.tx_rate_hz
-            );
-            self.dev.transmitting.store(true, Ordering::Relaxed);
-            let _ = self.dev.ctrl.send(Ctrl::TxOn(tx_freq_hz));
+    /// [`Self::tx_write`].
+    pub fn tx_begin(&self, tx_freq_hz: f64) -> Result<f64, HpsdrError> {
+        if self.tx.is_none() {
+            return Err(HpsdrError::Msg(
+                "cannot begin TX: this HPSDR stream has no transmitter".into(),
+            ));
         }
-        self.dev.tx_rate_hz
+
+        tracing::info!(
+            "HPSDR: TX begin at {tx_freq_hz:.0} Hz ({:.0} Hz I/Q)",
+            self.dev.tx_rate_hz
+        );
+
+        self.dev
+            .ctrl
+            .send(Ctrl::TxOn(tx_freq_hz))
+            .map_err(|e| HpsdrError::Msg(format!("cannot queue TX-on command: {e}")))?;
+
+        self.dev.transmitting.store(true, Ordering::Relaxed);
+        Ok(self.dev.tx_rate_hz)
+    }
+
+    /// Request an AH-4 tuning cycle without keying the transmitter.
+    pub fn tuner_start(&self) -> Result<(), HpsdrError> {
+        if self.tx.is_none() {
+            return Err(HpsdrError::Msg(
+                "cannot start AH-4: this HPSDR stream has no transmitter".into(),
+            ));
+        }
+
+        self.dev
+            .ctrl
+            .send(Ctrl::TunerStart)
+            .map_err(|e| HpsdrError::Msg(format!("cannot queue AH-4 start command: {e}")))
+    }
+
+    /// Request AH-4 bypass without keying the transmitter.
+    pub fn tuner_bypass(&self) -> Result<(), HpsdrError> {
+        if self.tx.is_none() {
+            return Err(HpsdrError::Msg(
+                "cannot bypass AH-4: this HPSDR stream has no transmitter".into(),
+            ));
+        }
+
+        self.dev
+            .ctrl
+            .send(Ctrl::TunerBypass)
+            .map_err(|e| HpsdrError::Msg(format!("cannot queue AH-4 bypass command: {e}")))
+    }
+
+    /// Request AH-4 tuner recovery without enabling transmit RF.
+    pub fn tuner_recover(&self) -> Result<(), HpsdrError> {
+        if self.tx.is_none() {
+            return Err(HpsdrError::Msg(
+                "cannot recover AH-4: this HPSDR stream has no transmitter".into(),
+            ));
+        }
+
+        self.dev
+            .ctrl
+            .send(Ctrl::TunerRecover)
+            .map_err(|e| HpsdrError::Msg(format!("cannot queue AH-4 recovery command: {e}")))
+    }
+
+    /// Stop transmitting.
+    pub fn tx_end(&self) -> Result<(), HpsdrError> {
+        self.dev.transmitting.store(false, Ordering::Relaxed);
+
+        if self.tx.is_none() {
+            return Ok(());
+        }
+
+        tracing::info!("HPSDR: TX end");
+
+        self.dev
+            .ctrl
+            .send(Ctrl::TxOff)
+            .map_err(|e| HpsdrError::Msg(format!("cannot queue TX-off command: {e}")))
     }
 
     /// The state of the radio's own PTT line — a foot switch, a mic button, or
@@ -1290,12 +1414,37 @@ impl HpsdrRx {
         }
     }
 
-    /// Stop transmitting.
-    pub fn tx_end(&self) {
-        if self.tx.is_some() {
-            tracing::info!("HPSDR: TX end");
-            self.dev.transmitting.store(false, Ordering::Relaxed);
-            let _ = self.dev.ctrl.send(Ctrl::TxOff);
+    /// Latest AH-4 tuner status and its publication timestamp.
+    ///
+    /// The status is returned only while fresh and the connection is alive.
+    /// The timestamp is retained even when the status is stale or unavailable,
+    /// so callers can establish a baseline for a subsequent status reading.
+    pub fn tuner_status_snapshot(&self) -> (Option<u8>, u64) {
+        let published = self.dev.tuner_status.load(Ordering::Acquire);
+        let published_at_us = published >> 9;
+        let status = decode_tuner_status(
+            published,
+            self.is_alive(),
+            self.dev.opened_at.elapsed().as_micros() as u64,
+        );
+        (status, published_at_us)
+    }
+
+    /// Latest AH-4 tuner status, but only while its acknowledgement is fresh.
+    pub fn tuner_status(&self) -> Option<u8> {
+        self.tuner_status_snapshot().0
+    }
+
+    /// Latched AH-4 discovery result, independent of status freshness.
+    /// A dead connection is unknown rather than a confirmed absence.
+    pub fn tuner_presence(&self) -> Option<bool> {
+        if !self.is_alive() {
+            return None;
+        }
+        match self.dev.tuner_presence.load(Ordering::Acquire) {
+            1 => Some(false),
+            2 => Some(true),
+            _ => None,
         }
     }
 
@@ -1734,5 +1883,66 @@ mod hl2_swr_regression_tests {
     fn no_forward_drive_has_no_meaningful_swr() {
         assert_eq!(hl2_swr_from_raw(0, 0), None);
         assert_eq!(hl2_swr_from_raw(6, 0), None);
+    }
+}
+
+
+#[cfg(test)]
+mod tuner_status_freshness_tests {
+    use super::*;
+
+    #[test]
+    fn fresh_status_is_available() {
+        let published = encode_tuner_status(0xEE, 1_000_000);
+        assert_eq!(
+            decode_tuner_status(published, true, 1_100_000),
+            Some(0xEE)
+        );
+    }
+
+    #[test]
+    fn status_at_age_limit_is_available() {
+        let published = encode_tuner_status(0xEE, 1_000_000);
+        assert_eq!(
+            decode_tuner_status(
+                published,
+                true,
+                1_000_000 + TUNER_STATUS_MAX_AGE_US
+            ),
+            Some(0xEE)
+        );
+    }
+
+    #[test]
+    fn stale_status_is_unavailable() {
+        let published = encode_tuner_status(0xEE, 1_000_000);
+        assert_eq!(
+            decode_tuner_status(
+                published,
+                true,
+                1_000_001 + TUNER_STATUS_MAX_AGE_US
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn unavailable_status_is_rejected() {
+        assert_eq!(decode_tuner_status(0x100, true, 1_000_000), None);
+        assert_eq!(encode_tuner_status(0x100, 1_000_000), 0x100);
+    }
+
+    #[test]
+    fn dead_connection_invalidates_even_fresh_status() {
+        let published = encode_tuner_status(0xEE, 1_000_000);
+        assert_eq!(decode_tuner_status(published, false, 1_000_001), None);
+    }
+
+    #[test]
+    fn different_status_and_timestamp_are_published_together() {
+        let published = encode_tuner_status(0x00, 1_234_567);
+        assert_eq!(published & 0x1ff, 0x00);
+        assert_eq!(published >> 9, 1_234_567);
+        assert_eq!(decode_tuner_status(published, true, 1_234_568), Some(0x00));
     }
 }

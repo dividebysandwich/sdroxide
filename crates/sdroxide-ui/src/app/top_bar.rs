@@ -217,6 +217,7 @@ struct ReadoutFit {
     gaps: f32,
 }
 
+
 impl ReadoutFit {
     /// Everything up to the group separators scales with the digit size, and
     /// `freq_display` draws " Hz" at 0.3x it, so one reference measurement of
@@ -1309,16 +1310,36 @@ impl SdroxideApp {
             // PTT is on the strip already; TUNE rides with the levels it is
             // set up with.
             self.tx_controls(ui, cmds, true);
-            if crate::chrome::chip_accent(
-                ui,
-                self.state.tx.tune,
-                RichText::new(" TUNE ").size(15.0),
-                crate::theme::YELLOW(),
-                crate::theme::INK_ON_CYAN(),
-            )
-            .clicked()
-            {
-                cmds.push(Command::SetTune(!self.state.tx.tune));
+            let ah4_detected = self.tuner_presence == Some(true);
+            let (tune_fill, tune_ink) = if self.ah4_busy {
+                (egui::Color32::GRAY, egui::Color32::LIGHT_GRAY)
+            } else if ah4_detected {
+                (egui::Color32::DARK_GREEN, egui::Color32::WHITE)
+            } else {
+                (crate::theme::YELLOW(), crate::theme::INK_ON_CYAN())
+            };
+
+            let response = ui.add_enabled_ui(!self.ah4_busy, |ui| {
+                crate::chrome::chip_lit(
+                    ui,
+                    RichText::new(" TUNE ").size(15.0),
+                    tune_fill,
+                    tune_ink,
+                )
+            });
+
+            if response.inner.clicked() {
+                tracing::info!(
+                    tuner_status = ?self.tuner_status,
+                    command = if ah4_detected { "Ah4Tune" } else { "SetTune" },
+                    "TX menu TUNE clicked"
+                );
+
+                if ah4_detected {
+                    cmds.push(Command::Ah4Tune);
+                } else {
+                    cmds.push(Command::SetTune(!self.state.tx.tune));
+                }
             }
         });
     }
@@ -4404,20 +4425,43 @@ impl SdroxideApp {
     }
 
     /// The TUNE latching chip: keys a carrier at the tune level drawn beside
-    /// it.
+    /// it. Tuner status is reported in the status bar.
     fn tx_tune_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let tx = self.state.tx;
-        if crate::chrome::chip_accent_sized(
-            ui,
-            tx.tune,
-            RichText::new(" TUNE ").size(15.0),
-            crate::theme::YELLOW(),
-            crate::theme::INK_ON_CYAN(),
-            tx_key_chip_size(ui),
-        )
-        .clicked()
-        {
-            cmds.push(Command::SetTune(!tx.tune));
+        let label = " TUNE ";
+
+        let ah4_detected = self.tuner_presence == Some(true);
+
+        let (tune_fill, tune_ink) = if self.ah4_busy {
+            (egui::Color32::GRAY, egui::Color32::LIGHT_GRAY)
+        } else if ah4_detected {
+            (egui::Color32::DARK_GREEN, egui::Color32::WHITE)
+        } else {
+            (crate::theme::YELLOW(), crate::theme::INK_ON_CYAN())
+        };
+
+        let response = ui.add_enabled_ui(!self.ah4_busy, |ui| {
+            crate::chrome::chip_lit_sized(
+                ui,
+                RichText::new(label).size(15.0),
+                tune_fill,
+                tune_ink,
+                tx_key_chip_size(ui),
+            )
+        });
+
+        if response.inner.clicked() {
+            tracing::info!(
+                tuner_status = ?self.tuner_status,
+                command = if ah4_detected { "Ah4Tune" } else { "SetTune" },
+                "Main TUNE chip clicked"
+            );
+
+            if ah4_detected {
+                cmds.push(Command::Ah4Tune);
+            } else {
+                cmds.push(Command::SetTune(!tx.tune));
+            }
         }
     }
 

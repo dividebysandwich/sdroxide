@@ -277,6 +277,12 @@ pub(crate) struct Latest {
     /// every change, and replayed on connect for the same reason as
     /// `memories`: a client that attaches later would otherwise offer nothing.
     pub profiles: Vec<String>,
+    /// Latest verified AH-4 tuner status; None means unavailable.
+    pub tuner_status: Option<u8>,
+    /// Latched AH-4 discovery result; None means not yet determined.
+    pub tuner_presence: Option<bool>,
+    /// Whether an AH-4 operation is currently in progress.
+    pub ah4_busy: bool,
 }
 
 /// Everything the routes are served out of: the station's radios and the
@@ -1267,6 +1273,18 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             RadioEvent::Profiles(p) => {
                 latest.profiles = p.clone();
                 Some(ServerMsg::Profiles(p))
+            }
+            RadioEvent::TunerStatus(status) => {
+                latest.tuner_status = status;
+                Some(ServerMsg::TunerStatus(status))
+            }
+            RadioEvent::TunerPresence(presence) => {
+                latest.tuner_presence = presence;
+                Some(ServerMsg::TunerPresence(presence))
+            }
+            RadioEvent::Ah4Busy(busy) => {
+                latest.ah4_busy = busy;
+                Some(ServerMsg::Ah4Busy(busy))
             }
             // Not cached: it is an answer to a test or news of one upload, and
             // a screen attaching later has asked nothing.

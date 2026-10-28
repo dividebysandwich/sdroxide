@@ -164,6 +164,12 @@ pub struct SdroxideApp {
     /// Persistent, non-fatal operator notice (e.g. radio audio input
     /// unavailable / mono card selected for IQ). Shown as a warning banner.
     radio_notice: Option<String>,
+    /// Latest verified AH-4 tuner status; None means unavailable.
+    tuner_status: Option<u8>,
+    /// Latched AH-4 discovery result; None means not yet determined.
+    tuner_presence: Option<bool>,
+    /// Whether an AH-4 tune, bypass, or recovery operation is in progress.
+    ah4_busy: bool,
     /// A newer release published on sdroxide.com — the version string
     /// itself. Set at most once, when the startup check lands; drawn in the
     /// notice banner's clothes above the panadapter, with a Dismiss that also
@@ -1397,6 +1403,9 @@ impl SdroxideApp {
             retry_at: None,
             retry_backoff: RETRY_MIN_S,
             radio_notice: None,
+            tuner_status: None,
+            tuner_presence: None,
+            ah4_busy: false,
             sent_cfg: None,
             desired_cfg: None,
             desired_at: 0.0,

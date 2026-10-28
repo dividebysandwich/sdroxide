@@ -1146,12 +1146,12 @@ pub enum Command {
     ResetModeDefaults {
         mode: Option<Mode>,
     },
-
     /// Replace the received-picture FTP upload settings (`picupload.json`).
     /// Boxed: the struct is large next to most commands.
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     SetPictureUploadConfig(Box<crate::PictureUploadConfig>),
+
     /// Try the given settings — connect, log in, change directory, put and
     /// delete a small file — without saving them, and answer with
     /// [`crate::RadioEvent::PictureUpload`]. The settings being edited are
@@ -1159,6 +1159,7 @@ pub enum Command {
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     TestPictureUpload(Box<crate::PictureUploadConfig>),
+
     /// Record a test phrase from the microphone for the TX Audio window
     /// (`true`), or stop and keep it (`false`). Stored raw, before any
     /// processing, so it can be played back through the chain again and again
@@ -1167,11 +1168,13 @@ pub enum Command {
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     TxVoiceTestRecord(bool),
+
     /// Play the test phrase through the voice chain as it is set *now*, to
     /// the speakers (`true`), or stop (`false`). Refused while transmitting.
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     TxVoiceTestPlay(bool),
+
     /// Put the live microphone through the voice chain without keying: for
     /// the meters alone, or for the meters and the speakers. Stops a test
     /// recording or playback; refused while transmitting, and stopped by the
@@ -1179,6 +1182,7 @@ pub enum Command {
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     TxVoiceTestLive(crate::TxVoiceLive),
+
     /// Download QSOs from Wavelog: each `(station location, cursor)` from the
     /// record after the cursor on, a page at a time. Each page comes back as
     /// a [`crate::RadioEvent::WavelogBatch`]; the logbook and the cursors live
@@ -1191,6 +1195,7 @@ pub enum Command {
         stations: Vec<(u32, u64)>,
         full: bool,
     },
+
     /// Replace the amplifier settings, saved to `amp.json` and echoed back in
     /// [`crate::RadioEvent::StationConfig`]. The engine closes the old port
     /// before it opens the new one.
@@ -1212,4 +1217,11 @@ pub enum Command {
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     SetRigPowerStep(u8),
+
+    /// Request an AH-4 antenna-tuner cycle. This is distinct from
+    /// ordinary carrier TUNE: the engine must wait for tuner permission
+    /// before enabling RF.
+    ///
+    /// Appended for the usual reason — postcard numbers variants by position.
+    Ah4Tune,
 }

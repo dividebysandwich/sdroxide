@@ -73,7 +73,9 @@ fn duc_datagrams_are_paced_at_the_stream_rate() {
     .expect("open");
     let mut rx = board.rx(0).expect("attach DDC 0");
 
-    let rate = rx.tx_begin(14_200_000.0);
+    let rate = rx
+        .tx_begin(14_200_000.0)
+        .expect("TX begin command should queue successfully");
     assert_eq!(rate, 192_000.0);
     // 100 ms of transmit I/Q in one go: what a pacer's cushion plus a block
     // looks like from the network thread.
@@ -92,7 +94,8 @@ fn duc_datagrams_are_paced_at_the_stream_rate() {
             arrivals.push(t0.elapsed());
         }
     }
-    rx.tx_end();
+    rx.tx_end()
+        .expect("TX-off command should queue successfully");
     drop(rx);
     drop(board);
     stop.store(true, Ordering::Relaxed);

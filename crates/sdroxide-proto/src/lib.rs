@@ -2085,6 +2085,14 @@ pub enum ServerMsg {
     ///
     /// Appended last, for the usual reason.
     AmpStatus(Box<sdroxide_types::AmpStatus>),
+    /// `RadioEvent::TunerStatus`: latest verified AH-4 tuner status.
+    /// Appended last, for the usual reason.
+    TunerStatus(Option<u8>),
+    /// `RadioEvent::Ah4Busy`: whether an AH-4 operation is in progress.
+    Ah4Busy(bool),
+    /// `RadioEvent::TunerPresence`: latched discovery result, separate from status freshness.
+    /// Appended last, for the usual reason.
+    TunerPresence(Option<bool>),
 }
 
 /// One radio in a station's roster, as a client sees it.

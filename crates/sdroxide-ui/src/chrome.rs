@@ -1617,6 +1617,23 @@ pub fn chip_lit_sized(
     chip_impl(ui, false, text.into(), Some(Accent::lit(fill, ink)), Sense::click(), Some(size))
 }
 
+/// A chip that wears its accent colour the whole time, selected or not.
+pub fn chip_lit(
+    ui: &mut Ui,
+    text: impl Into<RichText>,
+    fill: Color32,
+    ink: Color32,
+) -> Response {
+    chip_impl(
+        ui,
+        false,
+        text.into(),
+        Some(Accent::lit(fill, ink)),
+        Sense::click(),
+        None,
+    )
+}
+
 /// [`chip_hold`] at an exact size — the compact strip's PTT, which is drawn
 /// bigger than its label needs because it is the one control worth a whole
 /// thumb.

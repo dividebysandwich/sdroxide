@@ -1267,6 +1267,9 @@ impl SdroxideApp {
                 // throwing it away on a QSY would blank the wideband strip and
                 // re-read every image store for nothing.
                 RadioEvent::CapabilitiesUpdated(c) => self.caps = Some(c),
+                RadioEvent::Ah4Busy(busy) => {
+                    self.ah4_busy = busy;
+                }
                 RadioEvent::State(s) => {
                     let prev_vfo = self.state.active_freq_hz();
                     let prev_rate = self.state.sample_rate;
@@ -1371,6 +1374,22 @@ impl SdroxideApp {
                         if r.ok { format!("ok, {}", r.message) } else { r.message.clone() }
                     ));
                     self.login_tests.insert(r.target, r);
+                }
+                RadioEvent::TunerStatus(status) => {
+                    self.tuner_status = status;
+                }
+                RadioEvent::TunerPresence(presence) => {
+                    self.tuner_presence = presence;
+                    match presence {
+                        Some(false) => {
+                            self.radio_notice = Some("Tuner not detected".into());
+                        }
+                        None | Some(true) => {
+                            if self.radio_notice.as_deref() == Some("Tuner not detected") {
+                                self.radio_notice = None;
+                            }
+                        }
+                    }
                 }
                 RadioEvent::WavelogProbe(p) => self.wavelog_probe = Some(*p),
                 RadioEvent::WavelogBatch(b) => self.on_wavelog_batch(*b),
