@@ -57,15 +57,18 @@ pub struct Message {
 
 /// Parse the body of a `:` frame.
 pub(crate) fn parse(rest: &[u8]) -> Result<Message> {
-    // The addressee is a fixed nine-character field followed by a colon. Not
-    // "up to the first colon": a colon is legal *inside* the message text, and
-    // searching for one finds the wrong split on the first message that
-    // contains a time.
-    if rest.len() < 10 || rest[9] != b':' {
+    // The addressee is a (space-padded, nine-wide) field followed by a colon.
+    // Real traffic is not always padded to the full nine characters, so the
+    // colon that ends the field is found rather than assumed at a fixed offset.
+    // The addressee itself carries no colon, so the first colon in the field is
+    // unambiguously the delimiter — even when the message text contains one
+    // (a time, say) or an identifier.
+    let colon = rest.iter().position(|&b| b == b':').ok_or(AprsError::Malformed("message addressee"))?;
+    if colon == 0 || colon > 9 {
         return Err(AprsError::Malformed("message addressee"));
     }
-    let addressee = printable(&rest[..9]).trim_end().to_string();
-    let body = printable(&rest[10..]);
+    let addressee = printable(&rest[..colon]).trim_end().to_string();
+    let body = printable(&rest[colon + 1..]);
 
     // `ack` and `rej` are recognised before anything else: their identifier is
     // the rest of the line rather than something after a brace.
