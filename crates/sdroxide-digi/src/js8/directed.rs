@@ -39,6 +39,8 @@ pub enum Js8Intent {
     HearingQuery,
     /// "What is your status message?"
     StatusQuery,
+    /// "What is your station information?"
+    InfoQuery,
     /// "Say again."
     RepeatQuery,
     /// A station announcing itself.
@@ -56,6 +58,8 @@ pub struct StationInfo {
     pub grid: String,
     /// Free-text status the operator set, sent in reply to ` STATUS?`.
     pub status: String,
+    /// Free-text station information, sent in reply to ` INFO?`.
+    pub info: String,
     /// Callsigns heard recently, most recent first, for ` HEARING?`.
     pub hearing: Vec<String>,
 }
@@ -106,6 +110,7 @@ pub fn intent(msg: &Js8Msg) -> Js8Intent {
         Some("GRID?") => Js8Intent::GridQuery,
         Some("HEARING?") => Js8Intent::HearingQuery,
         Some("STATUS?") => Js8Intent::StatusQuery,
+        Some("INFO?") => Js8Intent::InfoQuery,
         Some("AGN?") => Js8Intent::RepeatQuery,
         Some("HB") => Js8Intent::Heartbeat,
         Some("CQ") => Js8Intent::Cq,
@@ -166,6 +171,7 @@ pub fn auto_reply(msg: &Js8Msg, me: &StationInfo, policy: ReplyPolicy) -> Option
         Js8Intent::SnrQuery => (" SNR", None),
         Js8Intent::GridQuery => (" GRID", Some(me.grid.clone())),
         Js8Intent::StatusQuery => (" STATUS", Some(me.status.clone())),
+        Js8Intent::InfoQuery => (" INFO", Some(me.info.clone())),
         Js8Intent::HearingQuery => (" HEARING", Some(me.hearing.join(" "))),
         // A CQ is an announcement too, but unlike a heartbeat it is asking for
         // a contact rather than a report — answering it automatically would
@@ -205,6 +211,50 @@ pub fn auto_reply(msg: &Js8Msg, me: &StationInfo, policy: ReplyPolicy) -> Option
     })
 }
 
+/// A message this station sent, kept so ` AGN?` can say it again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LastTx {
+    /// Who it was addressed to: a callsign, a group, or empty for undirected
+    /// text.
+    pub to: String,
+    pub text: String,
+    pub unix: i64,
+}
+
+/// How long a message stays worth repeating. ` AGN?` means "say that again",
+/// and after ten minutes "that" is no longer the same conversation.
+pub const AGN_WINDOW_S: i64 = 10 * 60;
+
+/// The text to send again in answer to an ` AGN?`, if any.
+///
+/// We repeat only what we said to the station that asks. That is either a
+/// message addressed to them, or one sent to the group they ask through.
+/// Anything else would put our last words to one station on the air for
+/// another, which is not what they asked for. A ` AGN?` is a reply to
+/// something heard moments ago, so the message must also be recent.
+pub fn repeat_reply(
+    msg: &Js8Msg,
+    me: &StationInfo,
+    auto_reply: bool,
+    last: Option<&LastTx>,
+    now_unix: i64,
+) -> Option<String> {
+    if !auto_reply || me.call.is_empty() || intent(msg) != Js8Intent::RepeatQuery {
+        return None;
+    }
+    if !msg.to_me || !msg.complete || msg.from.is_empty() || msg.from.eq_ignore_ascii_case(&me.call)
+    {
+        return None;
+    }
+    let last = last?;
+    if now_unix - last.unix > AGN_WINDOW_S || last.text.trim().is_empty() {
+        return None;
+    }
+    let theirs = last.to.eq_ignore_ascii_case(&msg.from)
+        || (last.to.starts_with('@') && last.to.eq_ignore_ascii_case(&msg.to));
+    theirs.then(|| last.text.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,6 +264,7 @@ mod tests {
             call: "N0JDS".into(),
             grid: "FN42".into(),
             status: "IDLE".into(),
+            info: "IC-7300 50W DIPOLE".into(),
             hearing: vec!["KN4CRD".into(), "VK3ABC".into()],
         }
     }
@@ -391,6 +442,44 @@ mod tests {
         let m = query("KN4CRD", "N0JDS", "HEARING?", true);
         let deaf = StationInfo { hearing: Vec::new(), ..me() };
         assert!(auto_reply(&m, &deaf, ReplyPolicy::default()).is_none());
+    }
+
+    #[test]
+    fn station_information_is_answered_when_there_is_some() {
+        let m = query("KN4CRD", "N0JDS", "INFO?", true);
+        let r = auto_reply(&m, &me(), ReplyPolicy::default()).expect("answered");
+        assert_eq!(super::super::frame::cmd_text(r.directed.cmd), Some(" INFO"));
+        assert_eq!(r.body.as_deref(), Some("IC-7300 50W DIPOLE"));
+        let blank = StationInfo { info: String::new(), ..me() };
+        assert!(auto_reply(&m, &blank, ReplyPolicy::default()).is_none());
+    }
+
+    #[test]
+    fn agn_repeats_only_what_we_said_to_them_and_only_recently() {
+        let t = 10_000;
+        let last =
+            |to: &str| LastTx { to: to.into(), text: format!("{to} QTH IS BOSTON"), unix: t };
+        let m = query("KN4CRD", "N0JDS", "AGN?", true);
+        assert_eq!(
+            repeat_reply(&m, &me(), true, Some(&last("KN4CRD")), t + 60).as_deref(),
+            Some("KN4CRD QTH IS BOSTON")
+        );
+        // Said to somebody else.
+        assert_eq!(repeat_reply(&m, &me(), true, Some(&last("VK3ABC")), t + 60), None);
+        // Too long ago.
+        assert_eq!(
+            repeat_reply(&m, &me(), true, Some(&last("KN4CRD")), t + AGN_WINDOW_S + 1),
+            None
+        );
+        // Auto-reply off, or nothing sent yet.
+        assert_eq!(repeat_reply(&m, &me(), false, Some(&last("KN4CRD")), t + 60), None);
+        assert_eq!(repeat_reply(&m, &me(), true, None, t + 60), None);
+        // Said to a group, and asked again through that group.
+        let g = query("KN4CRD", "@EMCOMM", "AGN?", true);
+        assert!(repeat_reply(&g, &me(), true, Some(&last("@EMCOMM")), t + 60).is_some());
+        // Ourselves, through a relay or loopback.
+        let mine = query("N0JDS", "N0JDS", "AGN?", true);
+        assert_eq!(repeat_reply(&mine, &me(), true, Some(&last("N0JDS")), t + 60), None);
     }
 
     #[test]

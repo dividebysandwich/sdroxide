@@ -53,6 +53,11 @@ reuses FT8's array; it does not — FT8's is `[3,1,4,0,6,5,2]`. Trust the values
 | 87 info bits = 72 message + 3 frame-type + 12 CRC | `lib/js8/genjs8.f90:54-57` (format `12b6.6,b3.3,b12.12`) |
 | Frame-type codes | `varicode.h:50-57` |
 | Directed command table | `varicode.cpp:46+` (`directed_cmds`) |
+| Reserved callsigns / groups (`<....>` … `@QRO`, 54 entries) | `varicode.cpp:214-280` (`basecalls`) |
+| `NUSERGRID` = `nbasegrid + 10` | `varicode.cpp:211` |
+| Compound-directed command packing | `varicode.cpp:1166-1205` (`packCmd` / `unpackCmd`), placed above `nusergrid` by `packCompoundMessage` at `varicode.cpp:1425` |
+| Compound framing for custom groups and compound calls | `varicode.cpp:2100-2140` (`buildMessageFrames`, cases 1-3): `Compound(from, grid)` then `CompoundDirected(to, cmd)` |
+| Which calls need the compound form | `varicode.cpp:1232` (`isValidCompoundCallsign`), `:1292` (`isCompoundCallsign`) |
 | Huffman free-text table | `varicode.cpp:158+` (`hufftable`) |
 | JSC dictionary (262144 entries + 103 prefixes) | `jsc.h`, `jsc_list.cpp`, `jsc_map.cpp` |
 
@@ -208,6 +213,21 @@ round-trips through degrees.
 Three undefined symbols (`BuildMessageFramesThread`, `DecodedText`) are Qt
 thread/signal machinery the packing functions never reach; linking `moc`'s
 output for `varicode.h` and `decodedtext.cpp` satisfies them.
+
+`MESSAGES` holds whole messages as `buildMessageFrames` frames them. They cover
+custom groups (@MAGNET), slashed callsigns as addressee (W1AW/4) and as sender
+(KN4CRD/QRP), and reserved groups added late to the table (@EMCOMM, @AMRRON).
+`compound_messages_are_framed_as_js8call_frames_them` checks that our transmit
+side produces them byte for byte, and
+`messages_js8call_frames_reassemble_with_the_right_sender_and_addressee` that
+our receive side reads them back.
+
+**Two findings from adding it.**
+- Our copy of `basecalls` stopped at `@NTS`. Every frame JS8Call sent to
+  @EMCOMM, @ARES, @AMRRON or @APRSIS unpacked to "no such callsign" and was
+  dropped.
+- Every compound frame was read as a heartbeat, so a message to a custom group
+  arrived as "HB from @MAGNET".
 
 **A finding worth keeping.** `packGrid` computes `int ilat = pair.second + 90`
 — it biases the *float* and then truncates. Truncating first and then adding 90,

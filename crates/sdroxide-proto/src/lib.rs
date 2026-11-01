@@ -1627,7 +1627,13 @@ use sdroxide_types::{
 /// enums; [`sdroxide_types::Command`] gains the `Vara*` commands; `DigiStatus`
 /// gains `vara` (`Option<VaraStatus>`) and `DigiConfig` the `vara_*` settings,
 /// each on its tail, so a v189 peer reads digital status out of step.
-pub const PROTO_VERSION: u16 = 190;
+///
+/// v191: JS8 group auto-responses and station info. `DigiConfig` gains
+/// `js8_info`, `js8_auto_rules_on` and `js8_auto_rules` (`Vec<Js8AutoRule>`)
+/// after `js8_groups`. `Js8Status` gains `auto_pending`
+/// (`Vec<Js8AutoPending>`) on its tail. Both ride `DigiStatus`, so a v190 peer
+/// misreads every digital status.
+pub const PROTO_VERSION: u16 = 191;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

@@ -28,6 +28,13 @@ pub mod ft8_eu;
 pub mod hell_controller;
 pub mod js8;
 pub mod js8_controller;
+/// JS8Call's own output from the generated golden vectors, for the unit tests
+/// that check private framing code against it. The integration tests read the
+/// same file.
+#[cfg(test)]
+#[path = "../tests/js8_varicode_vectors/mod.rs"]
+#[allow(dead_code)]
+mod js8_vectors;
 pub mod jt_controller;
 pub mod jtty_controller;
 pub mod modem;

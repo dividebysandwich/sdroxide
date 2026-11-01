@@ -1777,6 +1777,23 @@ pub struct DigiConfig {
     /// as addressed to us.
     #[serde(default)]
     pub js8_groups: Vec<String>,
+    /// JS8: free-text station information, sent in reply to ` INFO?`. For
+    /// example, the rig, antenna and power.
+    #[serde(default)]
+    pub js8_info: String,
+    /// JS8: master switch for the group auto-responses in
+    /// [`js8_auto_rules`](Self::js8_auto_rules).
+    ///
+    /// Off by default. A rule transmits in reply to traffic nobody addressed
+    /// to this station personally, possibly several times over. That is an
+    /// on-air behaviour the operator has to choose, separately from
+    /// answering direct questions.
+    #[serde(default)]
+    pub js8_auto_rules_on: bool,
+    /// JS8: canned replies to messages sent to a group. See
+    /// [`Js8AutoRule`](crate::Js8AutoRule).
+    #[serde(default)]
+    pub js8_auto_rules: Vec<crate::Js8AutoRule>,
     /// Hellschreiber variant (Feld Hell / Slow / X5 / X9 / the FSK variants).
     pub hell_variant: HellVariant,
     /// Hellschreiber receive AGC speed: 0 = off (an absolute scale, meaningful
@@ -2448,6 +2465,9 @@ impl Default for DigiConfig {
             js8_call: String::new(),
             js8_status: String::new(),
             js8_groups: Vec::new(),
+            js8_info: String::new(),
+            js8_auto_rules_on: false,
+            js8_auto_rules: Vec::new(),
             hell_variant: HellVariant::Feld,
             hell_rx_agc: 0.35,
             rifp_profile: RifpProfile::default(),

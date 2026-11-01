@@ -23,6 +23,7 @@
 //! that obligation — and not in `sdroxide-dsp`, which the wasm client links.
 
 pub mod assembler;
+pub mod autorule;
 pub mod crc12;
 pub mod decode;
 pub mod directed;

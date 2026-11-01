@@ -2847,8 +2847,8 @@ setup-shared-packet-mode = shared with the packet mode
 setup-keep-stations = Keep stations
 setup-how-long-station-stays-map = How long a station stays on the map after it was last heard. Also what the map's fade is measured against, so a short window shows only what is live.
 setup-auto-reply = Auto-reply
-setup-answer-snr-grid-status = Answer SNR? / GRID? / STATUS?
-setup-answer-direct-question-addressed-you = Answer a direct question addressed to you or to @ALLCALL, with the answer rather than an acknowledgement. Never answers another station's traffic, and never answers itself.
+setup-answer-snr-grid-status = Answer SNR? / GRID? / STATUS? / INFO?…
+setup-answer-direct-question-addressed-you = Answer a direct question addressed to you, to @ALLCALL or to a group you are in: SNR?, GRID?, STATUS?, INFO?, HEARING? and AGN? (which repeats your last message to that station, if it was within ten minutes). Never answers another station's traffic, and never answers itself.
 setup-heartbeat = Heartbeat
 setup-off = Off
 setup-turbo-does-not-beacon-local = Turbo does not beacon — it is the local and VHF speed.
@@ -2862,6 +2862,42 @@ setup-heartbeat-reply = Heartbeat reply
 setup-answer-heartbeats-signal-report = Answer heartbeats with a signal report
 setup-tell-station-beaconed-how-well = Tell a station that beaconed how well you copied them. Off by default: a busy band carries a heartbeat every slot, and answering all of them would flood exactly the band heartbeats exist to keep quiet. Rate-limited to one answer per station every 15 minutes, and never while a message is still arriving or while you have something queued to send.
 setup-status-message = Status message
+setup-js8-station-info = Station info
+setup-js8-station-info-example = e.g. IC-7300 50W END-FED
+setup-js8-station-info-hint = Sent in reply to INFO?
+setup-js8-callsign = JS8 callsign
+setup-js8-callsign-hint = Only if JS8 should use a different callsign, such as KN4CRD/P or KN4CRD/QRP. Leave empty to use My callsign.
+setup-js8-groups = Groups
+setup-js8-groups-hint = Groups you are a member of, separated by spaces or commas. Messages to them count as addressed to you: they are highlighted, and the questions in them (SNR?, GRID?…) are answered.
+setup-js8-auto-response = Auto-response
+setup-js8-auto-response-on = Answer group messages with a canned reply
+setup-js8-auto-response-on-hint = When a message to a group matches a rule below, send that rule's reply, repeated if the rule says so. Off by default: this transmits in answer to traffic nobody addressed to you personally. ABORT, or sending anything yourself, cancels the repeats still waiting. Never answers your own messages, and never sends more than 20 replies an hour in all.
+setup-js8-rule-on = Rule on
+setup-js8-rule-name = Rule name
+setup-js8-rule-move-up = Move up. The first rule that matches a message is the one that answers.
+setup-js8-rule-delete = Delete this rule
+# "When [@GROUP] hears [phrase]": the two words around the group and phrase fields.
+setup-js8-rule-when = When
+setup-js8-rule-hears = hears
+setup-js8-rule-group-hint = The group whose messages this rule answers
+setup-js8-rule-any-message = any message
+setup-js8-rule-phrase-hint = Text the message must contain, ignoring case and spacing. Leave empty to answer any message to the group.
+setup-js8-rule-reply = Reply
+setup-js8-rule-reply-hint = @SENDER, @GROUP, @MYCALL and @MYGRID are filled in when it is sent.
+setup-js8-rule-to = To
+setup-js8-reply-to-sender-hint = Directed to the station that wrote
+setup-js8-reply-to-group-hint = To the whole group
+setup-js8-reply-to-as-written-hint = Exactly as written: start the reply with its addressee
+# "Send [N] ×, every [M min]": the words around the repeat count and the gap.
+setup-js8-rule-send = Send
+setup-js8-rule-times-every = ×, every
+setup-js8-rule-min-suffix = {" "}min
+setup-js8-rule-cooldown = Same station again after
+setup-js8-rule-cooldown-hint = The cooldown: a station repeating its call inside it does not start the replies again.
+setup-js8-rule-preview-empty = Sends nothing — the reply is empty
+setup-js8-rule-no-group = Name the group this rule answers, e.g. @EMCOMM.
+setup-js8-rule-self-retriggers = This reply goes to the group and contains the phrase it answers. Two stations with this rule would answer each other until the cooldown runs out.
+setup-js8-add-rule = + Add rule
 setup-tx-period = TX period
 setup-even = Even
 setup-odd = Odd
@@ -3193,6 +3229,11 @@ solar-cme-earth-directed = EARTH-DIRECTED CME { $time } · { $speed } km/s · { 
 setup-mode-setup = { $mode } Setup
 setup-transmits-as = Transmits as { $call }
 setup-decimal-degrees = Decimal degrees, negative for { $hemisphere }. Paste one straight off a map.
+setup-js8-not-a-group-name = Not a group name: { $names }
+setup-js8-callsign-same = same as My callsign ({ $call })
+setup-js8-rule-preview = Sends: { $text }
+setup-js8-rule-preview-hint = As it would go out to { $call }
+setup-js8-rule-bad-group = { $group } is not a group name.
 
 ## AMP window: messages with values
 
@@ -3712,6 +3753,11 @@ js8-already-addressing-allcall = Already addressing @ALLCALL
 js8-stop = {" "}STOP{" "}
 js8-send = {" "}SEND{" "}
 js8-message = Message…
+js8-auto-resp = AUTO-RESP
+js8-auto-resp-no-rules = No auto-response rules yet — click to write one in SETUP
+js8-auto-pending = AUTO
+js8-auto-pending-text-hint = The reply, as it will be sent
+js8-auto-pending-count-hint = Sends made / sends planned. ABORT or sending anything yourself cancels the rest.
 
 ## logbook (src/app/logbook.rs)
 
@@ -4816,6 +4862,16 @@ js8-sent = Sent at { $speed }
 js8-partial-frames-sent = partial ({ $frames } frames sent)
 js8-reply-2 = Reply to { $value }: “{ $value2 }”
 js8-address-composer = Address the composer at { $value }
+js8-auto-resp-on = Answering group messages with { $n } { $n ->
+        [one] rule
+       *[other] rules
+    } — click to stop
+js8-auto-resp-ready = { $n } auto-response { $n ->
+        [one] rule
+       *[other] rules
+    } ready — click to start answering
+js8-auto-pending-next-slot = { $sent }/{ $total } · next slot
+js8-auto-pending-next = { $sent }/{ $total } · next { $left }
 
 ## macros: messages with values (src/app/panels/macros.rs)
 
@@ -5344,6 +5400,9 @@ js8-speed-normal = NORMAL
 js8-speed-fast = FAST
 js8-speed-turbo = TURBO
 js8-speed-slow = SLOW
+js8-auto-reply-to-sender = Sender
+js8-auto-reply-to-group = Group
+js8-auto-reply-to-as-written = As written
 lime-aux-role-off = Not used
 lime-aux-role-diversity = A second aerial (diversity / QRM suppression)
 lime-aux-role-pure-signal = Transmit feedback (PureSignal predistortion)

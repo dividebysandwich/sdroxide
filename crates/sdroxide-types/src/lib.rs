@@ -184,8 +184,9 @@ pub use ism::{
     Rtl433Settings, Rtl433Status,
 };
 pub use js8::{
-    HB_BAND_HI_HZ, HB_BAND_LO_HZ, HB_SLOT_HZ, Js8FrameInfo, Js8FrameKind, Js8Heard, Js8Msg,
-    Js8Speed, Js8Status,
+    HB_BAND_HI_HZ, HB_BAND_LO_HZ, HB_SLOT_HZ, JS8_AUTO_REPEAT_MAX, JS8_AUTO_RULES_MAX,
+    Js8AutoPending, Js8AutoReplyTo, Js8AutoRule, Js8FrameInfo, Js8FrameKind, Js8Heard, Js8Msg,
+    Js8Speed, Js8Status, js8_group_normalize, js8_group_valid, js8_normalize_text,
 };
 pub use jtty::{JTTY_MESSAGE_MAX, JttyMessage, JttyStatus};
 pub use limerfe::{

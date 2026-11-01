@@ -23,7 +23,11 @@ use std::collections::HashMap;
 use sdroxide_types::{Js8Msg, Js8Speed};
 
 use super::decode::Js8Decode;
-use super::frame::{self, Js8Content, Js8Flags};
+use super::frame::{self, Js8Content, Js8Flags, Js8FrameType};
+
+/// What a directed frame carries in place of a compound callsign sent in the
+/// frame before it (`varicode.cpp:1555`).
+const PLACEHOLDER: &str = "<....>";
 
 /// How far a station may drift and still be recognised as the same one.
 ///
@@ -134,32 +138,70 @@ impl Js8Assembler {
 
         match content {
             Js8Content::Directed(dir) => {
-                p.from = dir.from.clone();
-                p.to = dir.to.clone();
+                // `<....>` stands for "the compound callsign in the frame
+                // before" (`packDirectedMessage`, `varicode.cpp:1552`). It is a
+                // placeholder, not a station, so it must not overwrite the
+                // callsign that frame already gave us.
+                if dir.from != PLACEHOLDER {
+                    p.from = dir.from.clone();
+                }
+                if dir.to != PLACEHOLDER {
+                    p.to = dir.to.clone();
+                }
                 p.cmd = frame::cmd_text(dir.cmd)
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty());
                 if let Some(n) = dir.num {
                     p.text = n.to_string();
                 }
-                self.heard.insert(dir.from, slot_utc);
-            }
-            Js8Content::Compound(c) => {
-                p.from = c.call.clone();
-                if c.is_cq() {
-                    p.to = "@ALLCALL".into();
-                    p.cmd = Some("CQ".into());
-                } else {
-                    // A heartbeat invites reports from everyone hearing it;
-                    // auto_reply rejects messages without a destination.
-                    p.to = "@ALLCALL".into();
-                    p.cmd = Some("HB".into());
+                if dir.from != PLACEHOLDER {
+                    self.heard.insert(dir.from, slot_utc);
                 }
-                if let Some(g) = c.grid() {
-                    p.text = g;
-                }
-                self.heard.insert(c.call, slot_utc);
             }
+            // The three compound kinds share a layout but not a meaning, and
+            // reading them all as a heartbeat turned every message to a custom
+            // group into "HB from @EMCOMM".
+            Js8Content::Compound(c) => match c.kind {
+                // Who is addressed, and with what. The sender came in the
+                // frame before.
+                Js8FrameType::CompoundDirected => {
+                    p.to = c.call.clone();
+                    if let Some((cmd, num)) = c.command() {
+                        p.cmd = frame::cmd_text(cmd)
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty());
+                        if let Some(n) = num {
+                            p.text = n.to_string();
+                        }
+                    }
+                }
+                // Who is speaking, and from where. This opens a message whose
+                // addressee follows in a compound-directed frame. Alone, it is
+                // a station identifying itself. The grid it carries is not
+                // put into the text, as upstream does (`tryUnpackCompound`
+                // renders `CALL: `). Otherwise every message to a group would
+                // read "EM73HELLO".
+                Js8FrameType::Compound => {
+                    p.from = c.call.clone();
+                    self.heard.insert(c.call, slot_utc);
+                }
+                _ => {
+                    p.from = c.call.clone();
+                    if c.is_cq() {
+                        p.to = "@ALLCALL".into();
+                        p.cmd = Some("CQ".into());
+                    } else {
+                        // A heartbeat invites reports from everyone hearing it;
+                        // auto_reply rejects messages without a destination.
+                        p.to = "@ALLCALL".into();
+                        p.cmd = Some("HB".into());
+                    }
+                    if let Some(g) = c.grid() {
+                        p.text = g;
+                    }
+                    self.heard.insert(c.call, slot_utc);
+                }
+            },
             Js8Content::Text(t) => p.text.push_str(&t),
         }
 
@@ -246,6 +288,17 @@ impl Js8Assembler {
     /// mid-message would interleave our frame with someone's sentence.
     pub fn has_partials(&self) -> bool {
         !self.partials.is_empty()
+    }
+
+    /// True while some station's message is still arriving *now*, meaning a
+    /// frame came in within the last `window_s` seconds.
+    ///
+    /// Narrower than [`Self::has_partials`]. A message whose LAST frame was
+    /// missed stays partial until the timeout, five minutes by default. A
+    /// station waiting for the band to be clear should not wait out that
+    /// stale entry too.
+    pub fn active_within(&self, now_utc: i64, window_s: i64) -> bool {
+        self.partials.iter().any(|p| now_utc - p.last_slot_utc <= window_s)
     }
 
     /// Messages still arriving, for a live view of partial text.
