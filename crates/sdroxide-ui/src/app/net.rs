@@ -348,7 +348,10 @@ impl SdroxideApp {
         if !b.records.is_empty() {
             // Another tab may have logged since this copy was read.
             if self.shared_log {
-                self.qso_log = crate::app::persist::load_qso_log(None);
+                self.qso_log = crate::app::persist::after_shared_log(
+                    std::mem::take(&mut self.qso_log),
+                    crate::app::persist::reload_qso_log(None),
+                );
             }
             let next = self.next_log_id();
             let m = sdroxide_types::merge_from_wavelog(&mut self.qso_log, b.records, next);
@@ -417,7 +420,10 @@ impl SdroxideApp {
             return;
         }
         if self.shared_log {
-            self.qso_log = crate::app::persist::load_qso_log(None);
+            self.qso_log = crate::app::persist::after_shared_log(
+                std::mem::take(&mut self.qso_log),
+                crate::app::persist::reload_qso_log(None),
+            );
         }
         let plan = sdroxide_types::plan_resync(&self.qso_log, records);
         if plan.is_empty() {
@@ -444,7 +450,10 @@ impl SdroxideApp {
         // QSOs. Re-reading is safe: tabs only append, and a plan names
         // existing records by id and adds new ones under fresh ids.
         if self.shared_log {
-            self.qso_log = crate::app::persist::load_qso_log(None);
+            self.qso_log = crate::app::persist::after_shared_log(
+                std::mem::take(&mut self.qso_log),
+                crate::app::persist::reload_qso_log(None),
+            );
         }
         let (add, update, remove, mark) =
             (plan.add.len(), plan.update.len(), plan.remove.len(), plan.mark.len());
