@@ -57,7 +57,6 @@ impl HostConfig for xara_arq::hf::Config {
     }
 }
 
-
 pub trait Arq {
     type Config: HostConfig;
     type Listen: Clone;

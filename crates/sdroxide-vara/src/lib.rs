@@ -17,8 +17,13 @@ pub use station::{Link, Modem, Options};
 pub use tnc::{Observed, Tnc};
 pub use xara_arq::hf::session::{Config, State};
 pub use xara_arq::time::{SECOND, Time};
-pub use xara_host::response::Response;
+pub use xara_host::response::{LinkWidth, Response};
 pub use xara_phy::hf::level::Bandwidth;
+
+/// The peak amplitude the modem's transmit audio reaches at the default drive
+/// (−5 dB), measured by `transmit_peak_at_default_drive`. The engine divides
+/// it out so a hundred-percent Drive puts the over on the air at full scale.
+pub const TX_PEAK: f32 = 0.65;
 
 /// The station's sample rate. Every `Time` in the modem counts these.
 pub const RATE: f64 = 48_000.0;
@@ -31,6 +36,6 @@ pub fn new_modem(bw: Bandwidth, mycall: &str, registered: bool, seed: u64) -> Va
     let mut cfg = Config::new(bw, mycall);
     cfg.host.registered = registered;
     cfg.seed = seed;
-    let opts = Options { drive_db: 0.0, ..Options::default() };
+    let opts = Options::default();
     Tnc::new(Station::new(cfg, opts), HostMux::new())
 }

@@ -120,6 +120,12 @@ impl VaraHandle {
     pub fn holder(&self) -> Option<Holder> {
         lock(&self.slot).holder.clone()
     }
+
+    /// Whether two handles reach the same modem — so the engine can tell a
+    /// fresh modem from the one a destroyed controller left behind.
+    pub fn same_modem(&self, other: &VaraHandle) -> bool {
+        Arc::ptr_eq(&self.slot, &other.slot)
+    }
 }
 
 /// An in-process VARA host. Speaks the same command language as the TCP port;
@@ -241,9 +247,9 @@ impl TcpHost {
     ) -> io::Result<Self> {
         let data_port = match port {
             0 => 0,
-            p => p
-                .checked_add(1)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "port must be < 65535"))?,
+            p => p.checked_add(1).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "port must be < 65535")
+            })?,
         };
         let cl = TcpListener::bind((addr, port))?;
         let dl = TcpListener::bind((addr, data_port))?;
@@ -329,7 +335,9 @@ fn accept_loop(
                 let _ = s.shutdown(Shutdown::Both);
                 continue;
             }
-            let Ok(w) = s.try_clone().and_then(|w| Writer::new(w, if is_cmd { "vara-cmd-tx" } else { "vara-data-tx" }))
+            let Ok(w) = s
+                .try_clone()
+                .and_then(|w| Writer::new(w, if is_cmd { "vara-cmd-tx" } else { "vara-data-tx" }))
             else {
                 continue;
             };
@@ -462,7 +470,13 @@ impl HostMux {
     /// Open the TCP ports (`port` for commands, `port + 1` for data).
     pub fn listen_tcp(&mut self, addr: &str, port: u16) -> io::Result<()> {
         self.tcp = None;
-        self.tcp = Some(TcpHost::bind(addr, port, self.tcp_input.0.clone(), self.slot.clone(), self.hold.clone())?);
+        self.tcp = Some(TcpHost::bind(
+            addr,
+            port,
+            self.tcp_input.0.clone(),
+            self.slot.clone(),
+            self.hold.clone(),
+        )?);
         Ok(())
     }
 

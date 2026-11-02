@@ -145,6 +145,7 @@ sdroxide-kiwisdr = { path = "crates/sdroxide-kiwisdr" }
 sdroxide-net = { path = "crates/sdroxide-net" }
 sdroxide-winlink = { path = "crates/sdroxide-winlink" }
 sdroxide-ax25 = { path = "crates/sdroxide-ax25" }
+sdroxide-vara = { path = "crates/sdroxide-vara" }
 sdroxide-kiss = { path = "crates/sdroxide-kiss" }
 sdroxide-deepcw = { path = "crates/sdroxide-deepcw" }
 sdroxide-ism = { path = "crates/sdroxide-ism" }

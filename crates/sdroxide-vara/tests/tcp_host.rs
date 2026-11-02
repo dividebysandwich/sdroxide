@@ -36,7 +36,10 @@ fn a_tcp_host_is_answered_and_excludes_local_claims() {
     let mut c = TcpStream::connect(cmd).unwrap();
     let _d = TcpStream::connect(data).unwrap();
     pump(&mut m, 200);
-    assert!(m.host().handle().claim("Winlink").is_err(), "a TCP host must exclude an in-process one");
+    assert!(
+        m.host().handle().claim("Winlink").is_err(),
+        "a TCP host must exclude an in-process one"
+    );
 
     c.write_all(b"MYCALL OE1AAA\rVERSION\rBW500\rNONSENSE\r").unwrap();
     pump(&mut m, 300);

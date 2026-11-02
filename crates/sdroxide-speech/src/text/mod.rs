@@ -147,6 +147,7 @@ impl<'a> Speaker<'a> {
             Mode::Rifp => "R I F P",
             Mode::Packet => "packet",
             Mode::PacketHf => "H F packet",
+            Mode::VaraHf => "VARA H F",
             // A word, not four letters: nobody says "A P R S" out loud.
             Mode::Aprs => "aprs",
             Mode::Wefax => "wefax",

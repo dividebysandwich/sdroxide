@@ -2,7 +2,9 @@ use super::scheduler::{Kind, TxFront};
 use super::{Arq, Common, Link, MIN_GAP, Modem, Options, Report, secs};
 use xara_arq::hf::broadcast::{self, Broadcast, Plan};
 use xara_arq::hf::frames::ReplyFormat;
-use xara_arq::hf::session::{Config, CtrlIn, DataIn, FrameIn, Keys, Listen, Output, Session, State, Tx};
+use xara_arq::hf::session::{
+    Config, CtrlIn, DataIn, FrameIn, Keys, Listen, Output, Session, State, Tx,
+};
 use xara_arq::host::HostEvent;
 use xara_arq::time::Time;
 use xara_arq::{cq, kiss};
@@ -126,7 +128,8 @@ impl Station {
             codes.push(CQ);
         }
         if codes != self.un.codes {
-            let e: Vec<CtrlEntry> = self.un.entries.iter().filter(|e| codes.contains(&e.code)).cloned().collect();
+            let e: Vec<CtrlEntry> =
+                self.un.entries.iter().filter(|e| codes.contains(&e.code)).cloned().collect();
             self.un.rx.set_ctrl_entries((!e.is_empty()).then_some(&e[..]));
             self.un.codes = codes;
         }
@@ -146,8 +149,12 @@ impl Station {
     fn drain_unproto(&mut self, now: Time) {
         while let Some(e) = self.un.bc.pop() {
             match e {
-                broadcast::Event::Pending => self.c.reports.push_back(Report::Host(HostEvent::Pending)),
-                broadcast::Event::CancelPending => self.c.reports.push_back(Report::Host(HostEvent::CancelPending)),
+                broadcast::Event::Pending => {
+                    self.c.reports.push_back(Report::Host(HostEvent::Pending))
+                }
+                broadcast::Event::CancelPending => {
+                    self.c.reports.push_back(Report::Host(HostEvent::CancelPending))
+                }
                 broadcast::Event::Send(p) => self.send_unproto(now, p),
                 broadcast::Event::Expect(level) => {
                     self.un.rx.expect(level.as_slice(), Some(1));
@@ -155,19 +162,31 @@ impl Station {
                         self.c.reports.push_back(unproto_bitrate(l, false));
                     }
                 }
-                broadcast::Event::Sn(sn) => self.c.reports.push_back(Report::Host(HostEvent::Sn(sn))),
-                broadcast::Event::Kiss(cmd, data) => self.c.reports.push_back(Report::Kiss(cmd, data)),
+                broadcast::Event::Sn(sn) => {
+                    self.c.reports.push_back(Report::Host(HostEvent::Sn(sn)))
+                }
+                broadcast::Event::Kiss(cmd, data) => {
+                    self.c.reports.push_back(Report::Kiss(cmd, data))
+                }
                 broadcast::Event::Cq(c) => self.c.reports.push_back(Report::Line(c.host_line())),
             }
         }
     }
 
     fn send_unproto(&mut self, now: Time, p: Plan) {
-        self.c.reports.push_back(Report::Trace(format!("tx c{} L{}x{} unproto", p.code, p.level, p.frames.len())));
+        self.c.reports.push_back(Report::Trace(format!(
+            "tx c{} L{}x{} unproto",
+            p.code,
+            p.level,
+            p.frames.len()
+        )));
         self.c.tx.stop_tune();
         let d = self.c.opts.drive_db;
         let g = ctrl::gain(Fmt::F0, d);
-        let ann = frame_audio(&self.grids, &self.un.cb, Fmt::F0, p.code, 0).iter().map(|v| quantise(v * g)).collect();
+        let ann = frame_audio(&self.grids, &self.un.cb, Fmt::F0, p.code, 0)
+            .iter()
+            .map(|v| quantise(v * g))
+            .collect();
         let earliest = self.c.tx.after_hold(now);
         self.c.tx.push(ann, 0, earliest, Vec::new(), Kind::Announce);
         let g = self.un.modm.gain(p.level, d);
@@ -175,7 +194,10 @@ impl Station {
         for (k, f) in p.frames.iter().enumerate() {
             let rnd = &mut self.tx_rnd;
             let x = self.un.modm.transmission(p.level, &[f], &mut |m| rnd.draw(m));
-            let samples = vec![0.0; FRAGMENT_GAP].into_iter().chain(x.iter().map(|v| quantise(v * g))).collect();
+            let samples = vec![0.0; FRAGMENT_GAP]
+                .into_iter()
+                .chain(x.iter().map(|v| quantise(v * g)))
+                .collect();
             let keyed = vec![unproto_bitrate(p.level, true)];
             self.c.tx.push(samples, 0, now, keyed, Kind::Fragment { last: k + 1 == n });
         }
@@ -234,9 +256,10 @@ impl Station {
                     secs(t_end),
                     self.c.session.state()
                 )));
-                self.c
-                    .session
-                    .on_ctrl(now, CtrlIn { code: d.code, fmt: d.fmt, hits: d.hits, snr_norm: d.snr_norm, t_end });
+                self.c.session.on_ctrl(
+                    now,
+                    CtrlIn { code: d.code, fmt: d.fmt, hits: d.hits, snr_norm: d.snr_norm, t_end },
+                );
             }
             Event::Tx(t) => {
                 if !self.un.bc.idle() {
@@ -266,13 +289,16 @@ impl Station {
                 let mark = self.c.reports.len();
                 self.drain();
                 if was == State::Answering {
-                    if let Some(i) = (mark..self.c.reports.len())
-                        .find(|&i| matches!(self.c.reports[i], Report::Host(HostEvent::Connected { .. })))
-                    {
+                    if let Some(i) = (mark..self.c.reports.len()).find(|&i| {
+                        matches!(self.c.reports[i], Report::Host(HostEvent::Connected { .. }))
+                    }) {
                         self.c.reports.insert(i, Report::UnencryptedLink);
                     }
                 }
-                if was == State::Receiving && decoded.last() == Some(&true) && self.c.session.state() != State::Qrt {
+                if was == State::Receiving
+                    && decoded.last() == Some(&true)
+                    && self.c.session.state() != State::Qrt
+                {
                     self.report_bitrate(t.record, false);
                 }
             }
@@ -298,7 +324,10 @@ impl Station {
                 keyed.extend((1..frames.len()).map(|_| self.bitrate(*level, true)));
                 let refs: Vec<&[u8]> = frames.iter().map(Vec::as_slice).collect();
                 let rnd = &mut self.tx_rnd;
-                (self.modm.transmission(*level, &refs, &mut |m| rnd.draw(m)), self.modm.gain(*level, d))
+                (
+                    self.modm.transmission(*level, &refs, &mut |m| rnd.draw(m)),
+                    self.modm.gain(*level, d),
+                )
             }
             Tx::CwId { call, blanks } => {
                 let mut x = if *blanks == 0 { vec![0.0; cwid::UNIT] } else { Vec::new() };
@@ -362,7 +391,9 @@ impl Modem for Station {
 
     fn apply(&mut self, l: Listen) {
         if self.c.listen.as_ref().is_none_or(|o| o.levels != l.levels || o.nframes != l.nframes) {
-            self.c.reports.push_back(Report::Trace(format!("expect {:?} x{}", l.levels, l.nframes)));
+            self.c
+                .reports
+                .push_back(Report::Trace(format!("expect {:?} x{}", l.levels, l.nframes)));
         }
         if self.keys.as_ref() != Some(&l.keys) {
             let k = &l.keys;
@@ -375,8 +406,12 @@ impl Modem for Station {
             self.keys = Some(l.keys.clone());
         }
         let answering = self.c.listen_on || self.c.session.state() != State::Listen;
-        let entries: Vec<CtrlEntry> =
-            self.entries.iter().filter(|e| answering && l.codes.contains(&e.code)).cloned().collect();
+        let entries: Vec<CtrlEntry> = self
+            .entries
+            .iter()
+            .filter(|e| answering && l.codes.contains(&e.code))
+            .cloned()
+            .collect();
         self.rx.set_ctrl_entries((!entries.is_empty()).then_some(&entries[..]));
         self.rx.expect(&l.levels, Some(l.nframes));
         self.rx.linked = l.linked;
@@ -403,13 +438,16 @@ impl Modem for Station {
         }
         for t in txs {
             let what = match &t {
-                Tx::Ctrl { code, fmt, extra } => format!("tx c{code} f{fmt}{}", if *extra > 0 { "+" } else { "" }),
+                Tx::Ctrl { code, fmt, extra } => {
+                    format!("tx c{code} f{fmt}{}", if *extra > 0 { "+" } else { "" })
+                }
                 Tx::Data { level, frames } => format!("tx L{level}x{}", frames.len()),
                 Tx::CwId { .. } => "tx cw".into(),
             };
             self.c.reports.push_back(Report::Trace(format!("{what} {:?}", self.c.session.state())));
             self.c.tx.stop_tune();
-            let earliest = if matches!(t, Tx::CwId { .. }) { now } else { self.c.tx.next_start(now) };
+            let earliest =
+                if matches!(t, Tx::CwId { .. }) { now } else { self.c.tx.next_start(now) };
             if matches!(t, Tx::Data { .. }) && self.c.session.state() == State::HeaderSent {
                 self.c.reports.push_back(Report::UnencryptedLink);
             }
@@ -458,7 +496,8 @@ impl Modem for Station {
         let fed = self.key_block(t0, input, output);
         self.c.now = t0 + n as Time;
         self.c.busy.set_bw(self.c.session.bandwidth());
-        let forced = self.c.tx.ptt() || !self.c.tx.is_empty() || self.c.session.state() != State::Listen;
+        let forced =
+            self.c.tx.ptt() || !self.c.tx.is_empty() || self.c.session.state() != State::Listen;
         for e in self.c.busy.feed(input, forced) {
             self.c.reports.push_back(Report::Busy(e));
         }
@@ -498,7 +537,8 @@ impl Modem for Station {
 
     fn cq_frame(&mut self, call: &str, bw: Option<&str>) -> bool {
         let Some(bw) = bw else { return false };
-        let ok = self.is_free() && self.un.bc.cq_frame(call, bw.parse().unwrap_or(Bandwidth::Hz2750));
+        let ok =
+            self.is_free() && self.un.bc.cq_frame(call, bw.parse().unwrap_or(Bandwidth::Hz2750));
         self.poll_unproto();
         ok
     }

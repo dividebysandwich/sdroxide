@@ -121,7 +121,9 @@ impl<M: Modem> Tnc<M> {
         if self.station.busy() != self.busy {
             self.report_busy(self.station.busy());
         }
-        if self.tune_until.is_some_and(|t| now >= t) || (self.tune_until.is_some() && !self.station.tuning()) {
+        if self.tune_until.is_some_and(|t| now >= t)
+            || (self.tune_until.is_some() && !self.station.tuning())
+        {
             self.stop_tune();
         }
     }
@@ -258,7 +260,9 @@ impl<M: Modem> Tnc<M> {
     fn command(&mut self, c: Command) {
         let idle = self.idle();
         let ok = match c {
-            Command::Connect { mycall, remote } => !self.station.ptt() && self.station.connect(&mycall, &remote, &[]),
+            Command::Connect { mycall, remote } => {
+                !self.station.ptt() && self.station.connect(&mycall, &remote, &[])
+            }
             Command::ConnectVia { mycall, remote, vias } => {
                 M::VIAS
                     && !self.station.ptt()
@@ -394,7 +398,9 @@ impl<M: Modem> Tnc<M> {
                 Report::Line(l) => self.say(Response::Line(l)),
                 // No KISS port is served; unproto frames heard are dropped.
                 Report::Kiss(..) => {}
-                Report::Bitrate { level, bps, tx } => self.say(Response::Bitrate { level, bps, tx }),
+                Report::Bitrate { level, bps, tx } => {
+                    self.say(Response::Bitrate { level, bps, tx })
+                }
                 Report::Host(HostEvent::Data(d)) => {
                     self.host.data(&d);
                     self.observed.push(Observed::Data(d));
@@ -409,7 +415,9 @@ impl<M: Modem> Tnc<M> {
                         self.set_mycalls(calls);
                     }
                 }
-                Report::Host(HostEvent::UnableToConnect) => self.observed.push(Observed::UnableToConnect),
+                Report::Host(HostEvent::UnableToConnect) => {
+                    self.observed.push(Observed::UnableToConnect)
+                }
                 Report::Host(HostEvent::TimedOut) => self.observed.push(Observed::TimedOut),
                 Report::Host(h) => {
                     if let Some(r) = response(h) {

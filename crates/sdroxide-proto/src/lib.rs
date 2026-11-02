@@ -1622,7 +1622,12 @@ use sdroxide_types::{
 ///
 /// v189: [`sdroxide_types::Command`] gains `ClearMemories`, appended; a v188
 /// peer has no variant to decode it into.
-pub const PROTO_VERSION: u16 = 189;
+///
+/// v190: VARA HF. `Mode::VaraHf` and `WinlinkLane::Vara` are appended to their
+/// enums; [`sdroxide_types::Command`] gains the `Vara*` commands; `DigiStatus`
+/// gains `vara` (`Option<VaraStatus>`) and `DigiConfig` the `vara_*` settings,
+/// each on its tail, so a v189 peer reads digital status out of step.
+pub const PROTO_VERSION: u16 = 190;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

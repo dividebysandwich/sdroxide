@@ -30,7 +30,7 @@ is the same rule `vendor/rax25` follows.
 | `crates/xara-phy/src`, `build.rs` | `vendor/xara/xara-phy` | none |
 | `crates/xara-arq/src` | `vendor/xara/xara-arq` | none |
 | `crates/xara-host/src/{command,response}.rs` | `vendor/xara/xara-host/src` | none; `lib.rs` declares only these two |
-| `crates/xara/src/station/{mod,hf,scheduler}.rs` | `crates/sdroxide-vara/src/station` | FM station dropped; `xara_ui::telemetry::Link` replaced by a local copy of the struct |
+| `crates/xara/src/station/{mod,hf,scheduler}.rs` | `crates/sdroxide-vara/src/station` | FM station dropped; `xara_ui::telemetry::Link` replaced by a local copy of the struct; reformatted to this workspace's rustfmt settings |
 | `crates/xara/src/tnc.rs` | `crates/sdroxide-vara/src/tnc.rs` | telemetry, web-UI controls, restart, KISS port and logging removed; replies also fed to the operator's panel |
 | `rustfmt.toml`, `LICENSE` | `vendor/xara/` | none |
 

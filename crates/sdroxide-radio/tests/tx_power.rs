@@ -113,8 +113,7 @@ fn run(cmds: Vec<Command>, settle: Duration) -> Vec<Told> {
 
 fn run_rig(cmds: Vec<Command>, settle: Duration, echo: bool) -> Vec<Told> {
     let log = Arc::new(Mutex::new(Vec::new()));
-    let src =
-        PowerRig { center: 14_074_000.0, log: Arc::clone(&log), echo, reports: Vec::new() };
+    let src = PowerRig { center: 14_074_000.0, log: Arc::clone(&log), echo, reports: Vec::new() };
     let mut h = start_engine(Box::new(src), caps(), EngineConfig::default());
     let thread = h.thread.take();
     std::thread::sleep(Duration::from_millis(300));

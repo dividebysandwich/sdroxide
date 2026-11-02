@@ -96,10 +96,21 @@ impl TxScheduler {
     }
 
     pub fn next_start(&self, now: Time) -> Time {
-        if !self.bursts.is_empty() || (self.ptt && self.unkey.is_none()) { now } else { self.after_hold(now) }
+        if !self.bursts.is_empty() || (self.ptt && self.unkey.is_none()) {
+            now
+        } else {
+            self.after_hold(now)
+        }
     }
 
-    pub fn push(&mut self, samples: Vec<f64>, tail: usize, earliest: Time, keyed: Vec<Report>, kind: Kind) {
+    pub fn push(
+        &mut self,
+        samples: Vec<f64>,
+        tail: usize,
+        earliest: Time,
+        keyed: Vec<Report>,
+        kind: Kind,
+    ) {
         self.bursts.push_back(Burst { samples, tail, pos: 0, earliest, keyed, kind });
     }
 

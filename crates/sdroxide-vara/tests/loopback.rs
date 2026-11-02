@@ -112,11 +112,13 @@ fn session(bw: Bandwidth, registered: bool, payload: usize) -> (Vec<String>, Vec
     let ok = p.run_until(60.0, |_| {
         la.extend(lines(&ha));
         lb.extend(lines(&hb));
-        la.iter().any(|l| l.starts_with("CONNECTED")) && lb.iter().any(|l| l.starts_with("CONNECTED"))
+        la.iter().any(|l| l.starts_with("CONNECTED"))
+            && lb.iter().any(|l| l.starts_with("CONNECTED"))
     });
     assert!(ok, "no link: A {la:?} B {lb:?}");
 
-    let msg: Vec<u8> = (0..payload).map(|i| b"The quick brown fox jumps over the lazy dog. "[i % 45]).collect();
+    let msg: Vec<u8> =
+        (0..payload).map(|i| b"The quick brown fox jumps over the lazy dog. "[i % 45]).collect();
     ha.send_data(&msg);
     let mut got = Vec::new();
     let ok = p.run_until(600.0, |_| {
@@ -127,7 +129,12 @@ fn session(bw: Bandwidth, registered: bool, payload: usize) -> (Vec<String>, Vec
     });
     assert!(ok, "A→B moved {} of {} bytes", got.len(), msg.len());
     assert_eq!(got, msg);
-    eprintln!("{bw:?} reg={registered}: {} bytes by t={:.1}s, max level {}", msg.len(), p.a.station().now() as f64 / 48000.0, max_level(&la));
+    eprintln!(
+        "{bw:?} reg={registered}: {} bytes by t={:.1}s, max level {}",
+        msg.len(),
+        p.a.station().now() as f64 / 48000.0,
+        max_level(&la)
+    );
 
     let back = b"73 de OE1BBB\r".to_vec();
     hb.send_data(&back);
@@ -207,4 +214,44 @@ fn one_host_at_a_time() {
     assert!(h.claim("panel").is_ok());
     drop(m);
     assert!(h.claim("late").is_err(), "a modem that is gone must refuse");
+}
+
+/// The figure `VaraController::tx_peak` declares ([`sdroxide_vara::TX_PEAK`]).
+/// Measured over a whole session at upstream's default drive (−5 dB) — the
+/// call, the acknowledgements and data at every level the link climbed through
+/// — rather than assumed. At 0 dB the OFDM peaks reach the clamp and clip,
+/// which is why upstream defaults below it.
+#[test]
+fn transmit_peak_at_default_drive() {
+    let mut p = Pair::new(Bandwidth::Hz2300, true);
+    let ha = p.a.host().handle().claim("A").unwrap();
+    let hb = p.b.host().handle().claim("B").unwrap();
+    hb.command("LISTEN ON");
+    ha.command("CONNECT OE1AAA OE1BBB");
+    ha.send_data(&vec![b'x'; 8000]);
+    let (mut peak, mut sum, mut n) = (0f64, 0f64, 0usize);
+    p.run_until(60.0, |p| {
+        for &v in p.a_out.iter().chain(p.b_out.iter()) {
+            if v != 0.0 {
+                peak = peak.max(v.abs());
+                sum += v * v;
+                n += 1;
+            }
+        }
+        false
+    });
+    let rms = (sum / n.max(1) as f64).sqrt();
+    eprintln!("peak {peak:.3} rms {rms:.3} over {n} keyed samples");
+    assert!(n > 0);
+    assert!(
+        peak <= sdroxide_vara::TX_PEAK as f64,
+        "peak {peak} above the declared {}",
+        sdroxide_vara::TX_PEAK
+    );
+    assert!(
+        peak > sdroxide_vara::TX_PEAK as f64 * 0.9,
+        "declared peak is {} but the signal only reaches {peak}",
+        sdroxide_vara::TX_PEAK
+    );
+    let _ = (&ha, &hb);
 }
