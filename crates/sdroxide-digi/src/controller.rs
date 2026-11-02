@@ -652,6 +652,13 @@ impl DigiController {
     /// Abort any in-progress burst immediately.
     pub fn abort_tx(&mut self) {
         self.burst = None;
+        // **Stopping the transmission stops the QSO.** The button says TX
+        // STOPPEN, and it used to drop the burst and leave the machine where it
+        // stood — so the panel went on believing a QSO was running, and CALL CQ
+        // stayed greyed out for the rest of the session until the operator found
+        // QSO STOPPEN as well (bench, 2026-11-02). Nothing can continue a QSO
+        // whose over the operator has just cancelled.
+        self.qso.abort();
         self.status_dirty = true;
     }
 
@@ -1240,6 +1247,28 @@ mod tests {
         c.on_rx_audio(&vec![0.0f32; (2.0 * 12_000.0) as usize]);
         c.poll(t(105.1), 14_074_000.0);
         assert_eq!(c.short_slots, 1);
+    }
+
+    /// **Stopping the transmission ends the QSO**, so the panel stops saying a
+    /// QSO is running and CALL CQ comes back. It used to leave the machine in
+    /// the calling step, which greyed CQ out for the rest of the session.
+    #[test]
+    fn aborting_the_transmission_returns_the_qso_machine_to_idle() {
+        let mut c = DigiController::new(Mode::Ft8, cfg(), 12_000.0);
+        c.call_cq();
+        let now = UNIX_EPOCH + Duration::from_secs_f64(1_609_459_201.0);
+        c.poll(now, 14_074_000.0);
+        assert!(c.tx_burst_active(), "a burst is loaded before the abort");
+        assert_ne!(c.status().step, sdroxide_types::QsoStep::Idle, "a QSO is running");
+
+        c.abort_tx();
+
+        assert!(!c.tx_burst_active(), "the burst is gone");
+        assert_eq!(
+            c.status().step,
+            sdroxide_types::QsoStep::Idle,
+            "and so is the QSO: nothing can continue an over the operator cancelled"
+        );
     }
 
     #[test]
