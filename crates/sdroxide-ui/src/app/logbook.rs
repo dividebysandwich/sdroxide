@@ -403,15 +403,16 @@ impl SdroxideApp {
     /// manual), with add / edit / delete and ADIF/TXT export.
     pub(in crate::app) fn logbook_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
         let mut open = self.show_logbook;
-        let resp = egui::Window::new(tr!("logbook-logbook"))
-            .id(crate::layout::salted_id(ctx, "LOGBOOK"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 720.0))
-            .default_height(crate::layout::window_h(ctx, 560.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+        let tool_title = tr!("logbook-logbook");
+        let mut tool_st = self.take_tool_state("LOGBOOK");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("LOGBOOK", &tool_title, [720.0, 560.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 ui.horizontal(|ui| {
                     let adding = self.log_edit.as_ref().is_some_and(|f| f.id == 0);
                     if crate::chrome::chip(ui, adding, tr!("logbook-new-entry")).clicked() {
@@ -474,10 +475,9 @@ impl SdroxideApp {
                     |ui, rows| self.log_list(ui, &view, rows),
                 );
                 self.log_view = view;
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+            },
+        );
+        self.put_tool_state("LOGBOOK", tool_st);
         self.show_logbook = open;
     }
 

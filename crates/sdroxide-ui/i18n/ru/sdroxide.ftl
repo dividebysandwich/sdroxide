@@ -5485,3 +5485,5 @@ settings-ui-undock-hint =
     В Wayland размер восстанавливается, но место окна решает композитор: сделайте его плавающим и закрепите за монитором правилом окна с app-id "{ $app_id }".
 settings-ui-undocked = Отстыковано — своё окно
 settings-ui-window-label = Окно { $module }
+frame-window-chip-hint = WINDOW — вынести это окно в отдельное окно ОС, чтобы разместить его на другом мониторе
+frame-dock-panel-pane-hint = DOCK — вернуть эту панель в область под водопадом

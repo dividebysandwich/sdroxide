@@ -5431,3 +5431,5 @@ settings-ui-undock-hint =
     Wayland ではサイズは復元されますが、ウィンドウの位置はコンポジターが決めます。フロート表示にし、app-id "{ $app_id }" に一致するウィンドウルールでモニターに固定してください。
 settings-ui-undocked = ドック解除 — 独立ウィンドウ
 settings-ui-window-label = { $module } ウィンドウ
+frame-window-chip-hint = ウィンドウ — このウィンドウを独立したOSウィンドウにして別のモニターに置きます
+frame-dock-panel-pane-hint = ドック — このパネルをウォーターフォール下のペインに戻します

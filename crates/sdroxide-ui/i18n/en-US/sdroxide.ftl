@@ -5534,3 +5534,5 @@ settings-ui-undock-hint =
     On Wayland the size comes back but the compositor decides where a window goes: float it and pin it to a monitor with a window rule matching app-id "{ $app_id }".
 settings-ui-undocked = Undocked — its own window
 settings-ui-window-label = { $module } window
+frame-window-chip-hint = WINDOW — move this window into its own OS window, to put it on another monitor
+frame-dock-panel-pane-hint = DOCK — return this panel to the pane below the waterfall

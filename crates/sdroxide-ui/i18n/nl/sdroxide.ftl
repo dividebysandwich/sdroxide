@@ -5482,3 +5482,5 @@ settings-ui-undock-hint =
     Onder Wayland komt de grootte terug, maar de compositor bepaalt waar een venster komt: laat het zweven en zet het vast op een monitor met een vensterregel die overeenkomt met app-id "{ $app_id }".
 settings-ui-undocked = Losgekoppeld — eigen venster
 settings-ui-window-label = Venster { $module }
+frame-window-chip-hint = VENSTER — verplaats dit venster naar een eigen OS-venster, om het op een andere monitor te zetten
+frame-dock-panel-pane-hint = DOCK — zet dit paneel terug in het vlak onder de waterval

@@ -5490,3 +5490,5 @@ settings-ui-undock-hint =
     No Wayland o tamanho volta, mas o compositor decide onde uma janela fica: deixe-a flutuante e fixe-a em um monitor com uma regra de janela que corresponda ao app-id "{ $app_id }".
 settings-ui-undocked = Desacoplado — janela própria
 settings-ui-window-label = Janela { $module }
+frame-window-chip-hint = JANELA — move esta janela para uma janela própria do sistema, para colocá-la em outro monitor
+frame-dock-panel-pane-hint = ACOPLAR — devolve este painel ao painel abaixo do waterfall

@@ -688,6 +688,299 @@ impl SdroxideApp {
     }
 }
 
+/// Where a **tool window** is — docked as a window inside the main one, or
+/// undocked into an OS window of its own — and where that OS window last was.
+///
+/// **Session-only**, like the in-viewport positions egui keeps for the same
+/// windows: a tool is transient, and where it sat last run is not worth a config
+/// field per tool. Kept on the app keyed by the tool's id, and taken out around
+/// the draw (see [`tool_window`]) so the window's body can borrow the app freely.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(in crate::app) struct ToolWindowState {
+    pub undocked: bool,
+    pub window: Option<sdroxide_types::DetachedWindow>,
+}
+
+/// How a tool window is built: its id (also its OS window's app-id, as
+/// `sdroxide-tool-<id>`), its title and its sizes.
+pub(in crate::app) struct ToolWindow<'a> {
+    /// The window's id, salted per radio. Kept as each tool's existing id so the
+    /// positions egui remembers for the docked windows survive.
+    pub id: &'static str,
+    pub title: &'a str,
+    pub default_size: [f32; 2],
+    /// A floor on how small the docked window may be dragged; zero for none.
+    pub min_size: [f32; 2],
+    pub resizable: bool,
+    /// Open in the middle of the screen the first time rather than in a corner.
+    pub centre_first: bool,
+    /// The body scrolls vertically rather than growing the window.
+    pub vscroll: bool,
+}
+
+impl<'a> ToolWindow<'a> {
+    pub(in crate::app) fn new(id: &'static str, title: &'a str, default_size: [f32; 2]) -> Self {
+        Self {
+            id,
+            title,
+            default_size,
+            min_size: [0.0, 0.0],
+            resizable: true,
+            centre_first: false,
+            vscroll: false,
+        }
+    }
+
+    pub(in crate::app) fn min_size(mut self, min_size: [f32; 2]) -> Self {
+        self.min_size = min_size;
+        self
+    }
+
+    pub(in crate::app) fn fixed_size(mut self) -> Self {
+        self.resizable = false;
+        self
+    }
+
+    pub(in crate::app) fn centre_first(mut self) -> Self {
+        self.centre_first = true;
+        self
+    }
+
+    pub(in crate::app) fn vscroll(mut self) -> Self {
+        self.vscroll = true;
+        self
+    }
+}
+
+/// The **⇱** button for a tool window's **title bar**, beside egui's fold and
+/// close.
+///
+/// egui draws its own title bar and offers no hook to add to it, so this is an
+/// `Area` laid over the title bar. The overlay is the point: a control in the
+/// body **reserves** a row and pushes the content down, while this one costs the
+/// body nothing. `Order::Middle`, the order egui's own windows live in, so a
+/// window raised over this one covers the button with everything else rather
+/// than the button showing through it. Returns whether it was pressed.
+#[cfg(not(target_arch = "wasm32"))]
+fn tool_window_title_button(
+    ctx: &egui::Context,
+    win_id: egui::Id,
+    win_rect: egui::Rect,
+    body_top: f32,
+) -> bool {
+    if !body_top.is_finite() {
+        return false;
+    }
+    // The title bar is the strip from the window's top down to where the body
+    // begins (its fold left, its close right).
+    let title_h = (body_top - win_rect.top()).clamp(18.0, 40.0);
+    let side = title_h - 6.0;
+    // egui's close button owns the title bar's right edge; put ours just inside
+    // it, so the two never overlap.
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(win_rect.right() - 2.0 * side - 10.0, win_rect.top() + (title_h - side) / 2.0),
+        egui::vec2(side, side),
+    );
+    let mut clicked = false;
+    egui::Area::new(win_id.with("title-btn")).fixed_pos(rect.min).order(egui::Order::Middle).show(
+        ctx,
+        |ui| {
+            ui.set_min_size(rect.size());
+            clicked = crate::chrome::chip_window_icon(ui, crate::chrome::WindowIcon::Out)
+                .on_hover_text(tr!("frame-window-chip-hint"))
+                .clicked();
+        },
+    );
+    clicked
+}
+
+/// The DOCK chip an undocked tool window wears at the top-right of its body.
+///
+/// A **one-row** allocation, right-aligned: a layout over the whole available
+/// height would centre the chip and push the tool's body to the bottom.
+#[cfg(not(target_arch = "wasm32"))]
+fn tool_window_dock_chip(ui: &mut egui::Ui) -> bool {
+    let size = egui::vec2(ui.available_width(), crate::chrome::chip_height(ui, None));
+    let mut clicked = false;
+    ui.allocate_ui_with_layout(size, egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        clicked = crate::chrome::chip_window_icon(ui, crate::chrome::WindowIcon::In)
+            .on_hover_text(tr!("frame-dock-panel-pane-hint"))
+            .clicked();
+    });
+    clicked
+}
+
+/// The window spec for a **tool window** undocked into its own OS window.
+/// Distinct from the module specs only in the id grammar — `sdroxide-tool-<id>`
+/// — so an operator's rule can target them as a group or one by one.
+#[cfg(not(target_arch = "wasm32"))]
+fn tool_spec(id: &str, title: &str, default_size: [f32; 2]) -> DetachedWindowSpec {
+    let app_id = format!("sdroxide-tool-{}", id.to_ascii_lowercase().replace(' ', "-"));
+    DetachedWindowSpec {
+        viewport_id: egui::ViewportId::from_hash_of(&app_id),
+        settle_id: egui::Id::new(format!("{app_id}-geom")),
+        app_id,
+        title: tr!("frame-detached-title", flavor = FLAVOR, name = title),
+        default_size,
+        min_size: [240.0, 160.0],
+    }
+}
+
+/// Draw a **tool window** — the scanner, the logbook and the rest — either as an
+/// egui window in the main window (docked, the default) or as its own OS window
+/// (undocked, native only). `open` is the caller's `show_*` flag, cleared when
+/// the window is closed.
+///
+/// Docked, the title bar carries a **⇱** that sends the tool out; undocked, its
+/// body carries a dock chip that brings it back. Closing an undocked tool's OS
+/// window *closes the tool*, it does not dock it: the operator shut it, so it
+/// should not reappear in the main window.
+///
+/// `state` is the tool's own [`ToolWindowState`], taken off the app by the
+/// caller around this call, so `body` may borrow the app as it always has.
+pub(in crate::app) fn tool_window<R>(
+    ctx: &egui::Context,
+    tool: ToolWindow<'_>,
+    state: &mut ToolWindowState,
+    child: ChildWindow,
+    open: &mut bool,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<R> {
+    if !*open {
+        return None;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if state.undocked {
+        return tool_window_os(ctx, &tool, state, child, open, body);
+    }
+    let _ = child;
+    tool_window_egui(ctx, &tool, state, open, body)
+}
+
+/// The tool as an egui window in the main window.
+fn tool_window_egui<R>(
+    ctx: &egui::Context,
+    tool: &ToolWindow<'_>,
+    state: &mut ToolWindowState,
+    open: &mut bool,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<R> {
+    let win_id = crate::layout::salted_id(ctx, tool.id);
+    #[cfg_attr(target_arch = "wasm32", allow(unused_mut, unused_variables))]
+    let mut body_top = f32::NAN;
+    // A height of zero is "as tall as its content", which is what a window
+    // given only a width has always been.
+    let size = egui::vec2(
+        crate::layout::window_w(ctx, tool.default_size[0]),
+        crate::layout::window_h(ctx, tool.default_size[1].max(1.0)),
+    );
+    let mut w = egui::Window::new(tool.title)
+        .id(win_id)
+        .open(open)
+        .frame(crate::chrome::window_frame())
+        .resizable(tool.resizable)
+        .vscroll(tool.vscroll)
+        .default_width(size.x);
+    if tool.default_size[1] > 0.0 {
+        w = w.default_height(size.y);
+    }
+    if tool.min_size[0] > 0.0 {
+        w = w.min_width(crate::layout::window_w(ctx, tool.min_size[0]));
+    }
+    if tool.min_size[1] > 0.0 {
+        w = w.min_height(crate::layout::window_h(ctx, tool.min_size[1]));
+    }
+    // First open only — egui remembers a window's position, so this decides
+    // where a window lands once and never again.
+    if tool.centre_first {
+        w = w.default_pos(ctx.content_rect().center() - size * 0.5);
+    }
+    let mut out = None;
+    let resp = w.show(ctx, |ui| {
+        crate::chrome::window_body_bg(ui);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            body_top = ui.min_rect().min.y;
+        }
+        out = Some(body(ui));
+    });
+    if let Some(r) = &resp {
+        crate::chrome::paint_window_border(ctx, &r.response);
+        #[cfg(not(target_arch = "wasm32"))]
+        if tool_window_title_button(ctx, win_id, r.response.rect, body_top) {
+            state.undocked = true;
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = state;
+    out
+}
+
+/// The tool in its own OS window.
+#[cfg(not(target_arch = "wasm32"))]
+fn tool_window_os<R>(
+    ctx: &egui::Context,
+    tool: &ToolWindow<'_>,
+    state: &mut ToolWindowState,
+    child: ChildWindow,
+    open: &mut bool,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<R> {
+    // An OS window needs a height to open at even where the docked one sizes
+    // itself to its content.
+    let opening = [
+        tool.default_size[0],
+        if tool.default_size[1] > 0.0 { tool.default_size[1] } else { 520.0 },
+    ];
+    let spec = tool_spec(tool.id, tool.title, opening);
+    let mut dock = false;
+    let mut out = None;
+    let outcome = detached_viewport(ctx, &spec, state.window, child, |ui| {
+        // A tool's own window gets the background the in-window one has from
+        // its `egui::Window` frame — a tool body assumes one.
+        egui::Frame::new()
+            .fill(crate::theme::BG_DEEP())
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                ui.set_min_size(ui.available_size());
+                dock = tool_window_dock_chip(ui);
+                if tool.vscroll {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| out = Some(body(ui)));
+                } else {
+                    out = Some(body(ui));
+                }
+            });
+    });
+    // Settle-persist the geometry as the modules do.
+    if let Some(g) = outcome.geometry {
+        let last: Option<sdroxide_types::DetachedWindow> = ctx.data(|d| d.get_temp(spec.settle_id));
+        if last == Some(g) || outcome.close_requested {
+            state.window = Some(g);
+        }
+        ctx.data_mut(|d| d.insert_temp(spec.settle_id, g));
+    }
+    if outcome.close_requested {
+        *open = false;
+    }
+    state.undocked = *open && !dock;
+    out
+}
+
+impl SdroxideApp {
+    /// Take a tool window's [`ToolWindowState`] off the app for the length of
+    /// its draw. Paired with [`Self::put_tool_state`].
+    pub(in crate::app) fn take_tool_state(&mut self, id: &'static str) -> ToolWindowState {
+        self.tool_windows.remove(id).unwrap_or_default()
+    }
+
+    /// Put a tool window's state back after its draw.
+    pub(in crate::app) fn put_tool_state(&mut self, id: &'static str, state: ToolWindowState) {
+        self.tool_windows.insert(id, state);
+    }
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
@@ -713,6 +1006,19 @@ mod tests {
         assert!(pos.x <= 1920.0 - 80.0 && pos.y <= 1080.0 - 60.0, "still off screen: {pos:?}");
         let (_, pos) = detached_geometry(monitor, seed(-1500.0, 100.0), [960.0, 540.0]);
         assert_eq!(pos, Some(egui::pos2(-1500.0, 100.0)), "a monitor to the left was undone");
+    }
+
+    /// A tool's OS window carries `sdroxide-tool-<id>`, lower case and with no
+    /// spaces, so one compositor rule can match every tool (`sdroxide-tool-*`)
+    /// and another a single one. An operator's rules depend on this spelling.
+    #[test]
+    fn a_tool_window_app_id_is_one_word_per_tool() {
+        assert_eq!(
+            tool_spec("GRID TRACKER", "Grid", [1.0, 1.0]).app_id,
+            "sdroxide-tool-grid-tracker"
+        );
+        assert_eq!(tool_spec("Scanner", "Scanner", [1.0, 1.0]).app_id, "sdroxide-tool-scanner");
+        assert_eq!(tool_spec("MAIL-LOG", "Log", [1.0, 1.0]).app_id, "sdroxide-tool-mail-log");
     }
 
     /// The window opens fitted to the monitor it is about to open on, and never

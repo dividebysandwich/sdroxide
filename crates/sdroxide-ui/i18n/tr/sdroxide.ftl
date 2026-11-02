@@ -5481,3 +5481,5 @@ settings-ui-undock-hint =
     Wayland'de boyut geri gelir ama bir pencerenin nereye gideceğine compositor karar verir: onu yüzdürüp app-id "{ $app_id }" ile eşleşen bir pencere kuralıyla bir monitöre sabitleyin.
 settings-ui-undocked = Ayrılmış — kendi penceresi
 settings-ui-window-label = { $module } penceresi
+frame-window-chip-hint = PENCERE — bu pencereyi kendi işletim sistemi penceresine taşıyın, başka bir monitöre koymak için
+frame-dock-panel-pane-hint = YERLEŞTİR — bu paneli şelalenin altındaki bölmeye geri döndürün

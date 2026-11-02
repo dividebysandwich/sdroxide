@@ -5518,3 +5518,5 @@ settings-ui-undock-hint =
     Unter Wayland kommt die Größe zurück, aber der Compositor entscheidet, wohin ein Fenster kommt: Machen Sie es schwebend und heften Sie es mit einer Fensterregel für die app-id „{ $app_id }“ an einen Monitor.
 settings-ui-undocked = Abgedockt — eigenes Fenster
 settings-ui-window-label = Fenster { $module }
+frame-window-chip-hint = WINDOW — dieses Fenster in ein eigenes Betriebssystem-Fenster verschieben, etwa auf einen anderen Monitor
+frame-dock-panel-pane-hint = DOCK — dieses Panel in den Bereich unter dem Wasserfall zurückholen

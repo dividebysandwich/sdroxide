@@ -5492,3 +5492,5 @@ settings-ui-undock-hint =
     Su Wayland la dimensione viene ripristinata ma è il compositor a decidere dove va una finestra: rendila flottante e fissala a un monitor con una regola di finestra che corrisponda all'app-id "{ $app_id }".
 settings-ui-undocked = Sganciato — finestra propria
 settings-ui-window-label = finestra { $module }
+frame-window-chip-hint = FINESTRA — sposta questa finestra in una finestra del sistema operativo a sé, per metterla su un altro monitor
+frame-dock-panel-pane-hint = ACCORPA — riporta questo pannello nel riquadro sotto il waterfall

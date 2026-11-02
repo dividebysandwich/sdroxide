@@ -5423,3 +5423,5 @@ settings-ui-undock-hint =
     在Wayland下大小可以恢复，但窗口位置由合成器决定：请让它浮动，并用匹配app-id "{ $app_id }" 的窗口规则把它固定到某块显示器。
 settings-ui-undocked = 已取消停靠：独立窗口
 settings-ui-window-label = { $module }窗口
+frame-window-chip-hint = 窗口：把此窗口移到独立的系统窗口，以便放到另一个显示器上
+frame-dock-panel-pane-hint = 停靠：把此面板放回瀑布图下方的窗格

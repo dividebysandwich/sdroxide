@@ -106,22 +106,20 @@ impl SdroxideApp {
             return;
         }
         let mut open = self.show_drm;
-        let resp = egui::Window::new("DRM")
-            .id(crate::layout::salted_id(ctx, "DRM"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 420.0))
-            .default_height(crate::layout::window_h(ctx, 380.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.drm_body(ui)
-            });
-        if let Some(r) = &resp {
-            cmds.extend(r.inner.clone().unwrap_or_default());
-        }
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
+        let tool_title = "DRM".to_string();
+        let mut tool_st = self.take_tool_state("DRM");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        let resp = crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("DRM", &tool_title, [420.0, 380.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| self.drm_body(ui),
+        );
+        self.put_tool_state("DRM", tool_st);
+        if let Some(c) = resp {
+            cmds.extend(c);
         }
         self.show_drm = open;
     }

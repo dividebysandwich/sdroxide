@@ -474,28 +474,27 @@ fn memory_repeater_rows(ui: &mut egui::Ui, e: &mut MemoryEdit) {
 impl SdroxideApp {
     pub(in crate::app) fn memories_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
         let mut open = self.show_memories;
-        let resp = egui::Window::new(tr!("windows-memories"))
-            .id(crate::layout::salted_id(ctx, "Memories"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
+        let tool_title = tr!("windows-memories");
+        let mut tool_st = self.take_tool_state("Memories");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
             // Wide enough for a row: the recall button, a name, a dial to the
             // Hz, a mode, and the edit and delete buttons. Narrower than this
             // and every name is drawn with an ellipsis on it.
-            .default_width(crate::layout::window_w(ctx, 460.0))
+            //
             // A real starting height, and a floor under what egui remembers:
             // the window used to hug its (often short) list and come up a few
             // rows tall. See the voice keyer below for why the minimum matters
             // as much as the default.
-            .default_height(crate::layout::window_h(ctx, 460.0))
-            .min_height(crate::layout::window_h(ctx, 280.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.memories_ui(ui, cmds)
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+            crate::app::undocked::ToolWindow::new("Memories", &tool_title, [460.0, 460.0])
+                .min_size([0.0, 280.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| self.memories_ui(ui, cmds),
+        );
+        self.put_tool_state("Memories", tool_st);
         self.show_memories = open;
     }
 
@@ -848,12 +847,12 @@ impl SdroxideApp {
         let tuning = self.state.tx.tune;
         let slots: Vec<sdroxide_types::VoiceSlotInfo> = self.voice.slots.clone();
 
-        let resp = egui::Window::new(tr!("windows-voice-keyer"))
-            .id(crate::layout::salted_id(ctx, "Voice keyer"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(false)
-            // `min_width` as well as `default_width`: the default only applies
+        let tool_title = tr!("windows-voice-keyer");
+        let mut tool_st = self.take_tool_state("Voice keyer");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            // A minimum width as well as the default: the default only applies
             // the first time the window is ever shown, and egui persists its
             // size — without the minimum, a build that shipped a narrower
             // window would keep squeezing the slot-name fields forever.
@@ -862,10 +861,13 @@ impl SdroxideApp {
             // reverse: a keyer opened at 600 pt on a desktop would otherwise
             // stay 600 pt wide on the phone that later loads the same storage,
             // with a third of it off the side of the screen.
-            .default_width(crate::layout::window_w(ctx, 600.0))
-            .min_width(crate::layout::window_w(ctx, 600.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+            crate::app::undocked::ToolWindow::new("Voice keyer", &tool_title, [600.0, 0.0])
+                .min_size([600.0, 0.0])
+                .fixed_size(),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 ui.label(
                     RichText::new(tr!("windows-rec-records-your-microphone-play"))
                         .weak()
@@ -1079,10 +1081,9 @@ impl SdroxideApp {
                             .size(11.0),
                     );
                 }
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+            },
+        );
+        self.put_tool_state("Voice keyer", tool_st);
         // Keep the position readout moving while something is running; the app
         // otherwise idles between spectrum frames.
         if self.voice.busy() {

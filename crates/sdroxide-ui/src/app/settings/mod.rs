@@ -1085,24 +1085,27 @@ impl SdroxideApp {
         // again — so the width drifted with wherever the operator had been
         // while the height stayed at egui's 420 pt default no matter how tall
         // the display was.
-        let want =
-            egui::vec2(crate::layout::window_w(ctx, 900.0), crate::layout::window_h(ctx, 760.0));
-        let resp = egui::Window::new(tr!("settings-settings"))
-            // Pinned id, versioned: egui persists the remembered size and
-            // position under it, and the suffix drops the stale (often very
-            // wide, always 420 pt tall) geometry left by the builds before this
-            // one. Position is centred on first use because it goes with it.
-            .id(crate::layout::salted_id(ctx, "settings-window-v2"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_pos(ctx.content_rect().center() - want * 0.5)
-            .default_size(want)
-            .min_width(crate::layout::window_w(ctx, 380.0))
-            .min_height(crate::layout::window_h(ctx, 300.0))
-            .vscroll(true)
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+        // Pinned id, versioned: egui persists the remembered size and position
+        // under it, and the suffix drops the stale (often very wide, always
+        // 420 pt tall) geometry left by the builds before this one. Position is
+        // centred on first use because it goes with it.
+        let tool_title = tr!("settings-settings");
+        let mut tool_st = self.take_tool_state("settings-window-v2");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new(
+                "settings-window-v2",
+                &tool_title,
+                [900.0, 760.0],
+            )
+            .min_size([380.0, 300.0])
+            .centre_first()
+            .vscroll(),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 bars.restore(ui);
                 // On the frame the dialog opens, jump back to the origin so
                 // the tab bar is on screen. Instant, not animated: a leftover
@@ -1247,11 +1250,10 @@ impl SdroxideApp {
                         },
                     );
                 });
-            });
+            },
+        );
+        self.put_tool_state("settings-window-v2", tool_st);
         bars.pop(ctx);
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
         self.show_settings = open;
         self.settings_tab = tab;
         self.settings_upload_tab = upload_tab;

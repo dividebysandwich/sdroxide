@@ -62,20 +62,18 @@ impl SdroxideApp {
     /// The BANDS window: one row per band, forecast beside evidence.
     pub(in crate::app) fn bands_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_bands;
-        let resp = egui::Window::new(tr!("bands-bands"))
-            .id(crate::layout::salted_id(ctx, "BANDS"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 520.0))
-            .default_height(crate::layout::window_h(ctx, 460.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.bands_body(ui)
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+        let tool_title = tr!("bands-bands");
+        let mut tool_st = self.take_tool_state("BANDS");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("BANDS", &tool_title, [520.0, 460.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| self.bands_body(ui),
+        );
+        self.put_tool_state("BANDS", tool_st);
         self.show_bands = open;
         if self.show_bands {
             // The IBP beacon and its countdown move every second; keep painting

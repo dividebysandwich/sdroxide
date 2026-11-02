@@ -5489,3 +5489,5 @@ settings-ui-undock-hint =
     Sous Wayland la taille est restaurée mais c'est le compositeur qui décide de l'emplacement d'une fenêtre : rendez-la flottante et épinglez-la sur un écran avec une règle de fenêtre correspondant à l'app-id « { $app_id } ».
 settings-ui-undocked = Détachée — sa propre fenêtre
 settings-ui-window-label = Fenêtre { $module }
+frame-window-chip-hint = WINDOW — déplacer cette fenêtre dans une fenêtre système à part, pour la mettre sur un autre écran
+frame-dock-panel-pane-hint = DOCK — remettre ce panneau dans le volet sous la cascade

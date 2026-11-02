@@ -573,6 +573,9 @@ pub struct SdroxideApp {
     /// decode list while the main window shows another pane.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     panel_window_pane: usize,
+    /// Each tool window's docked/undocked state, by its id — see
+    /// `undocked::tool_window`. Session-only.
+    tool_windows: std::collections::HashMap<&'static str, undocked::ToolWindowState>,
     /// How wide the docked column may be this frame, or `None` where it cannot
     /// dock — see [`top_bar::band_dock_room`]. Settled at the top of the frame
     /// from this app's own column, before the top bar draws the chip that
@@ -1559,6 +1562,7 @@ impl SdroxideApp {
             band_dock_visible: false,
             aux_view: ViewState::default(),
             panel_window_pane: 0,
+            tool_windows: Default::default(),
             band_dock_room: None,
             // Corrected on the first frame, once the viewport size is known.
             tier: crate::layout::Tier::Desktop,
