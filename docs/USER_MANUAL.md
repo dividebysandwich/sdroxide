@@ -12239,9 +12239,12 @@ configuration.
 **Tool windows** — the scanner, the logbook, Settings and the rest — can go to
 their own windows too. A docked tool window has a small **⇱** in its title bar,
 next to the close box: press it and the tool moves into an OS window of its own,
-where a dock icon at its top right brings it back. Closing an undocked tool
-closes it rather than docking it. Where a tool window sat is remembered for the
-session only.
+where a dock icon at its top right brings it back. Each tool remembers where you
+left it: closing a tool that is in its own window closes it without docking it,
+so the next time you open it — or after a restart — it opens in its own window
+again, at the same size and place, and a tool you left docked opens docked. Only
+the ⇱ and the dock icon move a tool between the two. This is kept in
+`tool_windows.json` beside the rest of the configuration.
 
 **Window rules.** On Wayland the program cannot place a window: a client is given
 no absolute position, so on niri, sway or GNOME a new window opens where the

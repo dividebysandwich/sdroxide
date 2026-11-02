@@ -1148,14 +1148,28 @@ impl SdroxideApp {
 /// Where a **tool window** is — docked as a window inside the main one, or
 /// undocked into an OS window of its own — and where that OS window last was.
 ///
-/// **Session-only**, like the in-viewport positions egui keeps for the same
-/// windows: a tool is transient, and where it sat last run is not worth a config
-/// field per tool. Kept on the app keyed by the tool's id, and taken out around
-/// the draw (see [`tool_window`]) so the window's body can borrow the app freely.
+/// **Remembered.** Closing a tool does not change where it lives: one that was
+/// in its own window opens in its own window again, at the same size and place,
+/// and one that was docked opens docked — next time it is opened and after a
+/// restart (`tool_windows.json`). Only the dock and ⇱ buttons move it. Kept on
+/// the app keyed by the tool's id, and taken out around the draw (see
+/// [`tool_window`]) so the window's body can borrow the app freely.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(in crate::app) struct ToolWindowState {
     pub undocked: bool,
     pub window: Option<sdroxide_types::DetachedWindow>,
+}
+
+impl From<sdroxide_types::DetachedState> for ToolWindowState {
+    fn from(s: sdroxide_types::DetachedState) -> Self {
+        Self { undocked: s.detached, window: s.window }
+    }
+}
+
+impl From<ToolWindowState> for sdroxide_types::DetachedState {
+    fn from(s: ToolWindowState) -> Self {
+        Self { detached: s.undocked, window: s.window }
+    }
 }
 
 /// How a tool window is built: its id (also its OS window's app-id, as
@@ -1305,8 +1319,8 @@ fn tool_spec(id: &str, title: &str, default_size: [f32; 2]) -> DetachedWindowSpe
 ///
 /// Docked, the title bar carries a **⇱** that sends the tool out; undocked, its
 /// body carries a dock chip that brings it back. Closing an undocked tool's OS
-/// window *closes the tool*, it does not dock it: the operator shut it, so it
-/// should not reappear in the main window.
+/// window *closes the tool* and leaves it undocked: the operator shut it, not
+/// moved it, so the next open is its own window again.
 ///
 /// `state` is the tool's own [`ToolWindowState`], taken off the app by the
 /// caller around this call, so `body` may borrow the app as it always has.
@@ -1436,7 +1450,8 @@ fn tool_window_os<R>(
     if outcome.close_requested {
         *open = false;
     }
-    state.undocked = *open && !dock;
+    // Closing keeps the tool where it is; only the dock chip brings it home.
+    state.undocked = !dock;
     out
 }
 
@@ -1444,12 +1459,19 @@ impl SdroxideApp {
     /// Take a tool window's [`ToolWindowState`] off the app for the length of
     /// its draw. Paired with [`Self::put_tool_state`].
     pub(in crate::app) fn take_tool_state(&mut self, id: &'static str) -> ToolWindowState {
-        self.tool_windows.remove(id).unwrap_or_default()
+        self.tool_windows.get(id).copied().unwrap_or_default()
     }
 
     /// Put a tool window's state back after its draw.
+    ///
+    /// Written out when it changed — the ⇱ or the dock chip pressed, or an OS
+    /// window moved or resized once the drag has settled — so the next open,
+    /// and the next start, put the tool back where it was left.
     pub(in crate::app) fn put_tool_state(&mut self, id: &'static str, state: ToolWindowState) {
-        self.tool_windows.insert(id, state);
+        if self.tool_windows.get(id) != Some(&state) {
+            crate::app::persist::persist_tool_window(id, state.into());
+            self.tool_windows.insert(id.to_string(), state);
+        }
     }
 }
 

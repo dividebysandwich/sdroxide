@@ -1572,6 +1572,18 @@ pub fn save_band_dock(map: &std::collections::BTreeMap<u32, bool>) -> Result<(),
     save_json("band_dock.json", map)
 }
 
+/// Where each tool window was last left — in its own OS window or inside the
+/// main one, and where that OS window was — by the tool's id.
+pub fn load_tool_windows() -> std::collections::BTreeMap<String, sdroxide_types::DetachedState> {
+    load_json("tool_windows.json")
+}
+
+pub fn save_tool_windows(
+    map: &std::collections::BTreeMap<String, sdroxide_types::DetachedState>,
+) -> Result<(), ConfigError> {
+    save_json("tool_windows.json", map)
+}
+
 /// The saved window arrangements — see [`sdroxide_types::Workspace`].
 pub fn load_workspaces() -> Vec<sdroxide_types::Workspace> {
     load_json_list("workspaces.json")

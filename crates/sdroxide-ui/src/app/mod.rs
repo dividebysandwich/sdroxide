@@ -575,7 +575,7 @@ pub struct SdroxideApp {
     panel_window_pane: usize,
     /// Each tool window's docked/undocked state, by its id — see
     /// `undocked::tool_window`. Session-only.
-    tool_windows: std::collections::HashMap<&'static str, undocked::ToolWindowState>,
+    tool_windows: std::collections::HashMap<String, undocked::ToolWindowState>,
     /// The operating panel lifted out of its pane as a **floating panel inside
     /// this window** — an `egui::Window` the window manager knows nothing about,
     /// so a tiling compositor cannot lose it. See
@@ -1584,7 +1584,12 @@ impl SdroxideApp {
             band_dock_visible: band_dock.get(&radio_id).copied().unwrap_or(false),
             aux_view: ViewState::default(),
             panel_window_pane: 0,
-            tool_windows: Default::default(),
+            // Where each tool window was left last time — in its own window or
+            // in this one — so it opens there again.
+            tool_windows: persist::load_tool_windows()
+                .into_iter()
+                .map(|(id, s)| (id, s.into()))
+                .collect(),
             panel_floating: false,
             panel_rolled: false,
             show_windows: false,
