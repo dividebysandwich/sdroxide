@@ -5494,3 +5494,26 @@ settings-ui-undocked = Sganciato — finestra propria
 settings-ui-window-label = finestra { $module }
 frame-window-chip-hint = FINESTRA — sposta questa finestra in una finestra del sistema operativo a sé, per metterla su un altro monitor
 frame-dock-panel-pane-hint = ACCORPA — riporta questo pannello nel riquadro sotto il waterfall
+frame-panel-window-title = { $mode } — pannello
+frame-roll-up-hint = Arrotola — lascia la barra del titolo e restituisce la finestra al waterfall
+frame-unroll-hint = Srotola — mostra di nuovo il pannello
+frame-window-panel-hint = FINESTRA — dà a questo pannello una finestra propria, da mettere su un altro monitor
+topbar-dock-all = ACCORPA TUTTO
+topbar-dock-all-hint = Riporta ogni finestra di modulo in questa finestra
+topbar-module-windows-title = Finestre dei moduli
+topbar-undock-all = SGANCIA TUTTO
+topbar-undock-all-hint = Metti ogni modulo in una finestra propria: questa finestra resta con lo spettro e i decodificatori
+topbar-windows-chip-hint =
+    ▣  Sinistro: riporta a casa ogni finestra di modulo
+    Destro: l'elenco delle finestre dei moduli
+topbar-wname-aux = SP2 (AUX) — un secondo spettro
+topbar-wname-band-menu = Banda e modo
+topbar-wname-controls = Controllo RX
+topbar-wname-panadapter = SP1 — lo spettro
+topbar-wname-panel = Pannello operativo
+topbar-wstate-float = Solleva { $name } dal riquadro e fallo fluttuare sopra questa finestra
+topbar-wstate-floating-panel-only = Flottante è lo stato proprio del pannello operativo: uno spettro o una console ha un solo posto in questa finestra
+topbar-wstate-here-now = { $name } è qui adesso
+topbar-wstate-no-panel = Nessun pannello operativo in { $mode }: si applica in un modo che ne ha uno
+topbar-wstate-own-window = Dai a { $name } una finestra propria, su qualsiasi monitor
+topbar-wstate-put-back = Rimetti { $name } in questa finestra

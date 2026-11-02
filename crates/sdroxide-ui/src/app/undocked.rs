@@ -26,9 +26,9 @@ use crate::i18n::tr;
 #[cfg(not(target_arch = "wasm32"))]
 use eframe::egui::RichText;
 use eframe::egui::{self};
-use sdroxide_types::Mode;
+use sdroxide_types::{Command, Mode};
 #[cfg(not(target_arch = "wasm32"))]
-use sdroxide_types::{Command, DetachableModule, Spot};
+use sdroxide_types::{DetachableModule, Spot};
 
 use crate::app::SdroxideApp;
 
@@ -688,6 +688,420 @@ impl SdroxideApp {
     }
 }
 
+/// Where one detachable module is — see [`SdroxideApp::module_window_state`].
+///
+/// Three states, though only the operating panel can be in all three: the
+/// others are docked or in a window of their own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) enum ModuleWindow {
+    /// In its own place in this window — the pane under the waterfall, the
+    /// strip above it, the column beside it.
+    Docked,
+    /// Lifted out, but **inside this window**: an `egui::Window` the window
+    /// manager knows nothing about, so a tiling compositor cannot lose it.
+    Floating,
+    /// Its own OS window, with its own app-id — the one a window rule can pin
+    /// to a monitor.
+    OwnWindow,
+}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+impl SdroxideApp {
+    /// Where a module is now. The operating panel can also be floating.
+    pub(crate) fn module_window_state(
+        &self,
+        module: sdroxide_types::DetachableModule,
+    ) -> ModuleWindow {
+        if module == sdroxide_types::DetachableModule::Panel && self.panel_floating {
+            ModuleWindow::Floating
+        } else if self.ui_settings.is_detached(module) {
+            ModuleWindow::OwnWindow
+        } else {
+            ModuleWindow::Docked
+        }
+    }
+
+    /// Put one module where the list asked for it.
+    ///
+    /// **Floating is the panel's own state** and nothing else's: a spectrum or
+    /// a console has one place in this window, and a floating copy of it would
+    /// be two places to change the same thing. So a request to float another
+    /// module is refused here rather than written — the list leaves that slot
+    /// empty and says why.
+    pub(crate) fn set_module_window_state(
+        &mut self,
+        module: sdroxide_types::DetachableModule,
+        state: ModuleWindow,
+    ) {
+        if state == ModuleWindow::Floating && module != sdroxide_types::DetachableModule::Panel {
+            return;
+        }
+        self.ui_settings.set_detached(module, state == ModuleWindow::OwnWindow);
+        if module == sdroxide_types::DetachableModule::Panel {
+            self.panel_floating = state == ModuleWindow::Floating;
+            if self.panel_floating {
+                // Lifting the panel out is asking to *see* it: a float
+                // remembered as rolled up would hand back a title bar alone.
+                self.panel_rolled = false;
+            }
+        }
+        crate::app::persist::persist_ui_settings(&self.ui_settings);
+    }
+
+    /// Put every module window home, or every one out — the list's DOCK ALL
+    /// and UNDOCK ALL. One write, so the two cannot drift in what they persist.
+    /// A module with nothing to show still opens no window: this sets the
+    /// *preference*, and the windows that can exist do.
+    pub(crate) fn set_all_detached(&mut self, on: bool) {
+        for m in sdroxide_types::DetachableModule::ALL {
+            self.ui_settings.set_detached(m, on);
+        }
+        if on {
+            self.panel_floating = false;
+        }
+        crate::app::persist::persist_ui_settings(&self.ui_settings);
+    }
+
+    /// The pane is not in the column this frame: either it is an OS window or it
+    /// has been lifted out as a **floating panel** in this window. Either way
+    /// whatever is left in the column takes the room back.
+    pub(in crate::app) fn panel_in_a_window(&self, mode: Mode) -> bool {
+        self.panel_detached(mode)
+            || (self.panel_floating && (mode.has_bottom_panel() || mode == Mode::Cw))
+    }
+
+    /// The operating pane as a **floating panel inside this window**.
+    ///
+    /// One `egui::Window` whose body is the same `draw_operating_panel` the
+    /// docked pane uses, so every mode gets it. **Its title bar is ours**, and
+    /// carries what a window has: out to a window of its own (native only — a
+    /// browser has no second window, and a button that docked instead would be
+    /// worse than none), roll up, and close — which here means *dock*, because a
+    /// panel is not a tool that can be shut, it is the mode's control surface.
+    /// egui offers no hook for extra title-bar buttons, so the bar is drawn by
+    /// us and `title_bar(false)` hands the movement to egui's drag-anywhere
+    /// fallback.
+    pub(in crate::app) fn floating_panel_window(
+        &mut self,
+        ctx: &egui::Context,
+        cmds: &mut Vec<Command>,
+        mode: Mode,
+    ) {
+        let title = tr!("frame-panel-window-title", mode = mode.label());
+        let mut open = true;
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut out = false;
+        let mut rolled = self.panel_rolled;
+        // The floating panel gets the same bargain as the detached one: its own
+        // pane, swapped in around the draw, clamped to a real pane so the
+        // waterfall tab the main window may have selected cannot ask it for a
+        // picture it has not got.
+        let panes = crate::app::panels::panel_panes(mode).len();
+        self.panel_window_pane = self.panel_window_pane.min(panes.saturating_sub(1));
+        std::mem::swap(&mut self.view.digi_pane, &mut self.panel_window_pane);
+        let child = ChildWindow::panes(self);
+        egui::Window::new(title)
+            .id(crate::layout::salted_id(ctx, "floating-operating-panel"))
+            .title_bar(false)
+            .frame(crate::chrome::window_frame())
+            .default_size([540.0, 440.0])
+            .min_width(320.0)
+            .min_height(0.0)
+            .max_size(ctx.content_rect().size() * 0.95)
+            .resizable(true)
+            .show(ctx, |ui| {
+                // A floating panel is a window inside this one, and answers for
+                // its own size like any other — see `layout::ViewportScope`.
+                let _scope = child.scope(ui);
+                crate::chrome::window_body_bg(ui);
+                let btn = egui::vec2(crate::chrome::BAR_CHIP, crate::chrome::BAR_CHIP);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), crate::chrome::BAR_H),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.label(
+                            egui::RichText::new(mode.label())
+                                .size(crate::chrome::BAR_FONT)
+                                .color(crate::theme::CYAN()),
+                        );
+                        // Right to left, so the order reads out · roll-up ·
+                        // close, which is what every desktop does.
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if crate::chrome::chip_window_icon_sized(
+                                ui,
+                                crate::chrome::WindowIcon::Close,
+                                btn,
+                            )
+                            .on_hover_text(tr!("frame-dock-panel-hint"))
+                            .clicked()
+                            {
+                                open = false;
+                            }
+                            let roll_icon = if rolled {
+                                crate::chrome::WindowIcon::Unfold
+                            } else {
+                                crate::chrome::WindowIcon::Collapse
+                            };
+                            if crate::chrome::chip_window_icon_sized(ui, roll_icon, btn)
+                                .on_hover_text(if rolled {
+                                    tr!("frame-unroll-hint")
+                                } else {
+                                    tr!("frame-roll-up-hint")
+                                })
+                                .clicked()
+                            {
+                                rolled = !rolled;
+                            }
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                out = crate::chrome::chip_window_icon_sized(
+                                    ui,
+                                    crate::chrome::WindowIcon::Out,
+                                    btn,
+                                )
+                                .on_hover_text(tr!("frame-window-panel-hint"))
+                                .clicked();
+                            }
+                        });
+                    },
+                );
+                ui.separator();
+                if !rolled {
+                    // One pane at a time in a narrow floating panel: the chips
+                    // that reach the others belong to the window in front.
+                    if crate::layout::tier(ui.ctx()) == crate::layout::Tier::Phone {
+                        self.digi_tabs(ui, mode, false);
+                    }
+                    let h = ui.available_height();
+                    self.draw_operating_panel(ui, cmds, mode, h);
+                }
+            });
+        std::mem::swap(&mut self.view.digi_pane, &mut self.panel_window_pane);
+        self.panel_rolled = rolled;
+        if !open {
+            self.panel_floating = false;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if out {
+            // One at a time: the OS window takes over from the floating panel.
+            self.set_module_window_state(
+                sdroxide_types::DetachableModule::Panel,
+                ModuleWindow::OwnWindow,
+            );
+        }
+    }
+}
+
+/// The window keys read off one frame's events — see
+/// [`SdroxideApp::window_keys`]. Pure, so a test can hold the mapping.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Default, PartialEq)]
+pub(in crate::app) struct WindowKeys {
+    pub list: bool,
+    pub float: bool,
+}
+
+/// Read `Ctrl+Alt+W` and `Ctrl+Alt+F` from the **events**, not from the frame's
+/// modifier state: a chord pressed and released inside one frame still arrives
+/// as its key event, and the frame's `modifiers` are whatever was held last.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn window_keys_in(events: &[egui::Event]) -> WindowKeys {
+    let mut keys = WindowKeys::default();
+    for event in events {
+        if let egui::Event::Key { key, pressed: true, modifiers, repeat: false, .. } = event
+            && modifiers.ctrl
+            && modifiers.alt
+            && !modifiers.shift
+        {
+            match key {
+                egui::Key::W => keys.list = true,
+                egui::Key::F => keys.float = true,
+                _ => {}
+            }
+        }
+    }
+    keys
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl SdroxideApp {
+    /// Act on the window keys pressed this frame.
+    pub(in crate::app) fn window_keys(&mut self, ctx: &egui::Context) {
+        let keys = ctx.input(|i| window_keys_in(&i.events));
+        if keys.list {
+            self.show_windows = !self.show_windows;
+        }
+        if keys.float {
+            let next =
+                if self.module_window_state(DetachableModule::Panel) == ModuleWindow::Floating {
+                    ModuleWindow::Docked
+                } else {
+                    ModuleWindow::Floating
+                };
+            self.set_module_window_state(DetachableModule::Panel, next);
+        }
+    }
+}
+
+/// A detachable module's name in the module-windows list.
+#[cfg(not(target_arch = "wasm32"))]
+fn module_window_name(m: DetachableModule) -> String {
+    use DetachableModule as M;
+    match m {
+        M::Panadapter => tr!("topbar-wname-panadapter"),
+        M::AuxPanadapter => tr!("topbar-wname-aux"),
+        M::Panel => tr!("topbar-wname-panel"),
+        M::Controls => tr!("topbar-wname-controls"),
+        M::BandMenu => tr!("topbar-wname-band-menu"),
+    }
+}
+
+impl SdroxideApp {
+    /// Whether the **▣** belongs on the System row this frame: while any module
+    /// is out of this window — in its own OS window, or the panel floating over
+    /// it — and while its list is open. Not otherwise: a chip is width, and the
+    /// strip is packed to the point, so the chip appears when there is
+    /// something for the list to say and the ordinary arrangement pays nothing.
+    pub(in crate::app) fn module_windows_chip_wanted(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            false
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.show_windows
+                || self.panel_floating
+                || DetachableModule::ALL.iter().any(|m| self.ui_settings.is_detached(*m))
+        }
+    }
+
+    /// The module-windows list, drawn as a window inside this one — what the ▣
+    /// chip and `Ctrl+Alt+W` both open. A window rather than a popup, because
+    /// the key has no chip to hang a popup on, and it is the one surface that
+    /// has to be reachable when a module window has been lost, so it must not
+    /// be one itself.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::app) fn module_windows_window(&mut self, ctx: &egui::Context) {
+        let mut open = true;
+        let resp = egui::Window::new(tr!("topbar-module-windows-title"))
+            .id(crate::layout::salted_id(ctx, "module-windows"))
+            .frame(crate::chrome::window_frame())
+            .default_width(430.0)
+            .min_width(340.0)
+            .resizable(false)
+            .collapsible(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                crate::chrome::window_body_bg(ui);
+                self.module_windows_list(ui);
+            });
+        if let Some(r) = &resp {
+            crate::chrome::paint_window_border(ctx, &r.response);
+        }
+        if !open {
+            self.show_windows = false;
+        }
+    }
+
+    /// **Module windows** — one row per detachable module, with the places it
+    /// can be and the one it is in lit.
+    ///
+    /// The list is the **recovery**: a window left on another workspace, or
+    /// behind the main window, is still a row here, and "put it back in this
+    /// window" does not depend on the window being visible or on finding its
+    /// close box. A tiling window manager draws no close box, which is what made
+    /// a lost window a lost control surface.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn module_windows_list(&mut self, ui: &mut egui::Ui) {
+        use DetachableModule as M;
+        const STATES: [ModuleWindow; 3] =
+            [ModuleWindow::Docked, ModuleWindow::Floating, ModuleWindow::OwnWindow];
+        let mode = self.state.rx[0].mode;
+        // A voice mode has no operating panel: its row says so instead of
+        // offering two states that would open an empty window.
+        let panel_possible = mode.has_bottom_panel() || mode == Mode::Cw;
+        let mut asked: Option<(M, ModuleWindow)> = None;
+        for m in M::ALL {
+            let now = self.module_window_state(m);
+            let can_be = |state: ModuleWindow| match state {
+                ModuleWindow::Floating => m == M::Panel && panel_possible,
+                _ => m != M::Panel || panel_possible,
+            };
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(module_window_name(m)).size(12.0));
+                // Right to left and reversed, so the row reads docked → floating
+                // → its own window on every line.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    for state in STATES.into_iter().rev() {
+                        let (icon, tip) = match state {
+                            ModuleWindow::Docked => (
+                                crate::chrome::WindowIcon::Dock,
+                                tr!("topbar-wstate-put-back", name = module_window_name(m)),
+                            ),
+                            ModuleWindow::Floating => (
+                                crate::chrome::WindowIcon::In,
+                                if m != M::Panel {
+                                    tr!("topbar-wstate-floating-panel-only")
+                                } else if panel_possible {
+                                    tr!("topbar-wstate-float", name = module_window_name(m))
+                                } else {
+                                    tr!("topbar-wstate-no-panel", mode = mode.label())
+                                },
+                            ),
+                            ModuleWindow::OwnWindow => (
+                                crate::chrome::WindowIcon::Out,
+                                tr!("topbar-wstate-own-window", name = module_window_name(m)),
+                            ),
+                        };
+                        if !can_be(state) {
+                            // A place this module cannot be. The slot is kept
+                            // empty rather than drawn dead, so nothing here
+                            // looks like a press.
+                            ui.add_space(crate::chrome::window_icon_width(ui));
+                            continue;
+                        }
+                        let lit = now == state;
+                        let tip = if lit {
+                            tr!("topbar-wstate-here-now", name = module_window_name(m))
+                        } else {
+                            tip
+                        };
+                        let resp =
+                            crate::chrome::chip_window_icon_lit(ui, icon, lit).on_hover_text(tip);
+                        if resp.clicked() && !lit {
+                            asked = Some((m, state));
+                        }
+                    }
+                });
+            });
+        }
+        if let Some((module, state)) = asked {
+            self.set_module_window_state(module, state);
+        }
+        // Both directions at once, each drawn only while it would do something.
+        let any_out = M::ALL.iter().any(|m| self.ui_settings.is_detached(*m));
+        let any_in = M::ALL.iter().any(|m| !self.ui_settings.is_detached(*m));
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            if any_out
+                && crate::chrome::chip(ui, false, tr!("topbar-dock-all"))
+                    .on_hover_text(tr!("topbar-dock-all-hint"))
+                    .clicked()
+            {
+                self.set_all_detached(false);
+            }
+            if any_in
+                && crate::chrome::chip(ui, false, tr!("topbar-undock-all"))
+                    .on_hover_text(tr!("topbar-undock-all-hint"))
+                    .clicked()
+            {
+                self.set_all_detached(true);
+            }
+        });
+    }
+}
+
 /// Where a **tool window** is — docked as a window inside the main one, or
 /// undocked into an OS window of its own — and where that OS window last was.
 ///
@@ -1019,6 +1433,40 @@ mod tests {
         );
         assert_eq!(tool_spec("Scanner", "Scanner", [1.0, 1.0]).app_id, "sdroxide-tool-scanner");
         assert_eq!(tool_spec("MAIL-LOG", "Log", [1.0, 1.0]).app_id, "sdroxide-tool-mail-log");
+    }
+
+    fn key(key: egui::Key, ctrl: bool, alt: bool, shift: bool) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers { ctrl, alt, shift, ..Default::default() },
+        }
+    }
+
+    /// `Ctrl+Alt+W` is the list and `Ctrl+Alt+F` the floating panel; the same
+    /// letters typed plainly, with only one of the two modifiers, or with Shift
+    /// as well, are not.
+    #[test]
+    fn the_window_keys_are_ctrl_alt_w_and_f_and_nothing_else() {
+        use egui::Key::{F, W};
+        assert_eq!(
+            window_keys_in(&[key(W, true, true, false)]),
+            WindowKeys { list: true, float: false }
+        );
+        assert_eq!(
+            window_keys_in(&[key(F, true, true, false)]),
+            WindowKeys { list: false, float: true }
+        );
+        for not_it in [
+            key(W, false, false, false),
+            key(W, true, false, false),
+            key(F, false, true, false),
+            key(F, true, true, true),
+        ] {
+            assert_eq!(window_keys_in(&[not_it]), WindowKeys::default());
+        }
     }
 
     /// The window opens fitted to the monitor it is about to open on, and never

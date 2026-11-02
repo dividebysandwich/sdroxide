@@ -5425,3 +5425,26 @@ settings-ui-undocked = 已取消停靠：独立窗口
 settings-ui-window-label = { $module }窗口
 frame-window-chip-hint = 窗口：把此窗口移到独立的系统窗口，以便放到另一个显示器上
 frame-dock-panel-pane-hint = 停靠：把此面板放回瀑布图下方的窗格
+frame-panel-window-title = { $mode }：面板
+frame-roll-up-hint = 卷起：离开标题栏，把窗口还给瀑布图
+frame-unroll-hint = 展开：重新显示面板
+frame-window-panel-hint = 窗口：给此面板一个独立窗口，以便放到另一个显示器上
+topbar-dock-all = 全部停靠
+topbar-dock-all-hint = 将所有模块窗口收回此窗口
+topbar-module-windows-title = 模块窗口
+topbar-undock-all = 全部取消停靠
+topbar-undock-all-hint = 让每个模块都有独立窗口：此窗口只剩频谱和解码器
+topbar-windows-chip-hint =
+    ▣  左键：将所有模块窗口收回
+    右键：模块窗口列表
+topbar-wname-aux = SP2（AUX）：第二频谱
+topbar-wname-band-menu = 波段和模式
+topbar-wname-controls = 接收控制
+topbar-wname-panadapter = SP1：频谱
+topbar-wname-panel = 操作面板
+topbar-wstate-float = 将 { $name } 从面板中提出，浮动在此窗口之上
+topbar-wstate-floating-panel-only = 浮动是操作面板自身的状态：频谱或控制台在此窗口中只有一个位置
+topbar-wstate-here-now = { $name } 现在就在这里
+topbar-wstate-no-panel = { $mode } 中没有操作面板：在有操作面板的模式下才适用
+topbar-wstate-own-window = 为 { $name } 提供独立窗口，可放在任意显示器上
+topbar-wstate-put-back = 将 { $name } 放回此窗口

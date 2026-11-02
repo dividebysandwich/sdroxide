@@ -5483,3 +5483,26 @@ settings-ui-undocked = Ayrılmış — kendi penceresi
 settings-ui-window-label = { $module } penceresi
 frame-window-chip-hint = PENCERE — bu pencereyi kendi işletim sistemi penceresine taşıyın, başka bir monitöre koymak için
 frame-dock-panel-pane-hint = YERLEŞTİR — bu paneli şelalenin altındaki bölmeye geri döndürün
+frame-panel-window-title = { $mode } — panel
+frame-roll-up-hint = Yukarı sar — başlık çubuğunu bırakıp pencereyi şelaleye geri verin
+frame-unroll-hint = Aç — paneli yeniden gösterin
+frame-window-panel-hint = PENCERE — bu panele kendi penceresini verin, başka bir monitöre koymak için
+topbar-dock-all = TÜMÜNÜ YERLEŞTİR
+topbar-dock-all-hint = Her modül penceresini bu pencereye geri getirir
+topbar-module-windows-title = Modül pencereleri
+topbar-undock-all = TÜMÜNÜ AYIR
+topbar-undock-all-hint = Her modülü kendi penceresine koyar — bu pencerede spektrum ve çözücüler kalır
+topbar-windows-chip-hint =
+    ▣  Sol: her modül penceresini eve getir
+    Sağ: modül pencereleri listesi
+topbar-wname-aux = SP2 (AUX) — ikinci bir spektrum
+topbar-wname-band-menu = Bant ve mod
+topbar-wname-controls = RX kontrolü
+topbar-wname-panadapter = SP1 — spektrum
+topbar-wname-panel = İşletim paneli
+topbar-wstate-float = { $name } öğesini bölmeden çıkarıp bu pencerenin üzerinde yüzdür
+topbar-wstate-floating-panel-only = Yüzdürme işletim panelinin kendi durumudur — bir spektrum ya da konsolun bu pencerede tek bir yeri vardır
+topbar-wstate-here-now = { $name } şu an burada
+topbar-wstate-no-panel = { $mode } modunda işletim paneli yok — bu, paneli olan bir modda geçerlidir
+topbar-wstate-own-window = { $name } öğesine herhangi bir monitörde kendi penceresini ver
+topbar-wstate-put-back = { $name } öğesini bu pencereye geri koy

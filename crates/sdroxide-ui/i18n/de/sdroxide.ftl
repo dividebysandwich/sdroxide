@@ -5520,3 +5520,26 @@ settings-ui-undocked = Abgedockt — eigenes Fenster
 settings-ui-window-label = Fenster { $module }
 frame-window-chip-hint = WINDOW — dieses Fenster in ein eigenes Betriebssystem-Fenster verschieben, etwa auf einen anderen Monitor
 frame-dock-panel-pane-hint = DOCK — dieses Panel in den Bereich unter dem Wasserfall zurückholen
+frame-panel-window-title = { $mode } — Panel
+frame-roll-up-hint = Einrollen — nur die Titelleiste behalten und dem Wasserfall den Platz zurückgeben
+frame-unroll-hint = Ausrollen — das Panel wieder anzeigen
+frame-window-panel-hint = WINDOW — diesem Panel ein eigenes Fenster geben, das auf einen anderen Monitor gelegt werden kann
+topbar-dock-all = ALLE ANDOCKEN
+topbar-dock-all-hint = Alle Modulfenster zurück in dieses Fenster holen
+topbar-module-windows-title = Modulfenster
+topbar-undock-all = ALLE ABDOCKEN
+topbar-undock-all-hint = Jedes Modul in ein eigenes Fenster setzen — dieses Fenster bleibt als Spektrum und Decoder
+topbar-windows-chip-hint =
+    ▣  Links: alle Modulfenster zurückholen
+    Rechts: die Liste der Modulfenster
+topbar-wname-aux = SP2 (AUX) — ein zweites Spektrum
+topbar-wname-band-menu = Band & Modus
+topbar-wname-controls = RX-Bedienung
+topbar-wname-panadapter = SP1 — das Spektrum
+topbar-wname-panel = Bedienpanel
+topbar-wstate-float = { $name } aus dem Bereich lösen und über diesem Fenster schweben lassen
+topbar-wstate-floating-panel-only = Schwebend ist ein Zustand nur des Bedienpanels — ein Spektrum oder eine Konsole hat in diesem Fenster nur einen Platz
+topbar-wstate-here-now = { $name } ist jetzt hier
+topbar-wstate-no-panel = Kein Bedienpanel in { $mode } — das gilt in einem Modus, der eines hat
+topbar-wstate-own-window = { $name } ein eigenes Fenster geben, auf einem beliebigen Monitor
+topbar-wstate-put-back = { $name } wieder in dieses Fenster setzen

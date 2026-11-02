@@ -5492,3 +5492,26 @@ settings-ui-undocked = Desacoplado — janela própria
 settings-ui-window-label = Janela { $module }
 frame-window-chip-hint = JANELA — move esta janela para uma janela própria do sistema, para colocá-la em outro monitor
 frame-dock-panel-pane-hint = ACOPLAR — devolve este painel ao painel abaixo do waterfall
+frame-panel-window-title = { $mode } — painel
+frame-roll-up-hint = Recolher — sai da barra de título e devolve a janela ao waterfall
+frame-unroll-hint = Expandir — mostra o painel de novo
+frame-window-panel-hint = JANELA — dá a este painel uma janela própria, para colocar em outro monitor
+topbar-dock-all = ACOPLAR TUDO
+topbar-dock-all-hint = Traz todas as janelas de módulos de volta a esta janela
+topbar-module-windows-title = Janelas de módulos
+topbar-undock-all = DESACOPLAR TUDO
+topbar-undock-all-hint = Coloca cada módulo em uma janela própria — esta janela fica com o espectro e os decodificadores
+topbar-windows-chip-hint =
+    ▣  Esquerdo: traz todas as janelas de módulos para casa
+    Direito: a lista de janelas de módulos
+topbar-wname-aux = SP2 (AUX) — um segundo espectro
+topbar-wname-band-menu = Banda e modo
+topbar-wname-controls = Controle RX
+topbar-wname-panadapter = SP1 — o espectro
+topbar-wname-panel = Painel de operação
+topbar-wstate-float = Tirar { $name } do painel e deixá-lo flutuando sobre esta janela
+topbar-wstate-floating-panel-only = Flutuar é um estado próprio do painel de operação — um espectro ou um console tem um só lugar nesta janela
+topbar-wstate-here-now = { $name } está aqui agora
+topbar-wstate-no-panel = Sem painel de operação em { $mode } — isto vale em um modo que tenha um
+topbar-wstate-own-window = Dar a { $name } uma janela própria, em qualquer monitor
+topbar-wstate-put-back = Colocar { $name } de volta nesta janela

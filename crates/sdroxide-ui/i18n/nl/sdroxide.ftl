@@ -5484,3 +5484,26 @@ settings-ui-undocked = Losgekoppeld — eigen venster
 settings-ui-window-label = Venster { $module }
 frame-window-chip-hint = VENSTER — verplaats dit venster naar een eigen OS-venster, om het op een andere monitor te zetten
 frame-dock-panel-pane-hint = DOCK — zet dit paneel terug in het vlak onder de waterval
+frame-panel-window-title = { $mode } — paneel
+frame-roll-up-hint = Oprollen — verlaat de titelbalk en geef het venster terug aan de waterval
+frame-unroll-hint = Uitrollen — toon het paneel weer
+frame-window-panel-hint = VENSTER — geef dit paneel een eigen venster, om op een andere monitor te zetten
+topbar-dock-all = ALLES VASTZETTEN
+topbar-dock-all-hint = Breng elk modulevenster terug in dit venster
+topbar-module-windows-title = Modulevensters
+topbar-undock-all = ALLES LOSKOPPELEN
+topbar-undock-all-hint = Zet elke module in een eigen venster — dit venster houdt alleen het spectrum en de decoders
+topbar-windows-chip-hint =
+    ▣  Links: breng elk modulevenster naar huis
+    Rechts: de lijst met modulevensters
+topbar-wname-aux = SP2 (AUX) — een tweede spectrum
+topbar-wname-band-menu = Band en modus
+topbar-wname-controls = RX-bediening
+topbar-wname-panadapter = SP1 — het spectrum
+topbar-wname-panel = Bedieningspaneel
+topbar-wstate-float = Til { $name } uit het paneel en laat het zweven boven dit venster
+topbar-wstate-floating-panel-only = Zweven is de eigen toestand van het bedieningspaneel — een spectrum of een console heeft één plek in dit venster
+topbar-wstate-here-now = { $name } is nu hier
+topbar-wstate-no-panel = Geen bedieningspaneel in { $mode } — dit geldt in een modus die er een heeft
+topbar-wstate-own-window = Geef { $name } een eigen venster, op elke monitor
+topbar-wstate-put-back = Zet { $name } terug in dit venster

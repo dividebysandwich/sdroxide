@@ -5487,3 +5487,26 @@ settings-ui-undocked = Отстыковано — своё окно
 settings-ui-window-label = Окно { $module }
 frame-window-chip-hint = WINDOW — вынести это окно в отдельное окно ОС, чтобы разместить его на другом мониторе
 frame-dock-panel-pane-hint = DOCK — вернуть эту панель в область под водопадом
+frame-panel-window-title = { $mode } — панель
+frame-roll-up-hint = Свернуть — убрать заголовок и вернуть окно водопаду
+frame-unroll-hint = Развернуть — снова показать панель
+frame-window-panel-hint = WINDOW — выделить этой панели отдельное окно, чтобы разместить на другом мониторе
+topbar-dock-all = ПРИСТЫКОВАТЬ ВСЕ
+topbar-dock-all-hint = Вернуть все окна модулей в это окно
+topbar-module-windows-title = Окна модулей
+topbar-undock-all = ОТСТЫКОВАТЬ ВСЕ
+topbar-undock-all-hint = Поместить каждый модуль в отдельное окно — это окно останется со спектром и декодерами
+topbar-windows-chip-hint =
+    ▣  Левая: вернуть все окна модулей домой
+    Правая: список окон модулей
+topbar-wname-aux = SP2 (AUX) — второй спектр
+topbar-wname-band-menu = Диапазон и режим
+topbar-wname-controls = Управление RX
+topbar-wname-panadapter = SP1 — спектр
+topbar-wname-panel = Рабочая панель
+topbar-wstate-float = Вынуть { $name } из области и сделать плавающим над этим окном
+topbar-wstate-floating-panel-only = Плавающее состояние — только у рабочей панели; у спектра или консоли в этом окне одно место
+topbar-wstate-here-now = { $name } сейчас здесь
+topbar-wstate-no-panel = В режиме { $mode } нет рабочей панели — это применимо в режиме, где она есть
+topbar-wstate-own-window = Дать { $name } отдельное окно на любом мониторе
+topbar-wstate-put-back = Вернуть { $name } в это окно

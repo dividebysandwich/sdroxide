@@ -5475,3 +5475,26 @@ settings-ui-undocked = Desacoplada — su propia ventana
 settings-ui-window-label = Ventana { $module }
 frame-window-chip-hint = WINDOW — mover esta ventana a una ventana propia del sistema, para ponerla en otro monitor
 frame-dock-panel-pane-hint = DOCK — devolver este panel al panel bajo la cascada
+frame-panel-window-title = { $mode } — panel
+frame-roll-up-hint = Enrollar — dejar solo la barra de título y devolver el espacio a la cascada
+frame-unroll-hint = Desenrollar — mostrar de nuevo el panel
+frame-window-panel-hint = WINDOW — dar a este panel una ventana propia, para ponerla en otro monitor
+topbar-dock-all = ACOPLAR TODO
+topbar-dock-all-hint = Traer todas las ventanas de módulos de vuelta a esta ventana
+topbar-module-windows-title = Ventanas de módulos
+topbar-undock-all = DESACOPLAR TODO
+topbar-undock-all-hint = Poner cada módulo en una ventana propia — esta ventana queda como el espectro y los decodificadores
+topbar-windows-chip-hint =
+    ▣  Izquierdo: traer a casa todas las ventanas de módulos
+    Derecho: la lista de ventanas de módulos
+topbar-wname-aux = SP2 (AUX) — un segundo espectro
+topbar-wname-band-menu = Banda y modo
+topbar-wname-controls = Control RX
+topbar-wname-panadapter = SP1 — el espectro
+topbar-wname-panel = Panel de operación
+topbar-wstate-float = Sacar { $name } del panel y hacerlo flotar sobre esta ventana
+topbar-wstate-floating-panel-only = Flotante es un estado propio del panel de operación — un espectro o una consola tiene un solo lugar en esta ventana
+topbar-wstate-here-now = { $name } está aquí ahora
+topbar-wstate-no-panel = No hay panel de operación en { $mode } — esto se aplica en un modo que lo tenga
+topbar-wstate-own-window = Dar a { $name } una ventana propia, en cualquier monitor
+topbar-wstate-put-back = Volver a poner { $name } en esta ventana

@@ -296,6 +296,15 @@ impl eframe::App for SdroxideApp {
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F1)) {
                 self.help.open = !self.help.open;
             }
+            // **The window keys.** `Ctrl+Alt+W` opens the module-windows list —
+            // the only route that works with every window docked, which is what
+            // makes a window lost on another workspace recoverable on a
+            // keyboard-only desktop — and `Ctrl+Alt+F` floats the operating
+            // panel or docks it again. Handled here, like F1, so they work while
+            // a text field has focus: a chord with Ctrl and Alt in it is not
+            // typing.
+            #[cfg(not(target_arch = "wasm32"))]
+            self.window_keys(&ctx);
             // An open manual takes the scrolling keys before the bindings run,
             // so reading it never tunes the radio at the same time.
             self.help.grab_keys(&ctx);
@@ -611,7 +620,7 @@ impl eframe::App for SdroxideApp {
             // Either half of this pane can be undocked into a window of its own,
             // and whichever stays here takes the whole column.
             let pan_out = self.panadapter_window_wanted();
-            let panel_out = self.panel_detached(mode);
+            let panel_out = self.panel_in_a_window(mode);
             // A phone shows one of the three at a time, chosen by a row of
             // chips: the decode list, the QSO area and the waterfall each want
             // the whole width and most of the height, and three slivers would
@@ -753,7 +762,7 @@ impl eframe::App for SdroxideApp {
             // Either half undocked into a window of its own: whichever stays
             // takes the whole pane.
             let pan_out = self.panadapter_window_wanted();
-            let panel_here = cw_mode && !self.panel_detached(Mode::Cw);
+            let panel_here = cw_mode && !self.panel_in_a_window(Mode::Cw);
             let (wf_h, panel_h, show_wf, show_panel) = if !panel_here {
                 (ui.available_height(), 0.0, layers && !pan_out, false)
             } else if phone {
@@ -819,6 +828,21 @@ impl eframe::App for SdroxideApp {
             self.prefill_from_spot(&spot);
         }
 
+        // **The operating pane, floating in this window**, drawn beside the tool
+        // windows because it is one of them in everything but where its body
+        // comes from. Only while the mode has a pane to float.
+        let mode_now = self.state.rx[0].mode;
+        if self.panel_floating
+            && self.error.is_none()
+            && (mode_now.has_bottom_panel() || mode_now == Mode::Cw)
+        {
+            self.floating_panel_window(&ctx, &mut cmds, mode_now);
+        }
+        // **The module-windows list**, from the ▣ chip or `Ctrl+Alt+W`.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.show_windows {
+            self.module_windows_window(&ctx);
+        }
         self.memories_window(&ctx, &mut cmds);
         self.scanner_window(&ctx, &mut cmds);
         self.ism_window(&ctx, &mut cmds);

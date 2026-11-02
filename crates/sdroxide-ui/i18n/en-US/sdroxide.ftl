@@ -5536,3 +5536,26 @@ settings-ui-undocked = Undocked — its own window
 settings-ui-window-label = { $module } window
 frame-window-chip-hint = WINDOW — move this window into its own OS window, to put it on another monitor
 frame-dock-panel-pane-hint = DOCK — return this panel to the pane below the waterfall
+frame-panel-window-title = { $mode } — panel
+frame-roll-up-hint = Roll up — leave the title bar and give the window back to the waterfall
+frame-unroll-hint = Unroll — show the panel again
+frame-window-panel-hint = WINDOW — give this panel a window of its own, to put on another monitor
+topbar-dock-all = DOCK ALL
+topbar-dock-all-hint = Bring every module window back into this window
+topbar-module-windows-title = Module windows
+topbar-undock-all = UNDOCK ALL
+topbar-undock-all-hint = Put every module in a window of its own — this window is left as the spectrum and the decoders
+topbar-windows-chip-hint =
+    ▣  Left: bring every module window home
+    Right: the module windows list
+topbar-wname-aux = SP2 (AUX) — a second spectrum
+topbar-wname-band-menu = Band & mode
+topbar-wname-controls = RX control
+topbar-wname-panadapter = SP1 — the spectrum
+topbar-wname-panel = Operating panel
+topbar-wstate-float = Lift { $name } out of the pane and float it over this window
+topbar-wstate-floating-panel-only = Floating is the operating panel's own state — a spectrum or a console has one place in this window
+topbar-wstate-here-now = { $name } is here now
+topbar-wstate-no-panel = No operating panel in { $mode } — this applies in a mode that has one
+topbar-wstate-own-window = Give { $name } a window of its own, on any monitor
+topbar-wstate-put-back = Put { $name } back in this window

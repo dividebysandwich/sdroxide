@@ -5491,3 +5491,26 @@ settings-ui-undocked = Détachée — sa propre fenêtre
 settings-ui-window-label = Fenêtre { $module }
 frame-window-chip-hint = WINDOW — déplacer cette fenêtre dans une fenêtre système à part, pour la mettre sur un autre écran
 frame-dock-panel-pane-hint = DOCK — remettre ce panneau dans le volet sous la cascade
+frame-panel-window-title = { $mode } — panneau
+frame-roll-up-hint = Enrouler — ne garder que la barre de titre et rendre la place à la cascade
+frame-unroll-hint = Dérouler — afficher à nouveau le panneau
+frame-window-panel-hint = WINDOW — donner à ce panneau sa propre fenêtre, à placer sur un autre écran
+topbar-dock-all = TOUT ANCRER
+topbar-dock-all-hint = Ramener toutes les fenêtres de modules dans cette fenêtre
+topbar-module-windows-title = Fenêtres de modules
+topbar-undock-all = TOUT DÉTACHER
+topbar-undock-all-hint = Mettre chaque module dans sa propre fenêtre — cette fenêtre ne garde que le spectre et les décodeurs
+topbar-windows-chip-hint =
+    ▣  Gauche : ramener toutes les fenêtres de modules
+    Droit : la liste des fenêtres de modules
+topbar-wname-aux = SP2 (AUX) — un second spectre
+topbar-wname-band-menu = Bande et mode
+topbar-wname-controls = Commande RX
+topbar-wname-panadapter = SP1 — le spectre
+topbar-wname-panel = Panneau d'exploitation
+topbar-wstate-float = Sortir { $name } du volet et le faire flotter au-dessus de cette fenêtre
+topbar-wstate-floating-panel-only = Flottant est un état propre au panneau d'exploitation — un spectre ou une console n'a qu'une place dans cette fenêtre
+topbar-wstate-here-now = { $name } est ici actuellement
+topbar-wstate-no-panel = Pas de panneau d'exploitation en { $mode } — cela s'applique dans un mode qui en a un
+topbar-wstate-own-window = Donner à { $name } sa propre fenêtre, sur n'importe quel écran
+topbar-wstate-put-back = Remettre { $name } dans cette fenêtre

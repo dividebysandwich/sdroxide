@@ -5433,3 +5433,26 @@ settings-ui-undocked = ドック解除 — 独立ウィンドウ
 settings-ui-window-label = { $module } ウィンドウ
 frame-window-chip-hint = ウィンドウ — このウィンドウを独立したOSウィンドウにして別のモニターに置きます
 frame-dock-panel-pane-hint = ドック — このパネルをウォーターフォール下のペインに戻します
+frame-panel-window-title = { $mode } — パネル
+frame-roll-up-hint = 巻き上げ — タイトルバーだけにして、ウィンドウ領域をウォーターフォールに返します
+frame-unroll-hint = 巻き戻し — パネルを再表示します
+frame-window-panel-hint = ウィンドウ — このパネルを独立したウィンドウにして別のモニターに置きます
+topbar-dock-all = すべてドック
+topbar-dock-all-hint = すべてのモジュールウィンドウをこのウィンドウに戻します
+topbar-module-windows-title = モジュールウィンドウ
+topbar-undock-all = すべて分離
+topbar-undock-all-hint = すべてのモジュールを専用ウィンドウにします。このウィンドウにはスペクトラムとデコーダーだけが残ります
+topbar-windows-chip-hint =
+    ▣  左クリック: すべてのモジュールウィンドウを戻す
+    右クリック: モジュールウィンドウの一覧
+topbar-wname-aux = SP2 (AUX) — 第2スペクトラム
+topbar-wname-band-menu = バンド・モード
+topbar-wname-controls = RX コントロール
+topbar-wname-panadapter = SP1 — スペクトラム
+topbar-wname-panel = オペレーションパネル
+topbar-wstate-float = { $name } をペインから外し、このウィンドウの上にフロート表示する
+topbar-wstate-floating-panel-only = フロート表示はオペレーションパネル専用の状態です。スペクトラムやコンソールはこのウィンドウ内の1か所に固定されます
+topbar-wstate-here-now = { $name } は現在ここにあります
+topbar-wstate-no-panel = { $mode } にはオペレーションパネルがありません。パネルのあるモードで適用されます
+topbar-wstate-own-window = { $name } を専用ウィンドウにして、任意のモニターに置く
+topbar-wstate-put-back = { $name } をこのウィンドウに戻す
