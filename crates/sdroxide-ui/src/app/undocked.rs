@@ -1231,6 +1231,7 @@ impl<'a> ToolWindow<'a> {
 fn tool_window_title_button(
     ctx: &egui::Context,
     win_id: egui::Id,
+    win_layer: egui::LayerId,
     win_rect: egui::Rect,
     body_top: f32,
 ) -> bool {
@@ -1248,15 +1249,20 @@ fn tool_window_title_button(
         egui::vec2(side, side),
     );
     let mut clicked = false;
-    egui::Area::new(win_id.with("title-btn")).fixed_pos(rect.min).order(egui::Order::Middle).show(
-        ctx,
-        |ui| {
-            ui.set_min_size(rect.size());
-            clicked = crate::chrome::chip_window_icon(ui, crate::chrome::WindowIcon::Out)
-                .on_hover_text(tr!("frame-window-chip-hint"))
-                .clicked();
-        },
-    );
+    let btn_id = win_id.with("title-btn");
+    egui::Area::new(btn_id).fixed_pos(rect.min).order(egui::Order::Middle).show(ctx, |ui| {
+        ui.set_min_size(rect.size());
+        clicked = crate::chrome::chip_window_icon(ui, crate::chrome::WindowIcon::Out)
+            .on_hover_text(tr!("frame-window-chip-hint"))
+            .clicked();
+    });
+    // **Tied to its own window**, every frame. In the same order as the
+    // windows, the button would otherwise keep the place it was created in:
+    // the first click inside the window — closing it with its ✕ is one —
+    // raises the window over its own button, and it stayed underneath,
+    // reopened or not. A sublayer is drawn directly above its parent and goes
+    // where the parent goes, so a window raised over this one still covers it.
+    ctx.set_sublayer(win_layer, egui::LayerId::new(egui::Order::Middle, btn_id));
     clicked
 }
 
@@ -1373,7 +1379,7 @@ fn tool_window_egui<R>(
     if let Some(r) = &resp {
         crate::chrome::paint_window_border(ctx, &r.response);
         #[cfg(not(target_arch = "wasm32"))]
-        if tool_window_title_button(ctx, win_id, r.response.rect, body_top) {
+        if tool_window_title_button(ctx, win_id, r.response.layer_id, r.response.rect, body_top) {
             state.undocked = true;
         }
     }
@@ -1524,6 +1530,83 @@ mod tests {
         ] {
             assert_eq!(window_keys_in(&[not_it]), WindowKeys::default());
         }
+    }
+
+    /// Whether a docked tool window's ⇱ is the topmost thing at its own spot
+    /// after one frame drawn with `open`.
+    fn title_button_on_top(
+        ctx: &egui::Context,
+        open: bool,
+        events: Vec<egui::Event>,
+    ) -> Option<bool> {
+        let mut open = open;
+        let mut state = ToolWindowState::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1600.0, 1000.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let mut button = None;
+        ctx.run_ui(input, |ui| {
+            let ctx = ui.ctx().clone();
+            let _ = tool_window_egui(
+                &ctx,
+                &ToolWindow::new("reopen-test", "Reopen", [400.0, 300.0]).centre_first().vscroll(),
+                &mut state,
+                &mut open,
+                |ui| {
+                    for i in 0..80 {
+                        ui.label(format!("body line {i}"));
+                    }
+                },
+            );
+            let id = crate::layout::salted_id(&ctx, "reopen-test").with("title-btn");
+            button = ctx.memory(|m| m.area_rect(id)).map(|r| (id, r));
+        })
+        .drop_without_applying_deltas();
+        let (id, rect) = button?;
+        Some(ctx.layer_id_at(rect.center()) == Some(egui::LayerId::new(egui::Order::Middle, id)))
+    }
+
+    /// **The ⇱ survives the window being closed and opened again.** Reported on
+    /// Settings: open it, close it, open it again, and the button to send it to
+    /// its own window was gone. Reopening raises the window to the top of its
+    /// order, and the button — a layer of its own, laid over the title bar —
+    /// was left underneath it. It has to stay directly above its own window.
+    #[test]
+    fn the_title_button_is_still_there_after_closing_and_reopening() {
+        let ctx = egui::Context::default();
+        let quiet = || Vec::new();
+        for _ in 0..3 {
+            title_button_on_top(&ctx, true, quiet());
+        }
+        assert_eq!(title_button_on_top(&ctx, true, quiet()), Some(true), "not on top at first");
+        // A click inside the window — which is what closing it with its ✕, or
+        // using anything in it, is. egui raises a window that is clicked.
+        let body = egui::pos2(800.0, 520.0);
+        let click = |pressed| egui::Event::PointerButton {
+            pos: body,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        title_button_on_top(&ctx, true, vec![egui::Event::PointerMoved(body), click(true)]);
+        title_button_on_top(&ctx, true, vec![click(false)]);
+        assert_eq!(
+            title_button_on_top(&ctx, true, quiet()),
+            Some(true),
+            "a click on the window put it over its own button"
+        );
+        for _ in 0..3 {
+            title_button_on_top(&ctx, false, quiet());
+        }
+        for _ in 0..3 {
+            title_button_on_top(&ctx, true, quiet());
+        }
+        assert_eq!(title_button_on_top(&ctx, true, quiet()), Some(true), "hidden after reopening");
     }
 
     /// The window opens fitted to the monitor it is about to open on, and never
