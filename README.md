@@ -1760,3 +1760,7 @@ none of it.
 The grey-line shade, the IBP beacon schedule, the meteor-shower calendar and the
 Kp history are adapted from ideas in
 [OpenHamClock](https://github.com/accius/openhamclock) (MIT).
+
+VARA HF runs on [xara](https://github.com/x0rro/xara) (MIT), an open
+implementation of the VARA protocol, vendored under `vendor/xara`. See its
+`PROVENANCE.md` for what was taken and changed.

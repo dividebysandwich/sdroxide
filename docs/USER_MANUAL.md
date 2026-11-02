@@ -30,6 +30,7 @@ or connects to a remote sdroxide server.
     - [3.24 Q65](#324-q65)
     - [3.25 FSK441](#325-fsk441)
     - [3.26 JTTY](#326-jtty)
+    - [3.27 VARA HF](#327-vara-hf)
 4. [Skimmers (CW, PSK, RTTY)](#4-skimmers)
 5. [ISM band decoder (315 / 345 / 433 / 868 / 915 MHz devices)](#5-ism-band-decoder)
 6. [Settings](#6-settings)
@@ -6595,6 +6596,77 @@ nothing is sent and the reason is shown under the row.
 
 **Where to find it.** There is no calling frequency and the mode is very new;
 tune where the station you want says it will be.
+
+### 3.27 VARA HF
+
+> **Experimental.** The modem is [xara](https://github.com/x0rro/xara), an
+> open, MIT-licensed implementation of the VARA HF protocol, built into
+> sdroxide. xara's author tests it against VARA HF 4.9.0. Inside sdroxide it
+> has been tested **station against station in simulation only**: two copies
+> connecting, moving data both ways and hanging up through a model of the
+> radio's turnaround. It has not yet linked with a real VARA station or an
+> RMS gateway, so treat a first session as a test.
+
+Choose **VARA HF** from the DIGITAL row. VARA HF is the connected-mode ARQ
+modem most Winlink RMS gateways and VarAC stations run. Two stations make a
+link, then trade bursts and acknowledgements, and the speed climbs and falls
+with the path. It is always **upper sideband** and centred on **1500 Hz** of
+audio, at one of three widths: **500**, **2300** (what most gateways run) or
+**2750** Hz.
+
+There are three ways to drive it, **one at a time**:
+
+- **The panel.** Call a station and type to it, as in VarAC's chat.
+- **The MAIL window.** Forward Winlink mail through an RMS gateway; see
+  [chapter 11](#11-winlink-radio-email).
+- **A program on VARA's TCP ports.** Pat, Winlink Express or VarAC uses this
+  radio as its VARA modem; see
+  [Serving the modem to other software](#serving-the-modem-to-other-software).
+
+Whichever claims the modem first holds it until its session ends. The others
+are refused and told who holds it. The panel shows this as **Host**.
+
+**The panel.** **STATUS** is the modem: the session state (LISTENING,
+CALLING, CONNECTED), **TX** while it is keyed, and **BUSY** while the channel
+detector hears someone else. Below that come the peer, the width, the speed
+level and its net bit rate, the far station's S/N, and the bytes moved.
+**TUNE** sends a steady tone for an antenna tuner, for up to a minute.
+**ABORT** drops a link at once, whoever is driving it.
+
+**TERMINAL** is the conversation. Type a callsign and press **CONNECT**. Once
+the link is up, type a line and press Enter to send it. **DISCONNECT** hangs
+up properly: whatever is still queued goes out first, then the far end agrees.
+While an external program holds the modem, the terminal shows its commands and
+the modem's replies, so you can watch a Pat session go by.
+
+**⚙ SETUP** holds the station settings:
+
+- **Station call:** the callsign the modem answers to, optionally with an
+  SSID. Leave it empty to use your callsign. A program on the TCP ports sets
+  its own.
+- **Bandwidth:** 500, 2300 or 2750 Hz.
+- **Registered:** unlocks the speed levels above 4, as a registered copy of
+  VARA does. It is meant for operators who own a VARA licence. Without it a
+  link stops at level 4 however good the path is.
+- **Retries:** how many times a call is repeated before it is given up.
+- **CW ID:** identify in CW at the end of a link.
+- **TX latency:** how long the transmit path takes to get audio to the
+  antenna. The modem's turnaround timing depends on it. **Auto** picks about
+  20 ms on an IQ SDR and 120 ms on a sound-card rig. If links fail just after
+  the far end answers, raise it.
+- **Answer calls:** take incoming calls in the terminal. This does nothing
+  while the TCP host is on, because a program attached there gets the calls.
+- **TCP host:** VARA's command port and the one after it (8300/8301).
+
+**Drive.** The modem leaves the headroom its OFDM peaks need, and the TX audio
+level scales it like any other digital mode: 100 % puts the peaks at full
+scale.
+
+**Receive timing.** While VARA HF is running, sdroxide reads the receiver in
+about 20 ms blocks instead of its usual larger ones. An ARQ station has to
+hear the far end from the moment its own over ends. On a sound-card rig the
+usual block left it deaf for a third of a second after every over, and in
+testing that was enough to fail the handshake.
 
 ## 4. Skimmers
 
@@ -15086,11 +15158,10 @@ mailbox with attachments in it does not have to cross a phone link on connect.
 
 ### Over the air
 
-Two routes now: the CMS over the internet, and **AX.25 packet** on the radio,
-reaching the RMS Packet gateways. Pick one under **Settings → Winlink → How to
-connect**. ARDOP on HF is still to come; VARA deliberately is not, being a
-closed Windows binary whose licence forbids reverse engineering and for which
-no open implementation of the waveform exists.
+Three routes now: the CMS over the internet, **AX.25 packet** on the radio
+(the RMS Packet gateways), and **VARA HF** (the RMS gateways on HF; see
+[3.27](#327-vara-hf)). Pick one under **Settings → Winlink → How to connect**.
+ARDOP is still to come.
 
 To forward over the air:
 
@@ -15104,6 +15175,19 @@ To forward over the air:
    starts. Leave the frequency at zero to keep the dial where it is and tune
    manually.
 4. Press **CONNECT** in the MAIL window as usual.
+
+Over **VARA HF** instead:
+
+1. Put the radio in **VARA HF**.
+2. Set the route to **Radio (VARA HF)** and name the gateway, with the dial
+   frequency gateway lists give for VARA (upper sideband). Leave the frequency
+   at zero to keep the dial where it is.
+3. Press **CONNECT**. The session calls as your Winlink account callsign, and
+   it holds the modem until it ends: the VARA panel and the TCP ports refuse
+   other users in the meantime.
+
+A VARA call that goes unanswered gives up by itself after its retries (about a
+minute and a half at the default fifteen).
 
 While a session is running, CONNECT becomes **ABORT**. Stopping is cooperative
 rather than a hard kill: the link is torn down properly and whatever mail
@@ -15273,6 +15357,21 @@ debug. The server runs only while the radio is in a packet mode: offering this
 modem while the radio is on FT8 would be a socket that accepts frames and never
 sends them.
 
+**VARA HF.** Turn on **TCP host** in the VARA HF setup dialog and sdroxide
+answers on VARA's own ports, **8300** for commands and **8301** for data,
+the way VARA HF does. Pat (`vara:///CALL`), Winlink Express or VarAC then use
+this radio as their VARA modem with no change on their side. The ports listen
+on localhost only, because a program on them can key your transmitter. The
+modem announces itself as `VERSION VARA HF v4.9.0`, as xara does. The host
+sets its own `MYCALL`; Registered and the bandwidth are your settings, though
+a host may switch the bandwidth for its session.
+
+One modem, one host. While a program holds the command port, the MAIL window
+and the panel are refused. While either of those holds the modem, a program
+that connects is turned away at the door. The ports are open only while the
+radio is in VARA HF. If one is already taken (by a real VARA, say), the
+panel's **Ports** line says so in red.
+
 ---
 
 ## 12. Command-line reference
@@ -15287,7 +15386,7 @@ sends them.
 | `--freq <HZ>` | Center frequency in Hz (default: where the last session was left, or 14,200,000 on a first run). |
 | `--rate <HZ>` | Sample rate in Hz (default: from config). |
 | `--gain <DB>` | Overall RX gain in dB (default: hardware AGC or a moderate value). |
-| `--mode <MODE>` | Initial mode, matched without regard to case: LSB, USB, CW, AM, SAM, NFM, WFM, DRM, HD RADIO, ADS-B, VDL2, AIS, DIGU, DIGL, DSB, ISB, SPEC, FT8, FT4, FT2, JS8, WSPR, PSK, RTTY, RTTY-FM, PACKET, PACKET-HF, APRS, SSTV, SSTV-FM, RIFP, WEFAX, NAVTEX, ACARS, OLIVIA, THOR, FSQ, ATCHAT, HELL, RFPAINT, RADE, HFDL. `HD RADIO` is the one name with a space in it, so it needs quoting on the command line: `--mode "HD RADIO"`. Default: the mode the last session was left in. |
+| `--mode <MODE>` | Initial mode, matched without regard to case: LSB, USB, CW, AM, SAM, NFM, WFM, DRM, HD RADIO, ADS-B, VDL2, AIS, DIGU, DIGL, DSB, ISB, SPEC, FT8, FT4, FT2, JS8, WSPR, PSK, RTTY, RTTY-FM, PACKET, PACKET-HF, "VARA HF", APRS, SSTV, SSTV-FM, RIFP, WEFAX, NAVTEX, ACARS, OLIVIA, THOR, FSQ, ATCHAT, HELL, RFPAINT, RADE, HFDL. `HD RADIO` and `VARA HF` have a space in them, so they need quoting on the command line: `--mode "HD RADIO"`. Default: the mode the last session was left in. |
 | `--antenna <NAME>` | RX antenna port, as the device names it (LNAH, TX/RX — `--probe` lists them). Default: the port the last session was left on, and failing that whatever the driver selects. |
 | `--tx-antenna <NAME>` | TX antenna port, likewise (BAND1, BAND2). |
 | `--server` | Run as a server (web client + WebSocket streaming backend). |
@@ -16837,6 +16936,7 @@ using. Bind them under **Speech** on the Controls tab:
 | Q65 | WSJT-X's modern weak-signal mode for EME and scatter paths: ten sub-modes (period and tone spacing), FT8's 77-bit message and a CRC. Receive only. See [3.24](#324-q65). |
 | FSK441 | The original meteor-scatter mode on 6 m and 2 m: 4-FSK at 441 baud carrying free text and the `R26`/`R27`/`RRR`/`73` single-tone shorthand, in a 15/30-second period. The decoder hunts the period for meteor-trail pings; transmit repeats the message for the length of the over. See [3.25](#325-fsk441). |
 | JTTY | **Experimental.** The WSJT-X 3.2 asynchronous RTTY-like text mode: no T/R slots, ~1.888-second frames of 4-GFSK about 125 Hz wide carrying free text or typed contest atoms behind a tail-biting convolutional code. Sends a message once. Checked against the reference encoder, not yet off-air. See [3.26](#326-jtty). |
+| VARA HF | **Experimental.** The connected-mode ARQ modem of the Winlink gateways and VarAC, on the open xara implementation: 500/2300/2750 Hz on upper sideband, speed adapting to the path. Driven from its panel, the MAIL window, or Pat/Winlink Express/VarAC on TCP 8300/8301. Tested in simulation, not yet on the air. See [3.27](#327-vara-hf). |
 | PSK | PSK31 keyboard mode (BPSK31 / varicode). |
 | RTTY | RTTY keyboard mode (Baudot; selectable shift and baud), on a sideband. |
 | RTTY-FM | The same modem on an FM carrier, the way a club bulletin is still sent on VHF. |
