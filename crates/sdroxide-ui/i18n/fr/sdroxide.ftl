@@ -5526,3 +5526,4 @@ settings-ui-workspace-full = Dix espaces de travail, c'est la limite de SDRuno ;
 settings-ui-workspace-save = ENREGISTRER L'ACTUELLE
 settings-ui-workspace-save-hint = Enregistrer la disposition actuelle sous ce nom
 settings-ui-workspace-name-first = Saisissez d'abord un nom
+topbar-band-window2-hint = WINDOW — ouvrir le sélecteur dans sa propre fenêtre, aussi large que vous voulez, sur n'importe quel écran

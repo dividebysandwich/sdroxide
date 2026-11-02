@@ -5522,3 +5522,4 @@ settings-ui-workspace-full = Десять рабочих пространств 
 settings-ui-workspace-save = СОХРАНИТЬ ТЕКУЩУЮ
 settings-ui-workspace-save-hint = Сохранить текущую раскладку под этим именем
 settings-ui-workspace-name-first = Сначала введите имя
+topbar-band-window2-hint = WINDOW — открыть выбор в отдельном окне любой ширины на любом мониторе

@@ -5518,3 +5518,4 @@ settings-ui-workspace-full = On çalışma alanı SDRuno'nun tuttuğu sınırdı
 settings-ui-workspace-save = MEVCUDU KAYDET
 settings-ui-workspace-save-hint = Şu anki düzeni bu adla kaydet
 settings-ui-workspace-name-first = Önce bir ad yazın
+topbar-band-window2-hint = PENCERE — seçiciyi herhangi bir monitörde, istediğiniz genişlikte kendi penceresinde açın

@@ -5460,3 +5460,4 @@ settings-ui-workspace-full = SDRuno最多保留十个工作区，请先删除一
 settings-ui-workspace-save = 保存当前布局
 settings-ui-workspace-save-hint = 以此名称保存当前布局
 settings-ui-workspace-name-first = 请先输入名称
+topbar-band-window2-hint = 窗口：在独立窗口中打开选择器，宽度随意，可放在任意显示器上

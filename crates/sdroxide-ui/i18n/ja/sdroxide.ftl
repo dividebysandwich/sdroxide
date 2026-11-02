@@ -5468,3 +5468,4 @@ settings-ui-workspace-full = ワークスペースは SDRuno と同じく最大1
 settings-ui-workspace-save = 現在の配置を保存
 settings-ui-workspace-save-hint = 現在の配置をこの名前で保存します
 settings-ui-workspace-name-first = 先に名前を入力してください
+topbar-band-window2-hint = ウィンドウ — 選択を専用ウィンドウで開きます。好きな幅にでき、任意のモニターに置けます

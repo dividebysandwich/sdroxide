@@ -2324,6 +2324,7 @@ impl SdroxideApp {
                 .clicked()
             {
                 self.band_dock_visible = !self.band_dock_visible;
+                self.remember_band_dock();
             }
             return;
         }
@@ -2351,6 +2352,7 @@ impl SdroxideApp {
         if dock {
             self.band_docked = true;
             self.band_dock_visible = true;
+            self.remember_band_dock();
             egui::Popup::close_id(ui.ctx(), popup_id);
         }
     }
@@ -2414,6 +2416,20 @@ impl SdroxideApp {
                         {
                             self.band_docked = false;
                         }
+                        // Out to a window of its own, where it can be as wide
+                        // as the operator likes without taking the waterfall's
+                        // width (native only: a browser has one window).
+                        #[cfg(not(target_arch = "wasm32"))]
+                        if crate::chrome::chip_window_icon(ui, crate::chrome::WindowIcon::Out)
+                            .on_hover_text(tr!("topbar-band-window2-hint"))
+                            .clicked()
+                        {
+                            self.band_docked = false;
+                            self.set_module_detached(
+                                sdroxide_types::DetachableModule::BandMenu,
+                                true,
+                            );
+                        }
                     });
                 });
                 ui.separator();
@@ -2424,6 +2440,11 @@ impl SdroxideApp {
             });
         if !visible {
             self.band_dock_visible = false;
+        }
+        // The column's own chips (hide, undock) write here, after the panel,
+        // because they cannot reach `self` while it draws.
+        if !visible || !self.band_docked {
+            self.remember_band_dock();
         }
     }
 

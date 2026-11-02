@@ -5527,3 +5527,4 @@ settings-ui-workspace-full = Dez áreas de trabalho é o limite que o SDRuno gua
 settings-ui-workspace-save = SALVAR ATUAL
 settings-ui-workspace-save-hint = Salva a disposição atual com este nome
 settings-ui-workspace-name-first = Digite um nome primeiro
+topbar-band-window2-hint = JANELA — abre o seletor em uma janela própria, tão larga quanto você quiser, em qualquer monitor

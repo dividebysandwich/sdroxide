@@ -5510,3 +5510,4 @@ settings-ui-workspace-full = Diez espacios de trabajo es el límite que mantiene
 settings-ui-workspace-save = GUARDAR ACTUAL
 settings-ui-workspace-save-hint = Guardar la disposición actual con este nombre
 settings-ui-workspace-name-first = Escriba primero un nombre
+topbar-band-window2-hint = WINDOW — abrir el selector en una ventana propia, tan ancha como quieras, en cualquier monitor

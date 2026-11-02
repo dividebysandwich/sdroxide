@@ -1379,6 +1379,7 @@ impl SdroxideApp {
         // reads them, or the first frame flashes the default theme at the
         // default scale.
         let ui_settings = load_ui_settings(storage);
+        let band_dock = persist::load_band_dock();
         crate::theme::set_look(
             ui_settings.theme,
             ui_settings.button_style,
@@ -1575,8 +1576,12 @@ impl SdroxideApp {
             bw_popup_since: None,
             duplex_popup_since: None,
             rpt_tone_popup_since: None,
-            band_docked: false,
-            band_dock_visible: false,
+            // A station that keeps the band/mode selector docked gets it back
+            // on the next start — per radio, and presentation only: the dock's
+            // own width rule (`band_dock_room`) still decides whether there is
+            // room for it this frame. (SWL users group, via sdroxide-brown.)
+            band_docked: band_dock.contains_key(&radio_id),
+            band_dock_visible: band_dock.get(&radio_id).copied().unwrap_or(false),
             aux_view: ViewState::default(),
             panel_window_pane: 0,
             tool_windows: Default::default(),

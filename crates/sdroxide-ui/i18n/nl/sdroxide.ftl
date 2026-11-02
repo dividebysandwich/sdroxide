@@ -5519,3 +5519,4 @@ settings-ui-workspace-full = Tien werkruimtes is de limiet die SDRuno bewaart; v
 settings-ui-workspace-save = HUIDIGE OPSLAAN
 settings-ui-workspace-save-hint = Sla de huidige indeling onder deze naam op
 settings-ui-workspace-name-first = Typ eerst een naam
+topbar-band-window2-hint = VENSTER — open de selectie in een eigen venster, zo breed als je wilt, op elke monitor

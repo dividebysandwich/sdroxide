@@ -470,6 +470,47 @@ pub(in crate::app) fn band_plan_path() -> Option<std::path::PathBuf> {
     None
 }
 
+// ── The band/mode selector's dock, per radio ─────────────────────────────────
+
+/// Which radios keep the band/mode selector docked, and whether it is showing.
+/// A file of its own rather than a `UiSettings` field, because `UiSettings` is
+/// `Copy` and a map is not. Native only: the browser keeps the dock for the
+/// session, as it always has.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_band_dock() -> std::collections::BTreeMap<u32, bool> {
+    sdroxide_config::load_band_dock()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_band_dock() -> std::collections::BTreeMap<u32, bool> {
+    Default::default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn save_band_dock(map: &std::collections::BTreeMap<u32, bool>) {
+    if let Err(e) = sdroxide_config::save_band_dock(map) {
+        eprintln!("failed to save the band dock: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn save_band_dock(_map: &std::collections::BTreeMap<u32, bool>) {}
+
+/// Fold one radio's dock state into the stored map; true when it changed.
+///
+/// Present means the operator docked the selector for that radio, so it comes
+/// back docked on the next start; the value is whether it was left showing —
+/// docked-then-hidden is a state of its own and comes back hidden, with the
+/// chip that brings it back. An undocked radio leaves the map.
+pub(in crate::app) fn band_dock_entry(
+    map: &mut std::collections::BTreeMap<u32, bool>,
+    radio: u32,
+    docked: bool,
+    visible: bool,
+) -> bool {
+    if docked { map.insert(radio, visible) != Some(visible) } else { map.remove(&radio).is_some() }
+}
+
 // ── Saved window arrangements (SDRuno's workspaces) ──────────────────────────
 
 /// The saved window arrangements. Natively a shared `workspaces.json` beside the
@@ -494,3 +535,25 @@ pub(in crate::app) fn save_workspaces(workspaces: &Vec<sdroxide_types::Workspace
 
 #[cfg(target_arch = "wasm32")]
 pub(in crate::app) fn save_workspaces(_workspaces: &Vec<sdroxide_types::Workspace>) {}
+
+#[cfg(test)]
+mod band_dock_tests {
+    use super::*;
+
+    /// The band dock is remembered per radio, docked-and-hidden is kept as a
+    /// state of its own, an undocked radio leaves the map, and a write that
+    /// changes nothing says so (so nothing is written).
+    #[test]
+    fn the_band_dock_is_remembered_per_radio() {
+        let mut map = std::collections::BTreeMap::new();
+        assert!(band_dock_entry(&mut map, 1, true, true), "docking radio 1 is a change");
+        assert!(band_dock_entry(&mut map, 0, true, false), "docked and hidden is kept too");
+        assert!(!band_dock_entry(&mut map, 1, true, true), "the same state again is no change");
+        assert!(band_dock_entry(&mut map, 1, true, false), "hiding it is a change");
+        assert_eq!(map.get(&1), Some(&false));
+        assert!(band_dock_entry(&mut map, 1, false, false), "undocking removes it");
+        assert!(!map.contains_key(&1));
+        assert_eq!(map.get(&0), Some(&false), "the other radio is untouched");
+        assert!(!band_dock_entry(&mut map, 7, false, false), "a radio never docked: no change");
+    }
+}

@@ -5571,3 +5571,4 @@ settings-ui-workspace-full = Ten workspaces is the limit SDRuno keeps; delete on
 settings-ui-workspace-save = SAVE CURRENT
 settings-ui-workspace-save-hint = Save the arrangement you have now under this name
 settings-ui-workspace-name-first = Type a name first
+topbar-band-window2-hint = WINDOW — open the selector in a window of its own, as wide as you like, on any monitor
