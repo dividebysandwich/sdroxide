@@ -515,35 +515,13 @@ impl SdroxideApp {
             self.push_net_log(tr!("net-adif-import-failed-file-could").to_string());
             return;
         };
-        // One pass to index the existing log by call and band, so the duplicate
-        // check only looks at the QSOs that could match rather than at all of
-        // them. A full logbook is tens of thousands of records and this runs
-        // inside a single frame.
-        let mut by_call_band: HashMap<(String, String), Vec<i64>> = HashMap::new();
-        for q in &self.qso_log {
-            by_call_band
-                .entry((q.call.to_ascii_uppercase(), q.band.to_ascii_uppercase()))
-                .or_default()
-                .push(q.start_utc);
-        }
+        let (fresh, skipped) = new_import_records(&self.qso_log, records);
         let mut next_id = self.next_log_id();
-        let mut added = 0usize;
-        let mut skipped = 0usize;
-        for mut r in records {
-            if r.call.trim().is_empty() {
-                continue;
-            }
-            let key = (r.call.to_ascii_uppercase(), r.band.to_ascii_uppercase());
-            let starts = by_call_band.entry(key).or_default();
-            if starts.iter().any(|&t| (t - r.start_utc).abs() < 120) {
-                skipped += 1;
-                continue;
-            }
-            starts.push(r.start_utc);
+        let added = fresh.len();
+        for mut r in fresh {
             r.id = next_id;
             next_id += 1;
             self.qso_log.push(r);
-            added += 1;
         }
         if added > 0 {
             persist_qso_log(&self.qso_log);
@@ -622,4 +600,98 @@ impl SdroxideApp {
             assumed = assumed
         ));
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn qso(call: &str, band: &str, start_utc: i64) -> sdroxide_types::QsoRecord {
+        sdroxide_types::QsoRecord {
+            call: call.into(),
+            band: band.into(),
+            mode: "FT8".into(),
+            start_utc,
+            ..Default::default()
+        }
+    }
+
+    /// **A contact already in the log is not imported a second time, and the
+    /// band is not part of how that is decided.**
+    ///
+    /// The sequencer logs a QSO with the frequency and an empty band; the same
+    /// contact re-imported from an ADIF carries the ADIF's band. Keying on both
+    /// let a whole file back in as duplicates of itself — 65 pairs of the same
+    /// call at the same second, one row with a band and one without (reported
+    /// from the bench, 2026-11-02).
+    #[test]
+    fn an_import_does_not_readd_what_the_log_already_has() {
+        let existing = vec![qso("13WF01", "", 1_789_281_763)];
+        let parsed = vec![
+            // The same contact, as the ADIF spells it: a band, not an empty one.
+            qso("13WF01", "11m", 1_789_281_763),
+            // A different station, and the same station five minutes later: both
+            // are contacts the log does not have.
+            qso("19AT168", "11m", 1_789_281_763),
+            qso("13WF01", "11m", 1_789_281_763 + 300),
+        ];
+        let (fresh, skipped) = new_import_records(&existing, parsed);
+        assert_eq!(skipped, 1, "the bandless copy in the log is the same contact");
+        let calls: Vec<&str> = fresh.iter().map(|q| q.call.as_str()).collect();
+        assert_eq!(calls, vec!["19AT168", "13WF01"]);
+    }
+
+    /// The same file twice in a row adds nothing the second time — the bug above
+    /// is the import disagreeing with *itself*, so this is the plain case.
+    #[test]
+    fn importing_the_same_file_twice_adds_nothing() {
+        let file = vec![qso("19JV75", "11m", 1_789_279_546), qso("13WF01", "11m", 1_789_281_763)];
+        let (first, skipped) = new_import_records(&[], file);
+        assert_eq!((first.len(), skipped), (2, 0));
+        let (second, skipped) = new_import_records(&first, vec![
+            qso("19JV75", "11m", 1_789_279_546),
+            qso("13WF01", "11m", 1_789_281_763),
+        ]);
+        assert_eq!((second.len(), skipped), (0, 2));
+    }
+}
+
+/// Which of an imported ADIF's contacts this log does not already have, and how
+/// many it does.
+///
+/// **The match is call and time, never band.** The log is not consistent about
+/// band: a contact logged by a digital sequencer carries the frequency and an
+/// empty band, while the same contact re-imported from an ADIF carries the
+/// ADIF's own band — so keying on band let a whole file back in as duplicates
+/// of itself, and the operator was left with 65 pairs of the same call at the
+/// same second, one row with a band and one without (reported 2026-11-02).
+///
+/// Two minutes is the window, and it is call-only because nothing is worked
+/// twice on two different bands inside two minutes. The existing log is indexed
+/// once by call so the check stays linear: this runs inside a single frame and a
+/// full logbook is tens of thousands of records.
+fn new_import_records(
+    existing: &[sdroxide_types::QsoRecord],
+    parsed: Vec<sdroxide_types::QsoRecord>,
+) -> (Vec<sdroxide_types::QsoRecord>, usize) {
+    let mut starts_by_call: HashMap<String, Vec<i64>> = HashMap::new();
+    for q in existing {
+        starts_by_call.entry(q.call.trim().to_ascii_uppercase()).or_default().push(q.start_utc);
+    }
+    let mut fresh = Vec::with_capacity(parsed.len());
+    let mut skipped = 0usize;
+    for r in parsed {
+        let call = r.call.trim().to_ascii_uppercase();
+        if call.is_empty() {
+            continue;
+        }
+        let starts = starts_by_call.entry(call).or_default();
+        if starts.iter().any(|&t| (t - r.start_utc).abs() < 120) {
+            skipped += 1;
+            continue;
+        }
+        starts.push(r.start_utc);
+        fresh.push(r);
+    }
+    (fresh, skipped)
 }
