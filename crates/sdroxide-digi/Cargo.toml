@@ -21,6 +21,8 @@ sdroxide-dsp.workspace = true
 # that bridges it onto the radio lives here because it needs the DSP resamplers.
 sdroxide-atchat.workspace = true
 sdroxide-ax25.workspace = true
+# VARA HF: the vendored xara modem core and its host ports (MIT).
+sdroxide-vara.workspace = true
 sdroxide-aprs.workspace = true
 sdroxide-deepcw.workspace = true
 sdroxide-rade.workspace = true

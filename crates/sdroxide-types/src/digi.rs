@@ -568,6 +568,10 @@ pub struct DigiStatus {
     /// after `tx_refused` for the same positional reason.
     #[serde(default)]
     pub jtty: Option<crate::JttyStatus>,
+    /// VARA HF: the link, the speed and the transcript. `None` in every other
+    /// mode. Appended after `jtty` for the same positional reason.
+    #[serde(default)]
+    pub vara: Option<crate::VaraStatus>,
 }
 
 /// The running detail of the contact in progress: when it started and what has
@@ -1082,6 +1086,7 @@ impl DigiStatus {
             navtex: None,
             acars: None,
             jtty: None,
+            vara: None,
             aprs: None,
             js8: None,
             atchat: None,
@@ -2220,6 +2225,49 @@ pub struct DigiConfig {
     /// remember to change it.
     #[serde(default)]
     pub wavelog_station_id: u32,
+
+    // ── VARA HF ── appended, postcard numbers fields by position.
+    /// The callsign the VARA modem answers to, with an optional SSID. Empty
+    /// falls back to the logbook callsign. A host program (Pat, VarAC) sets its
+    /// own with `MYCALL` and that wins for its session.
+    #[serde(default)]
+    pub vara_mycall: String,
+    /// The width the modem runs at. Most RMS gateways run 2300.
+    #[serde(default)]
+    pub vara_bw: crate::VaraBw,
+    /// Unlock the speed levels above 4, as a registered copy of VARA does.
+    /// For operators who own a VARA licence; an unregistered station caps a
+    /// link at level 4 whatever the path would carry.
+    #[serde(default)]
+    pub vara_registered: bool,
+    /// Identify in CW at the end of a link, as VARA does when asked.
+    #[serde(default)]
+    pub vara_cwid: bool,
+    /// Connect attempts before giving up on a call.
+    #[serde(default = "default_vara_retries")]
+    pub vara_retries: u32,
+    /// How long the transmit path takes from key-up to the first sample on
+    /// the air, in milliseconds. `None` asks the engine to pick from the
+    /// radio: a few milliseconds on an IQ SDR, about 200 on a CAT rig.
+    #[serde(default)]
+    pub vara_tx_latency_ms: Option<u16>,
+    /// Offer the modem on VARA's TCP host ports, for Pat, Winlink Express or
+    /// VarAC.
+    #[serde(default)]
+    pub vara_host_server: bool,
+    /// The command port; data is on the next one. 8300 is VARA HF's own.
+    #[serde(default = "default_vara_host_port")]
+    pub vara_host_port: u16,
+    /// Answer calls from the panel when no host program is attached.
+    #[serde(default)]
+    pub vara_listen: bool,
+}
+
+fn default_vara_retries() -> u32 {
+    15
+}
+fn default_vara_host_port() -> u16 {
+    8300
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2464,6 +2512,15 @@ impl Default for DigiConfig {
             fsk441_period: crate::Fsk441Period::P30,
             ft8_depth: Ft8Depth::default(),
             wavelog_station_id: 0,
+            vara_mycall: String::new(),
+            vara_bw: crate::VaraBw::default(),
+            vara_registered: false,
+            vara_cwid: false,
+            vara_retries: default_vara_retries(),
+            vara_tx_latency_ms: None,
+            vara_host_server: false,
+            vara_host_port: default_vara_host_port(),
+            vara_listen: false,
         }
     }
 }

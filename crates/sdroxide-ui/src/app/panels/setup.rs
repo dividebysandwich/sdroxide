@@ -46,6 +46,8 @@ impl SdroxideApp {
             (tr!("setup-aprs-setup"), "APRS Setup".to_string())
         } else if mode.is_packet() {
             (tr!("setup-packet-setup"), "Packet Setup".to_string())
+        } else if mode.is_vara() {
+            (tr!("setup-vara-setup"), "VARA HF Setup".to_string())
         } else if mode.is_text_modem() || mode.is_hell() || mode.is_js8() {
             (tr!("setup-mode-setup", mode = mode.label()), format!("{} Setup", mode.label()))
         } else {
@@ -223,6 +225,91 @@ impl SdroxideApp {
                                 .add(
                                     egui::DragValue::new(&mut cfg.packet_kiss_port)
                                         .range(1024..=65535),
+                                )
+                                .changed();
+                        });
+                        ui.end_row();
+                    }
+
+                    if mode.is_vara() {
+                        ui.label(tr!("setup-station-call"));
+                        if crate::chrome::field(
+                            ui,
+                            egui::TextEdit::singleline(&mut cfg.vara_mycall)
+                                .hint_text(cfg.my_call.clone()),
+                        )
+                        .on_hover_text(tr!("setup-vara-call-hint"))
+                        .changed()
+                        {
+                            cfg.vara_mycall = cfg.vara_mycall.to_uppercase();
+                            changed = true;
+                        }
+                        ui.end_row();
+
+                        ui.label(tr!("setup-vara-bandwidth"));
+                        ui.horizontal(|ui| {
+                            for bw in sdroxide_types::VaraBw::ALL {
+                                changed |=
+                                    ui.selectable_value(&mut cfg.vara_bw, bw, bw.label()).changed();
+                            }
+                        });
+                        ui.end_row();
+
+                        ui.label(tr!("setup-vara-registered"));
+                        changed |= ui
+                            .checkbox(&mut cfg.vara_registered, tr!("setup-vara-registered-check"))
+                            .on_hover_text(tr!("setup-vara-registered-hint"))
+                            .changed();
+                        ui.end_row();
+
+                        ui.label(tr!("setup-vara-retries"));
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut cfg.vara_retries).range(1..=30))
+                            .on_hover_text(tr!("setup-vara-retries-hint"))
+                            .changed();
+                        ui.end_row();
+
+                        ui.label(tr!("setup-vara-cwid"));
+                        changed |=
+                            ui.checkbox(&mut cfg.vara_cwid, tr!("setup-vara-cwid-check")).changed();
+                        ui.end_row();
+
+                        ui.label(tr!("setup-vara-latency"));
+                        ui.horizontal(|ui| {
+                            let mut auto = cfg.vara_tx_latency_ms.is_none();
+                            if ui
+                                .checkbox(&mut auto, tr!("setup-vara-latency-auto"))
+                                .on_hover_text(tr!("setup-vara-latency-hint"))
+                                .changed()
+                            {
+                                cfg.vara_tx_latency_ms = if auto { None } else { Some(120) };
+                                changed = true;
+                            }
+                            if let Some(ms) = cfg.vara_tx_latency_ms.as_mut() {
+                                changed |= ui
+                                    .add(egui::DragValue::new(ms).range(0..=1000).suffix(" ms"))
+                                    .changed();
+                            }
+                        });
+                        ui.end_row();
+
+                        ui.label(tr!("setup-vara-listen"));
+                        changed |= ui
+                            .checkbox(&mut cfg.vara_listen, tr!("setup-vara-listen-check"))
+                            .on_hover_text(tr!("setup-vara-listen-hint"))
+                            .changed();
+                        ui.end_row();
+
+                        ui.label(tr!("setup-vara-host"));
+                        ui.horizontal(|ui| {
+                            changed |= ui
+                                .checkbox(&mut cfg.vara_host_server, tr!("setup-serve"))
+                                .on_hover_text(tr!("setup-vara-host-hint"))
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut cfg.vara_host_port)
+                                        .range(1024..=65534),
                                 )
                                 .changed();
                         });
@@ -596,7 +683,7 @@ impl SdroxideApp {
                     // every setting the operator typed is discarded the moment
                     // the window closes — which is what happened when this
                     // was written the other way (issue #150).
-                    if !mode.is_aprs() {
+                    if !mode.is_aprs() && !mode.is_vara() {
                         ui.label(tr!("setup-tx-period"));
                         ui.horizontal(|ui| {
                             changed |= ui
@@ -810,7 +897,7 @@ impl SdroxideApp {
                     });
                     ui.end_row();
                 });
-                if !mode.is_aprs() {
+                if !mode.is_aprs() && !mode.is_vara() {
                     ui.separator();
                     ui.label(
                         RichText::new("Message templates  {MYCALL} {MYGRID} {DX} {REPORT}")

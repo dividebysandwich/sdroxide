@@ -206,6 +206,7 @@ impl FsqController {
             transcript: Vec::new(),
             config: self.cfg.clone(),
             jtty: None,
+            vara: None,
             text_rx: self.rx_text.clone(),
             tx_sent: self.tx.sent_chars(),
             fsq_heard: self.heard.clone(),

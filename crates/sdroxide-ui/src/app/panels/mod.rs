@@ -38,6 +38,7 @@ pub(in crate::app) mod rf_paint;
 pub(in crate::app) mod setup;
 pub(in crate::app) mod sstv;
 pub(in crate::app) mod text_modem;
+pub(in crate::app) mod vara;
 pub(in crate::app) mod vdl2;
 pub(in crate::app) mod wefax;
 pub(in crate::app) mod widgets;
@@ -79,6 +80,10 @@ pub(in crate::app) fn panel_panes(mode: Mode) -> &'static [&'static str] {
         // they move independently, so they get a pane each rather than sharing
         // one.
         Mode::Packet | Mode::PacketHf => &["MONITOR", "TERMINAL"],
+        // STATUS is the modem — state, speed, who holds it; TERMINAL is the
+        // conversation. A Winlink or Pat session fills the first and leaves
+        // the second alone, so they are watched apart.
+        Mode::VaraHf => &["STATUS", "TERMINAL"],
         // CHAT is the roster and the conversation; FILES is the transfers in
         // flight and the received-image viewer — two things an AtCHAT operator
         // watches move independently.
@@ -623,7 +628,9 @@ fn digi_dial_freqs(mode: Mode) -> &'static [(&'static str, f64)] {
         // and the band button looked broken. Landing an FM packet transmitter
         // on top of the busiest frequency in the band is the part of that
         // worth being sure about.
-        Mode::Aprs | Mode::Packet | Mode::PacketHf => &[],
+        // VARA is the same: an RMS gateway is on the frequency its keeper
+        // published, and the FT8 dials are the last place to put an ARQ link.
+        Mode::Aprs | Mode::Packet | Mode::PacketHf | Mode::VaraHf => &[],
         // RIFP assigns no frequency at all: 433.92 MHz is the deployment
         // example the draft names, and the others are the middle of the
         // segments where a 25 kHz channel is a realistic thing to ask for

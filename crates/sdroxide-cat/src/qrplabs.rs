@@ -200,6 +200,7 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
+        | Mode::VaraHf
         | Mode::AtChat
         | Mode::Rade => '6',
         // No QMX has an FM position at all, so there is nothing closer to ask
