@@ -34,7 +34,8 @@ const POLL: Duration = Duration::from_millis(50);
 /// One thing a host did.
 #[derive(Debug)]
 pub enum Input {
-    Command(Command),
+    /// A parsed command, and the line it came from (for the operator's log).
+    Command(Command, String),
     /// A line that did not parse; answered `WRONG`.
     Wrong(String),
     Data(Vec<u8>),
@@ -142,7 +143,7 @@ impl LocalClient {
     /// Send one command line, without the CR.
     pub fn command(&self, line: &str) {
         let i = match parse(line) {
-            Some(c) => Input::Command(c),
+            Some(c) => Input::Command(c, line.into()),
             None => Input::Wrong(line.into()),
         };
         self.to_tnc.send(i).ok();
@@ -399,7 +400,7 @@ fn read_commands(s: TcpStream, closed: &AtomicBool, input: &Sender<Input>) {
                     let line = String::from_utf8_lossy(&buf).trim().to_string();
                     buf.clear();
                     let i = match parse(&line) {
-                        Some(c) => Input::Command(c),
+                        Some(c) => Input::Command(c, line),
                         None => Input::Wrong(line),
                     };
                     if input.send(i).is_err() {

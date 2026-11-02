@@ -70,6 +70,19 @@ pub struct VaraLine {
     pub text: String,
 }
 
+/// Who is driving the VARA modem. One at a time.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum VaraHolder {
+    #[default]
+    Nobody,
+    /// The operator's own panel.
+    Panel,
+    /// The MAIL window's forwarding session.
+    Winlink,
+    /// A program on the TCP host ports, by its address.
+    Tcp(String),
+}
+
 /// VARA HF's live state, for the panel and the wire.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct VaraStatus {
@@ -99,9 +112,8 @@ pub struct VaraStatus {
     pub afc_hz: Option<f32>,
     /// Connect attempts made on the current call.
     pub attempts: u32,
-    /// Who holds the modem: "panel", "Winlink", "TCP client 127.0.0.1:…", or
-    /// empty when nobody does.
-    pub holder: String,
+    /// Who holds the modem.
+    pub holder: VaraHolder,
     /// Where the TCP host ports are listening, when they are — `127.0.0.1:8300`.
     pub host_listening: Option<String>,
     /// Why the TCP host ports are not listening, when they should be.

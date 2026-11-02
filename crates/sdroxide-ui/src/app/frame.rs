@@ -815,6 +815,8 @@ impl eframe::App for SdroxideApp {
                                     self.aprs_panel(ui, &mut cmds, panel_h);
                                 } else if mode.is_packet() {
                                     self.packet_panel(ui, &mut cmds, panel_h);
+                                } else if mode.is_vara() {
+                                    self.vara_panel(ui, &mut cmds, panel_h);
                                 } else if mode.is_fsq() {
                                     self.fsq_panel(ui, &mut cmds, panel_h);
                                 } else if mode.is_hell() {

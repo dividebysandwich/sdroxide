@@ -288,12 +288,12 @@ impl Station {
                 self.c.session.on_data(now, data_in(&t, t_end));
                 let mark = self.c.reports.len();
                 self.drain();
-                if was == State::Answering {
-                    if let Some(i) = (mark..self.c.reports.len()).find(|&i| {
+                if was == State::Answering
+                    && let Some(i) = (mark..self.c.reports.len()).find(|&i| {
                         matches!(self.c.reports[i], Report::Host(HostEvent::Connected { .. }))
-                    }) {
-                        self.c.reports.insert(i, Report::UnencryptedLink);
-                    }
+                    })
+                {
+                    self.c.reports.insert(i, Report::UnencryptedLink);
                 }
                 if was == State::Receiving
                     && decoded.last() == Some(&true)

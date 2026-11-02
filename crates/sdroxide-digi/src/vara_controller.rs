@@ -31,8 +31,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use sdroxide_dsp::MonoResampler;
 use sdroxide_types::{
-    DigiConfig, DigiStatus, Mode, QsoStep, TranscriptLine, VARA_TRANSCRIPT_MAX, VaraBw, VaraLine,
-    VaraLineKind, VaraStatus,
+    DigiConfig, DigiStatus, Mode, QsoStep, TranscriptLine, VARA_TRANSCRIPT_MAX, VaraBw, VaraHolder,
+    VaraLine, VaraLineKind, VaraStatus,
 };
 use sdroxide_vara::{
     Bandwidth, Holder, LocalClient, Modem, Observed, RATE, Response, Vara, VaraHandle,
@@ -388,7 +388,6 @@ impl VaraController {
                 self.status.bps = *bps;
             }
             Response::Sn(s) => self.status.snr_db = Some(*s as f32),
-            Response::Busy(b) => self.status.busy = *b,
             Response::Ptt(on) => self.status.ptt = *on,
             Response::Buffer(n) => self.status.buffered = *n as u32,
             Response::Pending => self.line(VaraLineKind::Event, "Incoming call…"),
@@ -476,9 +475,18 @@ impl VaraController {
         s.afc_hz = link.afc_hz.map(|v| v as f32);
         s.bw = from_xara_bw(self.modem.station().bandwidth());
         s.ptt = self.modem.keyed();
+        // The channel detector itself, not the `BUSY` lines a host is sent:
+        // VARA also toggles those when a host attaches, which is protocol
+        // ritual rather than news about the band.
+        s.busy = self.modem.station().busy();
         s.tuning = self.modem.tuning();
         s.listening = self.cfg.vara_listen;
-        s.holder = self.modem.host().holder().map(|h| h.describe()).unwrap_or_default();
+        s.holder = match self.modem.host().holder() {
+            None => VaraHolder::Nobody,
+            Some(Holder::Tcp(a)) => VaraHolder::Tcp(a),
+            Some(Holder::Local(w)) if w == PANEL => VaraHolder::Panel,
+            Some(Holder::Local(_)) => VaraHolder::Winlink,
+        };
         if !s.connected && !link.peer.is_empty() {
             s.peer = link.peer;
         }

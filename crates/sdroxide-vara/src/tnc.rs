@@ -156,8 +156,8 @@ impl<M: Modem> Tnc<M> {
         for _ in 0..HOST_INPUTS_PER_CALL {
             let Some(i) = self.host.try_recv() else { break };
             match i {
-                Input::Command(c) => {
-                    self.observed.push(Observed::Command(format!("{c:?}")));
+                Input::Command(c, line) => {
+                    self.observed.push(Observed::Command(line));
                     self.command(c);
                 }
                 Input::Wrong(l) => {
