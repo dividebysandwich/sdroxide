@@ -12176,6 +12176,115 @@ Under **3D view**:
   its outside — at several times the cost per pixel. Both draw the same weather;
   this only chooses how much the GPU spends on the light in it.
 
+#### Undocked windows, the floating panel and workspaces
+
+Native application only — the browser client has one window and keeps everything
+in it.
+
+**Modules in their own windows.** Any of the big modules can be pulled out of the
+main window into an OS window of its own, to put the waterfall on a second
+monitor or the controls on a third:
+
+- the **Panadapter** — the spectrum and waterfall;
+- **AUX SP** — a second spectrum and waterfall: the same receiver seen twice,
+  with its own zoom, pan and layers, so the two do not mirror each other;
+- the **Operating panel** — the mode's decoder list, transcript and controls;
+- the **Controls** — the whole top strip: the frequency readout, the S-meter and
+  the receiver and transmitter controls;
+- the **Band & mode selector** — in a window it can be as wide as you like
+  without taking width from the waterfall.
+
+Set each on this tab — **Docked in this window** (the default) or **Undocked —
+its own window** — or use **DOCK ALL WINDOWS** / **UNDOCK ALL WINDOWS** below the
+rows. Whatever stays in the main window takes the space back: the panel gets the
+whole column when the spectrum is out, the spectrum gets it when the panel is
+out, and when both are out the centre shows a plain placeholder. A voice mode has
+no operating panel, so it opens no panel window. Closing a module's window docks
+it again; its size and place are remembered, and a window saved on a monitor
+that is no longer there is brought back onto the screen.
+
+The spectrum window has a bar across the top with the frequency, the mode and
+the S-meter reading, and a dock icon. The panel window carries its own title bar
+with a dock icon — a tiling window manager draws none — and its own pane, so it
+can stay on the decode list while the main window shows another.
+
+**The floating panel.** The operating panel has a third place to be: **floating**
+over the main window, as a panel inside it. A floating panel is not an OS window,
+so a tiling window manager cannot lose it. Its title bar has three buttons: out
+to a window of its own, roll up to the title bar, and close — which docks it back
+under the waterfall. Floating works in the browser too.
+
+**The module-windows list.** While any module is out of the main window, a **▣**
+chip appears on the System row, next to SETTINGS. Click it to bring every module
+window home; right-click it for the **Module windows** list, a row per module
+with the places it can be and the one it is in lit. The list is how to recover a
+window left on another workspace or behind the main window.
+
+**Keys.** These work anywhere in the main window, even while typing in a field:
+
+| Keys | What they do |
+|---|---|
+| `Ctrl+Alt+W` | Open or close the module-windows list |
+| `Ctrl+Alt+F` | Float the operating panel, or dock it again |
+| `Ctrl+Alt+1` … `Ctrl+Alt+9`, `Ctrl+Alt+0` | Put back saved workspace 1 … 9, and the tenth |
+
+**Workspaces** save a whole arrangement and put it back. Under **Workspaces** on
+this tab, type a name and **SAVE CURRENT** to store which modules are in their own
+windows and where those windows are; click a saved name to put it back, or use
+its key, shown beside it. **×** forgets one, and saving under a name you already
+have replaces it. Up to ten. A workspace is the window arrangement only, not what
+is switched on. They are kept in `workspaces.json` beside the rest of the
+configuration.
+
+**Tool windows** — the scanner, the logbook, Settings and the rest — can go to
+their own windows too. A docked tool window has a small **⇱** in its title bar,
+next to the close box: press it and the tool moves into an OS window of its own,
+where a dock icon at its top right brings it back. Closing an undocked tool
+closes it rather than docking it. Where a tool window sat is remembered for the
+session only.
+
+**Window rules.** On Wayland the program cannot place a window: a client is given
+no absolute position, so on niri, sway or GNOME a new window opens where the
+compositor puts it. To float a window and pin it to a monitor, write a window
+rule matching its application id:
+
+| Window | Application id |
+|---|---|
+| Panadapter | `sdroxide-panadapter` |
+| AUX SP | `sdroxide-panadapter-aux` |
+| Operating panel | `sdroxide-panel` |
+| Controls | `sdroxide-controls` |
+| Band & mode selector | `sdroxide-bandmenu` |
+| A tool window | `sdroxide-tool-<name>` — `settings`, `scanner`, `logbook`, `memories`, `spots`, `satellite`, `bands`, `awards`, `grid-tracker`, `mail`, `mail-log`, `public-sdrs`, `ism`, `rds`, `drm`, `hd-radio`, `tx-audio`, `voice-keyer` |
+
+For **niri**, in `~/.config/niri/config.kdl` (use your own output names — `niri
+msg outputs`):
+
+```kdl
+window-rule {
+    match app-id="sdroxide-panadapter"
+    open-floating true
+    open-on-output "HDMI-A-1"
+    default-column-width { fixed 1200; }
+    default-window-height { fixed 720; }
+}
+window-rule {
+    match app-id="^sdroxide-tool-"
+    open-floating true
+}
+```
+
+For **i3** and other X11 window managers, match on the window title, which is
+"SDR Oxide — " followed by the window's name:
+
+```i3
+for_window [title="^SDR Oxide — panadapter$"] floating enable, move to workspace 2
+for_window [title="^SDR Oxide — panel$"] floating enable
+```
+
+On X11 desktops, Windows and macOS the saved position is used directly and no
+rule is needed.
+
 #### Voice announcements
 
 The last section of the UI tab reads the radio out loud, so it can be operated

@@ -1111,7 +1111,8 @@ impl SdroxideApp {
             )
             .min_size([380.0, 300.0])
             .centre_first()
-            .vscroll(),
+            .vscroll()
+            .app_name("settings"),
             &mut tool_st,
             tool_child,
             &mut open,

@@ -1173,6 +1173,9 @@ pub(in crate::app) struct ToolWindow<'a> {
     pub centre_first: bool,
     /// The body scrolls vertically rather than growing the window.
     pub vscroll: bool,
+    /// The name in the OS window's app-id (`sdroxide-tool-<name>`) where it
+    /// should not be the egui id — an id carrying a version suffix, say.
+    pub app_name: Option<&'static str>,
 }
 
 impl<'a> ToolWindow<'a> {
@@ -1185,6 +1188,7 @@ impl<'a> ToolWindow<'a> {
             resizable: true,
             centre_first: false,
             vscroll: false,
+            app_name: None,
         }
     }
 
@@ -1205,6 +1209,11 @@ impl<'a> ToolWindow<'a> {
 
     pub(in crate::app) fn vscroll(mut self) -> Self {
         self.vscroll = true;
+        self
+    }
+
+    pub(in crate::app) fn app_name(mut self, name: &'static str) -> Self {
+        self.app_name = Some(name);
         self
     }
 }
@@ -1389,7 +1398,7 @@ fn tool_window_os<R>(
         tool.default_size[0],
         if tool.default_size[1] > 0.0 { tool.default_size[1] } else { 520.0 },
     ];
-    let spec = tool_spec(tool.id, tool.title, opening);
+    let spec = tool_spec(tool.app_name.unwrap_or(tool.id), tool.title, opening);
     let mut dock = false;
     let mut out = None;
     let outcome = detached_viewport(ctx, &spec, state.window, child, |ui| {
