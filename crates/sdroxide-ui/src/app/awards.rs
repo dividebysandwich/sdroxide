@@ -112,15 +112,16 @@ impl SdroxideApp {
         let mut open = self.show_awards;
         let mut new_band: Option<String> = None;
         let awards = self.awards_cache.as_ref().map(|(_, _, a)| a.clone()).unwrap_or_default();
-        let resp = egui::Window::new(tr!("awards-awards"))
-            .id(crate::layout::salted_id(ctx, "AWARDS"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 540.0))
-            .default_height(crate::layout::window_h(ctx, 560.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+        let tool_title = tr!("awards-awards");
+        let mut tool_st = self.take_tool_state("AWARDS");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("AWARDS", &tool_title, [540.0, 560.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(tr!("awards-band")).size(11.0).color(crate::theme::gray(150)),
@@ -194,10 +195,9 @@ impl SdroxideApp {
                         );
                     }
                 });
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+            },
+        );
+        self.put_tool_state("AWARDS", tool_st);
         self.show_awards = open;
         if let Some(b) = new_band {
             self.awards_band = b;

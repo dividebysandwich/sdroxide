@@ -786,7 +786,7 @@ impl SdroxideApp {
         }
         let w = self.display_rows_w(ui);
         boxes.push((Kind::Display, StripBox { w, flex: 1.0, max_w: w * CHIP_STRETCH_FACTOR }));
-        let w = system_rows_w(ui, self.has_amp());
+        let w = system_rows_w(ui, self.has_amp(), self.module_windows_chip_wanted());
         boxes.push((Kind::System, StripBox { w, flex: 1.0, max_w: w * CHIP_STRETCH_FACTOR }));
 
         // A whole row is worth more than digit size: when the strip packs into
@@ -2324,6 +2324,7 @@ impl SdroxideApp {
                 .clicked()
             {
                 self.band_dock_visible = !self.band_dock_visible;
+                self.remember_band_dock();
             }
             return;
         }
@@ -2351,8 +2352,27 @@ impl SdroxideApp {
         if dock {
             self.band_docked = true;
             self.band_dock_visible = true;
+            self.remember_band_dock();
             egui::Popup::close_id(ui.ctx(), popup_id);
         }
+    }
+
+    /// The band/mode selector's body — the same [`band_mode_menu`] the popup
+    /// draws, for the docked column and the selector's own window alike, so
+    /// the two cannot come apart.
+    pub(in crate::app) fn band_menu_body(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let mode = self.state.rx[0].mode;
+        let stated = self.radio_cfg.as_ref().is_some_and(|c| !c.freq_ranges_rx.is_empty());
+        band_mode_menu(
+            ui,
+            mode,
+            &self.state,
+            self.caps.as_ref(),
+            stated,
+            self.band_conditions.as_ref(),
+            self.daylight,
+            cmds,
+        );
     }
 
     /// The band/mode selector docked as a column beside the panadapter: the
@@ -2396,30 +2416,35 @@ impl SdroxideApp {
                         {
                             self.band_docked = false;
                         }
+                        // Out to a window of its own, where it can be as wide
+                        // as the operator likes without taking the waterfall's
+                        // width (native only: a browser has one window).
+                        #[cfg(not(target_arch = "wasm32"))]
+                        if crate::chrome::chip_window_icon(ui, crate::chrome::WindowIcon::Out)
+                            .on_hover_text(tr!("topbar-band-window2-hint"))
+                            .clicked()
+                        {
+                            self.band_docked = false;
+                            self.set_module_detached(
+                                sdroxide_types::DetachableModule::BandMenu,
+                                true,
+                            );
+                        }
                     });
                 });
                 ui.separator();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .id_salt("band-dock-scroll")
-                    .show(ui, |ui| {
-                        let mode = self.state.rx[0].mode;
-                        let stated =
-                            self.radio_cfg.as_ref().is_some_and(|c| !c.freq_ranges_rx.is_empty());
-                        band_mode_menu(
-                            ui,
-                            mode,
-                            &self.state,
-                            self.caps.as_ref(),
-                            stated,
-                            self.band_conditions.as_ref(),
-                            self.daylight,
-                            cmds,
-                        );
-                    });
+                    .show(ui, |ui| self.band_menu_body(ui, cmds));
             });
         if !visible {
             self.band_dock_visible = false;
+        }
+        // The column's own chips (hide, undock) write here, after the panel,
+        // because they cannot reach `self` while it draws.
+        if !visible || !self.band_docked {
+            self.remember_band_dock();
         }
     }
 
@@ -5856,6 +5881,19 @@ impl SdroxideApp {
         {
             self.show_settings = !self.show_settings;
         }
+        // The module windows, only while something is out of this window: a
+        // click brings every module window home, a right-click opens the list
+        // (which is also on `Ctrl+Alt+W`).
+        if self.module_windows_chip_wanted() {
+            let resp = chip_stretched(ui, self.show_windows, MODULE_WINDOWS_CHIP, extra)
+                .on_hover_text(tr!("topbar-windows-chip-hint"));
+            if resp.clicked() {
+                self.set_all_detached(false);
+                self.panel_floating = false;
+            } else if resp.secondary_clicked() {
+                self.show_windows = !self.show_windows;
+            }
+        }
         if chip_stretched(ui, self.help.open, &help, extra)
             .on_hover_text(tr!("topbar-user-manual-f1"))
             .clicked()
@@ -5882,7 +5920,10 @@ impl SdroxideApp {
     /// chips splitting its share of the packer's stretch evenly.
     fn windows_condensed(&mut self, ui: &mut egui::Ui, w: f32, cmds: &mut Vec<Command>) {
         let inner = w - 2.0 * crate::chrome::MODULE_MARGIN_X;
-        let (top, bottom) = (system_chip_labels_top(), system_chips_bottom_row(self.has_amp()));
+        let (top, bottom) = (
+            system_chip_labels_top(),
+            system_chips_bottom_row(self.has_amp(), self.module_windows_chip_wanted()),
+        );
         let (top, bottom) = (&top[..], &bottom[..]);
         let extra1 = ((inner - chip_row_w(ui, top)) / top.len() as f32).max(0.0);
         let extra2 = ((inner - chip_row_w(ui, bottom)) / bottom.len() as f32).max(0.0);
@@ -6025,14 +6066,27 @@ fn system_chip_labels_bottom_amp() -> [String; 8] {
 /// amplifier's chip only where there is one. The strip is packed to the
 /// pixel, and a chip nobody can use is width taken from every station without
 /// an amplifier.
-fn system_chips_bottom_row(has_amp: bool) -> Vec<String> {
+///
+/// `windows` adds the **▣** module-windows chip before HELP — only while a module
+/// is out of this window, so the ordinary arrangement pays no width for it (see
+/// [`SdroxideApp::module_windows_chip_wanted`]).
+fn system_chips_bottom_row(has_amp: bool, windows: bool) -> Vec<String> {
     let [mail, mem, scan, hfdl, grid, amp, settings, help] = system_chip_labels_bottom_amp();
-    if has_amp {
-        vec![mail, mem, scan, hfdl, grid, amp, settings, help]
+    let mut row = if has_amp {
+        vec![mail, mem, scan, hfdl, grid, amp, settings]
     } else {
-        vec![mail, mem, scan, hfdl, grid, settings, help]
+        vec![mail, mem, scan, hfdl, grid, settings]
+    };
+    if windows {
+        row.push(MODULE_WINDOWS_CHIP.to_string());
     }
+    row.push(help);
+    row
 }
+
+/// The module-windows chip's face: a drawn-looking square that every face this
+/// program ships carries.
+const MODULE_WINDOWS_CHIP: &str = "▣";
 
 /// The Display box's top row: the solar view, then the chips that choose what
 /// the panadapter draws — the last of those only on a front end with a
@@ -6965,8 +7019,9 @@ fn accent_chip_stretched(
 /// wider row plus the box's side margins. Measured against the live style
 /// rather than fixed, because a touched layout pads every chip out past its
 /// desktop width — see `the_condensed_system_box_fits_its_chips`.
-fn system_rows_w(ui: &egui::Ui, has_amp: bool) -> f32 {
-    chip_row_w(ui, &system_chip_labels_top()).max(chip_row_w(ui, &system_chips_bottom_row(has_amp)))
+fn system_rows_w(ui: &egui::Ui, has_amp: bool, windows: bool) -> f32 {
+    chip_row_w(ui, &system_chip_labels_top())
+        .max(chip_row_w(ui, &system_chips_bottom_row(has_amp, windows)))
         + 2.0 * crate::chrome::MODULE_MARGIN_X
 }
 
@@ -8086,7 +8141,7 @@ mod tests {
         let mut out = None;
         ctx.run_ui(input, |ui| {
             let mut chips = Vec::new();
-            let width = system_rows_w(ui, has_amp);
+            let width = system_rows_w(ui, has_amp, false);
             let room =
                 crate::chrome::module_bare_h(ui, width, crate::chrome::MODULE_TALL_H, |ui| {
                     // Read before the rows are drawn: egui grows a Ui's
@@ -8100,7 +8155,7 @@ mod tests {
                         ui.spacing_mut().item_spacing =
                             egui::vec2(MODULE_ROW_SPACING, MODULE_ROW_SPACING);
                         let (top, bottom) =
-                            (system_chip_labels_top(), system_chips_bottom_row(has_amp));
+                            (system_chip_labels_top(), system_chips_bottom_row(has_amp, false));
                         for row in [&top[..], &bottom[..]] {
                             ui.horizontal(|ui| {
                                 for label in row {
@@ -8615,7 +8670,7 @@ mod tests {
         let tx = tx_rows_w_for(ui, mode.allows_voice_keyer(), side);
         let display = chip_row_w(ui, &DISPLAY_VIEW_CHIPS).max(chip_row_w(ui, &DISPLAY_TOOL_CHIPS))
             + 2.0 * crate::chrome::MODULE_MARGIN_X;
-        let system = system_rows_w(ui, false);
+        let system = system_rows_w(ui, false, false);
         vec![
             StripBox { w: freq_w, flex: 0.0, max_w: freq_w },
             StripBox { w: SMETER_W, flex: 3.0, max_w: f32::INFINITY },

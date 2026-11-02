@@ -5491,6 +5491,72 @@ topbar-atu-built-in-tuner =
 topbar-atu-start-tune = Eine Abstimmung starten. Das Funkgerät tastet sich selbst mit einem Träger, solange die Anpassung dauert, mit seiner Abstimmleistung (dem Tune-Pegel) — die Antenne muss also angeschlossen sein. Leuchtet, solange die gefundene Anpassung eingeschleift ist.
 topbar-atu-bypass-hint = Den Tuner überbrücken. Leuchtet, solange er überbrückt ist.
 
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = DOCK — die Band- und Modusauswahl ins Hauptfenster zurückholen, genauso wie dieses Fenster zu schließen, ohne das Schließfeld suchen zu müssen.
+frame-dock-panel-hint = DOCK — dieses Panel wieder unter den Wasserfall setzen
+frame-dock-spectrum-hint = DOCK — dieses Spektrum ins Hauptfenster zurückholen, genauso wie dieses Fenster zu schließen, ohne das Schließfeld suchen zu müssen.
+frame-every-module-own-window = jedes Modul hat sein eigenes Fenster
+frame-module-aux-panadapter = Aux-Panadapter
+frame-module-band-mode = Band & Modus
+frame-module-controls = Bedienelemente
+frame-module-panadapter = Panadapter
+frame-module-panel = Panel
+multi-dock-all-windows = ALLE FENSTER ANDOCKEN
+multi-module-panel = Bedienfeld
+multi-undock-all-windows = ALLE FENSTER ABDOCKEN
+settings-ui-dock-all-hint = Holt jedes abgedockte Fenster zurück in dieses.
+settings-ui-docked = In diesem Fenster angedockt
+settings-ui-module-aux = AUX SP (zweites Spektrum)
+settings-ui-module-band-menu = Band- und Betriebsartenwahl
+settings-ui-module-controls = Bedienelemente
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Setzt jedes Modul in ein eigenes Fenster – das Hauptfenster behält das Spektrum und die Decoder. Ein Modul ohne Inhalt, etwa das Bedienpanel in einer Sprachbetriebsart, öffnet kein Fenster.
+settings-ui-undock-hint =
+    Abgedockt wandert dieses Modul in ein eigenes Fenster, und das Hauptfenster gibt den Platz an das Übrige zurück – legen Sie den Wasserfall auf einen zweiten Monitor oder die Bedienelemente auf einen dritten. Schließen des Fensters dockt es wieder an.
+    
+    Unter Wayland kommt die Größe zurück, aber der Compositor entscheidet, wohin ein Fenster kommt: Machen Sie es schwebend und heften Sie es mit einer Fensterregel für die app-id „{ $app_id }“ an einen Monitor.
+settings-ui-undocked = Abgedockt — eigenes Fenster
+settings-ui-window-label = Fenster { $module }
+frame-window-chip-hint = WINDOW — dieses Fenster in ein eigenes Betriebssystem-Fenster verschieben, etwa auf einen anderen Monitor
+frame-dock-panel-pane-hint = DOCK — dieses Panel in den Bereich unter dem Wasserfall zurückholen
+frame-panel-window-title = { $mode } — Panel
+frame-roll-up-hint = Einrollen — nur die Titelleiste behalten und dem Wasserfall den Platz zurückgeben
+frame-unroll-hint = Ausrollen — das Panel wieder anzeigen
+frame-window-panel-hint = WINDOW — diesem Panel ein eigenes Fenster geben, das auf einen anderen Monitor gelegt werden kann
+topbar-dock-all = ALLE ANDOCKEN
+topbar-dock-all-hint = Alle Modulfenster zurück in dieses Fenster holen
+topbar-module-windows-title = Modulfenster
+topbar-undock-all = ALLE ABDOCKEN
+topbar-undock-all-hint = Jedes Modul in ein eigenes Fenster setzen — dieses Fenster bleibt als Spektrum und Decoder
+topbar-windows-chip-hint =
+    ▣  Links: alle Modulfenster zurückholen
+    Rechts: die Liste der Modulfenster
+topbar-wname-aux = SP2 (AUX) — ein zweites Spektrum
+topbar-wname-band-menu = Band & Modus
+topbar-wname-controls = RX-Bedienung
+topbar-wname-panadapter = SP1 — das Spektrum
+topbar-wname-panel = Bedienpanel
+topbar-wstate-float = { $name } aus dem Bereich lösen und über diesem Fenster schweben lassen
+topbar-wstate-floating-panel-only = Schwebend ist ein Zustand nur des Bedienpanels — ein Spektrum oder eine Konsole hat in diesem Fenster nur einen Platz
+topbar-wstate-here-now = { $name } ist jetzt hier
+topbar-wstate-no-panel = Kein Bedienpanel in { $mode } — das gilt in einem Modus, der eines hat
+topbar-wstate-own-window = { $name } ein eigenes Fenster geben, auf einem beliebigen Monitor
+topbar-wstate-put-back = { $name } wieder in dieses Fenster setzen
+frame-workspace-missing = Kein Arbeitsbereich { $n } gespeichert — speichern Sie einen unter Einstellungen › Oberfläche › Arbeitsbereiche, dann ruft diese Taste ihn auf.
+settings-ui-workspaces = Arbeitsbereiche
+settings-ui-workspaces-note = Eine benannte Fensteranordnung – welche Module in eigenen Fenstern sind und wo diese Fenster liegen. Speichern Sie die aktuelle oder holen Sie eine gespeicherte zurück. Bis zu zehn.
+settings-ui-workspaces-none = Noch keine Arbeitsbereiche gespeichert.
+settings-ui-workspace-restore-home = Diese Anordnung wiederherstellen – alle Module im Hauptfenster
+settings-ui-workspace-restore-out = Diese Anordnung wiederherstellen – { $n } Modul(e) in eigenen Fenstern
+settings-ui-workspace-forget = Diesen Arbeitsbereich vergessen
+settings-ui-workspace-name = diese Anordnung benennen
+settings-ui-workspace-full = Zehn Arbeitsbereiche sind das Limit von SDRuno; löschen Sie zuerst einen
+settings-ui-workspace-save = AKTUELLE SPEICHERN
+settings-ui-workspace-save-hint = Die aktuelle Anordnung unter diesem Namen speichern
+settings-ui-workspace-name-first = Geben Sie zuerst einen Namen ein
+topbar-band-window2-hint = WINDOW — die Auswahl in einem eigenen Fenster öffnen, so breit Sie möchten, auf einem beliebigen Monitor
+
 ## VARA HF panel
 
 vara-starting = VARA-Modem startet…

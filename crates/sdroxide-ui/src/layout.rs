@@ -102,6 +102,37 @@ pub fn tier_for(size: egui::Vec2, mode: LayoutMode) -> Tier {
     }
 }
 
+/// The height [`tier_for_window`] measures against: above every breakpoint in
+/// [`tier_for`], so only the *width* of a child window reaches its tier.
+const WINDOW_TALL: f32 = 4000.0;
+
+/// The tier a child window's **width** earns, before any floor: the screen's
+/// width rule with the height rules dropped.
+fn tier_for_width(width: f32, mode: LayoutMode) -> Tier {
+    tier_for(egui::vec2(width, WINDOW_TALL), mode)
+}
+
+/// The tier a **child window** — an operating panel, a spectrum, a tool in its
+/// own OS window — earns, from its own width and the operator's override.
+///
+/// [`tier_for`]'s height rules are about a *screen*: a phone held upright, a
+/// phone in landscape at 393 points tall. A window is not a screen. One that is
+/// short because the operator tiled it that way is asking for a short window,
+/// not for the phone design.
+///
+/// And the phone design is the one thing most child windows cannot wear: it is
+/// one pane at a time **behind a tab row**, and that tab row is drawn by the
+/// main window, so a child window that took the phone tier would draw a single
+/// pane and no way to reach the others. So the floor is [`Tier::Tablet`] — the
+/// exception being [`WindowShape::Panes`], a window that draws the tab row
+/// itself.
+pub fn tier_for_window(width: f32, mode: LayoutMode) -> Tier {
+    match tier_for_width(width, mode) {
+        Tier::Phone => Tier::Tablet,
+        tier => tier,
+    }
+}
+
 /// Below this height a tablet-tier viewport is "short": the tablet top bar —
 /// a full-width frequency box stacked over a row of meter and menu chips,
 /// some 170 pt of chrome — would take a quarter of a 1280x720 panel before
@@ -115,9 +146,15 @@ pub const SHORT_H: f32 = 740.0;
 /// than the stacked layout — see [`SHORT_H`]. Pure function of the size and
 /// override so it can be tested beside [`tier_for`].
 pub fn short_tablet_for(size: egui::Vec2, mode: LayoutMode) -> bool {
+    short_tablet_for_tier(tier_for(size, mode), size, mode)
+}
+
+/// [`short_tablet_for`] for a tier already decided — a child window's, which is
+/// measured by its width alone (see [`tier_for_window`]).
+pub fn short_tablet_for_tier(tier: Tier, size: egui::Vec2, mode: LayoutMode) -> bool {
     // `Small` is the tablet tier with this said out loud: it exists for a
     // screen that fits the stacked bar and cannot afford it.
-    mode == LayoutMode::Small || (tier_for(size, mode) == Tier::Tablet && size.y < SHORT_H)
+    mode == LayoutMode::Small || (tier == Tier::Tablet && size.y < SHORT_H)
 }
 
 /// Whether the operating panels should pull their chips and spacing in.
@@ -137,9 +174,12 @@ pub fn short_tablet_for(size: egui::Vec2, mode: LayoutMode) -> bool {
 /// Always true under [`LayoutMode::Small`], which is the operator saying so on
 /// a screen of any size, and always on a phone.
 pub fn tight_for(size: egui::Vec2, mode: LayoutMode) -> bool {
-    mode == LayoutMode::Small
-        || tier_for(size, mode) == Tier::Phone
-        || (tier_for(size, mode) != Tier::Desktop && size.y < TIGHT_H)
+    tight_for_tier(tier_for(size, mode), size, mode)
+}
+
+/// [`tight_for`] for a tier already decided — see [`short_tablet_for_tier`].
+pub fn tight_for_tier(tier: Tier, size: egui::Vec2, mode: LayoutMode) -> bool {
+    mode == LayoutMode::Small || tier == Tier::Phone || (tier != Tier::Desktop && size.y < TIGHT_H)
 }
 
 /// Below this height an operating panel pulls its chips in — see
@@ -323,6 +363,112 @@ pub fn window_w(ctx: &egui::Context, want: f32) -> f32 {
 /// A window height that fits the viewport. See [`window_w`].
 pub fn window_h(ctx: &egui::Context, want: f32) -> f32 {
     want.min(ctx.content_rect().height() - 16.0).max(120.0)
+}
+
+/// Where the child-window flag lives between [`ViewportScope`]'s publish and
+/// [`in_child_window`].
+fn child_window_id() -> egui::Id {
+    egui::Id::new("sdroxide-child-window")
+}
+
+/// Whether the draw in progress is a **child window** — a module or a tool in an
+/// OS window of its own — rather than the main window. A child window has no
+/// band column beside a waterfall to dock into, so the band chip opens its popup
+/// there instead of toggling a column that lives in another window.
+pub fn in_child_window(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp(child_window_id())).unwrap_or(false)
+}
+
+/// Which layout a **child window** publishes while it draws — see
+/// [`ViewportScope`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowShape {
+    /// Its own width decides the tier — a spectrum, a tool.
+    Own,
+    /// Desktop-shaped whatever its own height: a control surface an operator
+    /// opens wide and short, like the RX control console, whose compact strip
+    /// would otherwise be the first thing that looked wrong when it opened.
+    Desk,
+    /// An **operating panel**, which can carry the phone design because it draws
+    /// the tab row itself: two columns while there is room for two, one pane at
+    /// a time below 600 pt.
+    Panes,
+}
+
+/// One window's answers to the questions this module publishes for the frame,
+/// held for the length of its draw and put back afterwards.
+///
+/// The tier, the tight and short flags and the radio salt are published on the
+/// shared [`egui::Context`], because the widgets that need them are far too deep
+/// — and too many — to take them as arguments. That is right for one window and
+/// wrong for several: a detached viewport shares the context with the main one,
+/// so without this it would answer every question with the *main window's*
+/// geometry — a 520 pt panel window laid out as though it were desktop-wide, its
+/// chips running past its right edge, and with two radios on screen a window
+/// drawn with whichever tab the shell drew last.
+///
+/// `Drop` puts every answer back, so a child window's geometry ends with its
+/// draw and the main window gets its own again.
+///
+/// What this deliberately does **not** carry is the style: fonts, chip padding
+/// and touch targets are rewritten in one place by
+/// [`crate::theme::apply_metrics`] when the main window's tier changes. A child
+/// window's tier here decides **which arrangement the code branches into**, not
+/// how large a chip is.
+pub struct ViewportScope {
+    /// A `Context` is a handle on shared state, so keeping one costs a clone and
+    /// is what lets `Drop` put the answers back without an argument.
+    ctx: egui::Context,
+    tier: Tier,
+    tight: bool,
+    short_tablet: bool,
+    salt: u32,
+    child: bool,
+}
+
+impl ViewportScope {
+    /// Take on the answers for a child window of `size` drawn in `mode`, on
+    /// radio `salt`.
+    pub fn enter(
+        ctx: &egui::Context,
+        size: egui::Vec2,
+        mode: LayoutMode,
+        shape: WindowShape,
+        salt: u32,
+    ) -> Self {
+        let prev = Self {
+            ctx: ctx.clone(),
+            tier: tier(ctx),
+            tight: tight(ctx),
+            short_tablet: short_tablet(ctx),
+            salt: radio_salt(ctx),
+            child: in_child_window(ctx),
+        };
+        let tier = match shape {
+            WindowShape::Own => tier_for_window(size.x, mode),
+            WindowShape::Desk => Tier::Desktop,
+            // No floor: this window draws the tab row that makes one pane at a
+            // time reachable.
+            WindowShape::Panes => tier_for_width(size.x, mode),
+        };
+        set_tier(ctx, tier);
+        set_tight(ctx, tight_for_tier(tier, size, mode));
+        set_short_tablet(ctx, short_tablet_for_tier(tier, size, mode));
+        set_radio_salt(ctx, salt);
+        ctx.data_mut(|d| d.insert_temp(child_window_id(), true));
+        prev
+    }
+}
+
+impl Drop for ViewportScope {
+    fn drop(&mut self) {
+        set_tier(&self.ctx, self.tier);
+        set_tight(&self.ctx, self.tight);
+        set_short_tablet(&self.ctx, self.short_tablet);
+        set_radio_salt(&self.ctx, self.salt);
+        let child = self.child;
+        self.ctx.data_mut(|d| d.insert_temp(child_window_id(), child));
+    }
 }
 
 #[cfg(test)]

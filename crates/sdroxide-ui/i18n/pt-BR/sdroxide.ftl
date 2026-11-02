@@ -5463,6 +5463,72 @@ wheel-action-zoom = Zoom
 wheel-action-tune = Sintonizar
 wheel-action-none = Nada
 
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = ACOPLAR — devolve o seletor de banda e modo à janela principal, o mesmo que fechar esta sem procurar o botão de fechar.
+frame-dock-panel-hint = ACOPLAR — coloca este painel de volta sob o waterfall
+frame-dock-spectrum-hint = ACOPLAR — devolve este espectro à janela principal, o mesmo que fechar esta sem procurar o botão de fechar.
+frame-every-module-own-window = cada módulo está em sua própria janela
+frame-module-aux-panadapter = panadapter aux
+frame-module-band-mode = banda e modo
+frame-module-controls = controles
+frame-module-panadapter = panadapter
+frame-module-panel = painel
+multi-dock-all-windows = ACOPLAR TODAS AS JANELAS
+multi-module-panel = Painel de operação
+multi-undock-all-windows = DESACOPLAR TODAS AS JANELAS
+settings-ui-dock-all-hint = Traz todas as janelas desacopladas de volta para esta.
+settings-ui-docked = Acoplado nesta janela
+settings-ui-module-aux = AUX SP (segundo espectro)
+settings-ui-module-band-menu = Seletor de banda e modo
+settings-ui-module-controls = Controles
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Coloca cada módulo em uma janela própria — a janela principal fica com o espectro e os decodificadores. Um módulo sem nada a mostrar, como o painel de operação em um modo de voz, não abre janela.
+settings-ui-undock-hint =
+    Desacoplado, este módulo vai para uma janela própria e a janela principal devolve o espaço ao que sobra — ponha o waterfall em um segundo monitor, ou os controles em um terceiro. Fechar a janela o acopla de novo.
+
+    No Wayland o tamanho volta, mas o compositor decide onde uma janela fica: deixe-a flutuante e fixe-a em um monitor com uma regra de janela que corresponda ao app-id "{ $app_id }".
+settings-ui-undocked = Desacoplado — janela própria
+settings-ui-window-label = Janela { $module }
+frame-window-chip-hint = JANELA — move esta janela para uma janela própria do sistema, para colocá-la em outro monitor
+frame-dock-panel-pane-hint = ACOPLAR — devolve este painel ao painel abaixo do waterfall
+frame-panel-window-title = { $mode } — painel
+frame-roll-up-hint = Recolher — sai da barra de título e devolve a janela ao waterfall
+frame-unroll-hint = Expandir — mostra o painel de novo
+frame-window-panel-hint = JANELA — dá a este painel uma janela própria, para colocar em outro monitor
+topbar-dock-all = ACOPLAR TUDO
+topbar-dock-all-hint = Traz todas as janelas de módulos de volta a esta janela
+topbar-module-windows-title = Janelas de módulos
+topbar-undock-all = DESACOPLAR TUDO
+topbar-undock-all-hint = Coloca cada módulo em uma janela própria — esta janela fica com o espectro e os decodificadores
+topbar-windows-chip-hint =
+    ▣  Esquerdo: traz todas as janelas de módulos para casa
+    Direito: a lista de janelas de módulos
+topbar-wname-aux = SP2 (AUX) — um segundo espectro
+topbar-wname-band-menu = Banda e modo
+topbar-wname-controls = Controle RX
+topbar-wname-panadapter = SP1 — o espectro
+topbar-wname-panel = Painel de operação
+topbar-wstate-float = Tirar { $name } do painel e deixá-lo flutuando sobre esta janela
+topbar-wstate-floating-panel-only = Flutuar é um estado próprio do painel de operação — um espectro ou um console tem um só lugar nesta janela
+topbar-wstate-here-now = { $name } está aqui agora
+topbar-wstate-no-panel = Sem painel de operação em { $mode } — isto vale em um modo que tenha um
+topbar-wstate-own-window = Dar a { $name } uma janela própria, em qualquer monitor
+topbar-wstate-put-back = Colocar { $name } de volta nesta janela
+frame-workspace-missing = Nenhuma área de trabalho { $n } salva — salve uma em Configurações › UI › Áreas de trabalho e esta tecla a chamará de volta.
+settings-ui-workspaces = Áreas de trabalho
+settings-ui-workspaces-note = Uma disposição de janelas com nome — quais módulos estão em janelas próprias e onde essas janelas ficam. Salve a que você tem, ou restaure uma salva. Até dez.
+settings-ui-workspaces-none = Nenhuma área de trabalho salva ainda.
+settings-ui-workspace-restore-home = Restaurar esta disposição — todos os módulos na janela principal
+settings-ui-workspace-restore-out = Restaurar esta disposição — { $n } módulo(s) em janela(s) própria(s)
+settings-ui-workspace-forget = Esquecer esta área de trabalho
+settings-ui-workspace-name = dê um nome a esta disposição
+settings-ui-workspace-full = Dez áreas de trabalho é o limite que o SDRuno guarda; apague uma primeiro
+settings-ui-workspace-save = SALVAR ATUAL
+settings-ui-workspace-save-hint = Salva a disposição atual com este nome
+settings-ui-workspace-name-first = Digite um nome primeiro
+topbar-band-window2-hint = JANELA — abre o seletor em uma janela própria, tão larga quanto você quiser, em qualquer monitor
+
 ## VARA HF panel
 
 vara-starting = Iniciando o modem VARA…

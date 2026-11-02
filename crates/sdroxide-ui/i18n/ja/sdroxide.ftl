@@ -5404,6 +5404,72 @@ wheel-action-none = なし
 ## 無線機タブ：値を含むメッセージ（続き）。
 settings-radio-rx-tx-words = { $rx } / TX { $tx }
 
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = ドック — バンド/モード選択をメインウィンドウに戻します。閉じるボタンを探さずに閉じるのと同じです。
+frame-dock-panel-hint = ドック — このパネルをウォーターフォールの下に戻します
+frame-dock-spectrum-hint = ドック — このスペクトラムをメインウィンドウに戻します。閉じるボタンを探さずに閉じるのと同じです。
+frame-every-module-own-window = すべてのモジュールが個別のウィンドウにあります
+frame-module-aux-panadapter = 補助パンアダプター
+frame-module-band-mode = バンドとモード
+frame-module-controls = コントロール
+frame-module-panadapter = パンアダプター
+frame-module-panel = パネル
+multi-dock-all-windows = すべてドック
+multi-module-panel = 操作パネル
+multi-undock-all-windows = すべてドック解除
+settings-ui-dock-all-hint = ドック解除したすべてのウィンドウをこのウィンドウに戻します。
+settings-ui-docked = このウィンドウにドック
+settings-ui-module-aux = AUX SP (第2スペクトラム)
+settings-ui-module-band-menu = バンド・モード選択
+settings-ui-module-controls = コントロール
+settings-ui-module-panadapter = パンアダプター
+settings-ui-undock-all-hint = すべてのモジュールを個別のウィンドウにします。メインウィンドウにはスペクトラムとデコーダが残ります。音声モードの操作パネルのように表示するものがないモジュールは、ウィンドウを開きません。
+settings-ui-undock-hint =
+    ドッキング解除すると、このモジュールは専用ウィンドウに移り、メインウィンドウは空いた場所を残りの部分に譲ります。ウォーターフォールを2台目のモニターに、操作部を3台目に置くこともできます。ウィンドウを閉じると再びドッキングします。
+
+    Wayland ではサイズは復元されますが、ウィンドウの位置はコンポジターが決めます。フロート表示にし、app-id "{ $app_id }" に一致するウィンドウルールでモニターに固定してください。
+settings-ui-undocked = ドック解除 — 独立ウィンドウ
+settings-ui-window-label = { $module } ウィンドウ
+frame-window-chip-hint = ウィンドウ — このウィンドウを独立したOSウィンドウにして別のモニターに置きます
+frame-dock-panel-pane-hint = ドック — このパネルをウォーターフォール下のペインに戻します
+frame-panel-window-title = { $mode } — パネル
+frame-roll-up-hint = 巻き上げ — タイトルバーだけにして、ウィンドウ領域をウォーターフォールに返します
+frame-unroll-hint = 巻き戻し — パネルを再表示します
+frame-window-panel-hint = ウィンドウ — このパネルを独立したウィンドウにして別のモニターに置きます
+topbar-dock-all = すべてドック
+topbar-dock-all-hint = すべてのモジュールウィンドウをこのウィンドウに戻します
+topbar-module-windows-title = モジュールウィンドウ
+topbar-undock-all = すべて分離
+topbar-undock-all-hint = すべてのモジュールを専用ウィンドウにします。このウィンドウにはスペクトラムとデコーダーだけが残ります
+topbar-windows-chip-hint =
+    ▣  左クリック: すべてのモジュールウィンドウを戻す
+    右クリック: モジュールウィンドウの一覧
+topbar-wname-aux = SP2 (AUX) — 第2スペクトラム
+topbar-wname-band-menu = バンド・モード
+topbar-wname-controls = RX コントロール
+topbar-wname-panadapter = SP1 — スペクトラム
+topbar-wname-panel = オペレーションパネル
+topbar-wstate-float = { $name } をペインから外し、このウィンドウの上にフロート表示する
+topbar-wstate-floating-panel-only = フロート表示はオペレーションパネル専用の状態です。スペクトラムやコンソールはこのウィンドウ内の1か所に固定されます
+topbar-wstate-here-now = { $name } は現在ここにあります
+topbar-wstate-no-panel = { $mode } にはオペレーションパネルがありません。パネルのあるモードで適用されます
+topbar-wstate-own-window = { $name } を専用ウィンドウにして、任意のモニターに置く
+topbar-wstate-put-back = { $name } をこのウィンドウに戻す
+frame-workspace-missing = ワークスペース { $n } は保存されていません。設定 › UI › ワークスペースで保存すると、このキーで呼び出せます。
+settings-ui-workspaces = ワークスペース
+settings-ui-workspaces-note = 名前付きのウィンドウ配置です。どのモジュールを個別ウィンドウにし、それをどこに置くかを保存します。現在の配置を保存するか、保存済みの配置を呼び出せます。最大10個。
+settings-ui-workspaces-none = 保存されたワークスペースはまだありません。
+settings-ui-workspace-restore-home = この配置に戻す — すべてのモジュールをメインウィンドウに
+settings-ui-workspace-restore-out = この配置に戻す — { $n } 個のモジュールを個別ウィンドウに
+settings-ui-workspace-forget = このワークスペースを削除
+settings-ui-workspace-name = この配置の名前
+settings-ui-workspace-full = ワークスペースは SDRuno と同じく最大10個です。先に1つ削除してください
+settings-ui-workspace-save = 現在の配置を保存
+settings-ui-workspace-save-hint = 現在の配置をこの名前で保存します
+settings-ui-workspace-name-first = 先に名前を入力してください
+topbar-band-window2-hint = ウィンドウ — 選択を専用ウィンドウで開きます。好きな幅にでき、任意のモニターに置けます
+
 ## VARA HF panel
 
 vara-starting = VARA モデムを起動中…

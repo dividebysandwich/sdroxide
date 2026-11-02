@@ -51,22 +51,20 @@ impl SdroxideApp {
             return;
         }
         let mut open = self.show_hd;
-        let resp = egui::Window::new(tr!("hd-hd-radio"))
-            .id(crate::layout::salted_id(ctx, "HD Radio"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 440.0))
-            .default_height(crate::layout::window_h(ctx, 360.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.hd_body(ui)
-            });
-        if let Some(r) = &resp {
-            cmds.extend(r.inner.clone().unwrap_or_default());
-        }
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
+        let tool_title = tr!("hd-hd-radio");
+        let mut tool_st = self.take_tool_state("HD Radio");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        let resp = crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("HD Radio", &tool_title, [440.0, 360.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| self.hd_body(ui),
+        );
+        self.put_tool_state("HD Radio", tool_st);
+        if let Some(c) = resp {
+            cmds.extend(c);
         }
         self.show_hd = open;
     }

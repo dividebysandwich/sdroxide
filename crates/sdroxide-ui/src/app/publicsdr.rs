@@ -368,15 +368,16 @@ impl SdroxideApp {
         let blurb = self.public_sdr_confirm.as_deref().map(|e| self.replace_blurb(e));
         let mut answer: Option<Confirm> = None;
 
-        let resp = egui::Window::new(tr!("publicsdr-public-sdrs"))
-            .id(crate::layout::salted_id(ctx, "PUBLIC SDRS"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 980.0))
-            .default_height(crate::layout::window_h(ctx, 520.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+        let tool_title = tr!("publicsdr-public-sdrs");
+        let mut tool_st = self.take_tool_state("PUBLIC SDRS");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("PUBLIC SDRS", &tool_title, [980.0, 520.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 if let Some(blurb) = &blurb {
                     answer = confirm_panel(ui, blurb);
                     ui.add_space(6.0);
@@ -515,10 +516,9 @@ impl SdroxideApp {
                         );
                     }
                 });
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+            },
+        );
+        self.put_tool_state("PUBLIC SDRS", tool_st);
         self.show_public_sdrs = open;
 
         if refresh {

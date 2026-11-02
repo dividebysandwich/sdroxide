@@ -76,20 +76,18 @@ impl SdroxideApp {
             return;
         }
         let mut open = self.show_rds;
-        let resp = egui::Window::new("RDS")
-            .id(crate::layout::salted_id(ctx, "RDS"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 460.0))
-            .default_height(crate::layout::window_h(ctx, 420.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.rds_body(ui)
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+        let tool_title = "RDS";
+        let mut tool_st = self.take_tool_state("RDS");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("RDS", &tool_title, [460.0, 420.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| self.rds_body(ui),
+        );
+        self.put_tool_state("RDS", tool_st);
         self.show_rds = open;
     }
 

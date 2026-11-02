@@ -867,6 +867,23 @@ impl SdroxideApp {
         focus_hz(mode, self.state.active_freq_hz(), audio_hz, self.ui_settings.cw_qrg)
     }
 
+    /// Write this radio's band-dock state out the moment it changes, rather
+    /// than on a clean quit, so it survives a crash — the common way a program
+    /// ends on a bench. The stored map is re-read first: every radio tab
+    /// writes, and writing a copy read at start would erase the radio another
+    /// tab docked since.
+    pub(in crate::app) fn remember_band_dock(&mut self) {
+        let mut stored = crate::app::persist::load_band_dock();
+        if crate::app::persist::band_dock_entry(
+            &mut stored,
+            self.radio_id,
+            self.band_docked,
+            self.band_dock_visible,
+        ) {
+            crate::app::persist::save_band_dock(&stored);
+        }
+    }
+
     /// Center the view on the tuned frequency after big jumps (band change,
     /// memory recall, startup) — i.e. whenever the tuning changed AND left
     /// the visible span. Deliberate pans away from the VFO are never

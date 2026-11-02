@@ -340,6 +340,13 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// the edit commits, so the roster's per-frame republish cannot fight the
     /// keyboard — see `SdroxideApp::radio_name_edit`.
     radio_name_edit: &'a mut Option<(u32, String)>,
+    /// The saved window arrangements, edited on the UI tab and written back
+    /// after the window closure like `ui_edit`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    workspaces: &'a mut Vec<sdroxide_types::Workspace>,
+    /// The name being typed for the next workspace.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    workspace_name: &'a mut String,
     /// Spoken announcements, edited in place and written back after the
     /// window closure like every other buffer here.
     speech_edit: &'a mut sdroxide_types::SpeechSettings,
@@ -1020,6 +1027,9 @@ impl SdroxideApp {
         let mut ranges = self.range_edit.clone();
         let mut rx_site = self.rx_site_edit.clone();
         let mut ui_edit = self.ui_settings;
+        // The workspaces are cloned out and handed back like `ui_edit`.
+        let mut workspaces = self.workspaces.clone();
+        let mut workspace_name = std::mem::take(&mut self.workspace_name);
         // Only where the engine is in this process: see `SettingsIo`.
         let owns_server = !self.ctrl.engine_is_remote();
         let mut access_edit = self.remote_access.clone();
@@ -1085,24 +1095,28 @@ impl SdroxideApp {
         // again — so the width drifted with wherever the operator had been
         // while the height stayed at egui's 420 pt default no matter how tall
         // the display was.
-        let want =
-            egui::vec2(crate::layout::window_w(ctx, 900.0), crate::layout::window_h(ctx, 760.0));
-        let resp = egui::Window::new(tr!("settings-settings"))
-            // Pinned id, versioned: egui persists the remembered size and
-            // position under it, and the suffix drops the stale (often very
-            // wide, always 420 pt tall) geometry left by the builds before this
-            // one. Position is centred on first use because it goes with it.
-            .id(crate::layout::salted_id(ctx, "settings-window-v2"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_pos(ctx.content_rect().center() - want * 0.5)
-            .default_size(want)
-            .min_width(crate::layout::window_w(ctx, 380.0))
-            .min_height(crate::layout::window_h(ctx, 300.0))
-            .vscroll(true)
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+        // Pinned id, versioned: egui persists the remembered size and position
+        // under it, and the suffix drops the stale (often very wide, always
+        // 420 pt tall) geometry left by the builds before this one. Position is
+        // centred on first use because it goes with it.
+        let tool_title = tr!("settings-settings");
+        let mut tool_st = self.take_tool_state("settings-window-v2");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new(
+                "settings-window-v2",
+                &tool_title,
+                [900.0, 760.0],
+            )
+            .min_size([380.0, 300.0])
+            .centre_first()
+            .vscroll()
+            .app_name("settings"),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 bars.restore(ui);
                 // On the frame the dialog opens, jump back to the origin so
                 // the tab bar is on screen. Instant, not animated: a leftover
@@ -1202,6 +1216,8 @@ impl SdroxideApp {
                             bc_refetch: &mut bc_refetch,
                             bc_fetching: self.broadcast_fetch.is_some(),
                             bc_status: self.broadcast_fetch_status.as_ref(),
+                            workspaces: &mut workspaces,
+                            workspace_name: &mut workspace_name,
                             speech_edit: &mut speech_edit,
                             speech_voices: &self.speech_voices,
                             speech_status: &speech_status,
@@ -1247,11 +1263,10 @@ impl SdroxideApp {
                         },
                     );
                 });
-            });
+            },
+        );
+        self.put_tool_state("settings-window-v2", tool_st);
         bars.pop(ctx);
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
         self.show_settings = open;
         self.settings_tab = tab;
         self.settings_upload_tab = upload_tab;
@@ -1645,6 +1660,11 @@ impl SdroxideApp {
                 self.ctrl.set_radio_config(cfg.clone());
             }
             self.radio_cfg = radio_edit;
+        }
+        self.workspace_name = workspace_name;
+        if workspaces != self.workspaces {
+            self.workspaces = workspaces;
+            crate::app::persist::save_workspaces(&self.workspaces);
         }
         if ui_edit != self.ui_settings {
             // Live: fps + averaging flow to the engine via the spectrum-config
@@ -2535,6 +2555,13 @@ impl SdroxideApp {
             }
             SettingsTab::Ui => {
                 settings_ui_tab(ui, io.ui_edit, io.solar_cloud_march.as_deref_mut());
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    ui_tab::workspaces_section(ui, io.ui_edit, io.workspaces, io.workspace_name);
+                }
                 ui.add_space(10.0);
                 ui.separator();
                 ui.add_space(6.0);

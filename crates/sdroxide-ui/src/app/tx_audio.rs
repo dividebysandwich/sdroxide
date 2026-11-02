@@ -208,19 +208,21 @@ impl SdroxideApp {
         let now = ctx.input(|i| i.time);
         let fresh = self.meters.as_ref().and_then(|m| m.voice);
         let mic_gain = self.state.tx.mic_gain;
+        let tool_title = tr!("txaudio-tx-audio");
+        let mut tool_st = self.take_tool_state("TX Audio");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
         let ui_state = &mut self.tx_audio;
         ui_state.meters.update(now, fresh);
         pick_up_import(ui_state);
 
-        let resp = egui::Window::new(tr!("txaudio-tx-audio"))
-            .id(crate::layout::salted_id(ctx, "TX Audio"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 780.0))
-            .min_width(crate::layout::window_w(ctx, 560.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("TX Audio", &tool_title, [780.0, 0.0])
+                .min_size([560.0, 0.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 header(ui, &mut v, test, test_len, transmitting, cmds);
                 level_row(ui, &mut v, ui_state, mic_gain, test, transmitting, now, fresh, cmds);
                 if !voice_mode {
@@ -251,10 +253,9 @@ impl SdroxideApp {
                 });
                 ui.separator();
                 meter_strip(ui, &v, ui_state.meters.m);
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+            },
+        );
+        self.put_tool_state("TX Audio", tool_st);
         if v != self.state.tx.voice {
             let v = v.clamped();
             self.state.tx.voice = v;

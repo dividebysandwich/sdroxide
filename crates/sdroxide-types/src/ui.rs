@@ -514,6 +514,161 @@ pub struct Solar3dWindow {
     pub pos_px: Option<[f32; 2]>,
 }
 
+/// A module pulled out into its **own OS window**: where it last was, so
+/// reopening it — or the next start — puts it back rather than at a built-in
+/// size.
+///
+/// The same shape and the same Wayland caveat as [`Solar3dWindow`]: a client is
+/// given no absolute window position, so `pos` is `None` there and the
+/// compositor places the window. The **app-id** the window carries
+/// ([`DetachableModule::app_id`]) is what a compositor rule matches on to float
+/// it and pin it to a monitor.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DetachedWindow {
+    /// Inner (drawing-area) size in points.
+    pub size: [f32; 2],
+    /// Outer (top-left) position in points; `None` on Wayland.
+    #[serde(default)]
+    pub pos: Option<[f32; 2]>,
+}
+
+/// A module that can be pulled out of the main window into its own OS window —
+/// **undocked** — in the SDRuno mould: the spectrum on one monitor, the decoder
+/// on another. An enum keyed in [`UiSettings::detached`] rather than a field
+/// pair per module, so a new detachable module is a variant here plus its UI,
+/// nothing else. **Append only**: the variant's [`Self::index`] is its slot in
+/// the saved settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum DetachableModule {
+    /// The spectrum and waterfall.
+    Panadapter,
+    /// The mode's operating panel — the decoder list, the transcript and the
+    /// controls under the panadapter.
+    Panel,
+    /// The top control strip — the frequency readout, the S-meter and the
+    /// receiver and transmitter controls (SDRuno's "RX control").
+    Controls,
+    /// A **second** spectrum and waterfall — SDRuno's AUX SP. A second view of
+    /// the same receiver, with its own zoom and layers, not a second receiver.
+    AuxPanadapter,
+    /// The **band/mode selector** in a window of its own, where it can be as
+    /// wide as the operator likes without squeezing the operating panel.
+    BandMenu,
+}
+
+impl DetachableModule {
+    /// How many detachable modules there are — the length of
+    /// [`UiSettings::detached`], which is an array so `UiSettings` stays `Copy`.
+    pub const COUNT: usize = 5;
+
+    /// Every module, so a settings list or a test can walk them all.
+    pub const ALL: [DetachableModule; DetachableModule::COUNT] = [
+        DetachableModule::Panadapter,
+        DetachableModule::Panel,
+        DetachableModule::Controls,
+        DetachableModule::AuxPanadapter,
+        DetachableModule::BandMenu,
+    ];
+
+    /// This module's slot in [`UiSettings::detached`].
+    pub fn index(self) -> usize {
+        match self {
+            DetachableModule::Panadapter => 0,
+            DetachableModule::Panel => 1,
+            DetachableModule::Controls => 2,
+            DetachableModule::AuxPanadapter => 3,
+            DetachableModule::BandMenu => 4,
+        }
+    }
+
+    /// The window's **application id** — the handle a Wayland compositor rule
+    /// matches on to float this window and pin it to a monitor. A public
+    /// contract with the operator: change it and their rules stop matching.
+    pub fn app_id(self) -> &'static str {
+        match self {
+            DetachableModule::Panadapter => "sdroxide-panadapter",
+            DetachableModule::Panel => "sdroxide-panel",
+            DetachableModule::Controls => "sdroxide-controls",
+            DetachableModule::AuxPanadapter => "sdroxide-panadapter-aux",
+            DetachableModule::BandMenu => "sdroxide-bandmenu",
+        }
+    }
+}
+
+/// Whether one [`DetachableModule`] is undocked, and where its window last was.
+/// See [`UiSettings::detached`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct DetachedState {
+    /// True when the module is drawn in its own window instead of the main one.
+    pub detached: bool,
+    /// Where its window last was; `None` until it has been open once.
+    #[serde(default)]
+    pub window: Option<DetachedWindow>,
+}
+
+/// A named window arrangement — SDRuno's **workspace**: which modules are in
+/// their own OS windows, and where those windows are. SDRuno keeps up to ten and
+/// recalls them by name; so does this.
+///
+/// A **list of its own**, not a field in [`UiSettings`], because `UiSettings` is
+/// `Copy` and the whole UI passes it around by value. The list lives in
+/// `workspaces.json`, beside the memories and the logbook. A workspace is the
+/// arrangement only — where the furniture is, not what is switched on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct Workspace {
+    /// What the operator called it. Not an index: a name survives a reorder.
+    pub name: String,
+    /// One slot per [`DetachableModule`] in `index()` order **at save time**. A
+    /// `Vec` rather than the fixed array, so a workspace written by a build with
+    /// a module this one has not heard of still loads and applies the modules it
+    /// does know — the same tolerance [`UiSettings::detached`]'s reader has.
+    pub slots: Vec<DetachedState>,
+}
+
+/// How many workspaces may be saved — SDRuno's ten, and the ten number keys
+/// that recall them.
+pub const WORKSPACE_MAX: usize = 10;
+
+impl Workspace {
+    /// Snapshot the arrangement in `settings` under `name`.
+    pub fn capture(name: impl Into<String>, settings: &UiSettings) -> Self {
+        Self { name: name.into(), slots: settings.detached.to_vec() }
+    }
+
+    /// Put this arrangement back into `settings`, leaving any module the
+    /// workspace does not mention — a slot a newer or older build wrote —
+    /// docked.
+    pub fn apply(&self, settings: &mut UiSettings) {
+        let mut out = default_detached();
+        for (slot, saved) in out.iter_mut().zip(self.slots.iter()) {
+            *slot = *saved;
+        }
+        settings.detached = out;
+    }
+}
+
+fn default_detached() -> [DetachedState; DetachableModule::COUNT] {
+    [DetachedState::default(); DetachableModule::COUNT]
+}
+
+/// Read [`UiSettings::detached`] at any length. A config written by a build with
+/// fewer (or more) modules carries a shorter (or longer) list, and a derived
+/// array deserializer would reject the whole file over it — which would reset
+/// every other setting along with the window geometry. A short list leaves the
+/// modules it does not reach docked; a long one drops what this build does not
+/// know.
+fn detached_slots<'de, D>(d: D) -> Result<[DetachedState; DetachableModule::COUNT], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let list = Vec::<DetachedState>::deserialize(d)?;
+    let mut out = default_detached();
+    for (slot, state) in out.iter_mut().zip(list) {
+        *slot = state;
+    }
+    Ok(out)
+}
+
 /// The language the interface is drawn in: a BCP 47 tag such as `es` or
 /// `pt-BR`, or none to follow the operating system's.
 ///
@@ -797,6 +952,16 @@ pub struct UiSettings {
     /// list, 255 for no bottom needle. `None` for the built-in picks.
     #[serde(default)]
     pub amp_meters: Option<[u8; 4]>,
+    /// Which modules are undocked into their own windows, and where those
+    /// windows last were — one [`DetachedState`] per [`DetachableModule`], in
+    /// `module.index()` order. An array rather than a map so `UiSettings` stays
+    /// `Copy`; read at any length, see [`detached_slots`].
+    ///
+    /// **Native only.** The browser has no second window and keeps every module
+    /// in-window, so the flags are ignored there. Machine-local: where a window
+    /// sits is a property of this screen.
+    #[serde(default = "default_detached", deserialize_with = "detached_slots")]
+    pub detached: [DetachedState; DetachableModule::COUNT],
 }
 
 /// The docked AMP window's place: its top-left corner and width, in points.
@@ -912,11 +1077,29 @@ impl Default for UiSettings {
             amp_window: None,
             amp_docked: None,
             amp_meters: None,
+            detached: default_detached(),
         }
     }
 }
 
 impl UiSettings {
+    /// One module's undocked state, or the docked default if it has never been
+    /// touched.
+    pub fn detached_state(&self, module: DetachableModule) -> DetachedState {
+        self.detached[module.index()]
+    }
+
+    /// Whether a module is undocked.
+    pub fn is_detached(&self, module: DetachableModule) -> bool {
+        self.detached[module.index()].detached
+    }
+
+    /// Set (or clear) a module's undocked flag, leaving its remembered window
+    /// geometry alone.
+    pub fn set_detached(&mut self, module: DetachableModule, on: bool) {
+        self.detached[module.index()].detached = on;
+    }
+
     /// The steps the tuning buttons cycle through, in hertz — from the 10 Hz
     /// that trims a carrier onto zero-beat up to the 25 kHz of an FM channel,
     /// by way of the AM broadcast spacings (9 kHz in Regions 1 and 3, 10 kHz in
@@ -1116,5 +1299,40 @@ mod serde_tests {
         // A config written before the field existed loads with the system's.
         let ui: UiSettings = serde_json::from_str("{}").unwrap();
         assert!(ui.language.is_system());
+    }
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::*;
+
+    /// A workspace puts back exactly the arrangement it captured, and one saved
+    /// by a build with fewer modules leaves the rest docked.
+    #[test]
+    fn a_workspace_round_trips_and_tolerates_another_builds_length() {
+        let mut ui = UiSettings::default();
+        ui.set_detached(DetachableModule::Panadapter, true);
+        ui.detached[DetachableModule::Panel.index()].window =
+            Some(DetachedWindow { size: [500.0, 400.0], pos: Some([10.0, 20.0]) });
+        let ws = Workspace::capture("Contest", &ui);
+        let mut other = UiSettings::default();
+        other.set_detached(DetachableModule::Controls, true);
+        ws.apply(&mut other);
+        assert_eq!(other.detached, ui.detached);
+
+        let short = Workspace {
+            name: "Old".into(),
+            slots: vec![DetachedState { detached: true, window: None }],
+        };
+        let mut target = UiSettings::default();
+        target.set_detached(DetachableModule::BandMenu, true);
+        short.apply(&mut target);
+        assert!(target.is_detached(DetachableModule::Panadapter));
+        assert!(
+            !target.is_detached(DetachableModule::BandMenu),
+            "a slot the workspace never had stays docked"
+        );
+        let json = serde_json::to_string(&ws).unwrap();
+        assert_eq!(serde_json::from_str::<Workspace>(&json).unwrap(), ws);
     }
 }

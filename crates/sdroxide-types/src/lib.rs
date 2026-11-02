@@ -302,8 +302,9 @@ pub use tx_voice::{
     TxVoiceTest,
 };
 pub use ui::{
-    AmpDocked, BandplanKind, ChromeStyle, FontSize, LayoutMode, SmeterStyle, Solar3dWindow,
-    SpectrumDetail, Speed, UiLanguage, UiSettings, UiTheme,
+    AmpDocked, BandplanKind, ChromeStyle, DetachableModule, DetachedState, DetachedWindow,
+    FontSize, LayoutMode, SmeterStyle, Solar3dWindow, SpectrumDetail, Speed, UiLanguage,
+    UiSettings, UiTheme, WORKSPACE_MAX, Workspace,
 };
 pub use vara::{VARA_TRANSCRIPT_MAX, VaraBw, VaraHolder, VaraLine, VaraLineKind, VaraStatus};
 pub use vdl2::{

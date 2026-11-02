@@ -5462,6 +5462,72 @@ wheel-action-zoom = Zoom
 wheel-action-tune = Accord
 wheel-action-none = Aucune action
 
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = DOCK — remettre le sélecteur de bande et de mode dans la fenêtre principale, comme en fermant celle-ci sans chercher sa case de fermeture.
+frame-dock-panel-hint = DOCK — remettre ce panneau sous la cascade
+frame-dock-spectrum-hint = DOCK — remettre ce spectre dans la fenêtre principale, comme en fermant celle-ci sans chercher sa case de fermeture.
+frame-every-module-own-window = chaque module est dans sa propre fenêtre
+frame-module-aux-panadapter = panadapter auxiliaire
+frame-module-band-mode = bande et mode
+frame-module-controls = commandes
+frame-module-panadapter = panadapter
+frame-module-panel = panneau
+multi-dock-all-windows = ANCRER TOUTES LES FENÊTRES
+multi-module-panel = Panneau d'exploitation
+multi-undock-all-windows = DÉTACHER TOUTES LES FENÊTRES
+settings-ui-dock-all-hint = Ramène chaque fenêtre détachée dans celle-ci.
+settings-ui-docked = Ancrée dans cette fenêtre
+settings-ui-module-aux = AUX SP (second spectre)
+settings-ui-module-band-menu = Sélecteur de bande et de mode
+settings-ui-module-controls = Commandes
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Place chaque module dans sa propre fenêtre ; la fenêtre principale ne garde que le spectre et les décodeurs. Un module sans rien à afficher, comme le panneau d'exploitation en mode phonie, n'ouvre pas de fenêtre.
+settings-ui-undock-hint =
+    Détaché, ce module passe dans sa propre fenêtre et la fenêtre principale rend la place à ce qui reste : mettez la cascade sur un deuxième écran, ou les commandes sur un troisième. Fermer sa fenêtre le rattache.
+    
+    Sous Wayland la taille est restaurée mais c'est le compositeur qui décide de l'emplacement d'une fenêtre : rendez-la flottante et épinglez-la sur un écran avec une règle de fenêtre correspondant à l'app-id « { $app_id } ».
+settings-ui-undocked = Détachée — sa propre fenêtre
+settings-ui-window-label = Fenêtre { $module }
+frame-window-chip-hint = WINDOW — déplacer cette fenêtre dans une fenêtre système à part, pour la mettre sur un autre écran
+frame-dock-panel-pane-hint = DOCK — remettre ce panneau dans le volet sous la cascade
+frame-panel-window-title = { $mode } — panneau
+frame-roll-up-hint = Enrouler — ne garder que la barre de titre et rendre la place à la cascade
+frame-unroll-hint = Dérouler — afficher à nouveau le panneau
+frame-window-panel-hint = WINDOW — donner à ce panneau sa propre fenêtre, à placer sur un autre écran
+topbar-dock-all = TOUT ANCRER
+topbar-dock-all-hint = Ramener toutes les fenêtres de modules dans cette fenêtre
+topbar-module-windows-title = Fenêtres de modules
+topbar-undock-all = TOUT DÉTACHER
+topbar-undock-all-hint = Mettre chaque module dans sa propre fenêtre — cette fenêtre ne garde que le spectre et les décodeurs
+topbar-windows-chip-hint =
+    ▣  Gauche : ramener toutes les fenêtres de modules
+    Droit : la liste des fenêtres de modules
+topbar-wname-aux = SP2 (AUX) — un second spectre
+topbar-wname-band-menu = Bande et mode
+topbar-wname-controls = Commande RX
+topbar-wname-panadapter = SP1 — le spectre
+topbar-wname-panel = Panneau d'exploitation
+topbar-wstate-float = Sortir { $name } du volet et le faire flotter au-dessus de cette fenêtre
+topbar-wstate-floating-panel-only = Flottant est un état propre au panneau d'exploitation — un spectre ou une console n'a qu'une place dans cette fenêtre
+topbar-wstate-here-now = { $name } est ici actuellement
+topbar-wstate-no-panel = Pas de panneau d'exploitation en { $mode } — cela s'applique dans un mode qui en a un
+topbar-wstate-own-window = Donner à { $name } sa propre fenêtre, sur n'importe quel écran
+topbar-wstate-put-back = Remettre { $name } dans cette fenêtre
+frame-workspace-missing = Aucun espace de travail { $n } enregistré — enregistrez-en un dans Réglages › Interface › Espaces de travail et cette touche le rappellera.
+settings-ui-workspaces = Espaces de travail
+settings-ui-workspaces-note = Une disposition de fenêtres nommée : quels modules sont dans leur propre fenêtre et où se trouvent ces fenêtres. Enregistrez l'actuelle ou rétablissez-en une enregistrée. Dix au maximum.
+settings-ui-workspaces-none = Aucun espace de travail enregistré.
+settings-ui-workspace-restore-home = Rétablir cette disposition : tous les modules dans la fenêtre principale
+settings-ui-workspace-restore-out = Rétablir cette disposition : { $n } module(s) dans leur(s) propre(s) fenêtre(s)
+settings-ui-workspace-forget = Oublier cet espace de travail
+settings-ui-workspace-name = nommer cette disposition
+settings-ui-workspace-full = Dix espaces de travail, c'est la limite de SDRuno ; supprimez-en un d'abord
+settings-ui-workspace-save = ENREGISTRER L'ACTUELLE
+settings-ui-workspace-save-hint = Enregistrer la disposition actuelle sous ce nom
+settings-ui-workspace-name-first = Saisissez d'abord un nom
+topbar-band-window2-hint = WINDOW — ouvrir le sélecteur dans sa propre fenêtre, aussi large que vous voulez, sur n'importe quel écran
+
 ## VARA HF panel
 
 vara-starting = Démarrage du modem VARA…

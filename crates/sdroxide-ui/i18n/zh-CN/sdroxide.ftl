@@ -5396,6 +5396,72 @@ wheel-action-zoom = 缩放
 wheel-action-tune = 调谐
 wheel-action-none = 无
 
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor }：{ $name }
+frame-dock-band-menu-hint = 停靠：把波段和模式选择器放回主窗口，效果与关闭此窗口相同，无需寻找关闭按钮。
+frame-dock-panel-hint = 停靠：把此面板放回瀑布图下方
+frame-dock-spectrum-hint = 停靠：把此频谱放回主窗口，效果与关闭此窗口相同，无需寻找关闭按钮。
+frame-every-module-own-window = 每个模块都在各自的窗口中
+frame-module-aux-panadapter = 辅助全景显示
+frame-module-band-mode = 波段与模式
+frame-module-controls = 控制
+frame-module-panadapter = 全景显示
+frame-module-panel = 面板
+multi-dock-all-windows = 全部停靠
+multi-module-panel = 操作面板
+multi-undock-all-windows = 全部取消停靠
+settings-ui-dock-all-hint = 把所有已取消停靠的窗口放回此窗口。
+settings-ui-docked = 停靠在此窗口中
+settings-ui-module-aux = 辅助频谱（第二频谱）
+settings-ui-module-band-menu = 波段和模式选择器
+settings-ui-module-controls = 控制
+settings-ui-module-panadapter = 全景频谱
+settings-ui-undock-all-hint = 让每个模块都使用自己的窗口：主窗口只留下频谱和解码器。没有内容可显示的模块，例如语音模式下的操作面板，不会打开窗口。
+settings-ui-undock-hint =
+    取消停靠后，此模块将移到独立窗口，主窗口把空出的空间让给其余部分：可以把瀑布图放到第二块显示器，把控制面板放到第三块。关闭其窗口即可重新停靠。
+
+    在Wayland下大小可以恢复，但窗口位置由合成器决定：请让它浮动，并用匹配app-id "{ $app_id }" 的窗口规则把它固定到某块显示器。
+settings-ui-undocked = 已取消停靠：独立窗口
+settings-ui-window-label = { $module }窗口
+frame-window-chip-hint = 窗口：把此窗口移到独立的系统窗口，以便放到另一个显示器上
+frame-dock-panel-pane-hint = 停靠：把此面板放回瀑布图下方的窗格
+frame-panel-window-title = { $mode }：面板
+frame-roll-up-hint = 卷起：离开标题栏，把窗口还给瀑布图
+frame-unroll-hint = 展开：重新显示面板
+frame-window-panel-hint = 窗口：给此面板一个独立窗口，以便放到另一个显示器上
+topbar-dock-all = 全部停靠
+topbar-dock-all-hint = 将所有模块窗口收回此窗口
+topbar-module-windows-title = 模块窗口
+topbar-undock-all = 全部取消停靠
+topbar-undock-all-hint = 让每个模块都有独立窗口：此窗口只剩频谱和解码器
+topbar-windows-chip-hint =
+    ▣  左键：将所有模块窗口收回
+    右键：模块窗口列表
+topbar-wname-aux = SP2（AUX）：第二频谱
+topbar-wname-band-menu = 波段和模式
+topbar-wname-controls = 接收控制
+topbar-wname-panadapter = SP1：频谱
+topbar-wname-panel = 操作面板
+topbar-wstate-float = 将 { $name } 从面板中提出，浮动在此窗口之上
+topbar-wstate-floating-panel-only = 浮动是操作面板自身的状态：频谱或控制台在此窗口中只有一个位置
+topbar-wstate-here-now = { $name } 现在就在这里
+topbar-wstate-no-panel = { $mode } 中没有操作面板：在有操作面板的模式下才适用
+topbar-wstate-own-window = 为 { $name } 提供独立窗口，可放在任意显示器上
+topbar-wstate-put-back = 将 { $name } 放回此窗口
+frame-workspace-missing = 未保存工作区 { $n }。请在“设置 → 界面 → 工作区”中保存一个，此按键就会调出它。
+settings-ui-workspaces = 工作区
+settings-ui-workspaces-note = 一个有名称的窗口布局：哪些模块在独立窗口中，以及这些窗口的位置。可以保存当前布局，或恢复已保存的布局。最多十个。
+settings-ui-workspaces-none = 尚未保存任何工作区。
+settings-ui-workspace-restore-home = 恢复此布局：所有模块都在主窗口中
+settings-ui-workspace-restore-out = 恢复此布局：{ $n } 个模块位于独立窗口
+settings-ui-workspace-forget = 删除此工作区
+settings-ui-workspace-name = 为此布局命名
+settings-ui-workspace-full = SDRuno最多保留十个工作区，请先删除一个
+settings-ui-workspace-save = 保存当前布局
+settings-ui-workspace-save-hint = 以此名称保存当前布局
+settings-ui-workspace-name-first = 请先输入名称
+topbar-band-window2-hint = 窗口：在独立窗口中打开选择器，宽度随意，可放在任意显示器上
+
 ## VARA HF panel
 
 vara-starting = 正在启动 VARA 调制解调器…

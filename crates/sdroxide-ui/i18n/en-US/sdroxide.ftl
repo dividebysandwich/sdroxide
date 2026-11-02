@@ -5507,6 +5507,72 @@ topbar-atu-built-in-tuner =
 topbar-atu-start-tune = Start a tune. The radio keys itself with a carrier for as long as the match takes, at its tune power (the Tune level), so the antenna must be connected. Lit while the match it found is in circuit.
 topbar-atu-bypass-hint = Take the tuner out of circuit. Lit while it is.
 
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = DOCK — return the band and mode selector into the main window, the same as closing this one without hunting for its close box.
+frame-dock-panel-hint = DOCK — put this panel back under the waterfall
+frame-dock-spectrum-hint = DOCK — return this spectrum into the main window, the same as closing this one without hunting for its close box.
+frame-every-module-own-window = every module is in its own window
+frame-module-aux-panadapter = aux panadapter
+frame-module-band-mode = band & mode
+frame-module-controls = controls
+frame-module-panadapter = panadapter
+frame-module-panel = panel
+multi-dock-all-windows = DOCK ALL WINDOWS
+multi-module-panel = Operating panel
+multi-undock-all-windows = UNDOCK ALL WINDOWS
+settings-ui-dock-all-hint = Bring every undocked window back into this one.
+settings-ui-docked = Docked in this window
+settings-ui-module-aux = AUX SP (second spectrum)
+settings-ui-module-band-menu = Band & mode selector
+settings-ui-module-controls = Controls
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Put every module in a window of its own — the main window is left as the spectrum and the decoders. A module with nothing to show, like the operating panel in a voice mode, opens no window.
+settings-ui-undock-hint =
+    Undocked, this module moves into its own window and the main window gives the space back to what is left — put the waterfall on a second monitor, or the controls on a third. Closing its window docks it again.
+    
+    On Wayland the size comes back but the compositor decides where a window goes: float it and pin it to a monitor with a window rule matching app-id "{ $app_id }".
+settings-ui-undocked = Undocked — its own window
+settings-ui-window-label = { $module } window
+frame-window-chip-hint = WINDOW — move this window into its own OS window, to put it on another monitor
+frame-dock-panel-pane-hint = DOCK — return this panel to the pane below the waterfall
+frame-panel-window-title = { $mode } — panel
+frame-roll-up-hint = Roll up — leave the title bar and give the window back to the waterfall
+frame-unroll-hint = Unroll — show the panel again
+frame-window-panel-hint = WINDOW — give this panel a window of its own, to put on another monitor
+topbar-dock-all = DOCK ALL
+topbar-dock-all-hint = Bring every module window back into this window
+topbar-module-windows-title = Module windows
+topbar-undock-all = UNDOCK ALL
+topbar-undock-all-hint = Put every module in a window of its own — this window is left as the spectrum and the decoders
+topbar-windows-chip-hint =
+    ▣  Left: bring every module window home
+    Right: the module windows list
+topbar-wname-aux = SP2 (AUX) — a second spectrum
+topbar-wname-band-menu = Band & mode
+topbar-wname-controls = RX control
+topbar-wname-panadapter = SP1 — the spectrum
+topbar-wname-panel = Operating panel
+topbar-wstate-float = Lift { $name } out of the pane and float it over this window
+topbar-wstate-floating-panel-only = Floating is the operating panel's own state — a spectrum or a console has one place in this window
+topbar-wstate-here-now = { $name } is here now
+topbar-wstate-no-panel = No operating panel in { $mode } — this applies in a mode that has one
+topbar-wstate-own-window = Give { $name } a window of its own, on any monitor
+topbar-wstate-put-back = Put { $name } back in this window
+frame-workspace-missing = No workspace { $n } saved — save one in Settings › UI › Workspaces and this key will call it back.
+settings-ui-workspaces = Workspaces
+settings-ui-workspaces-note = A named window arrangement — which modules are in their own windows and where those windows are. Save the one you have, or put a saved one back. Up to ten.
+settings-ui-workspaces-none = No workspaces saved yet.
+settings-ui-workspace-restore-home = Put this arrangement back — every module in the main window
+settings-ui-workspace-restore-out = Put this arrangement back — { $n } module(s) in their own window(s)
+settings-ui-workspace-forget = Forget this workspace
+settings-ui-workspace-name = name this arrangement
+settings-ui-workspace-full = Ten workspaces is the limit SDRuno keeps; delete one first
+settings-ui-workspace-save = SAVE CURRENT
+settings-ui-workspace-save-hint = Save the arrangement you have now under this name
+settings-ui-workspace-name-first = Type a name first
+topbar-band-window2-hint = WINDOW — open the selector in a window of its own, as wide as you like, on any monitor
+
 ## VARA HF panel
 
 vara-starting = Starting the VARA modem…
