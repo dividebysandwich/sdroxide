@@ -5374,6 +5374,7 @@ dependencies = [
  "network-interface",
  "rtrb",
  "sdroxide-types",
+ "socket2",
  "thiserror 2.0.20",
  "tracing",
 ]

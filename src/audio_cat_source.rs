@@ -192,7 +192,16 @@ impl AudioCatSource {
             }
             Ok((s, c)) => {
                 let rate = s.sample_rate;
-                (Some(s), c, rate, None)
+                // Opened, but not the card that was asked for. Said on screen
+                // because the stream runs: a rig whose stored name no longer
+                // matches falls back to the default input and looks like a
+                // working radio carrying the wrong signal.
+                let status = s.swap.as_ref().map(|sw| {
+                    let msg = format!("Radio input: {}", sw.sentence());
+                    tracing::warn!("{msg}");
+                    msg
+                });
+                (Some(s), c, rate, status)
             }
             Err(e) => {
                 let msg = format!(
@@ -206,20 +215,44 @@ impl AudioCatSource {
         };
 
         // TX playback is best-effort: a missing device just means no TX audio.
-        let out = match sdroxide_audio::start_output(
+        let (out, out_status) = match sdroxide_audio::start_output(
             audio_out,
             48_000,
             sdroxide_types::AudioRouting::Both,
         ) {
-            Ok((o, p)) => Some((o, p)),
+            Ok((o, p)) => {
+                let status = o.swap.as_ref().map(|sw| {
+                    let msg = format!("Radio transmit device: {}", sw.sentence());
+                    tracing::warn!("{msg}");
+                    msg
+                });
+                (Some((o, p)), status)
+            }
             Err(e) => {
                 tracing::warn!("radio TX audio device unavailable ({e}); RX only");
-                None
+                (
+                    None,
+                    Some(format!(
+                        "Radio transmit device unavailable ({e}) \u{2014} no over will go out."
+                    )),
+                )
             }
         };
         // `MonoResampler::new` returns None when the rates match.
         let tx_resampler =
             out.as_ref().and_then(|(o, _)| MonoResampler::new(48_000.0, o.sample_rate));
+
+        // The transmit card's own problem, folded onto the same line the
+        // receive card's is on. Ordered after it because a rig that is
+        // listening to the wrong card cannot hear a report of what it is
+        // transmitting on either.
+        let status = match out_status {
+            Some(b) => Some(match status {
+                Some(a) => format!("{a}\n{b}"),
+                None => b,
+            }),
+            None => status,
+        };
 
         let label =
             format!("CAT rig ({}) on {}", cfg.family.label(), sdroxide_cat::link_label(&cfg));
