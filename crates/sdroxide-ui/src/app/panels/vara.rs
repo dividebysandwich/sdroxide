@@ -300,16 +300,10 @@ impl SdroxideApp {
         // ── the line you type on ──────────────────────────────────────────
         let can_send = st.connected && panel_holds;
         let mut send = false;
-        ui.horizontal(|ui| {
-            let room = (ui.available_width() - 56.0).max(80.0);
-            ui.add_enabled_ui(can_send, |ui| {
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut self.vara_draft).desired_width(room).hint_text(
-                        if can_send { tr!("vara-type-here") } else { tr!("vara-not-connected") },
-                    ),
-                );
-                send |= resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            });
+        // Right to left: the SEND chip is laid out first at its own width,
+        // which is not the English one in every language (ОТПРАВИТЬ), and the
+        // text field takes whatever is left.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if tx_gated(ui, tx_ok && can_send, |ui| {
                 crate::chrome::chip_accent(
                     ui,
@@ -323,6 +317,15 @@ impl SdroxideApp {
             {
                 send = true;
             }
+            let room = ui.available_width().max(80.0);
+            ui.add_enabled_ui(can_send, |ui| {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.vara_draft).desired_width(room).hint_text(
+                        if can_send { tr!("vara-type-here") } else { tr!("vara-not-connected") },
+                    ),
+                );
+                send |= resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            });
         });
         if send && tx_ok && can_send {
             cmds.push(Command::VaraSend { text: self.vara_draft.trim_end().to_string() });
