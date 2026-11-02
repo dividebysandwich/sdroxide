@@ -5457,3 +5457,31 @@ upload-naming-original = Исходное имя файла
 wheel-action-zoom = Масштаб
 wheel-action-tune = Настройка
 wheel-action-none = Ничего
+
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = DOCK — вернуть выбор диапазона и режима в главное окно, так же, как закрытие этого окна, без поиска кнопки закрытия.
+frame-dock-panel-hint = DOCK — вернуть эту панель обратно под водопад
+frame-dock-spectrum-hint = DOCK — вернуть этот спектр в главное окно, так же, как закрытие этого окна, без поиска кнопки закрытия.
+frame-every-module-own-window = каждый модуль в своём окне
+frame-module-aux-panadapter = доп. панадаптер
+frame-module-band-mode = диапазон и режим
+frame-module-controls = управление
+frame-module-panadapter = панадаптер
+frame-module-panel = панель
+multi-dock-all-windows = ПРИСТЫКОВАТЬ ВСЕ ОКНА
+multi-module-panel = Рабочая панель
+multi-undock-all-windows = ОТСТЫКОВАТЬ ВСЕ ОКНА
+settings-ui-dock-all-hint = Вернуть все отстыкованные окна в это окно.
+settings-ui-docked = Пристыковано в этом окне
+settings-ui-module-aux = AUX SP (второй спектр)
+settings-ui-module-band-menu = Выбор диапазона и режима
+settings-ui-module-controls = Управление
+settings-ui-module-panadapter = Панадаптер
+settings-ui-undock-all-hint = Поместить каждый модуль в отдельное окно — главное окно останется со спектром и декодерами. Модуль, которому нечего показывать, например рабочая панель в голосовом режиме, окна не открывает.
+settings-ui-undock-hint =
+    После отстыковки этот модуль перемещается в своё окно, а главное окно отдаёт освободившееся место остальному — поместите водопад на второй монитор или управление на третий. Закрытие его окна пристыковывает его обратно.
+
+    В Wayland размер восстанавливается, но место окна решает композитор: сделайте его плавающим и закрепите за монитором правилом окна с app-id "{ $app_id }".
+settings-ui-undocked = Отстыковано — своё окно
+settings-ui-window-label = Окно { $module }

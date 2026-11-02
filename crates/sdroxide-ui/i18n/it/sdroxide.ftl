@@ -5464,3 +5464,31 @@ upload-naming-original = Nome file originale
 wheel-action-zoom = Zoom
 wheel-action-tune = Sintonia
 wheel-action-none = Nulla
+
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = ACCORPA — riporta il selettore di banda e modo nella finestra principale, come chiudere questa senza cercare il suo pulsante di chiusura.
+frame-dock-panel-hint = ACCORPA — rimette questo pannello sotto il waterfall
+frame-dock-spectrum-hint = ACCORPA — riporta questo spettro nella finestra principale, come chiudere questa senza cercare il suo pulsante di chiusura.
+frame-every-module-own-window = ogni modulo è nella sua finestra
+frame-module-aux-panadapter = panadapter aux
+frame-module-band-mode = banda e modo
+frame-module-controls = controlli
+frame-module-panadapter = panadapter
+frame-module-panel = pannello
+multi-dock-all-windows = ACCORPA TUTTE LE FINESTRE
+multi-module-panel = Pannello operativo
+multi-undock-all-windows = SGANCIA TUTTE LE FINESTRE
+settings-ui-dock-all-hint = Riporta ogni finestra sganciata in questa.
+settings-ui-docked = Accorpato in questa finestra
+settings-ui-module-aux = AUX SP (secondo spettro)
+settings-ui-module-band-menu = Selettore di banda e modo
+settings-ui-module-controls = Controlli
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Metti ogni modulo in una finestra propria: la finestra principale resta con lo spettro e i decodificatori. Un modulo senza nulla da mostrare, come il pannello operativo in un modo voce, non apre alcuna finestra.
+settings-ui-undock-hint =
+    Sganciato, questo modulo si sposta nella sua finestra e la finestra principale restituisce lo spazio a ciò che resta: metti il waterfall su un secondo monitor, o i controlli su un terzo. Chiudere la sua finestra lo riaccorpa.
+
+    Su Wayland la dimensione viene ripristinata ma è il compositor a decidere dove va una finestra: rendila flottante e fissala a un monitor con una regola di finestra che corrisponda all'app-id "{ $app_id }".
+settings-ui-undocked = Sganciato — finestra propria
+settings-ui-window-label = finestra { $module }

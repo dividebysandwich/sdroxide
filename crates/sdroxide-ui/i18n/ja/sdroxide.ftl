@@ -5403,3 +5403,31 @@ wheel-action-none = なし
 
 ## 無線機タブ：値を含むメッセージ（続き）。
 settings-radio-rx-tx-words = { $rx } / TX { $tx }
+
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = ドック — バンド/モード選択をメインウィンドウに戻します。閉じるボタンを探さずに閉じるのと同じです。
+frame-dock-panel-hint = ドック — このパネルをウォーターフォールの下に戻します
+frame-dock-spectrum-hint = ドック — このスペクトラムをメインウィンドウに戻します。閉じるボタンを探さずに閉じるのと同じです。
+frame-every-module-own-window = すべてのモジュールが個別のウィンドウにあります
+frame-module-aux-panadapter = 補助パンアダプター
+frame-module-band-mode = バンドとモード
+frame-module-controls = コントロール
+frame-module-panadapter = パンアダプター
+frame-module-panel = パネル
+multi-dock-all-windows = すべてドック
+multi-module-panel = 操作パネル
+multi-undock-all-windows = すべてドック解除
+settings-ui-dock-all-hint = ドック解除したすべてのウィンドウをこのウィンドウに戻します。
+settings-ui-docked = このウィンドウにドック
+settings-ui-module-aux = AUX SP (第2スペクトラム)
+settings-ui-module-band-menu = バンド・モード選択
+settings-ui-module-controls = コントロール
+settings-ui-module-panadapter = パンアダプター
+settings-ui-undock-all-hint = すべてのモジュールを個別のウィンドウにします。メインウィンドウにはスペクトラムとデコーダが残ります。音声モードの操作パネルのように表示するものがないモジュールは、ウィンドウを開きません。
+settings-ui-undock-hint =
+    ドッキング解除すると、このモジュールは専用ウィンドウに移り、メインウィンドウは空いた場所を残りの部分に譲ります。ウォーターフォールを2台目のモニターに、操作部を3台目に置くこともできます。ウィンドウを閉じると再びドッキングします。
+
+    Wayland ではサイズは復元されますが、ウィンドウの位置はコンポジターが決めます。フロート表示にし、app-id "{ $app_id }" に一致するウィンドウルールでモニターに固定してください。
+settings-ui-undocked = ドック解除 — 独立ウィンドウ
+settings-ui-window-label = { $module } ウィンドウ

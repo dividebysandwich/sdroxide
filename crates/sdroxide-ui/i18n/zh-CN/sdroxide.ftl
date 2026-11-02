@@ -5395,3 +5395,31 @@ upload-naming-original = 原始文件名
 wheel-action-zoom = 缩放
 wheel-action-tune = 调谐
 wheel-action-none = 无
+
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor }：{ $name }
+frame-dock-band-menu-hint = 停靠：把波段和模式选择器放回主窗口，效果与关闭此窗口相同，无需寻找关闭按钮。
+frame-dock-panel-hint = 停靠：把此面板放回瀑布图下方
+frame-dock-spectrum-hint = 停靠：把此频谱放回主窗口，效果与关闭此窗口相同，无需寻找关闭按钮。
+frame-every-module-own-window = 每个模块都在各自的窗口中
+frame-module-aux-panadapter = 辅助全景显示
+frame-module-band-mode = 波段与模式
+frame-module-controls = 控制
+frame-module-panadapter = 全景显示
+frame-module-panel = 面板
+multi-dock-all-windows = 全部停靠
+multi-module-panel = 操作面板
+multi-undock-all-windows = 全部取消停靠
+settings-ui-dock-all-hint = 把所有已取消停靠的窗口放回此窗口。
+settings-ui-docked = 停靠在此窗口中
+settings-ui-module-aux = 辅助频谱（第二频谱）
+settings-ui-module-band-menu = 波段和模式选择器
+settings-ui-module-controls = 控制
+settings-ui-module-panadapter = 全景频谱
+settings-ui-undock-all-hint = 让每个模块都使用自己的窗口：主窗口只留下频谱和解码器。没有内容可显示的模块，例如语音模式下的操作面板，不会打开窗口。
+settings-ui-undock-hint =
+    取消停靠后，此模块将移到独立窗口，主窗口把空出的空间让给其余部分：可以把瀑布图放到第二块显示器，把控制面板放到第三块。关闭其窗口即可重新停靠。
+
+    在Wayland下大小可以恢复，但窗口位置由合成器决定：请让它浮动，并用匹配app-id "{ $app_id }" 的窗口规则把它固定到某块显示器。
+settings-ui-undocked = 已取消停靠：独立窗口
+settings-ui-window-label = { $module }窗口

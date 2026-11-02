@@ -48,6 +48,7 @@ pub(in crate::app) mod speech;
 pub(in crate::app) mod spots;
 pub(in crate::app) mod top_bar;
 pub(in crate::app) mod tx_audio;
+pub(in crate::app) mod undocked;
 pub(crate) mod util;
 pub(in crate::app) mod windows;
 pub(in crate::app) mod winlink;
@@ -562,6 +563,16 @@ pub struct SdroxideApp {
     /// it, so widening the window again brings it back.
     band_docked: bool,
     band_dock_visible: bool,
+    /// AUX SP's own view of the spectrum — its zoom, pan and layers — swapped
+    /// in for `view` while its window draws, so the two spectra do not mirror
+    /// each other (see `undocked::show_detached_module`).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    aux_view: ViewState,
+    /// The pane the undocked operating panel shows, swapped in for
+    /// `view.digi_pane` while its window draws: that window may sit on the
+    /// decode list while the main window shows another pane.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    panel_window_pane: usize,
     /// How wide the docked column may be this frame, or `None` where it cannot
     /// dock — see [`top_bar::band_dock_room`]. Settled at the top of the frame
     /// from this app's own column, before the top bar draws the chip that
@@ -1546,6 +1557,8 @@ impl SdroxideApp {
             rpt_tone_popup_since: None,
             band_docked: false,
             band_dock_visible: false,
+            aux_view: ViewState::default(),
+            panel_window_pane: 0,
             band_dock_room: None,
             // Corrected on the first frame, once the viewport size is known.
             tier: crate::layout::Tier::Desktop,

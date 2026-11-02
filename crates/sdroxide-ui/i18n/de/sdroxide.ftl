@@ -5490,3 +5490,31 @@ topbar-atu-built-in-tuner =
     { $state }
 topbar-atu-start-tune = Eine Abstimmung starten. Das Funkgerät tastet sich selbst mit einem Träger, solange die Anpassung dauert, mit seiner Abstimmleistung (dem Tune-Pegel) — die Antenne muss also angeschlossen sein. Leuchtet, solange die gefundene Anpassung eingeschleift ist.
 topbar-atu-bypass-hint = Den Tuner überbrücken. Leuchtet, solange er überbrückt ist.
+
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = DOCK — die Band- und Modusauswahl ins Hauptfenster zurückholen, genauso wie dieses Fenster zu schließen, ohne das Schließfeld suchen zu müssen.
+frame-dock-panel-hint = DOCK — dieses Panel wieder unter den Wasserfall setzen
+frame-dock-spectrum-hint = DOCK — dieses Spektrum ins Hauptfenster zurückholen, genauso wie dieses Fenster zu schließen, ohne das Schließfeld suchen zu müssen.
+frame-every-module-own-window = jedes Modul hat sein eigenes Fenster
+frame-module-aux-panadapter = Aux-Panadapter
+frame-module-band-mode = Band & Modus
+frame-module-controls = Bedienelemente
+frame-module-panadapter = Panadapter
+frame-module-panel = Panel
+multi-dock-all-windows = ALLE FENSTER ANDOCKEN
+multi-module-panel = Bedienfeld
+multi-undock-all-windows = ALLE FENSTER ABDOCKEN
+settings-ui-dock-all-hint = Holt jedes abgedockte Fenster zurück in dieses.
+settings-ui-docked = In diesem Fenster angedockt
+settings-ui-module-aux = AUX SP (zweites Spektrum)
+settings-ui-module-band-menu = Band- und Betriebsartenwahl
+settings-ui-module-controls = Bedienelemente
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Setzt jedes Modul in ein eigenes Fenster – das Hauptfenster behält das Spektrum und die Decoder. Ein Modul ohne Inhalt, etwa das Bedienpanel in einer Sprachbetriebsart, öffnet kein Fenster.
+settings-ui-undock-hint =
+    Abgedockt wandert dieses Modul in ein eigenes Fenster, und das Hauptfenster gibt den Platz an das Übrige zurück – legen Sie den Wasserfall auf einen zweiten Monitor oder die Bedienelemente auf einen dritten. Schließen des Fensters dockt es wieder an.
+    
+    Unter Wayland kommt die Größe zurück, aber der Compositor entscheidet, wohin ein Fenster kommt: Machen Sie es schwebend und heften Sie es mit einer Fensterregel für die app-id „{ $app_id }“ an einen Monitor.
+settings-ui-undocked = Abgedockt — eigenes Fenster
+settings-ui-window-label = Fenster { $module }

@@ -5454,3 +5454,31 @@ upload-naming-original = Oorspronkelijke bestandsnaam
 wheel-action-zoom = Zoomen
 wheel-action-tune = Afstemmen
 wheel-action-none = Niets
+
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = DOCK — zet de band- en modusselectie terug in het hoofdvenster, hetzelfde als dit venster sluiten zonder het sluitvakje te zoeken.
+frame-dock-panel-hint = DOCK — zet dit paneel terug onder de waterval
+frame-dock-spectrum-hint = DOCK — zet dit spectrum terug in het hoofdvenster, hetzelfde als dit venster sluiten zonder het sluitvakje te zoeken.
+frame-every-module-own-window = elke module staat in een eigen venster
+frame-module-aux-panadapter = aux-panadapter
+frame-module-band-mode = band & modus
+frame-module-controls = bediening
+frame-module-panadapter = panadapter
+frame-module-panel = paneel
+multi-dock-all-windows = ALLE VENSTERS DOCKEN
+multi-module-panel = Bedieningspaneel
+multi-undock-all-windows = ALLE VENSTERS LOSKOPPELEN
+settings-ui-dock-all-hint = Breng elk losgekoppeld venster terug in dit venster.
+settings-ui-docked = Gedockt in dit venster
+settings-ui-module-aux = AUX SP (tweede spectrum)
+settings-ui-module-band-menu = Band- en modusselectie
+settings-ui-module-controls = Bediening
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Zet elke module in een eigen venster — het hoofdvenster blijft over als het spectrum en de decoders. Een module zonder iets om te tonen, zoals het bedieningspaneel in een spraakmodus, opent geen venster.
+settings-ui-undock-hint =
+    Losgekoppeld verhuist deze module naar een eigen venster en geeft het hoofdvenster de ruimte terug aan wat overblijft — zet de waterfall op een tweede monitor, of de bediening op een derde. Het venster sluiten koppelt de module weer vast.
+
+    Onder Wayland komt de grootte terug, maar de compositor bepaalt waar een venster komt: laat het zweven en zet het vast op een monitor met een vensterregel die overeenkomt met app-id "{ $app_id }".
+settings-ui-undocked = Losgekoppeld — eigen venster
+settings-ui-window-label = Venster { $module }

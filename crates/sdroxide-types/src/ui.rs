@@ -514,6 +514,120 @@ pub struct Solar3dWindow {
     pub pos_px: Option<[f32; 2]>,
 }
 
+/// A module pulled out into its **own OS window**: where it last was, so
+/// reopening it — or the next start — puts it back rather than at a built-in
+/// size.
+///
+/// The same shape and the same Wayland caveat as [`Solar3dWindow`]: a client is
+/// given no absolute window position, so `pos` is `None` there and the
+/// compositor places the window. The **app-id** the window carries
+/// ([`DetachableModule::app_id`]) is what a compositor rule matches on to float
+/// it and pin it to a monitor.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DetachedWindow {
+    /// Inner (drawing-area) size in points.
+    pub size: [f32; 2],
+    /// Outer (top-left) position in points; `None` on Wayland.
+    #[serde(default)]
+    pub pos: Option<[f32; 2]>,
+}
+
+/// A module that can be pulled out of the main window into its own OS window —
+/// **undocked** — in the SDRuno mould: the spectrum on one monitor, the decoder
+/// on another. An enum keyed in [`UiSettings::detached`] rather than a field
+/// pair per module, so a new detachable module is a variant here plus its UI,
+/// nothing else. **Append only**: the variant's [`Self::index`] is its slot in
+/// the saved settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum DetachableModule {
+    /// The spectrum and waterfall.
+    Panadapter,
+    /// The mode's operating panel — the decoder list, the transcript and the
+    /// controls under the panadapter.
+    Panel,
+    /// The top control strip — the frequency readout, the S-meter and the
+    /// receiver and transmitter controls (SDRuno's "RX control").
+    Controls,
+    /// A **second** spectrum and waterfall — SDRuno's AUX SP. A second view of
+    /// the same receiver, with its own zoom and layers, not a second receiver.
+    AuxPanadapter,
+    /// The **band/mode selector** in a window of its own, where it can be as
+    /// wide as the operator likes without squeezing the operating panel.
+    BandMenu,
+}
+
+impl DetachableModule {
+    /// How many detachable modules there are — the length of
+    /// [`UiSettings::detached`], which is an array so `UiSettings` stays `Copy`.
+    pub const COUNT: usize = 5;
+
+    /// Every module, so a settings list or a test can walk them all.
+    pub const ALL: [DetachableModule; DetachableModule::COUNT] = [
+        DetachableModule::Panadapter,
+        DetachableModule::Panel,
+        DetachableModule::Controls,
+        DetachableModule::AuxPanadapter,
+        DetachableModule::BandMenu,
+    ];
+
+    /// This module's slot in [`UiSettings::detached`].
+    pub fn index(self) -> usize {
+        match self {
+            DetachableModule::Panadapter => 0,
+            DetachableModule::Panel => 1,
+            DetachableModule::Controls => 2,
+            DetachableModule::AuxPanadapter => 3,
+            DetachableModule::BandMenu => 4,
+        }
+    }
+
+    /// The window's **application id** — the handle a Wayland compositor rule
+    /// matches on to float this window and pin it to a monitor. A public
+    /// contract with the operator: change it and their rules stop matching.
+    pub fn app_id(self) -> &'static str {
+        match self {
+            DetachableModule::Panadapter => "sdroxide-panadapter",
+            DetachableModule::Panel => "sdroxide-panel",
+            DetachableModule::Controls => "sdroxide-controls",
+            DetachableModule::AuxPanadapter => "sdroxide-panadapter-aux",
+            DetachableModule::BandMenu => "sdroxide-bandmenu",
+        }
+    }
+}
+
+/// Whether one [`DetachableModule`] is undocked, and where its window last was.
+/// See [`UiSettings::detached`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct DetachedState {
+    /// True when the module is drawn in its own window instead of the main one.
+    pub detached: bool,
+    /// Where its window last was; `None` until it has been open once.
+    #[serde(default)]
+    pub window: Option<DetachedWindow>,
+}
+
+fn default_detached() -> [DetachedState; DetachableModule::COUNT] {
+    [DetachedState::default(); DetachableModule::COUNT]
+}
+
+/// Read [`UiSettings::detached`] at any length. A config written by a build with
+/// fewer (or more) modules carries a shorter (or longer) list, and a derived
+/// array deserializer would reject the whole file over it — which would reset
+/// every other setting along with the window geometry. A short list leaves the
+/// modules it does not reach docked; a long one drops what this build does not
+/// know.
+fn detached_slots<'de, D>(d: D) -> Result<[DetachedState; DetachableModule::COUNT], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let list = Vec::<DetachedState>::deserialize(d)?;
+    let mut out = default_detached();
+    for (slot, state) in out.iter_mut().zip(list) {
+        *slot = state;
+    }
+    Ok(out)
+}
+
 /// The language the interface is drawn in: a BCP 47 tag such as `es` or
 /// `pt-BR`, or none to follow the operating system's.
 ///
@@ -797,6 +911,16 @@ pub struct UiSettings {
     /// list, 255 for no bottom needle. `None` for the built-in picks.
     #[serde(default)]
     pub amp_meters: Option<[u8; 4]>,
+    /// Which modules are undocked into their own windows, and where those
+    /// windows last were — one [`DetachedState`] per [`DetachableModule`], in
+    /// `module.index()` order. An array rather than a map so `UiSettings` stays
+    /// `Copy`; read at any length, see [`detached_slots`].
+    ///
+    /// **Native only.** The browser has no second window and keeps every module
+    /// in-window, so the flags are ignored there. Machine-local: where a window
+    /// sits is a property of this screen.
+    #[serde(default = "default_detached", deserialize_with = "detached_slots")]
+    pub detached: [DetachedState; DetachableModule::COUNT],
 }
 
 /// The docked AMP window's place: its top-left corner and width, in points.
@@ -912,11 +1036,29 @@ impl Default for UiSettings {
             amp_window: None,
             amp_docked: None,
             amp_meters: None,
+            detached: default_detached(),
         }
     }
 }
 
 impl UiSettings {
+    /// One module's undocked state, or the docked default if it has never been
+    /// touched.
+    pub fn detached_state(&self, module: DetachableModule) -> DetachedState {
+        self.detached[module.index()]
+    }
+
+    /// Whether a module is undocked.
+    pub fn is_detached(&self, module: DetachableModule) -> bool {
+        self.detached[module.index()].detached
+    }
+
+    /// Set (or clear) a module's undocked flag, leaving its remembered window
+    /// geometry alone.
+    pub fn set_detached(&mut self, module: DetachableModule, on: bool) {
+        self.detached[module.index()].detached = on;
+    }
+
     /// The steps the tuning buttons cycle through, in hertz — from the 10 Hz
     /// that trims a carrier onto zero-beat up to the 25 kHz of an FM channel,
     /// by way of the AM broadcast spacings (9 kHz in Regions 1 and 3, 10 kHz in

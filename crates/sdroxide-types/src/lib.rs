@@ -301,8 +301,9 @@ pub use tx_voice::{
     TxVoiceTest,
 };
 pub use ui::{
-    AmpDocked, BandplanKind, ChromeStyle, FontSize, LayoutMode, SmeterStyle, Solar3dWindow,
-    SpectrumDetail, Speed, UiLanguage, UiSettings, UiTheme,
+    AmpDocked, BandplanKind, ChromeStyle, DetachableModule, DetachedState, DetachedWindow,
+    FontSize, LayoutMode, SmeterStyle, Solar3dWindow, SpectrumDetail, Speed, UiLanguage,
+    UiSettings, UiTheme,
 };
 pub use vdl2::{
     VDL2_ALL_CHANNELS, VDL2_CHANNEL_LABELS, VDL2_CHANNEL_SPACING_HZ, VDL2_CHANNELS_HZ, VDL2_CSC_HZ,

@@ -721,7 +721,15 @@ impl SdroxideApp {
     /// Wrapped, so a mode with more panes than the width holds takes a second
     /// row rather than losing the last one — which on most modes is the
     /// waterfall.
-    pub(in crate::app) fn digi_tabs(&mut self, ui: &mut egui::Ui, mode: Mode) {
+    ///
+    /// `with_waterfall` is false in a panel drawn in a window of its own: the
+    /// waterfall is not in that window, so a tab for it would show nothing.
+    pub(in crate::app) fn digi_tabs(
+        &mut self,
+        ui: &mut egui::Ui,
+        mode: Mode,
+        with_waterfall: bool,
+    ) {
         let selected = self.digi_pane(mode);
         // Pin the content to the width left *inside* the margins. A `Frame`
         // reports an outer rect of content-plus-margins, and a content row that
@@ -736,7 +744,11 @@ impl SdroxideApp {
             .show(ui, |ui| {
                 ui.set_max_width(inner_w);
                 ui.horizontal_wrapped(|ui| {
+                    let panes = panel_panes(mode).len();
                     for (i, label) in panel_tabs(mode).enumerate() {
+                        if !with_waterfall && i >= panes {
+                            break;
+                        }
                         if crate::chrome::chip(ui, selected == i, pane_label(label)).clicked() {
                             self.view.digi_pane = i;
                         }

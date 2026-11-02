@@ -5461,3 +5461,31 @@ upload-naming-original = Nom de fichier d'origine
 wheel-action-zoom = Zoom
 wheel-action-tune = Accord
 wheel-action-none = Aucune action
+
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = DOCK — remettre le sélecteur de bande et de mode dans la fenêtre principale, comme en fermant celle-ci sans chercher sa case de fermeture.
+frame-dock-panel-hint = DOCK — remettre ce panneau sous la cascade
+frame-dock-spectrum-hint = DOCK — remettre ce spectre dans la fenêtre principale, comme en fermant celle-ci sans chercher sa case de fermeture.
+frame-every-module-own-window = chaque module est dans sa propre fenêtre
+frame-module-aux-panadapter = panadapter auxiliaire
+frame-module-band-mode = bande et mode
+frame-module-controls = commandes
+frame-module-panadapter = panadapter
+frame-module-panel = panneau
+multi-dock-all-windows = ANCRER TOUTES LES FENÊTRES
+multi-module-panel = Panneau d'exploitation
+multi-undock-all-windows = DÉTACHER TOUTES LES FENÊTRES
+settings-ui-dock-all-hint = Ramène chaque fenêtre détachée dans celle-ci.
+settings-ui-docked = Ancrée dans cette fenêtre
+settings-ui-module-aux = AUX SP (second spectre)
+settings-ui-module-band-menu = Sélecteur de bande et de mode
+settings-ui-module-controls = Commandes
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Place chaque module dans sa propre fenêtre ; la fenêtre principale ne garde que le spectre et les décodeurs. Un module sans rien à afficher, comme le panneau d'exploitation en mode phonie, n'ouvre pas de fenêtre.
+settings-ui-undock-hint =
+    Détaché, ce module passe dans sa propre fenêtre et la fenêtre principale rend la place à ce qui reste : mettez la cascade sur un deuxième écran, ou les commandes sur un troisième. Fermer sa fenêtre le rattache.
+    
+    Sous Wayland la taille est restaurée mais c'est le compositeur qui décide de l'emplacement d'une fenêtre : rendez-la flottante et épinglez-la sur un écran avec une règle de fenêtre correspondant à l'app-id « { $app_id } ».
+settings-ui-undocked = Détachée — sa propre fenêtre
+settings-ui-window-label = Fenêtre { $module }

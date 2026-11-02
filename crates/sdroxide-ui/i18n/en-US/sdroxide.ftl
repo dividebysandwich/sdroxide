@@ -5506,3 +5506,31 @@ topbar-atu-built-in-tuner =
     { $state }
 topbar-atu-start-tune = Start a tune. The radio keys itself with a carrier for as long as the match takes, at its tune power (the Tune level), so the antenna must be connected. Lit while the match it found is in circuit.
 topbar-atu-bypass-hint = Take the tuner out of circuit. Lit while it is.
+
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = DOCK — return the band and mode selector into the main window, the same as closing this one without hunting for its close box.
+frame-dock-panel-hint = DOCK — put this panel back under the waterfall
+frame-dock-spectrum-hint = DOCK — return this spectrum into the main window, the same as closing this one without hunting for its close box.
+frame-every-module-own-window = every module is in its own window
+frame-module-aux-panadapter = aux panadapter
+frame-module-band-mode = band & mode
+frame-module-controls = controls
+frame-module-panadapter = panadapter
+frame-module-panel = panel
+multi-dock-all-windows = DOCK ALL WINDOWS
+multi-module-panel = Operating panel
+multi-undock-all-windows = UNDOCK ALL WINDOWS
+settings-ui-dock-all-hint = Bring every undocked window back into this one.
+settings-ui-docked = Docked in this window
+settings-ui-module-aux = AUX SP (second spectrum)
+settings-ui-module-band-menu = Band & mode selector
+settings-ui-module-controls = Controls
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Put every module in a window of its own — the main window is left as the spectrum and the decoders. A module with nothing to show, like the operating panel in a voice mode, opens no window.
+settings-ui-undock-hint =
+    Undocked, this module moves into its own window and the main window gives the space back to what is left — put the waterfall on a second monitor, or the controls on a third. Closing its window docks it again.
+    
+    On Wayland the size comes back but the compositor decides where a window goes: float it and pin it to a monitor with a window rule matching app-id "{ $app_id }".
+settings-ui-undocked = Undocked — its own window
+settings-ui-window-label = { $module } window

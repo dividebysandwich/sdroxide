@@ -2355,6 +2355,24 @@ impl SdroxideApp {
         }
     }
 
+    /// The band/mode selector's body — the same [`band_mode_menu`] the popup
+    /// draws, for the docked column and the selector's own window alike, so
+    /// the two cannot come apart.
+    pub(in crate::app) fn band_menu_body(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let mode = self.state.rx[0].mode;
+        let stated = self.radio_cfg.as_ref().is_some_and(|c| !c.freq_ranges_rx.is_empty());
+        band_mode_menu(
+            ui,
+            mode,
+            &self.state,
+            self.caps.as_ref(),
+            stated,
+            self.band_conditions.as_ref(),
+            self.daylight,
+            cmds,
+        );
+    }
+
     /// The band/mode selector docked as a column beside the panadapter: the
     /// same [`band_mode_menu`] the popup draws, with its own UNDOCK and hide.
     pub(in crate::app) fn band_dock_panel(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
@@ -2402,21 +2420,7 @@ impl SdroxideApp {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .id_salt("band-dock-scroll")
-                    .show(ui, |ui| {
-                        let mode = self.state.rx[0].mode;
-                        let stated =
-                            self.radio_cfg.as_ref().is_some_and(|c| !c.freq_ranges_rx.is_empty());
-                        band_mode_menu(
-                            ui,
-                            mode,
-                            &self.state,
-                            self.caps.as_ref(),
-                            stated,
-                            self.band_conditions.as_ref(),
-                            self.daylight,
-                            cmds,
-                        );
-                    });
+                    .show(ui, |ui| self.band_menu_body(ui, cmds));
             });
         if !visible {
             self.band_dock_visible = false;

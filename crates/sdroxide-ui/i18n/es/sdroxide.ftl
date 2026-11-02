@@ -5445,3 +5445,31 @@ upload-naming-original = Nombre de archivo original
 wheel-action-zoom = Zoom
 wheel-action-tune = Sintonía
 wheel-action-none = Nada
+
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = DOCK — devolver el selector de banda y modo a la ventana principal, igual que cerrar esta sin buscar su casilla de cierre.
+frame-dock-panel-hint = DOCK — volver a poner este panel bajo la cascada
+frame-dock-spectrum-hint = DOCK — devolver este espectro a la ventana principal, igual que cerrar esta sin buscar su casilla de cierre.
+frame-every-module-own-window = cada módulo está en su propia ventana
+frame-module-aux-panadapter = panadapter auxiliar
+frame-module-band-mode = banda y modo
+frame-module-controls = controles
+frame-module-panadapter = panadapter
+frame-module-panel = panel
+multi-dock-all-windows = ACOPLAR TODAS LAS VENTANAS
+multi-module-panel = Panel de operación
+multi-undock-all-windows = DESACOPLAR TODAS LAS VENTANAS
+settings-ui-dock-all-hint = Devuelve cada ventana desacoplada a esta.
+settings-ui-docked = Acoplada en esta ventana
+settings-ui-module-aux = AUX SP (segundo espectro)
+settings-ui-module-band-menu = Selector de banda y modo
+settings-ui-module-controls = Controles
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Pone cada módulo en su propia ventana; la ventana principal queda con el espectro y los decodificadores. Un módulo sin nada que mostrar, como el panel de operación en un modo de voz, no abre ventana.
+settings-ui-undock-hint =
+    Desacoplado, este módulo pasa a su propia ventana y la ventana principal devuelve el espacio a lo que queda: ponga la cascada en un segundo monitor, o los controles en un tercero. Cerrar su ventana lo vuelve a acoplar.
+    
+    En Wayland se recupera el tamaño, pero el compositor decide dónde va una ventana: hágala flotante y fíjela a un monitor con una regla de ventana que coincida con el app-id «{ $app_id }».
+settings-ui-undocked = Desacoplada — su propia ventana
+settings-ui-window-label = Ventana { $module }

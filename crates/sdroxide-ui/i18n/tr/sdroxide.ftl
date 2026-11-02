@@ -5453,3 +5453,31 @@ upload-naming-original = Özgün dosya adı
 wheel-action-zoom = Yakınlaştır
 wheel-action-tune = Ayarla
 wheel-action-none = Hiçbiri
+
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = YERLEŞTİR — bant ve mod seçiciyi ana pencereye geri döndürün; kapatma kutusunu aramadan bunu kapatmakla aynı.
+frame-dock-panel-hint = YERLEŞTİR — bu paneli şelalenin altına geri koyun
+frame-dock-spectrum-hint = YERLEŞTİR — bu spektrumu ana pencereye geri döndürün; kapatma kutusunu aramadan bunu kapatmakla aynı.
+frame-every-module-own-window = her modül kendi penceresinde
+frame-module-aux-panadapter = yardımcı panadaptör
+frame-module-band-mode = bant ve mod
+frame-module-controls = kontroller
+frame-module-panadapter = panadaptör
+frame-module-panel = panel
+multi-dock-all-windows = TÜM PENCERELERİ YERLEŞTİR
+multi-module-panel = İşletim paneli
+multi-undock-all-windows = TÜM PENCERELERİ AYIR
+settings-ui-dock-all-hint = Ayrılmış her pencereyi bu pencereye geri getirir.
+settings-ui-docked = Bu pencerede yerleşik
+settings-ui-module-aux = AUX SP (ikinci spektrum)
+settings-ui-module-band-menu = Bant ve mod seçici
+settings-ui-module-controls = Kontroller
+settings-ui-module-panadapter = Panadaptör
+settings-ui-undock-all-hint = Her modülü kendi penceresine koyar — ana pencerede spektrum ve çözücüler kalır. Bir ses modundaki işletim paneli gibi gösterecek bir şeyi olmayan modül pencere açmaz.
+settings-ui-undock-hint =
+    Ayrıldığında bu modül kendi penceresine taşınır ve ana pencere boşluğu kalanlara geri verir — şelaleyi ikinci bir monitöre, kontrolleri üçüncüye koyun. Penceresini kapatmak onu yeniden yerleştirir.
+
+    Wayland'de boyut geri gelir ama bir pencerenin nereye gideceğine compositor karar verir: onu yüzdürüp app-id "{ $app_id }" ile eşleşen bir pencere kuralıyla bir monitöre sabitleyin.
+settings-ui-undocked = Ayrılmış — kendi penceresi
+settings-ui-window-label = { $module } penceresi

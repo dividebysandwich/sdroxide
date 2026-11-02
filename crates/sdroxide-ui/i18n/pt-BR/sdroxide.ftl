@@ -5462,3 +5462,31 @@ upload-naming-original = Nome original do arquivo
 wheel-action-zoom = Zoom
 wheel-action-tune = Sintonizar
 wheel-action-none = Nada
+
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = ACOPLAR — devolve o seletor de banda e modo à janela principal, o mesmo que fechar esta sem procurar o botão de fechar.
+frame-dock-panel-hint = ACOPLAR — coloca este painel de volta sob o waterfall
+frame-dock-spectrum-hint = ACOPLAR — devolve este espectro à janela principal, o mesmo que fechar esta sem procurar o botão de fechar.
+frame-every-module-own-window = cada módulo está em sua própria janela
+frame-module-aux-panadapter = panadapter aux
+frame-module-band-mode = banda e modo
+frame-module-controls = controles
+frame-module-panadapter = panadapter
+frame-module-panel = painel
+multi-dock-all-windows = ACOPLAR TODAS AS JANELAS
+multi-module-panel = Painel de operação
+multi-undock-all-windows = DESACOPLAR TODAS AS JANELAS
+settings-ui-dock-all-hint = Traz todas as janelas desacopladas de volta para esta.
+settings-ui-docked = Acoplado nesta janela
+settings-ui-module-aux = AUX SP (segundo espectro)
+settings-ui-module-band-menu = Seletor de banda e modo
+settings-ui-module-controls = Controles
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Coloca cada módulo em uma janela própria — a janela principal fica com o espectro e os decodificadores. Um módulo sem nada a mostrar, como o painel de operação em um modo de voz, não abre janela.
+settings-ui-undock-hint =
+    Desacoplado, este módulo vai para uma janela própria e a janela principal devolve o espaço ao que sobra — ponha o waterfall em um segundo monitor, ou os controles em um terceiro. Fechar a janela o acopla de novo.
+
+    No Wayland o tamanho volta, mas o compositor decide onde uma janela fica: deixe-a flutuante e fixe-a em um monitor com uma regra de janela que corresponda ao app-id "{ $app_id }".
+settings-ui-undocked = Desacoplado — janela própria
+settings-ui-window-label = Janela { $module }

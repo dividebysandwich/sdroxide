@@ -60,6 +60,62 @@ pub(in crate::app) fn settings_ui_tab(
         enum_combo(ui, "ui-win-style", &mut cfg.window_style, &ChromeStyle::ALL, ChromeStyle::tr);
         ui.end_row();
 
+        // The **undocked** modules. A window arrangement, chosen once and kept,
+        // rather than something reached for mid-QSO — so it lives here with the
+        // other display settings. One row per [`DetachableModule`], so the next
+        // detachable module appears here for free. Native only: the browser
+        // keeps every module in its one window.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use sdroxide_types::DetachableModule;
+            for module in DetachableModule::ALL {
+                let mut on = cfg.is_detached(module);
+                ui.label(tr!("settings-ui-window-label", module = module_label(module)));
+                ComboBox::from_id_salt(("ui-undocked", module))
+                    .selected_text(if on {
+                        tr!("settings-ui-undocked")
+                    } else {
+                        tr!("settings-ui-docked")
+                    })
+                    .show_styled(ui, |ui| {
+                        ui.selectable_value(&mut on, false, tr!("settings-ui-docked"));
+                        ui.selectable_value(&mut on, true, tr!("settings-ui-undocked"));
+                    })
+                    .response
+                    .on_hover_text(tr!("settings-ui-undock-hint", app_id = module.app_id()));
+                cfg.set_detached(module, on);
+                ui.end_row();
+            }
+            // Both directions at once, for arranging a whole screen in one
+            // press: every module out, or every module home. Shown only while
+            // they would do something, so neither is a button that changes
+            // nothing.
+            let any_out = DetachableModule::ALL.iter().any(|m| cfg.is_detached(*m));
+            let any_in = DetachableModule::ALL.iter().any(|m| !cfg.is_detached(*m));
+            ui.label("");
+            ui.horizontal(|ui| {
+                if any_out
+                    && crate::chrome::chip(ui, false, tr!("multi-dock-all-windows"))
+                        .on_hover_text(tr!("settings-ui-dock-all-hint"))
+                        .clicked()
+                {
+                    for m in DetachableModule::ALL {
+                        cfg.set_detached(m, false);
+                    }
+                }
+                if any_in
+                    && crate::chrome::chip(ui, false, tr!("multi-undock-all-windows"))
+                        .on_hover_text(tr!("settings-ui-undock-all-hint"))
+                        .clicked()
+                {
+                    for m in DetachableModule::ALL {
+                        cfg.set_detached(m, true);
+                    }
+                }
+            });
+            ui.end_row();
+        }
+
         ui.label(tr!("settings-ui-frame-rate"));
         ComboBox::from_id_salt("ui-fps")
             .selected_text(format!("{fps} fps", fps = cfg.frame_rate_fps))
@@ -498,4 +554,17 @@ fn language_combo(ui: &mut egui::Ui, cur: &mut sdroxide_types::UiLanguage) {
             }
         }
     });
+}
+
+/// A detachable module's name in the settings rows, in the interface language.
+#[cfg(not(target_arch = "wasm32"))]
+fn module_label(m: sdroxide_types::DetachableModule) -> String {
+    use sdroxide_types::DetachableModule as M;
+    match m {
+        M::Panadapter => tr!("settings-ui-module-panadapter"),
+        M::Panel => tr!("multi-module-panel"),
+        M::Controls => tr!("settings-ui-module-controls"),
+        M::AuxPanadapter => tr!("settings-ui-module-aux"),
+        M::BandMenu => tr!("settings-ui-module-band-menu"),
+    }
 }
