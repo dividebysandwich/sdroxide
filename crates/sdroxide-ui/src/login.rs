@@ -642,7 +642,7 @@ fn card(
     // and keeps a copy of the password instead.
     #[cfg(target_arch = "wasm32")]
     {
-        ui.label(RichText::new("Remember this station").size(11.5).weak());
+        ui.label(RichText::new(tr!("login-remember-station")).size(11.5).weak());
         // One box rather than a choice of clock arithmetic. "Do not ask me
         // again" is a single decision, and how long it lasts is the station's
         // business; making the operator translate a duration into one of two
@@ -652,7 +652,9 @@ fn card(
             if ui
                 .checkbox(
                     &mut remember,
-                    RichText::new("REMEMBER ME").size(if touch { 13.0 } else { 11.5 }).strong(),
+                    RichText::new(tr!("login-remember-me"))
+                        .size(if touch { 13.0 } else { 11.5 })
+                        .strong(),
                 )
                 .changed()
             {
@@ -661,11 +663,9 @@ fn card(
         });
         ui.label(
             RichText::new(if form.remember_cookie {
-                "This station keeps your sign-in, not this page — nothing to fill in on the \
-                 other radios, and nothing to forget when you leave."
+                tr!("login-station-keeps-sign-in")
             } else {
-                "Not this time: this browser forgets it when it closes, so you are asked again \
-                 next session and nothing about this sign-in is left on the device."
+                tr!("login-not-this-time")
             })
             .size(10.5)
             .color(crate::theme::gray(140)),
