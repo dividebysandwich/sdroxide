@@ -900,6 +900,29 @@ impl SdroxideApp {
 pub(in crate::app) struct WindowKeys {
     pub list: bool,
     pub float: bool,
+    /// `Ctrl+Alt+<digit>`: the saved workspace to put back, by slot.
+    pub workspace: Option<usize>,
+}
+
+/// Which saved workspace a `Ctrl+Alt+<digit>` calls back, or `None`. The number
+/// row reads 1…9 and then 0 for the tenth, which is how SDRuno numbers its
+/// workspaces and how a keyboard operator counts them.
+#[cfg(not(target_arch = "wasm32"))]
+fn workspace_slot(key: egui::Key) -> Option<usize> {
+    use egui::Key;
+    Some(match key {
+        Key::Num1 => 0,
+        Key::Num2 => 1,
+        Key::Num3 => 2,
+        Key::Num4 => 3,
+        Key::Num5 => 4,
+        Key::Num6 => 5,
+        Key::Num7 => 6,
+        Key::Num8 => 7,
+        Key::Num9 => 8,
+        Key::Num0 => 9,
+        _ => return None,
+    })
 }
 
 /// Read `Ctrl+Alt+W` and `Ctrl+Alt+F` from the **events**, not from the frame's
@@ -917,7 +940,11 @@ pub(in crate::app) fn window_keys_in(events: &[egui::Event]) -> WindowKeys {
             match key {
                 egui::Key::W => keys.list = true,
                 egui::Key::F => keys.float = true,
-                _ => {}
+                other => {
+                    if let Some(slot) = workspace_slot(*other) {
+                        keys.workspace = Some(slot);
+                    }
+                }
             }
         }
     }
@@ -940,6 +967,22 @@ impl SdroxideApp {
                     ModuleWindow::Floating
                 };
             self.set_module_window_state(DetachableModule::Panel, next);
+        }
+        if let Some(i) = keys.workspace {
+            // **A workspace on a key.** An empty slot says so instead of doing
+            // nothing: a key that silently ignores a press is the one thing a
+            // control must never do.
+            match self.workspaces.get(i).cloned() {
+                Some(ws) => {
+                    ws.apply(&mut self.ui_settings);
+                    // A workspace stores the module windows, not the floating
+                    // panel, so the panel comes back to the pane with it rather
+                    // than floating over the arrangement that asked for it docked.
+                    self.panel_floating = false;
+                    crate::app::persist::persist_ui_settings(&self.ui_settings);
+                }
+                None => self.show_notice(tr!("frame-workspace-missing", n = i + 1)),
+            }
         }
     }
 }
@@ -1453,12 +1496,17 @@ mod tests {
         use egui::Key::{F, W};
         assert_eq!(
             window_keys_in(&[key(W, true, true, false)]),
-            WindowKeys { list: true, float: false }
+            WindowKeys { list: true, ..Default::default() }
         );
         assert_eq!(
             window_keys_in(&[key(F, true, true, false)]),
-            WindowKeys { list: false, float: true }
+            WindowKeys { float: true, ..Default::default() }
         );
+        // The number row recalls the workspaces, 1 to 9 and then 0 for the
+        // tenth.
+        assert_eq!(window_keys_in(&[key(egui::Key::Num1, true, true, false)]).workspace, Some(0));
+        assert_eq!(window_keys_in(&[key(egui::Key::Num0, true, true, false)]).workspace, Some(9));
+        assert_eq!(window_keys_in(&[key(egui::Key::Num3, false, true, false)]).workspace, None);
         for not_it in [
             key(W, false, false, false),
             key(W, true, false, false),

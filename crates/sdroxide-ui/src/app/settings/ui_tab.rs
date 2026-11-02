@@ -556,6 +556,102 @@ fn language_combo(ui: &mut egui::Ui, cur: &mut sdroxide_types::UiLanguage) {
     });
 }
 
+/// **Workspaces** — SDRuno's saved window arrangements: which modules are in
+/// their own OS windows and where those windows are. Save captures the
+/// arrangement as it stands; a name is a chip that puts it back. Kept with the
+/// undocked rows it acts on: the same subject, one screen. The first ten are
+/// also on `Ctrl+Alt+1…9, 0`.
+///
+/// Native only, like the undocked rows — the browser has one window and nothing
+/// to arrange.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn workspaces_section(
+    ui: &mut egui::Ui,
+    cfg: &mut sdroxide_types::UiSettings,
+    workspaces: &mut Vec<sdroxide_types::Workspace>,
+    name: &mut String,
+) {
+    use sdroxide_types::{WORKSPACE_MAX, Workspace};
+    ui.label(
+        RichText::new(tr!("settings-ui-workspaces"))
+            .size(14.0)
+            .strong()
+            .color(crate::theme::CYAN()),
+    );
+    ui.add_space(2.0);
+    ui.label(RichText::new(tr!("settings-ui-workspaces-note")).size(11.0).weak());
+    ui.add_space(6.0);
+
+    if workspaces.is_empty() {
+        ui.label(RichText::new(tr!("settings-ui-workspaces-none")).size(11.0).weak());
+    }
+    let mut apply: Option<usize> = None;
+    let mut delete: Option<usize> = None;
+    for (i, ws) in workspaces.iter().enumerate() {
+        ui.horizontal(|ui| {
+            // The key that recalls it, so the list doubles as the key map.
+            let key = if i < 9 { format!("{}", i + 1) } else { "0".to_string() };
+            ui.label(RichText::new(format!("Ctrl+Alt+{key}")).monospace().size(11.0).weak());
+            let out = ws.slots.iter().filter(|s| s.detached).count();
+            let chip =
+                crate::chrome::chip(ui, false, ws.name.as_str()).on_hover_text(if out == 0 {
+                    tr!("settings-ui-workspace-restore-home").to_string()
+                } else {
+                    tr!("settings-ui-workspace-restore-out", n = out)
+                });
+            if chip.clicked() {
+                apply = Some(i);
+            }
+            if crate::chrome::chip(ui, false, "×")
+                .on_hover_text(tr!("settings-ui-workspace-forget"))
+                .clicked()
+            {
+                delete = Some(i);
+            }
+        });
+    }
+
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        crate::chrome::field_sized(
+            ui,
+            egui::vec2(220.0, 0.0),
+            egui::TextEdit::singleline(name).hint_text(tr!("settings-ui-workspace-name")),
+        );
+        let named = !name.trim().is_empty();
+        let replaces = workspaces.iter().any(|w| w.name == name.trim());
+        let full = workspaces.len() >= WORKSPACE_MAX && !replaces;
+        let can_save = named && !full;
+        let save =
+            crate::chrome::chip_enabled(ui, can_save, false, &tr!("settings-ui-workspace-save"))
+                .on_hover_text(if full {
+                    tr!("settings-ui-workspace-full")
+                } else if named {
+                    tr!("settings-ui-workspace-save-hint").to_string()
+                } else {
+                    tr!("settings-ui-workspace-name-first").to_string()
+                });
+        if save.clicked() {
+            let n = name.trim().to_string();
+            // Saving over an existing name replaces it rather than making a
+            // duplicate row the operator then has to tell apart.
+            if let Some(slot) = workspaces.iter_mut().find(|w| w.name == n) {
+                *slot = Workspace::capture(n, cfg);
+            } else {
+                workspaces.push(Workspace::capture(n, cfg));
+            }
+            name.clear();
+        }
+    });
+
+    if let Some(i) = delete {
+        workspaces.remove(i);
+    }
+    if let Some(i) = apply {
+        workspaces[i].apply(cfg);
+    }
+}
+
 /// A detachable module's name in the settings rows, in the interface language.
 #[cfg(not(target_arch = "wasm32"))]
 fn module_label(m: sdroxide_types::DetachableModule) -> String {

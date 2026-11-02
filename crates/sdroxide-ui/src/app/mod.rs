@@ -587,6 +587,12 @@ pub struct SdroxideApp {
     /// on `Ctrl+Alt+W`.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     show_windows: bool,
+    /// The saved window arrangements (`workspaces.json`), edited on Settings →
+    /// UI and recalled with `Ctrl+Alt+1…9, 0`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    workspaces: Vec<sdroxide_types::Workspace>,
+    /// The name being typed for the next workspace to save.
+    workspace_name: String,
     /// How wide the docked column may be this frame, or `None` where it cannot
     /// dock — see [`top_bar::band_dock_room`]. Settled at the top of the frame
     /// from this app's own column, before the top bar draws the chip that
@@ -1577,6 +1583,8 @@ impl SdroxideApp {
             panel_floating: false,
             panel_rolled: false,
             show_windows: false,
+            workspaces: persist::load_workspaces(),
+            workspace_name: String::new(),
             band_dock_room: None,
             // Corrected on the first frame, once the viewport size is known.
             tier: crate::layout::Tier::Desktop,

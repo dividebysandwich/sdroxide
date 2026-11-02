@@ -469,3 +469,28 @@ pub(in crate::app) fn band_plan_path() -> Option<std::path::PathBuf> {
 pub(in crate::app) fn band_plan_path() -> Option<std::path::PathBuf> {
     None
 }
+
+// ── Saved window arrangements (SDRuno's workspaces) ──────────────────────────
+
+/// The saved window arrangements. Natively a shared `workspaces.json` beside the
+/// rest of the configuration; the browser has no windows to arrange, so its list
+/// is empty and the settings section that edits it is not drawn.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_workspaces() -> Vec<sdroxide_types::Workspace> {
+    sdroxide_config::load_workspaces()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_workspaces() -> Vec<sdroxide_types::Workspace> {
+    Vec::new()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn save_workspaces(workspaces: &Vec<sdroxide_types::Workspace>) {
+    if let Err(e) = sdroxide_config::save_workspaces(workspaces) {
+        eprintln!("failed to save workspaces: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn save_workspaces(_workspaces: &Vec<sdroxide_types::Workspace>) {}

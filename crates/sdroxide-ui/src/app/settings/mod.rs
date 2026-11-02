@@ -340,6 +340,13 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// the edit commits, so the roster's per-frame republish cannot fight the
     /// keyboard — see `SdroxideApp::radio_name_edit`.
     radio_name_edit: &'a mut Option<(u32, String)>,
+    /// The saved window arrangements, edited on the UI tab and written back
+    /// after the window closure like `ui_edit`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    workspaces: &'a mut Vec<sdroxide_types::Workspace>,
+    /// The name being typed for the next workspace.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    workspace_name: &'a mut String,
     /// Spoken announcements, edited in place and written back after the
     /// window closure like every other buffer here.
     speech_edit: &'a mut sdroxide_types::SpeechSettings,
@@ -1020,6 +1027,9 @@ impl SdroxideApp {
         let mut ranges = self.range_edit.clone();
         let mut rx_site = self.rx_site_edit.clone();
         let mut ui_edit = self.ui_settings;
+        // The workspaces are cloned out and handed back like `ui_edit`.
+        let mut workspaces = self.workspaces.clone();
+        let mut workspace_name = std::mem::take(&mut self.workspace_name);
         // Only where the engine is in this process: see `SettingsIo`.
         let owns_server = !self.ctrl.engine_is_remote();
         let mut access_edit = self.remote_access.clone();
@@ -1205,6 +1215,8 @@ impl SdroxideApp {
                             bc_refetch: &mut bc_refetch,
                             bc_fetching: self.broadcast_fetch.is_some(),
                             bc_status: self.broadcast_fetch_status.as_ref(),
+                            workspaces: &mut workspaces,
+                            workspace_name: &mut workspace_name,
                             speech_edit: &mut speech_edit,
                             speech_voices: &self.speech_voices,
                             speech_status: &speech_status,
@@ -1647,6 +1659,11 @@ impl SdroxideApp {
                 self.ctrl.set_radio_config(cfg.clone());
             }
             self.radio_cfg = radio_edit;
+        }
+        self.workspace_name = workspace_name;
+        if workspaces != self.workspaces {
+            self.workspaces = workspaces;
+            crate::app::persist::save_workspaces(&self.workspaces);
         }
         if ui_edit != self.ui_settings {
             // Live: fps + averaging flow to the engine via the spectrum-config
@@ -2537,6 +2554,13 @@ impl SdroxideApp {
             }
             SettingsTab::Ui => {
                 settings_ui_tab(ui, io.ui_edit, io.solar_cloud_march.as_deref_mut());
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    ui_tab::workspaces_section(ui, io.ui_edit, io.workspaces, io.workspace_name);
+                }
                 ui.add_space(10.0);
                 ui.separator();
                 ui.add_space(6.0);

@@ -606,6 +606,47 @@ pub struct DetachedState {
     pub window: Option<DetachedWindow>,
 }
 
+/// A named window arrangement — SDRuno's **workspace**: which modules are in
+/// their own OS windows, and where those windows are. SDRuno keeps up to ten and
+/// recalls them by name; so does this.
+///
+/// A **list of its own**, not a field in [`UiSettings`], because `UiSettings` is
+/// `Copy` and the whole UI passes it around by value. The list lives in
+/// `workspaces.json`, beside the memories and the logbook. A workspace is the
+/// arrangement only — where the furniture is, not what is switched on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct Workspace {
+    /// What the operator called it. Not an index: a name survives a reorder.
+    pub name: String,
+    /// One slot per [`DetachableModule`] in `index()` order **at save time**. A
+    /// `Vec` rather than the fixed array, so a workspace written by a build with
+    /// a module this one has not heard of still loads and applies the modules it
+    /// does know — the same tolerance [`UiSettings::detached`]'s reader has.
+    pub slots: Vec<DetachedState>,
+}
+
+/// How many workspaces may be saved — SDRuno's ten, and the ten number keys
+/// that recall them.
+pub const WORKSPACE_MAX: usize = 10;
+
+impl Workspace {
+    /// Snapshot the arrangement in `settings` under `name`.
+    pub fn capture(name: impl Into<String>, settings: &UiSettings) -> Self {
+        Self { name: name.into(), slots: settings.detached.to_vec() }
+    }
+
+    /// Put this arrangement back into `settings`, leaving any module the
+    /// workspace does not mention — a slot a newer or older build wrote —
+    /// docked.
+    pub fn apply(&self, settings: &mut UiSettings) {
+        let mut out = default_detached();
+        for (slot, saved) in out.iter_mut().zip(self.slots.iter()) {
+            *slot = *saved;
+        }
+        settings.detached = out;
+    }
+}
+
 fn default_detached() -> [DetachedState; DetachableModule::COUNT] {
     [DetachedState::default(); DetachableModule::COUNT]
 }
@@ -1258,5 +1299,40 @@ mod serde_tests {
         // A config written before the field existed loads with the system's.
         let ui: UiSettings = serde_json::from_str("{}").unwrap();
         assert!(ui.language.is_system());
+    }
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::*;
+
+    /// A workspace puts back exactly the arrangement it captured, and one saved
+    /// by a build with fewer modules leaves the rest docked.
+    #[test]
+    fn a_workspace_round_trips_and_tolerates_another_builds_length() {
+        let mut ui = UiSettings::default();
+        ui.set_detached(DetachableModule::Panadapter, true);
+        ui.detached[DetachableModule::Panel.index()].window =
+            Some(DetachedWindow { size: [500.0, 400.0], pos: Some([10.0, 20.0]) });
+        let ws = Workspace::capture("Contest", &ui);
+        let mut other = UiSettings::default();
+        other.set_detached(DetachableModule::Controls, true);
+        ws.apply(&mut other);
+        assert_eq!(other.detached, ui.detached);
+
+        let short = Workspace {
+            name: "Old".into(),
+            slots: vec![DetachedState { detached: true, window: None }],
+        };
+        let mut target = UiSettings::default();
+        target.set_detached(DetachableModule::BandMenu, true);
+        short.apply(&mut target);
+        assert!(target.is_detached(DetachableModule::Panadapter));
+        assert!(
+            !target.is_detached(DetachableModule::BandMenu),
+            "a slot the workspace never had stays docked"
+        );
+        let json = serde_json::to_string(&ws).unwrap();
+        assert_eq!(serde_json::from_str::<Workspace>(&json).unwrap(), ws);
     }
 }

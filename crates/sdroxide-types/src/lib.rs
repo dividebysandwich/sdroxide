@@ -303,7 +303,7 @@ pub use tx_voice::{
 pub use ui::{
     AmpDocked, BandplanKind, ChromeStyle, DetachableModule, DetachedState, DetachedWindow,
     FontSize, LayoutMode, SmeterStyle, Solar3dWindow, SpectrumDetail, Speed, UiLanguage,
-    UiSettings, UiTheme,
+    UiSettings, UiTheme, WORKSPACE_MAX, Workspace,
 };
 pub use vdl2::{
     VDL2_ALL_CHANNELS, VDL2_CHANNEL_LABELS, VDL2_CHANNEL_SPACING_HZ, VDL2_CHANNELS_HZ, VDL2_CSC_HZ,
