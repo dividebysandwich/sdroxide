@@ -14,8 +14,8 @@
 use sdroxide_types::{Command, Direction, NrLevel, NrStrength, RigctldConfig, RxId, Vfo};
 
 use crate::state::{
-    RigState, agc_from_hamlib, agc_to_hamlib, filter_for, from_hamlib_mode, nr_engine_for,
-    nr_on_level, nr_strength_for, nr_to_hamlib, squelch_db_for, to_hamlib_mode,
+    RigState, agc_from_hamlib, agc_to_hamlib, centred_on, filter_for, from_hamlib_mode,
+    nr_engine_for, nr_on_level, nr_strength_for, nr_to_hamlib, squelch_db_for, to_hamlib_mode,
 };
 
 /// Hamlib error codes (`rig.h`), returned negated in `RPRT`.
@@ -719,6 +719,18 @@ fn dispatch(
 /// Only where the name round-trips to the mode actually running (USB, LSB,
 /// CW, AM ...), never a `PKT` name, so a digital session still ignores
 /// WSJT-X's periodic write whatever width it carries.
+/// The filter a mode and a requested width ask for.
+///
+/// Every mode but CW takes `filter_for` as it comes. CW is centred on the
+/// operator's sidetone instead: that is the rule the whole receiver follows,
+/// and a width placed against the mode's default low edge lands beside the tone
+/// the operator is listening to as soon as the pitch or the width is not the
+/// default (review of #451).
+fn mode_filter(mode: sdroxide_types::Mode, w: i32, st: &RigState) -> (f32, f32) {
+    let (lo, hi) = filter_for(mode, w);
+    if mode == sdroxide_types::Mode::Cw { centred_on(st.cw_pitch_hz, lo, hi) } else { (lo, hi) }
+}
+
 fn set_mode(args: &[&str], st: &RigState, cmds: &mut Vec<Command>, out: Out) -> Reply {
     let Some(name) = args.first() else { return out.finish(EINVAL, false) };
     let Some(mode) = from_hamlib_mode(name) else { return out.finish(EINVAL, false) };
@@ -730,7 +742,7 @@ fn set_mode(args: &[&str], st: &RigState, cmds: &mut Vec<Command>, out: Out) -> 
         {
             // Compared as applied: `filter_for` clamps, so a client re-sending
             // a width out of range would otherwise re-set the filter each time.
-            let (lo, hi) = filter_for(mode, w);
+            let (lo, hi) = mode_filter(mode, w, st);
             if (hi - lo).round() as i32 != st.passband_hz() {
                 cmds.push(Command::SetFilter { rx: RxId::Main, lo, hi });
             }
@@ -743,7 +755,7 @@ fn set_mode(args: &[&str], st: &RigState, cmds: &mut Vec<Command>, out: Out) -> 
     if let Some(w) = args.get(1).and_then(|s| s.parse::<i32>().ok())
         && w > 0
     {
-        let (lo, hi) = filter_for(mode, w);
+        let (lo, hi) = mode_filter(mode, w, st);
         cmds.push(Command::SetFilter { rx: RxId::Main, lo, hi });
     }
     out.finish(OK, false)
@@ -972,6 +984,36 @@ mod tests {
         let (reply, cmds) = run("M USB 2400");
         assert_eq!(reply, "RPRT 0\n");
         assert_eq!(cmds, vec![Command::SetFilter { rx: RxId::Main, lo: 150.0, hi: 2550.0 }]);
+    }
+
+    /// A width in CW is centred on the operator's pitch, not on the mode's
+    /// default low edge: with a 700 Hz pitch `M CW 200` used to leave the
+    /// passband at 450–650 and the tone outside it (review of #451).
+    #[test]
+    fn a_cw_width_is_centred_on_the_pitch() {
+        let cfg = RigctldConfig::default();
+        let s = RigState { mode: Mode::Cw, cw_pitch_hz: 700.0, ..st() };
+        assert_eq!(
+            run_with("M CW 200", &s, &cfg).1,
+            vec![Command::SetFilter { rx: RxId::Main, lo: 600.0, hi: 800.0 }]
+        );
+        // A different pitch moves it with the tone, and the width is kept.
+        let s = RigState { mode: Mode::Cw, cw_pitch_hz: 900.0, ..st() };
+        assert_eq!(
+            run_with("M CW 200", &s, &cfg).1,
+            vec![Command::SetFilter { rx: RxId::Main, lo: 800.0, hi: 1000.0 }]
+        );
+        // Switching *into* CW centres it too, not only a width in the mode.
+        let s = RigState { mode: Mode::Usb, cw_pitch_hz: 900.0, ..st() };
+        let cmds = run_with("M CW 200", &s, &cfg).1;
+        assert_eq!(cmds[0], Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+        assert_eq!(cmds[1], Command::SetFilter { rx: RxId::Main, lo: 800.0, hi: 1000.0 });
+        // Other modes are untouched.
+        let s = RigState { mode: Mode::Usb, cw_pitch_hz: 900.0, ..st() };
+        assert_eq!(
+            run_with("M USB 2400", &s, &cfg).1,
+            vec![Command::SetFilter { rx: RxId::Main, lo: 150.0, hi: 2550.0 }]
+        );
     }
 
     /// The width already set, re-sent with the mode, still changes nothing.
