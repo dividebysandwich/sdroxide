@@ -735,6 +735,9 @@ fn set_mode(args: &[&str], st: &RigState, cmds: &mut Vec<Command>, out: Out) -> 
     let Some(name) = args.first() else { return out.finish(EINVAL, false) };
     let Some(mode) = from_hamlib_mode(name) else { return out.finish(EINVAL, false) };
     if name.eq_ignore_ascii_case(to_hamlib_mode(st.mode)) {
+        // The width compared is the one that would be APPLIED — clamped to
+        // the mode's range — so a client asking past the maximum does not
+        // send the same filter again on every write.
         if mode == st.mode
             && !name.to_ascii_uppercase().starts_with("PKT")
             && let Some(w) = args.get(1).and_then(|s| s.parse::<i32>().ok())
@@ -1021,6 +1024,17 @@ mod tests {
     fn the_same_mode_and_width_change_nothing() {
         assert!(run("M USB 2700").1.is_empty());
         assert!(run("M USB 0").1.is_empty());
+    }
+
+    /// A width past the mode's maximum is clamped; once the filter is at that
+    /// maximum, asking again changes nothing.
+    #[test]
+    fn a_width_past_the_maximum_is_sent_once() {
+        let max = Mode::Usb.max_filter_hz();
+        let (_, cmds) = run("M USB 999999");
+        assert_eq!(cmds, vec![Command::SetFilter { rx: RxId::Main, lo: 150.0, hi: 150.0 + max }]);
+        let at_max = RigState { filter_lo: 150.0, filter_hi: 150.0 + max, ..st() };
+        assert!(run_with("M USB 999999", &at_max, &RigctldConfig::default()).1.is_empty());
     }
 
     /// Width 0 is how a client says "mode only, leave my filter alone".
