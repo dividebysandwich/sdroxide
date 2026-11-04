@@ -13,6 +13,9 @@ fn main() {
         "wwv" => TimeStation::Wwv,
         "wwvh" => TimeStation::Wwvh,
         "als162" => TimeStation::Als162,
+        "bpc" => TimeStation::Bpc,
+        "bpm" => TimeStation::Bpm,
+        "rwm" => TimeStation::Rwm,
         _ => TimeStation::Dcf77,
     };
     let snr: Option<f64> = args.get(2).and_then(|s| s.parse().ok());
@@ -60,6 +63,10 @@ fn main() {
                     (start + pos / rate - frame.utc as f64) * 1e3
                 ),
                 Event::BadFrame { error, .. } => println!("\nBAD {error:?}"),
+                Event::Minute { pos } => {
+                    let t = start + pos / rate;
+                    println!("\nMINUTE err={:.3}ms", (t - (t / 60.0).round() * 60.0) * 1e3)
+                }
                 Event::Locked => {
                     let sn = dec.snapshot();
                     println!(

@@ -16,7 +16,8 @@
 
 use eframe::egui::{self, RichText};
 use sdroxide_types::{
-    ClockAuthority, Command, TimeCode, TimeSigStatus, TimeStation, Vfo, utc_ymd_hms,
+    ClockAuthority, Command, SECONDS_ONLY_MAX_S, TimeCode, TimeSigStatus, TimeStation, Vfo,
+    utc_ymd_hms,
 };
 
 use crate::app::SdroxideApp;
@@ -94,11 +95,16 @@ fn header(
             ui.label(
                 RichText::new(format!("phase {db:.0} dB")).size(10.0).color(theme::CYAN_DIM()),
             )
-            .on_hover_text(
+            .on_hover_text(if st.station == TimeStation::Dcf77 {
+                "How cleanly DCF77's phase code reads: a second's correlation with the code, \
+                 learnt from the air, against the noise. It is a second reading of each bit, \
+                 added to the amplitude's, and stands in for a second the amplitude could not \
+                 read."
+            } else {
                 "How cleanly WWVB's phase code reads: a bit against the noise. It is read \
-                     alongside the amplitude code, and holds on to the minute when the \
-                     amplitude code's seconds start to go.",
-            );
+                 alongside the amplitude code, and holds on to the minute when the amplitude \
+                 code's seconds start to go."
+            });
         }
         let counts = if st.frames_phase > 0 {
             format!(
@@ -124,21 +130,29 @@ fn header(
 /// The current minute as a strip of sixty cells, and the second being read.
 fn ribbon(ui: &mut egui::Ui, st: &TimeSigStatus) {
     let resp = cells(ui, &st.symbols, st.second_of_minute, 1.6);
-    resp.on_hover_text(
-        "This minute, one cell a second: dim for a 0, green for a 1 (MSF's two bits show green \
-         for either), cyan for a marker — and for WWV's empty second 0 — red for a second that \
-         could not be read. One red cell costs the minute — except on DCF77 and ALS162, whose \
-         parity can stand in for a red cell or two once a minute has already been decoded, and \
-         which name a minute too weak to read alone from the evidence of several, misread and \
-         red cells and all.",
-    );
+    resp.on_hover_text(if st.station.seconds_only() {
+        "This minute, one cell a second: dim for an ordinary second, cyan for the minute's mark, \
+         red for a second that read as neither. The station sends nothing else — no time of \
+         day — so only the mark matters."
+    } else {
+        "This minute, one cell a second: dim for a 0, green for anything else (MSF's and BPC's \
+         two bits a second show green for any but 0), cyan for a marker — and for WWV's empty \
+         second 0 — red for a second that could not be read. One red cell costs the minute (on \
+         BPC, its twenty-second frame) — except on DCF77 and ALS162, whose parity can stand in \
+         for a red cell or two once a minute has already been decoded, and which name a minute \
+         too weak to read alone from the evidence of several, misread and red cells and all."
+    });
     if !st.phase_symbols.is_empty() {
         let resp = cells(ui, &st.phase_symbols, st.second_of_minute, 0.8);
-        resp.on_hover_text(
+        resp.on_hover_text(if st.station == TimeStation::Dcf77 {
+            "DCF77's phase code for the same seconds: dim for a 0, green for a 1, red for a second \
+             not clear enough to show. It carries the same bit as the amplitude code above it, \
+             but not the minute's marker; its second 59 shows nothing."
+        } else {
             "WWVB's phase code for the same seconds: dim for a 0, green for a 1, red for a second \
              too noisy to call. Its minute is found by its own sync word and checked by a Hamming \
-             code, so a red cell or two here does not lose the minute.",
-        );
+             code, so a red cell or two here does not lose the minute."
+        });
     }
 }
 
@@ -197,7 +211,15 @@ fn scope(ui: &mut egui::Ui, st: &TimeSigStatus) {
             .collect();
         p.add(egui::Shape::line(pts, egui::Stroke::new(1.5, theme::CYAN())));
     }
-    resp.on_hover_text(if st.station.is_hf() {
+    resp.on_hover_text(if st.station == TimeStation::Bpm {
+        "The 1000 Hz tick through one second, averaged over the last fifteen or so, starting at \
+         the tick. A clean station shows a sharp spike at the left edge; noise shows a ragged \
+         line."
+    } else if st.station == TimeStation::Rwm {
+        "The carrier through one second, averaged over the last fifteen or so, starting at the \
+         second. A clean station shows it switched on at the left edge for a tenth of a second \
+         and off for the rest; noise shows a ragged line."
+    } else if st.station.is_hf() {
         "The 100 Hz time code through one second, averaged over the last fifteen or so, \
          starting at the tick. A clean station shows the pulse rising just after the left edge \
          and falling at 0.2, 0.5 or 0.8 s; noise shows a ragged line."
@@ -214,14 +236,16 @@ fn scope(ui: &mut egui::Ui, st: &TimeSigStatus) {
     });
 }
 
-/// "2026-10-18 12:37 UTC (14:37 local at the station)".
+/// "2026-10-18 12:37 UTC (14:37 local at the station)" — with the seconds
+/// for BPC, whose frames name :20 and :40 as well.
 fn frame_text(f: &sdroxide_types::TimeFrame) -> String {
-    let (y, mo, d, h, mi, _) = utc_ymd_hms(f.utc);
-    let mut s = format!("{y}-{mo:02}-{d:02} {h:02}:{mi:02} UTC");
+    let (y, mo, d, h, mi, sec) = utc_ymd_hms(f.utc);
+    let secs = if sec != 0 { format!(":{sec:02}") } else { String::new() };
+    let mut s = format!("{y}-{mo:02}-{d:02} {h:02}:{mi:02}{secs} UTC");
     if f.zone_min != 0 {
         let (_, _, _, lh, lm, _) = utc_ymd_hms(f.utc + i64::from(f.zone_min) * 60);
         s.push_str(&format!(
-            " ({lh:02}:{lm:02} station time{})",
+            " ({lh:02}:{lm:02}{secs} station time{})",
             if f.dst { ", summer" } else { "" }
         ));
     }
@@ -256,6 +280,13 @@ impl SdroxideApp {
                     _ => "",
                 };
                 let line = match (&st.last_frame, st.confirmed) {
+                    (Some(f), n) if st.station.seconds_only() => {
+                        let (_, _, _, h, mi, _) = utc_ymd_hms(f.utc);
+                        format!(
+                            "minute mark at {h:02}:{mi:02} UTC, named from this computer's clock{}",
+                            if n >= 2 { format!(" · {n} agree") } else { String::new() }
+                        )
+                    }
                     (Some(f), n) if n >= 2 => {
                         format!("{}{by} · {n} minutes agree", frame_text(f))
                     }
@@ -267,6 +298,9 @@ impl SdroxideApp {
                             && matches!(st.station, TimeStation::Dcf77 | TimeStation::Als162) =>
                     {
                         "reading the minute… a weak signal is read over several minutes".to_string()
+                    }
+                    (None, _) if st.second_lock && st.station.seconds_only() => {
+                        "waiting for the minute's mark…".to_string()
                     }
                     (None, _) if st.second_lock => "reading the minute…".to_string(),
                     (None, _) => String::new(),
@@ -304,14 +338,40 @@ impl SdroxideApp {
                 let tip = if s.is_hf() {
                     let freqs: Vec<String> =
                         s.carriers_hz().iter().map(|f| format!("{}", f / 1e6)).collect();
+                    let how = match s {
+                        TimeStation::Wwv | TimeStation::Wwvh => {
+                            "Its seconds are timed by the station's own ticks; the other NIST \
+                             station on the same frequencies sends the same time code."
+                        }
+                        TimeStation::Bpm => {
+                            "Seconds only: 10 ms ticks and a 300 ms one at the minute, with no \
+                             time of day — the minute is named from this computer's clock, which \
+                             is only corrected when already within 10 s. The minutes it sends UT1 \
+                             in are not measured. It shares WWV's frequencies, and its ticks are \
+                             WWV's pitch: where both are heard, try another frequency."
+                        }
+                        _ => {
+                            "Seconds only: the carrier is keyed on for each second and for 500 ms \
+                             at the minute, with no time of day — the minute is named from this \
+                             computer's clock, which is only corrected when already within 10 s."
+                        }
+                    };
                     format!(
-                        "{} — {}, on {} MHz. Tunes to {} MHz with the dial 1 kHz below, in USB. \
-                         Its seconds are timed by the station's own ticks; the other NIST station \
-                         on the same frequencies sends the same time code.",
+                        "{} — {}, on {} MHz. Tunes to {} MHz with the dial 1 kHz below, in USB. {how}",
                         s.label(),
                         s.site(),
                         freqs.join(", "),
                         s.carrier_hz() / 1e6
+                    )
+                } else if s == TimeStation::Bpc {
+                    format!(
+                        "{} kHz — {}. Tunes the dial to {} kHz USB, which puts the carrier at 1 kHz. \
+                         NTSC does not publish BPC's format: it is decoded as publicly described, \
+                         every check it allows is made, and three frames a minute have to agree \
+                         before any is believed.",
+                        khz(s.carrier_hz()),
+                        s.site(),
+                        khz(s.dial_hz())
                     )
                 } else {
                     format!(
@@ -460,8 +520,25 @@ impl SdroxideApp {
         });
 
         let clock = &st.clock;
+        // A seconds-only station's minute is named from the clock it measures:
+        // past this, the measurement is shown but nothing acts on it.
+        let too_far = st.station.seconds_only()
+            && st.offset_ms.is_some_and(|o| o.abs() > SECONDS_ONLY_MAX_S * 1000.0);
+        if too_far {
+            ui.label(
+                RichText::new(format!(
+                    "{} sends no time of day, so the minute is named from this clock — which is \
+                     more than {SECONDS_ONLY_MAX_S:.0} s out. Set the clock roughly first, or use a \
+                     station that sends the time.",
+                    st.station.label()
+                ))
+                .size(10.0)
+                .color(theme::YELLOW()),
+            );
+        }
         ui.horizontal_wrapped(|ui| {
             let can = st.offset_ms.is_some()
+                && !too_far
                 && clock.authority != ClockAuthority::Unavailable
                 && !clock.step_pending;
             let confirm_id = ui.id().with("timesig-confirm");
@@ -484,16 +561,19 @@ impl SdroxideApp {
                     ClockAuthority::Direct => "Move the clock to the received time now.",
                     _ => {
                         "Move the clock to the received time. The system asks for an administrator \
-                          password first."
+                          first: the password dialog on Linux and macOS, UAC on Windows."
                     }
                 })
             } else {
                 resp.on_disabled_hover_text(if clock.step_pending {
                     "Waiting for the administrator password."
                 } else if clock.authority == ClockAuthority::Unavailable {
-                    "This program cannot set the clock on that computer: run it as an \
-                     administrator, or let the NTP server hand the time to the system's own \
-                     time service."
+                    "This program cannot set the clock on that computer and has no way to ask: \
+                     it runs without a desktop to show a password dialog on. Run it as root (or \
+                     with CAP_SYS_TIME on Linux), as a Windows service, or let the NTP server \
+                     hand the time to the system's own time service."
+                } else if too_far {
+                    "A seconds-only station cannot correct a clock this far out."
                 } else {
                     "Nothing to set from until the received time is believed."
                 })
@@ -531,8 +611,9 @@ impl SdroxideApp {
                 ))
             } else {
                 auto_resp.on_disabled_hover_text(
-                    "Only when the program may set the clock without a password: running as an \
-                     administrator, or on Linux with CAP_SYS_TIME.",
+                    "Only when the program may set the clock without a password: running as \
+                     root, on Linux with CAP_SYS_TIME, or on Windows elevated (\"Run as \
+                     administrator\") or as a service.",
                 )
             };
             if auto_resp.clicked() && auto_ok && self.digi_cfg_seeded {

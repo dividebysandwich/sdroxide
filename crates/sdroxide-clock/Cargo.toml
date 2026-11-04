@@ -24,3 +24,20 @@ tracing.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# The token's privilege to set the clock, the clock itself, UAC's `runas`
+# for the helper, and the Windows Time service's state. `SHELLEXECUTEINFOW`
+# carries an `HKEY`, so the registry module has to be on for it to exist.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_Registry",
+  "Win32_System_Services",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_System_Time",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }

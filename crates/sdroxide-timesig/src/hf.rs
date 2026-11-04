@@ -43,6 +43,14 @@
 //! would be mostly noise. Its low level, 15 dB down, would otherwise read as
 //! the noise rather than itself.
 //!
+//! # BPM
+//!
+//! BPM has no subcarrier and no time code: its seconds are 10 ms ticks of
+//! 1000 Hz and its minute a 300 ms one. So its tick channel is averaged over
+//! 10 ms, its own tick's length, and the level the second is read from is that
+//! same tone — high for a tenth of the second at a tick, three tenths at the
+//! minute.
+//!
 //! # Where each sample is
 //!
 //! As on long wave, every filter is a plain average, symmetric, and every
@@ -61,8 +69,14 @@ use crate::search::CarrierSearch;
 const SUBCARRIER_HZ: f64 = 100.0;
 /// The subcarrier's average, envelope samples: 10 ms.
 const SUB_SMOOTH: usize = 10;
-/// The ticks' average: 5 ms, the length of a tick.
-const TICK_SMOOTH: usize = 5;
+/// The ticks' average, envelope samples: the length of the station's tick —
+/// 5 ms for WWV and WWVH.
+pub(crate) fn tick_smooth(station: TimeStation) -> usize {
+    match station {
+        TimeStation::Bpm => 10,
+        _ => 5,
+    }
+}
 /// The carrier average outputs are divided by, envelope samples either side
 /// of the centre: 100 ms, so 0.2 s in all.
 const LEVEL_HALF: usize = 100;
@@ -203,6 +217,11 @@ pub struct HfFrontEnd {
     long_level: f32,
     /// The search's move count when the averages were last emptied.
     moves_seen: u32,
+    /// The ticks' average, envelope samples.
+    tick_smooth: usize,
+    /// The level the second is read from is the tick tone's, not the
+    /// subcarrier's (BPM).
+    level_from_tick: bool,
     /// The input sample the carrier last moved at.
     moved_at: f64,
 }
@@ -226,8 +245,8 @@ impl HfFrontEnd {
             search: CarrierSearch::new(rate / m as f64, false),
             carrier: Boxcar::new(SUB_SMOOTH),
             sub: Boxcar::new(SUB_SMOOTH),
-            tick: Boxcar::new(TICK_SMOOTH),
-            sibling: Boxcar::new(TICK_SMOOTH),
+            tick: Boxcar::new(tick_smooth(station)),
+            sibling: Boxcar::new(tick_smooth(station)),
             levels: VecDeque::new(),
             level_sum: Complex32::new(0.0, 0.0),
             sub_phase: Complex32::new(0.0, 0.0),
@@ -236,6 +255,8 @@ impl HfFrontEnd {
             long_level: 0.0,
             moves_seen: 0,
             moved_at: 0.0,
+            tick_smooth: tick_smooth(station),
+            level_from_tick: station == TimeStation::Bpm,
         }
     }
 
@@ -322,7 +343,7 @@ impl HfFrontEnd {
         self.pending.push_back(Pending {
             pos: at(SUB_SMOOTH),
             sub,
-            tpos: at(TICK_SMOOTH),
+            tpos: at(self.tick_smooth),
             tick: tick.norm(),
             sibling: sibling.norm(),
         });
@@ -357,13 +378,15 @@ impl HfFrontEnd {
         self.sub_phase += (ratio - self.sub_phase) / SUB_PHASE_TC;
         let dir = self.sub_phase.norm();
         let sub = if dir > 0.0 { (ratio * self.sub_phase.conj()).re / dir } else { ratio.norm() };
+        let (pos, mag) = if self.level_from_tick { (p.tpos, p.tick * norm) } else { (p.pos, sub) };
         out.push(EnvSample {
-            pos: p.pos,
-            mag: sub,
+            pos,
+            mag,
             tpos: p.tpos,
             timing: p.tick * norm,
             sibling: p.sibling * norm,
             iq: Complex32::new(0.0, 0.0),
+            quad: 0.0,
         });
     }
 }

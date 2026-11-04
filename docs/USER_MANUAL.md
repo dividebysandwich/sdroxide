@@ -28,7 +28,7 @@ or connects to a remote sdroxide server.
     - [3.23 FST4](#323-fst4)
     - [3.24 Q65](#324-q65)
     - [3.25 FSK441](#325-fsk441)
-    - [3.26 Time signals](#326-time-signals-dcf77-als162-msf-wwvb-jjy-wwv-wwvh)
+    - [3.26 Time signals](#326-time-signals-dcf77-als162-msf-wwvb-jjy-bpc-wwv-wwvh-bpm-rwm)
 4. [Skimmers (CW, PSK, RTTY)](#4-skimmers)
 5. [ISM band decoder (315 / 345 / 433 / 868 / 915 MHz devices)](#5-ism-band-decoder)
 6. [Settings](#6-settings)
@@ -6206,9 +6206,9 @@ first. There is no automatic sequencing and no station being called: a
 meteor-scatter contact is arranged by ear and by the shorthand, which is what
 the mode has always been.
 
-### 3.26 Time signals (DCF77, ALS162, MSF, WWVB, JJY, WWV, WWVH)
+### 3.26 Time signals (DCF77, ALS162, MSF, WWVB, JJY, BPC, WWV, WWVH, BPM, RWM)
 
-The national time stations send the date and time once a minute. The long-wave ones key their carrier: every second the carrier is reduced for a moment, and how long it stays reduced is the bit. ALS162 is the exception: its carrier stays at full strength and swings its phase instead, once for a 0 and twice for a 1. The short-wave ones, WWV and WWVH, are AM broadcasts with a tick on every second and the time code on a quiet 100 Hz tone underneath. The **TIME** mode decodes them and measures how far the clock of the computer running sdroxide is from the received time. It can then **set that clock** from the radio, and the built-in **NTP server** can hand the received time to other machines on your network.
+The national time stations send the date and time once a minute. The long-wave ones key their carrier: every second the carrier is reduced for a moment, and how long it stays reduced is the bit. ALS162 is the exception: its carrier stays at full strength and swings its phase instead, once for a 0 and twice for a 1. BPC keys its carrier the same way, but says two bits a second and the whole time every twenty seconds. The short-wave ones, WWV and WWVH, are AM broadcasts with a tick on every second and the time code on a quiet 100 Hz tone underneath. Two more short-wave stations, BPM and RWM, send only seconds and minute marks, with no time of day; sdroxide reads their seconds for a clock that is already nearly right (see *Seconds-only stations* below). The **TIME** mode decodes them and measures how far the clock of the computer running sdroxide is from the received time. It can then **set that clock** from the radio, and the built-in **NTP server** can hand the received time to other machines on your network.
 
 | Station | Frequency | Where | Heard |
 | --- | --- | --- | --- |
@@ -6218,8 +6218,11 @@ The national time stations send the date and time once a minute. The long-wave o
 | **WWVB** | 60 kHz | Fort Collins, Colorado (NIST) | Most of North America, best at night |
 | **JJY 40** | 40 kHz | Mt. Ōtakadoya, Fukushima (NICT) | Eastern Japan |
 | **JJY 60** | 60 kHz | Mt. Hagane, Kyushu (NICT) | Western Japan |
+| **BPC** | 68.5 kHz | Shangqiu, Henan, China (NTSC) | China and its neighbours, by ground wave |
 | **WWV** | 2.5, 5, 10, 15, 20, 25 MHz | Fort Collins, Colorado (NIST) | The Americas, and much further by sky wave |
 | **WWVH** | 2.5, 5, 10, 15 MHz | Kekaha, Kauaʻi, Hawaii (NIST) | The Pacific, Asia, and western North America |
+| **BPM** | 2.5, 5, 10, 15 MHz | Pucheng, Shaanxi, China (NTSC) | Asia; seconds only |
+| **RWM** | 4.996, 9.996, 14.996 MHz | Moscow (VNIIFTRI) | Europe and northern Asia; seconds only |
 
 CHU, Canada's short-wave time station, closed for good on 22 June 2026 and is not offered. A decoder for a station that no longer transmits would only ever hear whoever imitates it, and this one sets clocks.
 
@@ -6229,7 +6232,7 @@ CHU, Canada's short-wave time station, closed for good on 22 June 2026 and is no
 
 **What you need on short wave.** Any HF receiver and antenna that hear WWV or WWVH. Which frequency works depends on the hour and the season, as for any short-wave path: 5 and 10 MHz most of the time, 2.5 MHz at night, 15 MHz and up by day. The time code needs the station clearly above the noise, since it is a faint tone 21 dB below the carrier and has no parity to rescue a misread second. As a rough guide, every minute reads at 10 dB of signal over the noise in a 3 kHz bandwidth, and few do below 5 dB. The ticks, which the time is measured from, are heard well below that.
 
-**Tuning.** Pick **TIME** in the mode picker (or start with `--mode TIME`), then press the station's chip in the panel. That chooses the decoder and puts the dial 1 kHz below the carrier in USB, so the carrier sounds as a 1 kHz tone. For WWV and WWVH it tunes to 10 MHz, and a row of **MHz** chips under it moves to the station's other frequencies. The decoder finds the carrier itself anywhere within ±300 Hz of that tone, which covers a receiver whose reference is a few ppm out — and an up-converter's, which can be out by much more. The panel shows **carrier** with the frequency it found.
+**Tuning.** Pick **TIME** in the mode picker (or start with `--mode TIME`), then press the station's chip in the panel. That chooses the decoder and puts the dial 1 kHz below the carrier in USB, so the carrier sounds as a 1 kHz tone. For WWV, WWVH and BPM it tunes to 10 MHz, and for RWM to 9.996 MHz; a row of **MHz** chips under it moves to the station's other frequencies. The decoder finds the carrier itself anywhere within ±300 Hz of that tone, which covers a receiver whose reference is a few ppm out — and an up-converter's, which can be out by much more. The panel shows **carrier** with the frequency it found.
 
 The passband follows the band. On long wave it is the search range around the carrier, 700–1300 Hz. Above 1 MHz it opens to 700–2800 Hz, which takes in the ticks a kilohertz and more above the carrier. A passband you have narrowed yourself is left alone when you retune.
 
@@ -6265,6 +6268,23 @@ The phase code reads minutes more reliably, but it does not reach further into t
 - The phase has to reach the decoder the right way up. The mode's USB does that. A receiver that mirrors its spectrum would also put the carrier on the wrong side of the dial, where the decoder would not find it at all.
 - The transmitter is usually off the air for a few hours on Tuesday mornings for maintenance.
 
+**DCF77's phase code.** DCF77 sends each second's bit twice. Besides the dip in strength, it swings its carrier's phase a few degrees either way, following a fixed pseudo-random pattern of 512 steps that fills the rest of the second. The pattern is sent as it is for a 0 and inverted for a 1. sdroxide reads that too, and the panel adds **phase** (how cleanly it reads, in dB) and a thinner ribbon of phase bits under the first.
+
+- The pattern is learnt from the air rather than built in. Every second whose dip read clearly says which way up the pattern was sent, and the receiver averages those seconds, turned the right way up, into a template of the pattern as it arrives through your receiver. Each second is then compared with the template. The first phase bits appear about half a minute after locking.
+- Each second's phase reading is independent of its dip reading, so the two are added together when a weak minute is read over several (see above). Where the dip could not be read at all but the phase is clear, the phase stands in for it. It never stands in for the minute marker at second 59, which only the dip carries.
+- It helps most where reception is marginal. In the decoder's tests it names about one minute in seven more at −18 dB, and never loses a minute that the dip alone would have named. It does not measure the time any more precisely: that is still the dip's edge.
+
+**BPC.** China's long-wave time signal, from Shangqiu on 68.5 kHz. Every second begins with the carrier reduced for 100, 200, 300 or 400 ms, which is two bits. A second with no reduction starts a frame. A frame is twenty seconds and names the time in Beijing (UTC+8) at its own start, so three come every minute. The panel shows each with its seconds (**12:37:20 UTC**).
+
+- NTSC does not publish BPC's format. sdroxide decodes it as it has been publicly described: the frame's place in the minute, the hour on a 12-hour clock with an afternoon bit, the minute, the day of the week, the date, and a parity bit over the time and another over the date. Every check the layout allows is made, including the day of the week against the date. It has not been tested against the station on the air. If a frame never decodes on a strong, clean BPC signal, the published description is the likely culprit, and a recording would help put it right.
+- As with every station, two frames have to decode and agree before the time is believed.
+
+**Seconds-only stations: BPM and RWM.** These two send precise seconds and mark each minute, but do not say which minute it is. sdroxide takes the minute from the computer's own clock: the nearest minute to when the mark arrived. That is right as long as the clock is within half a minute. Nothing in the signal can tell when it is not: a clock 45 s fast reads as 15 s slow. So a measurement from these stations is always shown, but **SET CLOCK**, **AUTO** and the NTP server act on it only while the clock is within **10 seconds**, which leaves twenty seconds of margin. Further out, the panel says so in yellow. Set the clock roughly first, from the internet or by hand, or use a station that sends the time.
+
+- **BPM** (Pucheng, China; 2.5, 5, 10 and 15 MHz). The seconds are 10 ms ticks of 1000 Hz and the minute a 300 ms tick. They are sent 20 ms ahead of UTC, as the BIPM's table of time services lists, and sdroxide takes that off. Each half hour carries UTC seconds for ten minutes, the carrier alone for five, UTC for ten more, then four minutes of **UT1** seconds and a minute for the call sign. UT1 is off UTC by up to 0.9 s, so nothing is measured in those minutes or for a little while either side; the decoder may lose its lock there and find it again afterwards. BPM shares WWV's frequencies and its tick has the same pitch. Where WWV is heard as well, pick a frequency where BPM dominates.
+- **RWM** (Moscow; 4.996, 9.996 and 14.996 MHz). The carrier itself is keyed: on at each second and for 500 ms at the minute, off in between, and the seconds are timed by it coming on. Its hour also has stretches of plain carrier and of ten pulses a second, and a minute off the air. The receiver loses the seconds in the plain stretches and picks them up again afterwards.
+- The schedules above are as published, and the receiver has been tested against synthetic versions of them, not against the stations on the air.
+
 **WWV and WWVH together.** The two stations share their frequencies, so many listeners hear both at once, a few milliseconds apart. They send the same time code. What tells them apart is the pitch of the ticks, 1000 Hz from WWV and 1200 Hz from WWVH. The ticks are what the time is measured from, and the station you pick is the one whose ticks are timed, and whose distance is added. The panel says when the other station is heard too. When only the other one is coming in, it says so and offers a **LISTEN TO WWVH** (or **WWV**) chip, which switches station without retuning. Where the two arrive out of step, their 100 Hz codes can partly cancel, and minutes read a little worse.
 
 **How far the clock is out.** Once the time is believed, every second's edge is a measurement, and the panel shows the median of the last minute of them: *"This computer's clock is 12.4 ms slow"*, with the scatter beside it. Two corrections are made before that figure is shown:
@@ -6282,15 +6302,18 @@ A move of more than ten minutes needs a second press (**CONFIRM SET CLOCK**). A 
 
 Setting a clock needs administrator rights, and sdroxide asks for them only for that one step:
 
-- **Linux.** If sdroxide runs as root or has `CAP_SYS_TIME`, it sets the clock itself. Otherwise the desktop's own password dialog appears (`pkexec`). It runs the sdroxide binary as root with nothing but the offset to apply, and that process exits straight away.
+- **Linux.** If sdroxide runs as root or has `CAP_SYS_TIME`, it sets the clock itself. Otherwise the desktop's own password dialog appears (`pkexec`). It runs the sdroxide binary as root with nothing but the offset to apply, and that process exits straight away. The AppImage works the same way: the dialog runs the AppImage file itself.
 - **macOS.** The system's administrator dialog appears ("sdroxide wants to set the clock…"), with the same one-step helper behind it.
-- **Headless**, without root: there is nobody to type a password, so **SET CLOCK** is disabled. Use the NTP server instead (below).
+- **Windows.** Started with **Run as administrator**, or as a service, sdroxide sets the clock itself. Otherwise Windows' own UAC dialog appears for the same one-step helper. On a standard account, UAC asks for an administrator's password.
+- **Headless**, without root (on Windows, a service whose account may not set the clock): there is nobody to answer a dialog, so **SET CLOCK** is disabled. Use the NTP server instead (below).
+
+On Linux the change goes to the system clock only. The hardware clock picks it up the next time a time service synchronises, so a reboot before then brings back the old time.
 
 The step is made as an *offset*, so the time you spend typing the password makes no difference to the result.
 
-If something else keeps the clock — systemd-timesyncd, chrony or ntpd on Linux, or macOS's own "Set time and date automatically" — it may move the clock back to its own source afterwards. The panel names what it found. To keep radio time, switch that service off, or better, point it at sdroxide's NTP server.
+If something else keeps the clock — systemd-timesyncd, chrony or ntpd on Linux, macOS's own "Set time and date automatically", or the Windows Time service when "Set the time automatically" is on — it may move the clock back to its own source afterwards. The panel names what it found. To keep radio time, switch that service off, or better, point it at sdroxide's NTP server.
 
-**AUTO** corrects the clock without being asked whenever it is more than 100 ms out, at most once every ten minutes, and never by a step that would need confirming. It is only available where no password is needed (root, or `CAP_SYS_TIME`), because a password dialog nobody asked for is not something to put on a screen.
+**AUTO** corrects the clock without being asked whenever it is more than 100 ms out, at most once every ten minutes, and never by a step that would need confirming. It is only available where no password is needed (root, `CAP_SYS_TIME`, or on Windows elevated or as a service), because a password dialog nobody asked for is not something to put on a screen.
 
 **Remote clients.** A client connected to a server ([§8](#8-remote-operation)) sees the panel, and the panel says that **SET CLOCK** acts on the *station's* computer. By default the server refuses it from a remote client and says so: operating the radio from elsewhere is not administering the machine it is plugged into. To allow it, the station's operator adds this line to that machine's `config.toml`:
 
@@ -6300,7 +6323,7 @@ allow_remote_clock_set = true
 
 It must go among the plain settings at the top of the file, above the first `[section]`. The setting is read again on every attempt, so no restart is needed.
 
-**The NTP server.** **Settings → Servers → Built-in NTP server** serves the received time as a stratum 1 NTP server. While a recent reception is in hand it announces itself as synchronised, with the station named as its reference (`DCF`, `TDF` for ALS162, `MSF`, `WWVB`, `JJY`, `WWV`, `WWVH`). For two hours after the last reception it keeps serving, with an error estimate that grows with the time since. After that, or before the first reception, it answers as unsynchronised, and clients ignore it.
+**The NTP server.** **Settings → Servers → Built-in NTP server** serves the received time as a stratum 1 NTP server. While a recent reception is in hand it announces itself as synchronised, with the station named as its reference (`DCF`, `TDF` for ALS162, `MSF`, `WWVB`, `JJY`, `BPC`, `WWV`, `WWVH`, `BPM`, `RWM`). For two hours after the last reception it keeps serving, with an error estimate that grows with the time since. After that, or before the first reception, it answers as unsynchronised, and clients ignore it.
 
 It serves the computer's clock *corrected by the latest measurement*, so it gives radio time even if this computer's own clock is never set. The usual arrangement is to point this machine's own time service at it, which keeps the clock on radio time continuously with no password at all. For chrony:
 
@@ -6308,7 +6331,9 @@ It serves the computer's clock *corrected by the latest measurement*, so it give
 server 127.0.0.1 port 1123 iburst
 ```
 
-Port 123 is what every client expects, but on Linux, and on older macOS, a port below 1024 needs privilege. The server reports **permission denied** if it could not bind, and 1123 is the usual choice instead. Bind to `127.0.0.1` to serve only this machine, or to `0.0.0.0` to serve the network. The server only answers time requests and gives nothing else away; the settings are kept in `ntpserver.json` and belong to the station.
+Windows' own time service is simplest pointed at sdroxide on another machine, on port 123. On the same Windows machine, **SET CLOCK** or **AUTO** is the more direct route.
+
+Port 123 is what every client expects, but on Linux, and on older macOS, a port below 1024 needs privilege. The server reports **permission denied** if it could not bind, and 1123 is the usual choice instead. If another time service on the same machine already answers on 123 (chronyd, ntpd, or the Windows Time service), binding fails with **address in use**, and 1123 is again the answer. Bind to `127.0.0.1` to serve only this machine, or to `0.0.0.0` to serve the network. The server only answers time requests and gives nothing else away; the settings are kept in `ntpserver.json` and belong to the station.
 
 **Accuracy.** On a clean long-wave signal the measurement is good to about a millisecond, once the travel time and the receiver's latency are accounted for. The desktop's own scheduling is the larger part of what is left, and the median over a minute takes most of that out. Short wave is good to a millisecond or so. The ionosphere's height changes through the day and moves the path with it, and a signal arriving by two paths at once is timed by the stronger. A receiver whose sample clock is off by tens of ppm is followed, drift and all. A receiver reached over the network (KiwiSDR, SpyServer, a remote sdroxide server) adds that network's delay and its jitter. The decode still works, but calibrating the latency only helps as far as that delay holds steady.
 
@@ -14978,7 +15003,7 @@ and not the station's.
 
 | File | Format | Contents |
 | --- | --- | --- |
-| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `dismissed_update` (the published release whose update banner was dismissed, [§6.3](#63-ui-display-preferences-and-voice-announcements)), `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), `allow_remote_clock_set` (whether a remote client may set this machine's clock from the time signal, [§3.26](#326-time-signals-dcf77-als162-msf-wwvb-jjy-wwv-wwvh)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **Remote** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
+| `config.toml` | TOML | General settings: `device_args`, `sample_rate`, `cal_offset_db`, `spectrum_fft`, `spectrum_fps`, `server_bind`, `server_port`, `tx_ham_only`, `swr_guard` and `swr_limit` (the SWR guard, [§6.1](#61-general-station-audio-and-remote-access)), `audio_output`, `audio_input`, `dismissed_update` (the published release whose update banner was dismissed, [§6.3](#63-ui-display-preferences-and-voice-announcements)), `region` (`"R1"` / `"R2"` / `"R3"` — the IARU region every band plan follows, [§6.1](#61-general-station-audio-and-remote-access)), `allow_remote_clock_set` (whether a remote client may set this machine's clock from the time signal, [§3.26](#326-time-signals-dcf77-als162-msf-wwvb-jjy-bpc-wwv-wwvh-bpm-rwm)), plus the `[ui]` display preferences (including `theme`, `button_style` and `window_style`), the `[speech]` announcement settings ([§6.3](#63-ui-display-preferences-and-voice-announcements)), the `[remote_access]` sign-in that server mode demands ([§8.3](#83-sign-in-who-may-operate-the-station), stored in plaintext) and the `[remote_server]` address the **Remote** tab dials ([§8.2](#82-connect-a-native-remote-client)). Belongs to the machine the engine runs on — except `[ui]`, `[speech]` and `[remote_server]`, which belong to the screen in front of you. |
 | `radio.json` | JSON | Which radio interface is selected and everything that configures it — the CAT/HPSDR/TCI/SmartSDR/RTL-SDR/rtl_tcp/SpyServer/RX-888/Airspy HF+/SDRplay/PlutoSDR sections, the converter offset and stated tuning ranges, and the radio's sound-card device names. |
 | `digi.json` | JSON | Digital-mode operator settings: your callsign and grid, FT8/FT4/FT2 TX period, auto-sequence and message templates, the transmit-frequency hold (`hold_tx_freq`) and the per-band transmit offsets it pins (`tx_audio_hz`), the per-mode transmit-audio levels (`tx_audio_levels`, with `tx_audio_level_fm` / `tx_audio_level_ssb` as the level a mode with no entry of its own inherits), and the WSPR beacon's duty cycle, power and band-hop list. |
 | `memories.json` | JSON | Saved memory channels. |
@@ -14991,7 +15016,7 @@ and not the station's.
 | `net.json` | JSON | Network cockpit: DX cluster / POTA / SOTA / PSK / FreeDV Reporter / WSPRnet feed settings, and callsign-lookup / eQSL / QRZ / HamQTH / Club Log / LoTW credentials (stored in plaintext). |
 | `winlink/` | directory | The Winlink mailbox: `inbox/`, `outbox/`, `sent/` and `archive/`, one `.b2f` file per message holding it exactly as it rides the wire ([§11](#11-winlink-radio-email)). The account settings live in `net.json`, password included, in plaintext. |
 | `tciserver.json` | JSON | Built-in TCI server: enabled, bind address, port, advertised device name, whether clients may transmit, and the client limit. |
-| `ntpserver.json` | JSON | Built-in NTP server ([§3.26](#326-time-signals-dcf77-als162-msf-wwvb-jjy-wwv-wwvh)): enabled, bind address and port. Belongs to the engine's machine, like the other servers. |
+| `ntpserver.json` | JSON | Built-in NTP server ([§3.26](#326-time-signals-dcf77-als162-msf-wwvb-jjy-bpc-wwv-wwvh-bpm-rwm)): enabled, bind address and port. Belongs to the engine's machine, like the other servers. |
 | `rigctld.json` | JSON | Built-in Hamlib rigctld server: enabled, bind address, port, reported rig name, whether clients may transmit, and the client limit. |
 | `wsjtx.json` | JSON | WSJT-X UDP broadcast: enabled, destination host and port, and the name clients see. |
 | `scanner.json` | JSON | The scanner: memories or a range, the range and channel step, the level that counts as busy, the dwell, how it resumes, and which memories to skip. |
@@ -16430,7 +16455,7 @@ using. Bind them under **Speech** on the Controls tab:
 | RTTY | RTTY keyboard mode (Baudot; selectable shift and baud), on a sideband. |
 | RTTY-FM | The same modem on an FM carrier, the way a club bulletin is still sent on VHF. |
 | NAVTEX | The maritime safety broadcast on 518, 490 and 4209.5 kHz: navigational and meteorological warnings, search-and-rescue bulletins and ice reports, framed into messages. Receive only. |
-| TIME | The time stations DCF77, ALS162, MSF, WWVB (both its codes), JJY, WWV and WWVH: the minute decoded, how far the computer's clock is from it, setting that clock, and an NTP server serving the received time. Receive only. See [3.26](#326-time-signals-dcf77-als162-msf-wwvb-jjy-wwv-wwvh). |
+| TIME | The time stations DCF77 (both its codes), ALS162, MSF, WWVB (both its codes), JJY, BPC, WWV and WWVH, and the seconds of BPM and RWM: the minute decoded, how far the computer's clock is from it, setting that clock, and an NTP server serving the received time. Receive only. See [3.26](#326-time-signals-dcf77-als162-msf-wwvb-jjy-bpc-wwv-wwvh-bpm-rwm). |
 | OLIVIA | Robust MFSK keyboard mode (selectable tones/bandwidth). |
 | THOR | DominoEX-family IFK keyboard mode with FEC (THOR4…THOR32). |
 | FSQ | Fast Simple QSO — 33-tone IFK with directed (FSQCALL) messaging and images. |

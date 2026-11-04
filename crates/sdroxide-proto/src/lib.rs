@@ -1557,7 +1557,10 @@ use sdroxide_types::{
 /// phase code arrived before v180 was released: [`sdroxide_types::TimeStation`]
 /// gains `Wwv` and `Wwvh` and [`sdroxide_types::TimeSigStatus`] the phase code's
 /// and the short-wave pair's fields, all within the same version. So did
-/// ALS162: `TimeStation::Als162`, appended.
+/// ALS162: `TimeStation::Als162`, appended. And BPC, BPM and RWM:
+/// `TimeStation::Bpc`, `Bpm` and `Rwm`, appended in that order; nothing else
+/// on the wire changed for them, nor for DCF77's phase code, whose bits ride
+/// the fields WWVB's already use.
 pub const PROTO_VERSION: u16 = 180;
 const VERSION_BYTE: u8 = 0x12;
 

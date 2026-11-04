@@ -13,13 +13,15 @@
 //!
 //! # Privilege
 //!
-//! Setting the clock needs `CAP_SYS_TIME` on Linux and root on macOS. A
-//! process that has it sets the clock itself. One that does not asks the
-//! system's own administrator prompt to run this same binary as root with
-//! [`HELPER_FLAG`] and the offset — `pkexec` on Linux, an AppleScript
-//! `do shell script … with administrator privileges` on macOS. The helper
-//! does that one thing and exits before anything else in the program starts
-//! (see [`helper_main`]), so nothing else ever runs as root.
+//! Setting the clock needs `CAP_SYS_TIME` on Linux, root on macOS, and
+//! `SeSystemtimePrivilege` on Windows (an elevated administrator, or a
+//! service account). A process that has it sets the clock itself. One that
+//! does not asks the system's own administrator prompt to run this same
+//! binary with that privilege, with [`HELPER_FLAG`] and the offset —
+//! `pkexec` on Linux, an AppleScript `do shell script … with administrator
+//! privileges` on macOS, UAC on Windows. The helper does that one thing and
+//! exits before anything else in the program starts (see [`helper_main`]),
+//! so nothing else ever runs with the privilege.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -50,17 +52,30 @@ pub fn system_time_ns(t: SystemTime) -> i128 {
 
 /// How this process may set the clock.
 pub fn authority() -> ClockAuthority {
-    #[cfg(unix)]
-    {
-        // SAFETY: geteuid has no preconditions and cannot fail.
-        if unsafe { libc::geteuid() } == 0 || has_cap_sys_time() {
-            return ClockAuthority::Direct;
-        }
-        if prompt_available() {
-            return ClockAuthority::Prompt;
-        }
+    if may_set_directly() {
+        ClockAuthority::Direct
+    } else if prompt_available() {
+        ClockAuthority::Prompt
+    } else {
+        ClockAuthority::Unavailable
     }
-    ClockAuthority::Unavailable
+}
+
+#[cfg(unix)]
+fn may_set_directly() -> bool {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    let euid = unsafe { libc::geteuid() };
+    euid == 0 || has_cap_sys_time()
+}
+
+#[cfg(windows)]
+fn may_set_directly() -> bool {
+    crate::windows::may_set_directly()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn may_set_directly() -> bool {
+    false
 }
 
 /// Linux: whether the effective capability set holds `CAP_SYS_TIME` (25).
@@ -97,7 +112,12 @@ fn prompt_available() -> bool {
         && std::path::Path::new("/usr/bin/osascript").exists()
 }
 
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+#[cfg(windows)]
+fn prompt_available() -> bool {
+    crate::windows::prompt_available()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn prompt_available() -> bool {
     false
 }
@@ -137,7 +157,17 @@ pub fn step_direct(offset_ns: i64) -> std::io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+/// Moves the clock by `offset_ns`, from this process. Needs
+/// [`ClockAuthority::Direct`].
+#[cfg(windows)]
+pub fn step_direct(offset_ns: i64) -> std::io::Result<()> {
+    if offset_ns.unsigned_abs() > MAX_STEP_NS as u64 {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "step too large"));
+    }
+    crate::windows::step(offset_ns)
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn step_direct(_offset_ns: i64) -> std::io::Result<()> {
     Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "not supported on this system"))
 }
@@ -145,9 +175,27 @@ pub fn step_direct(_offset_ns: i64) -> std::io::Result<()> {
 /// Moves the clock by `offset_ns` through the administrator prompt. Blocks
 /// until the operator has answered it, so it belongs on a thread of its own.
 pub fn step_elevated(offset_ns: i64) -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|e| format!("cannot find this program: {e}"))?;
-    let exe = exe.to_str().ok_or("this program's path is not valid text")?.to_owned();
+    let exe = helper_exe(std::env::var_os("APPIMAGE"), std::env::current_exe())?;
     elevated(&exe, offset_ns)
+}
+
+/// The program the administrator prompt is asked to run as the helper.
+///
+/// Normally this one. Inside an AppImage, though, this one is
+/// `/tmp/.mount_XXXX/usr/bin/sdroxide` on a FUSE mount that only the user
+/// who started it may enter — not even root, without `allow_other` — so the
+/// helper would never start. The AppImage file itself is an ordinary file
+/// root can run, and its runtime sets `APPIMAGE` to its path; its AppRun hands
+/// the arguments through, so the helper flag arrives the same.
+fn helper_exe(
+    appimage: Option<std::ffi::OsString>,
+    current: std::io::Result<std::path::PathBuf>,
+) -> Result<String, String> {
+    let exe = match appimage.map(std::path::PathBuf::from) {
+        Some(p) if p.is_absolute() && p.is_file() => p,
+        _ => current.map_err(|e| format!("cannot find this program: {e}"))?,
+    };
+    exe.to_str().map(str::to_owned).ok_or_else(|| "this program's path is not valid text".into())
 }
 
 #[cfg(target_os = "linux")]
@@ -196,7 +244,12 @@ fn elevated(exe: &str, offset_ns: i64) -> Result<(), String> {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(windows)]
+fn elevated(exe: &str, offset_ns: i64) -> Result<(), String> {
+    crate::windows::elevated(exe, offset_ns)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn elevated(_exe: &str, _offset_ns: i64) -> Result<(), String> {
     Err("setting the clock is not supported on this system".into())
 }
@@ -226,7 +279,11 @@ pub fn sync_daemon() -> Option<String> {
         // date automatically" switch, which only an administrator can read.
         Some("timed, if \"Set time and date automatically\" is on".into())
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(windows)]
+    {
+        crate::windows::sync_daemon()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         None
     }
@@ -255,5 +312,37 @@ pub fn helper_main() -> Option<i32> {
             eprintln!("{e}");
             Some(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_appimage_asks_for_itself_not_its_mount() {
+        let dir = std::env::temp_dir().join(format!("sdroxide-clock-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let image = dir.join("sdroxide.AppImage");
+        std::fs::write(&image, b"").unwrap();
+        let mount = Ok(std::path::PathBuf::from("/tmp/.mount_abc/usr/bin/sdroxide"));
+        let got = helper_exe(Some(image.clone().into()), mount);
+        assert_eq!(got.as_deref(), Ok(image.to_str().unwrap()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn without_an_appimage_it_is_this_program() {
+        let exe = std::path::PathBuf::from("/usr/bin/sdroxide");
+        assert_eq!(helper_exe(None, Ok(exe.clone())).as_deref(), Ok("/usr/bin/sdroxide"));
+        // A stale or relative APPIMAGE is not believed.
+        assert_eq!(
+            helper_exe(Some("relative.AppImage".into()), Ok(exe.clone())).as_deref(),
+            Ok("/usr/bin/sdroxide")
+        );
+        assert_eq!(
+            helper_exe(Some("/nonexistent/x.AppImage".into()), Ok(exe)).as_deref(),
+            Ok("/usr/bin/sdroxide")
+        );
     }
 }

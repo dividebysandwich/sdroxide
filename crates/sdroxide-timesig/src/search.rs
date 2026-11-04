@@ -15,6 +15,17 @@
 //! decimated band, so the squared spectrum is read for the fine answer and
 //! the plain one, hump and all, decides which of the folded images it was.
 //!
+//! # A carrier switched on and off
+//!
+//! RWM's carrier is on for a tenth of each second and off for the rest. Its
+//! spectrum is a comb of lines a hertz apart, and with so short a duty the
+//! lines either side of the carrier are within a few percent of it — the
+//! strongest line is as likely a neighbour as the carrier. What singles the
+//! carrier out is the comb's envelope, the spectrum of one pulse, which is
+//! centred on it: so each candidate is scored by the power of the whole comb
+//! around it, each tooth weighted by that envelope, and the best scored is
+//! the carrier.
+//!
 //! # Moving
 //!
 //! A carrier found somewhere new is believed only when it is found there
@@ -37,6 +48,8 @@ const CARRIER_MIN_RATIO: f32 = 31.6;
 /// Hz. The plain spectrum's hump on a phase-keyed carrier is good to about
 /// half a hertz; anything past this is somewhere else.
 const SAME_CARRIER_HZ: f64 = 2.0;
+/// The teeth either side of the carrier a comb is scored over.
+const COMB_TEETH: i32 = 12;
 
 pub(crate) struct CarrierSearch {
     env_rate: f64,
@@ -50,6 +63,8 @@ pub(crate) struct CarrierSearch {
     offset_hz: Option<f64>,
     candidate: Option<f64>,
     moves: u32,
+    /// An on-off keyed carrier: the share of each second it is on.
+    comb_duty: Option<f64>,
 }
 
 impl CarrierSearch {
@@ -74,7 +89,42 @@ impl CarrierSearch {
             offset_hz: None,
             candidate: None,
             moves: 0,
+            comb_duty: None,
         }
+    }
+
+    /// For a carrier switched on for `duty` of every second and off for the
+    /// rest: find it by its comb of lines.
+    pub fn with_comb(mut self, duty: f64) -> Self {
+        self.comb_duty = Some(duty);
+        self
+    }
+
+    /// The bin the comb centred on scores best, within `reach` of the tone.
+    fn comb_centre(&self, reach: isize, duty: f64) -> Option<f64> {
+        let bin_hz = self.env_rate / FFT_N as f64;
+        // A line spread over its bin and the two beside it by the window.
+        let line = |i: isize| (i - 1..=i + 1).map(|j| at(&self.spectrum, j)).sum::<f32>();
+        let sinc2 = |x: f64| {
+            if x == 0.0 {
+                1.0
+            } else {
+                ((std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x)).powi(2)
+            }
+        };
+        let score = |i: isize| {
+            (-COMB_TEETH..=COMB_TEETH)
+                .map(|n| {
+                    let j = i + (f64::from(n) / bin_hz).round() as isize;
+                    sinc2(f64::from(n) * duty) as f32 * line(j)
+                })
+                .sum::<f32>()
+        };
+        let best = (-reach..=reach).max_by(|&a, &b| score(a).total_cmp(&score(b)))?;
+        // Placed between bins on the plain spectrum, as any carrier is.
+        let top = (best - 1..=best + 1)
+            .max_by(|&a, &b| at(&self.spectrum, a).total_cmp(&at(&self.spectrum, b)))?;
+        Some(interpolate(&self.spectrum, top))
     }
 
     /// The carrier's offset from the tone, Hz, once found.
@@ -145,6 +195,10 @@ impl CarrierSearch {
                 // code needs.
                 None => plain.map(|p| p * bin_hz),
             }
+        } else if let Some(duty) = self.comb_duty {
+            // Only once the comb stands clear at all: the same test as any
+            // carrier, on its strongest line.
+            plain.and_then(|_| self.comb_centre(reach, duty)).map(|p| p * bin_hz)
         } else {
             plain.map(|p| p * bin_hz)
         };
@@ -190,9 +244,15 @@ fn peak(spectrum: &[f32], range: std::ops::RangeInclusive<isize>) -> Option<f64>
     if p / median < CARRIER_MIN_RATIO {
         return None;
     }
-    // Parabolic interpolation on the log spectrum.
-    let (l, c, r) = (at(spectrum, i - 1).ln(), p.ln(), at(spectrum, i + 1).ln());
+    Some(interpolate(spectrum, i))
+}
+
+/// Bin `i`, a local peak, placed between bins by a parabola through the log
+/// spectrum.
+fn interpolate(spectrum: &[f32], i: isize) -> f64 {
+    let ln = |j: isize| at(spectrum, j).max(f32::MIN_POSITIVE).ln();
+    let (l, c, r) = (ln(i - 1), ln(i), ln(i + 1));
     let den = l - 2.0 * c + r;
     let frac = if den.abs() > 1e-12 { (0.5 * (l - r) / den).clamp(-0.5, 0.5) } else { 0.0 };
-    Some(f64::from(i as f32 + frac))
+    f64::from(i as f32 + frac)
 }

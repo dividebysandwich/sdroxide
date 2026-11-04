@@ -10,6 +10,8 @@
 mod hub;
 pub mod ntp;
 pub mod os;
+#[cfg(windows)]
+mod windows;
 
 pub use hub::{Fix, Refusal, StepOutcome, TimeHub, check_step};
 pub use os::helper_main;

@@ -1,7 +1,20 @@
 # Time signals: what to add next, and setting the clock per OS
 
 Status of the `time-sync-signals` branch as of 2026-11-04, and a plan for
-what comes after it. Two parts:
+what comes after it.
+
+> **Update, later the same day.** Done on this branch since: the AppImage
+> `pkexec` fix (§2, Linux problem 1); Windows clock setting (§2, Windows plan
+> steps 1–5, 7 and 8, with the hover text and manual corrected); DCF77's phase
+> code (§1.2), read against a template learnt from the air rather than a
+> built-in sequence, since PTB's description could not be fetched to check the
+> sequence against; BPC (§1.1), from the publicly described layout, untested on
+> air; and the seconds-only mode with BPM and RWM (§1.5, §1.6), tested against
+> synthetic signals only. Still open: the Linux RTC, atomic and slewed steps
+> (§2, Linux problems 2–4), the macOS headless-prompt edge case, and §1.3,
+> §1.4 and Tier 4.
+
+Two parts:
 
 1. [New signals](#1-new-signals): which stations and codes are worth adding,
    in what order, and what each needs from the decoder.

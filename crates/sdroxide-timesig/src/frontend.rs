@@ -50,6 +50,15 @@
 //! angle is only known modulo half a turn, so the bits may come out upside
 //! down; the phase code's sync word sorts that out.
 //!
+//! # DCF77's phase
+//!
+//! DCF77 swings its carrier's phase a few degrees either way, chip by chip,
+//! after each second's amplitude drop. That part of the signal is across the
+//! same half-second reference the amplitude is read along, so it is read
+//! there too: [`EnvSample::quad`], the part of each millisecond's sample
+//! across the reference. Unsmoothed: a chip is a millisecond and a half, and
+//! the 5 ms smoothing the amplitude gets would take most of the code off.
+//!
 //! # Clicks
 //!
 //! Long wave is full of them — static, and every switching supply and LED
@@ -122,7 +131,7 @@ const BLANK_SEED: usize = 101;
 const BLANK_RUN_MAX: u32 = 100;
 
 /// What a station keys, and so what the front end reads off its carrier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Keying {
     /// The amplitude alone: read in phase with the carrier.
     Amplitude,
@@ -132,6 +141,10 @@ pub enum Keying {
     AmplitudeAndSign,
     /// The phase alone (ALS162): the part of the signal across the carrier.
     Phase,
+    /// The carrier switched on and off, `duty` of each second on (RWM): read
+    /// by magnitude, since between pulses there is no carrier to hold a phase
+    /// against, and found by its comb of lines.
+    OnOff { duty: f64 },
 }
 
 /// One envelope sample.
@@ -157,6 +170,9 @@ pub struct EnvSample {
     /// The carrier turned onto its own phase, keying left on: WWVB only, and
     /// zero until the phase loop is running.
     pub iq: Complex32,
+    /// The part of the signal across the carrier, one millisecond's sample
+    /// at `pos`, unsmoothed: DCF77's phase code. Zero elsewhere.
+    pub quad: f32,
 }
 
 /// A second-order phase-locked loop on the squared carrier.
@@ -242,6 +258,8 @@ pub struct FrontEnd {
     pll: Option<PhaseLoop>,
     moves_seen: u32,
     moved_at: f64,
+    /// DCF77: fill [`EnvSample::quad`].
+    quadrature: bool,
     /// The usual size of a decimated sample — a running quantile of them —
     /// the quantile, the first few samples, which seed it, and the multiple
     /// of it that is a click.
@@ -272,10 +290,14 @@ impl FrontEnd {
             reference: Complex32::new(0.0, 0.0),
             centred: VecDeque::new(),
             centred_sum: Complex32::new(0.0, 0.0),
-            search: CarrierSearch::new(env_rate, phase_code),
+            search: match keying {
+                Keying::OnOff { duty } => CarrierSearch::new(env_rate, false).with_comb(duty),
+                _ => CarrierSearch::new(env_rate, phase_code),
+            },
             pll: phase_code.then(|| PhaseLoop::new(env_rate)),
             moves_seen: 0,
             moved_at: 0.0,
+            quadrature: false,
             usual: 0.0,
             quantile: 0.5,
             seed: Vec::with_capacity(BLANK_SEED),
@@ -284,10 +306,20 @@ impl FrontEnd {
         }
     }
 
+    /// Also reads the part of the signal across the carrier, for a station
+    /// that keys its phase as well as its amplitude by a few degrees (DCF77).
+    pub fn with_quadrature(mut self) -> Self {
+        self.quadrature = true;
+        self
+    }
+
     /// Sets the click blanker for a carrier at full level `full_share` of
     /// the time, 0 to 1.
     pub fn with_full_share(mut self, full_share: f64) -> Self {
-        let q = (1.0 - full_share.clamp(0.0, 1.0) / 2.0).clamp(0.5, 0.9);
+        // RWM, its carrier off but for a tenth of each second, is the one
+        // that needs the top of this: at 0.9 the usual size would be the
+        // carrier switched off, and the pulses themselves the clicks.
+        let q = (1.0 - full_share.clamp(0.0, 1.0) / 2.0).clamp(0.5, 0.95);
         self.quantile = q as f32;
         self.blank_ratio = blank_ratio(q);
         self
@@ -304,6 +336,13 @@ impl FrontEnd {
                 self.seed.sort_by(f32::total_cmp);
                 self.usual = self.seed[(self.quantile * (BLANK_SEED - 1) as f32) as usize];
             }
+            return y;
+        }
+        if self.usual <= 0.0 {
+            // Seeded on silence — exact zeros, which only a carrier switched
+            // right off and no noise at all makes (RWM, in a test): there is
+            // no usual size to hold anything against yet.
+            self.seed.clear();
             return y;
         }
         let blank = a > self.blank_ratio * self.usual;
@@ -405,7 +444,8 @@ impl FrontEnd {
                 self.across(pos, smooth, out);
                 return;
             }
-            let mag = if self.keying == Keying::AmplitudeAndSign {
+            let mut quad = 0.0;
+            let mag = if matches!(self.keying, Keying::AmplitudeAndSign | Keying::OnOff { .. }) {
                 smooth.norm()
             } else {
                 // The reference follows the newest samples and the smoothed
@@ -413,6 +453,11 @@ impl FrontEnd {
                 // not turned by anything measurable in two milliseconds.
                 self.reference += (smooth - self.reference) / PHASE_TC;
                 let r = self.reference.norm();
+                if self.quadrature && r > 0.0 {
+                    // The block at the smoothing's centre, on its own.
+                    let centre = self.ring[((k + SMOOTH as u64 - 2) % SMOOTH as u64) as usize];
+                    quad = (centre * self.reference.conj()).im / r;
+                }
                 if r > 0.0 { (smooth * self.reference.conj()).re / r } else { smooth.norm() }
             };
             // The loop runs only on a carrier the search has found: before
@@ -421,7 +466,7 @@ impl FrontEnd {
                 (Some(pll), Some(_)) => pll.step(smooth).unwrap_or_default(),
                 _ => Complex32::new(0.0, 0.0),
             };
-            out.push(EnvSample { pos, mag, tpos: pos, timing: mag, sibling: 0.0, iq });
+            out.push(EnvSample { pos, mag, tpos: pos, timing: mag, sibling: 0.0, iq, quad });
         }
     }
 
@@ -439,7 +484,7 @@ impl FrontEnd {
         let r = self.reference.norm();
         let mag = if r > 0.0 { (z * self.reference.conj()).im / r } else { 0.0 };
         let zero = Complex32::new(0.0, 0.0);
-        out.push(EnvSample { pos, mag, tpos: pos, timing: mag, sibling: 0.0, iq: zero });
+        out.push(EnvSample { pos, mag, tpos: pos, timing: mag, sibling: 0.0, iq: zero, quad: 0.0 });
         let (_, gone) = self.centred.pop_front().expect("full");
         self.centred_sum -= gone;
     }

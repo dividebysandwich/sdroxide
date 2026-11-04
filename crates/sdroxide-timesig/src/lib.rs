@@ -62,6 +62,29 @@ mod tests {
             .collect()
     }
 
+    /// A seconds-only station's minute marks, each with the UTC minute it is
+    /// nearest — which is what the controller names it, from the clock.
+    fn marks(events: &[Event], start: f64, rate: f64) -> Vec<(f64, i64)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Minute { pos } => {
+                    Some((*pos, ((start + pos / rate) / 60.0).round() as i64 * 60))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// What a station names: its frames, or for a seconds-only station its
+    /// minute marks, each with the instant it ought to have begun on air —
+    /// earlier than the UTC it names by the station's advance.
+    fn named(station: TimeStation, events: &[Event], start: f64, rate: f64) -> Vec<(f64, f64)> {
+        let adv = station.advance_s();
+        let got = if station.seconds_only() { marks(events, start, rate) } else { frames(events) };
+        got.into_iter().map(|(pos, utc)| (pos, utc as f64 - adv)).collect()
+    }
+
     /// Start 23.4 s into a minute so the lock and the first frame have to be
     /// found, not handed over on a boundary.
     fn start() -> f64 {
@@ -74,10 +97,10 @@ mod tests {
             for rate in [12_000.0, 48_000.0, 44_100.0] {
                 let s = synth::Synth::new(station, rate);
                 let ev = run(&s, start(), 200.0);
-                let f = frames(&ev);
+                let f = named(station, &ev, start(), rate);
                 assert!(f.len() >= 2, "{station:?} @ {rate}: {} frames", f.len());
                 for (pos, utc) in f {
-                    let err_ms = (start() + pos / rate - utc as f64) * 1000.0;
+                    let err_ms = (start() + pos / rate - utc) * 1000.0;
                     assert!(err_ms.abs() < 1.0, "{station:?} @ {rate}: frame {err_ms:.3} ms out");
                 }
                 assert!(
@@ -105,7 +128,7 @@ mod tests {
             s.rate_error_ppm = 40.0;
             s.seed = 3;
             let ev = run(&s, start(), 260.0);
-            let f = frames(&ev);
+            let f = named(station, &ev, start(), s.rate);
             assert!(f.len() >= 2, "{station:?}: {} frames", f.len());
             for (pos, utc) in f {
                 // The receiver's samples are 40 ppm short of true seconds.
@@ -113,7 +136,7 @@ mod tests {
                 // milliseconds; the controller's median over every second
                 // does better than any one of them.
                 let t = start() + pos / (s.rate * (1.0 + 40e-6));
-                let err_ms = (t - utc as f64) * 1000.0;
+                let err_ms = (t - utc) * 1000.0;
                 assert!(err_ms.abs() < 4.0, "{station:?}: frame {err_ms:.3} ms out");
             }
         }
@@ -316,6 +339,96 @@ mod tests {
         }
     }
 
+    /// DCF77's phase code, read second by second against the template it
+    /// learnt, gives back the bits that were sent.
+    #[test]
+    fn the_dcf77_phase_bits_are_the_ones_sent() {
+        let mut s = synth::Synth::new(TimeStation::Dcf77, 12_000.0);
+        s.snr_db = Some(-5.0);
+        s.tone_hz += 61.0;
+        let ev = run(&s, start(), 200.0);
+        let fmt = Format::for_station(TimeStation::Dcf77);
+        let mut checked = 0;
+        for e in &ev {
+            if let Event::Second(sec) = e
+                && let Some(bit) = sec.phase_bit
+            {
+                let utc = (start() + sec.pos / s.rate).round() as i64;
+                let m = utc.div_euclid(60) * 60;
+                let sent = (fmt.encode)(m)[(utc - m) as usize];
+                assert!(!sent.marker || !bit, "a 1 read in the marker's second, {utc}");
+                if !sent.marker {
+                    assert_eq!(bit, sent.a, "second {utc}");
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 100, "only {checked} phase bits read");
+    }
+
+    /// Adding the phase code's reading to the amplitude's never loses a
+    /// minute the amplitude alone would have named — the risk being a template
+    /// learnt from noise, believed.
+    #[test]
+    fn the_dcf77_phase_code_never_costs_a_minute() {
+        for (snr, seed) in [(-14.0, 21), (-18.0, 22)] {
+            let mut s = synth::Synth::new(TimeStation::Dcf77, 8_000.0);
+            s.snr_db = Some(snr);
+            s.seed = seed;
+            let audio = s.render(start(), 900.0);
+            let count = |dec: Decoder| {
+                let mut dec = dec;
+                let mut ev = Vec::new();
+                for b in audio.chunks(160) {
+                    dec.process(b, &mut ev);
+                }
+                let f = frames(&ev);
+                for &(pos, utc) in &f {
+                    let err_ms = (start() + pos / s.rate - utc as f64) * 1000.0;
+                    assert!(err_ms.abs() < 10.0, "{snr} dB: a wrong minute, {err_ms:.1} ms");
+                }
+                f.len()
+            };
+            let with = count(Decoder::new(TimeStation::Dcf77, s.rate));
+            let without = count(Decoder::new(TimeStation::Dcf77, s.rate).without_phase_code());
+            assert!(
+                with >= without,
+                "{snr} dB: {with} minutes with the phase code, {without} without"
+            );
+        }
+    }
+
+    /// The phase code's worth: minutes named with it and without it.
+    ///
+    /// `cargo test -p sdroxide-timesig --release -- --ignored --nocapture phase_code_sweep`
+    #[test]
+    #[ignore]
+    fn phase_code_sweep() {
+        for snr in [-12.0, -14.0, -16.0, -18.0, -20.0] {
+            let (mut with, mut without) = (0, 0);
+            for seed in 0..3 {
+                let mut s = synth::Synth::new(TimeStation::Dcf77, 8_000.0);
+                s.snr_db = Some(snr);
+                s.seed = 20 + seed;
+                let audio = s.render(start(), 900.0);
+                for (on, n) in [(true, &mut with), (false, &mut without)] {
+                    let mut dec = Decoder::new(TimeStation::Dcf77, s.rate);
+                    if !on {
+                        dec = dec.without_phase_code();
+                    }
+                    let mut ev = Vec::new();
+                    for b in audio.chunks(160) {
+                        dec.process(b, &mut ev);
+                    }
+                    *n += frames(&ev).len();
+                }
+            }
+            println!(
+                "DCF77 {snr:>6} dB: {with:>3} minutes with the phase code, {without:>3} without"
+            );
+        }
+    }
+
     /// Noise alone must never produce a frame. Ten minutes here, for every
     /// station; `noise_never_decodes_long` runs for hours.
     #[test]
@@ -326,6 +439,7 @@ mod tests {
             s.seed = 11;
             let ev = run(&s, start(), 600.0);
             assert!(frames(&ev).is_empty(), "{station:?} decoded a frame from noise");
+            assert!(marks(&ev, start(), s.rate).is_empty(), "{station:?}: a minute from noise");
         }
     }
 
@@ -342,6 +456,7 @@ mod tests {
             s.seed = 5;
             let ev = run(&s, start(), 600.0);
             assert!(frames(&ev).is_empty(), "{station:?} decoded a frame from a bare carrier");
+            assert!(marks(&ev, start(), s.rate).is_empty(), "{station:?}: a minute, bare carrier");
             let locks = ev.iter().filter(|e| matches!(e, Event::Locked)).count();
             assert_eq!(locks, 0, "{station:?} found seconds on a bare carrier");
         }

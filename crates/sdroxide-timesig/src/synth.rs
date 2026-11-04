@@ -13,13 +13,22 @@
 //! the rest of it the pseudo-random code the station adds, which is there to
 //! be read past.
 //!
+//! DCF77's carrier carries its phase code too, from 200 ms into each second
+//! (see [`crate::format::dcf77_phase`]). BPC and RWM are keyed carriers like
+//! the others — RWM's switched right off between its pulses, and sending its
+//! one pulse a second throughout, without the ten-a-second and carrier-only
+//! parts of its hour.
+//!
 //! The short-wave stations are an AM broadcast as a USB receiver hears it:
 //! the carrier at the tone and each part of the modulation as a tone above
 //! it — the 100 Hz subcarrier at −15 dBc while high and −30 dBc while low, the
 //! 5 ms ticks and the minute's 800 ms tone, and the 500 or 600 Hz tone of
 //! alternate minutes kept out of the 40 ms protected zone around each second.
 //! The other station on the same frequency can be added, later and weaker, and
-//! the whole signal can fade.
+//! the whole signal can fade. BPM is the same kind of broadcast with only its
+//! ticks on it, 20 ms early as it sends them, and its half hour as it runs:
+//! UTC seconds, carrier alone, UTC again, then UT1 seconds — late or early by
+//! [`Synth::dut1_s`] — and a minute for its call sign.
 //!
 //! The SNR is quoted in a 3 kHz bandwidth against the full carrier, like the
 //! other decoders' harnesses. The carrier is narrow and the decoder's own
@@ -30,7 +39,7 @@
 
 use sdroxide_types::TimeStation;
 
-use crate::format::{Format, Sym, als162, wwvb_phase};
+use crate::format::{Format, Sym, als162, dcf77_phase, wwvb_phase};
 
 /// What a station's reduced carrier is, against its full carrier.
 fn low_level(station: TimeStation) -> f32 {
@@ -43,8 +52,12 @@ fn low_level(station: TimeStation) -> f32 {
         TimeStation::Wwvb => 0.1413,
         // 10 % — NICT.
         TimeStation::Jjy40 | TimeStation::Jjy60 => 0.1,
+        // Not published; taken to be JJY's.
+        TimeStation::Bpc => 0.1,
+        // Off between pulses.
+        TimeStation::Rwm => 0.0,
         // Unused: the short-wave carrier and ALS162's are never reduced.
-        TimeStation::Wwv | TimeStation::Wwvh | TimeStation::Als162 => 1.0,
+        TimeStation::Wwv | TimeStation::Wwvh | TimeStation::Bpm | TimeStation::Als162 => 1.0,
     }
 }
 
@@ -95,6 +108,8 @@ pub struct Synth {
     /// time code has stopped, which must decode as nothing.
     pub dead_air: bool,
     pub impulses: Option<Impulses>,
+    /// BPM only: UT1 − UTC, seconds, which its UT1 minutes are sent by.
+    pub dut1_s: f64,
 }
 
 impl Synth {
@@ -110,6 +125,7 @@ impl Synth {
             sibling: None,
             dead_air: false,
             impulses: None,
+            dut1_s: -0.3,
         }
     }
 
@@ -124,8 +140,12 @@ impl Synth {
         });
         let mut rng = Rng(self.seed.max(1));
         let mut lf = Lf::new(self.station);
-        let mut hf =
-            [Hf::new(self.station), Hf::new(self.station.sibling().unwrap_or(self.station))];
+        let mut hf = [
+            Hf::new(self.station, self.dut1_s),
+            Hf::new(self.station.sibling().unwrap_or(self.station), self.dut1_s),
+        ];
+        // RWM keys its carrier, as the long-wave stations do.
+        let ticks = self.station.is_hf() && self.station.tick_hz().is_some();
         let n = (secs * self.rate) as usize;
         let mut out = Vec::with_capacity(n);
         // Clicks: a chance per sample, and how many samples one lasts.
@@ -140,7 +160,7 @@ impl Synth {
                 .map_or(1.0, |f| 0.55 + 0.45 * (std::f64::consts::TAU * f * (t - start)).cos());
             let signal = if self.dead_air {
                 wc.cos()
-            } else if self.station.is_hf() {
+            } else if ticks {
                 let mut x = hf[0].sample(t, wc);
                 if let Some(s) = self.sibling {
                     // A fixed phase between the two carriers: they are on the
@@ -170,17 +190,37 @@ impl Synth {
     }
 }
 
-/// The long-wave stations: a keyed carrier, and WWVB's phase.
+/// The keyed carriers: the long-wave stations and RWM, and the phase codes
+/// of WWVB and DCF77.
 struct Lf {
     station: TimeStation,
     fmt: &'static Format,
     minute: Option<(i64, [Sym; 60])>,
     phase_bit: Option<(i64, bool)>,
+    chips: [bool; dcf77_phase::CHIPS],
 }
 
 impl Lf {
     fn new(station: TimeStation) -> Self {
-        Lf { station, fmt: Format::for_station(station), minute: None, phase_bit: None }
+        Lf {
+            station,
+            fmt: Format::for_station(station),
+            minute: None,
+            phase_bit: None,
+            chips: dcf77_phase::chips(),
+        }
+    }
+
+    /// DCF77's phase at `t`: the code, the right way up for the second's 0
+    /// and inverted for its 1. The minute's marker second sends it as a 0.
+    fn dcf77_phase(&mut self, t: f64) -> f64 {
+        let sec = t.floor() as i64;
+        let m = sec.div_euclid(60) * 60;
+        if self.minute.is_none_or(|(at, _)| at != m) {
+            self.minute = Some((m, (self.fmt.encode)(m)));
+        }
+        let sym = self.minute.expect("just set").1[(sec - m) as usize];
+        dcf77_phase::phase(t - sec as f64, sym.a && !sym.marker, &self.chips)
     }
 
     fn level_at(&mut self, t: f64) -> f32 {
@@ -210,6 +250,7 @@ impl Lf {
                 if self.phase_bit.expect("just set").1 { std::f64::consts::PI } else { 0.0 }
             }
             TimeStation::Als162 => self.als162_phase(t),
+            TimeStation::Dcf77 => self.dcf77_phase(t),
             _ => 0.0,
         };
         (f64::from(a), phase)
@@ -324,16 +365,43 @@ struct Hf {
     station: TimeStation,
     fmt: &'static Format,
     minute: Option<(i64, [Sym; 60])>,
+    dut1_s: f64,
 }
 
 impl Hf {
-    fn new(station: TimeStation) -> Self {
-        Hf { station, fmt: Format::for_station(station), minute: None }
+    fn new(station: TimeStation, dut1_s: f64) -> Self {
+        Hf { station, fmt: Format::for_station(station), minute: None, dut1_s }
+    }
+
+    /// BPM at true time `t`: its ticks alone, sent ahead of UTC, in the part
+    /// of its half hour `t` falls in.
+    fn bpm(&mut self, t: f64, wc: f64) -> f64 {
+        let tau = std::f64::consts::TAU;
+        let mut x = wc.cos();
+        let sent = t + self.station.advance_s();
+        let minute_of_hour = (sent.div_euclid(60.0) as i64).rem_euclid(60) as u32;
+        let (clock, second_len) = match minute_of_hour % 30 {
+            0..10 | 15..25 => (sent, 0.010),
+            // UT1 seconds, 100 ms long.
+            25..29 => (sent + self.dut1_s, 0.100),
+            // Carrier alone, or the call sign, which is not modelled.
+            _ => return x,
+        };
+        let sec = clock.floor();
+        let into = clock - sec;
+        let len = if (sec as i64).rem_euclid(60) == 0 { 0.300 } else { second_len };
+        if into < len {
+            x += 0.5 * (wc + tau * 1000.0 * into).cos();
+        }
+        x
     }
 
     /// The audio at true time `t` with the carrier's phase `wc`, carrier
     /// amplitude 1. Each modulating tone of depth μ is a sideband of μ/2.
     fn sample(&mut self, t: f64, wc: f64) -> f64 {
+        if self.station == TimeStation::Bpm {
+            return self.bpm(t, wc);
+        }
         let sec = t.floor() as i64;
         let into = t - sec as f64;
         let m = sec.div_euclid(60) * 60;

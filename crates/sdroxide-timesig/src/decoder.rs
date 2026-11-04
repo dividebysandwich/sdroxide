@@ -69,6 +69,16 @@
 //! it usually is when the pattern could not be read. The sum against the
 //! noise in the other quadrature is a soft bit.
 //!
+//! DCF77's seconds are also read for its phase code (see
+//! [`crate::format::dcf77_phase`]): the part of the carrier across its phase,
+//! over the second after the amplitude drop, correlated with a template of
+//! the code learnt from the seconds whose amplitude bit read clearly — turned
+//! the right way up by that bit, and averaged. The correlation's sign is a
+//! second reading of the bit, independent of the first. It is handed to the
+//! integrator alongside the amplitude's, and stands in for a second the
+//! amplitude could not read at all, where it is clear enough — but never for
+//! the minute's marker, which only the amplitude code carries.
+//!
 //! # Reading a minute
 //!
 //! When a marker arrives the last minute's worth of symbols is handed to the
@@ -84,6 +94,9 @@
 //! two both name a minute they have to agree. The instant a frame names is
 //! tied to the input sample its second began on — and that sample, not the
 //! computer's clock, is what leaves here.
+//!
+//! BPM and RWM send no time code: for them a marker is only the minute's
+//! mark, reported as [`Event::Minute`] for whoever has a clock to name it.
 
 use std::collections::VecDeque;
 
@@ -109,14 +122,34 @@ const EDGE_WIDE: usize = 80;
 /// wide one's answer it looks.
 const EDGE_NARROW: usize = 10;
 const EDGE_REFINE: usize = 20;
-/// The quiet either side of a tick's peak the peak is measured against, bins
-/// from the peak: past the tick's own 11 ms response and inside the 40 ms the
-/// stations keep clear around it.
+/// The quiet either side of a 5 ms tick's peak the peak is measured against,
+/// bins from the peak: past the tick's own 11 ms response and inside the
+/// 40 ms the stations keep clear around it. A longer tick moves both out by
+/// its extra length.
 const TICK_QUIET_FROM: usize = 8;
 const TICK_QUIET_TO: usize = 20;
-/// Where in the tick its matched filter peaks, seconds after the second: the
-/// middle of the 5 ms burst.
-const TICK_CENTRE_S: f64 = 0.0025;
+/// A station's tick, as its matched filter in the fold sees it.
+#[derive(Debug, Clone, Copy)]
+struct TickShape {
+    /// Where the filter peaks, seconds after the second: the middle of the
+    /// burst.
+    centre_s: f64,
+    /// The quiet either side the peak is measured against, bins from it:
+    /// past the filter's own response, inside the clear zone around it.
+    quiet_from: usize,
+    quiet_to: usize,
+}
+
+impl TickShape {
+    fn of(station: TimeStation) -> TickShape {
+        let len = crate::hf::tick_smooth(station);
+        TickShape {
+            centre_s: len as f64 / 2000.0,
+            quiet_from: TICK_QUIET_FROM + len - 5,
+            quiet_to: TICK_QUIET_TO + len - 5,
+        }
+    }
+}
 /// Where around this station's tick the other station's is not looked for,
 /// bins from the tick's middle. A 5 ms average nulls a steady tone 200 Hz
 /// away but not a 5 ms burst it only half overlaps: this station's own tick
@@ -228,6 +261,27 @@ const PHASE_WARMUP: u32 = 5;
 /// handed over.
 const PILOT_BETA: f32 = 0.05;
 const PILOT_WARMUP: u32 = 10;
+/// DCF77's phase code: the part of the second it is read over, clear of the
+/// amplitude drop before it and the next second's after.
+const PRN_FROM_S: f64 = 0.21;
+const PRN_TO_S: f64 = 0.99;
+/// Seconds learnt before the template is read with, and the slowest it
+/// follows after that, per second: a plain average of the first 128, then a
+/// moving one over about as many. Long, because the template's own noise is
+/// what limits it on a weak signal, and it can be: the seconds it is learnt
+/// over are the decoder's own, which follow the sample clock's drift.
+const PRN_WARMUP: u32 = 20;
+const PRN_ALPHA_MIN: f32 = 1.0 / 128.0;
+/// How clearly a second's amplitude bit has to have been read for it to say
+/// which way up the code was — the decoder's margin, where a clean second is
+/// about 1.
+const PRN_TEACH_MARGIN: f32 = 0.5;
+/// How many standard deviations of noise a second's correlation has to stand
+/// at for its bit to be shown, and to stand in for an amplitude bit that
+/// could not be read. Noise alone reaches 3.5 once in four thousand, and four
+/// once in thirty thousand.
+const PRN_SHOW_Z: f32 = 3.5;
+const PRN_FILL_Z: f32 = 4.0;
 
 /// One second, read.
 #[derive(Debug, Clone, Copy)]
@@ -261,6 +315,9 @@ pub enum Event {
     Frame { pos: f64, frame: TimeFrame, code: TimeCode },
     /// A minute was read in full and failed its checks.
     BadFrame { pos: f64, error: FrameError },
+    /// A seconds-only station's minute mark: input sample `pos` began a
+    /// minute, which one the station does not say.
+    Minute { pos: f64 },
 }
 
 /// A picture of the receiver for the panel.
@@ -290,9 +347,8 @@ pub struct Snapshot {
 enum Timing {
     /// A step in the carrier: up (`rising`) or down.
     Edge { rising: bool },
-    /// A tick: a short burst whose middle is [`TICK_CENTRE_S`] after the
-    /// second.
-    Tick,
+    /// A tick: a short burst, shaped as [`TickShape`] says.
+    Tick(TickShape),
     /// ALS162's element: a swing of phase through zero on the second.
     Element,
 }
@@ -422,16 +478,16 @@ impl Fold {
     /// second starts, as a fraction of a second, how many standard deviations
     /// of its noise the peak stands, and its height. Peaks within
     /// [`SIBLING_MASK`] of the second starting at `not_near` are passed over.
-    fn tick(&self, not_near: Option<f64>) -> (f64, f32, f64) {
+    fn tick(&self, shape: TickShape, not_near: Option<f64>) -> (f64, f32, f64) {
         let at = |i: isize| f64::from(self.v[i.rem_euclid(NB as isize) as usize]);
         let quiet = |b: isize| {
-            let (from, to) = (TICK_QUIET_FROM as isize, TICK_QUIET_TO as isize);
+            let (from, to) = (shape.quiet_from as isize, shape.quiet_to as isize);
             let n = 2 * (to - from + 1);
             ((from..=to).map(|d| at(b - d) + at(b + d)).sum::<f64>()) / n as f64
         };
         let masked = |b: isize| {
             not_near.is_some_and(|p| {
-                let centre = ((p + TICK_CENTRE_S) * NB as f64).round() as isize;
+                let centre = ((p + shape.centre_s) * NB as f64).round() as isize;
                 // From the tick's middle, wrapped to ±half a second.
                 let d = (b - centre + NB as isize / 2).rem_euclid(NB as isize) - NB as isize / 2;
                 SIBLING_MASK.iter().any(|&(lo, hi)| (lo..=hi).contains(&d))
@@ -441,7 +497,7 @@ impl Fold {
             .filter(|&b| !masked(b))
             .map(|b| (b, at(b) - quiet(b)))
             .fold((0, f64::MIN), |best, x| if x.1 > best.1 { x } else { best });
-        let n_quiet = 2.0 * (TICK_QUIET_TO - TICK_QUIET_FROM + 1) as f64;
+        let n_quiet = 2.0 * (shape.quiet_to - shape.quiet_from + 1) as f64;
         let sigma_peak = self.sigma() * (1.0 + CORR_BINS / n_quiet).sqrt();
         let z = (peak / sigma_peak.max(1e-12)) as f32;
         // A tick's matched filter rises and falls in straight lines with a
@@ -453,7 +509,7 @@ impl Fold {
         let pos = |b: isize| b as f64 + f64::from(self.off[b.rem_euclid(NB as isize) as usize]);
         let cross = |dir: isize| {
             let mut b = peak_at;
-            for _ in 0..TICK_QUIET_FROM {
+            for _ in 0..shape.quiet_from {
                 let next = b + dir;
                 if at(next) < half {
                     let (v0, v1) = (at(b), at(next));
@@ -464,7 +520,7 @@ impl Fold {
             pos(b)
         };
         let middle = (cross(-1) + cross(1)) / 2.0;
-        ((middle / NB as f64 - TICK_CENTRE_S).rem_euclid(1.0), z, peak)
+        ((middle / NB as f64 - shape.centre_s).rem_euclid(1.0), z, peak)
     }
 }
 
@@ -661,6 +717,90 @@ pub struct Decoder {
     /// seconds it has been measured over.
     pilot_var: f32,
     pilot_seconds: u32,
+    /// DCF77's phase code, learnt.
+    prn: Option<Prn>,
+}
+
+/// DCF77's phase code as this receiver sees it: a template learnt from the
+/// air, one value a millisecond over [`PRN_FROM_S`]..[`PRN_TO_S`] of the
+/// second, sent the right way up for a 0.
+struct Prn {
+    template: Vec<f32>,
+    /// Seconds learnt from.
+    taught: u32,
+    /// How much of one second's noise the template still carries, per bin:
+    /// the sum of the squared weights it was averaged with.
+    weight2: f32,
+    /// The noise in one millisecond's reading, as a variance: what is left of
+    /// a taught second once the template is taken off.
+    noise: f32,
+}
+
+impl Prn {
+    fn bins() -> usize {
+        ((PRN_TO_S - PRN_FROM_S) * NB as f64).round() as usize
+    }
+
+    fn new() -> Self {
+        Prn { template: vec![0.0; Self::bins()], taught: 0, weight2: 1.0, noise: 0.0 }
+    }
+
+    /// How many standard deviations a second's correlation stands at, on
+    /// average, when the code is there.
+    ///
+    /// The correlation's mean is the template's agreement with the code
+    /// itself, which is its energy less the part that is its own noise — on a
+    /// weak signal, most of it. Taken at face value the energy would make
+    /// every reading look sure, and the integrator would believe a template
+    /// of noise.
+    fn strength(&self) -> f32 {
+        let e: f32 = self.template.iter().map(|t| t * t).sum();
+        let own = self.template.len() as f32 * self.noise * self.weight2;
+        (e - own).max(0.0) / (self.noise * e).sqrt().max(f32::MIN_POSITIVE)
+    }
+
+    /// A second's correlation with the template, in standard deviations of
+    /// noise: positive for a 0. `None` until the template is learnt.
+    fn read(&self, x: &[Option<f32>]) -> Option<f32> {
+        if self.taught < PRN_WARMUP || self.noise <= 0.0 {
+            return None;
+        }
+        let (mut c, mut e) = (0.0f32, 0.0f32);
+        for (x, t) in x.iter().zip(&self.template) {
+            if let Some(x) = x {
+                c += x * t;
+                e += t * t;
+            }
+        }
+        (e > 0.0).then(|| c / (self.noise * e).sqrt())
+    }
+
+    /// Learns from a second whose bit is known.
+    fn teach(&mut self, x: &[Option<f32>], bit: bool) {
+        let s = if bit { -1.0 } else { 1.0 };
+        self.taught += 1;
+        let a = (1.0 / self.taught as f32).max(PRN_ALPHA_MIN);
+        let before = self.weight2;
+        self.weight2 = (1.0 - a) * (1.0 - a) * self.weight2 + a * a;
+        let (mut r, mut n) = (0.0f32, 0u32);
+        for (x, t) in x.iter().zip(&mut self.template) {
+            if let Some(x) = x {
+                let y = s * x;
+                if self.taught > 1 {
+                    r += (y - *t) * (y - *t);
+                    n += 1;
+                }
+                *t += a * (y - *t);
+            }
+        }
+        if n > 0 {
+            // The residual is against the template as it was, whose own noise
+            // adds to this second's.
+            let r = r / n as f32 / (1.0 + before);
+            self.noise =
+                if self.taught == 2 { r } else { self.noise + PILOT_BETA * (r - self.noise) };
+        }
+    }
 }
 
 impl Decoder {
@@ -669,7 +809,11 @@ impl Decoder {
         let tone = f64::from(TIMESIG_TONE_HZ);
         let full = full_share(fmt);
         let (fe, timing) = match station {
-            _ if station.is_hf() => (Fe::Hf(HfFrontEnd::new(station, rate, tone)), Timing::Tick),
+            // RWM is on short wave but keys its carrier: read below like a
+            // long-wave station.
+            _ if station.is_hf() && station.tick_hz().is_some() => {
+                (Fe::Hf(HfFrontEnd::new(station, rate, tone)), Timing::Tick(TickShape::of(station)))
+            }
             TimeStation::Als162 => (
                 Fe::Lf(FrontEnd::new(rate, tone, Keying::Phase).with_full_share(full)),
                 Timing::Element,
@@ -677,6 +821,23 @@ impl Decoder {
             // WWVB keys its carrier's phase as well: see the front end.
             TimeStation::Wwvb => (
                 Fe::Lf(FrontEnd::new(rate, tone, Keying::AmplitudeAndSign).with_full_share(full)),
+                Timing::Edge { rising: fmt.rising_edge },
+            ),
+            // DCF77 keys its phase by a few degrees as well, read across the
+            // carrier.
+            TimeStation::Dcf77 => (
+                Fe::Lf(
+                    FrontEnd::new(rate, tone, Keying::Amplitude)
+                        .with_full_share(full)
+                        .with_quadrature(),
+                ),
+                Timing::Edge { rising: fmt.rising_edge },
+            ),
+            // RWM: on for a tenth of each second, off between.
+            TimeStation::Rwm => (
+                Fe::Lf(
+                    FrontEnd::new(rate, tone, Keying::OnOff { duty: 0.1 }).with_full_share(full),
+                ),
                 Timing::Edge { rising: fmt.rising_edge },
             ),
             _ => (
@@ -738,7 +899,15 @@ impl Decoder {
             pilot,
             pilot_var: 0.0,
             pilot_seconds: 0,
+            prn: (station == TimeStation::Dcf77).then(Prn::new),
         }
+    }
+
+    /// Stops reading DCF77's phase code: the amplitude code alone, as before
+    /// it was read — for comparing the two.
+    pub fn without_phase_code(mut self) -> Self {
+        self.prn = None;
+        self
     }
 
     pub fn station(&self) -> TimeStation {
@@ -823,6 +992,9 @@ impl Decoder {
             it.reset();
         }
         self.pilot_seconds = 0;
+        if let Some(p) = &mut self.prn {
+            *p = Prn::new();
+        }
     }
 
     /// The sample clock's drift against the station, seconds per second, from
@@ -847,7 +1019,7 @@ impl Decoder {
                 let (e, z) = self.timing_fold.edge(rising);
                 (e, z, 0.0)
             }
-            Timing::Tick => self.timing_fold.tick(None),
+            Timing::Tick(shape) => self.timing_fold.tick(shape, None),
             Timing::Element => {
                 let sigma = self.timing_fold.sigma();
                 let (e, z, h) = self.matched.as_ref().expect("made for Element").find(sigma);
@@ -872,7 +1044,8 @@ impl Decoder {
         let drift = self.drift();
         let edge = (raw + drift * FOLD_AGE_S).rem_euclid(1.0);
         let own = credible.then_some(raw);
-        let sibling = self.sibling_fold.as_ref().map(|f| f.tick(own));
+        let shape = TickShape::of(self.fmt.station);
+        let sibling = self.sibling_fold.as_ref().map(|f| f.tick(shape, own));
         self.sibling_z = sibling.map(|(_, z, _)| z);
         self.sibling_heard = sibling.is_some_and(|(_, sz, sh)| {
             sz >= MIN_EDGE_Z && (!credible || sh >= SIBLING_MIN_RATIO * height)
@@ -940,7 +1113,14 @@ impl Decoder {
         v.sort_by(f32::total_cmp);
         let n = NB / 20;
         self.lo = v[..n].iter().sum::<f32>() / n as f32;
-        self.hi = v[NB - n..].iter().sum::<f32>() / n as f32;
+        self.hi = if matches!(self.timing, Timing::Tick(_)) && self.fmt.station.seconds_only() {
+            // BPM's level is its tick tone, on for a hundredth of each second:
+            // a twentieth of the fold's bins is mostly silence. The tick's
+            // peak is the tone at full level, since every second has one.
+            v[NB - 1]
+        } else {
+            v[NB - n..].iter().sum::<f32>() / n as f32
+        };
     }
 
     /// Each slot's sum and count over its middle, for the second starting at
@@ -1140,22 +1320,85 @@ impl Decoder {
         } else {
             None
         };
+        // DCF77's phase code: a second reading of the bit, from the other
+        // quadrature and the rest of the second.
+        let prn = self.read_prn(start, read.map(|(t, m)| (t.sym, m)));
+        if let (Some(z), Some(sf), Some(p)) = (prn, soft.as_mut(), self.prn.as_ref()) {
+            // z is N(±m, 1), + for a 0: its log-likelihood ratio for a 1.
+            sf.bit += -2.0 * p.strength() * z;
+        }
+        let mut read = read.map(|(t, m)| (t.sym, m));
+        if read.is_none()
+            && let Some(z) = prn.filter(|z| z.abs() >= PRN_FILL_Z)
+            && self.second_of_minute(start).is_some_and(|s| s != 59)
+        {
+            // The amplitude could not say; the phase can, clearly, and this is
+            // not the marker's second, which the phase code does not carry.
+            read = Some((Sym::bit(z < 0.0), PRN_TEACH_MARGIN));
+        }
         let named = self.integ.as_mut().and_then(|it| it.push(start * self.rate, soft));
         self.unread = if read.is_some() { 0 } else { self.unread + 1 };
         if self.unread >= RESEED_AFTER {
             self.unread = 0;
             self.seed_levels();
         }
-        let phase =
-            if self.phase_code { self.read_phase(start, read.map(|(t, _)| t)) } else { None };
+        let (phase, phase_bit) = if self.phase_code {
+            let tpl = read.and_then(|(s, _)| self.fmt.template(s));
+            let phase = self.read_phase(start, tpl);
+            (phase, phase.zip(self.polarity).and_then(|(s, p)| wwvb_phase::bit(s, p)))
+        } else {
+            (prn, prn.filter(|z| z.abs() >= PRN_SHOW_Z).map(|z| z < 0.0))
+        };
         let second = Second {
             pos: start * self.rate,
-            sym: read.map(|(t, _)| t.sym),
+            sym: read.map(|(s, _)| s),
             margin: read.map_or(0.0, |(_, m)| m),
             phase,
-            phase_bit: phase.zip(self.polarity).and_then(|(s, p)| wwvb_phase::bit(s, p)),
+            phase_bit,
         };
         self.push_second(second, named, events);
+    }
+
+    /// Which second of its minute the second starting at `start` is, from the
+    /// last frame — if there was one recently enough to count from.
+    fn second_of_minute(&self, start: f64) -> Option<i64> {
+        let (at, _) = self.last_frame?;
+        let since = (start * self.rate - at) / self.rate;
+        (0.0..=FILL_CONTEXT_S).contains(&since).then(|| (since.round() as i64).rem_euclid(60))
+    }
+
+    /// DCF77: the second starting at `start` read for its phase code, as a
+    /// correlation in standard deviations of noise, positive for a 0 — and,
+    /// where the amplitude read its bit clearly, taught to the template.
+    fn read_prn(&mut self, start: f64, read: Option<(Sym, f32)>) -> Option<f32> {
+        let prn = self.prn.as_mut()?;
+        let n = prn.template.len();
+        let (mut sum, mut cnt) = (vec![0.0f32; n], vec![0u32; n]);
+        for e in &self.env {
+            let r = e.pos / self.rate - start - PRN_FROM_S;
+            if r < 0.0 {
+                continue;
+            }
+            let k = (r * NB as f64) as usize;
+            if k < n {
+                sum[k] += e.quad;
+                cnt[k] += 1;
+            }
+        }
+        let x: Vec<Option<f32>> =
+            sum.iter().zip(&cnt).map(|(&s, &c)| (c > 0).then(|| s / c as f32)).collect();
+        let z = prn.read(&x);
+        if let Some((sym, margin)) = read
+            && !sym.marker
+            && margin >= PRN_TEACH_MARGIN
+        {
+            prn.teach(&x, sym.a);
+        }
+        if let Some(z) = z {
+            self.phase_seconds += 1;
+            self.phase_level += 0.1 * (z.abs() - self.phase_level);
+        }
+        z
     }
 
     /// A second read: reported, kept, and — if it ends a minute — decoded.
@@ -1166,6 +1409,13 @@ impl Decoder {
             self.syms.pop_front();
         }
         self.syms.push_back(second);
+        if self.fmt.station.seconds_only() {
+            // No code to read: the marker is the minute, unnamed.
+            if second.sym.is_some_and(|s| s.marker) {
+                events.push(Event::Minute { pos: second.pos });
+            }
+            return;
+        }
         let amplitude =
             if second.sym.is_some_and(|s| s.marker) { self.amplitude_frame() } else { None };
         let phase = if self.phase_code { self.phase_frame() } else { None };

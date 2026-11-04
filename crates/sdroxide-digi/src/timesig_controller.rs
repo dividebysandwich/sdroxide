@@ -28,6 +28,22 @@
 //! is why short wave is good to a millisecond or so and long wave to a few
 //! hundredths.
 //!
+//! # Seconds only
+//!
+//! BPM and RWM mark the minute without saying which it is. Their minute
+//! marks are named here, from this computer's clock: the nearest minute to
+//! when the mark arrived. That is right while the clock is within half a
+//! minute, and nothing about the signal can say when it is not — so a
+//! measurement from such a station is shown whatever it is, but handed on to
+//! set the clock or to the NTP server only within
+//! [`sdroxide_types::SECONDS_ONLY_MAX_S`], which leaves twenty seconds of
+//! margin before the naming could be wrong.
+//!
+//! BPM also sends UT1's seconds, off UTC's by up to 0.9 s, in part of every
+//! half hour; nothing measured then is used, nor for a while either side,
+//! since the decoder's memory of the seconds lasts a quarter of a minute and
+//! the clock that says when those minutes are may be ten seconds out.
+//!
 //! # Receive only
 //!
 //! Every transmit hook is a no-op. These are national time services.
@@ -61,6 +77,11 @@ const F2_HEIGHT_KM: f64 = 300.0;
 /// layer a hop cannot be longer than about 3800 km even at grazing angle,
 /// and the low angles nearest that are the first to be lost.
 const MAX_HOP_KM: f64 = 3500.0;
+/// How long before and after a minute of BPM's UT1 seconds nothing is
+/// measured, seconds: the decoder's memory of where the seconds are, and the
+/// clock's own error, which is what says when those minutes are.
+const UT1_GUARD_AFTER_S: f64 = 30.0;
+const UT1_GUARD_BEFORE_S: f64 = 15.0;
 
 /// The length of a short-wave path over `ground_km` of the Earth's surface,
 /// and its hops: up to the F2 layer and down again, each hop a straight line
@@ -157,9 +178,30 @@ impl TimeSigController {
         self.path().map_or(0.0, |(km, _)| km / C_KM_PER_NS)
     }
 
-    /// The signal's flight time plus the receiver's latency, ns.
+    /// The signal's flight time plus the receiver's latency, less however
+    /// early the station sends its seconds, ns.
     fn delay_ns(&self) -> i64 {
-        (self.flight_ns() + self.cfg.timesig.latency_ms * 1e6) as i64
+        let ts = &self.cfg.timesig;
+        (self.flight_ns() + ts.latency_ms * 1e6 - ts.station.advance_s() * 1e9) as i64
+    }
+
+    /// Whether what arrived at clock reading `wall` (ns) is UTC's seconds:
+    /// always, but for BPM's UT1 minutes and the guard around them.
+    fn utc_seconds_at(&self, wall: i128) -> bool {
+        let station = self.cfg.timesig.station;
+        let t = wall as f64 / 1e9;
+        let minute = |t: f64| ((t / 60.0).floor() as i64).rem_euclid(60) as u32;
+        [t, t - UT1_GUARD_AFTER_S, t + UT1_GUARD_BEFORE_S]
+            .into_iter()
+            .all(|t| station.utc_seconds_in(minute(t)))
+    }
+
+    /// Whether the measurement in hand may be acted on: always, but for a
+    /// seconds-only station whose minute was named from a clock too far out
+    /// to be sure of it.
+    fn actionable(&self, offset_ns: i64) -> bool {
+        !self.cfg.timesig.station.seconds_only()
+            || (offset_ns as f64 / 1e9).abs() <= sdroxide_types::SECONDS_ONLY_MAX_S
     }
 
     /// The median offset over the window and its scatter, once there are
@@ -212,7 +254,10 @@ impl TimeSigController {
             Event::Second(sec) => {
                 let code = sec.sym.map_or(TimeSigStatus::UNKNOWN, |s| s.code());
                 let phase = sec.phase_bit.map_or(TimeSigStatus::UNKNOWN, u8::from);
-                let phase_code = self.cfg.timesig.station == sdroxide_types::TimeStation::Wwvb;
+                let phase_code = matches!(
+                    self.cfg.timesig.station,
+                    sdroxide_types::TimeStation::Wwvb | sdroxide_types::TimeStation::Dcf77
+                );
                 match self.tracker.utc_at(sec.pos) {
                     Some(utc) => {
                         let som = utc.rem_euclid(60) as u8;
@@ -225,7 +270,9 @@ impl TimeSigController {
                             }
                         }
                         self.second_of_minute = Some(som);
-                        if let Some(wall) = self.clock.wall_ns_at(sec.pos) {
+                        if let Some(wall) =
+                            self.clock.wall_ns_at(sec.pos).filter(|&w| self.utc_seconds_at(w))
+                        {
                             let raw = i128::from(utc) * 1_000_000_000 - wall;
                             self.meas.push_back((wall, raw as i64));
                             while self
@@ -260,6 +307,27 @@ impl TimeSigController {
                 self.last_code = code;
             }
             Event::BadFrame { .. } => self.frames_bad += 1,
+            Event::Minute { pos } => {
+                // Named from the clock: the minute nearest the moment the mark
+                // should have been sent, by this clock.
+                let Some(wall) = self.clock.wall_ns_at(pos) else { return };
+                if !self.utc_seconds_at(wall) {
+                    return;
+                }
+                let sent = (wall - i128::from(self.delay_ns())) as f64 / 1e9;
+                let utc = (sent / 60.0).round() as i64 * 60;
+                self.tracker.frame(pos, utc);
+                self.frames_good += 1;
+                self.last_frame = Some(TimeFrame {
+                    utc,
+                    zone_min: 0,
+                    dst: false,
+                    dst_change_soon: false,
+                    leap_second_soon: false,
+                    dut1_ms: None,
+                });
+                self.last_code = TimeCode::Amplitude;
+            }
         }
         self.status_dirty = true;
     }
@@ -370,6 +438,7 @@ impl DigiEngine for TimeSigController {
         if let (Some((offset_ns, jitter_ns)), Some(w)) = (self.estimate(), newest)
             && self.tracker.anchor().is_some()
             && self.reported != Some(w)
+            && self.actionable(offset_ns)
         {
             self.reported = Some(w);
             out.push(DigiAction::TimeFix {
@@ -463,8 +532,19 @@ mod tests {
         clock_error_s: f64,
         snr_db: f64,
     ) {
-        let rate = 12_000.0;
         let start = ymd_hms_to_unix(2026, 10, 18, 12, 36, 23) as f64 + 0.4;
+        feed_from(c, station, start, secs, clock_error_s, snr_db);
+    }
+
+    fn feed_from(
+        c: &mut TimeSigController,
+        station: TimeStation,
+        start: f64,
+        secs: f64,
+        clock_error_s: f64,
+        snr_db: f64,
+    ) {
+        let rate = 12_000.0;
         let mut s = Synth::new(station, rate);
         s.snr_db = Some(snr_db);
         let audio = s.render(start, secs);
@@ -572,6 +652,97 @@ mod tests {
             assert_eq!(st.sibling_heard, None);
             assert!(st.phase_symbols.is_empty());
         }
+    }
+
+    #[test]
+    fn the_new_stations_measure_the_clock() {
+        // BPC by its code; BPM and RWM by their seconds, the minute named from
+        // the clock — which is 2.5 s slow, well inside what that allows.
+        // BPM's seconds leave 20 ms early, and are measured as UTC's.
+        for (station, snr) in
+            [(TimeStation::Bpc, 0.0), (TimeStation::Bpm, 25.0), (TimeStation::Rwm, 25.0)]
+        {
+            let cfg = DigiConfig {
+                timesig: sdroxide_types::TimeSigConfig { station, ..Default::default() },
+                ..DigiConfig::default()
+            };
+            let mut c = TimeSigController::new(cfg, 12_000.0);
+            feed_at(&mut c, station, 200.0, 2.5, snr);
+            let st = c.timesig_status();
+            assert!(st.confirmed >= 2, "{station:?}: {} frames confirmed", st.confirmed);
+            let off = st.offset_ms.expect("an offset");
+            assert!((off - 2500.0).abs() < 1.0, "{station:?}: measured {off} ms for 2500");
+            let actions = c.poll(SystemTime::now(), 0.0);
+            assert!(
+                actions.iter().any(|a| matches!(a, DigiAction::TimeFix { .. })),
+                "{station:?}: no fix reported"
+            );
+        }
+    }
+
+    #[test]
+    fn a_seconds_only_station_acts_only_on_a_clock_nearly_right() {
+        for (error_s, reads_s) in [(15.0, 15.0), (45.0, -15.0)] {
+            let cfg = DigiConfig {
+                timesig: sdroxide_types::TimeSigConfig {
+                    station: TimeStation::Rwm,
+                    ..Default::default()
+                },
+                ..DigiConfig::default()
+            };
+            let mut c = TimeSigController::new(cfg, 12_000.0);
+            feed_at(&mut c, TimeStation::Rwm, 200.0, error_s, 25.0);
+            // 45 s slow reads as 15 s fast: the minute is named wrong, and
+            // nothing in the signal can say so — which is why neither is
+            // acted on.
+            let off = c.timesig_status().offset_ms.expect("measured, and shown");
+            assert!((off - reads_s * 1000.0).abs() < 1.0, "{error_s} s: read {off} ms");
+            let actions = c.poll(SystemTime::now(), 0.0);
+            assert!(
+                !actions.iter().any(|a| matches!(a, DigiAction::TimeFix { .. })),
+                "{error_s} s: a fix from a clock too far out to name the minute"
+            );
+        }
+    }
+
+    #[test]
+    fn bpm_measures_nothing_in_its_ut1_minutes() {
+        // 12:22:30 to 12:33:30: UTC, then UT1 from 12:25 to 12:29 — 0.3 s
+        // off in the synthetic signal — the call sign at 12:29, UTC again.
+        let cfg = DigiConfig {
+            timesig: sdroxide_types::TimeSigConfig {
+                station: TimeStation::Bpm,
+                ..Default::default()
+            },
+            ..DigiConfig::default()
+        };
+        let mut c = TimeSigController::new(cfg, 12_000.0);
+        let start = ymd_hms_to_unix(2026, 10, 18, 12, 22, 30) as f64;
+        let mut walls = Vec::new();
+        for k in 0..33 {
+            feed_from(&mut c, TimeStation::Bpm, start + 20.0 * k as f64, 20.0, 2.5, 25.0);
+            let delay = c.delay_ns();
+            for &(w, raw) in &c.meas {
+                let off_ms = (raw + delay) as f64 / 1e6;
+                assert!((off_ms - 2500.0).abs() < 5.0, "measured {off_ms} ms at {w}");
+                walls.push(w);
+            }
+        }
+        let at = |h, m, s| i128::from(ymd_hms_to_unix(2026, 10, 18, h, m, s)) * 1_000_000_000;
+        // Measured before the UT1 minutes and after them, never in them.
+        assert!(walls.iter().any(|&w| w < at(12, 24, 40)));
+        assert!(walls.iter().any(|&w| w > at(12, 31, 0)));
+        assert!(!walls.iter().any(|&w| (at(12, 24, 50)..at(12, 30, 25)).contains(&w)));
+    }
+
+    #[test]
+    fn dcf77_shows_its_phase_code() {
+        let mut c = TimeSigController::new(DigiConfig::default(), 12_000.0);
+        feed(&mut c, TimeStation::Dcf77, 200.0, 2.5);
+        let st = c.timesig_status();
+        assert!(st.phase_symbols.iter().any(|&b| b <= 1), "no phase bits shown");
+        assert_eq!(st.phase_symbols.len(), st.symbols.len());
+        assert!(st.phase_snr_db.is_some(), "no phase SNR");
     }
 
     #[test]

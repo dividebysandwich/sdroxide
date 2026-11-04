@@ -20,10 +20,21 @@
 //! They share their frequencies, so either may be heard alone or both at once,
 //! told apart by the pitch of their ticks.
 //!
+//! BPC, China's long-wave service, keys its carrier like the others but says
+//! two bits a second, and a whole time every twenty seconds.
+//!
+//! Two stations here send no time of day at all, only the seconds and the
+//! minutes: BPM, China's short-wave service, with ticks like WWV's, and RWM,
+//! Russia's, which keys its carrier on and off. They are *seconds only*: the
+//! receiver takes the minute's name from the computer's own clock, and so can
+//! correct a clock already within a few seconds of right, never one further
+//! out — see [`TimeStation::seconds_only`].
+//!
 //! Each station publishes its own format, cited in `sdroxide-timesig` where it
-//! is decoded. CHU, Canada's short-wave service, closed on 22 June 2026 and is
-//! not here: a decoder for a station that no longer transmits would only ever
-//! be fed by whoever imitates it.
+//! is decoded — except BPC's, which its operator does not publish; see there.
+//! CHU, Canada's short-wave service, closed on 22 June 2026 and is not here: a
+//! decoder for a station that no longer transmits would only ever be fed by
+//! whoever imitates it.
 
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +65,16 @@ pub const TIMESIG_HF_TOP_HZ: f32 = 2_800.0;
 /// Where long wave ends for the mode's passband: a dial above this is tuned to
 /// a short-wave station.
 pub const TIMESIG_HF_FROM_HZ: f64 = 1_000_000.0;
+
+/// The furthest a seconds-only station ([`TimeStation::seconds_only`]) may
+/// find the computer's clock out and still be believed, seconds.
+///
+/// Such a station marks the minute but does not say which minute it is, so
+/// its name comes from the computer's clock, rounded to the nearest. A clock
+/// 45 s fast would be read as 15 s slow, and "corrected" to a minute out. Ten
+/// seconds leaves twenty either side before the rounding could go wrong, and
+/// past it the receiver says what it measured and acts on none of it.
+pub const SECONDS_ONLY_MAX_S: f64 = 10.0;
 
 /// A time-signal station the receiver can decode.
 ///
@@ -88,19 +109,35 @@ pub enum TimeStation {
     /// transmitter (TDF). A DCF77-like code sent by swinging the carrier's
     /// phase, so its amplitude never moves.
     Als162,
+    /// BPC, Shangqiu, Henan, China — NTSC's 68.5 kHz service. Each second
+    /// begins with the carrier reduced for 100 to 400 ms, two bits a second,
+    /// and the whole time is sent every twenty seconds, in Beijing time.
+    Bpc,
+    /// BPM, Pucheng, Shaanxi, China — NTSC's short-wave service, on 2.5, 5,
+    /// 10 and 15 MHz. Seconds are 10 ms ticks of 1000 Hz and the minute a
+    /// 300 ms one; no time of day is sent. Part of each half hour carries UT1
+    /// rather than UTC, which is not read.
+    Bpm,
+    /// RWM, Moscow — VNIIFTRI's short-wave service, on 4996, 9996 and
+    /// 14996 kHz. The carrier itself is keyed: on for each second's pulse and
+    /// for 500 ms at the minute. No time of day is sent.
+    Rwm,
 }
 
 impl TimeStation {
     /// Every station, in the order the panel offers them.
-    pub const ALL: [TimeStation; 8] = [
+    pub const ALL: [TimeStation; 11] = [
         TimeStation::Dcf77,
         TimeStation::Als162,
         TimeStation::Msf,
         TimeStation::Wwvb,
         TimeStation::Jjy40,
         TimeStation::Jjy60,
+        TimeStation::Bpc,
         TimeStation::Wwv,
         TimeStation::Wwvh,
+        TimeStation::Bpm,
+        TimeStation::Rwm,
     ];
 
     /// The call sign, as the station's operator writes it.
@@ -114,6 +151,9 @@ impl TimeStation {
             TimeStation::Wwv => "WWV",
             TimeStation::Wwvh => "WWVH",
             TimeStation::Als162 => "ALS162",
+            TimeStation::Bpc => "BPC",
+            TimeStation::Bpm => "BPM",
+            TimeStation::Rwm => "RWM",
         }
     }
 
@@ -126,18 +166,23 @@ impl TimeStation {
             TimeStation::Wwv => {
                 &[2_500_000.0, 5_000_000.0, 10_000_000.0, 15_000_000.0, 20_000_000.0, 25_000_000.0]
             }
-            TimeStation::Wwvh => &[2_500_000.0, 5_000_000.0, 10_000_000.0, 15_000_000.0],
+            TimeStation::Wwvh | TimeStation::Bpm => {
+                &[2_500_000.0, 5_000_000.0, 10_000_000.0, 15_000_000.0]
+            }
             TimeStation::Als162 => &[162_000.0],
+            TimeStation::Bpc => &[68_500.0],
+            TimeStation::Rwm => &[4_996_000.0, 9_996_000.0, 14_996_000.0],
         }
     }
 
     /// The carrier frequency a press of the station's chip tunes to, Hz: the
-    /// only one on long wave, and 10 MHz on short wave — the one both NIST
-    /// stations use that is open by day and by night across most of their
-    /// coverage.
+    /// only one on long wave, and 10 MHz or so on short wave — the one every
+    /// short-wave station here has that is open by day and by night across
+    /// most of its coverage.
     pub fn carrier_hz(self) -> f64 {
         match self {
-            TimeStation::Wwv | TimeStation::Wwvh => 10_000_000.0,
+            TimeStation::Wwv | TimeStation::Wwvh | TimeStation::Bpm => 10_000_000.0,
+            TimeStation::Rwm => 9_996_000.0,
             s => s.carriers_hz()[0],
         }
     }
@@ -155,17 +200,51 @@ impl TimeStation {
 
     /// A short-wave station, heard by sky wave: an AM broadcast whose seconds
     /// are ticks, rather than a long-wave carrier whose seconds are its keying.
+    ///
+    /// RWM is the short-wave station whose seconds *are* its keying, like a
+    /// long-wave one's, and is decoded like one; this says only where it is.
     pub fn is_hf(self) -> bool {
-        matches!(self, TimeStation::Wwv | TimeStation::Wwvh)
+        matches!(self, TimeStation::Wwv | TimeStation::Wwvh | TimeStation::Bpm | TimeStation::Rwm)
     }
 
     /// The pitch of the station's seconds ticks, Hz — for the short-wave
-    /// stations, which are told apart by it.
+    /// stations that send them as a tone. WWV and WWVH are told apart by it.
     pub fn tick_hz(self) -> Option<f64> {
         match self {
-            TimeStation::Wwv => Some(1000.0),
+            TimeStation::Wwv | TimeStation::Bpm => Some(1000.0),
             TimeStation::Wwvh => Some(1200.0),
             _ => None,
+        }
+    }
+
+    /// The station sends no time of day, only seconds and minute marks: the
+    /// minute is named from the computer's clock, which is therefore only
+    /// corrected when it is already within [`SECONDS_ONLY_MAX_S`].
+    pub fn seconds_only(self) -> bool {
+        matches!(self, TimeStation::Bpm | TimeStation::Rwm)
+    }
+
+    /// How far ahead of UTC the station sends its seconds, seconds.
+    ///
+    /// BPM's are sent 20 ms early, by the BIPM's annual table of time
+    /// services, which puts them on time near the middle of China rather than
+    /// at the transmitter. Everyone else's leave on the second.
+    pub fn advance_s(self) -> f64 {
+        match self {
+            TimeStation::Bpm => 0.020,
+            _ => 0.0,
+        }
+    }
+
+    /// Whether the seconds sent during `minute_of_hour` (UTC) are UTC's.
+    ///
+    /// BPM's half hour is ten minutes of UTC seconds, five of carrier alone,
+    /// ten more of UTC, four of UT1 — whose seconds are off UTC's by DUT1, up
+    /// to 0.9 s — and one for its call sign. Only the UTC ones are measured.
+    pub fn utc_seconds_in(self, minute_of_hour: u32) -> bool {
+        match self {
+            TimeStation::Bpm => matches!(minute_of_hour % 30, 0..10 | 15..25),
+            _ => true,
         }
     }
 
@@ -190,6 +269,9 @@ impl TimeStation {
             TimeStation::Wwv => "Fort Collins, Colorado, USA",
             TimeStation::Wwvh => "Kekaha, Kauaʻi, Hawaii, USA",
             TimeStation::Als162 => "Allouis, France",
+            TimeStation::Bpc => "Shangqiu, Henan, China",
+            TimeStation::Bpm => "Pucheng, Shaanxi, China",
+            TimeStation::Rwm => "Taldom, Moscow Oblast, Russia",
         }
     }
 
@@ -208,6 +290,9 @@ impl TimeStation {
             TimeStation::Wwv => (40.6809, -105.0408),
             TimeStation::Wwvh => (21.9878, -159.7644),
             TimeStation::Als162 => (47.1694, 2.2042),
+            TimeStation::Bpc => (34.4570, 115.8370),
+            TimeStation::Bpm => (34.9486, 109.5428),
+            TimeStation::Rwm => (56.7333, 37.6667),
         }
     }
 
@@ -223,6 +308,11 @@ impl TimeStation {
             TimeStation::Wwvh => *b"WWVH",
             // RFC 5905 still calls Allouis by its old operator's name.
             TimeStation::Als162 => *b"TDF\0",
+            // Not in RFC 5905's table, whose identifiers are only examples:
+            // each is the call sign, as the others are.
+            TimeStation::Bpc => *b"BPC\0",
+            TimeStation::Bpm => *b"BPM\0",
+            TimeStation::Rwm => *b"RWM\0",
         }
     }
 }
@@ -255,8 +345,9 @@ pub struct TimeSigConfig {
     /// than [`TimeSigConfig::auto_threshold_ms`].
     ///
     /// Only possible where the program may set the clock without a password
-    /// prompt — running as root, or on Linux with `CAP_SYS_TIME`. Elsewhere
-    /// the switch is shown but has nothing to act through, and says so.
+    /// prompt — running as root, on Linux with `CAP_SYS_TIME`, or on Windows
+    /// elevated or as a service. Elsewhere the switch is shown but has
+    /// nothing to act through, and says so.
     pub auto_set: bool,
     /// How far out the clock has to be before an automatic correction is made.
     /// Below it the clock is left alone: a correction is a step, and stepping a
@@ -318,15 +409,18 @@ pub enum TimeCode {
 /// Who may set this computer's clock, and how.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ClockAuthority {
-    /// The process may set the clock itself (root, or `CAP_SYS_TIME`).
+    /// The process may set the clock itself (root, `CAP_SYS_TIME`, or on
+    /// Windows a token holding `SeSystemtimePrivilege`: elevated, or a
+    /// service).
     Direct,
-    /// Setting the clock needs an administrator's password, which the system
+    /// Setting the clock needs an administrator's say-so, which the system
     /// asks for in a dialog of its own (`pkexec` on Linux, the authorisation
-    /// prompt on macOS).
+    /// prompt on macOS, UAC on Windows).
     Prompt,
     /// Neither: no way to set the clock from here. A headless server not
-    /// running as root lands here, and its operator's way to share the
-    /// received time is the NTP server instead.
+    /// running as root lands here (on Windows, a service whose account may
+    /// not set the clock), and its operator's way to share the received time
+    /// is the NTP server instead.
     #[default]
     Unavailable,
 }
@@ -503,6 +597,20 @@ mod tests {
         for f in TimeStation::Wwvh.carriers_hz() {
             assert!(TimeStation::Wwv.carriers_hz().contains(f));
         }
+    }
+
+    #[test]
+    fn only_bpm_skips_minutes() {
+        // UTC seconds :00–:09 and :15–:24 of each half hour; carrier alone,
+        // UT1 and the call sign in between.
+        let utc: Vec<u32> = (0..60).filter(|&m| TimeStation::Bpm.utc_seconds_in(m)).collect();
+        let want: Vec<u32> = (0..10).chain(15..25).chain(30..40).chain(45..55).collect();
+        assert_eq!(utc, want);
+        for s in TimeStation::ALL.into_iter().filter(|&s| s != TimeStation::Bpm) {
+            assert!((0..60).all(|m| s.utc_seconds_in(m)), "{s:?}");
+        }
+        assert!(TimeStation::Bpm.seconds_only() && TimeStation::Rwm.seconds_only());
+        assert!(!TimeStation::Bpc.seconds_only() && !TimeStation::Wwv.seconds_only());
     }
 
     #[test]

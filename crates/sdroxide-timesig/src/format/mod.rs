@@ -14,7 +14,14 @@
 //! of the carrier rather than a pattern of levels. It is described in
 //! [`wwvb_phase`], next to the amplitude code it rides alongside. ALS162 is
 //! the other: its carrier is never reduced, and a second says its bit by how
-//! many swings of phase it carries — see [`als162`].
+//! many swings of phase it carries — see [`als162`]. DCF77 sends its bits a
+//! second time in its carrier's phase, as a pseudo-random sequence the right
+//! way up or inverted — see [`dcf77_phase`].
+//!
+//! BPC is the one code with two bits a second *and* a frame shorter than a
+//! minute: twenty seconds, so three to the minute. BPM and RWM send no code
+//! at all, only seconds and the minute's mark (see `ticks`); their formats
+//! say only how to tell one from the other.
 //!
 //! Each format also has an encoder. The receiver never transmits, but the
 //! tests and the signal generator in [`crate::synth`] need the symbols a real
@@ -23,9 +30,12 @@
 //! something.
 
 pub mod als162;
+mod bpc;
 pub(crate) mod dcf77;
+pub mod dcf77_phase;
 mod jjy;
 mod msf;
+mod ticks;
 mod wwv;
 mod wwvb;
 pub mod wwvb_phase;
@@ -159,6 +169,9 @@ impl Format {
             TimeStation::Wwv => &wwv::FORMAT_WWV,
             TimeStation::Wwvh => &wwv::FORMAT_WWVH,
             TimeStation::Als162 => &als162::FORMAT,
+            TimeStation::Bpc => &bpc::FORMAT,
+            TimeStation::Bpm => &ticks::FORMAT_BPM,
+            TimeStation::Rwm => &ticks::FORMAT_RWM,
         }
     }
 
@@ -224,7 +237,7 @@ mod tests {
 
     #[test]
     fn every_format_round_trips_through_its_encoder() {
-        for station in TimeStation::ALL {
+        for station in TimeStation::ALL.into_iter().filter(|s| !s.seconds_only()) {
             let fmt = Format::for_station(station);
             for t in minutes() {
                 let w = window_naming(fmt, t);
@@ -240,12 +253,16 @@ mod tests {
 
     #[test]
     fn one_flipped_bit_never_decodes_to_a_different_time_where_there_is_parity() {
-        // DCF77, ALS162, MSF and JJY carry parity over the time fields;
+        // DCF77, ALS162, MSF, JJY and BPC carry parity over the time fields;
         // WWVB's amplitude code and WWV's carry none, and are protected only
         // by their unused bits and range checks.
-        for station in
-            [TimeStation::Dcf77, TimeStation::Als162, TimeStation::Msf, TimeStation::Jjy60]
-        {
+        for station in [
+            TimeStation::Dcf77,
+            TimeStation::Als162,
+            TimeStation::Msf,
+            TimeStation::Jjy60,
+            TimeStation::Bpc,
+        ] {
             let fmt = Format::for_station(station);
             for t in minutes().into_iter().take(60) {
                 let w = window_naming(fmt, t);
@@ -330,7 +347,7 @@ mod tests {
 
     #[test]
     fn a_window_one_second_out_of_place_is_refused() {
-        for station in TimeStation::ALL {
+        for station in TimeStation::ALL.into_iter().filter(|s| !s.seconds_only()) {
             let fmt = Format::for_station(station);
             let t = ymd_hms_to_unix(2026, 10, 18, 12, 37, 0);
             let mut stream = Vec::new();
@@ -346,6 +363,33 @@ mod tests {
                     panic!("{station:?} shifted by {shift} decoded as {}", f.utc);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn seconds_only_formats_mark_the_minute_and_name_nothing() {
+        for station in TimeStation::ALL.into_iter().filter(|s| s.seconds_only()) {
+            let fmt = Format::for_station(station);
+            let sent = (fmt.encode)(ymd_hms_to_unix(2026, 10, 18, 12, 37, 0));
+            assert!(sent[0].marker, "{station:?}");
+            assert!(sent[1..].iter().all(|s| *s == Sym::ZERO), "{station:?}");
+            assert!((fmt.decode)(&sent[..1], &Context::default()).is_err());
+            // The minute's mark and an ordinary second differ by whole slots.
+            let (z, m) = (fmt.template(Sym::ZERO).unwrap(), fmt.template(Sym::MARKER).unwrap());
+            assert!(z.low.iter().zip(&m.low).filter(|(a, b)| a != b).count() >= 2);
+        }
+    }
+
+    #[test]
+    fn bpc_names_each_of_its_three_frames() {
+        let fmt = Format::for_station(TimeStation::Bpc);
+        let minute = ymd_hms_to_unix(2026, 10, 18, 12, 37, 0);
+        let mut stream = (fmt.encode)(minute).to_vec();
+        stream.extend_from_slice(&(fmt.encode)(minute + 60));
+        for f in 0..3 {
+            let w = &stream[20 * f..20 * f + 21];
+            let got = (fmt.decode)(w, &Context::default()).map(|fr| fr.utc);
+            assert_eq!(got, Ok(minute + 20 * f as i64), "frame {f}");
         }
     }
 }

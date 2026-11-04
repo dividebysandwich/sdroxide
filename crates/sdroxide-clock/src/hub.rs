@@ -92,8 +92,8 @@ impl std::fmt::Display for Refusal {
             Refusal::Busy => write!(f, "a clock change is already waiting for the password"),
             Refusal::NoAuthority => write!(
                 f,
-                "this program cannot set the clock here — run it as an administrator, or use \
-                 the NTP server"
+                "this program cannot set the clock here, and has no desktop to ask for a \
+                 password on — run it as root or as a service, or use the NTP server"
             ),
         }
     }
@@ -205,10 +205,16 @@ impl TimeHub {
                 ntp.server = Some(s);
             }
             Err(e) => {
-                let hint = if e.kind() == std::io::ErrorKind::PermissionDenied && cfg.port < 1024 {
-                    " — ports below 1024 need privilege; try 1123"
-                } else {
-                    ""
+                let hint = match e.kind() {
+                    std::io::ErrorKind::PermissionDenied if cfg.port < 1024 => {
+                        " — ports below 1024 need privilege; try 1123"
+                    }
+                    // chronyd, ntpd, or on Windows the Windows Time service,
+                    // already answering on this machine.
+                    std::io::ErrorKind::AddrInUse if cfg.port == 123 => {
+                        " — another time service holds port 123; try 1123"
+                    }
+                    _ => "",
                 };
                 tracing::warn!("NTP server on {}: {e}", cfg.addr());
                 ntp.error = Some(format!("{e}{hint}"));
