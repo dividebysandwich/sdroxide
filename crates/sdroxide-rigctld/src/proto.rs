@@ -1377,6 +1377,38 @@ mod tests {
         }
     }
 
+    /// The level masks are what a Hamlib client offers controls from, so they
+    /// are pinned by Hamlib's own bit values (`rig.h`), not by this crate's
+    /// constants: a wrong constant would otherwise pass its own test.
+    #[test]
+    fn dump_state_advertises_the_levels_clients_see() {
+        const SQL: u64 = 0x20;
+        const NR: u64 = 0x100;
+        const AGC: u64 = 0x2_0000;
+        const RF: u64 = 0x10;
+        const STRENGTH: u64 = 0x4000_0000;
+        let masks = |s: &RigState| {
+            let d = run_with("\\dump_state", s, &RigctldConfig::default()).0;
+            let after_filters = d.split("0 0\n").last().unwrap().to_string();
+            let hex = |l: &str| u64::from_str_radix(l.trim_start_matches("0x"), 16).unwrap();
+            let lines: Vec<&str> = after_filters.lines().collect();
+            (hex(lines[8]), hex(lines[9]))
+        };
+
+        let (get, set) = masks(&st());
+        for (name, bit) in [("SQL", SQL), ("NR", NR), ("AGC", AGC)] {
+            assert_ne!(get & bit, 0, "{name} not readable");
+            assert_ne!(set & bit, 0, "{name} not settable");
+        }
+        assert_ne!(get & STRENGTH, 0, "STRENGTH not readable");
+        assert_eq!(set & STRENGTH, 0, "STRENGTH is a meter, never settable");
+        assert_eq!((get & RF, set & RF), (0, 0), "RF without a gain stage");
+
+        let (get, set) = masks(&with_gain());
+        assert_ne!(get & RF, 0, "RF not readable with a gain stage");
+        assert_ne!(set & RF, 0, "RF not settable with a gain stage");
+    }
+
     #[test]
     fn dump_state_uses_only_newlines() {
         assert!(!run("\\dump_state").0.contains('\r'));
