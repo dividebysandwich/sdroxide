@@ -94,6 +94,17 @@ const REG_CONTROL: u8 = 5;
 /// what the reset leaves), the board's own J9 SMA (1), or J9 with the J10
 /// PureSignal jack switched in on transmit (2).
 const REG_RF_INPUTS: u8 = 11;
+
+/// Generic antenna tuner interface registers on the Pico.
+const REG_ANTENNA_TUNER: u8 = 7;
+const REG_FAULT: u8 = 8;
+const REG_FIRMWARE_MAJOR: u8 = 9;
+const REG_FIRMWARE_MINOR: u8 = 10;
+
+/// Generic tuner discovery command and its response codes.
+const TUNER_DISCOVER: u8 = 0x03;
+const TUNER_PRESENT: u8 = 0x01;
+const TUNER_ABSENT: u8 = 0x02;
 /// Receiver 1's frequency, as a one-byte *code* rather than a frequency —
 /// registers 13..=24 hold one for each of the twelve receivers the protocol can
 /// carry. The board uses them to pick a receive antenna and preselector; all
@@ -116,6 +127,11 @@ const FREQ_INTERVAL: Duration = Duration::from_millis(500);
 const PROBE_TRIES: u8 = 3;
 /// Gap between those probes.
 const PROBE_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Interval between reads while the Pico completes tuner discovery.
+const TUNER_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Maximum time allowed for generic tuner discovery.
+const TUNER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// One I2C transaction: read or write, one byte either way.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -155,6 +171,21 @@ enum Presence {
     Absent,
 }
 
+/// Progress of the generic Pico tuner discovery exchange.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TunerDiscovery {
+    /// The I/O Board has not yet completed its startup reset.
+    NotStarted,
+    /// Discovery command 0x03 has been sent; its ACK is awaited.
+    AwaitingCommandAck,
+    /// Discovery command was acknowledged; the four-byte response is awaited.
+    AwaitingResponse,
+    /// Compatible firmware was identified.
+    Complete { present: bool, firmware_major: u8, firmware_minor: u8 },
+    /// The response did not match the generic tuner protocol.
+    Unsupported,
+}
+
 /// A transaction on the wire, waiting to be acknowledged.
 struct InFlight {
     op: Op,
@@ -166,6 +197,9 @@ struct InFlight {
 /// transmit frequency.
 pub(crate) struct IoBoard {
     presence: Presence,
+    tuner_discovery: TunerDiscovery,
+    tuner_discovery_deadline: Option<Instant>,
+    tuner_poll_at: Option<Instant>,
     /// Which input the operator has wired the board for, stated once after the
     /// reset. Only the connection knows this; the board itself comes up at 0.
     rx_input: HpsdrIoRxInput,
@@ -194,6 +228,9 @@ impl IoBoard {
     pub(crate) fn new(rx_input: HpsdrIoRxInput) -> IoBoard {
         IoBoard {
             presence: Presence::Probing(PROBE_TRIES),
+            tuner_discovery: TunerDiscovery::NotStarted,
+            tuner_discovery_deadline: None,
+            tuner_poll_at: None,
             rx_input,
             inflight: None,
             queue: VecDeque::new(),
@@ -245,6 +282,32 @@ impl IoBoard {
             self.give_up(op, now, "no answer");
         }
 
+        // Continue generic tuner discovery without blocking normal I2C traffic.
+        if self.tuner_discovery == TunerDiscovery::AwaitingResponse {
+            if self.tuner_discovery_deadline.is_some_and(|deadline| now >= deadline) {
+                self.tuner_discovery = TunerDiscovery::Unsupported;
+                self.tuner_discovery_deadline = None;
+                self.tuner_poll_at = None;
+
+                // Remove any queued discovery read, but preserve normal I2C work.
+                self.queue.retain(|op| {
+                    !(op.cookie == I2C_READ && op.addr == IOB_ADDR && op.reg == REG_ANTENNA_TUNER)
+                });
+
+                tracing::warn!(
+                    "HL2IOBoard: generic tuner discovery timed out; \
+                     firmware may not support the interface"
+                );
+            } else if self.tuner_poll_at.is_some_and(|poll_at| now >= poll_at) {
+                self.tuner_poll_at = None;
+                self.queue.push_front(Op {
+                    cookie: I2C_READ,
+                    addr: IOB_ADDR,
+                    reg: REG_ANTENNA_TUNER,
+                    data: 0,
+                });
+            }
+        }
         self.refill(now, tx_freq_hz, rx_freq_hz);
         let op = self.queue.pop_front()?;
         self.inflight = Some(InFlight { op, sent_at: now, tries: 0 });
@@ -326,6 +389,76 @@ impl IoBoard {
             self.give_up(f.op, now, "the radio reported an I2C error");
             return;
         }
+        // Start generic tuner discovery after the normal board reset.
+        if self.tuner_discovery == TunerDiscovery::NotStarted
+            && f.op.cookie == I2C_WRITE
+            && f.op.reg == REG_CONTROL
+        {
+            self.tuner_discovery = TunerDiscovery::AwaitingCommandAck;
+            self.queue.push_front(Op::write(REG_ANTENNA_TUNER, TUNER_DISCOVER));
+            tracing::info!("HL2IOBoard: requesting generic tuner discovery");
+        }
+        // The discovery command was acknowledged. Read registers 7 through 10.
+        else if self.tuner_discovery == TunerDiscovery::AwaitingCommandAck
+            && f.op.cookie == I2C_WRITE
+            && f.op.reg == REG_ANTENNA_TUNER
+        {
+            self.tuner_discovery = TunerDiscovery::AwaitingResponse;
+            self.tuner_discovery_deadline = Some(now + TUNER_DISCOVERY_TIMEOUT);
+            self.tuner_poll_at = None;
+            self.queue.push_front(Op {
+                cookie: I2C_READ,
+                addr: IOB_ADDR,
+                reg: REG_ANTENNA_TUNER,
+                data: 0,
+            });
+        }
+        // Validate the discovery response.
+        else if self.tuner_discovery == TunerDiscovery::AwaitingResponse
+            && f.op.cookie == I2C_READ
+            && f.op.addr == IOB_ADDR
+            && f.op.reg == REG_ANTENNA_TUNER
+        {
+            let tuner_code = data[usize::from(REG_FAULT - REG_ANTENNA_TUNER)];
+            let firmware_major = data[usize::from(REG_FIRMWARE_MAJOR - REG_ANTENNA_TUNER)];
+            let firmware_minor = data[usize::from(REG_FIRMWARE_MINOR - REG_ANTENNA_TUNER)];
+
+            if data[0] == 0 && tuner_code == TUNER_PRESENT {
+                self.tuner_discovery =
+                    TunerDiscovery::Complete { present: true, firmware_major, firmware_minor };
+                self.tuner_discovery_deadline = None;
+                self.tuner_poll_at = None;
+                tracing::info!(
+                    "HL2IOBoard: generic tuner firmware {firmware_major}.{firmware_minor}; tuner present"
+                );
+            } else if data[0] == 0 && tuner_code == TUNER_ABSENT {
+                self.tuner_discovery =
+                    TunerDiscovery::Complete { present: false, firmware_major, firmware_minor };
+                self.tuner_discovery_deadline = None;
+                self.tuner_poll_at = None;
+                tracing::info!(
+                    "HL2IOBoard: generic tuner firmware {firmware_major}.{firmware_minor}; no tuner present"
+                );
+            } else if data[0] == TUNER_DISCOVER
+                && self.tuner_discovery_deadline.is_some_and(|deadline| now < deadline)
+            {
+                // The Pico has received the command but has not completed
+                // its own startup discovery. Schedule another read.
+                self.tuner_poll_at = Some(now + TUNER_POLL_INTERVAL);
+            } else {
+                self.tuner_discovery = TunerDiscovery::Unsupported;
+                self.tuner_discovery_deadline = None;
+                self.tuner_poll_at = None;
+                tracing::info!(
+                    "HL2IOBoard: generic tuner interface not recognised \
+                     (registers 7-10: {:02X} {:02X} {:02X} {:02X})",
+                    data[0],
+                    data[1],
+                    data[2],
+                    data[3]
+                );
+            }
+        }
         if let Presence::Probing(_) = self.presence
             && f.op.cookie == I2C_READ
         {
@@ -360,6 +493,28 @@ impl IoBoard {
     fn give_up(&mut self, op: Op, now: Instant, why: &str) {
         if let Presence::Probing(_) = self.presence {
             return self.probe_failed(now, why);
+        }
+        // A failed tuner-discovery transaction must not disrupt ordinary
+        // frequency or receive-input traffic.
+        if op.addr == IOB_ADDR
+            && op.reg == REG_ANTENNA_TUNER
+            && matches!(
+                self.tuner_discovery,
+                TunerDiscovery::AwaitingCommandAck | TunerDiscovery::AwaitingResponse
+            )
+        {
+            self.tuner_discovery = TunerDiscovery::Unsupported;
+            self.tuner_discovery_deadline = None;
+            self.tuner_poll_at = None;
+
+            self.queue
+                .retain(|queued| !(queued.addr == IOB_ADDR && queued.reg == REG_ANTENNA_TUNER));
+
+            tracing::warn!(
+                "HL2IOBoard: tuner discovery transaction failed ({why}); \
+                 continuing without generic tuner support"
+            );
+            return;
         }
         // Abandon the rest of the sequence with it. A frequency the board only
         // half received is not a frequency — and the byte that went missing may
@@ -454,6 +609,160 @@ mod tests {
         probe
     }
 
+    /// Complete the board reset and generic tuner discovery exchange.
+    /// Returns the four-byte read request, which the individual tests answer.
+    fn request_tuner_discovery(board: &mut IoBoard, now: Instant) -> [u8; 5] {
+        find(board, now);
+        // Acknowledge the normal I/O Board reset.
+        let reset = board.next_request(now, RX_HZ, RX_HZ, 0).expect("board reset");
+        assert_eq!((reset[3], reset[4]), (REG_CONTROL, 1));
+        ack(board, now, [0; 4]);
+
+        // The host should now write discovery command 0x03.
+        let discover = board.next_request(now, RX_HZ, RX_HZ, 0).expect("tuner discovery command");
+        assert_eq!(discover[1], I2C_WRITE);
+        assert_eq!((discover[3], discover[4]), (REG_ANTENNA_TUNER, TUNER_DISCOVER));
+        ack(board, now, [0; 4]);
+
+        // The command ACK must be followed by a separate read of registers 7-10.
+        let read = board.next_request(now, RX_HZ, RX_HZ, 0).expect("tuner discovery response");
+        assert_eq!(read[1], I2C_READ);
+        assert_eq!(read[2], IOB_ADDR);
+        assert_eq!(read[3], REG_ANTENNA_TUNER);
+        read
+    }
+
+    /// Complete discovery after the normal board reset has been acknowledged.
+    /// The existing frequency and input tests do not require a connected tuner.
+    fn complete_tuner_discovery(board: &mut IoBoard, now: Instant) {
+        let discover = board.next_request(now, RX_HZ, RX_HZ, 0).expect("tuner discovery command");
+        assert_eq!((discover[3], discover[4]), (REG_ANTENNA_TUNER, TUNER_DISCOVER));
+        ack(board, now, [0; 4]);
+
+        let read = board.next_request(now, RX_HZ, RX_HZ, 0).expect("tuner discovery response");
+        assert_eq!((read[1], read[3]), (I2C_READ, REG_ANTENNA_TUNER));
+        ack(board, now, [0x00, TUNER_ABSENT, 7, 9]);
+
+        assert!(matches!(board.tuner_discovery, TunerDiscovery::Complete { present: false, .. }));
+    }
+
+    #[test]
+    fn generic_tuner_discovery_detects_present_tuner_and_firmware_version() {
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        let now = Instant::now();
+
+        let read = request_tuner_discovery(&mut board, now);
+        ack(&mut board, now, [0x00, TUNER_PRESENT, 7, 9]);
+
+        assert_eq!(
+            board.tuner_discovery,
+            TunerDiscovery::Complete { present: true, firmware_major: 7, firmware_minor: 9 }
+        );
+
+        // The discovery result must not prevent normal frequency updates.
+        assert_eq!(board.presence, Presence::Present);
+        assert!(!board.queue.iter().any(|op| op.reg == REG_ANTENNA_TUNER));
+        assert_eq!(read[3], REG_ANTENNA_TUNER);
+    }
+
+    #[test]
+    fn generic_tuner_discovery_waits_for_pico_startup() {
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        let mut now = Instant::now();
+
+        request_tuner_discovery(&mut board, now);
+
+        // The Pico has not finished its own startup discovery.
+        ack(&mut board, now, [TUNER_DISCOVER, 0x00, 0x00, 0x00]);
+
+        assert_eq!(board.tuner_discovery, TunerDiscovery::AwaitingResponse);
+
+        // Wait for the scheduled 50 ms polling interval.
+        now += TUNER_POLL_INTERVAL;
+
+        let poll = board.next_request(now, RX_HZ, RX_HZ, 0).expect("next discovery poll");
+
+        assert_eq!((poll[1], poll[3]), (I2C_READ, REG_ANTENNA_TUNER));
+
+        // The Pico has now completed startup and reports a tuner.
+        ack(&mut board, now, [0x00, TUNER_PRESENT, 7, 9]);
+
+        assert_eq!(
+            board.tuner_discovery,
+            TunerDiscovery::Complete { present: true, firmware_major: 7, firmware_minor: 9 }
+        );
+
+        assert_eq!(board.tuner_discovery_deadline, None);
+        assert_eq!(board.tuner_poll_at, None);
+    }
+
+    #[test]
+    fn failed_tuner_discovery_does_not_block_frequency_updates() {
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        let now = Instant::now();
+
+        // Start discovery and obtain its response-read request.
+        let read = request_tuner_discovery(&mut board, now);
+        assert_eq!((read[1], read[3]), (I2C_READ, REG_ANTENNA_TUNER));
+
+        // Simulate the Hermes-Lite reporting an I2C transaction error.
+        board.on_ack(RADDR_ERROR, [0; 4], now);
+
+        assert_eq!(board.tuner_discovery, TunerDiscovery::Unsupported);
+        assert_eq!(board.tuner_discovery_deadline, None);
+        assert_eq!(board.tuner_poll_at, None);
+
+        // Normal frequency traffic must still proceed.
+        let next =
+            board.next_request(now, RX_HZ, RX_HZ, 0).expect("frequency update should proceed");
+
+        assert_eq!((next[1], next[3]), (I2C_WRITE, REG_TX_FREQ_BYTE4));
+    }
+
+    #[test]
+    fn generic_tuner_discovery_detects_firmware_without_a_tuner() {
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        let now = Instant::now();
+
+        request_tuner_discovery(&mut board, now);
+        ack(&mut board, now, [0x00, TUNER_ABSENT, 7, 9]);
+
+        assert_eq!(
+            board.tuner_discovery,
+            TunerDiscovery::Complete { present: false, firmware_major: 7, firmware_minor: 9 }
+        );
+    }
+
+    #[test]
+    fn generic_tuner_discovery_rejects_older_firmware() {
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        let mut now = Instant::now();
+
+        request_tuner_discovery(&mut board, now);
+
+        // Older firmware ignores command 0x03, leaving register 7 unchanged.
+        // The host should keep polling until its discovery deadline expires.
+        ack(&mut board, now, [TUNER_DISCOVER, 0x00, 0x00, 0x00]);
+
+        let deadline = now + TUNER_DISCOVERY_TIMEOUT;
+
+        loop {
+            now += TUNER_POLL_INTERVAL;
+            let request = board.next_request(now, RX_HZ, RX_HZ, 0);
+
+            if now >= deadline {
+                assert_eq!(board.tuner_discovery, TunerDiscovery::Unsupported);
+                break;
+            }
+
+            let poll = request.expect("next tuner discovery poll");
+            assert_eq!((poll[1], poll[3]), (I2C_READ, REG_ANTENNA_TUNER));
+
+            // Older firmware continues to report the unprocessed command.
+            ack(&mut board, now, [TUNER_DISCOVER, 0x00, 0x00, 0x00]);
+        }
+    }
+
     #[test]
     fn probe_reads_the_version_register_and_then_resets_the_board() {
         let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
@@ -484,6 +793,7 @@ mod tests {
             find(&mut board, now);
             let reset = board.next_request(now, RX_HZ, RX_HZ, 0).expect("the reset");
             ack(&mut board, now, [0; 4]);
+            complete_tuner_discovery(&mut board, now);
             assert_eq!((reset[3], reset[4]), (REG_CONTROL, 1));
             let sel = board.next_request(now, RX_HZ, RX_HZ, 0).expect("the input mode");
             ack(&mut board, now, [0; 4]);
@@ -495,6 +805,7 @@ mod tests {
         find(&mut board, now);
         board.next_request(now, RX_HZ, RX_HZ, 0).expect("the reset");
         ack(&mut board, now, [0; 4]);
+        complete_tuner_discovery(&mut board, now);
         let next = board.next_request(now, RX_HZ, RX_HZ, 0).expect("straight to the frequency");
         assert_eq!(next[3], REG_TX_FREQ_BYTE4, "no redundant mode write");
     }
@@ -509,6 +820,7 @@ mod tests {
         find(&mut board, now);
         board.next_request(now, RX_HZ, RX_HZ, 0).expect("the reset");
         ack(&mut board, now, [0; 4]);
+        complete_tuner_discovery(&mut board, now);
         board.next_request(now, RX_HZ, RX_HZ, 0).expect("the input mode");
         ack(&mut board, now, [0; 4]);
         // The band changes to one kept on the radio's own jack.
@@ -533,6 +845,7 @@ mod tests {
         find(&mut board, now);
         board.next_request(now, RX_HZ, RX_HZ, 0).expect("the reset");
         ack(&mut board, now, [0; 4]);
+        complete_tuner_discovery(&mut board, now);
         let sel = board.next_request(now, RX_HZ, RX_HZ, 0).expect("the input mode");
         assert_eq!((sel[3], sel[4]), (REG_RF_INPUTS, 1));
     }
@@ -562,6 +875,7 @@ mod tests {
         find(&mut board, now);
         board.next_request(now, 14_074_000, RX_HZ, 0); // the reset
         ack(&mut board, now, [0; 4]);
+        complete_tuner_discovery(&mut board, now);
 
         let mut sent = Vec::new();
         for _ in 0..5 {
@@ -623,8 +937,15 @@ mod tests {
         let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
         let mut now = Instant::now();
         find(&mut board, now);
-        // Drain the reset, the transmit frequency and the first receive code.
-        for _ in 0..7 {
+
+        // Complete the reset and generic tuner discovery.
+        let reset = board.next_request(now, 14_074_000, 14_074_000, 0).expect("board reset");
+        assert_eq!((reset[3], reset[4]), (REG_CONTROL, 1));
+        ack(&mut board, now, [0; 4]);
+        complete_tuner_discovery(&mut board, now);
+
+        // Drain the transmit frequency and the first receive code.
+        for _ in 0..6 {
             board.next_request(now, 14_074_000, 14_074_000, 0).expect("startup traffic");
             ack(&mut board, now, [0; 4]);
         }
@@ -650,6 +971,7 @@ mod tests {
         find(&mut board, now);
         board.next_request(now, 7_074_000, RX_HZ, 0); // the reset
         ack(&mut board, now, [0; 4]);
+        complete_tuner_discovery(&mut board, now);
 
         // Drain the first frequency and the receive code that follows it.
         for _ in 0..6 {
@@ -684,6 +1006,7 @@ mod tests {
         find(&mut board, now);
         board.next_request(now, 7_074_000, RX_HZ, 0); // the reset
         ack(&mut board, now, [0; 4]);
+        complete_tuner_discovery(&mut board, now);
 
         let first = board.next_request(now, 7_074_000, RX_HZ, 0).expect("first frequency byte");
         // Nothing answers. It is re-sent, unchanged, up to the try limit.
