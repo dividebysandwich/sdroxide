@@ -2,7 +2,8 @@
 //! vocabulary it is reported in.
 
 use sdroxide_types::{
-    AgcMode, Band, Mode, NrEngine, NrLevel, NrStrength, SQUELCH_CLOSED_DB, SQUELCH_OPEN_DB, Vfo,
+    AgcMode, Band, MAX_DECIMATION, Mode, NrEngine, NrLevel, NrStrength, SQUELCH_CLOSED_DB,
+    SQUELCH_OPEN_DB, Vfo,
 };
 
 /// What the protocol layer needs to answer a query. Refreshed by the engine on
@@ -52,6 +53,16 @@ pub struct RigState {
     /// rule, so a width a client asks for is centred there too — see
     /// [`centred_on`].
     pub cw_pitch_hz: f32,
+    /// The receiver's sampled span — the width the panadapter can show, which
+    /// is the device rate divided by the decimation. Reported as Hamlib's
+    /// `SPECTRUM_SPAN`, and what a client's width is turned back into.
+    pub span_hz: f64,
+    /// The front end's own rate, which the span is a division of.
+    pub device_rate_hz: f64,
+    /// Whether this receiver can decimate at all. An audio-mode rig hands over
+    /// one channel of already-demodulated audio: there is no span to set, so
+    /// the level is not advertised and is refused.
+    pub can_decimate: bool,
     /// The receiver's front-end gain — the stage the top bar's Gain slider
     /// moves — reported as Hamlib's `RF` level. `None` on a radio with no RX
     /// gain the software can set, which then has no `RF` level at all.
@@ -92,6 +103,9 @@ impl Default for RigState {
             rig_squelch: None,
             agc: AgcMode::Med,
             cw_pitch_hz: 700.0,
+            span_hz: 0.0,
+            device_rate_hz: 0.0,
+            can_decimate: false,
             rf_gain: None,
             can_tx: false,
             rx_ranges: Vec::new(),
@@ -168,6 +182,23 @@ impl RfGain {
         };
         snapped.clamp(self.min, self.max)
     }
+}
+
+/// The decimation that turns a device rate into a requested span.
+///
+/// Powers of two only, because that is what the decimator is, and clamped to
+/// what the front end can carry — so a client asks for a width and reads back
+/// the one it got rather than the one it asked for.
+pub fn decimation_for_span(device_rate_hz: f64, span_hz: f64) -> u32 {
+    if !(device_rate_hz > 0.0) || !(span_hz > 0.0) {
+        return 1;
+    }
+    let want = (device_rate_hz / span_hz).max(1.0);
+    let mut factor = 1u32;
+    while factor * 2 <= MAX_DECIMATION && (factor * 2) as f64 <= want * 1.5 {
+        factor *= 2;
+    }
+    factor.min(sdroxide_types::max_decimation(device_rate_hz))
 }
 
 /// A passband of the same width, centred on `pitch_hz`.
