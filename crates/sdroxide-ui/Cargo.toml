@@ -25,8 +25,12 @@ serde_json.workspace = true
 # silently switched it back off: without it the whole widget tree is
 # invisible to NVDA, Orca and VoiceOver. It is native-only (it maps to
 # egui-winit), so it costs the browser build nothing.
+# `links` is another: without it `ctx.open_url` only logs "Cannot open url -
+# feature \"links\" not enabled", so the update banner's sdroxide.com link and
+# the manual's external links open nothing on the desktop. Also native-only.
 eframe = { version = "0.36.1", default-features = false, features = [
     "accesskit",
+    "links",
     "default_fonts",
     "wgpu",
     "wayland",
