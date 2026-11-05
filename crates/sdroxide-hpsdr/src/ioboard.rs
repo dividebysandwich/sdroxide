@@ -97,9 +97,6 @@ const REG_RF_INPUTS: u8 = 11;
 
 /// Generic antenna tuner interface registers on the Pico.
 const REG_ANTENNA_TUNER: u8 = 7;
-const REG_FAULT: u8 = 8;
-const REG_FIRMWARE_MAJOR: u8 = 9;
-const REG_FIRMWARE_MINOR: u8 = 10;
 
 /// Generic tuner discovery command and its response codes.
 const TUNER_DISCOVER: u8 = 0x03;
@@ -419,11 +416,22 @@ impl IoBoard {
             && f.op.addr == IOB_ADDR
             && f.op.reg == REG_ANTENNA_TUNER
         {
-            let tuner_code = data[usize::from(REG_FAULT - REG_ANTENNA_TUNER)];
-            let firmware_major = data[usize::from(REG_FIRMWARE_MAJOR - REG_ANTENNA_TUNER)];
-            let firmware_minor = data[usize::from(REG_FIRMWARE_MINOR - REG_ANTENNA_TUNER)];
+            tracing::info!(
+                "HL2IOBoard: tuner discovery raw bytes C1..C4 = {:02X} {:02X} {:02X} {:02X}",
+                data[0],
+                data[1],
+                data[2],
+                data[3]
+            );
 
-            if data[0] == 0 && tuner_code == TUNER_PRESENT {
+            // The Pico returns the four registers in descending order:
+            // C1 = register 10, C2 = register 9, C3 = register 8, C4 = register 7.
+            let firmware_minor = data[0];
+            let firmware_major = data[1];
+            let tuner_code = data[2];
+            let tuner_status = data[3];
+
+            if tuner_status == 0 && tuner_code == TUNER_PRESENT {
                 self.tuner_discovery =
                     TunerDiscovery::Complete { present: true, firmware_major, firmware_minor };
                 self.tuner_discovery_deadline = None;
@@ -431,7 +439,7 @@ impl IoBoard {
                 tracing::info!(
                     "HL2IOBoard: generic tuner firmware {firmware_major}.{firmware_minor}; tuner present"
                 );
-            } else if data[0] == 0 && tuner_code == TUNER_ABSENT {
+            } else if tuner_status == 0 && tuner_code == TUNER_ABSENT {
                 self.tuner_discovery =
                     TunerDiscovery::Complete { present: false, firmware_major, firmware_minor };
                 self.tuner_discovery_deadline = None;
@@ -439,7 +447,7 @@ impl IoBoard {
                 tracing::info!(
                     "HL2IOBoard: generic tuner firmware {firmware_major}.{firmware_minor}; no tuner present"
                 );
-            } else if data[0] == TUNER_DISCOVER
+            } else if tuner_status == TUNER_DISCOVER
                 && self.tuner_discovery_deadline.is_some_and(|deadline| now < deadline)
             {
                 // The Pico has received the command but has not completed
@@ -641,7 +649,7 @@ mod tests {
 
         let read = board.next_request(now, RX_HZ, RX_HZ, 0).expect("tuner discovery response");
         assert_eq!((read[1], read[3]), (I2C_READ, REG_ANTENNA_TUNER));
-        ack(board, now, [0x00, TUNER_ABSENT, 7, 9]);
+        ack(board, now, [9, 7, TUNER_ABSENT, 0x00]);
 
         assert!(matches!(board.tuner_discovery, TunerDiscovery::Complete { present: false, .. }));
     }
@@ -652,7 +660,7 @@ mod tests {
         let now = Instant::now();
 
         let read = request_tuner_discovery(&mut board, now);
-        ack(&mut board, now, [0x00, TUNER_PRESENT, 7, 9]);
+        ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
 
         assert_eq!(
             board.tuner_discovery,
@@ -673,7 +681,7 @@ mod tests {
         request_tuner_discovery(&mut board, now);
 
         // The Pico has not finished its own startup discovery.
-        ack(&mut board, now, [TUNER_DISCOVER, 0x00, 0x00, 0x00]);
+        ack(&mut board, now, [0x00, 0x00, 0x00, TUNER_DISCOVER]);
 
         assert_eq!(board.tuner_discovery, TunerDiscovery::AwaitingResponse);
 
@@ -685,7 +693,7 @@ mod tests {
         assert_eq!((poll[1], poll[3]), (I2C_READ, REG_ANTENNA_TUNER));
 
         // The Pico has now completed startup and reports a tuner.
-        ack(&mut board, now, [0x00, TUNER_PRESENT, 7, 9]);
+        ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
 
         assert_eq!(
             board.tuner_discovery,
@@ -725,7 +733,7 @@ mod tests {
         let now = Instant::now();
 
         request_tuner_discovery(&mut board, now);
-        ack(&mut board, now, [0x00, TUNER_ABSENT, 7, 9]);
+        ack(&mut board, now, [9, 7, TUNER_ABSENT, 0x00]);
 
         assert_eq!(
             board.tuner_discovery,
@@ -742,7 +750,7 @@ mod tests {
 
         // Older firmware ignores command 0x03, leaving register 7 unchanged.
         // The host should keep polling until its discovery deadline expires.
-        ack(&mut board, now, [TUNER_DISCOVER, 0x00, 0x00, 0x00]);
+        ack(&mut board, now, [0x00, 0x00, 0x00, TUNER_DISCOVER]);
 
         let deadline = now + TUNER_DISCOVERY_TIMEOUT;
 
@@ -759,7 +767,7 @@ mod tests {
             assert_eq!((poll[1], poll[3]), (I2C_READ, REG_ANTENNA_TUNER));
 
             // Older firmware continues to report the unprocessed command.
-            ack(&mut board, now, [TUNER_DISCOVER, 0x00, 0x00, 0x00]);
+            ack(&mut board, now, [0x00, 0x00, 0x00, TUNER_DISCOVER]);
         }
     }
 
