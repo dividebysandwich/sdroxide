@@ -697,6 +697,28 @@ pub(crate) fn run(ctx: ThreadCtx) {
                         b.set_rx_input(input);
                     }
                 }
+                Ctrl::AtuTune => {
+                    if let Some(b) = io_board.as_mut() {
+                        if !b.request_tune(Instant::now()) {
+                            tracing::warn!("HPSDR P1: antenna tuner tune request rejected");
+                        }
+                    } else {
+                        tracing::warn!(
+                            "HPSDR P1: antenna tuner tune request ignored; no I/O board"
+                        );
+                    }
+                }
+                Ctrl::AtuBypass => {
+                    if let Some(b) = io_board.as_mut() {
+                        if !b.request_bypass(Instant::now()) {
+                            tracing::warn!("HPSDR P1: antenna tuner bypass request rejected");
+                        }
+                    } else {
+                        tracing::warn!(
+                            "HPSDR P1: antenna tuner bypass request ignored; no I/O board"
+                        );
+                    }
+                }
                 Ctrl::RxGain(db) => {
                     if has_lna {
                         regs.lna_gain = Some(db);

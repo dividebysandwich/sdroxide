@@ -895,6 +895,17 @@ impl P2Thread {
                     // The HL2IOBoard is a Hermes-Lite accessory on Protocol 1's
                     // I2C tunnel; nothing here to switch.
                     Ctrl::IoRxInput(_) => {}
+                    // Protocol 2 has no accessory I2C bus for antenna tuner commands.
+                    Ctrl::AtuTune => {
+                        tracing::warn!(
+                            "HPSDR P2: antenna tuner tune request ignored; no accessory bus"
+                        );
+                    }
+                    Ctrl::AtuBypass => {
+                        tracing::warn!(
+                            "HPSDR P2: antenna tuner bypass request ignored; no accessory bus"
+                        );
+                    }
                     // The open collectors follow the dial here exactly as they
                     // do on Protocol 1: a band decoder switches for the signal
                     // on the air, not for the I.F. a transverter left the radio

@@ -504,6 +504,9 @@ pub(crate) enum Ctrl {
     /// — changed while running, because the antenna memory keeps it per band
     /// (issue #292). Protocol 1 only; there is no accessory bus on Protocol 2.
     IoRxInput(HpsdrIoRxInput),
+    /// Request an antenna tuner operation (Protocol 1 accessory board only).
+    AtuTune,
+    AtuBypass,
     /// Where the radio *would* transmit, sent while receiving so an accessory
     /// board can switch bands before the operator keys. Loads the TX NCO
     /// register too, which is harmless: it does nothing until MOX.
@@ -1262,6 +1265,24 @@ impl HpsdrRx {
         if self.ddc == 0 {
             let _ = self.dev.ctrl.send(Ctrl::IoRxInput(input));
         }
+    }
+
+    /// Request an antenna tuner tune operation.
+    ///
+    /// Returns true if the request was queued for the network thread.
+    /// This does not indicate that the tuner accepted or completed the operation.
+    /// Protocol 1 accessory board only; only DDC 0 sends board-level commands.
+    pub fn request_atu_tune(&self) -> bool {
+        self.ddc == 0 && self.dev.ctrl.send(Ctrl::AtuTune).is_ok()
+    }
+
+    /// Request antenna tuner bypass.
+    ///
+    /// Returns true if the request was queued for the network thread.
+    /// This does not indicate that the tuner accepted or completed the operation.
+    /// Protocol 1 accessory board only; only DDC 0 sends board-level commands.
+    pub fn request_atu_bypass(&self) -> bool {
+        self.ddc == 0 && self.dev.ctrl.send(Ctrl::AtuBypass).is_ok()
     }
 
     /// Whether this board has a front-end gain this crate can command.

@@ -130,6 +130,15 @@ const TUNER_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// Maximum time allowed for generic tuner discovery.
 const TUNER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Interval between runtime tuner status reads.
+const TUNER_STATUS_POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// Maximum age of a tuner status that may authorise a command.
+const TUNER_STATUS_MAX_AGE: Duration = Duration::from_millis(200);
+
+/// Generic tuner commands written to REG_ANTENNA_TUNER.
+const TUNER_CMD_TUNE: u8 = 0x01;
+const TUNER_CMD_BYPASS: u8 = 0x02;
+
 /// One I2C transaction: read or write, one byte either way.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Op {
@@ -197,6 +206,13 @@ pub(crate) struct IoBoard {
     tuner_discovery: TunerDiscovery,
     tuner_discovery_deadline: Option<Instant>,
     tuner_poll_at: Option<Instant>,
+
+    /// Most recently reported raw tuner status and the time it was received.
+    tuner_status: Option<(u8, Instant)>,
+    /// When the next runtime status poll is due.
+    tuner_status_poll_at: Option<Instant>,
+    /// True while a TUNE or BYPASS write is awaiting its I2C ACK.
+    tuner_command_pending: bool,
     /// Which input the operator has wired the board for, stated once after the
     /// reset. Only the connection knows this; the board itself comes up at 0.
     rx_input: HpsdrIoRxInput,
@@ -228,6 +244,9 @@ impl IoBoard {
             tuner_discovery: TunerDiscovery::NotStarted,
             tuner_discovery_deadline: None,
             tuner_poll_at: None,
+            tuner_status: None,
+            tuner_status_poll_at: None,
+            tuner_command_pending: false,
             rx_input,
             inflight: None,
             queue: VecDeque::new(),
@@ -245,6 +264,53 @@ impl IoBoard {
     /// probed picks it up after the reset that would otherwise undo it.
     pub(crate) fn set_rx_input(&mut self, input: HpsdrIoRxInput) {
         self.rx_input = input;
+    }
+
+    /// Request a generic tuner tune operation.
+    ///
+    /// The request is accepted only when a tuner is positively detected,
+    /// its latest status is fresh and exactly idle (0x00), and no tuner
+    /// command is already awaiting acknowledgement.
+    pub(crate) fn request_tune(&mut self, now: Instant) -> bool {
+        self.request_tuner_command(TUNER_CMD_TUNE, now)
+    }
+
+    /// Request generic tuner bypass.
+    pub(crate) fn request_bypass(&mut self, now: Instant) -> bool {
+        self.request_tuner_command(TUNER_CMD_BYPASS, now)
+    }
+
+    fn request_tuner_command(&mut self, command: u8, now: Instant) -> bool {
+        let tuner_present =
+            matches!(self.tuner_discovery, TunerDiscovery::Complete { present: true, .. });
+
+        let status_is_idle_and_fresh = self.tuner_status.is_some_and(|(status, received_at)| {
+            status == 0x00
+                && now
+                    .checked_duration_since(received_at)
+                    .is_some_and(|age| age <= TUNER_STATUS_MAX_AGE)
+        });
+
+        if !tuner_present || !status_is_idle_and_fresh || self.tuner_command_pending {
+            tracing::debug!(
+                "HL2IOBoard: tuner command 0x{command:02X} rejected \
+                 (present={tuner_present}, status={:?}, pending={})",
+                self.tuner_status.map(|(status, _)| status),
+                self.tuner_command_pending
+            );
+            return false;
+        }
+
+        self.queue.push_back(Op::write(REG_ANTENNA_TUNER, command));
+        self.tuner_command_pending = true;
+
+        // The old idle status must not authorise another command. A fresh
+        // status read is required after this command has been acknowledged.
+        self.tuner_status = None;
+        self.tuner_status_poll_at = None;
+
+        tracing::info!("HL2IOBoard: tuner command 0x{command:02X} queued");
+        true
     }
 
     /// The C&C block to put in this datagram, or `None` to leave the slot to the
@@ -305,6 +371,33 @@ impl IoBoard {
                 });
             }
         }
+
+        // Poll the generic tuner status while a positively detected tuner
+        // is available. Do not poll while a command write is awaiting ACK.
+        if matches!(self.tuner_discovery, TunerDiscovery::Complete { present: true, .. })
+            && !self.tuner_command_pending
+            && self.tuner_status_poll_at.is_some_and(|poll_at| now >= poll_at)
+        {
+            let read_already_queued = self.queue.iter().any(|op| {
+                op.cookie == I2C_READ && op.addr == IOB_ADDR && op.reg == REG_ANTENNA_TUNER
+            });
+
+            let read_in_flight = self.inflight.as_ref().is_some_and(|f| {
+                f.op.cookie == I2C_READ && f.op.addr == IOB_ADDR && f.op.reg == REG_ANTENNA_TUNER
+            });
+
+            self.tuner_status_poll_at = None;
+
+            if !read_already_queued && !read_in_flight {
+                self.queue.push_back(Op {
+                    cookie: I2C_READ,
+                    addr: IOB_ADDR,
+                    reg: REG_ANTENNA_TUNER,
+                    data: 0,
+                });
+            }
+        }
+
         self.refill(now, tx_freq_hz, rx_freq_hz);
         let op = self.queue.pop_front()?;
         self.inflight = Some(InFlight { op, sent_at: now, tries: 0 });
@@ -467,6 +560,33 @@ impl IoBoard {
                 );
             }
         }
+
+        // Runtime status reads return register 7 in the fourth response byte.
+        // Preserve the raw value: only 0x00 has idle-command permission.
+        if f.op.cookie == I2C_READ
+            && f.op.addr == IOB_ADDR
+            && f.op.reg == REG_ANTENNA_TUNER
+            && matches!(self.tuner_discovery, TunerDiscovery::Complete { present: true, .. })
+        {
+            let status = data[3];
+            self.tuner_status = Some((status, now));
+            self.tuner_status_poll_at = Some(now + TUNER_STATUS_POLL_INTERVAL);
+
+            tracing::debug!("HL2IOBoard: tuner status -> 0x{status:02X}");
+        }
+
+        // A command ACK confirms the I2C write was received, not that
+        // the tuner operation has completed. Require a new status read.
+        if f.op.cookie == I2C_WRITE
+            && f.op.addr == IOB_ADDR
+            && f.op.reg == REG_ANTENNA_TUNER
+            && matches!(f.op.data, TUNER_CMD_TUNE | TUNER_CMD_BYPASS)
+        {
+            self.tuner_command_pending = false;
+            self.tuner_status = None;
+            self.tuner_status_poll_at = Some(now);
+        }
+
         if let Presence::Probing(_) = self.presence
             && f.op.cookie == I2C_READ
         {
@@ -524,6 +644,27 @@ impl IoBoard {
             );
             return;
         }
+
+        // A failed runtime tuner read or command must not disrupt the
+        // ordinary frequency and receive-input update sequence.
+        if op.addr == IOB_ADDR
+            && op.reg == REG_ANTENNA_TUNER
+            && matches!(self.tuner_discovery, TunerDiscovery::Complete { present: true, .. })
+        {
+            if op.cookie == I2C_WRITE && matches!(op.data, TUNER_CMD_TUNE | TUNER_CMD_BYPASS) {
+                self.tuner_command_pending = false;
+            }
+
+            self.tuner_status = None;
+            self.tuner_status_poll_at = Some(now + TUNER_STATUS_POLL_INTERVAL);
+
+            tracing::warn!(
+                "HL2IOBoard: tuner transaction failed ({why}); \
+                 waiting for another status read"
+            );
+            return;
+        }
+
         // Abandon the rest of the sequence with it. A frequency the board only
         // half received is not a frequency — and the byte that went missing may
         // have been the one that latches — so forget that it was ever sent and
@@ -1073,5 +1214,78 @@ mod tests {
         // The real one still lands.
         board.on_ack(CC_I2C2 >> 1, [0xF1, 0, 0, 0], now);
         assert_eq!(board.presence, Presence::Present);
+    }
+
+    #[test]
+    fn tuner_commands_require_a_fresh_idle_status() {
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        let now = Instant::now();
+
+        request_tuner_discovery(&mut board, now);
+        ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
+
+        assert!(board.request_tune(now));
+        assert!(board.tuner_command_pending);
+
+        // A second command cannot be accepted while the first is pending.
+        assert!(!board.request_bypass(now));
+    }
+
+    #[test]
+    fn tuner_command_is_rejected_when_status_is_not_idle() {
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        let now = Instant::now();
+
+        request_tuner_discovery(&mut board, now);
+        ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
+
+        // Simulate a fresh status read reporting a non-idle value.
+        let read = board
+            .next_request(now + TUNER_STATUS_POLL_INTERVAL, RX_HZ, RX_HZ, 0)
+            .expect("status poll");
+
+        assert_eq!((read[1], read[3]), (I2C_READ, REG_ANTENNA_TUNER));
+
+        ack(&mut board, now + TUNER_STATUS_POLL_INTERVAL, [9, 7, TUNER_PRESENT, 0x04]);
+
+        assert!(!board.request_tune(now + TUNER_STATUS_POLL_INTERVAL));
+        assert!(!board.tuner_command_pending);
+    }
+
+    #[test]
+    fn tuner_command_is_rejected_when_status_is_stale() {
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        let now = Instant::now();
+
+        request_tuner_discovery(&mut board, now);
+        ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
+
+        assert!(!board.request_tune(now + TUNER_STATUS_MAX_AGE + Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn tuner_command_ack_requires_a_new_status_read() {
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        let now = Instant::now();
+
+        request_tuner_discovery(&mut board, now);
+        ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
+
+        assert!(board.request_tune(now));
+
+        let command = board.next_request(now, RX_HZ, RX_HZ, 0).expect("tune command");
+        assert_eq!(
+            (command[1], command[3], command[4]),
+            (I2C_WRITE, REG_ANTENNA_TUNER, TUNER_CMD_TUNE)
+        );
+
+        ack(&mut board, now, [0; 4]);
+
+        assert!(!board.tuner_command_pending);
+        assert_eq!(board.tuner_status, None);
+
+        // The next request should be a status read, not another tuner command.
+        let poll = board.next_request(now, RX_HZ, RX_HZ, 0).expect("post-command status read");
+        assert_eq!((poll[1], poll[3]), (I2C_READ, REG_ANTENNA_TUNER));
     }
 }
