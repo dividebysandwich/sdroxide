@@ -517,6 +517,18 @@ fn stop_stream(socket: &UdpSocket, dest: SocketAddr, radio: IpAddr, conn_id: u64
     }
 }
 
+fn publish_tuner_status(
+    io_board: Option<&crate::ioboard::IoBoard>,
+    shared: &std::sync::Mutex<crate::net::HpsdrTunerStatus>,
+) {
+    let snapshot = match io_board {
+        Some(board) => board.status_snapshot(),
+        None => crate::net::HpsdrTunerStatus::default(),
+    };
+
+    *shared.lock().unwrap_or_else(|e| e.into_inner()) = snapshot;
+}
+
 /// Run the Protocol 1 network loop until told to shut down.
 pub(crate) fn run(ctx: ThreadCtx) {
     let ThreadCtx {
@@ -535,6 +547,7 @@ pub(crate) fn run(ctx: ThreadCtx) {
         lna_gain_centi_db,
         adc_overload: overload_line,
         radio_ptt: ptt_line,
+        tuner_status,
         temp_centi_c,
         fwd_power_raw,
         rev_power_raw,
@@ -760,6 +773,7 @@ pub(crate) fn run(ctx: ThreadCtx) {
                 }
             }
         }
+        publish_tuner_status(io_board.as_ref(), &tuner_status);
 
         // 2) One inbound datagram (EP6 RX I/Q).
         match socket.recv_from(&mut buf) {
@@ -806,6 +820,7 @@ pub(crate) fn run(ctx: ThreadCtx) {
                         && let Some(b) = io_board.as_mut()
                     {
                         b.on_ack(raddr, data, Instant::now());
+                        publish_tuner_status(io_board.as_ref(), &tuner_status);
                     }
                     // The radio's own PTT input (a Hermes-Lite's CN4 ring, a
                     // foot switch, a mic button). Published as a level for
@@ -1001,6 +1016,8 @@ pub(crate) fn run(ctx: ThreadCtx) {
                 .as_mut()
                 .and_then(|b| b.next_request(now, io_tx, io_rx, mox))
                 .unwrap_or_else(|| regs.cc(rot.take(&regs)));
+
+            publish_tuner_status(io_board.as_ref(), &tuner_status);
             let d = build_ep2(&mut out_seq, speed, mox, regs.oc(), cc, &tx_scratch);
             let _ = socket.send_to(&d, dest);
             next_ep2 += EP2_INTERVAL;

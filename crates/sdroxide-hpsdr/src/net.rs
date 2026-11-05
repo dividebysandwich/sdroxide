@@ -669,6 +669,18 @@ impl AutoGain {
 /// enough that a light still on means the front end is still in trouble.
 pub const OVERLOAD_HOLD: Duration = Duration::from_millis(1500);
 
+/// Snapshot of the generic antenna tuner's discovery and runtime status.
+///
+/// `present` is None until discovery has completed or if the interface
+/// is unsupported. `raw_status` and `updated_at` describe the latest
+/// status byte received from the Pico.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HpsdrTunerStatus {
+    pub present: Option<bool>,
+    pub raw_status: Option<u8>,
+    pub updated_at: Option<Instant>,
+}
+
 /// Everything a protocol thread needs: the socket, the radio address, the
 /// rates, the TX ring and the control channel. The RX rings arrive per DDC
 /// with [`Ctrl::Attach`] — streams come and go while the connection runs.
@@ -710,6 +722,7 @@ pub(crate) struct ThreadCtx {
     pub adc_overload: Arc<AtomicBool>,
     /// The radio's own PTT line, published for [`HpsdrRx::radio_ptt`].
     pub radio_ptt: Arc<AtomicBool>,
+    pub tuner_status: Arc<Mutex<HpsdrTunerStatus>>,
     /// The board's temperature in hundredths of a degree Celsius, published for
     /// [`HpsdrRx::pa_temp_c`]. [`TEMP_UNKNOWN`] until the board reports one —
     /// which most of them never do.
@@ -787,6 +800,7 @@ struct DevInner {
     /// Which DDCs have a live [`HpsdrRx`], so one cannot be vended twice: two
     /// engines draining one ring would each get half the samples.
     attached: Mutex<std::collections::HashSet<u8>>,
+    tuner_status: Arc<Mutex<HpsdrTunerStatus>>,
 }
 
 impl Drop for DevInner {
@@ -948,6 +962,7 @@ impl HpsdrBoard {
         // drops it a moment from now it will leave the stream alone.
         let conn_id = claim_connection(IpAddr::V4(ip));
         let radio_ptt = Arc::new(AtomicBool::new(false));
+        let tuner_status = Arc::new(Mutex::new(HpsdrTunerStatus::default()));
         let temp_centi_c = Arc::new(AtomicI32::new(TEMP_UNKNOWN));
         let fwd_power_raw = Arc::new(AtomicU16::new(POWER_UNKNOWN));
         let rev_power_raw = Arc::new(AtomicU16::new(POWER_UNKNOWN));
@@ -983,6 +998,7 @@ impl HpsdrBoard {
             temp_centi_c: Arc::clone(&temp_centi_c),
             fwd_power_raw: Arc::clone(&fwd_power_raw),
             rev_power_raw: Arc::clone(&rev_power_raw),
+            tuner_status: Arc::clone(&tuner_status),
             tx: tx_cons,
             ctrl: ctrl_rx,
         };
@@ -1020,6 +1036,7 @@ impl HpsdrBoard {
                 temp_centi_c,
                 fwd_power_raw,
                 rev_power_raw,
+                tuner_status,
                 tx_endpoint: Mutex::new(Some(tx_prod)),
                 attached: Mutex::new(std::collections::HashSet::new()),
             }),
@@ -1472,6 +1489,13 @@ impl HpsdrRx {
     /// unread for the length of somebody else's over.
     pub fn set_rx_paused(&self, paused: bool) {
         self.rx_paused.store(paused, Ordering::Relaxed);
+    }
+    /// Latest generic antenna tuner status reported by the accessory board.
+    ///
+    /// The returned snapshot is copied under a short-lived lock. Reading it
+    /// does not block the protocol thread or initiate an I2C transaction.
+    pub fn tuner_status(&self) -> HpsdrTunerStatus {
+        *self.dev.tuner_status.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 

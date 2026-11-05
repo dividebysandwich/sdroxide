@@ -258,6 +258,21 @@ impl IoBoard {
         }
     }
 
+    /// Return the current tuner discovery and status snapshot.
+    pub(crate) fn status_snapshot(&self) -> crate::net::HpsdrTunerStatus {
+        let present = match self.tuner_discovery {
+            TunerDiscovery::Complete { present, .. } => Some(present),
+            _ => None,
+        };
+
+        let (raw_status, updated_at) = match self.tuner_status {
+            Some((status, received_at)) => (Some(status), Some(received_at)),
+            None => (None, None),
+        };
+
+        crate::net::HpsdrTunerStatus { present, raw_status, updated_at }
+    }
+
     /// Move the receive input while running.
     ///
     /// A board already found is told with the next request; one still being
