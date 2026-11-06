@@ -16351,6 +16351,8 @@ impl Engine {
             antenna_tx: self.source.current_tx_antenna(),
             // The levels carry over; a keyed transmit never does.
             tx: sdroxide_types::TxState { ptt: false, tune: false, ..self.state.tx },
+            // The old source's tuner state does not describe the new source.
+            atu: Default::default(),
             // The scan was walking the old front end's span.
             scan: sdroxide_types::ScanState::default(),
             skimmer: if self.audio_mode {
