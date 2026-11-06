@@ -142,6 +142,63 @@ const TUNER_STATUS_MAX_AGE: Duration = Duration::from_millis(200);
 const TUNER_CMD_TUNE: u8 = 0x01;
 const TUNER_CMD_BYPASS: u8 = 0x02;
 
+/// Interpreted runtime values of the Pico's REG_ANTENNA_TUNER register.
+///
+/// The fault variants are terminal: the Pico has returned its state machine
+/// to state 0, so another Tune or Bypass command may be accepted. In-progress
+/// values must not authorise a new command. Unknown values are rejected
+/// conservatively.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TunerReg7Status {
+    Idle,
+    TuneRequested,
+    BypassRequested,
+    BypassActive,
+    TunePreparing,
+    AwaitingResult,
+    AwaitingRf,
+    FaultKeyDisconnected,
+    FaultKeyTimeout,
+    FaultTuneFailed,
+    FaultOperationTimeout,
+    Unknown(u8),
+}
+
+impl From<u8> for TunerReg7Status {
+    fn from(value: u8) -> Self {
+        match value {
+            0x00 => Self::Idle,
+            0x01 => Self::TuneRequested,
+            0x02 => Self::BypassRequested,
+            0x04 => Self::BypassActive,
+            0x05 => Self::TunePreparing,
+            0x08 => Self::AwaitingResult,
+            0xEE => Self::AwaitingRf,
+            0xFA => Self::FaultKeyDisconnected,
+            0xFB => Self::FaultKeyTimeout,
+            0xFC => Self::FaultTuneFailed,
+            0xFD => Self::FaultOperationTimeout,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
+impl TunerReg7Status {
+    /// Whether the Pico is quiescent and ready to accept another command.
+    /// Terminal fault codes are retained in Reg7 after the state machine has
+    /// returned to state 0, so they are just as command-ready as 0x00.
+    fn permits_command(self) -> bool {
+        matches!(
+            self,
+            Self::Idle
+                | Self::FaultKeyDisconnected
+                | Self::FaultKeyTimeout
+                | Self::FaultTuneFailed
+                | Self::FaultOperationTimeout
+        )
+    }
+}
+
 /// One I2C transaction: read or write, one byte either way.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Op {
@@ -318,14 +375,15 @@ impl IoBoard {
         let tuner_present =
             matches!(self.tuner_discovery, TunerDiscovery::Complete { present: true, .. });
 
-        let status_is_idle_and_fresh = self.tuner_status.is_some_and(|(status, received_at)| {
-            status == 0x00
-                && now
-                    .checked_duration_since(received_at)
-                    .is_some_and(|age| age <= TUNER_STATUS_MAX_AGE)
-        });
+        let status_is_ready_and_fresh =
+            self.tuner_status.is_some_and(|(status, received_at)| {
+                TunerReg7Status::from(status).permits_command()
+                    && now
+                        .checked_duration_since(received_at)
+                        .is_some_and(|age| age <= TUNER_STATUS_MAX_AGE)
+            });
 
-        if !tuner_present || !status_is_idle_and_fresh || self.tuner_command_pending {
+        if !tuner_present || !status_is_ready_and_fresh || self.tuner_command_pending {
             tracing::debug!(
                 "HL2IOBoard: tuner command 0x{command:02X} rejected \
                  (present={tuner_present}, status={:?}, pending={})",
@@ -1271,6 +1329,76 @@ mod tests {
 
         // A second command cannot be accepted while the first is pending.
         assert!(!board.request_bypass(now, std::sync::mpsc::channel().0));
+    }
+
+    fn board_with_tuner_status(status: u8, now: Instant) -> IoBoard {
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        board.tuner_discovery =
+            TunerDiscovery::Complete { present: true, firmware_major: 7, firmware_minor: 9 };
+        board.tuner_status = Some((status, now));
+        board
+    }
+
+    #[test]
+    fn terminal_tuner_faults_allow_a_new_tune_or_bypass() {
+        for status in [0xFA, 0xFB, 0xFC, 0xFD] {
+            for command in [TUNER_CMD_TUNE, TUNER_CMD_BYPASS] {
+                let now = Instant::now();
+                let mut board = board_with_tuner_status(status, now);
+                let (reply_tx, _reply_rx) = std::sync::mpsc::channel();
+
+                let accepted = match command {
+                    TUNER_CMD_TUNE => board.request_tune(now, reply_tx),
+                    TUNER_CMD_BYPASS => board.request_bypass(now, reply_tx),
+                    _ => unreachable!(),
+                };
+
+                assert!(accepted, "terminal status 0x{status:02X} must permit command 0x{command:02X}");
+                assert_eq!(board.queue.back().map(|op| op.data), Some(command));
+            }
+        }
+    }
+
+    #[test]
+    fn tuner_commands_are_rejected_during_every_known_active_status() {
+        for status in [0x01, 0x02, 0x04, 0x05, 0x08, 0xEE] {
+            for command in [TUNER_CMD_TUNE, TUNER_CMD_BYPASS] {
+                let now = Instant::now();
+                let mut board = board_with_tuner_status(status, now);
+                let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+
+                let accepted = match command {
+                    TUNER_CMD_TUNE => board.request_tune(now, reply_tx),
+                    TUNER_CMD_BYPASS => board.request_bypass(now, reply_tx),
+                    _ => unreachable!(),
+                };
+
+                assert!(!accepted, "active status 0x{status:02X} must reject command 0x{command:02X}");
+                assert_eq!(reply_rx.try_recv(), Ok(HpsdrAtuCommandResult::Rejected));
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_tuner_statuses_do_not_authorise_commands() {
+        for status in [0x03, 0x06, 0x07, 0xF0, 0xF9, 0xFE, 0xFF, 0x10] {
+            let now = Instant::now();
+            let mut board = board_with_tuner_status(status, now);
+            let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+
+            assert!(!board.request_tune(now, reply_tx), "unknown status 0x{status:02X}");
+            assert_eq!(reply_rx.try_recv(), Ok(HpsdrAtuCommandResult::Rejected));
+        }
+    }
+
+    #[test]
+    fn terminal_tuner_fault_status_must_still_be_fresh() {
+        let now = Instant::now();
+        let mut board = board_with_tuner_status(0xFC, now - TUNER_STATUS_MAX_AGE - Duration::from_millis(1));
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+
+        assert!(!board.request_tune(now, reply_tx));
+        assert_eq!(reply_rx.try_recv(), Ok(HpsdrAtuCommandResult::Rejected));
     }
 
     #[test]
