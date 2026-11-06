@@ -80,6 +80,9 @@ pub struct HpsdrSource {
     /// Whether the Pico requested RF during the current tuning operation.
     atu_saw_rf_request: bool,
 
+    /// Whether a fresh Pico status currently requests an RF carrier.
+    atu_rf_requested: bool,
+
     /// Timestamp of the last status byte already processed.
     atu_last_status_at: Option<Instant>,
 
@@ -256,6 +259,7 @@ impl HpsdrSource {
             ddc: cfg.ddc,
             atu_operation: None,
             atu_saw_rf_request: false,
+            atu_rf_requested: false,
             atu_last_status_at: None,
             atu_state: None,
             tx_rate,
@@ -374,11 +378,13 @@ impl HpsdrSource {
             self.atu_state = None;
             self.atu_operation = None;
             self.atu_saw_rf_request = false;
+            self.atu_rf_requested = false;
             self.atu_last_status_at = None;
             return;
         }
 
         let Some(rx) = self.rx.as_ref() else {
+            self.atu_rf_requested = false;
             return;
         };
 
@@ -388,6 +394,7 @@ impl HpsdrSource {
             self.atu_state = None;
             self.atu_operation = None;
             self.atu_saw_rf_request = false;
+            self.atu_rf_requested = false;
             self.atu_last_status_at = None;
             return;
         }
@@ -399,8 +406,18 @@ impl HpsdrSource {
         }
 
         let (Some(status), Some(updated_at)) = (snapshot.raw_status, snapshot.updated_at) else {
+            self.atu_rf_requested = false;
             return;
         };
+
+        let fresh = Instant::now()
+            .checked_duration_since(updated_at)
+            .is_some_and(|age| age <= TUNER_STATUS_MAX_AGE);
+
+        if !fresh {
+            self.atu_rf_requested = false;
+            return;
+        }
 
         // The same snapshot is returned on successive engine-loop passes.
         // Process each received status byte only once.
@@ -409,6 +426,11 @@ impl HpsdrSource {
         }
 
         self.atu_last_status_at = Some(updated_at);
+
+        // Only a fresh 0xEE status authorises the host to transmit.
+        // Every other status withdraws the request.
+        self.atu_rf_requested = status == 0xEE;
+
         self.observe_atu_status(status);
     }
 
@@ -762,16 +784,27 @@ impl IqSource for HpsdrSource {
     /// Only changes are reported. A released stream answers `false`, which
     /// unkeys rather than leaving an over hanging on a line nobody is reading.
     fn poll_control(&mut self) -> Vec<ControlUpdate> {
+        let previous_atu_request = self.atu_rf_requested;
+
         // ATU status must be polled even when the PTT line has not changed.
         self.poll_atu_status();
 
         let ptt = self.rx.as_ref().is_some_and(|rx| rx.radio_ptt());
-        if ptt == self.ptt {
-            return Vec::new();
+
+        let mut updates = Vec::new();
+
+        // Process a hardware PTT edge before an ATU request arriving on the
+        // same engine pass. An existing operator transmission must win.
+        if ptt != self.ptt {
+            self.ptt = ptt;
+            updates.push(ControlUpdate::Ptt(ptt));
         }
 
-        self.ptt = ptt;
-        vec![ControlUpdate::Ptt(ptt)]
+        if previous_atu_request != self.atu_rf_requested {
+            updates.push(ControlUpdate::AtuRfRequest(self.atu_rf_requested));
+        }
+
+        updates
     }
 
     /// Load the transmit frequency while receiving, so an HL2IOBoard on the
