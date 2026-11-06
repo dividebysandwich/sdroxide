@@ -442,6 +442,7 @@ impl HpsdrSource {
         if !self.generic_atu_available() {
             self.atu_state = None;
             self.atu_operation = None;
+            self.atu_command_reply = None;
             self.atu_saw_rf_request = false;
             self.atu_rf_requested = false;
             self.atu_last_status_at = None;
@@ -449,6 +450,9 @@ impl HpsdrSource {
         }
 
         let Some(rx) = self.rx.as_ref() else {
+            self.atu_command_reply = None;
+            self.atu_operation = None;
+            self.atu_saw_rf_request = false;
             self.atu_rf_requested = false;
             return;
         };
@@ -458,6 +462,7 @@ impl HpsdrSource {
         if snapshot.present != Some(true) {
             self.atu_state = None;
             self.atu_operation = None;
+            self.atu_command_reply = None;
             self.atu_saw_rf_request = false;
             self.atu_rf_requested = false;
             self.atu_last_status_at = None;
@@ -826,6 +831,10 @@ impl IqSource for HpsdrSource {
     fn release(&mut self) {
         self.rx = None;
         self.board = None;
+        self.atu_command_reply = None;
+        self.atu_operation = None;
+        self.atu_saw_rf_request = false;
+        self.atu_rf_requested = false;
     }
 
     fn atu(&self) -> Option<sdroxide_types::AtuState> {
