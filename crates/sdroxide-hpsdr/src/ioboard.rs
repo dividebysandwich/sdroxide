@@ -54,8 +54,9 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::net::HpsdrAtuCommandResult;
 use std::sync::mpsc::Sender;
+
+use crate::net::HpsdrAtuCommandResult;
 
 use sdroxide_types::HpsdrIoRxInput;
 
@@ -1292,10 +1293,7 @@ mod tests {
 
         let (reply_tx, reply_rx) = std::sync::mpsc::channel();
         assert!(!board.request_tune(now + TUNER_STATUS_POLL_INTERVAL, reply_tx));
-        assert_eq!(
-            reply_rx.try_recv(),
-            Ok(HpsdrAtuCommandResult::Rejected)
-        );
+        assert_eq!(reply_rx.try_recv(), Ok(HpsdrAtuCommandResult::Rejected));
         assert!(!board.tuner_command_pending);
     }
 
@@ -1350,10 +1348,7 @@ mod tests {
 
         ack(&mut board, now, [0; 4]);
 
-        assert_eq!(
-            reply_rx.try_recv(),
-            Ok(HpsdrAtuCommandResult::Acknowledged)
-        );
+        assert_eq!(reply_rx.try_recv(), Ok(HpsdrAtuCommandResult::Acknowledged));
         assert!(!board.tuner_command_pending);
         assert_eq!(board.tuner_status, None);
 
