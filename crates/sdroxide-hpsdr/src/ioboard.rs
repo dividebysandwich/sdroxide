@@ -347,8 +347,8 @@ impl IoBoard {
     /// Request a generic tuner tune operation.
     ///
     /// The request is accepted only when a tuner is positively detected,
-    /// its latest status is fresh and exactly idle (0x00), and no tuner
-    /// command is already awaiting acknowledgement.
+    /// its latest status is fresh and command-ready (idle or a documented
+    /// terminal fault), and no tuner command is already awaiting acknowledgement.
     pub(crate) fn request_tune(
         &mut self,
         now: Instant,
@@ -656,7 +656,8 @@ impl IoBoard {
         }
 
         // Runtime status reads return register 7 in the fourth response byte.
-        // Preserve the raw value: only 0x00 has idle-command permission.
+        // Preserve the raw value: idle and documented terminal fault codes
+        // permit a new command; active and unknown values do not.
         if f.op.cookie == I2C_READ
             && f.op.addr == IOB_ADDR
             && f.op.reg == REG_ANTENNA_TUNER
