@@ -714,7 +714,7 @@ pub(crate) fn run(ctx: ThreadCtx) {
                     if let Some(b) = io_board.as_mut() {
                         b.request_tune(Instant::now(), reply);
                     } else {
-                        let _ = reply.send(false);
+                        let _ = reply.send(crate::net::HpsdrAtuCommandResult::Rejected);
                         tracing::warn!(
                             "HPSDR P1: antenna tuner tune request ignored; no I/O board"
                         );
@@ -724,7 +724,7 @@ pub(crate) fn run(ctx: ThreadCtx) {
                     if let Some(b) = io_board.as_mut() {
                         b.request_bypass(Instant::now(), reply);
                     } else {
-                        let _ = reply.send(false);
+                        let _ = reply.send(crate::net::HpsdrAtuCommandResult::Rejected);
                         tracing::warn!(
                             "HPSDR P1: antenna tuner bypass request ignored; no I/O board"
                         );
