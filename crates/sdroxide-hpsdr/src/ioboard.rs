@@ -1294,7 +1294,10 @@ mod tests {
         request_tuner_discovery(&mut board, now);
         ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
 
-        assert!(!board.request_tune(now + TUNER_STATUS_MAX_AGE + Duration::from_millis(1)));
+        assert!(!board.request_tune(
+            now + TUNER_STATUS_MAX_AGE + Duration::from_millis(1),
+            crossbeam_channel::bounded(1).0,
+        ));
     }
 
     #[test]
