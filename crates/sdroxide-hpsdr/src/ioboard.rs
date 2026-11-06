@@ -1282,7 +1282,12 @@ mod tests {
 
         ack(&mut board, now + TUNER_STATUS_POLL_INTERVAL, [9, 7, TUNER_PRESENT, 0x04]);
 
-        assert!(!board.request_tune(now + TUNER_STATUS_POLL_INTERVAL, crossbeam_channel::bounded(1).0));
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        assert!(!board.request_tune(now + TUNER_STATUS_POLL_INTERVAL, reply_tx));
+        assert_eq!(
+            reply_rx.try_recv(),
+            Ok(HpsdrAtuCommandResult::Rejected)
+        );
         assert!(!board.tuner_command_pending);
     }
 
@@ -1301,6 +1306,24 @@ mod tests {
     }
 
     #[test]
+    fn tuner_command_i2c_failure_is_reported() {
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        let now = Instant::now();
+
+        request_tuner_discovery(&mut board, now);
+        ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
+
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        assert!(board.request_tune(now, reply_tx));
+        board.next_request(now, RX_HZ, RX_HZ, 0).expect("tune command");
+
+        board.on_ack(RADDR_ERROR, [0; 4], now);
+
+        assert_eq!(reply_rx.try_recv(), Ok(HpsdrAtuCommandResult::Failed));
+        assert!(!board.tuner_command_pending);
+    }
+
+    #[test]
     fn tuner_command_ack_requires_a_new_status_read() {
         let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
         let now = Instant::now();
@@ -1308,7 +1331,8 @@ mod tests {
         request_tuner_discovery(&mut board, now);
         ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
 
-        assert!(board.request_tune(now, crossbeam_channel::bounded(1).0));
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        assert!(board.request_tune(now, reply_tx));
 
         let command = board.next_request(now, RX_HZ, RX_HZ, 0).expect("tune command");
         assert_eq!(
@@ -1318,6 +1342,10 @@ mod tests {
 
         ack(&mut board, now, [0; 4]);
 
+        assert_eq!(
+            reply_rx.try_recv(),
+            Ok(HpsdrAtuCommandResult::Acknowledged)
+        );
         assert!(!board.tuner_command_pending);
         assert_eq!(board.tuner_status, None);
 
