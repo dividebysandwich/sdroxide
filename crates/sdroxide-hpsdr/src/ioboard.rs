@@ -54,6 +54,8 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use crossbeam_channel::Sender;
+
 use sdroxide_types::HpsdrIoRxInput;
 
 /// C&C address `0x3D` — I2C bus 2 — already shifted into C0's address field.
@@ -213,6 +215,8 @@ pub(crate) struct IoBoard {
     tuner_status_poll_at: Option<Instant>,
     /// True while a TUNE or BYPASS write is awaiting its I2C ACK.
     tuner_command_pending: bool,
+    /// Delivers the result of the command's I2C write to its requesting stream.
+    tuner_command_reply: Option<Sender<bool>>,
     /// Which input the operator has wired the board for, stated once after the
     /// reset. Only the connection knows this; the board itself comes up at 0.
     rx_input: HpsdrIoRxInput,
@@ -247,6 +251,7 @@ impl IoBoard {
             tuner_status: None,
             tuner_status_poll_at: None,
             tuner_command_pending: false,
+            tuner_command_reply: None,
             rx_input,
             inflight: None,
             queue: VecDeque::new(),
@@ -286,16 +291,21 @@ impl IoBoard {
     /// The request is accepted only when a tuner is positively detected,
     /// its latest status is fresh and exactly idle (0x00), and no tuner
     /// command is already awaiting acknowledgement.
-    pub(crate) fn request_tune(&mut self, now: Instant) -> bool {
-        self.request_tuner_command(TUNER_CMD_TUNE, now)
+    pub(crate) fn request_tune(&mut self, now: Instant, reply: Sender<bool>) -> bool {
+        self.request_tuner_command(TUNER_CMD_TUNE, now, reply)
     }
 
     /// Request generic tuner bypass.
-    pub(crate) fn request_bypass(&mut self, now: Instant) -> bool {
-        self.request_tuner_command(TUNER_CMD_BYPASS, now)
+    pub(crate) fn request_bypass(&mut self, now: Instant, reply: Sender<bool>) -> bool {
+        self.request_tuner_command(TUNER_CMD_BYPASS, now, reply)
     }
 
-    fn request_tuner_command(&mut self, command: u8, now: Instant) -> bool {
+    fn request_tuner_command(
+        &mut self,
+        command: u8,
+        now: Instant,
+        reply: Sender<bool>,
+    ) -> bool {
         let tuner_present =
             matches!(self.tuner_discovery, TunerDiscovery::Complete { present: true, .. });
 
@@ -313,11 +323,13 @@ impl IoBoard {
                 self.tuner_status.map(|(status, _)| status),
                 self.tuner_command_pending
             );
+            let _ = reply.send(false);
             return false;
         }
 
         self.queue.push_back(Op::write(REG_ANTENNA_TUNER, command));
         self.tuner_command_pending = true;
+        self.tuner_command_reply = Some(reply);
 
         // The old idle status must not authorise another command. A fresh
         // status read is required after this command has been acknowledged.
@@ -598,6 +610,9 @@ impl IoBoard {
             && matches!(f.op.data, TUNER_CMD_TUNE | TUNER_CMD_BYPASS)
         {
             self.tuner_command_pending = false;
+            if let Some(reply) = self.tuner_command_reply.take() {
+                let _ = reply.send(true);
+            }
             self.tuner_status = None;
             self.tuner_status_poll_at = Some(now);
         }
@@ -668,6 +683,9 @@ impl IoBoard {
         {
             if op.cookie == I2C_WRITE && matches!(op.data, TUNER_CMD_TUNE | TUNER_CMD_BYPASS) {
                 self.tuner_command_pending = false;
+                if let Some(reply) = self.tuner_command_reply.take() {
+                    let _ = reply.send(false);
+                }
             }
 
             self.tuner_status = None;
