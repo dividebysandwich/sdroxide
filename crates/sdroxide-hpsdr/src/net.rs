@@ -469,7 +469,7 @@ pub enum HpsdrError {
 
 /// Result of delivering an ATU command to the Pico over I2C.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum HpsdrAtuCommandResult {
+pub enum HpsdrAtuCommandResult {
     /// The network thread or I/O board rejected the request before the write.
     Rejected,
     /// The Pico acknowledged the I2C write. This is not tune completion.
