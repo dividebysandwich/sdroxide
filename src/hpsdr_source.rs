@@ -14,7 +14,7 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use sdroxide_dsp::{Decimator, PureSignal};
-use sdroxide_hpsdr::{HpsdrBoard, HpsdrRx, LNA_GAIN_ELEMENT};
+use sdroxide_hpsdr::{HpsdrAtuCommandResult, HpsdrBoard, HpsdrRx, LNA_GAIN_ELEMENT};
 use sdroxide_radio::{Complex32, ControlUpdate, IqSource, RadioError, Result};
 
 use crate::device_registry::{DeviceKey, SharedDevice, registry};
@@ -76,6 +76,9 @@ pub struct HpsdrSource {
 
     /// Last host-requested tuner operation, needed to interpret status 0x00.
     atu_operation: Option<AtuOperation>,
+
+    /// Pending result of delivering the command to the Pico over I2C.
+    atu_command_reply: Option<crossbeam_channel::Receiver<HpsdrAtuCommandResult>>,
 
     /// Whether the Pico requested RF during the current tuning operation.
     atu_saw_rf_request: bool,
@@ -258,6 +261,7 @@ impl HpsdrSource {
             ptt: false,
             ddc: cfg.ddc,
             atu_operation: None,
+            atu_command_reply: None,
             atu_saw_rf_request: false,
             atu_rf_requested: false,
             atu_last_status_at: None,
@@ -393,8 +397,48 @@ impl HpsdrSource {
         }
     }
 
+    /// Process the asynchronous result of delivering the command to the Pico.
+    /// An I2C ACK confirms delivery only; Reg7 remains authoritative for completion.
+    fn poll_atu_command_reply(&mut self) {
+        let result = match self.atu_command_reply.as_ref().map(|reply| reply.try_recv()) {
+            Some(Ok(result)) => Some(result),
+            Some(Err(crossbeam_channel::TryRecvError::Disconnected)) => {
+                Some(HpsdrAtuCommandResult::Failed)
+            }
+            Some(Err(crossbeam_channel::TryRecvError::Empty)) | None => None,
+        };
+
+        let Some(result) = result else { return };
+        self.atu_command_reply = None;
+
+        match result {
+            HpsdrAtuCommandResult::Acknowledged => {
+                tracing::debug!("HPSDR: antenna tuner command acknowledged by the Pico");
+            }
+            HpsdrAtuCommandResult::Rejected => {
+                tracing::warn!("HPSDR: antenna tuner command rejected before the I2C write");
+                self.atu_operation = None;
+                self.atu_saw_rf_request = false;
+                self.atu_rf_requested = false;
+            }
+            HpsdrAtuCommandResult::Failed => {
+                tracing::warn!("HPSDR: antenna tuner I2C command failed or was not acknowledged");
+                self.atu_operation = None;
+                self.atu_saw_rf_request = false;
+                self.atu_rf_requested = false;
+                let enabled = self.atu_state.is_some_and(|state| state.enabled);
+                self.atu_state = Some(sdroxide_types::AtuState {
+                    status: sdroxide_types::AtuStatus::Failed,
+                    enabled,
+                    using_memory: false,
+                });
+            }
+        }
+    }
+
     /// Process the latest tuner snapshot without initiating I2C traffic.
     fn poll_atu_status(&mut self) {
+        self.poll_atu_command_reply();
         if !self.generic_atu_available() {
             self.atu_state = None;
             self.atu_operation = None;
@@ -482,22 +526,20 @@ impl HpsdrSource {
             ));
         }
 
-        let queued = match operation {
+        let reply = match operation {
             AtuOperation::Tune => rx.request_atu_tune(),
             AtuOperation::Bypass => rx.request_atu_bypass(),
-        };
-
-        if !queued {
-            return Err(RadioError::Msg(
-                "the HPSDR network thread did not accept the tuner command".into(),
-            ));
         }
+        .ok_or_else(|| {
+            RadioError::Msg("the HPSDR network thread did not accept the tuner command".into())
+        })?;
 
         // Do not interpret the idle status that permitted this command
         // as the completion status of the command itself.
         self.atu_last_status_at = snapshot.updated_at;
 
         self.atu_operation = Some(operation);
+        self.atu_command_reply = Some(reply);
         self.atu_saw_rf_request = false;
 
         Ok(())
