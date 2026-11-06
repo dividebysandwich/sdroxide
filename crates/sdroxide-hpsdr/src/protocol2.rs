@@ -896,12 +896,14 @@ impl P2Thread {
                     // I2C tunnel; nothing here to switch.
                     Ctrl::IoRxInput(_) => {}
                     // Protocol 2 has no accessory I2C bus for antenna tuner commands.
-                    Ctrl::AtuTune => {
+                    Ctrl::AtuTune(reply) => {
+                        let _ = reply.send(crate::net::HpsdrAtuCommandResult::Rejected);
                         tracing::warn!(
                             "HPSDR P2: antenna tuner tune request ignored; no accessory bus"
                         );
                     }
-                    Ctrl::AtuBypass => {
+                    Ctrl::AtuBypass(reply) => {
+                        let _ = reply.send(crate::net::HpsdrAtuCommandResult::Rejected);
                         tracing::warn!(
                             "HPSDR P2: antenna tuner bypass request ignored; no accessory bus"
                         );
