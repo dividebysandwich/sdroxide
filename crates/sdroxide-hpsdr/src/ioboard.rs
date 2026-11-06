@@ -54,8 +54,8 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use std::sync::mpsc::Sender;
 use crate::net::HpsdrAtuCommandResult;
+use std::sync::mpsc::Sender;
 
 use sdroxide_types::HpsdrIoRxInput;
 
