@@ -55,6 +55,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
+use crate::net::HpsdrAtuCommandResult;
 
 use sdroxide_types::HpsdrIoRxInput;
 
@@ -216,7 +217,7 @@ pub(crate) struct IoBoard {
     /// True while a TUNE or BYPASS write is awaiting its I2C ACK.
     tuner_command_pending: bool,
     /// Delivers the result of the command's I2C write to its requesting stream.
-    tuner_command_reply: Option<Sender<bool>>,
+    tuner_command_reply: Option<Sender<HpsdrAtuCommandResult>>,
     /// Which input the operator has wired the board for, stated once after the
     /// reset. Only the connection knows this; the board itself comes up at 0.
     rx_input: HpsdrIoRxInput,
@@ -291,7 +292,7 @@ impl IoBoard {
     /// The request is accepted only when a tuner is positively detected,
     /// its latest status is fresh and exactly idle (0x00), and no tuner
     /// command is already awaiting acknowledgement.
-    pub(crate) fn request_tune(&mut self, now: Instant, reply: Sender<bool>) -> bool {
+    pub(crate) fn request_tune(&mut self, now: Instant, reply: Sender<HpsdrAtuCommandResult>) -> bool {
         self.request_tuner_command(TUNER_CMD_TUNE, now, reply)
     }
 
@@ -323,7 +324,7 @@ impl IoBoard {
                 self.tuner_status.map(|(status, _)| status),
                 self.tuner_command_pending
             );
-            let _ = reply.send(false);
+            let _ = reply.send(HpsdrAtuCommandResult::Rejected);
             return false;
         }
 
@@ -611,7 +612,7 @@ impl IoBoard {
         {
             self.tuner_command_pending = false;
             if let Some(reply) = self.tuner_command_reply.take() {
-                let _ = reply.send(true);
+                let _ = reply.send(HpsdrAtuCommandResult::Acknowledged);
             }
             self.tuner_status = None;
             self.tuner_status_poll_at = Some(now);
@@ -684,7 +685,7 @@ impl IoBoard {
             if op.cookie == I2C_WRITE && matches!(op.data, TUNER_CMD_TUNE | TUNER_CMD_BYPASS) {
                 self.tuner_command_pending = false;
                 if let Some(reply) = self.tuner_command_reply.take() {
-                    let _ = reply.send(false);
+                    let _ = reply.send(HpsdrAtuCommandResult::Failed);
                 }
             }
 
