@@ -54,7 +54,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::Sender;
+use std::sync::mpsc::Sender;
 use crate::net::HpsdrAtuCommandResult;
 
 use sdroxide_types::HpsdrIoRxInput;
@@ -1258,11 +1258,11 @@ mod tests {
         request_tuner_discovery(&mut board, now);
         ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
 
-        assert!(board.request_tune(now, crossbeam_channel::bounded(1).0));
+        assert!(board.request_tune(now, std::sync::mpsc::channel().0));
         assert!(board.tuner_command_pending);
 
         // A second command cannot be accepted while the first is pending.
-        assert!(!board.request_bypass(now, crossbeam_channel::bounded(1).0));
+        assert!(!board.request_bypass(now, std::sync::mpsc::channel().0));
     }
 
     #[test]
@@ -1282,7 +1282,7 @@ mod tests {
 
         ack(&mut board, now + TUNER_STATUS_POLL_INTERVAL, [9, 7, TUNER_PRESENT, 0x04]);
 
-        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
         assert!(!board.request_tune(now + TUNER_STATUS_POLL_INTERVAL, reply_tx));
         assert_eq!(
             reply_rx.try_recv(),
@@ -1301,7 +1301,7 @@ mod tests {
 
         assert!(!board.request_tune(
             now + TUNER_STATUS_MAX_AGE + Duration::from_millis(1),
-            crossbeam_channel::bounded(1).0,
+            std::sync::mpsc::channel().0,
         ));
     }
 
@@ -1313,7 +1313,7 @@ mod tests {
         request_tuner_discovery(&mut board, now);
         ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
 
-        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
         assert!(board.request_tune(now, reply_tx));
         board.next_request(now, RX_HZ, RX_HZ, 0).expect("tune command");
 
@@ -1331,7 +1331,7 @@ mod tests {
         request_tuner_discovery(&mut board, now);
         ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
 
-        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
         assert!(board.request_tune(now, reply_tx));
 
         let command = board.next_request(now, RX_HZ, RX_HZ, 0).expect("tune command");
