@@ -1301,22 +1301,22 @@ impl HpsdrRx {
     /// The returned receiver reports whether the I2C write reached the Pico.
     /// It does not indicate that tuning has completed; Reg7 reports that separately.
     /// Protocol 1 accessory board only; only DDC 0 sends board-level commands.
-    pub fn request_atu_tune(&self) -> Option<Receiver<HpsdrAtuCommandResult>> {
+    pub fn request_atu_tune(&self) -> Option<std::sync::mpsc::Receiver<HpsdrAtuCommandResult>> {
         if self.ddc != 0 {
             return None;
         }
-        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
         self.dev.ctrl.send(Ctrl::AtuTune(reply_tx)).ok()?;
         Some(reply_rx)
     }
 
     /// Request antenna tuner bypass. The returned result has the same meaning
     /// as request_atu_tune: it confirms the I2C write, not tune completion.
-    pub fn request_atu_bypass(&self) -> Option<Receiver<HpsdrAtuCommandResult>> {
+    pub fn request_atu_bypass(&self) -> Option<std::sync::mpsc::Receiver<HpsdrAtuCommandResult>> {
         if self.ddc != 0 {
             return None;
         }
-        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
         self.dev.ctrl.send(Ctrl::AtuBypass(reply_tx)).ok()?;
         Some(reply_rx)
     }
