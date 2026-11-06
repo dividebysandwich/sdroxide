@@ -372,6 +372,27 @@ impl HpsdrSource {
         }
     }
 
+    /// Withdraw RF and stop presenting an active operation as Tuning when
+    /// the last received status has exceeded the freshness limit. Keep the
+    /// operation context until a fresh terminal status arrives, so 0x00 and
+    /// failure statuses can still be interpreted correctly.
+    fn withdraw_stale_atu_status(&mut self) {
+        self.atu_rf_requested = false;
+
+        let stale = self.atu_last_status_at.is_some_and(|updated_at| {
+            Instant::now()
+                .checked_duration_since(updated_at)
+                .is_some_and(|age| age > TUNER_STATUS_MAX_AGE)
+        });
+
+        if stale && (self.atu_operation.is_some() || self.atu_saw_rf_request) {
+            if let Some(state) = self.atu_state.as_mut() {
+                state.status = sdroxide_types::AtuStatus::Idle;
+                state.using_memory = false;
+            }
+        }
+    }
+
     /// Process the latest tuner snapshot without initiating I2C traffic.
     fn poll_atu_status(&mut self) {
         if !self.generic_atu_available() {
@@ -406,7 +427,7 @@ impl HpsdrSource {
         }
 
         let (Some(status), Some(updated_at)) = (snapshot.raw_status, snapshot.updated_at) else {
-            self.atu_rf_requested = false;
+            self.withdraw_stale_atu_status();
             return;
         };
 
@@ -415,7 +436,7 @@ impl HpsdrSource {
             .is_some_and(|age| age <= TUNER_STATUS_MAX_AGE);
 
         if !fresh {
-            self.atu_rf_requested = false;
+            self.withdraw_stale_atu_status();
             return;
         }
 
