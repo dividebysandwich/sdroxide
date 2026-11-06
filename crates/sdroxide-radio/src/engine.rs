@@ -16295,6 +16295,10 @@ impl Engine {
         if self.tx_active {
             let _ = self.source.tx_end();
         }
+        // An ATU request belongs to the old source. Clear it before reconciling
+        // rig TX, so a falling rig-TX indication cannot restart the old ATU
+        // carrier while the source is being replaced.
+        self.atu_rf_requested = false;
         // Nor the old link's word that the radio was on the air by itself: the
         // new one reports only changes, so a stale `true` would keep receive
         // muted and transmit refused until the radio keyed again.
