@@ -78,7 +78,7 @@ pub struct HpsdrSource {
     atu_operation: Option<AtuOperation>,
 
     /// Pending result of delivering the command to the Pico over I2C.
-    atu_command_reply: Option<crossbeam_channel::Receiver<HpsdrAtuCommandResult>>,
+    atu_command_reply: Option<std::sync::mpsc::Receiver<HpsdrAtuCommandResult>>,
 
     /// Whether the Pico requested RF during the current tuning operation.
     atu_saw_rf_request: bool,
@@ -402,10 +402,10 @@ impl HpsdrSource {
     fn poll_atu_command_reply(&mut self) {
         let result = match self.atu_command_reply.as_ref().map(|reply| reply.try_recv()) {
             Some(Ok(result)) => Some(result),
-            Some(Err(crossbeam_channel::TryRecvError::Disconnected)) => {
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
                 Some(HpsdrAtuCommandResult::Failed)
             }
-            Some(Err(crossbeam_channel::TryRecvError::Empty)) | None => None,
+            Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => None,
         };
 
         let Some(result) = result else { return };
