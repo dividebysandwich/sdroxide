@@ -467,6 +467,17 @@ pub enum HpsdrError {
     Msg(String),
 }
 
+/// Result of delivering an ATU command to the Pico over I2C.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HpsdrAtuCommandResult {
+    /// The network thread or I/O board rejected the request before the write.
+    Rejected,
+    /// The Pico acknowledged the I2C write. This is not tune completion.
+    Acknowledged,
+    /// The I2C write did not receive an acknowledgement before giving up.
+    Failed,
+}
+
 /// Control messages from the handles to the network thread.
 pub(crate) enum Ctrl {
     /// A DDC stream coming up: store its ring + liveness clock, enable it on
@@ -506,8 +517,8 @@ pub(crate) enum Ctrl {
     IoRxInput(HpsdrIoRxInput),
     /// Request an antenna tuner operation (Protocol 1 accessory board only).
     /// The reply reports whether the I2C write reached the Pico, not tune completion.
-    AtuTune(Sender<bool>),
-    AtuBypass(Sender<bool>),
+    AtuTune(Sender<HpsdrAtuCommandResult>),
+    AtuBypass(Sender<HpsdrAtuCommandResult>),
     /// Where the radio *would* transmit, sent while receiving so an accessory
     /// board can switch bands before the operator keys. Loads the TX NCO
     /// register too, which is harmless: it does nothing until MOX.
@@ -1290,7 +1301,7 @@ impl HpsdrRx {
     /// The returned receiver reports whether the I2C write reached the Pico.
     /// It does not indicate that tuning has completed; Reg7 reports that separately.
     /// Protocol 1 accessory board only; only DDC 0 sends board-level commands.
-    pub fn request_atu_tune(&self) -> Option<Receiver<bool>> {
+    pub fn request_atu_tune(&self) -> Option<Receiver<HpsdrAtuCommandResult>> {
         if self.ddc != 0 {
             return None;
         }
@@ -1301,7 +1312,7 @@ impl HpsdrRx {
 
     /// Request antenna tuner bypass. The returned result has the same meaning
     /// as request_atu_tune: it confirms the I2C write, not tune completion.
-    pub fn request_atu_bypass(&self) -> Option<Receiver<bool>> {
+    pub fn request_atu_bypass(&self) -> Option<Receiver<HpsdrAtuCommandResult>> {
         if self.ddc != 0 {
             return None;
         }
