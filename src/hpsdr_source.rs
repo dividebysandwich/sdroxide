@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use sdroxide_dsp::{Decimator, PureSignal};
 use sdroxide_hpsdr::{HpsdrBoard, HpsdrRx, LNA_GAIN_ELEMENT};
-use sdroxide_radio::{Complex32, ControlUpdate, IqSource, Result};
+use sdroxide_radio::{Complex32, ControlUpdate, IqSource, RadioError, Result};
 
 use crate::device_registry::{DeviceKey, SharedDevice, registry};
 
@@ -38,6 +38,15 @@ const SILENCE_BEFORE_REOPEN: Duration = Duration::from_secs(5);
 /// been sitting at unity all evening", so it goes out often enough to be seen
 /// on a short transmission.
 const PS_LOG_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The same freshness limit enforced by the HPSDR I/O board scheduler.
+const TUNER_STATUS_MAX_AGE: Duration = Duration::from_millis(200);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AtuOperation {
+    Tune,
+    Bypass,
+}
 
 pub struct HpsdrSource {
     /// The shared connection and this source's stream on it. `None` after
@@ -62,6 +71,20 @@ pub struct HpsdrSource {
     /// only changes are handed on. The board reports a level and the engine
     /// wants an edge.
     ptt: bool,
+    /// DDC number: the accessory tuner belongs to DDC 0.
+    ddc: u8,
+
+    /// Last host-requested tuner operation, needed to interpret status 0x00.
+    atu_operation: Option<AtuOperation>,
+
+    /// Whether the Pico requested RF during the current tuning operation.
+    atu_saw_rf_request: bool,
+
+    /// Timestamp of the last status byte already processed.
+    atu_last_status_at: Option<Instant>,
+
+    /// Interpreted generic tuner state.
+    atu_state: Option<sdroxide_types::AtuState>,
     label: String,
     /// See [`sdroxide_types::HpsdrConfig::tx_latency_ms`].
     tx_latency_ms: f64,
@@ -230,6 +253,11 @@ impl HpsdrSource {
             rx_scratch: Vec::new(),
             tx_scratch: Vec::new(),
             ptt: false,
+            ddc: cfg.ddc,
+            atu_operation: None,
+            atu_saw_rf_request: false,
+            atu_last_status_at: None,
+            atu_state: None,
             tx_rate,
             label,
             rx: Some(rx),
@@ -264,6 +292,172 @@ impl HpsdrSource {
     /// so the band memory keeps one per band (issue #292).
     pub fn io_inputs_offered(&self) -> bool {
         self.io_rx_input.is_some()
+    }
+
+    /// Whether this source owns a Protocol 1 accessory board that can
+    /// provide the generic tuner interface.
+    fn generic_atu_available(&self) -> bool {
+        self.ddc == 0
+            && self
+                .board
+                .as_ref()
+                .is_some_and(|board| board.protocol() == 1 && board.has_io_board())
+    }
+
+    /// Interpret a newly received Pico tuner status byte.
+    fn observe_atu_status(&mut self, status: u8) {
+        let enabled = self.atu_state.is_some_and(|state| state.enabled);
+
+        match status {
+            // The Pico is requesting an RF carrier from the host.
+            0xEE => {
+                self.atu_saw_rf_request = true;
+                self.atu_state = Some(sdroxide_types::AtuState {
+                    status: sdroxide_types::AtuStatus::Tuning,
+                    enabled: true,
+                    using_memory: false,
+                });
+            }
+
+            // Idle/completion. The preceding host operation determines
+            // whether this represents a successful tune or bypass.
+            0x00 => {
+                let completed = match self.atu_operation {
+                    Some(AtuOperation::Tune) => Some(sdroxide_types::AtuState {
+                        status: sdroxide_types::AtuStatus::Tuned,
+                        enabled: true,
+                        using_memory: !self.atu_saw_rf_request,
+                    }),
+                    Some(AtuOperation::Bypass) => Some(sdroxide_types::AtuState {
+                        status: sdroxide_types::AtuStatus::Bypass,
+                        enabled: false,
+                        using_memory: false,
+                    }),
+                    None if self.atu_saw_rf_request => Some(sdroxide_types::AtuState {
+                        status: sdroxide_types::AtuStatus::Aborted,
+                        enabled,
+                        using_memory: false,
+                    }),
+                    None => None,
+                };
+
+                if let Some(state) = completed {
+                    self.atu_state = Some(state);
+                }
+
+                self.atu_operation = None;
+                self.atu_saw_rf_request = false;
+            }
+
+            // The Pico's failure status range.
+            0xF0..=0xFF => {
+                self.atu_state = Some(sdroxide_types::AtuState {
+                    status: sdroxide_types::AtuStatus::Failed,
+                    enabled,
+                    using_memory: false,
+                });
+
+                self.atu_operation = None;
+                self.atu_saw_rf_request = false;
+            }
+
+            // Do not assign meaning to other values without protocol evidence.
+            other => {
+                tracing::debug!("HPSDR: unrecognised generic tuner status 0x{other:02X}");
+            }
+        }
+    }
+
+    /// Process the latest tuner snapshot without initiating I2C traffic.
+    fn poll_atu_status(&mut self) {
+        if !self.generic_atu_available() {
+            self.atu_state = None;
+            self.atu_operation = None;
+            self.atu_saw_rf_request = false;
+            self.atu_last_status_at = None;
+            return;
+        }
+
+        let Some(rx) = self.rx.as_ref() else {
+            return;
+        };
+
+        let snapshot = rx.tuner_status();
+
+        if snapshot.present != Some(true) {
+            self.atu_state = None;
+            self.atu_operation = None;
+            self.atu_saw_rf_request = false;
+            self.atu_last_status_at = None;
+            return;
+        }
+
+        // Discovery has succeeded. Until the first status byte arrives,
+        // report the default idle state.
+        if self.atu_state.is_none() {
+            self.atu_state = Some(sdroxide_types::AtuState::default());
+        }
+
+        let (Some(status), Some(updated_at)) = (snapshot.raw_status, snapshot.updated_at) else {
+            return;
+        };
+
+        // The same snapshot is returned on successive engine-loop passes.
+        // Process each received status byte only once.
+        if self.atu_last_status_at == Some(updated_at) {
+            return;
+        }
+
+        self.atu_last_status_at = Some(updated_at);
+        self.observe_atu_status(status);
+    }
+
+    /// Queue a tuner operation, requiring a fresh idle status first.
+    fn queue_atu_command(&mut self, operation: AtuOperation) -> Result<()> {
+        if !self.generic_atu_available() {
+            return Err(RadioError::Msg("the generic HPSDR antenna tuner is unavailable".into()));
+        }
+
+        if self.atu_operation.is_some() {
+            return Err(RadioError::Msg("an antenna tuner operation is already pending".into()));
+        }
+
+        let Some(rx) = self.rx.as_ref() else {
+            return Err(RadioError::Msg("the HPSDR receive stream is unavailable".into()));
+        };
+
+        let snapshot = rx.tuner_status();
+        let now = Instant::now();
+
+        let fresh = snapshot.updated_at.is_some_and(|updated_at| {
+            now.checked_duration_since(updated_at).is_some_and(|age| age <= TUNER_STATUS_MAX_AGE)
+        });
+
+        if snapshot.present != Some(true) || snapshot.raw_status != Some(0x00) || !fresh {
+            return Err(RadioError::Msg(
+                "the antenna tuner is not reporting a fresh idle status".into(),
+            ));
+        }
+
+        let queued = match operation {
+            AtuOperation::Tune => rx.request_atu_tune(),
+            AtuOperation::Bypass => rx.request_atu_bypass(),
+        };
+
+        if !queued {
+            return Err(RadioError::Msg(
+                "the HPSDR network thread did not accept the tuner command".into(),
+            ));
+        }
+
+        // Do not interpret the idle status that permitted this command
+        // as the completion status of the command itself.
+        self.atu_last_status_at = snapshot.updated_at;
+
+        self.atu_operation = Some(operation);
+        self.atu_saw_rf_request = false;
+
+        Ok(())
     }
 
     /// The connection's rate, remembered rather than asked for: it is fixed
@@ -459,7 +653,13 @@ impl IqSource for HpsdrSource {
 
     fn tx_telemetry(&mut self) -> Option<sdroxide_types::TxTelemetry> {
         let swr = self.rx.as_ref()?.swr()?;
-        Some(sdroxide_types::TxTelemetry { fwd_w: None, swr: Some(swr), alc: None, po: None, rfl_w: None })
+        Some(sdroxide_types::TxTelemetry {
+            fwd_w: None,
+            swr: Some(swr),
+            alc: None,
+            po: None,
+            rfl_w: None,
+        })
     }
 
     /// The board's own ADC-overflow flag — see [`IqSource::adc_overload`]. It
@@ -543,6 +743,18 @@ impl IqSource for HpsdrSource {
         self.board = None;
     }
 
+    fn atu(&self) -> Option<sdroxide_types::AtuState> {
+        self.atu_state
+    }
+
+    fn atu_tune(&mut self) -> Result<()> {
+        self.queue_atu_command(AtuOperation::Tune)
+    }
+
+    fn atu_bypass(&mut self) -> Result<()> {
+        self.queue_atu_command(AtuOperation::Bypass)
+    }
+
     /// Hand on the radio's own PTT line — a foot switch, a mic button, or
     /// whatever is wired to the board's PTT input — so the engine keys on it
     /// exactly as it does on the on-screen button.
@@ -550,10 +762,14 @@ impl IqSource for HpsdrSource {
     /// Only changes are reported. A released stream answers `false`, which
     /// unkeys rather than leaving an over hanging on a line nobody is reading.
     fn poll_control(&mut self) -> Vec<ControlUpdate> {
+        // ATU status must be polled even when the PTT line has not changed.
+        self.poll_atu_status();
+
         let ptt = self.rx.as_ref().is_some_and(|rx| rx.radio_ptt());
         if ptt == self.ptt {
             return Vec::new();
         }
+
         self.ptt = ptt;
         vec![ControlUpdate::Ptt(ptt)]
     }
