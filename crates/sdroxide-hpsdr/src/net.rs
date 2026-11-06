@@ -505,8 +505,9 @@ pub(crate) enum Ctrl {
     /// (issue #292). Protocol 1 only; there is no accessory bus on Protocol 2.
     IoRxInput(HpsdrIoRxInput),
     /// Request an antenna tuner operation (Protocol 1 accessory board only).
-    AtuTune,
-    AtuBypass,
+    /// The reply reports whether the I2C write reached the Pico, not tune completion.
+    AtuTune(Sender<bool>),
+    AtuBypass(Sender<bool>),
     /// Where the radio *would* transmit, sent while receiving so an accessory
     /// board can switch bands before the operator keys. Loads the TX NCO
     /// register too, which is harmless: it does nothing until MOX.
@@ -1286,20 +1287,27 @@ impl HpsdrRx {
 
     /// Request an antenna tuner tune operation.
     ///
-    /// Returns true if the request was queued for the network thread.
-    /// This does not indicate that the tuner accepted or completed the operation.
+    /// The returned receiver reports whether the I2C write reached the Pico.
+    /// It does not indicate that tuning has completed; Reg7 reports that separately.
     /// Protocol 1 accessory board only; only DDC 0 sends board-level commands.
-    pub fn request_atu_tune(&self) -> bool {
-        self.ddc == 0 && self.dev.ctrl.send(Ctrl::AtuTune).is_ok()
+    pub fn request_atu_tune(&self) -> Option<Receiver<bool>> {
+        if self.ddc != 0 {
+            return None;
+        }
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.dev.ctrl.send(Ctrl::AtuTune(reply_tx)).ok()?;
+        Some(reply_rx)
     }
 
-    /// Request antenna tuner bypass.
-    ///
-    /// Returns true if the request was queued for the network thread.
-    /// This does not indicate that the tuner accepted or completed the operation.
-    /// Protocol 1 accessory board only; only DDC 0 sends board-level commands.
-    pub fn request_atu_bypass(&self) -> bool {
-        self.ddc == 0 && self.dev.ctrl.send(Ctrl::AtuBypass).is_ok()
+    /// Request antenna tuner bypass. The returned result has the same meaning
+    /// as request_atu_tune: it confirms the I2C write, not tune completion.
+    pub fn request_atu_bypass(&self) -> Option<Receiver<bool>> {
+        if self.ddc != 0 {
+            return None;
+        }
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.dev.ctrl.send(Ctrl::AtuBypass(reply_tx)).ok()?;
+        Some(reply_rx)
     }
 
     /// Whether this board has a front-end gain this crate can command.
