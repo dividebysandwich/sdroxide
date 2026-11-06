@@ -24,7 +24,8 @@ use std::time::Duration;
 
 pub use discovery::{discover, probe};
 pub use net::{
-    AutoGain, HpsdrBoard, HpsdrError, HpsdrRx, HpsdrTunerStatus, LNA_GAIN_DEFAULT_DB,
+    AutoGain, HpsdrAtuCommandResult, HpsdrBoard, HpsdrError, HpsdrRx, HpsdrTunerStatus,
+    LNA_GAIN_DEFAULT_DB,
     LNA_GAIN_ELEMENT, LNA_GAIN_MAX_DB, LNA_GAIN_MIN_DB, TX_RATE_HZ, TX_RATE_HZ_P2,
     board_has_io_board, board_has_lna_gain, tx_rate_for_protocol,
 };
