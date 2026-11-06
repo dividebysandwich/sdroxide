@@ -517,8 +517,8 @@ pub(crate) enum Ctrl {
     IoRxInput(HpsdrIoRxInput),
     /// Request an antenna tuner operation (Protocol 1 accessory board only).
     /// The reply reports whether the I2C write reached the Pico, not tune completion.
-    AtuTune(Sender<HpsdrAtuCommandResult>),
-    AtuBypass(Sender<HpsdrAtuCommandResult>),
+    AtuTune(std::sync::mpsc::Sender<HpsdrAtuCommandResult>),
+    AtuBypass(std::sync::mpsc::Sender<HpsdrAtuCommandResult>),
     /// Where the radio *would* transmit, sent while receiving so an accessory
     /// board can switch bands before the operator keys. Loads the TX NCO
     /// register too, which is harmless: it does nothing until MOX.
