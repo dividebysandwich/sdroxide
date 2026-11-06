@@ -2152,4 +2152,71 @@ mod tests {
         assert!(panel <= 0.6 * 279.0 + 0.01, "floor {panel} ate the waterfall");
         assert!(wf > 0.0);
     }
+
+    /// A controller with nothing behind it: enough to draw the whole app.
+    struct NullCtrl;
+    impl sdroxide_types::RadioController for NullCtrl {
+        fn send(&mut self, _cmd: sdroxide_types::Command) {}
+        fn poll_event(&mut self) -> Option<sdroxide_types::RadioEvent> {
+            None
+        }
+    }
+
+    /// The FT8 action row (CALL CQ, STOP QSO, STOP TX) and the panel's frame
+    /// end inside the window. The row is laid out bottom-up and was placed by
+    /// the style's row height, shorter than its chips, so the difference hung
+    /// off the bottom: 10 points on a desktop, 6 on a tablet, at every window
+    /// size. Drawn here as the whole app, because the overhang came from how
+    /// the pieces sit inside each other and no one piece shows it alone.
+    ///
+    /// Ignored in the normal run: the app sets the language, the look and the
+    /// map switches process-wide, and the tests beside it read those. Run it
+    /// alone: `cargo test -p sdroxide-ui --lib the_ft8_action_row -- --ignored`.
+    #[test]
+    #[ignore = "draws the whole app, which changes process-wide settings"]
+    fn the_ft8_action_row_ends_inside_the_window() {
+        use eframe::egui;
+        use sdroxide_types::LayoutMode;
+        let mut over = Vec::new();
+        for layout in [LayoutMode::Desktop, LayoutMode::Tablet] {
+            for (w, h) in
+                [(1290.0f32, 724.0f32), (1366.0, 768.0), (1633.0, 965.0), (1920.0, 1050.0)]
+            {
+                let ctx = egui::Context::default();
+                let mut app = crate::app::SdroxideApp::new_tab(
+                    &ctx,
+                    None,
+                    None,
+                    Box::new(NullCtrl),
+                    0,
+                    false,
+                );
+                app.ui_settings.layout = layout;
+                app.state.rx[0].mode = Mode::Ft8;
+                let mut frame = eframe::Frame::_new_kittest();
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+                // A few frames: the tier and its metrics settle on the first.
+                let mut lowest = 0.0f32;
+                for _ in 0..4 {
+                    let mut out = ctx.run_ui(
+                        egui::RawInput { screen_rect: Some(screen), ..Default::default() },
+                        |ui| eframe::App::ui(&mut app, ui, &mut frame),
+                    );
+                    out.textures_delta.clear();
+                    lowest = out
+                        .shapes
+                        .iter()
+                        .map(|c| c.shape.visual_bounding_rect())
+                        .filter(|r| r.is_finite())
+                        .map(|r| r.bottom())
+                        .fold(0.0, f32::max);
+                }
+                // One point of slack for the anti-aliased edge of the frame.
+                if lowest > h + 1.0 {
+                    over.push(format!("{layout:?} {w}x{h}: drawn down to {lowest}"));
+                }
+            }
+        }
+        assert!(over.is_empty(), "{over:#?}");
+    }
 }
