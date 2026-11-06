@@ -297,7 +297,7 @@ impl IoBoard {
     }
 
     /// Request generic tuner bypass.
-    pub(crate) fn request_bypass(&mut self, now: Instant, reply: Sender<bool>) -> bool {
+    pub(crate) fn request_bypass(&mut self, now: Instant, reply: Sender<HpsdrAtuCommandResult>) -> bool {
         self.request_tuner_command(TUNER_CMD_BYPASS, now, reply)
     }
 
@@ -305,7 +305,7 @@ impl IoBoard {
         &mut self,
         command: u8,
         now: Instant,
-        reply: Sender<bool>,
+        reply: Sender<HpsdrAtuCommandResult>,
     ) -> bool {
         let tuner_present =
             matches!(self.tuner_discovery, TunerDiscovery::Complete { present: true, .. });
@@ -1258,11 +1258,11 @@ mod tests {
         request_tuner_discovery(&mut board, now);
         ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
 
-        assert!(board.request_tune(now));
+        assert!(board.request_tune(now, crossbeam_channel::bounded(1).0));
         assert!(board.tuner_command_pending);
 
         // A second command cannot be accepted while the first is pending.
-        assert!(!board.request_bypass(now));
+        assert!(!board.request_bypass(now, crossbeam_channel::bounded(1).0));
     }
 
     #[test]
@@ -1282,7 +1282,7 @@ mod tests {
 
         ack(&mut board, now + TUNER_STATUS_POLL_INTERVAL, [9, 7, TUNER_PRESENT, 0x04]);
 
-        assert!(!board.request_tune(now + TUNER_STATUS_POLL_INTERVAL));
+        assert!(!board.request_tune(now + TUNER_STATUS_POLL_INTERVAL, crossbeam_channel::bounded(1).0));
         assert!(!board.tuner_command_pending);
     }
 
@@ -1305,7 +1305,7 @@ mod tests {
         request_tuner_discovery(&mut board, now);
         ack(&mut board, now, [9, 7, TUNER_PRESENT, 0x00]);
 
-        assert!(board.request_tune(now));
+        assert!(board.request_tune(now, crossbeam_channel::bounded(1).0));
 
         let command = board.next_request(now, RX_HZ, RX_HZ, 0).expect("tune command");
         assert_eq!(
