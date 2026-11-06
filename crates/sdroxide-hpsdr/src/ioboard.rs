@@ -292,12 +292,20 @@ impl IoBoard {
     /// The request is accepted only when a tuner is positively detected,
     /// its latest status is fresh and exactly idle (0x00), and no tuner
     /// command is already awaiting acknowledgement.
-    pub(crate) fn request_tune(&mut self, now: Instant, reply: Sender<HpsdrAtuCommandResult>) -> bool {
+    pub(crate) fn request_tune(
+        &mut self,
+        now: Instant,
+        reply: Sender<HpsdrAtuCommandResult>,
+    ) -> bool {
         self.request_tuner_command(TUNER_CMD_TUNE, now, reply)
     }
 
     /// Request generic tuner bypass.
-    pub(crate) fn request_bypass(&mut self, now: Instant, reply: Sender<HpsdrAtuCommandResult>) -> bool {
+    pub(crate) fn request_bypass(
+        &mut self,
+        now: Instant,
+        reply: Sender<HpsdrAtuCommandResult>,
+    ) -> bool {
         self.request_tuner_command(TUNER_CMD_BYPASS, now, reply)
     }
 
