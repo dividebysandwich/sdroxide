@@ -793,15 +793,15 @@ impl IqSource for HpsdrSource {
 
         let mut updates = Vec::new();
 
-        // Process a hardware PTT edge before an ATU request arriving on the
-        // same engine pass. An existing operator transmission must win.
+        // Process an ATU request before a simultaneous hardware PTT edge.
+        // The ATU owns the host TX path while its request is active.
+        if previous_atu_request != self.atu_rf_requested {
+            updates.push(ControlUpdate::AtuRfRequest(self.atu_rf_requested));
+        }
+
         if ptt != self.ptt {
             self.ptt = ptt;
             updates.push(ControlUpdate::Ptt(ptt));
-        }
-
-        if previous_atu_request != self.atu_rf_requested {
-            updates.push(ControlUpdate::AtuRfRequest(self.atu_rf_requested));
         }
 
         updates

@@ -9712,6 +9712,12 @@ impl Engine {
                 }
             }
             DigiTxActive(on) => {
+                // The external ATU owns the transmitter.
+                // Refuse digital-voice key-downs, but allow key-up.
+                if on && self.atu_rf_requested {
+                    return;
+                }
+
                 if let Some(d) = self.digi.as_mut() {
                     d.set_tx_active(on);
                 }
@@ -17017,7 +17023,7 @@ impl Engine {
         if closed == self.hw_ptt {
             return; // a level, re-reported; only edges do anything
         }
-        if closed && (self.tx_active || self.state.tx.tune || self.digi_tx) {
+        if closed && (self.atu_rf_requested || self.tx_active || self.state.tx.tune || self.digi_tx) {
             return; // someone else owns this over — and owns its key-up too
         }
         self.hw_ptt = closed;
