@@ -357,8 +357,10 @@ impl HpsdrSource {
                 self.atu_saw_rf_request = false;
             }
 
-            // The Pico's failure status range.
-            0xF0..=0xFF => {
+            // Documented terminal tuner failures. The Pico returns to its
+            // idle state after these codes, but retains the fault byte in
+            // Reg7 until the next command.
+            0xFA..=0xFD => {
                 self.atu_state = Some(sdroxide_types::AtuState {
                     status: sdroxide_types::AtuStatus::Failed,
                     enabled,
@@ -369,7 +371,8 @@ impl HpsdrSource {
                 self.atu_saw_rf_request = false;
             }
 
-            // Do not assign meaning to other values without protocol evidence.
+            // Do not assign meaning to undocumented values, including the
+            // remainder of the 0xF0..=0xFF range.
             other => {
                 tracing::debug!("HPSDR: unrecognised generic tuner status 0x{other:02X}");
             }
