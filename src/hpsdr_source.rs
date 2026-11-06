@@ -525,7 +525,10 @@ impl HpsdrSource {
             now.checked_duration_since(updated_at).is_some_and(|age| age <= TUNER_STATUS_MAX_AGE)
         });
 
-        if snapshot.present != Some(true) || snapshot.raw_status != Some(0x00) || !fresh {
+        let status_allows_command =
+            matches!(snapshot.raw_status, Some(0x00 | 0xFA..=0xFD));
+
+        if snapshot.present != Some(true) || !status_allows_command || !fresh {
             return Err(RadioError::Msg(
                 "the antenna tuner is not reporting a fresh idle status".into(),
             ));
