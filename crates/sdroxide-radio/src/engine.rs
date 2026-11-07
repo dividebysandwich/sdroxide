@@ -2708,6 +2708,8 @@ struct Engine {
     tx_active: bool,
     /// A fresh external antenna-tuner request for an RF carrier.
     atu_rf_requested: bool,
+    /// The ATU owns the transmitter from accepted command through terminal status.
+    atu_operation_active: bool,
     /// The loudest the microphone got this over, and how many blocks of it were
     /// modulated — see [`Engine::report_silent_microphone`].
     voice_peak: f32,
@@ -4378,6 +4380,7 @@ fn engine_thread(
         tx: None,
         tx_active: false,
         atu_rf_requested: false,
+        atu_operation_active: false,
         voice_peak: 0.0,
         voice_blocks: 0,
         hw_ptt: false,
@@ -6443,9 +6446,12 @@ impl Engine {
                 }
             }
             ControlUpdate::Ptt(closed) => self.apply_hw_ptt(closed),
-            ControlUpdate::AtuRfRequest(on) => {
-                if self.atu_rf_requested != on {
-                    self.atu_rf_requested = on;
+            ControlUpdate::AtuState { rf_requested, operation_active } => {
+                let changed = self.atu_rf_requested != rf_requested
+                    || self.atu_operation_active != operation_active;
+                self.atu_rf_requested = rf_requested;
+                self.atu_operation_active = operation_active;
+                if changed {
                     self.sync_tx_state();
                 }
             }
@@ -7030,7 +7036,7 @@ impl Engine {
                 DigiAction::KeyTx => {
                     // An active external ATU owns the transmitter.
                     // Ignore digital key-downs until its request ends.
-                    if self.atu_rf_requested {
+                    if self.atu_operation_active {
                         return;
                     }
 
@@ -8935,7 +8941,7 @@ impl Engine {
             SetTune(on) => {
                 // The external ATU owns the transmitter until its request ends.
                 // Ignore operator TUNE key-downs, but always permit key-up.
-                if on && self.atu_rf_requested {
+                if on && self.atu_operation_active {
                     return;
                 }
 
@@ -9175,7 +9181,7 @@ impl Engine {
                 if !self.caps.has_atu {
                     return;
                 }
-                if self.tx_active || self.rig_tx {
+                if self.tx_active || self.rig_tx || self.state.tx.ptt || self.state.tx.tune || self.digi_tx {
                     self.notice("The antenna tuner can only be operated while the radio is receiving.");
                     return;
                 }
@@ -13439,7 +13445,7 @@ impl Engine {
         self.follow_rig_tx(on);
         // An external ATU owns the host TX path, but the radio's own
         // transmission always overrides it.
-        if self.atu_rf_requested {
+        if self.atu_operation_active || self.tx_active {
             self.sync_tx_state();
         }
         // Straight through to the switch rather than waiting for the next tick.
@@ -16929,7 +16935,7 @@ impl Engine {
     fn set_ptt(&mut self, on: bool) {
         // The external ATU owns the transmitter until its request ends.
         // Ignore operator key-downs, but always permit key-up.
-        if on && self.atu_rf_requested {
+        if on && self.atu_operation_active {
             return;
         }
 
@@ -17033,7 +17039,7 @@ impl Engine {
         if closed == self.hw_ptt {
             return; // a level, re-reported; only edges do anything
         }
-        if closed && (self.atu_rf_requested || self.tx_active || self.state.tx.tune || self.digi_tx) {
+        if closed && (self.atu_operation_active || self.tx_active || self.state.tx.tune || self.digi_tx) {
             return; // someone else owns this over — and owns its key-up too
         }
         self.hw_ptt = closed;
@@ -17044,8 +17050,8 @@ impl Engine {
     /// Reconcile the TX hardware state with `ptt || tune`, enforcing the
     /// safety rails on key-down.
     fn sync_tx_state(&mut self) {
-        let want_tx =
-            self.atu_rf_active() || self.state.tx.ptt || self.state.tx.tune;
+        let want_tx = !self.rig_tx
+            && (self.atu_rf_active() || self.state.tx.ptt || self.state.tx.tune);
         if want_tx == self.tx_active {
             return;
         }
