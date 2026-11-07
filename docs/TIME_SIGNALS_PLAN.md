@@ -10,9 +10,16 @@ what comes after it.
 > built-in sequence, since PTB's description could not be fetched to check the
 > sequence against; BPC (§1.1), from the publicly described layout, untested on
 > air; and the seconds-only mode with BPM and RWM (§1.5, §1.6), tested against
-> synthetic signals only. Still open: the Linux RTC, atomic and slewed steps
-> (§2, Linux problems 2–4), the macOS headless-prompt edge case, and §1.3,
-> §1.4 and Tier 4.
+> synthetic signals only.
+>
+> **Update, 2026-11-07.** Also done: the atomic Linux step (`clock_adjtime`
+> with `ADJ_SETOFFSET`; a +2 s / −2 s round trip now nets tens of
+> nanoseconds), writing the hardware clock after a step (skipped when
+> `/etc/adjtime` says LOCAL; the VM here has no RTC, so only its parts are
+> tested), and the macOS headless-prompt case (the dialog is offered only to
+> the user who owns `/dev/console`). Still open: slewing small AUTO
+> corrections (§2, Linux problem 4; it would need the measurement bookkeeping
+> to follow a clock that moves gradually), §1.3, §1.4 and Tier 4.
 
 Two parts:
 

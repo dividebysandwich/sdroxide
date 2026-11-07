@@ -6303,11 +6303,11 @@ A move of more than ten minutes needs a second press (**CONFIRM SET CLOCK**). A 
 Setting a clock needs administrator rights, and sdroxide asks for them only for that one step:
 
 - **Linux.** If sdroxide runs as root or has `CAP_SYS_TIME`, it sets the clock itself. Otherwise the desktop's own password dialog appears (`pkexec`). It runs the sdroxide binary as root with nothing but the offset to apply, and that process exits straight away. The AppImage works the same way: the dialog runs the AppImage file itself.
-- **macOS.** The system's administrator dialog appears ("sdroxide wants to set the clock…"), with the same one-step helper behind it.
+- **macOS.** The system's administrator dialog appears ("sdroxide wants to set the clock…"), with the same one-step helper behind it. It is offered only when sdroxide runs as the user logged in at the screen — not over SSH, and not as a service started at boot, where nobody would see the dialog.
 - **Windows.** Started with **Run as administrator**, or as a service, sdroxide sets the clock itself. Otherwise Windows' own UAC dialog appears for the same one-step helper. On a standard account, UAC asks for an administrator's password.
 - **Headless**, without root (on Windows, a service whose account may not set the clock): there is nobody to answer a dialog, so **SET CLOCK** is disabled. Use the NTP server instead (below).
 
-On Linux the change goes to the system clock only. The hardware clock picks it up the next time a time service synchronises, so a reboot before then brings back the old time.
+On Linux the kernel makes the move itself, in one step and to the nanosecond, and sdroxide then writes the time to the computer's hardware clock, so that the correction survives a reboot. It leaves the hardware clock alone when `/etc/adjtime` says it keeps local time, as on a machine that also boots Windows; there, and where the hardware clock cannot be written (a virtual machine, or sdroxide running with `CAP_SYS_TIME` but not as root), the correction lasts until the next reboot or the next time a time service synchronises.
 
 The step is made as an *offset*, so the time you spend typing the password makes no difference to the result.
 

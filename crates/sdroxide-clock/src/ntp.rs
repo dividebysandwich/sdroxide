@@ -132,10 +132,13 @@ impl NtpServer {
                     let r = reference();
                     let off = i128::from(r.offset_ns);
                     let xmit = crate::os::now_ns() + off;
-                    if let Some(out) = reply(&buf[..n], recv_host + off, xmit, &r)
-                        && socket.send_to(&out, from).is_ok()
-                    {
+                    if let Some(out) = reply(&buf[..n], recv_host + off, xmit, &r) {
+                        // Counted before it goes, so that whoever has the
+                        // reply in hand also sees it counted.
                         requests.fetch_add(1, Ordering::Relaxed);
+                        if socket.send_to(&out, from).is_err() {
+                            requests.fetch_sub(1, Ordering::Relaxed);
+                        }
                     }
                 }
             }

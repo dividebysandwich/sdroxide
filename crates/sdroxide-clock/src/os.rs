@@ -107,8 +107,17 @@ fn prompt_available() -> bool {
 
 #[cfg(target_os = "macos")]
 fn prompt_available() -> bool {
-    // An SSH login has no window server to put the dialog on.
+    use std::os::unix::fs::MetadataExt;
+    // The dialog appears on the screen of the user logged in at it, who owns
+    // /dev/console — root at the login window, with nobody logged in. Only
+    // when that is this process's own user is there someone to answer it: not
+    // over SSH, not from a launchd service started at boot, not from another
+    // user's session.
+    // SAFETY: getuid has no preconditions and cannot fail.
+    let uid = unsafe { libc::getuid() };
+    let at_console = std::fs::metadata("/dev/console").is_ok_and(|m| m.uid() == uid && uid != 0);
     std::env::var_os("SSH_CONNECTION").is_none()
+        && at_console
         && std::path::Path::new("/usr/bin/osascript").exists()
 }
 
@@ -133,11 +142,60 @@ fn find_in_path(name: &str) -> Option<std::path::PathBuf> {
 
 /// Moves the clock by `offset_ns`, from this process. Needs
 /// [`ClockAuthority::Direct`].
+///
+/// On Linux the kernel moves it, in one call and to the nanosecond; and the
+/// hardware clock is then written from it, so that the correction outlasts a
+/// reboot (see [`rtc`]).
 #[cfg(unix)]
 pub fn step_direct(offset_ns: i64) -> std::io::Result<()> {
     if offset_ns.unsigned_abs() > MAX_STEP_NS as u64 {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "step too large"));
     }
+    #[cfg(target_os = "linux")]
+    {
+        match step_by_kernel(offset_ns) {
+            Ok(()) => {
+                rtc::write_after_step();
+                return Ok(());
+            }
+            // A kernel too old for ADJ_SETOFFSET (before 2.6.39): the clock
+            // is read and written back instead, as everywhere else.
+            Err(e) if matches!(e.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS)) => {}
+            Err(e) => return Err(e),
+        }
+        step_by_settimeofday(offset_ns)?;
+        rtc::write_after_step();
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    step_by_settimeofday(offset_ns)
+}
+
+/// Linux: the kernel adds `offset_ns` to the clock itself
+/// (`clock_adjtime` with `ADJ_SETOFFSET`) — exactly the "move by" this
+/// module is built on, with nothing lost between reading the clock and
+/// writing it back, and to the nanosecond rather than the microsecond.
+#[cfg(target_os = "linux")]
+fn step_by_kernel(offset_ns: i64) -> std::io::Result<()> {
+    // SAFETY: an all-zero timex is a valid "change nothing" request; only
+    // the fields set below are read for these modes.
+    let mut tx: libc::timex = unsafe { std::mem::zeroed() };
+    tx.modes = libc::ADJ_SETOFFSET | libc::ADJ_NANO;
+    // With ADJ_NANO the offset is whole seconds and non-negative
+    // nanoseconds: −0.25 s is −1 s and 750 000 000 ns.
+    tx.time.tv_sec = offset_ns.div_euclid(1_000_000_000) as libc::time_t;
+    tx.time.tv_usec = offset_ns.rem_euclid(1_000_000_000) as libc::suseconds_t;
+    // SAFETY: `tx` is a valid, initialised timex for the call to read and
+    // write back.
+    if unsafe { libc::clock_adjtime(libc::CLOCK_REALTIME, &mut tx) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Reads the clock and writes it back moved, to the microsecond.
+#[cfg(unix)]
+fn step_by_settimeofday(offset_ns: i64) -> std::io::Result<()> {
     let mut tv = libc::timeval { tv_sec: 0, tv_usec: 0 };
     // SAFETY: both calls are given a valid timeval and a null timezone, as
     // POSIX requires; nothing else is read or written.
@@ -315,9 +373,139 @@ pub fn helper_main() -> Option<i32> {
     }
 }
 
+/// Linux: the hardware clock, written from the system clock after a step.
+///
+/// The kernel only writes it back itself while a time service says the
+/// clock is synchronised (its "11-minute mode"), so a step made here would
+/// otherwise last only until the next reboot, which reads the time from it.
+/// Written on a second boundary, since it keeps whole seconds; skipped when
+/// `/etc/adjtime` says it keeps local time rather than UTC — a machine that
+/// also boots Windows — since the step is not this program's business to
+/// translate into a time zone. Best effort: a machine with no hardware clock
+/// it may write (a container, a virtual machine, a process with
+/// `CAP_SYS_TIME` but no access to `/dev/rtc0`) keeps the step all the same.
+#[cfg(target_os = "linux")]
+pub mod rtc {
+    /// The kernel's `struct rtc_time`.
+    #[repr(C)]
+    #[derive(Debug, Default, PartialEq)]
+    pub struct RtcTime {
+        pub sec: libc::c_int,
+        pub min: libc::c_int,
+        pub hour: libc::c_int,
+        pub mday: libc::c_int,
+        /// 0–11.
+        pub mon: libc::c_int,
+        /// Years since 1900.
+        pub year: libc::c_int,
+        pub wday: libc::c_int,
+        pub yday: libc::c_int,
+        pub isdst: libc::c_int,
+    }
+
+    /// `_IOW('p', 0x0a, struct rtc_time)`, in the encoding x86 and ARM share.
+    #[cfg(any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "arm"
+    ))]
+    const RTC_SET_TIME: libc::c_ulong =
+        (1 << 30) | ((std::mem::size_of::<RtcTime>() as libc::c_ulong) << 16) | (0x70 << 8) | 0x0a;
+
+    /// Whether `/etc/adjtime`, as given, says the hardware clock keeps local
+    /// time: its third line is `LOCAL` (or `UTC`, or absent, for UTC).
+    pub fn keeps_local_time(adjtime: &str) -> bool {
+        adjtime.lines().nth(2).map(str::trim) == Some("LOCAL")
+    }
+
+    /// The hardware clock's reading for UTC second `utc`.
+    pub fn rtc_time(utc: i64) -> RtcTime {
+        let (y, mo, d, h, mi, s) = sdroxide_types::utc_ymd_hms(utc);
+        RtcTime {
+            sec: s as libc::c_int,
+            min: mi as libc::c_int,
+            hour: h as libc::c_int,
+            mday: d as libc::c_int,
+            mon: mo as libc::c_int - 1,
+            year: (y - 1900) as libc::c_int,
+            ..RtcTime::default()
+        }
+    }
+
+    /// Writes the system clock's time to the hardware clock; what happened,
+    /// for the log.
+    pub fn write_after_step() {
+        match write() {
+            Ok(dev) => tracing::info!("hardware clock {dev} set from the system clock"),
+            Err(why) => tracing::info!("hardware clock not set: {why}"),
+        }
+    }
+
+    #[cfg(any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "arm"
+    ))]
+    fn write() -> Result<&'static str, String> {
+        use std::os::fd::AsRawFd;
+        if std::fs::read_to_string("/etc/adjtime").is_ok_and(|a| keeps_local_time(&a)) {
+            return Err("it keeps local time (/etc/adjtime)".into());
+        }
+        let (dev, file) = ["/dev/rtc0", "/dev/rtc"]
+            .into_iter()
+            .find_map(|d| std::fs::File::open(d).ok().map(|f| (d, f)))
+            .ok_or("no /dev/rtc0 to write")?;
+        // To the next whole second, which is what the hardware clock keeps.
+        let now = super::now_ns();
+        let next = now.div_euclid(1_000_000_000) + 1;
+        let wait = (next * 1_000_000_000 - now) as u64;
+        std::thread::sleep(std::time::Duration::from_nanos(wait));
+        let tm = rtc_time(next as i64);
+        // SAFETY: `file` is an open RTC device and `tm` a valid rtc_time for
+        // the ioctl to read.
+        let r = unsafe { libc::ioctl(file.as_raw_fd(), RTC_SET_TIME as _, &tm as *const RtcTime) };
+        if r < 0 {
+            return Err(format!("{dev}: {}", std::io::Error::last_os_error()));
+        }
+        Ok(dev)
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "arm"
+    )))]
+    fn write() -> Result<&'static str, String> {
+        Err("not on this processor architecture".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_hardware_clock_is_left_alone_when_it_keeps_local_time() {
+        assert!(rtc::keeps_local_time("0.0 0 0\n0\nLOCAL\n"));
+        assert!(!rtc::keeps_local_time("0.0 0 0\n0\nUTC\n"));
+        assert!(!rtc::keeps_local_time("0.0 0 0\n0\n"));
+        assert!(!rtc::keeps_local_time(""));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_hardware_clock_reading_is_the_kernels_layout() {
+        // 2026-11-07 13:45:09 UTC.
+        let t = sdroxide_types::ymd_hms_to_unix(2026, 11, 7, 13, 45, 9);
+        let tm = rtc::rtc_time(t);
+        assert_eq!((tm.year, tm.mon, tm.mday, tm.hour, tm.min, tm.sec), (126, 10, 7, 13, 45, 9));
+        // Nine ints: what the ioctl number's size field says.
+        assert_eq!(std::mem::size_of::<rtc::RtcTime>(), 36);
+    }
 
     #[test]
     fn an_appimage_asks_for_itself_not_its_mount() {
