@@ -734,6 +734,11 @@ const NET_BOTTOM_MARGIN: f32 = 4.0;
 const NET_H_GAP: f32 = 6.0;
 const NET_LEADER: f32 = 14.0;
 const NET_MAX_LANES: usize = 5;
+/// Fraction of the waterfall height everything at the oldest edge may take
+/// together — band-plan strip, memory lanes and these lanes — before further
+/// lanes are dropped. The rest is the signal, and the skimmer's boxes at the
+/// other edge.
+const NET_MAX_FRAC: f32 = 0.6;
 
 /// A laid-out network-spot box (mirrors [`SpotBox`] but bottom-anchored).
 struct NetBox {
@@ -924,6 +929,7 @@ fn layout_net_spots(
     rect: &Rect,
     wf_rect: &Rect,
     spots: &[Spot],
+    base: f32,
 ) -> Vec<NetBox> {
     let mut vis: Vec<(f32, usize)> = spots
         .iter()
@@ -934,6 +940,13 @@ fn layout_net_spots(
     vis.sort_by(|a, b| a.0.total_cmp(&b.0));
 
     let box_h = NET_BOX_H * crate::theme::skimmer_font_scale();
+    // Lanes that fit above `base` within the fence; a low waterfall (a pane
+    // of a split view) keeps fewer rather than running into the spectrum.
+    let fit = ((wf_rect.height() * NET_MAX_FRAC - base - NET_BOTTOM_MARGIN)
+        / (box_h + NET_LANE_GAP))
+        .floor()
+        .max(0.0) as usize;
+    let max_lanes = fit.min(NET_MAX_LANES);
     let mut lane_right: Vec<f32> = Vec::new();
     let mut out = Vec::with_capacity(vis.len());
     for (xc, idx) in vis {
@@ -947,7 +960,7 @@ fn layout_net_spots(
                 break;
             }
         }
-        if lane >= NET_MAX_LANES {
+        if lane >= max_lanes {
             continue;
         }
         if lane == lane_right.len() {
@@ -955,8 +968,10 @@ fn layout_net_spots(
         }
         lane_right[lane] = foot_right;
         // Anchored at the *oldest* edge, opposite the skimmer boxes, so the two
-        // sets never collide — which end that is depends on the flip.
-        let lane_off = NET_BOTTOM_MARGIN + lane as f32 * (box_h + NET_LANE_GAP);
+        // sets never collide — which end that is depends on the flip. Stacked
+        // from `base`, the depth the band-plan strip and the memory marks
+        // already take at that edge.
+        let lane_off = base + NET_BOTTOM_MARGIN + lane as f32 * (box_h + NET_LANE_GAP);
         let top = if view.waterfall_flip {
             wf_rect.top() + lane_off
         } else {
@@ -1343,9 +1358,6 @@ pub fn show_ext(
     // Skimmer boxes are laid out up front so the click hit-test (below) and the
     // draw pass (bottom) agree on their rects. Boxes fit their text: callsign
     // only for FT8 (digital), callsign + message tail for the CW skimmer.
-    let spot_boxes = layout_spots(&painter, view, &rect, &lanes_rect, skimmer, click_sets_offset);
-    let net_boxes = layout_net_spots(&painter, view, &rect, &lanes_rect, net_spots);
-    let ism_boxes = layout_ism_labels(&painter, view, &rect, &lanes_rect, ism);
     // The memory marks, laid out here for the same reason: a click has to be
     // tested against them, and the pointer is dealt with long before the
     // waterfall is painted. The strip depth they stack inwards from is asked
@@ -1353,6 +1365,22 @@ pub fn show_ext(
     let mem_strip_h = crate::widgets::bandplan::height(view, &wf_rect, panel_below);
     let mem_boxes =
         crate::widgets::memories::layout(&painter, view, &wf_rect, mem, mem_strip_h, panel_below);
+    // The network spots stack from the oldest edge too, so they start past
+    // the band-plan strip and past whatever lanes the memory marks took:
+    // stacked from the bare edge they covered the band names and the marks.
+    // Why: HDZ 2026-11-05: "die Labels obstruieren die Frequenzbandinfo am
+    //      Boden des Fensters, die Labels sollten höher platziert werden" —
+    //      and the marks sharing a height with them "ist ja eh etwas fischig".
+    let net_base = mem_boxes.iter().fold(mem_strip_h, |depth, b| {
+        depth.max(if view.waterfall_flip {
+            b.rect.bottom() - wf_rect.top()
+        } else {
+            wf_rect.bottom() - b.rect.top()
+        })
+    });
+    let spot_boxes = layout_spots(&painter, view, &rect, &lanes_rect, skimmer, click_sets_offset);
+    let net_boxes = layout_net_spots(&painter, view, &rect, &lanes_rect, net_spots, net_base);
+    let ism_boxes = layout_ism_labels(&painter, view, &rect, &lanes_rect, ism);
 
     // --- interactions -----------------------------------------------------
     // Model: grabbing a filter edge (left button, spectrum strip) always
