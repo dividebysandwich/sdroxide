@@ -118,13 +118,16 @@ impl TciTuneClient {
 
     /// The newest frequency the far radio was tuned to from its own side
     /// since the last call. The worker already counts it as sent, so tuning
-    /// the dial here to it does not send it back.
+    /// the dial here to it does not send it back. A report the operator has
+    /// tuned past since (the dial no longer holds it) is dropped, so a local
+    /// tune that lands between the worker hearing and the engine polling is
+    /// not undone; the worker sends the operator's frequency instead.
     pub fn poll_heard(&self) -> Option<u64> {
         let mut last = None;
         while let Ok(hz) = self.heard_rx.try_recv() {
             last = Some(hz);
         }
-        last
+        last.filter(|&h| self.hz.load(Ordering::Relaxed) == h)
     }
 }
 
@@ -184,13 +187,20 @@ impl Dial {
 
     fn record_sent(&mut self, hz: u64, now: Instant) {
         self.sent = hz;
+        self.prune(now);
         self.recent.push_back((hz, now));
     }
 
-    fn heard(&mut self, hz: u64, now: Instant) {
+    /// Forget what was sent longer ago than [`ECHO_WINDOW`]. Also run on a
+    /// send, so a server that never broadcasts `vfo:` does not grow the list.
+    fn prune(&mut self, now: Instant) {
         while self.recent.front().is_some_and(|(_, t)| now.duration_since(*t) > ECHO_WINDOW) {
             self.recent.pop_front();
         }
+    }
+
+    fn heard(&mut self, hz: u64, now: Instant) {
+        self.prune(now);
         // Each report replaces the last: the newest is where the radio is.
         // A report of something we sent means the radio is on our dial.
         self.pending = if hz == self.sent || self.recent.iter().any(|(f, _)| *f == hz) {
