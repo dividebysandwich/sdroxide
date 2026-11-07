@@ -3130,9 +3130,17 @@ impl SdroxideApp {
             });
         if let Some(r) = &resp {
             crate::chrome::paint_popup_cut_border(ui.ctx(), &r.response, alpha);
-            if r.response.contains_pointer() {
+            // An open preset editor holds the popup too: the operator may be
+            // typing with the pointer elsewhere, and the fade would take the
+            // fields away mid-edit.
+            if r.response.contains_pointer() || self.preset_edit.is_some() {
                 self.bw_popup_since = Some(now);
             }
+        }
+        // A popup closed with the editor open (a click outside) drops the
+        // edit, so the next open shows the chips, not a stale editor.
+        if !egui::Popup::is_id_open(ui.ctx(), popup_id) {
+            self.preset_edit = None;
         }
     }
 
@@ -6690,12 +6698,6 @@ fn width_to_edges(mode: Mode, lo: f32, hi: f32, width: f32) -> (f32, f32) {
     if lo.abs() <= hi.abs() { (lo, lo + width) } else { (hi - width, hi) }
 }
 
-/// A preset's edges, once the operator's own station is accounted for.
-///
-/// Taken as written everywhere but CW, where the table is drawn about the
-/// 700 Hz default sidetone. An operator copying at 500 wants that same width
-/// about *their* pitch; handing them the table verbatim would put the note
-/// they are listening for on the edge of the filter, or outside it.
 /// A custom preset's edges made into a passband the mode can use: low below
 /// high by at least the grips' floor, and a channel about the carrier for the
 /// modes whose filter is one, the same rule the edge fields follow.
@@ -6713,6 +6715,12 @@ fn preset_shape(mode: Mode, lo: f32, hi: f32) -> (f32, f32) {
     }
 }
 
+/// A preset's edges, once the operator's own station is accounted for.
+///
+/// Taken as written everywhere but CW, where the table is drawn about the
+/// 700 Hz default sidetone. An operator copying at 500 wants that same width
+/// about *their* pitch; handing them the table verbatim would put the note
+/// they are listening for on the edge of the filter, or outside it.
 fn preset_edges(mode: Mode, lo: f32, hi: f32, cw_pitch_hz: f32) -> (f32, f32) {
     if mode != Mode::Cw {
         return (lo, hi);
