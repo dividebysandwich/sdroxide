@@ -890,6 +890,7 @@ impl IqSource for HpsdrSource {
     /// unkeys rather than leaving an over hanging on a line nobody is reading.
     fn poll_control(&mut self) -> Vec<ControlUpdate> {
         let previous_atu_request = self.atu_rf_requested;
+        let previous_atu_operation = self.atu_operation.is_some();
 
         // ATU status must be polled even when the PTT line has not changed.
         self.poll_atu_status();
@@ -898,10 +899,17 @@ impl IqSource for HpsdrSource {
 
         let mut updates = Vec::new();
 
-        // Process an ATU request before a simultaneous hardware PTT edge.
-        // The ATU owns the host TX path while its request is active.
-        if previous_atu_request != self.atu_rf_requested {
-            updates.push(ControlUpdate::AtuRfRequest(self.atu_rf_requested));
+        // Send RF permission and operation ownership together. A non-0xEE
+        // status withdraws RF immediately, but only a terminal status releases
+        // the operation interlock.
+        let atu_operation_active = self.atu_operation.is_some();
+        if previous_atu_request != self.atu_rf_requested
+            || previous_atu_operation != atu_operation_active
+        {
+            updates.push(ControlUpdate::AtuState {
+                rf_requested: self.atu_rf_requested,
+                operation_active: atu_operation_active,
+            });
         }
 
         if ptt != self.ptt {
