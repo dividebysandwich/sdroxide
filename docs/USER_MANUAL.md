@@ -7773,6 +7773,9 @@ table holds up to ten rows, and each has:
 Rows are tried in the order they are listed, and a dial no row covers falls
 through to the single **Offset** above and then to the bare radio — which is
 what keeps HF working on a station whose only converter is a 2 m transverter.
+When a radio connects or reconnects, its remembered dial selects the row even
+when several transverters share the same I.F.; their I.F. alone cannot identify
+which band was in use.
 Everything downstream follows the dial as it always has: the band buttons, the
 band-plan strip, the logbook, spots, the transmit gate, and on an HPSDR board
 with anything on its open-collector outputs, the control word the accessory
