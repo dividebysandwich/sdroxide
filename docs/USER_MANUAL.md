@@ -12300,7 +12300,8 @@ window home; right-click it for the **Module windows** list, a row per module
 with the places it can be and the one it is in lit. The list is how to recover a
 window left on another workspace or behind the main window.
 
-**Keys.** These work anywhere in the main window, even while typing in a field:
+**Keys.** These work anywhere in the main window, except while typing in a field
+(on Windows AltGr is Ctrl+Alt, so there the chords are the characters a field types):
 
 | Keys | What they do |
 |---|---|
