@@ -9181,8 +9181,15 @@ impl Engine {
                 if !self.caps.has_atu {
                     return;
                 }
-                if self.tx_active || self.rig_tx || self.state.tx.ptt || self.state.tx.tune || self.digi_tx {
-                    self.notice("The antenna tuner can only be operated while the radio is receiving.");
+                if self.tx_active
+                    || self.rig_tx
+                    || self.state.tx.ptt
+                    || self.state.tx.tune
+                    || self.digi_tx
+                {
+                    self.notice(
+                        "The antenna tuner can only be operated while the radio is receiving.",
+                    );
                     return;
                 }
                 if let Err(e) = self.source.atu_tune() {
@@ -9198,8 +9205,15 @@ impl Engine {
                 if !self.caps.has_atu {
                     return;
                 }
-                if self.tx_active || self.rig_tx || self.state.tx.ptt || self.state.tx.tune || self.digi_tx {
-                    self.notice("The antenna tuner can only be operated while the radio is receiving.");
+                if self.tx_active
+                    || self.rig_tx
+                    || self.state.tx.ptt
+                    || self.state.tx.tune
+                    || self.digi_tx
+                {
+                    self.notice(
+                        "The antenna tuner can only be operated while the radio is receiving.",
+                    );
                     return;
                 }
                 if let Err(e) = self.source.atu_bypass() {
@@ -9734,7 +9748,6 @@ impl Engine {
                 if on && self.atu_rf_requested {
                     return;
                 }
-
                 if let Some(d) = self.digi.as_mut() {
                     d.set_tx_active(on);
                 }
@@ -17047,7 +17060,9 @@ impl Engine {
         if closed == self.hw_ptt {
             return; // a level, re-reported; only edges do anything
         }
-        if closed && (self.atu_operation_active || self.tx_active || self.state.tx.tune || self.digi_tx) {
+        if closed
+            && (self.atu_operation_active || self.tx_active || self.state.tx.tune || self.digi_tx)
+        {
             return; // someone else owns this over — and owns its key-up too
         }
         self.hw_ptt = closed;
@@ -17058,8 +17073,15 @@ impl Engine {
     /// Reconcile the TX hardware state with `ptt || tune`, enforcing the
     /// safety rails on key-down.
     fn sync_tx_state(&mut self) {
-        let want_tx = !self.rig_tx
-            && (self.atu_rf_active() || self.state.tx.ptt || self.state.tx.tune);
+        let requested_tx = self.atu_rf_active() || self.state.tx.ptt || self.state.tx.tune;
+
+        // The radio is already transmitting under its own control.
+        // Refuse any request for host transmission.
+        if requested_tx && self.rig_tx {
+            return self.deny_tx("the radio is transmitting on its own PTT");
+        }
+
+        let want_tx = !self.rig_tx && requested_tx;
         if want_tx == self.tx_active {
             return;
         }
@@ -17089,15 +17111,6 @@ impl Engine {
                 return self.deny_tx(&format!(
                     "SWR guard tripped at {swr:.1}:1. Acknowledge it to transmit again"
                 ));
-            }
-            // The radio is already transmitting under its own control —
-            // somebody has their hand on its microphone. Keying here would put
-            // sdroxide's audio into an over that is not its to drive, and on a
-            // rig whose key-down doubles as an audio-source switch it would cut
-            // the operator off mid-word. Placed with the other pure state
-            // checks, before anything acquires or tears down.
-            if self.rig_tx {
-                return self.deny_tx("the radio is transmitting on its own PTT");
             }
             // The station's transmit interlock: one radio on the air at a
             // time. First among the rails, before anything with side effects,

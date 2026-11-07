@@ -98,7 +98,15 @@ fn wait_for_state(
     false
 }
 
-const TUNED: AtuState = AtuState { status: AtuStatus::Tuned, enabled: true, using_memory: true };
+const TUNED: AtuState = AtuState {
+    status: AtuStatus::Tuned,
+    enabled: true,
+    using_memory: true,
+    reg7_supported: false,
+    reg7_status: None,
+    reg7_fresh: false,
+    command_error: None,
+};
 
 /// The control appears only where the radio says it has a tuner.
 #[test]
@@ -138,7 +146,7 @@ fn a_tune_reaches_the_radio_and_its_outcome_is_shown() {
 
     // The radio finishing the tune on its own.
     *atu.lock().unwrap() =
-        Some(AtuState { status: AtuStatus::Tuned, enabled: true, using_memory: false });
+        Some(AtuState { status: AtuStatus::Tuned, enabled: true, using_memory: false, ..TUNED });
     assert!(wait_for_state(&h.event_rx, |s| s.atu.status == AtuStatus::Tuned));
 
     h.cmd_tx.send(Command::AtuBypass).unwrap();
