@@ -51,6 +51,16 @@ opt-level = 2
 [profile.release.package.mfsk-core]
 opt-level = 2
 
+# A release build of sdroxide-ui does not reproduce when it is split into
+# several codegen units: recompiling it from identical inputs (identical
+# rmeta) leaves a few of its object files different, with drop glue and
+# closure shims landing in other units, both natively and for wasm32 on Rust
+# 1.98.1. That breaks bit-for-bit rebuilds of the -compat binaries and the web
+# client (see .github/workflows/reproducible.yml). One unit makes it stable,
+# for about half a minute more build time.
+[profile.release.package.sdroxide-ui]
+codegen-units = 1
+
 [profile.dev.package.sdroxide-dsp]
 opt-level = 2
 

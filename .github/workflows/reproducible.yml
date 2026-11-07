@@ -1,19 +1,21 @@
 name: Reproducibility
 
-# Builds the linux-x86_64-compat binary, and the web client it embeds, twice
-# from the same commit and fails unless the two come out byte for byte the
-# same. The two builds differ in everything a user's rebuild would: the
-# directory the source is checked out to, the time zone and the locale, and
-# (for the web client) the machine. When they do not match, diffoscope's report
-# of where they differ is on the run page.
+# Builds the linux-x86_64-compat binary, the macos-aarch64 binary and the web
+# client they embed, each twice from the same commit, and fails unless the two
+# come out byte for byte the same. The two builds differ in everything a user's
+# rebuild would: the directory the source is checked out to, the time zone and
+# the locale, and the machine. When they do not match, diffoscope's report of
+# where they differ is on the run page.
 #
-# Only the -compat build is checked because only it has a pinned environment —
-# a fixed image and a fixed compiler. The regular Linux builds run on whatever
-# `ubuntu-latest` is that week, and Windows and macOS on rolling toolchains.
+# Only those are checked because only they have a pinned environment: a fixed
+# compiler, and a fixed image (Linux) or a fixed runner label and Xcode
+# (macOS). The regular Linux builds run on whatever `ubuntu-latest` is that
+# week, and Windows on a rolling toolchain. macos-x86_64 is pinned the same way
+# as macos-aarch64 and left out only to keep the weekly bill down.
 on:
   workflow_dispatch:
   # Weekly, Sunday 04:41 UTC: often enough to notice a regression within a
-  # release or two, rarely enough that four release-sized builds a week do not
+  # release or two, rarely enough that six release-sized builds a week do not
   # matter. The odd minute for the reason given in release.yml.
   schedule:
     - cron: '41 4 * * 0'
@@ -26,29 +28,40 @@ env:
   CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
-  # The compiler and the image are read out of release.yml rather than written
-  # here a second time, so this can never check a pairing the release does not
-  # use.
+  # The compiler, the Linux image, the Xcode and the macOS runner are read out
+  # of release.yml rather than written here a second time, so this can never
+  # check a pairing the release does not use.
   pins:
     runs-on: ubuntu-latest
     outputs:
       toolchain: ${{ steps.read.outputs.toolchain }}
       image: ${{ steps.read.outputs.image }}
+      xcode: ${{ steps.read.outputs.xcode }}
+      macos_runner: ${{ steps.read.outputs.macos_runner }}
     steps:
       - uses: actions/checkout@v7
         with:
           sparse-checkout: .github
       - id: read
         run: |
-          toolchain=$(sed -n 's/^  LINUX_RUST_TOOLCHAIN: "\(.*\)"$/\1/p' .github/workflows/release.yml)
-          image=$(grep -o 'ubuntu:22.04@sha256:[0-9a-f]*' .github/workflows/release.yml | sort -u)
-          if [[ -z "$toolchain" || -z "$image" || "$image" == *$'\n'* ]]; then
-            echo "::error::could not read one pinned toolchain and one pinned image from release.yml"
-            exit 1
-          fi
-          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-          echo "toolchain $toolchain, image $image"
+          rel=.github/workflows/release.yml
+          toolchain=$(sed -n 's/^  RUST_TOOLCHAIN: "\(.*\)"$/\1/p' "$rel")
+          xcode=$(sed -n 's/^  MACOS_XCODE: "\(.*\)"$/\1/p' "$rel")
+          image=$(grep -o 'ubuntu:22.04@sha256:[0-9a-f]*' "$rel" | sort -u)
+          macos_runner=$(sed -n 's/.*"label": "macos-aarch64", *"os": "\([^"]*\)".*/\1/p' "$rel")
+          for v in "$toolchain" "$xcode" "$image" "$macos_runner"; do
+            if [[ -z "$v" || "$v" == *$'\n'* ]]; then
+              echo "::error::could not read one pinned toolchain, Xcode, image and macOS runner from release.yml"
+              exit 1
+            fi
+          done
+          {
+            echo "toolchain=$toolchain"
+            echo "xcode=$xcode"
+            echo "image=$image"
+            echo "macos_runner=$macos_runner"
+          } >> "$GITHUB_OUTPUT"
+          echo "toolchain $toolchain, image $image, macOS runner $macos_runner with Xcode $xcode"
 
   # As release.yml's `web` job, once per attempt.
   web:
@@ -76,7 +89,7 @@ jobs:
         with:
           toolchain: ${{ needs.pins.outputs.toolchain }}
           targets: wasm32-unknown-unknown
-      - run: packaging/linux/reproducible-env.sh >> "$GITHUB_ENV"
+      - run: packaging/reproducible-env.sh >> "$GITHUB_ENV"
       # Keep in step with release.yml.
       - name: Install trunk
         run: |
@@ -131,7 +144,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ needs.pins.outputs.toolchain }}
-      - run: packaging/linux/reproducible-env.sh >> "$GITHUB_ENV"
+      - run: packaging/reproducible-env.sh >> "$GITHUB_ENV"
       # Each attempt embeds its own web build, so a web client that does not
       # reproduce shows up here as well as in the comparison of the two dists.
       - uses: actions/download-artifact@v8
@@ -150,8 +163,71 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # As release.yml's `build` job for macos-aarch64 (cat): the stripped binary
+  # the tarball carries, and the same binary ad-hoc signed, as it goes into the
+  # .app. (The .dmg is not compared: hdiutil cannot be made to reproduce.) No
+  # rust-cache, for the reason given above.
+  macos:
+    name: macos-aarch64 (${{ matrix.attempt }})
+    needs: [pins, web]
+    runs-on: ${{ needs.pins.outputs.macos_runner }}
+    strategy:
+      matrix:
+        include:
+          - { attempt: first,  dir: sdroxide,          tz: UTC,                lang: en_US.UTF-8 }
+          - { attempt: second, dir: elsewhere/rebuild, tz: Pacific/Kiritimati, lang: C }
+    env:
+      TZ: ${{ matrix.tz }}
+      LC_ALL: ${{ matrix.lang }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          path: ${{ matrix.dir }}
+      - run: packaging/macos/setup-build-env.sh "${{ needs.pins.outputs.xcode }}" cat
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ needs.pins.outputs.toolchain }}
+      - run: packaging/reproducible-env.sh >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-${{ matrix.attempt }}
+          path: ${{ matrix.dir }}/crates/sdroxide-web/dist
+      - name: Build
+        run: |
+          cargo build --release --locked -p sdroxide --no-default-features --features embed-web,rtl433
+          mkdir -p target/macos-out
+          strip -x target/release/sdroxide
+          cp target/release/sdroxide target/macos-out/sdroxide
+          cp target/release/sdroxide target/macos-out/sdroxide-adhoc-signed
+          codesign --force -s - target/macos-out/sdroxide-adhoc-signed
+          shasum -a 256 target/macos-out/*
+      # Two jobs can land on different image versions while GitHub rolls a new
+      # one out, and then they are not expected to match. Kept beside the
+      # binaries, not among them, so `compare` can tell that case apart.
+      - name: Note the runner image
+        run: |
+          mkdir -p target/macos-image
+          echo "${ImageOS:-?} ${ImageVersion:-?}" > target/macos-image/image.txt
+          cat target/macos-image/image.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-${{ matrix.attempt }}
+          path: ${{ matrix.dir }}/target/macos-out
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-image-${{ matrix.attempt }}
+          path: ${{ matrix.dir }}/target/macos-image
+          retention-days: 7
+
   compare:
-    needs: [web, native]
+    needs: [web, native, macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -162,7 +238,7 @@ jobs:
         run: |
           cd builds
           status=0
-          for what in web native; do
+          for what in web native macos; do
             echo "## $what"
             (cd "$what-first" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$what-first.sums"
             (cd "$what-second" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$what-second.sums"
@@ -174,14 +250,18 @@ jobs:
               status=1
             fi
           done
+          if ! cmp -s macos-image-first/image.txt macos-image-second/image.txt; then
+            echo "::warning::the two macOS builds ran on different runner images ($(cat macos-image-first/image.txt) and $(cat macos-image-second/image.txt)), so a difference between them may be the images' rather than the build's"
+          fi
           exit $status
       - name: Explain the difference
         if: failure() && steps.compare.outcome == 'failure'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends diffoscope-minimal binutils
+          # llvm for diffoscope's Mach-O support.
+          sudo apt-get install -y --no-install-recommends diffoscope-minimal binutils llvm
           cd builds
-          for what in web native; do
+          for what in web native macos; do
             # Exits non-zero precisely because there are differences.
             diffoscope --html "../diffoscope-$what.html" --text "../diffoscope-$what.txt" \
               "$what-first" "$what-second" || true

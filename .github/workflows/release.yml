@@ -26,13 +26,19 @@ env:
   # CMake 4.x on the macOS/Windows runners refuses to configure it without
   # this override (CMake 3.x ignores the variable).
   CMAKE_POLICY_VERSION_MINIMUM: "3.5"
-  # The compiler every Linux build and the web client are built with. Pinned
-  # rather than `stable` so a -compat binary can be rebuilt bit for bit later
-  # (see reproducible.yml): a new rustc changes the output even when the source
-  # has not. Bump it deliberately, like any other dependency. Windows and macOS
-  # stay on `stable` — their toolchains are not pinned anyway, and the Windows
+  # The compiler every Linux and macOS build and the web client are built with.
+  # Pinned rather than `stable` so a -compat or macOS binary can be rebuilt bit
+  # for bit later (see reproducible.yml): a new rustc changes the output even
+  # when the source has not. Bump it deliberately, like any other dependency.
+  # Windows stays on `stable`: its MinGW toolchain is not pinned anyway, and the
   # build relies on the windows-gnu target the runner image has for `stable`.
-  LINUX_RUST_TOOLCHAIN: "1.98.1"
+  RUST_TOOLCHAIN: "1.98.1"
+  # The Xcode — so clang, the linker and the macOS SDK — every macOS build
+  # uses. Each runner image carries several and moves its default with the
+  # image; this one is on both macOS images in the platform table below. When
+  # a runner image drops it, packaging/macos/setup-build-env.sh fails and lists
+  # what the image has instead.
+  MACOS_XCODE: "26.3"
 
 jobs:
   # Which build combinations this run wants. A tag or a manual run builds all
@@ -71,14 +77,18 @@ jobs:
           # both architectures): `ubuntu:22.04` is re-pushed every few weeks,
           # and a rebuild from a different base cannot match the release.
           # reproducible.yml reads the digest from here, as it does the
-          # toolchain, so there is one place to bump either.
+          # toolchain, so there is one place to bump either. The macOS
+          # runners are named by version rather than `macos-latest`, for the
+          # same reason: `-latest` moved from macOS 15 to 26 under the release
+          # once already, and a different image is a different build.
+          # reproducible.yml reads the arm64 label from here too.
           platforms='[
             {"label": "linux-x86_64",         "os": "ubuntu-latest"},
             {"label": "linux-aarch64",        "os": "ubuntu-24.04-arm"},
             {"label": "linux-x86_64-compat",  "os": "ubuntu-latest",    "container": "ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02"},
             {"label": "linux-aarch64-compat", "os": "ubuntu-24.04-arm", "container": "ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02"},
             {"label": "windows-x86_64",       "os": "windows-latest"},
-            {"label": "macos-aarch64",        "os": "macos-latest"},
+            {"label": "macos-aarch64",        "os": "macos-26"},
             {"label": "macos-x86_64",         "os": "macos-15-intel"}
           ]'
           # Every platform is built twice: `soapy` (dynamically links SoapySDR)
@@ -142,17 +152,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-      # Pinned, like the Linux builds: every native binary embeds this dist, so
-      # a -compat binary can only be rebuilt bit for bit if the dist can be too.
+      # Pinned, like the Linux and macOS builds: every native binary embeds this
+      # dist, so a -compat or macOS binary can only be rebuilt bit for bit if
+      # the dist can be too.
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ env.LINUX_RUST_TOOLCHAIN }}
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           key: web-dist
       - name: Reproducible build settings
-        run: packaging/linux/reproducible-env.sh >> "$GITHUB_ENV"
+        run: packaging/reproducible-env.sh >> "$GITHUB_ENV"
       - name: Install trunk
         run: |
           mkdir -p "$HOME/.local/bin"
@@ -287,28 +298,29 @@ jobs:
           7z x -opothos -y pothossdr.exe > /dev/null
           echo "${{ github.workspace }}/pothos/bin" >> "$GITHUB_PATH"
 
-      # RADE builds a FARGAN-enabled Opus from source with autotools.
-      - name: Install build dependencies (macOS)
+      # Selects the pinned Xcode, then installs what RADE's FARGAN-enabled Opus
+      # needs (it is built from source with autotools), plus SoapySDR for that
+      # variant — from the formula versions the runner image was made with.
+      # From a script so reproducible.yml sets up exactly the same.
+      - name: Set up build environment (macOS)
         if: runner.os == 'macOS'
-        run: brew install cmake autoconf automake libtool
-
-      - name: Install SoapySDR (macOS)
-        if: runner.os == 'macOS' && matrix.variant == 'soapy'
-        run: brew install pkg-config soapysdr
+        run: packaging/macos/setup-build-env.sh "$MACOS_XCODE" ${{ matrix.variant }}
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ runner.os == 'Linux' && env.LINUX_RUST_TOOLCHAIN || 'stable' }}
+          toolchain: ${{ runner.os == 'Windows' && 'stable' || env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.label }}-${{ matrix.variant }}
 
-      # Every Linux build, not only -compat: it costs nothing, and it keeps the
-      # checkout's path out of the regular binaries too. Only -compat is
-      # expected to rebuild bit for bit, since only it has a pinned image.
-      - name: Reproducible build settings (Linux)
-        if: runner.os == 'Linux'
-        run: packaging/linux/reproducible-env.sh >> "$GITHUB_ENV"
+      # Every Linux and macOS build, not only -compat: it costs nothing, and it
+      # keeps the checkout's path out of the regular binaries too. The -compat
+      # and macOS builds are the ones expected to rebuild bit for bit, since
+      # only they have a pinned image; the regular Linux builds run on whatever
+      # `ubuntu-latest` is that week.
+      - name: Reproducible build settings (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: packaging/reproducible-env.sh >> "$GITHUB_ENV"
 
       # The embed-web feature bakes these files into the binary via rust-embed.
       - name: Fetch web client
@@ -476,10 +488,8 @@ jobs:
           EOF
           # Sorted, owned by root, stamped with the commit's time and without
           # gzip's own name-and-time header, so the archive depends on nothing
-          # but the files in it.
-          tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
-              --owner=0 --group=0 --numeric-owner --mode=u+rwX,go+rX,go-w \
-              -cf - -C stage sdroxide | gzip -n > "out/$PKG.tar.gz"
+          # but the files in it. The macOS step below uses the same script.
+          packaging/reproducible-tar.sh "out/$PKG.tar.gz" stage sdroxide
           # Pinned for the same reason as the compiler; it also takes its file
           # times from SOURCE_DATE_EPOCH.
           cargo install cargo-deb --locked --version 3.8.0
@@ -766,9 +776,18 @@ jobs:
           its section 13 applies: if you run sdroxide as a server and let other
           people use it over a network, you have to offer them the source.
           EOF
-          tar czf "out/$PKG.tar.gz" -C stage sdroxide
+          # As on Linux: sorted, root-owned, stamped with the commit's time.
+          # GNU tar (`gtar` on the runner) rather than the system bsdtar, which
+          # cannot sort and would add AppleDouble `._` entries of its own.
+          packaging/reproducible-tar.sh "out/$PKG.tar.gz" stage sdroxide
           # The .app/.dmg (fixed bundle identity) is only built for the default
           # (non-SoapySDR) variant; SoapySDR users take the portable tarball.
+          #
+          # The .app inside is reproducible — the binary, Info.plist and the
+          # ad-hoc signature (which has no timestamp) all are — but the .dmg
+          # around it is not: hdiutil stamps the volume and its catalogue with
+          # the time it ran and offers no way to fix it. A rebuild is checked
+          # against the tarball, or against the .app copied out of the image.
           if [[ "${{ matrix.variant }}" == "cat" ]]; then
             mkdir -p stage-dmg
             APP=stage-dmg/sdroxide.app
@@ -831,7 +850,7 @@ jobs:
       # pinned above, but `apt-get install` takes whatever jammy-updates has
       # that day, so the exact package set is recorded here, in a form
       # snapshot.ubuntu.com can serve again. The checksums are of the files
-      # beside it, as built. packaging/linux/reproducible-env.sh has the rest.
+      # beside it, as built. packaging/reproducible-env.sh has the rest.
       - name: Record build environment (compat container)
         if: matrix.container
         run: |
@@ -853,6 +872,42 @@ jobs:
             dpkg-query -W -f '${Package}:${Architecture}=${Version}\n' | sort
           } > buildinfo
           # Written aside and moved in, or it would be among the files it sums.
+          mv buildinfo "out/$PKG.buildinfo"
+          cat "out/$PKG.buildinfo"
+
+      # The same for macOS, where there is no image digest to pin: the runner
+      # label and the Xcode are pinned above, and the runner image version
+      # (GitHub's ImageVersion) names everything else the build saw, including
+      # the Homebrew formulae, which setup-build-env.sh takes from the image
+      # rather than updating. A rebuild needs a runner on that same image
+      # version; GitHub keeps one for a few weeks after the next is out.
+      - name: Record build environment (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          {
+            echo "package: $PKG"
+            echo "source: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$GITHUB_SHA"
+            echo "runner: ${{ matrix.os }}, image ${ImageOS:-?} ${ImageVersion:-?}"
+            echo "macOS: $(sw_vers -productVersion) ($(sw_vers -buildVersion)), $(uname -m)"
+            echo "xcode: $(xcodebuild -version | tr '\n' ' ')($(xcode-select -p))"
+            echo "sdk: $(xcrun --show-sdk-version) $(xcrun --show-sdk-build-version)"
+            echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH"
+            echo "SDROXIDE_BUILD: ${SDROXIDE_BUILD:-<unset>}"
+            echo
+            echo "## rustc -vV"
+            rustc -vV
+            echo
+            echo "## clang, ld"
+            clang --version | sed -n 1p
+            ld -v 2>&1 | sed -n 1p
+            echo
+            echo "## sha256 (the .dmg is not expected to reproduce; see Package)"
+            (cd out && shasum -a 256 -- *)
+            echo
+            echo "## brew list --versions"
+            brew list --versions
+          } > buildinfo
           mv buildinfo "out/$PKG.buildinfo"
           cat "out/$PKG.buildinfo"
 
@@ -885,7 +940,7 @@ jobs:
           cd web-dist
           zip -r "../dist/sdroxide-web-$GITHUB_REF_NAME.zip" .
       # One file to check a download against, and the thing a rebuild of a
-      # -compat package compares with.
+      # -compat or macOS package compares with.
       - name: Checksums
         run: |
           cd dist

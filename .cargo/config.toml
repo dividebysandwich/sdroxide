@@ -10,8 +10,8 @@
 # which rustc leaves to the gcc driver's own defaults.
 #
 # Note that a RUSTFLAGS environment variable, if one is ever set, replaces this
-# wholesale rather than adding to it — CI sets one only on Linux and for the
-# wasm client (packaging/linux/reproducible-env.sh), which never build this
+# wholesale rather than adding to it — CI sets one only on Linux, macOS and for
+# the wasm client (packaging/reproducible-env.sh), which never build this
 # target, and deliberately none on Windows.
 [target.x86_64-pc-windows-gnu]
 rustflags = ["-C", "link-arg=-static-libgcc"]
