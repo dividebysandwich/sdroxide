@@ -1,0 +1,65 @@
+name: Set up the Windows build
+description: >-
+  The MSYS2/MinGW toolchain the Windows release is built with, pinned, and
+  cargo pointed at the x86_64-pc-windows-gnu target. Shared by release.yml and
+  reproducible.yml so the check builds with exactly what the release does.
+
+# RADE's Opus dependency is built with autotools, which MSVC cannot drive and
+# whose static library MSVC cannot link. Windows therefore builds the
+# `x86_64-pc-windows-gnu` target inside MSYS2/MinGW — the same way upstream
+# FreeDV ships its Windows binaries. The DRM receiver is compiled by `cc`
+# directly rather than through its own build system, so it never generates a
+# makefile and cannot hit the MSYS `make` trap that an absolute path in a rule
+# line sets off.
+#
+# What pins the toolchain: setup-msys2 is referenced by commit, and each of its
+# releases installs one fixed MSYS2 release (v2.33.0: the 2026-09-27 one, whose
+# SHA-256 it checks). With `update: false` nothing is upgraded, and the
+# packages below come from that release's own package database rather than
+# from whatever MSYS2 published that day, so the commit names every version
+# of gcc, binutils, CMake and the rest. repo.msys2.org keeps old package
+# versions, so the same set can still be installed later. To move to a newer
+# toolchain, bump the commit (and the version in the comment) deliberately,
+# like any other dependency. The release's .buildinfo lists what was installed.
+#
+# `zip` is Info-ZIP, for packaging/reproducible-zip.sh.
+
+runs:
+  using: composite
+  steps:
+    - id: msys2
+      uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+      with:
+        msystem: MINGW64
+        update: false
+        install: >-
+          base-devel
+          mingw-w64-x86_64-toolchain
+          mingw-w64-x86_64-cmake
+          mingw-w64-x86_64-clang
+          autoconf
+          automake
+          libtool
+          zip
+    # The steps after this run in the runner's Git Bash; putting MSYS2's
+    # MinGW and MSYS bin directories first on PATH makes them use its gcc,
+    # cmake, libclang (for bindgen) and zip rather than anything the runner
+    # image has.
+    - name: Use the MSYS2 toolchain
+      shell: bash
+      env:
+        MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+      run: |
+        loc=$(cygpath -m "$MSYS2_LOCATION")
+        echo "CARGO_BUILD_TARGET=x86_64-pc-windows-gnu" >> "$GITHUB_ENV"
+        echo "$loc/mingw64/bin" >> "$GITHUB_PATH"
+        echo "$loc/usr/bin" >> "$GITHUB_PATH"
+    # What the pin installed, by exact version, for the release's .buildinfo.
+    # From MSYS2's own shell: pacman belongs to that runtime, not Git Bash's.
+    - name: List the MSYS2 packages
+      shell: msys2 {0}
+      run: |
+        list="$(cygpath -u "$RUNNER_TEMP")/msys2-packages.txt"
+        pacman -Q > "$list"
+        echo "MSYS2_PACKAGES=$(cygpath -m "$list")" >> "$GITHUB_ENV"
+        wc -l < "$list"

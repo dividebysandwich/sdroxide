@@ -1,39 +1,56 @@
 #!/usr/bin/env bash
-# Print the environment a reproducible Linux or macOS build of sdroxide needs,
-# as NAME=value lines. CI appends them to $GITHUB_ENV; to rebuild a release by
-# hand, run this from the top of the checkout (after rustup, before cargo) and
-# export what it prints (the values hold spaces, so not through `eval`):
+# Print the environment a reproducible build of sdroxide needs, as NAME=value
+# lines. CI appends them to $GITHUB_ENV; to rebuild a release by hand, run this
+# from the top of the checkout (after rustup, before cargo) and export what it
+# prints (the values hold spaces, so not through `eval`):
 #
 #   while IFS= read -r v; do export "$v"; done < <(packaging/reproducible-env.sh)
+#
+# On Windows, run it from the Git Bash or MSYS2 shell, after CARGO_BUILD_TARGET
+# is set to x86_64-pc-windows-gnu (.github/actions/setup-windows-build does it).
 #
 # It removes what differs between two builds of the same commit that are not
 # the source's doing: the time of the build, and where the checkout and cargo's
 # registry happen to live. The toolchain is pinned in
-# .github/workflows/release.yml, as are the Linux build image and, for macOS,
-# the runner image and the Xcode; every -compat and macOS release ships a
-# .buildinfo naming them, plus the exact packages the build had.
+# .github/workflows/release.yml, as are the Linux build image, the macOS runner
+# and Xcode, and (through the setup action) the Windows MSYS2 snapshot; every
+# -compat, macOS and Windows release ships a .buildinfo naming them, plus the
+# exact packages the build had.
 #
 # Written for the bash 3.2 macOS still ships as /bin/bash.
 set -euo pipefail
 
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*) windows=1 ;;
+  *) windows=0 ;;
+esac
+
 # Both spellings of the checkout, in case it is reached through a symlink:
 # cargo passes paths on as it was given them, while the build scripts that
 # canonicalize their vendor directories hand CMake the resolved one. (On macOS
-# /tmp and /var are such symlinks, into /private.)
-roots=("$PWD")
-[[ "$(pwd -P)" != "$PWD" ]] && roots+=("$(pwd -P)")
+# /tmp and /var are such symlinks, into /private.) On Windows the shell's
+# /d/a/... is not what the compilers see: rustc gets D:\a\..., and CMake and
+# MinGW gcc mostly D:/a/..., so both of those are added instead.
 cargo_home=${CARGO_HOME:-$HOME/.cargo}
+if [[ $windows == 1 ]]; then
+  roots=("$(cygpath -w "$PWD")" "$(cygpath -m "$PWD")")
+  cargo_homes=("$(cygpath -w "$cargo_home")" "$(cygpath -m "$cargo_home")")
+else
+  roots=("$PWD")
+  [[ "$(pwd -P)" != "$PWD" ]] && roots+=("$(pwd -P)")
+  cargo_homes=("$cargo_home")
+fi
 
 # The commit's own time, so a tool that stamps "now" — gcc's __DATE__, the
-# .deb's file times, the tarball's — stamps the same thing on every rebuild.
-# `safe.directory` because in a container the checkout is owned by another uid.
+# .deb's file times, the tarball's, and GNU ld's PE header timestamp on
+# Windows, which it takes from here when set — stamps the same thing on every
+# rebuild. `safe.directory` because in a container the checkout is owned by
+# another uid.
 echo "SOURCE_DATE_EPOCH=$(git -c safe.directory="$PWD" log -1 --format=%ct)"
 
 # rustc: panic locations, `file!()` and bindgen output name source files by
 # absolute path. Workspace crates are already relative; the registry, git
-# dependencies and everything under target/ (OUT_DIR) are not. This lands in
-# RUSTFLAGS, which overrides `build.rustflags` in .cargo/config.toml — there is
-# none, and its only [target] entry is for Windows, which never runs this.
+# dependencies and everything under target/ (OUT_DIR) are not.
 #
 # The standard library's own paths are /rustc/<commit>/library/... in the
 # shipped std — unless the rust-src component is installed, in which case
@@ -42,11 +59,26 @@ echo "SOURCE_DATE_EPOCH=$(git -c safe.directory="$PWD" log -1 --format=%ct)"
 # would differ. Mapping the copy back gives /rustc/<commit> either way.
 rustflags=""
 for r in "${roots[@]}"; do rustflags+="--remap-path-prefix=$r=. "; done
-rustflags+="--remap-path-prefix=$cargo_home=/cargo "
+for c in "${cargo_homes[@]}"; do rustflags+="--remap-path-prefix=$c=/cargo "; done
 sysroot=$(rustc --print sysroot)
 commit=$(rustc -vV | sed -n 's/^commit-hash: //p')
 rustflags+="--remap-path-prefix=$sysroot/lib/rustlib/src/rust=/rustc/$commit"
-echo "RUSTFLAGS=$rustflags"
+
+host=$(rustc -vV | sed -n 's/^host: //p')
+target=${CARGO_BUILD_TARGET:-$host}
+
+# On Linux and macOS this goes in RUSTFLAGS, which reaches every target (the
+# web job builds wasm32 with it) and overrides `build.rustflags` and
+# `[target.*] rustflags` in .cargo/config.toml — there is no build.rustflags,
+# and the only [target] entry is for Windows. On Windows that entry
+# (-static-libgcc) has to survive, so the flags go in the target's own
+# variable instead, which cargo appends to the config file's list.
+if [[ $windows == 1 ]]; then
+  upper=$(printf '%s' "$target" | tr '[:lower:]-' '[:upper:]_')
+  echo "CARGO_TARGET_${upper}_RUSTFLAGS=$rustflags"
+else
+  echo "RUSTFLAGS=$rustflags"
+fi
 
 # C and C++: `__FILE__` in rtl_433's and mongoose's diagnostics, and whatever
 # else a build script compiles. The `cc` crate reads the target-suffixed
@@ -54,13 +86,18 @@ echo "RUSTFLAGS=$rustflags"
 # is left alone on purpose, because autoconf takes a set CFLAGS as a
 # replacement for its `-g -O2` and RADE's Opus would lose its optimisation.
 # (Opus is built in its own source tree, so its paths are relative already.)
-# Apple clang takes -ffile-prefix-map as gcc does.
+# Apple clang takes -ffile-prefix-map as gcc does, and MinGW gcc compares the
+# prefix with / and \ alike, so on Windows only the forward-slash spelling is
+# passed: a backslash in CMAKE_C_FLAGS is an escape to CMake.
 cflags=""
-for r in "${roots[@]}"; do cflags+="-ffile-prefix-map=$r=. "; done
-cflags+="-ffile-prefix-map=$cargo_home=/cargo"
-host=$(rustc -vV | sed -n 's/^host: //p')
-echo "CFLAGS_${host//-/_}=$cflags"
-echo "CXXFLAGS_${host//-/_}=$cflags"
+if [[ $windows == 1 ]]; then
+  cflags+="-ffile-prefix-map=${roots[1]}=. -ffile-prefix-map=${cargo_homes[1]}=/cargo"
+else
+  for r in "${roots[@]}"; do cflags+="-ffile-prefix-map=$r=. "; done
+  cflags+="-ffile-prefix-map=$cargo_home=/cargo"
+fi
+echo "CFLAGS_${target//-/_}=$cflags"
+echo "CXXFLAGS_${target//-/_}=$cflags"
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   # Apple's ar, ranlib and libtool write each member's mtime into a static

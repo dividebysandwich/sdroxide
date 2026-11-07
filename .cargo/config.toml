@@ -12,6 +12,9 @@
 # Note that a RUSTFLAGS environment variable, if one is ever set, replaces this
 # wholesale rather than adding to it — CI sets one only on Linux, macOS and for
 # the wasm client (packaging/reproducible-env.sh), which never build this
-# target, and deliberately none on Windows.
+# target. On Windows the same script sets
+# CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS instead, which cargo appends to
+# the list below rather than replacing it; release.yml's MinGW-DLL check would
+# catch it if -static-libgcc ever went missing.
 [target.x86_64-pc-windows-gnu]
 rustflags = ["-C", "link-arg=-static-libgcc"]

@@ -26,12 +26,13 @@ env:
   # CMake 4.x on the macOS/Windows runners refuses to configure it without
   # this override (CMake 3.x ignores the variable).
   CMAKE_POLICY_VERSION_MINIMUM: "3.5"
-  # The compiler every Linux and macOS build and the web client are built with.
-  # Pinned rather than `stable` so a -compat or macOS binary can be rebuilt bit
-  # for bit later (see reproducible.yml): a new rustc changes the output even
-  # when the source has not. Bump it deliberately, like any other dependency.
-  # Windows stays on `stable`: its MinGW toolchain is not pinned anyway, and the
-  # build relies on the windows-gnu target the runner image has for `stable`.
+  # The compiler every native build and the web client are built with. Pinned
+  # rather than `stable` so a -compat, macOS or Windows binary can be rebuilt
+  # bit for bit later (see reproducible.yml): a new rustc changes the output
+  # even when the source has not. Bump it deliberately, like any other
+  # dependency. (Windows adds the x86_64-pc-windows-gnu target to it; the
+  # MinGW toolchain it links with is pinned in
+  # .github/actions/setup-windows-build.)
   RUST_TOOLCHAIN: "1.98.1"
   # The Xcode — so clang, the linker and the macOS SDK — every macOS build
   # uses. Each runner image carries several and moves its default with the
@@ -81,13 +82,15 @@ jobs:
           # runners are named by version rather than `macos-latest`, for the
           # same reason: `-latest` moved from macOS 15 to 26 under the release
           # once already, and a different image is a different build.
-          # reproducible.yml reads the arm64 label from here too.
+          # reproducible.yml reads the arm64 label from here too, and the
+          # Windows one, pinned likewise (the MSVC that compiles build scripts
+          # and proc macros comes with the image).
           platforms='[
             {"label": "linux-x86_64",         "os": "ubuntu-latest"},
             {"label": "linux-aarch64",        "os": "ubuntu-24.04-arm"},
             {"label": "linux-x86_64-compat",  "os": "ubuntu-latest",    "container": "ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02"},
             {"label": "linux-aarch64-compat", "os": "ubuntu-24.04-arm", "container": "ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02"},
-            {"label": "windows-x86_64",       "os": "windows-latest"},
+            {"label": "windows-x86_64",       "os": "windows-2025"},
             {"label": "macos-aarch64",        "os": "macos-26"},
             {"label": "macos-x86_64",         "os": "macos-15-intel"}
           ]'
@@ -261,36 +264,15 @@ jobs:
             sudo apt-get install -y --no-install-recommends libsoapysdr-dev
           fi
 
+      # The pinned MSYS2/MinGW toolchain, and cargo pointed at the
+      # x86_64-pc-windows-gnu target. Why MinGW and how it is pinned are in the
+      # action; reproducible.yml uses the same one.
+      - name: Set up build environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-build
+
       # Extract the PothosSDR bundle (no install needed); soapysdr-sys finds
       # SoapySDR.dll via PATH. Same approach as rust-soapysdr's own CI.
-      # RADE's Opus dependency is built with autotools, which MSVC cannot drive
-      # and whose static library MSVC cannot link. Windows therefore builds the
-      # `x86_64-pc-windows-gnu` target inside MSYS2/MinGW — the same way
-      # upstream FreeDV ships its Windows binaries. The DRM receiver is
-      # compiled by `cc` directly rather than through its own build system, so
-      # it never generates a makefile and cannot hit the MSYS `make` trap that
-      # an absolute path in a rule line sets off.
-      - name: Set up MSYS2 (Windows)
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            base-devel
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-clang
-            autoconf
-            automake
-            libtool
-      - name: Use the MSYS2 toolchain (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          echo "CARGO_BUILD_TARGET=x86_64-pc-windows-gnu" >> "$GITHUB_ENV"
-          echo "D:/a/_temp/msys64/mingw64/bin" >> "$GITHUB_PATH"
-          echo "D:/a/_temp/msys64/usr/bin" >> "$GITHUB_PATH"
-
       - name: Install SoapySDR (Windows)
         if: runner.os == 'Windows' && matrix.variant == 'soapy'
         run: |
@@ -306,20 +288,24 @@ jobs:
         if: runner.os == 'macOS'
         run: packaging/macos/setup-build-env.sh "$MACOS_XCODE" ${{ matrix.variant }}
 
+      # On Windows the host toolchain stays MSVC (it builds the build scripts
+      # and proc macros); the release itself is the windows-gnu target added
+      # here.
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ runner.os == 'Windows' && 'stable' || env.RUST_TOOLCHAIN }}
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ runner.os == 'Windows' && 'x86_64-pc-windows-gnu' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.label }}-${{ matrix.variant }}
 
-      # Every Linux and macOS build, not only -compat: it costs nothing, and it
-      # keeps the checkout's path out of the regular binaries too. The -compat
-      # and macOS builds are the ones expected to rebuild bit for bit, since
-      # only they have a pinned image; the regular Linux builds run on whatever
-      # `ubuntu-latest` is that week.
-      - name: Reproducible build settings (Linux, macOS)
-        if: runner.os != 'Windows'
+      # Every build, not only -compat: it costs nothing, and it keeps the
+      # checkout's path out of the regular binaries too. The -compat, macOS and
+      # Windows builds are the ones expected to rebuild bit for bit, since only
+      # they have a pinned environment; the regular Linux builds run on
+      # whatever `ubuntu-latest` is that week. On Windows this has to come after
+      # the setup action, which sets the CARGO_BUILD_TARGET it reads.
+      - name: Reproducible build settings
         run: packaging/reproducible-env.sh >> "$GITHUB_ENV"
 
       # The embed-web feature bakes these files into the binary via rust-embed.
@@ -586,6 +572,12 @@ jobs:
           # cargo write to a target-specific directory rather than
           # target/release.
           BIN_DIR="target/$CARGO_BUILD_TARGET/release"
+          # Drop the symbol table, as Linux and macOS do. cargo's own release
+          # strip removes only the debug info, which leaves a COFF symbol table
+          # whose `.file` entries name every C source file by the absolute path
+          # it was compiled from — the checkout's, which differs per machine.
+          # The .zip and the MSI both take this stripped file.
+          strip "$BIN_DIR/sdroxide.exe"
           cp "$BIN_DIR/sdroxide.exe" stage/sdroxide/
           cp LICENSE stage/sdroxide/LICENSE.txt
           # MIT notice for the FX3 firmware image embedded in the binary.
@@ -678,9 +670,18 @@ jobs:
           its section 13 applies: if you run sdroxide as a server and let other
           people use it over a network, you have to offer them the source.
           EOF
-          7z a "out/$PKG.zip" ./stage/sdroxide > /dev/null
+          # Sorted, every file stamped with the commit's time, no extra fields:
+          # the zip counterpart of the Linux and macOS tarballs.
+          packaging/reproducible-zip.sh "out/$PKG.zip" stage sdroxide
           # The MSI (fixed product identity) is only built for the default
           # (non-SoapySDR) variant; SoapySDR users take the portable .zip.
+          #
+          # The sdroxide.exe inside it is the reproducible one, but the .msi
+          # around it is not: WiX gives every build a new package code and
+          # stamps the summary information and the cabinet with the time it
+          # ran, and has no option to fix either. A rebuild is checked against
+          # the .zip, or against the files an administrative install
+          # (`msiexec /a`) unpacks.
           if [[ "${{ matrix.variant }}" == "cat" ]]; then
             dotnet tool install --global wix --version 5.0.2
             wix build packaging/windows/main.wxs -arch x64 \
@@ -911,6 +912,40 @@ jobs:
           mv buildinfo "out/$PKG.buildinfo"
           cat "out/$PKG.buildinfo"
 
+      # And for Windows. The MinGW toolchain is pinned by the setup-msys2
+      # commit in .github/actions/setup-windows-build, and the package list
+      # below is what that pin installed, by exact version: repo.msys2.org
+      # keeps old versions, so `pacman -U` can put the same set back later.
+      # The runner image adds only the MSVC that builds build scripts and proc
+      # macros, which do not end up in the binary.
+      - name: Record build environment (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          {
+            echo "package: $PKG"
+            echo "source: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$GITHUB_SHA"
+            echo "runner: ${{ matrix.os }}, image ${ImageOS:-?} ${ImageVersion:-?}"
+            echo "target: $CARGO_BUILD_TARGET"
+            echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH"
+            echo "SDROXIDE_BUILD: ${SDROXIDE_BUILD:-<unset>}"
+            echo
+            echo "## rustc -vV"
+            rustc -vV
+            echo
+            echo "## gcc, ld"
+            gcc --version | sed -n 1p
+            ld --version | sed -n 1p
+            echo
+            echo "## sha256 (the .msi is not expected to reproduce; see Package)"
+            (cd out && sha256sum -- *)
+            echo
+            echo "## pacman -Q (MSYS2, listed by setup-windows-build)"
+            cat "$MSYS2_PACKAGES"
+          } > buildinfo
+          mv buildinfo "out/$PKG.buildinfo"
+          cat "out/$PKG.buildinfo"
+
       - uses: actions/upload-artifact@v7
         with:
           name: pkg-${{ matrix.label }}-${{ matrix.variant }}
@@ -940,7 +975,7 @@ jobs:
           cd web-dist
           zip -r "../dist/sdroxide-web-$GITHUB_REF_NAME.zip" .
       # One file to check a download against, and the thing a rebuild of a
-      # -compat or macOS package compares with.
+      # -compat, macOS or Windows package compares with.
       - name: Checksums
         run: |
           cd dist
