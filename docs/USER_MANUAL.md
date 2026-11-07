@@ -16868,6 +16868,10 @@ after the click by the machine the radio is attached to (a KiwiSDR's status
 page, a SpyServer's greeting, a TCP connect; three seconds each, no channel
 taken). The map fills its window; resize the window to make it larger.
 
+The name on such a radio's tab leads back: a click on it opens the map at that
+receiver. Where the directory no longer lists it, the map draws it at its last
+known place as a dashed ring, remembered from when it was added or last seen.
+
 The lists are fetched by the machine the radio is attached to, not by the
 screen you are sitting at — so this works the same in the browser client, and
 a receiver is judged reachable from where it will actually be connected to.

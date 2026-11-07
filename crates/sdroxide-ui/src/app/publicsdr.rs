@@ -524,6 +524,7 @@ impl SdroxideApp {
         // show the last session's receivers with their last answers.
         if !open {
             self.public_sdr_map_state.picked.clear();
+            self.public_sdr_map_state.ghost = None;
         }
 
         if refresh {
@@ -555,6 +556,8 @@ impl SdroxideApp {
         my_pos: Option<(f64, f64)>,
     ) -> Option<PublicSdrEntry> {
         use crate::publicsdr_map::{MAX_PICKED, key, show};
+        // A radio asked to be shown here: pick its receiver and look at it.
+        self.public_sdr_map_state.take_focus(all, crate::time::now_unix_f64());
         // Everything below stays inside the width the window has now. Outside
         // a scroll area, a row that measures itself by what is free would
         // otherwise widen the window a little every frame, until it filled
@@ -736,11 +739,42 @@ impl SdroxideApp {
     // Why: HDZ 2026-11-04: "dabei wäre statt Kiwisdr … der Sendername aus dem
     //      Katalog zu übernehmen". Without a name the radio was called after
     //      its interface, so every public receiver read "Kiwisdr".
+    /// Whether this radio listens to a public receiver (KiwiSDR or SpyServer),
+    /// so that its name on the tab can open the map on it.
+    // Pitfall: asked of the controller, not read from `radio_cfg`: that is the
+    //          settings page's copy, filled only once the page has been
+    //          opened, so a radio added earlier had no link (HDZ 2026-11-04:
+    //          "geht noch nicht, und die bestehenden müssten retro gelinkt
+    //          werden").
+    pub(crate) fn on_public_sdr(&self) -> bool {
+        self.ctrl.radio_config().as_ref().and_then(crate::publicsdr_map::radio_target).is_some()
+    }
+
+    /// Open Public SDRs on the map, at the receiver this radio listens to.
+    ///
+    /// In: nothing. Effect: the window opens in MAP with the request held in
+    /// [`crate::publicsdr_map::PublicSdrMapState::focus`]; the directory is
+    /// asked for as on any opening. Nothing for a radio on no public receiver.
+    pub(crate) fn show_self_on_public_map(&mut self) {
+        let Some(target) =
+            self.ctrl.radio_config().as_ref().and_then(crate::publicsdr_map::radio_target)
+        else {
+            return;
+        };
+        self.public_sdr_map_state.focus = Some(target);
+        self.public_sdr_map = true;
+        self.show_public_sdrs = true;
+    }
+
     fn take_public_sdr(&mut self, entry: &PublicSdrEntry) {
         // A brand-new radio has none of this radio's settings, and should not
         // inherit them: it is a different receiver.
         let fresh =
             entry.radio_config(&sdroxide_types::RadioConfig::default(), self.public_sdr_low_bw);
+        // Where it stands, for the day the directory no longer lists it.
+        if let Some(target) = crate::publicsdr_map::radio_target(&fresh) {
+            self.public_sdr_map_state.remember(&target, entry);
+        }
         self.radio_tab_requests.push(RadioTabRequest::Add {
             station: self.station_key(),
             preset: Some(Box::new(fresh)),
@@ -756,6 +790,7 @@ impl SdroxideApp {
         //      die Radios stale".
         self.show_public_sdrs = false;
         self.public_sdr_map_state.picked.clear();
+        self.public_sdr_map_state.ghost = None;
     }
 }
 

@@ -100,6 +100,112 @@ pub struct PublicSdrMapState {
     //      Easing is for a search narrowing the receivers; a map that changes
     //      size under the pointer should not glide for half a second after it.
     pub fitted_size: Vec2,
+    /// A radio asked to be shown on the map: the receiver it is set up for,
+    /// as [`radio_target`] gives it. Held until the directory is in, then
+    /// turned into a pick and a view on it ([`PublicSdrMapState::take_focus`]).
+    pub focus: Option<(bool, String)>,
+    /// Where the radios' receivers were last seen, by [`target_key`]: written
+    /// when a receiver is added as a radio and whenever a radio's receiver is
+    /// found in the directory, read when it is not. Loaded on first use.
+    pub known: Option<std::collections::HashMap<String, KnownPosition>>,
+    /// A radio's receiver the directory no longer lists, drawn at its last
+    /// known place as a hollow ring ([`show`]).
+    pub ghost: Option<KnownPosition>,
+}
+
+/// Where a receiver stood when the directory last listed it.
+// Why: HDZ 2026-11-04: "ein Radio sollte seine Altposition speichern, wenn die
+//      Map es nicht hergibt, dann gibt's ein Symbol". The directories are live
+//      lists: a KiwiSDR that is off for an evening drops out of kiwisdr.com,
+//      and an address can change; the radio still listens there.
+// Invariant: kept in this window's own file, never in the radio's
+//      configuration, which travels over the wire to remote clients.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct KnownPosition {
+    pub lat: f64,
+    pub lon: f64,
+    /// The receiver's name as the directory gave it.
+    pub name: String,
+    /// The day it was last seen there, `YYYY-MM-DD`; empty where no clock
+    /// was asked (the browser build).
+    pub seen: String,
+}
+
+/// The key a radio's receiver is remembered under: network kind and address,
+/// as [`radio_target`] gives them.
+pub fn target_key(target: &(bool, String)) -> String {
+    format!("{}|{}", if target.0 { "SpyServer" } else { "KiwiSDR" }, target.1)
+}
+
+/// The file the known positions live in, beside the other configuration.
+/// None under unit tests, which must not touch the operator's configuration.
+#[cfg(not(target_arch = "wasm32"))]
+fn known_path() -> Option<std::path::PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    sdroxide_config::config_dir().ok().map(|d| d.join("publicsdr-positions.json"))
+}
+
+/// Read the known positions; an absent or unreadable file is an empty list.
+fn load_known() -> std::collections::HashMap<String, KnownPosition> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(p) = known_path()
+        && let Ok(text) = std::fs::read_to_string(p)
+    {
+        return serde_json::from_str(&text).unwrap_or_default();
+    }
+    std::collections::HashMap::new()
+}
+
+/// Write the known positions. A failure is reported and otherwise ignored:
+/// the list is a convenience, and the map works without it.
+fn save_known(known: &std::collections::HashMap<String, KnownPosition>) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(p) = known_path() {
+        let written = serde_json::to_string_pretty(known)
+            .map_err(|e| e.to_string())
+            .and_then(|s| std::fs::write(&p, s).map_err(|e| e.to_string()));
+        if let Err(e) = written {
+            eprintln!("sdroxide: recording public SDR positions in {}: {e}", p.display());
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = known;
+}
+
+/// Today as `YYYY-MM-DD`, on a build that has a clock to ask.
+fn today() -> String {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        chrono::Local::now().format("%Y-%m-%d").to_string()
+    }
+    #[cfg(target_arch = "wasm32")]
+    String::new()
+}
+
+/// How much longitude the map shows around a receiver a radio asked to be
+/// shown at: its country and the receivers next to it.
+const FOCUS_LON_SPAN: f64 = 24.0;
+
+/// The public receiver a radio is set up for, if it is one.
+///
+/// In: the radio's configuration. Out: `(is SpyServer, host:port)` for a
+/// KiwiSDR or SpyServer interface (either SpyServer shape), by the same
+/// `endpoint` rule [`endpoint`] uses for a directory entry; `None` for every
+/// other interface. Fails: none.
+// Why: HDZ 2026-11-04: "wenn du linken kannst, kannst du den Link auch ohne
+//      Symbol an den Namen heften" — the radio's name on its tab opens this
+//      map on the receiver it listens to. Matched by address, not by name,
+//      because a name is the operator's to change and "anonymous" repeats.
+pub fn radio_target(cfg: &sdroxide_types::RadioConfig) -> Option<(bool, String)> {
+    use sdroxide_types::Backend;
+    match cfg.backend {
+        Backend::KiwiSdr => Some((false, cfg.kiwi.endpoint())),
+        Backend::SpyServer => Some((true, cfg.spyserver.endpoint())),
+        Backend::SpyServerVfo => Some((true, cfg.spyserver_vfo.endpoint())),
+        _ => None,
+    }
 }
 
 /// How long after a click its receivers are checked, in seconds: long enough
@@ -152,6 +258,70 @@ pub fn endpoint(e: &PublicSdrEntry) -> String {
 }
 
 impl PublicSdrMapState {
+    /// Turn a radio's request to be shown ([`Self::focus`]) into a pick of its
+    /// receiver and a view on it, once the directory is there to find it in.
+    ///
+    /// In: the whole directory, now (Unix seconds). Effect: with the receiver
+    /// found, it is the one pick (its check scheduled as for a click) and the
+    /// view is centred on it at [`FOCUS_LON_SPAN`], held like a hand-set view
+    /// until a double-click hands it back to the fit. A receiver the directory
+    /// does not list (gone, or entered by hand) leaves the map as it is.
+    /// Fails: none; an empty directory keeps the request for a later frame.
+    pub fn take_focus(&mut self, all: &[PublicSdrEntry], now: f64) {
+        let Some(target) = self.focus.clone() else { return };
+        if all.is_empty() {
+            return;
+        }
+        self.focus = None;
+        self.ghost = None;
+        let (spy, ep) = (target.0, target.1.as_str());
+        let found = all
+            .iter()
+            .find(|e| matches!(e.network, PublicSdrNetwork::SpyServer) == spy && endpoint(e) == ep);
+        // Where to look: the receiver as the directory has it, remembered for
+        // the day it is gone; or, gone, where it was last seen, marked.
+        let at = match found {
+            Some(e) => {
+                self.picked = vec![key(e)];
+                self.schedule_checks(&[e], now);
+                self.remember(&target, e);
+                position(e)
+            }
+            None => {
+                // Nothing in the directory to pick: an old pick would stand
+                // for a receiver this radio is not on.
+                self.picked.clear();
+                let known = self.known.get_or_insert_with(load_known);
+                self.ghost = known.get(&target_key(&target)).cloned();
+                self.ghost.as_ref().map(|g| (g.lat, g.lon))
+            }
+        };
+        if let Some((lat, lon)) = at {
+            self.view.clat = lat;
+            self.view.clon = lon;
+            self.view.lon_span = FOCUS_LON_SPAN;
+            self.view.initialized = true;
+            self.view.manual = true;
+        }
+    }
+
+    /// Remember where a radio's receiver stands, as the directory gives it.
+    ///
+    /// In: the radio's target ([`radio_target`]) and the directory entry.
+    /// Effect: the entry's place, name and today's date under
+    /// [`target_key`], written to the file when anything changed. Nothing
+    /// for an entry without a position. Fails: none (see [`save_known`]).
+    pub fn remember(&mut self, target: &(bool, String), e: &PublicSdrEntry) {
+        let Some((lat, lon)) = position(e) else { return };
+        let now = KnownPosition { lat, lon, name: e.name.clone(), seen: today() };
+        let known = self.known.get_or_insert_with(load_known);
+        let slot = known.entry(target_key(target)).or_default();
+        if *slot != now {
+            *slot = now;
+            save_known(known);
+        }
+    }
+
     /// After a click: schedule a check of each picked receiver that has no
     /// fresh answer and none on the way, [`CHECK_DELAY_S`] from `now`.
     ///
@@ -607,6 +777,31 @@ pub fn show(
         p.circle_stroke(c, 6.5, (1.2, alpha(map.home, 170.0)));
     }
 
+    // ── a radio's receiver the directory no longer lists ──
+    // A hollow ring where it was last seen, in the pick colour, with a dashed
+    // look from four arcs: there is no dot to ring, and the gap says so.
+    if let Some(g) = &state.ghost {
+        let c = project((g.lat, g.lon));
+        let r = DOT_R + 4.0;
+        for k in 0..4 {
+            let a0 = k as f32 * std::f32::consts::FRAC_PI_2 + 0.25;
+            let arc: Vec<Pos2> = (0..=8)
+                .map(|i| {
+                    let a = a0 + (std::f32::consts::FRAC_PI_2 - 0.5) * i as f32 / 8.0;
+                    pos2(c.x + r * a.cos(), c.y + r * a.sin())
+                })
+                .collect();
+            p.add(eframe::egui::Shape::line(arc, (1.6, map.dx)));
+        }
+        if resp.hover_pos().is_some_and(|h| h.distance(c) <= r + 2.0) {
+            resp.clone().on_hover_text(tr!(
+                "publicsdr-map-ghost",
+                name = g.name.clone(),
+                seen = g.seen.clone()
+            ));
+        }
+    }
+
     // ── interaction ──
     let mut changed = false;
     if !hovered.is_empty() {
@@ -820,5 +1015,42 @@ mod tests {
         let a = key(&e);
         e.address = "5.6.7.8:5555".into();
         assert_ne!(a, key(&e));
+    }
+    /// Proves: a radio on a public SpyServer finds its receiver by address,
+    /// which becomes the one pick, checked and looked at, and a radio on
+    /// another interface asks for nothing ([`radio_target`],
+    /// [`PublicSdrMapState::take_focus`]).
+    #[test]
+    fn a_radio_is_shown_at_its_own_receiver() {
+        let all = vec![spy("1.2.3.4:5555"), spy("5.6.7.8:5555")];
+        let mut cfg = sdroxide_types::RadioConfig::default();
+        assert!(radio_target(&cfg).is_none(), "no public interface, nothing to show");
+        cfg = all[1].radio_config(&cfg, false);
+        let mut st = PublicSdrMapState { focus: radio_target(&cfg), ..Default::default() };
+        // No directory yet: the request waits.
+        st.take_focus(&[], 100.0);
+        assert!(st.focus.is_some() && st.picked.is_empty());
+        st.take_focus(&all, 100.0);
+        assert!(st.focus.is_none());
+        assert_eq!(st.picked, vec![key(&all[1])]);
+        assert!(st.checks_pending(), "the receiver is checked as after a click");
+        assert!(st.view.manual && (st.view.lon_span - FOCUS_LON_SPAN).abs() < 1e-9);
+        assert!((st.view.clat - 1.0).abs() < 1e-9 && (st.view.clon - 2.0).abs() < 1e-9);
+        assert!(st.ghost.is_none(), "found in the directory: no ghost");
+        let target = radio_target(&cfg).unwrap();
+        assert!(st.known.as_ref().is_some_and(|k| k.contains_key(&target_key(&target))));
+
+        // Gone from the directory: the map goes to where it was last seen and
+        // marks it, with nothing picked.
+        let mut moved = all[1].clone();
+        moved.lat = Some(10.0);
+        moved.lon = Some(20.0);
+        st.remember(&target, &moved);
+        st.focus = Some(target);
+        st.take_focus(&all[..1], 200.0);
+        assert!(st.picked.is_empty());
+        let g = st.ghost.as_ref().expect("a ghost where it was last seen");
+        assert!((g.lat - 10.0).abs() < 1e-6 && (g.lon - 20.0).abs() < 1e-6);
+        assert!((st.view.clat - 10.0).abs() < 1e-6 && (st.view.clon - 20.0).abs() < 1e-6);
     }
 }
