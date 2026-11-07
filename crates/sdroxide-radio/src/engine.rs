@@ -9188,6 +9188,10 @@ impl Engine {
                 if let Err(e) = self.source.atu_tune() {
                     warn!("starting the antenna tuner: {e}");
                     self.notice(&format!("The radio would not start its tuner: {e}"));
+                } else {
+                    // The command is accepted: acquire the interlock now,
+                    // before the next status-poll cycle can report 0xEE.
+                    self.atu_operation_active = true;
                 }
             }
             AtuBypass => {
@@ -9201,6 +9205,9 @@ impl Engine {
                 if let Err(e) = self.source.atu_bypass() {
                     warn!("bypassing the antenna tuner: {e}");
                     self.notice(&format!("The radio would not bypass its tuner: {e}"));
+                } else {
+                    // Bypass has the same operation-wide transmit interlock.
+                    self.atu_operation_active = true;
                 }
             }
             SetAntenna { dir, name } => {
