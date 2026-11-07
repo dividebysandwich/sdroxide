@@ -822,7 +822,24 @@ impl HpsdrBoard {
         auto_gain: AutoGain,
     ) -> Result<HpsdrBoard, HpsdrError> {
         tracing::info!("HPSDR: opening {ip}, requested RX rate {sample_rate_hz:.0} Hz");
-        let (board, protocol) = match discovery::probe(ip, Duration::from_millis(800)) {
+        // Some boards answer only a *broadcast* discovery request: an ANAN-10
+        // and an ANAN-100D on Protocol 1 gateware were found as "P1" by
+        // Settings → Discover yet never answered the directed probe, so the
+        // open guessed Protocol 2 and got no I/Q (#744, #789). When the
+        // directed probe is silent, broadcast and keep the answer from `ip`.
+        let probed = discovery::probe(ip, Duration::from_millis(800)).or_else(|| {
+            let ip_s = ip.to_string();
+            let dev = discovery::discover(Duration::from_millis(800))
+                .into_iter()
+                .find(|d| d.ip == ip_s);
+            if dev.is_some() {
+                tracing::info!(
+                    "HPSDR: {ip} ignored the directed probe but answered a broadcast one"
+                );
+            }
+            dev
+        });
+        let (board, protocol) = match probed {
             Some(dev) => {
                 tracing::info!(
                     "HPSDR: {ip} answered probe: board \"{}\", Protocol {}, MAC {}, {}",
