@@ -25,6 +25,7 @@
     <link data-trunk rel="copy-file" href="assets/pcm_worklet.js" />
     <link data-trunk rel="copy-file" href="assets/ws_arraybuffer.js" />
     <link data-trunk rel="copy-file" href="assets/wake_lock.js" />
+    <link data-trunk rel="copy-file" href="assets/rc28_bridge.js" />
     <link data-trunk rel="copy-file" href="assets/manifest.json" />
     <!-- The icons the manifest names, from the one source every other platform
          renders from (packaging/icons/sdroxide.svg via render.sh). -->
@@ -36,6 +37,8 @@
     <!-- Keeps a watched panel from blanking; see the file for why it is safe to
          run unconditionally. -->
     <script src="wake_lock.js"></script>
+    <!-- The Icom RC-28 knob over WebHID (Chromium only; inert elsewhere). -->
+    <script src="rc28_bridge.js"></script>
     <style>
         html, body {
             margin: 0;
