@@ -314,7 +314,11 @@ impl HpsdrSource {
 
     /// Interpret a newly received Pico tuner status byte.
     fn observe_atu_status(&mut self, status: u8) {
-        let enabled = self.atu_state.is_some_and(|state| state.enabled);
+        let mut diagnostic = self.atu_state.unwrap_or_default();
+        diagnostic.reg7_status = Some(status);
+        diagnostic.reg7_fresh = true;
+        self.atu_state = Some(diagnostic);
+        let enabled = diagnostic.enabled;
 
         match status {
             // The Pico is requesting an RF carrier from the host.
@@ -324,6 +328,7 @@ impl HpsdrSource {
                     status: sdroxide_types::AtuStatus::Tuning,
                     enabled: true,
                     using_memory: false,
+                    ..diagnostic
                 });
             }
 
@@ -335,16 +340,19 @@ impl HpsdrSource {
                         status: sdroxide_types::AtuStatus::Tuned,
                         enabled: true,
                         using_memory: !self.atu_saw_rf_request,
+                        ..diagnostic
                     }),
                     Some(AtuOperation::Bypass) => Some(sdroxide_types::AtuState {
                         status: sdroxide_types::AtuStatus::Bypass,
                         enabled: false,
                         using_memory: false,
+                        ..diagnostic
                     }),
                     None if self.atu_saw_rf_request => Some(sdroxide_types::AtuState {
                         status: sdroxide_types::AtuStatus::Aborted,
                         enabled,
                         using_memory: false,
+                        ..diagnostic
                     }),
                     None => None,
                 };
@@ -357,22 +365,21 @@ impl HpsdrSource {
                 self.atu_saw_rf_request = false;
             }
 
-            // Documented terminal tuner failures. The Pico returns to its
-            // idle state after these codes, but retains the fault byte in
-            // Reg7 until the next command.
+            // The Pico supplies the reason for a failed tune directly in Reg7.
+            // Preserve that byte; do not infer a more specific cause here.
             0xFA..=0xFD => {
                 self.atu_state = Some(sdroxide_types::AtuState {
                     status: sdroxide_types::AtuStatus::Failed,
                     enabled,
                     using_memory: false,
+                    ..diagnostic
                 });
 
                 self.atu_operation = None;
                 self.atu_saw_rf_request = false;
             }
 
-            // Do not assign meaning to undocumented values, including the
-            // remainder of the 0xF0..=0xFF range.
+            // Retain undocumented bytes for display as unknown diagnostics.
             other => {
                 tracing::debug!("HPSDR: unrecognised generic tuner status 0x{other:02X}");
             }
@@ -392,10 +399,13 @@ impl HpsdrSource {
                 .is_some_and(|age| age > TUNER_STATUS_MAX_AGE)
         });
 
-        if stale && (self.atu_operation.is_some() || self.atu_saw_rf_request) {
+        if stale {
             if let Some(state) = self.atu_state.as_mut() {
-                state.status = sdroxide_types::AtuStatus::Idle;
-                state.using_memory = false;
+                state.reg7_fresh = false;
+                if self.atu_operation.is_some() || self.atu_saw_rf_request {
+                    state.status = sdroxide_types::AtuStatus::Idle;
+                    state.using_memory = false;
+                }
             }
         }
     }
@@ -417,17 +427,22 @@ impl HpsdrSource {
         match result {
             HpsdrAtuCommandResult::Acknowledged => {
                 tracing::debug!("HPSDR: antenna tuner command acknowledged by the Pico");
+                if let Some(state) = self.atu_state.as_mut() {
+                    state.command_error = None;
+                }
             }
             HpsdrAtuCommandResult::Rejected => {
                 tracing::warn!("HPSDR: antenna tuner command rejected before the I2C write");
                 self.atu_operation = None;
                 self.atu_saw_rf_request = false;
                 self.atu_rf_requested = false;
-                let enabled = self.atu_state.is_some_and(|state| state.enabled);
+                let previous = self.atu_state.unwrap_or_default();
                 self.atu_state = Some(sdroxide_types::AtuState {
                     status: sdroxide_types::AtuStatus::Failed,
-                    enabled,
+                    enabled: previous.enabled,
                     using_memory: false,
+                    command_error: Some(sdroxide_types::AtuCommandError::Rejected),
+                    ..previous
                 });
             }
             HpsdrAtuCommandResult::Failed => {
@@ -435,11 +450,13 @@ impl HpsdrSource {
                 self.atu_operation = None;
                 self.atu_saw_rf_request = false;
                 self.atu_rf_requested = false;
-                let enabled = self.atu_state.is_some_and(|state| state.enabled);
+                let previous = self.atu_state.unwrap_or_default();
                 self.atu_state = Some(sdroxide_types::AtuState {
                     status: sdroxide_types::AtuStatus::Failed,
-                    enabled,
+                    enabled: previous.enabled,
                     using_memory: false,
+                    command_error: Some(sdroxide_types::AtuCommandError::DeliveryFailed),
+                    ..previous
                 });
             }
         }
