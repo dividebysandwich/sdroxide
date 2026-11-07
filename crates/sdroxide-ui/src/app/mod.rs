@@ -2316,7 +2316,7 @@ impl SdroxideApp {
     /// Two separate questions, and both have to be asked. A radio that cannot
     /// transmit (an SDR dongle, a public SDR, the ATS Mini) has no business
     /// showing a PTT. So has a **mode that is receive-only by design**, whatever
-    /// the radio can do — WEFAX, NAVTEX, DSC, ADS-B, ACARS and the rest. The
+    /// the radio can do — WEFAX, NAVTEX, ADS-B, ACARS and the rest. The
     /// strip asked only the first, so tuning to a weather fax put a PTT, a Drive
     /// slider and a Tune chip on the screen on a broadcast frequency: a
     /// transmitter that could be keyed with nothing to modulate, on a channel

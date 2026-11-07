@@ -59,7 +59,7 @@ impl DeviceSwap {
             SwapReason::Renamed => format!(
                 "the sound card this radio is set to has been renamed by the sound \
                  server ({} → {}); it is the same hardware, but the name in the \
-                 settings is out of date. Apply to update it.",
+                 settings is out of date. Re-pick it under Settings → Radio to update the name.",
                 self.wanted, self.opened
             ),
         }
@@ -967,7 +967,7 @@ fn pick_device(
         }
         // 3) the same hardware under a card id the sound server has since
         // renumbered. Keyed on product *and* USB id together: either alone
-        // would pick the wrong card at a station running two of the same codec.
+        // would pick the wrong card at a station running two different codecs.
         if idxs.is_empty()
             && let Some((product, usb)) = stable_tokens(want)
         {
@@ -977,8 +977,16 @@ fn pick_device(
                 .filter(|(_, (_, n))| stable_tokens(n) == Some((product, usb)))
                 .map(|(i, _)| i)
                 .collect();
-            if !idxs.is_empty() {
+            // Two cards of the same model share product *and* USB id (the id
+            // is the model's, not the unit's), so a renumbered name can match
+            // both. Only a match that resolves to one card is the same
+            // hardware; more than one is a guess, and falls through as Gone.
+            let cards: std::collections::HashSet<&str> =
+                idxs.iter().map(|&i| all[i].1.as_str()).collect();
+            if cards.len() == 1 {
                 reason = SwapReason::Renamed;
+            } else {
+                idxs.clear();
             }
         }
         if !idxs.is_empty() {
@@ -991,7 +999,7 @@ fn pick_device(
             // A rename is reported even though it resolved, because the *stored
             // name* is now out of date and that is worth one line: the radio
             // works, but the config is drifting further from the machine with
-            // every renumbering, and Apply writes the current name back.
+            // every renumbering, until the operator re-picks it.
             let swap = if reason == SwapReason::Renamed {
                 info!("audio device {want:?} is now {label:?}; same hardware, renamed");
                 Some(DeviceSwap { wanted: want.to_string(), opened: label.clone(), reason })
@@ -1561,10 +1569,11 @@ mod tests {
         assert_eq!(stable_tokens(now), Some(("Generic AB13X USB Audio, USB Audio", "001f:0b21")));
     }
 
-    /// The tokens must not be so loose that a station running two of the same
-    /// codec picks the wrong one: product *and* USB id together, or neither.
+    /// The tokens must not be so loose that two different codecs match: product
+    /// *and* USB id together, or neither. Two units of the same model do share
+    /// both; `pick_device` refuses a tier-3 match that lands on more than one card.
     #[test]
-    fn the_stable_tokens_tell_two_identical_codecs_apart() {
+    fn the_stable_tokens_tell_two_different_codecs_apart() {
         let a = "Generic AB13X USB Audio, USB Audio [Audio \u{b7} 001f:0b21]";
         let b = "Generic AB13X USB Audio, USB Audio [Audio_1 \u{b7} 001f:0b22]";
         assert_ne!(stable_tokens(a), stable_tokens(b));
@@ -1601,11 +1610,9 @@ mod tests {
             opened: "HDA Intel, ALC256 Analog [Generic]".into(),
             reason: SwapReason::Gone,
         };
-        // The renamed case needs no re-pick \u{2014} it found the right hardware \u{2014} so
-        // it says Apply, which is what writes the current name back. Only the
-        // gone case sends the operator to Settings, because only that one has
-        // to choose again.
-        assert!(renamed.sentence().contains("Apply"), "{}", renamed.sentence());
+        // Both send the operator to Settings: nothing writes the renamed name
+        // back on its own, only picking the device again does.
+        assert!(renamed.sentence().contains("Settings \u{2192} Radio"), "{}", renamed.sentence());
         assert!(gone.sentence().contains("Settings \u{2192} Radio"), "{}", gone.sentence());
         assert!(gone.sentence().contains("HDA Intel"), "{}", gone.sentence());
         assert!(gone.sentence().contains("1234:5678"), "{}", gone.sentence());

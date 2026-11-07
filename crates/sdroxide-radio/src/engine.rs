@@ -16927,7 +16927,7 @@ impl Engine {
         }
         if want_tx {
             // **A receive-only mode cannot be keyed, by any route.** The chrome
-            // stops offering a PTT in WEFAX, NAVTEX, DSC and the rest (issue
+            // stops offering a PTT in WEFAX, NAVTEX and the rest (issue
             // #239), and this is the half that makes the refusal true rather
             // than cosmetic: a keyboard binding, a MIDI button, an external PTT
             // line, a TCI client, a remote `SetPtt` or a digital burst all end
