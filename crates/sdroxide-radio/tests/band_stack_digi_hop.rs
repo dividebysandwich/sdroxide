@@ -9,7 +9,9 @@
 use std::time::{Duration, Instant};
 
 use sdroxide_radio::{Complex32, EngineConfig, IqSource, Result, start_engine};
-use sdroxide_types::{Band, Command, DeviceCaps, Mode, RadioEvent, RadioState, RxId, Vfo};
+use sdroxide_types::{
+    Band, BandStackEntry, Command, DeviceCaps, Mode, RadioEvent, RadioState, RxId, Vfo,
+};
 
 const RATE: f64 = 192_000.0;
 
@@ -75,10 +77,29 @@ fn a_band_left_by_a_dial_move_is_recorded_on_its_stack() {
     std::fs::create_dir_all(&root).unwrap();
     unsafe { std::env::set_var("SDROXIDE_CONFIG_DIR", &root) };
 
+    let entry = |freq_hz, mode| {
+        let (filter_lo, filter_hi) = Mode::default_filter(mode);
+        BandStackEntry { freq_hz, mode, filter_lo, filter_hi }
+    };
+    let mut legacy = sdroxide_config::BandStacks::default();
+    legacy.insert(
+        Band::M6,
+        vec![
+            entry(50_081_530.0, Mode::Cw),
+            entry(50_125_000.0, Mode::Usb),
+            entry(50_313_000.0, Mode::Ft8),
+        ],
+    );
+    sdroxide_config::save_bandstacks(&legacy).unwrap();
+    let store = sdroxide_config::Store::radio(5);
+    let other = sdroxide_config::Store::radio(0);
+    assert_eq!(store.load_bandstacks(), legacy);
+    assert_eq!(other.load_bandstacks(), legacy);
+
     let mut h = start_engine(
         Box::new(Rx { center: 14_200_000.0 }),
         caps(),
-        EngineConfig { remember_session: false, ..Default::default() },
+        EngineConfig { remember_session: false, store: store.clone(), ..Default::default() },
     );
     let thread = h.thread.take();
     let send = |c: Command| h.cmd_tx.send(c).unwrap();
@@ -106,6 +127,50 @@ fn a_band_left_by_a_dial_move_is_recorded_on_its_stack() {
         s.rx[0].mode
     );
 
+    // FT8 must not intercept SetBand. Edit the recalled register, then cycle
+    // through USB and CW and back to the edited FT8 register.
+    send(Command::SetVfo { vfo: Vfo::A, hz: 50_320_000.0 });
+    send(Command::SetFilter { rx: RxId::Main, lo: 200.0, hi: 2800.0 });
+    send(Command::SetBand(Band::M6));
+    wait_for(&h.event_rx, "6 m CW stack", |s| {
+        s.vfo_a_hz == 50_081_530.0 && s.rx[0].mode == Mode::Cw
+    });
+    send(Command::SetVfo { vfo: Vfo::A, hz: 50_090_000.0 });
+    send(Command::SetBand(Band::M6));
+    wait_for(&h.event_rx, "6 m USB stack", |s| {
+        s.vfo_a_hz == 50_125_000.0 && s.rx[0].mode == Mode::Usb
+    });
+    send(Command::SetBand(Band::M6));
+    wait_for(&h.event_rx, "edited FT8 stack", |s| {
+        s.vfo_a_hz == 50_320_000.0
+            && s.rx[0].mode == Mode::Ft8
+            && s.rx[0].filter_lo == 200.0
+            && s.rx[0].filter_hi == 2800.0
+    });
+    send(Command::SetBand(Band::M2));
+    wait_for(&h.event_rx, "leave edited 6 m", |s| s.band == Band::M2);
+    send(Command::SetBand(Band::M6));
+    wait_for(&h.event_rx, "edited 6 m recalled from FT8", |s| {
+        s.vfo_a_hz == 50_320_000.0 && s.rx[0].mode == Mode::Ft8
+    });
+    drop(h);
+    let _ = thread.map(|t| t.join());
+    let saved = store.load_bandstacks();
+    assert_eq!(saved[&Band::M6][0].freq_hz, 50_320_000.0);
+    assert!(saved[&Band::M6].iter().any(|e| e.freq_hz == 50_090_000.0));
+    assert!(!saved[&Band::M6].iter().any(|e| e.freq_hz == 50_081_530.0));
+    assert_eq!(other.load_bandstacks(), legacy, "other radios must not change");
+    assert_eq!(sdroxide_config::load_bandstacks(), legacy, "legacy file stays intact");
+    let mut h = start_engine(
+        Box::new(Rx { center: 144_174_000.0 }),
+        caps(),
+        EngineConfig { remember_session: false, store, ..Default::default() },
+    );
+    let thread = h.thread.take();
+    h.cmd_tx.send(Command::SetBand(Band::M6)).unwrap();
+    wait_for(&h.event_rx, "6 m survives restart", |s| {
+        s.vfo_a_hz == 50_320_000.0 && s.rx[0].mode == Mode::Ft8
+    });
     drop(h);
     let _ = thread.map(|t| t.join());
     let _ = std::fs::remove_dir_all(&root);

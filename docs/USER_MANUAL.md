@@ -315,7 +315,11 @@ popup with three rows:
 
 - **BAND:** `160M 80M 60M 40M 30M 20M 17M 15M 12M 10M 6M 4M 2M 1.25M 70CM 33CM
   23CM 13CM 9CM 6CM GEN`. Each
-  band remembers your last frequency, mode, and filter. A band your region's
+  band remembers up to three frequencies, modes, and filters **per radio**.
+  Pressing another band recalls its last entry; pressing the current band saves
+  edits to the current entry and cycles to the next one. This works in every
+  mode, including FT8. Use the digital panel's **⇵** picker to jump to standard
+  digital frequencies instead. A band your region's
   band plan does not have gets no button at all — `4M` (70 MHz) is an amateur
   allocation in IARU Region 1 only, so it is absent in Regions 2 and 3, and
   `1.25M` (220 MHz) and `33CM` (902 MHz) are Region 2's alone, so they are absent
@@ -325,9 +329,7 @@ popup with three rows:
   been fetched the button are tinted by the published forecast — green Good,
   yellow Fair, pink Poor — and hovering one gives it in words. Bands the
   forecast does not cover are left uncoloured; see
-  [§2.15](#215-band-conditions). In a digital mode, the bands where that mode
-  has a standard calling frequency carry a cyan underline; see
-  [§3.1](#31-general-considerations).
+  [§2.15](#215-band-conditions).
 - **MODE:** `LSB USB CW AM SAM NFM WFM DRM HD DIGU DIGL DSB ISB SPEC`.
 - **DIGITAL:** `FT8 FT4 FT2 JS8 WSPR PI4 MSK144 JT65 JT9 FST4 Q65 FSK441 JTTY PSK RTTY RTTY-FM OLIVIA THOR FSQ ATCHAT HELL SSTV SSTV-FM RIFP WEFAX NAVTEX ACARS RFPAINT RADE PACKET PACKET-HF APRS ADS-B VDL2 AIS HFDL` (see
   [Digital modes](#3-digital-modes)).
@@ -2582,10 +2584,10 @@ notice naming the radio that is on the air, and nothing on the refused radio
 changes state. The interlock releases on unkey.
 
 **What is shared and what is per-radio.** Memory channels, memory folders,
-band stacks, the digital-mode operator settings (callsign, grid, templates),
+the digital-mode operator settings (callsign, grid, templates),
 the saved profiles ([6.12](#612-profiles-saved-station-setups)), the logbook,
 spots and awards belong to the operator, and are shared: save a
-memory on one radio and it appears on the others. The dial, mode, filter,
+memory on one radio and it appears on the others. Band stacks, the dial, mode, filter,
 session restore, scanner setup and the built-in servers (TCI, rigctld,
 WSJT-X) belong to each radio. Each radio's servers have their own
 configuration precisely so two radios can serve two copies of WSJT-X on two
@@ -7375,7 +7377,7 @@ decides every band plan sdroxide draws and enforces:
 - **Skimmer windows** — where the PSK and RTTY skimmers listen. 40 m PSK is
   around 7.040 in Region 1 and 7.070 in the other two; RTTY, 7.040 against
   7.080.
-- **Calling frequencies** — the ⇵ frequency button and the digital band buttons
+- **Calling frequencies** — the digital panel's ⇵ frequency button and its presets
   offer your region's convention: PSK31 and RTTY on 40 m, and SSTV on 80 m and
   40 m (3.730 / 7.165 in Region 1, 3.845 / 7.171 elsewhere — and 3.845 is
   outside the Region 1 allocation altogether, so it is never offered there).
@@ -13633,9 +13635,9 @@ anything.
 
 **Apply** is refused while the station is on the air — by any route, including a
 rig keyed at its own microphone — since it moves the dial and the transmit setup
-under the over. The callsign, messages and band stacks are station-wide, so on a
-station with several radios applying a profile on one changes them for all of
-them, as editing them does.
+under the over. The callsign and messages are station-wide, so applying a
+profile changes those for all radios. Its band stacks replace only the
+selected radio's stacks.
 
 Profiles are kept in `profiles.json` on the machine the radio engine runs on
 ([§13](#13-configuration-files)), shared by every radio of the station, and a
@@ -15637,7 +15639,8 @@ and not the station's.
 | `radio.json` | JSON | Which radio interface is selected and everything that configures it — the CAT/HPSDR/TCI/SmartSDR/RTL-SDR/rtl_tcp/SpyServer/RX-888/Airspy HF+/SDRplay/PlutoSDR sections, the converter offset and stated tuning ranges, and the radio's sound-card device names. |
 | `digi.json` | JSON | Digital-mode operator settings: your callsign and grid, FT8/FT4/FT2 TX period, auto-sequence and message templates, the transmit-frequency hold (`hold_tx_freq`) and the per-band transmit offsets it pins (`tx_audio_hz`), the per-mode transmit-audio levels (`tx_audio_levels`, with `tx_audio_level_fm` / `tx_audio_level_ssb` as the level a mode with no entry of its own inherits), and the WSPR beacon's duty cycle, power and band-hop list. |
 | `memories.json` | JSON | Saved memory channels. |
-| `bandstacks.json` | JSON | Per-band memory of your last frequency/mode/filter (up to three per band). |
+| `bandstacks.json` | JSON | Legacy shared stacks, left intact and used to initialize each radio's stacks once. |
+| `bandstacks-radio.json` | JSON | Per-radio frequency/mode/filter registers (up to three per band). Radio 1 uses the root directory; additional radios use their `radio-<id>` directory (Radio 6 normally uses `radio-5`). |
 | `profiles.json` | JSON | The saved station setups from Settings → Profiles ([6.12](#612-profiles-saved-station-setups)): each one's name, the remembered radio state (the same fields as `session.json`), the digital-mode settings and the band stacks. Shared by every radio of the station. |
 | `bandplan.json` | JSON | The band plan itself, per IARU region: band edges, the CW/data/phone/beacon/all-modes sub-segments, and the PSK and RTTY skimmer windows — all in MHz. Written from the built-in IARU tables on first start and meant to be edited; narrow a band here and the transmit lockout narrows with it. Which region applies is `region` in `config.toml`. **RELOAD BAND PLAN** on the General tab applies an edit without a restart, and deleting the file restores the defaults. See [§6.1](#61-general-station-audio-and-remote-access). |
 | `digi_presets.json` | JSON | The frequencies you have added to the digital modes' own lists yourself, as `mode` / `dial_hz` / `note` — written by the **＋ Save** button in the **⇵** picker ([§3.1](#31-general-considerations)) and readable and editable by hand, which is where a `note` comes from. Belongs to the station, so every radio and every remote client offers the same list. Absent until you save one. |

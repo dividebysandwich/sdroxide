@@ -26,6 +26,8 @@ fn settings_travel_between_stations_and_a_bundle_cannot_write_outside_the_config
     fs::write(from.join("config.toml"), "callsign = \"KG4O\"\n").unwrap();
     fs::write(from.join("memories.json"), "[1,2,3]").unwrap();
     fs::write(from.join("radio-1/radio.json"), "{\"backend\":\"HackRf\"}").unwrap();
+    fs::write(from.join("bandstacks-radio.json"), "{}").unwrap();
+    fs::write(from.join("radio-1/bandstacks-radio.json"), "{}").unwrap();
     // Three things that are in the directory and are not settings.
     fs::write(from.join("qso_log.json"), "[{\"call\":\"W1AW\"}]").unwrap();
     fs::write(from.join("remote_login.json"), "{\"password\":\"hunter2\"}").unwrap();
@@ -33,7 +35,16 @@ fn settings_travel_between_stations_and_a_bundle_cannot_write_outside_the_config
 
     let bundle = transfer::export().expect("exports");
     let names: Vec<&str> = bundle.files.keys().map(String::as_str).collect();
-    assert_eq!(names, ["config.toml", "memories.json", "radio-1/radio.json"]);
+    assert_eq!(
+        names,
+        [
+            "bandstacks-radio.json",
+            "config.toml",
+            "memories.json",
+            "radio-1/bandstacks-radio.json",
+            "radio-1/radio.json",
+        ]
+    );
     assert_eq!(
         bundle.files["config.toml"], "callsign = \"KG4O\"\n",
         "carried verbatim, so a setting this version has never heard of survives the trip"
@@ -46,7 +57,18 @@ fn settings_travel_between_stations_and_a_bundle_cannot_write_outside_the_config
     fs::write(to.join("bandstacks.json"), "[9]").unwrap();
 
     let report = transfer::import(&json).expect("imports");
-    assert_eq!(report.written, ["config.toml", "memories.json", "radio-1/radio.json"]);
+    assert_eq!(
+        report.written,
+        [
+            "bandstacks-radio.json",
+            "config.toml",
+            "memories.json",
+            "radio-1/bandstacks-radio.json",
+            "radio-1/radio.json",
+        ]
+    );
+    assert_eq!(fs::read_to_string(to.join("bandstacks-radio.json")).unwrap(), "{}");
+    assert_eq!(fs::read_to_string(to.join("radio-1/bandstacks-radio.json")).unwrap(), "{}");
     assert!(report.skipped.is_empty(), "{:?}", report.skipped);
     assert_eq!(fs::read_to_string(to.join("config.toml")).unwrap(), "callsign = \"KG4O\"\n");
     assert_eq!(

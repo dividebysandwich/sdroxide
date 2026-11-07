@@ -654,9 +654,9 @@ pub fn config_dir() -> Result<PathBuf, ConfigError> {
 /// migration and stays downgrade-safe.
 ///
 /// Only the files that describe *a radio* are scoped: `radio.json`,
-/// `session.json`, `scanner.json`, `modeprofiles.json`, `tciserver.json`, `rigctld.json`,
+/// `session.json`, `bandstacks-radio.json`, `scanner.json`, `modeprofiles.json`, `tciserver.json`, `rigctld.json`,
 /// `wsjtx.json`, `wspr.json`. Everything the operator shares across radios — memories,
-/// band stacks, the logbook, `config.toml` — stays on the root free functions.
+/// the logbook, `config.toml` — stays on the root free functions.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Store {
     /// `None` = the legacy root (the station scope, and radio 0);
@@ -681,6 +681,29 @@ impl Store {
     /// scope answers 0, which is the radio it holds the files of.
     pub fn radio_id(&self) -> u32 {
         self.scope.unwrap_or(0)
+    }
+
+    /// Per-radio stacks, seeded once from the legacy shared file.
+    pub fn load_bandstacks(&self) -> BandStacks {
+        let Ok(dir) = self.dir() else { return BandStacks::default() };
+        let file = "bandstacks-radio.json";
+        match std::fs::symlink_metadata(dir.join(file)) {
+            Ok(_) => return self.load(file),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                warn!("checking radio band stacks: {e}");
+                return self.load(file);
+            }
+        }
+        let stacks = load_bandstacks();
+        if let Err(e) = self.save_bandstacks(&stacks) {
+            warn!("initializing radio band stacks: {e}");
+        }
+        stacks
+    }
+
+    pub fn save_bandstacks(&self, stacks: &BandStacks) -> Result<(), ConfigError> {
+        self.save("bandstacks-radio.json", stacks)
     }
 
     /// This scope's directory. Not created here; writers create it on demand.

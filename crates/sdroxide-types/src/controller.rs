@@ -521,7 +521,7 @@ pub trait RadioController {
     }
 
     /// Tell this radio's engine to re-read the station-shared stores
-    /// (memories, band stacks, digi operator config) from disk, because
+    /// (memories, digi operator config) from disk, because
     /// another radio in the same process just saved one of them. No-op for
     /// remote controllers — there is no second local engine to have written.
     fn nudge_shared_stores(&mut self) {}
