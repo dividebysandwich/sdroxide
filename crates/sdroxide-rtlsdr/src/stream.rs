@@ -182,6 +182,8 @@ fn pump(
     // and does not do this.
     let mut odd_carry: Option<u8> = None;
     let mut scratch: Vec<f32> = Vec::with_capacity(xfer_bytes);
+    // Copy of each completed transfer in ordinary (cacheable) memory
+    let mut staging: Vec<u8> = Vec::with_capacity(xfer_bytes);
 
     dev.reset_buffer()?;
     for _ in 0..in_flight {
@@ -234,8 +236,16 @@ fn pump(
             };
             match completion.status {
                 Ok(()) => {
-                    let bytes = &completion.buffer[..];
-                    convert(bytes, &lut, &mut odd_carry, &mut scratch);
+                    // On a host that is not cache-coherent - a Raspberry Pi 5 / CM5,
+                    // on its RP1 xHCI ports and its dwc2 port alike - the kernel maps
+                    // that memory non-cacheable, and `convert` read it one byte at
+                    // a time, then paid a full trip to RAM per byte: ~2.3 ms per 16 KiB
+                    // transfer on a CM5, two thirds of a core at 2.4 MB/s.
+                    // This fix brings down CPU work significantly.
+                    staging.clear();
+                    staging.extend_from_slice(&completion.buffer[..]);
+                    convert(&staging, &lut, &mut odd_carry, &mut scratch);
+
                     if !scratch.is_empty() {
                         stats.on_iq(scratch.len() / 2);
                         push_iq(rx, &scratch, &mut stats, shared.rx_paused.load(Ordering::Relaxed));

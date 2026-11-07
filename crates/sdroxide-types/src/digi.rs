@@ -213,8 +213,8 @@ pub const NAVTEX_TONE_HZ: f32 = 1700.0;
 /// How hard the FT8 decoder works for weak signals, and what it costs.
 ///
 /// FT8's recall comes from signal subtraction, and the most thorough pass —
-/// WSJT-X's checkpointed multi-pass (mfsk-core's `.sic_early()`, a recall
-/// superset of the flat `.sic_rounds(n)`) — is **sequential by construction**,
+/// WSJT-X's checkpointed multi-pass (mfsk-core's `Ft8Strategy::SicEarly`, a
+/// recall superset of the flat `SicRounds(n)`) — is **sequential by construction**,
 /// so it can neither be spread across cores nor made cheap. It was measured at
 /// ~1.2 s on a busy slot against FT8's 0.5 s transmit offset, so an operator who
 /// wants the reply to go out on time should be able to trade a few weak decodes
@@ -563,12 +563,21 @@ pub struct DigiStatus {
     /// rather than a flag so each mode can name its own reason.
     #[serde(default)]
     pub tx_refused: Option<String>,
+    /// JTTY: the asynchronous text messages received and the smoothed audio
+    /// level. `None` in every other mode, as the rest of these are. Appended
+    /// after `tx_refused` for the same positional reason.
+    #[serde(default)]
+    pub jtty: Option<crate::JttyStatus>,
+    /// VARA HF: the link, the speed and the transcript. `None` in every other
+    /// mode. Appended after `jtty` for the same positional reason.
+    #[serde(default)]
+    pub vara: Option<crate::VaraStatus>,
     /// The time-signal receiver: the carrier, the keying, the minute being
     /// read and how far the computer's clock is from it. `None` in every other
     /// mode, as the rest of these are. Boxed because it carries the symbol
     /// ribbon and the scope trace, and is present for one mode only.
     ///
-    /// Last in the struct for the reason [`DigiStatus::acars`] gives.
+    /// Appended after `vara`, for the reason [`DigiStatus::acars`] gives.
     #[serde(default)]
     pub timesig: Option<Box<crate::TimeSigStatus>>,
 }
@@ -1085,6 +1094,8 @@ impl DigiStatus {
             packet: None,
             navtex: None,
             acars: None,
+            jtty: None,
+            vara: None,
             aprs: None,
             js8: None,
             atchat: None,
@@ -1191,6 +1202,18 @@ pub struct QsoRecord {
     /// the reason [`Self::hamqth_sent`] gives.
     #[serde(default)]
     pub wrl_sent: bool,
+    /// In the operator's Wavelog: uploaded from here and acknowledged, or
+    /// downloaded from it in the first place. Appended for the reason
+    /// [`Self::hamqth_sent`] gives.
+    #[serde(default)]
+    pub wavelog_sent: bool,
+    /// The Wavelog station location this contact was downloaded from, or 0
+    /// for one logged here or imported from a file. A full resync may update
+    /// or remove a downloaded contact to match Wavelog; it never touches one
+    /// with no origin, which is the operator's own. Appended for the reason
+    /// [`Self::hamqth_sent`] gives.
+    #[serde(default)]
+    pub wavelog_origin: u32,
 }
 
 impl QsoRecord {
@@ -2201,10 +2224,63 @@ pub struct DigiConfig {
     /// so it governs only the extra, subtracting batch.
     #[serde(default)]
     pub ft8_depth: Ft8Depth,
+    /// The Wavelog station location this identity logs to, or 0 for the
+    /// default in [`crate::WavelogConfig::station_id`].
+    ///
+    /// Here, with the callsign and grid, rather than with the server: Wavelog
+    /// refuses a QSO whose station callsign is not the location's, so the
+    /// location is part of the identity a profile switches — a portable
+    /// profile's call goes to the portable location without anyone having to
+    /// remember to change it.
+    #[serde(default)]
+    pub wavelog_station_id: u32,
+
+    // ── VARA HF ── appended, postcard numbers fields by position.
+    /// The callsign the VARA modem answers to, with an optional SSID. Empty
+    /// falls back to the logbook callsign. A host program (Pat, VarAC) sets its
+    /// own with `MYCALL` and that wins for its session.
+    #[serde(default)]
+    pub vara_mycall: String,
+    /// The width the modem runs at. Most RMS gateways run 2300.
+    #[serde(default)]
+    pub vara_bw: crate::VaraBw,
+    /// Unlock the speed levels above 4, as a registered copy of VARA does.
+    /// For operators who own a VARA licence; an unregistered station caps a
+    /// link at level 4 whatever the path would carry.
+    #[serde(default)]
+    pub vara_registered: bool,
+    /// Identify in CW at the end of a link, as VARA does when asked.
+    #[serde(default)]
+    pub vara_cwid: bool,
+    /// Connect attempts before giving up on a call.
+    #[serde(default = "default_vara_retries")]
+    pub vara_retries: u32,
+    /// How long the transmit path takes from key-up to the first sample on
+    /// the air, in milliseconds. `None` asks the engine to pick from the
+    /// radio: a few milliseconds on an IQ SDR, about 200 on a CAT rig.
+    #[serde(default)]
+    pub vara_tx_latency_ms: Option<u16>,
+    /// Offer the modem on VARA's TCP host ports, for Pat, Winlink Express or
+    /// VarAC.
+    #[serde(default)]
+    pub vara_host_server: bool,
+    /// The command port; data is on the next one. 8300 is VARA HF's own.
+    #[serde(default = "default_vara_host_port")]
+    pub vara_host_port: u16,
+    /// Answer calls from the panel when no host program is attached.
+    #[serde(default)]
+    pub vara_listen: bool,
     /// The time-signal receiver's station and calibration — see
-    /// [`crate::TimeSigConfig`]. Appended last, for the usual reason.
+    /// [`crate::TimeSigConfig`]. Appended after the VARA settings, for the usual reason.
     #[serde(default)]
     pub timesig: crate::TimeSigConfig,
+}
+
+fn default_vara_retries() -> u32 {
+    15
+}
+fn default_vara_host_port() -> u16 {
+    8300
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2448,6 +2524,16 @@ impl Default for DigiConfig {
             q65_mode: crate::Q65Mode::A30,
             fsk441_period: crate::Fsk441Period::P30,
             ft8_depth: Ft8Depth::default(),
+            wavelog_station_id: 0,
+            vara_mycall: String::new(),
+            vara_bw: crate::VaraBw::default(),
+            vara_registered: false,
+            vara_cwid: false,
+            vara_retries: default_vara_retries(),
+            vara_tx_latency_ms: None,
+            vara_host_server: false,
+            vara_host_port: default_vara_host_port(),
+            vara_listen: false,
             timesig: crate::TimeSigConfig::default(),
         }
     }
@@ -2941,6 +3027,15 @@ fn record_from_fields(fields: &[(String, String)]) -> QsoRecord {
         r.freq_hz = f * 1e6;
     }
     r.mode = get("MODE").unwrap_or_default().to_ascii_uppercase();
+    // ADIF files FT4, JS8, Q65 and the like as SUBMODE under the MFSK
+    // umbrella, which is how Wavelog, LoTW and most loggers export them. The
+    // submode is the name an operator knows the mode by, and the one sdroxide
+    // logs its own contacts under.
+    if r.mode == "MFSK"
+        && let Some(sub) = get("SUBMODE").filter(|s| !s.is_empty())
+    {
+        r.mode = sub.to_ascii_uppercase();
+    }
     r.band = get("BAND").map(|b| b.to_ascii_lowercase()).unwrap_or_else(|| {
         if r.freq_hz > 0.0 { adif_band(r.freq_hz).to_string() } else { String::new() }
     });
@@ -3642,6 +3737,16 @@ mod tests {
         assert_eq!(back[0].name, "Владимир");
         assert_eq!(back[0].qth, "Москва");
         assert_eq!(back[0].country, "Ålesund");
+    }
+
+    #[test]
+    fn adif_import_reads_an_mfsk_submode_as_the_mode() {
+        // How Wavelog, LoTW and most loggers file an FT4 contact.
+        let recs = adif_to_qso_log("<call:5>EA1AB <mode:4>MFSK <submode:3>FT4 <band:3>20m <eor>");
+        assert_eq!(recs[0].mode, "FT4");
+        // A submode under any other mode is a refinement, not the name.
+        let recs = adif_to_qso_log("<call:5>EA1AB <mode:3>SSB <submode:3>USB <band:3>20m <eor>");
+        assert_eq!(recs[0].mode, "SSB");
     }
 
     #[test]

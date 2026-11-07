@@ -5,6 +5,7 @@
 //! tunes by dragging inside its own passband, and a shift+drag bandwidth
 //! measurement ruler.
 
+use crate::i18n::tr;
 use std::sync::Arc;
 
 use eframe::egui::{
@@ -214,9 +215,22 @@ impl WindowPan {
 /// The view is inside the window when this is called — [`ViewState::clamp_to`]
 /// at the end of every frame guarantees it — so the overshoot is exactly the
 /// part of this pan the window could not absorb.
+///
+/// ⛔ Except in the one frame a zoom-out has asked for more than the window:
+/// the wheel runs before the centring and the clamp, so the view arrives here
+/// wider than the window and overhangs it on *both* sides. Reading only the
+/// low edge then reported half the excess as a pan the operator never made,
+/// the front end was retuned by it, the next frame centred it back, and the
+/// waterfall shook for as long as the wheel kept pushing past full span.
+/// A view at least as wide as the window cannot be panned within it, so the
+/// move is where its middle sits against the window's — zero for a view
+/// centred on the dial, however far past the window the zoom went.
 fn pan_view(view: &mut ViewState, dhz: f64, dev_center: f64, dev_span: f64) -> f64 {
     view.view_lo_hz += dhz;
     view.view_hi_hz += dhz;
+    if view.span() >= dev_span {
+        return (view.view_lo_hz + view.view_hi_hz) / 2.0 - dev_center;
+    }
     let (lo, hi) = (dev_center - dev_span / 2.0, dev_center + dev_span / 2.0);
     if view.view_lo_hz < lo {
         view.view_lo_hz - lo
@@ -733,6 +747,11 @@ const NET_BOTTOM_MARGIN: f32 = 4.0;
 const NET_H_GAP: f32 = 6.0;
 const NET_LEADER: f32 = 14.0;
 const NET_MAX_LANES: usize = 5;
+/// Fraction of the waterfall height everything at the oldest edge may take
+/// together — band-plan strip, memory lanes and these lanes — before further
+/// lanes are dropped. The rest is the signal, and the skimmer's boxes at the
+/// other edge.
+const NET_MAX_FRAC: f32 = 0.6;
 
 /// A laid-out network-spot box (mirrors [`SpotBox`] but bottom-anchored).
 struct NetBox {
@@ -923,6 +942,7 @@ fn layout_net_spots(
     rect: &Rect,
     wf_rect: &Rect,
     spots: &[Spot],
+    base: f32,
 ) -> Vec<NetBox> {
     let mut vis: Vec<(f32, usize)> = spots
         .iter()
@@ -933,6 +953,13 @@ fn layout_net_spots(
     vis.sort_by(|a, b| a.0.total_cmp(&b.0));
 
     let box_h = NET_BOX_H * crate::theme::skimmer_font_scale();
+    // Lanes that fit above `base` within the fence; a low waterfall (a pane
+    // of a split view) keeps fewer rather than running into the spectrum.
+    let fit = ((wf_rect.height() * NET_MAX_FRAC - base - NET_BOTTOM_MARGIN)
+        / (box_h + NET_LANE_GAP))
+        .floor()
+        .max(0.0) as usize;
+    let max_lanes = fit.min(NET_MAX_LANES);
     let mut lane_right: Vec<f32> = Vec::new();
     let mut out = Vec::with_capacity(vis.len());
     for (xc, idx) in vis {
@@ -946,7 +973,7 @@ fn layout_net_spots(
                 break;
             }
         }
-        if lane >= NET_MAX_LANES {
+        if lane >= max_lanes {
             continue;
         }
         if lane == lane_right.len() {
@@ -954,8 +981,10 @@ fn layout_net_spots(
         }
         lane_right[lane] = foot_right;
         // Anchored at the *oldest* edge, opposite the skimmer boxes, so the two
-        // sets never collide — which end that is depends on the flip.
-        let lane_off = NET_BOTTOM_MARGIN + lane as f32 * (box_h + NET_LANE_GAP);
+        // sets never collide — which end that is depends on the flip. Stacked
+        // from `base`, the depth the band-plan strip and the memory marks
+        // already take at that edge.
+        let lane_off = base + NET_BOTTOM_MARGIN + lane as f32 * (box_h + NET_LANE_GAP);
         let top = if view.waterfall_flip {
             wf_rect.top() + lane_off
         } else {
@@ -1271,7 +1300,7 @@ pub fn show_ext(
         painter.text(
             rect.center(),
             Align2::CENTER_CENTER,
-            "waiting for spectrum…",
+            tr!("specview-waiting-spectrum"),
             FontId::proportional(16.0),
             Color32::GRAY,
         );
@@ -1342,9 +1371,6 @@ pub fn show_ext(
     // Skimmer boxes are laid out up front so the click hit-test (below) and the
     // draw pass (bottom) agree on their rects. Boxes fit their text: callsign
     // only for FT8 (digital), callsign + message tail for the CW skimmer.
-    let spot_boxes = layout_spots(&painter, view, &rect, &lanes_rect, skimmer, click_sets_offset);
-    let net_boxes = layout_net_spots(&painter, view, &rect, &lanes_rect, net_spots);
-    let ism_boxes = layout_ism_labels(&painter, view, &rect, &lanes_rect, ism);
     // The memory marks, laid out here for the same reason: a click has to be
     // tested against them, and the pointer is dealt with long before the
     // waterfall is painted. The strip depth they stack inwards from is asked
@@ -1352,6 +1378,22 @@ pub fn show_ext(
     let mem_strip_h = crate::widgets::bandplan::height(view, &wf_rect, panel_below);
     let mem_boxes =
         crate::widgets::memories::layout(&painter, view, &wf_rect, mem, mem_strip_h, panel_below);
+    // The network spots stack from the oldest edge too, so they start past
+    // the band-plan strip and past whatever lanes the memory marks took:
+    // stacked from the bare edge they covered the band names and the marks.
+    // Why: HDZ 2026-11-05: "die Labels obstruieren die Frequenzbandinfo am
+    //      Boden des Fensters, die Labels sollten höher platziert werden" —
+    //      and the marks sharing a height with them "ist ja eh etwas fischig".
+    let net_base = mem_boxes.iter().fold(mem_strip_h, |depth, b| {
+        depth.max(if view.waterfall_flip {
+            b.rect.bottom() - wf_rect.top()
+        } else {
+            wf_rect.bottom() - b.rect.top()
+        })
+    });
+    let spot_boxes = layout_spots(&painter, view, &rect, &lanes_rect, skimmer, click_sets_offset);
+    let net_boxes = layout_net_spots(&painter, view, &rect, &lanes_rect, net_spots, net_base);
+    let ism_boxes = layout_ism_labels(&painter, view, &rect, &lanes_rect, ism);
 
     // --- interactions -----------------------------------------------------
     // Model: grabbing a filter edge (left button, spectrum strip) always
@@ -2383,7 +2425,7 @@ pub fn show_ext(
             (
                 sdroxide_types::FOX_ZONE_MAX_HZ as f64,
                 sdroxide_types::HOUND_ZONE_MAX_HZ as f64,
-                "HOUNDS",
+                &tr!("specview-hounds"),
                 crate::theme::scope().accent,
                 mine(sdroxide_types::DxpedMode::Hound),
             ),
@@ -2502,7 +2544,7 @@ pub fn show_ext(
                 view.freq_to_x(state.rx_freq_hz(), &rect),
                 top_y + row * 16.0,
                 rit_col,
-                &format!("RIT {:+} Hz", state.rit.hz),
+                &tr!("specview-rit-hz", hz = format!("{:+}", state.rit.hz)),
             );
             row += 1.0;
         }
@@ -2527,7 +2569,7 @@ pub fn show_ext(
                 view.freq_to_x(tx, &rect),
                 top_y + row * 16.0,
                 xit_col,
-                &format!("XIT {:+} Hz", state.xit.hz),
+                &tr!("specview-xit-hz", hz = format!("{:+}", state.xit.hz)),
             );
             row += 1.0;
         }
@@ -2940,7 +2982,7 @@ fn zoom_about(view: &mut ViewState, x: f32, rect: &Rect, factor: f64, dev_span: 
 
 /// A frequency in Hz as `xx.xxxxx MHz`.
 fn fmt_mhz(hz: f64) -> String {
-    format!("{:.5} MHz", hz / 1e6)
+    format!("{e6:.5} MHz", e6 = hz / 1e6)
 }
 
 /// Draw `text` in a small box centred on `cx`, top at `y`, clamped to `rect`,
@@ -2977,11 +3019,11 @@ fn format_bandwidth(hz: f64) -> String {
         // The ruler also runs over the full-band strip, where a span of several
         // megahertz is the ordinary case and four digits of kilohertz is not a
         // number anyone reads.
-        format!("{:.3} MHz", hz / 1e6)
+        format!("{e6:.3} MHz", e6 = hz / 1e6)
     } else if hz >= 10_000.0 {
-        format!("{:.1} kHz", hz / 1000.0)
+        format!("{hz:.1} kHz", hz = hz / 1000.0)
     } else if hz >= 1_000.0 {
-        format!("{:.2} kHz", hz / 1000.0)
+        format!("{hz:.2} kHz", hz = hz / 1000.0)
     } else {
         format!("{:.0} Hz", hz)
     }
@@ -3067,7 +3109,7 @@ fn click_tune_label(
         // The label is the frequency of the *signal*, which in CW is a pitch
         // above the dial the click will actually set.
         let tuned = (hz / CLICK_TUNE_STEP).round() * CLICK_TUNE_STEP;
-        format!("{:.5} MHz", tuned / 1e6)
+        format!("{e6:.5} MHz", e6 = tuned / 1e6)
     }
 }
 
@@ -3284,6 +3326,26 @@ mod centring_tests {
         let mut v = view_spanning(0.0, 1_000_000.0);
         let over = center_on_dial(&mut v, 520_000.0, 500_000.0, 1_000_000.0, 1000.0);
         assert!((over - 20_000.0).abs() < 0.5, "the front end was asked for {over} Hz, not 20 kHz");
+    }
+
+    /// Zooming out past the whole window is not a pan. The wheel runs before
+    /// the centring, so for one frame the view is wider than the window on
+    /// both sides; reading that as an overshoot retuned the front end by half
+    /// the excess, the next frame centred it back, and the waterfall shook for
+    /// as long as the wheel pushed past full span (Kevin, 2.5 Msps Pluto).
+    #[test]
+    fn zooming_out_past_the_window_does_not_retune() {
+        const DEV: f64 = 1_000_000.0;
+        let rect = Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(1000.0, 200.0));
+        for x in [100.0f32, 500.0, 900.0] {
+            let mut v = view_spanning(0.0, DEV);
+            zoom_about(&mut v, x, &rect, 1.05, DEV);
+            assert!(v.span() > DEV, "the zoom did not overshoot the window");
+            let over = center_on_dial(&mut v, DEV / 2.0, DEV / 2.0, DEV, 1000.0);
+            assert_eq!(over, 0.0, "a zoom-out at x={x} asked the front end to move {over} Hz");
+            v.clamp_to(DEV / 2.0, DEV);
+            assert_eq!((v.view_lo_hz, v.view_hi_hz), (0.0, DEV));
+        }
     }
 
     /// A slide narrower than one column of the picture is not worth a retune:

@@ -22,6 +22,8 @@
 //!   moving settings between two callsigns wants their setup on both and their
 //!   contacts kept apart, which is exactly what issue #356 asks for; a log that
 //!   really is to be moved has ADIF, which every other program reads too.
+//!   `wavelog_sync.json` stays with it: it says how much of a Wavelog has been
+//!   downloaded *into this log*, and is wrong for any other.
 //! * **A saved sign-in.** `remote_login.json` holds a password for a server
 //!   *this* machine connects to, and a settings bundle is a file people email
 //!   each other.
@@ -56,7 +58,7 @@ const EXTENSIONS: &[&str] = &["json", "toml", "conf"];
 
 /// Files that are in the config directory, look like settings, and are not.
 /// See the module header for why each is here.
-const SKIP: &[&str] = &["qso_log.json", "remote_login.json"];
+const SKIP: &[&str] = &["qso_log.json", "wavelog_sync.json", "remote_login.json"];
 
 /// A station's settings, as one file.
 #[derive(Debug, Clone, Serialize, Deserialize)]

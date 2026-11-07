@@ -16,7 +16,9 @@
 //!   not one, and Normal's is not FT8's.
 
 use mfsk_core::engine::dsp::downsample::DownsampleCfg;
-use mfsk_core::engine::{FrameLayout, ModulationParams, Protocol, ProtocolId, SyncBlock, SyncMode};
+use mfsk_core::engine::{
+    FrameLayout, ModulationParams, Protocol, ProtocolId, SyncBlock, SyncFrontEnd, SyncMode,
+};
 use sdroxide_types::Js8Speed;
 
 use super::message::Js8Message;
@@ -47,7 +49,7 @@ const SYNC_MODIFIED: [SyncBlock; 3] = [
 ];
 
 /// What the four speed types have in common beyond [`Protocol`].
-pub trait Js8Proto: Protocol {
+pub trait Js8Proto: SyncFrontEnd {
     /// The operator-facing speed this type implements.
     const SPEED: Js8Speed;
     /// Samples per symbol after downsampling — JS8Call's `NDOWNSPS`, and the
@@ -89,6 +91,9 @@ macro_rules! js8_speed {
             // deliberate improvement rather than a mismatch.
             const GFSK_BT: f32 = 2.0;
             const GFSK_HMOD: f32 = 1.0;
+        }
+
+        impl SyncFrontEnd for $ty {
             // NFFT1 = 2 * NSPS and NSTEP = NSPS / 4, per `js8*_params.f90`.
             const NFFT_PER_SYMBOL_FACTOR: u32 = 2;
             const NSTEP_PER_SYMBOL: u32 = 4;
@@ -125,6 +130,8 @@ macro_rules! js8_speed {
             // (91 vs 87), so it would be wrong if anything ever read it.
             type Fec = mfsk_core::fec::Ldpc174_91;
             type Msg = Js8Message;
+            // No precomputed Δt phasors; every `df` is built on demand.
+            type SyncPhasors = ();
             const ID: ProtocolId = ProtocolId::Ft8;
         }
 

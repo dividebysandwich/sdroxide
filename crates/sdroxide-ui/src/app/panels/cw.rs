@@ -12,6 +12,7 @@
 //! the same frequency — a station is answered where it was heard — so there is
 //! nothing to keep in step.
 
+use crate::i18n::{Tr, tr};
 use eframe::egui::{self, Color32, RichText};
 use sdroxide_types::{Command, CwEngine, KeyChord};
 
@@ -61,14 +62,11 @@ impl SdroxideApp {
             ui.label(
                 RichText::new(format!("{pitch:.0} Hz")).size(11.0).color(crate::theme::gray(150)),
             )
-            .on_hover_text(
-                "The tone being copied, and the tone transmitted — in CW they are the \
-                 same frequency. Click the waterfall to move it onto a signal.",
-            );
-            if crate::chrome::chip(ui, false, "−").on_hover_text("Down 10 Hz").clicked() {
+            .on_hover_text(tr!("cw-tone-being-copied-tone-transmitted"));
+            if crate::chrome::chip(ui, false, "−").on_hover_text(tr!("cw-down-10-hz")).clicked() {
                 cmds.push(Command::SetDigiAudioFreq((pitch - 10.0).clamp(200.0, 3000.0)));
             }
-            if crate::chrome::chip(ui, false, "+").on_hover_text("Up 10 Hz").clicked() {
+            if crate::chrome::chip(ui, false, "+").on_hover_text(tr!("cw-up-10-hz")).clicked() {
                 cmds.push(Command::SetDigiAudioFreq((pitch + 10.0).clamp(200.0, 3000.0)));
             }
             crate::app::panels::on_air_readout(ui, on_air);
@@ -85,17 +83,9 @@ impl SdroxideApp {
             let qrg = self.ui_settings.cw_qrg;
             if crate::chrome::chip(ui, qrg, "QRG")
                 .on_hover_text(if qrg {
-                    "QRG: the main readout and the tuning line are on the frequency being \
-                     worked. Click for the dial instead, a sidetone pitch below it — what \
-                     most radios show."
+                    tr!("cw-qrg-main-readout-tuning-line")
                 } else {
-                    "Put the main readout and the tuning line on the signal rather than on \
-                     the dial, so the frequency shown is the one both operators would quote \
-                     and the tuning line sits in the middle of the passband. Tuning is \
-                     unchanged; only the numbers move.\n\nClicking a signal lands it on \
-                     the cursor only as closely as the click step allows — Controls → \
-                     click-to-tune rounding, 10 Hz by default. A coarse step leaves the \
-                     signal off the pitch by up to half of it, and the readout will say so."
+                    tr!("cw-put-main-readout-tuning-line")
                 })
                 .clicked()
             {
@@ -114,18 +104,18 @@ impl SdroxideApp {
             );
             if cw.locked {
                 ui.label(
-                    RichText::new(format!("{:.0} WPM", cw.wpm))
+                    RichText::new(format!("{wpm:.0} WPM", wpm = cw.wpm))
                         .size(11.0)
                         .strong()
                         .color(crate::theme::GREEN()),
                 )
-                .on_hover_text("Sending speed read off the signal");
+                .on_hover_text(tr!("cw-sending-speed-read-off-signal"));
                 ui.label(
                     RichText::new(format!("{:+.0} dB", cw.snr_db))
                         .size(10.5)
                         .color(crate::theme::gray(140)),
                 )
-                .on_hover_text("Signal to noise in 500 Hz — the same figure a report quotes");
+                .on_hover_text(tr!("cw-signal-noise-500-hz-same"));
                 // Only worth showing once it is a real mistune rather than a
                 // fraction of a hertz of tracking.
                 let off = cw.tone_hz - pitch;
@@ -135,19 +125,21 @@ impl SdroxideApp {
                             .size(10.5)
                             .color(crate::theme::YELLOW()),
                     )
-                    .on_hover_text(
-                        "How far off the cursor the signal actually is. The decoder \
-                         follows it; the passband does not, so nudge the cursor if it grows.",
-                    );
+                    .on_hover_text(tr!("cw-how-far-off-cursor-signal"));
                 }
             } else {
-                ui.label(RichText::new("— listening —").size(10.5).color(crate::theme::gray(100)));
+                ui.label(
+                    RichText::new(tr!("cw-listening")).size(10.5).color(crate::theme::gray(100)),
+                );
             }
 
             crate::chrome::row_tail(ui, |ui| {
                 if transmitting {
                     ui.label(
-                        RichText::new("● TX").size(11.0).strong().color(crate::theme::ALERT()),
+                        RichText::new(tr!("cw-tx"))
+                            .size(11.0)
+                            .strong()
+                            .color(crate::theme::ALERT()),
                     );
                     ui.add_space(6.0);
                 }
@@ -158,13 +150,13 @@ impl SdroxideApp {
                 // this computer's speakers and never keys the radio, so it sits
                 // on the receive row where SWL mode and a receive-only set can
                 // still reach it.
-                if crate::chrome::chip(ui, self.morse.show, RichText::new("TRAINER").size(10.5))
-                    .on_hover_text(
-                        "Learn Morse: read characters and words, play them at your own \
-                         speed, and a Koch drill that adds a character at a time. It plays \
-                         here, through this computer's speakers — nothing keys the radio.",
-                    )
-                    .clicked()
+                if crate::chrome::chip(
+                    ui,
+                    self.morse.show,
+                    RichText::new(tr!("cw-trainer")).size(10.5),
+                )
+                .on_hover_text(tr!("cw-learn-morse-read-characters-words"))
+                .clicked()
                 {
                     self.morse.show = !self.morse.show;
                 }
@@ -207,7 +199,7 @@ impl SdroxideApp {
                         .show_themed(ui, |ui| {
                             if rx_text.is_empty() {
                                 ui.label(
-                                    RichText::new("— nothing copied yet —")
+                                    RichText::new(tr!("cw-nothing-copied-yet"))
                                         .monospace()
                                         .size(12.0)
                                         .color(crate::theme::gray(90)),
@@ -312,8 +304,7 @@ impl SdroxideApp {
                                     if straight {
                                         let (text, color) = if sent_text.is_empty() {
                                             (
-                                                "Key to send — the characters you send appear here."
-                                                    .to_string(),
+                                                tr!("cw-key-send-characters-you-send").to_string(),
                                                 crate::theme::gray(120),
                                             )
                                         } else {
@@ -337,9 +328,9 @@ impl SdroxideApp {
                                                 .frame(egui::Frame::NONE)
                                                 .desired_width(f32::INFINITY)
                                                 .hint_text(if send_on_enter {
-                                                    "Type a line, Return sends it…"
+                                                    tr!("cw-type-line-return-sends")
                                                 } else {
-                                                    "Type here to send…"
+                                                    tr!("cw-type-here-send")
                                                 }),
                                         )
                                     }
@@ -435,22 +426,14 @@ impl SdroxideApp {
                 crate::chrome::chip(
                     ui,
                     on,
-                    RichText::new(if on { " KEY ● " } else { " KEY " }).size(12.0).strong(),
+                    RichText::new(if on { tr!("cw-key") } else { tr!("cw-key-2") })
+                        .size(12.0)
+                        .strong(),
                 )
                 .on_hover_text(if hand_key_ok {
-                    "Hold the key bound to CW straight key — Space by default, and any key \
-                     you like in Settings → Controls — as a straight key: down while \
-                     it is held, up on release, instead of typing text. The transmit box is \
-                     locked while it is on, and the whole keyer is handed to the key: \
-                     whatever text was queued is dropped."
+                    tr!("cw-hold-key-bound-cw-straight")
                 } else {
-                    "This radio sends from its own keyer: the text goes over the control \
-                     port and the rig times the elements, so there is nothing between the \
-                     straight key and the air for a hand to drive.\n\n\
-                     To hand-key it, set CW keying to \"Sound card (MCW)\" in \
-                     Settings → Radio. The rig is then held on a sideband and the \
-                     keyer's own sidetone is transmitted as audio, which is the route the \
-                     straight key drives."
+                    tr!("cw-radio-sends-own-keyer-text")
                 })
             })
             .clicked()
@@ -469,15 +452,14 @@ impl SdroxideApp {
             // in the radio.
             if status.as_ref().is_some_and(|s| s.tx_watchdog) {
                 ui.label(
-                    RichText::new("WATCHDOG").size(11.0).strong().color(crate::theme::YELLOW()),
+                    RichText::new(tr!("cw-watchdog"))
+                        .size(11.0)
+                        .strong()
+                        .color(crate::theme::YELLOW()),
                 )
-                .on_hover_text(
-                    "The straight key was held down too long — a lost key-up rather than a \
-                     hand — so the carrier was dropped and transmit switched off. Press the \
-                     key again to carry on.",
-                );
+                .on_hover_text(tr!("cw-straight-key-was-held-down"));
             }
-            let label = if tx_on { "  TX ON  " } else { "   TX   " };
+            let label = if tx_on { tr!("cw-tx-2") } else { tr!("cw-tx-3") };
             if tx_gated(ui, tx_ok, |ui| {
                 crate::chrome::chip_accent(
                     ui,
@@ -487,9 +469,9 @@ impl SdroxideApp {
                     Color32::WHITE,
                 )
                 .on_hover_text(if send_on_enter {
-                    "Send what is in the box now, without waiting for Return"
+                    tr!("cw-send-what-box-now-without")
                 } else {
-                    "Hold the key down between characters, so nothing typed waits"
+                    tr!("cw-hold-key-down-between-characters")
                 })
             })
             .clicked()
@@ -506,25 +488,23 @@ impl SdroxideApp {
                 crate::chrome::chip_accent(
                     ui,
                     false,
-                    RichText::new(" CALL CQ ").size(13.0).strong(),
+                    RichText::new(tr!("cw-call-cq")).size(13.0).strong(),
                     crate::theme::GREEN(),
                     crate::theme::INK_ON_CYAN(),
                 )
             })
             .clicked()
             {
-                let call = if my_call.is_empty() { "NOCALL".to_string() } else { my_call.clone() };
+                let call =
+                    if my_call.is_empty() { tr!("cw-nocall").to_string() } else { my_call.clone() };
                 let cq = format!("CQ CQ CQ DE {call} {call} {call} K ");
                 cmds.push(Command::DigiAbortTx);
                 self.text_tx = cq.clone();
                 cmds.push(Command::DigiTxText(cq));
                 cmds.push(Command::DigiTxActive(true));
             }
-            if crate::chrome::chip(ui, false, " CLEAR ")
-                .on_hover_text(
-                    "Stop sending and drop whatever has not gone out. With the straight \
-                     key on, the read-back over what you keyed goes with it.",
-                )
+            if crate::chrome::chip(ui, false, tr!("cw-clear"))
+                .on_hover_text(tr!("cw-stop-sending-drop-whatever-has"))
                 .clicked()
             {
                 self.text_tx.clear();
@@ -553,28 +533,15 @@ impl SdroxideApp {
                 // its own sending: on `Sound card (MCW)` the keyed tone goes to
                 // the rig and stops there.
                 let sidetone = self.digi_cfg_edit.cw_sidetone;
-                if crate::chrome::chip(ui, sidetone, RichText::new("SIDETONE").size(10.5))
-                    .on_hover_text(
-                        "Play the keyed tone through this computer's speakers as well as \
-                         sending it, so you hear what you are sending. On `Sound card \
-                         (MCW)` the tone goes out to the rig and nowhere else, so without \
-                         this you send in silence. Off where the rig's own monitor or an \
-                         off-air copy already does the job.",
-                    )
+                if crate::chrome::chip(ui, sidetone, RichText::new(tr!("cw-sidetone")).size(10.5))
+                    .on_hover_text(tr!("cw-play-keyed-tone-through-computer"))
                     .clicked()
                     && self.digi_cfg_seeded
                 {
                     self.digi_cfg_edit.cw_sidetone = !sidetone;
                     cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
                 }
-                self.send_on_return_chip(
-                    ui,
-                    cmds,
-                    "Hold what is typed until Return, then send the line in one piece \
-                     instead of keying each character as it is typed. Worth having on a \
-                     transceiver that keys itself from text, where every hand-off to its \
-                     keyer is another transmit-receive cycle.",
-                );
+                self.send_on_return_chip(ui, cmds, &tr!("cw-hold-what-typed-until-return"));
                 self.msg_edit_chip(ui);
             });
         });
@@ -621,12 +588,7 @@ impl SdroxideApp {
     /// machinery that makes them.
     fn msg_edit_chip(&mut self, ui: &mut egui::Ui) {
         if crate::chrome::chip(ui, self.cw_macro_edit, "MSG")
-            .on_hover_text(
-                "Your own message buttons — a contest exchange, a name-and-QTH reply, \
-                 TNX 73 GL. Each sends its whole text in one go, and F2–F10 press the \
-                 first nine. They travel with the station's configuration, so a \
-                 remote client has them too.",
-            )
+            .on_hover_text(tr!("cw-your-own-message-buttons-contest"))
             .clicked()
         {
             self.cw_macro_edit = !self.cw_macro_edit;
@@ -639,7 +601,7 @@ impl SdroxideApp {
     pub(in crate::app) fn cw_macro_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
         if super::macros::macro_window(
             ctx,
-            "CW MESSAGES",
+            &tr!("cw-cw-messages"),
             "CwMacros",
             "5NN 5NN {MYCALL}",
             &mut self.cw_macro_edit,
@@ -662,18 +624,12 @@ impl SdroxideApp {
             ui,
             true,
             false,
-            " CLEAR RX ",
+            &tr!("cw-clear-rx"),
             Some(10.5),
             crate::theme::CYAN(),
             crate::theme::INK_ON_CYAN(),
         );
-        if resp
-            .on_hover_text(
-                "Empty the receive window and the straight key's read-back. \
-                 Nothing that is on the air stops.",
-            )
-            .clicked()
-        {
+        if resp.on_hover_text(tr!("cw-empty-receive-window-straight-key")).clicked() {
             if let Some(s) = self.digi_status.as_mut() {
                 s.text_rx.clear();
                 if let Some(cw) = s.cw.as_mut() {
@@ -694,11 +650,8 @@ impl SdroxideApp {
         // weak for the search to settle when you already know how fast the
         // other station is sending — in a contest, everyone at once.
         let locked = cfg.cw_speed_lock;
-        if crate::chrome::chip(ui, locked, RichText::new("LOCK").size(10.5))
-            .on_hover_text(
-                "Decode at the speed set here instead of reading it off the signal. \
-                 Helps a signal too weak for the speed search to settle.",
-            )
+        if crate::chrome::chip(ui, locked, RichText::new(tr!("cw-lock")).size(10.5))
+            .on_hover_text(tr!("cw-decode-speed-set-here-instead"))
             .clicked()
         {
             cfg.cw_speed_lock = !locked;
@@ -712,15 +665,12 @@ impl SdroxideApp {
         if crate::chrome::chip(
             ui,
             engine == CwEngine::Timing,
-            RichText::new(engine.label()).size(10.5),
+            RichText::new(engine.tr()).size(10.5),
         )
-        .on_hover_text(format!(
-            "{}\n\nClick for the {} decoder. The neural one copies further down and \
-                 reads hand-sent CW a timing fit will not accept; the timing one is the \
-                 only one that copies the accented letters — Ä, Ö, Å, Ü, É — because the \
-                 model has no output class for them.",
-            engine.hint(),
-            match engine {
+        .on_hover_text(tr!(
+            "cw-click-decoder-neural-one-copies",
+            hint = engine.hint(),
+            neural = match engine {
                 CwEngine::Neural => "timing",
                 CwEngine::Timing => "neural",
             }
@@ -738,11 +688,8 @@ impl SdroxideApp {
         let fw = cfg.cw_farnsworth_wpm;
         let fw_on = fw > 0.0 && fw < cfg.cw_wpm;
         let face = if fw_on { format!("FW {fw:.0}") } else { "FW".to_string() };
-        let btn = crate::chrome::chip(ui, fw_on, RichText::new(face).size(10.5)).on_hover_text(
-            "Farnsworth: send the characters at full speed and stretch only the gaps \
-             between them, so they are heard at the right rhythm but arrive slowly enough \
-             to write down.",
-        );
+        let btn = crate::chrome::chip(ui, fw_on, RichText::new(face).size(10.5))
+            .on_hover_text(tr!("cw-farnsworth-send-characters-full-speed"));
         let mut pick_fw = None;
         let resp = egui::Popup::from_toggle_button_response(&btn)
             .frame(crate::chrome::window_frame())
@@ -750,14 +697,17 @@ impl SdroxideApp {
             .show(|ui| {
                 crate::chrome::window_body_bg(ui);
                 ui.set_max_width(180.0);
-                if ui.selectable_label(!fw_on, "Off — normal spacing").clicked() {
+                if ui.selectable_label(!fw_on, tr!("cw-off-normal-spacing")).clicked() {
                     pick_fw = Some(0.0);
                 }
                 for w in [5.0f32, 8.0, 10.0, 13.0, 15.0, 18.0] {
                     if w >= cfg.cw_wpm {
                         continue; // stretching to faster than the elements is not a thing
                     }
-                    if ui.selectable_label((fw - w).abs() < 0.5, format!("{w:.0} WPM")).clicked() {
+                    if ui
+                        .selectable_label((fw - w).abs() < 0.5, format!("{w:.0} WPM", w = w))
+                        .clicked()
+                    {
                         pick_fw = Some(w);
                     }
                 }
@@ -772,8 +722,12 @@ impl SdroxideApp {
 
         // Transmit speed.
         let wpm = cfg.cw_wpm;
-        let btn = crate::chrome::chip(ui, false, RichText::new(format!("{wpm:.0} WPM")).size(11.0))
-            .on_hover_text("Keying speed");
+        let btn = crate::chrome::chip(
+            ui,
+            false,
+            RichText::new(format!("{wpm:.0} WPM", wpm = wpm)).size(11.0),
+        )
+        .on_hover_text(tr!("cw-keying-speed"));
         let mut pick = None;
         let resp = egui::Popup::from_toggle_button_response(&btn)
             .frame(crate::chrome::window_frame())
@@ -782,7 +736,10 @@ impl SdroxideApp {
                 crate::chrome::window_body_bg(ui);
                 ui.set_max_width(140.0);
                 for w in WPM_STEPS {
-                    if ui.selectable_label((wpm - w).abs() < 0.5, format!("{w:.0} WPM")).clicked() {
+                    if ui
+                        .selectable_label((wpm - w).abs() < 0.5, format!("{w:.0} WPM", w = w))
+                        .clicked()
+                    {
                         pick = Some(*w);
                     }
                 }
@@ -806,13 +763,13 @@ impl SdroxideApp {
         // straight key, and 0 drops transmit as soon as nothing is left to
         // send.
         let idle = cfg.cw_tx_idle_s;
-        let face = if idle <= 0.0 { "IDLE 0".to_string() } else { format!("IDLE {idle:.0}s") };
-        let btn = crate::chrome::chip(ui, false, RichText::new(face).size(10.5)).on_hover_text(
-            "How long transmit is held after the last character, or after the straight \
-             key is let go, before the carrier drops. Longer bridges a slow typist's \
-             pauses; shorter gets off the frequency sooner; Off drops it as soon as \
-             everything queued has gone out.",
-        );
+        let face = if idle <= 0.0 {
+            tr!("cw-idle-0").to_string()
+        } else {
+            tr!("cw-idle-s", idle = format!("{:.0}", idle))
+        };
+        let btn = crate::chrome::chip(ui, false, RichText::new(face).size(10.5))
+            .on_hover_text(tr!("cw-how-long-transmit-held-after"));
         let mut pick_idle = None;
         let resp = egui::Popup::from_toggle_button_response(&btn)
             .frame(crate::chrome::window_frame())
@@ -822,7 +779,7 @@ impl SdroxideApp {
                 ui.set_max_width(170.0);
                 for s in [0.0f32, 1.0, 2.0, 3.0, 5.0, 8.0, 10.0] {
                     let lbl = if s == 0.0 {
-                        "Off — drop at once".to_string()
+                        tr!("cw-off-drop-once").to_string()
                     } else {
                         format!("{s:.0} s")
                     };

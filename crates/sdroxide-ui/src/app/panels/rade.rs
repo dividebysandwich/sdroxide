@@ -4,6 +4,7 @@
 //! status view: sync state, SNR, and the reporting the mode does to FreeDV
 //! Reporter on the operator's behalf.
 
+use crate::i18n::tr;
 use eframe::egui::{self, RichText};
 use sdroxide_types::Command;
 
@@ -27,30 +28,36 @@ impl SdroxideApp {
         let dx_call = status.as_ref().and_then(|s| s.dx_call.clone());
 
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("RADE").size(11.0).strong().color(crate::theme::CYAN()));
             ui.label(
-                RichText::new("FreeDV V1 digital voice").size(10.5).color(crate::theme::CYAN_DIM()),
+                RichText::new(tr!("rade-rade")).size(11.0).strong().color(crate::theme::CYAN()),
+            );
+            ui.label(
+                RichText::new(tr!("rade-freedv-v1-digital-voice"))
+                    .size(10.5)
+                    .color(crate::theme::CYAN_DIM()),
             );
             crate::chrome::row_tail(ui, |ui| {
                 if transmitting {
                     ui.label(
-                        RichText::new("● TX").size(11.0).strong().color(crate::theme::ALERT()),
+                        RichText::new(tr!("rade-tx"))
+                            .size(11.0)
+                            .strong()
+                            .color(crate::theme::ALERT()),
                     );
                     ui.add_space(8.0);
                 }
                 // Silence the raw signal, leaving only decoded speech audible.
                 let muted = self.digi_cfg_edit.rade_mute_analog;
-                let resp = crate::chrome::chip(ui, muted, RichText::new("MUTE ANALOG").size(10.5));
+                let resp = crate::chrome::chip(
+                    ui,
+                    muted,
+                    RichText::new(tr!("rade-mute-analog")).size(10.5),
+                );
                 if resp.clicked() && self.digi_cfg_seeded {
                     self.digi_cfg_edit.rade_mute_analog = !muted;
                     cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
                 }
-                resp.on_hover_text(
-                    "Mute the demodulated audio, so only decoded speech is heard. \
-                     The raw signal is otherwise passed through whenever the modem \
-                     has nothing to play — that hiss is how you find an over before \
-                     it syncs, so leave this off while tuning.",
-                );
+                resp.on_hover_text(tr!("rade-mute-demodulated-audio-so-only"));
             });
         });
         ui.add_space(8.0);
@@ -66,11 +73,11 @@ impl SdroxideApp {
             );
             ui.label(
                 RichText::new(if transmitting {
-                    "transmitting"
+                    tr!("rade-transmitting")
                 } else if rade.sync {
-                    "SYNC"
+                    tr!("rade-sync")
                 } else {
-                    "searching"
+                    String::from("searching")
                 })
                 .size(12.0)
                 .strong()
@@ -84,23 +91,22 @@ impl SdroxideApp {
             let dim = crate::theme::gray(150);
             if rade.sync && !transmitting {
                 ui.label(
-                    RichText::new(format!("SNR {:.0} dB", rade.snr_db))
+                    RichText::new(tr!("rade-snr-db", snr_db = format!("{:.0}", rade.snr_db)))
                         .size(12.0)
                         .color(crate::theme::TEXT_STRONG()),
                 );
                 ui.add_space(12.0);
                 ui.label(
-                    RichText::new(format!("offset {:+.0} Hz", rade.freq_offset_hz))
-                        .size(11.0)
-                        .color(dim),
+                    RichText::new(tr!(
+                        "rade-offset-hz",
+                        freq_offset_hz = format!("{:+.0}", rade.freq_offset_hz)
+                    ))
+                    .size(11.0)
+                    .color(dim),
                 )
-                .on_hover_text(
-                    "How far the received signal sits from where the modem expects it. \
-                     Large values still decode — the acquisition loop tracks them — but \
-                     nudging the dial to bring this near zero gives the best margin.",
-                );
+                .on_hover_text(tr!("rade-how-far-received-signal-sits"));
             } else {
-                ui.label(RichText::new("SNR —").size(12.0).color(dim));
+                ui.label(RichText::new(tr!("rade-snr")).size(12.0).color(dim));
             }
             // Who we last heard, from the End-of-Over frame that closed their
             // over — the only time a RADE station names itself. Held for a
@@ -108,20 +114,12 @@ impl SdroxideApp {
             if let Some(call) = &dx_call {
                 ui.add_space(12.0);
                 ui.label(
-                    RichText::new(format!("heard {call}"))
+                    RichText::new(tr!("rade-heard", call = call))
                         .size(12.0)
                         .strong()
                         .color(crate::theme::GREEN()),
                 )
-                .on_hover_text(
-                    "The callsign the station put in its End-of-Over frame — the only \
-                     point in a RADE over at which one is sent. It is also what is \
-                     reported to FreeDV Reporter, so a station you hear appears on \
-                     qso.freedv.org as heard by you.\n\n\
-                     Held for a minute after the signal goes, and dropped when you \
-                     start an over of your own: it names the station on frequency, \
-                     not every station the receiver has ever heard.",
-                );
+                .on_hover_text(tr!("rade-callsign-station-put-end-over"));
             }
         });
         ui.add_space(8.0);
@@ -145,7 +143,7 @@ impl SdroxideApp {
         // up sending in this mode, so the two stay in step.
         let tx_ok = self.tx_capable();
         ui.horizontal(|ui| {
-            let label = if transmitting { "STOP TALKING" } else { "TALK (PTT)" };
+            let label = if transmitting { tr!("rade-stop-talking") } else { tr!("rade-talk-ptt") };
             let resp = tx_gated(ui, tx_ok, |ui| {
                 crate::chrome::chip_accent(
                     ui,
@@ -158,32 +156,22 @@ impl SdroxideApp {
             if resp.clicked() {
                 cmds.push(Command::DigiTxActive(!transmitting));
             }
-            resp.on_hover_text(
-                "Open or close a RADE over. The modem needs ~120 ms of speech before \
-                 the first frame goes out, and sends an end-of-over frame when you stop, \
-                 so transmit runs on a little past the button.",
-            );
+            resp.on_hover_text(tr!("rade-open-close-rade-over-modem"));
             ui.add_space(10.0);
         });
         ui.add_space(12.0);
 
         ui.label(
-            RichText::new(
-                "RADE V1 occupies roughly 1060–1880 Hz of the passband — upper sideband, \
-                 or lower on 160, 80 and 40 m, where RADE keeps phone practice and \
-                 sdroxide switches for you. Put the signal inside the shaded band on the \
-                 waterfall; the modem finds it from there.",
-            )
-            .size(10.5)
-            .color(crate::theme::gray(125)),
+            RichText::new(tr!("rade-rade-v1-occupies-roughly-1060"))
+                .size(10.5)
+                .color(crate::theme::gray(125)),
         );
         if rade.dropped > 0 {
             ui.add_space(6.0);
             ui.label(
-                RichText::new(format!(
-                    "⚠ {} samples dropped between the receiver and the decoder — this \
-                     machine is not keeping up with the neural decode.",
-                    rade.dropped
+                RichText::new(tr!(
+                    "rade-samples-dropped-between-receiver-decoder",
+                    dropped = rade.dropped
                 ))
                 .size(10.5)
                 .color(crate::theme::YELLOW()),

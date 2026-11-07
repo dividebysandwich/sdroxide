@@ -144,6 +144,10 @@ pub struct EladSource {
     out: Option<(sdroxide_audio::AudioOutput, sdroxide_radio::rtrb::Producer<f32>)>,
     tx_resampler: Option<sdroxide_dsp::MonoResampler>,
     tx_scratch: Vec<f32>,
+    /// Amplitude applied to the TX audio: the Drive level, or the TUNE level
+    /// while tuning. The rig's power register is set from the power buttons
+    /// (MAX unless the operator picks less), so this is the fine control.
+    tx_audio_gain: f32,
 
     /// Mirrors of the front-end switches, so `current_gains` can answer without
     /// a round trip to the stream thread.
@@ -363,6 +367,7 @@ impl EladSource {
             out,
             tx_resampler,
             tx_scratch: Vec::new(),
+            tx_audio_gain: 1.0,
             attenuator: cfg.attenuator,
             preselector: cfg.preselector,
             antenna: EladAntenna::default(),
@@ -385,6 +390,10 @@ impl EladSource {
         // `Protocol::clear_offsets`; this is the gateway's copy of it.
         if matches!(src.control, Control::Gateway) {
             src.handle.send_cat(sdroxide_cat::elad::vfo_frame(Vfo::A));
+            // Menu 34 to MAX, as the serial path does in `clear_offsets`:
+            // with the PC's USB audio as low as it is, any numbered step caps
+            // the output below what the radio is asked for.
+            src.handle.send_cat(sdroxide_cat::elad::tx_power_max_frame());
             // And its dial is read back, which is the only way this path sees
             // the knob turned. Not on the serial path, where the CAT poll
             // already reports it.
@@ -808,6 +817,7 @@ impl IqSource for EladSource {
                 | sdroxide_cat::CatUpdate::Alc(_)
                 | sdroxide_cat::CatUpdate::Po(_)
                 | sdroxide_cat::CatUpdate::FwdW(_)
+                | sdroxide_cat::CatUpdate::RflW(_)
                 | sdroxide_cat::CatUpdate::Squelch(_)
                 | sdroxide_cat::CatUpdate::RxAntenna(_)
                 | sdroxide_cat::CatUpdate::Signal(_) => {}
@@ -866,8 +876,29 @@ impl IqSource for EladSource {
     fn set_tx_freq_hz(&mut self, _hz: f64) {}
 
     fn set_tx_drive(&mut self, frac: f64) {
+        match &self.control {
+            Control::Serial(cat) => {
+                if cat.power_by_audio() {
+                    self.tx_audio_gain = cat.audio_gain_for(frac as f32);
+                }
+                cat.set_power(frac as f32);
+            }
+            // The gateway pins menu 34 at MAX as it opens, so the audio level
+            // is the only power control left here too.
+            Control::Gateway => {
+                self.tx_audio_gain = sdroxide_cat::audio_gain_for_power(
+                    frac.clamp(0.0, 1.0) as f32 * sdroxide_cat::elad::DUO_AUDIO_POWER_CEILING,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    /// Menu 34, from the power buttons beside Drive. Serial only: the buttons
+    /// are offered only where a Rig control port is set.
+    fn set_power_step(&mut self, code: u8) {
         if let Control::Serial(cat) = &self.control {
-            cat.set_power(frac as f32);
+            cat.set_power_step(code);
         }
     }
 
@@ -932,9 +963,10 @@ impl IqSource for EladSource {
             Some(rs) => rs.push(audio, &mut self.tx_scratch),
             None => self.tx_scratch.extend_from_slice(audio),
         }
+        let gain = self.tx_audio_gain;
         for &s in &self.tx_scratch {
             for _ in 0..2 {
-                let mut v = s;
+                let mut v = s * gain;
                 let mut tries = 0u32;
                 while let Err(sdroxide_radio::rtrb::PushError::Full(x)) = producer.push(v) {
                     v = x;

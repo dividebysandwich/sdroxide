@@ -164,7 +164,7 @@ fn fine(region: Region) -> Vec<Seg> {
             SegmentKind::Beacon => ("Bcn", Kind::Beacon),
             SegmentKind::All => ("All", Kind::Ham),
         };
-        v.push(s(seg.lo, seg.hi, label, kind));
+        v.push(s(seg.lo, seg.hi, seg.label.unwrap_or(label), kind));
     }
     // The bands with no sub-segment table keep their whole-band block, so
     // zooming into 2 m or 70 cm does not empty the strip. Non-amateur

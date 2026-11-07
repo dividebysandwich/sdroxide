@@ -196,7 +196,7 @@ pub fn decode_slot(audio: &[f32], sample_rate: u32) -> Vec<WsprDecode> {
     let mut out: Vec<WsprDecode> = Vec::new();
     // Every decode so far keeps its padded-buffer alignment, so the next pass
     // can subtract it from the baseband at the right place.
-    let mut decoded: Vec<(wspr::WsprResult, usize)> = Vec::new();
+    let mut decoded: Vec<(Found, usize)> = Vec::new();
 
     // The residual the current pass searches. Pass 1 sees the recording as it
     // arrived; every later pass sees it with the decodes so far subtracted out.
@@ -244,19 +244,12 @@ pub fn decode_slot(audio: &[f32], sample_rate: u32) -> Vec<WsprDecode> {
         let mut found_this_pass = 0usize;
         for (c, attempt) in cands.iter().zip(attempts) {
             let Some((al, hit)) = attempt else { continue };
-            let r = wspr::WsprResult {
+            // The drift and SNR are read back off `c` in `from_result`.
+            let r = Found {
                 message: hit.message,
                 freq_hz: al.tone0_hz,
                 start_sample: (al.lag * 32).max(0) as usize,
-                dt_sec: 0.0,
-                // The drift the demodulation actually ran at — the same
-                // figure handed to `align_and_decode` above, not the raw
-                // coarse score.
-                drift_hz: reportable_drift(c.drift_hz),
                 info_bits: hit.info,
-                // Upstream takes this from the coarse candidate too; the
-                // reported figure is read back off `c` in `from_result`.
-                snr_db: c.snr_db,
             };
             // Does the message we are about to report actually explain the
             // tones that arrived? Every symbol the OSD fallback emits is a
@@ -813,10 +806,22 @@ fn is_grid4(g: &str) -> bool {
         && b[3].is_ascii_digit()
 }
 
-/// Build our result from upstream's, taking the SNR and drift from the coarse
+/// One decode as the passes hold it: what a later pass needs to subtract it,
+/// and what [`from_result`] makes a spot of. mfsk-core's `WsprResult` carried
+/// this until 0.14 made it `#[non_exhaustive]`, which closed it to a decoder
+/// outside the crate.
+struct Found {
+    message: WsprMessage,
+    freq_hz: f32,
+    /// Where the frame starts in the padded buffer.
+    start_sample: usize,
+    info_bits: [u8; 50],
+}
+
+/// Build our result from a decode, taking the SNR and drift from the coarse
 /// candidate that found it — the whole point of this module.
 fn from_result(
-    r: &wspr::WsprResult,
+    r: &Found,
     c: &wspr::coarse_baseband::BasebandCandidate,
     pad: usize,
     sample_rate: u32,
@@ -824,9 +829,9 @@ fn from_result(
     WsprDecode {
         message: r.message.clone(),
         freq_hz: r.freq_hz,
-        // Upstream computes this the same way; recomputed here rather than read
-        // off `r.dt_sec` because `decode_at_baseband` is unaware of our padding
-        // and reports the offset within the padded buffer.
+        // Upstream computes this the same way, but `decode_at_baseband` is
+        // unaware of our padding and would report the offset within the padded
+        // buffer.
         dt_sec: (r.start_sample as i64 - pad as i64) as f32 / sample_rate as f32 - 1.0,
         snr_db: c.snr_db,
         drift_hz: reportable_drift(c.drift_hz),

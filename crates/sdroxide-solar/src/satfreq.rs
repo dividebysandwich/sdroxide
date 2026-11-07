@@ -43,12 +43,15 @@ fn build() -> Vec<SatFreqs> {
                 duplex(
                     "NB transponder",
                     "SSB/CW/digital",
-                    P::range(2400.050, 2400.300),
-                    P::range(10489.550, 10489.800),
+                    P::range(2400.000, 2400.500),
+                    P::range(10489.500, 10490.000),
                 )
                 .note("non-inverting; 2.4 GHz up, 10 GHz down"),
-                down("NB lower beacon", "CW", P::at(10489.500)),
-                down("NB upper beacon", "BPSK 400bd", P::at(10489.800)),
+                // Beacon blocks as in the AMSAT-DL band plan.
+                down("NB lower beacon", "CW", P::range(10489.500, 10489.505)),
+                down("NB middle beacon", "BPSK 400bd", P::at(10489.750))
+                    .note("multimedia beacon; the frequency reference"),
+                down("NB upper beacon", "CW", P::range(10489.990, 10490.000)),
                 duplex(
                     "WB transponder",
                     "DVB-S2",
@@ -297,9 +300,9 @@ mod tests {
     fn the_well_known_satellites_are_on_their_published_frequencies() {
         let qo = builtin_for(crate::satellites::QO100_NORAD).expect("QO-100 in the table");
         let nb = &qo.links[0];
-        assert_eq!(nb.downlink.unwrap().lo_mhz, 10489.550);
-        assert_eq!(nb.uplink.unwrap().lo_mhz, 2400.050);
-        assert_eq!(nb.downlink.unwrap().width_khz(), 250.0);
+        assert_eq!(nb.downlink.unwrap().lo_mhz, 10489.500);
+        assert_eq!(nb.uplink.unwrap().lo_mhz, 2400.000);
+        assert_eq!(nb.downlink.unwrap().width_khz(), 500.0);
 
         let iss = builtin_for(25544).expect("ISS in the table");
         assert!(iss.links.iter().any(|l| l.downlink == Some(Passband::at(145.800))));

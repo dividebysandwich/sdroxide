@@ -33,6 +33,11 @@ const READ_TIMEOUT: Duration = Duration::from_millis(50);
 /// How long a set of read-back bytes is given to turn up.
 const REPLY_TIMEOUT: Duration = Duration::from_millis(250);
 
+/// The pause between two LCUS frames. Its microcontroller drops a frame that
+/// arrives hard on the heels of the last one, and it never answers, so a
+/// multi-contact word sent back to back left contacts wrong (#627).
+const LCUS_FRAME_GAP: Duration = Duration::from_millis(30);
+
 pub struct SerialTransport {
     port: Box<dyn serialport::SerialPort>,
     family: RelayFamily,
@@ -152,10 +157,14 @@ impl RelayTransport for SerialTransport {
         if changed == 0 {
             return Ok(());
         }
+        let mut first = true;
         for ch in 1..=u8::try_from(ChannelMask::BITS).unwrap_or(32) {
             let b = frame::bit(ch);
             if changed & b == 0 {
                 continue;
+            }
+            if self.family == RelayFamily::Lcus && !std::mem::take(&mut first) {
+                std::thread::sleep(LCUS_FRAME_GAP);
             }
             if let Err(e) = self.write_channel(ch, want & b != 0) {
                 // A half-written state is not a state.
@@ -170,6 +179,14 @@ impl RelayTransport for SerialTransport {
 
     fn read_back(&mut self) -> Result<Option<ChannelMask>> {
         if !self.family.reads_back() {
+            // An LCUS cannot be asked, so restate what it was told instead: a
+            // frame it dropped then heals off air rather than at the next
+            // change of that one contact (#627).
+            if self.family == RelayFamily::Lcus
+                && let Some(had) = self.last.take()
+            {
+                self.apply(had)?;
+            }
             return Ok(None);
         }
         let mut state: ChannelMask = 0;
@@ -218,8 +235,13 @@ impl RelayTransport for SerialTransport {
     fn round_trip(&self) -> Duration {
         match self.family {
             // Four bytes at 9600 8N1 is 4.2 ms of wire time; the board's own
-            // handling is the rest.
-            RelayFamily::Lcus | RelayFamily::KMtronic => Duration::from_millis(10),
+            // handling is the rest. An LCUS word also waits out the gap
+            // between its frames.
+            RelayFamily::Lcus => {
+                Duration::from_millis(10)
+                    + LCUS_FRAME_GAP * self.managed.count_ones().saturating_sub(1)
+            }
+            RelayFamily::KMtronic => Duration::from_millis(10),
             // A CDC ACM port at USB speed. The ASCII is longer and the link is
             // very much faster.
             RelayFamily::Numato => Duration::from_millis(5),

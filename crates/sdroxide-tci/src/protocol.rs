@@ -332,7 +332,9 @@ pub fn mode_to_tci(mode: Mode) -> &'static str {
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
+        | Mode::VaraHf
         | Mode::AtChat
+        | Mode::Jtty
         | Mode::Rade => "digu",
         Mode::Digl => "digl",
         Mode::Dsb => "dsb",

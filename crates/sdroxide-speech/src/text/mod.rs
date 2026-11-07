@@ -147,6 +147,7 @@ impl<'a> Speaker<'a> {
             Mode::Rifp => "R I F P",
             Mode::Packet => "packet",
             Mode::PacketHf => "H F packet",
+            Mode::VaraHf => "VARA H F",
             // A word, not four letters: nobody says "A P R S" out loud.
             Mode::Aprs => "aprs",
             Mode::Wefax => "wefax",
@@ -174,6 +175,7 @@ impl<'a> Speaker<'a> {
             Mode::Ais => "A I S",
             // Spelt out for the same reason every other initialism here is.
             Mode::Hfdl => "H F D L",
+            Mode::Jtty => "J T T Y",
             Mode::Fsk441 => "F S K four forty one",
             Mode::AtChat => "at chat",
         }

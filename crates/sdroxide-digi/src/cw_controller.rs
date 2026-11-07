@@ -567,6 +567,8 @@ impl CwController {
             timesig: None,
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
+            jtty: None,
+            vara: None,
             text_rx: self.rx_display(),
             tx_sent: self.sent_chars(now),
             fsq_heard: Vec::new(),
@@ -964,8 +966,12 @@ impl DigiEngine for CwController {
     /// idle hang, no end on a sent line — and the key or the keyer sends inside
     /// it; released, the over ends at once. A rig that keys itself from text
     /// declines, and plain PTT keys it as before.
+    ///
+    /// A release also ends an over the key or the keyer started. Declined, it
+    /// fell to the voice path, which unkeyed the radio but left this latched,
+    /// and nothing keyed again until CLEAR (#716).
     fn set_ptt_hold(&mut self, on: bool) -> bool {
-        if self.cat.is_some() || (!on && !self.ptt_hold) {
+        if self.cat.is_some() || (!on && !self.ptt_hold && !self.tx_active) {
             return false;
         }
         self.ptt_hold = on;

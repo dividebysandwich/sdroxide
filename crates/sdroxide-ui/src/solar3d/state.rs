@@ -4,6 +4,7 @@
 //! the window cannot borrow `SdroxideApp`. All of its mutable state lives here
 //! behind an `Arc<Mutex<_>>` that both the root pass and the child pass hold.
 
+use crate::i18n::tr;
 use std::sync::{Arc, Mutex};
 
 use sdroxide_solar::SolarData;
@@ -51,8 +52,8 @@ impl Focus {
     /// of them, they would swamp a popup meant for choosing between eleven
     /// planets, and the search box finds them by name — which is how you look
     /// for a body you already have in mind, and the only way that scales.
-    pub fn groups() -> Vec<(&'static str, Vec<Focus>)> {
-        let mut v = vec![("HOME", Focus::NEAR.to_vec())];
+    pub fn groups() -> Vec<(String, Vec<Focus>)> {
+        let mut v = vec![(tr!("solarstate-home"), Focus::NEAR.to_vec())];
         for p in sdroxide_solar::Planet::ALL {
             let mut row = vec![Focus::Planet(p)];
             row.extend(
@@ -62,10 +63,11 @@ impl Focus {
                     .filter(|(_, m)| m.parent == p)
                     .map(|(i, _)| Focus::Satellite(i)),
             );
-            v.push((p.name(), row));
+            // Captions are drawn as given, so the name is put in capitals here.
+            v.push((p.name().to_uppercase(), row));
         }
         v.push((
-            "DWARF PLANETS",
+            tr!("solarstate-dwarf-planets"),
             sdroxide_solar::smallbody::BODIES
                 .iter()
                 .enumerate()

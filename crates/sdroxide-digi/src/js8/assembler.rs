@@ -150,6 +150,9 @@ impl Js8Assembler {
                     p.to = "@ALLCALL".into();
                     p.cmd = Some("CQ".into());
                 } else {
+                    // A heartbeat invites reports from everyone hearing it;
+                    // auto_reply rejects messages without a destination.
+                    p.to = "@ALLCALL".into();
                     p.cmd = Some("HB".into());
                 }
                 if let Some(g) = c.grid() {
@@ -249,7 +252,7 @@ impl Js8Assembler {
     pub fn in_progress(&self) -> Vec<Js8Msg> {
         self.partials
             .iter()
-            .filter(|p| !p.text.is_empty())
+            .filter(|p| !p.text.is_empty() || !p.from.is_empty())
             .map(|p| p.to_msg(false, &self.my_call, &self.my_groups))
             .collect()
     }
@@ -284,6 +287,25 @@ mod tests {
         }
         .pack()
         .expect("packs")
+    }
+
+    #[test]
+    fn a_directed_header_is_visible_before_its_text_arrives() {
+        let mut a = Js8Assembler::new("N0JDS");
+        let head = decode(directed("KN4CRD", "N0JDS", " STATUS"), Js8Flags::FIRST, 1500.0);
+        assert!(a.push(&head, 1000).is_none());
+        let partial = a.in_progress();
+        assert_eq!(partial.len(), 1, "a header with no text must still be visible");
+        assert_eq!(partial[0].from, "KN4CRD");
+        assert_eq!(partial[0].to, "N0JDS");
+        assert_eq!(partial[0].cmd.as_deref(), Some("STATUS"));
+        assert!(partial[0].text.is_empty());
+        assert!(!partial[0].complete);
+        let (body, _) = pack_data("PORTABLE").expect("packs");
+        let msg = a.push(&decode(body, Js8Flags::LAST, 1500.0), 1015).expect("completes");
+        assert_eq!(msg.text.trim(), "PORTABLE");
+        assert!(msg.complete);
+        assert!(a.in_progress().is_empty());
     }
 
     #[test]
@@ -384,14 +406,20 @@ mod tests {
 
     #[test]
     fn a_heartbeat_is_a_complete_message_on_its_own() {
-        let mut a = Js8Assembler::new("N0JDS");
-        let hb = Compound::heartbeat("KN4CRD", Some("EM73")).pack().expect("packs");
-        let msg =
-            a.push(&decode(hb, Js8Flags::FIRST | Js8Flags::LAST, 1200.0), 2000).expect("completes");
-        assert_eq!(msg.from, "KN4CRD");
-        assert_eq!(msg.cmd.as_deref(), Some("HB"));
-        assert_eq!(msg.text, "EM73");
-        assert_eq!(a.heard().get("KN4CRD"), Some(&2000));
+        for grid in [Some("EM73"), None] {
+            let mut a = Js8Assembler::new("N0JDS");
+            let hb = Compound::heartbeat("KN4CRD", grid).pack().expect("packs");
+            let msg = a
+                .push(&decode(hb, Js8Flags::FIRST | Js8Flags::LAST, 750.0), 2000)
+                .expect("completes");
+            assert_eq!(msg.from, "KN4CRD");
+            assert_eq!(msg.cmd.as_deref(), Some("HB"));
+            assert_eq!(msg.to, "@ALLCALL");
+            assert!(msg.to_me, "a heartbeat invites a report from anyone hearing it");
+            assert!(msg.complete);
+            assert_eq!(msg.text, grid.unwrap_or_default());
+            assert_eq!(a.heard().get("KN4CRD"), Some(&2000));
+        }
     }
 
     #[test]

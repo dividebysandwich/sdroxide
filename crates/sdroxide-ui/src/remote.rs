@@ -1,6 +1,7 @@
 //! `RemoteController`: the same UI seam as `LocalController`, but over a
 //! WebSocket speaking `sdroxide-proto`. Compiles for wasm32 and native.
 
+use crate::i18n::tr;
 use std::collections::VecDeque;
 
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
@@ -62,14 +63,28 @@ fn mic_silence_due(now: f64, started: f64, samples: usize, already_said: bool) -
 /// bites if the socket never opens at all.
 const OUTBOX_LIMIT: usize = 64;
 
-/// Open a socket that wakes the UI on every event.
+/// Where a dial leaves the SHA-256 of a `wss://` certificate it refused — see
+/// [`RadioController::untrusted_cert`]. Written from the socket thread during
+/// the handshake, read by the UI once the failure has arrived. Always empty in
+/// the browser, which checks certificates itself.
+pub(crate) type RefusedCert = std::sync::Arc<std::sync::Mutex<Option<String>>>;
+
+/// Open a socket that wakes the UI on every event. Each dial has a slot of its
+/// own for a refused certificate, so a fingerprint never outlives the attempt
+/// that saw it.
 fn dial(
     url: &str,
     wake: &std::sync::Arc<dyn Fn() + Send + Sync>,
-) -> Result<(WsSender, WsReceiver), String> {
+) -> Result<(WsSender, WsReceiver, RefusedCert), String> {
     let wake = std::sync::Arc::clone(wake);
-    ewebsock::connect_with_wakeup(url, ewebsock::Options::default(), move || wake())
-        .map_err(|e| e.to_string())
+    let refused = RefusedCert::default();
+    #[cfg(not(target_arch = "wasm32"))]
+    let options = crate::remote_tls::options_for(url, &refused);
+    #[cfg(target_arch = "wasm32")]
+    let options = ewebsock::Options::default();
+    let (sender, receiver) =
+        ewebsock::connect_with_wakeup(url, options, move || wake()).map_err(|e| e.to_string())?;
+    Ok((sender, receiver, refused))
 }
 
 /// Outbound gate: nothing the UI produces reaches the socket until the
@@ -153,6 +168,8 @@ pub struct RemoteController {
     /// drops, without rebuilding the app around a new controller.
     url: String,
     wake: std::sync::Arc<dyn Fn() + Send + Sync>,
+    /// The certificate the current dial was refused for, if it was.
+    refused_cert: RefusedCert,
     outbox: Outbox,
     /// Where this connection stands with the server's sign-in challenge, for
     /// the UI to put a dialog up against.
@@ -289,12 +306,13 @@ impl RemoteController {
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Result<Self, String> {
         let wake: std::sync::Arc<dyn Fn() + Send + Sync> = std::sync::Arc::new(wake);
-        let (sender, receiver) = dial(url, &wake)?;
+        let (sender, receiver, refused_cert) = dial(url, &wake)?;
         Ok(RemoteController {
             sender,
             receiver,
             url: url.to_string(),
             wake,
+            refused_cert,
             outbox: Outbox::default(),
             auth: AuthPhase::Open,
             audio,
@@ -369,6 +387,7 @@ impl RemoteController {
             ServerMsg::MemoryFolders(f) => self.pending.push_back(RadioEvent::MemoryFolders(f)),
             ServerMsg::Scanner(c) => self.pending.push_back(RadioEvent::Scanner(c)),
             ServerMsg::Profiles(p) => self.pending.push_back(RadioEvent::Profiles(p)),
+            ServerMsg::PictureUpload(st) => self.pending.push_back(RadioEvent::PictureUpload(st)),
             // Dropped rather than decoded while another tab holds the page's
             // single output: the work saved is the point on a browser tab
             // holding several radios.
@@ -405,7 +424,7 @@ impl RemoteController {
             }
             ServerMsg::Pong(_) => {}
             ServerMsg::Busy => self.pending.push_back(RadioEvent::ConnectionLost(
-                "server busy — another client is connected".into(),
+                tr!("remote-server-busy-another-client-connected").into(),
             )),
             ServerMsg::Error(e) => self.pending.push_back(RadioEvent::ConnectionLost(e)),
             ServerMsg::Notice(n) => self.pending.push_back(RadioEvent::Notice(n)),
@@ -460,9 +479,21 @@ impl RemoteController {
             ServerMsg::RigctldStatus { running, addr, clients, error } => {
                 self.pending.push_back(RadioEvent::RigctldStatus { running, addr, clients, error })
             }
-            ServerMsg::TciServerStatus { running, addr, clients, error } => self
-                .pending
-                .push_back(RadioEvent::TciServerStatus { running, addr, clients, error }),
+            ServerMsg::TciServerStatus {
+                running,
+                addr,
+                clients,
+                error,
+                client_connected,
+                client_error,
+            } => self.pending.push_back(RadioEvent::TciServerStatus {
+                running,
+                addr,
+                clients,
+                error,
+                client_connected,
+                client_error,
+            }),
             ServerMsg::ImagePresets(p) => self.pending.push_back(RadioEvent::ImagePresets(p)),
             ServerMsg::ImageSlotSource { slot, version, png } => {
                 self.pending.push_back(RadioEvent::ImageSlotSource { slot, version, png })
@@ -490,6 +521,7 @@ impl RemoteController {
                 .pending
                 .push_back(RadioEvent::RotatorStatus { connected, az_deg, el_deg, error }),
             ServerMsg::RelayStatus(st) => self.pending.push_back(RadioEvent::RelayStatus(st)),
+            ServerMsg::AmpStatus(st) => self.pending.push_back(RadioEvent::AmpStatus(st)),
             ServerMsg::RadioConfig(c) => {
                 // Adopted only when nothing of ours is waiting to go out. This
                 // message is usually the echo of our own write, but it can
@@ -636,10 +668,7 @@ impl RemoteController {
         }
         self.mic_over_reported = true;
         self.pending.push_back(RadioEvent::Notice(Some(
-            "Transmitting, but this client's microphone is producing no audio at all — \
-             nothing is being modulated. In a browser, check that the page was allowed \
-             the microphone and that no other application holds it."
-                .into(),
+            tr!("remote-transmitting-but-client-s-microphone").into(),
         )));
     }
 }
@@ -674,16 +703,19 @@ impl RadioController for RemoteController {
                 }
                 WsEvent::Message(WsMessage::Binary(bytes)) => match decode::<ServerMsg>(&bytes) {
                     Ok(msg) => self.on_server_msg(msg),
-                    Err(e) => self
-                        .pending
-                        .push_back(RadioEvent::ConnectionLost(format!("protocol error: {e}"))),
+                    Err(e) => self.pending.push_back(RadioEvent::ConnectionLost(tr!(
+                        "remote-protocol-error",
+                        error = e.to_string()
+                    ))),
                 },
                 WsEvent::Message(_) => {}
                 WsEvent::Error(e) => {
                     self.pending.push_back(RadioEvent::ConnectionLost(e));
                 }
                 WsEvent::Closed => {
-                    self.pending.push_back(RadioEvent::ConnectionLost("connection closed".into()));
+                    self.pending.push_back(RadioEvent::ConnectionLost(
+                        tr!("remote-connection-closed").into(),
+                    ));
                 }
             }
         }
@@ -796,15 +828,36 @@ impl RadioController for RemoteController {
         self.write(&ClientMsg::Auth { username, password });
     }
 
+    fn untrusted_cert(&self) -> Option<String> {
+        let refused = self.refused_cert.lock().ok()?.clone()?;
+        // Trusted since — perhaps from another tab of the same station, which
+        // is what lets that tab's decision bring this one back too.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(authority) = crate::remote_tls::authority(&self.url)
+            && crate::remote_tls::trusted(&authority).as_deref() == Some(refused.as_str())
+        {
+            return None;
+        }
+        Some(refused)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn trust_cert(&mut self, sha256: &str) -> Result<(), String> {
+        let authority = crate::remote_tls::authority(&self.url)
+            .ok_or_else(|| "only a wss:// connection has a certificate to trust".to_string())?;
+        crate::remote_tls::trust(&authority, sha256)
+    }
+
     fn reconnect(&mut self) -> Result<(), String> {
         // Close first, and only then dial: the server allows one control
         // session at a time, so a new socket opened while the old one is still
         // registered is answered with `Busy` — the reconnect would fail on the
         // strength of the connection it is replacing.
         self.sender.close();
-        let (sender, receiver) = dial(&self.url, &self.wake)?;
+        let (sender, receiver, refused_cert) = dial(&self.url, &self.wake)?;
         self.sender = sender;
         self.receiver = receiver;
+        self.refused_cert = refused_cert;
         // Everything below is per-session: the outbox gate has to hold commands
         // behind a fresh `Hello`, the codec is renegotiated in the handshake,
         // and neither queued events nor a half-sent microphone block from the

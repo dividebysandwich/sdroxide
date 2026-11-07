@@ -337,11 +337,13 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
+        | Mode::VaraHf
         | Mode::AtChat
         | Mode::Rade => 'C',
         Mode::Usb
         | Mode::Spec
         | Mode::Hfdl
+        | Mode::Jtty
         | Mode::Sstv
         | Mode::Wefax
         | Mode::Navtex

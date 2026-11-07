@@ -90,6 +90,48 @@ fn contains(haystack: &str, term: &str) -> bool {
     n.len() <= h.len() && h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
 }
 
+/// Whether every whitespace-separated term of `query` appears in `haystack` as
+/// a *tight* subsequence: all its characters, in order, inside a window at
+/// most a few characters longer than the term itself.
+///
+/// This is the fallback test for a long haystack when nothing matched
+/// literally. A loose subsequence is no evidence there: the six letters of
+/// `twente` fall in that order somewhere in hundreds of receiver descriptions
+/// by accident, and offering those as near misses filled the public-SDR list
+/// with rows that have nothing to do with the query. A tight window keeps
+/// what a near miss actually looks like — a dropped or swapped-out letter
+/// (`hambrg` → "Hamburg", `nethrlands` → "Netherlands") — and nothing else.
+/// The slack grows with the term (a third of its length, at least two), so a
+/// long word may carry more than one typo.
+pub fn tight_terms(haystack: &str, query: &str) -> bool {
+    query.split_whitespace().all(|term| tight(haystack, term))
+}
+
+/// One term, ASCII-case-insensitively, as a subsequence inside a window of at
+/// most `term.len() + slack` haystack characters.
+fn tight(haystack: &str, term: &str) -> bool {
+    let (h, n) = (haystack.as_bytes(), term.as_bytes());
+    if n.is_empty() {
+        return true;
+    }
+    let max_span = n.len() + (n.len() / 3).max(2);
+    (0..h.len()).filter(|&start| h[start].eq_ignore_ascii_case(&n[0])).any(|start| {
+        // Greedy from each start: the earliest completion from a given
+        // start is also the shortest window beginning there.
+        let end = (start + max_span).min(h.len());
+        let mut ni = 1;
+        for &hc in &h[start + 1..end] {
+            if ni == n.len() {
+                break;
+            }
+            if hc.eq_ignore_ascii_case(&n[ni]) {
+                ni += 1;
+            }
+        }
+        ni == n.len()
+    })
+}
+
 /// Score a whole query: every whitespace-separated term has to match somewhere,
 /// and the scores add up. That makes `bbc asc` find the BBC transmission from
 /// Ascension without caring which order the two words appear in.
@@ -185,6 +227,20 @@ mod tests {
         assert!(contains_terms("BBC World Service", "   "));
         // A term longer than the haystack cannot be in it.
         assert!(!contains_terms("BBC", "BBC World Service"));
+    }
+
+    #[test]
+    fn a_typo_is_a_tight_match_and_scattered_letters_are_not() {
+        assert!(tight_terms("KiwiSDR DF3LZ | Hamburg, Germany", "hambrg"));
+        assert!(tight_terms("De Kiel, Netherlands", "nethrlands"));
+        assert!(tight_terms("R7KJG SDR Rostov-on-Don", "rstv"));
+        // A subsequence, but spread across two words: a near miss of nothing.
+        let hay = "KiwiSDR 0-30 MHz | South Wenatchee, WA";
+        assert!(score_terms(hay, "twente").is_some());
+        assert!(!tight_terms(hay, "twente"));
+        // Every term has to be tight, and an empty query is.
+        assert!(!tight_terms("Hamburg, Germany", "hambrg nowhere"));
+        assert!(tight_terms("Hamburg, Germany", "  "));
     }
 
     #[test]

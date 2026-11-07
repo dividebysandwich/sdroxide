@@ -58,6 +58,7 @@ pub fn make_modulator(mode: Mode, rate: f64, passband: (f32, f32)) -> Option<Box
         | Mode::RfPaint
         // HF packet is 300 baud AFSK audio on a sideband, like RTTY.
         | Mode::PacketHf
+        | Mode::VaraHf
         // AtChat COFDM rides the same USB path as the keyboard modes.
         | Mode::AtChat
         | Mode::Rade
@@ -65,6 +66,9 @@ pub fn make_modulator(mode: Mode, rate: f64, passband: (f32, f32)) -> Option<Box
         // transmit path. Without this a manual PTT on an SDR sent a bare
         // carrier under an FSK441 label.
         | Mode::Fsk441 => Some(Box::new(SsbMod::new(rate, lo, hi))),
+        // JTTY's narrow 4-GFSK tones are audio on a sideband, keyed by the digi
+        // engine's asynchronous transmit path.
+        | Mode::Jtty => Some(Box::new(SsbMod::new(rate, lo, hi))),
         Mode::Am | Mode::Sam | Mode::Dsb => Some(Box::new(AmMod::new(rate))),
         // ISB is receive only: transmitting it wants two modulators feeding
         // one linear amplifier, which is a station, not a setting. No

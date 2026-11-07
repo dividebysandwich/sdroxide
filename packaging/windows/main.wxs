@@ -15,7 +15,12 @@
              Compressed="yes"
              Scope="perMachine">
 
-        <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+        <!-- Every dev build carries the same version, so without
+             AllowSameVersionUpgrades a new dev installer is added beside the
+             old one instead of replacing it (AJ3G, 18 Oct 2026). With it, any
+             earlier install of the same version is removed first. -->
+        <MajorUpgrade AllowSameVersionUpgrades="yes"
+                      DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
         <MediaTemplate EmbedCab="yes" />
 
         <!-- Used by the Start-menu shortcut below and by the Apps & features /

@@ -1,4 +1,4 @@
-//! The engine's picture stores: the five transmit presets an operator composes
+//! The engine's picture stores: the ten transmit presets an operator composes
 //! from, and the directories of received pictures a gallery is a window onto.
 //!
 //! All of it used to be client state, which meant a browser tab had no presets
@@ -10,7 +10,7 @@
 //!
 //! * pure image work ([`normalise`], [`thumbnail`], [`page`]) with no I/O, so
 //!   the bounds and the ordering can be tested without a filesystem;
-//! * [`ImagePresetStore`], the five slots and their messages, small enough to
+//! * [`ImagePresetStore`], the ten slots and their messages, small enough to
 //!   sit on the engine thread;
 //! * [`GalleryWorker`], everything that walks a directory or decodes a big
 //!   picture — off the engine thread, because that loop is the audio loop and a
@@ -276,7 +276,7 @@ struct Slot {
     thumb: Vec<u8>,
 }
 
-/// The five transmit presets: a source picture and an overlay message each.
+/// The ten transmit presets: a source picture and an overlay message each.
 ///
 /// Only the source is kept. The crop, the header strip and the text are
 /// composited client-side, so the panel can redraw a preview on every keystroke

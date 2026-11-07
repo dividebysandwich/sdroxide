@@ -81,11 +81,7 @@ pub fn ws_receiver_blocking(url: &str, options: Options, on_event: &EventHandler
     let max_redirects = 3; // tungstenite default
 
     let read_timeout = options.read_timeout;
-    let (mut socket, response) = match tungstenite::client::connect_with_config(
-        into_requester(uri, options),
-        Some(config),
-        max_redirects,
-    ) {
+    let (mut socket, response) = match connect(uri, options, config, max_redirects) {
         Ok(result) => result,
         Err(err) => {
             return Err(format!("Connect: {err}"));
@@ -163,11 +159,7 @@ pub fn ws_connect_blocking(
         .map_err(|err| format!("Failed to parse URL {url:?}: {err}"))?;
 
     let read_timeout = options.read_timeout;
-    let (mut socket, response) = match tungstenite::client::connect_with_config(
-        into_requester(uri, options),
-        Some(config),
-        max_redirects,
-    ) {
+    let (mut socket, response) = match connect(uri, options, config, max_redirects) {
         Ok(result) => result,
         Err(err) => {
             return Err(format!("Connect: {err}"));
@@ -227,6 +219,103 @@ pub fn ws_connect_blocking(
 
         std::thread::yield_now();
     }
+}
+
+/// Open the socket and run the handshake — tungstenite's own
+/// `connect_with_config`, unless [`Options::tls_config`] asks for a TLS
+/// configuration of the caller's.
+///
+/// Added by sdroxide's patch. Without a configuration this is exactly the
+/// upstream call, so a connection that does not ask for one is untouched.
+fn connect(
+    uri: tungstenite::http::Uri,
+    options: Options,
+    config: tungstenite::protocol::WebSocketConfig,
+    max_redirects: u8,
+) -> tungstenite::Result<(
+    WebSocket<MaybeTlsStream<TcpStream>>,
+    tungstenite::handshake::client::Response,
+)> {
+    #[cfg(feature = "tls")]
+    if let Some(tls) = options.tls_config.clone() {
+        return connect_with_tls(into_requester(uri, options), config, max_redirects, &tls);
+    }
+    tungstenite::client::connect_with_config(
+        into_requester(uri, options),
+        Some(config),
+        max_redirects,
+    )
+}
+
+/// `connect_with_config` with the TLS connector named rather than defaulted,
+/// which upstream tungstenite has no blocking entry point for. The same
+/// steps in the same order: resolve, try each address, `TCP_NODELAY`, the
+/// handshake, and a redirect followed up to `max_redirects` times.
+#[cfg(feature = "tls")]
+fn connect_with_tls(
+    request: tungstenite::client::ClientRequestBuilder,
+    config: tungstenite::protocol::WebSocketConfig,
+    max_redirects: u8,
+    tls: &crate::TlsConfig,
+) -> tungstenite::Result<(
+    WebSocket<MaybeTlsStream<TcpStream>>,
+    tungstenite::handshake::client::Response,
+)> {
+    use std::net::ToSocketAddrs;
+    use tungstenite::client::IntoClientRequest;
+    use tungstenite::error::UrlError;
+    use tungstenite::handshake::HandshakeError;
+    use tungstenite::stream::Mode;
+    use tungstenite::Error;
+
+    let (parts, ()) = request.into_client_request()?.into_parts();
+    let mut uri = parts.uri.clone();
+    for attempt in 0..=max_redirects {
+        let mut builder = tungstenite::http::Request::builder()
+            .uri(uri.clone())
+            .method(parts.method.clone())
+            .version(parts.version);
+        if let Some(headers) = builder.headers_mut() {
+            headers.clone_from(&parts.headers);
+        }
+        let request = builder.body(())?;
+
+        let mode = tungstenite::client::uri_mode(&uri)?;
+        let host = uri.host().ok_or(Error::Url(UrlError::NoHostName))?;
+        let host = host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(host);
+        let port = uri.port_u16().unwrap_or(match mode {
+            Mode::Plain => 80,
+            Mode::Tls => 443,
+        });
+        let stream = (host, port)
+            .to_socket_addrs()?
+            .find_map(|addr| TcpStream::connect(addr).ok())
+            .ok_or_else(|| Error::Url(UrlError::UnableToConnect(uri.to_string())))?;
+        stream.set_nodelay(true)?;
+
+        let connector = tungstenite::Connector::Rustls(tls.0.clone());
+        match tungstenite::client_tls_with_config(request, stream, Some(config), Some(connector)) {
+            Ok(done) => return Ok(done),
+            Err(HandshakeError::Failure(Error::Http(res)))
+                if res.status().is_redirection() && attempt < max_redirects =>
+            {
+                let Some(location) = res.headers().get("Location") else {
+                    log::warn!("No `Location` found in redirect");
+                    return Err(Error::Http(res));
+                };
+                uri = location.to_str()?.parse()?;
+                log::debug!("Redirecting to {uri:?}");
+            }
+            Err(HandshakeError::Failure(err)) => return Err(err),
+            Err(HandshakeError::Interrupted(_)) => {
+                return Err(Error::Io(std::io::ErrorKind::WouldBlock.into()));
+            }
+        }
+    }
+    unreachable!("the last attempt either returns or is not redirected")
 }
 
 /// Windows' `ERROR_IO_PENDING` / `WSA_IO_PENDING`, which Winsock hands back

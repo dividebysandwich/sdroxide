@@ -1028,6 +1028,13 @@ pub struct CatConfig {
     /// deserialise costs.
     #[serde(default)]
     pub elad_tx_input: EladTxInput,
+    /// The ELAD FDM-DUO's menu 34 `TX POWER` setting, as its `TP` parameter:
+    /// 0 to 8 for 0.3, 0.5, 1.0, 1.2, 1.5, 2.0, 3.0, 4.0 and 5.0 W, 9 for MAX.
+    /// Sent each time the port opens, and chosen with the 1W / 3W / 5W / MAX
+    /// buttons beside Drive. MAX for a config written before this existed,
+    /// which is what was always sent until then.
+    #[serde(default = "default_elad_tx_power")]
+    pub elad_tx_power: u8,
     pub format: SoundFormat,
     /// Conjugate the sound card's I/Q, mirroring the panadapter about the
     /// tuned frequency. Only read for [`SoundFormat::Iq`]: demod audio is real
@@ -1277,6 +1284,11 @@ fn default_rigctld_addr() -> String {
     "127.0.0.1:4532".to_string()
 }
 
+/// Menu 34 at MAX — see [`CatConfig::elad_tx_power`].
+pub fn default_elad_tx_power() -> u8 {
+    9
+}
+
 /// Where an flrig serves XML-RPC unless told otherwise — its own default port,
 /// on this machine.
 fn default_flrig_addr() -> String {
@@ -1299,6 +1311,7 @@ impl Default for CatConfig {
             flrig_addr: default_flrig_addr(),
             kenwood_send: KenwoodSend::default(),
             elad_tx_input: EladTxInput::default(),
+            elad_tx_power: default_elad_tx_power(),
             format: SoundFormat::default(),
             invert_spectrum: false,
             iq_offset_hz: 0.0,

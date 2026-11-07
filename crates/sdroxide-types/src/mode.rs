@@ -362,7 +362,29 @@ pub enum Mode {
     /// message repeats for the length of the over. Appended for the same reason
     /// as [`Mode::Hell`].
     Fsk441,
-    /// A standard time-signal station — DCF77, MSF, WWVB or JJY — decoded to
+    /// JTTY — the WSJT-X 3.2 RTTY-like **asynchronous** text mode.
+    ///
+    /// Not slotted: a transmission can start at any instant, so
+    /// [`Mode::slot_timing`] answers `None` and the receiver keeps a rolling
+    /// audio window rather than a slot buffer. Each ~1.888 s frame carries a
+    /// short text or typed contest atom (calls, serials, grids, control
+    /// phrases) over a narrow (≈127 Hz) 4-GFSK signal with a tail-biting
+    /// convolutional code, so it copies where 45.45-baud RTTY goes marginal.
+    /// Appended for the same reason as [`Mode::Hell`].
+    Jtty,
+    /// VARA HF — the ARQ modem most Winlink RMS gateways and VarAC stations
+    /// run, here on the vendored xara modem core (see `vendor/xara`).
+    ///
+    /// A connected-mode link rather than a keyboard or slotted mode: two
+    /// stations hand-shake, then trade OFDM/PSK bursts and acknowledgements
+    /// with the speed adapting to the path. Upper sideband whatever the band,
+    /// a 500, 2300 or 2750 Hz signal centred on 1500 Hz of audio — the width is
+    /// a setting ([`crate::DigiConfig::vara_bw`]), not part of the mode.
+    /// Driven by the Winlink window, the operator's panel, or an external
+    /// program on VARA's TCP host ports. Appended for the same reason as
+    /// [`Mode::Hell`].
+    VaraHf,
+    /// A standard time-signal station — DCF77, WWVB, WWV, BPC and the rest — decoded to
     /// the time it sends, which can then set the computer's clock or be served
     /// to the network over NTP. Which station is a setting
     /// ([`crate::TimeSigConfig::station`]), not part of the mode, as FST4's
@@ -393,7 +415,7 @@ const PHONE_LSB_BANDS: [(f64, f64); 3] =
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 50] = [
+    pub const ALL: [Mode; 52] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -422,6 +444,7 @@ impl Mode {
         Mode::RttyFm,
         Mode::Packet,
         Mode::PacketHf,
+        Mode::VaraHf,
         Mode::Aprs,
         Mode::Sstv,
         Mode::SstvFm,
@@ -444,6 +467,7 @@ impl Mode {
         Mode::Fst4,
         Mode::Q65,
         Mode::Fsk441,
+        Mode::Jtty,
     ];
 
     /// The digital modes handled by a dedicated decode/encode engine (the
@@ -451,7 +475,7 @@ impl Mode {
     /// packet, RF Paint). All are USB underneath except RIFP, VHF packet and
     /// VHF SSTV, which frequency-modulate the carrier, and ACARS, which is
     /// received in AM.
-    pub const DIGITAL: [Mode; 32] = [
+    pub const DIGITAL: [Mode; 34] = [
         Mode::Ft8,
         Mode::Ft4,
         Mode::Ft2,
@@ -464,6 +488,7 @@ impl Mode {
         Mode::Fst4,
         Mode::Q65,
         Mode::Fsk441,
+        Mode::Jtty,
         Mode::Psk,
         Mode::Rtty,
         Mode::RttyFm,
@@ -483,6 +508,7 @@ impl Mode {
         Mode::Rade,
         Mode::Packet,
         Mode::PacketHf,
+        Mode::VaraHf,
         Mode::Aprs,
     ];
 
@@ -514,6 +540,7 @@ impl Mode {
                 | Mode::Navtex
                 | Mode::Packet
                 | Mode::PacketHf
+                | Mode::VaraHf
                 | Mode::Aprs
                 | Mode::Msk144
                 | Mode::Jt65
@@ -521,6 +548,7 @@ impl Mode {
                 | Mode::Fst4
                 | Mode::Q65
                 | Mode::Fsk441
+                | Mode::Jtty
                 | Mode::TimeSignal
         )
     }
@@ -534,6 +562,13 @@ impl Mode {
     /// route, the packet monitor — and APRS is none of those.
     pub fn is_packet(self) -> bool {
         matches!(self, Mode::Packet | Mode::PacketHf)
+    }
+
+    /// True for VARA HF. Not a member of [`Self::is_packet`]: the two share a
+    /// purpose (a Winlink route) and nothing else — not the modem, not the
+    /// link layer, not the controller.
+    pub fn is_vara(self) -> bool {
+        matches!(self, Mode::VaraHf)
     }
 
     /// True for APRS.
@@ -733,7 +768,7 @@ impl Mode {
     /// Used by the transmit lockout, which needs to know how far above the
     /// carrier the emission actually reaches. The figures are tones times tone
     /// spacing: FT8 is 8 × 6.25, FT4 is 4 × 20.833, FT2 is 4 × 41.667 (see
-    /// `Ft2::TONE_SPACING_HZ`), WSPR is 4 × 1.4648.
+    /// `Ft2::TONE_SPACING_HZ`), WSPR is 4 × 1.4648, JTTY is 4 × 31.25.
     ///
     /// JS8 is given its WIDEST speed, Turbo's 160 Hz, because a `Mode` does not
     /// know which speed is set — [`crate::Js8Speed::bandwidth_hz`] does, and is
@@ -747,6 +782,7 @@ impl Mode {
             Mode::Ft2 => Some(166.7),
             Mode::Js8 => Some(crate::Js8Speed::Turbo.bandwidth_hz()),
             Mode::Wspr => Some(6.0),
+            Mode::Jtty => Some(125.0),
             _ => None,
         }
     }
@@ -957,6 +993,7 @@ impl Mode {
             Mode::Rifp => "RIFP",
             Mode::Packet => "PACKET",
             Mode::PacketHf => "PACKET-HF",
+            Mode::VaraHf => "VARA HF",
             Mode::Aprs => "APRS",
             Mode::Wefax => "WEFAX",
             Mode::Js8 => "JS8",
@@ -976,6 +1013,7 @@ impl Mode {
             Mode::Fst4 => "FST4",
             Mode::Q65 => "Q65",
             Mode::Fsk441 => "FSK441",
+            Mode::Jtty => "JTTY",
             Mode::TimeSignal => "TIME",
         }
     }
@@ -1032,6 +1070,7 @@ impl Mode {
                 | Mode::RfPaint
                 | Mode::Packet
                 | Mode::PacketHf
+                | Mode::VaraHf
                 | Mode::Navtex
                 | Mode::Wefax
                 | Mode::Msk144
@@ -1040,6 +1079,7 @@ impl Mode {
                 | Mode::Fst4
                 | Mode::Q65
                 | Mode::Fsk441
+                | Mode::Jtty
         );
         crate::ModeProfile {
             agc: Some(if weak_digi { AgcMode::Slow } else { AgcMode::Med }),
@@ -1129,7 +1169,8 @@ impl Mode {
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
-            | Mode::Fsk441 => (100.0, 3300.0),
+            | Mode::Fsk441
+            | Mode::Jtty => (100.0, 3300.0),
             // The fax subcarrier is 1900 Hz ± 400; the wider passband leaves
             // room for a receiver tuned a few hundred hertz off, which is the
             // normal state of affairs on a chart found by ear.
@@ -1187,6 +1228,9 @@ impl Mode {
             // HF packet is 300 baud AFSK on a sideband, tones around
             // 1600/1800 Hz — an ordinary keyboard-mode passband.
             Mode::PacketHf => (150.0, 2850.0),
+            // All three VARA widths are centred on 1500 Hz; this is the widest
+            // (2750) with a little room, and the presets narrow it.
+            Mode::VaraHf => (100.0, 2900.0),
         }
     }
 
@@ -1388,6 +1432,7 @@ impl Mode {
             | Mode::Rade
             | Mode::Packet
             | Mode::PacketHf
+            | Mode::VaraHf
             | Mode::Aprs
             | Mode::Msk144
             | Mode::Jt65
@@ -1395,6 +1440,7 @@ impl Mode {
             | Mode::Fst4
             | Mode::Q65
             | Mode::Fsk441
+            | Mode::Jtty
             | Mode::TimeSignal => C::Data,
         }
     }
@@ -1461,8 +1507,22 @@ impl Mode {
     /// sustained and full of low notes — is the programme itself. On AM it
     /// took the audio away with the whistle (issue #434), and DRM's decoded
     /// audio is the same material.
+    ///
+    /// **Not on the image and tone modes either.** SSTV, WEFAX, Hell and RF
+    /// Paint are *made* of steady tones — the sync pulses, the subcarrier, the
+    /// low video frequencies — so a canceller that removes anything persistent
+    /// removes the picture. An operator in SSTV with the notch on saw the low
+    /// end (around 200–290 Hz, where the sync and the dark video sit) eaten
+    /// away to a dead band in the waterfall and the spectrum. The same argument
+    /// covers the receive-only image lanes: their content is tone, not voice.
     pub fn auto_notch_applies(self) -> bool {
-        !matches!(self, Mode::Am | Mode::Sam | Mode::Wfm | Mode::Drm | Mode::HdRadio)
+        if matches!(self, Mode::Am | Mode::Sam | Mode::Wfm | Mode::Drm | Mode::HdRadio) {
+            return false;
+        }
+        if self.is_image() || self.is_wefax() || self.is_hell() || self.is_rf_paint() {
+            return false;
+        }
+        true
     }
 
     /// Furthest a filter edge may be dragged from the carrier — bounded by
@@ -1606,6 +1666,11 @@ impl Mode {
                 ("18k", -4100.0, 13_100.0),
                 ("20k", -4700.0, 14_600.0),
             ],
+            // VARA's three widths, all centred on 1500 Hz: matching the filter to
+            // the width the link runs keeps a neighbour out of the busy detector.
+            Mode::VaraHf => {
+                &[("500", 1200.0, 1800.0), ("2.3k", 300.0, 2700.0), ("2.75k", 100.0, 2900.0)]
+            }
             // Digital modes have a fixed wide passband; no presets.
             Mode::Wfm
             | Mode::Spec
@@ -1636,6 +1701,7 @@ impl Mode {
             | Mode::Fst4
             | Mode::Q65
             | Mode::Fsk441
+            | Mode::Jtty
             | Mode::TimeSignal => &[],
         }
     }
@@ -2082,6 +2148,15 @@ impl AgcMode {
         }
     }
 
+    /// [`Self::next`], passing over `Off` where it is not on offer — see
+    /// `DeviceCaps::agc_off_unavailable`.
+    pub fn next_offered(self, offer_off: bool) -> AgcMode {
+        match self.next() {
+            AgcMode::Off if !offer_off => AgcMode::Off.next(),
+            next => next,
+        }
+    }
+
     /// Hang time in milliseconds; `None` means AGC disabled.
     pub fn hang_ms(self) -> Option<f32> {
         match self {
@@ -2093,9 +2168,81 @@ impl AgcMode {
     }
 }
 
+/// The operator's own version of one of a mode's filter preset chips
+/// ([`Mode::filter_presets`]): a label and two edges of their choosing in
+/// place of the built-in ones. Set from a right-click on the chip, kept in
+/// `filter_presets.json`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomFilterPreset {
+    pub mode: Mode,
+    /// Which built-in chip this stands in for, counted from the left.
+    pub slot: usize,
+    pub label: String,
+    /// Edges in Hz relative to the carrier, like the built-ins.
+    pub lo: f32,
+    pub hi: f32,
+}
+
+/// The chips `mode` shows: its built-in presets, with any of `custom` that
+/// belong to it standing in for theirs.
+pub fn filter_presets_with(mode: Mode, custom: &[CustomFilterPreset]) -> Vec<(String, f32, f32)> {
+    mode.filter_presets()
+        .iter()
+        .enumerate()
+        .map(|(slot, &(label, lo, hi))| {
+            match custom.iter().find(|c| c.mode == mode && c.slot == slot) {
+                Some(c) => (c.label.clone(), c.lo, c.hi),
+                None => (label.to_string(), lo, hi),
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod custom_preset_tests {
+    use super::*;
+
+    #[test]
+    fn a_custom_preset_replaces_only_its_own_chip() {
+        let custom = [CustomFilterPreset {
+            mode: Mode::Usb,
+            slot: 1,
+            label: "Rag".into(),
+            lo: 100.0,
+            hi: 3000.0,
+        }];
+        let usb = filter_presets_with(Mode::Usb, &custom);
+        assert_eq!(usb.len(), Mode::Usb.filter_presets().len());
+        assert_eq!(usb[0].0, "1.8k");
+        assert_eq!(usb[1], ("Rag".to_string(), 100.0, 3000.0));
+        // LSB is its own mode with its own chips.
+        assert_eq!(filter_presets_with(Mode::Lsb, &custom)[1].0, "2.4k");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A radio whose AGC cannot be switched off is walked through its three
+    /// presets only; everywhere else the cycle is the full four.
+    #[test]
+    fn the_agc_cycle_passes_over_off_only_where_it_is_not_on_offer() {
+        let walk = |offer_off| {
+            let mut agc = AgcMode::Fast;
+            (0..4)
+                .map(|_| {
+                    agc = agc.next_offered(offer_off);
+                    agc
+                })
+                .collect::<Vec<_>>()
+        };
+        use AgcMode::*;
+        assert_eq!(walk(true), [Off, Slow, Med, Fast]);
+        assert_eq!(walk(false), [Slow, Med, Fast, Slow]);
+        // An Off already set still leaves for a real preset.
+        assert_eq!(Off.next_offered(false), Slow);
+    }
 
     /// A mode whose passband is a channel about the carrier must have nothing
     /// but symmetric presets, and a mode with an asymmetric preset must not
@@ -2181,7 +2328,9 @@ mod tests {
             (Mode::Fst4, 46),
             (Mode::Q65, 47),
             (Mode::Fsk441, 48),
-            (Mode::TimeSignal, 49),
+            (Mode::Jtty, 49),
+            (Mode::VaraHf, 50),
+            (Mode::TimeSignal, 51),
         ];
         for (mode, index) in pinned {
             assert_eq!(mode as u8, index, "{} moved", mode.label());
@@ -2234,6 +2383,25 @@ mod tests {
             assert_eq!(present, 1, "discriminant {i} appears {present} times in Mode::ALL");
         }
         assert_eq!(Mode::ALL.len(), last as usize + 1);
+    }
+
+    /// Every mode offered in the band/mode menu's **Digital** row must be a
+    /// digital mode, and every digital mode must be offerable — the menu
+    /// iterates `Mode::DIGITAL`, not `Mode::ALL`, so a new mode left out of
+    /// `DIGITAL` is simply invisible there even though it cycles and parses.
+    #[test]
+    fn the_digital_menu_row_lists_every_digital_mode() {
+        for m in Mode::DIGITAL {
+            assert!(m.is_digital(), "{m:?} is in the Digital menu row but is not digital");
+        }
+        for m in Mode::ALL {
+            if m.is_digital() {
+                assert!(
+                    Mode::DIGITAL.contains(&m),
+                    "{m:?} is digital but missing from the Digital menu row"
+                );
+            }
+        }
     }
 
     /// RTTY on an FM carrier is the same modem on a different radio, and every

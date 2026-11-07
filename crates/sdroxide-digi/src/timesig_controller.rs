@@ -401,6 +401,8 @@ impl TimeSigController {
             wspr: None,
             pi4: None,
             qso: None,
+            jtty: None,
+            vara: None,
         }
     }
 }

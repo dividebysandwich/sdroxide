@@ -1045,6 +1045,13 @@ transmitter has a single owner, and keying up locally always takes it back.
 Verified against WSJT-X (rig *TCI Client RX1*, PTT via CAT, TCI audio). See the
 user manual, §5.6.
 
+The same settings section has **TCI Client**. Turn that on and sdroxide dials
+out to another TCI server — 590Ctrl, at `127.0.0.1:50001` unless you change
+it — and sends the VFO whenever you tune. Tune the radio from its own knob and
+sdroxide's dial follows. That path is control only: no audio,
+no IQ, and it does not key the transmitter. If 590Ctrl is already listening on
+50001, leave sdroxide's own server off or move it to another port.
+
 ## Built-in Hamlib rigctld server
 
 Most amateur software reaches a radio through **Hamlib**, over the network
@@ -1761,3 +1768,7 @@ none of it.
 The grey-line shade, the IBP beacon schedule, the meteor-shower calendar and the
 Kp history are adapted from ideas in
 [OpenHamClock](https://github.com/accius/openhamclock) (MIT).
+
+VARA HF runs on [xara](https://github.com/x0rro/xara) (MIT), an open
+implementation of the VARA protocol, vendored under `vendor/xara`. See its
+`PROVENANCE.md` for what was taken and changed.

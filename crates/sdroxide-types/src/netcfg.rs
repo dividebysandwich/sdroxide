@@ -330,6 +330,11 @@ pub struct NetworkConfig {
     /// Appended last, as the wire requires.
     #[serde(default)]
     pub eqsl_qth_nickname: String,
+    // ── Wavelog ──
+    /// The operator's own Wavelog server: where it is, the key, and whether
+    /// each new QSO goes to it. Appended last, as the wire requires.
+    #[serde(default)]
+    pub wavelog: crate::WavelogConfig,
 }
 
 impl Default for NetworkConfig {
@@ -362,6 +367,7 @@ impl Default for NetworkConfig {
             wrl_api_key: String::new(),
             auto_upload_wrl: false,
             eqsl_qth_nickname: String::new(),
+            wavelog: crate::WavelogConfig::default(),
         }
     }
 }

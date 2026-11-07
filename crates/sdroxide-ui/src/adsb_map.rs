@@ -31,6 +31,7 @@
 //! aeroplane is, drawn in the same ink as the ones that are true, and the map
 //! is the one place with no room for a hedge.
 
+use crate::i18n::tr;
 use eframe::egui::{Align2, Color32, FontId, Rect, Sense, Ui, pos2, vec2};
 use sdroxide_types::{AdsbAircraft, AdsbSettings};
 
@@ -379,7 +380,7 @@ pub fn show(
         }
         tip.push_str(&format!("\n{} ft   {} kt", a.altitude_ft.unwrap_or(0), a.fmt_speed()));
         if let Some(vr) = a.vertical_rate_fpm.filter(|v| v.abs() > 100) {
-            tip.push_str(&format!("\n{vr:+} ft/min"));
+            tip.push_str(&tr!("adsbmap-ft-min", vr = format!("{:+}", vr)));
         }
         if let (Some(h), Some((lat, lon))) = (home, a.lat.zip(a.lon)) {
             let km = sdroxide_types::distance_km(h, (lat, lon));
@@ -402,7 +403,7 @@ pub fn show(
         p.text(
             rect.right_bottom() + vec2(-6.0, -4.0),
             Align2::RIGHT_BOTTOM,
-            "double-click to reframe",
+            tr!("adsbmap-double-click-reframe"),
             FontId::proportional(9.0),
             alpha(Color32::WHITE, 110.0),
         );

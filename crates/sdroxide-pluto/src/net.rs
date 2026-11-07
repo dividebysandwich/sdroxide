@@ -183,6 +183,11 @@ pub(crate) struct Shared {
     pub last_rx_ms: AtomicU64,
     /// The second chain's clock, stamped only while its ring is attached.
     pub last_rx1_ms: AtomicU64,
+    /// Milliseconds since [`Self::opened_at`] when the last over ended, or 0.
+    /// A half-duplex over stands receive down for its whole length, so the
+    /// receive clocks above are that far behind the moment it ends; silence is
+    /// counted from whichever is later.
+    pub last_tx_end_ms: AtomicU64,
     pub transmitting: AtomicBool,
     /// Receive and transmit may hold the link at the same time — see this
     /// module's header. Fixed for the life of the connection: it describes the
@@ -509,6 +514,9 @@ impl PlutoRig {
         if let Err(e) = phy.silence_dds(&mut control) {
             tracing::warn!("PlutoSDR: could not silence the transmit tone generators: {e}");
         }
+        if let Err(e) = phy.set_rx_lo_powered(&mut control, true) {
+            tracing::warn!("PlutoSDR: could not power the receive oscillator up: {e}");
+        }
         phy.set_rx_lo(&mut control, PlutoConfig::apply_ppm(center_hz, cfg.ppm))?;
         // And park the transmit synthesiser in the band the session opened on.
         // Nothing radiates — in TDD the state machine is in receive and in FDD
@@ -527,6 +535,11 @@ impl PlutoRig {
                 None
             }
         };
+        // Powered down until the first key-up, so nothing leaks out of a
+        // transmit chain that FDD keeps live; `key_up` powers it up.
+        if let Err(e) = phy.set_tx_lo_powered(&mut control, false) {
+            tracing::warn!("PlutoSDR: could not power the transmit oscillator down: {e}");
+        }
         let tx_rate = phy.tx_sample_rate(&mut control).unwrap_or(rate);
         let rx_port = phy.rx_port(&mut control).unwrap_or_default();
         let tx_port = phy.tx_port(&mut control).unwrap_or_default();
@@ -635,6 +648,7 @@ impl PlutoRig {
             opened_at: Instant::now(),
             last_rx_ms: AtomicU64::new(0),
             last_rx1_ms: AtomicU64::new(0),
+            last_tx_end_ms: AtomicU64::new(0),
             transmitting: AtomicBool::new(false),
             full_duplex,
             tdd: tr.tdd,
@@ -1062,7 +1076,10 @@ impl PlutoRx {
     pub fn tx_end(&self) {
         if self.tx.is_some() {
             tracing::info!("PlutoSDR: TX end");
-            self.rig.shared.transmitting.store(false, Ordering::Relaxed);
+            let shared = &self.rig.shared;
+            let now_ms = shared.opened_at.elapsed().as_millis() as u64;
+            shared.last_tx_end_ms.store(now_ms, Ordering::Relaxed);
+            shared.transmitting.store(false, Ordering::Relaxed);
             let _ = self.rig.ctrl.send(Ctrl::TxOff);
         }
     }
@@ -1153,8 +1170,8 @@ impl PlutoRx {
         }
         let clock = if self.chain == 0 { &shared.last_rx_ms } else { &shared.last_rx1_ms };
         let since_open = shared.opened_at.elapsed();
-        let last = Duration::from_millis(clock.load(Ordering::Relaxed));
-        since_open.saturating_sub(last)
+        let last = clock.load(Ordering::Relaxed).max(shared.last_tx_end_ms.load(Ordering::Relaxed));
+        since_open.saturating_sub(Duration::from_millis(last))
     }
 }
 
@@ -1464,6 +1481,11 @@ fn control_thread(
     {
         tracing::debug!("PlutoSDR: could not put the state machine back to receive: {e}");
     }
+    // Same reasoning for the transmit oscillator, which `key_down` would have
+    // powered down had the over ended normally.
+    if let Err(e) = shared.phy.set_tx_lo_powered(&mut conn, false) {
+        tracing::debug!("PlutoSDR: could not power the transmit oscillator down: {e}");
+    }
     conn.exit();
     tracing::debug!("PlutoSDR: control thread finished");
 }
@@ -1629,6 +1651,7 @@ fn key_up(
         phy.set_tx_lo(conn, want)?;
         *tx_lo = phy.tx_lo(conn).ok().map(|at| (want, at));
     }
+    phy.set_tx_lo_powered(conn, true)?;
     // Tell the receive thread to stop *before* the state machine moves, so it
     // is already unwinding while the relay settles; the wait for it is below.
     if !shared.full_duplex {
@@ -1667,14 +1690,19 @@ fn key_up(
 /// put a gap in a receiver that is working.
 fn key_down(conn: &mut Connection, shared: &Shared, rx_hz: f64, ppm: f64) -> Result<()> {
     shared.tx_enabled.store(false, Ordering::Relaxed);
-    if shared.full_duplex {
-        return Ok(());
-    }
     // Wait for the transmit buffer to actually close before receive reclaims
-    // the link: on a USB 2.0 gadget there is only room for one of them.
+    // the link (on a USB 2.0 gadget there is only room for one of them) and
+    // before the transmit oscillator goes down under the end of the over.
     let deadline = Instant::now() + Duration::from_millis(500);
     while shared.tx_active.load(Ordering::Relaxed) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(2));
+    }
+    // In FDD the transmit chain stays live between overs: without this its LO
+    // leakage is a carrier on the transmit frequency for as long as the radio
+    // is open, full duplex or not.
+    shared.phy.set_tx_lo_powered(conn, false)?;
+    if shared.full_duplex {
+        return Ok(());
     }
     // After the buffer has drained, for the same reason key-up ran before it:
     // this drops the transmit GPO, and an amplifier switched out from under a

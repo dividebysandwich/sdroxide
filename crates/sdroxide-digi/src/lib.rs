@@ -1,7 +1,7 @@
 //! Digital-mode engines for sdroxide: the slotted FT8/FT4 and JS8 modes, the
 //! keyboard modems, and the image and voice modes.
 //!
-//! **Licensing:** this crate links `mfsk-core` (GPL-3.0-or-later) and carries
+//! **Licensing:** this crate links `mfsk-core` (GPL-3.0-only since 0.13.1) and carries
 //! the JS8 protocol tables transcribed from JS8Call (also GPL-3.0-or-later).
 //! It is the only crate in the workspace that does either, and it is used only
 //! in the native binary — the wasm remote client links none of it (all
@@ -29,6 +29,7 @@ pub mod hell_controller;
 pub mod js8;
 pub mod js8_controller;
 pub mod jt_controller;
+pub mod jtty_controller;
 pub mod modem;
 pub mod msk144_controller;
 pub mod navtex_controller;
@@ -47,6 +48,7 @@ pub mod squelch;
 pub mod sstv_controller;
 pub mod text_modem;
 pub mod timesig_controller;
+pub mod vara_controller;
 pub mod wefax_controller;
 pub mod wspr;
 pub mod wspr_controller;
@@ -64,6 +66,7 @@ pub use fst4_controller::Fst4Controller;
 pub use hell_controller::HellController;
 pub use js8_controller::Js8Controller;
 pub use jt_controller::JtController;
+pub use jtty_controller::JttyController;
 pub use modem::{
     ApHints, Ft8Modem, decode_fsk441_slot, decode_fst4_slot, decode_jt_slot, decode_msk144_slot,
     decode_q65_slot,
@@ -82,6 +85,7 @@ pub use scheduler::SlotScheduler;
 pub use sstv_controller::SstvController;
 pub use text_modem::TextModemController;
 pub use timesig_controller::TimeSigController;
+pub use vara_controller::VaraController;
 pub use wefax_controller::WefaxController;
 pub use wspr_controller::WsprController;
 
@@ -279,6 +283,28 @@ pub trait DigiEngine: Send {
 
     /// Packet: empty the terminal transcript, leaving the link alone.
     fn packet_term_clear(&mut self) {}
+
+    /// Whether this mode needs the receive audio in small blocks. An ARQ mode
+    /// does: after every over the far end answers at once, and a sound-card
+    /// rig delivering 16384-sample blocks leaves the station deaf for a third
+    /// of a second just when the answer starts. The engine reads in ~20 ms
+    /// blocks while this is true.
+    fn low_latency_rx(&self) -> bool {
+        false
+    }
+
+    // --- VARA HF --- the operator's panel; inert in every other mode.
+
+    /// VARA: call a station from the panel.
+    fn vara_connect(&mut self, _call: String) {}
+    /// VARA: send a line to the connected station.
+    fn vara_send(&mut self, _text: String) {}
+    /// VARA: hang up the panel's link cleanly.
+    fn vara_disconnect(&mut self) {}
+    /// VARA: send or stop a tune tone.
+    fn vara_tune(&mut self, _on: bool) {}
+    /// VARA: empty the panel's transcript.
+    fn vara_term_clear(&mut self) {}
     /// APRS: send one position beacon now. Still subject to CSMA — the
     /// operator asks for the channel, they do not take it.
     fn aprs_beacon_now(&mut self) {}
@@ -380,6 +406,8 @@ mod dispatch_tests {
             "aprs"
         } else if mode.is_packet() {
             "packet"
+        } else if mode.is_vara() {
+            "vara"
         } else if mode.is_rf_paint() {
             "rfpaint"
         } else if mode.is_fsq() {
@@ -415,6 +443,9 @@ mod dispatch_tests {
         // branch hands it an FT8 decoder and nothing downstream notices — no
         // error, no log line, just a receiver listening for another protocol.
         assert_eq!(pick(Mode::Js8), "js8");
+        // VARA is neither slotted nor a keyboard mode; under FT8's decoder it
+        // would sit in silence while a gateway called it.
+        assert_eq!(pick(Mode::VaraHf), "vara");
         // WSPR is the same trap as JS8, and worse: it is slotted, it is 4-FSK
         // in the same passband, and a controller handed FT8's decoder would sit
         // there finding nothing for ever without a word.

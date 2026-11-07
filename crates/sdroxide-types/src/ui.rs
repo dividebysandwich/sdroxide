@@ -506,6 +506,244 @@ pub struct Solar3dWindow {
     /// Outer (top-left, including decorations) position in points.
     #[serde(default)]
     pub pos: Option<[f32; 2]>,
+    /// The same position in screen pixels. Points don't survive a second
+    /// monitor at a different display scale: a new window starts with the
+    /// main screen's scale, so the same points land somewhere else. Pixels
+    /// are the same on every screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pos_px: Option<[f32; 2]>,
+}
+
+/// A module pulled out into its **own OS window**: where it last was, so
+/// reopening it — or the next start — puts it back rather than at a built-in
+/// size.
+///
+/// The same shape and the same Wayland caveat as [`Solar3dWindow`]: a client is
+/// given no absolute window position, so `pos` is `None` there and the
+/// compositor places the window. The **app-id** the window carries
+/// ([`DetachableModule::app_id`]) is what a compositor rule matches on to float
+/// it and pin it to a monitor.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DetachedWindow {
+    /// Inner (drawing-area) size in points.
+    pub size: [f32; 2],
+    /// Outer (top-left) position in points; `None` on Wayland.
+    #[serde(default)]
+    pub pos: Option<[f32; 2]>,
+}
+
+/// A module that can be pulled out of the main window into its own OS window —
+/// **undocked** — in the SDRuno mould: the spectrum on one monitor, the decoder
+/// on another. An enum keyed in [`UiSettings::detached`] rather than a field
+/// pair per module, so a new detachable module is a variant here plus its UI,
+/// nothing else. **Append only**: the variant's [`Self::index`] is its slot in
+/// the saved settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum DetachableModule {
+    /// The spectrum and waterfall.
+    Panadapter,
+    /// The mode's operating panel — the decoder list, the transcript and the
+    /// controls under the panadapter.
+    Panel,
+    /// The top control strip — the frequency readout, the S-meter and the
+    /// receiver and transmitter controls (SDRuno's "RX control").
+    Controls,
+    /// A **second** spectrum and waterfall — SDRuno's AUX SP. A second view of
+    /// the same receiver, with its own zoom and layers, not a second receiver.
+    AuxPanadapter,
+    /// The **band/mode selector** in a window of its own, where it can be as
+    /// wide as the operator likes without squeezing the operating panel.
+    BandMenu,
+}
+
+impl DetachableModule {
+    /// How many detachable modules there are — the length of
+    /// [`UiSettings::detached`], which is an array so `UiSettings` stays `Copy`.
+    pub const COUNT: usize = 5;
+
+    /// Every module, so a settings list or a test can walk them all.
+    pub const ALL: [DetachableModule; DetachableModule::COUNT] = [
+        DetachableModule::Panadapter,
+        DetachableModule::Panel,
+        DetachableModule::Controls,
+        DetachableModule::AuxPanadapter,
+        DetachableModule::BandMenu,
+    ];
+
+    /// This module's slot in [`UiSettings::detached`].
+    pub fn index(self) -> usize {
+        match self {
+            DetachableModule::Panadapter => 0,
+            DetachableModule::Panel => 1,
+            DetachableModule::Controls => 2,
+            DetachableModule::AuxPanadapter => 3,
+            DetachableModule::BandMenu => 4,
+        }
+    }
+
+    /// The window's **application id** — the handle a Wayland compositor rule
+    /// matches on to float this window and pin it to a monitor. A public
+    /// contract with the operator: change it and their rules stop matching.
+    pub fn app_id(self) -> &'static str {
+        match self {
+            DetachableModule::Panadapter => "sdroxide-panadapter",
+            DetachableModule::Panel => "sdroxide-panel",
+            DetachableModule::Controls => "sdroxide-controls",
+            DetachableModule::AuxPanadapter => "sdroxide-panadapter-aux",
+            DetachableModule::BandMenu => "sdroxide-bandmenu",
+        }
+    }
+}
+
+/// Whether one [`DetachableModule`] is undocked, and where its window last was.
+/// See [`UiSettings::detached`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct DetachedState {
+    /// True when the module is drawn in its own window instead of the main one.
+    pub detached: bool,
+    /// Where its window last was; `None` until it has been open once.
+    #[serde(default)]
+    pub window: Option<DetachedWindow>,
+}
+
+/// A named window arrangement — SDRuno's **workspace**: which modules are in
+/// their own OS windows, and where those windows are. SDRuno keeps up to ten and
+/// recalls them by name; so does this.
+///
+/// A **list of its own**, not a field in [`UiSettings`], because `UiSettings` is
+/// `Copy` and the whole UI passes it around by value. The list lives in
+/// `workspaces.json`, beside the memories and the logbook. A workspace is the
+/// arrangement only — where the furniture is, not what is switched on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct Workspace {
+    /// What the operator called it. Not an index: a name survives a reorder.
+    pub name: String,
+    /// One slot per [`DetachableModule`] in `index()` order **at save time**. A
+    /// `Vec` rather than the fixed array, so a workspace written by a build with
+    /// a module this one has not heard of still loads and applies the modules it
+    /// does know — the same tolerance [`UiSettings::detached`]'s reader has.
+    pub slots: Vec<DetachedState>,
+}
+
+/// How many workspaces may be saved — SDRuno's ten, and the ten number keys
+/// that recall them.
+pub const WORKSPACE_MAX: usize = 10;
+
+impl Workspace {
+    /// Snapshot the arrangement in `settings` under `name`.
+    pub fn capture(name: impl Into<String>, settings: &UiSettings) -> Self {
+        Self { name: name.into(), slots: settings.detached.to_vec() }
+    }
+
+    /// Put this arrangement back into `settings`, leaving any module the
+    /// workspace does not mention — a slot a newer or older build wrote —
+    /// docked.
+    pub fn apply(&self, settings: &mut UiSettings) {
+        let mut out = default_detached();
+        for (slot, saved) in out.iter_mut().zip(self.slots.iter()) {
+            *slot = *saved;
+        }
+        settings.detached = out;
+    }
+}
+
+fn default_detached() -> [DetachedState; DetachableModule::COUNT] {
+    [DetachedState::default(); DetachableModule::COUNT]
+}
+
+/// Read [`UiSettings::detached`] at any length. A config written by a build with
+/// fewer (or more) modules carries a shorter (or longer) list, and a derived
+/// array deserializer would reject the whole file over it — which would reset
+/// every other setting along with the window geometry. A short list leaves the
+/// modules it does not reach docked; a long one drops what this build does not
+/// know.
+fn detached_slots<'de, D>(d: D) -> Result<[DetachedState; DetachableModule::COUNT], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let list = Vec::<DetachedState>::deserialize(d)?;
+    let mut out = default_detached();
+    for (slot, state) in out.iter_mut().zip(list) {
+        *slot = state;
+    }
+    Ok(out)
+}
+
+/// The language the interface is drawn in: a BCP 47 tag such as `es` or
+/// `pt-BR`, or none to follow the operating system's.
+///
+/// A tag rather than an enum of the languages there are, because the list is
+/// whatever translations the client carries, and this crate knows none of
+/// them. A tag the client has no translation for is not an error: it falls
+/// back to the nearest it has, and to English last, the same as a system
+/// language it has never heard of. Held inline so [`UiSettings`] stays `Copy`.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub struct UiLanguage {
+    tag: [u8; UiLanguage::MAX_LEN],
+    len: u8,
+}
+
+impl UiLanguage {
+    /// The longest tag held. Language, script and region come to eleven
+    /// (`zh-Hant-TW`); the rest is room for a variant.
+    pub const MAX_LEN: usize = 23;
+
+    /// Follow the operating system's language — the default.
+    pub const SYSTEM: UiLanguage = UiLanguage { tag: [0; Self::MAX_LEN], len: 0 };
+
+    /// A language picked by tag. `None` for an empty tag, one too long to
+    /// hold, or one with a character no language tag has.
+    pub fn from_tag(tag: &str) -> Option<UiLanguage> {
+        let tag = tag.trim();
+        if tag.is_empty()
+            || tag.len() > Self::MAX_LEN
+            || !tag.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return None;
+        }
+        let mut out = Self::SYSTEM;
+        out.tag[..tag.len()].copy_from_slice(tag.as_bytes());
+        out.len = tag.len() as u8;
+        Some(out)
+    }
+
+    /// The picked tag, or `None` for the system's language.
+    pub fn tag(&self) -> Option<&str> {
+        // Only ever filled from a `&str` of ASCII, so this cannot fail.
+        (self.len > 0).then(|| std::str::from_utf8(&self.tag[..self.len as usize]).unwrap_or(""))
+    }
+
+    pub fn is_system(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl std::fmt::Debug for UiLanguage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.tag() {
+            Some(tag) => write!(f, "UiLanguage({tag})"),
+            None => f.write_str("UiLanguage(system)"),
+        }
+    }
+}
+
+/// Written as the bare tag, and as an empty string for the system's language,
+/// so `config.toml` reads `language = "es"`.
+impl Serialize for UiLanguage {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.tag().unwrap_or(""))
+    }
+}
+
+/// Anything that is not a tag it can hold — hand-edited nonsense, or a longer
+/// tag from some later build — reads as the system's language rather than
+/// failing the whole `[ui]` table, which would lose the theme and the layout
+/// along with it.
+impl<'de> Deserialize<'de> for UiLanguage {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let tag = String::deserialize(d)?;
+        Ok(UiLanguage::from_tag(&tag).unwrap_or(UiLanguage::SYSTEM))
+    }
 }
 
 /// User display preferences. All have defaults so a missing `[ui]` table loads.
@@ -595,6 +833,9 @@ pub struct UiSettings {
     pub bandplan_colors: [[u8; 3]; BandplanKind::COUNT],
     /// Which layout the window wears, or `Auto` to pick from the viewport.
     pub layout: LayoutMode,
+    /// The language the interface is drawn in — see [`UiLanguage`]. This
+    /// screen's preference, like the theme: a remote client picks its own.
+    pub language: UiLanguage,
     /// Colour theme for the UI chrome.
     pub theme: UiTheme,
     /// The shape buttons wear.
@@ -693,6 +934,42 @@ pub struct UiSettings {
     /// its own.
     #[serde(default)]
     pub solar3d_window: Option<Solar3dWindow>,
+    /// The AMP window in a window of its own rather than inside the main one,
+    /// as the solar-system window is. Desktop only; the browser keeps it in.
+    #[serde(default)]
+    pub amp_popped: bool,
+    /// Whether the AMP window was open, so it comes back as it was closed.
+    #[serde(default)]
+    pub amp_open: bool,
+    /// Where the popped-out AMP window was, as for the solar-system window.
+    #[serde(default)]
+    pub amp_window: Option<Solar3dWindow>,
+    /// Where the docked AMP window was inside the main one.
+    #[serde(default)]
+    pub amp_docked: Option<AmpDocked>,
+    /// The AMP window's meter picks: top and bottom of the left meter, then of
+    /// the right one, each as its place in the window's FWD, RFL, VDD, IDD, DRV
+    /// list, 255 for no bottom needle. `None` for the built-in picks.
+    #[serde(default)]
+    pub amp_meters: Option<[u8; 4]>,
+    /// Which modules are undocked into their own windows, and where those
+    /// windows last were — one [`DetachedState`] per [`DetachableModule`], in
+    /// `module.index()` order. An array rather than a map so `UiSettings` stays
+    /// `Copy`; read at any length, see [`detached_slots`].
+    ///
+    /// **Native only.** The browser has no second window and keeps every module
+    /// in-window, so the flags are ignored there. Machine-local: where a window
+    /// sits is a property of this screen.
+    #[serde(default = "default_detached", deserialize_with = "detached_slots")]
+    pub detached: [DetachedState; DetachableModule::COUNT],
+}
+
+/// The docked AMP window's place: its top-left corner and width, in points.
+/// Its height follows the width.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AmpDocked {
+    pub pos: [f32; 2],
+    pub width: f32,
 }
 
 /// Default for [`UiSettings::spot_colors`] — every kind on its stock tint.
@@ -773,6 +1050,7 @@ impl Default for UiSettings {
             spot_colors: default_spot_colors(),
             bandplan_colors: default_bandplan_colors(),
             layout: LayoutMode::Auto,
+            language: UiLanguage::SYSTEM,
             theme: UiTheme::Default,
             button_style: ChromeStyle::Angled,
             window_style: ChromeStyle::Angled,
@@ -794,11 +1072,34 @@ impl Default for UiSettings {
             map_cities: true,
             panadapter_clock: true,
             solar3d_window: None,
+            amp_popped: false,
+            amp_open: false,
+            amp_window: None,
+            amp_docked: None,
+            amp_meters: None,
+            detached: default_detached(),
         }
     }
 }
 
 impl UiSettings {
+    /// One module's undocked state, or the docked default if it has never been
+    /// touched.
+    pub fn detached_state(&self, module: DetachableModule) -> DetachedState {
+        self.detached[module.index()]
+    }
+
+    /// Whether a module is undocked.
+    pub fn is_detached(&self, module: DetachableModule) -> bool {
+        self.detached[module.index()].detached
+    }
+
+    /// Set (or clear) a module's undocked flag, leaving its remembered window
+    /// geometry alone.
+    pub fn set_detached(&mut self, module: DetachableModule, on: bool) {
+        self.detached[module.index()].detached = on;
+    }
+
     /// The steps the tuning buttons cycle through, in hertz — from the 10 Hz
     /// that trims a carrier onto zero-beat up to the 25 kHz of an FM channel,
     /// by way of the AM broadcast spacings (9 kHz in Regions 1 and 3, 10 kHz in
@@ -977,5 +1278,61 @@ mod serde_tests {
         // order: it is written out, not derived.
         assert!(LayoutMode::ALL.contains(&LayoutMode::Auto));
         assert_eq!(LayoutMode::ALL.len(), 5);
+    }
+
+    /// The language is written as the bare tag, the system's as an empty
+    /// string, and anything that is not a tag reads back as the system's
+    /// rather than costing the rest of `[ui]`.
+    #[test]
+    fn the_language_round_trips_as_a_bare_tag() {
+        let es = UiLanguage::from_tag("es").unwrap();
+        assert_eq!(serde_json::to_string(&es).unwrap(), "\"es\"");
+        assert_eq!(serde_json::to_string(&UiLanguage::SYSTEM).unwrap(), "\"\"");
+        let back: UiLanguage = serde_json::from_str("\"pt-BR\"").unwrap();
+        assert_eq!(back.tag(), Some("pt-BR"));
+        let none: UiLanguage = serde_json::from_str("\"\"").unwrap();
+        assert!(none.is_system());
+        let junk: UiLanguage = serde_json::from_str("\"<script>\"").unwrap();
+        assert!(junk.is_system());
+        let long: UiLanguage = serde_json::from_str(&format!("\"{}\"", "a".repeat(40))).unwrap();
+        assert!(long.is_system());
+        // A config written before the field existed loads with the system's.
+        let ui: UiSettings = serde_json::from_str("{}").unwrap();
+        assert!(ui.language.is_system());
+    }
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::*;
+
+    /// A workspace puts back exactly the arrangement it captured, and one saved
+    /// by a build with fewer modules leaves the rest docked.
+    #[test]
+    fn a_workspace_round_trips_and_tolerates_another_builds_length() {
+        let mut ui = UiSettings::default();
+        ui.set_detached(DetachableModule::Panadapter, true);
+        ui.detached[DetachableModule::Panel.index()].window =
+            Some(DetachedWindow { size: [500.0, 400.0], pos: Some([10.0, 20.0]) });
+        let ws = Workspace::capture("Contest", &ui);
+        let mut other = UiSettings::default();
+        other.set_detached(DetachableModule::Controls, true);
+        ws.apply(&mut other);
+        assert_eq!(other.detached, ui.detached);
+
+        let short = Workspace {
+            name: "Old".into(),
+            slots: vec![DetachedState { detached: true, window: None }],
+        };
+        let mut target = UiSettings::default();
+        target.set_detached(DetachableModule::BandMenu, true);
+        short.apply(&mut target);
+        assert!(target.is_detached(DetachableModule::Panadapter));
+        assert!(
+            !target.is_detached(DetachableModule::BandMenu),
+            "a slot the workspace never had stays docked"
+        );
+        let json = serde_json::to_string(&ws).unwrap();
+        assert_eq!(serde_json::from_str::<Workspace>(&json).unwrap(), ws);
     }
 }

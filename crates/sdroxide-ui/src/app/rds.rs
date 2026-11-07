@@ -9,6 +9,7 @@
 //! what has already been received rather than waiting for the station to send it
 //! again. See [`sdroxide_types::RdsStandard`].
 
+use crate::i18n::{Tr, tr};
 use eframe::egui::{self, Color32, RichText};
 use sdroxide_types::{RdsData, RdsGroupLog, RdsStandard, pty_name, rt_plus_class};
 
@@ -75,20 +76,18 @@ impl SdroxideApp {
             return;
         }
         let mut open = self.show_rds;
-        let resp = egui::Window::new("RDS")
-            .id(crate::layout::salted_id(ctx, "RDS"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 460.0))
-            .default_height(crate::layout::window_h(ctx, 420.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.rds_body(ui)
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+        let tool_title = "RDS";
+        let mut tool_st = self.take_tool_state("RDS");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("RDS", tool_title, [460.0, 420.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| self.rds_body(ui),
+        );
+        self.put_tool_state("RDS", tool_st);
         self.show_rds = open;
     }
 
@@ -99,8 +98,10 @@ impl SdroxideApp {
         let chosen = self.view.rds_standard;
 
         crate::chrome::tab_bar(ui, |ui, bar| {
-            for (tab, label) in [(RdsTab::Station, "STATION"), (RdsTab::Diagnostics, "DIAGNOSTICS")]
-            {
+            for (tab, label) in [
+                (RdsTab::Station, tr!("rds-station")),
+                (RdsTab::Diagnostics, tr!("rds-diagnostics")),
+            ] {
                 if bar.tab(ui, self.rds_tab == tab, label).clicked() {
                     self.rds_tab = tab;
                 }
@@ -112,24 +113,17 @@ impl SdroxideApp {
             // codes are already here, so this re-labels everything at once.
             egui::ComboBox::from_id_salt("rds-standard")
                 .selected_text(if chosen == RdsStandard::Auto {
-                    format!("Auto ({})", standard.label())
+                    tr!("rds-auto", standard = standard.tr())
                 } else {
-                    chosen.label().to_string()
+                    chosen.tr().to_string()
                 })
                 .show_styled(ui, |ui| {
                     for s in RdsStandard::ALL {
-                        ui.selectable_value(&mut self.view.rds_standard, s, s.label());
+                        ui.selectable_value(&mut self.view.rds_standard, s, s.tr());
                     }
                 })
                 .response
-                .on_hover_text(
-                    "Which programme-type table to read this station against. RDS is used \
-                     everywhere outside North America; RBDS adds the call sign a US station's \
-                     identity code spells out. Auto follows the extended country code the \
-                     station sends, and until one arrives it will not spell out a call sign — \
-                     the identity ranges it would read are shared with nine countries' RDS \
-                     codes, so select RBDS to name a station that sends no country code.",
-                );
+                .on_hover_text(tr!("rds-which-programme-type-table-read"));
         });
         // No separator: the strip's own baseline is the line between the tabs
         // and the page they open.
@@ -147,16 +141,15 @@ impl SdroxideApp {
     fn rds_station(&mut self, ui: &mut egui::Ui, standard: RdsStandard, chosen: RdsStandard) {
         let dim = |s: &str| RichText::new(s).size(9.5).color(dim_ink());
         let Some(d) = self.rds.as_ref() else {
-            ui.label(dim("waiting for the receiver…"));
+            ui.label(dim(&tr!("rds-waiting-receiver")));
             return;
         };
 
         if !d.sync && d.is_empty() {
-            ui.label(dim(if self.state.rx[0].mode == sdroxide_types::Mode::Wfm {
-                "No RDS on this station. Not every transmitter carries it, and a weak \
-                 one may carry it without it arriving."
+            ui.label(dim(&if self.state.rx[0].mode == sdroxide_types::Mode::Wfm {
+                tr!("rds-no-rds-station-not-every")
             } else {
-                "RDS is only carried on WFM broadcast stations."
+                tr!("rds-rds-only-carried-wfm-broadcast")
             }));
             return;
         }
@@ -166,8 +159,8 @@ impl SdroxideApp {
             let title = d.title(chosen).unwrap_or_else(|| "—".to_string());
             ui.label(RichText::new(title).size(22.0).strong());
             if !d.sync {
-                ui.label(RichText::new("HOLDING").size(9.5).color(crate::theme::ALERT()))
-                    .on_hover_text("Block sync has dropped — this is the last station read.");
+                ui.label(RichText::new(tr!("rds-holding")).size(9.5).color(crate::theme::ALERT()))
+                    .on_hover_text(tr!("rds-block-sync-has-dropped-last"));
             }
         });
 
@@ -198,42 +191,52 @@ impl SdroxideApp {
                         if let Some(call) = d.call_sign(chosen) {
                             v = format!("{pi:04X}  ({call})");
                         }
-                        row(ui, "IDENTITY", v);
+                        row(ui, &tr!("rds-identity"), v);
                     }
                     if let Some(pty) = d.pty {
-                        row(ui, "PROGRAMME", format!("{}  ({pty})", pty_name(pty, standard)));
+                        row(
+                            ui,
+                            &tr!("rds-programme"),
+                            format!("{}  ({pty})", pty_name(pty, standard)),
+                        );
                     }
                     if let Some(n) = d.ptyn.as_ref().filter(|n| !n.is_empty()) {
-                        row(ui, "DESCRIBED AS", n.clone());
+                        row(ui, &tr!("rds-described"), n.clone());
                     }
                     if let Some(m) = d.music {
-                        row(ui, "CONTENT", if m { "Music" } else { "Speech" }.to_string());
+                        row(
+                            ui,
+                            &tr!("rds-content"),
+                            if m { tr!("rds-music") } else { tr!("rds-speech") }.to_string(),
+                        );
                     }
                     row(
                         ui,
-                        "TRAFFIC",
+                        &tr!("rds-traffic"),
                         match (d.tp, d.ta) {
-                            (_, true) => "announcement on air now".to_string(),
-                            (true, false) => "carried by this station".to_string(),
-                            (false, false) => "not carried".to_string(),
+                            (_, true) => tr!("rds-announcement-air-now").to_string(),
+                            (true, false) => tr!("rds-carried-station").to_string(),
+                            (false, false) => tr!("rds-not-carried").to_string(),
                         },
                     );
                     if let Some(rt) = d.radiotext.as_ref().filter(|t| !t.is_empty()) {
-                        ui.label(dim("RADIO TEXT"));
+                        ui.label(dim(&tr!("rds-radio-text")));
                         ui.label(RichText::new(rt.clone()).size(11.0));
                         ui.end_row();
                     }
                     if let Some(c) = d.clock {
-                        row(ui, "STATION CLOCK", c.label());
+                        row(ui, &tr!("rds-station-clock"), c.label());
                     }
                     if let Some(ecc) = d.ecc {
-                        row(ui, "COUNTRY CODE", format!("{ecc:02X}"));
+                        row(ui, &tr!("rds-country-code"), format!("{ecc:02X}"));
                     }
                     if !d.af.is_empty() {
                         let list: Vec<String> =
                             d.af.iter().map(|hz| format!("{:.1}", *hz as f64 / 1e6)).collect();
-                        ui.label(dim("ALSO ON"));
-                        ui.label(RichText::new(format!("{} MHz", list.join(", "))).size(11.0));
+                        ui.label(dim(&tr!("rds-also")));
+                        ui.label(
+                            RichText::new(format!("{list} MHz", list = list.join(", "))).size(11.0),
+                        );
                         ui.end_row();
                     }
                 },
@@ -243,11 +246,11 @@ impl SdroxideApp {
             let extra = d.rt_plus.as_ref().map(|r| r.other.clone()).unwrap_or_default();
             if !extra.is_empty() {
                 ui.add_space(8.0);
-                ui.label(dim("ALSO TAGGED"));
+                ui.label(dim(&tr!("rds-also-tagged")));
                 for (class, text) in extra {
                     let name = rt_plus_class(class)
                         .map(str::to_string)
-                        .unwrap_or_else(|| format!("type {class}"));
+                        .unwrap_or_else(|| tr!("rds-type", class = class));
                     ui.label(RichText::new(format!("{name}: {text}")).size(10.5));
                 }
             }
@@ -257,29 +260,28 @@ impl SdroxideApp {
     fn rds_diagnostics(&mut self, ui: &mut egui::Ui) {
         let dim = |s: &str| RichText::new(s).size(9.5).color(dim_ink());
         let Some(d) = self.rds.as_ref() else {
-            ui.label(dim("waiting for the receiver…"));
+            ui.label(dim(&tr!("rds-waiting-receiver")));
             return;
         };
         let stats = d.stats;
 
         ui.horizontal(|ui| {
             let (label, colour) = if d.sync {
-                ("SYNC", crate::theme::CYAN_DIM())
+                (tr!("rds-sync"), crate::theme::CYAN_DIM())
             } else {
-                ("NO SYNC", crate::theme::ALERT())
+                (tr!("rds-no-sync"), crate::theme::ALERT())
             };
             ui.label(RichText::new(label).size(11.0).strong().color(colour));
-            ui.label(dim(&format!("· {} groups", stats.groups)));
+            ui.label(dim(&tr!("rds-groups", groups = stats.groups)));
             let ber = stats.block_error_rate();
-            ui.label(dim(&format!("· {:.1} % of blocks in error", ber * 100.0))).on_hover_text(
-                "Blocks that failed their check, plus those the error corrector had to \
-                     repair. Corrections count as errors on purpose: a rising figure is the \
-                     first sign a station is about to stop decoding.",
-            );
+            ui.label(dim(&tr!("rds-blocks-error", ber = format!("{:.1}", ber * 100.0))))
+                .on_hover_text(tr!("rds-blocks-failed-their-check-plus"));
         });
-        ui.label(dim(&format!(
-            "{} clean · {} corrected · {} lost",
-            stats.blocks_ok, stats.blocks_corrected, stats.blocks_bad
+        ui.label(dim(&tr!(
+            "rds-clean-corrected-lost",
+            blocks_ok = stats.blocks_ok,
+            blocks_corrected = stats.blocks_corrected,
+            blocks_bad = stats.blocks_bad
         )));
 
         // The cause, when it is this one. A block error rate is a symptom, and
@@ -292,18 +294,12 @@ impl SdroxideApp {
         if self.meters.is_some_and(|m| m.adc_overloaded()) {
             ui.add_space(4.0);
             ui.label(
-                RichText::new("FRONT END OVERLOADING")
+                RichText::new(tr!("rds-front-end-overloading"))
                     .size(10.5)
                     .strong()
                     .color(crate::theme::ALERT()),
             )
-            .on_hover_text(
-                "The converter is clipping, which puts distortion right across the \
-                 multiplex — including on the 57 kHz data subcarrier. Turn the RF gain \
-                 down, or switch in an attenuator: RDS goes about a decibel before \
-                 anything is audible, so a station that sounds perfect can still be far \
-                 too strong for its data to survive.",
-            );
+            .on_hover_text(tr!("rds-converter-clipping-which-puts-distortion"));
         }
         ui.add_space(6.0);
 
@@ -317,7 +313,7 @@ impl SdroxideApp {
             .filter(|&(_, &n)| n > 0)
             .map(|(i, n)| format!("{}{}×{}", i / 2, if i % 2 == 0 { 'A' } else { 'B' }, n))
             .collect();
-        ui.label(dim("GROUP TYPES"));
+        ui.label(dim(&tr!("rds-group-types")));
         ui.label(
             RichText::new(if seen.is_empty() { "—".to_string() } else { seen.join("  ") })
                 .size(10.5)
@@ -325,13 +321,13 @@ impl SdroxideApp {
         );
         ui.add_space(6.0);
 
-        ui.label(dim("RECENT GROUPS — newest last"));
+        ui.label(dim(&tr!("rds-recent-groups-newest-last")));
         egui::ScrollArea::vertical().id_salt("rds-log").stick_to_bottom(true).show(ui, |ui| {
             for g in &self.rds_log {
                 ui.label(rds_log_line(g));
             }
             if self.rds_log.is_empty() {
-                ui.label(dim("nothing decoded yet"));
+                ui.label(dim(&tr!("rds-nothing-decoded-yet")));
             }
         });
     }

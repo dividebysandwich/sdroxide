@@ -12,6 +12,7 @@
 //! does, which is what makes them worth watching while a station is being
 //! aligned or an antenna turned.
 
+use crate::i18n::tr;
 use eframe::egui::{self, Color32, RichText};
 use sdroxide_types::{Command, HdRadioStatus, Mode};
 
@@ -50,22 +51,20 @@ impl SdroxideApp {
             return;
         }
         let mut open = self.show_hd;
-        let resp = egui::Window::new("HD Radio")
-            .id(crate::layout::salted_id(ctx, "HD Radio"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 440.0))
-            .default_height(crate::layout::window_h(ctx, 360.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.hd_body(ui)
-            });
-        if let Some(r) = &resp {
-            cmds.extend(r.inner.clone().unwrap_or_default());
-        }
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
+        let tool_title = tr!("hd-hd-radio");
+        let mut tool_st = self.take_tool_state("HD Radio");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        let resp = crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("HD Radio", &tool_title, [440.0, 360.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| self.hd_body(ui),
+        );
+        self.put_tool_state("HD Radio", tool_st);
+        if let Some(c) = resp {
+            cmds.extend(c);
         }
         self.show_hd = open;
     }
@@ -75,15 +74,12 @@ impl SdroxideApp {
         let dim = |s: &str| RichText::new(s).size(9.5).color(dim_ink());
 
         let Some(d) = self.hd.clone() else {
-            ui.label(dim("waiting for the receiver…"));
+            ui.label(dim(&tr!("hd-waiting-receiver")));
             return cmds;
         };
 
         if self.state.rx[0].mode != Mode::HdRadio {
-            ui.label(dim(
-                "Not in HD Radio. Set the mode to HD Radio on an FM broadcast carrying the \
-                 digital sidecars — the dial goes on the analog carrier's centre, not beside it.",
-            ));
+            ui.label(dim(&tr!("hd-not-hd-radio-set-mode")));
             ui.add_space(6.0);
         }
 
@@ -95,11 +91,7 @@ impl SdroxideApp {
             return cmds;
         }
         if !d.locked {
-            ui.label(dim(
-                "No HD Radio lock. The digital sidebands are transmitted about 20 dB below \
-                 the analog carrier, so a listenable station can still be too noisy to \
-                 decode: the decoder needs a few seconds on a clean one.",
-            ));
+            ui.label(dim(&tr!("hd-no-hd-radio-lock-digital")));
             return cmds;
         }
 
@@ -122,8 +114,8 @@ impl SdroxideApp {
             ui.painter().circle_filled(rect.center(), 3.5, ink);
         };
         let stages = [
-            ("SYNC", d.locked, "OFDM frame timing recovered"),
-            ("AUDIO", d.audio, "Audio frames decoding"),
+            (tr!("hd-sync"), d.locked, tr!("hd-ofdm-frame-timing-recovered")),
+            (tr!("hd-audio"), d.audio, tr!("hd-audio-frames-decoding")),
         ];
         ui.horizontal_wrapped(|ui| {
             for (label, on, hover) in stages {
@@ -154,10 +146,14 @@ impl SdroxideApp {
     fn hd_quality_history(&self, ui: &mut egui::Ui) {
         let dim = |s: &str| RichText::new(s).size(9.5).color(dim_ink());
         ui.horizontal(|ui| {
-            ui.label(dim("QUALITY"));
-            ui.label(RichText::new("LOWER").size(9.0).color(Color32::from_rgb(90, 190, 230)));
-            ui.label(RichText::new("UPPER").size(9.0).color(Color32::from_rgb(150, 210, 120)));
-            ui.label(dim("last minute"));
+            ui.label(dim(&tr!("hd-quality")));
+            ui.label(
+                RichText::new(tr!("hd-lower")).size(9.0).color(Color32::from_rgb(90, 190, 230)),
+            );
+            ui.label(
+                RichText::new(tr!("hd-upper")).size(9.0).color(Color32::from_rgb(150, 210, 120)),
+            );
+            ui.label(dim(&tr!("hd-last-minute")));
         });
 
         let (rect, _) =
@@ -172,7 +168,7 @@ impl SdroxideApp {
             p.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "waiting for a locked signal",
+                tr!("hd-waiting-locked-signal"),
                 egui::FontId::proportional(10.0),
                 dim_ink(),
             );
@@ -226,32 +222,26 @@ impl SdroxideApp {
         let val = |s: String| RichText::new(s).size(11.0);
 
         egui::Grid::new("hd-signal").num_columns(4).spacing([14.0, 3.0]).show(ui, |ui| {
-            ui.label(dim("MER L"));
+            ui.label(dim(&tr!("hd-mer-l")));
             ui.label(val(format!("{:.1} dB", d.mer_lower_db)))
-                .on_hover_text("Modulation error ratio of the lower digital sideband.");
-            ui.label(dim("MER U"));
+                .on_hover_text(tr!("hd-modulation-error-ratio-lower-digital"));
+            ui.label(dim(&tr!("hd-mer-u")));
             ui.label(val(format!("{:.1} dB", d.mer_upper_db)))
-                .on_hover_text("Modulation error ratio of the upper digital sideband.");
+                .on_hover_text(tr!("hd-modulation-error-ratio-upper-digital"));
             ui.end_row();
 
-            ui.label(dim("CBER"));
-            ui.label(val(format!("{:.2e}", d.cber))).on_hover_text(
-                "Channel bit-error ratio after the inner code. Below about 1e-3 the outer \
-                 code can correct it; above that the audio starts to break up.",
-            );
-            ui.label(dim("OFFSET"));
-            ui.label(val(format!("{:+.0} Hz", d.freq_offset_hz))).on_hover_text(
-                "Residual carrier frequency offset. Large and steady means the receiver's \
-                 reference is off, not the broadcast.",
-            );
+            ui.label(dim(&tr!("hd-cber")));
+            ui.label(val(format!("{:.2e}", d.cber)))
+                .on_hover_text(tr!("hd-channel-bit-error-ratio-after"));
+            ui.label(dim(&tr!("hd-offset")));
+            ui.label(val(format!("{:+.0} Hz", d.freq_offset_hz)))
+                .on_hover_text(tr!("hd-residual-carrier-frequency-offset-large"));
             ui.end_row();
 
             if d.psmi > 0 {
-                ui.label(dim("PSMI"));
-                ui.label(val(format!("MP{}", d.psmi))).on_hover_text(
-                    "Primary Service Mode Indicator: which of the FM hybrid service modes \
-                     the station is transmitting.",
-                );
+                ui.label(dim(&tr!("hd-psmi")));
+                ui.label(val(format!("MP{}", d.psmi)))
+                    .on_hover_text(tr!("hd-primary-service-mode-indicator-which"));
                 ui.label("");
                 ui.label("");
                 ui.end_row();
@@ -273,13 +263,14 @@ impl SdroxideApp {
         if d.audio_services.len() > 1 {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label(dim("PROGRAMME"));
+                ui.label(dim(&tr!("hd-programme")));
                 for svc in &d.audio_services {
                     let on = svc.program == d.program;
                     let label = format!("HD-{}", svc.program_number());
-                    let mut hover = format!("Decode {} ({})", label, svc.codec_label());
+                    let mut hover =
+                        tr!("hd-decode", value = label, codec_label = svc.codec_label());
                     if svc.restricted() {
-                        hover.push_str(" — restricted access");
+                        hover.push_str(&tr!("hd-restricted-access"));
                     }
                     if crate::chrome::chip(ui, on, label).on_hover_text(hover).clicked() && !on {
                         cmds.push(Command::SetHdProgram { program: svc.program });

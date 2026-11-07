@@ -5,6 +5,7 @@
 //! so the frame draws the newest state, and the repaint request at the end is
 //! what keeps the app idling instead of spinning when no stream is flowing.
 
+use crate::i18n::tr;
 use eframe::egui::{self, Color32, RichText};
 use sdroxide_types::{Band, Command, Mode, RadioEvent, SpectrumConfig, Spot};
 
@@ -16,13 +17,14 @@ use crate::app::net::auto_upload_adif;
 use crate::app::persist::persist_qso_log;
 use crate::app::settings::servers::TciServerStatus;
 use crate::app::spectrum::CFG_DEBOUNCE_S;
+use crate::app::undocked::empty_centre;
 
 /// Repaint-poll cadence when no spectrum stream is flowing (startup, connection
 /// lost, stalled stream) — the app truly idles between these wakes.
 const IDLE_POLL_MS: u64 = 250;
 
 /// The stream counts as stalled after this long without a new frame (seconds).
-const STREAM_STALE_S: f64 = 1.0;
+pub(in crate::app) const STREAM_STALE_S: f64 = 1.0;
 
 /// The wall clock, top-right of the panadapter: UTC and the operator's own
 /// local time, so a listener always has both in view. Draw-only over the
@@ -130,6 +132,29 @@ fn notice_banner_colors() -> (Color32, Color32, Color32, Color32) {
     }
 }
 
+/// Everything the panadapter draw needs that is derived from the radio's state
+/// and the current mode, gathered by [`SdroxideApp::panadapter_inputs`].
+///
+/// The point is that [`SdroxideApp::draw_panadapter`] is self-contained: it is
+/// callable from the main window *or* a detached window without the frame
+/// loop's branch having to compute a dozen locals first. The one thing that
+/// must still run before the draw — the sub-band view-fitting that sets
+/// `view.view_lo_hz` — stays in the frame loop, because it is state the draw
+/// reads rather than an argument to it.
+pub(in crate::app) struct PanadapterInputs {
+    cursor: Option<spectrum_view::AudioCursor>,
+    dxped: sdroxide_types::DxpedMode,
+    auto_tx_freq: bool,
+    hold_tx_freq: bool,
+    markers: Vec<f32>,
+    skimmer: Vec<sdroxide_types::SkimmerSpot>,
+    alpha: Vec<f32>,
+    net_spots: Vec<Spot>,
+    net_alpha: Vec<f32>,
+    ism: Vec<spectrum_view::IsmLabel>,
+    mem: Vec<crate::widgets::memories::MemMark>,
+}
+
 impl eframe::App for SdroxideApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -186,6 +211,11 @@ impl eframe::App for SdroxideApp {
             crate::theme::apply_visuals(&ctx);
             ctx.request_repaint();
         }
+        if self.applied_language != self.ui_settings.language {
+            self.applied_language = self.ui_settings.language;
+            crate::i18n::set_language(self.applied_language);
+            ctx.request_repaint();
+        }
         // The panadapter and skimmer font sizes need no visuals rewrite —
         // everything they size is laid out per frame — so they are simply
         // re-stored each frame.
@@ -239,6 +269,9 @@ impl eframe::App for SdroxideApp {
         }
 
         let mut cmds = Vec::new();
+        // An FDM-DUO's power buttons and the AMP panel need the radio's
+        // settings from the first frame, not from when Settings is opened.
+        self.load_radio_cfg_for_duo();
         // A channel list chosen in the memories window: parsed here and sent
         // to the engine, which owns the list and the numbering in it.
         self.poll_chirp_import(&mut cmds);
@@ -263,6 +296,15 @@ impl eframe::App for SdroxideApp {
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F1)) {
                 self.help.open = !self.help.open;
             }
+            // **The window keys.** `Ctrl+Alt+W` opens the module-windows list —
+            // the only route that works with every window docked, which is what
+            // makes a window lost on another workspace recoverable on a
+            // keyboard-only desktop — and `Ctrl+Alt+F` floats the operating
+            // panel or docks it again. Handled here, like F1, but not while a
+            // text field has focus: on Windows AltGr is Ctrl+Alt, so there a
+            // chord with Ctrl and Alt in it can be typing.
+            #[cfg(not(target_arch = "wasm32"))]
+            self.window_keys(&ctx);
             // An open manual takes the scrolling keys before the bindings run,
             // so reading it never tunes the radio at the same time.
             self.help.grab_keys(&ctx);
@@ -288,17 +330,22 @@ impl eframe::App for SdroxideApp {
             }
         }
 
-        egui::Panel::top(crate::layout::salted_id(&ctx, "topbar"))
-            .frame(
-                egui::Frame::new()
-                    .fill(crate::theme::BG_DEEP())
-                    .inner_margin(egui::Margin::symmetric(8, 6)),
-            )
-            .show(ui, |ui| {
-                crate::chrome::angled_frame(ui, crate::theme::PINK(), |ui| {
-                    self.top_bar(ui, &mut cmds);
+        // The control strip undocked into a window of its own (the RX control
+        // console) is drawn there by the shell, so the main window gives its
+        // row to the panadapter.
+        if !self.controls_detached() {
+            egui::Panel::top(crate::layout::salted_id(&ctx, "topbar"))
+                .frame(
+                    egui::Frame::new()
+                        .fill(crate::theme::BG_DEEP())
+                        .inner_margin(egui::Margin::symmetric(8, 6)),
+                )
+                .show(ui, |ui| {
+                    crate::chrome::angled_frame(ui, crate::theme::PINK(), |ui| {
+                        self.top_bar(ui, &mut cmds);
+                    });
                 });
-            });
+        }
         // A persistent radio-audio warning (input unavailable / mono-for-IQ)
         // rides above the panadapter with a dismiss button, so a silent RX
         // failure is explained rather than reading as "waiting for spectrum".
@@ -323,18 +370,17 @@ impl eframe::App for SdroxideApp {
                             // actually clears it in the engine.
                             if let Some(swr) = self.state.tx.swr_tripped {
                                 if ui
-                                    .button(RichText::new("Acknowledge").size(13.0))
-                                    .on_hover_text(format!(
-                                        "Re-enables transmit after {swr:.1}:1. Check the antenna \
-                                         first: if the fault is still there, the next \
-                                         transmission stops too."
+                                    .button(RichText::new(tr!("frame-acknowledge")).size(13.0))
+                                    .on_hover_text(tr!(
+                                        "frame-re-enables-transmit-after-1",
+                                        swr = format!("{:.1}", swr)
                                     ))
                                     .clicked()
                                 {
                                     cmds.push(Command::ClearSwrTrip);
                                     self.radio_notice = None;
                                 }
-                            } else if ui.small_button("Dismiss").clicked() {
+                            } else if ui.small_button(tr!("frame-dismiss")).clicked() {
                                 self.radio_notice = None;
                             }
                         });
@@ -368,19 +414,20 @@ impl eframe::App for SdroxideApp {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(RichText::new("⚠").size(15.0).color(mark));
                         ui.label(
-                            RichText::new(format!(
-                                "SDRoxide {version} has been released — this is {}.",
-                                sdroxide_version::VERSION
+                            RichText::new(tr!(
+                                "frame-sdroxide-has-been-released",
+                                version = version,
+                                sdroxide_version = sdroxide_version::VERSION
                             ))
                             .size(13.0)
                             .color(ink),
                         );
                         ui.hyperlink_to(
-                            RichText::new("Get it at sdroxide.com").size(13.0),
+                            RichText::new(tr!("frame-get-sdroxide-com")).size(13.0),
                             "https://sdroxide.com/",
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("Dismiss").clicked() {
+                            if ui.small_button(tr!("frame-dismiss")).clicked() {
                                 crate::app::persist::persist_dismissed_update(&version);
                                 self.update_notice = None;
                             }
@@ -393,13 +440,7 @@ impl eframe::App for SdroxideApp {
         // The broadcast stations are refreshed first, before anything reads
         // them: the overlay here, the SPOTS list and the world map all do.
         self.refresh_broadcast_spots(now_unix());
-        let (net_spots, net_alpha) = self.net_overlay(now_unix());
         let mut clicked_spot: Option<Spot> = None;
-        // Built once for both panadapter call sites: the same devices are
-        // labelled whichever layout is on screen.
-        let ism_labels = self.ism_overlay();
-        // Likewise the memory marks along the bottom of the waterfall.
-        let mem_marks = self.memory_overlay();
         // A docked band/mode selector takes a column off the right of the
         // panadapter before either draws. Shown here, after the top bar and the
         // notices, so the column sits beside the waterfall rather than under the
@@ -413,28 +454,63 @@ impl eframe::App for SdroxideApp {
             // Seconds until the redial that is already coming, so the screen
             // can say what is going to happen rather than only what went wrong.
             let due_in = self.retry_at.map(|at| (at - crate::time::now_unix_f64()).max(0.0));
+            // A `wss://` server whose certificate nothing vouches for: show it
+            // and offer to trust it, as the Wavelog settings do (issue #736).
+            let untrusted = self.ctrl.untrusted_cert();
             let mut retry = false;
+            let mut trust = false;
             ui.vertical_centered(|ui| {
                 // Roughly where `centered_and_justified` used to put the text,
                 // with the button under it rather than beside it.
-                ui.add_space(ui.available_height() * 0.4);
+                ui.add_space(ui.available_height() * if untrusted.is_some() { 0.25 } else { 0.4 });
                 ui.label(RichText::new(err).size(18.0).color(crate::theme::ALERT()));
+                if let Some(fp) = untrusted.as_deref() {
+                    ui.add_space(12.0);
+                    ui.label(
+                        RichText::new(tr!("frame-certificate-not-signed-authority")).size(13.0),
+                    );
+                    ui.add_space(4.0);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(sdroxide_types::fingerprint_display(fp))
+                                .monospace()
+                                .size(12.0)
+                                .strong(),
+                        )
+                        .selectable(true),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(tr!("frame-compare-certificate-trust-only-if-match"))
+                            .size(12.0)
+                            .color(crate::theme::gray(150)),
+                    );
+                    ui.add_space(8.0);
+                    trust = ui
+                        .button(RichText::new(tr!("frame-trust-certificate-connect")).size(16.0))
+                        .clicked();
+                }
                 if offer_retry {
                     ui.add_space(10.0);
                     ui.label(
                         RichText::new(match due_in {
-                            Some(s) if s >= 1.0 => format!("Reconnecting in {}s…", s.ceil() as u64),
-                            Some(_) => "Reconnecting…".to_string(),
-                            None => "Not connected.".to_string(),
+                            Some(s) if s >= 1.0 => {
+                                tr!("frame-reconnecting-s", value = s.ceil() as u64)
+                            }
+                            Some(_) => tr!("frame-reconnecting").to_string(),
+                            None => tr!("frame-not-connected").to_string(),
                         })
                         .size(13.0)
                         .color(crate::theme::gray(150)),
                     );
                     ui.add_space(10.0);
-                    retry = ui.button(RichText::new("Reconnect now").size(16.0)).clicked();
+                    retry =
+                        ui.button(RichText::new(tr!("frame-reconnect-now")).size(16.0)).clicked();
                 }
             });
-            if retry {
+            if trust && let Some(fp) = untrusted {
+                self.trust_cert_and_reconnect(&fp);
+            } else if retry {
                 // Asking by hand puts the wait back to the bottom: the operator
                 // has some reason to believe the far end is up, and making them
                 // watch out a backoff they did not choose is not an answer.
@@ -536,63 +612,15 @@ impl eframe::App for SdroxideApp {
                 self.view.view_hi_hz = sub_hi;
             }
             self.digi_view_fit = Some((mode, dial, center));
-            // Which side of the dial the mode's audio band is on. Every tone
-            // offset below is a distance from the dial and every marker is drawn
-            // at dial + offset, so on the bands where the mode rides the lower
-            // sideband (SSTV and RADE on 160/80/40 m) they all belong below it.
-            // Display only: the controllers go on reporting an offset as a
-            // width from the dial, whichever side they are being worked on.
-            let side = if mode.is_lower_sideband_at(dial) { -1.0 } else { 1.0 };
-            let audio_hz = side * self.digi_status.as_ref().map(|s| s.audio_hz).unwrap_or(1500.0);
-            let is_text = mode.is_text_modem();
-            // RTTY shows mark/space tuning lines; Olivia the tone-bank edges;
-            // PSK just the centre marker.
-            let markers: Vec<f32> = if mode == Mode::Rtty {
-                let sh = self.digi_status.as_ref().map(|s| s.config.rtty_shift_hz).unwrap_or(170.0);
-                vec![audio_hz - sh / 2.0, audio_hz + sh / 2.0]
-            } else if mode == Mode::Olivia {
-                let bw = self.digi_status.as_ref().map(|s| s.config.olivia_bw_hz).unwrap_or(1000.0);
-                vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
-            } else if mode == Mode::Thor {
-                let baud =
-                    self.digi_status.as_ref().map(|s| s.config.thor_mode.baud()).unwrap_or(15.625);
-                let bw = 18.0 * baud;
-                vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
-            } else if mode == Mode::Js8 {
-                // Worth showing: Turbo's 160 Hz footprint against Slow's 25 Hz
-                // is what decides whether a frequency is actually free.
-                let bw = self
-                    .digi_status
-                    .as_ref()
-                    .and_then(|s| s.js8.as_ref())
-                    .map_or(50.0, |j| j.speed.bandwidth_hz());
-                vec![audio_hz, audio_hz + bw]
-            } else if mode == Mode::Fsq {
-                let baud = self.digi_status.as_ref().map(|s| s.config.fsq_baud).unwrap_or(4.5);
-                let bw = 33.0 * baud;
-                vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
-            } else if mode == Mode::Hell {
-                let v =
-                    self.digi_status.as_ref().map(|s| s.config.hell_variant).unwrap_or_default();
-                let bw = v.bandwidth_hz() as f32;
-                vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
-            } else if mode == Mode::RfPaint {
-                // The painting band edges (300..3300 Hz).
-                vec![300.0, 3300.0]
-            } else if mode == Mode::Rade {
-                // The RADE V1 OFDM carriers, so the operator can see whether the
-                // signal is sitting inside the modem's window.
-                vec![side * 1062.0, side * 1876.0]
-            } else {
-                Vec::new()
-            };
-            // FT8 station callsign boxes (built before the &mut self borrows).
-            // Only the slotted modes have them — SSTV / RF Paint share the digi
-            // path but must not inherit FT8's overlay.
-            let (ft8_spots, ft8_alpha) =
-                if mode.is_slotted() { self.ft8_overlay() } else { (Vec::new(), Vec::new()) };
-
+            // The overlays, the cursor and the tone markers for this mode —
+            // gathered in one place so an undocked panadapter window draws
+            // exactly what this one would have.
+            let inputs = self.panadapter_inputs(now);
             let frame = self.frame.take();
+            // Either half of this pane can be undocked into a window of its own,
+            // and whichever stays here takes the whole column.
+            let pan_out = self.panadapter_window_wanted();
+            let panel_out = self.panel_in_a_window(mode);
             // A phone shows one of the three at a time, chosen by a row of
             // chips: the decode list, the QSO area and the waterfall each want
             // the whole width and most of the height, and three slivers would
@@ -600,32 +628,30 @@ impl eframe::App for SdroxideApp {
             // waterfall above the panel, split by a draggable divider.
             let phone = tier == crate::layout::Tier::Phone;
             let width = ui.available_width();
-            if phone {
-                self.digi_tabs(ui, mode);
+            if phone && !panel_out {
+                self.digi_tabs(ui, mode, true);
             }
             // The waterfall is the tab past the last of the mode's own panes.
-            let on_waterfall =
-                phone && self.digi_pane(mode) == crate::app::panels::panel_panes(mode).len();
+            let on_waterfall = phone
+                && !panel_out
+                && self.digi_pane(mode) == crate::app::panels::panel_panes(mode).len();
             // Both panadapter layers switched off in the SPEC popup means no
             // panadapter: the decode panel takes the whole height rather than
             // sharing it with an empty strip. Never on a phone, which draws the
             // waterfall alone and ignores the layer switches (see
             // `spectrum_view::show_ext`), so they cannot empty its screen.
             let layers = tier.waterfall_only() || self.view.panadapter_visible();
-            let show_wf = (!phone || on_waterfall) && layers;
-            let show_panel = !phone || !on_waterfall;
+            let show_wf = !pan_out && layers && (!phone || on_waterfall || panel_out);
+            let show_panel = !panel_out && (!phone || !on_waterfall);
+            // Split only between two things that are both here.
+            let split = show_wf && show_panel && !phone;
 
             // Manual vertical split with a draggable divider: the operating
             // panel gets `digi_panel_fraction` of the height, the waterfall the
             // rest. A thin handle between them resizes the split.
             let total = ui.available_height();
-            let handle_h = if phone { 0.0 } else { 7.0 };
-            let (wf_h, panel_h) = if phone {
-                // Whichever one is showing gets all of it.
-                (total, total)
-            } else if !layers {
-                (0.0, total)
-            } else {
+            let handle_h = 7.0;
+            let (wf_h, panel_h) = if split {
                 // The handle plus the gap the layout inserts on each side of it.
                 let divider = handle_h + 2.0 * ui.spacing().item_spacing.y;
                 digi_split(
@@ -634,6 +660,9 @@ impl eframe::App for SdroxideApp {
                     self.view.digi_panel_fraction,
                     ui.spacing().interact_size.y,
                 )
+            } else {
+                // Whichever one is showing gets all of it.
+                (total, total)
             };
 
             // Scroll only while frames are actually arriving. The last frame is
@@ -641,87 +670,25 @@ impl eframe::App for SdroxideApp {
             // waterfall would be time that never happened — a switched-off
             // radio (or any stalled stream) freezes instead.
             let live = frame.is_some() && now - self.last_spectrum_at < STREAM_STALE_S;
-            self.note_panadapter_width(ui);
-            let wf_tuning = self.wf_tick(live, ui.ctx().pixels_per_point());
             if show_wf {
-                ui.allocate_ui(egui::vec2(width, wf_h), |ui| {
-                    let pan =
-                        spectrum_view::WindowPan::of(self.caps.as_ref(), self.state.center_hz)
-                            .with_outer(Some(self.zoom_out_window()), self.state.sample_rate);
-                    spectrum_view::show_ext(
-                        ui,
-                        &mut self.view,
-                        &mut self.state,
-                        frame.as_ref(),
-                        &mut self.peaks,
-                        &mut self.spec_smooth,
-                        &mut self.trace_cache,
-                        &mut self.spec3d,
-                        // A click sets the tone offset in the modes that park
-                        // on an agreed dial and pick a signal inside the
-                        // sub-band. Not in RTTY: its tone pair is a standard
-                        // (2125/2295 Hz), stations are spread across the band
-                        // rather than stacked in one window, and dragging mark
-                        // and space onto each one in turn walks them out of the
-                        // transmit filter. There a click tunes the dial so the
-                        // signal lands on the pair, exactly as CW does.
-                        Some(spectrum_view::AudioCursor {
-                            hz: audio_hz,
-                            click_sets_offset: !mode.holds_standard_tones(),
-                            // CW only for now: RTTY and WEFAX sit off their
-                            // dials too and could follow, but each wants
-                            // checking against real signals first.
-                            line_on_cursor: false,
-                            // Where the window is centred is a separate
-                            // question from where the tuning line is drawn,
-                            // and RTTY has already been checked on the air for
-                            // this one: its tone pair is 2210 Hz off the dial,
-                            // so a click-tune zoomed in tighter than that left
-                            // the dial off the picture and the re-centring
-                            // carried the signal away with it.
-                            center_on_cursor: mode.holds_standard_tones(),
-                        }),
-                        if matches!(mode, Mode::Ft8 | Mode::Ft2) {
-                            self.digi_status
-                                .as_ref()
-                                .map(|s| s.config.dxped_mode)
-                                .unwrap_or_default()
-                        } else {
-                            sdroxide_types::DxpedMode::Normal
-                        },
-                        mode.is_slotted()
-                            && self
-                                .digi_status
-                                .as_ref()
-                                .map(|s| s.config.auto_tx_freq)
-                                .unwrap_or(true),
-                        mode.is_slotted()
-                            && self
-                                .digi_status
-                                .as_ref()
-                                .map(|s| s.config.hold_tx_freq)
-                                .unwrap_or(false),
-                        &markers,
-                        &ft8_spots,
-                        &ft8_alpha,
-                        &net_spots,
-                        &net_alpha,
-                        &mut clicked_spot,
-                        &ism_labels,
-                        &mem_marks,
-                        self.input.cfg.wheel,
-                        pan,
-                        wf_tuning,
-                        show_panel,
-                        &mut cmds,
-                    );
-                    paint_panadapter_clock(ui, ui.max_rect(), self.ui_settings.panadapter_clock);
-                });
+                self.note_panadapter_width(ui);
+                let wf_tuning = self.wf_tick(live, ui.ctx().pixels_per_point());
+                self.draw_panadapter(
+                    ui,
+                    width,
+                    wf_h,
+                    frame.as_ref(),
+                    &inputs,
+                    &mut clicked_spot,
+                    show_panel,
+                    wf_tuning,
+                    &mut cmds,
+                );
             }
             // Only between two things: with the panadapter switched off there
             // is nothing above the panel for the handle to divide, and a drag
             // on it would silently rewrite a split with nothing to show for it.
-            if !phone && show_wf {
+            if split {
                 // Resize handle between the waterfall and the FT8/FT4 panel.
                 let hresp = crate::chrome::split_handle(
                     ui,
@@ -737,70 +704,11 @@ impl eframe::App for SdroxideApp {
             }
             if show_panel {
                 ui.allocate_ui(egui::vec2(width, panel_h), |ui| {
-                    // The operating panels, pulled in on a small screen — one
-                    // call for all of them, see `layout::tighten`.
-                    crate::layout::tighten(ui);
-                    egui::Frame::new()
-                        .fill(crate::theme::BG_DEEP())
-                        .inner_margin(egui::Margin { left: 0, right: 0, top: 6, bottom: 0 })
-                        .show(ui, |ui| {
-                            crate::chrome::angled_frame(ui, crate::theme::PINK(), |ui| {
-                                if mode.is_rade() {
-                                    self.rade_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_atchat() {
-                                    self.atchat_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_wefax() {
-                                    self.wefax_panel(ui, &mut cmds, panel_h);
-                                } else if mode == Mode::Navtex {
-                                    self.navtex_panel(ui, &mut cmds, panel_h);
-                                } else if mode == Mode::Acars {
-                                    self.acars_panel(ui, &mut cmds, panel_h);
-                                } else if mode == Mode::TimeSignal {
-                                    self.timesig_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_image() {
-                                    self.image_panel(ui, &mut cmds, mode);
-                                } else if mode.is_rf_paint() {
-                                    self.rf_paint_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_adsb() {
-                                    self.adsb_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_vdl2() {
-                                    self.vdl2_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_ais() {
-                                    self.ais_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_hfdl() {
-                                    self.hfdl_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_aprs() {
-                                    self.aprs_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_packet() {
-                                    self.packet_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_fsq() {
-                                    self.fsq_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_hell() {
-                                    self.hell_panel(ui, &mut cmds, panel_h);
-                                } else if is_text {
-                                    self.text_modem_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_js8() {
-                                    self.js8_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_wspr() {
-                                    self.wspr_panel(ui, &mut cmds, panel_h);
-                                } else if mode.is_pi4() {
-                                    self.pi4_panel(ui, &mut cmds, panel_h);
-                                } else if mode == Mode::Msk144 {
-                                    self.msk144_panel(ui, &mut cmds);
-                                } else if matches!(mode, Mode::Jt65 | Mode::Jt9) {
-                                    self.jt_panel(ui, &mut cmds);
-                                } else if mode == Mode::Fst4 {
-                                    self.fst4_panel(ui, &mut cmds);
-                                } else if mode == Mode::Q65 {
-                                    self.q65_panel(ui, &mut cmds);
-                                } else if mode == Mode::Fsk441 {
-                                    self.fsk441_panel(ui, &mut cmds);
-                                } else {
-                                    self.digi_panel(ui, &mut cmds);
-                                }
-                            });
-                        });
+                    self.draw_operating_panel(ui, &mut cmds, mode, panel_h);
                 });
+            }
+            if !show_wf && !show_panel && (pan_out || panel_out) {
+                empty_centre(ui);
             }
             self.frame = frame;
         } else {
@@ -818,8 +726,11 @@ impl eframe::App for SdroxideApp {
             // module's WIDE chip on. Never on a phone: 96 pt of strip is a
             // quarter of the height there, taken from the waterfall being
             // listened to for a band view nothing is tuned to.
+            // It belongs to the panadapter, so it goes where the panadapter
+            // goes: not drawn here while the spectrum is in a window of its own.
             if !tier.waterfall_only()
                 && self.view.wide_waterfall
+                && !self.panadapter_window_wanted()
                 && let Some(wide) = self.wide_frame.clone()
             {
                 crate::widgets::wide_spectrum::show(
@@ -832,12 +743,10 @@ impl eframe::App for SdroxideApp {
                 );
                 ui.add_space(2.0);
             }
-            let (cw_spots, cw_alpha) = self.cw_overlay(now);
+            let inputs = self.panadapter_inputs(now);
             let frame = self.frame.take();
             // As on the digital path: no fresh frames, no scroll.
             let live = frame.is_some() && now - self.last_spectrum_at < STREAM_STALE_S;
-            self.note_panadapter_width(ui);
-            let wf_tuning = self.wf_tick(live, ui.ctx().pixels_per_point());
             // CW is the one analog mode with a panel under the panadapter. It
             // is not a digital mode and does not take the digital path — the
             // demodulated tone stays audible and the view stays wherever the
@@ -850,15 +759,19 @@ impl eframe::App for SdroxideApp {
             // with nothing under it that leaves the pane empty, which is what
             // switching both off asks for.
             let layers = tier.waterfall_only() || self.view.panadapter_visible();
-            let (wf_h, panel_h, show_wf, show_panel) = if !cw_mode {
-                (ui.available_height(), 0.0, layers, false)
+            // Either half undocked into a window of its own: whichever stays
+            // takes the whole pane.
+            let pan_out = self.panadapter_window_wanted();
+            let panel_here = cw_mode && !self.panel_in_a_window(Mode::Cw);
+            let (wf_h, panel_h, show_wf, show_panel) = if !panel_here {
+                (ui.available_height(), 0.0, layers && !pan_out, false)
             } else if phone {
-                self.digi_tabs(ui, Mode::Cw);
+                self.digi_tabs(ui, Mode::Cw, true);
                 let on_wf =
                     self.digi_pane(Mode::Cw) == crate::app::panels::panel_panes(Mode::Cw).len();
                 let h = ui.available_height();
-                (h, h, on_wf, !on_wf)
-            } else if !layers {
+                (h, h, on_wf && !pan_out, !on_wf)
+            } else if !layers || pan_out {
                 (0.0, ui.available_height(), false, true)
             } else {
                 let total = ui.available_height();
@@ -872,57 +785,20 @@ impl eframe::App for SdroxideApp {
                 (w, p, true, true)
             };
             let width = ui.available_width();
-            let cw_pitch = cw_mode.then(|| spectrum_view::AudioCursor {
-                hz: self.cw_pitch_hz(),
-                // A click tunes the dial so the signal lands on the cursor.
-                click_sets_offset: false,
-                // With the readout reading the signal, the tuning line follows
-                // it there — see `UiSettings::cw_qrg`.
-                line_on_cursor: self.ui_settings.cw_qrg,
-                // And so does the middle of the window: with the readout and
-                // the line both on the cursor, a window still centred on the
-                // dial would be the one thing left disagreeing. Off by
-                // default, with the setting.
-                center_on_cursor: self.ui_settings.cw_qrg,
-            });
             if show_wf {
-                ui.allocate_ui(egui::vec2(width, wf_h), |ui| {
-                    let pan =
-                        spectrum_view::WindowPan::of(self.caps.as_ref(), self.state.center_hz)
-                            .with_outer(Some(self.zoom_out_window()), self.state.sample_rate);
-                    spectrum_view::show_ext(
-                        ui,
-                        &mut self.view,
-                        &mut self.state,
-                        frame.as_ref(),
-                        &mut self.peaks,
-                        &mut self.spec_smooth,
-                        &mut self.trace_cache,
-                        &mut self.spec3d,
-                        cw_pitch,
-                        sdroxide_types::DxpedMode::Normal,
-                        false,
-                        // This waterfall is drawn for the non-slotted modes, so
-                        // there is no held FT8 transmit tone for a click to
-                        // disturb. The engine's own gate is the authority in any
-                        // case; this only decides whether the UI bothers asking.
-                        false,
-                        &[],
-                        &cw_spots,
-                        &cw_alpha,
-                        &net_spots,
-                        &net_alpha,
-                        &mut clicked_spot,
-                        &ism_labels,
-                        &mem_marks,
-                        self.input.cfg.wheel,
-                        pan,
-                        wf_tuning,
-                        show_panel,
-                        &mut cmds,
-                    );
-                    paint_panadapter_clock(ui, ui.max_rect(), self.ui_settings.panadapter_clock);
-                });
+                self.note_panadapter_width(ui);
+                let wf_tuning = self.wf_tick(live, ui.ctx().pixels_per_point());
+                self.draw_panadapter(
+                    ui,
+                    width,
+                    wf_h,
+                    frame.as_ref(),
+                    &inputs,
+                    &mut clicked_spot,
+                    show_panel,
+                    wf_tuning,
+                    &mut cmds,
+                );
             }
             if show_panel {
                 if !phone && show_wf {
@@ -938,18 +814,11 @@ impl eframe::App for SdroxideApp {
                     }
                 }
                 ui.allocate_ui(egui::vec2(width, panel_h), |ui| {
-                    // The operating panels, pulled in on a small screen — one
-                    // call for all of them, see `layout::tighten`.
-                    crate::layout::tighten(ui);
-                    egui::Frame::new()
-                        .fill(crate::theme::BG_DEEP())
-                        .inner_margin(egui::Margin { left: 0, right: 0, top: 6, bottom: 0 })
-                        .show(ui, |ui| {
-                            crate::chrome::angled_frame(ui, crate::theme::PINK(), |ui| {
-                                self.cw_panel(ui, &mut cmds, panel_h);
-                            });
-                        });
+                    self.draw_operating_panel(ui, &mut cmds, Mode::Cw, panel_h);
                 });
+            }
+            if !show_wf && !show_panel && pan_out {
+                empty_centre(ui);
             }
             self.frame = frame;
         }
@@ -959,6 +828,21 @@ impl eframe::App for SdroxideApp {
             self.prefill_from_spot(&spot);
         }
 
+        // **The operating pane, floating in this window**, drawn beside the tool
+        // windows because it is one of them in everything but where its body
+        // comes from. Only while the mode has a pane to float.
+        let mode_now = self.state.rx[0].mode;
+        if self.panel_floating
+            && self.error.is_none()
+            && (mode_now.has_bottom_panel() || mode_now == Mode::Cw)
+        {
+            self.floating_panel_window(&ctx, &mut cmds, mode_now);
+        }
+        // **The module-windows list**, from the ▣ chip or `Ctrl+Alt+W`.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.show_windows {
+            self.module_windows_window(&ctx);
+        }
         self.memories_window(&ctx, &mut cmds);
         self.scanner_window(&ctx, &mut cmds);
         self.ism_window(&ctx, &mut cmds);
@@ -971,6 +855,7 @@ impl eframe::App for SdroxideApp {
         self.drm_window(&ctx, &mut cmds);
         self.hd_window(&ctx, &mut cmds);
         self.voice_window(&ctx, &mut cmds);
+        self.tx_audio_window(&ctx, &mut cmds);
         self.settings_window(&ctx, &mut cmds);
         self.digi_settings_window(&ctx, &mut cmds);
         self.logbook_window(&ctx, &mut cmds);
@@ -982,6 +867,7 @@ impl eframe::App for SdroxideApp {
         self.grid_tracker_window(&ctx);
         self.bands_window(&ctx);
         self.sat_window(&ctx, &mut cmds);
+        self.amp_window(&ctx, &mut cmds);
         self.morse_window(&ctx);
         self.help.ui(&ctx);
         // Last, so it lands on top of everything else that opened this frame.
@@ -1079,6 +965,15 @@ impl eframe::App for SdroxideApp {
             }
         }
 
+        // A picture-upload TEST whose answer never came: the station went
+        // away, or dropped it. Give the button back rather than spin for ever.
+        // Past the connect, login and transfer timeouts the station applies.
+        if self.picup_test_pending.is_some_and(|t| crate::time::now_unix_f64() - t > 75.0) {
+            self.picup_test_pending = None;
+        }
+
+        self.wavelog_retry_tick(now);
+        self.wavelog_sync_tick(now, &mut cmds);
         // Flush queued lookups / uploads accumulated during window rendering.
         for call in std::mem::take(&mut self.pending_lookups) {
             cmds.push(Command::LookupCallsign { call });
@@ -1100,17 +995,7 @@ impl eframe::App for SdroxideApp {
             self.ctrl.send(Command::SetAudioDuck(gain));
         }
 
-        for c in cmds {
-            // Marked here rather than at the button, because the settings panel
-            // holds borrows of `self` while it draws and cannot take a mutable
-            // one. This is the point where the command is definitely going out,
-            // which is the honest moment to call the check "in flight" anyway.
-            if let Command::TestLogin(t) = &c {
-                self.login_tests_pending.insert(*t);
-                self.login_tests.remove(t);
-            }
-            self.ctrl.send(c);
-        }
+        self.dispatch_commands(cmds);
 
         // Data-driven repaint: wake at the next expected spectrum frame while
         // something is streaming, and idle-poll when nothing is. User input
@@ -1172,11 +1057,310 @@ impl eframe::App for SdroxideApp {
             // hfdl_channels.json, written on change.
             #[cfg(target_arch = "wasm32")]
             eframe::set_value(storage, "hfdl_channels", &self.hfdl_channels);
+            // And the custom filter presets: filter_presets.json natively.
+            #[cfg(target_arch = "wasm32")]
+            eframe::set_value(storage, "filter_presets", &self.filter_presets);
+            // Likewise the TX Audio profile library: tx_audio_profiles.json
+            // natively.
+            #[cfg(target_arch = "wasm32")]
+            eframe::set_value(storage, "tx_voice_profiles", self.tx_audio.profiles());
         }
     }
 }
 
 impl SdroxideApp {
+    /// Everything the panadapter draw needs for the current mode, gathered so
+    /// [`Self::draw_panadapter`] can be called from the main window or from a
+    /// detached one — see [`PanadapterInputs`]. The same choices the frame loop
+    /// made inline before the panadapter could leave the main window: the
+    /// digital path's tone markers and FT8 boxes, or the analog path's CW pitch
+    /// cursor and skimmer boxes.
+    pub(in crate::app) fn panadapter_inputs(&self, now: f64) -> PanadapterInputs {
+        let mode = self.state.rx[0].mode;
+        let (net_spots, net_alpha) = self.net_overlay(now_unix());
+        let ism = self.ism_overlay();
+        let mem = self.memory_overlay();
+        if !mode.has_bottom_panel() {
+            let (skimmer, alpha) = self.cw_overlay(now);
+            let cursor = (mode == Mode::Cw).then(|| spectrum_view::AudioCursor {
+                hz: self.cw_pitch_hz(),
+                // A click tunes the dial so the signal lands on the cursor.
+                click_sets_offset: false,
+                // With the readout reading the signal, the tuning line follows
+                // it there — see `UiSettings::cw_qrg`.
+                line_on_cursor: self.ui_settings.cw_qrg,
+                // And so does the middle of the window: with the readout and
+                // the line both on the cursor, a window still centred on the
+                // dial would be the one thing left disagreeing. Off by
+                // default, with the setting.
+                center_on_cursor: self.ui_settings.cw_qrg,
+            });
+            return PanadapterInputs {
+                cursor,
+                dxped: sdroxide_types::DxpedMode::Normal,
+                auto_tx_freq: false,
+                // This waterfall is drawn for the non-slotted modes, so there is
+                // no held FT8 transmit tone for a click to disturb. The engine's
+                // own gate is the authority in any case; this only decides
+                // whether the UI bothers asking.
+                hold_tx_freq: false,
+                markers: Vec::new(),
+                skimmer,
+                alpha,
+                net_spots,
+                net_alpha,
+                ism,
+                mem,
+            };
+        }
+        let dial = self.state.rx_freq_hz();
+        // Which side of the dial the mode's audio band is on. Every tone
+        // offset below is a distance from the dial and every marker is drawn
+        // at dial + offset, so on the bands where the mode rides the lower
+        // sideband (SSTV and RADE on 160/80/40 m) they all belong below it.
+        // Display only: the controllers go on reporting an offset as a
+        // width from the dial, whichever side they are being worked on.
+        let side = if mode.is_lower_sideband_at(dial) { -1.0 } else { 1.0 };
+        let audio_hz = side * self.digi_status.as_ref().map(|s| s.audio_hz).unwrap_or(1500.0);
+        // RTTY shows mark/space tuning lines; Olivia the tone-bank edges;
+        // PSK just the centre marker.
+        let markers: Vec<f32> = if mode == Mode::Rtty {
+            let sh = self.digi_status.as_ref().map(|s| s.config.rtty_shift_hz).unwrap_or(170.0);
+            vec![audio_hz - sh / 2.0, audio_hz + sh / 2.0]
+        } else if mode == Mode::Olivia {
+            let bw = self.digi_status.as_ref().map(|s| s.config.olivia_bw_hz).unwrap_or(1000.0);
+            vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
+        } else if mode == Mode::Thor {
+            let baud =
+                self.digi_status.as_ref().map(|s| s.config.thor_mode.baud()).unwrap_or(15.625);
+            let bw = 18.0 * baud;
+            vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
+        } else if mode == Mode::Js8 {
+            // Worth showing: Turbo's 160 Hz footprint against Slow's 25 Hz
+            // is what decides whether a frequency is actually free.
+            let bw = self
+                .digi_status
+                .as_ref()
+                .and_then(|s| s.js8.as_ref())
+                .map_or(50.0, |j| j.speed.bandwidth_hz());
+            vec![audio_hz, audio_hz + bw]
+        } else if mode == Mode::Fsq {
+            let baud = self.digi_status.as_ref().map(|s| s.config.fsq_baud).unwrap_or(4.5);
+            let bw = 33.0 * baud;
+            vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
+        } else if mode == Mode::Hell {
+            let v = self.digi_status.as_ref().map(|s| s.config.hell_variant).unwrap_or_default();
+            let bw = v.bandwidth_hz() as f32;
+            vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
+        } else if mode == Mode::RfPaint {
+            // The painting band edges (300..3300 Hz).
+            vec![300.0, 3300.0]
+        } else if mode == Mode::Rade {
+            // The RADE V1 OFDM carriers, so the operator can see whether the
+            // signal is sitting inside the modem's window.
+            vec![side * 1062.0, side * 1876.0]
+        } else {
+            Vec::new()
+        };
+        // FT8 station callsign boxes. Only the slotted modes have them — SSTV /
+        // RF Paint share the digi path but must not inherit FT8's overlay.
+        let (skimmer, alpha) =
+            if mode.is_slotted() { self.ft8_overlay() } else { (Vec::new(), Vec::new()) };
+        PanadapterInputs {
+            // A click sets the tone offset in the modes that park on an agreed
+            // dial and pick a signal inside the sub-band. Not in RTTY: its tone
+            // pair is a standard (2125/2295 Hz), stations are spread across the
+            // band rather than stacked in one window, and dragging mark and
+            // space onto each one in turn walks them out of the transmit
+            // filter. There a click tunes the dial so the signal lands on the
+            // pair, exactly as CW does.
+            cursor: Some(spectrum_view::AudioCursor {
+                hz: audio_hz,
+                click_sets_offset: !mode.holds_standard_tones(),
+                // CW only for now: RTTY and WEFAX sit off their dials too and
+                // could follow, but each wants checking against real signals
+                // first.
+                line_on_cursor: false,
+                // Where the window is centred is a separate question from where
+                // the tuning line is drawn, and RTTY has already been checked on
+                // the air for this one: its tone pair is 2210 Hz off the dial,
+                // so a click-tune zoomed in tighter than that left the dial off
+                // the picture and the re-centring carried the signal away with
+                // it.
+                center_on_cursor: mode.holds_standard_tones(),
+            }),
+            dxped: if matches!(mode, Mode::Ft8 | Mode::Ft2) {
+                self.digi_status.as_ref().map(|s| s.config.dxped_mode).unwrap_or_default()
+            } else {
+                sdroxide_types::DxpedMode::Normal
+            },
+            auto_tx_freq: mode.is_slotted()
+                && self.digi_status.as_ref().map(|s| s.config.auto_tx_freq).unwrap_or(true),
+            hold_tx_freq: mode.is_slotted()
+                && self.digi_status.as_ref().map(|s| s.config.hold_tx_freq).unwrap_or(false),
+            markers,
+            skimmer,
+            alpha,
+            net_spots,
+            net_alpha,
+            ism,
+            mem,
+        }
+    }
+
+    /// The spectrum and waterfall, `width` × `height`, drawn into `ui` — the
+    /// **shared body** of the in-window panadapter and its undocked windows, so
+    /// the two cannot differ. `panel_below` says whether an operating panel sits
+    /// under this one (the band-plan strip gives it the room if so).
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::app) fn draw_panadapter(
+        &mut self,
+        ui: &mut egui::Ui,
+        width: f32,
+        height: f32,
+        frame: Option<&std::sync::Arc<sdroxide_types::SpectrumFrame>>,
+        inputs: &PanadapterInputs,
+        clicked_spot: &mut Option<Spot>,
+        panel_below: bool,
+        wf_tuning: spectrum_view::WfTuning,
+        cmds: &mut Vec<Command>,
+    ) {
+        ui.allocate_ui(egui::vec2(width, height), |ui| {
+            let pan = spectrum_view::WindowPan::of(self.caps.as_ref(), self.state.center_hz)
+                .with_outer(Some(self.zoom_out_window()), self.state.sample_rate);
+            spectrum_view::show_ext(
+                ui,
+                &mut self.view,
+                &mut self.state,
+                frame,
+                &mut self.peaks,
+                &mut self.spec_smooth,
+                &mut self.trace_cache,
+                &mut self.spec3d,
+                inputs.cursor,
+                inputs.dxped,
+                inputs.auto_tx_freq,
+                inputs.hold_tx_freq,
+                &inputs.markers,
+                &inputs.skimmer,
+                &inputs.alpha,
+                &inputs.net_spots,
+                &inputs.net_alpha,
+                clicked_spot,
+                &inputs.ism,
+                &inputs.mem,
+                self.input.cfg.wheel,
+                pan,
+                wf_tuning,
+                panel_below,
+                cmds,
+            );
+            paint_panadapter_clock(ui, ui.max_rect(), self.ui_settings.panadapter_clock);
+        });
+    }
+
+    /// The mode's operating panel, drawn into `ui` — the **shared body** of the
+    /// in-window panel and its undocked window, so the two cannot differ.
+    pub(in crate::app) fn draw_operating_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        cmds: &mut Vec<Command>,
+        mode: Mode,
+        panel_h: f32,
+    ) {
+        // The operating panels, pulled in on a small screen — one call for all
+        // of them, see `layout::tighten`.
+        crate::layout::tighten(ui);
+        egui::Frame::new()
+            .fill(crate::theme::BG_DEEP())
+            .inner_margin(egui::Margin { left: 0, right: 0, top: 6, bottom: 0 })
+            .show(ui, |ui| {
+                crate::chrome::angled_frame(ui, crate::theme::PINK(), |ui| {
+                    if mode == Mode::Cw {
+                        self.cw_panel(ui, cmds, panel_h);
+                    } else if mode.is_rade() {
+                        self.rade_panel(ui, cmds, panel_h);
+                    } else if mode.is_atchat() {
+                        self.atchat_panel(ui, cmds, panel_h);
+                    } else if mode.is_wefax() {
+                        self.wefax_panel(ui, cmds, panel_h);
+                    } else if mode == Mode::Navtex {
+                        self.navtex_panel(ui, cmds, panel_h);
+                    } else if mode == Mode::Acars {
+                        self.acars_panel(ui, cmds, panel_h);
+                    } else if mode == Mode::TimeSignal {
+                        self.timesig_panel(ui, cmds, panel_h);
+                    } else if mode.is_image() {
+                        self.image_panel(ui, cmds, mode);
+                    } else if mode.is_rf_paint() {
+                        self.rf_paint_panel(ui, cmds, panel_h);
+                    } else if mode.is_adsb() {
+                        self.adsb_panel(ui, cmds, panel_h);
+                    } else if mode.is_vdl2() {
+                        self.vdl2_panel(ui, cmds, panel_h);
+                    } else if mode.is_ais() {
+                        self.ais_panel(ui, cmds, panel_h);
+                    } else if mode.is_hfdl() {
+                        self.hfdl_panel(ui, cmds, panel_h);
+                    } else if mode.is_aprs() {
+                        self.aprs_panel(ui, cmds, panel_h);
+                    } else if mode.is_packet() {
+                        self.packet_panel(ui, cmds, panel_h);
+                    } else if mode.is_vara() {
+                        self.vara_panel(ui, cmds, panel_h);
+                    } else if mode.is_fsq() {
+                        self.fsq_panel(ui, cmds, panel_h);
+                    } else if mode.is_hell() {
+                        self.hell_panel(ui, cmds, panel_h);
+                    } else if mode.is_text_modem() {
+                        self.text_modem_panel(ui, cmds, panel_h);
+                    } else if mode.is_js8() {
+                        self.js8_panel(ui, cmds, panel_h);
+                    } else if mode.is_wspr() {
+                        self.wspr_panel(ui, cmds, panel_h);
+                    } else if mode.is_pi4() {
+                        self.pi4_panel(ui, cmds, panel_h);
+                    } else if mode == Mode::Msk144 {
+                        self.msk144_panel(ui, cmds);
+                    } else if matches!(mode, Mode::Jt65 | Mode::Jt9) {
+                        self.jt_panel(ui, cmds);
+                    } else if mode == Mode::Fst4 {
+                        self.fst4_panel(ui, cmds);
+                    } else if mode == Mode::Q65 {
+                        self.q65_panel(ui, cmds);
+                    } else if mode == Mode::Fsk441 {
+                        self.fsk441_panel(ui, cmds);
+                    } else if mode == Mode::Jtty {
+                        self.jtty_panel(ui, cmds, panel_h);
+                    } else {
+                        self.digi_panel(ui, cmds);
+                    }
+                });
+            });
+    }
+
+    /// Send a frame's commands, with the bookkeeping that must ride every route
+    /// a command can leave by. Split out so an undocked window's own commands
+    /// are dispatched exactly as the main window's — there is one place that
+    /// decides, not two that can drift.
+    pub(in crate::app) fn dispatch_commands(&mut self, cmds: Vec<Command>) {
+        for c in cmds {
+            // Marked here rather than at the button, because the settings panel
+            // holds borrows of `self` while it draws and cannot take a mutable
+            // one. This is the point where the command is definitely going out,
+            // which is the honest moment to call the check "in flight" anyway.
+            if let Command::TestLogin(t) = &c {
+                self.login_tests_pending.insert(*t);
+                self.login_tests.remove(t);
+            }
+            if let Command::TestPictureUpload(_) = &c {
+                self.picup_test_pending = Some(crate::time::now_unix_f64());
+                self.picup_test = None;
+            }
+            self.ctrl.send(c);
+        }
+    }
+
     /// Drain everything this radio's engine sent since the last visit.
     ///
     /// Runs at the top of every drawn frame — and, in a multi-radio session,
@@ -1209,6 +1393,8 @@ impl SdroxideApp {
                     // A different interface on this radio: the stored zoom
                     // was taken in another span and means nothing in this one.
                     if self.view.adopt_driver(&c.driver) {
+                        // Nor does the last SWR another radio was matched to.
+                        self.last_swr = None;
                         tracing::debug!(
                             target: "sdroxide::panadapter",
                             driver = %c.driver,
@@ -1315,6 +1501,11 @@ impl SdroxideApp {
                     if self.focused {
                         self.speech.announcer.on_meters(&m, &self.state, now);
                     }
+                    // Below 1.0 is not a reading but a radio that has not
+                    // measured one yet; the engine's own guard reads it so.
+                    if let Some(swr) = m.tx.and_then(|t| t.swr).filter(|s| *s >= 1.0) {
+                        self.last_swr = Some(swr);
+                    }
                     self.meters = Some(m);
                 }
                 RadioEvent::Memories(m) => self.memories = m,
@@ -1333,6 +1524,14 @@ impl SdroxideApp {
                     self.error = Some(e);
                     self.arm_retry(now);
                 }
+                RadioEvent::PictureUpload(st) => {
+                    if st.is_test {
+                        self.picup_test_pending = None;
+                        self.picup_test = Some(st);
+                    } else {
+                        self.picup_last = Some(st);
+                    }
+                }
                 RadioEvent::LoginTest(r) => {
                     self.login_tests_pending.remove(&r.target);
                     self.push_net_log(format!(
@@ -1342,6 +1541,8 @@ impl SdroxideApp {
                     ));
                     self.login_tests.insert(r.target, r);
                 }
+                RadioEvent::WavelogProbe(p) => self.wavelog_probe = Some(*p),
+                RadioEvent::WavelogBatch(b) => self.on_wavelog_batch(*b),
                 RadioEvent::Notice(n) => {
                     if self.focused {
                         self.speech.announcer.on_notice(n.as_deref(), now);
@@ -1478,9 +1679,16 @@ impl SdroxideApp {
                 }
                 RadioEvent::Ft8QsoLogged(mut r) => {
                     // Another tab may have logged since this copy was read;
-                    // appending to a stale copy would write its QSOs away.
+                    // appending to a stale copy would write its QSOs away. That
+                    // reload needs a store to read: where there is none the log
+                    // in hand is the truth, and treating "no store" as "an empty
+                    // logbook" is what left a three-radio browser station
+                    // exporting a logbook of one contact (issue #236).
                     if self.shared_log {
-                        self.qso_log = crate::app::persist::load_qso_log(None);
+                        self.qso_log = crate::app::persist::after_shared_log(
+                            std::mem::take(&mut self.qso_log),
+                            crate::app::persist::reload_qso_log(None),
+                        );
                     }
                     r.id = self.next_log_id();
                     let call = r.call.clone();
@@ -1591,11 +1799,32 @@ impl SdroxideApp {
                     self.spots_gen += 1;
                     self.adopted_spots_gen = None;
                 }
-                RadioEvent::TciServerStatus { running, addr, clients, error } => {
-                    self.tci_srv_status = Some(TciServerStatus { running, addr, clients, error });
+                RadioEvent::TciServerStatus {
+                    running,
+                    addr,
+                    clients,
+                    error,
+                    client_connected,
+                    client_error,
+                } => {
+                    self.tci_srv_status = Some(TciServerStatus {
+                        running,
+                        addr,
+                        clients,
+                        error,
+                        client_connected,
+                        client_error,
+                    });
                 }
                 RadioEvent::RigctldStatus { running, addr, clients, error } => {
-                    self.rigctld_status = Some(TciServerStatus { running, addr, clients, error });
+                    self.rigctld_status = Some(TciServerStatus {
+                        running,
+                        addr,
+                        clients,
+                        error,
+                        client_connected: false,
+                        client_error: None,
+                    });
                 }
                 RadioEvent::VoiceStatus(v) => self.voice = v,
                 RadioEvent::ImagePresets(p) => self.sstv.on_presets(p, &ctx),
@@ -1639,6 +1868,10 @@ impl SdroxideApp {
                         self.wsjtx_edit = c.wsjtx.clone();
                         self.wsjtx_seeded = true;
                     }
+                    if !self.picup_seeded {
+                        self.picup_edit = c.picture_upload.clone();
+                        self.picup_seeded = true;
+                    }
                     if !self.sat_cfg_seeded {
                         self.sat_cfg_edit = c.sat.clone();
                         self.sat_cfg = std::sync::Arc::new(c.sat.clone());
@@ -1651,6 +1884,10 @@ impl SdroxideApp {
                     if !self.relay_seeded {
                         self.relay_edit = c.relay.clone();
                         self.relay_seeded = true;
+                    }
+                    if !self.amp_seeded {
+                        self.amp_edit = c.amp.clone();
+                        self.amp_seeded = true;
                     }
                     // Adopted on every announcement rather than seeded once:
                     // these are not dialog buffers the operator types into but
@@ -1681,6 +1918,7 @@ impl SdroxideApp {
                     self.rotator_status = Some((connected, az_deg, el_deg, error));
                 }
                 RadioEvent::RelayStatus(st) => self.relay_status = *st,
+                RadioEvent::AmpStatus(st) => self.amp_status = *st,
                 RadioEvent::ImageSaved(e) => match e.kind {
                     sdroxide_types::ImageKind::Sstv => self.sstv.on_saved(e, &ctx),
                     sdroxide_types::ImageKind::Wefax => self.wefax.on_saved(e, &ctx),
@@ -1764,7 +2002,7 @@ impl SdroxideApp {
             return;
         }
         let mut dismissed = false;
-        let resp = egui::Window::new("⚠  TRANSMIT LOCKOUT DISABLED")
+        let resp = egui::Window::new(tr!("frame-transmit-lockout-disabled"))
             .id(crate::layout::salted_id(ctx, "oob-tx-window"))
             .frame(crate::chrome::window_frame())
             .collapsible(false)
@@ -1774,30 +2012,21 @@ impl SdroxideApp {
                 crate::chrome::window_body_bg(ui);
                 ui.set_max_width(crate::layout::window_w(ctx, 430.0));
                 ui.label(
-                    RichText::new(
-                        "This engine was started with --oob-tx. The amateur-band lockout is \
-                         off: it will key the transmitter on any frequency the hardware \
-                         supports.",
-                    )
-                    .color(crate::theme::TEXT_STRONG())
-                    .size(13.0),
+                    RichText::new(tr!("frame-engine-was-started-oob-tx"))
+                        .color(crate::theme::TEXT_STRONG())
+                        .size(13.0),
                 );
                 ui.add_space(6.0);
                 ui.label(
-                    RichText::new(
-                        "Transmitting outside your licence is an offence in every country that \
-                         issues one. Only continue if you are authorised to use the frequencies \
-                         you are about to key on — a MARS/CAP or commercial licence, an \
-                         experimental permit, or a dummy load.",
-                    )
-                    .color(crate::theme::TEXT()),
+                    RichText::new(tr!("frame-transmitting-outside-your-licence-offence"))
+                        .color(crate::theme::TEXT()),
                 );
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     if crate::chrome::chip_accent(
                         ui,
                         false,
-                        RichText::new("  I UNDERSTAND  ").strong(),
+                        RichText::new(tr!("frame-i-understand")).strong(),
                         crate::theme::ALERT(),
                         crate::theme::TEXT_STRONG(),
                     )
@@ -1806,7 +2035,7 @@ impl SdroxideApp {
                         dismissed = true;
                     }
                     ui.label(
-                        RichText::new("Restart without --oob-tx to put the lockout back.")
+                        RichText::new(tr!("frame-restart-without-oob-tx-put"))
                             .color(crate::theme::LINE_LIT())
                             .size(10.5),
                     );
@@ -1847,6 +2076,7 @@ impl SdroxideApp {
         } = self;
         // Read before the borrow below, which takes `self` apart.
         let rig_squelch = caps.as_ref().is_some_and(|c| c.commands_squelch);
+        let agc_without_off = caps.as_ref().is_some_and(|c| c.agc_off_unavailable);
         // How far a bound zoom-out may go: the full-band lane where the front
         // end has one, else its passband. Read here for the same reason
         // `rig_squelch` is — after this the borrow has taken `self` apart.
@@ -1867,6 +2097,7 @@ impl SdroxideApp {
             voice: show_voice,
             speech: &mut speech_acts,
             rig_squelch,
+            agc_without_off,
             zoom_out,
         };
         input.poll_pointer_and_keys(ctx, state, &mut sink, cmds);
@@ -1930,6 +2161,7 @@ impl SdroxideApp {
             cmds.push(Command::CwKey(false));
         }
         let rig_squelch = caps.as_ref().is_some_and(|c| c.commands_squelch);
+        let agc_without_off = caps.as_ref().is_some_and(|c| c.agc_off_unavailable);
         let mut sink = crate::input::UiSink {
             view,
             help: &mut help.open,
@@ -1940,6 +2172,7 @@ impl SdroxideApp {
             voice: show_voice,
             speech: &mut Vec::new(),
             rig_squelch,
+            agc_without_off,
             // Releasing held keys never pans or zooms, so the passband will do.
             zoom_out: (state.center_hz, state.sample_rate),
         };
@@ -2048,5 +2281,72 @@ mod tests {
         let (wf, panel) = digi_split(300.0, 21.0, 0.2, 34.0);
         assert!(panel <= 0.6 * 279.0 + 0.01, "floor {panel} ate the waterfall");
         assert!(wf > 0.0);
+    }
+
+    /// A controller with nothing behind it: enough to draw the whole app.
+    struct NullCtrl;
+    impl sdroxide_types::RadioController for NullCtrl {
+        fn send(&mut self, _cmd: sdroxide_types::Command) {}
+        fn poll_event(&mut self) -> Option<sdroxide_types::RadioEvent> {
+            None
+        }
+    }
+
+    /// The FT8 action row (CALL CQ, STOP QSO, STOP TX) and the panel's frame
+    /// end inside the window. The row is laid out bottom-up and was placed by
+    /// the style's row height, shorter than its chips, so the difference hung
+    /// off the bottom: 10 points on a desktop, 6 on a tablet, at every window
+    /// size. Drawn here as the whole app, because the overhang came from how
+    /// the pieces sit inside each other and no one piece shows it alone.
+    ///
+    /// Ignored in the normal run: the app sets the language, the look and the
+    /// map switches process-wide, and the tests beside it read those. Run it
+    /// alone: `cargo test -p sdroxide-ui --lib the_ft8_action_row -- --ignored`.
+    #[test]
+    #[ignore = "draws the whole app, which changes process-wide settings"]
+    fn the_ft8_action_row_ends_inside_the_window() {
+        use eframe::egui;
+        use sdroxide_types::LayoutMode;
+        let mut over = Vec::new();
+        for layout in [LayoutMode::Desktop, LayoutMode::Tablet] {
+            for (w, h) in
+                [(1290.0f32, 724.0f32), (1366.0, 768.0), (1633.0, 965.0), (1920.0, 1050.0)]
+            {
+                let ctx = egui::Context::default();
+                let mut app = crate::app::SdroxideApp::new_tab(
+                    &ctx,
+                    None,
+                    None,
+                    Box::new(NullCtrl),
+                    0,
+                    false,
+                );
+                app.ui_settings.layout = layout;
+                app.state.rx[0].mode = Mode::Ft8;
+                let mut frame = eframe::Frame::_new_kittest();
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+                // A few frames: the tier and its metrics settle on the first.
+                let mut lowest = 0.0f32;
+                for _ in 0..4 {
+                    let mut out = ctx.run_ui(
+                        egui::RawInput { screen_rect: Some(screen), ..Default::default() },
+                        |ui| eframe::App::ui(&mut app, ui, &mut frame),
+                    );
+                    out.textures_delta.clear();
+                    lowest = out
+                        .shapes
+                        .iter()
+                        .map(|c| c.shape.visual_bounding_rect())
+                        .filter(|r| r.is_finite())
+                        .map(|r| r.bottom())
+                        .fold(0.0, f32::max);
+                }
+                // One point of slack for the anti-aliased edge of the frame.
+                if lowest > h + 1.0 {
+                    over.push(format!("{layout:?} {w}x{h}: drawn down to {lowest}"));
+                }
+            }
+        }
+        assert!(over.is_empty(), "{over:#?}");
     }
 }

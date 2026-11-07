@@ -97,3 +97,46 @@ fn ptt_in_cw_keys_the_transmitter_without_a_carrier() {
         let _ = t.join();
     }
 }
+
+/// Issue #716: releasing PTT on an over the key started, not PTT, used to unkey
+/// the radio while the keyer stayed latched, and nothing keyed again until
+/// CLEAR.
+#[test]
+fn a_ptt_release_on_a_keyed_over_leaves_the_key_working() {
+    let log = Arc::new(Mutex::new(Log::default()));
+    let (producer, _consumer) = sdroxide_radio::rtrb::RingBuffer::<f32>::new(48_000);
+    let cfg = EngineConfig {
+        tx_ham_only: false,
+        audio: Some(sdroxide_radio::AudioParams { producer, out_rate: 48_000.0 }),
+        ..Default::default()
+    };
+    let mut h = start_engine(Box::new(Rig { log: Arc::clone(&log) }), caps(), cfg);
+    let thread = h.thread.take();
+
+    h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::Cw }).unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    h.cmd_tx.send(Command::CwStraight(true)).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    h.cmd_tx.send(Command::CwKey(true)).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    h.cmd_tx.send(Command::CwKey(false)).unwrap();
+    assert!(log.lock().unwrap().began, "the key did not key the transmitter");
+    h.cmd_tx.send(Command::SetPtt(false)).unwrap();
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(log.lock().unwrap().ended, "releasing PTT did not end the over");
+
+    *log.lock().unwrap() = Log::default();
+    h.cmd_tx.send(Command::CwKey(true)).unwrap();
+    std::thread::sleep(Duration::from_millis(600));
+    h.cmd_tx.send(Command::CwKey(false)).unwrap();
+    {
+        let l = log.lock().unwrap();
+        assert!(l.began, "the key no longer keys after the PTT release");
+        assert!(l.peak > 1e-3, "keyed, but no carrier");
+    }
+
+    drop(h.cmd_tx);
+    if let Some(t) = thread {
+        let _ = t.join();
+    }
+}

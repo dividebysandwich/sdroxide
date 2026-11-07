@@ -338,6 +338,30 @@ pub struct DeviceCaps {
     /// already on the wire keeps its number.
     #[serde(default)]
     pub has_rx_antenna: bool,
+    /// The AGC control drives the *radio's* AGC, and that AGC cannot be
+    /// switched off from here — so `AgcMode::Off` is not offered.
+    ///
+    /// True only while the radio is the one demodulating what is heard (a CAT
+    /// rig on demod audio, an Icom on its LAN AF) and sdroxide commands its
+    /// presets. The audio has then already been levelled by the radio, and
+    /// switching off the engine's AGC behind it changes nothing that can be
+    /// heard: Icom's `16 12` has FAST, MID and SLOW and nothing else. On an
+    /// Icom's 12 kHz IF and on every I/Q front end the AGC is the engine's,
+    /// Off is real, and this is false. Kept current by the engine, because an
+    /// Icom moves between AF and IF with the mode. Appended last, so every
+    /// field already on the wire keeps its number.
+    #[serde(default)]
+    pub agc_off_unavailable: bool,
+    /// The radio has a built-in antenna tuner sdroxide can start and bypass
+    /// ([`crate::Command::AtuTune`], [`crate::Command::AtuBypass`]), and
+    /// reports what it is doing in [`crate::RadioState::atu`].
+    ///
+    /// Learned rather than claimed, like [`Self::has_rx_antenna`]: a FLEX
+    /// answers whether it has one (`atu_present`), and the control appears
+    /// once it has. Appended last, so every field already on the wire keeps
+    /// its number.
+    #[serde(default)]
+    pub has_atu: bool,
 }
 
 impl DeviceCaps {

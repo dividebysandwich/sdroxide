@@ -5,6 +5,7 @@
 //! one they will make again after the next restart. MIDI learn works the same
 //! way: arm a row, move the control, and the row captures whatever arrives.
 
+use crate::i18n::{Tr, tr};
 use eframe::egui::{self, Color32, ComboBox, RichText};
 use sdroxide_types::MemoryChannel;
 
@@ -66,30 +67,30 @@ pub(in crate::app) fn settings_controls_tab(
     let cfg = &mut *io.input_edit;
     let key_capture = &mut *io.key_capture;
 
-    ui.label(RichText::new("Keyboard").size(14.0).strong().color(crate::theme::CYAN()));
-    ui.add_space(4.0);
     ui.label(
-        RichText::new(
-            "Click a shortcut to rebind it, then press the key combination (Esc cancels). \
-             Bindings are ignored while you are typing in a text field.",
-        )
-        .weak(),
+        RichText::new(tr!("settings-controls-keyboard"))
+            .size(14.0)
+            .strong()
+            .color(crate::theme::CYAN()),
     );
+    ui.add_space(4.0);
+    ui.label(RichText::new(tr!("settings-controls-click-shortcut-rebind-then-press")).weak());
     ui.add_space(6.0);
 
     let mut remove: Option<usize> = None;
     egui::Grid::new("keys-grid").num_columns(6).spacing([10.0, 6.0]).striped(true).show(ui, |ui| {
-        ui.label(RichText::new("Shortcut").small().weak());
-        ui.label(RichText::new("Does").small().weak());
-        ui.label(RichText::new("Step / mode").small().weak());
-        ui.label(RichText::new("Accel").small().weak());
-        ui.label(RichText::new("On").small().weak());
+        ui.label(RichText::new(tr!("settings-controls-shortcut")).small().weak());
+        ui.label(RichText::new(tr!("settings-controls-does")).small().weak());
+        ui.label(RichText::new(tr!("settings-controls-step-mode")).small().weak());
+        ui.label(RichText::new(tr!("settings-controls-accel")).small().weak());
+        ui.label(RichText::new(tr!("settings-controls-on")).small().weak());
         ui.label("");
         ui.end_row();
 
         for (i, b) in cfg.keys.iter_mut().enumerate() {
             let capturing = *key_capture == Some(i);
-            let label = if capturing { "press a key…".to_string() } else { b.chord.label() };
+            let label =
+                if capturing { tr!("settings-controls-press-key") } else { b.chord.label() };
             if crate::chrome::chip(ui, capturing, RichText::new(label).monospace()).clicked() {
                 *key_capture = if capturing { None } else { Some(i) };
             }
@@ -118,7 +119,7 @@ pub(in crate::app) fn settings_controls_tab(
                 ActionKind::Momentary => {
                     ui.horizontal(|ui| {
                         for m in ButtonMode::ALL {
-                            if crate::chrome::chip(ui, b.button == m, m.label()).clicked() {
+                            if crate::chrome::chip(ui, b.button == m, m.tr()).clicked() {
                                 b.button = m;
                             }
                         }
@@ -128,7 +129,8 @@ pub(in crate::app) fn settings_controls_tab(
             }
 
             crate::chrome::checkbox(ui, &mut b.enabled, "");
-            if ui.small_button("✕").on_hover_text("Remove this binding").clicked() {
+            if ui.small_button("✕").on_hover_text(tr!("settings-controls-remove-binding")).clicked()
+            {
                 remove = Some(i);
             }
             ui.end_row();
@@ -143,21 +145,19 @@ pub(in crate::app) fn settings_controls_tab(
 
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        if crate::chrome::chip(ui, false, "+ Add shortcut").clicked() {
+        if crate::chrome::chip(ui, false, tr!("settings-controls-add-shortcut")).clicked() {
             cfg.keys.push(KeyBinding::default());
             *key_capture = Some(cfg.keys.len() - 1);
         }
-        if crate::chrome::chip(ui, false, "Restore defaults").clicked() {
+        if crate::chrome::chip(ui, false, tr!("settings-controls-restore-defaults")).clicked() {
             cfg.keys = KeyBinding::defaults();
             *key_capture = None;
         }
         // PTT ships unbound on purpose; this is the one-click opt-in.
         let has_ptt = cfg.keys.iter().any(|b| b.action == Action::Ptt);
         if !has_ptt
-            && crate::chrome::chip(ui, false, "Bind hold-to-talk to Space")
-                .on_hover_text(
-                    "Hold Space to transmit; releasing it — or losing window focus — unkeys",
-                )
+            && crate::chrome::chip(ui, false, tr!("settings-controls-bind-hold-talk-space"))
+                .on_hover_text(tr!("settings-controls-hold-space-transmit-releasing-losing"))
                 .clicked()
         {
             cfg.keys.push(KeyBinding {
@@ -171,7 +171,7 @@ pub(in crate::app) fn settings_controls_tab(
 
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        ui.label("Unkey a held PTT after");
+        ui.label(tr!("settings-controls-unkey-held-ptt-after"));
         ui.add(
             egui::DragValue::new(&mut cfg.ptt_hold_timeout_s)
                 .speed(5.0)
@@ -180,37 +180,40 @@ pub(in crate::app) fn settings_controls_tab(
         );
     })
     .response
-    .on_hover_text(
-        "Backstop against a stuck key or a controller that stops reporting. 0 disables.",
-    );
+    .on_hover_text(tr!("settings-controls-backstop-against-stuck-key-controller"));
 
     ui.add_space(10.0);
     ui.separator();
     ui.add_space(6.0);
-    ui.label(RichText::new("Panadapter mouse").size(14.0).strong().color(crate::theme::CYAN()));
+    ui.label(
+        RichText::new(tr!("settings-controls-panadapter-mouse"))
+            .size(14.0)
+            .strong()
+            .color(crate::theme::CYAN()),
+    );
     ui.add_space(6.0);
 
     let w = &mut cfg.wheel;
     egui::Grid::new("mouse-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-        ui.label("Wheel");
+        ui.label(tr!("settings-controls-wheel"));
         wheel_action_combo(ui, "wheel-plain", &mut w.wheel);
         ui.end_row();
 
-        ui.label("Wheel + Shift");
+        ui.label(tr!("settings-controls-wheel-shift"));
         wheel_action_combo(ui, "wheel-shift", &mut w.wheel_shift);
         ui.end_row();
 
-        ui.label("Tune step");
+        ui.label(tr!("settings-controls-tune-step"));
         ui.add(
             egui::DragValue::new(&mut w.tune_step_hz).speed(10.0).range(1.0..=1e6).suffix(" Hz"),
         );
         ui.end_row();
 
-        ui.label("Zoom rate");
+        ui.label(tr!("settings-controls-zoom-rate"));
         ui.add(egui::DragValue::new(&mut w.zoom_rate).speed(0.05).range(0.1..=5.0));
         ui.end_row();
 
-        ui.label("Click-tune rounding");
+        ui.label(tr!("settings-controls-click-tune-rounding"));
         ui.add(
             egui::DragValue::new(&mut w.click_tune_step_hz)
                 .speed(1.0)
@@ -220,37 +223,40 @@ pub(in crate::app) fn settings_controls_tab(
         ui.end_row();
     });
     ui.add_space(4.0);
-    crate::chrome::checkbox(ui, &mut w.invert, "Invert wheel direction");
-    crate::chrome::checkbox(ui, &mut w.drag_tunes, "Left-drag tunes as well as pans")
-        .on_hover_text("Off makes left-drag pan the view only, like right-drag.");
+    crate::chrome::checkbox(ui, &mut w.invert, tr!("settings-controls-invert-wheel-direction"));
+    crate::chrome::checkbox(
+        ui,
+        &mut w.drag_tunes,
+        tr!("settings-controls-left-drag-tunes-well-pans"),
+    )
+    .on_hover_text(tr!("settings-controls-off-makes-left-drag-pan"));
     crate::chrome::checkbox(
         ui,
         &mut w.digit_wheel,
-        "Scroll a digit on the frequency readout to tune it",
+        tr!("settings-controls-scroll-digit-frequency-readout-tune"),
     );
     if w.wheel == WheelAction::Tune && w.wheel_shift == WheelAction::Tune {
         ui.label(
-            RichText::new("Both wheel actions are Tune — there is no way left to zoom.")
+            RichText::new(tr!("settings-controls-both-wheel-actions-are-tune"))
                 .color(Color32::from_rgb(230, 170, 60)),
         );
     }
     ui.add_space(6.0);
-    if crate::chrome::chip(ui, false, "Restore mouse defaults").clicked() {
+    if crate::chrome::chip(ui, false, tr!("settings-controls-restore-mouse-defaults")).clicked() {
         cfg.wheel = WheelSettings::default();
     }
 
     ui.add_space(10.0);
     ui.separator();
     ui.add_space(6.0);
-    ui.label(RichText::new("Mouse buttons").size(14.0).strong().color(crate::theme::CYAN()));
-    ui.add_space(4.0);
     ui.label(
-        RichText::new(
-            "The left and right buttons are reserved for tuning and panning; the middle and \
-             extra buttons are free. A side button held for PTT behaves like a footswitch.",
-        )
-        .weak(),
+        RichText::new(tr!("settings-controls-mouse-buttons"))
+            .size(14.0)
+            .strong()
+            .color(crate::theme::CYAN()),
     );
+    ui.add_space(4.0);
+    ui.label(RichText::new(tr!("settings-controls-left-right-buttons-are-reserved")).weak());
     ui.add_space(6.0);
 
     let mut remove: Option<usize> = None;
@@ -260,10 +266,10 @@ pub(in crate::app) fn settings_controls_tab(
             for (i, b) in cfg.mouse_buttons.iter_mut().enumerate() {
                 ComboBox::from_id_salt(("mb", i))
                     .width(130.0)
-                    .selected_text(b.button.label())
+                    .selected_text(b.button.tr())
                     .show_styled(ui, |ui| {
                         for m in MouseButton::ALL {
-                            if ui.selectable_label(b.button == m, m.label()).clicked() {
+                            if ui.selectable_label(b.button == m, m.tr()).clicked() {
                                 b.button = m;
                             }
                         }
@@ -271,7 +277,7 @@ pub(in crate::app) fn settings_controls_tab(
                 action_combo(ui, ("mbact", i), &mut b.action, memories);
                 ui.horizontal(|ui| {
                     for m in ButtonMode::ALL {
-                        if crate::chrome::chip(ui, b.button_mode == m, m.label()).clicked() {
+                        if crate::chrome::chip(ui, b.button_mode == m, m.tr()).clicked() {
                             b.button_mode = m;
                         }
                     }
@@ -288,15 +294,12 @@ pub(in crate::app) fn settings_controls_tab(
         cfg.mouse_buttons.remove(i);
     }
     ui.add_space(6.0);
-    if crate::chrome::chip(ui, false, "+ Add mouse button").clicked() {
+    if crate::chrome::chip(ui, false, tr!("settings-controls-add-mouse-button")).clicked() {
         cfg.mouse_buttons.push(MouseButtonBinding::default());
     }
 
     ui.add_space(8.0);
-    ui.label(
-        RichText::new("F1 always opens this manual, even while typing, so it is not rebindable.")
-            .weak(),
-    );
+    ui.label(RichText::new(tr!("settings-controls-f1-always-opens-manual-even")).weak());
 
     ui.add_space(10.0);
     ui.separator();
@@ -330,30 +333,25 @@ fn settings_midi_section(
 ) {
     use sdroxide_types::{ActionKind, ButtonMode, MidiBinding, RelativeMode};
 
-    ui.label(RichText::new("MIDI controller").size(14.0).strong().color(crate::theme::CYAN()));
+    ui.label(
+        RichText::new(tr!("settings-controls-midi-controller"))
+            .size(14.0)
+            .strong()
+            .color(crate::theme::CYAN()),
+    );
     ui.add_space(4.0);
     if !status.supported {
-        ui.label(
-            RichText::new(
-                "MIDI controllers need the native app — the browser client has no MIDI access.",
-            )
-            .weak(),
-        );
+        ui.label(RichText::new(tr!("settings-controls-midi-controllers-need-native-app")).weak());
         return;
     }
-    ui.label(
-        RichText::new(
-            "Any class-compliant MIDI surface works: a DJ controller's jog wheel makes a fine              VFO knob, its pads make PTT and band buttons, its faders make gain controls.",
-        )
-        .weak(),
-    );
+    ui.label(RichText::new(tr!("settings-controls-any-class-compliant-midi-surface")).weak());
     ui.add_space(6.0);
-    crate::chrome::checkbox(ui, &mut cfg.midi.enabled, "Enable");
+    crate::chrome::checkbox(ui, &mut cfg.midi.enabled, tr!("settings-controls-enable"));
     ui.add_space(6.0);
 
     ui.add_enabled_ui(cfg.midi.enabled, |ui| {
         egui::Grid::new("midi-ports").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Controller");
+            ui.label(tr!("settings-controls-controller"));
             midi_port_combo(
                 ui,
                 "midi-in",
@@ -363,7 +361,7 @@ fn settings_midi_section(
             );
             ui.end_row();
 
-            ui.label("Feedback to");
+            ui.label(tr!("settings-controls-feedback"));
             midi_port_combo(
                 ui,
                 "midi-out",
@@ -375,7 +373,7 @@ fn settings_midi_section(
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            if crate::chrome::chip(ui, false, "Rescan ports").clicked() {
+            if crate::chrome::chip(ui, false, tr!("settings-controls-rescan-ports")).clicked() {
                 *rescan = true;
             }
             if status.connected {
@@ -386,37 +384,38 @@ fn settings_midi_section(
             } else if let Some(e) = &status.error {
                 ui.label(RichText::new(e).color(Color32::from_rgb(230, 90, 80)));
             } else {
-                ui.label(RichText::new("Not connected.").weak());
+                ui.label(RichText::new(tr!("settings-controls-not-connected")).weak());
             }
         });
         ui.add_space(4.0);
         // Naming the control that just moved is what makes an unlabelled
         // surface bindable at all.
         match last_midi {
-            Some((msg, v)) => {
-                ui.label(RichText::new(format!("Last message: {}  value {v}", msg.label())).weak())
-            }
-            None => ui.label(RichText::new("Move a control to see it here.").weak()),
+            Some((msg, v)) => ui.label(
+                RichText::new(tr!("settings-controls-last-midi", message = msg.label(), value = v))
+                    .weak(),
+            ),
+            None => ui.label(RichText::new(tr!("settings-controls-move-control-see-here")).weak()),
         };
     });
 
     ui.add_space(8.0);
     let mut remove: Option<usize> = None;
     egui::Grid::new("midi-grid").num_columns(7).spacing([10.0, 6.0]).striped(true).show(ui, |ui| {
-        ui.label(RichText::new("Control").small().weak());
-        ui.label(RichText::new("Does").small().weak());
-        ui.label(RichText::new("Reads as").small().weak());
-        ui.label(RichText::new("Step / mode").small().weak());
-        ui.label(RichText::new("LED").small().weak());
-        ui.label(RichText::new("On").small().weak());
+        ui.label(RichText::new(tr!("settings-controls-control")).small().weak());
+        ui.label(RichText::new(tr!("settings-controls-does")).small().weak());
+        ui.label(RichText::new(tr!("settings-controls-reads")).small().weak());
+        ui.label(RichText::new(tr!("settings-controls-step-mode")).small().weak());
+        ui.label(RichText::new(tr!("settings-controls-led")).small().weak());
+        ui.label(RichText::new(tr!("settings-controls-on")).small().weak());
         ui.label("");
         ui.end_row();
 
         for (i, b) in cfg.midi.bindings.iter_mut().enumerate() {
             let learning = learn.map(|l| l.row) == Some(i);
-            let label = if learning { "move it…".to_string() } else { b.msg.label() };
+            let label = if learning { tr!("settings-controls-move") } else { b.msg.label() };
             if crate::chrome::chip(ui, learning, RichText::new(label).monospace())
-                .on_hover_text("Click, then move the control you want to bind")
+                .on_hover_text(tr!("settings-controls-click-then-move-control-you"))
                 .clicked()
             {
                 *learn = if learning { None } else { Some(crate::input::MidiLearn { row: i }) };
@@ -430,10 +429,10 @@ fn settings_midi_section(
                 ActionKind::Continuous => {
                     ComboBox::from_id_salt(("midirel", i))
                         .width(170.0)
-                        .selected_text(b.relative.label())
+                        .selected_text(b.relative.tr())
                         .show_styled(ui, |ui| {
                             for m in RelativeMode::ALL {
-                                if ui.selectable_label(b.relative == m, m.label()).clicked() {
+                                if ui.selectable_label(b.relative == m, m.tr()).clicked() {
                                     b.relative = m;
                                 }
                             }
@@ -450,7 +449,7 @@ fn settings_midi_section(
                                 .range(0.0..=4.0)
                                 .prefix("×"),
                         )
-                        .on_hover_text("Speed sensitivity: spin faster to tune faster");
+                        .on_hover_text(tr!("settings-controls-speed-sensitivity-spin-faster-tune"));
                         // Sign/magnitude and 64-centred encoders are
                         // indistinguishable from small movements, so a wrong
                         // guess shows up as a knob that turns the wrong way.
@@ -461,7 +460,7 @@ fn settings_midi_section(
                     ui.label("");
                     ui.horizontal(|ui| {
                         for m in ButtonMode::ALL {
-                            if crate::chrome::chip(ui, b.button_mode == m, m.label()).clicked() {
+                            if crate::chrome::chip(ui, b.button_mode == m, m.tr()).clicked() {
                                 b.button_mode = m;
                             }
                         }
@@ -470,7 +469,7 @@ fn settings_midi_section(
             }
 
             crate::chrome::checkbox(ui, &mut b.feedback, "")
-                .on_hover_text("Send the current value back, to light an LED or move a fader");
+                .on_hover_text(tr!("settings-controls-send-current-value-back-light"));
             crate::chrome::checkbox(ui, &mut b.enabled, "");
             if ui.small_button("✕").clicked() {
                 remove = Some(i);
@@ -487,23 +486,20 @@ fn settings_midi_section(
 
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        if crate::chrome::chip(ui, false, "+ Add MIDI control").clicked() {
+        if crate::chrome::chip(ui, false, tr!("settings-controls-add-midi-control")).clicked() {
             cfg.midi.bindings.push(MidiBinding::default());
             *learn = Some(crate::input::MidiLearn { row: cfg.midi.bindings.len() - 1 });
         }
-        if !cfg.midi.bindings.is_empty() && crate::chrome::chip(ui, false, "Clear all").clicked() {
+        if !cfg.midi.bindings.is_empty()
+            && crate::chrome::chip(ui, false, tr!("settings-controls-clear-all")).clicked()
+        {
             cfg.midi.bindings.clear();
             *learn = None;
         }
     });
 
     ui.add_space(8.0);
-    ui.label(
-        RichText::new(
-            "Endless (jog) encoders send a relative step rather than a position, in one of three              encodings that look alike from small movements. LEARN guesses from a clockwise turn;              if the knob then tunes the wrong way, tick \u{201c}rev\u{201d}.",
-        )
-        .weak(),
-    );
+    ui.label(RichText::new(tr!("settings-controls-endless-jog-encoders-send-relative")).weak());
 }
 
 /// Port dropdown that keeps both the stable id and the human name — the id
@@ -515,9 +511,13 @@ fn midi_port_combo(
     sel_id: &mut String,
     sel_name: &mut String,
 ) {
-    let shown = if sel_name.is_empty() { "— none —" } else { sel_name.as_str() };
+    let shown = if sel_name.is_empty() {
+        tr!("settings-controls-none")
+    } else {
+        String::from(sel_name.as_str())
+    };
     ComboBox::from_id_salt(id).width(280.0).selected_text(shown).show_styled(ui, |ui| {
-        if ui.selectable_label(sel_name.is_empty(), "— none —").clicked() {
+        if ui.selectable_label(sel_name.is_empty(), tr!("settings-controls-none")).clicked() {
             sel_id.clear();
             sel_name.clear();
         }
@@ -532,9 +532,9 @@ fn midi_port_combo(
 
 /// Dropdown over [`WheelAction`].
 fn wheel_action_combo(ui: &mut egui::Ui, id: &str, act: &mut sdroxide_types::WheelAction) {
-    ComboBox::from_id_salt(id).width(130.0).selected_text(act.label()).show_styled(ui, |ui| {
+    ComboBox::from_id_salt(id).width(130.0).selected_text(act.tr()).show_styled(ui, |ui| {
         for a in sdroxide_types::WheelAction::ALL {
-            if ui.selectable_label(*act == a, a.label()).clicked() {
+            if ui.selectable_label(*act == a, a.tr()).clicked() {
                 *act = a;
             }
         }

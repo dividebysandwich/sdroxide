@@ -9,6 +9,7 @@
 //! one piece of space weather the *main* window shows, so the main window keeps
 //! them current itself rather than waiting for the 3D view to be opened.
 
+use crate::i18n::tr;
 use eframe::egui;
 
 // The traffic layer only exists where the 3D window does.
@@ -201,9 +202,7 @@ impl SdroxideApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if super::top_bar::chip_stretched(ui, self.solar.open, label, extra)
-                .on_hover_text(
-                    "Solar system 3D view — Sun, Earth, Moon, sunspots and CMEs (separate window)",
-                )
+                .on_hover_text(tr!("solarbtn-solar-system-3d-view-sun"))
                 .clicked()
             {
                 self.solar.open = !self.solar.open;
@@ -212,9 +211,7 @@ impl SdroxideApp {
         #[cfg(target_arch = "wasm32")]
         {
             if super::top_bar::chip_stretched(ui, false, label, extra)
-                .on_hover_text(
-                    "Solar system 3D view — Sun, Earth, Moon, sunspots and CMEs (new browser tab)",
-                )
+                .on_hover_text(tr!("solarbtn-solar-system-3d-view-sun-2"))
                 .clicked()
             {
                 ui.ctx().open_url(egui::OpenUrl::new_tab("?view=solar"));

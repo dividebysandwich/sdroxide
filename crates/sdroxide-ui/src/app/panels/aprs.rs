@@ -15,6 +15,7 @@
 //! there is a conversation to have: APRS messages are addressed, acknowledged
 //! and retried, and answering one is a button.
 
+use crate::i18n::tr;
 use eframe::egui::{self, RichText};
 use sdroxide_types::{AprsEntryKind, AprsMsgState, AprsStation, AprsStatus, Command};
 
@@ -36,7 +37,7 @@ impl SdroxideApp {
         let st: Option<AprsStatus> =
             self.digi_status.as_ref().and_then(|s| s.aprs.as_ref().map(|a| (**a).clone()));
         let Some(st) = st else {
-            ui.label(RichText::new("starting the APRS modem…").weak());
+            ui.label(RichText::new(tr!("aprs-starting-aprs-modem")).weak());
             return;
         };
         let tx_ok = self.tx_capable();
@@ -116,7 +117,7 @@ impl SdroxideApp {
             // A floor under the row, so a height that varies by a point with
             // its content cannot ripple into every pane below it either.
             ui.set_min_height(22.0);
-            ui.label(RichText::new("APRS").size(11.0).strong().color(theme::CYAN()));
+            ui.label(RichText::new(tr!("aprs-aprs")).size(11.0).strong().color(theme::CYAN()));
             ui.label(RichText::new("1200 baud").weak().size(10.5));
             self.digi_freq_chip(ui, cmds);
             aprs_level_bar(ui, st.level, st.dcd);
@@ -126,18 +127,16 @@ impl SdroxideApp {
             // changes only when the operator changes a setting — so it needs
             // no slot of its own.
             if !have_call {
-                ui.label(RichText::new("no callsign").strong().size(10.5).color(theme::ALERT()))
-                    .on_hover_text(
-                        "Nothing will be transmitted — no beacon, no message, not even an \
-                         acknowledgement — until this station has a callsign. Set one under \
-                         Settings → General, or an APRS-specific one with its SSID under SETUP.",
-                    );
+                ui.label(
+                    RichText::new(tr!("aprs-no-callsign"))
+                        .strong()
+                        .size(10.5)
+                        .color(theme::ALERT()),
+                )
+                .on_hover_text(tr!("aprs-nothing-will-transmitted-no-beacon"));
             } else if !have_pos {
-                ui.label(RichText::new("no position").size(10.5).color(theme::YELLOW()))
-                    .on_hover_text(
-                        "A beacon needs somewhere to report. Fill in your locator under \
-                         Settings → General, or give coordinates under SETUP.",
-                    );
+                ui.label(RichText::new(tr!("aprs-no-position")).size(10.5).color(theme::YELLOW()))
+                    .on_hover_text(tr!("aprs-beacon-needs-somewhere-report-fill"));
             }
 
             crate::chrome::row_tail(ui, |ui| {
@@ -146,9 +145,9 @@ impl SdroxideApp {
                 if crate::chrome::chip(
                     ui,
                     self.show_digi_settings,
-                    RichText::new("SETUP").size(9.5),
+                    RichText::new(tr!("aprs-setup")).size(9.5),
                 )
-                .on_hover_text("Callsign, symbol, digipeater path, position and beacon")
+                .on_hover_text(tr!("aprs-callsign-symbol-digipeater-path-position"))
                 .clicked()
                 {
                     self.show_digi_settings = !self.show_digi_settings;
@@ -172,15 +171,10 @@ impl SdroxideApp {
                             .range(0..=120)
                             .speed(0.25)
                             .custom_formatter(|n, _| {
-                                if n < 1.0 { "off".into() } else { format!("{n:.0} min") }
+                                if n < 1.0 { "off".into() } else { format!("{n:.0} min", n = n) }
                             }),
                     )
-                    .on_hover_text(
-                        "How often to beacon your position, unattended. `off` — the default — \
-                         never beacons: selecting a mode must not put a station on the air. \
-                         Thirty minutes is the convention for a fixed station, oftener for a \
-                         moving one, and every beacon is somebody else's channel time.",
-                    );
+                    .on_hover_text(tr!("aprs-how-often-beacon-your-position"));
                 if resp.changed() && cfg.aprs_beacon_minutes != before {
                     let cfg = cfg.clone();
                     cmds.push(Command::SetDigiConfig(cfg));
@@ -189,17 +183,16 @@ impl SdroxideApp {
                     crate::chrome::chip_accent(
                         ui,
                         false,
-                        RichText::new(" BEACON ").strong(),
+                        RichText::new(tr!("aprs-beacon")).strong(),
                         theme::GREEN(),
                         theme::INK_ON_CYAN(),
                     )
                     .on_hover_text(if !have_call {
-                        "This station has no callsign — see the warning to the left."
+                        tr!("aprs-station-has-no-callsign-see")
                     } else if !have_pos {
-                        "This station has no position to report — see the warning to the left."
+                        tr!("aprs-station-has-no-position-report")
                     } else {
-                        "Send one position report now, without waiting for the interval. It \
-                         waits for the channel to be clear like everything else."
+                        tr!("aprs-send-one-position-report-now")
                     })
                 })
                 .clicked()
@@ -228,7 +221,9 @@ impl SdroxideApp {
         tx_ok: bool,
     ) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("STATIONS").size(10.5).strong().color(theme::CYAN_DIM()));
+            ui.label(
+                RichText::new(tr!("aprs-stations")).size(10.5).strong().color(theme::CYAN_DIM()),
+            );
             crate::chrome::row_tail(ui, |ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.aprs_filter)
@@ -271,7 +266,7 @@ impl SdroxideApp {
             .auto_shrink([false, false])
             .show_themed(ui, |ui| {
                 if rows.is_empty() {
-                    ui.label(RichText::new("nothing heard yet").weak());
+                    ui.label(RichText::new(tr!("aprs-nothing-heard-yet")).weak());
                 }
                 for (i, s) in rows.iter().enumerate() {
                     if let Some(name) = self.aprs_row(ui, s, st, now, selected.as_deref(), i) {
@@ -407,7 +402,11 @@ impl SdroxideApp {
             ui.label(RichText::new(&s.name).monospace().strong().color(theme::YELLOW()));
             ui.label(RichText::new(s.symbol.kind().label()).size(10.5));
             if s.entry == AprsEntryKind::Object && !s.reported_by.is_empty() {
-                ui.label(RichText::new(format!("object from {}", s.reported_by)).size(10.0).weak());
+                ui.label(
+                    RichText::new(tr!("aprs-object", reported_by = s.reported_by))
+                        .size(10.0)
+                        .weak(),
+                );
             }
             if !s.comment.is_empty() {
                 ui.label(RichText::new(&s.comment).size(10.5));
@@ -418,11 +417,11 @@ impl SdroxideApp {
             }
             ui.label(
                 RichText::new(if s.direct {
-                    "heard direct".to_string()
+                    tr!("aprs-heard-direct").to_string()
                 } else if s.via.is_empty() {
                     String::new()
                 } else {
-                    format!("via {}", s.via.join(","))
+                    tr!("aprs-via", via = s.via.join(","))
                 })
                 .size(10.0)
                 .weak(),
@@ -448,15 +447,15 @@ impl SdroxideApp {
                 ui.label(RichText::new(&s.name).monospace().strong().color(theme::YELLOW()));
                 ui.label(RichText::new(s.symbol.kind().label()).size(10.0).weak());
                 ui.label(RichText::new(s.symbol.text()).size(9.5).monospace().weak())
-                    .on_hover_text("The two characters the station sent to say what it is");
+                    .on_hover_text(tr!("aprs-two-characters-station-sent-say"));
                 if s.killed {
-                    ui.label(RichText::new("KILLED").size(9.5).color(theme::ALERT()))
-                        .on_hover_text("The station that put this object here has cancelled it");
+                    ui.label(RichText::new(tr!("aprs-killed")).size(9.5).color(theme::ALERT()))
+                        .on_hover_text(tr!("aprs-station-put-object-here-has"));
                 }
             });
             if s.entry == AprsEntryKind::Object && !s.reported_by.is_empty() {
                 ui.label(
-                    RichText::new(format!("object reported by {}", s.reported_by))
+                    RichText::new(tr!("aprs-object-reported", reported_by = s.reported_by))
                         .size(10.0)
                         .weak(),
                 );
@@ -473,14 +472,11 @@ impl SdroxideApp {
                 );
                 if q.ambiguity > 0 {
                     ui.label(
-                        RichText::new(format!("± {} digit(s) blanked", q.ambiguity))
+                        RichText::new(tr!("aprs-digit-s-blanked", ambiguity = q.ambiguity))
                             .size(9.5)
                             .weak(),
                     )
-                    .on_hover_text(
-                        "The sender deliberately reported a square rather than a point. The \
-                         map draws the square.",
-                    );
+                    .on_hover_text(tr!("aprs-sender-deliberately-reported-square-rather"));
                 }
                 if let Some(me) = st.my_pos {
                     let km = sdroxide_types::distance_km((me.lat, me.lon), (q.lat, q.lon));
@@ -509,28 +505,32 @@ impl SdroxideApp {
                     bits.push(format!("{t:.1} °C"));
                 }
                 if let (Some(d), Some(v)) = (w.wind_dir_deg, w.wind_speed_ms) {
-                    bits.push(format!("wind {d:03}° {v:.1} m/s"));
+                    bits.push(tr!(
+                        "aprs-wind-m-s",
+                        value = format!("{:03}", d),
+                        value2 = format!("{:.1}", v)
+                    ));
                 }
                 if let Some(g) = w.wind_gust_ms {
-                    bits.push(format!("gust {g:.1}"));
+                    bits.push(tr!("aprs-gust", value = format!("{:.1}", g)));
                 }
                 if let Some(hu) = w.humidity_pct {
                     bits.push(format!("{hu}% RH"));
                 }
                 if let Some(p) = w.pressure_hpa {
-                    bits.push(format!("{p:.1} hPa"));
+                    bits.push(format!("{value:.1} hPa", value = p));
                 }
                 if let Some(r) = w.rain_1h_mm {
-                    bits.push(format!("rain {r:.1} mm/h"));
+                    bits.push(tr!("aprs-rain-mm-h", value = format!("{:.1}", r)));
                 }
                 ui.label(RichText::new(bits.join("   ")).size(10.0).color(theme::CYAN_DIM()));
             }
             ui.horizontal_wrapped(|ui| {
                 ui.label(
-                    RichText::new(format!(
-                        "{} frame(s), last {} ago",
-                        s.packets,
-                        fmt_age(now - s.last_heard)
+                    RichText::new(tr!(
+                        "aprs-frame-s-last-ago",
+                        packets = s.packets,
+                        last_heard = fmt_age(now - s.last_heard)
                     ))
                     .size(9.5)
                     .weak(),
@@ -538,30 +538,31 @@ impl SdroxideApp {
             });
             if !s.via.is_empty() {
                 ui.label(
-                    RichText::new(format!("via {}", s.via.join(","))).size(9.5).monospace().weak(),
+                    RichText::new(tr!("aprs-via-2", via = s.via.join(",")))
+                        .size(9.5)
+                        .monospace()
+                        .weak(),
                 )
-                .on_hover_text(
-                    "The digipeaters the last frame came through. A `*` marks one that \
-                         actually repeated it.",
-                );
+                .on_hover_text(tr!("aprs-digipeaters-last-frame-came-through"));
             }
             ui.add_space(3.0);
             ui.horizontal(|ui| {
                 if s.entry == AprsEntryKind::Station
                     && tx_gated(ui, tx_ok, |ui| {
-                        crate::chrome::chip(ui, false, RichText::new(" MESSAGE ").size(10.0))
-                            .on_hover_text("Address the message box to this station")
+                        crate::chrome::chip(
+                            ui,
+                            false,
+                            RichText::new(tr!("aprs-message")).size(10.0),
+                        )
+                        .on_hover_text(tr!("aprs-address-message-box-station"))
                     })
                     .clicked()
                 {
                     self.aprs_target = name.clone();
                 }
                 if s.pos.is_some()
-                    && crate::chrome::chip(ui, false, RichText::new(" CENTER ").size(10.0))
-                        .on_hover_text(
-                            "Put this station in the middle of the map. Double-click the map \
-                             to hand the view back to the automatic fit.",
-                        )
+                    && crate::chrome::chip(ui, false, RichText::new(tr!("aprs-center")).size(10.0))
+                        .on_hover_text(tr!("aprs-put-station-middle-map-double"))
                         .clicked()
                     && let Some(q) = s.pos
                 {
@@ -601,10 +602,14 @@ impl SdroxideApp {
         let have_call = !me.is_empty();
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(if self.aprs_show_traffic { "CHANNEL" } else { "MESSAGES" })
-                    .size(10.5)
-                    .strong()
-                    .color(theme::CYAN_DIM()),
+                RichText::new(if self.aprs_show_traffic {
+                    tr!("aprs-channel")
+                } else {
+                    tr!("aprs-messages")
+                })
+                .size(10.5)
+                .strong()
+                .color(theme::CYAN_DIM()),
             );
             // The two counts that say why a channel is not decoding, beside the
             // raw view they are about. They were in the panel header and are
@@ -612,28 +617,21 @@ impl SdroxideApp {
             // keep a constant width (see `aprs_header`).
             if self.aprs_show_traffic {
                 if st.bad_frames > 0 {
-                    ui.label(RichText::new(format!("{} bad", st.bad_frames)).size(9.5).weak())
-                        .on_hover_text(
-                            "Frames that arrived and failed their check sequence — a collision, \
-                             a fade, or a signal too weak to read. A count rising with nothing \
-                             decoding means the modem *is* hearing the channel: check the level \
-                             meter, and open the radio's squelch.",
-                        );
+                    ui.label(
+                        RichText::new(tr!("aprs-bad", bad_frames = st.bad_frames)).size(9.5).weak(),
+                    )
+                    .on_hover_text(tr!("aprs-frames-arrived-failed-their-check"));
                 }
                 if st.non_aprs > 0 {
-                    ui.label(RichText::new(format!("{} other", st.non_aprs)).size(9.5).weak())
-                        .on_hover_text(
-                            "Frames read cleanly off the channel that were not APRS — somebody \
-                             else's packet session, or a format this build does not decode.",
-                        );
+                    ui.label(
+                        RichText::new(tr!("aprs-other", non_aprs = st.non_aprs)).size(9.5).weak(),
+                    )
+                    .on_hover_text(tr!("aprs-frames-read-cleanly-off-channel"));
                 }
             }
             crate::chrome::row_tail(ui, |ui| {
                 if crate::chrome::chip(ui, self.aprs_show_traffic, RichText::new("RAW").size(9.5))
-                    .on_hover_text(
-                        "Every frame on the channel, as it arrived — other people's traffic \
-                         included, and anything the decoder could not read.",
-                    )
+                    .on_hover_text(tr!("aprs-every-frame-channel-arrived-other"))
                     .clicked()
                 {
                     self.aprs_show_traffic = !self.aprs_show_traffic;
@@ -655,7 +653,7 @@ impl SdroxideApp {
             .show_themed(ui, |ui| {
                 if self.aprs_show_traffic {
                     if st.traffic.is_empty() {
-                        ui.label(RichText::new("nothing on the channel yet").weak());
+                        ui.label(RichText::new(tr!("aprs-nothing-channel-yet")).weak());
                     }
                     for t in &st.traffic {
                         let via = if t.via.is_empty() {
@@ -679,7 +677,7 @@ impl SdroxideApp {
                     return;
                 }
                 if st.messages.is_empty() {
-                    ui.label(RichText::new("No messages.").weak().size(10.5));
+                    ui.label(RichText::new(tr!("aprs-no-messages")).weak().size(10.5));
                 }
                 for m in &st.messages {
                     let ours = m.from.eq_ignore_ascii_case(&me) && !me.is_empty();
@@ -706,34 +704,36 @@ impl SdroxideApp {
                             // something to leave to a font fallback.
                             let (face, colour, tip) = match m.state {
                                 AprsMsgState::Queued => {
-                                    ("…".to_string(), theme::gray(150), "waiting for the channel")
+                                    ("…".to_string(), theme::gray(150), tr!("aprs-waiting-channel"))
                                 }
                                 AprsMsgState::Sent if m.tries > 1 => (
-                                    format!("sent ×{}", m.tries),
+                                    tr!("aprs-sent", tries = m.tries),
                                     theme::CYAN_DIM(),
-                                    "sent and retried, still waiting to be acknowledged",
+                                    tr!("aprs-sent-retried-still-waiting-acknowledged"),
                                 ),
                                 AprsMsgState::Sent => (
                                     "sent".to_string(),
                                     theme::CYAN_DIM(),
-                                    "on the air, waiting to be acknowledged",
+                                    tr!("aprs-air-waiting-acknowledged"),
                                 ),
                                 AprsMsgState::Acked => (
                                     "ack".to_string(),
                                     theme::GREEN(),
-                                    "acknowledged by the far end",
+                                    tr!("aprs-acknowledged-far-end"),
                                 ),
                                 AprsMsgState::Rejected => (
                                     "rejected".to_string(),
                                     theme::ALERT(),
-                                    "refused by the far end — not retried",
+                                    tr!("aprs-refused-far-end-not-retried"),
                                 ),
                                 AprsMsgState::Failed => (
-                                    "no ack".to_string(),
+                                    tr!("aprs-no-ack").to_string(),
                                     theme::ALERT(),
-                                    "no answer after every retry",
+                                    tr!("aprs-no-answer-after-every-retry"),
                                 ),
-                                AprsMsgState::Received => (String::new(), theme::gray(150), ""),
+                                AprsMsgState::Received => {
+                                    (String::new(), theme::gray(150), String::new())
+                                }
                             };
                             if !face.is_empty() {
                                 ui.label(RichText::new(face).size(9.5).color(colour))
@@ -777,18 +777,16 @@ impl SdroxideApp {
                 crate::chrome::chip_accent(
                     ui,
                     false,
-                    RichText::new(" SEND ").size(10.0).strong(),
+                    RichText::new(tr!("aprs-send")).size(10.0).strong(),
                     theme::GREEN(),
                     theme::INK_ON_CYAN(),
                 )
                 .on_hover_text(if !have_call {
-                    "This station has no callsign, so nothing can be transmitted. Set one under \
-                     Settings → General, or an APRS-specific one with its SSID under SETUP."
+                    tr!("aprs-station-has-no-callsign-so")
                 } else if !ready {
-                    "Needs a station to address and something to say."
+                    tr!("aprs-needs-station-address-something-say")
                 } else {
-                    "Send it, and keep retrying until the far end acknowledges. Messages are \
-                     the one thing on this channel that is answered."
+                    tr!("aprs-send-keep-retrying-until-far")
                 })
             })
             .clicked()
@@ -832,15 +830,12 @@ fn paint_segments(ui: &egui::Ui, rect: egui::Rect, segs: &[(String, egui::Color3
 /// the channel is busy or clear — see [`SdroxideApp::aprs_header`].
 fn aprs_channel_slot(ui: &mut egui::Ui, st: &AprsStatus) {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(86.0, 15.0), egui::Sense::hover());
-    let mut segs = vec![(format!("{} stn", st.stations.len()), theme::CYAN_DIM())];
+    let mut segs = vec![(tr!("aprs-stn", stations = st.stations.len()), theme::CYAN_DIM())];
     if st.dcd {
-        segs.push(("BUSY".to_string(), theme::ALERT()));
+        segs.push((tr!("aprs-busy").to_string(), theme::ALERT()));
     }
     paint_segments(ui, rect, &segs);
-    resp.on_hover_text(
-        "Stations heard and still inside the window set in APRS Setup, and whether another \
-         station is on the channel right now. Nothing will key while it is busy.",
-    );
+    resp.on_hover_text(tr!("aprs-stations-heard-still-inside-window"));
 }
 
 /// What the transmitter is doing, in a slot of fixed width: the over in
@@ -850,17 +845,14 @@ fn aprs_tx_slot(ui: &mut egui::Ui, st: &AprsStatus, transmitting: bool) {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(58.0, 15.0), egui::Sense::hover());
     let mut segs = Vec::new();
     if transmitting {
-        segs.push(("● TX".to_string(), theme::ALERT()));
+        segs.push((tr!("aprs-tx").to_string(), theme::ALERT()));
     } else if st.tx_queue > 0 {
-        segs.push((format!("{} queued", st.tx_queue), theme::YELLOW()));
+        segs.push((tr!("aprs-queued", tx_queue = st.tx_queue), theme::YELLOW()));
     } else if let Some(secs) = st.next_beacon_s {
         segs.push((format!("{}:{:02}", secs / 60, secs % 60), theme::CYAN_DIM()));
     }
     paint_segments(ui, rect, &segs);
-    resp.on_hover_text(
-        "The over in progress, the frames waiting for the channel to clear, or the time until \
-         the next scheduled beacon.",
-    );
+    resp.on_hover_text(tr!("aprs-over-progress-frames-waiting-channel"));
 }
 
 /// Receive level, so "nothing is decoding" can be told from "nothing is
@@ -889,9 +881,5 @@ fn aprs_level_bar(ui: &mut egui::Ui, level: f32, dcd: bool) {
     };
     p.rect_filled(fill, 2.0, col);
     p.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, theme::gray(60)), egui::StrokeKind::Inside);
-    resp.on_hover_text(
-        "Audio reaching the modem. Flat means nothing is arriving at all — check that the \
-         radio's data output is the one sdroxide is listening to. It lights up green while \
-         the modem hears a carrier.",
-    );
+    resp.on_hover_text(tr!("aprs-audio-reaching-modem-flat-means"));
 }

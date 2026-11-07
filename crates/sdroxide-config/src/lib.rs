@@ -493,6 +493,19 @@ pub fn save_band_plan(plan: &sdroxide_types::BandPlan) -> Result<(), ConfigError
     write_atomic(&config_dir()?, BAND_PLAN_FILE, &plan.to_json_document())
 }
 
+/// The TX Audio window's profile library (`tx_audio_profiles.json`). A
+/// client-side file: profiles are this operator's settings for their own
+/// microphone, kept on the machine they sit at.
+pub fn load_tx_voice_profiles() -> Vec<sdroxide_types::TxVoiceProfile> {
+    load_json_list("tx_audio_profiles.json")
+}
+
+pub fn save_tx_voice_profiles(
+    profiles: &[sdroxide_types::TxVoiceProfile],
+) -> Result<(), ConfigError> {
+    save_json("tx_audio_profiles.json", &profiles)
+}
+
 /// The operator's own HFDL channels (`hfdl_channels.json`), in kHz — the busy
 /// assigned frequencies that are not in the published plan, kept as one-click
 /// chips beside it. Per machine rather than per station: a channel a listener
@@ -503,6 +516,18 @@ pub fn load_hfdl_channels() -> Vec<u32> {
 
 pub fn save_hfdl_channels(khz: &[u32]) -> Result<(), ConfigError> {
     save_json("hfdl_channels.json", &khz)
+}
+
+/// The operator's own receive filter presets (`filter_presets.json`), each
+/// standing in for one of a mode's built-in chips. A missing file is none.
+pub fn load_filter_presets() -> Vec<sdroxide_types::CustomFilterPreset> {
+    load_json_list("filter_presets.json")
+}
+
+pub fn save_filter_presets(
+    presets: &[sdroxide_types::CustomFilterPreset],
+) -> Result<(), ConfigError> {
+    save_json("filter_presets.json", &presets)
 }
 
 /// Load just the remote-access credentials.
@@ -590,6 +615,19 @@ pub fn save_remote_login(login: Option<&sdroxide_types::RemoteAccess>) -> Result
             }
         }
     }
+}
+
+/// The certificates the operator has said to trust on `wss://` servers that
+/// no public authority vouches for (issue #736): `host:port` to the SHA-256 of
+/// the one certificate accepted there, as 64 lowercase hex digits.
+pub fn load_trusted_certs() -> std::collections::BTreeMap<String, String> {
+    load_json("remote_certs.json")
+}
+
+pub fn save_trusted_certs(
+    certs: &std::collections::BTreeMap<String, String>,
+) -> Result<(), ConfigError> {
+    save_json("remote_certs.json", certs)
 }
 
 mod publicsdr;
@@ -1285,7 +1323,16 @@ pub struct Session {
     /// Transmit parametric EQ (voice modes only). Absent in a session written
     /// before this existed, in which case `#[serde(default)]` above gives it
     /// [`sdroxide_types::TxEqState::default`], disabled and flat.
+    ///
+    /// Still written beside `tx_voice`, which carries the same EQ as one of
+    /// its stages: it is what a session from before the voice chain restores
+    /// the EQ from, and what an older build reading this file falls back to.
     pub tx_eq: sdroxide_types::TxEqState,
+    /// The transmit voice chain — gate, EQ, de-esser, compressor, limiter.
+    /// `None` in a session written before it existed; [`Self::tx_voice`]
+    /// builds one around `tx_eq` then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_voice: Option<sdroxide_types::TxVoiceState>,
     /// Main receiver's squelch threshold, in dBFS.
     /// [`sdroxide_types::SQUELCH_OPEN_DB`] = always open.
     pub squelch_db: f32,
@@ -1413,7 +1460,8 @@ impl Default for Session {
             tune_drive: radio.tx.tune_drive,
             mic_gain: radio.tx.mic_gain,
             cessb_db: radio.tx.cessb_db,
-            tx_eq: radio.tx.eq,
+            tx_eq: radio.tx.voice.eq,
+            tx_voice: None,
             squelch_db: radio.rx[0].squelch_db,
             noise_reduction: radio.rx[0].noise_reduction,
             binaural: radio.rx[0].binaural,
@@ -1452,6 +1500,22 @@ impl Session {
     fn sanitized(mut self) -> Session {
         self.vfo_b_hz = self.vfo_b_hz.filter(|hz| Self::usable_dial(*hz));
         self
+    }
+
+    /// The transmit voice chain this session restores: its own record when it
+    /// has one, otherwise a chain with every other stage off around the EQ a
+    /// pre-chain session stored. Not clamped — the engine does that, as it
+    /// does for everything that comes off the wire.
+    pub fn tx_voice(&self) -> sdroxide_types::TxVoiceState {
+        self.tx_voice
+            .unwrap_or(sdroxide_types::TxVoiceState { eq: self.tx_eq, ..Default::default() })
+    }
+
+    /// Record `voice` — in `tx_voice`, and its EQ in `tx_eq` as well; see
+    /// [`Self::tx_eq`].
+    pub fn set_tx_voice(&mut self, voice: sdroxide_types::TxVoiceState) {
+        self.tx_eq = voice.eq;
+        self.tx_voice = Some(voice);
     }
 
     /// The dial the radio was actually being worked on — what the front end
@@ -1511,6 +1575,37 @@ pub struct Profile {
     /// The band stacks — which bands this way of working the station has its
     /// setup stored in.
     pub stacks: BandStacks,
+}
+
+/// Which radios keep the band/mode selector docked, by roster id, and whether it
+/// was left showing (`false`: docked, then hidden).
+pub fn load_band_dock() -> std::collections::BTreeMap<u32, bool> {
+    load_json("band_dock.json")
+}
+
+pub fn save_band_dock(map: &std::collections::BTreeMap<u32, bool>) -> Result<(), ConfigError> {
+    save_json("band_dock.json", map)
+}
+
+/// Where each tool window was last left — in its own OS window or inside the
+/// main one, and where that OS window was — by the tool's id.
+pub fn load_tool_windows() -> std::collections::BTreeMap<String, sdroxide_types::DetachedState> {
+    load_json("tool_windows.json")
+}
+
+pub fn save_tool_windows(
+    map: &std::collections::BTreeMap<String, sdroxide_types::DetachedState>,
+) -> Result<(), ConfigError> {
+    save_json("tool_windows.json", map)
+}
+
+/// The saved window arrangements — see [`sdroxide_types::Workspace`].
+pub fn load_workspaces() -> Vec<sdroxide_types::Workspace> {
+    load_json_list("workspaces.json")
+}
+
+pub fn save_workspaces(workspaces: &[sdroxide_types::Workspace]) -> Result<(), ConfigError> {
+    save_json("workspaces.json", workspaces)
 }
 
 /// The named profiles defined on this station. Station scope, like the band
@@ -1620,7 +1715,7 @@ fn load_json_migrated<T: serde::de::DeserializeOwned + Default>(
     }
 }
 
-fn save_json<T: serde::Serialize>(file: &str, value: &T) -> Result<(), ConfigError> {
+fn save_json<T: serde::Serialize + ?Sized>(file: &str, value: &T) -> Result<(), ConfigError> {
     let dir = config_dir()?;
     let text = serde_json::to_string_pretty(value).expect("serialize");
     write_atomic(&dir, file, &text)
@@ -1808,6 +1903,19 @@ pub fn save_qso_log(log: &[sdroxide_types::QsoRecord]) -> Result<(), ConfigError
     save_json("qso_log.json", &log)
 }
 
+/// How far each Wavelog station location has been downloaded into the
+/// logbook. Kept beside the logbook, not in the settings, because it is a fact
+/// about the log: replace or empty the log and these are wrong. A missing or
+/// unreadable file means "from the beginning", which costs one full download
+/// and nothing else, since a download never duplicates a contact.
+pub fn load_wavelog_sync() -> sdroxide_types::WavelogSyncState {
+    load_json("wavelog_sync.json")
+}
+
+pub fn save_wavelog_sync(state: &sdroxide_types::WavelogSyncState) -> Result<(), ConfigError> {
+    save_json("wavelog_sync.json", state)
+}
+
 /// Network cockpit config (spot feeds, callsign lookup, uploads; credentials).
 pub fn load_network_config() -> sdroxide_types::NetworkConfig {
     load_json("net.json")
@@ -1907,6 +2015,18 @@ pub fn save_rotator_config(cfg: &sdroxide_types::RotatorConfig) -> Result<(), Co
     save_json("rotator.json", cfg)
 }
 
+/// Uploading received pictures to an FTP server. One server for the whole
+/// station, like the rotator, so it lives at the root rather than per radio.
+pub fn load_picture_upload_config() -> sdroxide_types::PictureUploadConfig {
+    load_json("picupload.json")
+}
+
+pub fn save_picture_upload_config(
+    cfg: &sdroxide_types::PictureUploadConfig,
+) -> Result<(), ConfigError> {
+    save_json("picupload.json", cfg)
+}
+
 /// The external transmit/receive switch — the relay board or contact closure
 /// that grounds the SDR's antenna while the station transmits. Owned by the
 /// engine, like the rotator above, and for the same reason: it is a fact about
@@ -1918,6 +2038,16 @@ pub fn load_relay_config() -> sdroxide_types::RelayConfig {
 
 pub fn save_relay_config(cfg: &sdroxide_types::RelayConfig) -> Result<(), ConfigError> {
     save_json("relay.json", cfg)
+}
+
+/// The Hardrock amplifier. Owned by the engine for the T/R switch's reason: the
+/// amplifier is on a port of the machine the radio is attached to.
+pub fn load_amp_config() -> sdroxide_types::AmpConfig {
+    load_json("amp.json")
+}
+
+pub fn save_amp_config(cfg: &sdroxide_types::AmpConfig) -> Result<(), ConfigError> {
+    save_json("amp.json", cfg)
 }
 
 /// The built-in NTP server, which serves the time the time-signal receiver
@@ -2385,7 +2515,17 @@ mod tests {
                 low: sdroxide_types::TxEqBand { freq_hz: 250.0, gain_db: -3.0, q: 0.8 },
                 mid: sdroxide_types::TxEqBand { freq_hz: 1800.0, gain_db: 4.0, q: 1.2 },
                 high: sdroxide_types::TxEqBand { freq_hz: 3000.0, gain_db: 2.0, q: 0.6 },
+                ..Default::default()
             },
+            tx_voice: Some(sdroxide_types::TxVoiceState {
+                denoise: true,
+                comp: sdroxide_types::TxCompState {
+                    enabled: true,
+                    phase_stages: 4,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
             squelch_db: -70.0,
             noise_reduction: sdroxide_types::NrLevel::RnnMed,
             binaural: true,
@@ -2438,7 +2578,7 @@ mod tests {
         assert_eq!(old.drive, radio.tx.drive);
         assert_eq!(old.tune_drive, radio.tx.tune_drive);
         assert_eq!(old.mic_gain, radio.tx.mic_gain);
-        assert_eq!(old.tx_eq, radio.tx.eq);
+        assert_eq!(old.tx_voice(), radio.tx.voice);
         assert_eq!(old.recording_mono, radio.recording_mono);
         // Likewise the receive settings added after those: an operator upgrading
         // into this comes up squelch-open with NR off, exactly as they always
@@ -3281,6 +3421,19 @@ mod tests {
         save_hfdl_channels(&[5_451, 8_843, 11_184]).unwrap();
         assert!(root.join("hfdl_channels.json").exists());
         assert_eq!(load_hfdl_channels(), vec![5_451, 8_843, 11_184]);
+
+        // Custom filter presets round-trip the same way.
+        assert!(load_filter_presets().is_empty(), "no file, no custom presets");
+        let preset = sdroxide_types::CustomFilterPreset {
+            mode: sdroxide_types::Mode::Usb,
+            slot: 1,
+            label: "Rag".into(),
+            lo: 100.0,
+            hi: 3000.0,
+        };
+        save_filter_presets(std::slice::from_ref(&preset)).unwrap();
+        assert!(root.join("filter_presets.json").exists());
+        assert_eq!(load_filter_presets(), vec![preset]);
 
         unsafe { std::env::remove_var("SDROXIDE_CONFIG_DIR") };
     }

@@ -374,11 +374,13 @@ fn mode_digit(m: Mode) -> (char, bool) {
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
+        | Mode::VaraHf
         | Mode::AtChat
         | Mode::Rade => ('2', true),
         Mode::Usb
         | Mode::Spec
         | Mode::Hfdl
+        | Mode::Jtty
         | Mode::Sstv
         | Mode::Wefax
         | Mode::Navtex

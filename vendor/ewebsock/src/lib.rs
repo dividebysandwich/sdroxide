@@ -153,7 +153,43 @@ pub struct Options {
     ///
     /// Defaults to 10ms.
     pub read_timeout: Option<std::time::Duration>,
+
+    /// The TLS client configuration for `wss://`, in place of the one
+    /// tungstenite builds for itself (the webpki roots, nothing else).
+    ///
+    /// Added by sdroxide's patch, not upstream: it is how a client can accept
+    /// a server's self-signed certificate it has been told to trust, which
+    /// the default configuration has no way to express.
+    ///
+    /// Native only, and only honoured by the blocking (non-`tokio`) client.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tls"))]
+    pub tls_config: Option<TlsConfig>,
 }
+
+/// A rustls client configuration, shared between connections.
+///
+/// Compared by identity rather than by value, so [`Options`] can stay
+/// `PartialEq` — rustls's configuration has no notion of equality.
+#[cfg(all(not(target_arch = "wasm32"), feature = "tls"))]
+#[derive(Clone)]
+pub struct TlsConfig(pub std::sync::Arc<rustls::ClientConfig>);
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tls"))]
+impl std::fmt::Debug for TlsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TlsConfig(..)")
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tls"))]
+impl PartialEq for TlsConfig {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tls"))]
+impl Eq for TlsConfig {}
 
 impl Default for Options {
     fn default() -> Self {
@@ -164,6 +200,8 @@ impl Default for Options {
             // let the OS schedule something else, otherwise busy-loop
             // TODO: use polling on native instead
             read_timeout: Some(std::time::Duration::from_millis(10)),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "tls"))]
+            tls_config: None,
         }
     }
 }

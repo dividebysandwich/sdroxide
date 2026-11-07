@@ -15,6 +15,7 @@
 //! [`crate::hfdl_map`]. The divider is the same draggable handle the ADS-B
 //! panel uses, and where it sits is remembered with the rest of the view state.
 
+use crate::i18n::tr;
 use eframe::egui::{self, RichText};
 use sdroxide_types::{Command, HfdlDecode, HfdlStatus, Mode};
 
@@ -50,12 +51,8 @@ impl SdroxideApp {
         ui.add_space(2.0);
 
         ui.horizontal(|ui| {
-            if crate::chrome::chip_enabled(ui, true, cfg.enabled, "LISTEN")
-                .on_hover_text(
-                    "Switches the engine's HFDL downconverter and decoder on or \
-                             off. Decoding costs a 24 kHz lane and a worker thread whether \
-                             the window is open or not.",
-                )
+            if crate::chrome::chip_enabled(ui, true, cfg.enabled, &tr!("hfdl-listen"))
+                .on_hover_text(tr!("hfdl-switches-engine-s-hfdl-downconverter"))
                 .clicked()
             {
                 cfg.enabled = !cfg.enabled;
@@ -65,11 +62,7 @@ impl SdroxideApp {
             ui.add(
                 egui::DragValue::new(&mut khz).range(2_800.0..=30_000.0).speed(1.0).suffix(" kHz"),
             )
-            .on_hover_text(
-                "The channel (the assigned frequency) to listen on. Anything in the \
-                         band works — HFDL stations transmit on 2.8 to 22 MHz — against a \
-                         fixed 24 kHz lane centred here.",
-            );
+            .on_hover_text(tr!("hfdl-channel-assigned-frequency-listen-anything"));
             if khz != old_khz {
                 cfg.frequency_hz = khz * 1e3;
             }
@@ -79,7 +72,7 @@ impl SdroxideApp {
                     ui,
                     !log.is_empty(),
                     "sdroxide-hfdl-log.txt",
-                    "Save the HFDL decode log to a file",
+                    &tr!("hfdl-save-hfdl-decode-log-file"),
                     || crate::app::save_text::hfdl_log_text(log),
                 );
             });
@@ -97,10 +90,9 @@ impl SdroxideApp {
                 let on = (cfg.frequency_hz / 1e3).round() as u32 == khz;
                 if crate::chrome::chip(ui, on, format!("{:.3} M", khz as f32 / 1e3))
                     .on_hover_text(if khz == 21_931 {
-                        "Riverhead (northern Atlantic/north America) — the default, \
-                                 and the channel the decoder was validated on."
+                        tr!("hfdl-riverhead-northern-atlantic-north-america")
                     } else {
-                        "An HFDL assigned frequency."
+                        tr!("hfdl-hfdl-assigned-frequency")
                     })
                     .clicked()
                 {
@@ -111,9 +103,7 @@ impl SdroxideApp {
             for &khz in &self.hfdl_channels {
                 let resp =
                     crate::chrome::chip(ui, cur_khz == khz, format!("{:.3} M", khz as f32 / 1e3))
-                        .on_hover_text(
-                            "One of your saved channels — click to tune, right-click to remove.",
-                        );
+                        .on_hover_text(tr!("hfdl-one-your-saved-channels-click"));
                 if resp.clicked() {
                     cfg.frequency_hz = f64::from(khz) * 1e3;
                 }
@@ -124,11 +114,9 @@ impl SdroxideApp {
             let already = self.hfdl_channels.contains(&cur_khz) || HFDL_PLAN_KHZ.contains(&cur_khz);
             let add = crate::chrome::chip_enabled(ui, !already, false, "+");
             let add = if already {
-                add.on_disabled_hover_text(format!("{cur_khz} kHz already has a chip"))
+                add.on_disabled_hover_text(tr!("hfdl-khz-already-has-chip", cur_khz = cur_khz))
             } else {
-                add.on_hover_text(format!(
-                    "Save the current channel ({cur_khz} kHz) as one of your own chips"
-                ))
+                add.on_hover_text(tr!("hfdl-save-current-channel-khz-one", cur_khz = cur_khz))
             };
             if add.clicked() {
                 add_now = true;
@@ -158,9 +146,7 @@ impl SdroxideApp {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("⚠").size(13.0).color(ink));
                 ui.label(
-                    RichText::new("HFDL is selected but decoding is off — press LISTEN above")
-                        .size(11.5)
-                        .color(ink),
+                    RichText::new(tr!("hfdl-hfdl-selected-but-decoding-off")).size(11.5).color(ink),
                 );
             });
             ui.add_space(4.0);
@@ -213,7 +199,12 @@ impl SdroxideApp {
     fn hfdl_log_pane(&mut self, ui: &mut egui::Ui, avail_h: f32) {
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(20.0);
-            ui.label(RichText::new("DECODES").size(10.5).strong().color(crate::theme::CYAN_DIM()));
+            ui.label(
+                RichText::new(tr!("hfdl-decodes"))
+                    .size(10.5)
+                    .strong()
+                    .color(crate::theme::CYAN_DIM()),
+            );
             ui.add(
                 egui::TextEdit::singleline(&mut self.hfdl_filter)
                     .hint_text("filter")
@@ -239,10 +230,9 @@ impl SdroxideApp {
                 }
                 if shown == 0 {
                     let text = if log.is_empty() {
-                        "Nothing decoded yet — a ground station's squitter repeats every \
-                         ~32 s once one is in the channel."
+                        tr!("hfdl-nothing-decoded-yet-ground-station")
                     } else {
-                        "No decode matches the filter."
+                        tr!("hfdl-no-decode-matches-filter")
                     };
                     ui.label(RichText::new(text).size(10.5).color(crate::theme::gray(120)));
                 }
@@ -290,19 +280,19 @@ fn hfdl_status_slots(ui: &mut egui::Ui, status: Option<&HfdlStatus>, aircraft: u
     // channel" instead of "not switched on" (issue #497). The word itself says
     // which: DECODING rather than a bare RUNNING/OFF.
     let (run_text, run_ink) = if running {
-        ("DECODING", crate::theme::GREEN())
+        (tr!("hfdl-decoding"), crate::theme::GREEN())
     } else {
-        ("DECODING OFF", crate::theme::HAZARD())
+        (tr!("hfdl-decoding-off"), crate::theme::HAZARD())
     };
-    slot(ui, 108.0, run_text, run_ink);
+    slot(ui, 108.0, &run_text, run_ink);
     let level_text = match level {
-        Some(l) if l > -90.0 => format!("{l:.0} dBFS"),
-        _ => "— dBFS".to_string(),
+        Some(l) if l > -90.0 => format!("{l:.0} dBFS", l = l),
+        _ => tr!("hfdl-dbfs").to_string(),
     };
     slot(ui, 76.0, &level_text, crate::theme::gray(150));
-    slot(ui, 76.0, &format!("{} aircraft", count(aircraft as u64)), crate::theme::CYAN());
-    slot(ui, 64.0, &format!("{} bursts", count(bursts)), crate::theme::gray(150));
-    slot(ui, 64.0, &format!("{} decodes", count(decodes)), crate::theme::gray(120));
+    slot(ui, 76.0, &tr!("hfdl-aircraft", aircraft = count(aircraft as u64)), crate::theme::CYAN());
+    slot(ui, 64.0, &tr!("hfdl-bursts", bursts = count(bursts)), crate::theme::gray(150));
+    slot(ui, 64.0, &tr!("hfdl-decodes-2", decodes = count(decodes)), crate::theme::gray(120));
 }
 
 /// One decoded event, as a row of the log: time, kind, the ground station it
@@ -321,7 +311,7 @@ fn hfdl_log_row(ui: &mut egui::Ui, d: &HfdlDecode) {
             ui.label(RichText::new(gs).size(10.5).strong());
         }
         ui.label(
-            RichText::new(format!("{:.3} MHz", d.freq_khz as f32 / 1e3))
+            RichText::new(format!("{e3:.3} MHz", e3 = d.freq_khz as f32 / 1e3))
                 .size(10.5)
                 .color(crate::theme::gray(150)),
         );
@@ -334,7 +324,7 @@ fn hfdl_log_row(ui: &mut egui::Ui, d: &HfdlDecode) {
         }
         if let Some(fec) = d.fec_corrected.filter(|f| *f > 0) {
             ui.label(
-                RichText::new(format!("{} fixed", count(u64::from(fec))))
+                RichText::new(tr!("hfdl-fixed", fec = count(u64::from(fec))))
                     .size(10.5)
                     .color(crate::theme::gray(120)),
             );

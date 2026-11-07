@@ -8,6 +8,7 @@
 //! pause. The ring opens in flight (a few milliseconds of silence), which is
 //! what makes the first alarm sound listenable.
 
+use crate::i18n::tr;
 use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -43,8 +44,10 @@ impl AlertStatus {
     pub fn note(&self) -> Option<String> {
         match self {
             AlertStatus::Idle => None,
-            AlertStatus::Running(d) => Some(format!("alarming on {d}")),
-            AlertStatus::Failed(e) => Some(format!("alarm device unavailable: {e}")),
+            AlertStatus::Running(d) => Some(tr!("alerts-alarming", device = d)),
+            AlertStatus::Failed(e) => {
+                Some(tr!("alerts-alarm-device-unavailable", error = e.to_string()))
+            }
         }
     }
 
@@ -497,7 +500,7 @@ impl AlertSink {
         };
         if thread.is_none() {
             *status.lock().unwrap() =
-                AlertStatus::Failed("could not start the alert thread".into());
+                AlertStatus::Failed(tr!("alerts-could-not-start-alert-thread"));
         }
         AlertSink { tx: Some(tx), stop, thread }
     }

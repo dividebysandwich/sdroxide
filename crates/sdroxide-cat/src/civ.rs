@@ -1,7 +1,7 @@
 //! Icom CI-V framing — also used by the Xiegu X6100, which speaks a CI-V
 //! dialect. A frame is `FE FE <to> <from> <cmd> [data…] FD`.
 
-use sdroxide_types::Mode;
+use sdroxide_types::{AgcMode, Mode};
 
 pub const PREAMBLE: u8 = 0xFE;
 pub const END: u8 = 0xFD;
@@ -67,6 +67,7 @@ pub fn mode_to_civ(m: Mode) -> u8 {
         | Mode::Fst4
         | Mode::Q65
         | Mode::Fsk441
+        | Mode::Jtty
         | Mode::Ft4
         | Mode::Ft2
         | Mode::Psk
@@ -83,6 +84,7 @@ pub fn mode_to_civ(m: Mode) -> u8 {
         | Mode::Rade
         // HF packet is 300 baud AFSK on a sideband, like any keyboard mode.
         | Mode::PacketHf
+        | Mode::VaraHf
         // AtChat NET is a 2.7 kHz COFDM keyboard/file mode on a sideband.
         | Mode::AtChat => 0x01,
         Mode::Am | Mode::Sam | Mode::Dsb | Mode::Isb | Mode::Drm | Mode::Acars => 0x02,
@@ -832,10 +834,30 @@ pub fn parse_smeter_reply(data: &[u8]) -> Option<f32> {
 /// FM has no such setting at all (its filter follows the mode's own
 /// wide/narrow), and neither has WFM, so both answer `None` rather than an
 /// index that would land in some other scale entirely.
-pub fn set_filter_frame(radio: u8, mode: Mode, lo_hz: f32, hi_hz: f32) -> Option<Vec<u8>> {
+///
+/// `rig_mode` is the mode byte the radio last reported, when there is one.
+/// The index is read against the mode the *radio* is in, and that is not
+/// always the one on screen: sdroxide's own RTTY rides on USB, but an
+/// operator can put the radio in its RTTY mode at the front panel, which this
+/// side has no mode for and so does not follow. There the wide range stops at
+/// 31 (2.7 kHz) on every model whose guide is to hand — IC-7300MK2, IC-9700,
+/// IC-905 — and the radio rejects anything past it, leaving the filter where
+/// it was. So a radio in RTTY is given the sideband scale, held to 2.7 kHz,
+/// whatever the panel's mode is.
+pub fn set_filter_frame(
+    radio: u8,
+    mode: Mode,
+    rig_mode: Option<u8>,
+    lo_hz: f32,
+    hi_hz: f32,
+) -> Option<Vec<u8>> {
     // Sideband lives in the sign of the edges on this side; the rig's filter is
     // a width and knows nothing of that.
     let want = (hi_hz - lo_hz).abs().round().max(0.0) as u32;
+    if matches!(rig_mode, Some(RIG_RTTY | RIG_RTTY_R)) {
+        let index = sideband_filter_index(want).min(31);
+        return Some(frame(radio, 0x1A, &[0x03, to_bcd(index as u8)]));
+    }
     let index = match mode {
         // No filter-width setting: the mode itself picks the filter.
         Mode::Nfm | Mode::Wfm | Mode::Rifp | Mode::Packet | Mode::Aprs => return None,
@@ -844,17 +866,45 @@ pub fn set_filter_frame(radio: u8, mode: Mode, lo_hz: f32, hi_hz: f32) -> Option
             // never quietly narrower than the one on screen.
             want.div_ceil(200).clamp(1, 50) - 1
         }
-        _ => {
-            if want <= 500 {
-                // 50 Hz .. 500 Hz, index 0..9.
-                want.div_ceil(50).clamp(1, 10) - 1
-            } else {
-                // 600 Hz .. 3600 Hz, index 10..40.
-                want.div_ceil(100).clamp(6, 36) + 4
-            }
-        }
+        _ => sideband_filter_index(want),
     };
     Some(frame(radio, 0x1A, &[0x03, to_bcd(index as u8)]))
+}
+
+/// The radio's own RTTY and RTTY-R mode bytes, which no app mode maps to.
+const RIG_RTTY: u8 = 0x04;
+const RIG_RTTY_R: u8 = 0x08;
+
+/// The sideband/CW/RTTY filter index for a width in Hz.
+fn sideband_filter_index(want: u32) -> u32 {
+    if want <= 500 {
+        // 50 Hz .. 500 Hz, index 0..9.
+        want.div_ceil(50).clamp(1, 10) - 1
+    } else {
+        // 600 Hz .. 3600 Hz, index 10..40.
+        want.div_ceil(100).clamp(6, 36) + 4
+    }
+}
+
+/// Select the receiver's AGC (`16 12 <01|02|03>`): FAST, MID or SLOW.
+///
+/// Like the filter, this only matters on a rig sending demodulated audio, and
+/// there it is the only AGC that does anything: the audio has already been
+/// levelled by the time it reaches this side, so changing the time constant
+/// of a second AGC behind the first changes almost nothing that can be heard.
+///
+/// Off answers `None`. This command has no OFF; Icom turns the AGC off by
+/// setting the *selected preset's* time constant to zero (`1A 04 00`), which
+/// overwrites the value the operator had stored there. The radio's AGC is
+/// left where it was instead.
+pub fn set_agc_frame(radio: u8, agc: AgcMode) -> Option<Vec<u8>> {
+    let preset = match agc {
+        AgcMode::Off => return None,
+        AgcMode::Fast => 0x01,
+        AgcMode::Med => 0x02,
+        AgcMode::Slow => 0x03,
+    };
+    Some(frame(radio, 0x16, &[0x12, preset]))
 }
 
 /// A 0..99 value as the packed BCD byte Icom's level and index fields take.
@@ -1274,7 +1324,7 @@ mod tests {
     #[test]
     fn the_filter_width_maps_onto_icoms_two_index_scales() {
         let idx = |mode: Mode, lo: f32, hi: f32| {
-            set_filter_frame(0x94, mode, lo, hi).map(|f| f[f.len() - 2])
+            set_filter_frame(0x94, mode, None, lo, hi).map(|f| f[f.len() - 2])
         };
         // Sideband/CW/RTTY: 0..9 is 50..500 Hz in fifties, 10..40 is 600..3600
         // in hundreds. The index goes on the wire as BCD.
@@ -1298,8 +1348,47 @@ mod tests {
         assert_eq!(idx(Mode::Wfm, 0.0, 200_000.0), None);
         // And the whole frame is the documented sub-command.
         assert_eq!(
-            set_filter_frame(0x94, Mode::Usb, 200.0, 2600.0).unwrap(),
+            set_filter_frame(0x94, Mode::Usb, None, 200.0, 2600.0).unwrap(),
             vec![0xFE, 0xFE, 0x94, 0xE0, 0x1A, 0x03, 0x28, 0xFD]
+        );
+    }
+
+    /// A radio switched to its own RTTY at the front panel takes the sideband
+    /// scale but stops at 2.7 kHz, whatever mode the panel is showing; a
+    /// radio on USB — where sdroxide's own RTTY puts it — keeps the full 3.6.
+    #[test]
+    fn a_radio_in_its_own_rtty_is_held_to_its_narrower_range() {
+        let idx = |mode: Mode, rig: Option<u8>, lo: f32, hi: f32| {
+            set_filter_frame(0x94, mode, rig, lo, hi).map(|f| f[f.len() - 2])
+        };
+        // RTTY and RTTY-R both top out at index 31.
+        assert_eq!(idx(Mode::Usb, Some(0x04), 0.0, 3600.0), Some(0x31));
+        assert_eq!(idx(Mode::Usb, Some(0x08), 0.0, 3000.0), Some(0x31));
+        // Inside the range nothing changes.
+        assert_eq!(idx(Mode::Usb, Some(0x04), 0.0, 2700.0), Some(0x31));
+        assert_eq!(idx(Mode::Usb, Some(0x04), 0.0, 500.0), Some(0x09));
+        assert_eq!(idx(Mode::Usb, Some(0x04), 200.0, 2600.0), Some(0x28));
+        // The panel's mode does not pick the scale or skip the command: the
+        // radio is in RTTY, whatever was last on screen.
+        assert_eq!(idx(Mode::Am, Some(0x04), 0.0, 6000.0), Some(0x31));
+        assert_eq!(idx(Mode::Nfm, Some(0x04), 0.0, 500.0), Some(0x09));
+        // On USB, including sdroxide's own RTTY, the full range is there.
+        assert_eq!(idx(Mode::Rtty, Some(0x01), 0.0, 3600.0), Some(0x40));
+        assert_eq!(idx(Mode::Rtty, None, 0.0, 3600.0), Some(0x40));
+    }
+
+    /// Icom numbers its AGC presets fastest first, the other way round from
+    /// the order the button cycles through them.
+    #[test]
+    fn the_agc_selects_icoms_preset_and_off_leaves_the_radio_alone() {
+        let preset = |agc| set_agc_frame(0xA4, agc).map(|f| f[f.len() - 2]);
+        assert_eq!(preset(AgcMode::Fast), Some(0x01));
+        assert_eq!(preset(AgcMode::Med), Some(0x02));
+        assert_eq!(preset(AgcMode::Slow), Some(0x03));
+        assert_eq!(preset(AgcMode::Off), None);
+        assert_eq!(
+            set_agc_frame(0xA4, AgcMode::Slow).unwrap(),
+            vec![0xFE, 0xFE, 0xA4, 0xE0, 0x16, 0x12, 0x03, 0xFD]
         );
     }
 

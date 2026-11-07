@@ -18,6 +18,45 @@ pub(in crate::app) fn load_qso_log(storage: Option<&dyn eframe::Storage>) -> Vec
     storage.and_then(|s| eframe::get_value(s, "qso_log")).unwrap_or_default()
 }
 
+/// Re-read the logbook before a QSO that arrived from the engine is appended,
+/// or `None` when there is **no store to re-read**.
+///
+/// The difference between "the store says nothing" and "there is no store" is
+/// the whole point. On this machine the logbook is a JSON file beside the rest
+/// of the configuration, so it can always be re-read — that is what keeps two
+/// radio tabs from writing each other's contacts away. In the browser the
+/// logbook lives in eframe's storage, and the call site in the event loop has
+/// no `Storage` to offer it: asking anyway answered "empty", which wiped the
+/// log down to the contact just logged. A three-radio station in a browser
+/// exported a logbook of exactly one QSO (issue #236) — and the export itself
+/// was innocent, which is why the same button on a native single-radio station
+/// exported all of them.
+pub(in crate::app) fn reload_qso_log(
+    #[allow(unused_variables)] storage: Option<&dyn eframe::Storage>,
+) -> Option<Vec<QsoRecord>> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Some(sdroxide_config::load_qso_log())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        storage.and_then(|s| eframe::get_value(s, "qso_log"))
+    }
+}
+
+/// **The logbook after a shared-log reload**: what the store gave back, or the
+/// log in hand when there was no store to ask.
+///
+/// Taken as a list rather than a bool so the rule can be tested without a
+/// filesystem, a browser or an event loop — the fault being fixed here was
+/// invisible to every one of them until a second radio tab existed.
+pub(in crate::app) fn after_shared_log(
+    current: Vec<QsoRecord>,
+    reloaded: Option<Vec<QsoRecord>>,
+) -> Vec<QsoRecord> {
+    reloaded.unwrap_or(current)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::app) fn persist_qso_log(log: &[QsoRecord]) {
     if let Err(e) = sdroxide_config::save_qso_log(log) {
@@ -29,6 +68,32 @@ pub(in crate::app) fn persist_qso_log(log: &[QsoRecord]) {
 pub(in crate::app) fn persist_qso_log(_log: &[QsoRecord]) {
     // Written by eframe's periodic `save()` into localStorage.
 }
+
+// ── Wavelog download cursors (native only) ───────────────────────────────────
+//
+// Beside the logbook they describe. Downloading needs the engine in this
+// process, and a browser client never has it, so there is no browser half:
+// it starts from nothing and never writes.
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_wavelog_sync() -> sdroxide_types::WavelogSyncState {
+    sdroxide_config::load_wavelog_sync()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_wavelog_sync() -> sdroxide_types::WavelogSyncState {
+    sdroxide_types::WavelogSyncState::default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn persist_wavelog_sync(state: &sdroxide_types::WavelogSyncState) {
+    if let Err(e) = sdroxide_config::save_wavelog_sync(state) {
+        eprintln!("failed to save the Wavelog sync position: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn persist_wavelog_sync(_state: &sdroxide_types::WavelogSyncState) {}
 
 // ── UI/display preferences (native: config.toml [ui]; wasm: eframe storage) ──
 #[cfg(not(target_arch = "wasm32"))]
@@ -120,6 +185,34 @@ pub(in crate::app) fn persist_alerts_settings(cfg: &sdroxide_types::AlertSetting
 
 #[cfg(target_arch = "wasm32")]
 pub(in crate::app) fn persist_alerts_settings(_cfg: &sdroxide_types::AlertSettings) {
+    // Written by eframe's periodic `save()` into localStorage.
+}
+
+// ── TX Audio profiles ─────────────────────────────────────────────────────────
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_tx_voice_profiles(
+    _storage: Option<&dyn eframe::Storage>,
+) -> Vec<sdroxide_types::TxVoiceProfile> {
+    sdroxide_config::load_tx_voice_profiles()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_tx_voice_profiles(
+    storage: Option<&dyn eframe::Storage>,
+) -> Vec<sdroxide_types::TxVoiceProfile> {
+    storage.and_then(|s| eframe::get_value(s, "tx_voice_profiles")).unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn persist_tx_voice_profiles(profiles: &[sdroxide_types::TxVoiceProfile]) {
+    if let Err(e) = sdroxide_config::save_tx_voice_profiles(profiles) {
+        eprintln!("failed to save TX audio profiles: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn persist_tx_voice_profiles(_profiles: &[sdroxide_types::TxVoiceProfile]) {
     // Written by eframe's periodic `save()` into localStorage.
 }
 
@@ -263,6 +356,34 @@ pub(in crate::app) fn persist_hfdl_channels(khz: &[u32]) {
 
 #[cfg(target_arch = "wasm32")]
 pub(in crate::app) fn persist_hfdl_channels(_khz: &[u32]) {
+    // Written with the rest of the browser's storage in `App::save`.
+}
+
+// ── Custom filter presets (native: config-dir JSON; wasm: eframe storage) ──
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_filter_presets(
+    _storage: Option<&dyn eframe::Storage>,
+) -> Vec<sdroxide_types::CustomFilterPreset> {
+    sdroxide_config::load_filter_presets()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_filter_presets(
+    storage: Option<&dyn eframe::Storage>,
+) -> Vec<sdroxide_types::CustomFilterPreset> {
+    storage.and_then(|s| eframe::get_value(s, "filter_presets")).unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn persist_filter_presets(presets: &[sdroxide_types::CustomFilterPreset]) {
+    if let Err(e) = sdroxide_config::save_filter_presets(presets) {
+        eprintln!("failed to save filter presets: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn persist_filter_presets(_presets: &[sdroxide_types::CustomFilterPreset]) {
     // Written with the rest of the browser's storage in `App::save`.
 }
 
@@ -414,4 +535,193 @@ pub(in crate::app) fn band_plan_path() -> Option<std::path::PathBuf> {
 #[cfg(target_arch = "wasm32")]
 pub(in crate::app) fn band_plan_path() -> Option<std::path::PathBuf> {
     None
+}
+
+// ── The band/mode selector's dock, per radio ─────────────────────────────────
+
+/// Which radios keep the band/mode selector docked, and whether it is showing.
+/// A file of its own rather than a `UiSettings` field, because `UiSettings` is
+/// `Copy` and a map is not. Native only: the browser keeps the dock for the
+/// session, as it always has.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_band_dock() -> std::collections::BTreeMap<u32, bool> {
+    sdroxide_config::load_band_dock()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_band_dock() -> std::collections::BTreeMap<u32, bool> {
+    Default::default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn save_band_dock(map: &std::collections::BTreeMap<u32, bool>) {
+    if let Err(e) = sdroxide_config::save_band_dock(map) {
+        eprintln!("failed to save the band dock: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn save_band_dock(_map: &std::collections::BTreeMap<u32, bool>) {}
+
+/// Fold one radio's dock state into the stored map; true when it changed.
+///
+/// Present means the operator docked the selector for that radio, so it comes
+/// back docked on the next start; the value is whether it was left showing —
+/// docked-then-hidden is a state of its own and comes back hidden, with the
+/// chip that brings it back. An undocked radio leaves the map.
+pub(in crate::app) fn band_dock_entry(
+    map: &mut std::collections::BTreeMap<u32, bool>,
+    radio: u32,
+    docked: bool,
+    visible: bool,
+) -> bool {
+    if docked { map.insert(radio, visible) != Some(visible) } else { map.remove(&radio).is_some() }
+}
+
+// ── Tool windows: docked or in their own window ──────────────────────────────
+
+/// Where each tool window was last left, by its id. Native only: the browser
+/// has one window, so every tool there is docked.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_tool_windows()
+-> std::collections::BTreeMap<String, sdroxide_types::DetachedState> {
+    sdroxide_config::load_tool_windows()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_tool_windows()
+-> std::collections::BTreeMap<String, sdroxide_types::DetachedState> {
+    Default::default()
+}
+
+/// Fold one tool's place into the stored map; true when it changed, and so
+/// has to be written.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(in crate::app) fn merge_tool_window(
+    map: &mut std::collections::BTreeMap<String, sdroxide_types::DetachedState>,
+    id: &str,
+    state: sdroxide_types::DetachedState,
+) -> bool {
+    if map.get(id) == Some(&state) {
+        return false;
+    }
+    map.insert(id.to_string(), state);
+    true
+}
+
+/// Write one tool's place out. The stored map is re-read first, so a second
+/// radio tab writing its own tool cannot erase the first one's.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn persist_tool_window(id: &str, state: sdroxide_types::DetachedState) {
+    let mut map = sdroxide_config::load_tool_windows();
+    if merge_tool_window(&mut map, id, state)
+        && let Err(e) = sdroxide_config::save_tool_windows(&map)
+    {
+        eprintln!("failed to save the tool windows: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn persist_tool_window(_id: &str, _state: sdroxide_types::DetachedState) {}
+
+// ── Saved window arrangements (SDRuno's workspaces) ──────────────────────────
+
+/// The saved window arrangements. Natively a shared `workspaces.json` beside the
+/// rest of the configuration; the browser has no windows to arrange, so its list
+/// is empty and the settings section that edits it is not drawn.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_workspaces() -> Vec<sdroxide_types::Workspace> {
+    sdroxide_config::load_workspaces()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_workspaces() -> Vec<sdroxide_types::Workspace> {
+    Vec::new()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn save_workspaces(workspaces: &[sdroxide_types::Workspace]) {
+    if let Err(e) = sdroxide_config::save_workspaces(workspaces) {
+        eprintln!("failed to save workspaces: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn save_workspaces(_workspaces: &[sdroxide_types::Workspace]) {}
+
+#[cfg(test)]
+mod band_dock_tests {
+    use super::*;
+
+    /// A tool's place is written into the stored map without disturbing the
+    /// other tools', an unchanged place is not a write, and the map comes back
+    /// from its file as it went in — undocked with its window, or docked.
+    #[test]
+    fn a_tool_window_remembers_where_it_was_left() {
+        use sdroxide_types::{DetachedState, DetachedWindow};
+        let out = DetachedState {
+            detached: true,
+            window: Some(DetachedWindow { size: [900.0, 760.0], pos: Some([40.0, 60.0]) }),
+        };
+        let mut map = std::collections::BTreeMap::new();
+        assert!(merge_tool_window(&mut map, "settings", out));
+        assert!(merge_tool_window(&mut map, "Scanner", DetachedState::default()));
+        assert!(!merge_tool_window(&mut map, "settings", out), "the same place is no write");
+        assert_eq!(map.get("Scanner"), Some(&DetachedState::default()), "the other tool is kept");
+        let json = serde_json::to_string(&map).unwrap();
+        let back: std::collections::BTreeMap<String, DetachedState> =
+            serde_json::from_str(&json).unwrap();
+        assert_eq!(back, map);
+        let st: crate::app::undocked::ToolWindowState = back["settings"].into();
+        assert!(st.undocked && st.window == out.window, "reloaded as undocked, same window");
+    }
+
+    /// The band dock is remembered per radio, docked-and-hidden is kept as a
+    /// state of its own, an undocked radio leaves the map, and a write that
+    /// changes nothing says so (so nothing is written).
+    #[test]
+    fn the_band_dock_is_remembered_per_radio() {
+        let mut map = std::collections::BTreeMap::new();
+        assert!(band_dock_entry(&mut map, 1, true, true), "docking radio 1 is a change");
+        assert!(band_dock_entry(&mut map, 0, true, false), "docked and hidden is kept too");
+        assert!(!band_dock_entry(&mut map, 1, true, true), "the same state again is no change");
+        assert!(band_dock_entry(&mut map, 1, true, false), "hiding it is a change");
+        assert_eq!(map.get(&1), Some(&false));
+        assert!(band_dock_entry(&mut map, 1, false, false), "undocking removes it");
+        assert!(!map.contains_key(&1));
+        assert_eq!(map.get(&0), Some(&false), "the other radio is untouched");
+        assert!(!band_dock_entry(&mut map, 7, false, false), "a radio never docked: no change");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn qso(call: &str) -> QsoRecord {
+        QsoRecord { call: call.into(), ..QsoRecord::default() }
+    }
+
+    /// **A reload with no store to read must leave the logbook in hand alone.**
+    ///
+    /// This is the shape of the fault behind issue #236. A station with more
+    /// than one radio shares one logbook between the radio tabs, so a contact
+    /// logged by the engine is appended only after the log has been re-read —
+    /// which keeps one tab from writing another's contacts away. In a browser
+    /// there is no file to re-read, and the question "what does the store say?"
+    /// was answered "nothing": the log was replaced by an empty list and the one
+    /// contact just logged was pushed onto it. An export of a session then held
+    /// exactly one QSO, while the same button on a native single-radio station
+    /// held every one of them.
+    #[test]
+    fn a_logbook_is_not_wiped_by_a_reload_that_had_no_store_to_read() {
+        let log = vec![qso("ON6CQ"), qso("DL1ABC"), qso("F4NRM")];
+        assert_eq!(after_shared_log(log.clone(), None), log, "no store is not an empty logbook");
+        // A store that *does* answer still replaces it: that is the point of the
+        // reload, so a contact logged on another tab is not written away.
+        let from_store = vec![qso("ON6CQ"), qso("DL1ABC"), qso("F4NRM"), qso("G4XYZ")];
+        assert_eq!(after_shared_log(log, Some(from_store.clone())), from_store);
+        // A first run really is an empty logbook, and that still works.
+        assert!(after_shared_log(Vec::new(), Some(Vec::new())).is_empty());
+    }
 }

@@ -114,7 +114,7 @@ mod tests {
     fn every_clock_label_character_has_a_glyph() {
         // A missing letter renders blank rather than failing, so "-- SIM" once
         // drew as two dashes and three empty cells.
-        for c in "UTC LOC -- SIM".chars().filter(|c| !c.is_whitespace() && *c != '-') {
+        for c in "UTC LOC -- SIM 2026-11-01".chars().filter(|c| !c.is_whitespace() && *c != '-') {
             let g = glyph(c).unwrap_or_else(|| panic!("no glyph for {c}"));
             assert!(g.iter().any(|b| *b != 0), "{c} renders blank");
             assert!(g.iter().all(|b| b & 0x80 == 0), "{c} overflows the 7-row matrix");

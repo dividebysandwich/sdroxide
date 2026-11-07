@@ -59,10 +59,30 @@ pub struct Segment {
     pub lo: f64,
     pub hi: f64,
     pub kind: SegmentKind,
+    /// The operator's own name for the segment from `bandplan.json` (a QO-100
+    /// "Emergency" or "CONTEST" block), shown on the waterfall strip instead
+    /// of the kind's. `None` in the built-in tables.
+    pub label: Option<&'static str>,
 }
 
 const fn seg(lo: f64, hi: f64, kind: SegmentKind) -> Segment {
-    Segment { lo, hi, kind }
+    Segment { lo, hi, kind, label: None }
+}
+
+/// `label` with a `'static` lifetime, so [`Segment`] stays `Copy` and the
+/// lookups keep handing out `&'static` slices. Each distinct label is leaked
+/// once, however many times a plan is loaded or announced.
+pub(crate) fn intern_label(label: &str) -> &'static str {
+    use std::collections::HashSet;
+    use std::sync::{LazyLock, Mutex};
+    static LABELS: LazyLock<Mutex<HashSet<&'static str>>> = LazyLock::new(Default::default);
+    let mut set = LABELS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(&l) = set.get(label) {
+        return l;
+    }
+    let l: &'static str = Box::leak(label.to_owned().into_boxed_str());
+    set.insert(l);
+    l
 }
 
 const M: f64 = 1_000_000.0;

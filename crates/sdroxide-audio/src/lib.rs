@@ -2,7 +2,7 @@
 //! lock-free ring buffer. The DSP engine owns the producer side.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -10,6 +10,61 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Sample, SampleFormat};
 use sdroxide_types::AudioRouting;
 use tracing::{debug, info, warn};
+
+/// The device a caller asked for was not the one it got.
+///
+/// This is not an error: the stream opens and runs, which is exactly why it
+/// needs carrying. A sound card that has gone away, or a saved name the audio
+/// server has renamed since (the ALSA card id in [`device_display`]'s name is
+/// `Audio`, `Audio_1`, … by enumeration order and moves whenever USB order
+/// does), used to fall through to the system default with nothing but a log
+/// line — so the operator got a live stream off the wrong hardware, a waterfall
+/// that looked alive and carried nothing, and no message anywhere.
+///
+/// Only ever set when a name *was* stored and did not resolve. A radio with no
+/// card chosen at all is a different condition, and the backend that owns it
+/// says so in its own words — there is no substitution to report there.
+///
+/// [`DeviceSwap::sentence`] is what the UI shows, so it names both ends: what
+/// was asked for, and what answered instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceSwap {
+    /// The stored name that did not resolve.
+    pub wanted: String,
+    /// The device that was opened instead.
+    pub opened: String,
+    /// Why the wanted name did not match outright, in the operator's terms.
+    pub reason: SwapReason,
+}
+
+/// Why a stored device name did not match what is enumerated now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwapReason {
+    /// The name matches no enumerated device at all.
+    Gone,
+    /// The name matches none exactly, but the same hardware was found by its
+    /// stable tokens (product + USB VID:PID) with a different card id.
+    Renamed,
+}
+
+impl DeviceSwap {
+    /// One line naming both ends, for the place a device problem is shown.
+    pub fn sentence(&self) -> String {
+        match self.reason {
+            SwapReason::Gone => format!(
+                "the sound card this radio is set to ({}) is not on the machine — \
+                 it is listening on {} instead. Re-pick it under Settings → Radio.",
+                self.wanted, self.opened
+            ),
+            SwapReason::Renamed => format!(
+                "the sound card this radio is set to has been renamed by the sound \
+                 server ({} → {}); it is the same hardware, but the name in the \
+                 settings is out of date. Re-pick it under Settings → Radio to update the name.",
+                self.wanted, self.opened
+            ),
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum AudioError {
@@ -298,6 +353,7 @@ fn spawn_input(
     mut producer: rtrb::Producer<f32>,
     dropped: Arc<AtomicU64>,
     glitches: Arc<AtomicU64>,
+    failed: Arc<AtomicBool>,
     what: &'static str,
     label: String,
     // Whether a hole in this stream costs a decode — see
@@ -344,6 +400,7 @@ fn spawn_input(
                         log.on_glitch(what, &label);
                     } else {
                         warn!("{what}: audio input from \"{label}\" failed: {e}");
+                        failed.store(true, Ordering::Relaxed);
                     }
                 },
                 None,
@@ -444,6 +501,9 @@ pub struct AudioOutput {
     /// Channels the *card* opened with. Not the shape of what to write: the
     /// ring is interleaved stereo either way — see [`start_output`].
     pub channels: u16,
+    /// Set when this is not the device the caller asked for — see
+    /// [`DeviceSwap`]. `None` on the ordinary path.
+    pub swap: Option<DeviceSwap>,
     underruns: Arc<AtomicU64>,
 }
 
@@ -477,11 +537,22 @@ pub struct AudioInput {
     pub sample_rate: f64,
     /// Channels the capture stream actually runs with (1 = mono; IQ needs ≥2).
     pub channels: u16,
+    /// Set when this is not the device the caller asked for — see
+    /// [`DeviceSwap`]. `None` on the ordinary path.
+    pub swap: Option<DeviceSwap>,
     dropped: Arc<AtomicU64>,
     glitches: Arc<AtomicU64>,
+    failed: Arc<AtomicBool>,
 }
 
 impl AudioInput {
+    /// Whether the host reported the stream broken rather than merely glitched
+    /// — the device went away, or Windows' audio service restarted under it.
+    /// Such a stream delivers nothing again, so its owner reopens it (#707).
+    pub fn has_failed(&self) -> bool {
+        self.failed.load(Ordering::Relaxed)
+    }
+
     /// Frames the capture callback had to throw away because the reader had not
     /// emptied the ring — a whole second of samples behind, at any rate.
     ///
@@ -836,11 +907,44 @@ fn has_usable_config(device: &cpal::Device, output: bool) -> bool {
 /// output running" line reports: with two of the same sound card in the station
 /// the plain cpal name says nothing about which one this is, and that line is
 /// where an operator checks that each radio got its own.
+/// The parts of a device name that identify the *hardware*, as opposed to the
+/// card slot it happened to enumerate into.
+///
+/// [`device_display`] builds `{vendor} {product} [{card id} · {usb vid:pid}]`.
+/// The product string and the USB id are the codec; the card id is
+/// `Audio`, `Audio_1`, `Audio_2`… by enumeration order, and moves whenever
+/// another USB audio device enumerates first — which is what a PipeWire
+/// upgrade did here, turning every saved `… [Audio · 001f:0b21]` into a name
+/// that matched nothing. Matching the whole string is therefore matching on
+/// something the machine gets to choose afresh at every boot.
+///
+/// Returns `(product, usb id)`, or `None` for a name with no bracketed card
+/// id — a virtual or on-board device, where there is nothing stable to key on
+/// and the exact match above is all there is.
+fn stable_tokens(name: &str) -> Option<(&str, &str)> {
+    let rest = name.strip_suffix(']')?;
+    let open = rest.rfind('[')?;
+    let (product, card) = rest.split_at(open);
+    // `card` is `[<id>` or `[<id> · <usb id>]`; the id alone is not stable.
+    let (_, usb) = card[1..].split_once('·')?;
+    let usb = usb.trim();
+    if usb.is_empty() { None } else { Some((product.trim(), usb)) }
+}
+
+/// Picks the device for one direction, and says when that is not the one asked
+/// for.
+///
+/// The wanted name is tried three ways, cheapest first: the enumerated name
+/// exactly, then the legacy bare cpal name (configs saved before names carried
+/// the vendor and id), then the same hardware by its [`stable_tokens`] — which
+/// is what rescues a selection the sound server has renamed. Only a name that
+/// matches none of them falls through to the system default, and that
+/// substitution comes back as a [`DeviceSwap`] rather than as silence.
 fn pick_device(
     host: &cpal::Host,
     name: Option<&str>,
     output: bool,
-) -> Result<(cpal::Device, String), AudioError> {
+) -> Result<(cpal::Device, String, Option<DeviceSwap>), AudioError> {
     if let Some(want) = name {
         let all = enumerate_devices(host, output);
         // 1) enumerated-name match (all sub-PCMs of the card); 2) legacy plain
@@ -850,6 +954,7 @@ fn pick_device(
         // the operator re-picks from a list that now shows both.
         let mut idxs: Vec<usize> =
             all.iter().enumerate().filter(|(_, (_, n))| n == want).map(|(i, _)| i).collect();
+        let mut reason = SwapReason::Gone;
         if idxs.is_empty() {
             idxs = all
                 .iter()
@@ -860,21 +965,66 @@ fn pick_device(
                 .map(|(i, _)| i)
                 .collect();
         }
+        // 3) the same hardware under a card id the sound server has since
+        // renumbered. Keyed on product *and* USB id together: either alone
+        // would pick the wrong card at a station running two different codecs.
+        if idxs.is_empty()
+            && let Some((product, usb)) = stable_tokens(want)
+        {
+            idxs = all
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, n))| stable_tokens(n) == Some((product, usb)))
+                .map(|(i, _)| i)
+                .collect();
+            // Two cards of the same model share product *and* USB id (the id
+            // is the model's, not the unit's), so a renumbered name can match
+            // both. Only a match that resolves to one card is the same
+            // hardware; more than one is a guess, and falls through as Gone.
+            let cards: std::collections::HashSet<&str> =
+                idxs.iter().map(|&i| all[i].1.as_str()).collect();
+            if cards.len() == 1 {
+                reason = SwapReason::Renamed;
+            } else {
+                idxs.clear();
+            }
+        }
         if !idxs.is_empty() {
             let best = idxs
                 .iter()
                 .copied()
                 .find(|&i| has_usable_config(&all[i].0, output))
                 .unwrap_or(idxs[0]);
-            return Ok(all.into_iter().nth(best).unwrap());
+            let (device, label) = all.into_iter().nth(best).unwrap();
+            // A rename is reported even though it resolved, because the *stored
+            // name* is now out of date and that is worth one line: the radio
+            // works, but the config is drifting further from the machine with
+            // every renumbering, until the operator re-picks it.
+            let swap = if reason == SwapReason::Renamed {
+                info!("audio device {want:?} is now {label:?}; same hardware, renamed");
+                Some(DeviceSwap { wanted: want.to_string(), opened: label.clone(), reason })
+            } else {
+                None
+            };
+            return Ok((device, label, swap));
         }
         warn!("audio device {want:?} not found; using default");
+        let device =
+            if output { host.default_output_device() } else { host.default_input_device() }
+                .ok_or(AudioError::NoDevice)?;
+        let cards = alsa_cards();
+        let label = device_display(&device, &cards).unwrap_or_else(|| "system default".into());
+        return Ok((
+            device,
+            label.clone(),
+            Some(DeviceSwap { wanted: want.to_string(), opened: label, reason }),
+        ));
     }
     let device = if output { host.default_output_device() } else { host.default_input_device() }
         .ok_or(AudioError::NoDevice)?;
     let cards = alsa_cards();
     let label = device_display(&device, &cards).unwrap_or_else(|| "system default".into());
-    Ok((device, label))
+    Ok((device, label, None))
 }
 
 /// Open an input device (microphone) by name (`None` = system default) and
@@ -926,7 +1076,7 @@ fn start_input_mono(
     costs_a_decode: bool,
 ) -> Result<(AudioInput, rtrb::Consumer<f32>), AudioError> {
     let host = cpal::default_host();
-    let (device, label) = pick_device(&host, device_name, false)?;
+    let (device, label, swap) = pick_device(&host, device_name, false)?;
 
     let picked = device
         .supported_input_configs()
@@ -948,6 +1098,7 @@ fn start_input_mono(
         let (producer, consumer) = rtrb::RingBuffer::<f32>::new(rate as usize);
         let dropped = Arc::new(AtomicU64::new(0));
         let glitches = Arc::new(AtomicU64::new(0));
+        let failed = Arc::new(AtomicBool::new(false));
         let started = Instant::now();
         match spawn_input(
             &device,
@@ -957,6 +1108,7 @@ fn start_input_mono(
             producer,
             dropped.clone(),
             glitches.clone(),
+            failed.clone(),
             what,
             label.clone(),
             costs_a_decode,
@@ -968,8 +1120,10 @@ fn start_input_mono(
                         _stream: stream,
                         sample_rate: rate as f64,
                         channels,
+                        swap,
                         dropped,
                         glitches,
+                        failed,
                     },
                     consumer,
                 ));
@@ -1065,7 +1219,7 @@ pub fn start_input_stereo(
     preferred_rate: u32,
 ) -> Result<(AudioInput, rtrb::Consumer<f32>), AudioError> {
     let host = cpal::default_host();
-    let (device, label) = pick_device(&host, device_name, false)?;
+    let (device, label, swap) = pick_device(&host, device_name, false)?;
 
     let picked = device
         .supported_input_configs()
@@ -1096,6 +1250,7 @@ pub fn start_input_stereo(
         let (producer, consumer) = rtrb::RingBuffer::<f32>::new(rate as usize * 2);
         let dropped = Arc::new(AtomicU64::new(0));
         let glitches = Arc::new(AtomicU64::new(0));
+        let failed = Arc::new(AtomicBool::new(false));
         let started = Instant::now();
         match spawn_input(
             &device,
@@ -1105,6 +1260,7 @@ pub fn start_input_stereo(
             producer,
             dropped.clone(),
             glitches.clone(),
+            failed.clone(),
             "radio IQ input",
             label.clone(),
             true,
@@ -1128,8 +1284,10 @@ pub fn start_input_stereo(
                         _stream: stream,
                         sample_rate: rate as f64,
                         channels,
+                        swap,
                         dropped,
                         glitches,
+                        failed,
                     },
                     consumer,
                 ));
@@ -1166,7 +1324,7 @@ pub fn start_output(
     routing: AudioRouting,
 ) -> Result<(AudioOutput, rtrb::Producer<f32>), AudioError> {
     let host = cpal::default_host();
-    let (device, label) = pick_device(&host, device_name, true)?;
+    let (device, label, swap) = pick_device(&host, device_name, true)?;
 
     let picked = device
         .supported_output_configs()
@@ -1192,7 +1350,7 @@ pub fn start_output(
             Ok(stream) => {
                 info!(rate, channels, format = ?fmt, device = %label, "audio output running");
                 return Ok((
-                    AudioOutput { stream, sample_rate: rate as f64, channels, underruns },
+                    AudioOutput { stream, sample_rate: rate as f64, channels, swap, underruns },
                     producer,
                 ));
             }
@@ -1211,8 +1369,9 @@ pub fn start_output(
 #[cfg(test)]
 mod tests {
     use super::{
-        CAPTURE_BUFFER_MS, GLITCH_REPORT_EVERY, NameAssigner, PendingInput, Say, alsa_dev_index,
-        capture_channels_in, capture_period_frames, config_candidates,
+        CAPTURE_BUFFER_MS, GLITCH_REPORT_EVERY, NameAssigner, PendingInput, Say, SwapReason,
+        alsa_dev_index, capture_channels_in, capture_period_frames, config_candidates,
+        stable_tokens,
     };
     use std::time::{Duration, Instant};
 
@@ -1394,5 +1553,68 @@ mod tests {
         assert_eq!(Say::decide(true, 45, due), Say::MoreFaults);
         assert_eq!(Say::decide(false, 2, due), Say::MoreHarmless);
         assert_eq!(Say::decide(false, 45, due), Say::MoreHarmless);
+    }
+
+    /// The reported crash of #567's operator: a saved name that stopped
+    /// matching when the sound server renumbered the ALSA card id, which put
+    /// the radio on the system default with nothing on screen saying so. The
+    /// card id is the only part of the name the machine chooses afresh, so the
+    /// stable tokens have to survive it and nothing else may.
+    #[test]
+    fn a_renumbered_card_id_still_resolves_to_the_same_hardware() {
+        let saved = "Generic AB13X USB Audio, USB Audio [Audio \u{b7} 001f:0b21]";
+        let now = "Generic AB13X USB Audio, USB Audio [Audio_1 \u{b7} 001f:0b21]";
+        assert_ne!(saved, now, "the whole-string match is what failed");
+        assert_eq!(stable_tokens(saved), stable_tokens(now));
+        assert_eq!(stable_tokens(now), Some(("Generic AB13X USB Audio, USB Audio", "001f:0b21")));
+    }
+
+    /// The tokens must not be so loose that two different codecs match: product
+    /// *and* USB id together, or neither. Two units of the same model do share
+    /// both; `pick_device` refuses a tier-3 match that lands on more than one card.
+    #[test]
+    fn the_stable_tokens_tell_two_different_codecs_apart() {
+        let a = "Generic AB13X USB Audio, USB Audio [Audio \u{b7} 001f:0b21]";
+        let b = "Generic AB13X USB Audio, USB Audio [Audio_1 \u{b7} 001f:0b22]";
+        assert_ne!(stable_tokens(a), stable_tokens(b));
+
+        // And a different product on the same id is still a different device.
+        let c = "Other Codec, USB Audio [Audio_2 \u{b7} 001f:0b21]";
+        assert_ne!(stable_tokens(a), stable_tokens(c));
+    }
+
+    /// A name with no bracketed card id \u{2014} an on-board codec, a virtual
+    /// device \u{2014} has no stable token, so it must report none rather than
+    /// invent one and match everything.
+    #[test]
+    fn a_name_with_no_card_id_has_no_stable_tokens() {
+        assert_eq!(stable_tokens("HDA NVidia, HDMI 0"), None);
+        assert_eq!(stable_tokens("Default Audio Device"), None);
+        // A bracketed card id with no USB id behind it is not a stable key
+        // either \u{2014} that is the enumeration-order part on its own.
+        assert_eq!(stable_tokens("Built-in Audio Analog Stereo [Analog]"), None);
+    }
+
+    /// Every one of these sentences has to name what was asked for *and* what
+    /// answered, because the whole point is that the operator is being handed a
+    /// device they did not choose.
+    #[test]
+    fn a_swap_says_which_device_answered_instead() {
+        let renamed = super::DeviceSwap {
+            wanted: "Generic AB13X USB Audio, USB Audio [Audio \u{b7} 001f:0b21]".into(),
+            opened: "Generic AB13X USB Audio, USB Audio [Audio_1 \u{b7} 001f:0b21]".into(),
+            reason: SwapReason::Renamed,
+        };
+        let gone = super::DeviceSwap {
+            wanted: "Some Rig [Audio \u{b7} 1234:5678]".into(),
+            opened: "HDA Intel, ALC256 Analog [Generic]".into(),
+            reason: SwapReason::Gone,
+        };
+        // Both send the operator to Settings: nothing writes the renamed name
+        // back on its own, only picking the device again does.
+        assert!(renamed.sentence().contains("Settings \u{2192} Radio"), "{}", renamed.sentence());
+        assert!(gone.sentence().contains("Settings \u{2192} Radio"), "{}", gone.sentence());
+        assert!(gone.sentence().contains("HDA Intel"), "{}", gone.sentence());
+        assert!(gone.sentence().contains("1234:5678"), "{}", gone.sentence());
     }
 }

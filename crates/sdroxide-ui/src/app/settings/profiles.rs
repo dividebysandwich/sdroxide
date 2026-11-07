@@ -12,6 +12,7 @@
 //! list, which is all this tab ever holds: the profiles themselves live with
 //! everything else the radio remembers, wherever the radio happens to be.
 
+use crate::i18n::tr;
 use eframe::egui::{self, RichText};
 
 use sdroxide_types::Command;
@@ -27,61 +28,46 @@ pub(in crate::app) fn settings_profiles_tab(
     use crate::theme;
 
     ui.label(
-        RichText::new("Profiles: the station's saved setups")
+        RichText::new(tr!("settings-profiles-profiles-station-s-saved-setups"))
             .size(14.0)
             .strong()
             .color(theme::CYAN()),
     );
     ui.add_space(4.0);
-    ui.label(
-        RichText::new(
-            "A profile captures the whole working setup — the dials and VFOs, the mode \
-             and filters, the gains, drive and antennas, your callsign and message \
-             templates, and the per-band registers — and applies it back in one click. \
-             The hardware (back end, audio devices, converters) is deliberately left \
-             alone: a profile is the way you work the station, not the radio it runs on.",
-        )
-        .weak(),
-    );
+    ui.label(RichText::new(tr!("settings-profiles-profile-captures-whole-working-setup")).weak());
     ui.add_space(10.0);
 
-    ui.label(RichText::new("Save the current setup").strong());
+    ui.label(RichText::new(tr!("settings-profiles-save-current-setup")).strong());
     ui.horizontal(|ui| {
         crate::chrome::field(
             ui,
-            egui::TextEdit::singleline(io.profile_name).hint_text("profile name"),
+            egui::TextEdit::singleline(io.profile_name)
+                .hint_text(tr!("settings-profiles-profile-name")),
         );
-        if !io.profile_name.trim().is_empty() && ui.button("Save").clicked() {
+        if !io.profile_name.trim().is_empty() && ui.button(tr!("settings-profiles-save")).clicked()
+        {
             cmds.push(Command::ProfileSave(io.profile_name.trim().to_string()));
             io.profile_name.clear();
         }
     });
     ui.label(
-        RichText::new(
-            "Applies to whatever sdroxide is attached to: dials and VFOs, mode and \
-             filters, levels, gains, drive, antennas, the digital identity and the band \
-             stacks.",
-        )
-        .weak(),
+        RichText::new(tr!("settings-profiles-applies-whatever-sdroxide-attached-dials")).weak(),
     );
     ui.add_space(12.0);
 
     if profiles.is_empty() {
-        ui.label(RichText::new("No profiles saved yet — name one above and press Save.").weak());
+        ui.label(RichText::new(tr!("settings-profiles-no-profiles-saved-yet-name")).weak());
         return;
     }
 
-    ui.label(RichText::new("Saved profiles").strong());
+    ui.label(RichText::new(tr!("settings-profiles-saved-profiles")).strong());
     ui.add_space(4.0);
     for name in profiles {
         ui.horizontal(|ui| {
             ui.label(RichText::new(name).strong());
             if ui
-                .button("Apply")
-                .on_hover_text(format!(
-                    "Put the station back onto \u{201c}{name}\u{201d}: dials, VFOs, mode, filters, \
-                 gains, drive, antennas, identity and band stacks."
-                ))
+                .button(tr!("settings-profiles-apply"))
+                .on_hover_text(tr!("settings-profiles-apply-hint", name = name.as_str()))
                 .clicked()
             {
                 cmds.push(Command::ProfileApply(name.clone()));
@@ -90,7 +76,11 @@ pub(in crate::app) fn settings_profiles_tab(
                 // would put the old callsign back.
                 *io.digi_reseed = true;
             }
-            if ui.button("✕").on_hover_text(format!("Delete \u{201c}{name}\u{201d}")).clicked() {
+            if ui
+                .button("✕")
+                .on_hover_text(tr!("settings-profiles-delete", name = name.as_str()))
+                .clicked()
+            {
                 cmds.push(Command::ProfileDelete(name.clone()));
             }
         });

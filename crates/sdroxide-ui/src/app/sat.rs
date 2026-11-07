@@ -13,6 +13,7 @@
 //! the list is memoized one satellite per frame: a search over 48 hours is
 //! cheap enough to do once, and far too dear to do ninety times per repaint.
 
+use crate::i18n::tr;
 use eframe::egui::{self, RichText};
 use sdroxide_types::{Command, Mode, SatLockConfig, SatUplink, Vfo};
 
@@ -341,9 +342,9 @@ fn hhmm(unix: i64) -> String {
 fn utc_and_local(unix: i64) -> String {
     let offset = crate::time::local_offset_at(unix);
     if offset == 0 {
-        format!("{} UTC", hhmm(unix))
+        format!("{unix} UTC", unix = hhmm(unix))
     } else {
-        format!("{} UTC ({} local)", hhmm(unix), hhmm(unix + offset))
+        tr!("sat-utc-local", unix = hhmm(unix), offset = hhmm(unix + offset))
     }
 }
 
@@ -514,8 +515,9 @@ fn pass_diagram(ui: &mut egui::Ui, curve: &PassCurve, now: i64, height: f32) {
             Stroke::new(1.2, theme::CYAN()),
         );
     }
-    let aos = format!("AOS {} {}", hhmm(curve.rise_unix), compass(curve.rise_unix));
-    let los = format!("LOS {} {}", hhmm(curve.set_unix), compass(curve.set_unix));
+    let aos =
+        tr!("sat-aos", rise_unix = hhmm(curve.rise_unix), rise_unix2 = compass(curve.rise_unix));
+    let los = tr!("sat-los", set_unix = hhmm(curve.set_unix), set_unix2 = compass(curve.set_unix));
     let baseline = plot.bottom() - 1.0;
     let aos_r =
         p.text(pos2(plot.left() + 5.0, baseline), Align2::LEFT_BOTTOM, &aos, font.clone(), dim);
@@ -550,16 +552,16 @@ fn pass_diagram(ui: &mut egui::Ui, curve: &PassCurve, now: i64, height: f32) {
     p.text(
         pos2(rect.left() + 7.0, rect.top() + 2.0),
         Align2::LEFT_TOP,
-        "PASS PROFILE",
+        tr!("sat-pass-profile"),
         font.clone(),
         dim,
     );
     p.text(
         pos2(rect.right() - 13.0, rect.top() + 2.0),
         Align2::RIGHT_TOP,
-        format!(
-            "{} above the horizon",
-            sdroxide_solar::timefmt::age(curve.set_unix - curve.rise_unix)
+        tr!(
+            "sat-above-horizon",
+            rise_unix = sdroxide_solar::timefmt::age(curve.set_unix - curve.rise_unix)
         ),
         font,
         dim,
@@ -569,12 +571,15 @@ fn pass_diagram(ui: &mut egui::Ui, curve: &PassCurve, now: i64, height: f32) {
 
 /// The mode a link's published emission maps onto. Satellite SSB convention
 /// is USB on the downlink, whatever the band. An SSTV downlink is FM on V/UHF,
-/// and tuning it as plain NFM would leave the picture undecoded (#622).
+/// and tuning it as plain NFM would leave the picture undecoded (#622). A
+/// 1k2 AFSK link is packet on FM, so it tunes in the APRS mode (#651).
 fn mode_for_link(l: &sdroxide_types::SatLink) -> Mode {
     let m = l.mode.to_ascii_uppercase();
     let sstv = m.contains("SSTV") || l.label.to_ascii_uppercase().contains("SSTV");
     if sstv && m.contains("FM") {
         Mode::SstvFm
+    } else if m.contains("AFSK") {
+        Mode::Aprs
     } else if m.contains("FM") || m.contains("APT") {
         Mode::Nfm
     } else if m.contains("SSB") || m.contains("BPSK") || m.contains("GMSK") || m.contains("AX.25") {
@@ -600,7 +605,11 @@ fn lock_downlink_hz(l: &sdroxide_types::SatLink, dial_hz: f64) -> f64 {
 }
 
 fn fmt_hz_signed(hz: f64) -> String {
-    if hz.abs() >= 1000.0 { format!("{:+.2} kHz", hz / 1000.0) } else { format!("{hz:+.0} Hz") }
+    if hz.abs() >= 1000.0 {
+        format!("{hz:+.2} kHz", hz = hz / 1000.0)
+    } else {
+        format!("{hz:+.0} Hz")
+    }
 }
 
 fn fmt_mhz(hz: f64) -> String {
@@ -611,11 +620,11 @@ fn fmt_mhz(hz: f64) -> String {
 fn in_words(s: i64) -> String {
     let s = s.max(0);
     if s < 60 {
-        format!("in {s} s")
+        tr!("sat-in-seconds", s = s)
     } else if s < 3600 {
-        format!("in {} min", s / 60)
+        tr!("sat-min", value = s / 60)
     } else {
-        format!("in {} h {:02} min", s / 3600, (s % 3600) / 60)
+        tr!("sat-h-min", value = s / 3600, value2 = format!("{:02}", (s % 3600) / 60))
     }
 }
 
@@ -631,20 +640,18 @@ impl SdroxideApp {
         // and the state lives on `self`.
         let mut qo100 = std::mem::take(&mut self.qo100_win);
         let mut open = self.show_sat;
-        let resp = egui::Window::new("SATELLITE")
-            .id(crate::layout::salted_id(ctx, "SATELLITE"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 480.0))
-            .default_height(crate::layout::window_h(ctx, 520.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.sat_body(ui, &mut win, &mut qo100, cmds)
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+        let tool_title = tr!("sat-satellite");
+        let mut tool_st = self.take_tool_state("SATELLITE");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("SATELLITE", &tool_title, [480.0, 520.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| self.sat_body(ui, &mut win, &mut qo100, cmds),
+        );
+        self.put_tool_state("SATELLITE", tool_st);
         self.show_sat = open;
         self.sat_win = win;
         self.qo100_win = qo100;
@@ -668,8 +675,8 @@ impl SdroxideApp {
         let hunting = self.state.qo100.enabled;
         crate::chrome::tab_bar(ui, |ui, bar| {
             for (tab, label) in [
-                (SatTab::Satellites, live(locked, "SATELLITES")),
-                (SatTab::Passes, "PASSES".to_string()),
+                (SatTab::Satellites, live(locked, &tr!("sat-satellites"))),
+                (SatTab::Passes, tr!("sat-passes").to_string()),
                 (SatTab::Qo100, live(hunting, "QO-100")),
             ] {
                 if bar.tab(ui, self.sat_tab == tab, label).clicked() {
@@ -729,8 +736,7 @@ impl SdroxideApp {
         }
         let Some((lat, lon)) = sdroxide_types::grid_to_latlon(&self.my_grid()) else {
             ui.label(
-                RichText::new("Set your grid for passes (Settings ▸ General).")
-                    .color(theme::YELLOW()),
+                RichText::new(tr!("sat-set-your-grid-passes-settings")).color(theme::YELLOW()),
             );
             return;
         };
@@ -740,21 +746,18 @@ impl SdroxideApp {
             t.min_el = 10.0;
         }
         ui.horizontal_wrapped(|ui| {
-            ui.label(dim("NEXT"));
+            ui.label(dim(&tr!("sat-next")));
             for h in [24u32, 48] {
                 if ui.selectable_label(t.span_h == h, format!("{h} h")).clicked() {
                     t.span_h = h;
                 }
             }
             ui.add_space(8.0);
-            ui.label(dim("PEAK ≥"));
+            ui.label(dim(&tr!("sat-peak")));
             ui.add(egui::DragValue::new(&mut t.min_el).range(0.0..=60.0).speed(1.0).suffix("°"));
             ui.add_space(8.0);
-            crate::chrome::checkbox(ui, &mut t.all, "all satellites").on_hover_text(
-                "Off: only satellites with frequencies on file — the ones you can work — and \
-                 any you pasted in yourself. On: every satellite in the list, which can be \
-                 thousands with a subscription and takes a while to search.",
-            );
+            crate::chrome::checkbox(ui, &mut t.all, tr!("sat-all-satellites"))
+                .on_hover_text(tr!("sat-off-only-satellites-frequencies-file"));
         });
         ui.add_space(4.0);
 
@@ -802,17 +805,24 @@ impl SdroxideApp {
 
         let shown: Vec<&PassRow> = t.rows.iter().filter(|r| r.pass.set_unix > now).collect();
         if searching {
-            ui.label(dim(&format!("searching… {} of {}", t.next, list.entries.len())));
+            ui.label(dim(&tr!("sat-searching", next = t.next, entries = list.entries.len())));
         } else if shown.is_empty() {
-            ui.label(dim("No passes in this window. Lower the peak, or widen the window."));
+            ui.label(dim(&tr!("sat-no-passes-window-lower-peak")));
         }
         let mut picked = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             egui::Grid::new("sat-passes").num_columns(6).spacing([12.0, 2.0]).striped(true).show(
                 ui,
                 |ui| {
-                    for h in ["SATELLITE", "AOS", "", "LENGTH", "PEAK", "FROM → TO"] {
-                        ui.label(dim(h));
+                    for h in [
+                        tr!("sat-satellite"),
+                        String::from("AOS"),
+                        String::from(""),
+                        tr!("sat-length"),
+                        tr!("sat-peak-2"),
+                        tr!("sat-from-to"),
+                    ] {
+                        ui.label(dim(&h));
                     }
                     ui.end_row();
                     for r in &shown {
@@ -825,7 +835,7 @@ impl SdroxideApp {
                         }
                         ui.label(RichText::new(utc_and_local(p.rise_unix)).size(10.0));
                         let when = if up {
-                            RichText::new("● up now").color(theme::GREEN())
+                            RichText::new(tr!("sat-up-now")).color(theme::GREEN())
                         } else {
                             RichText::new(in_words(p.rise_unix - now))
                         };
@@ -867,14 +877,14 @@ impl SdroxideApp {
 
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(format!("● LOCKED — {}", t.name))
+                RichText::new(tr!("sat-locked-2", t = t.name))
                     .size(13.0)
                     .strong()
                     .color(if t.visible { theme::GREEN() } else { theme::YELLOW() }),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if crate::chrome::chip(ui, false, "UNLOCK")
-                    .on_hover_text("Release the lock; the dial stays where it is")
+                if crate::chrome::chip(ui, false, tr!("sat-unlock"))
+                    .on_hover_text(tr!("sat-release-lock-dial-stays-where"))
                     .clicked()
                 {
                     cmds.push(Command::SetSatLock(None));
@@ -885,13 +895,13 @@ impl SdroxideApp {
         ui.add_space(4.0);
 
         egui::Grid::new("sat-lock-grid").num_columns(4).spacing([16.0, 3.0]).show(ui, |ui| {
-            ui.label(dim("AZIMUTH"));
+            ui.label(dim(&tr!("sat-azimuth")));
             ui.label(
                 RichText::new(format!("{:.1}°  {}", t.az_deg, compass(t.az_deg)))
                     .size(12.5)
                     .strong(),
             );
-            ui.label(dim("ELEVATION"));
+            ui.label(dim(&tr!("sat-elevation")));
             ui.label(
                 RichText::new(format!("{:+.1}°", t.el_deg))
                     .size(12.5)
@@ -900,9 +910,9 @@ impl SdroxideApp {
             );
             ui.end_row();
 
-            ui.label(dim("RANGE"));
+            ui.label(dim(&tr!("sat-range")));
             ui.label(RichText::new(format!("{:.0} km", t.range_km)).size(11.5));
-            ui.label(dim("RATE"));
+            ui.label(dim(&tr!("sat-rate")));
             let dir = if t.range_rate_km_s < -0.01 {
                 "approaching"
             } else if t.range_rate_km_s > 0.01 {
@@ -913,22 +923,24 @@ impl SdroxideApp {
             ui.label(RichText::new(format!("{:+.2} km/s {dir}", t.range_rate_km_s)).size(11.5));
             ui.end_row();
 
-            ui.label(dim("DOWNLINK"));
+            ui.label(dim(&tr!("sat-downlink")));
             ui.label(
-                RichText::new(format!("{} MHz", fmt_mhz(t.downlink_hz)))
+                RichText::new(format!("{downlink_hz} MHz", downlink_hz = fmt_mhz(t.downlink_hz)))
                     .size(11.5)
                     .color(theme::GREEN()),
             );
-            ui.label(dim("DOPPLER RX"));
+            ui.label(dim(&tr!("sat-doppler-rx")));
             ui.label(RichText::new(fmt_hz_signed(t.doppler_rx_hz)).size(11.5));
             ui.end_row();
 
             if let Some(up) = t.uplink_hz {
-                ui.label(dim("UPLINK"));
+                ui.label(dim(&tr!("sat-uplink")));
                 ui.label(
-                    RichText::new(format!("{} MHz", fmt_mhz(up))).size(11.5).color(theme::YELLOW()),
+                    RichText::new(format!("{up} MHz", up = fmt_mhz(up)))
+                        .size(11.5)
+                        .color(theme::YELLOW()),
                 );
-                ui.label(dim("DOPPLER TX"));
+                ui.label(dim(&tr!("sat-doppler-tx")));
                 ui.label(RichText::new(fmt_hz_signed(t.doppler_tx_hz)).size(11.5));
                 ui.end_row();
             }
@@ -942,27 +954,27 @@ impl SdroxideApp {
             (_, true) => {
                 if let Some(p) = &t.next_pass {
                     if (p.rise_unix..=p.set_unix).contains(&now) {
-                        ui.label(dim(&format!(
-                            "Pass until {} · max {:.0}°",
-                            utc_and_local(p.set_unix),
-                            p.max_el
+                        ui.label(dim(&tr!(
+                            "sat-pass-until-max",
+                            set_unix = utc_and_local(p.set_unix),
+                            max_el = format!("{:.0}", p.max_el)
                         )));
                     }
                 }
             }
             (Some(p), false) => {
-                ui.label(dim(&format!(
-                    "Next pass {} {} ({}) · rises {:.0}° {} · max {:.0}°",
-                    sdroxide_solar::timefmt::ymd(p.rise_unix),
-                    utc_and_local(p.rise_unix),
-                    in_words(p.rise_unix - now),
-                    p.rise_az,
-                    compass(p.rise_az),
-                    p.max_el
+                ui.label(dim(&tr!(
+                    "sat-next-pass-rises-max",
+                    rise_unix = sdroxide_solar::timefmt::ymd(p.rise_unix),
+                    rise_unix2 = utc_and_local(p.rise_unix),
+                    now = in_words(p.rise_unix - now),
+                    rise_az = format!("{:.0}", p.rise_az),
+                    rise_az2 = compass(p.rise_az),
+                    max_el = format!("{:.0}", p.max_el)
                 )));
             }
             (None, false) => {
-                ui.label(dim("No pass inside the next 48 hours from your QTH."));
+                ui.label(dim(&tr!("sat-no-pass-inside-next-48")));
             }
         }
 
@@ -992,13 +1004,13 @@ impl SdroxideApp {
         // The warnings, in the order an operator has to act on them.
         if t.stale_elements {
             ui.label(
-                RichText::new("⚠ Elements stale — corrections suspended until a TLE refresh")
+                RichText::new(tr!("sat-elements-stale-corrections-suspended-until"))
                     .size(10.5)
                     .color(theme::YELLOW()),
             );
         } else if !t.corrections_active && win.sent.as_ref().is_none_or(|c| c.doppler) {
             ui.label(
-                RichText::new("Doppler correction needs an IQ front end — a CAT rig tracks only")
+                RichText::new(tr!("sat-doppler-correction-needs-iq-front"))
                     .size(10.5)
                     .color(theme::CYAN_DIM()),
             );
@@ -1006,11 +1018,9 @@ impl SdroxideApp {
         if let Some(s) = &self.rigctld_status {
             if s.running && s.clients > 0 {
                 ui.label(
-                    RichText::new(format!(
-                        "⚠ {} rigctld client{} connected — satellite software steering the dial \
-                         there would correct Doppler twice",
-                        s.clients,
-                        if s.clients == 1 { "" } else { "s" }
+                    RichText::new(tr!(
+                        "sat-rigctld-client-connected-satellite-software",
+                        clients = s.clients
                     ))
                     .size(10.5)
                     .color(theme::YELLOW()),
@@ -1020,12 +1030,19 @@ impl SdroxideApp {
         if let Some((connected, az, el, err)) = &self.rotator_status {
             if win.sent.as_ref().is_some_and(|c| c.rotator) {
                 let line = if *connected {
-                    RichText::new(format!("Rotator: antenna at {az:.0}° az {el:.0}° el"))
-                        .color(theme::CYAN_DIM())
+                    RichText::new(tr!(
+                        "sat-rotator-antenna-az-el",
+                        az = format!("{:.0}", az),
+                        el = format!("{:.0}", el)
+                    ))
+                    .color(theme::CYAN_DIM())
                 } else {
                     match err {
-                        Some(e) => RichText::new(format!("Rotator: {e}")).color(theme::YELLOW()),
-                        None => RichText::new("Rotator: not connected").color(theme::CYAN_DIM()),
+                        Some(e) => RichText::new(tr!("sat-rotator-2", error = e.to_string()))
+                            .color(theme::YELLOW()),
+                        None => {
+                            RichText::new(tr!("sat-rotator-not-connected")).color(theme::CYAN_DIM())
+                        }
                     }
                 };
                 ui.label(line.size(10.5));
@@ -1037,17 +1054,15 @@ impl SdroxideApp {
         if let Some(sent) = win.sent.as_mut() {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if crate::chrome::chip(ui, sent.doppler, "DOPPLER")
-                    .on_hover_text("Apply the computed correction to RX and TX")
+                if crate::chrome::chip(ui, sent.doppler, tr!("sat-doppler"))
+                    .on_hover_text(tr!("sat-apply-computed-correction-rx-tx"))
                     .clicked()
                 {
                     sent.doppler = !sent.doppler;
                     cmds.push(Command::SetSatLock(Some(Box::new(sent.clone()))));
                 }
-                if crate::chrome::chip(ui, sent.rotator, "ROTATOR")
-                    .on_hover_text(
-                        "Steer the antenna through the rotctld client (Settings ▸ Servers)",
-                    )
+                if crate::chrome::chip(ui, sent.rotator, tr!("sat-rotator"))
+                    .on_hover_text(tr!("sat-steer-antenna-through-rotctld-client"))
                     .clicked()
                 {
                     sent.rotator = !sent.rotator;
@@ -1072,14 +1087,14 @@ impl SdroxideApp {
                 ui,
                 egui::TextEdit::singleline(&mut win.search)
                     .desired_width(160.0)
-                    .hint_text("name or NORAD"),
+                    .hint_text(tr!("sat-name-norad")),
             );
             if !win.search.is_empty() && ui.small_button("×").clicked() {
                 win.search.clear();
             }
             if qth.is_none() {
                 ui.label(
-                    RichText::new("set your grid for passes (Settings ▸ General)")
+                    RichText::new(tr!("sat-set-your-grid-passes-settings-2"))
                         .size(9.5)
                         .color(theme::YELLOW()),
                 );
@@ -1163,9 +1178,9 @@ impl SdroxideApp {
                 .spacing([14.0, 2.0])
                 .striped(true)
                 .show(ui, |ui| {
-                    ui.label(dim("SATELLITE"));
-                    ui.label(dim("NORAD"));
-                    ui.label(dim("PASS"));
+                    ui.label(dim(&tr!("sat-satellite")));
+                    ui.label(dim(&tr!("sat-norad")));
+                    ui.label(dim(&tr!("sat-pass")));
                     ui.end_row();
                     for (i, el, _) in &rows {
                         let e = &list.entries[*i];
@@ -1188,18 +1203,21 @@ impl SdroxideApp {
                         ui.label(RichText::new(e.norad_id.to_string()).size(10.0));
                         let pass = match (el, &e.pass, &e.sat) {
                             (Some(el), _, _) if *el > 0.0 => {
-                                RichText::new(format!("● up now, {el:.0}°")).color(theme::GREEN())
+                                RichText::new(tr!("sat-up-now-2", el = format!("{:.0}", el)))
+                                    .color(theme::GREEN())
                             }
                             (_, Some((_, PassMemo::Pass(p))), _) => {
                                 RichText::new(in_words(p.rise_unix - now))
                             }
                             (_, Some((_, PassMemo::Always)), _) => {
-                                RichText::new("always visible").color(theme::GREEN())
+                                RichText::new(tr!("sat-always-visible")).color(theme::GREEN())
                             }
                             (_, Some((_, PassMemo::Never)), _) => {
-                                RichText::new("not from here").color(theme::CYAN_DIM())
+                                RichText::new(tr!("sat-not-here")).color(theme::CYAN_DIM())
                             }
-                            (_, None, None) => RichText::new("no elements").color(theme::YELLOW()),
+                            (_, None, None) => {
+                                RichText::new(tr!("sat-no-elements")).color(theme::YELLOW())
+                            }
                             (_, None, Some(_)) => RichText::new("…"),
                         };
                         ui.label(pass.size(10.0));
@@ -1210,7 +1228,7 @@ impl SdroxideApp {
 
         let Some(id) = win.selected else {
             ui.add_space(4.0);
-            ui.label(dim("Pick a satellite to see its links and lock on."));
+            ui.label(dim(&tr!("sat-pick-satellite-see-links-lock")));
             return;
         };
         let Some(entry_idx) = list.entries.iter().position(|e| e.norad_id == id) else {
@@ -1248,7 +1266,7 @@ impl SdroxideApp {
         let links: Vec<sdroxide_types::SatLink> =
             freqs.as_ref().map(|f| f.usable_links().cloned().collect()).unwrap_or_default();
         if links.is_empty() {
-            ui.label(dim("No frequencies on file for this one — add them in Settings ▸ TLE."));
+            ui.label(dim(&tr!("sat-no-frequencies-file-one-add")));
             return;
         }
         win.link_idx = win.link_idx.min(links.len() - 1);
@@ -1260,10 +1278,10 @@ impl SdroxideApp {
             .min_col_width(link_col_w)
             .spacing([14.0, 2.0])
             .show(ui, |ui| {
-                ui.label(dim("LINK"));
-                ui.label(dim("DOWNLINK (MHz)"));
-                ui.label(dim("UPLINK (MHz)"));
-                ui.label(dim("MODE"));
+                ui.label(dim(&tr!("sat-link")));
+                ui.label(dim(&tr!("sat-downlink-mhz")));
+                ui.label(dim(&tr!("sat-uplink-mhz")));
+                ui.label(dim(&tr!("sat-mode")));
                 ui.end_row();
                 for (i, l) in links.iter().enumerate() {
                     let sel = i == win.link_idx;
@@ -1292,7 +1310,7 @@ impl SdroxideApp {
                             .color(theme::YELLOW()),
                     );
                     let mode =
-                        if l.inverting { format!("{} · inv", l.mode) } else { l.mode.clone() };
+                        if l.inverting { tr!("sat-inv", mode = l.mode) } else { l.mode.clone() };
                     ui.label(RichText::new(mode).size(10.5));
                     ui.end_row();
                 }
@@ -1304,8 +1322,8 @@ impl SdroxideApp {
         ui.add_space(6.0);
 
         ui.horizontal(|ui| {
-            if crate::chrome::chip(ui, false, "TUNE")
-                .on_hover_text("Set the dial and mode to this link — no lock, no correction")
+            if crate::chrome::chip(ui, false, tr!("sat-tune"))
+                .on_hover_text(tr!("sat-set-dial-mode-link-no"))
                 .clicked()
             {
                 if link.downlink.is_some() {
@@ -1322,14 +1340,12 @@ impl SdroxideApp {
             if crate::chrome::chip_accent(
                 ui,
                 locked_here,
-                RichText::new(if locked_here { " LOCKED " } else { " LOCK ON " }).strong(),
+                RichText::new(if locked_here { tr!("sat-locked") } else { tr!("sat-lock") })
+                    .strong(),
                 theme::GREEN(),
                 theme::INK_ON_CYAN(),
             )
-            .on_hover_text(
-                "Track this satellite: Doppler correction on RX and TX, transponder-mapped \
-                 uplink, and the 3D view follows it",
-            )
+            .on_hover_text(tr!("sat-track-satellite-doppler-correction-rx"))
             .clicked()
                 && !locked_here
             {
@@ -1389,7 +1405,7 @@ impl SdroxideApp {
         let name = entry
             .map(|e| e.name.clone())
             .or_else(|| freqs.as_ref().map(|f| f.name.clone()).filter(|n| !n.is_empty()))
-            .unwrap_or_else(|| format!("NORAD {norad_id}"));
+            .unwrap_or_else(|| tr!("sat-norad-2", norad_id = norad_id));
         let tle = entry.and_then(|e| e.tle.clone());
         let cfg = SatLockConfig {
             norad_id,
@@ -1424,5 +1440,12 @@ mod tests {
         // Voice stays voice.
         let voice = SatLink::down("FM voice", "FM", Passband::at(145.800));
         assert_eq!(mode_for_link(&voice), Mode::Nfm);
+    }
+
+    /// Issue #651: the ISS APRS digipeater is 1k2 AFSK on FM, not USB.
+    #[test]
+    fn an_afsk_link_tunes_in_aprs() {
+        let aprs = SatLink::down("APRS digipeater", "AX.25 1k2 AFSK", Passband::at(145.825));
+        assert_eq!(mode_for_link(&aprs), Mode::Aprs);
     }
 }

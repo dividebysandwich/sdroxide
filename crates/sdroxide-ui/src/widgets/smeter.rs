@@ -15,6 +15,7 @@
 //! Everything is laid out against `k`, the box height over its 72 px design
 //! height, so the whole instrument scales with the box it is handed.
 
+use crate::i18n::tr;
 use eframe::egui::{
     Align2, Color32, FontId, Id, Painter, Pos2, Rangef, Rect, Response, Sense, Shape, Stroke,
     StrokeKind, Ui, Vec2,
@@ -173,90 +174,65 @@ pub use sdroxide_types::SmeterStyle;
 pub fn hover_text(meters: Option<&Meters>) -> String {
     let mut out = String::new();
     if let Some(tx) = meters.and_then(|m| m.tx.as_ref()) {
-        out.push_str(
-            "ALC — how hard the transmitter is being driven, as a percentage of the most it \
-             can put out. 100 % is full scale, not full power in watts: what that is worth at \
-             the antenna depends on the radio and on Drive.",
-        );
+        out.push_str(&tr!("smeter-alc-how-hard-transmitter-being"));
         match tx.fwd_w {
-            Some(w) => out.push_str(&format!(
-                "\n\nForward power — {w:.1} W, measured by the radio's own sensor.",
-            )),
-            None => out.push_str(
-                "\n\nThis radio reports no forward power, so the figure beside ALC is the \
-                 ALC reading again rather than watts.",
-            ),
+            Some(w) => {
+                out.push_str(&tr!("smeter-forward-power-w-measured-radio", w = format!("{:.1}", w)))
+            }
+            None => out.push_str(&tr!("smeter-radio-reports-no-forward-power")),
         }
         if let Some(po) = tx.po {
-            out.push_str(&format!(
-                "\n\nPO — the radio's own power-output meter, at {:.0} % of its full scale. A \
-                 needle position as the radio reports it, not a calibrated wattage; what to \
-                 watch is whether it falls while Drive stays put.",
-                po.clamp(0.0, 1.0) * 100.0,
+            out.push_str(&tr!(
+                "smeter-po-radio-s-own-power",
+                clamp = format!("{:.0}", po.clamp(0.0, 1.0) * 100.0)
             ));
         }
         match tx.swr {
-            Some(swr) => out.push_str(&format!(
-                "\n\nSWR — {swr:.1}:1, the match the antenna is presenting, as the radio \
-                 measures it. Under 2:1 is unremarkable; past 3:1 the scale turns red.",
+            Some(swr) => out.push_str(&tr!(
+                "smeter-swr-1-match-antenna-presenting",
+                swr = format!("{:.1}", swr)
             )),
-            None => out.push_str(
-                "\n\nNo SWR: this radio has no bridge to measure it with, and sdroxide will \
-                 not invent one — it can only show what the radio itself reports. A rig with \
-                 an SWR meter (over CAT, TCI or a LAN link) and an HPSDR board both fill this \
-                 in; a plain SDR transmitter cannot.",
-            ),
+            None => out.push_str(&tr!("smeter-no-swr-radio-has-no")),
         }
         return out;
     }
 
     let Some(m) = meters else {
-        return "No signal report yet — the receiver has not delivered a meter reading.".into();
+        return tr!("smeter-no-signal-report-yet-receiver");
     };
     let (s, over) = m.s_units();
     if over > 0.0 {
-        out.push_str(&format!(
-            "Received signal strength: S9 + {over:.0} dB ({:.0} dBm in the passband).",
-            m.s_dbm,
+        out.push_str(&tr!(
+            "smeter-received-signal-strength-s9-db",
+            over = format!("{:.0}", over),
+            s_dbm = format!("{:.0}", m.s_dbm)
         ));
     } else {
-        out.push_str(&format!(
-            "Received signal strength: S{s} ({:.0} dBm in the passband).",
-            m.s_dbm,
+        out.push_str(&tr!(
+            "smeter-received-signal-strength-s-dbm",
+            value = s,
+            s_dbm = format!("{:.0}", m.s_dbm)
         ));
     }
-    out.push_str(
-        "\n\nS9 is −73 dBm and each S-unit below it is 6 dB. The dBm figure is only as \
-         honest as the front end's calibration — an uncalibrated receiver reports dBFS with a \
-         dBm label.",
-    );
+    out.push_str(&tr!("smeter-s9-73-dbm-each-s"));
     if m.adc_overloaded() {
-        out.push_str(
-            "\n\nOVLD: the converter is into its rails, so the level shown understates the \
-             signal. Wind the front-end gain back.",
-        );
+        out.push_str(&tr!("smeter-ovld-converter-into-rails-so"));
     }
     if let Some(t) = m.pa_temp_c {
-        out.push_str(&format!("\n\nThe radio reports {t:.0} °C."));
+        out.push_str(&tr!("smeter-radio-reports-c", t = format!("{:.0}", t)));
     }
     if let Some(ps) = m.puresignal {
         if ps.locked {
-            out.push_str(&format!(
-                "\n\nPS — PureSignal is correcting {:.1} dB of compression{} (the feedback \
-                 matched the transmission at {:.2}).",
-                ps.correction_db,
-                if ps.frozen { ", table held" } else { "" },
-                ps.score,
+            out.push_str(&tr!(
+                "smeter-ps-puresignal-correcting-db-compression",
+                correction_db = format!("{:.1}", ps.correction_db),
+                held = if ps.frozen { tr!("smeter-table-held") } else { String::from("") },
+                score = format!("{:.2}", ps.score)
             ));
         } else {
-            out.push_str(&format!(
-                "\n\nPS −− — PureSignal is switched on but has not found the transmission in \
-                 the feedback path (best match {:.2}), so the transmitter is going out \
-                 uncorrected. Check that a sample of the amplifier's output really reaches a \
-                 receive input the T/R switch does not take away on transmit, and that its \
-                 attenuator is not swallowing it. The loop listens on this receiver only — a \
-                 coupler wired to a second receiver (RX2, ADC2) is never read as the feedback.",
-                ps.score,
+            out.push_str(&tr!(
+                "smeter-ps-puresignal-switched-but-has",
+                score = format!("{:.2}", ps.score)
             ));
         }
     }
@@ -714,8 +690,10 @@ fn reading(meters: Option<&Meters>) -> Reading {
     let dbm = meters.map(|m| m.s_dbm).unwrap_or(DBM_LO);
     let (primary, secondary) = match meters {
         None => ("—".to_string(), String::new()),
-        Some(_) if dbm > S9_DBM => (format!("S9+{:.0}", dbm - S9_DBM), format!("{dbm:.0} dBm")),
-        Some(m) => (format!("S{}", m.s_units().0), format!("{dbm:.0} dBm")),
+        Some(_) if dbm > S9_DBM => {
+            (format!("S9+{:.0}", dbm - S9_DBM), format!("{dbm:.0} dBm", dbm = dbm))
+        }
+        Some(m) => (format!("S{}", m.s_units().0), format!("{dbm:.0} dBm", dbm = dbm)),
     };
     // The converter is into its rails. This takes the dBm's place rather than
     // sitting beside it, because the dBm is no longer a measurement: a clipped
@@ -822,7 +800,7 @@ fn puresignal(p: &Painter, rect: Rect, meters: Option<&Meters>, k: f32) {
     let Some(ps) = meters.and_then(|m| m.puresignal) else { return };
     let (text, ink) = if !ps.locked {
         // Blind: the feature is on and doing nothing.
-        ("PS --".to_string(), hot(c(0xffc03a), c(0xc88a00), c(0xffff00)))
+        (tr!("smeter-ps").to_string(), hot(c(0xffc03a), c(0xc88a00), c(0xffff00)))
     } else {
         let held = if ps.frozen { "*" } else { "" };
         (format!("PS {:.0}dB{held}", ps.correction_db), SUBDUED())

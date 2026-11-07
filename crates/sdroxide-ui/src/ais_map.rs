@@ -48,6 +48,7 @@
 //! minutes, so a shorter one would blank most of a harbour between two
 //! perfectly good reports.
 
+use crate::i18n::{Tr, tr};
 use eframe::egui::{
     Align2, Color32, FontId, Margin, Pos2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2,
 };
@@ -475,7 +476,7 @@ pub fn show(
         if !v.name.is_empty() {
             tip.push_str(&format!("  {}", v.mmsi));
         }
-        tip.push_str(&format!("\n{}", v.kind.label()));
+        tip.push_str(&format!("\n{}", v.kind.tr()));
         if let Some(t) = v.type_label() {
             tip.push_str(&format!(" — {t}"));
         }
@@ -512,11 +513,11 @@ pub fn show(
     if live.is_empty() && !vessels.is_empty() {
         let heard = vessels.len();
         let note = if vessels.iter().any(|v| v.lat.is_some() && v.lon.is_some()) {
-            format!("{heard} heard — no position newer than {}s", cfg.drop_map_s)
+            tr!("aismap-heard-no-position-newer-than", heard = heard, drop_map_s = cfg.drop_map_s)
         } else if heard == 1 {
-            "1 station heard — waiting for it to report a position".to_string()
+            tr!("aismap-t-1-station-heard-waiting-report").to_string()
         } else {
-            format!("{heard} stations heard — waiting for a position report")
+            tr!("aismap-stations-heard-waiting-position-report", heard = heard)
         };
         p.text(
             rect.center(),
@@ -531,7 +532,7 @@ pub fn show(
         p.text(
             rect.right_bottom() + vec2(-6.0, -4.0),
             Align2::RIGHT_BOTTOM,
-            "double-click to reframe",
+            tr!("aismap-double-click-reframe"),
             FontId::proportional(9.0),
             alpha(Color32::WHITE, 110.0),
         );
@@ -567,7 +568,7 @@ pub fn show(
         .show(&mut ctrl_ui, |ui| {
             ui.horizontal(|ui| {
                 if crate::chrome::chip(ui, false, RichText::new("\u{2212}").size(12.0))
-                    .on_hover_text("Zoom out — the wheel or a pinch do this too")
+                    .on_hover_text(tr!("aismap-zoom-out-wheel-pinch-do"))
                     .clicked()
                 {
                     view.zoom_about(1.0 / ZOOM_STEP, 0.5, 0.5, aspect);
@@ -575,7 +576,7 @@ pub fn show(
                     crate::repaint::animate(ui.ctx());
                 }
                 if crate::chrome::chip(ui, false, RichText::new("+").size(12.0))
-                    .on_hover_text("Zoom in about the middle of the chart")
+                    .on_hover_text(tr!("aismap-zoom-about-middle-chart"))
                     .clicked()
                 {
                     view.zoom_about(ZOOM_STEP, 0.5, 0.5, aspect);
@@ -583,7 +584,7 @@ pub fn show(
                     crate::repaint::animate(ui.ctx());
                 }
                 if crate::chrome::chip(ui, false, RichText::new("FIT").size(10.0))
-                    .on_hover_text("Frame everything being tracked again — a double-click does too")
+                    .on_hover_text(tr!("aismap-frame-everything-being-tracked-again"))
                     .clicked()
                 {
                     view.manual = false;
@@ -598,7 +599,7 @@ pub fn show(
     p.text(
         rect.left_bottom() + vec2(6.0, -4.0),
         Align2::LEFT_BOTTOM,
-        format!("{lon_span:.2}° · ~{km:.0} km across"),
+        tr!("aismap-km-across", lon_span = format!("{:.2}", lon_span), km = format!("{:.0}", km)),
         FontId::proportional(9.0),
         alpha(Color32::WHITE, 110.0),
     );

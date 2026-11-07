@@ -178,6 +178,10 @@ pub(crate) struct IoBoard {
     /// than the frequency because that is what the board acts on, and a code
     /// spans a whole band (see [`hertz_to_code`]).
     sent_rx_code: Option<u8>,
+    /// The receive input mode the board has been told. Restated like the
+    /// frequencies, so a write lost to an I2C failure is sent again rather than
+    /// leaving J9 on the old input until the operator moves it (#444).
+    sent_input_code: Option<u8>,
     /// When the last frequency went out, for the half-second rate limit. Shared
     /// by both directions: it exists to keep the I2C bus quiet, and the bus does
     /// not care which of them is talking.
@@ -195,6 +199,7 @@ impl IoBoard {
             queue: VecDeque::new(),
             sent_hz: None,
             sent_rx_code: None,
+            sent_input_code: None,
             sent_at: None,
             probe_at: None,
         }
@@ -202,22 +207,10 @@ impl IoBoard {
 
     /// Move the receive input while running.
     ///
-    /// A board already found is told straight away; one still being probed
-    /// picks it up with the rest of its start-up writes, after the reset that
-    /// would otherwise undo it.
+    /// A board already found is told with the next request; one still being
+    /// probed picks it up after the reset that would otherwise undo it.
     pub(crate) fn set_rx_input(&mut self, input: HpsdrIoRxInput) {
-        if self.rx_input == input {
-            return;
-        }
         self.rx_input = input;
-        if self.presence == Presence::Present {
-            self.queue.push_back(Op::write(REG_RF_INPUTS, input.code()));
-            tracing::info!(
-                "HL2IOBoard: receive input -> {} (mode {})",
-                input.label(),
-                input.code()
-            );
-        }
     }
 
     /// The C&C block to put in this datagram, or `None` to leave the slot to the
@@ -276,6 +269,15 @@ impl IoBoard {
                 }
             }
             Presence::Present => {
+                let input = self.rx_input.code();
+                if self.sent_input_code != Some(input) {
+                    self.sent_input_code = Some(input);
+                    self.queue.push_back(Op::write(REG_RF_INPUTS, input));
+                    tracing::info!(
+                        "HL2IOBoard: receive input -> {} (mode {input})",
+                        self.rx_input.label()
+                    );
+                }
                 let rx_code = hertz_to_code(rx_freq_hz);
                 let tx_stale = self.sent_hz != Some(tx_freq_hz);
                 let rx_stale = self.sent_rx_code != Some(rx_code);
@@ -341,14 +343,7 @@ impl IoBoard {
                 self.queue.push_back(Op::write(REG_CONTROL, 1));
                 // The reset just wrote 0 there, so only a non-default choice
                 // needs saying.
-                if self.rx_input.code() != 0 {
-                    self.queue.push_back(Op::write(REG_RF_INPUTS, self.rx_input.code()));
-                    tracing::info!(
-                        "HL2IOBoard: receive input -> {} (mode {})",
-                        self.rx_input.label(),
-                        self.rx_input.code()
-                    );
-                }
+                self.sent_input_code = Some(0);
                 // The reset just zeroed every register, so say both frequencies
                 // straight away rather than waiting for the operator to move
                 // the dial.
@@ -370,6 +365,11 @@ impl IoBoard {
         // half received is not a frequency — and the byte that went missing may
         // have been the one that latches — so forget that it was ever sent and
         // say the whole five bytes again from the top.
+        // An input write that failed or is dropped with the queue has to be
+        // said again too; one that already landed does not.
+        if op.reg == REG_RF_INPUTS || self.queue.iter().any(|q| q.reg == REG_RF_INPUTS) {
+            self.sent_input_code = None;
+        }
         self.queue.clear();
         self.sent_hz = None;
         self.sent_rx_code = None;
@@ -700,6 +700,26 @@ mod tests {
         now += ACK_TIMEOUT;
         let retry = board.next_request(now, 7_074_000, RX_HZ, 0).expect("says it again");
         assert_eq!(retry[3], REG_TX_FREQ_BYTE4, "starting from the top");
+    }
+
+    /// Issue #444: a receive-input write lost to an I2C failure is sent again,
+    /// rather than leaving J9 on the old input until the operator moves it.
+    #[test]
+    fn a_failed_receive_input_write_is_sent_again() {
+        let mut board = IoBoard::new(HpsdrIoRxInput::Radio);
+        let now = Instant::now();
+        find(&mut board, now);
+        board.next_request(now, RX_HZ, RX_HZ, 0).expect("the reset");
+        ack(&mut board, now, [0; 4]);
+        while board.next_request(now, RX_HZ, RX_HZ, 0).is_some() {
+            ack(&mut board, now, [0; 4]);
+        }
+        board.set_rx_input(HpsdrIoRxInput::IoBoard);
+        let sel = board.next_request(now, RX_HZ, RX_HZ, 0).expect("the input mode");
+        assert_eq!((sel[3], sel[4]), (REG_RF_INPUTS, 1));
+        board.on_ack(RADDR_ERROR, [0; 4], now);
+        let again = board.next_request(now, RX_HZ, RX_HZ, 0).expect("said again");
+        assert_eq!((again[3], again[4]), (REG_RF_INPUTS, 1));
     }
 
     #[test]

@@ -9,6 +9,21 @@ pub const DECODE_RATE: f64 = 12_000.0;
 pub const AUDIO_MIN_HZ: f32 = 100.0;
 pub const AUDIO_MAX_HZ: f32 = 3300.0;
 
+/// The sync score an FT8/FT4 candidate needs to be tried.
+pub const SYNC_MIN: f32 = 1.5;
+/// How many sync candidates a slot's decode is allowed to try.
+///
+/// The list is sorted by sync power and cut here, so on a quiet band this is
+/// never reached and on a busy one it decides which of the weak signals are
+/// never looked at — which is exactly the shape of issue #307, where the gap
+/// against WSJT-X grew with the number of stations on the band.
+///
+/// Measured on a synthetic forty-signal slot: 120 candidates found thirteen
+/// messages, 300 found fourteen and 600 found fifteen, for 9.6, 10.2 and
+/// 11.8 milliseconds of decode. A slot is fifteen seconds long, so the whole
+/// range is free and the only question is how many are looked at.
+pub const MAX_CAND: usize = 600;
+
 #[derive(Debug, Clone, Copy)]
 pub struct DigiParams {
     pub mode: Mode,

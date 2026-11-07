@@ -19,12 +19,18 @@ tracing.workspace = true
 # no I/O and no clock, so it builds for wasm32 alongside everything else here.
 sdroxide-aprs = { path = "../sdroxide-aprs" }
 serde.workspace = true
+# TX Audio profiles are exported and imported as JSON files.
+serde_json.workspace = true
 # `accesskit` is one of eframe's defaults, and turning the defaults off
 # silently switched it back off: without it the whole widget tree is
 # invisible to NVDA, Orca and VoiceOver. It is native-only (it maps to
 # egui-winit), so it costs the browser build nothing.
+# `links` is another: without it `ctx.open_url` only logs "Cannot open url -
+# feature \"links\" not enabled", so the update banner's sdroxide.com link and
+# the manual's external links open nothing on the desktop. Also native-only.
 eframe = { version = "0.36.1", default-features = false, features = [
     "accesskit",
+    "links",
     "default_fonts",
     "wgpu",
     "wayland",
@@ -56,6 +62,21 @@ bytemuck = { version = "1", features = ["derive"] }
 # native target block below adds the synthesizer on top.
 sdroxide-speech = { path = "../sdroxide-speech", default-features = false }
 
+# Translations. Fluent message files under `i18n/`, embedded in the binary
+# (`debug-embed` too, so a debug build and the browser build — which has no
+# disk to read them from — carry the same text a release does). `fl!` checks
+# every message id and argument against the English file at compile time, so a
+# typo is a build error rather than a raw id on screen.
+i18n-embed = { version = "0.16.0", features = ["fluent-system"] }
+i18n-embed-fl = "0.10.1"
+# For `FluentValue`, the type a message's arguments are passed as. The version
+# i18n-embed itself uses.
+fluent = "0.17.0"
+rust-embed = { version = "8.12.0", features = ["debug-embed"] }
+# The operating system's language list — or the browser's, with `js` — for an
+# operator who has not picked one.
+sys-locale = { version = "0.3.2", features = ["js"] }
+
 [features]
 # WebSocket RemoteController for the browser (and native remote) client.
 remote = ["dep:ewebsock", "dep:sdroxide-proto"]
@@ -67,6 +88,15 @@ rfd = "0.17.2"
 # HTTPS, which is how a station on port 443 is usually reached — is refused
 # outright by a tungstenite built without it. See the note beside that entry.
 ewebsock = { version = "0.8.0", optional = true, features = ["tls"] }
+# ...and the certificate check that rides on it (`remote_tls.rs`): a `wss://`
+# station behind a self-signed certificate is accepted once the operator has
+# trusted that one certificate (issue #736). A custom verifier needs rustls's
+# own types, the same 0.23 tungstenite links; the roots are the ones tungstenite
+# uses by itself, so a server it accepted is still accepted; the pin is a
+# SHA-256. `ring` only — rustls's default would pull in aws-lc as well.
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+webpki-roots = "1"
+ring = "0.17"
 # The OS timezone, for the solar view's local-time clock. `clock` is the only
 # feature that matters here; the browser build asks JavaScript for the offset
 # instead, so chrono never reaches the wasm dependency path.
@@ -101,6 +131,12 @@ rfd = "0.17.2"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Blob", "BlobPropertyBag", "Url", "Document", "Window", "HtmlAnchorElement", "HtmlElement", "Storage", "File", "FileList", "FileReader", "HtmlInputElement"] }
 
+# The far end of the `wss://` loopback test in `remote_tls.rs`: a WebSocket
+# server behind a self-signed certificate. The tungstenite ewebsock already
+# links, so it adds no build time.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tungstenite = "0.24"
+
 [dev-dependencies]
 # Compiles and validates the WGSL in src/shaders/ as a unit test, so a shader
 # error is a test failure rather than a blank window at runtime. Same version
@@ -110,3 +146,6 @@ naga = { version = "30.0.1", features = ["wgsl-in"] }
 # written by an older version exactly as the app would. Already in the tree via
 # eframe, so it adds no build time either.
 ron = "0.12"
+# Parses the message files strictly in the translation tests. The version
+# i18n-embed already pulls in, so it adds no build time.
+fluent-syntax = "0.12"

@@ -459,7 +459,7 @@ impl IqSource for HpsdrSource {
 
     fn tx_telemetry(&mut self) -> Option<sdroxide_types::TxTelemetry> {
         let swr = self.rx.as_ref()?.swr()?;
-        Some(sdroxide_types::TxTelemetry { fwd_w: None, swr: Some(swr), alc: None, po: None })
+        Some(sdroxide_types::TxTelemetry { fwd_w: None, swr: Some(swr), alc: None, po: None, rfl_w: None })
     }
 
     /// The board's own ADC-overflow flag — see [`IqSource::adc_overload`]. It

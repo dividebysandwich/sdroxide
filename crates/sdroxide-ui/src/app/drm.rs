@@ -11,6 +11,7 @@
 //! the decoder even starts — so nothing here reacts as quickly as an analog
 //! S-meter does. That is the transmission, not the display.
 
+use crate::i18n::tr;
 use eframe::egui::{self, Color32, RichText};
 use sdroxide_types::{Command, DrmChannel, DrmStatus, DrmSync, Mode};
 
@@ -105,22 +106,20 @@ impl SdroxideApp {
             return;
         }
         let mut open = self.show_drm;
-        let resp = egui::Window::new("DRM")
-            .id(crate::layout::salted_id(ctx, "DRM"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 420.0))
-            .default_height(crate::layout::window_h(ctx, 380.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.drm_body(ui)
-            });
-        if let Some(r) = &resp {
-            cmds.extend(r.inner.clone().unwrap_or_default());
-        }
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
+        let tool_title = "DRM".to_string();
+        let mut tool_st = self.take_tool_state("DRM");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        let resp = crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("DRM", &tool_title, [420.0, 380.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| self.drm_body(ui),
+        );
+        self.put_tool_state("DRM", tool_st);
+        if let Some(c) = resp {
+            cmds.extend(c);
         }
         self.show_drm = open;
     }
@@ -130,15 +129,12 @@ impl SdroxideApp {
         let dim = |s: &str| RichText::new(s).size(9.5).color(dim_ink());
 
         let Some(d) = self.drm.clone() else {
-            ui.label(dim("waiting for the receiver…"));
+            ui.label(dim(&tr!("drm-waiting-receiver")));
             return cmds;
         };
 
         if self.state.rx[0].mode != Mode::Drm {
-            ui.label(dim(
-                "Not in DRM. Set the mode to DRM on a digital shortwave broadcast — the \
-                 dial goes on the channel centre, not on a sideband.",
-            ));
+            ui.label(dim(&tr!("drm-not-drm-set-mode-drm")));
             ui.add_space(6.0);
         }
 
@@ -146,10 +142,7 @@ impl SdroxideApp {
         ui.add_space(8.0);
 
         if !d.locked {
-            ui.label(dim(
-                "No DRM signal locked. The decoder needs a few seconds on a clean carrier: \
-                 DRM interleaves over 400 ms or 2 s before any of it can be read.",
-            ));
+            ui.label(dim(&tr!("drm-no-drm-signal-locked-decoder")));
             return cmds;
         }
 
@@ -158,14 +151,7 @@ impl SdroxideApp {
         // Above the service block rather than below it: this is the reason the
         // station named there cannot be heard.
         if d.service.codec.is_some() && !d.service.codec_supported {
-            ui.label(dim(
-                "This station's audio codec is not decoding here. xHE-AAC needs libfdk-aac \
-                 on the system — it cannot be built in, because its licence and this \
-                 program's are incompatible. Install it (Debian/Ubuntu: libfdk-aac2, \
-                 Arch: libfdk-aac, macOS: brew install fdk-aac, Windows: libfdk-aac-2.dll \
-                 beside sdroxide.exe) and restart. Everything else on this screen is \
-                 decoding normally.",
-            ));
+            ui.label(dim(&tr!("drm-station-s-audio-codec-not")));
             ui.add_space(8.0);
         }
         self.drm_service(ui, &d, &mut cmds);
@@ -189,10 +175,10 @@ impl SdroxideApp {
     fn drm_quality_history(&self, ui: &mut egui::Ui) {
         let dim = |s: &str| RichText::new(s).size(9.5).color(dim_ink());
         ui.horizontal(|ui| {
-            ui.label(dim("QUALITY"));
+            ui.label(dim(&tr!("drm-quality")));
             ui.label(RichText::new("SNR").size(9.0).color(Color32::from_rgb(90, 190, 230)));
             ui.label(RichText::new("MER").size(9.0).color(Color32::from_rgb(150, 210, 120)));
-            ui.label(dim("last minute"));
+            ui.label(dim(&tr!("drm-last-minute")));
         });
 
         let (rect, _) =
@@ -207,7 +193,7 @@ impl SdroxideApp {
             p.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "waiting for a locked signal",
+                tr!("drm-waiting-locked-signal"),
                 egui::FontId::proportional(10.0),
                 dim_ink(),
             );
@@ -265,17 +251,17 @@ impl SdroxideApp {
         // Where the row stops is the diagnosis, and this is the one stage that
         // can stop for a reason the chain itself does not show.
         let audio_hover = if d.service.codec.is_some() && !d.service.codec_supported {
-            "Audio frames decoding — but this station's codec cannot be decoded here"
+            tr!("drm-audio-frames-decoding-but-station")
         } else {
-            "Audio frames decoding"
+            tr!("drm-audio-frames-decoding")
         };
         let stages = [
-            ("IO", d.io, "Samples reaching the decoder"),
-            ("TIME", d.time_sync, "Symbol timing recovered"),
-            ("FRAME", d.frame_sync, "Transmission frames found"),
-            ("FAC", d.fac, "Fast Access Channel — what the transmission is"),
-            ("SDC", d.sdc, "Service Description Channel — what the services are"),
-            ("AUDIO", d.audio, audio_hover),
+            ("IO", d.io, tr!("drm-samples-reaching-decoder")),
+            (&tr!("drm-time"), d.time_sync, tr!("drm-symbol-timing-recovered")),
+            (&tr!("drm-frame"), d.frame_sync, tr!("drm-transmission-frames-found")),
+            ("FAC", d.fac, tr!("drm-fast-access-channel-what-transmission")),
+            ("SDC", d.sdc, tr!("drm-service-description-channel-what-services")),
+            (&tr!("drm-audio"), d.audio, audio_hover),
         ];
         ui.horizontal_wrapped(|ui| {
             for (label, state, hover) in stages {
@@ -313,7 +299,7 @@ impl SdroxideApp {
         let dim = |s: &str| RichText::new(s).size(9.5).color(dim_ink());
 
         ui.horizontal(|ui| {
-            ui.label(dim("CONSTELLATION"));
+            ui.label(dim(&tr!("drm-constellation")));
             for ch in DrmChannel::ALL {
                 if crate::chrome::chip(ui, self.drm_channel == ch, ch.label())
                     .on_hover_text(ch.describes())
@@ -342,7 +328,7 @@ impl SdroxideApp {
             p.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "waiting for decoded symbols",
+                tr!("drm-waiting-decoded-symbols"),
                 egui::FontId::proportional(10.0),
                 dim_ink(),
             );
@@ -352,7 +338,7 @@ impl SdroxideApp {
             p.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                format!("{} not decoding", c.channel.label()),
+                tr!("drm-not-decoding", channel = c.channel.label()),
                 egui::FontId::proportional(10.0),
                 dim_ink(),
             );
@@ -419,10 +405,14 @@ impl SdroxideApp {
         }
         p.add(egui::Shape::mesh(mesh));
 
-        ui.label(dim(&format!(
-            "{} symbols \u{00b7} {}",
-            c.len(),
-            if c.channel == DrmChannel::Msc { "sampled across the frame" } else { "whole frame" }
+        ui.label(dim(&tr!(
+            "drm-symbols",
+            value = c.len(),
+            frame = if c.channel == DrmChannel::Msc {
+                tr!("drm-sampled-across-frame")
+            } else {
+                tr!("drm-whole-frame")
+            }
         )));
     }
 
@@ -437,42 +427,33 @@ impl SdroxideApp {
             ui.label(val(format!("{:.1} dB", d.wmer_db)));
             ui.end_row();
 
-            ui.label(dim("MODE"));
+            ui.label(dim(&tr!("drm-mode")));
             ui.label(val(format!(
                 "{} / {}",
                 d.robustness.map(|r| r.label()).unwrap_or("?"),
-                d.bandwidth_khz.map(|b| format!("{b} kHz")).unwrap_or_else(|| "?".into()),
+                d.bandwidth_khz
+                    .map(|b| format!("{value} kHz", value = b))
+                    .unwrap_or_else(|| "?".into()),
             )))
-            .on_hover_text(
-                "Robustness mode and channel width. A is for a ground-wave path and \
-                 carries the most; D is for a badly scattered sky-wave one and carries \
-                 the least.",
-            );
-            ui.label(dim("INTERLEAVE"));
+            .on_hover_text(tr!("drm-robustness-mode-channel-width-ground"));
+            ui.label(dim(&tr!("drm-interleave")));
             ui.label(val(if d.interleaver_long { "2 s".into() } else { "400 ms".into() }))
-                .on_hover_text(
-                    "How far the transmission spreads each frame in time. Long rides out \
-                     deeper fades and takes correspondingly longer to acquire.",
-                );
+                .on_hover_text(tr!("drm-how-far-transmission-spreads-each"));
             ui.end_row();
 
-            ui.label(dim("PROTECTION"));
+            ui.label(dim(&tr!("drm-protection")));
             ui.label(val(format!("B {} / A {}", d.protection_b, d.protection_a)));
-            ui.label(dim("OFFSET"));
-            ui.label(val(format!("{:+.0} Hz", d.sample_offset_hz))).on_hover_text(
-                "Residual sample-clock error against the transmitter. Large and steady \
-                 means the receiver's reference is off, not the broadcast.",
-            );
+            ui.label(dim(&tr!("drm-offset")));
+            ui.label(val(format!("{:+.0} Hz", d.sample_offset_hz)))
+                .on_hover_text(tr!("drm-residual-sample-clock-error-against"));
             ui.end_row();
 
             if let Some(dop) = d.doppler_hz {
-                ui.label(dim("DOPPLER"));
+                ui.label(dim(&tr!("drm-doppler")));
                 ui.label(val(format!("{dop:.1} Hz")));
-                ui.label(dim("DELAY"));
-                ui.label(val(format!("{:.1} ms", d.delay_ms))).on_hover_text(
-                    "Doppler and delay spread of the path — how fast it is moving and how \
-                     far apart its echoes arrive.",
-                );
+                ui.label(dim(&tr!("drm-delay")));
+                ui.label(val(format!("{:.1} ms", d.delay_ms)))
+                    .on_hover_text(tr!("drm-doppler-delay-spread-path-how"));
                 ui.end_row();
             }
         });
@@ -496,11 +477,11 @@ impl SdroxideApp {
             line.push(if d.service.codec_supported {
                 c.label().to_string()
             } else {
-                format!("{} — not decodable", c.label())
+                tr!("drm-not-decodable", value = c.label())
             });
         }
         if d.service.bitrate_kbps > 0.0 {
-            line.push(format!("{:.1} kbps", d.service.bitrate_kbps));
+            line.push(format!("{bitrate_kbps:.1} kbps", bitrate_kbps = d.service.bitrate_kbps));
         }
         line.push(if d.service.stereo { "stereo".into() } else { "mono".into() });
         if !line.is_empty() {
@@ -511,11 +492,11 @@ impl SdroxideApp {
         if d.audio_services > 1 {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label(dim("SERVICE"));
+                ui.label(dim(&tr!("drm-service")));
                 for i in 0..d.audio_services {
                     let on = i == d.current_service;
                     if crate::chrome::chip(ui, on, (i + 1).to_string())
-                        .on_hover_text("Decode this service of the multiplex")
+                        .on_hover_text(tr!("drm-decode-service-multiplex"))
                         .clicked()
                         && !on
                     {
@@ -537,9 +518,13 @@ impl SdroxideApp {
 
         if let Some(t) = d.time {
             ui.add_space(6.0);
-            ui.label(dim(&format!(
-                "broadcaster's clock  {:04}-{:02}-{:02} {:02}:{:02} UTC",
-                t.year, t.month, t.day, t.hour, t.minute
+            ui.label(dim(&tr!(
+                "drm-broadcaster-s-clock-utc",
+                year = format!("{:04}", t.year),
+                month = format!("{:02}", t.month),
+                day = format!("{:02}", t.day),
+                hour = format!("{:02}", t.hour),
+                minute = format!("{:02}", t.minute)
             )));
         }
     }

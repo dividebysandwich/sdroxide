@@ -14,6 +14,8 @@
 //! the wasm browser client — the composed buffer is both the live preview and,
 //! PNG-encoded, the transmit payload.
 
+use std::collections::HashMap;
+
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
 use eframe::egui;
 
@@ -206,46 +208,70 @@ pub fn color_image(rgb: &[u8], w: u16, h: u16) -> egui::ColorImage {
 // typing in. Every other slot takes the engine's word. The same arrangement the
 // voice keyer's slot labels use, kept here rather than in the panel so it can be
 // tested without an `egui::Context`.
+//
+// Between handing a slot back and the engine echoing it, the text is in flight:
+// the presets still hold the old message. That window is not hypothetical —
+// clicking TX takes the focus off the message box in the same frame the button
+// fires, so the commit always lands just before the picture is composed. Those
+// writes are kept in `sent` until the engine says the same thing back, and
+// everything shown or sent reads through them (issue #752).
 
-/// The text to show for `slot`: what is being typed if it is this slot,
-/// otherwise what the engine says.
+/// The text to show for `slot`: what is being typed if it is this slot, else
+/// what was last written to the engine for it, else what the engine says.
 pub fn message_shown<'a>(
     edit: &'a Option<(usize, String)>,
+    sent: &'a HashMap<usize, String>,
     presets: &'a sdroxide_types::ImagePresets,
     slot: usize,
 ) -> &'a str {
     match edit {
         Some((i, text)) if *i == slot => text,
-        _ => presets.slots.get(slot).map_or("", |s| s.message.as_str()),
+        _ => sent
+            .get(&slot)
+            .map(String::as_str)
+            .unwrap_or_else(|| presets.slots.get(slot).map_or("", |s| s.message.as_str())),
     }
 }
 
 /// Give a claimed slot back to the engine, returning the command to send when
-/// the text actually changed.
+/// the text actually changed. The text is held in `sent` until it is echoed.
 ///
 /// `None` when nothing was claimed or nothing was edited, so an unfocused click
 /// does not spray writes at the engine.
 pub fn commit_message(
     edit: &mut Option<(usize, String)>,
+    sent: &mut HashMap<usize, String>,
     presets: &sdroxide_types::ImagePresets,
 ) -> Option<sdroxide_types::Command> {
     let (slot, text) = edit.take()?;
-    (presets.slots.get(slot).map(|s| s.message.as_str()) != Some(text.as_str()))
-        .then(|| sdroxide_types::Command::ImageSetMessage { slot: slot as u8, message: text })
+    if message_shown(&None, sent, presets, slot) == text {
+        return None;
+    }
+    sent.insert(slot, text.clone());
+    Some(sdroxide_types::Command::ImageSetMessage { slot: slot as u8, message: text })
 }
 
 /// Claim `slot` for editing, committing whatever was claimed before.
 pub fn claim_message(
     edit: &mut Option<(usize, String)>,
+    sent: &mut HashMap<usize, String>,
     presets: &sdroxide_types::ImagePresets,
     slot: usize,
 ) -> Option<sdroxide_types::Command> {
     if matches!(edit, Some((i, _)) if *i == slot) {
         return None;
     }
-    let cmd = commit_message(edit, presets);
-    *edit = Some((slot, message_shown(&None, presets, slot).to_string()));
+    let cmd = commit_message(edit, sent, presets);
+    *edit = Some((slot, message_shown(&None, sent, presets, slot).to_string()));
     cmd
+}
+
+/// Drop the writes the engine has now echoed. One still in flight survives an
+/// announcement that went out before the engine got to it.
+pub fn settle_messages(sent: &mut HashMap<usize, String>, presets: &sdroxide_types::ImagePresets) {
+    sent.retain(|&slot, text| {
+        presets.slots.get(slot).map(|s| s.message.as_str()) != Some(text.as_str())
+    });
 }
 
 fn put(img: &mut [u8], w: usize, h: usize, x: i32, y: i32, r: u8, g: u8, b: u8) {
@@ -542,6 +568,10 @@ mod tests {
         }
     }
 
+    fn none() -> HashMap<usize, String> {
+        HashMap::new()
+    }
+
     /// The echo of our own write comes back a round trip after it went out.
     /// Adopting it would drop the cursor back to where it was when the operator
     /// started the sentence.
@@ -549,7 +579,7 @@ mod tests {
     fn a_server_echo_does_not_clobber_the_slot_being_typed_in() {
         let p = presets(&["a", "b", "old", "d", "e"]);
         let edit = Some((2, "CQ CQ de OE1TEST".to_string()));
-        assert_eq!(message_shown(&edit, &p, 2), "CQ CQ de OE1TEST");
+        assert_eq!(message_shown(&edit, &none(), &p, 2), "CQ CQ de OE1TEST");
     }
 
     /// An edit made on another screen still has to appear — that is the whole
@@ -558,42 +588,93 @@ mod tests {
     fn an_edit_made_elsewhere_reaches_every_slot_but_the_one_in_hand() {
         let p = presets(&["a", "b", "old", "d", "e"]);
         let edit = Some((2, "typing".to_string()));
-        assert_eq!(message_shown(&edit, &p, 0), "a");
-        assert_eq!(message_shown(&edit, &p, 3), "d");
+        assert_eq!(message_shown(&edit, &none(), &p, 0), "a");
+        assert_eq!(message_shown(&edit, &none(), &p, 3), "d");
         // With nothing claimed, every slot follows the engine.
-        assert_eq!(message_shown(&None, &p, 2), "old");
+        assert_eq!(message_shown(&None, &none(), &p, 2), "old");
         // A slot the engine has never mentioned reads empty rather than panicking.
-        assert_eq!(message_shown(&None, &p, 99), "");
+        assert_eq!(message_shown(&None, &none(), &p, 99), "");
     }
 
     #[test]
     fn leaving_a_slot_commits_it_and_gives_it_back() {
         let p = presets(&["a", "b", "old", "d", "e"]);
+        let mut sent = none();
         let mut edit = Some((2, "new".to_string()));
-        let cmd = commit_message(&mut edit, &p);
+        let cmd = commit_message(&mut edit, &mut sent, &p);
         assert_eq!(cmd, Some(Command::ImageSetMessage { slot: 2, message: "new".into() }));
         assert!(edit.is_none(), "the claim is released");
 
         // Clicking away without having changed anything must not write.
+        let mut sent = none();
         let mut edit = Some((2, "old".to_string()));
-        assert_eq!(commit_message(&mut edit, &p), None);
+        assert_eq!(commit_message(&mut edit, &mut sent, &p), None);
         assert!(edit.is_none());
+        assert!(sent.is_empty());
         // And with nothing claimed there is nothing to commit.
-        assert_eq!(commit_message(&mut None, &p), None);
+        assert_eq!(commit_message(&mut None, &mut sent, &p), None);
     }
 
     #[test]
     fn switching_slots_takes_the_engines_text_for_the_new_one() {
         let p = presets(&["a", "b", "old", "d", "e"]);
+        let mut sent = none();
         let mut edit = Some((2, "half-typed".to_string()));
         // Moving to slot 4 flushes slot 2 and picks up slot 4's stored text.
-        let cmd = claim_message(&mut edit, &p, 4);
+        let cmd = claim_message(&mut edit, &mut sent, &p, 4);
         assert_eq!(cmd, Some(Command::ImageSetMessage { slot: 2, message: "half-typed".into() }));
         assert_eq!(edit, Some((4, "e".to_string())));
         // Re-claiming the slot already in hand keeps what is being typed.
         edit = Some((4, "e and more".to_string()));
-        assert_eq!(claim_message(&mut edit, &p, 4), None);
+        assert_eq!(claim_message(&mut edit, &mut sent, &p, 4), None);
         assert_eq!(edit, Some((4, "e and more".to_string())));
+    }
+
+    /// #752: clicking TX takes the focus off the message box, so the commit
+    /// runs in the same frame, just before the picture is composed. The text
+    /// has to be the one just typed, not the presets it has not reached yet.
+    #[test]
+    fn a_committed_message_is_what_is_sent_until_the_engine_echoes_it() {
+        let stale = presets(&["a", "b", "old", "d", "e"]);
+        let mut sent = none();
+        let mut edit = Some((2, "new".to_string()));
+        assert!(commit_message(&mut edit, &mut sent, &stale).is_some());
+        assert_eq!(message_shown(&edit, &sent, &stale, 2), "new");
+
+        // An announcement that left the engine before the write arrived does
+        // not undo it.
+        settle_messages(&mut sent, &stale);
+        assert_eq!(message_shown(&None, &sent, &stale, 2), "new");
+
+        // Coming back to the slot before the echo picks up the new text, and
+        // leaving it again unchanged writes nothing more.
+        assert_eq!(claim_message(&mut edit, &mut sent, &stale, 2), None);
+        assert_eq!(edit, Some((2, "new".to_string())));
+        assert_eq!(commit_message(&mut edit, &mut sent, &stale), None);
+
+        // The echo hands the slot back to the engine for good.
+        let echoed = presets(&["a", "b", "new", "d", "e"]);
+        settle_messages(&mut sent, &echoed);
+        assert!(sent.is_empty());
+        assert_eq!(message_shown(&None, &sent, &echoed, 2), "new");
+    }
+
+    /// Typing the old text back before the first write is echoed is still a
+    /// change from what the engine is about to hold, so it has to be written.
+    #[test]
+    fn reverting_an_unechoed_edit_still_writes() {
+        let stale = presets(&["a", "b", "old", "d", "e"]);
+        let mut sent = none();
+        let mut edit = Some((2, "new".to_string()));
+        commit_message(&mut edit, &mut sent, &stale);
+        let mut edit = Some((2, "old".to_string()));
+        assert_eq!(
+            commit_message(&mut edit, &mut sent, &stale),
+            Some(Command::ImageSetMessage { slot: 2, message: "old".into() }),
+        );
+        // The echo of the first write does not settle the second.
+        settle_messages(&mut sent, &presets(&["a", "b", "new", "d", "e"]));
+        assert_eq!(message_shown(&None, &sent, &stale, 2), "old");
     }
 
     /// The stock settings have to compose the strip the header was hard-wired

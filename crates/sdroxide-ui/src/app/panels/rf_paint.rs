@@ -4,6 +4,7 @@
 //! rasterised text and a picked image — along with the scrolling previews that
 //! show what the receiving station's waterfall will look like.
 
+use crate::i18n::tr;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui::{self, Color32, RichText};
@@ -219,9 +220,16 @@ impl SdroxideApp {
 
         // Header: title, transmit-speed slider, and the transmit indicator.
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("RF PAINT").size(11.0).strong().color(crate::theme::CYAN()));
+            ui.label(
+                RichText::new(tr!("rfpaint-rf-paint"))
+                    .size(11.0)
+                    .strong()
+                    .color(crate::theme::CYAN()),
+            );
             ui.add_space(12.0);
-            ui.label(RichText::new("Scan speed").size(10.5).color(crate::theme::CYAN_DIM()));
+            ui.label(
+                RichText::new(tr!("rfpaint-scan-speed")).size(10.5).color(crate::theme::CYAN_DIM()),
+            );
             let mut speed = self.digi_cfg_edit.rf_paint_speed;
             ui.spacing_mut().slider_width = 150.0;
             let resp = crate::chrome::slider(
@@ -233,17 +241,14 @@ impl SdroxideApp {
                         s.trim().trim_end_matches('%').parse::<f64>().ok().map(|p| p / 100.0)
                     }),
             )
-            .on_hover_text(
-                "How fast the text/image is scanned onto the waterfall. Lower is slower and \
-                     more legible; 100% = base rate, 25% (centre) is the default.",
-            );
+            .on_hover_text(tr!("rfpaint-how-fast-text-image-scanned"));
             if resp.changed() {
                 self.digi_cfg_edit.rf_paint_speed = speed;
                 cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
             }
             crate::chrome::row_tail(ui, |ui| {
                 if transmitting {
-                    if crate::chrome::chip(ui, false, "Abort").clicked() {
+                    if crate::chrome::chip(ui, false, tr!("rfpaint-abort")).clicked() {
                         cmds.push(Command::DigiAbortTx);
                     }
                     ui.label(
@@ -281,17 +286,17 @@ impl SdroxideApp {
         ui.horizontal_top(|ui| {
             // ── Text paint ──
             if pane.is_none_or(|p| p == 0) {
-                sstv_section(ui, "TEXT PAINT", egui::vec2(half, content_h), |ui| {
+                sstv_section(ui, &tr!("rfpaint-text-paint"), egui::vec2(half, content_h), |ui| {
                     let inner_w = ui.available_width();
                     crate::chrome::field(
                         ui,
                         egui::TextEdit::singleline(&mut self.rf_paint.text)
-                            .hint_text("Type text to paint…")
+                            .hint_text(tr!("rfpaint-type-text-paint"))
                             .desired_width(inner_w),
                     );
                     ui.add_space(6.0);
                     ui.label(
-                        RichText::new("PREVIEW WATERFALL")
+                        RichText::new(tr!("rfpaint-preview-waterfall"))
                             .size(8.5)
                             .color(crate::theme::CYAN_DIM()),
                     );
@@ -302,7 +307,7 @@ impl SdroxideApp {
                         self.rf_paint.text_prev.as_ref(),
                         egui::vec2(inner_w, prev_h),
                         time,
-                        "type text to preview",
+                        &tr!("rfpaint-type-text-preview"),
                     );
                     ui.add_space(6.0);
                     let ready = !self.rf_paint.text.trim().is_empty();
@@ -311,7 +316,7 @@ impl SdroxideApp {
                             crate::chrome::chip_accent(
                                 ui,
                                 true,
-                                "  TRANSMIT  ",
+                                tr!("rfpaint-transmit"),
                                 crate::theme::ALERT(),
                                 Color32::WHITE,
                             ),
@@ -332,7 +337,7 @@ impl SdroxideApp {
             }
             // ── Image paint ──
             if pane.is_none_or(|p| p != 0) {
-                sstv_section(ui, "IMAGE PAINT", egui::vec2(half, content_h), |ui| {
+                sstv_section(ui, &tr!("rfpaint-image-paint"), egui::vec2(half, content_h), |ui| {
                     let inner_w = ui.available_width();
                     let img_h = (content_h * 0.4).clamp(56.0, 150.0);
                     draw_image_box(
@@ -340,15 +345,15 @@ impl SdroxideApp {
                         self.rf_paint.img_disp.as_ref(),
                         self.rf_paint.img_gray.as_ref().map(|(_, w, h)| (*w, *h)),
                         egui::vec2(inner_w, img_h),
-                        "no image loaded",
+                        &tr!("rfpaint-no-image-loaded"),
                     );
                     ui.add_space(4.0);
-                    if crate::chrome::chip(ui, false, "Load image…").clicked() {
+                    if crate::chrome::chip(ui, false, tr!("rfpaint-load-image")).clicked() {
                         pick_image(self.rf_paint.inbox.clone());
                     }
                     ui.add_space(6.0);
                     ui.label(
-                        RichText::new("PREVIEW WATERFALL")
+                        RichText::new(tr!("rfpaint-preview-waterfall"))
                             .size(8.5)
                             .color(crate::theme::CYAN_DIM()),
                     );
@@ -359,7 +364,7 @@ impl SdroxideApp {
                         self.rf_paint.img_prev.as_ref(),
                         egui::vec2(inner_w, prev_h),
                         time,
-                        "load an image to preview",
+                        &tr!("rfpaint-load-image-preview"),
                     );
                     ui.add_space(6.0);
                     let ready = self.rf_paint.img_gray.is_some();
@@ -368,7 +373,7 @@ impl SdroxideApp {
                             crate::chrome::chip_accent(
                                 ui,
                                 true,
-                                "  TRANSMIT  ",
+                                tr!("rfpaint-transmit"),
                                 crate::theme::ALERT(),
                                 Color32::WHITE,
                             ),

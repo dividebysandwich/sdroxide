@@ -23,6 +23,7 @@ mod hell;
 mod hell_font;
 mod interp;
 mod iqcorrect;
+pub mod jtty;
 mod mfsk;
 mod modulator;
 mod navtex;
@@ -49,6 +50,7 @@ mod sstv;
 mod sstv_slant;
 mod thor;
 mod tonegen;
+mod txvoice;
 mod wbddc;
 mod wbspectrum;
 pub mod wefax;
@@ -87,6 +89,7 @@ pub use modulator::{Modulator, PACKET_DEVIATION_HZ, SsbMod, make_modulator};
 pub use navtex::{
     CharSource as NavtexCharSource, NAVTEX_BAUD, NAVTEX_CENTER_HZ, NAVTEX_SHIFT_HZ, NavtexRx,
 };
+pub use txvoice::{VOICE_CHAIN_RATE, VoiceChain};
 
 /// The NAVTEX transmit side, for tests and for anyone checking a receiver.
 ///

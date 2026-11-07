@@ -28,6 +28,7 @@ pub(in crate::app) mod cw;
 pub(in crate::app) mod decodes;
 pub(in crate::app) mod fsq;
 pub(in crate::app) mod js8;
+pub(in crate::app) mod jtty;
 pub(in crate::app) mod macros;
 mod navtex;
 pub(in crate::app) mod packet;
@@ -37,12 +38,14 @@ pub(in crate::app) mod rf_paint;
 pub(in crate::app) mod setup;
 pub(in crate::app) mod sstv;
 pub(in crate::app) mod text_modem;
-mod timesig;
+pub(in crate::app) mod timesig;
+pub(in crate::app) mod vara;
 pub(in crate::app) mod vdl2;
 pub(in crate::app) mod wefax;
 pub(in crate::app) mod widgets;
 pub(in crate::app) mod wspr;
 
+use crate::i18n::tr;
 use eframe::egui::{self, Color32, RichText};
 use sdroxide_types::{Band, Command, DigiStatus, Mode};
 
@@ -78,6 +81,10 @@ pub(in crate::app) fn panel_panes(mode: Mode) -> &'static [&'static str] {
         // they move independently, so they get a pane each rather than sharing
         // one.
         Mode::Packet | Mode::PacketHf => &["MONITOR", "TERMINAL"],
+        // STATUS is the modem — state, speed, who holds it; TERMINAL is the
+        // conversation. A Winlink or Pat session fills the first and leaves
+        // the second alone, so they are watched apart.
+        Mode::VaraHf => &["STATUS", "TERMINAL"],
         // CHAT is the roster and the conversation; FILES is the transfers in
         // flight and the received-image viewer — two things an AtCHAT operator
         // watches move independently.
@@ -101,6 +108,9 @@ pub(in crate::app) fn panel_panes(mode: Mode) -> &'static [&'static str] {
         Mode::Wefax => &["CHART", "SAVED"],
         Mode::Navtex => &["MESSAGES", "READING"],
         Mode::RfPaint => &["TEXT", "IMAGE"],
+        // JTTY is keyboard text, so its panel is a single rolling log of the
+        // messages heard, like the CW and text-modem receive panes.
+        Mode::Jtty => &["MESSAGES"],
         // The decode list alone: the QSO pane is FT8's sequencer, which a
         // receive-only MSK144 build has nothing to put in.
         Mode::Msk144 => &["DECODES"],
@@ -165,7 +175,7 @@ fn save_chip(ui: &mut egui::Ui, ready: bool, hover: &str) -> egui::Response {
         ui,
         ready,
         false,
-        " SAVE ",
+        &tr!("panels-save"),
         Some(10.5),
         crate::theme::CYAN(),
         crate::theme::INK_ON_CYAN(),
@@ -173,7 +183,7 @@ fn save_chip(ui: &mut egui::Ui, ready: bool, hover: &str) -> egui::Response {
     if ready {
         resp.on_hover_text(hover)
     } else {
-        resp.on_disabled_hover_text("Nothing decoded to save")
+        resp.on_disabled_hover_text(tr!("panels-nothing-decoded-save"))
     }
 }
 
@@ -184,15 +194,15 @@ pub(in crate::app) fn clear_rx_chip_at(ui: &mut egui::Ui, cmds: &mut Vec<Command
         ui,
         enabled,
         false,
-        " CLEAR RX ",
+        &tr!("panels-clear-rx"),
         Some(10.5),
         crate::theme::CYAN(),
         crate::theme::INK_ON_CYAN(),
     );
     let resp = if enabled {
-        resp.on_hover_text("Empty the receive window. Nothing that is on the air stops.")
+        resp.on_hover_text(tr!("panels-empty-receive-window-nothing-air"))
     } else {
-        resp.on_disabled_hover_text("Nothing received to clear")
+        resp.on_disabled_hover_text(tr!("panels-nothing-received-clear"))
     };
     if resp.clicked() {
         cmds.push(Command::DigiClearRx);
@@ -203,7 +213,7 @@ pub(in crate::app) fn clear_rx_chip_at(ui: &mut egui::Ui, cmds: &mut Vec<Command
 /// `status` is the app's `digi_status`.
 pub(in crate::app) fn save_rx_chip_for(ui: &mut egui::Ui, status: Option<&DigiStatus>) {
     let ready = status.is_some_and(crate::app::save_text::digi_has_log);
-    let resp = save_chip(ui, ready, "Save what this panel has decoded to a file");
+    let resp = save_chip(ui, ready, &tr!("panels-save-what-panel-has-decoded"));
     if resp.clicked()
         && let Some((name, text)) = status.and_then(crate::app::save_text::digi_log)
     {
@@ -290,28 +300,20 @@ impl SdroxideApp {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             let on = self.view.prop_on_map;
-            let resp = crate::chrome::chip(ui, on, RichText::new("PROP").size(9.5));
+            let resp = crate::chrome::chip(ui, on, RichText::new(tr!("panels-prop")).size(9.5));
             if resp.clicked() {
                 self.view.prop_on_map = !on;
             }
-            resp.on_hover_text(
-                "Shade the map by where signals are actually getting through, on each band. \
-                 Every reception is placed at the midpoint of its path — the patch of \
-                 ionosphere that bent it — not at the far station, so this is a map of the \
-                 sky rather than of where radio amateurs live. Built from paths this \
-                 station has taken part in, plus — when the Reverse Beacon Network is \
-                 switched on under Settings → Spots — what the world's skimmers are \
-                 hearing, which covers the bands this radio is not on.",
-            );
+            resp.on_hover_text(tr!("panels-shade-map-where-signals-are"));
             // The grey line, independent of the heat — it stays useful with PROP
             // off, so it sits above the early return.
-            if crate::chrome::chip(ui, self.view.map_night, RichText::new("NIGHT").size(9.5))
-                .on_hover_text(
-                    "Shade where the Sun is down, and the twilight between, so the grey line \
-                     shows on the map. Low bands go long and high bands close on the night side \
-                     of it, and the terminator itself is where the DX is.",
-                )
-                .clicked()
+            if crate::chrome::chip(
+                ui,
+                self.view.map_night,
+                RichText::new(tr!("panels-night")).size(9.5),
+            )
+            .on_hover_text(tr!("panels-shade-where-sun-down-twilight"))
+            .clicked()
             {
                 self.view.map_night = !self.view.map_night;
             }
@@ -319,14 +321,14 @@ impl SdroxideApp {
                 return;
             }
             let combined = self.view.prop_map_mode != 0;
-            if crate::chrome::chip(ui, combined, RichText::new("ALL BANDS").size(9.5))
-                .on_hover_text("Every band at once, one hue each — overall conditions.")
+            if crate::chrome::chip(ui, combined, RichText::new(tr!("panels-all-bands")).size(9.5))
+                .on_hover_text(tr!("panels-every-band-once-one-hue"))
                 .clicked()
             {
                 self.view.prop_map_mode = 1;
             }
-            if crate::chrome::chip(ui, !combined, RichText::new("ONE BAND").size(9.5))
-                .on_hover_text("One band, cold to hot: blue, green, yellow, red.")
+            if crate::chrome::chip(ui, !combined, RichText::new(tr!("panels-one-band")).size(9.5))
+                .on_hover_text(tr!("panels-one-band-cold-hot-blue"))
                 .clicked()
             {
                 self.view.prop_map_mode = 0;
@@ -352,9 +354,12 @@ impl SdroxideApp {
             // lying by omission.
             if self.prop_heat.peak_paths > 0.0 {
                 ui.label(
-                    RichText::new(format!("top ≈ {:.0} paths", self.prop_heat.peak_paths))
-                        .size(9.0)
-                        .color(crate::theme::gray(110)),
+                    RichText::new(tr!(
+                        "panels-top-paths",
+                        n = format!("{:.0}", self.prop_heat.peak_paths)
+                    ))
+                    .size(9.0)
+                    .color(crate::theme::gray(110)),
                 );
             }
         });
@@ -364,6 +369,43 @@ impl SdroxideApp {
 /// The full tab row for `mode`: its panes, then the waterfall.
 pub(in crate::app) fn panel_tabs(mode: Mode) -> impl Iterator<Item = &'static str> {
     panel_panes(mode).iter().copied().chain(std::iter::once(TAB_WFALL))
+}
+
+/// A pane's name as its tab shows it. The names [`panel_panes`] returns are
+/// identifiers — [`pane_index`] looks panes up by them — so they stay English
+/// and are translated only here, where they are drawn.
+pub(in crate::app) fn pane_label(name: &str) -> String {
+    pane_message(name).unwrap_or_else(|| name.to_string())
+}
+
+fn pane_message(name: &str) -> Option<String> {
+    Some(match name {
+        "AIRCRAFT" => tr!("pane-aircraft"),
+        "CHART" => tr!("pane-chart"),
+        "CHAT" => tr!("pane-chat"),
+        "DECODES" => tr!("pane-decodes"),
+        "FILES" => tr!("pane-files"),
+        "HEARD" => tr!("pane-heard"),
+        "IMAGE" => tr!("pane-image"),
+        "MAP" => tr!("pane-map"),
+        "MESSAGES" => tr!("pane-messages"),
+        "MONITOR" => tr!("pane-monitor"),
+        "PANEL" => tr!("pane-panel"),
+        "QSO" => tr!("pane-qso"),
+        "READING" => tr!("pane-reading"),
+        "RECEIVE" => tr!("pane-receive"),
+        "SAVED" => tr!("pane-saved"),
+        "SEND" => tr!("pane-send"),
+        "SPOTS" => tr!("pane-spots"),
+        "STATIONS" => tr!("pane-stations"),
+        "STATUS" => tr!("pane-status"),
+        "TERMINAL" => tr!("pane-terminal"),
+        "TEXT" => tr!("pane-text"),
+        "TRAFFIC" => tr!("pane-traffic"),
+        "VESSELS" => tr!("pane-vessels"),
+        TAB_WFALL => tr!("pane-wfall"),
+        _ => return None,
+    })
 }
 
 /// Index of the pane named `name`, for the panels that need to switch to one of
@@ -384,10 +426,7 @@ pub(in crate::app) fn on_air_readout(ui: &mut egui::Ui, hz: f64) {
     ui.label(
         RichText::new(format!("{:.4} MHz", hz / 1e6)).size(11.0).color(crate::theme::gray(190)),
     )
-    .on_hover_text(
-        "The frequency you are actually working: the dial plus the tone offset \
-         beside it. This is what goes in the log — the dial alone is that much low.",
-    );
+    .on_hover_text(tr!("panels-frequency-you-are-actually-working"));
 }
 
 /// The standard dial frequency for `band`, if one exists for `mode`
@@ -590,7 +629,9 @@ fn digi_dial_freqs(mode: Mode) -> &'static [(&'static str, f64)] {
         // and the band button looked broken. Landing an FM packet transmitter
         // on top of the busiest frequency in the band is the part of that
         // worth being sure about.
-        Mode::Aprs | Mode::Packet | Mode::PacketHf => &[],
+        // VARA is the same: an RMS gateway is on the frequency its keeper
+        // published, and the FT8 dials are the last place to put an ARQ link.
+        Mode::Aprs | Mode::Packet | Mode::PacketHf | Mode::VaraHf => &[],
         // RIFP assigns no frequency at all: 433.92 MHz is the deployment
         // example the draft names, and the others are the middle of the
         // segments where a 25 kHz channel is a realistic thing to ask for
@@ -688,7 +729,15 @@ impl SdroxideApp {
     /// Wrapped, so a mode with more panes than the width holds takes a second
     /// row rather than losing the last one — which on most modes is the
     /// waterfall.
-    pub(in crate::app) fn digi_tabs(&mut self, ui: &mut egui::Ui, mode: Mode) {
+    ///
+    /// `with_waterfall` is false in a panel drawn in a window of its own: the
+    /// waterfall is not in that window, so a tab for it would show nothing.
+    pub(in crate::app) fn digi_tabs(
+        &mut self,
+        ui: &mut egui::Ui,
+        mode: Mode,
+        with_waterfall: bool,
+    ) {
         let selected = self.digi_pane(mode);
         // Pin the content to the width left *inside* the margins. A `Frame`
         // reports an outer rect of content-plus-margins, and a content row that
@@ -703,8 +752,12 @@ impl SdroxideApp {
             .show(ui, |ui| {
                 ui.set_max_width(inner_w);
                 ui.horizontal_wrapped(|ui| {
+                    let panes = panel_panes(mode).len();
                     for (i, label) in panel_tabs(mode).enumerate() {
-                        if crate::chrome::chip(ui, selected == i, label).clicked() {
+                        if !with_waterfall && i >= panes {
+                            break;
+                        }
+                        if crate::chrome::chip(ui, selected == i, pane_label(label)).clicked() {
                             self.view.digi_pane = i;
                         }
                     }
@@ -809,7 +862,7 @@ impl SdroxideApp {
         hover: &str,
     ) {
         let on = self.digi_cfg_edit.send_on_enter;
-        if crate::chrome::chip(ui, on, RichText::new("SEND ON RETURN").size(10.5))
+        if crate::chrome::chip(ui, on, RichText::new(tr!("panels-send-return")).size(10.5))
             .on_hover_text(hover)
             .clicked()
         {
@@ -914,21 +967,13 @@ impl SdroxideApp {
         let here = channels.iter().find(|c| (c.dial_hz - dial).abs() < 1.0);
         let face = match here {
             Some(c) => format!("⇵ {:.3}", c.dial_hz / 1e6),
-            None => "⇵ FREQ".to_string(),
+            None => tr!("panels-freq").to_string(),
         };
         let btn = crate::chrome::chip(ui, here.is_some(), RichText::new(face).size(11.0))
             .on_hover_text(if channels.is_empty() {
-                format!(
-                    "No frequency is agreed for {} — open this to save the one you are on",
-                    mode.label()
-                )
+                tr!("panels-no-agreed-frequency", mode = mode.label())
             } else {
-                format!(
-                    "The {} frequencies for {} — picking one tunes the dial, and you can save \
-                     your own",
-                    channels.len(),
-                    mode.label()
-                )
+                tr!("panels-mode-frequencies-hint", n = channels.len(), mode = mode.label())
             });
 
         // Grouped by band, the dial's own band first: everything else is a
@@ -960,7 +1005,7 @@ impl SdroxideApp {
                 crate::chrome::window_body_bg(ui);
                 ui.set_max_width(300.0);
                 ui.label(
-                    RichText::new(format!("{} · frequencies", mode.label()))
+                    RichText::new(tr!("panels-mode-frequencies", mode = mode.label()))
                         .color(crate::theme::CYAN_DIM())
                         .size(9.5)
                         .strong(),
@@ -968,7 +1013,7 @@ impl SdroxideApp {
                 ui.add_space(2.0);
                 if groups.is_empty() {
                     ui.label(
-                        RichText::new("Nothing agreed for this mode — save your own below.")
+                        RichText::new(tr!("panels-nothing-agreed-mode-save-your"))
                             .size(10.0)
                             .weak(),
                     );
@@ -1001,11 +1046,9 @@ impl SdroxideApp {
                             ui.horizontal(|ui| {
                                 let row = ui.selectable_label(on, rich);
                                 if c.outside_data_segment(mode) {
-                                    row.clone().on_hover_text(format!(
-                                        "A global convention that the IARU Region {} band plan \
-                                         does not put narrow data on — check your own band plan \
-                                         before transmitting here.",
-                                        sdroxide_types::region().number()
+                                    row.clone().on_hover_text(tr!(
+                                        "panels-global-convention",
+                                        region = sdroxide_types::region().number()
                                     ));
                                 }
                                 if row.clicked() {
@@ -1018,7 +1061,7 @@ impl SdroxideApp {
                                 if c.mine
                                     && ui
                                         .small_button("✕")
-                                        .on_hover_text("Forget this saved frequency")
+                                        .on_hover_text(tr!("panels-forget-saved-frequency"))
                                         .clicked()
                                 {
                                     forget = Some(c.dial_hz);
@@ -1030,9 +1073,9 @@ impl SdroxideApp {
                 if flagged {
                     ui.add_space(2.0);
                     ui.label(
-                        RichText::new(format!(
-                            "Amber: outside the Region {} data segment.",
-                            sdroxide_types::region().number()
+                        RichText::new(tr!(
+                            "panels-outside-data-segment",
+                            region = sdroxide_types::region().number()
                         ))
                         .color(crate::theme::LINE_LIT())
                         .size(10.0),
@@ -1048,18 +1091,19 @@ impl SdroxideApp {
                 let can_save = !saved && here.is_none();
                 ui.add_enabled_ui(can_save, |ui| {
                     if ui
-                        .button(RichText::new(format!("＋ Save {:.3} MHz", dial / 1e6)).size(11.0))
+                        .button(
+                            RichText::new(tr!(
+                                "panels-save-dial",
+                                mhz = format!("{:.3}", dial / 1e6)
+                            ))
+                            .size(11.0),
+                        )
                         .on_hover_text(if saved {
-                            "This dial is already one of your saved frequencies.".to_string()
+                            tr!("panels-dial-already-one-your-saved").to_string()
                         } else if !can_save {
-                            "This dial is already in the agreed list for this mode.".to_string()
+                            tr!("panels-dial-already-agreed-list-mode").to_string()
                         } else {
-                            format!(
-                                "Remember this dial under {} and offer it here from now on. \
-                                 Saved on the station, so every screen attached to this radio \
-                                 has it.",
-                                mode.label()
-                            )
+                            tr!("panels-save-dial-hint", mode = mode.label())
                         })
                         .clicked()
                     {
@@ -1104,7 +1148,7 @@ impl SdroxideApp {
         ui.spacing_mut().slider_width = 84.0;
         let resp =
             crate::chrome::slider(ui, egui::Slider::new(&mut sq, 0.0..=1.0).show_value(false))
-                .on_hover_text("Decode squelch — raise to stop decoding noise");
+                .on_hover_text(tr!("panels-decode-squelch-raise-stop-decoding"));
         ui.label(RichText::new("SQL").size(10.0).color(crate::theme::CYAN_DIM()));
         if resp.changed() && self.digi_cfg_seeded {
             self.digi_cfg_edit.digi_squelch = sq;
@@ -1159,7 +1203,7 @@ impl SdroxideApp {
             for p in sdroxide_types::Fsk441Period::ALL {
                 let on = self.digi_cfg_edit.fsk441_period == p;
                 if crate::chrome::chip(ui, on, RichText::new(p.label()).size(10.5))
-                    .on_hover_text(format!("{}-second T/R period", p.label()))
+                    .on_hover_text(tr!("panels-tr-period", period = p.label()))
                     .clicked()
                     && !on
                 {
@@ -1199,24 +1243,21 @@ impl SdroxideApp {
         let refused = self.digi_status.as_ref().and_then(|s| s.tx_refused.clone());
         let tx_ok = self.tx_capable();
         ui.label(
-            RichText::new(
-                "The message repeats for as long as transmit is held — a meteor catches \
-                 whatever part of it is passing.",
-            )
-            .size(9.5)
-            .color(crate::theme::CYAN_DIM()),
+            RichText::new(tr!("panels-message-repeats-long-transmit-held"))
+                .size(9.5)
+                .color(crate::theme::CYAN_DIM()),
         );
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("TX").size(10.5).strong().color(crate::theme::CYAN()));
             let field = ui.add(
                 egui::TextEdit::singleline(&mut self.text_tx)
                     .desired_width(260.0)
-                    .hint_text("W1ABC W9XYZ FN42"),
+                    .hint_text(tr!("panels-w1abc-w9xyz-fn42")),
             );
             if field.changed() {
                 cmds.push(Command::DigiTxText(self.text_tx.clone()));
             }
-            let label = if tx_on { "  TX ON  " } else { "   TX   " };
+            let label = if tx_on { tr!("panels-tx") } else { tr!("panels-tx-2") };
             if tx_gated(ui, tx_ok, |ui| {
                 crate::chrome::chip_accent(
                     ui,
@@ -1237,7 +1278,7 @@ impl SdroxideApp {
                 crate::chrome::chip_accent(
                     ui,
                     false,
-                    RichText::new(" CALL CQ ").size(12.0).strong(),
+                    RichText::new(tr!("panels-call-cq")).size(12.0).strong(),
                     crate::theme::GREEN(),
                     crate::theme::INK_ON_CYAN(),
                 )
@@ -1245,7 +1286,7 @@ impl SdroxideApp {
             .clicked()
             {
                 let call = if self.digi_cfg_edit.my_call.is_empty() {
-                    "NOCALL".into()
+                    tr!("panels-nocall")
                 } else {
                     self.digi_cfg_edit.my_call.clone()
                 };
@@ -1299,16 +1340,12 @@ impl SdroxideApp {
         } else {
             widgets::SlotState::Listening
         };
-        widgets::slot_bar(ui, t, into, state).on_hover_text(format!(
-            "This turn: {:.1} s of {:.0}. Decodes land at the end of it, and that is when the \
-             next transmission may start.{}",
-            into,
-            t.slot_s,
-            if transmitting {
-                format!(
-                    " The mark is where the burst stops, {:.1} s in.",
-                    t.tx_offset_s + t.burst_s
-                )
+        widgets::slot_bar(ui, t, into, state).on_hover_text(tr!(
+            "panels-this-turn",
+            into = format!("{:.1}", into),
+            slot = format!("{:.0}", t.slot_s),
+            mark = if transmitting {
+                tr!("panels-burst-mark", secs = format!("{:.1}", t.tx_offset_s + t.burst_s))
             } else {
                 String::new()
             }
@@ -1358,7 +1395,7 @@ impl SdroxideApp {
             for p in sdroxide_types::Fst4Period::ALL {
                 let on = self.digi_cfg_edit.fst4_period == p;
                 if crate::chrome::chip(ui, on, RichText::new(p.label()).size(10.5))
-                    .on_hover_text(format!("{}-second T/R period", p.label()))
+                    .on_hover_text(tr!("panels-tr-period", period = p.label()))
                     .clicked()
                     && !on
                 {
@@ -1392,10 +1429,10 @@ impl SdroxideApp {
             for m in sdroxide_types::Q65Mode::ALL {
                 let on = self.digi_cfg_edit.q65_mode == m;
                 if crate::chrome::chip(ui, on, RichText::new(m.label()).size(10.5))
-                    .on_hover_text(format!(
-                        "{:.0}-second T/R period, {:.1} s burst",
-                        m.slot_s(),
-                        m.burst_s()
+                    .on_hover_text(tr!(
+                        "panels-tr-period-burst",
+                        slot = format!("{:.0}", m.slot_s()),
+                        burst = format!("{:.1}", m.burst_s())
                     ))
                     .clicked()
                     && !on
@@ -1495,6 +1532,17 @@ mod tests {
             assert_eq!(tabs.len(), panes.len() + 1, "{mode:?} tab count");
             assert_eq!(tabs.last().copied(), Some(TAB_WFALL), "{mode:?} waterfall is not last");
             assert!(!panes.contains(&TAB_WFALL), "{mode:?} names a pane after the waterfall tab");
+        }
+    }
+
+    /// Every pane name is one [`pane_label`] has a message for, so no tab is
+    /// drawn with its untranslated identifier.
+    #[test]
+    fn every_pane_has_a_message() {
+        for mode in Mode::ALL {
+            for name in panel_tabs(mode) {
+                assert!(pane_message(name).is_some(), "{mode:?} pane {name} has no message");
+            }
         }
     }
 

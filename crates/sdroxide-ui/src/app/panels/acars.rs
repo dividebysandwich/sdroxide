@@ -10,6 +10,7 @@
 //! airband frequencies and an operator moves between them by hand all evening,
 //! so the published ones are chips rather than something to type into the dial.
 
+use crate::i18n::tr;
 use eframe::egui::{self, RichText};
 use sdroxide_types::{AcarsStatus, Command, Vfo};
 
@@ -44,7 +45,7 @@ pub(super) fn acars_header(
     cmds: &mut Vec<Command>,
 ) {
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new("ACARS").strong().color(theme::CYAN()));
+        ui.label(RichText::new(tr!("acars-acars")).strong().color(theme::CYAN()));
         // The audio level: ACARS speaks in bursts, and the meter is how an
         // operator tells "nothing on this channel" from "nothing decoded".
         ui.add(
@@ -52,13 +53,13 @@ pub(super) fn acars_header(
                 .desired_width(70.0)
                 .fill(theme::CYAN_DIM()),
         )
-        .on_hover_text("Audio in the decoder's passband.");
+        .on_hover_text(tr!("acars-audio-decoder-s-passband"));
         ui.label(
-            RichText::new(format!("{} frames · {} bad", st.frames, st.bad))
+            RichText::new(tr!("acars-frames-bad", frames = st.frames, bad = st.bad))
                 .size(10.0)
                 .color(if st.bad > 0 { theme::YELLOW() } else { theme::CYAN_DIM() }),
         )
-        .on_hover_text("Blocks that framed, and blocks whose check sequence failed.");
+        .on_hover_text(tr!("acars-blocks-framed-blocks-whose-check"));
         super::clear_rx_chip_at(ui, cmds, true);
         super::save_rx_chip_for(ui, status);
     });
@@ -73,17 +74,17 @@ impl SdroxideApp {
     ) {
         let st: Option<AcarsStatus> = self.digi_status.as_ref().and_then(|s| s.acars.clone());
         let Some(st) = st else {
-            ui.label(RichText::new("starting the ACARS receiver…").weak());
+            ui.label(RichText::new(tr!("acars-starting-acars-receiver")).weak());
             return;
         };
 
         acars_header(ui, &st, self.digi_status.as_ref(), cmds);
 
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("CHANNEL").size(10.0).weak());
+            ui.label(RichText::new(tr!("acars-channel")).size(10.0).weak());
             for (hz, label) in CHANNELS {
                 if crate::chrome::chip(ui, false, RichText::new(*label).size(10.0))
-                    .on_hover_text("Tune the dial here.")
+                    .on_hover_text(tr!("acars-tune-dial-here"))
                     .clicked()
                 {
                     cmds.push(Command::SetVfo { vfo: Vfo::A, hz: *hz as f64 });
@@ -98,13 +99,7 @@ impl SdroxideApp {
             .max_height((panel_h - 60.0).max(60.0))
             .show(ui, |ui| {
                 if st.messages.is_empty() {
-                    ui.label(
-                        RichText::new(
-                            "Nothing yet. ACARS is quiet between aircraft — leave it on a \
-                             channel and wait for a burst.",
-                        )
-                        .weak(),
-                    );
+                    ui.label(RichText::new(tr!("acars-nothing-yet-acars-quiet-between")).weak());
                     return;
                 }
                 for m in st.messages.iter().rev() {
@@ -120,7 +115,9 @@ impl SdroxideApp {
                             RichText::new(&m.address).monospace().strong().color(theme::CYAN()),
                         );
                         if !m.mode.is_empty() {
-                            ui.label(RichText::new(format!("mode {}", m.mode)).size(9.5).weak());
+                            ui.label(
+                                RichText::new(tr!("acars-mode", mode = m.mode)).size(9.5).weak(),
+                            );
                         }
                         if !m.label.is_empty() {
                             ui.label(RichText::new(&m.label).monospace().size(10.0).weak());
@@ -133,15 +130,15 @@ impl SdroxideApp {
                         }
                         if !m.crc_ok {
                             ui.label(
-                                RichText::new("check failed").size(9.5).color(theme::YELLOW()),
+                                RichText::new(tr!("acars-check-failed"))
+                                    .size(9.5)
+                                    .color(theme::YELLOW()),
                             )
-                            .on_hover_text(
-                                "The block-check sequence did not match — text may be wrong.",
-                            );
+                            .on_hover_text(tr!("acars-block-check-sequence-did-not"));
                         }
                     });
                     if m.text.trim().is_empty() {
-                        ui.label(RichText::new("(no text)").size(10.0).weak());
+                        ui.label(RichText::new(tr!("acars-no-text")).size(10.0).weak());
                     } else {
                         // Unwrapped: an ACARS message is columns and line
                         // breaks as the sender wrote them.

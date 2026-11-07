@@ -143,10 +143,16 @@ fn a_channel_list_is_imported_once_however_often_it_is_offered() {
     );
     assert!(!again.iter().any(|m| m.name == "S20"), "and the file's copy of it was not added");
 
+    // Cleared, the list starts over: the one stored afterwards is all of it.
+    send(Command::ClearMemories);
+    send(Command::StoreMemory { name: "fresh".into() });
+    let cleared = memories(&h.event_rx, 1);
+    assert_eq!(cleared[0].name, "fresh");
+
     // And it is on disk, not merely announced.
     drop(h);
     let _ = thread.map(|t| t.join());
     let saved = sdroxide_config::load_memories();
-    assert_eq!(saved.len(), 4);
+    assert_eq!(saved.len(), 1);
     let _ = std::fs::remove_dir_all(&root);
 }

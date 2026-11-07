@@ -10,6 +10,7 @@
 //! because on a remote client the mail lives on the machine with the radio and
 //! may have attachments in it.
 
+use crate::i18n::{Tr, tr};
 use eframe::egui;
 
 use crate::app::panels::widgets::row_cell;
@@ -135,20 +136,22 @@ impl crate::app::SdroxideApp {
         // folder is empty.
         let min_h = crate::layout::window_h(ctx, 520.0);
         let mut open = self.mail.open;
-        egui::Window::new("MAIL")
-            .id(crate::layout::salted_id(ctx, "MAIL"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 860.0))
-            .default_height(crate::layout::window_h(ctx, 640.0))
-            .min_width(crate::layout::window_w(ctx, 420.0))
-            .min_height(min_h)
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+        let tool_title = tr!("winlink-mail");
+        let mut tool_st = self.take_tool_state("MAIL");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("MAIL", &tool_title, [860.0, 640.0])
+                .min_size([420.0, 520.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 ui.set_min_height(min_h);
                 self.mail_body(ui, cmds);
-            });
+            },
+        );
+        self.put_tool_state("MAIL", tool_st);
         self.mail.open = open;
     }
 
@@ -237,9 +240,9 @@ impl crate::app::SdroxideApp {
             for folder in MailFolder::ALL {
                 let count = self.mail.status.counts[folder as usize];
                 let label = if count > 0 {
-                    format!("{} {count}", folder.label())
+                    format!("{} {count}", folder.tr())
                 } else {
-                    folder.label().to_string()
+                    folder.tr().to_string()
                 };
                 if bar.tab(ui, self.mail.folder == folder, label).clicked() {
                     self.mail.select_folder(folder);
@@ -254,13 +257,17 @@ impl crate::app::SdroxideApp {
             // anything is happening — and a greyed-out CONNECT says nothing
             // about how to get out of it.
             if busy {
-                if ui.button("ABORT").on_hover_text("Stop the session in progress").clicked() {
+                if ui
+                    .button(tr!("winlink-abort"))
+                    .on_hover_text(tr!("winlink-stop-session-progress"))
+                    .clicked()
+                {
                     cmds.push(Command::WinlinkAbort);
                 }
-            } else if ui.button("CONNECT").clicked() {
+            } else if ui.button(tr!("winlink-connect")).clicked() {
                 cmds.push(Command::WinlinkConnect);
             }
-            if ui.add_enabled(!busy, egui::Button::new("COMPOSE")).clicked() {
+            if ui.add_enabled(!busy, egui::Button::new(tr!("winlink-compose"))).clicked() {
                 self.mail.draft = Some(MailDraft::default());
             }
             if ui.selectable_label(self.mail.log_open, "LOG").clicked() {
@@ -273,33 +280,34 @@ impl crate::app::SdroxideApp {
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label(if self.mail.status.activity.is_empty() {
-                    "connecting…"
+                    tr!("winlink-connecting")
                 } else {
-                    &self.mail.status.activity
+                    self.mail.status.activity.clone()
                 });
             });
         } else if let Some(err) = self.mail.status.last_error.clone() {
             // Errors persist until the next session rather than flashing past:
             // a forwarding failure is the thing the operator most needs to
             // read, and it is often the only clue to why no mail arrived.
-            ui.colored_label(crate::theme::ALERT(), format!("last session failed — {err}"));
+            ui.colored_label(crate::theme::ALERT(), tr!("winlink-last-session-failed", err = err));
         } else if self.mail.status.last_session.is_some() {
-            ui.label(format!(
-                "last session: {} received, {} sent",
-                self.mail.status.last_received, self.mail.status.last_sent
+            ui.label(tr!(
+                "winlink-last-session-received-sent",
+                last_received = self.mail.status.last_received,
+                last_sent = self.mail.status.last_sent
             ));
         } else {
-            ui.label("not connected yet");
+            ui.label(tr!("winlink-not-connected-yet"));
         }
     }
 
     fn mail_list(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let Some(listing) = self.mail.listing.clone() else {
-            ui.label("loading…");
+            ui.label(tr!("winlink-loading"));
             return;
         };
         if listing.entries.is_empty() {
-            ui.label(format!("{} is empty", self.mail.folder.label().to_lowercase()));
+            ui.label(tr!("winlink-empty", to_lowercase = self.mail.folder.tr().to_lowercase()));
             return;
         }
 
@@ -322,10 +330,10 @@ impl crate::app::SdroxideApp {
 
         if listing.total as usize > listing.entries.len() {
             ui.label(
-                egui::RichText::new(format!(
-                    "showing {} of {}",
-                    listing.entries.len(),
-                    listing.total
+                egui::RichText::new(tr!(
+                    "winlink-showing",
+                    entries = listing.entries.len(),
+                    total = listing.total
                 ))
                 .size(11.0)
                 .color(crate::theme::TEXT()),
@@ -354,10 +362,16 @@ impl crate::app::SdroxideApp {
             // Matches the rows' frame margin, or the headings sit left of the
             // columns they name.
             ui.add_space(11.0);
-            row_cell(ui, date_w, 16.0, false, head("DATE"));
-            row_cell(ui, who_w, 16.0, false, head(if inbox { "FROM" } else { "TO" }));
+            row_cell(ui, date_w, 16.0, false, head(&tr!("winlink-date")));
+            row_cell(
+                ui,
+                who_w,
+                16.0,
+                false,
+                head(&if inbox { tr!("winlink-from") } else { tr!("winlink-to-heading") }),
+            );
             row_cell(ui, att_w, 16.0, false, head(""));
-            row_cell(ui, subject_w, 16.0, false, head("SUBJECT"));
+            row_cell(ui, subject_w, 16.0, false, head(&tr!("winlink-subject")));
         });
     }
 
@@ -448,7 +462,10 @@ impl crate::app::SdroxideApp {
                     );
 
                     let subject = if entry.subject.is_empty() {
-                        egui::RichText::new("(no subject)").size(12.0).italics().color(dim)
+                        egui::RichText::new(tr!("winlink-no-subject"))
+                            .size(12.0)
+                            .italics()
+                            .color(dim)
                     } else {
                         // Unread stands out by weight and brightness; read mail
                         // recedes. Colour alone would not survive a colourblind
@@ -468,7 +485,11 @@ impl crate::app::SdroxideApp {
                     // clicks before the row-body interaction below sees them.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let left = ui.cursor().max.x;
-                        if ui.small_button("DEL").on_hover_text("Delete this message").clicked() {
+                        if ui
+                            .small_button("DEL")
+                            .on_hover_text(tr!("winlink-delete-message"))
+                            .clicked()
+                        {
                             cmds.push(Command::MailDelete {
                                 folder: self.mail.folder,
                                 mid: entry.mid.clone(),
@@ -476,8 +497,8 @@ impl crate::app::SdroxideApp {
                         }
                         if self.mail.folder != MailFolder::Archive
                             && ui
-                                .small_button("ARCH")
-                                .on_hover_text("Move to the archive")
+                                .small_button(tr!("winlink-arch"))
+                                .on_hover_text(tr!("winlink-move-archive"))
                                 .clicked()
                         {
                             cmds.push(Command::MailMove {
@@ -527,19 +548,23 @@ impl crate::app::SdroxideApp {
 
     fn mail_message(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         if let Some(mid) = self.mail.loading.clone() {
-            ui.label(format!("fetching {mid}…"));
+            ui.label(tr!("winlink-fetching", mid = mid));
             return;
         }
         let Some(msg) = self.mail.selected.clone() else {
-            ui.label("select a message");
+            ui.label(tr!("winlink-select-message"));
             return;
         };
 
-        ui.heading(if msg.subject.is_empty() { "(no subject)" } else { &msg.subject });
-        ui.label(format!("from {}   {}", msg.from, msg.date));
-        ui.label(format!("to {}", msg.to.join(", ")));
+        ui.heading(if msg.subject.is_empty() {
+            tr!("winlink-no-subject")
+        } else {
+            msg.subject.clone()
+        });
+        ui.label(tr!("winlink-from-2", msg = msg.from, date = msg.date));
+        ui.label(tr!("winlink-to-list", to = msg.to.join(", ")));
         if !msg.cc.is_empty() {
-            ui.label(format!("cc {}", msg.cc.join(", ")));
+            ui.label(tr!("winlink-cc-list", cc = msg.cc.join(", ")));
         }
 
         if !msg.attachments.is_empty() {
@@ -549,13 +574,13 @@ impl crate::app::SdroxideApp {
                 // write to the operator's disk, and the native one would be
                 // writing somewhere it has not asked about. Naming them is
                 // enough to know the message arrived whole.
-                ui.label(format!("attachment: {} ({} bytes)", att.name, att.data.len()));
+                ui.label(tr!("winlink-attachment-bytes", att = att.name, data = att.data.len()));
             }
         }
 
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.button("REPLY").clicked() {
+            if ui.button(tr!("winlink-reply")).clicked() {
                 let mut subject = msg.subject.clone();
                 if !subject.to_ascii_uppercase().starts_with("RE:") {
                     subject = format!("RE: {subject}");
@@ -572,7 +597,7 @@ impl crate::app::SdroxideApp {
                     attachments: vec![],
                 });
             }
-            if ui.button("DELETE").clicked() {
+            if ui.button(tr!("winlink-delete")).clicked() {
                 cmds.push(Command::MailDelete { folder: msg.folder, mid: msg.mid.clone() });
             }
         });
@@ -590,20 +615,17 @@ impl crate::app::SdroxideApp {
         let Some(mut draft) = self.mail.draft.clone() else { return };
 
         egui::Grid::new("mail-compose").num_columns(2).show(ui, |ui| {
-            ui.label("To");
+            ui.label(tr!("winlink-to"));
             crate::chrome::field(ui, egui::TextEdit::singleline(&mut self.mail.compose_to));
             ui.end_row();
-            ui.label("Cc");
+            ui.label(tr!("winlink-cc"));
             crate::chrome::field(ui, egui::TextEdit::singleline(&mut self.mail.compose_cc));
             ui.end_row();
-            ui.label("Subject");
+            ui.label(tr!("winlink-subject-2"));
             crate::chrome::field(ui, egui::TextEdit::singleline(&mut draft.subject));
             ui.end_row();
         });
-        ui.label(
-            "A callsign, or SMTP:someone@example.org for internet mail. \
-             Separate several with commas.",
-        );
+        ui.label(tr!("winlink-callsign-smtp-someone-example-org"));
 
         ui.separator();
         crate::chrome::field(
@@ -617,18 +639,21 @@ impl crate::app::SdroxideApp {
         ui.separator();
         ui.horizontal(|ui| {
             let to = split_addresses(&self.mail.compose_to);
-            if ui.add_enabled(!to.is_empty(), egui::Button::new("FILE IN OUTBOX")).clicked() {
+            if ui
+                .add_enabled(!to.is_empty(), egui::Button::new(tr!("winlink-file-outbox")))
+                .clicked()
+            {
                 draft.to = to;
                 draft.cc = split_addresses(&self.mail.compose_cc);
                 cmds.push(Command::MailCompose(Box::new(draft.clone())));
             }
-            if ui.button("DISCARD").clicked() {
+            if ui.button(tr!("winlink-discard")).clicked() {
                 self.mail.draft = None;
                 self.mail.compose_to.clear();
                 self.mail.compose_cc.clear();
                 return;
             }
-            ui.label("filed messages go out on the next session");
+            ui.label(tr!("winlink-filed-messages-go-out-next"));
         });
 
         if self.mail.draft.is_some() {
@@ -648,23 +673,23 @@ impl crate::app::SdroxideApp {
         }
 
         let mut open = self.mail.log_open;
-        egui::Window::new("MAIL LOG")
-            .id(crate::layout::salted_id(ctx, "MAIL-LOG"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 560.0))
-            .default_height(crate::layout::window_h(ctx, 420.0))
-            .min_width(crate::layout::window_w(ctx, 320.0))
-            .min_height(crate::layout::window_h(ctx, 200.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+        let tool_title = tr!("winlink-mail-log");
+        let mut tool_st = self.take_tool_state("MAIL-LOG");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("MAIL-LOG", &tool_title, [560.0, 420.0])
+                .min_size([320.0, 200.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 ui.set_min_height(crate::layout::window_h(ctx, 200.0));
 
                 if self.mail.status.busy {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label("session running…");
+                        ui.label(tr!("winlink-session-running"));
                     });
                     // Keep the transcript moving while a session is live; there
                     // is no other repaint source when the radio is idle.
@@ -673,7 +698,7 @@ impl crate::app::SdroxideApp {
                 }
 
                 if self.mail.status.log.is_empty() {
-                    ui.label("no session yet");
+                    ui.label(tr!("winlink-no-session-yet"));
                     return;
                 }
 
@@ -700,7 +725,9 @@ impl crate::app::SdroxideApp {
                             );
                         }
                     });
-            });
+            },
+        );
+        self.put_tool_state("MAIL-LOG", tool_st);
         self.mail.log_open = open;
     }
 }

@@ -258,6 +258,12 @@ impl Sim {
         self.recorded.lock().unwrap_or_else(|e| e.into_inner()).menu.insert(item, value);
     }
 
+    /// Change the mode from the radio's front panel, as its CI-V mode byte —
+    /// including the ones the client has no mode for, such as RTTY (`0x04`).
+    pub fn set_mode(&self, mode: u8) {
+        self.recorded.lock().unwrap_or_else(|e| e.into_inner()).mode = mode;
+    }
+
     /// Whether the client has pinged the audio stream.
     pub fn audio_pinged(&self) -> bool {
         self.recorded.lock().unwrap_or_else(|e| e.into_inner()).audio_pinged

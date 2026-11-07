@@ -165,6 +165,9 @@ pub enum WinlinkLane {
     Telnet,
     /// An RMS gateway over the air, using the radio's current packet mode.
     Packet,
+    /// An RMS gateway over the air on VARA HF. Appended — postcard numbers
+    /// variants by position.
+    Vara,
 }
 
 /// One RMS gateway the operator has written down.

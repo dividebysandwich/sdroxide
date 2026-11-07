@@ -18,6 +18,7 @@
 //! Clicking a station selects it, which is what the panel's detail card and
 //! the message box's addressee follow.
 
+use crate::i18n::tr;
 use eframe::egui::{Align2, Color32, FontId, Rect, Sense, Ui, pos2, vec2};
 use sdroxide_types::{AprsEntryKind, AprsPosition, AprsStation};
 
@@ -312,7 +313,7 @@ pub fn show(
         let age = now - s.last_heard;
         let mut tip = format!("{}\n{}", s.name, s.symbol.kind().label());
         if s.entry == AprsEntryKind::Object {
-            tip.push_str(&format!("\nobject from {}", s.reported_by));
+            tip.push_str(&tr!("aprsmap-object", reported_by = s.reported_by));
         }
         if !s.comment.is_empty() {
             tip.push('\n');
@@ -322,7 +323,7 @@ pub fn show(
             let km = sdroxide_types::distance_km((h.lat, h.lon), (q.lat, q.lon));
             tip.push_str(&format!("\n{km:.0} km"));
         }
-        tip.push_str(&format!("\nheard {} ago", crate::app::util::fmt_age(age)));
+        tip.push_str(&tr!("aprsmap-heard-ago", age = crate::app::util::fmt_age(age)));
         resp.clone().on_hover_text(tip);
         if resp.clicked() {
             clicked = Some(s.name.clone());
@@ -336,7 +337,7 @@ pub fn show(
         p.text(
             rect.right_bottom() + vec2(-6.0, -4.0),
             Align2::RIGHT_BOTTOM,
-            "double-click to reframe",
+            tr!("aprsmap-double-click-reframe"),
             FontId::proportional(9.0),
             alpha(Color32::WHITE, 110.0),
         );

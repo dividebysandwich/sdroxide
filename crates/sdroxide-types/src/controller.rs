@@ -148,6 +148,12 @@ pub enum RadioEvent {
         addr: String,
         clients: usize,
         error: Option<String>,
+        /// The outbound TCI client (see [`crate::TciServerConfig::client`])
+        /// has its socket up. False when that option is off.
+        client_connected: bool,
+        /// Why the outbound client is not connected. `None` while it is off,
+        /// still connecting, or up.
+        client_error: Option<String>,
     },
     /// Built-in rigctld server status: whether the listener is up, where it is
     /// bound, how many clients are connected, and any bind error. Emitted on
@@ -389,6 +395,29 @@ pub enum RadioEvent {
     ///
     /// Appended last, for the usual reason.
     Pi4Spots(Vec<crate::Pi4Spot>),
+    /// How a received-picture FTP upload, or a test of the settings, went.
+    ///
+    /// Appended last, for the usual reason.
+    PictureUpload(crate::PictureUploadStatus),
+    /// What a Wavelog connection check found, beyond its pass or fail: the
+    /// station locations to offer, the key's rights, and the fingerprint of a
+    /// certificate the operator is being asked to trust. Follows the
+    /// [`RadioEvent::LoginTest`] for the same check, and like it is local:
+    /// never forwarded to remote clients.
+    ///
+    /// Boxed for the reason [`RadioEvent::AisStatus`] is. Appended last, for
+    /// the usual reason.
+    WavelogProbe(Box<crate::WavelogProbe>),
+    /// One page of a Wavelog download, answering [`crate::Command::WavelogSync`].
+    /// Local like the probe: the logbook it feeds is this screen's, and the
+    /// contacts in it are the station owner's business. Boxed and appended for
+    /// the reasons the probe gives.
+    WavelogBatch(Box<crate::WavelogBatch>),
+    /// The Hardrock amplifier's readings, tuner and link state, when they
+    /// change. Boxed for the usual reason.
+    ///
+    /// Appended last, for the usual reason.
+    AmpStatus(Box<crate::AmpStatus>),
 }
 
 /// Snapshot of the frontend's switchable sound devices (native clients).
@@ -445,6 +474,26 @@ pub trait RadioController {
     /// the events that follow, exactly as at startup.
     fn reconnect(&mut self) -> Result<(), String> {
         Err("this connection cannot be re-established".into())
+    }
+
+    /// The certificate a `wss://` server was refused for on the last attempt,
+    /// as the SHA-256 of its DER in 64 lowercase hex digits — one no public
+    /// authority vouches for, typically a self-signed one (issue #736). `None`
+    /// once it has been trusted, on this connection or on another to the same
+    /// server, and always for an in-process engine.
+    ///
+    /// The UI shows it with [`RadioEvent::ConnectionLost`] and offers to trust
+    /// it; redialling without that decision would only be refused again.
+    fn untrusted_cert(&self) -> Option<String> {
+        None
+    }
+
+    /// Accept the certificate whose SHA-256 is `sha256` from this server from
+    /// now on, and every other one no more — kept on this device. Does not
+    /// redial; [`RadioController::reconnect`] does.
+    fn trust_cert(&mut self, sha256: &str) -> Result<(), String> {
+        let _ = sha256;
+        Err("this connection has no certificate to trust".into())
     }
 
     /// Where this connection stands with the server's sign-in challenge, so

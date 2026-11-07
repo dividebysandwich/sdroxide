@@ -16,6 +16,7 @@
 //! measurement rather than contact, which is the whole difference between this
 //! mode and the one next to it.
 
+use crate::i18n::tr;
 use eframe::egui::{self, Color32, RichText};
 use sdroxide_types::{Band, Command, WSPR_SLOT_S, WsprSpot, power_label};
 
@@ -196,12 +197,19 @@ impl SdroxideApp {
 
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new("RECEPTIONS").size(9.5).strong().color(crate::theme::CYAN_DIM()),
+                RichText::new(tr!("wspr-receptions"))
+                    .size(9.5)
+                    .strong()
+                    .color(crate::theme::CYAN_DIM()),
             );
             crate::chrome::row_tail(ui, |ui| {
                 let heard_us = self.wspr_spots.iter().filter(|s| s.is_heard_by_other()).count();
                 let label = if heard_us > 0 {
-                    format!("{} rx · {heard_us} heard us", self.wspr_spots.len() - heard_us)
+                    tr!(
+                        "wspr-rx-heard-us",
+                        heard_us = self.wspr_spots.len() - heard_us,
+                        heard_us2 = heard_us
+                    )
                 } else {
                     format!("{} rx", self.wspr_spots.len())
                 };
@@ -210,7 +218,7 @@ impl SdroxideApp {
                     ui,
                     !self.wspr_spots.is_empty(),
                     "sdroxide-wspr-spots.csv",
-                    "Save the WSPR reception list as CSV",
+                    &tr!("wspr-save-wspr-reception-list-csv"),
                     || crate::app::save_text::wspr_spots_csv(&self.wspr_spots),
                 );
             });
@@ -272,9 +280,11 @@ impl SdroxideApp {
         let into_slot = slot_phase_s(now_unix_f64(), timing.slot_s, w.slot_utc);
 
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("WSPR").size(11.0).strong().color(crate::theme::CYAN()));
             ui.label(
-                RichText::new("weak-signal propagation beacon")
+                RichText::new(tr!("wspr-wspr")).size(11.0).strong().color(crate::theme::CYAN()),
+            );
+            ui.label(
+                RichText::new(tr!("wspr-weak-signal-propagation-beacon"))
                     .size(10.5)
                     .color(crate::theme::CYAN_DIM()),
             );
@@ -293,16 +303,20 @@ impl SdroxideApp {
                         .size(10.5)
                         .color(crate::theme::gray(140)),
                 )
-                .on_hover_text(
-                    "Time left in this two-minute slot. At the end of it the recording goes to \
-                     the decoder and the next transmit decision lands.",
-                );
+                .on_hover_text(tr!("wspr-time-left-two-minute-slot"));
                 if transmitting {
                     ui.label(
-                        RichText::new("● TX").size(11.0).strong().color(crate::theme::ALERT()),
+                        RichText::new(tr!("wspr-tx"))
+                            .size(11.0)
+                            .strong()
+                            .color(crate::theme::ALERT()),
                     );
                 } else if w.decoding {
-                    ui.label(RichText::new("decoding…").size(10.5).color(crate::theme::YELLOW()));
+                    ui.label(
+                        RichText::new(tr!("wspr-decoding"))
+                            .size(10.5)
+                            .color(crate::theme::YELLOW()),
+                    );
                 }
             });
         });
@@ -323,37 +337,41 @@ impl SdroxideApp {
 
         crate::chrome::red_panel(ui, |ui| {
             let dial = self.state.rx_freq_hz();
-            row(ui, "Band", &format!("{} · {:.6} MHz", Band::containing(dial).label(), dial / 1e6));
             row(
                 ui,
-                "Last slot",
+                &tr!("wspr-band"),
+                &format!(
+                    "{dial} · {e6:.6} MHz",
+                    dial = Band::containing(dial).label(),
+                    e6 = dial / 1e6
+                ),
+            );
+            row(
+                ui,
+                &tr!("wspr-last-slot"),
                 &if w.decoding {
-                    "decoding…".to_string()
+                    tr!("wspr-decoding").to_string()
                 } else if w.last_slot_spots == 0 {
-                    "nothing heard".to_string()
+                    tr!("wspr-nothing-heard").to_string()
                 } else {
-                    format!(
-                        "{} beacon{}",
-                        w.last_slot_spots,
-                        if w.last_slot_spots == 1 { "" } else { "s" }
-                    )
+                    tr!("wspr-beacon", last_slot_spots = w.last_slot_spots)
                 },
             );
             // Whether the *next* slot transmits is decided before it starts, so
             // this is a promise rather than a guess — see the controller's duty
             // cycle.
             let tx_txt = if live.wspr_tx_percent == 0 {
-                "receive only".to_string()
+                tr!("wspr-receive-only").to_string()
             } else if w.tx_next {
-                format!(
-                    "beaconing — {}, {}% duty",
-                    power_label(live.wspr_power_dbm),
-                    live.wspr_tx_percent
+                tr!(
+                    "wspr-beaconing-duty",
+                    wspr_power_dbm = power_label(live.wspr_power_dbm),
+                    wspr_tx_percent = live.wspr_tx_percent
                 )
             } else {
-                format!("listening ({}% duty)", live.wspr_tx_percent)
+                tr!("wspr-listening-duty", wspr_tx_percent = live.wspr_tx_percent)
             };
-            row(ui, "Next slot", &tx_txt);
+            row(ui, &tr!("wspr-next-slot"), &tx_txt);
             // The one place the two copies can be seen to differ. A command
             // that did not reach the engine is otherwise invisible: the chips
             // would show the new setting and the beacon would keep to the old.
@@ -361,7 +379,7 @@ impl SdroxideApp {
                 || live.wspr_power_dbm != self.digi_cfg_edit.wspr_power_dbm
             {
                 ui.label(
-                    RichText::new("waiting for the radio to take the change…")
+                    RichText::new(tr!("wspr-waiting-radio-take-change"))
                         .size(10.0)
                         .color(crate::theme::YELLOW()),
                 );
@@ -369,8 +387,12 @@ impl SdroxideApp {
             if let Some(hz) = w.next_dial_hz {
                 row(
                     ui,
-                    "Hop next",
-                    &format!("{} · {:.4} MHz", Band::containing(hz).label(), hz / 1e6),
+                    &tr!("wspr-hop-next"),
+                    &format!(
+                        "{hz} · {e6:.4} MHz",
+                        hz = Band::containing(hz).label(),
+                        e6 = hz / 1e6
+                    ),
                 );
             }
             if let Some(why) = &w.hop_blocked {
@@ -393,7 +415,7 @@ impl SdroxideApp {
         let tx_ok = self.tx_capable();
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(RichText::new("TRANSMIT").size(9.5).color(crate::theme::CYAN_DIM()));
+            ui.label(RichText::new(tr!("wspr-transmit")).size(9.5).color(crate::theme::CYAN_DIM()));
             let cur = self.digi_cfg_edit.wspr_tx_percent;
             for (pct, label) in [(0u8, "OFF"), (10, "10%"), (20, "20%"), (33, "33%"), (50, "50%")] {
                 // Off is the resting state and reads as one; anything else puts
@@ -417,15 +439,13 @@ impl SdroxideApp {
                 };
                 if resp
                     .on_hover_text(if pct == 0 {
-                        "Receive only.".to_string()
+                        tr!("wspr-receive-only-2").to_string()
                     } else {
-                        format!(
-                            "Beacon in one two-minute slot out of every {} — {pct}% of them, \
-                             evenly spaced — at {}. Which slot the cycle starts on is drawn from \
-                             your callsign, so two stations running this program do not start \
-                             together.",
-                            (100 + pct as u32 / 2) / pct as u32,
-                            power_label(self.digi_cfg_edit.wspr_power_dbm),
+                        tr!(
+                            "wspr-beacon-one-two-minute-slot",
+                            pct = (100 + pct as u32 / 2) / pct as u32,
+                            pct2 = pct,
+                            wspr_power_dbm = power_label(self.digi_cfg_edit.wspr_power_dbm)
                         )
                     })
                     .clicked()
@@ -448,7 +468,7 @@ impl SdroxideApp {
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(RichText::new("POWER").size(9.5).color(crate::theme::CYAN_DIM()));
+            ui.label(RichText::new(tr!("wspr-power")).size(9.5).color(crate::theme::CYAN_DIM()));
             let cur = sdroxide_types::round_power_dbm(self.digi_cfg_edit.wspr_power_dbm);
             let mut chosen = None;
             egui::ComboBox::from_id_salt("wspr-power")
@@ -469,66 +489,50 @@ impl SdroxideApp {
                 cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
             }
             ui.label(
-                RichText::new("what you actually radiate").size(9.5).color(crate::theme::gray(110)),
+                RichText::new(tr!("wspr-what-you-actually-radiate"))
+                    .size(9.5)
+                    .color(crate::theme::gray(110)),
             )
-            .on_hover_text(
-                "This goes out in the message, and everyone who hears you judges the path by \
-                 it — so an optimistic figure here makes their measurements wrong as well as \
-                 yours.",
-            );
+            .on_hover_text(tr!("wspr-goes-out-message-everyone-who"));
 
             // Moving inside the 200 Hz window is the WSPR convention, and it is
             // the only other thing about a transmission worth a switch.
             let auto = self.digi_cfg_edit.auto_tx_freq;
-            let resp = crate::chrome::chip(ui, auto, RichText::new("ROAM").size(10.5));
+            let resp = crate::chrome::chip(ui, auto, RichText::new(tr!("wspr-roam")).size(10.5));
             if resp.clicked() && self.digi_cfg_seeded {
                 self.digi_cfg_edit.auto_tx_freq = !auto;
                 cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
             }
-            resp.on_hover_text(
-                "Pick a different offset inside the 200 Hz window for every transmission. \
-                 This is the convention: two hundred hertz shared by everyone only works if \
-                 nobody parks in the middle of it. Off holds where the cursor is.",
-            );
+            resp.on_hover_text(tr!("wspr-pick-different-offset-inside-200"));
         });
 
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             let hop = self.digi_cfg_edit.wspr_hop;
-            let resp = crate::chrome::chip(ui, hop, RichText::new("BAND HOP").size(10.5));
+            let resp = crate::chrome::chip(ui, hop, RichText::new(tr!("wspr-band-hop")).size(10.5));
             if resp.clicked() && self.digi_cfg_seeded {
                 self.digi_cfg_edit.wspr_hop = !hop;
                 cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
             }
-            resp.on_hover_text(
-                "Move the dial from band to band between slots, so one receiver samples the \
-                 whole spectrum instead of one slice of it. Turning the VFO yourself pauses \
-                 it — press this twice to resume.",
-            );
+            resp.on_hover_text(tr!("wspr-move-dial-band-band-between"));
 
             let up = self.net_cfg_edit.wspr.upload;
-            let resp = crate::chrome::chip(ui, up, RichText::new("UPLOAD").size(10.5));
+            let resp = crate::chrome::chip(ui, up, RichText::new(tr!("wspr-upload")).size(10.5));
             if resp.clicked() && self.net_cfg_seeded {
                 self.net_cfg_edit.wspr.upload = !up;
                 cmds.push(Command::SetNetworkConfig(self.net_cfg_edit.clone()));
             }
-            resp.on_hover_text(
-                "Send what this station decodes to wsprnet.org. Reporting what you hear is \
-                 what makes a WSPR receiver part of the network; it puts nothing on the air.",
-            );
+            resp.on_hover_text(tr!("wspr-send-what-station-decodes-wsprnet"));
 
             let dl = self.net_cfg_edit.wspr.download_heard_us;
-            let resp = crate::chrome::chip(ui, dl, RichText::new("WHO HEARD ME").size(10.5));
+            let resp =
+                crate::chrome::chip(ui, dl, RichText::new(tr!("wspr-who-heard-me")).size(10.5));
             if resp.clicked() && self.net_cfg_seeded {
                 self.net_cfg_edit.wspr.download_heard_us = !dl;
                 cmds.push(Command::SetNetworkConfig(self.net_cfg_edit.clone()));
             }
-            resp.on_hover_text(
-                "Ask wsprnet.org every few minutes which stations decoded this one. WSPR has \
-                 no acknowledgement of any kind, so this is the only way a beacon learns \
-                 anything about its own reach.",
-            );
+            resp.on_hover_text(tr!("wspr-ask-wsprnet-org-every-few"));
         });
 
         // The bands the hop cycle visits, shown only when it is running: a row
@@ -537,7 +541,9 @@ impl SdroxideApp {
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 3.0;
-                ui.label(RichText::new("BANDS").size(9.5).color(crate::theme::CYAN_DIM()));
+                ui.label(
+                    RichText::new(tr!("wspr-bands")).size(9.5).color(crate::theme::CYAN_DIM()),
+                );
                 let mut mask = self.digi_cfg_edit.wspr_hop_bands;
                 let mut hit = false;
                 // Only bands with a WSPR dial: the rest have nothing to hop to.
@@ -560,7 +566,7 @@ impl SdroxideApp {
                 }
                 if mask == 0 {
                     ui.label(
-                        RichText::new("none selected — hopping has nowhere to go")
+                        RichText::new(tr!("wspr-none-selected-hopping-has-nowhere"))
                             .size(9.5)
                             .color(crate::theme::YELLOW()),
                     );
@@ -575,14 +581,13 @@ impl SdroxideApp {
         let grid = self.digi_cfg_edit.my_grid.trim();
         ui.label(
             RichText::new(if call.is_empty() || grid.is_empty() {
-                "Set your callsign and grid on the General tab of Settings before transmitting."
-                    .to_string()
+                tr!("wspr-set-your-callsign-grid-general").to_string()
             } else {
                 // The locator as it will go out: a six-character one is sent as
                 // its first four, and saying so here is less surprising than
                 // letting the operator find it on a spot page.
                 let sent = sdroxide_types::wspr_grid4(grid).unwrap_or_else(|| grid.to_string());
-                format!("Transmitting as {call} in {sent} — set on the General tab of Settings.")
+                tr!("wspr-transmitting-set-general-tab-settings", call = call, sent = sent)
             })
             .size(10.0)
             .color(if call.is_empty() || grid.is_empty() {
@@ -752,11 +757,11 @@ fn wspr_row(ui: &mut egui::Ui, s: &WsprSpot, home: Option<(f64, f64)>, now: i64)
                             .monospace()
                             .color(crate::theme::gray(120)),
                     )
-                    .on_hover_text(format!(
-                        "{:02}:{:02} UTC — {} ago",
-                        t / 3600,
-                        (t % 3600) / 60,
-                        fmt_age(now - s.slot_utc)
+                    .on_hover_text(tr!(
+                        "wspr-utc-ago",
+                        t = format!("{:02}", t / 3600),
+                        t2 = format!("{:02}", (t % 3600) / 60),
+                        slot_utc = fmt_age(now - s.slot_utc)
                     ));
                 });
             });

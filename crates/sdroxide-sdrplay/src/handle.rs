@@ -810,6 +810,21 @@ impl SdrPlayHandle {
         }
     }
 
+    /// Throw away everything the ring is holding, in whole samples so a
+    /// paired RSPduo's quads stay aligned.
+    ///
+    /// Called after an over: what was buffered while the station transmitted
+    /// is the over itself, and would otherwise be played back as receive (#697).
+    pub fn discard_rx(&mut self) {
+        let n = self.rx.slots();
+        let n = n - (n % self.stride());
+        if n > 0
+            && let Ok(chunk) = self.rx.read_chunk(n)
+        {
+            chunk.commit_all();
+        }
+    }
+
     /// Floats per sample in the ring: I and Q, or both tuners' I and Q.
     fn stride(&self) -> usize {
         if self.dual_tuner() { crate::pair::QUAD } else { 2 }

@@ -56,7 +56,7 @@ use sdroxide_dsp::Ddc;
 use sdroxide_icomnet::{IcomNetDevice, IcomNetOptions};
 use sdroxide_radio::rtrb;
 use sdroxide_radio::{Complex32, ControlUpdate, IqSource, Result};
-use sdroxide_types::{Band, CwKeying, IcomNetConfig, IcomRxSource, Mode, TxTelemetry};
+use sdroxide_types::{AgcMode, Band, CwKeying, IcomNetConfig, IcomRxSource, Mode, TxTelemetry};
 
 use crate::dial::Dial;
 use crate::session_trace::TraceStore;
@@ -218,6 +218,11 @@ pub struct IcomNetSource {
     /// the two do not spell the same thing: every digital mode is commanded as
     /// plain USB, and comes back as plain USB.
     mode_cmd: Option<(u8, Instant)>,
+    /// The CI-V mode byte the radio is on, as last reported or commanded.
+    /// Kept apart from the app's mode because the radio can be in one the app
+    /// has none for — its own RTTY — and the filter index has a narrower range
+    /// there; see [`civ::set_filter_frame`].
+    rig_mode: Option<u8>,
     last_signal: Option<(Instant, f32)>,
     last_telem: Option<TxTelemetry>,
     transmitting: bool,
@@ -376,6 +381,7 @@ impl IcomNetSource {
             scope_stalled: false,
             last_poll: Instant::now(),
             mode_cmd: None,
+            rig_mode: None,
             last_signal: None,
             last_telem: None,
             transmitting: false,
@@ -796,6 +802,7 @@ impl IcomNetSource {
                         self.mode_cmd = None;
                     }
                 }
+                self.rig_mode = Some(b);
                 if let Some(m) = civ::civ_to_mode(b) {
                     self.pending.push(ControlUpdate::Mode(m));
                 }
@@ -1122,6 +1129,7 @@ impl IqSource for IcomNetSource {
             m => m,
         };
         self.mode_cmd = Some((civ::mode_to_civ(mode), Instant::now()));
+        self.rig_mode = Some(civ::mode_to_civ(mode));
         // The mode *and* the DATA switch beside it, which is the pair the
         // serial CAT path has always sent. The plain mode command clears the
         // switch, so sending it alone took a rig the operator had put in FM-D
@@ -1131,6 +1139,33 @@ impl IqSource for IcomNetSource {
             self.send(f);
         }
         Ok(())
+    }
+
+    /// The panel's width control, sent to the radio's own filter.
+    ///
+    /// On AF the stream has already come through it, exactly as with a serial
+    /// CAT rig: there is no demodulator here, so without this the width moved
+    /// on screen and nothing changed in the audio. The engine only calls this
+    /// while the radio is the one demodulating; on the 12 kHz IF the filter is
+    /// sdroxide's own.
+    fn set_control_filter(&mut self, mode: Mode, lo_hz: f64, hi_hz: f64) {
+        if let Some(f) =
+            civ::set_filter_frame(self.civ_addr, mode, self.rig_mode, lo_hz as f32, hi_hz as f32)
+        {
+            self.send(f);
+        }
+    }
+
+    /// The AGC button, sent to the radio's own AGC — on AF the only one the
+    /// audio has been through that makes an audible difference.
+    fn set_control_agc(&mut self, agc: AgcMode) {
+        if let Some(f) = civ::set_agc_frame(self.civ_addr, agc) {
+            self.send(f);
+        }
+    }
+
+    fn commands_agc(&self) -> bool {
+        true
     }
 
     // ── CW from the rig's own keyer ─────────────────────────────────────────
@@ -1491,6 +1526,65 @@ mod tests {
         assert!(tunes <= 2, "a radio that answered was asked {tunes} times");
     }
 
+    /// On AF the radio has already filtered and levelled the audio, so the
+    /// width and AGC controls only do something once they reach it. Neither
+    /// did: the width moved on the panadapter and the AGC button changed its
+    /// label, and the IC-705 sounded the same either way.
+    #[test]
+    fn the_filter_width_and_agc_are_sent_to_the_radio() {
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut src = IcomNetSource::open(&cfg(&sim)).expect("open");
+        let sent = |cmd: &[u8]| {
+            sim.civ_frames().iter().any(|f| f.len() == cmd.len() + 5 && f[4..f.len() - 1] == *cmd)
+        };
+
+        src.set_control_filter(Mode::Usb, 200.0, 2600.0);
+        wait_for("the 2.4 kHz filter", || sent(&[0x1A, 0x03, 0x28]));
+        src.set_control_agc(AgcMode::Slow);
+        wait_for("AGC SLOW", || sent(&[0x16, 0x12, 0x03]));
+
+        // Neither has a spelling for these, so the radio is left alone rather
+        // than handed some other filter or preset.
+        let before = sim.civ_frames().len();
+        src.set_control_filter(Mode::Nfm, -6000.0, 6000.0);
+        src.set_control_agc(AgcMode::Off);
+        std::thread::sleep(Duration::from_millis(50));
+        let after = sim.civ_frames();
+        assert!(
+            !after[before..]
+                .iter()
+                .any(|f| matches!(f.get(4..6), Some([0x1A, 0x03] | [0x16, 0x12]))),
+            "a filter or AGC frame went out with nothing to say"
+        );
+    }
+
+    /// An operator who switches the radio to its own RTTY at the front panel
+    /// puts it in a mode with a narrower filter range, which the panel has no
+    /// mode for and does not follow. A width past 2.7 kHz is held there
+    /// instead of sent as an index the radio rejects; back on USB the full
+    /// range returns.
+    #[test]
+    fn a_radio_put_in_rtty_at_the_front_panel_is_held_to_its_range() {
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut src = IcomNetSource::open(&cfg(&sim)).expect("open");
+        let sent = |cmd: &[u8]| {
+            sim.civ_frames().iter().any(|f| f.len() == cmd.len() + 5 && f[4..f.len() - 1] == *cmd)
+        };
+
+        sim.set_mode(0x04);
+        wait_for("the radio's RTTY report", || {
+            src.poll_control();
+            src.rig_mode == Some(0x04)
+        });
+        src.set_control_filter(Mode::Usb, 0.0, 3600.0);
+        wait_for("the filter held to 2.7 kHz", || sent(&[0x1A, 0x03, 0x31]));
+        assert!(!sent(&[0x1A, 0x03, 0x40]), "an index past RTTY's range went out");
+
+        src.set_control_mode(Mode::Usb).unwrap();
+        src.set_control_filter(Mode::Usb, 0.0, 3600.0);
+        wait_for("the full 3.6 kHz on USB", || sent(&[0x1A, 0x03, 0x40]));
+    }
+
     /// Two Icoms on one LAN, each keeping its own session trace.
     ///
     /// The trace is what a field report is built from, and a station with an
@@ -1687,6 +1781,192 @@ mod tests {
                 }
             }
             refused
+        });
+        drop(h);
+        thread.join().unwrap();
+    }
+
+    /// The same through the engine, which is what decides that a radio on AF is
+    /// the one filtering — the IC-705 report was of the panel's own controls.
+    #[test]
+    fn on_af_the_panels_width_and_agc_reach_the_radio() {
+        use sdroxide_types::{Command, RxId};
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let c = cfg(&sim);
+        let src = IcomNetSource::open(&c).unwrap();
+        let caps = crate::icomnet_caps(&c, &src);
+        let mut h = sdroxide_radio::start_engine(
+            Box::new(src),
+            caps,
+            sdroxide_radio::EngineConfig::default(),
+        );
+        let thread = h.thread.take().unwrap();
+        let sent = |cmd: &[u8]| {
+            sim.civ_frames().iter().any(|f| f.len() == cmd.len() + 5 && f[4..f.len() - 1] == *cmd)
+        };
+        h.cmd_tx.send(Command::SetFilter { rx: RxId::Main, lo: 300.0, hi: 1300.0 }).unwrap();
+        wait_for("the 1 kHz filter at the radio", || sent(&[0x1A, 0x03, 0x14]));
+        h.cmd_tx.send(Command::SetAgc { rx: RxId::Main, agc: AgcMode::Fast }).unwrap();
+        wait_for("AGC FAST at the radio", || sent(&[0x16, 0x12, 0x01]));
+        drop(h);
+        thread.join().unwrap();
+    }
+
+    /// On the 12 kHz IF sdroxide demodulates, so the width and AGC are its own
+    /// and the radio's are left wherever the operator set them.
+    #[test]
+    fn on_the_if_the_panels_width_and_agc_stay_in_the_app() {
+        use sdroxide_types::{Command, RadioEvent, RxId};
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut c = cfg(&sim);
+        c.rx_source = IcomRxSource::If12k;
+        let src = IcomNetSource::open(&c).unwrap();
+        let caps = crate::icomnet_caps(&c, &src);
+        let mut h = sdroxide_radio::start_engine(
+            Box::new(src),
+            caps,
+            sdroxide_radio::EngineConfig::default(),
+        );
+        let thread = h.thread.take().unwrap();
+        h.cmd_tx.send(Command::SetFilter { rx: RxId::Main, lo: 300.0, hi: 1300.0 }).unwrap();
+        h.cmd_tx.send(Command::SetAgc { rx: RxId::Main, agc: AgcMode::Fast }).unwrap();
+        let mut seen = (false, false);
+        wait_for("the engine to take both", || {
+            while let Ok(event) = h.event_rx.try_recv() {
+                if let RadioEvent::State(s) = event {
+                    seen.0 |= (s.rx[0].filter_lo, s.rx[0].filter_hi) == (300.0, 1300.0);
+                    seen.1 |= s.rx[0].agc == AgcMode::Fast;
+                }
+            }
+            seen == (true, true)
+        });
+        // Past a few poll periods, so a frame the engine had sent would be in.
+        std::thread::sleep(POLL_PERIOD * 3);
+        assert!(
+            !sim.civ_frames()
+                .iter()
+                .any(|f| matches!(f.get(4..6), Some([0x1A, 0x03] | [0x16, 0x12]))),
+            "the radio was sent a filter or AGC while sdroxide is the one demodulating"
+        );
+        drop(h);
+        thread.join().unwrap();
+    }
+
+    /// Watches an engine's events for the capabilities and the main receiver's
+    /// AGC, the two halves of what the AGC chip draws.
+    struct AgcWatch {
+        off_unavailable: Option<bool>,
+        agc: Option<AgcMode>,
+        max_gain_db: Option<f32>,
+        mode: Option<Mode>,
+    }
+
+    impl AgcWatch {
+        fn new() -> Self {
+            AgcWatch { off_unavailable: None, agc: None, max_gain_db: None, mode: None }
+        }
+
+        fn until(
+            &mut self,
+            h: &sdroxide_radio::EngineHandles,
+            what: &str,
+            mut done: impl FnMut(&Self) -> bool,
+        ) {
+            use sdroxide_types::RadioEvent;
+            wait_for(what, || {
+                while let Ok(event) = h.event_rx.try_recv() {
+                    match event {
+                        RadioEvent::Capabilities(c) | RadioEvent::CapabilitiesUpdated(c) => {
+                            self.off_unavailable = Some(c.agc_off_unavailable);
+                        }
+                        RadioEvent::State(s) => {
+                            self.agc = Some(s.rx[0].agc);
+                            self.max_gain_db = Some(s.rx[0].agc_max_gain_db);
+                            self.mode = Some(s.rx[0].mode);
+                        }
+                        _ => {}
+                    }
+                }
+                done(self)
+            });
+        }
+    }
+
+    /// On AF the AGC that is heard is the radio's, and Icom gives no way to
+    /// switch it off — so Off is not offered, and one asked for anyway (by a
+    /// rigctld client, say) is refused rather than shown.
+    #[test]
+    fn on_af_the_agc_has_no_off() {
+        use sdroxide_types::{Command, RxId};
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let c = cfg(&sim);
+        let src = IcomNetSource::open(&c).unwrap();
+        let caps = crate::icomnet_caps(&c, &src);
+        let mut h = sdroxide_radio::start_engine(
+            Box::new(src),
+            caps,
+            sdroxide_radio::EngineConfig::default(),
+        );
+        let thread = h.thread.take().unwrap();
+        let mut w = AgcWatch::new();
+        h.cmd_tx.send(Command::SetAgc { rx: RxId::Main, agc: AgcMode::Slow }).unwrap();
+        w.until(&h, "AF without an Off, on Slow", |w| {
+            w.off_unavailable == Some(true) && w.agc == Some(AgcMode::Slow)
+        });
+        h.cmd_tx.send(Command::SetAgc { rx: RxId::Main, agc: AgcMode::Off }).unwrap();
+        // Something after it, so its answer is known to have been processed.
+        h.cmd_tx.send(Command::SetAgcMaxGain { rx: RxId::Main, db: 80.0 }).unwrap();
+        w.until(&h, "the command after it", |w| w.max_gain_db == Some(80.0));
+        assert_eq!(w.agc, Some(AgcMode::Slow), "an Off the radio cannot honour was taken");
+        drop(h);
+        thread.join().unwrap();
+    }
+
+    /// On the 12 kHz IF the AGC is sdroxide's own and Off is real. Leaving the
+    /// IF for AF with it off — WFM is too wide for the IF — lands on a preset
+    /// the radio has, and coming back finds Off where it was left.
+    #[test]
+    fn off_is_offered_on_the_if_and_settled_on_the_way_to_af() {
+        use sdroxide_types::{Command, RxId};
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut c = cfg(&sim);
+        c.rx_source = IcomRxSource::If12k;
+        let src = IcomNetSource::open(&c).unwrap();
+        let caps = crate::icomnet_caps(&c, &src);
+        let mut h = sdroxide_radio::start_engine(
+            Box::new(src),
+            caps,
+            sdroxide_radio::EngineConfig::default(),
+        );
+        let thread = h.thread.take().unwrap();
+        let mut w = AgcWatch::new();
+        h.cmd_tx.send(Command::SetAgc { rx: RxId::Main, agc: AgcMode::Off }).unwrap();
+        w.until(&h, "Off on the IF", |w| {
+            w.off_unavailable == Some(false) && w.agc == Some(AgcMode::Off)
+        });
+
+        h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::Wfm }).unwrap();
+        w.until(&h, "AF on a preset", |w| {
+            w.mode == Some(Mode::Wfm)
+                && w.off_unavailable == Some(true)
+                && w.agc.is_some_and(|a| a != AgcMode::Off)
+        });
+        let preset = w.agc.unwrap();
+        let byte = match preset {
+            AgcMode::Fast => 0x01,
+            AgcMode::Med => 0x02,
+            _ => 0x03,
+        };
+        wait_for("the preset at the radio", || {
+            sim.civ_frames().iter().any(|f| f.get(4..7) == Some(&[0x16, 0x12, byte][..]))
+        });
+
+        // USB's saved Off was never overwritten by the settling.
+        h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::Usb }).unwrap();
+        w.until(&h, "back on the IF with Off", |w| {
+            w.mode == Some(Mode::Usb)
+                && w.off_unavailable == Some(false)
+                && w.agc == Some(AgcMode::Off)
         });
         drop(h);
         thread.join().unwrap();

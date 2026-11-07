@@ -112,6 +112,22 @@ pub struct SimConfig {
     /// client is on the right machine and listening on the wrong socket, which
     /// looks exactly like a firewall from the inside and is not one.
     pub stream_to_default_port: bool,
+    /// How long a `stream set … daxiq_rate=` takes to land. Until it does, the
+    /// stream goes on carrying the 48 kHz it was created at, and the reply
+    /// waits too.
+    ///
+    /// Measured on a FLEX-8400: 260 ms between the command and the first
+    /// 192 kHz packet, with a quarter of a second of 48 kHz packets streaming
+    /// meanwhile. A client that settles its rate inside that window settles on
+    /// the wrong one — issue #687, a panadapter drawing 192 kHz of band across
+    /// a 48 kHz axis.
+    pub rate_change_delay: Duration,
+    /// A built-in antenna tuner: `info` says `atu_present=1`, `sub atu` reports
+    /// it, and `atu start` runs a tune that takes [`Self::atu_tune_time`] and
+    /// succeeds. Off by default, as on a FLEX-6600 without one.
+    pub atu: bool,
+    /// How long a simulated tune runs before it reports success.
+    pub atu_tune_time: Duration,
 }
 
 impl Default for SimConfig {
@@ -145,6 +161,9 @@ impl Default for SimConfig {
             no_free_pan: false,
             foreign_pan_handle: 0xDEAD_BEEF,
             stream_to_default_port: false,
+            rate_change_delay: Duration::ZERO,
+            atu: false,
+            atu_tune_time: Duration::from_millis(300),
         }
     }
 }
@@ -363,6 +382,14 @@ struct Session {
     iq_stream: Option<u32>,
     iq_channel: u32,
     iq_rate: u32,
+    /// A `daxiq_rate` change still on its way in: the rate, the command's
+    /// sequence number, and when it lands. See [`SimConfig::rate_change_delay`].
+    pending_rate: Option<(u32, u32, Instant)>,
+    /// The tuner's status word, as the radio spells it.
+    atu_status: &'static str,
+    atu_enabled: bool,
+    /// When a tune that is running finishes.
+    atu_done_at: Option<Instant>,
     tx_stream: Option<u32>,
     pan_center_hz: f64,
     pan_bw_hz: f64,
@@ -420,6 +447,10 @@ impl Session {
             iq_stream: None,
             iq_channel: 0,
             iq_rate: 48_000,
+            pending_rate: None,
+            atu_status: "TUNE_NOT_STARTED",
+            atu_enabled: false,
+            atu_done_at: None,
             tx_stream: None,
             pan_center_hz: slice_hz,
             pan_bw_hz: 192_000.0,
@@ -481,12 +512,55 @@ impl Session {
             }
 
             self.maybe_evict();
+            self.land_pending_rate();
+            self.finish_atu_tune();
             self.pump_iq();
             self.pump_meters();
             self.drain_client_udp(&mut rx_buf);
         }
 
         self.stats.keyed.store(false, Ordering::Relaxed);
+    }
+
+    /// Apply a `daxiq_rate` change whose [`SimConfig::rate_change_delay`] is up.
+    fn land_pending_rate(&mut self) {
+        let Some((rate, seq, at)) = self.pending_rate else { return };
+        if Instant::now() < at {
+            return;
+        }
+        self.pending_rate = None;
+        self.iq_rate = rate;
+        self.reply(seq, 0, "");
+        self.send_iq_stream_status();
+    }
+
+    /// Report a running tune as finished once its time is up.
+    fn finish_atu_tune(&mut self) {
+        let Some(at) = self.atu_done_at else { return };
+        if Instant::now() < at {
+            return;
+        }
+        self.atu_done_at = None;
+        self.atu_status = "TUNE_SUCCESSFUL";
+        self.atu_enabled = true;
+        self.status("interlock state=UNKEY_REQUESTED source=");
+        self.send_atu_status();
+        // The copy a FLEX-8400 sends the client that asked for the tune, which
+        // leaves `atu_enabled` out.
+        self.status("atu status=TUNE_SUCCESSFUL memories_enabled=1 using_mem=0");
+        self.status("interlock state=READY source=");
+    }
+
+    fn send_atu_status(&mut self) {
+        if !self.cfg.atu {
+            return;
+        }
+        let line = format!(
+            "atu status={} atu_enabled={} memories_enabled=1 using_mem=0",
+            self.atu_status,
+            u8::from(self.atu_enabled)
+        );
+        self.status(&line);
     }
 
     fn send_line(&mut self, line: &str) {
@@ -591,9 +665,41 @@ impl Session {
                     Some("meter") => self.send_meter_defs(),
                     Some("radio") => self.send_radio_status(),
                     Some("client") => self.send_client_status(),
+                    Some("atu") => self.send_atu_status(),
                     _ => {}
                 }
                 self.reply(seq, 0, "");
+            }
+            // The one reply whose body is comma-separated, with quoted strings.
+            ("info", _) => {
+                let body = format!(
+                    "model=\"{}\",chassis_serial=\"{}\",name=\"{}\",callsign=\"{}\",\
+                     atu_present={},num_scu=1,software_ver={},",
+                    self.cfg.model,
+                    self.cfg.serial,
+                    self.cfg.nickname,
+                    self.cfg.callsign,
+                    u8::from(self.cfg.atu),
+                    self.cfg.version
+                );
+                self.reply(seq, 0, &body);
+            }
+            ("atu", Some("start")) if self.cfg.atu => {
+                self.reply(seq, 0, "");
+                self.atu_status = "TUNE_IN_PROGRESS";
+                self.atu_done_at = Some(Instant::now() + self.cfg.atu_tune_time);
+                // The radio keys itself for the tune, and says so on the
+                // interlock — the sequence a FLEX-8400 sent.
+                self.status("interlock state=PTT_REQUESTED source=SW");
+                self.send_atu_status();
+                self.status("interlock state=TRANSMITTING source=SW");
+            }
+            ("atu", Some("bypass")) if self.cfg.atu => {
+                self.reply(seq, 0, "");
+                self.atu_done_at = None;
+                self.atu_status = "TUNE_BYPASS";
+                self.atu_enabled = false;
+                self.send_atu_status();
             }
             ("keepalive", _) | ("ping", _) => self.reply(seq, 0, ""),
             ("display", Some("panafall")) => match rest.get(1).copied() {
@@ -696,9 +802,14 @@ impl Session {
                     && id == self.iq_stream
                 {
                     if p::dax_iq_rate(p::dax_iq_class_code(rate)) == Some(rate) {
-                        self.iq_rate = rate;
-                        self.reply(seq, 0, "");
-                        self.send_iq_stream_status();
+                        let delay = self.cfg.rate_change_delay;
+                        if delay.is_zero() {
+                            self.iq_rate = rate;
+                            self.reply(seq, 0, "");
+                            self.send_iq_stream_status();
+                        } else {
+                            self.pending_rate = Some((rate, seq, Instant::now() + delay));
+                        }
                         return;
                     }
                     self.reply(seq, 0x5000_0020, "unsupported daxiq_rate");
@@ -817,12 +928,12 @@ impl Session {
         ));
         self.status(&format!(
             "meter {METER_SWR}.src=TX-#{METER_SWR}.num=0#{METER_SWR}.nam=SWR#\
-             {METER_SWR}.low=1.0#{METER_SWR}.hi=10.0#{METER_SWR}.desc=SWR#\
+             {METER_SWR}.low=1.0#{METER_SWR}.hi=10.0#{METER_SWR}.desc=RF SWR#\
              {METER_SWR}.unit=SWR#{METER_SWR}.fps=20"
         ));
         self.status(&format!(
             "meter {METER_FWD}.src=TX-#{METER_FWD}.num=0#{METER_FWD}.nam=FWDPWR#\
-             {METER_FWD}.low=0.0#{METER_FWD}.hi=100.0#{METER_FWD}.desc=Forward power#\
+             {METER_FWD}.low=0.0#{METER_FWD}.hi=100.0#{METER_FWD}.desc=RF Power Forward#\
              {METER_FWD}.unit=dBm#{METER_FWD}.fps=20"
         ));
     }

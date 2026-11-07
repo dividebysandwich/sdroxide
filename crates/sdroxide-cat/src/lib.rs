@@ -25,8 +25,8 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use sdroxide_types::{
-    CatConfig, CatFamily, CwKeying, DigiMode, LineState, Mode, ModeControl, Parity, PttMethod,
-    SoundFormat, StopBits, TxTelemetry,
+    AgcMode, CatConfig, CatFamily, CwKeying, DigiMode, LineState, Mode, ModeControl, Parity,
+    PttMethod, SoundFormat, StopBits, TxTelemetry,
 };
 use tracing::{info, warn};
 
@@ -179,6 +179,9 @@ pub enum CatUpdate {
     /// family whose meter answers in watts sends this — QRP Labs' `PC`, which
     /// on every other ASCII family here is the power *control* instead.
     FwdW(f32),
+    /// TX reflected power the rig has measured, in watts. Only a family that
+    /// reports it in a known unit sends this — the ELAD FDM-DUO's `RP`.
+    RflW(f32),
     /// RX S-meter reading in dBm, from the rig's own meter (routed to the
     /// signal channel, not the control channel).
     Signal(f32),
@@ -370,6 +373,19 @@ trait Protocol: Send {
         false
     }
 
+    /// Select the rig's own AGC. On demodulated audio this is the AGC the
+    /// operator hears: the sound card is fed after it, so the engine's own AGC
+    /// behind it has almost nothing left to level. A setting the family has no
+    /// command for — Icom has no plain OFF — returns nothing and leaves the rig
+    /// where it was.
+    fn set_agc(&mut self, _agc: AgcMode) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+    /// Whether [`Protocol::set_agc`] reaches this family at all.
+    fn commands_agc(&self) -> bool {
+        false
+    }
+
     /// Set the transmitter's output power, as a `0..1` fraction of what the rig
     /// can do.
     ///
@@ -391,6 +407,26 @@ trait Protocol: Send {
     /// Whether [`Protocol::set_power`] reaches this family at all.
     fn commands_power(&self) -> bool {
         false
+    }
+    /// Whether the Drive and TUNE levels are applied by scaling the transmit
+    /// audio rather than by a power command. True for a family whose power
+    /// register is pinned at its maximum when the port opens (see
+    /// [`Protocol::clear_offsets`]); its [`Protocol::set_power`] sends nothing,
+    /// and the source scales the audio it hands the rig instead.
+    fn power_by_audio(&self) -> bool {
+        false
+    }
+    /// For a family with [`Self::power_by_audio`]: the share of full audio
+    /// level, as a power fraction, that Drive 100% sends. Below 1 where the rig
+    /// is already at its full output with less than full audio, so the Drive
+    /// slider spans the rig's range instead of the bottom of it.
+    fn audio_power_ceiling(&self) -> f32 {
+        1.0
+    }
+    /// Put the rig's own power setting on one of its numbered steps — the
+    /// FDM-DUO's menu 34 (`TP`). Nothing on a family without one.
+    fn set_power_step(&mut self, _code: u8) -> Vec<Vec<u8>> {
+        Vec::new()
     }
 
     /// Set the receiver's squelch threshold, as a `0..1` fraction of the rig's
@@ -708,6 +744,8 @@ struct Civ {
     /// Whether the power-output meter is read during an over — see
     /// [`Civ::without_po_meter`].
     po_meter: bool,
+    /// Whether the AGC is commanded — see [`Civ::without_agc`].
+    agc: bool,
 }
 
 /// How long after a broadcast a disagreeing polled answer is put down to the
@@ -737,7 +775,17 @@ impl Civ {
             socket: None,
             rx_ant: None,
             po_meter: true,
+            agc: true,
         }
+    }
+
+    /// Leave the AGC alone. Icom's `16 12` presets are FAST, MID and SLOW in
+    /// that order; nothing says a Xiegu, which shares only the dialect, numbers
+    /// them the same — and a guess there selects a different AGC from the one
+    /// on the button.
+    fn without_agc(mut self) -> Civ {
+        self.agc = false;
+        self
     }
 
     /// Leave the power-output meter unread. A Xiegu G90 answers `15 11` with
@@ -865,10 +913,19 @@ impl Protocol for Civ {
         vec![civ::keyer_speed_frame(self.radio, wpm)]
     }
     fn set_filter(&mut self, mode: Mode, lo_hz: f32, hi_hz: f32) -> Vec<Vec<u8>> {
-        civ::set_filter_frame(self.radio, mode, lo_hz, hi_hz).into_iter().collect()
+        civ::set_filter_frame(self.radio, mode, self.seen_mode, lo_hz, hi_hz).into_iter().collect()
     }
     fn commands_filter(&self) -> bool {
         true
+    }
+    fn set_agc(&mut self, agc: AgcMode) -> Vec<Vec<u8>> {
+        if !self.agc {
+            return Vec::new();
+        }
+        civ::set_agc_frame(self.radio, agc).into_iter().collect()
+    }
+    fn commands_agc(&self) -> bool {
+        self.agc
     }
     fn set_power(&mut self, frac: f32) -> Vec<Vec<u8>> {
         vec![civ::set_power_frame(self.radio, frac)]
@@ -1214,7 +1271,9 @@ fn make_protocol(cfg: &CatConfig) -> Box<dyn Protocol> {
         // A Xiegu is not in the Icom model table, so it takes the two sockets
         // every radio with a selector has at least — which changes nothing,
         // since it NAKs the read.
-        CatFamily::Xiegu => Box::new(Civ::new(cfg.icom_radio_id, None, 2).without_po_meter()),
+        CatFamily::Xiegu => {
+            Box::new(Civ::new(cfg.icom_radio_id, None, 2).without_po_meter().without_agc())
+        }
         CatFamily::Icom => {
             let civ = Civ::new(
                 cfg.icom_radio_id,
@@ -1230,7 +1289,7 @@ fn make_protocol(cfg: &CatConfig) -> Box<dyn Protocol> {
         CatFamily::Yaesu => Box::new(yaesu::Yaesu::new()),
         CatFamily::Kenwood => Box::new(kenwood::Kenwood::new(cfg.kenwood_send)),
         CatFamily::Elecraft => Box::new(elecraft::Elecraft::new()),
-        CatFamily::Elad => Box::new(elad::Elad::new(cfg.elad_tx_input)),
+        CatFamily::Elad => Box::new(elad::Elad::new(cfg.elad_tx_input, cfg.elad_tx_power)),
         // The one family whose framing depends on the *sound* settings: a QMX's
         // USB codec carries either demodulated audio or raw I/Q, and which one
         // it must carry is asserted at the radio when the port opens.
@@ -1264,6 +1323,8 @@ enum CatCmd {
     /// The rig's own receive filter: the mode it applies to, and the audio-band
     /// edges in Hz.
     Filter(Mode, f32, f32),
+    /// The rig's own AGC.
+    Agc(AgcMode),
     /// Which antenna socket to receive on, by name.
     Antenna(String),
     /// Switch the rig's receiving antenna into the receive path, or out of it.
@@ -1273,6 +1334,9 @@ enum CatCmd {
     AntennaRead,
     /// Switch the radio itself off, or back on again.
     RigPower(bool),
+    /// The rig's own power setting, one of its numbered steps — see
+    /// [`Protocol::set_power_step`].
+    PowerStep(u8),
     Stop,
 }
 
@@ -1307,7 +1371,10 @@ pub struct CatHandle {
     scope: std::sync::Arc<std::sync::Mutex<Option<ScopeFrame>>>,
     cw_chunk_len: usize,
     commands_power: bool,
+    power_by_audio: bool,
+    audio_power_ceiling: f32,
     commands_filter: bool,
+    commands_agc: bool,
     commands_squelch: bool,
     antennas: &'static [&'static str],
     commands_rig_power: bool,
@@ -1380,6 +1447,18 @@ impl CatHandle {
     pub fn commands_power(&self) -> bool {
         self.commands_power
     }
+    /// Whether this rig's power is set by scaling the transmit audio — see
+    /// [`Protocol::power_by_audio`]; the gain to use is
+    /// [`audio_gain_for_power`].
+    pub fn power_by_audio(&self) -> bool {
+        self.power_by_audio
+    }
+    /// The transmit audio gain for a `0..1` Drive or TUNE level on a rig with
+    /// [`Self::power_by_audio`]: [`audio_gain_for_power`] within this family's
+    /// [`Protocol::audio_power_ceiling`].
+    pub fn audio_gain_for(&self, frac: f32) -> f32 {
+        audio_gain_for_power(frac.clamp(0.0, 1.0) * self.audio_power_ceiling)
+    }
     /// Set the receiver's squelch threshold, as a `0..1` fraction of the rig's
     /// own scale (`0` open, `1` closed). Silently ignored on a family with no
     /// such command.
@@ -1402,6 +1481,18 @@ impl CatHandle {
         }
         let _ = self.cmd_tx.send(CatCmd::Filter(mode, lo_hz, hi_hz));
     }
+    /// Select the rig's own AGC. Silently ignored on a family whose AGC
+    /// sdroxide cannot address.
+    pub fn set_agc(&self, agc: AgcMode) {
+        if !self.commands_agc {
+            return;
+        }
+        let _ = self.cmd_tx.send(CatCmd::Agc(agc));
+    }
+    /// Whether [`Self::set_agc`] reaches this rig.
+    pub fn commands_agc(&self) -> bool {
+        self.commands_agc
+    }
     /// The antenna sockets this rig can put its receiver on, or empty where the
     /// family has no such command — and, on a family whose list has to be
     /// asked for ([`Protocol::antennas_probed`]), empty until the radio has
@@ -1421,6 +1512,11 @@ impl CatHandle {
             return;
         }
         let _ = self.cmd_tx.send(CatCmd::RigPower(on));
+    }
+    /// Put the rig's own power setting on step `code` — the FDM-DUO's menu 34.
+    /// Ignored by a family that has no such setting.
+    pub fn set_power_step(&self, code: u8) {
+        let _ = self.cmd_tx.send(CatCmd::PowerStep(code));
     }
     /// Whether [`Self::set_rig_power`] reaches this rig.
     pub fn commands_rig_power(&self) -> bool {
@@ -1633,6 +1729,7 @@ pub fn query_once(cfg: &CatConfig) -> Option<(Option<f64>, Option<Mode>)> {
                 | CatUpdate::Alc(_)
                 | CatUpdate::Po(_)
                 | CatUpdate::FwdW(_)
+                | CatUpdate::RflW(_)
                 | CatUpdate::Signal(_)
                 | CatUpdate::Power(_)
                 | CatUpdate::Squelch(_)
@@ -1732,6 +1829,18 @@ pub fn effective_cw_keying(cfg: &CatConfig) -> CwKeying {
     }
 }
 
+/// The TX audio amplitude for a `0..1` power fraction on a rig whose power is
+/// set by the audio level ([`Protocol::power_by_audio`]).
+///
+/// The square root, because output power follows the square of the amplitude:
+/// this keeps the Drive and TUNE sliders reading as a fraction of power, the
+/// same as they do on a rig with a power command. 100% is unity — the audio
+/// goes out exactly as loud as it does without this — so the slider can only
+/// ever take level away, never add clipping.
+pub fn audio_gain_for_power(frac: f32) -> f32 {
+    frac.clamp(0.0, 1.0).sqrt()
+}
+
 /// Spawn the serial CAT thread from a persisted [`CatConfig`].
 pub fn spawn(cfg: CatConfig) -> CatHandle {
     let cfg = with_family_serial_limits(cfg);
@@ -1749,7 +1858,10 @@ pub fn spawn(cfg: CatConfig) -> CatHandle {
     // Same reason: the engine asks whether this rig's power can be commanded
     // before it commands anything.
     let commands_power = make_protocol(&cfg).commands_power();
+    let power_by_audio = make_protocol(&cfg).power_by_audio();
+    let audio_power_ceiling = make_protocol(&cfg).audio_power_ceiling();
     let commands_filter = make_protocol(&cfg).commands_filter();
+    let commands_agc = make_protocol(&cfg).commands_agc();
     let commands_squelch = make_protocol(&cfg).commands_squelch();
     // And the same again for the antenna sockets: the caps this device
     // publishes are built before a single frame has gone out, so the list has
@@ -1809,7 +1921,10 @@ pub fn spawn(cfg: CatConfig) -> CatHandle {
         scope,
         cw_chunk_len,
         commands_power,
+        power_by_audio,
+        audio_power_ceiling,
         commands_filter,
+        commands_agc,
         commands_squelch,
         antennas,
         commands_rig_power,
@@ -2568,6 +2683,7 @@ fn serial_thread(
     let mut last_alc: Option<f32> = None;
     let mut last_po: Option<f32> = None;
     let mut last_fwd: Option<f32> = None;
+    let mut last_rfl: Option<f32> = None;
     // See `commanded_mode` for the app-mode → rig-mode policy. The dial comes
     // in because one mode's sideband follows the band — see there.
     let mode_cmd = |app_mode: Mode, dial: Option<f64>| -> Option<Mode> {
@@ -3015,6 +3131,7 @@ fn serial_thread(
                             last_alc = None;
                             last_po = None;
                             last_fwd = None;
+                            last_rfl = None;
                             // Clear the readings so the meters drop on unkey,
                             // here as well as at the receiver: a stale SWR held
                             // locally would be re-sent beside the next over's
@@ -3072,9 +3189,35 @@ fn serial_thread(
                     // pixel, and a rig served one frame at a time must not be
                     // handed hundreds of them.
                     Ok(CatCmd::Filter(m, lo, hi)) => pending_filter = Some((m, lo, hi)),
+                    // Not coalesced: a click, not a slider, and one frame.
+                    Ok(CatCmd::Agc(agc)) => {
+                        for f in protocol.set_agc(agc) {
+                            if write_frame(&mut *port, &mut *protocol, &f, &mut last_write, &mut io)
+                            {
+                                break 'io true;
+                            }
+                        }
+                    }
                     Ok(CatCmd::Power(frac)) => pending_power = Some(frac), // coalesce
                     // Coalesced like the power: this one is a slider too.
                     Ok(CatCmd::Squelch(frac)) => pending_squelch = Some(frac),
+                    // A click on a button, so neither coalesced nor rate
+                    // limited, like the antenna below.
+                    Ok(CatCmd::PowerStep(code)) => {
+                        let mut failed = false;
+                        for f in protocol.set_power_step(code) {
+                            failed |= write_frame(
+                                &mut *port,
+                                &mut *protocol,
+                                &f,
+                                &mut last_write,
+                                &mut io,
+                            );
+                        }
+                        if failed {
+                            break 'io true;
+                        }
+                    }
                     // Not coalesced and not rate limited: an antenna is a click
                     // on a two-entry list, not a slider being dragged, and it
                     // is one frame either way.
@@ -3545,22 +3688,22 @@ fn serial_thread(
                 // it reads `None` as "the rig has not said anything yet" and would sit at that
                 // forever, never tripping. Both are therefore held here and sent together, so every
                 // message carries the latest of each.
-                let send = |swr, alc, po, fwd_w| {
-                    let _ = telem_tx.send(TxTelemetry { fwd_w, swr, alc, po });
+                let send = |swr, alc, po, fwd_w, rfl_w| {
+                    let _ = telem_tx.send(TxTelemetry { fwd_w, swr, alc, po, rfl_w });
                 };
                 if let CatUpdate::Swr(v) = u {
                     last_swr = Some(v);
-                    send(last_swr, last_alc, last_po, last_fwd);
+                    send(last_swr, last_alc, last_po, last_fwd, last_rfl);
                     continue;
                 }
                 if let CatUpdate::Alc(v) = u {
                     last_alc = Some(v);
-                    send(last_swr, last_alc, last_po, last_fwd);
+                    send(last_swr, last_alc, last_po, last_fwd, last_rfl);
                     continue;
                 }
                 if let CatUpdate::Po(v) = u {
                     last_po = Some(v);
-                    send(last_swr, last_alc, last_po, last_fwd);
+                    send(last_swr, last_alc, last_po, last_fwd, last_rfl);
                     continue;
                 }
                 // Watts the rig measured, on the families whose meter answers
@@ -3569,7 +3712,12 @@ fn serial_thread(
                 // last message sent.
                 if let CatUpdate::FwdW(v) = u {
                     last_fwd = Some(v);
-                    send(last_swr, last_alc, last_po, last_fwd);
+                    send(last_swr, last_alc, last_po, last_fwd, last_rfl);
+                    continue;
+                }
+                if let CatUpdate::RflW(v) = u {
+                    last_rfl = Some(v);
+                    send(last_swr, last_alc, last_po, last_fwd, last_rfl);
                     continue;
                 }
                 if let CatUpdate::Signal(dbm) = u {
@@ -3690,6 +3838,7 @@ fn serial_thread(
                     | CatUpdate::Alc(_)
                     | CatUpdate::Po(_)
                     | CatUpdate::FwdW(_)
+                    | CatUpdate::RflW(_)
                     | CatUpdate::Signal(_)
                     | CatUpdate::Power(_)
                     | CatUpdate::Squelch(_)
@@ -3946,6 +4095,43 @@ mod tests {
         assert!(!asks_po(CatFamily::Xiegu));
         assert!(asks_po(CatFamily::Icom));
         assert_eq!(family(CatFamily::Xiegu).tx_telemetry_requests().len(), 2, "SWR and ALC stay");
+    }
+
+    /// On demod audio the AGC button only means something at the rig. An Icom
+    /// takes it; a Xiegu, which shares the dialect but not Icom's numbering of
+    /// the presets, is left alone rather than put on some other AGC.
+    #[test]
+    fn an_icom_is_sent_the_agc_and_a_xiegu_is_not() {
+        let family = |f| make_protocol(&CatConfig { family: f, ..CatConfig::default() });
+        let mut icom = family(CatFamily::Icom);
+        assert!(icom.commands_agc());
+        let frames = icom.set_agc(AgcMode::Med);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].get(4..7), Some(&[0x16, 0x12, 0x02][..]));
+        assert!(icom.set_agc(AgcMode::Off).is_empty(), "Icom has no plain AGC OFF");
+
+        let mut xiegu = family(CatFamily::Xiegu);
+        assert!(!xiegu.commands_agc());
+        assert!(xiegu.set_agc(AgcMode::Fast).is_empty());
+    }
+
+    /// The filter index is read against the mode the radio reports, not the
+    /// panel's: a rig switched to its own RTTY at the front panel stops at
+    /// 2.7 kHz, and one commanded back to USB has the full 3.6 again.
+    #[test]
+    fn an_icom_in_its_own_rtty_is_held_to_its_filter_range() {
+        let mut icom = icom();
+        let index = |p: &mut Box<dyn Protocol>| p.set_filter(Mode::Usb, 0.0, 3600.0)[0][6];
+        assert_eq!(index(&mut icom), 0x40, "nothing reported yet: the full range");
+
+        // The rig answers a mode read with RTTY, filter 1 — a byte with no app
+        // mode, so the panel stays where it was.
+        let mut rtty = vec![0xFE, 0xFE, civ::CONTROLLER_ADDR, 0x94, 0x04, 0x04, 0x01, 0xFD];
+        assert!(icom.parse(&mut rtty).is_empty());
+        assert_eq!(index(&mut icom), 0x31);
+
+        icom.set_mode(Mode::Usb);
+        assert_eq!(index(&mut icom), 0x40);
     }
 
     /// Only the family whose radios document the behaviour asks for it.
