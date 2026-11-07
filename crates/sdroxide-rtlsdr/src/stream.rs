@@ -245,7 +245,7 @@ fn pump(
                     staging.clear();
                     staging.extend_from_slice(&completion.buffer[..]);
                     convert(&staging, &lut, &mut odd_carry, &mut scratch);
-                    
+
                     if !scratch.is_empty() {
                         stats.on_iq(scratch.len() / 2);
                         push_iq(rx, &scratch, &mut stats, shared.rx_paused.load(Ordering::Relaxed));
