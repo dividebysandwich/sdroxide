@@ -217,7 +217,7 @@ impl SdroxideApp {
 
         crate::app::undocked::tool_window(
             ctx,
-            crate::app::undocked::ToolWindow::new("TX Audio", &tool_title, [780.0, 0.0])
+            crate::app::undocked::ToolWindow::new("TX Audio", &tool_title, [780.0, 760.0])
                 .min_size([560.0, 0.0]),
             &mut tool_st,
             tool_child,
@@ -233,26 +233,44 @@ impl SdroxideApp {
                     );
                 }
                 ui.separator();
-                ui.horizontal_top(|ui| {
-                    ui.vertical(|ui| {
-                        ui.set_width(190.0);
-                        stage_list(ui, &mut v, &mut ui_state.page);
+                // The pages scroll and the meter strip stays below them: as one
+                // block the window was taller than many screens and snapped
+                // back when dragged shorter, hiding the IN/OUT meters (#790).
+                // The strip's height is last frame's, measured below.
+                let strip_id = ui.id().with("txa-meter-strip-h");
+                let strip_h: f32 = ui.data(|d| d.get_temp(strip_id)).unwrap_or(60.0);
+                let reserve = strip_h + ui.spacing().item_spacing.y * 2.0 + 8.0;
+                let screen_room = ui.ctx().content_rect().bottom() - ui.cursor().top() - 24.0;
+                let pages_h = (ui.available_height().min(screen_room) - reserve).max(120.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("txa-pages")
+                    .max_height(pages_h)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.horizontal_top(|ui| {
+                            ui.vertical(|ui| {
+                                ui.set_width(190.0);
+                                stage_list(ui, &mut v, &mut ui_state.page);
+                            });
+                            ui.separator();
+                            ui.vertical(|ui| {
+                                let m = ui_state.meters.m;
+                                match ui_state.page {
+                                    Page::Gate => gate_page(ui, &mut v.gate, m),
+                                    Page::Eq => eq_page(ui, &mut v.eq),
+                                    Page::DeEss => deess_page(ui, &mut v.deess, m),
+                                    Page::Comp => comp_page(ui, &mut v.comp, m),
+                                    Page::Output => output_page(ui, &mut v.output, m),
+                                    Page::Profiles => profiles_page(ui, ui_state, &mut v),
+                                }
+                            });
+                        });
                     });
-                    ui.separator();
-                    ui.vertical(|ui| {
-                        let m = ui_state.meters.m;
-                        match ui_state.page {
-                            Page::Gate => gate_page(ui, &mut v.gate, m),
-                            Page::Eq => eq_page(ui, &mut v.eq),
-                            Page::DeEss => deess_page(ui, &mut v.deess, m),
-                            Page::Comp => comp_page(ui, &mut v.comp, m),
-                            Page::Output => output_page(ui, &mut v.output, m),
-                            Page::Profiles => profiles_page(ui, ui_state, &mut v),
-                        }
-                    });
-                });
                 ui.separator();
+                let top = ui.cursor().top();
                 meter_strip(ui, &v, ui_state.meters.m);
+                let h = ui.min_rect().bottom() - top;
+                ui.data_mut(|d| d.insert_temp(strip_id, h));
             },
         );
         self.put_tool_state("TX Audio", tool_st);
