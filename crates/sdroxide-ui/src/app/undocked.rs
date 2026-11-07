@@ -1393,7 +1393,17 @@ fn tool_window_egui<R>(
         crate::chrome::window_body_bg(ui);
         #[cfg(not(target_arch = "wasm32"))]
         {
-            body_top = ui.min_rect().min.y;
+            // The body's top, clamped to the visible top of the body: in a
+            // window with `vscroll`, the content is laid out from where the
+            // scroll has carried it, so scrolled down its top lies above the
+            // window. Measured from there, the title bar came out short (down
+            // to the 18 pt clamp), the button moved right by the difference
+            // and covered egui's close button: a scrolled Settings window
+            // could not be closed with its ✕.
+            // Why: HDZ 2026-11-08: "wenn man bei einigen Fenstern runterscrollt,
+            //      geht das Schließfeld aus dem Fenster weg … BÄNDER hat das
+            //      nicht, aber Einstellungen macht es".
+            body_top = ui.min_rect().min.y.max(ui.clip_rect().min.y);
         }
         out = Some(body(ui));
     });
