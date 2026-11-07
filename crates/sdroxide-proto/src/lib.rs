@@ -1627,7 +1627,10 @@ use sdroxide_types::{
 /// enums; [`sdroxide_types::Command`] gains the `Vara*` commands; `DigiStatus`
 /// gains `vara` (`Option<VaraStatus>`) and `DigiConfig` the `vara_*` settings,
 /// each on its tail, so a v189 peer reads digital status out of step.
-pub const PROTO_VERSION: u16 = 190;
+///
+/// v191: `AtuState` gains optional Reg7 diagnostics and a host command-delivery
+/// error, appended to the state carried by `RadioState`.
+pub const PROTO_VERSION: u16 = 191;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
