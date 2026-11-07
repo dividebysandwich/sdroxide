@@ -1111,7 +1111,14 @@ fn draw_table(
     pass: &mut Pass,
 ) {
     let cols = header.len().max(1);
-    let total = ui.available_width();
+    // The border is drawn inside the frame and adds its width on each side
+    // (egui >= 0.31), so the table's content gets the available width less
+    // two strokes. Given all of it, every table came out 2 pt wider than its
+    // column; the next table measured from that edge, and over the manual's
+    // tables the window grew ~170 pt a frame until it was wider than the
+    // screen (the resizable window keeps its widest content, see `SLACK`).
+    let stroke = Stroke::new(1.0, theme::LINE_LIT());
+    let total = ui.available_width() - 2.0 * stroke.width;
     let spacing = 10.0;
     let inner = total - 16.0 - spacing * (cols as f32 - 1.0);
     let col_w: Vec<f32> = if cols == 2 {
@@ -1121,7 +1128,7 @@ fn draw_table(
         vec![(inner / cols as f32).max(80.0); cols]
     };
 
-    egui::Frame::new().stroke(Stroke::new(1.0, theme::LINE_LIT())).inner_margin(0).show(ui, |ui| {
+    egui::Frame::new().stroke(stroke).inner_margin(0).show(ui, |ui| {
         ui.set_width(total);
         // Header row.
         table_row(ui, header, &col_w, spacing, theme::FILL(), true, pass, idx);
@@ -1927,6 +1934,63 @@ mod tests {
         assert!(matches!(blocks[1], Block::Paragraph(_)));
         assert!(matches!(blocks[2], Block::Bullets(ref v) if v.len() == 2));
         assert!(matches!(blocks[3], Block::Table { ref rows, .. } if rows.len() == 1));
+    }
+
+    /// A table takes the width it is given and no more: the border counts.
+    #[test]
+    fn a_table_takes_the_width_it_is_given() {
+        let blocks = parse_blocks("| a | b |\n| --- | --- |\n| one | two |\n");
+        let Block::Table { header, rows } = &blocks[0] else { panic!("not a table") };
+        let three = parse_blocks("| a | b | c |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n");
+        let Block::Table { header: h3, rows: r3 } = &three[0] else { panic!("not a table") };
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx);
+        ctx.begin_pass(egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 800.0))),
+            ..Default::default()
+        });
+        egui::Area::new(egui::Id::new("table")).fixed_pos(pos2(0.0, 0.0)).show(&ctx, |ui| {
+            ui.set_width(700.0);
+            let mut pass =
+                Pass { link: None, find: Find { needle: "", sel: 0, seen: 0, rect: None } };
+            for (h, r) in [(header, rows), (h3, r3)] {
+                let top = ui.cursor().min.y;
+                draw_table(ui, 0, h, r, &mut pass);
+                let used = ui.min_rect().width();
+                assert!(used <= 700.0 + 0.5, "a table {} columns wide took {used} of 700", h.len());
+                assert!(ui.min_rect().bottom() > top, "and it drew something");
+            }
+        });
+        ctx.end_pass().drop_without_applying_deltas();
+    }
+
+    /// The real manual, with its tables, settles at the width it opened at.
+    /// Before the table border was counted it grew ~170 pt a frame until it
+    /// was wider than the viewport, and dragged by its title the text column
+    /// ran on past the window's border. What is left is a few points in the
+    /// first frames from wrapped paragraphs that end a point or two past
+    /// their column; it stops there.
+    #[test]
+    fn the_manual_settles_at_the_width_it_opened_at() {
+        let mut help = Help { open: true, ..Help::default() };
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx);
+        let id = crate::layout::salted_id(&ctx, "SDROXIDE MANUAL");
+        let mut widths = Vec::new();
+        for _ in 0..20 {
+            ctx.begin_pass(egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, 1000.0))),
+                ..Default::default()
+            });
+            help.ui(&ctx);
+            ctx.end_pass().drop_without_applying_deltas();
+            widths.push(ctx.memory(|m| m.area_rect(id)).expect("the manual is on screen").width());
+        }
+        let (first, last) = (widths[0], widths[widths.len() - 1]);
+        assert!(last - first < 16.0, "the manual grew from {first} to {last}: {widths:?}");
+        assert!(last <= 1600.0, "wider than the viewport: {widths:?}");
+        let tail = &widths[widths.len() - 3..];
+        assert!(tail.iter().all(|w| *w == last), "still growing at the end: {widths:?}");
     }
 
     /// The shipped manual must parse, because it is parsed on the way to the
