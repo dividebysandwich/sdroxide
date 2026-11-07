@@ -472,8 +472,20 @@ impl MultiApp {
     /// The ⊞ toggle: open a pane for radio `id`, or close the one it has.
     fn toggle_split(&mut self, id: u32, ctx: &egui::Context) {
         if let Some(k) = self.panes.iter().position(|&p| p == id) {
-            // The last pane is not a split; it stays.
-            if self.panes.len() > 1 {
+            // The last pane is not a split; it stays. Its ⊞ used to do
+            // nothing at all, and that is the button an operator reaches for
+            // first, on the radio already on screen (#763): it opens the split
+            // with the next radio instead.
+            if self.panes.len() == 1 {
+                if let Some(other) = self
+                    .tabs
+                    .iter()
+                    .find(|t| t.id != id && t.attached_to.is_none())
+                    .map(|t| t.id)
+                {
+                    self.panes.push(other);
+                }
+            } else {
                 self.panes.remove(k);
                 // The keyboard must stay on a visible radio: hand it to the
                 // pane that slid into the closed one's place.

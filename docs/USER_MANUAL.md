@@ -2548,7 +2548,9 @@ rather than one that would be quietly ignored.
 
 **Split view.** The **⊞** toggle gives a radio a pane of its own: toggle it
 on a second radio and the main area splits into two equal columns, side by
-side; a third radio makes three. Every pane carries its own copy of the
+side; a third radio makes three. ⊞ on the radio already on screen, with no
+split open yet, splits it with the next radio in the strip. The split is not
+remembered across a restart. Every pane carries its own copy of the
 radio strip, so any pane can be switched to any radio that is not already on
 screen — a radio is never shown twice, and its name is greyed out in the
 other panes' strips while it is up. Keyboard shortcuts and MIDI go to one
