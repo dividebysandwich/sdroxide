@@ -1500,7 +1500,20 @@ impl SdroxideApp {
         // a transmitter: STOP QSO and STOP TX stay live, because a stop is
         // worth having even where it should have nothing to stop.
         let tx_ok = self.tx_capable();
+        // A bottom-up layout places a row by the height it is *started* with,
+        // which for `horizontal_wrapped` is `interact_size.y`, and the row then
+        // grows downward to fit what is in it. These chips are taller than that
+        // (29 points against 18 on a desktop, 41 against 34 on a tablet), so
+        // the difference hung off the bottom edge of the column and took the
+        // panel's frame and the lower part of the buttons with it. Started at
+        // the chips' own height, the row sits on the edge instead of below it.
+        let row_h = crate::chrome::chip_height(ui, Some(15.0));
+        let interact_h = ui.spacing().interact_size.y;
+        ui.spacing_mut().interact_size.y = interact_h.max(row_h);
         ui.horizontal_wrapped(|ui| {
+            // Back to the style's own height inside the row, so nothing drawn
+            // in it is sized from the row's.
+            ui.spacing_mut().interact_size.y = interact_h;
             let cq = ui.add_enabled_ui(!in_qso && tx_ok, |ui| {
                 rx_only_hint(
                     crate::chrome::chip_accent(
@@ -1533,6 +1546,7 @@ impl SdroxideApp {
                 cmds.push(Command::DigiAbortTx);
             }
         });
+        ui.spacing_mut().interact_size.y = interact_h;
         ui.add_space(gap);
         // Message picker: choose by hand which message goes next (WSJT-X's
         // Tx1–Tx6), or send a line of free text in the next slot.
