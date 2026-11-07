@@ -1,3 +1,9 @@
+on:
+  push:
+    branches: [reproducible-linux-compat]   # temporary: remove before merging
+  workflow_dispatch:
+  schedule:
+    - cron: '41 4 * * 0'
 name: Reproducibility
 
 # Builds the linux-x86_64-compat binary, the macos-aarch64 binary, the
