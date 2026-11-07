@@ -13,3 +13,6 @@ thiserror.workspace = true
 tracing.workspace = true
 # Enumerate local IPv4 interfaces so discovery can broadcast per-interface.
 network-interface = "2.0"
+# A UDP receive buffer sized for IQ rather than for control traffic — see
+# `receive_socket` in net.rs. Already in the workspace (sdroxide-smartsdr).
+socket2 = "0.6"

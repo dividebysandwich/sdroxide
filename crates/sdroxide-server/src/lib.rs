@@ -163,6 +163,15 @@ pub struct ServerParams {
     pub radio_power: Option<RadioPowerFn>,
 }
 
+/// How many receive-audio packets (20 ms each) the audio lane holds before the
+/// pump starts dropping the newest.
+///
+/// 8 was 160 ms: one large spectrum frame still being written to a slow link
+/// was enough to overflow it, and every packet dropped there is a hole in the
+/// audio that a digital-mode decoder cannot get back. 16 is 320 ms, enough to
+/// ride out one such frame without opening a hole.
+pub(crate) const AUDIO_LANE_DEPTH: usize = 16;
+
 pub(crate) struct SessionTx {
     pub reliable: mpsc::Sender<ServerMsg>,
     pub audio: mpsc::Sender<ServerMsg>,
@@ -692,7 +701,20 @@ pub async fn serve(params: ServerParams) -> Result<(), ServerError> {
     let addr: SocketAddr = format!("{}:{}", params.bind, params.port)
         .parse()
         .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], params.port)));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    // TCP_NODELAY on every accepted connection. The sockets carry a steady
+    // stream of small WebSocket messages (a 20 ms audio packet, meters, a
+    // spectrum row), each flushed on its own; with Nagle's algorithm on, a
+    // small write waits for the ACK of the previous one, and against a
+    // browser's delayed ACK that is up to 40 ms (200 ms on Windows) of
+    // stall followed by a burst. The client sees exactly what a lossy link
+    // looks like -- audio gaps, a waterfall that stutters -- on a network
+    // that is perfectly healthy.
+    use axum::serve::ListenerExt as _;
+    let listener = tokio::net::TcpListener::bind(addr).await?.tap_io(|tcp| {
+        if let Err(e) = tcp.set_nodelay(true) {
+            warn!("could not set TCP_NODELAY on a client connection: {e}");
+        }
+    });
     info!("server listening on http://{addr}/");
     axum::serve(listener, axum::ServiceExt::<axum::extract::Request>::into_make_service(app))
         .await?;
@@ -838,6 +860,11 @@ fn pump(
     let mut mono = Vec::<f32>::new();
     let mut opus_enc: Option<opus::Encoder> = None;
     let mut audio_seq = 0u32;
+    // Packets the audio lane refused, and when that was last reported. Dropping
+    // is the backpressure policy, but a silent one made "choppy audio on a good
+    // network" impossible to tell from a client-side fault.
+    let mut audio_dropped = 0u32;
+    let mut audio_dropped_at = std::time::Instant::now();
 
     loop {
         // Taken out of the roster: let go of the radio, so that the engine
@@ -922,11 +949,23 @@ fn pump(
                     audio_seq = audio_seq.wrapping_add(1);
                     if let Some(s) = shared.session.lock().unwrap().as_ref() {
                         // Bounded lane: dropping is the backpressure policy.
-                        let _ = s.audio.try_send(ServerMsg::RxAudio { seq: audio_seq, payload });
+                        if s.audio.try_send(ServerMsg::RxAudio { seq: audio_seq, payload }).is_err()
+                        {
+                            audio_dropped += 1;
+                        }
                     }
                     mono.drain(..960);
                 }
             }
+        }
+        if audio_dropped > 0 && audio_dropped_at.elapsed() >= Duration::from_secs(5) {
+            warn!(
+                radio = shared.id,
+                dropped = audio_dropped,
+                "audio lane full: the client is not draining its socket fast enough"
+            );
+            audio_dropped = 0;
+            audio_dropped_at = std::time::Instant::now();
         }
         // Bound the accumulator against pathological stalls.
         if mono.len() > 48_000 {

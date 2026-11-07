@@ -331,12 +331,18 @@ async fn run_session(
 
     // --- register lanes -----------------------------------------------
     let (rel_tx, mut rel_rx) = mpsc::channel::<ServerMsg>(256);
-    let (aud_tx, mut aud_rx) = mpsc::channel::<ServerMsg>(8);
+    let (aud_tx, mut aud_rx) = mpsc::channel::<ServerMsg>(crate::AUDIO_LANE_DEPTH);
     *shared.session.lock().unwrap() = Some(SessionTx { reliable: rel_tx, audio: aud_tx, rx_codec });
 
     let (mut ws_tx, mut ws_rx) = futures_util::StreamExt::split(socket);
 
-    // Sender: reliable first, then audio, then latest spectrum.
+    // Sender: audio first, then reliable, then latest spectrum.
+    //
+    // Audio leads because it is the only lane that cannot wait: it is 50
+    // small packets a second at most, so it cannot starve the others, while a
+    // burst on the reliable lane (up to 256 queued messages on connect or after
+    // a decode run) used to be written out ahead of it and overflowed the
+    // audio lane meanwhile -- holes in the sound with nothing wrong on the wire.
     let mut spectrum_rx = shared.spectrum_rx.clone();
     let mut wide_rx = shared.wide_spectrum_rx.clone();
     let sender = async {
@@ -345,11 +351,11 @@ async fn run_session(
         loop {
             tokio::select! {
                 biased;
-                m = rel_rx.recv() => {
+                m = aud_rx.recv() => {
                     let Some(m) = m else { break };
                     if ws_tx.send(msg(&m)).await.is_err() { break; }
                 }
-                m = aud_rx.recv() => {
+                m = rel_rx.recv() => {
                     let Some(m) = m else { break };
                     if ws_tx.send(msg(&m)).await.is_err() { break; }
                 }

@@ -215,9 +215,22 @@ impl WindowPan {
 /// The view is inside the window when this is called — [`ViewState::clamp_to`]
 /// at the end of every frame guarantees it — so the overshoot is exactly the
 /// part of this pan the window could not absorb.
+///
+/// ⛔ Except in the one frame a zoom-out has asked for more than the window:
+/// the wheel runs before the centring and the clamp, so the view arrives here
+/// wider than the window and overhangs it on *both* sides. Reading only the
+/// low edge then reported half the excess as a pan the operator never made,
+/// the front end was retuned by it, the next frame centred it back, and the
+/// waterfall shook for as long as the wheel kept pushing past full span.
+/// A view at least as wide as the window cannot be panned within it, so the
+/// move is where its middle sits against the window's — zero for a view
+/// centred on the dial, however far past the window the zoom went.
 fn pan_view(view: &mut ViewState, dhz: f64, dev_center: f64, dev_span: f64) -> f64 {
     view.view_lo_hz += dhz;
     view.view_hi_hz += dhz;
+    if view.span() >= dev_span {
+        return (view.view_lo_hz + view.view_hi_hz) / 2.0 - dev_center;
+    }
     let (lo, hi) = (dev_center - dev_span / 2.0, dev_center + dev_span / 2.0);
     if view.view_lo_hz < lo {
         view.view_lo_hz - lo
@@ -3313,6 +3326,26 @@ mod centring_tests {
         let mut v = view_spanning(0.0, 1_000_000.0);
         let over = center_on_dial(&mut v, 520_000.0, 500_000.0, 1_000_000.0, 1000.0);
         assert!((over - 20_000.0).abs() < 0.5, "the front end was asked for {over} Hz, not 20 kHz");
+    }
+
+    /// Zooming out past the whole window is not a pan. The wheel runs before
+    /// the centring, so for one frame the view is wider than the window on
+    /// both sides; reading that as an overshoot retuned the front end by half
+    /// the excess, the next frame centred it back, and the waterfall shook for
+    /// as long as the wheel pushed past full span (Kevin, 2.5 Msps Pluto).
+    #[test]
+    fn zooming_out_past_the_window_does_not_retune() {
+        const DEV: f64 = 1_000_000.0;
+        let rect = Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(1000.0, 200.0));
+        for x in [100.0f32, 500.0, 900.0] {
+            let mut v = view_spanning(0.0, DEV);
+            zoom_about(&mut v, x, &rect, 1.05, DEV);
+            assert!(v.span() > DEV, "the zoom did not overshoot the window");
+            let over = center_on_dial(&mut v, DEV / 2.0, DEV / 2.0, DEV, 1000.0);
+            assert_eq!(over, 0.0, "a zoom-out at x={x} asked the front end to move {over} Hz");
+            v.clamp_to(DEV / 2.0, DEV);
+            assert_eq!((v.view_lo_hz, v.view_hi_hz), (0.0, DEV));
+        }
     }
 
     /// A slide narrower than one column of the picture is not worth a retune:

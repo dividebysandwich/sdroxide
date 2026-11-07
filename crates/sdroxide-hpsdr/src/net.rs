@@ -344,6 +344,55 @@ impl RxStats {
     }
 }
 
+/// The local UDP socket RX I/Q arrives on, with the largest receive buffer the
+/// system will give it.
+///
+/// **The default is sized for control traffic, not for an IQ stream.** Linux
+/// hands out about 212 KB and Windows as little as 64 KB; at 384 ksample/s a
+/// second of interleaved stereo is 1.5 MB, so the buffer holds a tenth of a
+/// second on Linux and forty milliseconds on Windows. Any stall longer than
+/// that — a repaint, a scan, a page fault, a resume from idle — is a burst of
+/// datagrams the kernel throws away before the loop can read them, and the
+/// radio goes on sending, so the gap is silent and permanent. Reported by
+/// DK8JV as a handful of datagrams lost "almost precisely every two seconds",
+/// which is exactly how a periodic stall shows up against a two-second
+/// statistics window (issue #388).
+///
+/// Asked for four megabytes and **the granted size is logged**, because that is
+/// the number that decides how long a stall can last: on Linux the kernel
+/// doubles the request and then caps it at `net.core.rmem_max`, which is 212 KB
+/// on a stock kernel and cannot be raised from inside a process. A log line
+/// that says `recv buffer 425984 bytes` is the operator's evidence that the
+/// limit is theirs to raise.
+fn receive_socket() -> std::io::Result<UdpSocket> {
+    const WANT: usize = 4 * 1024 * 1024;
+    // Best effort at every step: a system that refuses the size still streams,
+    // it just streams with the buffer it gave us.
+    let socket = match socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::debug!("HPSDR: socket2 unavailable ({e}); using a plain UDP socket");
+            return UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0));
+        }
+    };
+    if let Err(e) = socket.set_recv_buffer_size(WANT) {
+        tracing::debug!("HPSDR: asking for a {WANT}-byte receive buffer failed: {e}");
+    }
+    socket.bind(&std::net::SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)).into())?;
+    match socket.recv_buffer_size() {
+        Ok(got) => tracing::info!(
+            "HPSDR: UDP receive buffer {got} bytes (~{:.0} ms of a 384 ksps stereo stream)",
+            got as f64 / 1_536_000.0 * 1000.0
+        ),
+        Err(e) => tracing::debug!("HPSDR: could not read back the receive buffer size: {e}"),
+    }
+    Ok(socket.into())
+}
+
 /// Follows a radio→host datagram sequence counter and reports how many
 /// datagrams went missing. UDP loss on a busy 100 Mbit link is the usual cause
 /// of a stream that runs at the right rate but sounds torn up, and nothing else
@@ -859,7 +908,7 @@ impl HpsdrBoard {
             }
         }
 
-        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
+        let socket = receive_socket()?;
         socket.set_read_timeout(Some(Duration::from_millis(2)))?;
         tracing::debug!(
             "HPSDR: bound local UDP socket {}",
@@ -1734,5 +1783,28 @@ mod hl2_swr_regression_tests {
     fn no_forward_drive_has_no_meaningful_swr() {
         assert_eq!(hl2_swr_from_raw(0, 0), None);
         assert_eq!(hl2_swr_from_raw(6, 0), None);
+    }
+
+    /// The receive buffer is the one number that decides how long a stall the radio
+    /// can survive, and it is the OS's decision, not ours.
+    ///
+    /// Asserted as a comparison rather than against a size: the kernel doubles the
+    /// request and then caps it at `net.core.rmem_max`, which differs per machine,
+    /// so an absolute floor would be a test of the machine rather than of this
+    /// code. What is ours to get right is that asking for a larger buffer never
+    /// yields a smaller one than a plain bind, and that the socket still binds.
+    #[test]
+    fn the_receive_socket_asks_for_more_room_than_a_plain_bind() {
+        let plain = std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, 0)).unwrap();
+        let plain_size = socket2::SockRef::from(&plain).recv_buffer_size().unwrap();
+        drop(plain);
+
+        let socket = super::receive_socket().expect("a local UDP socket");
+        assert!(socket.local_addr().is_ok(), "the socket is bound");
+        let size = socket2::SockRef::from(&socket).recv_buffer_size().unwrap();
+        assert!(
+            size >= plain_size,
+            "the receive buffer ({size}) is smaller than a plain bind's ({plain_size})"
+        );
     }
 }

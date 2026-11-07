@@ -18,6 +18,45 @@ pub(in crate::app) fn load_qso_log(storage: Option<&dyn eframe::Storage>) -> Vec
     storage.and_then(|s| eframe::get_value(s, "qso_log")).unwrap_or_default()
 }
 
+/// Re-read the logbook before a QSO that arrived from the engine is appended,
+/// or `None` when there is **no store to re-read**.
+///
+/// The difference between "the store says nothing" and "there is no store" is
+/// the whole point. On this machine the logbook is a JSON file beside the rest
+/// of the configuration, so it can always be re-read — that is what keeps two
+/// radio tabs from writing each other's contacts away. In the browser the
+/// logbook lives in eframe's storage, and the call site in the event loop has
+/// no `Storage` to offer it: asking anyway answered "empty", which wiped the
+/// log down to the contact just logged. A three-radio station in a browser
+/// exported a logbook of exactly one QSO (issue #236) — and the export itself
+/// was innocent, which is why the same button on a native single-radio station
+/// exported all of them.
+pub(in crate::app) fn reload_qso_log(
+    #[allow(unused_variables)] storage: Option<&dyn eframe::Storage>,
+) -> Option<Vec<QsoRecord>> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Some(sdroxide_config::load_qso_log())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        storage.and_then(|s| eframe::get_value(s, "qso_log"))
+    }
+}
+
+/// **The logbook after a shared-log reload**: what the store gave back, or the
+/// log in hand when there was no store to ask.
+///
+/// Taken as a list rather than a bool so the rule can be tested without a
+/// filesystem, a browser or an event loop — the fault being fixed here was
+/// invisible to every one of them until a second radio tab existed.
+pub(in crate::app) fn after_shared_log(
+    current: Vec<QsoRecord>,
+    reloaded: Option<Vec<QsoRecord>>,
+) -> Vec<QsoRecord> {
+    reloaded.unwrap_or(current)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::app) fn persist_qso_log(log: &[QsoRecord]) {
     if let Err(e) = sdroxide_config::save_qso_log(log) {
@@ -496,4 +535,36 @@ pub(in crate::app) fn band_plan_path() -> Option<std::path::PathBuf> {
 #[cfg(target_arch = "wasm32")]
 pub(in crate::app) fn band_plan_path() -> Option<std::path::PathBuf> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn qso(call: &str) -> QsoRecord {
+        QsoRecord { call: call.into(), ..QsoRecord::default() }
+    }
+
+    /// **A reload with no store to read must leave the logbook in hand alone.**
+    ///
+    /// This is the shape of the fault behind issue #236. A station with more
+    /// than one radio shares one logbook between the radio tabs, so a contact
+    /// logged by the engine is appended only after the log has been re-read —
+    /// which keeps one tab from writing another's contacts away. In a browser
+    /// there is no file to re-read, and the question "what does the store say?"
+    /// was answered "nothing": the log was replaced by an empty list and the one
+    /// contact just logged was pushed onto it. An export of a session then held
+    /// exactly one QSO, while the same button on a native single-radio station
+    /// held every one of them.
+    #[test]
+    fn a_logbook_is_not_wiped_by_a_reload_that_had_no_store_to_read() {
+        let log = vec![qso("ON6CQ"), qso("DL1ABC"), qso("F4NRM")];
+        assert_eq!(after_shared_log(log.clone(), None), log, "no store is not an empty logbook");
+        // A store that *does* answer still replaces it: that is the point of the
+        // reload, so a contact logged on another tab is not written away.
+        let from_store = vec![qso("ON6CQ"), qso("DL1ABC"), qso("F4NRM"), qso("G4XYZ")];
+        assert_eq!(after_shared_log(log, Some(from_store.clone())), from_store);
+        // A first run really is an empty logbook, and that still works.
+        assert!(after_shared_log(Vec::new(), Some(Vec::new())).is_empty());
+    }
 }

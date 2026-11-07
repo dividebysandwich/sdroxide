@@ -780,7 +780,7 @@ impl SdroxideApp {
             let w = self.rig_rows_w(ui);
             boxes.push((Kind::Rig, StripBox { w, flex: 1.0, max_w: w * CHIP_STRETCH_FACTOR }));
         }
-        if self.tx_capable() {
+        if self.tx_chrome_ok() {
             let w = self.tx_rows_w(ui);
             boxes.push((Kind::Tx, StripBox { w, flex: 2.0, max_w: w + RAIL_STRETCH_MAX }));
         }
@@ -879,7 +879,7 @@ impl SdroxideApp {
     /// plan turns on how much of the current row is still free, and only the
     /// cursor knows that.
     fn phone_tail(&self, ui: &egui::Ui, band_mode_shown: bool) -> PhoneTail {
-        let tx_capable = self.tx_capable();
+        let tx_capable = self.tx_chrome_ok();
         let gap = ui.spacing().item_spacing.x;
         let mut lead = (0usize, 0.0f32);
         let mut add_lead = |w: f32| {
@@ -918,7 +918,7 @@ impl SdroxideApp {
     /// which would cost a 720 pt screen a quarter of its height before the
     /// waterfall got any.
     fn short_strip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
-        let tx_capable = self.tx_capable();
+        let tx_capable = self.tx_chrome_ok();
         let sub = self.state.sub_rx_enabled;
         let div = self.has_diversity();
         let rig = self.rig_box_shown();
@@ -1095,7 +1095,7 @@ impl SdroxideApp {
         band_mode_shown: bool,
         tail: Option<PhoneTail>,
     ) {
-        let tx_capable = self.tx_capable();
+        let tx_capable = self.tx_chrome_ok();
         let extra = tail.map_or(0.0, |t| t.lead_extra);
         if !band_mode_shown {
             self.band_mode_chip(ui, cmds, extra);
@@ -1855,7 +1855,7 @@ impl SdroxideApp {
     /// [`Self::vfo_rows_w`] is spent by the controls themselves: the utility
     /// chips widen, and the offset fields grow.
     fn vfo_rit_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, w: f32) {
-        let tx_capable = self.tx_capable();
+        let tx_capable = self.tx_chrome_ok();
         let inner = w - 2.0 * crate::chrome::MODULE_MARGIN_X - 4.0;
         let chips = vfo_chip_labels(tx_capable);
         let extra1 = ((inner - chip_row_w(ui, &chips)) / chips.len() as f32).max(0.0);
@@ -1889,7 +1889,7 @@ impl SdroxideApp {
         {
             cmds.push(Command::SetSubRx(!self.state.sub_rx_enabled));
         }
-        if self.tx_capable() {
+        if self.tx_chrome_ok() {
             self.duplex_chip(ui, cmds, extra);
         }
         self.repeater_tone_chip(ui, cmds, extra);
@@ -1904,7 +1904,7 @@ impl SdroxideApp {
         narrow: bool,
         extra: f32,
     ) {
-        let tx_capable = self.tx_capable();
+        let tx_capable = self.tx_chrome_ok();
         // Wide enough for a signed 4-digit offset plus " Hz", and tall enough
         // to hit with a finger where the layout expects one.
         let hz_field = if narrow {
@@ -2285,7 +2285,7 @@ impl SdroxideApp {
     /// the RIT/XIT row, plus the box margins and a little rounding slack. A
     /// receive-only rig has no XIT, and stops paying for it.
     fn vfo_rows_w(&self, ui: &egui::Ui) -> f32 {
-        let tx_capable = self.tx_capable();
+        let tx_capable = self.tx_chrome_ok();
         chip_row_w(ui, &vfo_chip_labels(tx_capable)).max(vfo_offsets_w(ui, tx_capable))
             + 2.0 * crate::chrome::MODULE_MARGIN_X
             + 4.0
