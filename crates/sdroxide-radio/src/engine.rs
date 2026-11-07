@@ -7036,7 +7036,7 @@ impl Engine {
                 DigiAction::KeyTx => {
                     // An active external ATU owns the transmitter.
                     // Ignore digital key-downs until its request ends.
-                    if self.atu_operation_active {
+                    if self.atu_tx_interlocked() {
                         return;
                     }
 
@@ -7144,9 +7144,9 @@ impl Engine {
                 DigiAction::SendCw { text, seconds } => {
                     // The external ATU owns the transmitter.
                     // Do not allow a radio-keyed CW message to start during tuning.
-                    if self.atu_rf_requested {
-                        warn!("CW refused: external ATU is active");
-                        self.notice("transmit refused — external ATU is active");
+                    if self.atu_tx_interlocked() {
+                        warn!("CW refused: external ATU operation is active");
+                        self.notice("transmit refused — external ATU operation is active");
                         if let Some(d) = self.digi.as_mut() {
                             d.abort_tx();
                         }
@@ -8941,7 +8941,7 @@ impl Engine {
             SetTune(on) => {
                 // The external ATU owns the transmitter until its request ends.
                 // Ignore operator TUNE key-downs, but always permit key-up.
-                if on && self.atu_operation_active {
+                if on && self.atu_tx_interlocked() {
                     return;
                 }
 
@@ -9745,7 +9745,7 @@ impl Engine {
             DigiTxActive(on) => {
                 // The external ATU owns the transmitter.
                 // Refuse digital-voice key-downs, but allow key-up.
-                if on && self.atu_rf_requested {
+                if on && self.atu_tx_interlocked() {
                     return;
                 }
                 if let Some(d) = self.digi.as_mut() {
@@ -9763,7 +9763,7 @@ impl Engine {
             CwStraight(on) => {
                 // The external ATU owns the transmitter.
                 // Block straight-key closure, but always allow release.
-                if !on || !self.atu_rf_requested {
+                if !on || !self.atu_tx_interlocked() {
                     if let Some(d) = self.digi.as_mut() {
                         d.set_straight(on);
                     }
@@ -9772,7 +9772,7 @@ impl Engine {
             CwKey(down) => {
                 // The external ATU owns the transmitter.
                 // Block CW key-down, but always allow key-up.
-                if !down || !self.atu_rf_requested {
+                if !down || !self.atu_tx_interlocked() {
                     if let Some(d) = self.digi.as_mut() {
                         d.key_down(down);
                     }
@@ -12688,7 +12688,7 @@ impl Engine {
         }
         // The external ATU owns the transmitter until its request ends.
         // Refuse TCI key-downs, but always permit the unkey path above.
-        if self.atu_rf_requested {
+        if self.atu_tx_interlocked() {
             if let Some(s) = self.tci_srv.as_ref() {
                 s.deny_tx();
             }
@@ -13465,7 +13465,7 @@ impl Engine {
         self.follow_rig_tx(on);
         // An external ATU owns the host TX path, but the radio's own
         // transmission always overrides it.
-        if self.atu_operation_active || self.tx_active {
+        if self.atu_tx_interlocked() || self.tx_active {
             self.sync_tx_state();
         }
         // Straight through to the switch rather than waiting for the next tick.
@@ -16827,6 +16827,11 @@ impl Engine {
         self.atu_rf_requested && !self.rig_tx
     }
 
+    /// Whether an external antenna-tuner operation owns the host TX path.
+    fn atu_tx_interlocked(&self) -> bool {
+        self.atu_operation_active || self.atu_rf_requested
+    }
+
     /// The drive actually used: the operator's setting, calibrated for the band
     /// it is going out on and then held under whatever ceiling is in force —
     /// the transverter in front of the radio, the operator's own, or both.
@@ -16956,7 +16961,7 @@ impl Engine {
     fn set_ptt(&mut self, on: bool) {
         // The external ATU owns the transmitter until its request ends.
         // Ignore operator key-downs, but always permit key-up.
-        if on && self.atu_operation_active {
+        if on && self.atu_tx_interlocked() {
             return;
         }
 
@@ -17061,7 +17066,7 @@ impl Engine {
             return; // a level, re-reported; only edges do anything
         }
         if closed
-            && (self.atu_operation_active || self.tx_active || self.state.tx.tune || self.digi_tx)
+            && (self.atu_tx_interlocked() || self.tx_active || self.state.tx.tune || self.digi_tx)
         {
             return; // someone else owns this over — and owns its key-up too
         }
@@ -17867,8 +17872,8 @@ impl Engine {
     fn start_voice_play(&mut self, slot: usize) {
         // The external ATU owns the transmitter until its request ends.
         // Do not allow a voice-keyer transmission to start during tuning.
-        if self.atu_rf_requested {
-            warn!("voice keyer: external ATU is active");
+        if self.atu_tx_interlocked() {
+            warn!("voice keyer: external ATU operation is active");
             return;
         }
         if !self.state.rx[0].mode.allows_voice_keyer() {

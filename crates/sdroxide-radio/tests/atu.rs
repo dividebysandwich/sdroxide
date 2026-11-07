@@ -18,6 +18,8 @@ struct AtuRig {
     atu: Arc<Mutex<Option<AtuState>>>,
     tunes: Arc<Mutex<usize>>,
     bypasses: Arc<Mutex<usize>>,
+    tx_begins: Arc<Mutex<usize>>,
+    report_tuning: bool,
 }
 
 impl AtuRig {
@@ -26,7 +28,15 @@ impl AtuRig {
             atu: Arc::new(Mutex::new(atu)),
             tunes: Arc::new(Mutex::new(0)),
             bypasses: Arc::new(Mutex::new(0)),
+            tx_begins: Arc::new(Mutex::new(0)),
+            report_tuning: true,
         }
+    }
+
+    fn new_with_deferred_tune_report(atu: Option<AtuState>) -> AtuRig {
+        let mut rig = Self::new(atu);
+        rig.report_tuning = false;
+        rig
     }
 }
 
@@ -49,14 +59,20 @@ impl IqSource for AtuRig {
     fn describe(&self) -> String {
         "rig with an antenna tuner".into()
     }
+    fn tx_begin(&mut self, _center_hz: f64, rate: f64) -> Result<f64> {
+        *self.tx_begins.lock().unwrap() += 1;
+        Ok(rate)
+    }
     fn atu(&self) -> Option<AtuState> {
         *self.atu.lock().unwrap()
     }
     fn atu_tune(&mut self) -> Result<()> {
         *self.tunes.lock().unwrap() += 1;
         // The radio starts its tune; its report follows.
-        if let Some(a) = self.atu.lock().unwrap().as_mut() {
-            a.status = AtuStatus::Tuning;
+        if self.report_tuning {
+            if let Some(a) = self.atu.lock().unwrap().as_mut() {
+                a.status = AtuStatus::Tuning;
+            }
         }
         Ok(())
     }
@@ -152,6 +168,42 @@ fn a_tune_reaches_the_radio_and_its_outcome_is_shown() {
     h.cmd_tx.send(Command::AtuBypass).unwrap();
     assert!(wait_for_state(&h.event_rx, |s| s.atu.status == AtuStatus::Bypass && !s.atu.enabled));
     assert_eq!(*bypasses.lock().unwrap(), 1);
+
+    drop(h);
+    let _ = thread.map(|t| t.join());
+}
+
+/// A host PTT request is refused as soon as the tuner accepts a tune,
+/// even before the radio reports that tuning has started.
+#[test]
+fn host_ptt_is_interlocked_before_the_tuning_status_arrives() {
+    let rig = AtuRig::new_with_deferred_tune_report(Some(TUNED));
+    let (tunes, tx_begins) = (rig.tunes.clone(), rig.tx_begins.clone());
+    let mut h = start_engine(Box::new(rig), caps(), EngineConfig::default());
+    let thread = h.thread.take();
+
+    assert!(wait_for_state(&h.event_rx, |s| s.atu == TUNED));
+
+    // The fake radio continues to report TUNED after accepting this command.
+    h.cmd_tx.send(Command::AtuTune).unwrap();
+    h.cmd_tx.send(Command::SetPtt(true)).unwrap();
+
+    // This later command provides a FIFO marker: once Bypass is reported,
+    // the preceding PTT request has necessarily been processed.
+    h.cmd_tx.send(Command::AtuBypass).unwrap();
+    assert!(
+        wait_for_state(&h.event_rx, |s| {
+            s.atu.status == AtuStatus::Bypass && !s.atu.enabled
+        }),
+        "the queued bypass command should be processed"
+    );
+
+    assert_eq!(*tunes.lock().unwrap(), 1, "the tune command reached the radio");
+    assert_eq!(
+        *tx_begins.lock().unwrap(),
+        0,
+        "host transmission must not start during the ATU operation"
+    );
 
     drop(h);
     let _ = thread.map(|t| t.join());
