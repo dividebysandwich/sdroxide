@@ -423,6 +423,12 @@ impl HpsdrSource {
                 self.atu_operation = None;
                 self.atu_saw_rf_request = false;
                 self.atu_rf_requested = false;
+                let enabled = self.atu_state.is_some_and(|state| state.enabled);
+                self.atu_state = Some(sdroxide_types::AtuState {
+                    status: sdroxide_types::AtuStatus::Failed,
+                    enabled,
+                    using_memory: false,
+                });
             }
             HpsdrAtuCommandResult::Failed => {
                 tracing::warn!("HPSDR: antenna tuner I2C command failed or was not acknowledged");
