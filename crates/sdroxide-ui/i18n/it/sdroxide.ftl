@@ -2065,12 +2065,12 @@ topbar-return-selector-top-bar-popup = Riporta il selettore nel popup della barr
 topbar-dec-off = DEC off
 topbar-vol = Vol
 topbar-counted-steps-not-decibels-what =
-
+    {""}
 
     Contato in passi, non in decibel: quanto valga un passo è affare del ricevitore, e su un SDRplay dipende anche dalla banda. Il verso giusto resta più guadagno.
 topbar-gain = Guadagno
 topbar-plutosdr-s-own-agc-setting =
-
+    {""}
 
     L'AGC proprio del PlutoSDR imposta questo guadagno, quindi muovere il cursore non fa nulla. Imposta Impostazioni → Radio → AGC su Manuale per controllarlo da qui.
 topbar-agc-hang-time-click-cycle = Tempo di tenuta dell'AGC — clicca per scorrere: Off / Lento / Medio / Veloce
@@ -4178,7 +4178,7 @@ ism-where-decoder-actually-listening-follows = Dove il decodificatore sta davver
 ism-transmissions-gate-opened-how-many = Le trasmissioni su cui il cancello si è aperto, e quante hanno prodotto un frame valido. Molti burst e nessuna decodifica significa che la banda è occupata da dispositivi che sdroxide non sa ancora leggere. Nessuno affatto significa che nulla raggiunge la soglia — abbassala, oppure verifica che la sintonia sia sulla banda.
 ism-nothing-heard-yet = niente di sentito ancora
 ism-click-tune-receiver =
-
+    {""}
 
     Clicca per sintonizzare il ricevitore su di esso
 
@@ -4282,20 +4282,20 @@ frame-restart-without-oob-tx-put = Riavvia senza --oob-tx per ripristinare il bl
 
 smeter-alc-how-hard-transmitter-being = ALC — quanto è pilotato il trasmettitore, in percentuale della massima potenza che può emettere. 100 % è il fondo scala, non la piena potenza in watt: quanto valga in antenna dipende dalla radio e dal Pilotaggio.
 smeter-radio-reports-no-forward-power =
-
+    {""}
 
     Questa radio non riporta la potenza diretta, quindi la cifra accanto all'ALC è di nuovo la lettura dell'ALC anziché watt.
 smeter-no-swr-radio-has-no =
-
+    {""}
 
     Nessun ROS: questa radio non ha un ponte con cui misurarlo, e sdroxide non ne inventerà uno — può mostrare soltanto ciò che la radio stessa riporta. Un apparato con misuratore ROS (via CAT, TCI o collegamento LAN) e una scheda HPSDR lo compilano entrambi; un normale trasmettitore SDR no.
 smeter-no-signal-report-yet-receiver = Nessun rapporto di segnale ancora — il ricevitore non ha fornito una lettura dello strumento.
 smeter-s9-73-dbm-each-s =
-
+    {""}
 
     S9 è −73 dBm e ogni unità S sotto di esso vale 6 dB. La cifra in dBm è onesta quanto la calibrazione del front-end — un ricevitore non calibrato riporta dBFS con un'etichetta dBm.
 smeter-ovld-converter-into-rails-so =
-
+    {""}
 
     OVLD: il convertitore è arrivato ai suoi limiti, quindi il livello mostrato sottostima il segnale. Riduci il guadagno del front-end.
 smeter-table-held = , tabella bloccata

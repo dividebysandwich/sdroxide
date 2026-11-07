@@ -2061,12 +2061,12 @@ topbar-return-selector-top-bar-popup = Seçiciyi üst çubuktaki açılır pence
 topbar-dec-off = DEC kapalı
 topbar-vol = Ses
 topbar-counted-steps-not-decibels-what =
-
+    {""}
 
     Adımla sayılır, desibelle değil: bir adımın ne değerinde olduğu alıcının kendi işidir ve SDRplay'de bant da buna dahildir. Doğrusu yine daha fazla kazançtır.
 topbar-gain = Kazanç
 topbar-plutosdr-s-own-agc-setting =
-
+    {""}
 
     PlutoSDR'nin kendi AGC'si bu kazancı ayarlıyor, bu yüzden kaydırıcıyı hareket ettirmek bir şey yapmaz. Burada denetlemek için Ayarlar → Radyo → AGC'yi Manuel'e alın.
 topbar-agc-hang-time-click-cycle = AGC tutma süresi — döngü için tıklayın: Kapalı / Yavaş / Orta / Hızlı
@@ -4173,7 +4173,7 @@ ism-where-decoder-actually-listening-follows = Çözücünün gerçekte nerede d
 ism-transmissions-gate-opened-how-many = Kapının açıldığı yayınlar ve kaçının geçerli bir çerçeve ürettiği. Birçok patlama ve hiç çözüm yok, bandın sdroxide'ın henüz okuyamadığı aygıtlarla meşgul olduğu anlamına gelir. Hiç yoksa, hiçbir şeyin eşiğe ulaşmadığı anlamına gelir — onu düşürün ya da skalanın bantta olduğunu denetleyin.
 ism-nothing-heard-yet = henüz hiçbir şey duyulmadı
 ism-click-tune-receiver =
-
+    {""}
 
     Alıcıyı ona ayarlamak için tıklayın
 
@@ -4277,20 +4277,20 @@ frame-restart-without-oob-tx-put = Kilidi geri koymak için --oob-tx olmadan yen
 
 smeter-alc-how-hard-transmitter-being = ALC — verici, çıkarabileceği en fazlanın yüzdesi olarak ne kadar sürülüyor. %100 tam ölçektir, watt cinsinden tam güç değil: bunun antende ne değerinde olduğu radyoya ve Sürüş'e bağlıdır.
 smeter-radio-reports-no-forward-power =
-
+    {""}
 
     Bu radyo ileri güç bildirmez; bu yüzden ALC'nin yanındaki rakam watt değil yeniden ALC okumasıdır.
 smeter-no-swr-radio-has-no =
-
+    {""}
 
     SWR yok: bu radyonun onu ölçecek bir köprüsü yok ve sdroxide bir tane uydurmaz — yalnızca radyonun kendisinin bildirdiğini gösterebilir. Bir SWR metresi olan bir telsiz (CAT, TCI ya da LAN bağlantısı üzerinden) ve bir HPSDR kartı bunu doldurur; düz bir SDR verici doldurmaz.
 smeter-no-signal-report-yet-receiver = Henüz sinyal raporu yok — alıcı bir metre okuması vermedi.
 smeter-s9-73-dbm-each-s =
-
+    {""}
 
     S9, −73 dBm'dir ve altındaki her S birimi 6 dB'dir. dBm rakamı, ön ucun kalibrasyonu kadar dürüsttür — kalibre edilmemiş bir alıcı dBFS'i bir dBm etiketiyle bildirir.
 smeter-ovld-converter-into-rails-so =
-
+    {""}
 
     OVLD: dönüştürücü sınırına dayanmış, bu yüzden gösterilen seviye sinyali olduğundan az gösterir. Ön uç kazancını geri çekin.
 smeter-table-held = , tablo tutuldu
