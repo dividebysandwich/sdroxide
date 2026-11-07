@@ -12,6 +12,21 @@ use crate::rds::RdsRx;
 
 const PASSBAND_TAPS: usize = 331;
 
+/// The longest the SSB/CW passband filter grows for a narrow bandwidth.
+const PASSBAND_TAPS_MAX: usize = 1537;
+
+/// Taps for an SSB/CW passband `lo..hi` at `rate`. A fixed length gives a
+/// fixed skirt — about 4·rate/N each side with the Blackman-Harris window,
+/// ~580 Hz at 48 kHz and 331 taps — so a 250 Hz CW filter let a carrier
+/// 300 Hz away straight through (#758). The skirt is held to about a third of
+/// the bandwidth instead, down to what [`PASSBAND_TAPS_MAX`] allows; a voice
+/// bandwidth keeps the old length and the old cost.
+fn passband_taps(lo: f32, hi: f32, rate: f64) -> usize {
+    let bw = ((hi - lo).abs() as f64).max(50.0);
+    let want = (4.0 * rate / (bw / 3.0)).ceil() as usize;
+    want.clamp(PASSBAND_TAPS, PASSBAND_TAPS_MAX) | 1
+}
+
 /// RIFP's passband filter is short on purpose — see [`FskDemod`].
 const RIFP_TAPS: usize = 63;
 
@@ -292,7 +307,12 @@ impl SsbDemod {
     pub fn new(rate: f64, lo: f32, hi: f32) -> Self {
         SsbDemod {
             rate,
-            fir: ComplexFir::new(bandpass_taps(PASSBAND_TAPS, lo as f64, hi as f64, rate)),
+            fir: ComplexFir::new(bandpass_taps(
+                passband_taps(lo, hi, rate),
+                lo as f64,
+                hi as f64,
+                rate,
+            )),
             filtered: Vec::new(),
             power: PowerMeter::new(),
         }
@@ -308,7 +328,8 @@ impl Demodulator for SsbDemod {
     }
 
     fn set_filter(&mut self, lo: f32, hi: f32) {
-        self.fir.set_taps(bandpass_taps(PASSBAND_TAPS, lo as f64, hi as f64, self.rate));
+        let n = passband_taps(lo, hi, self.rate);
+        self.fir.set_taps(bandpass_taps(n, lo as f64, hi as f64, self.rate));
     }
 
     fn audio_rate(&self) -> f64 {
@@ -1334,6 +1355,56 @@ impl PilotPll {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RMS of the SSB/CW demod's audio for a carrier at `tone_hz`, filter
+    /// `lo..hi`, settled.
+    fn ssb_level(lo: f32, hi: f32, tone_hz: f64) -> f64 {
+        let rate = 48_000.0;
+        let mut d = SsbDemod::new(rate, -1000.0, 1000.0);
+        d.set_filter(lo, hi);
+        let iq: Vec<Complex32> = (0..48_000)
+            .map(|n| {
+                let ph = std::f64::consts::TAU * tone_hz * n as f64 / rate;
+                Complex32::new(ph.cos() as f32, ph.sin() as f32)
+            })
+            .collect();
+        let mut out = Vec::new();
+        d.process(&iq, &mut out);
+        let tail = &out[out.len() / 2..];
+        (tail.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / tail.len() as f64).sqrt()
+    }
+
+    /// A 250 Hz CW filter keeps a carrier 300 Hz outside it out (#758). With
+    /// the fixed 331-tap filter its skirt was ~580 Hz wide and the neighbour
+    /// came through.
+    #[test]
+    fn a_narrow_cw_filter_has_narrow_skirts() {
+        let inside = ssb_level(475.0, 725.0, 600.0);
+        let neighbour = ssb_level(475.0, 725.0, 1025.0);
+        let below = ssb_level(475.0, 725.0, 175.0);
+        let rej = |x: f64| 20.0 * (inside / x.max(1e-12)).log10();
+        assert!(rej(neighbour) > 60.0, "300 Hz above: {:.1} dB", rej(neighbour));
+        assert!(rej(below) > 60.0, "300 Hz below: {:.1} dB", rej(below));
+        // A voice bandwidth keeps the old length.
+        assert_eq!(passband_taps(100.0, 2800.0, 48_000.0), PASSBAND_TAPS);
+    }
+
+    /// Changing the filter length mid-stream keeps the sample count: a block in
+    /// gives the same block out.
+    #[test]
+    fn a_filter_length_change_keeps_the_stream_in_step() {
+        let mut d = SsbDemod::new(48_000.0, 100.0, 2800.0);
+        let iq = vec![Complex32::new(0.1, 0.0); 4800];
+        let mut out = Vec::new();
+        d.process(&iq, &mut out);
+        let first = out.len();
+        for (lo, hi) in [(550.0, 650.0), (100.0, 2800.0), (400.0, 800.0)] {
+            d.set_filter(lo, hi);
+            out.clear();
+            d.process(&iq, &mut out);
+            assert_eq!(out.len(), 4800, "after {lo}..{hi} (first block {first})");
+        }
+    }
 
     /// HD Radio is the one mode whose channel follows the dial: the FM hybrid
     /// wants its wide stream, HD-on-AM the narrow one.

@@ -102,8 +102,20 @@ impl ComplexFir {
     }
 
     pub fn set_taps(&mut self, taps: Vec<Complex32>) {
+        // Keep history. When the length changes, the history is padded or
+        // trimmed by the difference so the stream keeps its sample count: a
+        // longer filter would otherwise swallow the extra taps' worth of
+        // output, and a shorter one emit them twice.
+        let (old, new) = (self.taps.len(), taps.len());
+        if !self.buf.is_empty() {
+            if new > old {
+                self.buf.splice(0..0, std::iter::repeat_n(Complex32::default(), new - old));
+            } else {
+                let cut = (old - new).min(self.buf.len());
+                self.buf.drain(..cut);
+            }
+        }
         self.taps = taps;
-        // Keep history; length mismatch just causes one transient block.
     }
 
     pub fn process(&mut self, input: &[Complex32], out: &mut Vec<Complex32>) {
