@@ -315,6 +315,7 @@ impl HpsdrSource {
     /// Interpret a newly received Pico tuner status byte.
     fn observe_atu_status(&mut self, status: u8) {
         let mut diagnostic = self.atu_state.unwrap_or_default();
+        diagnostic.reg7_supported = true;
         diagnostic.reg7_status = Some(status);
         diagnostic.reg7_fresh = true;
         self.atu_state = Some(diagnostic);
@@ -498,7 +499,10 @@ impl HpsdrSource {
         // Discovery has succeeded. Until the first status byte arrives,
         // report the default idle state.
         if self.atu_state.is_none() {
-            self.atu_state = Some(sdroxide_types::AtuState::default());
+            self.atu_state = Some(sdroxide_types::AtuState {
+                reg7_supported: true,
+                ..Default::default()
+            });
         }
 
         let (Some(status), Some(updated_at)) = (snapshot.raw_status, snapshot.updated_at) else {
