@@ -4246,7 +4246,39 @@ impl SdroxideApp {
             AtuStatus::Failed => tr!("topbar-atu-failed"),
             AtuStatus::Aborted => tr!("topbar-atu-aborted"),
         };
-        ui.label("ATU").on_hover_text(tr!("topbar-atu-built-in-tuner", state = state));
+        let mut hover = format!("{}", tr!("topbar-atu-built-in-tuner", state = state));
+        if let Some(reg7) = atu.reg7_status {
+            let meaning = match reg7 {
+                0x00 => "Idle / operation complete",
+                0x01 => "Tune command accepted",
+                0x02 => "Bypass command accepted",
+                0x04 => "Bypass pulse active",
+                0x05 => "Tune preparation; waiting for tuner KEY",
+                0x08 => "Tune result confirmation; RF withdrawn",
+                0xEE => "Tuner requests an RF carrier",
+                0xFA => "Tune failed: AH-4 KEY input disconnected",
+                0xFB => "Tune failed: KEY did not go low within 600 ms",
+                0xFC => "Tune failed: AH-4 failure pulse detected",
+                0xFD => "Tune failed: tuner operation timed out (4 s)",
+                _ => "Unknown Reg7 status",
+            };
+            let freshness = if atu.reg7_fresh { "fresh" } else { "stale" };
+            hover.push_str(&format!("\nReg7: 0x{reg7:02X} — {meaning} ({freshness})"));
+        } else {
+            hover.push_str("\nReg7: unavailable");
+        }
+        if let Some(error) = atu.command_error {
+            let message = match error {
+                sdroxide_types::AtuCommandError::Rejected => {
+                    "Host rejected the command before the I2C write"
+                }
+                sdroxide_types::AtuCommandError::DeliveryFailed => {
+                    "Host could not deliver or confirm the I2C write"
+                }
+            };
+            hover.push_str(&format!("\nCommand delivery: {message}"));
+        }
+        ui.label("ATU").on_hover_text(hover);
         let tuning = atu.status == AtuStatus::Tuning;
         let matched = atu.enabled && atu.status == AtuStatus::Tuned;
         let label = if tuning { ATU_TUNING_LABEL } else { ATU_TUNE_LABEL };
