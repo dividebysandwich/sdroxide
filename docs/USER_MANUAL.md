@@ -7529,6 +7529,17 @@ Like every other password sdroxide stores — the cluster login, QRZ, eQSL — i
 kept in the clear, so `config.toml` is worth the same file permissions as the
 rest of your config directory.
 
+**Signed-in station** — which station *this* client is signed in to, and the
+way back out of it. Drawn whenever this screen is attached to a station rather
+than holding one, which in practice means the browser: a sign-in remembered for
+a day outlives a reload, so there is nothing to think about until you want to.
+**SIGN OUT** forgets this device's sign-in — the cookie has to be taken back by
+the station, because the page cannot read it — and the connection you are on
+stays up until you close it. Where a station was too old to hand out a cookie,
+the line underneath says so and names it, rather than the browser quietly
+holding a password. See
+[§ 8.3 Sign-in](#83-sign-in-who-may-operate-the-station).
+
 ### 6.2 Radio: choosing and configuring the rig
 
 In the native application the very top of the tab carries the **radio
@@ -14548,13 +14559,45 @@ Nothing crosses before the sign-in is accepted, and — the part that matters mo
 stranger cannot lock you out of your own radio by opening a socket to it.
 
 **One sign-in per station, not per radio.** A station serves each of its radios
-on a connection of its own and asks each one for the password, but you answer
-only the first: an answer the station has accepted is kept for as long as the
-program runs and offered by every other tab of *that* station — its other
-radios, and the 3D solar view. Another station is another door and asks for
-itself. Ticking **Remember me** is the separate decision to keep the sign-in on
-this device between runs (in `config.toml`, or the browser's local storage —
-in plain text either way).
+on a connection of its own and asks each one for the password. You answer the
+first one, and then you are not asked again: the station remembers the sign-in
+*itself*, for the time you chose, and every other connection of that station is
+let in on the strength of it — its other radios, the 3D solar view, and the
+browser after a reload or a restart. Another station is another door, and asks
+for itself, once.
+
+**In the browser there is one question: tick REMEMBER ME, or don't.** It starts
+ticked, because being asked again every twelve hours on a station with three
+radios was the complaint that produced the box. Ticked, the station — not the
+page — keeps the result for a month: a signed cookie the page itself cannot
+read. That is why there is no copy of your password in the browser's storage any
+more, and why every other radio of the station opens without a field to fill.
+**Unticked is a real answer and it is the tidier one on somebody else's browser:**
+the cookie then lasts only as long as the browser is open and is dropped when it
+closes, so nothing is left behind on a shared machine. How long a cookie is
+honoured is the station's business, not a number you have to pick — and because
+the station signs the cookie with its own configured password, **changing the
+password signs every
+browser out at once**, and a station with no password configured has no cookie
+to give.
+
+If you are on an older station that has no sign-in cookie to hand out, the card
+says nothing about that — the page falls back to keeping your password in
+local storage, and **Settings → General → Signed-in station** names every station
+that is being treated that way, so you are never quietly holding a station's
+password.
+
+**SIGN OUT** is on that same row, and it is the only thing that can end a
+remembered sign-in: the cookie is deliberately unreadable by the page, so ending
+it has to be something the *station* does. It forgets this device's sign-in for
+that station; the connection you are already signed in on stays up until you
+close it.
+
+> **The native client keeps the password instead.** There is no cookie to hold —
+> the program has no cookie store — so `--connect` and the desktop application
+> do what they always have: **Remember on this device** writes the sign-in to
+> `remote_login.json` beside your other settings, in plain text. SIGN OUT clears
+> it.
 
 A station compares one answer at a time, so its radios' tabs take turns signing
 in and the card says **CHECKING…** while a tab waits for its own. That wait is

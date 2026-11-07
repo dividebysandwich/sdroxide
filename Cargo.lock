@@ -5845,6 +5845,8 @@ dependencies = [
  "sdroxide-types",
  "serde",
  "serde_json",
+ "sha2",
+ "subtle",
  "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite 0.30.0",
@@ -5852,6 +5854,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "triple_buffer",
+ "ureq",
 ]
 
 [[package]]
