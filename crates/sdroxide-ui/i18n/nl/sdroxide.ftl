@@ -4064,21 +4064,25 @@ fsq-add = Toevoegen
 
 ## publicsdr (src/app/publicsdr.rs)
 
-publicsdr-tab = + TABBLAD
-publicsdr-open-receiver-new-radio-own = Deze ontvanger openen als een nieuwe radio, in een eigen tabblad
-publicsdr-point-radio-receiver-replacing-whatever = *Deze* radio naar deze ontvanger richten, en vervangen waar hij nu op zit — er wordt eerst opnieuw naar gevraagd, omdat dat de instelling van een hele radio is
 publicsdr-not-stated = niet opgegeven
-publicsdr-replace = VERVANGEN
-publicsdr-point-radio-you-are-receiver = De radio waarop je zit naar deze ontvanger richten
-publicsdr-tab-instead = + TABBLAD IN PLAATS
-publicsdr-open-receiver-another-radio-leave = De ontvanger openen als een andere radio, en deze ongemoeid laten
-publicsdr-cancel = ANNULEREN
 publicsdr-public-sdrs = PUBLIEKE SDR'S
 publicsdr-available = BESCHIKBAAR
 publicsdr-hide-receivers-are-full-ones = Ontvangers verbergen die vol zijn, en die waarvan de operator geen kanalen naar andere apps dan een browser heeft opengezet
 publicsdr-band = IN BAND
 publicsdr-only-receivers-cover-current-dial = Alleen ontvangers die de huidige dialfrequentie bestrijken
 publicsdr-low-bw = LAGE BW
+publicsdr-map-cities = STEDEN
+publicsdr-map-cities-tip = Steden op deze kaart, aan of uit.
+publicsdr-view-list = LIJST
+publicsdr-view-map = KAART
+publicsdr-view-map-tip = Dezelfde ontvangers op een wereldkaart. Klik op een punt om alle ontvangers eronder te kiezen.
+publicsdr-map-pick = Klik op een punt om de ontvangers eronder te kiezen.
+publicsdr-map-names = NAMEN
+publicsdr-map-names-tip = Toon de namen van de ontvangers op de kaart. Uit: alleen de gekozen ontvangers krijgen een naam.
+publicsdr-check-online = ONLINE
+publicsdr-check-silent = STIL
+publicsdr-check-waiting = CONTROLE…
+publicsdr-check-no-answer = Geen antwoord binnen 20 seconden.
 publicsdr-take-spyserver-low-bandwidth-shape = Een SpyServer in zijn vorm met lage bandbreedte nemen: een smal I/Q-venster dat de dial volgt plus de eigen bandweergave van de server, in plaats van megabits aan breedband-I/Q. Geen effect op een KiwiSDR, die maar de ene vorm heeft.
 publicsdr-refresh = ⟳ VERNIEUWEN
 publicsdr-fetch-both-directories-again = Beide mappen opnieuw ophalen
@@ -4088,9 +4092,6 @@ publicsdr-fetching-receiver-lists = De ontvangerlijsten ophalen…
 publicsdr-machine-radio-attached-does-not = De machine waarop deze radio is aangesloten, beantwoordt geen vragen over apparaten, dus kan hij de lijsten ook niet ophalen.
 publicsdr-no-match = geen overeenkomst
 publicsdr-nothing-matches-try-turning-filter = niets past — probeer een filter weer aan te zetten
-publicsdr-radio = deze radio
-publicsdr-radio-s-configuration-has-not = De configuratie van deze radio is nog niet aangekomen van de machine waarop hij staat, dus er is niets om de ontvanger op te richten — gebruik in plaats daarvan + TABBLAD.
-publicsdr-position-not-published-so-nothing = {" "}Zijn positie wordt niet gepubliceerd, dus wat hij hoort, wordt niet gemeld.
 
 ## hd (src/app/hd.rs)
 
@@ -4921,14 +4922,7 @@ publicsdr-antenna =
 publicsdr-receivers-fetched-ago = { $entries } ontvangers · { $per_net } · opgehaald { $age } geleden
 publicsdr-showing-search-narrow = { $shown } van { $n } getoond — zoek om te verfijnen
 publicsdr-match = { $n } treffer
-publicsdr-replace-taking-receiver-points-same =
-    { $this } vervangen door { $entry }?
-
-    { $this2 } staat op { $iface }. Deze ontvanger nemen laat hetzelfde tabblad op { $address } wijzen, hernoemt het naar “{ $entry2 }”, en houdt de dial op het { $range_label } dat de ontvanger publiceert — hier wordt niets verzonden.
-
-    De instellingen van { $iface2 } blijven staan waar ze staan, en dat geldt ook voor de bereiken die ervoor zijn opgegeven: de interface weer terugzetten in Instellingen → Radio brengt de radio terug zoals hij was.
-publicsdr-receptions-will-reported = {" "}Ontvangsten worden gemeld vanuit { $value }.
-publicsdr-pointing-radio = Deze radio richten op { $entry }…{ $site }
+publicsdr-map-status = { $shown } op de kaart · { $unplaced } zonder positie
 publicsdr-opening-another-radio = { $entry } openen als een andere radio…
 
 ## qo100: messages with values (src/app/qo100.rs)
@@ -5253,7 +5247,6 @@ cat-family-rs-hfiq = RS-HFIQ
 cat-family-tr-usdx = (tr)uSDX
 cat-family-rigctld = Hamlib rigctld (netwerk)
 cat-family-flrig = flrig (netwerk)
-publicsdr-its-interface = zijn interface
 
 ## Values from sdroxide-types drawn on chips, menus and lists (src/i18n/labels.rs).
 

@@ -54,8 +54,63 @@ pub fn probe(req: DeviceProbe, radio: u32) -> ProbeAnswer {
         DeviceProbe::Test(t) => ProbeAnswer::Test(t.kind(), test(&t)),
         DeviceProbe::Report(k) => ProbeAnswer::Report(k, report(k, radio)),
         DeviceProbe::Relays => ProbeAnswer::Relays(sdroxide_relay::list()),
+        DeviceProbe::PublicSdrCheck { network, address } => {
+            let result = public_sdr_check(network, &address);
+            ProbeAnswer::PublicSdrCheck { network, address, result }
+        }
     }
 }
+
+/// Whether a receiver from the public-SDR directories answers from here.
+///
+/// In: its network and endpoint (`host:port`). Out: `Ok` with one line on what
+/// answered, `Err` with why nothing did, within [`CHECK_TIMEOUT`].
+/// Effect: a KiwiSDR is asked for `/status` over HTTP (no channel is taken), a
+/// SpyServer is greeted and hung up on, an sdr-list receiver gets a TCP
+/// connect and nothing more, because nothing here speaks its protocol yet.
+/// Fails: unresolvable host, refused or timed-out connection, a reply that is
+/// not the protocol the directory promised.
+// Why: HDZ 2026-11-04: "wenn man jetzt einen Server anklickt, wäre ein basic
+//      Check nach 500 ms ein Connection-Test". The same tests the settings'
+//      "Test connection" runs, so the map and the dialog agree about a receiver.
+fn public_sdr_check(
+    network: sdroxide_types::PublicSdrNetwork,
+    address: &str,
+) -> Result<String, String> {
+    use sdroxide_types::PublicSdrNetwork as N;
+    match network {
+        // `/status` over HTTP: up, users, and whether non-browser apps may in.
+        N::KiwiSdr => sdroxide_kiwisdr::test_connection(address, CHECK_TIMEOUT),
+        // Hello, device info, hang up; no stream is started.
+        N::SpyServer => sdroxide_spyserver::test_connection(address, CHECK_TIMEOUT),
+        // Nothing here speaks these protocols yet, so the honest check is the
+        // lowest one: does anything accept a connection on that port.
+        N::SdrList => {
+            use std::net::{TcpStream, ToSocketAddrs};
+            // Every address the name resolves to (IPv4 and IPv6), tried in turn;
+            // the first that accepts answers.
+            let addrs: Vec<_> = address
+                .to_socket_addrs()
+                .map_err(|e| format!("{address}: {e}"))?
+                .collect();
+            // The reason reported if none accepts: the last error seen, or
+            // that the name resolved to nothing at all.
+            let mut last = format!("{address}: no address to connect to");
+            for a in addrs {
+                match TcpStream::connect_timeout(&a, CHECK_TIMEOUT) {
+                    // Connected, and dropped again at once: nothing is sent.
+                    Ok(_) => return Ok(format!("{address} accepts connections")),
+                    Err(e) => last = format!("{address}: {e}"),
+                }
+            }
+            Err(last)
+        }
+    }
+}
+
+/// How long [`public_sdr_check`] waits, as the settings' tests do: three
+/// seconds per connection attempt (and, for a KiwiSDR, for the whole request).
+const CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// `fobos_rx_list_devices`, translated into the wasm-safe type. `libfobos`'s
 /// own `DevInfo` also carries the index `fobos_rx_open` wants, which is not

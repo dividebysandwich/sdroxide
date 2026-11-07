@@ -1627,7 +1627,13 @@ use sdroxide_types::{
 /// enums; [`sdroxide_types::Command`] gains the `Vara*` commands; `DigiStatus`
 /// gains `vara` (`Option<VaraStatus>`) and `DigiConfig` the `vara_*` settings,
 /// each on its tail, so a v189 peer reads digital status out of step.
-pub const PROTO_VERSION: u16 = 190;
+///
+/// v191: the public-SDR map's receiver check.
+/// [`sdroxide_types::DeviceProbe`] gains `PublicSdrCheck { network, address }`
+/// and [`sdroxide_types::ProbeAnswer`] gains `PublicSdrCheck`, which carries
+/// the address back so several checks in flight each find their row. Both
+/// appended last; a v190 peer has no name for either.
+pub const PROTO_VERSION: u16 = 191;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

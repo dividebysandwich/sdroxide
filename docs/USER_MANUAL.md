@@ -16847,24 +16847,26 @@ whether it covers the frequency you are on; the search box matches on the
 name, the place, the antenna and the band, so `40m denmark` or `7000` both
 work. Hovering a row shows its address, its hardware and its antenna.
 
-Each row offers two things. **USE** points the radio you are on at that
-receiver, keeping everything else about it — converter offset, audio devices,
-the lot. **+ TAB** opens it as another radio in a tab of its own, leaving the
-one you were on alone.
+Each row offers **ADD AS RADIO**: the receiver becomes a radio of its own, in a
+tab named after its directory entry (padding trimmed, cut at a word at 32
+characters; a placeholder such as "anonymous" gives way to the place, else to
+the device and host). The radio you are on is left exactly as it was, so
+nothing needs confirming, and the window closes: the new radio is where you
+listen now.
 
-**USE** replaces a radio, so on a tab that already has an interface it asks
-first, across the top of the list: which radio is about to become which
-receiver, and **REPLACE** / **+ TAB INSTEAD** / **CANCEL**. Going ahead also
-**renames the tab** after the receiver — a tab still calling itself "IC-9700"
-while it is really a dongle in another country, refusing your 2 m calling
-frequency as out of range, is a puzzle nobody should have to solve.
-
-Nothing is lost by taking a receiver in a tab you had set up. Every interface
-keeps its own settings, and the tuning ranges you stated go with the interface
-they were stated for ([6.2](#62-radio-choosing-and-configuring-the-rig)),
-so switching **Radio interface** back in Settings → Radio brings the transceiver
-back as it was — its address, its sound cards and its ranges. What it does not
-bring back is the tab's name; type it again in the **Name** box on that page.
+**LIST** and **MAP** at the head of the window are two views of the same
+receivers: every one the buttons and the search let through, as a dot on the
+world map where the directory gives a position (KiwiSDR cyan, SpyServer in the
+map's station colour, sdr-list green, grey where it cannot be taken). The map
+fits itself to what is shown, so typing a country or a callsign flies there;
+drag, wheel and a double-click work as on the other maps, and **NAMES** and
+**CITIES** switch the labels. A click picks every receiver under the pointer
+(up to six: sites with several KiwiSDRs share a coordinate), and each appears
+under the map as the list's own row with **ADD AS RADIO**, headed by a check
+of whether it answers right now: **ONLINE** or **SILENT**, asked half a second
+after the click by the machine the radio is attached to (a KiwiSDR's status
+page, a SpyServer's greeting, a TCP connect; three seconds each, no channel
+taken). The map fills its window; resize the window to make it larger.
 
 The lists are fetched by the machine the radio is attached to, not by the
 screen you are sitting at — so this works the same in the browser client, and

@@ -4073,21 +4073,27 @@ fsq-add = Add
 
 ## publicsdr (src/app/publicsdr.rs)
 
-publicsdr-tab = + TAB
-publicsdr-open-receiver-new-radio-own = Open this receiver as a new radio, in its own tab
-publicsdr-point-radio-receiver-replacing-whatever = Point *this* radio at the receiver, replacing whatever interface it is on now — asked again first, because that is a whole radio's worth of setting up
 publicsdr-not-stated = not stated
-publicsdr-replace = REPLACE
-publicsdr-point-radio-you-are-receiver = Point the radio you are on at this receiver
-publicsdr-tab-instead = + TAB INSTEAD
-publicsdr-open-receiver-another-radio-leave = Open the receiver as another radio and leave this one alone
-publicsdr-cancel = CANCEL
+publicsdr-add-as-radio = ADD AS RADIO
+publicsdr-add-as-radio-tip = Add as radio, named from directory
 publicsdr-public-sdrs = PUBLIC SDRS
 publicsdr-available = AVAILABLE
 publicsdr-hide-receivers-are-full-ones = Hide receivers that are full, and the ones whose operator has not opened any channels to apps other than a browser
 publicsdr-band = IN BAND
 publicsdr-only-receivers-cover-current-dial = Only receivers that cover the current dial frequency
 publicsdr-low-bw = LOW BW
+publicsdr-map-cities = CITIES
+publicsdr-map-cities-tip = Cities on this map, on or off.
+publicsdr-view-list = LIST
+publicsdr-view-map = MAP
+publicsdr-view-map-tip = Receivers on world map; click dot to pick all under it
+publicsdr-map-pick = Click a dot to pick the receivers under it.
+publicsdr-map-names = NAMES
+publicsdr-map-names-tip = Names of all receivers; off: picked only
+publicsdr-check-online = ONLINE
+publicsdr-check-silent = SILENT
+publicsdr-check-waiting = CHECKING…
+publicsdr-check-no-answer = No answer within 20 seconds.
 publicsdr-take-spyserver-low-bandwidth-shape = Take a SpyServer in its low-bandwidth shape: a narrow I/Q window that follows the dial plus the server's own band view, instead of megabits of wideband I/Q. No effect on a KiwiSDR, which has only the one shape.
 publicsdr-refresh = ⟳ REFRESH
 publicsdr-fetch-both-directories-again = Fetch both directories again
@@ -4097,9 +4103,6 @@ publicsdr-fetching-receiver-lists = Fetching the receiver lists…
 publicsdr-machine-radio-attached-does-not = The machine this radio is attached to does not answer device questions, so it cannot fetch the lists either.
 publicsdr-no-match = no match
 publicsdr-nothing-matches-try-turning-filter = nothing matches — try turning a filter chip back on
-publicsdr-radio = this radio
-publicsdr-radio-s-configuration-has-not = This radio's configuration has not arrived from the machine it is on yet, so there is nothing to point at the receiver — take it with + TAB instead.
-publicsdr-position-not-published-so-nothing = {" "}Its position is not published, so nothing it hears will be reported.
 
 ## hd (src/app/hd.rs)
 
@@ -4933,14 +4936,7 @@ publicsdr-antenna =
 publicsdr-receivers-fetched-ago = { $entries } receivers · { $per_net } · fetched { $age } ago
 publicsdr-showing-search-narrow = showing { $shown } of { $n } — search to narrow it
 publicsdr-match = { $n } match
-publicsdr-replace-taking-receiver-points-same =
-    Replace { $this } with { $entry }?
-
-    { $this2 } is on { $iface }. Taking this receiver points the same tab at { $address } instead, renames it “{ $entry2 }”, and holds the dial to the { $range_label } the receiver publishes — nothing here transmits.
-
-    The { $iface2 } settings stay where they are, and so do the ranges stated for them: switching the interface back in Settings → Radio brings the radio back as it was.
-publicsdr-receptions-will-reported = {" "}Receptions will be reported from { $value }.
-publicsdr-pointing-radio = Pointing this radio at { $entry }…{ $site }
+publicsdr-map-status = { $shown } on the map · { $unplaced } without a position
 publicsdr-opening-another-radio = Opening { $entry } as another radio…
 
 ## qo100: messages with values (src/app/qo100.rs)
@@ -5266,7 +5262,6 @@ cat-family-rs-hfiq = RS-HFIQ
 cat-family-tr-usdx = (tr)uSDX
 cat-family-rigctld = Hamlib rigctld (network)
 cat-family-flrig = flrig (network)
-publicsdr-its-interface = its interface
 
 ## Values from sdroxide-types drawn on chips, menus and lists (src/i18n/labels.rs).
 agc-mode-off = Off

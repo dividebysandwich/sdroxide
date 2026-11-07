@@ -393,15 +393,11 @@ pub struct SdroxideApp {
     /// Take a SpyServer in its VFO+FFT shape rather than wideband. No effect on
     /// a KiwiSDR, which has only one shape.
     public_sdr_low_bw: bool,
-    /// The receiver whose **USE** is waiting to be confirmed.
-    ///
-    /// USE replaces the radio the operator is on, and a radio is a station's
-    /// worth of setting up — issue #254 is somebody losing an IC-9700 to a
-    /// SpyServer on one click, with the tab still carrying the Icom's name
-    /// afterwards. So the row's button arms this instead of acting, and the
-    /// window puts the choice, and the way out of it, in front of the list.
-    /// `None` is the ordinary state.
-    public_sdr_confirm: Option<Box<sdroxide_types::PublicSdrEntry>>,
+    /// The window shows the map rather than the list.
+    // Why: HDZ 2026-11-04: "eine Karte für die SDR-Stationen dran machen".
+    public_sdr_map: bool,
+    /// The map's view and the receivers a click on it picked.
+    public_sdr_map_state: crate::publicsdr_map::PublicSdrMapState,
     /// FlexRadios found by the last SmartSDR "Discover" listen.
     smartsdr_devices: Vec<sdroxide_types::SmartSdrDevice>,
     /// Result of the last SmartSDR "Test connection".
@@ -1308,9 +1304,15 @@ pub(crate) enum RadioTabRequest {
     /// pointed at the receiver that was picked, rather than arriving blank with
     /// its settings page open for an address to be typed into. `None` is the
     /// plain "+" chip, which does exactly that.
+    ///
+    /// `name` is the name the new radio is given; `None` leaves it to be named
+    /// after its interface, as before. "Public SDRs" gives the receiver's
+    /// directory name (HDZ 2026-11-04). Only for a radio on this machine: a
+    /// radio added at a station is named there.
     Add {
         station: String,
         preset: Option<Box<sdroxide_types::RadioConfig>>,
+        name: Option<String>,
     },
     /// Open somebody else's station as a tab of its own: dial this WebSocket
     /// URL and, if it answers, show it under `name`. Queued by the **Remote**
@@ -1541,7 +1543,8 @@ impl SdroxideApp {
             public_sdr_free_only: true,
             public_sdr_in_band: false,
             public_sdr_low_bw: false,
-            public_sdr_confirm: None,
+            public_sdr_map: false,
+            public_sdr_map_state: Default::default(),
             smartsdr_devices: Vec::new(),
             smartsdr_test_result: None,
             pluto_devices: Vec::new(),
