@@ -17,7 +17,7 @@
 //! | `IF;` | status: the dial, and the transmit flag |
 //! | `ID;` | `ID020;` |
 //! | `PS;` | power on/off state |
-//! | `TX;` `TX0;` `TX1;` `TX2;` | key, unkey, key, tune |
+//! | `TX;` `TX0;` `TX1;` `TX2;` | key (mic), key (CAT audio), key, tune |
 //! | `RX;` | unkey |
 //! | `AG0;` `FL0;` `RS;` `AI;` `VX;` `RC;` `RT1;` `XT1;` | the handful of |
 //! |   | settings the firmware kept |
@@ -244,10 +244,18 @@ impl Protocol for TrUsdx {
     }
 
     fn ptt(&self, on: bool) -> Vec<u8> {
-        // `TX;` keys and `RX;` unkeys. Not `TX0;` — the manual lists it as a
-        // *transmit* form, and the firmware's own `TX` handler treats the bare
-        // command as the toggle; `RX;` is the documented unkey either way.
-        if on { b"TX;".to_vec() } else { b"RX;".to_vec() }
+        // `RX;` is the documented unkey either way. The key-down picks the
+        // transmit audio: `TX0;` takes it from the CAT stream, a bare `TX;`
+        // from the radio's own microphone. With the audio in-band, a `TX;` put
+        // the mic on the air and the host's audio nowhere (#724); both
+        // streaming drivers that work with this radio key with `TX0;`
+        // (olgierd/trusdx-audio, ilikehamradio's Linux driver). On a sound
+        // card the audio arrives at the mic/line input, so `TX;` it stays.
+        match (on, self.one_cable) {
+            (true, true) => b"TX0;".to_vec(),
+            (true, false) => b"TX;".to_vec(),
+            (false, _) => b"RX;".to_vec(),
+        }
     }
 
     /// The dial and the mode — but only when the audio is on a sound card.
@@ -483,10 +491,13 @@ mod tests {
         assert_eq!(p.set_freq(14_031_000.0), b"FA00014031000;".to_vec());
         assert_eq!(p.set_mode(Mode::Usb), b"MD2;".to_vec());
         assert_eq!(p.set_mode(Mode::Cw), b"MD3;".to_vec());
-        assert_eq!(p.ptt(true), b"TX;".to_vec());
+        // In-band audio keys with `TX0;`, the CAT-audio transmit (#724)...
+        assert_eq!(p.ptt(true), b"TX0;".to_vec());
         assert_eq!(p.ptt(false), b"RX;".to_vec());
-        // Never `TX0;` — that is a transmit form on this family.
-        assert_ne!(p.ptt(true), b"TX0;".to_vec());
+        // ...and a sound card with the bare `TX;`, the mic/line input.
+        let q = TrUsdx::new(false);
+        assert_eq!(q.ptt(true), b"TX;".to_vec());
+        assert_eq!(q.ptt(false), b"RX;".to_vec());
     }
 
     /// A digital mode goes to the sideband its name carries. There is no DATA
