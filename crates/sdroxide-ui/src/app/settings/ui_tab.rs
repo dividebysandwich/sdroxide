@@ -60,6 +60,30 @@ pub(in crate::app) fn settings_ui_tab(
         enum_combo(ui, "ui-win-style", &mut cfg.window_style, &ChromeStyle::ALL, ChromeStyle::tr);
         ui.end_row();
 
+        // Tooltip timing: a dense strip whose tooltips explain its controls
+        // wants them sooner than egui's half second for some operators and not
+        // at all for others.
+        // Why: HDZ 2026-11-07: "nicht ganz so snappy, wie sie sein müsste",
+        //      then "manchmal stören die aber auch" — a setting, not a value.
+        ui.label(tr!("settings-ui-tooltip-delay"))
+            .on_hover_text(tr!("settings-ui-tooltip-delay-hint"));
+        crate::chrome::slider(
+            ui,
+            egui::Slider::new(&mut cfg.tooltip_delay_s, sdroxide_types::TOOLTIP_DELAY_RANGE_S)
+                .step_by(0.05)
+                .custom_formatter(|v, _| format!("{v:.2} s")),
+        );
+        ui.end_row();
+        ui.label(tr!("settings-ui-tooltip-grace"))
+            .on_hover_text(tr!("settings-ui-tooltip-grace-hint"));
+        crate::chrome::slider(
+            ui,
+            egui::Slider::new(&mut cfg.tooltip_grace_s, sdroxide_types::TOOLTIP_GRACE_RANGE_S)
+                .step_by(0.05)
+                .custom_formatter(|v, _| format!("{v:.2} s")),
+        );
+        ui.end_row();
+
         // The **undocked** modules. A window arrangement, chosen once and kept,
         // rather than something reached for mid-QSO — so it lives here with the
         // other display settings. One row per [`DetachableModule`], so the next

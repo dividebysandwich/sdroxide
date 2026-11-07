@@ -74,6 +74,10 @@ settings-ui-layout = Anordnung
 settings-ui-theme = Thema
 settings-ui-button-style = Schaltflächenstil
 settings-ui-window-style = Fensterstil
+settings-ui-tooltip-delay = Tooltip-Verzögerung
+settings-ui-tooltip-delay-hint = Ruhezeit des Zeigers bis zum Tooltip
+settings-ui-tooltip-grace = Tooltip-Folgezeit
+settings-ui-tooltip-grace-hint = Nach einem Tooltip: so lange zeigt der nächste ohne Verzögerung; 0 = jeder wartet
 settings-ui-frame-rate = Bildschirm-Aktualisierungsrate
 settings-ui-palette = Farbpalette des Wasserfalls
 settings-ui-tuning-buttons = Abstimmtasten

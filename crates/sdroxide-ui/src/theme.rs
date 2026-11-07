@@ -1935,6 +1935,28 @@ pub fn continent_color(code: &str) -> Color32 {
     }
 }
 
+/// The operator's tooltip timing ([`sdroxide_types::UiSettings::tooltip_delay_s`],
+/// [`sdroxide_types::UiSettings::tooltip_grace_s`]) into the context style. Cheap
+/// to call every frame: it writes only when a value differs.
+pub fn apply_tooltip_timing(ctx: &egui::Context, ui: &sdroxide_types::UiSettings) {
+    let delay = ui.tooltip_delay_s.clamp(
+        *sdroxide_types::TOOLTIP_DELAY_RANGE_S.start(),
+        *sdroxide_types::TOOLTIP_DELAY_RANGE_S.end(),
+    );
+    let grace = ui.tooltip_grace_s.clamp(
+        *sdroxide_types::TOOLTIP_GRACE_RANGE_S.start(),
+        *sdroxide_types::TOOLTIP_GRACE_RANGE_S.end(),
+    );
+    let style = ctx.style_of(ctx.theme());
+    let i = &style.interaction;
+    if i.tooltip_delay != delay || i.tooltip_grace_time != grace {
+        ctx.all_styles_mut(|s| {
+            s.interaction.tooltip_delay = delay;
+            s.interaction.tooltip_grace_time = grace;
+        });
+    }
+}
+
 pub fn apply(ctx: &egui::Context) {
     install_fonts(ctx);
     apply_metrics(ctx, crate::layout::Tier::Desktop);

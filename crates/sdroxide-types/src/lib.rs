@@ -306,8 +306,9 @@ pub use tx_voice::{
 };
 pub use ui::{
     AmpDocked, BandplanKind, ChromeStyle, DetachableModule, DetachedState, DetachedWindow,
-    FontSize, LayoutMode, SmeterStyle, Solar3dWindow, SpectrumDetail, Speed, UiLanguage,
-    UiSettings, UiTheme, WORKSPACE_MAX, Workspace,
+    FontSize, LayoutMode, SmeterStyle, Solar3dWindow, SpectrumDetail, Speed,
+    TOOLTIP_DELAY_DEFAULT_S, TOOLTIP_DELAY_RANGE_S, TOOLTIP_GRACE_DEFAULT_S, TOOLTIP_GRACE_RANGE_S,
+    UiLanguage, UiSettings, UiTheme, WORKSPACE_MAX, Workspace,
 };
 pub use vara::{VARA_TRANSCRIPT_MAX, VaraBw, VaraHolder, VaraLine, VaraLineKind, VaraStatus};
 pub use vdl2::{

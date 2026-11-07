@@ -192,6 +192,7 @@ impl eframe::App for SdroxideApp {
             &ctx,
             crate::layout::short_tablet_for(ui.max_rect().size(), self.ui_settings.layout),
         );
+        crate::theme::apply_tooltip_timing(&ctx, &self.ui_settings);
         if self.tier != tier {
             self.tier = tier;
             crate::theme::apply_metrics(&ctx, tier);

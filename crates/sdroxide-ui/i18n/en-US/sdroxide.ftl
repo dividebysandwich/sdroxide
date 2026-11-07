@@ -79,6 +79,10 @@ settings-ui-layout = Layout
 settings-ui-theme = Theme
 settings-ui-button-style = Button style
 settings-ui-window-style = Window style
+settings-ui-tooltip-delay = Tooltip delay
+settings-ui-tooltip-delay-hint = Pointer rest before a tooltip shows
+settings-ui-tooltip-grace = Tooltip follow-on
+settings-ui-tooltip-grace-hint = After a tooltip: how long the next shows without delay; 0 = every one waits
 settings-ui-frame-rate = Screen update rate
 settings-ui-palette = Waterfall palette
 settings-ui-tuning-buttons = Tuning buttons
