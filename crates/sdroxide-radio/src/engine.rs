@@ -549,7 +549,7 @@ pub enum EngineSwap {
     /// Rebuild the radio source at runtime (backend / CAT audio / HPSDR-TCI
     /// address changed). The engine calls its [`ReopenFn`] factory.
     ReopenSource,
-    /// Re-read the station-shared stores (memories, folders, band stacks, digi
+    /// Re-read the station-shared stores (memories, folders, digi
     /// operator config) from disk. Sent to every *other* engine after one of
     /// them saves: each engine holds a whole in-memory copy and writes it back
     /// whole, so without this nudge radio B's next edit would clobber what
@@ -4193,7 +4193,7 @@ fn engine_thread(
     // A hand-edited `scanner.json` can name a range and a skip list that were
     // never taken in it; the list is the part that goes.
     scan_cfg.forget_stale_skips();
-    let stacks = sdroxide_config::load_bandstacks();
+    let stacks = engine_cfg.store.load_bandstacks();
     let profiles = sdroxide_config::load_profiles();
     // Like the session, the per-mode overrides are only read and written by an
     // engine that was asked to remember its settings. A test or a one-shot
@@ -14215,13 +14215,11 @@ impl Engine {
     /// that dial), as leaving the band does.
     fn remember_band_entry(&mut self, band: Band, entry: BandStackEntry) {
         let stack = self.stacks.entry(band).or_default();
-        match stack.iter().position(|e| (e.freq_hz - entry.freq_hz).abs() < 1.0) {
-            Some(i) => stack[i] = entry,
-            None => {
-                stack.insert(0, entry);
-                stack.truncate(3);
-            }
+        if let Some(i) = stack.iter().position(|e| (e.freq_hz - entry.freq_hz).abs() < 1.0) {
+            stack.remove(i);
         }
+        stack.insert(0, entry);
+        stack.truncate(3);
     }
 
     /// The operator's dial left `old` for another band without a band button
@@ -14232,10 +14230,9 @@ impl Engine {
     /// recalled that instead (#762).
     fn note_band_left(&mut self, old: Band, entry: BandStackEntry) {
         self.remember_band_entry(old, entry);
-        if let Err(e) = sdroxide_config::save_bandstacks(&self.stacks) {
+        if let Err(e) = self.store.save_bandstacks(&self.stacks) {
             warn!("saving band stacks: {e}");
         }
-        self.mark_shared_store_write();
     }
 
     /// PowerSDR-style band button: same band = cycle the stack; different
@@ -14251,10 +14248,14 @@ impl Engine {
         };
 
         if band == cur_band {
-            if let Some(stack) = self.stacks.get_mut(&band) {
-                if stack.len() > 1 {
-                    stack.rotate_left(1);
-                }
+            let stack = self.stacks.entry(band).or_default();
+            if stack.is_empty() {
+                stack.push(cur_entry);
+            } else {
+                stack[0] = cur_entry;
+            }
+            if stack.len() > 1 {
+                stack.rotate_left(1);
             }
         } else {
             self.remember_band_entry(cur_band, cur_entry);
@@ -14268,10 +14269,9 @@ impl Engine {
 
         self.state.band = band;
         self.apply_entry(entry);
-        if let Err(e) = sdroxide_config::save_bandstacks(&self.stacks) {
+        if let Err(e) = self.store.save_bandstacks(&self.stacks) {
             warn!("saving band stacks: {e}");
         }
-        self.mark_shared_store_write();
     }
 
     /// What the S-meter should read, in dBm, or `None` when nothing here
@@ -15535,7 +15535,7 @@ impl Engine {
         // brought its own setup for each band with it, and switching back
         // should put them back too.
         self.stacks = profile.stacks.clone();
-        if let Err(e) = sdroxide_config::save_bandstacks(&self.stacks) {
+        if let Err(e) = self.store.save_bandstacks(&self.stacks) {
             warn!("saving band stacks: {e}");
         }
         let s = &profile.session;
@@ -15753,7 +15753,7 @@ impl Engine {
             self.mem_folders = folders;
             let _ = self.event_tx.send(RadioEvent::MemoryFolders(self.mem_folders.clone()));
         }
-        self.stacks = sdroxide_config::load_bandstacks();
+        self.stacks = self.store.load_bandstacks();
         // The profiles are station-shared too: another radio in the station
         // saving or deleting one rewrites the file, and this engine's copy is
         // stale until it is told.

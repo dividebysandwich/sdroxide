@@ -23,7 +23,7 @@
 //! [`sdroxide_types::Command::SetMute`] state the MUTE button shows, so the
 //! two always agree and the engine remembers it), a shared `TxGate` keys one
 //! transmitter at a time, and a shared `StoreSync` keeps the station-wide
-//! stores (memories, band stacks, digi config) converged across engines. Up
+//! stores (memories, digi config) converged across engines. Up
 //! here the shell only has to salt the persisted view state per tab (and,
 //! through `layout::set_radio_salt`, the fixed egui ids) and gate the
 //! announcer and the window title to the focused one.
