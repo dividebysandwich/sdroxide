@@ -93,11 +93,12 @@ pub enum ControlUpdate {
     /// capability rails as the on-screen button, and ignores a key-down that
     /// arrives while something else already owns the transmitter.
     Ptt(bool),
-    /// The external antenna tuner is requesting an RF carrier.
+    /// Current state of an external antenna-tuner operation.
     ///
-    /// This is a time-limited request, not an operator PTT. The source
-    /// withdraws it if the tuner status stops being fresh.
-    AtuRfRequest(bool),
+    /// RF permission is true only while a fresh tuner status is 0xEE.
+    /// The operation interlock remains true from command acceptance until
+    /// a terminal status (0x00 or 0xFA..=0xFD), or command-delivery failure.
+    AtuState { rf_requested: bool, operation_active: bool },
     /// The radio in front of us is transmitting **on its own** — its mic
     /// button, foot switch, VOX or keyer — and sdroxide is not driving the
     /// over. `true` is on the air.
