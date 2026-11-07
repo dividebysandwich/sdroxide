@@ -6,6 +6,7 @@
 //! working the station would be worth against the log — because the list is
 //! rebuilt from scratch every frame.
 
+use crate::i18n::{Tr, tr};
 use eframe::egui::{self, Color32, RichText};
 use sdroxide_types::{Command, Decode, DecodeSort, Mode};
 
@@ -53,18 +54,23 @@ impl SdroxideApp {
     /// row moves the TX audio frequency to that signal; REPLY starts a QSO.
     pub(in crate::app) fn decode_list(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let phone = crate::layout::tier(ui.ctx()) == crate::layout::Tier::Phone;
-        // A receive-only mode (MSK144, JT65/JT9, FST4, Q65, FSK441) shares this
-        // list but has no sequencer behind it, so nothing here that would
-        // answer, queue or place a transmission is drawn: a REPLY that does
-        // nothing is worse than no REPLY.
-        let rx_only_mode = self.state.rx[0].mode.is_rx_only();
+        // REPLY, QUEUE and the transmit-frequency chips belong to the QSO
+        // sequencer, and only FT8/FT4/FT2/JS8 have one. FSK441 shares this list
+        // and can transmit, but its decodes are free text with no station to
+        // answer and it is worked by hand; the receive-only slotted modes
+        // (MSK144, JT65/JT9, FST4, Q65) have no sequencer at all. Neither is
+        // drawn a control that would do nothing.
+        let qso_mode = self.state.rx[0].mode.has_qso_sequencer();
         // The tab row above already says which view this is and how many
         // stations came in; a second header would be a row of a phone's screen
         // spent repeating it.
         if !phone {
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("DECODES").size(9.5).strong().color(crate::theme::CYAN_DIM()),
+                    RichText::new(tr!("decodes-decodes"))
+                        .size(9.5)
+                        .strong()
+                        .color(crate::theme::CYAN_DIM()),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let n = self.digi_decodes.len();
@@ -76,11 +82,8 @@ impl SdroxideApp {
                     // which is contacts — a listener has none, so they sat dead
                     // on this panel. These write what is actually on screen.
                     if ui
-                        .add_enabled(n > 0, egui::Button::new("ADIF"))
-                        .on_hover_text(format!(
-                            "Save the {n} decodes in the list as ADIF — received reports, not \
-                             contacts. Decodes that name no sender are left out."
-                        ))
+                        .add_enabled(n > 0, egui::Button::new(tr!("decodes-adif")))
+                        .on_hover_text(tr!("decodes-save-decodes-list-adif-received", n = n))
                         .clicked()
                     {
                         let adif = sdroxide_types::digi_decodes_to_adif(
@@ -91,9 +94,7 @@ impl SdroxideApp {
                     }
                     if ui
                         .add_enabled(n > 0, egui::Button::new("CSV"))
-                        .on_hover_text(format!(
-                            "Save the {n} decodes in the list as CSV, one row each"
-                        ))
+                        .on_hover_text(tr!("decodes-save-decodes-list-csv-one", n = n))
                         .clicked()
                     {
                         let csv = sdroxide_types::digi_decodes_to_csv(
@@ -129,14 +130,14 @@ impl SdroxideApp {
         let (mut sort_by, mut sort_desc, mut single, mut cq_only, mut new_only) = was;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(RichText::new("Sort").size(9.5).color(crate::theme::CYAN_DIM()));
+            ui.label(RichText::new(tr!("decodes-sort")).size(9.5).color(crate::theme::CYAN_DIM()));
             for m in DecodeSort::ALL {
                 let active = sort_by == m;
                 // Active mode shows its direction; re-pressing it flips direction.
                 let lbl = if active && m != DecodeSort::None {
-                    format!("{} {}", m.label(), if sort_desc { "↓" } else { "↑" })
+                    format!("{} {}", m.tr(), if sort_desc { "↓" } else { "↑" })
                 } else {
-                    m.label().to_string()
+                    m.tr().to_string()
                 };
                 if crate::chrome::chip(ui, active, lbl).clicked() {
                     if active && m != DecodeSort::None {
@@ -154,30 +155,21 @@ impl SdroxideApp {
             // Grouping: odd/even turn blocks, or everything in one list.
             // Beside the Sort chips because it decides what they sort — each
             // turn on its own, or the whole list at once.
-            if crate::chrome::chip(ui, single, "Single list")
-                .on_hover_text(
-                    "Every decode in one list, newest turn first, instead of odd/even turn \
-                     blocks. The Sort chips then order the whole list rather than each turn, \
-                     and each row carries its slot time — cyan for an even slot, gold for an \
-                     odd one.",
-                )
+            if crate::chrome::chip(ui, single, tr!("decodes-single-list"))
+                .on_hover_text(tr!("decodes-every-decode-one-list-newest"))
                 .clicked()
             {
                 single = !single;
             }
             ui.add_space(8.0);
-            if crate::chrome::chip(ui, cq_only, "CQ only")
-                .on_hover_text(
-                    "Only stations calling CQ — and only the calls you may answer: a directed \
-                     CQ (DX, EU, JA, POTA, TEST …) is listed when it names you and hidden when \
-                     it names someone else.",
-                )
+            if crate::chrome::chip(ui, cq_only, tr!("decodes-cq-only"))
+                .on_hover_text(tr!("decodes-only-stations-calling-cq-only"))
                 .clicked()
             {
                 cq_only = !cq_only;
             }
-            if crate::chrome::chip(ui, new_only, "New only")
-                .on_hover_text("Only stations that would be new: entity, band-slot, grid, or call")
+            if crate::chrome::chip(ui, new_only, tr!("decodes-new-only"))
+                .on_hover_text(tr!("decodes-only-stations-would-new-entity"))
                 .clicked()
             {
                 new_only = !new_only;
@@ -198,26 +190,24 @@ impl SdroxideApp {
             // Whether the engine chooses our transmit frequency. Here rather
             // than in the setup window because it decides what clicking a
             // decode in this list does.
-            if self.digi_cfg_seeded && !rx_only_mode {
+            if self.digi_cfg_seeded && qso_mode {
                 let held = self.digi_cfg_edit.hold_tx_freq;
                 let auto = self.digi_cfg_edit.auto_tx_freq;
                 // Greyed while held, because held wins: leaving it live would
                 // offer a choice between two movers neither of which can run.
                 // `chip_enabled`, not a bare `add_enabled_ui`: this row is
                 // `horizontal_wrapped`, and a child Ui inside one does not wrap.
-                let auto_chip =
-                    crate::chrome::chip_enabled(ui, !held, auto && !held, "Auto TX FRQ")
-                        .on_hover_text(if held {
-                            "Overridden by Hold TX. Lift the hold to choose which way the transmit \
-                         frequency moves."
-                        } else {
-                            "Pick our transmit frequency automatically: the quietest spot in the \
-                         period we transmit in, rather than the frequency of whoever we are \
-                         answering — they transmit in the other period, so theirs says nothing \
-                         about who is there when we key. Off does NOT hold the frequency: it \
-                         answers on the frequency of the station being called. To hold, use \
-                         Hold TX."
-                        });
+                let auto_chip = crate::chrome::chip_enabled(
+                    ui,
+                    !held,
+                    auto && !held,
+                    &tr!("decodes-auto-tx-frq"),
+                )
+                .on_hover_text(if held {
+                    tr!("decodes-overridden-hold-tx-lift-hold")
+                } else {
+                    tr!("decodes-pick-our-transmit-frequency-automatically")
+                });
                 if auto_chip.clicked() {
                     self.digi_cfg_edit.auto_tx_freq = !auto;
                     cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
@@ -225,19 +215,8 @@ impl SdroxideApp {
                 // The third state neither setting above can express: don't move
                 // at all. For the licence edges, where the band plan is wider
                 // than what we are allowed to key into.
-                if crate::chrome::chip(ui, held, "Hold TX")
-                    .on_hover_text(
-                        "Pin the transmit tone where it is. Nothing moves it: not answering a \
-                         station, not the call queue, not calling CQ, not a click on a decode \
-                         or on the waterfall. Turn it off to move, then on again.\n\nChanging \
-                         band is the one exception, and it is your own act: the offset you last \
-                         set on the new band comes back with it, so a 60 m figure is not carried \
-                         onto 20 m and 20 m's is not carried onto 60 m.\n\nFor where \
-                         the licence is narrower than the band plan — on a UK 60 m dial of \
-                         5357 kHz the allocation ends at 5358.0, so the tone has to stay under \
-                         1000 Hz, and either automatic mover will walk out of the band between \
-                         one over and the next.",
-                    )
+                if crate::chrome::chip(ui, held, tr!("decodes-hold-tx"))
+                    .on_hover_text(tr!("decodes-pin-transmit-tone-where-nothing"))
                     .clicked()
                 {
                     self.digi_cfg_edit.hold_tx_freq = !held;
@@ -331,12 +310,7 @@ impl SdroxideApp {
                             .id(tx_hz_id)
                             .desired_width(40.0),
                     )
-                    .on_hover_text(
-                        "Type the transmit offset in Hz, then press Enter. Where \
-                         your licence is narrower than the band plan the whole \
-                         range below the edge is yours to pick from, so nothing \
-                         is suggested here.",
-                    );
+                    .on_hover_text(tr!("decodes-type-transmit-offset-hz-then"));
                     if crate::chrome::chip_enabled(ui, !held, false, "+").clicked() {
                         cmds.push(Command::SetDigiAudioFreq(step_up.clamp(200.0, 3500.0)));
                     }
@@ -360,8 +334,8 @@ impl SdroxideApp {
             // `clear_rx_chip`: that pushes `DigiClearRx`, which reaches the
             // controller — and the FT8/FT4 decodes are held here in the client,
             // one copy per attached screen, so the engine has nothing to empty.
-            if crate::chrome::chip(ui, false, RichText::new(" CLEAR RX ").size(10.5))
-                .on_hover_text("Empty the decode list. Nothing that is on the air stops.")
+            if crate::chrome::chip(ui, false, RichText::new(tr!("decodes-clear-rx")).size(10.5))
+                .on_hover_text(tr!("decodes-empty-decode-list-nothing-air"))
                 .clicked()
             {
                 self.clear_digi_band_rx();
@@ -521,13 +495,13 @@ impl SdroxideApp {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 5.0;
                         let (ptxt, pcol) = if even {
-                            ("EVEN", crate::theme::CYAN())
+                            (tr!("decodes-even"), crate::theme::CYAN())
                         } else {
-                            ("ODD", crate::theme::YELLOW())
+                            (tr!("decodes-odd"), crate::theme::YELLOW())
                         };
                         ui.label(RichText::new(ptxt).size(9.0).strong().color(pcol));
                         ui.label(
-                            RichText::new(format!("{tstr} UTC"))
+                            RichText::new(format!("{tstr} UTC", tstr = tstr))
                                 .size(9.5)
                                 .monospace()
                                 .color(crate::theme::gray(130)),
@@ -540,23 +514,28 @@ impl SdroxideApp {
                     // Free text names no sender, and a hashed callsign nobody
                     // has heard yet resolves to none either — say which it is
                     // rather than showing a bare "?".
-                    let who = d
-                        .from
-                        .clone()
-                        .unwrap_or_else(|| if d.free_text { "TEXT".into() } else { "?".into() });
+                    let who = d.from.clone().unwrap_or_else(|| {
+                        if d.free_text { tr!("decodes-text") } else { "?".into() }
+                    });
                     // What this station would be worth working: one badge, and
                     // a dupe fades the row back so the new ones carry the eye.
                     let (badge, badge_col) = match novelty.highlight() {
-                        Some(sdroxide_types::Highlight::NewDxcc) => ("DXCC", crate::theme::PINK()),
+                        Some(sdroxide_types::Highlight::NewDxcc) => {
+                            (tr!("decodes-dxcc"), crate::theme::PINK())
+                        }
                         Some(sdroxide_types::Highlight::NewDxccBand) => {
-                            ("BAND", crate::theme::YELLOW())
+                            (tr!("decodes-band"), crate::theme::YELLOW())
                         }
-                        Some(sdroxide_types::Highlight::NewGrid) => ("GRID", crate::theme::CYAN()),
+                        Some(sdroxide_types::Highlight::NewGrid) => {
+                            (tr!("decodes-grid"), crate::theme::CYAN())
+                        }
                         Some(sdroxide_types::Highlight::NewCall) => {
-                            ("NEW", crate::theme::CYAN_DIM())
+                            (tr!("decodes-new"), crate::theme::CYAN_DIM())
                         }
-                        Some(sdroxide_types::Highlight::Dupe) => ("DUPE", crate::theme::gray(85)),
-                        None => ("", Color32::TRANSPARENT),
+                        Some(sdroxide_types::Highlight::Dupe) => {
+                            (tr!("decodes-dupe"), crate::theme::gray(85))
+                        }
+                        None => (String::new(), Color32::TRANSPARENT),
                     };
                     let dupe = novelty.dupe;
                     let grid = d.grid.clone().unwrap_or_default();
@@ -669,19 +648,19 @@ impl SdroxideApp {
                     // marks a station for later; pressing it again drops the
                     // station, so one button both queues and un-queues.
                     //
-                    // Both are greyed on a receiver: answering a station and
-                    // lining one up to answer later are the same promise to
-                    // transmit, and a list of stations you cannot work should
-                    // say so on the row rather than only when the key fails.
+                    // Neither is drawn where there is no sequencer behind it —
+                    // answering a station and lining one up to answer later are
+                    // the same promise to transmit, and a mode with no QSO to
+                    // sequence should not offer the promise at all.
                     let buttons = |ui: &mut egui::Ui| {
-                        if rx_only_mode {
+                        if !qso_mode {
                             return None;
                         }
                         let resp = tx_gated(ui, tx_ok, |ui| {
                             crate::chrome::chip_accent(
                                 ui,
                                 false,
-                                RichText::new("REPLY").size(12.0).strong(),
+                                RichText::new(tr!("decodes-reply")).size(12.0).strong(),
                                 if to_me {
                                     crate::theme::YELLOW()
                                 } else if cq {
@@ -699,9 +678,9 @@ impl SdroxideApp {
                                 RichText::new(if queued { "＋" } else { "+" }).size(12.0).strong(),
                             )
                             .on_hover_text(if queued {
-                                "Queued — click to remove"
+                                tr!("decodes-queued-click-remove")
                             } else {
-                                "Work this station after the current one"
+                                tr!("decodes-work-station-after-current-one")
                             })
                         });
                         Some((resp, qresp))
@@ -1024,14 +1003,17 @@ impl SdroxideApp {
                 |ui| {
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new(format!("Session: {session} QSO"))
+                            RichText::new(tr!("decodes-session-qso", session = session))
                                 .size(11.0)
                                 .color(crate::theme::gray(150)),
                         )
-                        .on_hover_text("QSOs worked since sdroxide was started");
+                        .on_hover_text(tr!("decodes-qsos-worked-since-sdroxide-was"));
                         if ui
-                            .add_enabled(logged > 0, egui::Button::new("ADIF"))
-                            .on_hover_text(format!("Save the whole logbook ({logged} QSO) as ADIF"))
+                            .add_enabled(logged > 0, egui::Button::new(tr!("decodes-adif")))
+                            .on_hover_text(tr!(
+                                "decodes-save-whole-logbook-qso-adif",
+                                logged = logged
+                            ))
                             .clicked()
                         {
                             let adif = sdroxide_types::qso_log_to_adif(&self.qso_log);
@@ -1039,7 +1021,10 @@ impl SdroxideApp {
                         }
                         if ui
                             .add_enabled(logged > 0, egui::Button::new("TXT"))
-                            .on_hover_text(format!("Save the whole logbook ({logged} QSO) as text"))
+                            .on_hover_text(tr!(
+                                "decodes-save-whole-logbook-qso-text",
+                                logged = logged
+                            ))
                             .clicked()
                         {
                             let txt = sdroxide_types::qso_log_to_text(&self.qso_log);
@@ -1054,7 +1039,8 @@ impl SdroxideApp {
                 .max_rect(zone(2.0))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
             |ui| {
-                if crate::chrome::chip(ui, self.show_digi_settings, "⚙ SETUP").clicked() {
+                if crate::chrome::chip(ui, self.show_digi_settings, tr!("decodes-setup")).clicked()
+                {
                     self.show_digi_settings = !self.show_digi_settings;
                 }
             },
@@ -1177,23 +1163,19 @@ impl SdroxideApp {
                         let done = s.step == sdroxide_types::QsoStep::Confirming;
                         let step_col =
                             if done { crate::theme::GREEN() } else { crate::theme::CYAN() };
-                        ui.label(RichText::new(s.step.label()).size(13.0).strong().color(step_col));
+                        ui.label(RichText::new(s.step.tr()).size(13.0).strong().color(step_col));
                         if done {
                             ui.label(
-                                RichText::new("✓ QSO COMPLETE")
+                                RichText::new(tr!("decodes-qso-complete"))
                                     .size(11.0)
                                     .strong()
                                     .color(crate::theme::GREEN()),
                             )
-                            .on_hover_text(
-                                "The contact is complete and in the log. It is held here for a \
-                                 few minutes so the final message can be re-sent if the other \
-                                 station repeats theirs — nothing more is owed.",
-                            );
+                            .on_hover_text(tr!("decodes-contact-complete-log-held-here"));
                         }
                         if s.transmitting {
                             ui.label(
-                                RichText::new("● TX")
+                                RichText::new(tr!("decodes-tx"))
                                     .size(13.0)
                                     .strong()
                                     .color(crate::theme::ALERT()),
@@ -1203,37 +1185,30 @@ impl SdroxideApp {
                             && matches!(s.mode, Mode::Ft8 | Mode::Ft2)
                         {
                             ui.label(
-                                RichText::new(s.config.dxped_mode.label().to_uppercase())
+                                RichText::new(s.config.dxped_mode.tr().to_uppercase())
                                     .size(11.0)
                                     .strong()
                                     .color(crate::theme::PINK()),
                             )
-                            .on_hover_text(
-                                "DXpedition mode. The transmit frequency is held out of the \
-                                 Fox's half of the passband (below 1000 Hz) until the Fox \
-                                 answers.",
-                            );
+                            .on_hover_text(tr!("decodes-dxpedition-mode-transmit-frequency-held"));
                         }
                         if s.tx_watchdog {
                             // The sequencer stood down on its own; say so, since
                             // an idle step alone looks like nothing happened.
                             ui.label(
-                                RichText::new("WATCHDOG")
+                                RichText::new(tr!("decodes-watchdog"))
                                     .size(11.0)
                                     .strong()
                                     .color(crate::theme::YELLOW()),
                             )
-                            .on_hover_text(
-                                "Transmitting stopped: no reply and no action for the watchdog \
-                                 period. Call CQ or pick a message to resume.",
-                            );
+                            .on_hover_text(tr!("decodes-transmitting-stopped-no-reply-no"));
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
-                                RichText::new(format!(
-                                    "{:.0} Hz · {} slots",
-                                    s.audio_hz,
-                                    if s.tx_even { "even" } else { "odd" }
+                                RichText::new(tr!(
+                                    "decodes-hz-slots",
+                                    audio_hz = format!("{:.0}", s.audio_hz),
+                                    odd = if s.tx_even { "even" } else { "odd" }
                                 ))
                                 .size(11.0)
                                 .color(crate::theme::gray(140)),
@@ -1256,18 +1231,14 @@ impl SdroxideApp {
                                 } else {
                                     txt.strong().color(col)
                                 })
-                                .on_hover_text(format!(
-                                    "Your slot timing against the stations you are hearing.\n\
-                                     {}\n\nIt covers the whole receive path, so a slow audio or \
-                                     network chain counts the same as a wrong clock. Under 0.5 s \
-                                     is comfortable.",
-                                    match health {
-                                        Good => "Well inside tolerance.".to_string(),
-                                        _ => format!(
-                                            "You transmit {:.1} s {} everyone else — the usual \
-                                             reason calls go unanswered. Sync your computer clock.",
-                                            off.abs(),
-                                            if off > 0.0 { "before" } else { "after" },
+                                .on_hover_text(tr!(
+                                    "decodes-your-slot-timing-against-stations",
+                                    after = match health {
+                                        Good => tr!("decodes-well-inside-tolerance").to_string(),
+                                        _ => tr!(
+                                            "decodes-you-transmit-s-everyone-else",
+                                            off = format!("{:.1}", off.abs()),
+                                            after = if off > 0.0 { "before" } else { "after" }
                                         ),
                                     }
                                 ));
@@ -1315,7 +1286,7 @@ impl SdroxideApp {
                         }
                         None => {
                             ui.label(
-                                RichText::new("no active QSO — pick a decode to reply, or Call CQ")
+                                RichText::new(tr!("decodes-no-active-qso-pick-decode"))
                                     .size(11.0)
                                     .color(crate::theme::gray(120)),
                             );
@@ -1324,7 +1295,9 @@ impl SdroxideApp {
                 }
                 None => {
                     ui.label(
-                        RichText::new("FT8 engine idle").size(12.0).color(crate::theme::gray(130)),
+                        RichText::new(tr!("decodes-ft8-engine-idle"))
+                            .size(12.0)
+                            .color(crate::theme::gray(130)),
                     );
                 }
             }
@@ -1338,7 +1311,7 @@ impl SdroxideApp {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.label(
-                    RichText::new(format!("PILE-UP {}", fox_queue.len()))
+                    RichText::new(tr!("decodes-pile-up", fox_queue = fox_queue.len()))
                         .size(9.5)
                         .strong()
                         .color(crate::theme::CYAN_DIM()),
@@ -1349,7 +1322,11 @@ impl SdroxideApp {
                     ui.label(RichText::new(&c.call).size(11.5).strong().color(col)).on_hover_text(
                         format!(
                             "{} · {:+} dB{}",
-                            if c.working { "being worked" } else { "waiting" },
+                            if c.working {
+                                tr!("decodes-being-worked")
+                            } else {
+                                String::from("waiting")
+                            },
                             c.snr_db,
                             c.grid.as_deref().map(|g| format!(" · {g}")).unwrap_or_default(),
                         ),
@@ -1366,7 +1343,7 @@ impl SdroxideApp {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.label(
-                    RichText::new(format!("QUEUE {}", call_queue.len()))
+                    RichText::new(tr!("decodes-queue", call_queue = call_queue.len()))
                         .size(9.5)
                         .strong()
                         .color(crate::theme::CYAN_DIM()),
@@ -1375,19 +1352,22 @@ impl SdroxideApp {
                     // The one going next is the one worth reading first.
                     let col = if i == 0 { crate::theme::GREEN() } else { crate::theme::gray(150) };
                     if crate::chrome::chip(ui, false, RichText::new(&q.call).size(11.5).color(col))
-                        .on_hover_text(format!(
-                            "{} · {:+} dB · {:.0} Hz{}\nClick to remove",
-                            if i == 0 { "next" } else { "waiting" },
-                            q.snr_db,
-                            q.audio_hz,
-                            q.grid.as_deref().map(|g| format!(" · {g}")).unwrap_or_default(),
+                        .on_hover_text(tr!(
+                            "decodes-db-hz-click-remove",
+                            waiting = if i == 0 { "next" } else { "waiting" },
+                            snr_db = format!("{:+}", q.snr_db),
+                            audio_hz = format!("{:.0}", q.audio_hz),
+                            unwrap_or_default =
+                                q.grid.as_deref().map(|g| format!(" · {g}")).unwrap_or_default()
                         ))
                         .clicked()
                     {
                         cmds.push(Command::DigiQueueRemove(q.call.clone()));
                     }
                 }
-                if crate::chrome::chip(ui, false, RichText::new("CLEAR").size(10.0)).clicked() {
+                if crate::chrome::chip(ui, false, RichText::new(tr!("decodes-clear")).size(10.0))
+                    .clicked()
+                {
                     cmds.push(Command::DigiQueueRemove(String::new()));
                 }
             });
@@ -1481,7 +1461,7 @@ impl SdroxideApp {
                             }
                             if !any {
                                 ui.label(
-                                    RichText::new("— no messages —")
+                                    RichText::new(tr!("decodes-no-messages"))
                                         .monospace()
                                         .size(11.5)
                                         .color(crate::theme::gray(90)),
@@ -1520,13 +1500,26 @@ impl SdroxideApp {
         // a transmitter: STOP QSO and STOP TX stay live, because a stop is
         // worth having even where it should have nothing to stop.
         let tx_ok = self.tx_capable();
+        // A bottom-up layout places a row by the height it is *started* with,
+        // which for `horizontal_wrapped` is `interact_size.y`, and the row then
+        // grows downward to fit what is in it. These chips are taller than that
+        // (29 points against 18 on a desktop, 41 against 34 on a tablet), so
+        // the difference hung off the bottom edge of the column and took the
+        // panel's frame and the lower part of the buttons with it. Started at
+        // the chips' own height, the row sits on the edge instead of below it.
+        let row_h = crate::chrome::chip_height(ui, Some(15.0));
+        let interact_h = ui.spacing().interact_size.y;
+        ui.spacing_mut().interact_size.y = interact_h.max(row_h);
         ui.horizontal_wrapped(|ui| {
+            // Back to the style's own height inside the row, so nothing drawn
+            // in it is sized from the row's.
+            ui.spacing_mut().interact_size.y = interact_h;
             let cq = ui.add_enabled_ui(!in_qso && tx_ok, |ui| {
                 rx_only_hint(
                     crate::chrome::chip_accent(
                         ui,
                         false,
-                        RichText::new("  CALL CQ  ").size(15.0).strong(),
+                        RichText::new(tr!("decodes-call-cq")).size(15.0).strong(),
                         crate::theme::GREEN(),
                         crate::theme::INK_ON_CYAN(),
                     ),
@@ -1536,13 +1529,15 @@ impl SdroxideApp {
             if cq.inner.clicked() {
                 cmds.push(Command::DigiCallCq);
             }
-            if crate::chrome::chip(ui, false, RichText::new(" STOP QSO ").size(14.0)).clicked() {
+            if crate::chrome::chip(ui, false, RichText::new(tr!("decodes-stop-qso")).size(14.0))
+                .clicked()
+            {
                 cmds.push(Command::DigiStopQso);
             }
             if crate::chrome::chip_accent(
                 ui,
                 false,
-                RichText::new(" STOP TX ").size(15.0).strong(),
+                RichText::new(tr!("decodes-stop-tx")).size(15.0).strong(),
                 crate::theme::ALERT(),
                 Color32::WHITE,
             )
@@ -1551,6 +1546,7 @@ impl SdroxideApp {
                 cmds.push(Command::DigiAbortTx);
             }
         });
+        ui.spacing_mut().interact_size.y = interact_h;
         ui.add_space(gap);
         // Message picker: choose by hand which message goes next (WSJT-X's
         // Tx1–Tx6), or send a line of free text in the next slot.
@@ -1581,13 +1577,13 @@ impl SdroxideApp {
                 egui::TextEdit::singleline(&mut self.digi_free_text)
                     .desired_width(ui.available_width() - 52.0)
                     .char_limit(13)
-                    .hint_text("free text (13 chars)"),
+                    .hint_text(tr!("decodes-free-text-13-chars")),
             );
             let send = tx_gated(ui, tx_ok, |ui| {
                 crate::chrome::chip_accent(
                     ui,
                     false,
-                    RichText::new("SEND").size(11.0).strong(),
+                    RichText::new(tr!("decodes-send")).size(11.0).strong(),
                     crate::theme::CYAN(),
                     crate::theme::INK_ON_CYAN(),
                 )

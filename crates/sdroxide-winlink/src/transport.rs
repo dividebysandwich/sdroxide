@@ -368,3 +368,209 @@ impl Transport for Ax25Transport {
         format!("AX.25 packet to {}", self.gateway)
     }
 }
+
+/// How long a clean VARA hang-up is waited for before the link is simply
+/// dropped. VARA sends what is still buffered first, so this is generous.
+const VARA_DISCONNECT_WAIT: Duration = Duration::from_secs(45);
+
+/// A B2F session over a VARA HF link.
+///
+/// The third implementer. The modem is driven exactly as Pat or Winlink
+/// Express drive VARA — `MYCALL`, `CONNECT`, payload on the data channel,
+/// `DISCONNECT` — through an in-process host claimed from
+/// [`sdroxide_vara::VaraHandle`], so this holds no modem state at all. The
+/// claim is the lease: while this lives, neither the operator's panel nor a
+/// program on the TCP ports can drive the link underneath the session.
+///
+/// `read` never times out, for the reason [`Ax25Transport`] gives: VARA has
+/// its own failure model (retries, then `DISCONNECTED`), and an HF session can
+/// sit through a long fade and recover.
+pub struct VaraTransport {
+    client: sdroxide_vara::LocalClient,
+    gateway: String,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    inbox: std::collections::VecDeque<u8>,
+    closed: bool,
+}
+
+impl std::fmt::Debug for VaraTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VaraTransport")
+            .field("gateway", &self.gateway)
+            .field("closed", &self.closed)
+            .finish()
+    }
+}
+
+impl VaraTransport {
+    /// Call `gateway` as `mycall` and wait for the link to come up.
+    pub fn connect(
+        handle: &sdroxide_vara::VaraHandle,
+        mycall: &str,
+        gateway: &str,
+        timeout: Duration,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Self, TransportError> {
+        let fail = |kind: std::io::ErrorKind, why: &str| {
+            TransportError::Connect(gateway.into(), std::io::Error::new(kind, why.to_string()))
+        };
+        let client =
+            handle.claim("the Winlink window").map_err(|e| fail(std::io::ErrorKind::Other, &e))?;
+        client.command(&format!("MYCALL {mycall}"));
+        client.command("LISTEN OFF");
+        client.command(&format!("CONNECT {mycall} {gateway}"));
+
+        let deadline = std::time::Instant::now() + timeout;
+        // The replies to MYCALL and LISTEN come first; the third `OK`/`WRONG`
+        // is CONNECT's.
+        let mut acks = 0;
+        let mut inbox = std::collections::VecDeque::new();
+        loop {
+            if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                client.command("ABORT");
+                return Err(fail(std::io::ErrorKind::Interrupted, "stopped"));
+            }
+            if deadline <= std::time::Instant::now() {
+                client.command("ABORT");
+                return Err(fail(std::io::ErrorKind::TimedOut, "the gateway did not answer"));
+            }
+            while let Ok(d) = client.try_recv_data() {
+                inbox.extend(d);
+            }
+            match client.recv_line(CANCEL_POLL) {
+                Ok(l) if l.starts_with("CONNECTED") => {
+                    return Ok(VaraTransport {
+                        client,
+                        gateway: gateway.to_string(),
+                        cancel,
+                        inbox,
+                        closed: false,
+                    });
+                }
+                Ok(l) if l == "DISCONNECTED" => {
+                    return Err(fail(
+                        std::io::ErrorKind::ConnectionRefused,
+                        "no answer from the gateway",
+                    ));
+                }
+                Ok(l) if l == "OK" => acks += 1,
+                Ok(l) if l == "WRONG" => {
+                    let why = if acks < 2 {
+                        "the VARA modem refused the callsign"
+                    } else {
+                        "the VARA modem refused the call (busy, or already linked?)"
+                    };
+                    return Err(fail(std::io::ErrorKind::Other, why));
+                }
+                Ok(_) | Err(false) => {}
+                Err(true) => {
+                    return Err(fail(std::io::ErrorKind::BrokenPipe, "the radio left VARA HF"));
+                }
+            }
+        }
+    }
+
+    fn fill(&mut self) -> std::io::Result<()> {
+        while self.inbox.is_empty() && !self.closed {
+            if self.cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "stopped by the operator",
+                ));
+            }
+            match self.client.try_recv_data() {
+                Ok(d) => {
+                    self.inbox.extend(d);
+                    continue;
+                }
+                Err(true) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "the radio left VARA HF",
+                    ));
+                }
+                Err(false) => {}
+            }
+            match self.client.recv_line(CANCEL_POLL) {
+                // Payload that raced the hang-up is still the session's.
+                Ok(l) if l == "DISCONNECTED" => {
+                    while let Ok(d) = self.client.try_recv_data() {
+                        self.inbox.extend(d);
+                    }
+                    self.closed = true;
+                }
+                Ok(_) | Err(false) => {}
+                Err(true) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "the radio left VARA HF",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Read for VaraTransport {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.fill()?;
+        let n = buf.len().min(self.inbox.len());
+        for slot in buf.iter_mut().take(n) {
+            *slot = self.inbox.pop_front().unwrap_or(0);
+        }
+        Ok(n)
+    }
+}
+
+impl Write for VaraTransport {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.closed {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "the VARA link is down",
+            ));
+        }
+        self.client.send_data(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for VaraTransport {
+    /// Hang up properly: VARA sends what is buffered, then the far end agrees.
+    /// Dropping the host without this would drop the link on the floor and
+    /// leave the gateway to time out.
+    fn drop(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.client.command("DISCONNECT");
+        let until = std::time::Instant::now() + VARA_DISCONNECT_WAIT;
+        while std::time::Instant::now() < until {
+            if self.cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                self.client.command("ABORT");
+                return;
+            }
+            match self.client.recv_line(CANCEL_POLL) {
+                Ok(l) if l == "DISCONNECTED" => return,
+                Err(true) => return,
+                _ => {}
+            }
+        }
+        self.client.command("ABORT");
+    }
+}
+
+impl Transport for VaraTransport {
+    fn target_call(&self) -> &str {
+        &self.gateway
+    }
+
+    fn describe(&self) -> String {
+        format!("VARA HF to {}", self.gateway)
+    }
+}

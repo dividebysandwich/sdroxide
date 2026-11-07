@@ -21,6 +21,7 @@
 //! between "there are no ships" and "set the front end's frequency correction",
 //! and nothing else in the program can tell an operator which.
 
+use crate::i18n::{Tr, tr};
 use eframe::egui::{self, RichText};
 use sdroxide_types::{AisKind, AisStatus, AisVessel, Command};
 
@@ -70,7 +71,7 @@ impl SdroxideApp {
         let st: AisStatus = match self.ais_status.as_ref() {
             Some(s) => (**s).clone(),
             None => {
-                ui.label(RichText::new("starting the AIS decoder…").weak());
+                ui.label(RichText::new(tr!("ais-starting-ais-decoder")).weak());
                 return;
             }
         };
@@ -132,11 +133,7 @@ impl SdroxideApp {
             // The one preset there is. A chip rather than a note, because the
             // fix for "nothing is decoding" is nearly always this.
             if crate::chrome::chip(ui, on_channel, "162.000")
-                .on_hover_text(
-                    "Tune between the two AIS channels — 161.975 (AIS 1, marine 87B) and \
-                     162.025 (AIS 2, 88B). The dial goes in the middle because nothing \
-                     transmits there, so a zero-IF receiver's DC spike lands on neither.",
-                )
+                .on_hover_text(tr!("ais-tune-between-two-ais-channels"))
                 .clicked()
             {
                 cmds.push(Command::SetVfo {
@@ -146,30 +143,35 @@ impl SdroxideApp {
             }
 
             ui.separator();
-            slot(ui, 74.0, &format!("{} vessels", st.vessels.len()), theme::CYAN());
-            slot(ui, 84.0, &format!("{} messages", count(st.messages)), theme::gray(150));
+            slot(ui, 74.0, &tr!("ais-vessels-3", vessels = st.vessels.len()), theme::CYAN());
+            slot(ui, 84.0, &tr!("ais-messages", messages = count(st.messages)), theme::gray(150));
             // A high slot count with no messages is the honest picture of a
             // band busy with something the decoder cannot read. Worth showing
             // rather than leaving the panel looking broken.
-            slot(ui, 68.0, &format!("{} slots", count(st.bursts)), theme::gray(120));
-            slot(ui, 78.0, &format!("{} bad FCS", count(st.bad_fcs)), theme::gray(120));
+            slot(ui, 68.0, &tr!("ais-slots", bursts = count(st.bursts)), theme::gray(120));
+            slot(ui, 78.0, &tr!("ais-bad-fcs", bad_fcs = count(st.bad_fcs)), theme::gray(120));
 
             // Which channels are alive, as two chips: a ship alternates between
             // them, so one dark channel halves every vessel's reporting rate
             // and looks exactly like a quiet sea.
             for c in &st.channels {
                 let tip = match &c.reason {
-                    Some(r) => format!("AIS {} ({:.3} MHz) — {r}", c.label, c.freq_hz / 1e6),
-                    None => format!(
-                        "AIS {} ({:.3} MHz) — {} slots, {} messages, floor {:.0} dBFS",
-                        c.label,
-                        c.freq_hz / 1e6,
-                        c.bursts,
-                        c.messages,
-                        c.floor_dbfs
+                    Some(r) => tr!(
+                        "ais-ais-mhz",
+                        value = c.label,
+                        mhz = format!("{:.3}", c.freq_hz / 1e6),
+                        value2 = r
+                    ),
+                    None => tr!(
+                        "ais-ais-mhz-slots-messages-floor",
+                        value = c.label,
+                        mhz = format!("{:.3}", c.freq_hz / 1e6),
+                        bursts = c.bursts,
+                        messages = c.messages,
+                        floor_dbfs = format!("{:.0}", c.floor_dbfs)
                     ),
                 };
-                crate::chrome::chip(ui, c.live, format!("AIS {}", c.label)).on_hover_text(tip);
+                crate::chrome::chip(ui, c.live, tr!("ais-ais", value = c.label)).on_hover_text(tip);
             }
 
             if st.window_rate_hz > 0.0 {
@@ -177,19 +179,17 @@ impl SdroxideApp {
                     ui,
                     140.0,
                     &format!(
-                        "{:.3} MHz / {:.0} kHz",
-                        st.window_center_hz / 1e6,
-                        st.window_rate_hz / 1e3
+                        "{e6:.3} MHz / {e3:.0} kHz",
+                        e6 = st.window_center_hz / 1e6,
+                        e3 = st.window_rate_hz / 1e3
                     ),
                     theme::gray(120),
                 );
             }
 
             ui.separator();
-            if crate::chrome::chip(ui, self.show_ais_setup, "SETUP")
-                .on_hover_text(
-                    "Channels, timeouts, trail length and how far ahead the vectors reach",
-                )
+            if crate::chrome::chip(ui, self.show_ais_setup, tr!("ais-setup"))
+                .on_hover_text(tr!("ais-channels-timeouts-trail-length-how"))
                 .clicked()
             {
                 self.show_ais_setup = !self.show_ais_setup;
@@ -201,7 +201,12 @@ impl SdroxideApp {
                 ui.label(RichText::new(why).size(10.5).color(theme::HAZARD()));
                 if let Some(hz) = st.suggest_center_hz
                     && (dial - hz).abs() > 1.0
-                    && crate::chrome::chip(ui, false, format!("TUNE {:.3}", hz / 1e6)).clicked()
+                    && crate::chrome::chip(
+                        ui,
+                        false,
+                        tr!("ais-tune", mhz = format!("{:.3}", hz / 1e6)),
+                    )
+                    .clicked()
                 {
                     cmds.push(Command::SetVfo { vfo: self.state.active_vfo, hz });
                 }
@@ -218,12 +223,13 @@ impl SdroxideApp {
         // being three kilohertz off in the same direction is this receiver.
         if let Some(off) = st.offset_hz.filter(|o| o.abs() >= OFFSET_WARN_HZ) {
             ui.label(
-                RichText::new(format!(
-                    "the ships heard are {:+.1} kHz off frequency ({:+.0} ppm at 162 MHz) — \
-                     set the front end's frequency correction, or transmissions past about \
-                     5 kHz will stop decoding",
-                    off / 1e3,
-                    f64::from(off) / sdroxide_types::AIS_PLAN_CENTER_HZ * 1e6
+                RichText::new(tr!(
+                    "ais-ships-heard-are-khz-off",
+                    khz = format!("{:+.1}", off / 1e3),
+                    mhz = format!(
+                        "{:+.0}",
+                        f64::from(off) / sdroxide_types::AIS_PLAN_CENTER_HZ * 1e6
+                    )
                 ))
                 .size(10.5)
                 .color(theme::YELLOW()),
@@ -241,7 +247,7 @@ impl SdroxideApp {
         let home = self.ais_home();
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(20.0);
-            ui.label(RichText::new("VESSELS").strong().size(10.5).color(theme::CYAN()));
+            ui.label(RichText::new(tr!("ais-vessels")).strong().size(10.5).color(theme::CYAN()));
             ui.add(
                 egui::TextEdit::singleline(&mut self.ais_filter)
                     .hint_text("filter")
@@ -287,7 +293,7 @@ impl SdroxideApp {
             .auto_shrink([false, false])
             .show_themed(ui, |ui| {
                 if rows.is_empty() {
-                    ui.label(RichText::new("nothing heard yet").weak());
+                    ui.label(RichText::new(tr!("ais-nothing-heard-yet")).weak());
                 }
                 for (i, v) in rows.iter().enumerate() {
                     if ais_row(ui, v, now, selected, home, drop_map_s, i) {
@@ -333,17 +339,17 @@ impl SdroxideApp {
                             .color(if v.is_alarm() { theme::HAZARD() } else { theme::YELLOW() }),
                     );
                     ui.label(RichText::new(v.mmsi.to_string()).monospace().size(10.5).weak());
-                    ui.label(RichText::new(v.kind.label()).size(10.5).color(theme::CYAN_DIM()));
+                    ui.label(RichText::new(v.kind.tr()).size(10.5).color(theme::CYAN_DIM()));
                     if v.virtual_aid {
                         ui.label(
-                            RichText::new("virtual — nothing is there")
+                            RichText::new(tr!("ais-virtual-nothing-there"))
                                 .size(10.5)
                                 .color(theme::HAZARD()),
                         );
                     }
                     if v.lat.is_some() && v.pos_stale(now, self.state.ais.drop_map_s) {
                         ui.label(
-                            RichText::new("position stale")
+                            RichText::new(tr!("ais-position-stale"))
                                 .size(10.5)
                                 .color(theme::HAZARD())
                                 .italics(),
@@ -352,19 +358,17 @@ impl SdroxideApp {
                 });
                 if v.kind == AisKind::Sart {
                     ui.label(
-                        RichText::new(
-                            "a search-and-rescue transmitter, man-overboard beacon or AIS EPIRB",
-                        )
-                        .strong()
-                        .color(theme::HAZARD()),
+                        RichText::new(tr!("ais-search-rescue-transmitter-man-overboard"))
+                            .strong()
+                            .color(theme::HAZARD()),
                     );
                 }
 
-                let mut rows: Vec<(&str, String)> = Vec::new();
+                let mut rows: Vec<(String, String)> = Vec::new();
                 if let Some(t) = v.type_label() {
                     let hazard = v.ship_type.and_then(sdroxide_types::ship_type_hazard);
                     rows.push((
-                        "type",
+                        tr!("ais-row-type"),
                         match hazard {
                             Some(h) => format!("{t} — {h}"),
                             None => t.to_string(),
@@ -372,62 +376,87 @@ impl SdroxideApp {
                     ));
                 }
                 if let Some(s) = v.nav_status.map(sdroxide_types::nav_status_label) {
-                    rows.push(("status", s.to_string()));
+                    rows.push((tr!("ais-row-status"), s.to_string()));
                 }
                 if !v.call_sign.is_empty() {
-                    rows.push(("call sign", v.call_sign.clone()));
+                    rows.push((tr!("ais-call-sign"), v.call_sign.clone()));
                 }
                 if let Some(imo) = v.imo {
-                    rows.push(("IMO", imo.to_string()));
+                    rows.push(("IMO".into(), imo.to_string()));
                 }
                 if let Some(kt) = v.sog_kt {
-                    rows.push(("speed", format!("{kt:.1} kt")));
+                    rows.push((tr!("ais-row-speed"), format!("{kt:.1} kt")));
                 }
                 if let Some(c) = v.cog_deg {
-                    rows.push(("course", format!("{c:.0}° over ground")));
+                    rows.push((
+                        tr!("ais-row-course"),
+                        tr!("ais-over-ground", value = format!("{:.0}", c)),
+                    ));
                 }
                 if let Some(hd) = v.heading_deg {
-                    rows.push(("heading", format!("{hd:.0}°")));
+                    rows.push((tr!("ais-row-heading"), format!("{hd:.0}°")));
                 }
                 if let Some(r) = v.turn_rate_deg_min.filter(|r| r.abs() > 0.5) {
-                    rows.push(("turning", format!("{r:+.0}°/min")));
+                    rows.push((tr!("ais-row-turning"), format!("{value:+.0}°/min", value = r)));
                 }
                 if let Some(a) = v.altitude_m {
-                    rows.push(("altitude", format!("{a} m")));
+                    rows.push((tr!("ais-row-altitude"), format!("{a} m")));
                 }
                 let size = v.fmt_size();
                 if !size.is_empty() {
-                    rows.push(("size", size));
+                    rows.push((tr!("ais-row-size"), size));
                 }
                 if let Some(d) = v.draught_m {
-                    rows.push(("draught", format!("{d:.1} m")));
+                    rows.push((tr!("ais-row-draught"), format!("{d:.1} m")));
                 }
                 if !v.destination.is_empty() {
-                    rows.push(("destination", v.destination.clone()));
+                    rows.push((tr!("ais-row-destination"), v.destination.clone()));
                 }
                 if !v.eta.is_empty() {
-                    rows.push(("ETA", format!("{} UTC", v.eta)));
+                    rows.push(("ETA".into(), format!("{eta} UTC", eta = v.eta)));
                 }
                 if !v.utc.is_empty() {
-                    rows.push(("station time", format!("{} UTC", v.utc)));
+                    rows.push((tr!("ais-station-time"), format!("{utc} UTC", utc = v.utc)));
                 }
                 if let (Some((hlat, hlon)), Some((lat, lon))) = (home, v.lat.zip(v.lon)) {
                     let km = sdroxide_types::distance_km((hlat, hlon), (lat, lon));
                     let bear = sdroxide_types::bearing_deg((hlat, hlon), (lat, lon));
-                    rows.push(("range", format!("{km:.1} km at {bear:.0}°")));
+                    rows.push((
+                        tr!("ais-row-range"),
+                        tr!(
+                            "ais-range-bearing",
+                            km = format!("{km:.1}"),
+                            bearing = format!("{bear:.0}")
+                        ),
+                    ));
                 }
                 if let Some((lat, lon)) = v.lat.zip(v.lon) {
                     rows.push((
-                        "position",
-                        format!("{lat:.5}, {lon:.5}{}", if v.accuracy { " (DGNSS)" } else { "" }),
+                        tr!("ais-row-position"),
+                        format!(
+                            "{lat:.5}, {lon:.5}{}",
+                            if v.accuracy { tr!("ais-dgnss") } else { String::from("") }
+                        ),
                     ));
                 }
-                rows.push(("signal", format!("{:.0} dBFS, {:.0} dB SNR", v.rssi_dbfs, v.snr_db)));
                 rows.push((
-                    "messages",
-                    format!("{} (last type {}, AIS {})", v.messages, v.last_type, v.channel),
+                    tr!("ais-row-signal"),
+                    tr!(
+                        "ais-dbfs-db-snr",
+                        rssi_dbfs = format!("{:.0}", v.rssi_dbfs),
+                        snr_db = format!("{:.0}", v.snr_db)
+                    ),
                 ));
-                rows.push(("first heard", fmt_age(now - v.first_at)));
+                rows.push((
+                    tr!("ais-row-messages"),
+                    tr!(
+                        "ais-last-type-ais",
+                        messages = v.messages,
+                        last_type = v.last_type,
+                        channel = v.channel
+                    ),
+                ));
+                rows.push((tr!("ais-first-heard"), fmt_age(now - v.first_at)));
 
                 egui::Grid::new("ais-card-grid").num_columns(2).spacing([10.0, 1.0]).show(
                     ui,
@@ -442,9 +471,13 @@ impl SdroxideApp {
 
                 ui.horizontal_wrapped(|ui| {
                     if v.has_position()
-                        && crate::chrome::chip(ui, false, RichText::new("CENTER").size(10.0))
-                            .on_hover_text("Put this vessel in the middle of the chart")
-                            .clicked()
+                        && crate::chrome::chip(
+                            ui,
+                            false,
+                            RichText::new(tr!("ais-center")).size(10.0),
+                        )
+                        .on_hover_text(tr!("ais-put-vessel-middle-chart"))
+                        .clicked()
                         && let Some((lat, lon)) = v.lat.zip(v.lon)
                     {
                         self.ais_map.view.centre_on(lat, lon);
@@ -458,11 +491,7 @@ impl SdroxideApp {
                     ui.label(
                         RichText::new(&v.nmea).monospace().size(9.0).color(theme::gray(110)).weak(),
                     )
-                    .on_hover_text(
-                        "The last message from this station, as the NMEA sentences a \
-                         receiver would put on the wire. Paste it into any other AIS \
-                         decoder to check what sdroxide made of it.",
-                    );
+                    .on_hover_text(tr!("ais-last-message-station-nmea-sentences"));
                 }
             });
     }
@@ -506,7 +535,7 @@ impl SdroxideApp {
         // state, so there is no apply step and no way for the two copies to
         // drift.
         let mut cfg = self.state.ais;
-        let resp = egui::Window::new("AIS Setup")
+        let resp = egui::Window::new(tr!("ais-ais-setup"))
             .id(crate::layout::salted_id(ctx, "AisSetup"))
             .open(&mut open)
             .frame(crate::chrome::window_frame())
@@ -515,16 +544,14 @@ impl SdroxideApp {
             .show(ctx, |ui| {
                 crate::chrome::window_body_bg(ui);
                 ui.horizontal_wrapped(|ui| {
-                    ui.label("Channels");
+                    ui.label(tr!("ais-channels"));
                     for (i, ch) in sdroxide_ais_channels().iter().enumerate() {
                         let on = cfg.channel_enabled(i);
-                        if crate::chrome::chip(ui, on, format!("AIS {}", ch.0))
-                            .on_hover_text(format!(
-                                "{:.3} MHz — marine channel {}. A ship alternates between the \
-                                 two, so switching one off halves how often every vessel is \
-                                 heard.",
-                                ch.1 / 1e6,
-                                ch.2
+                        if crate::chrome::chip(ui, on, tr!("ais-ais-2", ch = ch.0))
+                            .on_hover_text(tr!(
+                                "ais-mhz-marine-channel-ship-alternates",
+                                mhz = format!("{:.3}", ch.1 / 1e6),
+                                ch = ch.2
                             ))
                             .clicked()
                         {
@@ -534,76 +561,59 @@ impl SdroxideApp {
                 });
                 ui.add_space(4.0);
                 egui::Grid::new("ais-cfg").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                    ui.label("Drop from chart after");
+                    ui.label(tr!("ais-drop-chart-after"));
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::DragValue::new(&mut cfg.drop_map_s).range(10..=3600).suffix(" s"),
                         );
-                        ui.label(RichText::new("without a position report").size(9.5).weak());
+                        ui.label(
+                            RichText::new(tr!("ais-without-position-report")).size(9.5).weak(),
+                        );
                     });
                     ui.end_row();
                     ui.label("");
                     ui.label(
-                        RichText::new(
-                            "Five minutes by default, not ADS-B's ten seconds: a vessel at \
-                             anchor reports once every three minutes, and a shorter window \
-                             would blank most of a harbour between two perfectly good \
-                             reports. Past it the ship comes off the chart and its row \
-                             greys — it is not faded, because a dim symbol at a stale \
-                             position is still a claim about where a ship is, in the same \
-                             ink as the true ones.",
-                        )
-                        .size(10.0)
-                        .weak(),
+                        RichText::new(tr!("ais-five-minutes-default-not-ads")).size(10.0).weak(),
                     );
                     ui.end_row();
 
-                    ui.label("Drop from list after");
+                    ui.label(tr!("ais-drop-list-after"));
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::DragValue::new(&mut cfg.drop_list_s)
                                 .range(i64::from(cfg.drop_map_s)..=21_600)
                                 .suffix(" s"),
                         );
-                        ui.label(RichText::new("with nothing heard at all").size(9.5).weak());
+                        ui.label(RichText::new(tr!("ais-nothing-heard-all")).size(9.5).weak());
                     });
                     ui.end_row();
                     ui.label("");
                     ui.label(
-                        RichText::new(
-                            "The message carrying a ship's name comes round every six \
-                             minutes, so a short list window keeps throwing vessels away \
-                             just before they say what they are called.",
-                        )
-                        .size(10.0)
-                        .weak(),
+                        RichText::new(tr!("ais-message-carrying-ship-s-name")).size(10.0).weak(),
                     );
                     ui.end_row();
 
-                    ui.label("Trail length");
+                    ui.label(tr!("ais-trail-length"));
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::DragValue::new(&mut cfg.trail_minutes)
                                 .range(0..=360)
                                 .suffix(" min"),
                         );
-                        ui.label(RichText::new("of history behind each target").size(9.5).weak());
+                        ui.label(
+                            RichText::new(tr!("ais-history-behind-each-target")).size(9.5).weak(),
+                        );
                     });
                     ui.end_row();
                     ui.label("");
                     ui.label(
-                        RichText::new(
-                            "In minutes rather than in points, because AIS reporting rates \
-                             span two orders of magnitude: a fixed count would be eighty \
-                             seconds of a ferry and two hours of an anchored tanker, drawn \
-                             identically. Zero switches trails off.",
-                        )
-                        .size(10.0)
-                        .weak(),
+                        RichText::new(tr!("ais-minutes-rather-than-points-because"))
+                            .size(10.0)
+                            .weak(),
                     );
                     ui.end_row();
 
-                    ui.label("Speed vector");
+                    ui.label(tr!("ais-speed-vector"));
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::DragValue::new(&mut cfg.vector_minutes)
@@ -612,51 +622,35 @@ impl SdroxideApp {
                                 .suffix(" min"),
                         );
                         ui.label(
-                            RichText::new("how far ahead the vector reaches").size(9.5).weak(),
+                            RichText::new(tr!("ais-how-far-ahead-vector-reaches")).size(9.5).weak(),
                         );
                     });
                     ui.end_row();
 
-                    ui.label("Slot threshold");
+                    ui.label(tr!("ais-slot-threshold"));
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::DragValue::new(&mut cfg.threshold_db).range(3..=30).suffix(" dB"),
                         );
                         ui.label(
-                            RichText::new("above the channel's learned noise floor")
+                            RichText::new(tr!("ais-above-channel-s-learned-noise"))
                                 .size(9.5)
                                 .weak(),
                         );
                     });
                     ui.end_row();
 
-                    ui.label("Track at most");
+                    ui.label(tr!("ais-track-most"));
                     ui.add(
                         egui::DragValue::new(&mut cfg.max_vessels)
                             .range(10..=5000)
-                            .suffix(" vessels"),
+                            .suffix(tr!("ais-vessels-2")),
                     );
                     ui.end_row();
                 });
                 ui.separator();
-                ui.label(
-                    RichText::new(
-                        "AIS is receive-only here and always will be: it is a \
-                         safety-of-life service, and putting false vessel traffic on it is \
-                         not something a licence covers.",
-                    )
-                    .size(10.0)
-                    .weak(),
-                );
-                ui.label(
-                    RichText::new(
-                        "Fill in My grid in the digimode setup for ranges and bearings, and \
-                         so the chart frames itself around where you are rather than around \
-                         whatever is furthest away.",
-                    )
-                    .size(10.0)
-                    .weak(),
-                );
+                ui.label(RichText::new(tr!("ais-ais-receive-only-here-always")).size(10.0).weak());
+                ui.label(RichText::new(tr!("ais-fill-my-grid-digimode-setup")).size(10.0).weak());
             });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
@@ -686,11 +680,11 @@ fn ais_head_row(ui: &mut egui::Ui, have_home: bool, sort: &mut AisSort, desc: &m
     crate::app::panels::widgets::sort_head_row(
         ui,
         &[
-            (cols.name, L, "NAME", Some(AisSort::Name)),
+            (cols.name, L, &tr!("ais-name"), Some(AisSort::Name)),
             // The MMSI is the name column's fallback, not an order anybody
             // wants a harbour in.
-            (cols.mmsi, L, "MMSI", None),
-            (cols.kind, L, "TYPE", None),
+            (cols.mmsi, L, &tr!("ais-mmsi"), None),
+            (cols.kind, L, &tr!("ais-type"), None),
             (cols.spd, R, "KT", Some(AisSort::Speed)),
             (cols.cog, R, "COG", None),
             (cols.sig, R, "SIG", Some(AisSort::Signal)),
@@ -823,8 +817,8 @@ fn ais_row(
     // it — which is what makes the name as clickable as the empty space.
     let hit = ui.interact(rect, ui.id().with(("ais-row", i)), egui::Sense::click());
     hit.on_hover_text(match v.type_label() {
-        Some(t) => format!("{} — {} — {t}", v.mmsi, v.kind.label()),
-        None => format!("{} — {}", v.mmsi, v.kind.label()),
+        Some(t) => format!("{} — {} — {t}", v.mmsi, v.kind.tr()),
+        None => format!("{} — {}", v.mmsi, v.kind.tr()),
     })
     .clicked()
 }

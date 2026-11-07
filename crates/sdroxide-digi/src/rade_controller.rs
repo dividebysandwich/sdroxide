@@ -118,8 +118,11 @@ fn build_status(
         tx_even: false,
         transmitting: keyed,
         tx_watchdog: false,
+        tx_refused: None,
         transcript: Vec::<TranscriptLine>::new(),
         config: cfg.clone(),
+        jtty: None,
+        vara: None,
         text_rx: String::new(),
         tx_sent: 0,
         fsq_heard: Vec::new(),
@@ -264,7 +267,11 @@ impl DigiEngine for RadeController {
     }
 
     fn on_tx_mic(&mut self, mic_48k: &[f32]) {
-        if !self.keyed {
+        // Only while the operator holds the over. After release the worker is
+        // back on receive and never reads this ring, so audio fed during the
+        // end-of-over tail opened the *next* over, grew with every over, and
+        // overflowed into the "samples dropped" warning (#614).
+        if !self.keyed || !self.tx_active {
             return;
         }
         if let Some(w) = self.worker.as_mut() {
@@ -381,5 +388,43 @@ fn stats_of(w: &RadeWorker) -> RadeStatus {
         rx_level: s.rx_level,
         eoo_count: s.eoo_count,
         dropped: s.dropped,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// Issue #614: microphone audio kept arriving through the end-of-over tail,
+    /// into a ring the worker no longer read. It opened the next over and grew
+    /// until it overflowed into the "samples dropped" warning.
+    #[test]
+    fn mic_audio_after_release_is_not_queued_for_the_next_over() {
+        let mut c = RadeController::new(DigiConfig::default(), 48_000.0);
+        if c.worker.is_none() {
+            return; // no modem on this machine; nothing to test
+        }
+        let mic = vec![0.1f32; 4_800];
+        c.set_tx_active(true);
+        let _ = c.poll(SystemTime::now(), 14_236_000.0);
+        assert!(c.keyed);
+        for _ in 0..3 {
+            c.on_tx_mic(&mic);
+        }
+        c.set_tx_active(false);
+        // Still keyed for the tail; the engine keeps feeding the microphone.
+        for _ in 0..15 {
+            c.on_tx_mic(&mic);
+        }
+        let w = c.worker.as_mut().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut out = vec![0.0f32; 4_800];
+        while !w.tx_drained() && Instant::now() < deadline {
+            w.pop_tx(&mut out);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(w.tx_pending(), 0, "audio from after release was queued");
+        assert_eq!(w.stats().dropped, 0);
     }
 }

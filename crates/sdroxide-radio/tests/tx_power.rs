@@ -13,7 +13,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use sdroxide_radio::{Complex32, EngineConfig, IqSource, Result, start_engine};
+use sdroxide_radio::{Complex32, ControlUpdate, EngineConfig, IqSource, Result, start_engine};
 use sdroxide_types::{Command, DeviceCaps, Mode, RxId};
 
 const RATE: f64 = 48_000.0;
@@ -31,6 +31,10 @@ enum Told {
 struct PowerRig {
     center: f64,
     log: Arc<Mutex<Vec<Told>>>,
+    /// Report every level it is told back as its own, the way a rig with
+    /// auto-information on does.
+    echo: bool,
+    reports: Vec<ControlUpdate>,
 }
 
 impl IqSource for PowerRig {
@@ -61,6 +65,12 @@ impl IqSource for PowerRig {
     }
     fn set_tx_drive(&mut self, frac: f64) {
         self.log.lock().unwrap().push(Told::Power(frac));
+        if self.echo {
+            self.reports.push(ControlUpdate::TxDrive(frac as f32));
+        }
+    }
+    fn poll_control(&mut self) -> Vec<ControlUpdate> {
+        std::mem::take(&mut self.reports)
     }
     fn cw_text_keying(&self) -> Option<usize> {
         Some(30)
@@ -98,8 +108,12 @@ fn caps() -> DeviceCaps {
 /// rig was told. `settle` is how long to keep the engine running afterwards, for
 /// the paths that take a moment (the CW keyer hands its queue over on a tick).
 fn run(cmds: Vec<Command>, settle: Duration) -> Vec<Told> {
+    run_rig(cmds, settle, false)
+}
+
+fn run_rig(cmds: Vec<Command>, settle: Duration, echo: bool) -> Vec<Told> {
     let log = Arc::new(Mutex::new(Vec::new()));
-    let src = PowerRig { center: 14_074_000.0, log: Arc::clone(&log) };
+    let src = PowerRig { center: 14_074_000.0, log: Arc::clone(&log), echo, reports: Vec::new() };
     let mut h = start_engine(Box::new(src), caps(), EngineConfig::default());
     let thread = h.thread.take();
     std::thread::sleep(Duration::from_millis(300));
@@ -159,7 +173,16 @@ fn a_message_handed_to_the_rigs_keyer_is_sent_at_the_drive_the_operator_set() {
 /// nothing here is in the way — at a few watts.
 #[test]
 fn the_operating_level_comes_back_when_a_tune_ends() {
-    let told = run(
+    for echo in [false, true] {
+        the_operating_level_comes_back(echo);
+    }
+}
+
+/// With `echo`, the rig reports the tune level back while TUNE is keyed. That
+/// is the rig on a level this end chose, not the operator's, and adopting it
+/// left Drive at the tune level after every TUNE (#741).
+fn the_operating_level_comes_back(echo: bool) {
+    let told = run_rig(
         vec![
             Command::SetTxDrive(0.6),
             Command::SetTuneDrive(0.05),
@@ -167,6 +190,7 @@ fn the_operating_level_comes_back_when_a_tune_ends() {
             Command::SetTune(false),
         ],
         Duration::from_millis(300),
+        echo,
     );
     let up = told.iter().position(|t| t == &Told::Key(true)).expect("TUNE never keyed");
     let down = told.iter().position(|t| t == &Told::Key(false)).expect("TUNE never unkeyed");

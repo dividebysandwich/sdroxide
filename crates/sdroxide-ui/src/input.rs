@@ -51,6 +51,10 @@ pub(crate) struct UiSink<'a> {
     /// control the on-screen rail does, or it moves a threshold the audio never
     /// passes through (issue #192).
     pub rig_squelch: bool,
+    /// Whether the AGC cycle passes over Off — `DeviceCaps::agc_off_unavailable`,
+    /// for the reason `rig_squelch` is here: a bound key has to walk the same
+    /// settings the on-screen chip does.
+    pub agc_without_off: bool,
     /// The window a zoom-out may reach, `(centre, span)` — the front end's
     /// full-band lane where it has one, else its passband. Precomputed by the
     /// caller for the same reason `rig_squelch` is: it comes off the spectrum
@@ -306,11 +310,11 @@ pub(crate) fn apply_action(
             }
             SpectrumFloorDb => {
                 let v = target.unwrap_or(ui.view.db_floor + delta);
-                ui.view.db_floor = v.clamp(-160.0, ui.view.db_ceil - 5.0);
+                ui.view.set_levels_by_hand(v, ui.view.db_ceil);
             }
             SpectrumCeilDb => {
                 let v = target.unwrap_or(ui.view.db_ceil + delta);
-                ui.view.db_ceil = v.clamp(ui.view.db_floor + 5.0, 40.0);
+                ui.view.set_levels_by_hand(ui.view.db_floor, v);
             }
             _ => {}
         }
@@ -361,9 +365,8 @@ pub(crate) fn apply_action(
             // In FM the chain bypasses the AGC and the chip is hidden; cycling
             // here would invisibly change what the next mode comes back to.
             if state.rx[0].mode.audio_agc() {
-                let all = sdroxide_types::AgcMode::ALL;
-                let i = all.iter().position(|a| *a == state.rx[0].agc).unwrap_or(0);
-                cmds.push(Command::SetAgc { rx, agc: all[(i + 1) % all.len()] });
+                let agc = state.rx[0].agc.next_offered(!ui.agc_without_off);
+                cmds.push(Command::SetAgc { rx, agc });
             }
         }
         SubRx => cmds.push(Command::SetSubRx(!state.sub_rx_enabled)),
@@ -404,7 +407,8 @@ pub(crate) fn apply_action(
         // The CW straight key is read held by the CW panel, not dispatched
         // here: it is a held state with its own focus rules, and the panel is
         // the only place that knows whether the mode is armed. The binding
-        // table is what makes the key selectable.
+        // table is what makes the key selectable — a keyboard chord, or a MIDI
+        // note through `cw_straight_midi_held`.
         CwStraight => {}
         // The engine decides whether this can transmit: an empty slot, a
         // digital mode other than RADE, or TUNE in progress all make it a
@@ -560,6 +564,15 @@ impl InputRuntime {
             .filter(|b| b.enabled && b.action == Action::CwStraight && !b.chord.is_empty())
             .map(|b| b.chord.clone())
             .collect()
+    }
+
+    /// Whether a MIDI note bound to [`Action::CwStraight`] is down. The CW
+    /// panel keys from this beside the keyboard chords: a keyer or paddle
+    /// interface sending notes is a straight key like any other (#625).
+    pub(crate) fn cw_straight_midi_held(&self) -> bool {
+        self.held
+            .iter()
+            .any(|h| h.action == Action::CwStraight && matches!(h.src, HeldSource::Midi(_)))
     }
 
     /// Throw away any queued MIDI events. A radio tab that is not focused
@@ -858,7 +871,11 @@ impl InputRuntime {
 
         for (ix, down) in buttons {
             let Some(b) = self.cfg.midi.bindings.get(ix) else { continue };
-            let (action, mode) = (b.action, b.button_mode);
+            // A straight key is down while held and nothing else, whatever
+            // the binding says: a toggled key would hold the carrier on.
+            let mode =
+                if b.action == Action::CwStraight { ButtonMode::Momentary } else { b.button_mode };
+            let action = b.action;
             let src = HeldSource::Midi(ix);
             if down {
                 self.press(src, action, mode, now);
@@ -1143,6 +1160,7 @@ mod tests {
             voice: &mut voice[0],
             speech,
             rig_squelch: false,
+            agc_without_off: false,
             // The clamp these tests exercise is a no-op at zero span, which is
             // what a default `RadioState` carries — the same thing the caller
             // used to read straight off it. A test about the clamp itself sets

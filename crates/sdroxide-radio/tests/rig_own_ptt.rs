@@ -77,7 +77,7 @@ impl IqSource for MockRig {
     fn tx_telemetry(&mut self) -> Option<TxTelemetry> {
         // An SWR bridge and nothing else: this rig reports no ALC meter, so
         // `alc` stays absent rather than being invented as a zero reading.
-        let t = TxTelemetry { fwd_w: None, swr: Some(SWR), alc: None, po: None };
+        let t = TxTelemetry { fwd_w: None, swr: Some(SWR), alc: None, po: None, rfl_w: None };
         self.rig.lock().unwrap().keyed.then_some(t)
     }
     fn tx_begin(&mut self, center_hz: f64, _rate: f64) -> Result<f64> {

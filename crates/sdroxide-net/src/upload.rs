@@ -22,21 +22,72 @@ pub fn upload(
         UploadTarget::ClubLog => upload_clublog(cfg, my_call, adif),
         UploadTarget::HamQth => upload_hamqth(cfg, my_call, adif),
         UploadTarget::Wrl => upload_wrl(cfg, my_call, adif),
+        // The default station location: a caller of this function has no
+        // operating profile to take one from. The engine's own uploads go
+        // through `SpotManager`, which does, and queues them.
+        UploadTarget::Wavelog => crate::wavelog::upload(&cfg.wavelog, cfg.wavelog.station_id, adif)
+            .map_err(|f| f.message),
     }
+}
+
+/// The form fields an eQSL upload posts. Split out so the **QTH Nickname** can
+/// be asserted: eQSL refuses an upload from an account that owns more than one
+/// QTH profile unless the target profile is named, so the nickname is sent only
+/// when the operator has set one and left off entirely otherwise (issue #647).
+fn eqsl_form_fields<'a>(cfg: &'a NetworkConfig, adif: &'a str) -> Vec<(&'a str, &'a str)> {
+    let mut fields =
+        vec![("EQSL_USER", cfg.eqsl.user.trim()), ("EQSL_PSWD", cfg.eqsl.password.trim())];
+    let qth = cfg.eqsl_qth_nickname.trim();
+    if !qth.is_empty() {
+        // eQSL's own spelling of the parameter.
+        fields.push(("QTHNickname", qth));
+    }
+    fields.push(("ADIFData", adif));
+    fields
+}
+
+/// The records with eQSL's documented per-record profile tag,
+/// `APP_EQSL_QTH_NICKNAME`, before each `<EOR>` — the form field above is what
+/// was verified live, this is what eQSL's ImportADIF spec prefers. Left alone
+/// when no nickname is set or the log already names one.
+fn with_eqsl_qth(adif: &str, qth: &str) -> String {
+    let qth = qth.trim();
+    let upper = adif.to_ascii_uppercase();
+    if qth.is_empty() || upper.contains("<APP_EQSL_QTH_NICKNAME:") {
+        return adif.to_owned();
+    }
+    let tag = format!("<APP_EQSL_QTH_NICKNAME:{}>{}", qth.len(), qth);
+    let mut out = String::with_capacity(adif.len() + 32);
+    let mut last = 0;
+    // ASCII upper-casing keeps byte offsets, so the match indexes `adif` too.
+    for (i, _) in upper.match_indices("<EOR>") {
+        out.push_str(&adif[last..i]);
+        out.push_str(&tag);
+        last = i;
+    }
+    out.push_str(&adif[last..]);
+    out
+}
+
+/// The `&QTHNickname=…` an eQSL URL appends when the operator has set one.
+///
+/// eQSL identifies an account by **callsign *and* QTH nickname**: an account
+/// with more than one attached profile answers "No such Username/Password
+/// found" to a correct password with the wrong nickname — or none — on the
+/// download and the login test as well as on the upload (issue #647). Empty
+/// when no nickname is set, so a single-profile account is unchanged.
+fn eqsl_qth_query(cfg: &NetworkConfig) -> String {
+    let qth = cfg.eqsl_qth_nickname.trim();
+    if qth.is_empty() { String::new() } else { format!("&QTHNickname={}", urlencode(qth)) }
 }
 
 fn upload_eqsl(cfg: &NetworkConfig, adif: &str) -> Result<String, String> {
     if cfg.eqsl.user.trim().is_empty() {
         return Err("eQSL username/password not set".into());
     }
-    let body = http::post_form(
-        "https://www.eqsl.cc/qslcard/importADIF.cfm",
-        &[
-            ("EQSL_USER", cfg.eqsl.user.trim()),
-            ("EQSL_PSWD", cfg.eqsl.password.trim()),
-            ("ADIFData", adif),
-        ],
-    )?;
+    let adif = with_eqsl_qth(adif, &cfg.eqsl_qth_nickname);
+    let fields = eqsl_form_fields(cfg, &adif);
+    let body = http::post_form("https://www.eqsl.cc/qslcard/importADIF.cfm", &fields)?;
     // eQSL returns HTML; success contains "Result: 1 out of 1 …". Errors carry
     // an "Error:" / "Warning:" line.
     let text = strip_html(&body);
@@ -490,6 +541,10 @@ pub fn test_login(
         LoginTarget::Lotw => test_lotw(cfg),
         LoginTarget::HamQth => test_hamqth(cfg),
         LoginTarget::Wrl => test_wrl(cfg),
+        LoginTarget::Wavelog => {
+            let probe = crate::wavelog::probe(&cfg.wavelog);
+            if probe.ok { Ok(probe.message) } else { Err(probe.message) }
+        }
     }
 }
 
@@ -501,9 +556,10 @@ fn test_eqsl(cfg: &NetworkConfig) -> Result<String, String> {
     // question is whether the login is accepted, not what is in the inbox, and
     // this keeps eQSL from building an ADIF file to answer it.
     let url = format!(
-        "https://www.eqsl.cc/qslcard/DownloadInBox.cfm?UserName={}&Password={}&RcvdSince=20991231",
+        "https://www.eqsl.cc/qslcard/DownloadInBox.cfm?UserName={}&Password={}&RcvdSince=20991231{}",
         urlencode(cfg.eqsl.user.trim()),
-        urlencode(cfg.eqsl.password.trim())
+        urlencode(cfg.eqsl.password.trim()),
+        eqsl_qth_query(cfg)
     );
     let page = http::get(&url)?;
     let text = strip_html(&page);
@@ -721,9 +777,10 @@ fn download_eqsl(cfg: &NetworkConfig) -> Result<Vec<QsoRecord>, String> {
     // eQSL's inbox download is two-step: the first call builds an .adi and
     // returns a page linking to it.
     let url = format!(
-        "https://www.eqsl.cc/qslcard/DownloadInBox.cfm?UserName={}&Password={}&RcvdSince=19700101",
+        "https://www.eqsl.cc/qslcard/DownloadInBox.cfm?UserName={}&Password={}&RcvdSince=19700101{}",
         urlencode(cfg.eqsl.user.trim()),
-        urlencode(cfg.eqsl.password.trim())
+        urlencode(cfg.eqsl.password.trim()),
+        eqsl_qth_query(cfg)
     );
     let page = http::get(&url)?;
     // Find the ".adi" link in the returned HTML.
@@ -819,6 +876,56 @@ mod tests {
     fn parses_qrz_response() {
         let kv = parse_kv("RESULT=OK&COUNT=1&LOGID=123");
         assert_eq!(kv.iter().find(|(k, _)| k == "RESULT").unwrap().1, "OK");
+    }
+
+    /// Issue #647: an eQSL account that owns several QTH profiles is refused
+    /// unless the upload names which one. The nickname goes out when set.
+    #[test]
+    fn an_eqsl_upload_sends_the_qth_nickname_when_it_is_set() {
+        let cfg = NetworkConfig { eqsl_qth_nickname: "Home".into(), ..Default::default() };
+        let f = eqsl_form_fields(&cfg, "ADIF");
+        assert!(
+            f.iter().any(|(k, v)| *k == "QTHNickname" && *v == "Home"),
+            "nickname missing: {f:?}"
+        );
+    }
+
+    /// And is left off entirely when blank, so a single-profile account — and
+    /// the payload shape from before this field existed — is unchanged.
+    #[test]
+    fn an_eqsl_upload_omits_a_blank_qth_nickname() {
+        for blank in ["", "   "] {
+            let cfg = NetworkConfig { eqsl_qth_nickname: blank.into(), ..Default::default() };
+            let f = eqsl_form_fields(&cfg, "ADIF");
+            assert!(!f.iter().any(|(k, _)| *k == "QTHNickname"), "{blank:?}: {f:?}");
+        }
+    }
+
+    /// The nickname rides the **download** and login-test URLs too, not only
+    /// the upload: eQSL identifies a multi-QTH account by callsign *and*
+    /// nickname, and answers "No such Username/Password found" for a correct
+    /// password with the wrong one on any of them.
+    #[test]
+    fn the_eqsl_qth_nickname_rides_the_download_url_too() {
+        let set = NetworkConfig { eqsl_qth_nickname: "Home".into(), ..Default::default() };
+        assert_eq!(eqsl_qth_query(&set), "&QTHNickname=Home");
+        assert_eq!(eqsl_qth_query(&NetworkConfig::default()), "", "no nickname, nothing sent");
+        let spaced = NetworkConfig { eqsl_qth_nickname: "My Home".into(), ..Default::default() };
+        let q = eqsl_qth_query(&spaced);
+        assert!(q.starts_with("&QTHNickname=") && !q.contains(' '), "encoded: {q}");
+    }
+
+    #[test]
+    fn the_eqsl_qth_nickname_is_tagged_on_every_record() {
+        let adif = "<EOH>\n<CALL:4>K1AB<EOR>\n<CALL:4>K2CD<eor>\n";
+        let tagged = with_eqsl_qth(adif, " Home ");
+        assert_eq!(
+            tagged,
+            "<EOH>\n<CALL:4>K1AB<APP_EQSL_QTH_NICKNAME:4>Home<EOR>\n\
+             <CALL:4>K2CD<APP_EQSL_QTH_NICKNAME:4>Home<eor>\n"
+        );
+        assert_eq!(with_eqsl_qth(adif, ""), adif, "blank: unchanged");
+        assert_eq!(with_eqsl_qth(&tagged, "Away"), tagged, "a log that names one keeps it");
     }
 
     #[test]

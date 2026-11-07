@@ -17,6 +17,7 @@
 //! and happens at most every ten minutes, so it runs inline rather than being
 //! worth a worker.
 
+use crate::i18n::tr;
 use std::sync::{Arc, Mutex};
 
 use ewebsock::{WsMessage, WsReceiver, WsSender};
@@ -181,13 +182,16 @@ impl SolarClient {
                 ewebsock::WsEvent::Message(WsMessage::Binary(bytes)) => {
                     match proto_decode::<SolarServerMsg>(&bytes) {
                         Ok(m) => self.apply(m),
-                        Err(e) => self.link = Link::Down(format!("bad message: {e}")),
+                        Err(e) => {
+                            self.link =
+                                Link::Down(tr!("solarnet-bad-message", error = e.to_string()))
+                        }
                     }
                 }
                 ewebsock::WsEvent::Message(_) => {}
                 ewebsock::WsEvent::Error(e) => self.link = Link::Down(e),
                 ewebsock::WsEvent::Closed => {
-                    self.link = Link::Down("connection closed".into());
+                    self.link = Link::Down(tr!("solarnet-connection-closed").into());
                 }
             }
         }
@@ -206,8 +210,10 @@ impl SolarClient {
                 self.link = if proto == SOLAR_PROTO_VERSION {
                     Link::Up
                 } else {
-                    Link::Down(format!(
-                        "solar protocol mismatch: server {proto}, client {SOLAR_PROTO_VERSION}"
+                    Link::Down(tr!(
+                        "solarnet-solar-protocol-mismatch-server-client",
+                        proto = proto,
+                        value = SOLAR_PROTO_VERSION
                     ))
                 };
             }

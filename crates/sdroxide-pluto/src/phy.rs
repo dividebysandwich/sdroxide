@@ -473,6 +473,20 @@ impl Phy {
         conn.write_attr(&self.phy_id, Some(TX_LO), "frequency", &format!("{}", hz.round() as i64))
     }
 
+    /// Power the receive synthesiser up or down. Another program may have left
+    /// it off — SoapyPlutoSDR powers it down when it closes — and a receiver on
+    /// a powered-down LO streams nothing but noise.
+    pub fn set_rx_lo_powered(&self, conn: &mut Connection, on: bool) -> Result<()> {
+        conn.write_attr(&self.phy_id, Some(RX_LO), "powerdown", if on { "0" } else { "1" })
+    }
+
+    /// Power the transmit synthesiser up or down. In FDD the transmit chain is
+    /// live between overs, and the LO leaking through it is a carrier on the
+    /// transmit frequency — on a QO-100 station, one inside the transponder.
+    pub fn set_tx_lo_powered(&self, conn: &mut Connection, on: bool) -> Result<()> {
+        conn.write_attr(&self.phy_id, Some(TX_LO), "powerdown", if on { "0" } else { "1" })
+    }
+
     /// Where the transmit synthesiser actually is.
     ///
     /// A read, not a guess, and it costs one round trip: `key_up` uses it to

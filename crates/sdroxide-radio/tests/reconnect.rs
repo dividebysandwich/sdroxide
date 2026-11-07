@@ -428,6 +428,41 @@ fn applying_a_settings_change_keeps_the_operating_position() {
     }
 }
 
+/// An Icom over LAN whose first frequency reply came after the connect wait
+/// reports 0 Hz: it has not heard its dial yet. Taken as the radio's answer,
+/// that put both VFOs on 0, clamped them to the bottom of the receive range,
+/// band GEN, and tuned the radio there (#576). The dial stays the operator's.
+#[test]
+fn a_source_that_has_not_heard_its_dial_keeps_the_operators() {
+    let reopen: sdroxide_radio::ReopenFn = Box::new(move |_center: f64| {
+        let mut c = caps("unheard");
+        c.freq_ranges_rx = vec![(30_000.0, 60_000_000.0)];
+        Ok((Box::new(Tunable { center: 0.0 }) as Box<dyn IqSource>, c))
+    });
+    let cfg = EngineConfig { reopen: Some(reopen), ..Default::default() };
+    let mut h = start_engine(Box::new(Tunable { center: CENTER }), caps("dongle"), cfg);
+    let thread = h.thread.take();
+    std::thread::sleep(Duration::from_millis(150));
+
+    let on_air = 14_080_000.0;
+    let other = 7_040_000.0;
+    h.cmd_tx.send(Command::SetVfo { vfo: Vfo::B, hz: other }).unwrap();
+    h.cmd_tx.send(Command::SetVfo { vfo: Vfo::A, hz: on_air }).unwrap();
+    let _ = settle(&h, "dongle", Duration::from_millis(300));
+
+    h.swap_tx.send(EngineSwap::ReopenSource).expect("engine is running");
+    let (swapped, after) = settle(&h, "unheard", Duration::from_secs(2));
+    assert!(swapped, "the engine should have swapped to the new interface");
+    let after = after.expect("the swap publishes state");
+    assert_eq!(after.vfo_a_hz, on_air, "VFO A went to the radio's unknown 0 Hz");
+    assert_eq!(after.vfo_b_hz, other, "VFO B went to the radio's unknown 0 Hz");
+
+    drop(h.cmd_tx);
+    if let Some(t) = thread {
+        let _ = t.join();
+    }
+}
+
 /// The stand-in for a radio the operator has switched off: no samples, and —
 /// unlike [`Offline`] — it does not ask to be reopened. A radio that is off is
 /// not one waiting to come back.

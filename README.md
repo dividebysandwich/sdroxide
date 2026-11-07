@@ -81,9 +81,10 @@ One binary, three ways to run it:
   15/30/60/120/300-second T/R period, the same 77-bit message as FT8), receive-only **Q65** (the
   modern WSJT weak-signal mode — 65-tone FSK in a 15/30/60/120/300-second
   T/R period with a tone-spacing letter A–E for Doppler spread, the same
-  77-bit message as FT8), receive-only **FSK441** (the
+  77-bit message as FT8), **FSK441** (the
   original meteor-scatter mode — 4-FSK at 441 baud, decoding the brief pings a
-  meteor trail reflects in a 15/30-second period),
+  meteor trail reflects in a 15/30-second period, and transmitting a message
+  repeated for the length of the over),
   **Hellschreiber** (all seven Feld Hell / FSK Hell variants, on a scrolling
   raster), image **SSTV** (Scottie, Martin, Robot), image **RIFP**
   (draft-dulaunoy-rifp-00 — packetised, checksummed pictures over a 4800-baud
@@ -375,6 +376,11 @@ left and a transmit compositor on the right:
 - **Receive** decodes incoming pictures scanline-by-scanline into the gallery;
   the VIS header sets the mode automatically (and pre-selects it for your next
   transmit). Received images are saved under `~/.config/sdroxide/sstv_rx/`.
+  Slant is corrected automatically: lines are placed along a line fitted
+  through the sync pulses, so a fade or a sender whose sound-card clock is off
+  does not shear the picture, and once the picture is complete it is decoded
+  again along the sync column of the whole image — the saved picture is the
+  straightened one.
 - **Transmit** from a strip of five image slots — click to select, double-click
   (or click an empty slot) to pick a file, which is auto-cropped/scaled to the
   mode's size. A multi-line message is overlaid on the image, **each line in a
@@ -1032,14 +1038,24 @@ transmitter has a single owner, and keying up locally always takes it back.
 Verified against WSJT-X (rig *TCI Client RX1*, PTT via CAT, TCI audio). See the
 user manual, §5.6.
 
+The same settings section has **TCI Client**. Turn that on and sdroxide dials
+out to another TCI server — 590Ctrl, at `127.0.0.1:50001` unless you change
+it — and sends the VFO whenever you tune. Tune the radio from its own knob and
+sdroxide's dial follows. That path is control only: no audio,
+no IQ, and it does not key the transmitter. If 590Ctrl is already listening on
+50001, leave sdroxide's own server off or move it to another port.
+
 ## Built-in Hamlib rigctld server
 
 Most amateur software reaches a radio through **Hamlib**, over the network
 protocol its `rigctld` daemon speaks. sdroxide serves that protocol directly, so
 **WSJT-X, fldigi, JS8Call, N1MM, Log4OM, GPredict and CQRLOG** can drive it with
 no extra daemon, no serial cable and no virtual COM port pair — frequency, mode
-and passband, PTT, VFO A/B and split, RIT/XIT, power and volume levels, the
-NB/NR/ANF/MUTE functions, and the VFO operations.
+and passband, PTT, VFO A/B and split, RIT/XIT, power, volume, RF gain,
+squelch, AGC and NR-strength levels, the NB/NR/ANF/MUTE functions, and the VFO
+operations. NR over rigctl keeps the engine chosen in the NR panel: `U NR 1`
+brings back the engine and strength last on, and the `NR` level sets only the
+strength. RF gain is the stage the Gain slider moves, 0 to 1 across its range.
 
 It is **off by default** — port 4532 is often already held by a real `rigctld`,
 and the protocol has no authentication — and lives on the **Servers** tab next
@@ -1745,3 +1761,7 @@ none of it.
 The grey-line shade, the IBP beacon schedule, the meteor-shower calendar and the
 Kp history are adapted from ideas in
 [OpenHamClock](https://github.com/accius/openhamclock) (MIT).
+
+VARA HF runs on [xara](https://github.com/x0rro/xara) (MIT), an open
+implementation of the VARA protocol, vendored under `vendor/xara`. See its
+`PROVENANCE.md` for what was taken and changed.

@@ -84,6 +84,13 @@ struct Band {
     rate: f64,
     samples: Vec<Complex32>,
     pos: usize,
+    /// Where the slots were modulated about; a retune away from it shifts them
+    /// the way a real band moves under a moving LO.
+    plan_center: f64,
+    phase: f64,
+    /// See [`IqSource::lo_offset_hz`]: a zero-IF front end parks its LO this
+    /// far above the dial.
+    lo_offset: f64,
 }
 
 impl Band {
@@ -104,7 +111,7 @@ impl Band {
         }
         let mut noise = sdroxide_ais::tx::Noise::new(0x4149_5300);
         noise.add(&mut samples, 0.004);
-        Band { center, rate, samples, pos: 0 }
+        Band { center, rate, samples, pos: 0, plan_center, phase: 0.0, lo_offset: 0.0 }
     }
 }
 
@@ -124,11 +131,17 @@ impl IqSource for Band {
         // clock talking without spending a core on megasamples of silence.
         std::thread::sleep(Duration::from_millis(5));
         let n = buf.len().min(8192);
+        let step = std::f64::consts::TAU * (self.plan_center - self.center_hz()) / self.rate;
         for z in buf[..n].iter_mut() {
-            *z = self.samples[self.pos];
+            let (sin, cos) = self.phase.sin_cos();
+            *z = self.samples[self.pos] * Complex32::new(cos as f32, sin as f32);
+            self.phase = (self.phase + step) % std::f64::consts::TAU;
             self.pos = (self.pos + 1) % self.samples.len();
         }
         Ok(n)
+    }
+    fn lo_offset_hz(&self) -> f64 {
+        self.lo_offset
     }
     fn describe(&self) -> String {
         "one ship reporting on both AIS channels".into()
@@ -192,13 +205,17 @@ fn isolate_config(name: &str) {
 }
 
 fn engine(rate: f64, dial: f64) -> sdroxide_radio::EngineHandles {
+    engine_with_lo_offset(rate, dial, 0.0)
+}
+
+fn engine_with_lo_offset(rate: f64, dial: f64, lo_offset: f64) -> sdroxide_radio::EngineHandles {
     // The lanes below the speaker — the skimmers, the ISM window, this one —
     // are fed from the same pass as the main receiver, so an engine with
     // nowhere to play audio never reaches them. Hence a ring nothing reads.
     let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(48_000);
     let center = Arc::new(Mutex::new(dial));
     start_engine(
-        Box::new(Band::new(rate, center, dial)),
+        Box::new(Band { lo_offset, ..Band::new(rate, center, dial) }),
         caps(rate),
         EngineConfig {
             remember_session: false,
@@ -333,6 +350,31 @@ fn a_receiver_too_narrow_for_either_channel_says_so_rather_than_going_quiet() {
     let why = st.unavailable.unwrap();
     assert!(why.contains("kHz"), "the sentence should name the rate: {why}");
     assert!(st.vessels.is_empty());
+
+    drop(h);
+    if let Some(t) = thread {
+        let _ = t.join();
+    }
+}
+
+#[test]
+fn a_decimated_zero_if_front_end_still_reaches_both_channels() {
+    isolate_config("ais-lo-offset");
+    // An RSPdx at 2 Msps parks its LO 500 kHz above the dial, which the engine
+    // scales by the decimation: 62.5 kHz at DEC 8. Entering AIS left the LO
+    // there, and the 125 kHz window, clamped inside the 250 kHz stream, only
+    // reached AIS B (#658).
+    let mut h = engine_with_lo_offset(2_000_000.0, AIS_PLAN_CENTER_HZ, 500_000.0);
+    let thread = h.thread.take();
+    let send = |c: Command| h.cmd_tx.send(c).unwrap();
+
+    send(Command::SetDecimation(8));
+    send(Command::SetVfo { vfo: Vfo::A, hz: AIS_PLAN_CENTER_HZ });
+    send(Command::SetMode { rx: RxId::Main, mode: Mode::Ais });
+
+    let st = status(&h, "a named ship", |s| s.vessels.iter().any(|v| !v.name.is_empty()));
+    assert!(st.degraded.is_none(), "both channels fit a 125 kHz window: {:?}", st.degraded);
+    assert!(st.channels.iter().all(|c| c.live), "both should be open: {:?}", st.channels);
 
     drop(h);
     if let Some(t) = thread {

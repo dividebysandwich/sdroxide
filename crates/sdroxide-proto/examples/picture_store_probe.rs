@@ -128,7 +128,7 @@ fn main() {
                     }
                     None => {
                         println!(
-                            "all five slots are in use — skipping the upload checks rather than \
+                            "all slots are in use — skipping the upload checks rather than \
                              overwriting one"
                         );
                         want -= 3; // the upload echo, the source, and the put-back

@@ -36,6 +36,28 @@ use crate::{colormap, widgets::spectrum_view};
 /// Height of the strip, in points.
 pub const STRIP_HEIGHT: f32 = 96.0;
 
+/// The colour of the receiving slice and the tuned frequency: magenta, which
+/// nine of the eleven waterfall palettes never draw (Classic among them). Neon
+/// and Synthwave do, and there the triangles on the edges still carry the mark.
+///
+/// Used by: the slice outline and the tuned-frequency line in [`show`], and
+/// the fill of the edge triangles ([`edge_triangle`]).
+// Why: HDZ 2026-11-04 (KiwiSDR, whole 0-30 MHz strip): the white slice outline
+//      and the amber tuned line were lost in the waterfall; "für den Marker
+//      zumindest eine andere Farbe nehmen, die nicht im Wasserfall drin ist …
+//      ein schreiendes Lila". Checked against `colormap::lut`: only Neon
+//      (210, 0, 190) and Synthwave (150, 12, 130 to 240, 40, 110) come near it.
+// Invariant: one colour for slice and tuned line, so the two read as one mark.
+const MARK: Color32 = Color32::from_rgb(255, 0, 255);
+
+/// Height of the triangles that point at the tuned frequency from the strip's
+/// top and bottom edge, in points, before the panadapter font scale; as wide
+/// as they are tall (see [`edge_triangle`]).
+// Why: HDZ 2026-11-04: "mit kleinen Dreiecken an den Rändern verdeutlichen".
+//      7 pt is found at a glance on a 96 pt strip and covers less than a tenth
+//      of its height at each edge.
+const MARK_TRIANGLE: f32 = 7.0;
+
 /// Rows of history kept. At ~20 frames a second this is about six seconds —
 /// long enough to see a band opening without the strip turning into a second
 /// waterfall competing with the main one.
@@ -287,7 +309,8 @@ pub fn show(
             Pos2::new(sx1.max(sx0 + 2.0), rect.bottom()),
         ),
         0.0,
-        Stroke::new(1.0, Color32::from_rgb(150, 190, 255)),
+        // In the mark's colour, like the tuned line: see [`MARK`].
+        Stroke::new(1.0, MARK),
         StrokeKind::Inside,
     );
 
@@ -349,12 +372,31 @@ pub fn show(
         }
     }
 
-    // The tuned frequency.
+    // The tuned frequency: a line, and a triangle on each edge pointing at it.
+    //
+    // On a strip of the whole band the slice above is narrower than a pixel and
+    // a one-pixel line in a colour the palettes also use (white, amber) is lost
+    // in the waterfall under it, so the place is marked in magenta (see
+    // [`MARK`]) and by a black-rimmed triangle on the top and the bottom edge,
+    // which the eye finds where a line one pixel wide is gone.
     let vfo_x = x_of(state.active_freq_hz());
     painter.line_segment(
         [Pos2::new(vfo_x, rect.top()), Pos2::new(vfo_x, rect.bottom())],
-        Stroke::new(1.0, Color32::from_rgb(255, 190, 60)),
+        Stroke::new(1.0, MARK),
     );
+    // Grown with the panadapter font, like every other label on the strip.
+    let size = MARK_TRIANGLE * crate::theme::panadapter_font_scale();
+    // Pitfall: the tips point *into* the strip. A triangle hung outside its
+    //          edge would sit on the panel above or below and be clipped by it.
+    // Why: the black rim keeps the triangle readable on Neon and Synthwave,
+    //      whose palettes reach magenta.
+    for (edge, inward) in [(rect.top(), 1.0), (rect.bottom(), -1.0)] {
+        painter.add(egui::Shape::convex_polygon(
+            edge_triangle(vfo_x, edge, inward, size).to_vec(),
+            MARK,
+            Stroke::new(1.0, Color32::BLACK),
+        ));
+    }
 
     // The auto-ranged window, so the scale is not a mystery.
     painter.text(
@@ -451,6 +493,20 @@ fn backed_label(
     p.rect_filled(bg, 2.0, Color32::from_black_alpha(120));
     p.galley(align.anchor_size(pos, galley.size()).min, galley, color);
     bg
+}
+
+/// The triangle that points at `x` from an edge of the strip.
+///
+/// In: `x` and `y` in screen points, `y` on the edge; `inward` is +1 from the
+/// top edge and -1 from the bottom one; `size` in points.
+/// Out: the three corners — the base on the edge, centred on `x` and `size`
+/// wide, then the tip `size` points inside the strip at `x`.
+/// Fails: none; a zero `size` gives a degenerate triangle that draws nothing.
+// Why: a pure function, so where the mark lands is tested without a painter
+//      (`the_triangles_point_into_the_strip_from_both_edges`).
+fn edge_triangle(x: f32, y: f32, inward: f32, size: f32) -> [Pos2; 3] {
+    let half = size / 2.0;
+    [Pos2::new(x - half, y), Pos2::new(x + half, y), Pos2::new(x, y + inward * size)]
 }
 
 /// The frequency at screen `x`, clamped to the band the strip is showing —
@@ -698,5 +754,20 @@ mod tests {
         f.db_ceil = -17.0;
         wf.push(&f, 0);
         assert_eq!(wf.levels, (-101.0, -17.0));
+    }
+
+    /// Proves: both edge triangles stand on their edge, centred on the tuned
+    /// frequency, with the tip inside the strip under it ([`edge_triangle`]).
+    #[test]
+    fn the_triangles_point_into_the_strip_from_both_edges() {
+        let (top, bottom) = (10.0, 106.0);
+        let down = edge_triangle(50.0, top, 1.0, 7.0);
+        let up = edge_triangle(50.0, bottom, -1.0, 7.0);
+        // The base sits on the edge, centred on the tuned frequency...
+        assert_eq!((down[0].y, down[1].y), (top, top));
+        assert_eq!((down[0].x + down[1].x) / 2.0, 50.0);
+        // ...and the tip is inside the strip, under the same frequency.
+        assert_eq!(down[2], Pos2::new(50.0, top + 7.0));
+        assert_eq!(up[2], Pos2::new(50.0, bottom - 7.0));
     }
 }

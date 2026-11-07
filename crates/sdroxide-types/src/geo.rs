@@ -33,6 +33,21 @@ pub fn grid_to_latlon(grid: &str) -> Option<(f64, f64)> {
     Some((lat, lon))
 }
 
+/// The 4-character Maidenhead square a locator falls in, uppercased.
+///
+/// The one truncation every "worked grid" tally shares: a 6- or 8-character
+/// locator and its 4-character square are the same award slot, so a caller that
+/// truncates differently — or not at all — would count one place twice. `None`
+/// for a string too short to be a locator or not opening with a letter, which
+/// is the shape check; the rest of the characters are trusted, as the awards
+/// tally does.
+pub fn grid4(grid: &str) -> Option<String> {
+    // `get`, not an index: a locator mistyped with a multi-byte character in
+    // its first four bytes is not a square, and must not panic.
+    let g = grid.trim().get(..4)?;
+    g.as_bytes()[0].is_ascii_alphabetic().then(|| g.to_ascii_uppercase())
+}
+
 /// The 6-character Maidenhead locator a position falls in.
 ///
 /// The inverse of [`grid_to_latlon`], and the reason it exists: the public
@@ -163,6 +178,27 @@ mod tests {
         assert_eq!(latlon_to_grid(90.0, 180.0), "RR99xx");
         // And a plain position: Vienna is JN88.
         assert!(latlon_to_grid(48.2, 16.37).starts_with("JN88"), "{}", latlon_to_grid(48.2, 16.37));
+    }
+
+    #[test]
+    fn grid4_truncates_a_longer_locator_to_its_square() {
+        // A 6- or 8-character locator and its 4-character square are the same
+        // award slot, so the tracker has to fold them together or one place is
+        // counted twice.
+        assert_eq!(grid4("JO53gk"), Some("JO53".to_string()));
+        assert_eq!(grid4("JO53gk99"), Some("JO53".to_string()));
+        assert_eq!(grid4(" jo53 "), Some("JO53".to_string()));
+        assert_eq!(grid4("JO53"), Some("JO53".to_string()));
+        // Too short, or not a locator at all.
+        assert_eq!(grid4("JO5"), None);
+        assert_eq!(grid4("1234"), None);
+        assert_eq!(grid4(""), None);
+        // The awards tally's own rule: only the leading letter is checked, so
+        // the two helpers agree about what a grid is.
+        assert_eq!(grid4("JO5x"), Some("JO5X".to_string()));
+        // A multi-byte character inside the first four bytes is not a square.
+        assert_eq!(grid4("JOxé"), None);
+        assert_eq!(grid4("éé"), None);
     }
 
     #[test]

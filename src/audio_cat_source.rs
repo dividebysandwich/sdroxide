@@ -9,8 +9,8 @@ use sdroxide_dsp::{IqCorrect, MonoResampler, Nco};
 use sdroxide_radio::rtrb;
 use sdroxide_radio::{Complex32, ControlUpdate, DC_BLOCK_HZ, IqSource, Result};
 use sdroxide_types::{
-    CatConfig, CatFamily, Mode, SoundFormat, TRUSDX_RX_RATE_HZ, TRUSDX_TX_RATE_HZ, TrUsdxAudio,
-    TxTelemetry,
+    AgcMode, CatConfig, CatFamily, Mode, SoundFormat, TRUSDX_RX_RATE_HZ, TRUSDX_TX_RATE_HZ,
+    TrUsdxAudio, TxTelemetry,
 };
 
 use crate::dial::Dial;
@@ -57,6 +57,12 @@ pub struct AudioCatSource {
     out: Option<(sdroxide_audio::AudioOutput, rtrb::Producer<f32>)>,
     tx_resampler: Option<MonoResampler>,
     tx_scratch: Vec<f32>,
+    /// Amplitude applied to the TX audio on a rig whose power is set by the
+    /// audio level (`CatHandle::power_by_audio`): the Drive level, or the TUNE
+    /// level while tuning. 1.0 everywhere else.
+    tx_audio_gain: f32,
+    /// Scratch for the TX audio once [`Self::tx_audio_gain`] is applied.
+    tx_gain_scratch: Vec<f32>,
     /// Scratch for draining the in-band receive ring, on a rig at
     /// [`IqSource::streams_audio`] — the (tr)uSDX.
     stream_scratch: Vec<f32>,
@@ -186,7 +192,16 @@ impl AudioCatSource {
             }
             Ok((s, c)) => {
                 let rate = s.sample_rate;
-                (Some(s), c, rate, None)
+                // Opened, but not the card that was asked for. Said on screen
+                // because the stream runs: a rig whose stored name no longer
+                // matches falls back to the default input and looks like a
+                // working radio carrying the wrong signal.
+                let status = s.swap.as_ref().map(|sw| {
+                    let msg = format!("Radio input: {}", sw.sentence());
+                    tracing::warn!("{msg}");
+                    msg
+                });
+                (Some(s), c, rate, status)
             }
             Err(e) => {
                 let msg = format!(
@@ -200,16 +215,44 @@ impl AudioCatSource {
         };
 
         // TX playback is best-effort: a missing device just means no TX audio.
-        let out = match sdroxide_audio::start_output(audio_out, 48_000) {
-            Ok((o, p)) => Some((o, p)),
+        let (out, out_status) = match sdroxide_audio::start_output(
+            audio_out,
+            48_000,
+            sdroxide_types::AudioRouting::Both,
+        ) {
+            Ok((o, p)) => {
+                let status = o.swap.as_ref().map(|sw| {
+                    let msg = format!("Radio transmit device: {}", sw.sentence());
+                    tracing::warn!("{msg}");
+                    msg
+                });
+                (Some((o, p)), status)
+            }
             Err(e) => {
                 tracing::warn!("radio TX audio device unavailable ({e}); RX only");
-                None
+                (
+                    None,
+                    Some(format!(
+                        "Radio transmit device unavailable ({e}) \u{2014} no over will go out."
+                    )),
+                )
             }
         };
         // `MonoResampler::new` returns None when the rates match.
         let tx_resampler =
             out.as_ref().and_then(|(o, _)| MonoResampler::new(48_000.0, o.sample_rate));
+
+        // The transmit card's own problem, folded onto the same line the
+        // receive card's is on. Ordered after it because a rig that is
+        // listening to the wrong card cannot hear a report of what it is
+        // transmitting on either.
+        let status = match out_status {
+            Some(b) => Some(match status {
+                Some(a) => format!("{a}\n{b}"),
+                None => b,
+            }),
+            None => status,
+        };
 
         let label =
             format!("CAT rig ({}) on {}", cfg.family.label(), sdroxide_cat::link_label(&cfg));
@@ -269,7 +312,7 @@ impl AudioCatSource {
         let signal_max_age = sdroxide_cat::signal_max_age(&cfg);
         // Either sound format: even an IQ-format rig transmits what arrives at
         // its sound card, so MCW rides a sideband there too.
-        let cw_mcw = cfg.cw_keying == sdroxide_types::CwKeying::Audio;
+        let cw_mcw = sdroxide_cat::effective_cw_keying(&cfg) == sdroxide_types::CwKeying::Audio;
         // The scope, asked for on a link its sweeps do not fit down, is
         // declined rather than allowed to bury the polls and the PTT — and
         // that has to be said on screen, because nothing else explains a
@@ -335,6 +378,8 @@ impl AudioCatSource {
             out,
             tx_resampler,
             tx_scratch: Vec::new(),
+            tx_audio_gain: 1.0,
+            tx_gain_scratch: Vec::new(),
             stream_scratch: Vec::new(),
             cat,
             scope_full_scale,
@@ -398,10 +443,12 @@ impl AudioCatSource {
             out: None,
             tx_resampler: None,
             tx_scratch: Vec::new(),
+            tx_audio_gain: 1.0,
+            tx_gain_scratch: Vec::new(),
             stream_scratch: Vec::new(),
             cat,
             scope_full_scale: 160.0,
-            cw_mcw: cfg.cw_keying == sdroxide_types::CwKeying::Audio,
+            cw_mcw: sdroxide_cat::effective_cw_keying(&cfg) == sdroxide_types::CwKeying::Audio,
             // Where the band starts, not where the radio is — nothing reads
             // the radio's dial in this mode. The first tune commands it.
             dial: Dial::at(14_074_000.0),
@@ -803,6 +850,40 @@ fn fill_iq(
     n
 }
 
+impl AudioCatSource {
+    /// [`IqSource::tx_write_audio`] once the power-by-audio gain is applied.
+    fn write_tx_audio_scaled(&mut self, audio: &[f32]) -> Result<()> {
+        if self.cat.streams_audio() {
+            // The control thread paces these out at the radio's own rate. If
+            // its ring is full the over is ahead of the radio, so wait for room
+            // rather than drop — dropping silence into a digital mode is worse
+            // than a stutter. Bounded so a thread that has died cannot hang the
+            // transmit loop forever.
+            let mut off = 0;
+            let mut spins = 0u32;
+            while off < audio.len() {
+                let n = self.cat.push_stream_audio(&audio[off..]);
+                if n == 0 {
+                    spins += 1;
+                    if spins > 500 {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    continue;
+                }
+                off += n;
+                spins = 0;
+            }
+            return Ok(());
+        }
+        let Some((_, producer)) = self.out.as_mut() else {
+            return Ok(()); // no TX audio device — PTT still keyed the rig
+        };
+        write_tx_audio(producer, self.tx_resampler.as_mut(), &mut self.tx_scratch, audio);
+        Ok(())
+    }
+}
+
 impl IqSource for AudioCatSource {
     fn sample_rate(&self) -> f64 {
         self.in_rate
@@ -1071,6 +1152,7 @@ impl IqSource for AudioCatSource {
                 | sdroxide_cat::CatUpdate::Alc(_)
                 | sdroxide_cat::CatUpdate::Po(_)
                 | sdroxide_cat::CatUpdate::FwdW(_)
+                | sdroxide_cat::CatUpdate::RflW(_)
                 | sdroxide_cat::CatUpdate::Signal(_) => {}
             }
         }
@@ -1158,6 +1240,16 @@ impl IqSource for AudioCatSource {
         self.cat.set_filter(mode, lo_hz as f32, hi_hz as f32);
     }
 
+    /// The AGC button, sent to the rig's — on demod audio the AGC the sound
+    /// card is fed after, and so the only one whose setting can be heard.
+    fn set_control_agc(&mut self, agc: AgcMode) {
+        self.cat.set_agc(agc);
+    }
+
+    fn commands_agc(&self) -> bool {
+        self.cat.commands_agc()
+    }
+
     // ── Squelch ──────────────────────────────────────────────────────────────
     /// The rig's own squelch, over CAT. On demod audio it is the only one there
     /// is: what reaches the sound card has already been through it, so a
@@ -1189,7 +1281,16 @@ impl IqSource for AudioCatSource {
     // The engine asserts the level that applies — drive, or the tune level
     // while tuning — before every key-down, so an over cannot go out at the
     // previous one.
+    /// The rig's own power step — the FDM-DUO's menu 34, from the power
+    /// buttons beside Drive. The family ignores it if it has none.
+    fn set_power_step(&mut self, code: u8) {
+        self.cat.set_power_step(code);
+    }
+
     fn set_tx_drive(&mut self, frac: f64) {
+        if self.cat.power_by_audio() {
+            self.tx_audio_gain = self.cat.audio_gain_for(frac as f32);
+        }
         self.cat.set_power(frac as f32);
     }
 
@@ -1310,34 +1411,16 @@ impl IqSource for AudioCatSource {
     }
 
     fn tx_write_audio(&mut self, audio: &[f32]) -> Result<()> {
-        if self.cat.streams_audio() {
-            // The control thread paces these out at the radio's own rate. If
-            // its ring is full the over is ahead of the radio, so wait for room
-            // rather than drop — dropping silence into a digital mode is worse
-            // than a stutter. Bounded so a thread that has died cannot hang the
-            // transmit loop forever.
-            let mut off = 0;
-            let mut spins = 0u32;
-            while off < audio.len() {
-                let n = self.cat.push_stream_audio(&audio[off..]);
-                if n == 0 {
-                    spins += 1;
-                    if spins > 500 {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(2));
-                    continue;
-                }
-                off += n;
-                spins = 0;
-            }
-            return Ok(());
+        let gain = self.tx_audio_gain;
+        if gain == 1.0 {
+            return self.write_tx_audio_scaled(audio);
         }
-        let Some((_, producer)) = self.out.as_mut() else {
-            return Ok(()); // no TX audio device — PTT still keyed the rig
-        };
-        write_tx_audio(producer, self.tx_resampler.as_mut(), &mut self.tx_scratch, audio);
-        Ok(())
+        let mut scaled = std::mem::take(&mut self.tx_gain_scratch);
+        scaled.clear();
+        scaled.extend(audio.iter().map(|s| s * gain));
+        let r = self.write_tx_audio_scaled(&scaled);
+        self.tx_gain_scratch = scaled;
+        r
     }
 
     fn tx_drain(&mut self) {

@@ -1028,6 +1028,13 @@ pub struct CatConfig {
     /// deserialise costs.
     #[serde(default)]
     pub elad_tx_input: EladTxInput,
+    /// The ELAD FDM-DUO's menu 34 `TX POWER` setting, as its `TP` parameter:
+    /// 0 to 8 for 0.3, 0.5, 1.0, 1.2, 1.5, 2.0, 3.0, 4.0 and 5.0 W, 9 for MAX.
+    /// Sent each time the port opens, and chosen with the 1W / 3W / 5W / MAX
+    /// buttons beside Drive. MAX for a config written before this existed,
+    /// which is what was always sent until then.
+    #[serde(default = "default_elad_tx_power")]
+    pub elad_tx_power: u8,
     pub format: SoundFormat,
     /// Conjugate the sound card's I/Q, mirroring the panadapter about the
     /// tuned frequency. Only read for [`SoundFormat::Iq`]: demod audio is real
@@ -1277,6 +1284,11 @@ fn default_rigctld_addr() -> String {
     "127.0.0.1:4532".to_string()
 }
 
+/// Menu 34 at MAX — see [`CatConfig::elad_tx_power`].
+pub fn default_elad_tx_power() -> u8 {
+    9
+}
+
 /// Where an flrig serves XML-RPC unless told otherwise — its own default port,
 /// on this machine.
 fn default_flrig_addr() -> String {
@@ -1299,6 +1311,7 @@ impl Default for CatConfig {
             flrig_addr: default_flrig_addr(),
             kenwood_send: KenwoodSend::default(),
             elad_tx_input: EladTxInput::default(),
+            elad_tx_power: default_elad_tx_power(),
             format: SoundFormat::default(),
             invert_spectrum: false,
             iq_offset_hz: 0.0,
@@ -4289,6 +4302,34 @@ impl LimeConfig {
     pub const SAMPLE_RATES: [f64; 9] =
         [1.0e6, 2.0e6, 2.5e6, 5.0e6, 10.0e6, 15.36e6, 20.0e6, 30.72e6, 40.0e6];
 
+    /// The lower rates a LimeSDR **Mini** also offers, and the reason they exist.
+    ///
+    /// The Mini's FT601 USB link cannot sustain 1 Msps on transmit — it
+    /// underruns, which is issue #609. Soapy runs the Mini at 100–750 ksps and
+    /// SDRconsole only transmits at 750 ksps for the same reason. These are the
+    /// rates that clear it, offered on the Mini only: the USB boards have no
+    /// need for them and the extra entries would only clutter their combo. The
+    /// full list follows, since the Mini still receives at those rates.
+    pub const MINI_SAMPLE_RATES: [f64; 13] = [
+        100_000.0, 250_000.0, 500_000.0, 750_000.0, 1.0e6, 2.0e6, 2.5e6, 5.0e6, 10.0e6, 15.36e6,
+        20.0e6, 30.72e6, 40.0e6,
+    ];
+
+    /// The rates the settings combo should offer for a board called `name`.
+    ///
+    /// The Mini gets [`Self::MINI_SAMPLE_RATES`]; every other board gets
+    /// [`Self::SAMPLE_RATES`]. Matched on the same folded name as
+    /// [`LimeDevice::rx_channels`], so a board spelled with a space or an
+    /// underscore is still recognised.
+    pub fn rates_for(name: &str) -> &'static [f64] {
+        let folded = name.trim().to_ascii_lowercase().replace([' ', '_'], "-");
+        if folded.starts_with("limesdr-mini") {
+            &Self::MINI_SAMPLE_RATES
+        } else {
+            &Self::SAMPLE_RATES
+        }
+    }
+
     /// What to say beside a rate in the combo, when there is something to say.
     ///
     /// The numbers are the host link's load at 12 bits per sample per
@@ -6785,6 +6826,30 @@ impl PanadapterTap {
     }
 }
 
+/// Which speaker channels a radio's audio goes to (#654): both, or one ear
+/// only — two radios on one headset, one per side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AudioRoute {
+    /// Both channels: a sub receiver on the right, as it always was.
+    #[default]
+    Both,
+    /// The left channel only, the main and sub receivers mixed into it.
+    Left,
+    /// The right channel only, the main and sub receivers mixed into it.
+    Right,
+}
+
+impl AudioRoute {
+    pub const ALL: [AudioRoute; 3] = [AudioRoute::Both, AudioRoute::Left, AudioRoute::Right];
+    pub fn label(self) -> &'static str {
+        match self {
+            AudioRoute::Both => "Both channels",
+            AudioRoute::Left => "Left only",
+            AudioRoute::Right => "Right only",
+        }
+    }
+}
+
 /// Which of the two radios you listen to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PanadapterAudio {
@@ -7405,6 +7470,23 @@ pub struct RadioConfig {
     /// refuses to make its rated power. See [`Self::tx_drive_ceiling`] for what
     /// it is for and why it is not the band table.
     pub tx_drive_max: Option<f32>,
+    /// This radio's S-meter calibration, in dB, added to the station's
+    /// `cal_offset_db`. An SDR's meter reads dBFS until it is told where zero
+    /// is, and the station-wide figure lived only in `config.toml` with no
+    /// control for it — and is wrong for every radio but the one it was set
+    /// against (#642). Settable from Settings → Radio and applied live.
+    ///
+    /// `0.0` in a configuration written before this existed: the meter reads
+    /// exactly as it did. Appended last, as every field here is.
+    pub s_meter_cal_db: f32,
+    /// Which speaker channels this radio's audio goes to. See [`AudioRoute`].
+    /// `Both` in a configuration written before this existed. Appended last.
+    pub audio_route: AudioRoute,
+    /// One receive gain on every band, as before #605. Off — the default — the
+    /// gain stages are remembered per band and restored as the dial crosses
+    /// into one; a band never set keeps whatever gain is in force. Appended
+    /// last.
+    pub same_gain_all_bands: bool,
 }
 
 impl RadioConfig {
@@ -8797,5 +8879,23 @@ mod tests {
         // below the tuner's own floor.
         assert_eq!(Rx888Config::vhf_crossover_hz(CLOCK), 64_800_000.0);
         assert_eq!(Rx888Config::vhf_crossover_hz(32_400_000.0), 24_000_000.0);
+    }
+
+    #[test]
+    fn the_mini_gets_lower_rates_because_its_usb_link_underruns() {
+        // Issue #609: the Mini's FT601 cannot sustain 1 Msps on transmit, so it
+        // gets a list that starts at 100 ksps. Every other board keeps the full
+        // list — the lower rates would only clutter their combo.
+        assert_eq!(LimeConfig::rates_for("LimeSDR-Mini"), &LimeConfig::MINI_SAMPLE_RATES);
+        assert_eq!(LimeConfig::rates_for("LimeSDR-Mini_v2"), &LimeConfig::MINI_SAMPLE_RATES);
+        // LimeSuite 23.11 spells the same board with a bare space.
+        assert_eq!(LimeConfig::rates_for("LimeSDR Mini"), &LimeConfig::MINI_SAMPLE_RATES);
+        // The low rates are added, not substituted: the Mini still receives wide.
+        assert!(LimeConfig::MINI_SAMPLE_RATES.ends_with(&LimeConfig::SAMPLE_RATES));
+        assert_eq!(LimeConfig::rates_for("LimeSDR-USB"), &LimeConfig::SAMPLE_RATES);
+        assert_eq!(LimeConfig::rates_for("LimeSDR-PCIe"), &LimeConfig::SAMPLE_RATES);
+        assert_eq!(LimeConfig::rates_for("LimeNET-Micro"), &LimeConfig::SAMPLE_RATES);
+        // An unknown board gets the safe full list rather than an empty one.
+        assert_eq!(LimeConfig::rates_for(""), &LimeConfig::SAMPLE_RATES);
     }
 }

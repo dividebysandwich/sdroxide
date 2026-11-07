@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::{Complex32, Result};
-use sdroxide_types::{Mode, Vfo};
+use sdroxide_types::{AgcMode, Mode, Vfo};
 
 /// Corner frequency of the front-end DC blocker. Low enough to be invisible at
 /// any device rate (10 ppm of a 2 Msps span), high enough to settle in ~8 ms.
@@ -126,6 +126,17 @@ pub enum ControlUpdate {
 /// default for anyone running a frequency converter. Add the forward at the
 /// same time.
 pub trait IqSource: Send {
+    /// Select a mode-dependent receive path. `Some` reports whether the
+    /// resulting stream is demodulated audio; `None` leaves capabilities alone.
+    fn prepare_receive_mode(&mut self, _mode: Mode) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
+    /// Hardware-specific reason a modulation mode cannot be received.
+    fn mode_unavailable(&self, _mode: Mode) -> Option<&'static str> {
+        None
+    }
+
     fn sample_rate(&self) -> f64;
     fn center_hz(&self) -> f64;
     fn set_center_hz(&mut self, hz: f64) -> Result<()>;
@@ -245,6 +256,9 @@ pub trait IqSource: Send {
     fn set_rig_power(&mut self, _on: bool) -> Result<()> {
         Ok(())
     }
+    /// Put the radio's own power setting on one of its numbered steps — the
+    /// ELAD FDM-DUO's menu 34, by its `TP` parameter. A no-op everywhere else.
+    fn set_power_step(&mut self, _code: u8) {}
     /// Whether [`Self::set_rig_power`] reaches this radio, for
     /// `DeviceCaps::commands_rig_power`.
     fn commands_rig_power(&self) -> bool {
@@ -281,6 +295,25 @@ pub trait IqSource: Send {
     /// Not an assertion: what comes back is adopted. Free on a front end with
     /// nothing to ask.
     fn reread_rx_antenna(&mut self) {}
+    /// Whether this radio has a built-in antenna tuner sdroxide can drive, and
+    /// what it is doing.
+    ///
+    /// `None` — the default — where it has none, or has not said yet. `Some`
+    /// becomes `DeviceCaps::has_atu` and `RadioState::atu`, the same way
+    /// [`Self::rx_antenna`] becomes its pair. Asked on every pass of the engine
+    /// loop, so it must not allocate or block.
+    fn atu(&self) -> Option<sdroxide_types::AtuState> {
+        None
+    }
+    /// Start a tune. The radio keys its own carrier for it; sdroxide transmits
+    /// nothing.
+    fn atu_tune(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// Take the tuner out of circuit.
+    fn atu_bypass(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// Whether the receive port is the source's own to decide, so a remembered
     /// one must not be restored over the top of it.
     ///
@@ -679,6 +712,29 @@ pub trait IqSource: Send {
     /// has all of.
     fn set_control_filter(&mut self, _mode: Mode, _lo_hz: f64, _hi_hz: f64) {}
 
+    /// Command the rig's own AGC to the setting the operator picked here.
+    ///
+    /// The same case as [`Self::set_control_filter`]: on demodulated audio the
+    /// rig's AGC has already levelled what arrives, so the engine's AGC behind
+    /// it has almost nothing left to do and its button changes nothing that
+    /// can be heard. A family with no way to say a particular setting — Icom
+    /// has no plain AGC OFF — leaves the radio where it was.
+    ///
+    /// Default: no-op.
+    fn set_control_agc(&mut self, _agc: AgcMode) {}
+
+    /// Whether [`Self::set_control_agc`] reaches the radio at all.
+    ///
+    /// Every rig that answers true takes Slow, Med and Fast but has no way to
+    /// be told Off, so while the radio is the one demodulating the engine
+    /// stops offering Off (`DeviceCaps::agc_off_unavailable`) rather than
+    /// show a setting the audio never hears.
+    ///
+    /// Default: false.
+    fn commands_agc(&self) -> bool {
+        false
+    }
+
     /// The receive offset (RIT) this front end has to carry itself, in Hz —
     /// zero when RIT is off.
     ///
@@ -967,13 +1023,19 @@ impl ConvertedSource {
     }
 
     /// A station with more than one box in front of it — see [`ConverterPlan`].
-    pub fn with_plan(inner: Box<dyn IqSource>, plan: ConverterPlan) -> Self {
+    pub fn with_plan(mut inner: Box<dyn IqSource>, plan: ConverterPlan) -> Self {
         // Seeded by working *backwards* from where the front end already is.
         // Nothing has told us a dial yet, and the first thing the engine does
         // is read `center_hz()` — so a source that started on a transverter's
         // I.F. has to say so, or the radio comes up on 28 MHz having been
         // opened for 144.
         let step = plan.step_from_hardware(inner.center_hz());
+        // The band decoder follows the dial too, and until a retune it would
+        // otherwise be left on the I.F. (#444).
+        if !step.is_identity() {
+            let dial = inner.center_hz() - step.rx_offset_hz;
+            inner.set_dial_hz(dial);
+        }
         ConvertedSource { inner, plan, step }
     }
 
@@ -1369,6 +1431,14 @@ impl IqSource for ConvertedSource {
 
     // --- forwarded verbatim -------------------------------------------------
 
+    fn prepare_receive_mode(&mut self, mode: Mode) -> Result<Option<bool>> {
+        self.inner.prepare_receive_mode(mode)
+    }
+
+    fn mode_unavailable(&self, mode: Mode) -> Option<&'static str> {
+        self.inner.mode_unavailable(mode)
+    }
+
     fn sample_rate(&self) -> f64 {
         self.inner.sample_rate()
     }
@@ -1440,6 +1510,9 @@ impl IqSource for ConvertedSource {
     fn set_rig_power(&mut self, on: bool) -> Result<()> {
         self.inner.set_rig_power(on)
     }
+    fn set_power_step(&mut self, code: u8) {
+        self.inner.set_power_step(code)
+    }
     fn commands_rig_power(&self) -> bool {
         self.inner.commands_rig_power()
     }
@@ -1451,6 +1524,17 @@ impl IqSource for ConvertedSource {
     }
     fn reread_rx_antenna(&mut self) {
         self.inner.reread_rx_antenna();
+    }
+    /// The tuner sits between the radio and its aerial, behind any converter
+    /// on the receive side, so it is the inner radio's.
+    fn atu(&self) -> Option<sdroxide_types::AtuState> {
+        self.inner.atu()
+    }
+    fn atu_tune(&mut self) -> Result<()> {
+        self.inner.atu_tune()
+    }
+    fn atu_bypass(&mut self) -> Result<()> {
+        self.inner.atu_bypass()
     }
 
     fn owns_rx_antenna(&self) -> bool {
@@ -1594,6 +1678,14 @@ impl IqSource for ConvertedSource {
     /// move.
     fn set_control_filter(&mut self, mode: Mode, lo_hz: f64, hi_hz: f64) {
         self.inner.set_control_filter(mode, lo_hz, hi_hz);
+    }
+
+    fn set_control_agc(&mut self, agc: AgcMode) {
+        self.inner.set_control_agc(agc);
+    }
+
+    fn commands_agc(&self) -> bool {
+        self.inner.commands_agc()
     }
 
     /// Relative (an offset from the dial), so untouched.

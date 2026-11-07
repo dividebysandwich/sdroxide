@@ -18,6 +18,7 @@
 pub(in crate::app) mod controls;
 pub(in crate::app) mod general;
 pub(in crate::app) mod net;
+pub(in crate::app) mod picup;
 pub(in crate::app) mod profiles;
 pub(in crate::app) mod radio;
 pub(in crate::app) mod relay;
@@ -26,9 +27,12 @@ pub(in crate::app) mod remote;
 pub(in crate::app) mod servers;
 pub(in crate::app) mod tle;
 pub(in crate::app) mod ui_tab;
+pub(in crate::app) mod wavelog;
 
 pub(in crate::app) mod alerts;
+pub(in crate::app) mod amp;
 
+use crate::i18n::{Tr, tr};
 use eframe::egui::{self, Color32, ComboBox, RichText};
 use sdroxide_types::{Command, LoginTarget, LookupProvider, NetworkConfig, UploadTarget};
 
@@ -86,6 +90,8 @@ pub(in crate::app) enum SettingsTab {
     /// sequencer's timings and a test button apiece — and this is the one page
     /// in here whose being hard to find could cost somebody a front end.
     TrSwitch,
+    /// The Hardrock amplifier: its port, model, and whether it follows the band.
+    Amp,
     /// Dial another station. Native only: a browser client is already attached
     /// to the server that served it and has nowhere to put a second one.
     #[cfg(not(target_arch = "wasm32"))]
@@ -174,6 +180,9 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// `SdroxideApp::rx_site_edit`.
     rx_site: &'a mut Option<sdroxide_types::RxSite>,
     audio_pick: &'a mut Option<(bool, Option<String>)>,
+    /// Which speaker channel(s) the received audio reaches, applied after the
+    /// window closure (#654).
+    routing_pick: &'a mut Option<sdroxide_types::AudioRouting>,
     hpsdr_discover: &'a mut bool,
     /// The name being typed in the Profiles tab's save box. Owned on the app:
     /// the dialog lives across taps of the tab bar, and a half-typed name is
@@ -279,6 +288,9 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// GridTracker, JTAlert, N1MM+ and Log4OM.
     wsjtx_edit: &'a mut sdroxide_types::WsjtxConfig,
     wsjtx_apply: &'a mut bool,
+    /// Received pictures → FTP: the dialog's copy, and whether to send it.
+    picup_edit: &'a mut sdroxide_types::PictureUploadConfig,
+    picup_apply: &'a mut bool,
     /// The rotctld *client* — the satellite lock steering a motorized antenna.
     rot_edit: &'a mut sdroxide_types::RotatorConfig,
     rot_apply: &'a mut bool,
@@ -286,6 +298,8 @@ pub(in crate::app) struct SettingsIo<'a> {
     relay_apply: &'a mut bool,
     /// Which contact the operator asked to hear, if any.
     relay_test: &'a mut Option<u8>,
+    amp_edit: &'a mut sdroxide_types::AmpConfig,
+    amp_apply: &'a mut bool,
     /// Control-input bindings, plus the row (if any) waiting to capture a
     /// keypress. Persisted on close, since a rebind has no APPLY step.
     input_edit: &'a mut sdroxide_types::InputSettings,
@@ -326,6 +340,13 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// the edit commits, so the roster's per-frame republish cannot fight the
     /// keyboard — see `SdroxideApp::radio_name_edit`.
     radio_name_edit: &'a mut Option<(u32, String)>,
+    /// The saved window arrangements, edited on the UI tab and written back
+    /// after the window closure like `ui_edit`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    workspaces: &'a mut Vec<sdroxide_types::Workspace>,
+    /// The name being typed for the next workspace.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    workspace_name: &'a mut String,
     /// Spoken announcements, edited in place and written back after the
     /// window closure like every other buffer here.
     speech_edit: &'a mut sdroxide_types::SpeechSettings,
@@ -347,11 +368,9 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// there is no APPLY step on the General tab, and the whole point of it is
     /// that the band plan follows immediately.
     region_edit: &'a mut sdroxide_types::Region,
-    /// The transmit parametric EQ (voice modes only). Same contract as
-    /// `region_edit`: no APPLY step, sent the moment a band changes. This is
-    /// live `RadioState`, not a per-backend `RadioConfig`, so it applies
-    /// regardless of which radio interface is selected.
-    tx_eq_edit: &'a mut sdroxide_types::TxEqState,
+    /// Set when the operator asks for the TX Audio window, which took over
+    /// the transmit EQ that used to sit in this tab.
+    open_tx_audio: &'a mut bool,
     tab: &'a mut SettingsTab,
     /// Which logging service the Uploads tab's own strip is showing. Its own
     /// field rather than state inside the tab's body, because the body is drawn
@@ -368,7 +387,7 @@ pub(in crate::app) struct SettingsIo<'a> {
 /// machine, and one the operator could act on by typing over it.
 fn net_seeded_note(ui: &mut egui::Ui, seeded: bool) -> bool {
     if !seeded {
-        ui.label(RichText::new("Waiting for the station's network configuration…").weak());
+        ui.label(RichText::new(tr!("settings-waiting-station-s-network-configuration")).weak());
     }
     seeded
 }
@@ -386,7 +405,7 @@ fn freq_range_edit(ui: &mut egui::Ui, id: &str, text: &mut String, hover: &str) 
             egui::TextEdit::singleline(text)
                 .id_salt(id)
                 .desired_width(220.0)
-                .hint_text("as the device reports"),
+                .hint_text(tr!("settings-device-reports")),
         )
         .on_hover_text(hover);
         if let Err(e) = sdroxide_types::parse_freq_ranges(text) {
@@ -427,50 +446,42 @@ fn transverter_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
     ui.add_space(10.0);
     ui.separator();
     ui.add_space(4.0);
-    ui.label(RichText::new("Transverters").size(14.0).strong().color(crate::theme::CYAN()));
-    ui.add_space(2.0);
     ui.label(
-        RichText::new(
-            "One row per box. While the dial is inside a row's band the radio is tuned to \
-             dial + offset and that row's transmit rule and drive limit apply; outside every \
-             row the radio is on its own bands. Rows are tried top to bottom.",
-        )
-        .weak(),
+        RichText::new(tr!("settings-transverters")).size(14.0).strong().color(crate::theme::CYAN()),
     );
+    ui.add_space(2.0);
+    ui.label(RichText::new(tr!("settings-one-row-per-box-while")).weak());
     ui.add_space(6.0);
 
     let mut remove: Option<usize> = None;
     egui::Grid::new("xvtr-grid").num_columns(8).spacing([10.0, 6.0]).striped(true).show(ui, |ui| {
-        for h in ["", "Name", "Band low", "Band high", "Offset", "Transmit", "Max drive", ""] {
+        for h in [
+            "",
+            &tr!("settings-name"),
+            &tr!("settings-band-low"),
+            &tr!("settings-band-high"),
+            &tr!("settings-offset"),
+            &tr!("settings-transmit"),
+            &tr!("settings-max-drive"),
+            "",
+        ] {
             ui.label(RichText::new(h).weak().size(10.0));
         }
         ui.end_row();
 
         for (i, x) in cfg.transverters.iter_mut().enumerate() {
-            crate::chrome::checkbox(ui, &mut x.enabled, "").on_hover_text(
-                "Off takes this transverter out of the line without losing the row — the \
-                     band goes back to whatever the radio reaches on its own.",
-            );
+            crate::chrome::checkbox(ui, &mut x.enabled, "")
+                .on_hover_text(tr!("settings-off-takes-transverter-out-line"));
             crate::chrome::field(
                 ui,
                 egui::TextEdit::singleline(&mut x.name)
                     .id_salt(("xvtr-name", i))
                     .desired_width(110.0)
-                    .hint_text("2 m"),
+                    .hint_text(tr!("settings-t-2-m")),
             )
-            .on_hover_text("What you call it. Shown in the log when the dial selects it.");
-            mhz_drag(
-                ui,
-                &mut x.rf_lo_hz,
-                "The bottom of the band this transverter works, \
-                     on the dial. 144 for 2 m.",
-            );
-            mhz_drag(
-                ui,
-                &mut x.rf_hi_hz,
-                "The top of the band, on the dial. 148 for 2 m \
-                     in Regions 2 and 3, 146 in Region 1.",
-            );
+            .on_hover_text(tr!("settings-what-you-call-shown-log"));
+            mhz_drag(ui, &mut x.rf_lo_hz, &tr!("settings-bottom-band-transverter-works-dial"));
+            mhz_drag(ui, &mut x.rf_hi_hz, &tr!("settings-top-band-dial-148-2"));
             ui.add(
                 egui::DragValue::new(&mut x.offset_hz)
                     .speed(1000.0)
@@ -482,29 +493,20 @@ fn transverter_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
                     .custom_parser(|s| s.trim().parse::<f64>().ok().map(|m| m * 1e6))
                     .suffix(" MHz"),
             )
-            .on_hover_text(
-                "The radio ends up on dial + offset, so a transverter that brings a band \
-                     down to an I.F. is negative: 2 m into a 28 MHz I.F. is -116, because \
-                     144 - 116 = 28. Drag to trim it a hertz at a time for an oscillator that \
-                     is slightly off.",
-            );
+            .on_hover_text(tr!("settings-radio-ends-up-dial-offset"));
             egui::ComboBox::from_id_salt(("xvtr-tx", i))
-                .selected_text(x.tx.label())
+                .selected_text(x.tx.tr())
                 .width(120.0)
                 .show_styled(ui, |ui| {
                     for opt in [Tx::Off, Tx::Transverter] {
                         let on = std::mem::discriminant(&opt) == std::mem::discriminant(&x.tx);
-                        if ui.selectable_label(on, opt.label()).clicked() && !on {
+                        if ui.selectable_label(on, opt.tr()).clicked() && !on {
                             x.tx = opt;
                         }
                     }
                 })
                 .response
-                .on_hover_text(
-                    "Off while converting: receive only — the row is a converter, not a \
-                         transverter, and nothing is keyed on this band.\n\nThrough the same \
-                         converter: it works both ways, and transmit takes the same offset.",
-                );
+                .on_hover_text(tr!("settings-off-while-converting-receive-only"));
             ui.add(
                 egui::DragValue::new(&mut x.tx_drive)
                     .speed(0.005)
@@ -513,15 +515,8 @@ fn transverter_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
                     .custom_parser(|s| s.trim().parse::<f64>().ok().map(|p| p / 100.0))
                     .suffix(" %"),
             )
-            .on_hover_text(
-                "A ceiling on transmit drive while this transverter is selected, as a \
-                     percentage of full. A transverter's I.F. input takes milliwatts and the \
-                     drive that is right for the radio's own bands will destroy it, so this is \
-                     the row's most important field. 100% is no limit.\n\nYour Drive setting \
-                     is held under this rather than moved, so the number you use on HF comes \
-                     back when the dial leaves the band.",
-            );
-            if crate::chrome::chip(ui, false, "REMOVE").clicked() {
+            .on_hover_text(tr!("settings-ceiling-transmit-drive-while-transverter"));
+            if crate::chrome::chip(ui, false, tr!("settings-remove")).clicked() {
                 remove = Some(i);
             }
             ui.end_row();
@@ -534,16 +529,13 @@ fn transverter_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
     ui.horizontal(|ui| {
         let full = cfg.transverters.len() >= MAX_TRANSVERTERS;
         if ui
-            .add_enabled(!full, egui::Button::new("ADD TRANSVERTER"))
-            .on_disabled_hover_text(format!("{MAX_TRANSVERTERS} is the most this table holds"))
+            .add_enabled(!full, egui::Button::new(tr!("settings-add-transverter")))
+            .on_disabled_hover_text(tr!("settings-transverters-full", max = MAX_TRANSVERTERS))
             .clicked()
         {
             cfg.transverters.push(Transverter { tx: Tx::Transverter, ..Transverter::default() });
         }
-        ui.label(
-            RichText::new("Takes effect on Apply / reconnect, like the converter offset above.")
-                .weak(),
-        );
+        ui.label(RichText::new(tr!("settings-takes-effect-apply-reconnect-like")).weak());
     });
 }
 
@@ -560,19 +552,17 @@ fn drive_ceiling_row(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
     ui.separator();
     ui.add_space(4.0);
     ui.label(
-        RichText::new("Maximum transmit drive").size(14.0).strong().color(crate::theme::CYAN()),
+        RichText::new(tr!("settings-maximum-transmit-drive"))
+            .size(14.0)
+            .strong()
+            .color(crate::theme::CYAN()),
     );
     ui.add_space(2.0);
-    ui.label(
-        RichText::new(
-            "A hard limit the Drive and TUNE controls cannot be taken past, applied after the              band calibration below so nothing can lift the drive back over it. Set it where              the radio makes its rated power and the whole of the Drive control becomes usable              — on a transmitter that modulates its own samples (HPSDR, LimeSDR, PlutoSDR,              HackRF) full drive is the transmitter wide open, which on a high-gain amplifier is              well past what its finals are rated for. Off means the controls reach full drive.",
-        )
-        .weak(),
-    );
+    ui.label(RichText::new(tr!("settings-hard-limit-drive-tune-controls")).weak());
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         let mut on = cfg.tx_drive_max.is_some();
-        if crate::chrome::checkbox(ui, &mut on, "Limit drive to").changed() {
+        if crate::chrome::checkbox(ui, &mut on, tr!("settings-limit-drive")).changed() {
             // Starting at the top rather than at a guess: a ceiling this
             // dialog invented would be a power limit the operator did not
             // measure, and one they might trust. Turning it on changes
@@ -585,14 +575,12 @@ fn drive_ceiling_row(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
                 on,
                 egui::DragValue::new(&mut pct).speed(0.5).range(1.0..=100.0).suffix(" %"),
             )
-            .on_hover_text(
-                "Per cent of full drive. Key the radio into a dummy load and bring this down                  until the meter reads the power the amplifier is rated for.",
-            )
+            .on_hover_text(tr!("settings-per-cent-full-drive-key"))
             .changed()
         {
             cfg.tx_drive_max = Some((pct / 100.0).clamp(0.01, 1.0));
         }
-        ui.label(RichText::new("Applies immediately, on every band and to TUNE as well.").weak());
+        ui.label(RichText::new(tr!("settings-applies-immediately-every-band-tune")).weak());
     });
 }
 
@@ -609,20 +597,13 @@ fn drive_trim_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
     ui.separator();
     ui.add_space(4.0);
     ui.label(
-        RichText::new("Transmit drive by band").size(14.0).strong().color(crate::theme::CYAN()),
+        RichText::new(tr!("settings-transmit-drive-band"))
+            .size(14.0)
+            .strong()
+            .color(crate::theme::CYAN()),
     );
     ui.add_space(2.0);
-    ui.label(
-        RichText::new(
-            "Every amplifier has a different gain on every band, so one Drive setting makes a \
-             different power on each. Measure the output on each band, then trim the bands \
-             that come out high until they all match: set Drive for the band that needs the \
-             most (usually the highest), and take the others down to it. Decibels of output \
-             power, applied to voice, digital and TUNE alike. Zero everywhere — the default — \
-             changes nothing.",
-        )
-        .weak(),
-    );
+    ui.label(RichText::new(tr!("settings-every-amplifier-has-different-gain")).weak());
     ui.add_space(6.0);
 
     // Bands the station's own region actually has: a Region 1 operator has no
@@ -637,7 +618,11 @@ fn drive_trim_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
             for (i, band) in bands.iter().enumerate() {
                 let mut db =
                     cfg.tx_drive_trim.iter().find(|t| t.band == *band).map(|t| t.db).unwrap_or(0.0);
-                ui.label(if *band == Band::Gen { "Other" } else { band.label() });
+                ui.label(if *band == Band::Gen {
+                    tr!("settings-other")
+                } else {
+                    band.label().to_string()
+                });
                 if ui
                     .add(
                         egui::DragValue::new(&mut db)
@@ -666,52 +651,25 @@ fn drive_trim_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(!cfg.tx_drive_trim.is_empty(), egui::Button::new("CLEAR ALL"))
-            .on_hover_text("Back to no calibration: the Drive setting reaches every band whole.")
+            .add_enabled(
+                !cfg.tx_drive_trim.is_empty(),
+                egui::Button::new(tr!("settings-clear-all")),
+            )
+            .on_hover_text(tr!("settings-back-no-calibration-drive-setting"))
             .clicked()
         {
             cfg.tx_drive_trim.clear();
         }
-        ui.label(
-            RichText::new(
-                "Applies immediately, and to the band you would transmit on — behind a \
-                 transverter that is the band on the dial, and the transverter's own drive \
-                 limit still wins over anything set here.",
-            )
-            .weak(),
-        );
+        ui.label(RichText::new(tr!("settings-applies-immediately-band-you-would")).weak());
     });
 }
 
-/// One row of the transmit-EQ grid: a band's frequency, gain and Q/slope.
-/// `q_range` doubles as the shelf-slope range for the two shelf bands, see
-/// [`sdroxide_types::TxEqBand::q`].
-fn tx_eq_band_row(
-    ui: &mut egui::Ui,
-    label: &str,
-    band: &mut sdroxide_types::TxEqBand,
-    freq_range: std::ops::RangeInclusive<f32>,
-    q_range: std::ops::RangeInclusive<f32>,
-    hover: &str,
-) {
-    ui.label(label).on_hover_text(hover);
-    ui.add(egui::DragValue::new(&mut band.freq_hz).range(freq_range).suffix(" Hz").speed(5.0));
-    ui.add(
-        egui::DragValue::new(&mut band.gain_db)
-            .range(sdroxide_types::TxEqState::GAIN_DB_RANGE)
-            .suffix(" dB")
-            .speed(0.2),
-    );
-    ui.add(egui::DragValue::new(&mut band.q).range(q_range).speed(0.02));
-    ui.end_row();
-}
-
-pub(in crate::app) fn enum_combo<T: PartialEq + Copy>(
+pub(in crate::app) fn enum_combo<T: PartialEq + Copy, L: Into<egui::WidgetText>>(
     ui: &mut egui::Ui,
     id: &str,
     cur: &mut T,
     all: &[T],
-    label: impl Fn(T) -> &'static str,
+    label: impl Fn(T) -> L,
 ) {
     ComboBox::from_id_salt(id).selected_text(label(*cur)).show_styled(ui, |ui| {
         for &opt in all {
@@ -1023,6 +981,7 @@ impl SdroxideApp {
         // Edits collected here and applied after the window closure, which
         // borrows `&self` and so can't touch `&mut self.ctrl`.
         let mut audio_pick: Option<(bool, Option<String>)> = None;
+        let mut routing_pick: Option<sdroxide_types::AudioRouting> = None;
         let mut profile_name = std::mem::take(&mut self.profile_name_edit);
         let mut digi_reseed = false;
         let mut speech_edit = self.speech.settings().clone();
@@ -1068,6 +1027,9 @@ impl SdroxideApp {
         let mut ranges = self.range_edit.clone();
         let mut rx_site = self.rx_site_edit.clone();
         let mut ui_edit = self.ui_settings;
+        // The workspaces are cloned out and handed back like `ui_edit`.
+        let mut workspaces = self.workspaces.clone();
+        let mut workspace_name = std::mem::take(&mut self.workspace_name);
         // Only where the engine is in this process: see `SettingsIo`.
         let owns_server = !self.ctrl.engine_is_remote();
         let mut access_edit = self.remote_access.clone();
@@ -1078,7 +1040,7 @@ impl SdroxideApp {
         let mut digi_edit = self.digi_cfg_edit.clone();
         let digi_seeded = self.digi_cfg_seeded;
         let mut region_edit = self.region_edit;
-        let mut tx_eq_edit = self.state.tx.eq;
+        let mut open_tx_audio = false;
         let mut net_edit = self.net_cfg_edit.clone();
         let mut net_cmds = self.net_cluster_cmds.clone();
         let mut rbn_cmds = self.net_rbn_cmds.clone();
@@ -1090,11 +1052,15 @@ impl SdroxideApp {
         let mut rigctld_apply = false;
         let mut wsjtx_edit = self.wsjtx_edit.clone();
         let mut wsjtx_apply = false;
+        let mut picup_edit = self.picup_edit.clone();
+        let mut picup_apply = false;
         let mut rot_edit = self.rot_cfg_edit.clone();
         let mut rot_apply = false;
         let mut relay_edit = self.relay_edit.clone();
         let mut relay_apply = false;
         let mut relay_test: Option<u8> = None;
+        let mut amp_edit = self.amp_edit.clone();
+        let mut amp_apply = false;
         let mut input_edit = self.input.cfg.clone();
         let mut key_capture = self.input.key_capture;
         let mut midi_learn = self.input.midi_learn;
@@ -1129,24 +1095,28 @@ impl SdroxideApp {
         // again — so the width drifted with wherever the operator had been
         // while the height stayed at egui's 420 pt default no matter how tall
         // the display was.
-        let want =
-            egui::vec2(crate::layout::window_w(ctx, 900.0), crate::layout::window_h(ctx, 760.0));
-        let resp = egui::Window::new("Settings")
-            // Pinned id, versioned: egui persists the remembered size and
-            // position under it, and the suffix drops the stale (often very
-            // wide, always 420 pt tall) geometry left by the builds before this
-            // one. Position is centred on first use because it goes with it.
-            .id(crate::layout::salted_id(ctx, "settings-window-v2"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_pos(ctx.content_rect().center() - want * 0.5)
-            .default_size(want)
-            .min_width(crate::layout::window_w(ctx, 380.0))
-            .min_height(crate::layout::window_h(ctx, 300.0))
-            .vscroll(true)
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+        // Pinned id, versioned: egui persists the remembered size and position
+        // under it, and the suffix drops the stale (often very wide, always
+        // 420 pt tall) geometry left by the builds before this one. Position is
+        // centred on first use because it goes with it.
+        let tool_title = tr!("settings-settings");
+        let mut tool_st = self.take_tool_state("settings-window-v2");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new(
+                "settings-window-v2",
+                &tool_title,
+                [900.0, 760.0],
+            )
+            .min_size([380.0, 300.0])
+            .centre_first()
+            .vscroll()
+            .app_name("settings"),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 bars.restore(ui);
                 // On the frame the dialog opens, jump back to the origin so
                 // the tab bar is on screen. Instant, not animated: a leftover
@@ -1194,6 +1164,7 @@ impl SdroxideApp {
                             ranges: &mut ranges,
                             rx_site: &mut rx_site,
                             audio_pick: &mut audio_pick,
+                            routing_pick: &mut routing_pick,
                             hpsdr_discover: &mut hpsdr_discover,
                             profile_name: &mut profile_name,
                             digi_reseed: &mut digi_reseed,
@@ -1245,6 +1216,8 @@ impl SdroxideApp {
                             bc_refetch: &mut bc_refetch,
                             bc_fetching: self.broadcast_fetch.is_some(),
                             bc_status: self.broadcast_fetch_status.as_ref(),
+                            workspaces: &mut workspaces,
+                            workspace_name: &mut workspace_name,
                             speech_edit: &mut speech_edit,
                             speech_voices: &self.speech_voices,
                             speech_status: &speech_status,
@@ -1259,11 +1232,15 @@ impl SdroxideApp {
                             rigctld_apply: &mut rigctld_apply,
                             wsjtx_edit: &mut wsjtx_edit,
                             wsjtx_apply: &mut wsjtx_apply,
+                            picup_edit: &mut picup_edit,
+                            picup_apply: &mut picup_apply,
                             rot_edit: &mut rot_edit,
                             rot_apply: &mut rot_apply,
                             relay_edit: &mut relay_edit,
                             relay_apply: &mut relay_apply,
                             relay_test: &mut relay_test,
+                            amp_edit: &mut amp_edit,
+                            amp_apply: &mut amp_apply,
                             input_edit: &mut input_edit,
                             key_capture: &mut key_capture,
                             midi_learn: &mut midi_learn,
@@ -1280,17 +1257,16 @@ impl SdroxideApp {
                             radio_tabs: &mut radio_tab_reqs,
                             radio_name_edit: &mut radio_name_edit,
                             region_edit: &mut region_edit,
-                            tx_eq_edit: &mut tx_eq_edit,
+                            open_tx_audio: &mut open_tx_audio,
                             tab: &mut tab,
                             upload_tab: &mut upload_tab,
                         },
                     );
                 });
-            });
+            },
+        );
+        self.put_tool_state("settings-window-v2", tool_st);
         bars.pop(ctx);
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
         self.show_settings = open;
         self.settings_tab = tab;
         self.settings_upload_tab = upload_tab;
@@ -1355,6 +1331,11 @@ impl SdroxideApp {
             // The engine persists wsjtx.json when it opens the socket.
             cmds.push(Command::SetWsjtxConfig(self.wsjtx_edit.clone()));
         }
+        self.picup_edit = picup_edit;
+        if picup_apply {
+            // The engine persists picupload.json and announces it back.
+            cmds.push(Command::SetPictureUploadConfig(Box::new(self.picup_edit.clone())));
+        }
         self.rot_cfg_edit = rot_edit;
         if rot_apply {
             // The engine persists rotator.json when it (re)starts the client.
@@ -1369,6 +1350,11 @@ impl SdroxideApp {
         }
         if let Some(channel) = relay_test {
             cmds.push(Command::TestRelay { channel });
+        }
+        self.amp_edit = amp_edit;
+        if amp_apply {
+            // The engine persists amp.json when it (re)opens the port.
+            cmds.push(Command::SetAmpConfig(Box::new(self.amp_edit.clone())));
         }
         self.sat_ui = sat_ui;
         if self.sat_cfg_seeded && sat_edit != self.sat_cfg_edit {
@@ -1396,6 +1382,10 @@ impl SdroxideApp {
         }
         if let Some((output, name)) = audio_pick {
             self.ctrl.set_audio_device(output, name);
+            self.audio_devices_queried = false;
+        }
+        if let Some(routing) = routing_pick {
+            self.ctrl.set_audio_routing(routing);
             self.audio_devices_queried = false;
         }
         // Every device question below is asked after the window closure, which
@@ -1495,7 +1485,7 @@ impl SdroxideApp {
                 // say anything useful about an empty address.
                 self.set_test_outcome(
                     sdroxide_types::TestKind::SpyServer,
-                    TestOutcome::Done(Err("enter the server's address first".to_string())),
+                    TestOutcome::Done(Err(tr!("settings-enter-server-s-address-first"))),
                 );
             } else {
                 let endpoint = block.endpoint();
@@ -1510,10 +1500,7 @@ impl SdroxideApp {
             if cfg.kiwi.address.trim().is_empty() {
                 self.set_test_outcome(
                     sdroxide_types::TestKind::Kiwi,
-                    TestOutcome::Done(Err(
-                        "enter the receiver's address first, or pick one from Public SDRs"
-                            .to_string(),
-                    )),
+                    TestOutcome::Done(Err(tr!("settings-enter-receiver-s-address-first"))),
                 );
             } else {
                 let endpoint = cfg.kiwi.endpoint();
@@ -1531,9 +1518,7 @@ impl SdroxideApp {
                     Some(addr) => self.ask_device(ctx, P::Test(T::SmartSdr(addr))),
                     None => self.set_test_outcome(
                         sdroxide_types::TestKind::SmartSdr,
-                        TestOutcome::Done(Err(
-                            "no radio selected — press Discover, or enter an address".to_string(),
-                        )),
+                        TestOutcome::Done(Err(tr!("settings-no-radio-selected-press-discover"))),
                     ),
                 }
             }
@@ -1545,7 +1530,7 @@ impl SdroxideApp {
             if cfg.icomnet.address.trim().is_empty() {
                 self.set_test_outcome(
                     sdroxide_types::TestKind::IcomNet,
-                    TestOutcome::Done(Err("enter the radio's address first".to_string())),
+                    TestOutcome::Done(Err(tr!("settings-enter-radio-s-address-first"))),
                 );
             } else {
                 let icomnet = Box::new(cfg.icomnet.clone());
@@ -1676,6 +1661,11 @@ impl SdroxideApp {
             }
             self.radio_cfg = radio_edit;
         }
+        self.workspace_name = workspace_name;
+        if workspaces != self.workspaces {
+            self.workspaces = workspaces;
+            crate::app::persist::save_workspaces(&self.workspaces);
+        }
         if ui_edit != self.ui_settings {
             // Live: fps + averaging flow to the engine via the spectrum-config
             // diff next frame; waterfall speed is read each frame. Persist too.
@@ -1723,7 +1713,8 @@ impl SdroxideApp {
             if remote_connect && !self.remote_server.host.trim().is_empty() {
                 // Dialled by the shell after the frame: it owns the tab set,
                 // and this connection needs a tab to live in.
-                self.remote_status = Some(Ok(format!("Dialling {}…", self.remote_server.url())));
+                self.remote_status =
+                    Some(Ok(tr!("settings-dialling", url = self.remote_server.url())));
                 self.radio_tab_requests.push(crate::app::RadioTabRequest::Connect {
                     url: self.remote_server.url(),
                     name: self.remote_server.label(),
@@ -1747,12 +1738,8 @@ impl SdroxideApp {
             sdroxide_types::set_region(region_edit);
             cmds.push(Command::SetRegion(region_edit));
         }
-        // The transmit EQ: live `RadioState`, applied the moment a band
-        // changes, same as the region above. There is no per-backend config
-        // to wait on, so no APPLY step either.
-        if tx_eq_edit != self.state.tx.eq {
-            self.state.tx.eq = tx_eq_edit;
-            cmds.push(Command::SetTxEq(tx_eq_edit));
+        if open_tx_audio {
+            self.tx_audio.open = true;
         }
     }
 
@@ -1773,24 +1760,25 @@ impl SdroxideApp {
         // Built rather than written out, because one of the tabs only exists on
         // native (see [`SettingsTab::Remote`]).
         let mut tabs = vec![
-            (SettingsTab::General, "General"),
-            (SettingsTab::Radio, "Radio"),
-            (SettingsTab::Ui, "UI"),
-            (SettingsTab::Alerts, "Alerts"),
-            (SettingsTab::Controls, "Controls"),
-            (SettingsTab::Spots, "Spots"),
-            (SettingsTab::FreeDv, "FreeDV"),
-            (SettingsTab::Uploads, "Uploads"),
-            (SettingsTab::Winlink, "Winlink"),
-            (SettingsTab::Servers, "Servers"),
-            (SettingsTab::TrSwitch, "T/R switch"),
+            (SettingsTab::General, tr!("settings-general")),
+            (SettingsTab::Radio, tr!("settings-radio")),
+            (SettingsTab::Ui, tr!("settings-ui")),
+            (SettingsTab::Alerts, tr!("settings-alerts")),
+            (SettingsTab::Controls, tr!("settings-controls")),
+            (SettingsTab::Spots, tr!("settings-spots")),
+            (SettingsTab::FreeDv, tr!("settings-freedv")),
+            (SettingsTab::Uploads, tr!("settings-uploads")),
+            (SettingsTab::Winlink, tr!("settings-winlink")),
+            (SettingsTab::Servers, tr!("settings-servers")),
+            (SettingsTab::TrSwitch, tr!("settings-t-r-switch")),
+            (SettingsTab::Amp, tr!("settings-amplifier")),
         ];
         // Next to Servers: the two are the same subject from opposite ends —
         // what this station offers others, and where this screen goes.
         #[cfg(not(target_arch = "wasm32"))]
-        tabs.push((SettingsTab::Remote, "Remote"));
-        tabs.push((SettingsTab::Tle, "TLE"));
-        tabs.push((SettingsTab::Profiles, "Profiles"));
+        tabs.push((SettingsTab::Remote, tr!("settings-remote")));
+        tabs.push((SettingsTab::Tle, tr!("settings-tle")));
+        tabs.push((SettingsTab::Profiles, tr!("settings-profiles")));
         // Wrapped: the tab strip no longer fits the window's width on one line.
         // Real tabs rather than chips — a chip strip standing in for a tab strip
         // reads as a row of buttons that happen to stay pressed, with nothing to
@@ -1821,21 +1809,21 @@ impl SdroxideApp {
                 ui.separator();
                 ui.add_space(6.0);
 
-                ui.label(RichText::new("Station").size(14.0).strong().color(crate::theme::CYAN()));
+                ui.label(
+                    RichText::new(tr!("settings-station"))
+                        .size(14.0)
+                        .strong()
+                        .color(crate::theme::CYAN()),
+                );
                 ui.add_space(6.0);
                 if !io.digi_seeded {
-                    ui.label(
-                        RichText::new(
-                            "Enter a digital mode (FT8 / SSTV / …) once to load the saved values.",
-                        )
-                        .weak(),
-                    );
+                    ui.label(RichText::new(tr!("settings-enter-digital-mode-ft8-sstv")).weak());
                 }
                 ui.add_enabled_ui(io.digi_seeded, |ui| {
                     egui::Grid::new("general-grid").num_columns(2).spacing([12.0, 8.0]).show(
                         ui,
                         |ui| {
-                            ui.label("Callsign");
+                            ui.label(tr!("settings-callsign"));
                             if crate::chrome::field(
                                 ui,
                                 egui::TextEdit::singleline(&mut io.digi_edit.my_call),
@@ -1845,7 +1833,7 @@ impl SdroxideApp {
                                 io.digi_edit.my_call = io.digi_edit.my_call.to_uppercase();
                             }
                             ui.end_row();
-                            ui.label("Grid square");
+                            ui.label(tr!("settings-grid-square"));
                             crate::chrome::field(
                                 ui,
                                 egui::TextEdit::singleline(&mut io.digi_edit.my_grid),
@@ -1855,13 +1843,7 @@ impl SdroxideApp {
                     );
                 });
                 ui.add_space(6.0);
-                ui.label(
-                    RichText::new(
-                        "Your callsign and grid, shared across FT8/FT4/FT2, SSTV image headers, and \
-                         the logbook. Also editable from the FT8 / SSTV setup dialog.",
-                    )
-                    .weak(),
-                );
+                ui.label(RichText::new(tr!("settings-your-callsign-grid-shared-across")).weak());
 
                 // Its own grid, outside the enabled-ui above: the region comes
                 // from `config.toml` by way of the station announcement, not
@@ -1871,28 +1853,15 @@ impl SdroxideApp {
                 egui::Grid::new("general-region-grid").num_columns(2).spacing([12.0, 8.0]).show(
                     ui,
                     |ui| {
-                        ui.label("IARU region");
+                        ui.label(tr!("settings-iaru-region"));
                         region_combo(ui, io.region_edit);
                         ui.end_row();
                     },
                 );
                 ui.add_space(6.0);
                 ui.label(
-                    RichText::new(format!(
-                        "Where the station is. Sets every band plan: the band edges, the CW / \
-                         data / phone sub-segments on the waterfall strip, where the skimmers \
-                         listen, the calling frequencies offered, and what counts as out of band \
-                         for transmit. In Region {} that makes 70 cm {}. Takes effect at once, \
-                         and applies to every radio at this station.",
-                        io.region_edit.number(),
-                        match io.region_edit {
-                            sdroxide_types::Region::R1 =>
-                                "430–440 MHz — so 446 is out of band, and 40 m stops at 7.200",
-                            sdroxide_types::Region::R2 => "420–450 MHz, and 40 m runs to 7.300",
-                            sdroxide_types::Region::R3 => "430–450 MHz, and 80 m stops at 3.900",
-                        }
-                    ))
-                    .weak(),
+                    RichText::new(tr!("settings-region-note", region = io.region_edit.number()))
+                        .weak(),
                 );
                 ui.add_space(6.0);
                 self.settings_band_plan_file(ui, cmds);
@@ -1922,7 +1891,7 @@ impl SdroxideApp {
                 // running two rigs at once runs two interfaces at once, and one
                 // pair of pickers on a shared page could only describe one of
                 // them (issue #474).
-                self.settings_user_audio(ui, io.audio_pick);
+                self.settings_user_audio(ui, io.audio_pick, io.routing_pick);
 
                 if let Some(access) = io.access_edit.as_deref_mut() {
                     ui.add_space(10.0);
@@ -1948,11 +1917,7 @@ impl SdroxideApp {
                     self.settings_device_tab(ui, cmds);
                     ui.add_space(6.0);
                     ui.label(
-                        RichText::new(
-                            "Which radio interface the server uses is set on the machine it \
-                             runs on.",
-                        )
-                        .weak(),
+                        RichText::new(tr!("settings-which-radio-interface-server-uses")).weak(),
                     );
                     return;
                 };
@@ -1968,7 +1933,7 @@ impl SdroxideApp {
                 });
                 let site = io.rx_site.get_or_insert_with(|| cfg.rx_site.clone());
                 egui::Grid::new("iface-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                    ui.label(RichText::new("Radio interface").strong());
+                    ui.label(RichText::new(tr!("settings-radio-interface")).strong());
                     // Switching the far end's interface is allowed: the device
                     // lists below come from that machine, so this is a choice
                     // between radios that are actually there, and a reopen that
@@ -1985,7 +1950,7 @@ impl SdroxideApp {
                         // still clamping the dial after the tab was switched
                         // back to an IC-9700 over the LAN.
                         let mut chosen = cfg.backend;
-                        enum_combo(ui, "iface", &mut chosen, io.iface_opts, Backend::label);
+                        enum_combo(ui, "iface", &mut chosen, io.iface_opts, Backend::tr);
                         if chosen != cfg.backend {
                             cfg.set_backend(chosen);
                             // The two boxes below are showing what was typed
@@ -2004,14 +1969,13 @@ impl SdroxideApp {
                             *site = cfg.rx_site.clone();
                         }
                     } else {
-                        ui.label(backend.label()).on_hover_text(
-                            "Waiting for the machine the radio is attached to. Its interface \
-                             settings are below and can be changed from here meanwhile.",
-                        );
+                        ui.label(backend.tr()).on_hover_text(tr!(
+                            "settings-waiting-machine-radio-attached-interface"
+                        ));
                     }
                     ui.end_row();
 
-                    ui.label(RichText::new("Converter").strong());
+                    ui.label(RichText::new(tr!("settings-converter")).strong());
                     let named = sdroxide_types::converter_preset_name(*converter);
                     egui::ComboBox::from_id_salt("converter-preset")
                         .selected_text(named)
@@ -2030,23 +1994,16 @@ impl SdroxideApp {
                                 false,
                                 egui::Button::selectable(
                                     named == "Manual",
-                                    "Manual — type an offset below",
+                                    tr!("settings-manual-type-offset-below"),
                                 ),
                             )
-                            .on_disabled_hover_text(
-                                "What this box reads when the offset is not one of the presets. \
-                                 Set it by typing in the Offset field below; there is nothing to \
-                                 select here.",
-                            );
+                            .on_disabled_hover_text(tr!("settings-what-box-reads-when-offset"));
                         })
                         .response
-                        .on_hover_text(
-                            "A frequency converter in front of the receiver. Pick one, or type \
-                             an offset beside it.",
-                        );
+                        .on_hover_text(tr!("settings-frequency-converter-front-receiver-pick"));
                     ui.end_row();
 
-                    ui.label(RichText::new("Offset").strong());
+                    ui.label(RichText::new(tr!("settings-offset")).strong());
                     ui.add(
                         egui::DragValue::new(converter)
                             .speed(1.0)
@@ -2057,18 +2014,7 @@ impl SdroxideApp {
                             .max_decimals(0)
                             .suffix(" Hz"),
                     )
-                    .on_hover_text(
-                        "How far a converter moves the signal on its way to the receiver, in Hz \
-                         — the same number and sign every converter's documentation and every \
-                         other SDR program states. The radio ends up on dial + offset: positive \
-                         for an upconverter (a Ham It Up is 125000000), negative for anything \
-                         that brings a band down to an I.F. — a satellite LNB, or a 2 m \
-                         transverter on a 28 MHz I.F., which is -116000000 (28 − 144). \
-                         0 = no converter.\n\nDrag to trim it a hertz at a time, which is what \
-                         a converter whose oscillator is slightly off wants.\n\nThis is the \
-                         receive path. What is in the transmit line is the row below.\n\nTakes \
-                         effect on Apply.",
-                    );
+                    .on_hover_text(tr!("settings-how-far-converter-moves-signal"));
                     ui.end_row();
 
                     // A converter is a receive accessory, so what the transmit
@@ -2078,7 +2024,7 @@ impl SdroxideApp {
                     // hears through a converter and transmits around it: a
                     // QO-100 operator receives 10 GHz through an LNB and puts
                     // 2.4 GHz straight out of the radio.
-                    ui.label(RichText::new("Transmit").strong());
+                    ui.label(RichText::new(tr!("settings-transmit")).strong());
                     // Greyed out with no converter set, because that is exactly
                     // when it decides nothing: the transmit path was never
                     // touched to begin with.
@@ -2087,7 +2033,7 @@ impl SdroxideApp {
                             use sdroxide_types::ConverterTx as Tx;
                             let tx = &mut cfg.converter_tx;
                             egui::ComboBox::from_id_salt("converter-tx")
-                                .selected_text(tx.label())
+                                .selected_text(tx.tr())
                                 .show_styled(ui, |ui| {
                                     for opt in [Tx::Off, Tx::Transverter, Tx::Own(0.0)] {
                                         // Matched on the *kind*, so choosing "its
@@ -2095,25 +2041,13 @@ impl SdroxideApp {
                                         // number already typed beside it.
                                         let on = std::mem::discriminant(&opt)
                                             == std::mem::discriminant(tx);
-                                        if ui.selectable_label(on, opt.label()).clicked() && !on {
+                                        if ui.selectable_label(on, opt.tr()).clicked() && !on {
                                             *tx = opt;
                                         }
                                     }
                                 })
                                 .response
-                                .on_hover_text(
-                                    "What is in the transmit line while a converter is set.\n\n\
-                                     Off while converting: nothing is transmitted — the safe \
-                                     default, and right for a receive-only accessory.\n\n\
-                                     Through the same converter: one box converts both ways, a \
-                                     transverter. Transmit takes the offset above and follows it \
-                                     when it is trimmed.\n\nIts own offset: the transmit line is \
-                                     different from the receive one. Nought is the common case — \
-                                     a converter (an LNB, a Ham It Up) on receive with the \
-                                     transmitter on its own antenna, which is the QO-100 station.\
-                                     \n\nThe amateur-band check still applies, on the frequency \
-                                     you are transmitting on.\n\nTakes effect on Apply.",
-                                );
+                                .on_hover_text(tr!("settings-what-transmit-line-while-converter"));
                             if let Tx::Own(hz) = tx {
                                 ui.add(
                                     egui::DragValue::new(hz)
@@ -2125,15 +2059,7 @@ impl SdroxideApp {
                                         .max_decimals(0)
                                         .suffix(" Hz"),
                                 )
-                                .on_hover_text(
-                                    "How far the transmit line moves the signal, in Hz, on the \
-                                     same sign rule as the receive offset: the radio transmits at \
-                                     dial + offset.\n\n0 = the transmitter is wired to its own \
-                                     antenna and works on the frequency the dial says — a QO-100 \
-                                     station's 2.4 GHz uplink.\n\nA transmit converter that \
-                                     takes an I.F. *up* is a negative number: the radio works \
-                                     below the dial.",
-                                );
+                                .on_hover_text(tr!("settings-how-far-transmit-line-moves"));
                             }
                         });
                     });
@@ -2144,33 +2070,21 @@ impl SdroxideApp {
                     // frequency-range call at all, which leaves nothing to
                     // check a frequency against) or publishes the tuner chip's
                     // rather than the radio's.
-                    ui.label(RichText::new("RX range").strong());
+                    ui.label(RichText::new(tr!("settings-rx-range")).strong());
                     freq_range_edit(
                         ui,
                         "rx-range",
                         &mut ranges.0,
-                        "Which frequencies this radio receives, in MHz: 144-146, 430-440. Leave \
-                         empty to use whatever the device reports about itself.\n\nBand buttons \
-                         outside the range are greyed out and the dial will not go there.\n\n\
-                         These are dial frequencies. With a converter set, state the band you \
-                         tune — 144-148 for a 2 m transverter — not the I.F. the radio is really \
-                         on.\n\nTakes effect on Apply.",
+                        &tr!("settings-which-frequencies-radio-receives-mhz"),
                     );
                     ui.end_row();
 
-                    ui.label(RichText::new("TX range").strong());
+                    ui.label(RichText::new(tr!("settings-tx-range")).strong());
                     freq_range_edit(
                         ui,
                         "tx-range",
                         &mut ranges.1,
-                        "Which frequencies this radio transmits on, in MHz: 144-146, 430-440. \
-                         Leave empty to use whatever the device reports — and if it reports \
-                         nothing, the driver is taken at its word and any frequency is \
-                         allowed.\n\nDial frequencies, like the receive range above.\n\nThis \
-                         is a limit you set, not a licence: transmitting outside \
-                         the amateur bands is refused regardless unless you have turned that off \
-                         in config.toml. Nor does it give a receive-only device a \
-                         transmitter.\n\nTakes effect on Apply.",
+                        &tr!("settings-which-frequencies-radio-transmits-mhz"),
                     );
                     ui.end_row();
 
@@ -2180,7 +2094,7 @@ impl SdroxideApp {
                     // Australia taken in a European tab posted every 2 m decode
                     // as an intercontinental opening, because the reports went
                     // out from the operator's square.
-                    ui.label(RichText::new("Antenna is").strong());
+                    ui.label(RichText::new(tr!("settings-antenna")).strong());
                     ui.horizontal(|ui| {
                         use sdroxide_types::RxSite;
                         egui::ComboBox::from_id_salt("rx-site")
@@ -2198,30 +2112,81 @@ impl SdroxideApp {
                                 }
                             })
                             .response
-                            .on_hover_text(
-                                "Where this radio listens from.\n\nAt the station: the antenna \
-                                 is yours, so your own locator says where it is. The default, \
-                                 and right for everything in the shack.\n\nSomewhere else: an \
-                                 online receiver, or your own set up on a hilltop. What it hears \
-                                 is reported to PSK Reporter, WSPRnet and FreeDV Reporter from \
-                                 the locator beside this, never from yours — and ADS-B places \
-                                 aircraft against it too.\n\nPicking a receiver under \
-                                 \"Public SDRs\" fills this in for you.\n\nTakes effect on \
-                                 Apply.",
-                            );
+                            .on_hover_text(tr!("settings-where-radio-listens-station-antenna"));
                         if let RxSite::Elsewhere(g) = site {
                             ui.add(
                                 egui::TextEdit::singleline(g)
                                     .desired_width(90.0)
-                                    .hint_text("locator"),
+                                    .hint_text(tr!("settings-locator-hint")),
                             )
-                            .on_hover_text(
-                                "The receiver's Maidenhead locator — JN88ec, DO30db. Four or \
-                                 six characters.\n\nLeave it empty if you do not know where \
-                                 the receiver is: nothing is then reported at all, which is the \
-                                 only honest answer. Reporting from your own square would put \
-                                 somebody else's reception on the wrong continent.",
-                            );
+                            .on_hover_text(tr!("settings-receiver-s-maidenhead-locator-jn88ec"));
+                        }
+                    });
+                    ui.end_row();
+
+                    // Which speaker channels this radio plays to (#654): one ear
+                    // only puts two radios on one headset, a sub receiver mixed
+                    // into the same ear. Live: an ear is chosen by listening.
+                    ui.label(RichText::new(tr!("settings-audio")).strong());
+                    let was = cfg.audio_route;
+                    enum_combo(
+                        ui,
+                        "audio-route",
+                        &mut cfg.audio_route,
+                        &sdroxide_types::AudioRoute::ALL,
+                        sdroxide_types::AudioRoute::tr,
+                    );
+                    if cfg.audio_route != was {
+                        cmds.push(Command::SetRadioConfig {
+                            cfg: Box::new(cfg.clone()),
+                            reopen: false,
+                        });
+                    }
+                    ui.end_row();
+
+                    // #605: an RTL-SDR wants little gain on HF and a lot on 2 m.
+                    ui.label(RichText::new(tr!("settings-gain-per-band")).strong());
+                    let mut per_band = !cfg.same_gain_all_bands;
+                    if crate::chrome::checkbox(
+                        ui,
+                        &mut per_band,
+                        tr!("settings-remember-receive-gain-per-band"),
+                    )
+                    .on_hover_text(tr!("settings-each-band-keeps-receive-gain"))
+                    .changed()
+                    {
+                        cfg.same_gain_all_bands = !per_band;
+                        cmds.push(Command::SetRadioConfig {
+                            cfg: Box::new(cfg.clone()),
+                            reopen: false,
+                        });
+                    }
+                    ui.end_row();
+
+                    // Live, like the receive audio trim: it is set by watching
+                    // the S-meter while dragging (#642).
+                    ui.label(RichText::new(tr!("settings-s-meter-calibration")).strong());
+                    ui.horizontal(|ui| {
+                        let was = cfg.s_meter_cal_db;
+                        ui.add(
+                            egui::DragValue::new(&mut cfg.s_meter_cal_db)
+                                .speed(0.5)
+                                .range(-150.0..=50.0)
+                                .fixed_decimals(1)
+                                .suffix(" dB"),
+                        )
+                        .on_hover_text(tr!("settings-added-radio-s-s-meter"));
+                        if cfg.s_meter_cal_db != 0.0 && ui.button(tr!("settings-t-0-db")).clicked()
+                        {
+                            cfg.s_meter_cal_db = 0.0;
+                        }
+                        // Saving the file alone reaches the engine only at the
+                        // next reopen; this is meant to be set while watching.
+                        if cfg.s_meter_cal_db != was {
+                            cmds.push(Command::SetRadioConfig {
+                                cfg: Box::new(cfg.clone()),
+                                reopen: false,
+                            });
                         }
                     });
                     ui.end_row();
@@ -2230,21 +2195,11 @@ impl SdroxideApp {
                     let g = g.trim();
                     ui.label(
                         RichText::new(if g.is_empty() {
-                            "The antenna is somewhere else and no locator is set, so nothing \
-                             this radio hears is reported to PSK Reporter, WSPRnet or FreeDV \
-                             Reporter. Type the receiver's locator above to report from it."
-                                .to_string()
+                            tr!("settings-antenna-somewhere-else-no-locator")
                         } else if sdroxide_types::grid_to_latlon(g).is_some() {
-                            format!(
-                                "Receptions through this radio are reported from {g}, not from \
-                                 your own locator."
-                            )
+                            tr!("settings-rx-grid-reported", grid = g)
                         } else {
-                            format!(
-                                "{g} is not a Maidenhead locator, so nothing this radio hears is \
-                                 reported. Four or six characters: two letters, two digits, and \
-                                 optionally two more letters."
-                            )
+                            tr!("settings-rx-grid-invalid", grid = g)
                         })
                         .weak(),
                     );
@@ -2252,48 +2207,28 @@ impl SdroxideApp {
                 // The two range boxes are the only megahertz on a tab whose
                 // other frequency field is hertz, so the example says the same
                 // range both ways rather than leaving anyone to count zeros.
-                ui.label(
-                    RichText::new(
-                        "Ranges are in MHz, low-high, separated by commas: 144-146, 430-440 — \
-                         that is 144000000-146000000 Hz and 430000000-440000000 Hz. They are \
-                         dial frequencies: a converter offset does not move them. The \
-                         converter offset above is the field in hertz. Leave a range empty to \
-                         use whatever the device reports about itself; a device that reports \
-                         nothing is taken at its word.",
-                    )
-                    .weak(),
-                );
+                ui.label(RichText::new(tr!("settings-ranges-are-mhz-low-high")).weak());
                 if *converter != 0.0 {
                     // What the two rows above add up to, in one sentence: the
                     // transmit answer is the one an operator gets wrong, and a
                     // radio that will not key is the symptom either way.
                     let tx = match cfg.converter_tx {
                         sdroxide_types::ConverterTx::Off => {
-                            "Transmit is off while a converter is set — say what is in the \
-                             transmit line above to turn it back on."
+                            tr!("settings-transmit-off-while-converter-set")
                         }
                         sdroxide_types::ConverterTx::Transverter => {
-                            "Transmit goes through the same converter, so the radio works the \
-                             same offset away from the dial in both directions."
+                            tr!("settings-transmit-goes-through-same-converter")
                         }
                         sdroxide_types::ConverterTx::Own(0.0) => {
-                            "Transmit is not converted: the radio transmits on the frequency the \
-                             dial shows, while receive comes through the converter."
+                            tr!("settings-transmit-not-converted-radio-transmits")
                         }
                         sdroxide_types::ConverterTx::Own(_) => {
-                            "Transmit takes its own offset, separate from the receive one."
+                            tr!("settings-transmit-takes-own-offset-separate")
                         }
                     };
                     ui.label(RichText::new(tx).weak());
                     if backend == Backend::RtlSdr && *converter < 0.0 {
-                        ui.label(
-                            RichText::new(
-                                "Careful on an RTL-SDR: the Blog V4 upconverts on its own below \
-                                 28.8 MHz, so a negative offset that lands the hardware there \
-                                 shifts twice.",
-                            )
-                            .weak(),
-                        );
+                        ui.label(RichText::new(tr!("settings-careful-rtl-sdr-blog-v4")).weak());
                     }
                 }
 
@@ -2310,55 +2245,30 @@ impl SdroxideApp {
                     drive_trim_table(ui, cfg);
                     ui.separator();
                     ui.label(
-                        RichText::new("Transmit EQ")
+                        RichText::new(tr!("settings-transmit-audio"))
                             .size(14.0)
                             .strong()
                             .color(crate::theme::CYAN()),
                     );
                     ui.add_space(4.0);
-                    crate::chrome::checkbox(ui, &mut io.tx_eq_edit.enabled, "Enabled").on_hover_text(
-                        "A 3-band parametric EQ on the microphone audio, ahead of the modulator. \
-                         Voice modes only (SSB/AM/FM); digital modes and CW carry synthesized or \
-                         keyed audio that never reaches it. Off by default and flat when turned \
-                         on, so enabling it changes nothing on the air until a band below is \
-                         actually moved. Applies immediately.",
-                    );
-                    ui.add_space(4.0);
-                    egui::Grid::new("tx-eq-grid").num_columns(4).spacing([10.0, 6.0]).show(
-                        ui,
-                        |ui| {
-                            ui.label("");
-                            ui.label(RichText::new("Freq").weak());
-                            ui.label(RichText::new("Gain").weak());
-                            ui.label(RichText::new("Q / Slope").weak());
-                            ui.end_row();
-
-                            tx_eq_band_row(
-                                ui,
-                                "Low shelf",
-                                &mut io.tx_eq_edit.low,
-                                sdroxide_types::TxEqState::LOW_FREQ_HZ_RANGE,
-                                sdroxide_types::TxEqState::SHELF_SLOPE_RANGE,
-                                "Cuts/boosts rumble and handling noise.",
-                            );
-                            tx_eq_band_row(
-                                ui,
-                                "Mid peak",
-                                &mut io.tx_eq_edit.mid,
-                                sdroxide_types::TxEqState::MID_FREQ_HZ_RANGE,
-                                sdroxide_types::TxEqState::MID_Q_RANGE,
-                                "Presence: a narrow bump or dip somewhere in the voice band.",
-                            );
-                            tx_eq_band_row(
-                                ui,
-                                "High shelf",
-                                &mut io.tx_eq_edit.high,
-                                sdroxide_types::TxEqState::HIGH_FREQ_HZ_RANGE,
-                                sdroxide_types::TxEqState::SHELF_SLOPE_RANGE,
-                                "Brightness/de-ess.",
-                            );
-                        },
-                    );
+                    ui.horizontal_wrapped(|ui| {
+                        let voice = &self.state.tx.voice;
+                        let on = if voice.bypass {
+                            tr!("settings-bypassed")
+                        } else if voice.active() {
+                            tr!("settings-use")
+                        } else {
+                            tr!("settings-every-stage-off")
+                        };
+                        if ui
+                            .button(tr!("settings-open-tx-audio"))
+                            .on_hover_text(tr!("settings-microphone-processing-chain-gate-eq"))
+                            .clicked()
+                        {
+                            *io.open_tx_audio = true;
+                        }
+                        ui.label(RichText::new(tr!("settings-tx-audio-chain", state = on)).weak());
+                    });
                 }
                 ui.separator();
 
@@ -2591,12 +2501,9 @@ impl SdroxideApp {
                     Backend::Auto => {
                         ui.label(
                             RichText::new(if io.can_probe {
-                                "Pick a radio interface above (this configuration used the \
-                                 removed auto-detect mode)."
+                                tr!("settings-pick-radio-interface-above-configuration")
                             } else {
-                                "This configuration used the removed auto-detect mode. Pick an \
-                                 interface above once the machine the radio is attached to has \
-                                 answered."
+                                tr!("settings-configuration-used-removed-auto-detect")
                             })
                             .weak(),
                         );
@@ -2606,11 +2513,9 @@ impl SdroxideApp {
                     Backend::None => {
                         ui.label(
                             RichText::new(if io.can_probe {
-                                "This radio has no interface yet — pick one above and press \
-                                 Apply / reconnect."
+                                tr!("settings-radio-has-no-interface-yet")
                             } else {
-                                "This radio has no interface yet. One can be picked above once \
-                                 the machine the radio is attached to has answered."
+                                tr!("settings-radio-has-no-interface-yet-2")
                             })
                             .weak(),
                         );
@@ -2623,12 +2528,11 @@ impl SdroxideApp {
                     // different interface, which from a remote client is how a
                     // headless station is moved from one device to another.
                     if ui
-                        .button("Apply / reconnect")
+                        .button(tr!("settings-apply-reconnect"))
                         .on_hover_text(if io.local_engine {
-                            "Switch to this interface now — no restart needed"
+                            tr!("settings-switch-interface-now-no-restart")
                         } else {
-                            "Switch the server's radio to this interface now — no restart \
-                             needed. The old one keeps running if the new one cannot be opened."
+                            tr!("settings-switch-server-s-radio-interface")
                         })
                         .clicked()
                     {
@@ -2639,12 +2543,9 @@ impl SdroxideApp {
                     ui.add(
                         egui::Label::new(
                             RichText::new(if io.local_engine {
-                                "Switches the live radio without restarting."
+                                tr!("settings-switches-live-radio-without-restarting")
                             } else {
-                                "Everything above is the server's own configuration, and \
-                                 changes are saved there. Most settings apply as you change \
-                                 them; the ones fixed when the device is opened — the sample \
-                                 rate, an address, the interface itself — need this button."
+                                tr!("settings-everything-above-server-s-own")
                             })
                             .weak(),
                         )
@@ -2654,6 +2555,13 @@ impl SdroxideApp {
             }
             SettingsTab::Ui => {
                 settings_ui_tab(ui, io.ui_edit, io.solar_cloud_march.as_deref_mut());
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    ui_tab::workspaces_section(ui, io.ui_edit, io.workspaces, io.workspace_name);
+                }
                 ui.add_space(10.0);
                 ui.separator();
                 ui.add_space(6.0);
@@ -2681,129 +2589,120 @@ impl SdroxideApp {
                 }
                 operator_identity_note(ui, io.digi_edit, io.digi_seeded);
 
-                net_heading(ui, "DX cluster (telnet)");
-                crate::chrome::checkbox(ui, &mut io.net_edit.cluster.enabled, "Enabled");
-                net_row(ui, "Host", &mut io.net_edit.cluster.host, 220.0);
+                net_heading(ui, &tr!("settings-dx-cluster-telnet"));
+                crate::chrome::checkbox(
+                    ui,
+                    &mut io.net_edit.cluster.enabled,
+                    tr!("settings-enabled"),
+                );
+                net_row(ui, &tr!("settings-host"), &mut io.net_edit.cluster.host, 220.0);
                 ui.horizontal(|ui| {
-                    ui.add_sized([96.0, 22.0], egui::Label::new("Port"));
+                    ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-port")));
                     ui.add(egui::DragValue::new(&mut io.net_edit.cluster.port).range(1..=65535));
                 });
-                net_row(ui, "Login call", &mut io.net_edit.cluster.login, 140.0);
+                net_row(ui, &tr!("settings-login-call"), &mut io.net_edit.cluster.login, 140.0);
                 ui.horizontal(|ui| {
-                    ui.add_sized([96.0, 22.0], egui::Label::new("Commands"));
+                    ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-commands")));
                     crate::chrome::field(
                         ui,
                         egui::TextEdit::multiline(io.net_cmds)
                             .desired_rows(2)
-                            .hint_text("one per line, e.g. SET/FT8")
+                            .hint_text(tr!("settings-one-per-line-e-g"))
                             .desired_width(220.0),
                     );
                 });
 
-                net_heading(ui, "Reverse Beacon Network");
-                crate::chrome::checkbox(ui, &mut io.net_edit.rbn.enabled, "Enabled").on_hover_text(
-                    "Read the world's CW/RTTY skimmers and feed the propagation map with \
-                     them. This is what makes the map show bands this radio is not \
-                     listening to. On by default: it puts nothing on the air, needs no \
-                     account, and uses the callsign from the General tab. RBN spots do not \
-                     appear in the spot list — they are measurements, not invitations.",
-                );
-                net_row(ui, "Host", &mut io.net_edit.rbn.host, 220.0);
+                net_heading(ui, &tr!("settings-reverse-beacon-network"));
+                crate::chrome::checkbox(ui, &mut io.net_edit.rbn.enabled, tr!("settings-enabled"))
+                    .on_hover_text(tr!("settings-read-world-s-cw-rtty"));
+                net_row(ui, &tr!("settings-host"), &mut io.net_edit.rbn.host, 220.0);
                 ui.horizontal(|ui| {
-                    ui.add_sized([96.0, 22.0], egui::Label::new("Port"));
+                    ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-port")));
                     ui.add(egui::DragValue::new(&mut io.net_edit.rbn.port).range(1..=65535))
-                        .on_hover_text("7000 is the CW/RTTY feed, 7001 the FT8/FT4 one");
+                        .on_hover_text(tr!("settings-t-7000-cw-rtty-feed-7001"));
                 });
-                net_row(ui, "Login call", &mut io.net_edit.rbn.login, 140.0);
+                net_row(ui, &tr!("settings-login-call"), &mut io.net_edit.rbn.login, 140.0);
                 ui.horizontal(|ui| {
-                    ui.add_sized([96.0, 22.0], egui::Label::new("Commands"));
+                    ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-commands")));
                     crate::chrome::field(
                         ui,
                         egui::TextEdit::multiline(io.rbn_cmds)
                             .desired_rows(2)
-                            .hint_text("one per line, e.g. set/filter cont=eu")
+                            .hint_text(tr!("settings-one-per-line-e-g-2"))
                             .desired_width(220.0),
                     )
-                    .on_hover_text(
-                        "Sent after login. The place to narrow the feed — without a filter \
-                         this is every skimmer on Earth.",
-                    );
+                    .on_hover_text(tr!("settings-sent-after-login-place-narrow"));
                 });
                 ui.label(
-                    egui::RichText::new(
-                        "RBN paths are placed from country centres, not locators — accurate \
-                         for a small country, out by a long way for a large one. They are a \
-                         separate layer on the propagation map and can be switched off there.",
-                    )
-                    .size(9.5)
-                    .italics()
-                    .color(crate::theme::gray(110)),
+                    egui::RichText::new(tr!("settings-rbn-paths-are-placed-country"))
+                        .size(9.5)
+                        .italics()
+                        .color(crate::theme::gray(110)),
                 );
 
-                net_heading(ui, "POTA / SOTA / PSK Reporter");
-                crate::chrome::checkbox(ui, &mut io.net_edit.pota.enabled, "POTA activator spots");
-                crate::chrome::checkbox(ui, &mut io.net_edit.sota.enabled, "SOTA spots");
+                net_heading(ui, &tr!("settings-pota-sota-psk-reporter"));
+                crate::chrome::checkbox(
+                    ui,
+                    &mut io.net_edit.pota.enabled,
+                    tr!("settings-pota-activator-spots"),
+                );
+                crate::chrome::checkbox(
+                    ui,
+                    &mut io.net_edit.sota.enabled,
+                    tr!("settings-sota-spots"),
+                );
                 crate::chrome::checkbox(
                     ui,
                     &mut io.net_edit.psk.enabled,
-                    "PSK Reporter (current band)",
+                    tr!("settings-psk-reporter-current-band"),
                 );
                 crate::chrome::checkbox(
                     ui,
                     &mut io.net_edit.psk.report,
-                    "Upload my FT8/FT4/FT2/JS8 decodes",
+                    tr!("settings-upload-my-ft8-ft4-ft2"),
                 )
-                .on_hover_text(
-                    "Report what this station hears to pskreporter.info, so it appears \
-                         there as a receiver. Uses the callsign and grid from the General tab.",
-                );
+                .on_hover_text(tr!("settings-report-what-station-hears-pskreporter"));
                 if io.net_edit.psk.report {
-                    net_row(ui, "Antenna", &mut io.net_edit.psk.antenna, 200.0);
+                    net_row(ui, &tr!("settings-antenna-2"), &mut io.net_edit.psk.antenna, 200.0);
                     ui.horizontal(|ui| {
-                        ui.add_sized([96.0, 22.0], egui::Label::new("Collector"));
+                        ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-collector")));
                         crate::chrome::field(
                             ui,
                             egui::TextEdit::singleline(&mut io.net_edit.psk.host)
                                 .desired_width(140.0),
                         );
                         ui.add(egui::DragValue::new(&mut io.net_edit.psk.port).range(1..=65535))
-                            .on_hover_text("4739 is the live collector, 14739 the test one");
+                            .on_hover_text(tr!("settings-t-4739-live-collector-14739-test"));
                     });
                 }
                 ui.horizontal(|ui| {
-                    ui.add_sized([96.0, 22.0], egui::Label::new("Max age (s)"));
+                    ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-max-age-s")));
                     let age = &mut io.net_edit.spot_max_age_secs;
                     ui.add(egui::DragValue::new(age).range(60..=7200));
                 });
 
-                net_heading(ui, "WSPRnet");
-                crate::chrome::checkbox(ui, &mut io.net_edit.wspr.upload, "Upload my WSPR decodes")
-                    .on_hover_text(
-                        "Send every WSPR reception to wsprnet.org. On by default: it puts \
-                         nothing on the air, and reporting what you hear is what makes a WSPR \
-                         receiver part of the network rather than a private curiosity. A slot \
-                         that decoded nothing is reported too, which is how the network tells a \
-                         shut band from a receiver that was switched off.",
-                    );
+                net_heading(ui, &tr!("settings-wsprnet"));
+                crate::chrome::checkbox(
+                    ui,
+                    &mut io.net_edit.wspr.upload,
+                    tr!("settings-upload-my-wspr-decodes"),
+                )
+                .on_hover_text(tr!("settings-send-every-wspr-reception-wsprnet"));
                 crate::chrome::checkbox(
                     ui,
                     &mut io.net_edit.wspr.download_heard_us,
-                    "Download who heard me",
+                    tr!("settings-download-who-heard-me"),
                 )
-                .on_hover_text(
-                    "Ask wsprnet.org which stations decoded this one. WSPR has no \
-                         acknowledgement of any kind, so this is the only way a transmitting \
-                         beacon learns anything about its own reach.",
-                );
+                .on_hover_text(tr!("settings-ask-wsprnet-org-which-stations"));
                 if io.net_edit.wspr.download_heard_us {
                     ui.horizontal(|ui| {
-                        ui.add_sized([96.0, 22.0], egui::Label::new("Ask every"));
+                        ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-ask-every")));
                         ui.add(
                             egui::DragValue::new(&mut io.net_edit.wspr.download_interval_secs)
                                 .range(60..=3600)
                                 .suffix(" s"),
                         );
-                        ui.add_sized([56.0, 22.0], egui::Label::new("looking back"));
+                        ui.add_sized([56.0, 22.0], egui::Label::new(tr!("settings-looking-back")));
                         ui.add(
                             egui::DragValue::new(&mut io.net_edit.wspr.download_window_min)
                                 .range(2..=180)
@@ -2816,17 +2715,17 @@ impl SdroxideApp {
                 if crate::chrome::chip_accent(
                     ui,
                     false,
-                    RichText::new(" APPLY ").strong(),
+                    RichText::new(tr!("settings-apply")).strong(),
                     crate::theme::GREEN(),
                     crate::theme::INK_ON_CYAN(),
                 )
-                .on_hover_text("Persist and (re)connect the feeds")
+                .on_hover_text(tr!("settings-persist-re-connect-feeds"))
                 .clicked()
                 {
                     *io.net_apply = true;
                 }
 
-                net_heading(ui, "Broadcast stations");
+                net_heading(ui, &tr!("settings-broadcast-stations"));
                 broadcast_stations_settings(
                     ui,
                     io.bc_reload,
@@ -2840,92 +2739,46 @@ impl SdroxideApp {
                     return;
                 }
                 let wl = &mut io.net_edit.winlink;
-                net_heading(ui, "Winlink account");
-                net_row(ui, "Callsign", &mut wl.callsign, 140.0);
-                net_secret(ui, "Password", &mut wl.password, 140.0);
+                net_heading(ui, &tr!("settings-winlink-account"));
+                net_row(ui, &tr!("settings-callsign"), &mut wl.callsign, 140.0);
+                net_secret(ui, &tr!("settings-password"), &mut wl.password, 140.0);
                 ui.label(
-                    RichText::new(
-                        "The Winlink account password, not the gateway password. It is \
-                         case-sensitive — enter it exactly as it was issued.",
-                    )
-                    .weak(),
+                    RichText::new(tr!("settings-winlink-account-password-not-gateway")).weak(),
                 );
-                net_row(ui, "Locator", &mut wl.locator, 100.0);
+                net_row(ui, &tr!("settings-locator"), &mut wl.locator, 100.0);
 
                 ui.add_space(6.0);
-                net_heading(ui, "How to connect");
+                net_heading(ui, &tr!("settings-how-connect"));
                 ui.horizontal(|ui| {
-                    ui.add_sized([96.0, 22.0], egui::Label::new("Route"));
+                    ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-route")));
                     ui.selectable_value(
                         &mut wl.lane,
                         sdroxide_types::WinlinkLane::Telnet,
-                        "Internet",
+                        tr!("settings-internet"),
                     )
-                    .on_hover_text("Forward with the CMS over the internet");
+                    .on_hover_text(tr!("settings-forward-cms-over-internet"));
                     ui.selectable_value(
                         &mut wl.lane,
                         sdroxide_types::WinlinkLane::Packet,
-                        "Radio (packet)",
+                        tr!("settings-radio-packet"),
                     )
-                    .on_hover_text(
-                        "Call an RMS gateway on the air. The radio must be in PACKET or \
-                         PACKET-HF.",
-                    );
+                    .on_hover_text(tr!("settings-call-rms-gateway-air-radio"));
+                    ui.selectable_value(
+                        &mut wl.lane,
+                        sdroxide_types::WinlinkLane::Vara,
+                        tr!("settings-radio-vara"),
+                    )
+                    .on_hover_text(tr!("settings-call-rms-gateway-vara"));
                 });
 
-                if wl.lane == sdroxide_types::WinlinkLane::Packet {
+                // VARA: a gateway and where it listens. No path and no speed —
+                // VARA has no digipeaters, and the speed is negotiated on air.
+                if wl.lane == sdroxide_types::WinlinkLane::Vara {
                     ui.add_space(4.0);
-                    net_row(ui, "Gateway", &mut wl.gateway, 140.0);
-                    let mut via = wl.gateway_via.join(" ");
-                    ui.horizontal(|ui| {
-                        ui.add_sized([96.0, 22.0], egui::Label::new("Via"));
-                        if crate::chrome::field_sized(
-                            ui,
-                            [200.0, 22.0],
-                            egui::TextEdit::singleline(&mut via),
-                        )
-                        .changed()
-                        {
-                            wl.gateway_via =
-                                via.split_whitespace().map(|s| s.to_uppercase()).collect();
-                        }
-                    });
-                    ui.label(
-                        RichText::new(
-                            "Digipeaters, in order, separated by spaces. Usually empty — a \
-                             gateway you can hear directly is a gateway you should call \
-                             directly.",
-                        )
-                        .weak(),
-                    );
-
-                    // The gateway's speed, not the operator's: it belongs
-                    // beside the callsign it describes rather than with the
-                    // modem settings, because nothing about the band predicts
-                    // it and only the gateway's owner knows.
-                    ui.horizontal(|ui| {
-                        ui.add_sized([96.0, 22.0], egui::Label::new("Speed"));
-                        for b in [
-                            sdroxide_types::PacketBaud::Vhf1200,
-                            sdroxide_types::PacketBaud::Vhf9600,
-                            sdroxide_types::PacketBaud::Hf300,
-                        ] {
-                            ui.selectable_value(&mut wl.gateway_baud, b, b.label());
-                        }
-                    });
-                    ui.label(
-                        RichText::new(
-                            "Most RMS gateways answer at 1200. Calling a 1200 gateway at 9600 \
-                             sounds exactly like a gateway that is off the air, so set this \
-                             from what the gateway's owner publishes rather than guessing. \
-                             9600 also needs the radio's data port at both ends. 300 is HF.",
-                        )
-                        .weak(),
-                    );
-
+                    net_row(ui, &tr!("settings-gateway"), &mut wl.gateway, 140.0);
                     let mut mhz = wl.gateway_freq_hz / 1e6;
                     ui.horizontal(|ui| {
-                        ui.add_sized([96.0, 22.0], egui::Label::new("Frequency"));
+                        ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-frequency")));
                         if ui
                             .add(
                                 egui::DragValue::new(&mut mhz)
@@ -2938,28 +2791,76 @@ impl SdroxideApp {
                         {
                             wl.gateway_freq_hz = mhz * 1e6;
                         }
-                        if wl.gateway_freq_hz > 0.0 && ui.button("CLEAR").clicked() {
+                        if wl.gateway_freq_hz > 0.0 && ui.button(tr!("settings-clear")).clicked() {
                             wl.gateway_freq_hz = 0.0;
                         }
                     });
-                    ui.label(
-                        RichText::new(
-                            "Zero leaves the dial alone, which is what you want when you park \
-                             on one channel. Anything else tunes the radio when the session \
-                             starts.",
+                    ui.label(RichText::new(tr!("settings-vara-dial-note")).weak());
+                }
+
+                if wl.lane == sdroxide_types::WinlinkLane::Packet {
+                    ui.add_space(4.0);
+                    net_row(ui, &tr!("settings-gateway"), &mut wl.gateway, 140.0);
+                    let mut via = wl.gateway_via.join(" ");
+                    ui.horizontal(|ui| {
+                        ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-via")));
+                        if crate::chrome::field_sized(
+                            ui,
+                            [200.0, 22.0],
+                            egui::TextEdit::singleline(&mut via),
                         )
-                        .weak(),
+                        .changed()
+                        {
+                            wl.gateway_via =
+                                via.split_whitespace().map(|s| s.to_uppercase()).collect();
+                        }
+                    });
+                    ui.label(
+                        RichText::new(tr!("settings-digipeaters-order-separated-spaces-usually"))
+                            .weak(),
                     );
 
+                    // The gateway's speed, not the operator's: it belongs
+                    // beside the callsign it describes rather than with the
+                    // modem settings, because nothing about the band predicts
+                    // it and only the gateway's owner knows.
+                    ui.horizontal(|ui| {
+                        ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-speed")));
+                        for b in [
+                            sdroxide_types::PacketBaud::Vhf1200,
+                            sdroxide_types::PacketBaud::Vhf9600,
+                            sdroxide_types::PacketBaud::Hf300,
+                        ] {
+                            ui.selectable_value(&mut wl.gateway_baud, b, b.label());
+                        }
+                    });
+                    ui.label(RichText::new(tr!("settings-most-rms-gateways-answer-1200")).weak());
+
+                    let mut mhz = wl.gateway_freq_hz / 1e6;
+                    ui.horizontal(|ui| {
+                        ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-frequency")));
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut mhz)
+                                    .speed(0.001)
+                                    .range(0.0..=1300.0)
+                                    .max_decimals(4)
+                                    .suffix(" MHz"),
+                            )
+                            .changed()
+                        {
+                            wl.gateway_freq_hz = mhz * 1e6;
+                        }
+                        if wl.gateway_freq_hz > 0.0 && ui.button(tr!("settings-clear")).clicked() {
+                            wl.gateway_freq_hz = 0.0;
+                        }
+                    });
+                    ui.label(RichText::new(tr!("settings-zero-leaves-dial-alone-which")).weak());
+
                     ui.add_space(6.0);
-                    net_heading(ui, "My gateways");
+                    net_heading(ui, &tr!("settings-my-gateways"));
                     ui.label(
-                        RichText::new(
-                            "Winlink's published gateway list needs an API key sdroxide does \
-                             not have, so keep your own. The two or three gateways reachable \
-                             from one location are learned by trying, and they rarely change.",
-                        )
-                        .weak(),
+                        RichText::new(tr!("settings-winlink-s-published-gateway-list")).weak(),
                     );
 
                     let mut remove = None;
@@ -2967,8 +2868,8 @@ impl SdroxideApp {
                     for (i, g) in wl.gateways.iter().enumerate() {
                         ui.horizontal(|ui| {
                             if ui
-                                .button("USE")
-                                .on_hover_text("Call this one on the next connect")
+                                .button(tr!("settings-use-2"))
+                                .on_hover_text(tr!("settings-call-one-next-connect"))
                                 .clicked()
                             {
                                 pick = Some(i);
@@ -2976,12 +2877,12 @@ impl SdroxideApp {
                             let freq = if g.freq_hz > 0.0 {
                                 format!("{:.4} MHz", g.freq_hz / 1e6)
                             } else {
-                                "current dial".to_string()
+                                tr!("settings-current-dial")
                             };
                             let via = if g.via.is_empty() {
                                 String::new()
                             } else {
-                                format!(" via {}", g.via.join(" "))
+                                tr!("settings-gateway-via", via = g.via.join(" "))
                             };
                             ui.label(format!(
                                 "{}{via} — {freq}, {} baud{}{}",
@@ -2992,7 +2893,11 @@ impl SdroxideApp {
                             ));
                             // Text, not a glyph: this font has no ✕ and draws a
                             // tofu box, which reads as a broken button.
-                            if ui.button("FORGET").on_hover_text("Forget this gateway").clicked() {
+                            if ui
+                                .button(tr!("settings-forget"))
+                                .on_hover_text(tr!("settings-forget-gateway"))
+                                .clicked()
+                            {
                                 remove = Some(i);
                             }
                         });
@@ -3006,8 +2911,8 @@ impl SdroxideApp {
 
                     ui.add_space(4.0);
                     if ui
-                        .button("+ ADD GATEWAY")
-                        .on_hover_text("Save the gateway above to the list")
+                        .button(tr!("settings-add-gateway"))
+                        .on_hover_text(tr!("settings-save-gateway-above-list"))
                         .clicked()
                         && !wl.gateway.trim().is_empty()
                     {
@@ -3022,25 +2927,17 @@ impl SdroxideApp {
                 }
 
                 ui.add_space(6.0);
-                net_heading(ui, "Internet gateway");
-                net_row(ui, "CMS address", &mut wl.cms_address, 220.0);
-                net_row(ui, "Client name", &mut wl.app_name, 140.0);
-                ui.label(
-                    RichText::new(
-                        "Winlink's production servers only accept client names they know, and \
-                         answer an unknown one with \"Unknown client types are not allowed on \
-                         production servers\". Until sdroxide is registered with the Winlink \
-                         Development Team, connecting needs a name they recognise.",
-                    )
-                    .weak(),
-                );
+                net_heading(ui, &tr!("settings-internet-gateway"));
+                net_row(ui, &tr!("settings-cms-address"), &mut wl.cms_address, 220.0);
+                net_row(ui, &tr!("settings-client-name"), &mut wl.app_name, 140.0);
+                ui.label(RichText::new(tr!("settings-winlink-s-production-servers-only")).weak());
 
                 ui.add_space(6.0);
-                net_heading(ui, "Automatic connection");
-                crate::chrome::checkbox(ui, &mut wl.auto_connect, "Connect on a timer");
+                net_heading(ui, &tr!("settings-automatic-connection"));
+                crate::chrome::checkbox(ui, &mut wl.auto_connect, tr!("settings-connect-timer"));
                 ui.add_enabled_ui(wl.auto_connect, |ui| {
                     ui.horizontal(|ui| {
-                        ui.add_sized([96.0, 22.0], egui::Label::new("Every"));
+                        ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-every")));
                         ui.add(
                             egui::DragValue::new(&mut wl.auto_connect_minutes)
                                 .range(5..=1440)
@@ -3058,11 +2955,11 @@ impl SdroxideApp {
                 if crate::chrome::chip_accent(
                     ui,
                     false,
-                    RichText::new(" APPLY ").strong(),
+                    RichText::new(tr!("settings-apply")).strong(),
                     crate::theme::GREEN(),
                     crate::theme::INK_ON_CYAN(),
                 )
-                .on_hover_text("Persist the Winlink account")
+                .on_hover_text(tr!("settings-persist-winlink-account"))
                 .clicked()
                 {
                     *io.net_apply = true;
@@ -3072,22 +2969,22 @@ impl SdroxideApp {
                 if !net_seeded_note(ui, io.net_seeded) {
                     return;
                 }
-                net_heading(ui, "Callsign lookup");
+                net_heading(ui, &tr!("settings-callsign-lookup"));
                 ui.horizontal(|ui| {
-                    ui.add_sized([96.0, 22.0], egui::Label::new("Provider"));
+                    ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-provider")));
                     egui::ComboBox::from_id_salt("lookup_provider")
-                        .selected_text(io.net_edit.lookup_provider.label())
+                        .selected_text(io.net_edit.lookup_provider.tr())
                         .show_styled(ui, |ui| {
                             for p in LookupProvider::ALL {
                                 let cur = &mut io.net_edit.lookup_provider;
-                                ui.selectable_value(cur, p, p.label());
+                                ui.selectable_value(cur, p, p.tr());
                             }
                         });
                 });
                 crate::chrome::checkbox(
                     ui,
                     &mut io.net_edit.auto_lookup,
-                    "Auto-fill name/QTH/grid on spot click & QSO",
+                    tr!("settings-auto-fill-name-qth-grid"),
                 );
                 // Only the provider in use. Lookups go to exactly one service,
                 // so a second pair of boxes below the chosen one is a login
@@ -3096,38 +2993,48 @@ impl SdroxideApp {
                 match io.net_edit.lookup_provider {
                     LookupProvider::None => {
                         ui.label(
-                            RichText::new("Choose a provider to enter its login.")
+                            RichText::new(tr!("settings-choose-provider-enter-login"))
                                 .size(10.5)
                                 .color(crate::theme::gray(140)),
                         );
                     }
                     LookupProvider::Qrz => {
-                        net_row(ui, "QRZ user", &mut io.net_edit.qrz.user, 140.0);
-                        net_secret(ui, "QRZ pass", &mut io.net_edit.qrz.password, 140.0);
+                        net_row(ui, &tr!("settings-qrz-user"), &mut io.net_edit.qrz.user, 140.0);
+                        net_secret(
+                            ui,
+                            &tr!("settings-qrz-pass"),
+                            &mut io.net_edit.qrz.password,
+                            140.0,
+                        );
                     }
                     LookupProvider::HamQth => {
-                        net_row(ui, "HamQTH user", &mut io.net_edit.hamqth.user, 140.0);
-                        net_secret(ui, "HamQTH pass", &mut io.net_edit.hamqth.password, 140.0);
+                        net_row(
+                            ui,
+                            &tr!("settings-hamqth-user"),
+                            &mut io.net_edit.hamqth.user,
+                            140.0,
+                        );
+                        net_secret(
+                            ui,
+                            &tr!("settings-hamqth-pass"),
+                            &mut io.net_edit.hamqth.password,
+                            140.0,
+                        );
                         ui.label(
-                            RichText::new(
-                                "One HamQTH account does both — this login is the one the \
-                                 HamQTH upload tab uses.",
-                            )
-                            .size(10.5)
-                            .color(crate::theme::gray(140)),
+                            RichText::new(tr!("settings-one-hamqth-account-does-both"))
+                                .size(10.5)
+                                .color(crate::theme::gray(140)),
                         );
                     }
                 }
 
-                net_heading(ui, "Upload");
+                net_heading(ui, &tr!("settings-upload"));
                 crate::chrome::checkbox(
                     ui,
                     &mut io.net_edit.auto_upload,
-                    "Auto-upload each new QSO",
+                    tr!("settings-auto-upload-each-new-qso"),
                 )
-                .on_hover_text(
-                    "The master switch. Which services a QSO goes to is set on each tab below.",
-                );
+                .on_hover_text(tr!("settings-master-switch-which-services-qso"));
                 ui.add_space(4.0);
                 // A tab per service, rather than four stacked blocks of
                 // credentials: an operator configures the one they have an
@@ -3151,51 +3058,71 @@ impl SdroxideApp {
                 // editable, so a service can still be set up before auto-upload
                 // is switched on.
                 let auto_on = io.net_edit.auto_upload;
+                let wavelog_was_on = io.net_edit.wavelog.auto_upload;
                 let enable = match target {
                     UploadTarget::Eqsl => &mut io.net_edit.auto_upload_eqsl,
                     UploadTarget::QrzLogbook => &mut io.net_edit.auto_upload_qrz,
                     UploadTarget::HamQth => &mut io.net_edit.auto_upload_hamqth,
                     UploadTarget::ClubLog => &mut io.net_edit.auto_upload_clublog,
                     UploadTarget::Wrl => &mut io.net_edit.auto_upload_wrl,
+                    UploadTarget::Wavelog => &mut io.net_edit.wavelog.auto_upload,
                 };
                 ui.add_enabled_ui(auto_on, |ui| {
                     crate::chrome::checkbox(
                         ui,
                         enable,
-                        format!("Auto-upload each new QSO to {}", target.label()),
+                        tr!("settings-auto-upload-to", service = target.label()),
                     )
-                    .on_disabled_hover_text(
-                        "Turn on \"Auto-upload each new QSO\" above first — a service \
-                         ticked here is not pushed until it is.",
-                    );
+                    .on_disabled_hover_text(tr!("settings-turn-auto-upload-each-new"));
                 });
+                // The moment Wavelog auto-upload goes on is where its retry
+                // queue starts: what is logged from now on is owed until the
+                // server has it, and what came before is the backlog, sent
+                // only when asked. See `WavelogConfig::auto_upload_since`.
+                if !wavelog_was_on && io.net_edit.wavelog.auto_upload {
+                    io.net_edit.wavelog.auto_upload_since = crate::time::now_unix();
+                }
                 if !auto_on {
                     ui.label(
-                        RichText::new(
-                            "Auto-upload is off above, so the service ticks are disabled and \
-                             nothing is pushed automatically yet — the per-QSO UP button in the \
-                             logbook still works.",
-                        )
-                        .size(10.5)
-                        .color(crate::theme::gray(140)),
+                        RichText::new(tr!("settings-auto-upload-off-above-so"))
+                            .size(10.5)
+                            .color(crate::theme::gray(140)),
                     );
                 }
                 ui.add_space(4.0);
                 match target {
                     UploadTarget::QrzLogbook => {
-                        net_secret(ui, "QRZ log key", &mut io.net_edit.qrz_logbook_key, 200.0);
+                        net_secret(
+                            ui,
+                            &tr!("settings-qrz-log-key"),
+                            &mut io.net_edit.qrz_logbook_key,
+                            200.0,
+                        );
                         ui.label(
-                            RichText::new(
-                                "The QRZ logbook API key from your QRZ logbook settings — \
-                                 not the XML-lookup login.",
-                            )
-                            .size(10.5)
-                            .color(crate::theme::gray(140)),
+                            RichText::new(tr!("settings-qrz-logbook-api-key-your"))
+                                .size(10.5)
+                                .color(crate::theme::gray(140)),
                         );
                     }
                     UploadTarget::Eqsl => {
-                        net_row(ui, "eQSL user", &mut io.net_edit.eqsl.user, 140.0);
-                        net_secret(ui, "eQSL pass", &mut io.net_edit.eqsl.password, 140.0);
+                        net_row(ui, &tr!("settings-eqsl-user"), &mut io.net_edit.eqsl.user, 140.0);
+                        net_secret(
+                            ui,
+                            &tr!("settings-eqsl-pass"),
+                            &mut io.net_edit.eqsl.password,
+                            140.0,
+                        );
+                        net_row(
+                            ui,
+                            &tr!("settings-eqsl-qth"),
+                            &mut io.net_edit.eqsl_qth_nickname,
+                            140.0,
+                        );
+                        ui.label(
+                            RichText::new(tr!("settings-qth-nickname-eqsl-profile-upload"))
+                                .size(10.5)
+                                .color(crate::theme::gray(140)),
+                        );
                     }
                     UploadTarget::HamQth => {
                         // The *same* two fields as the lookup section above, not
@@ -3207,56 +3134,78 @@ impl SdroxideApp {
                         // `TextEdit`s over one `String` each keep their own
                         // cursor, only the focused one takes input, and the other
                         // redraws with what was typed.
-                        net_row(ui, "HamQTH user", &mut io.net_edit.hamqth.user, 140.0);
-                        net_secret(ui, "HamQTH pass", &mut io.net_edit.hamqth.password, 140.0);
+                        net_row(
+                            ui,
+                            &tr!("settings-hamqth-user"),
+                            &mut io.net_edit.hamqth.user,
+                            140.0,
+                        );
+                        net_secret(
+                            ui,
+                            &tr!("settings-hamqth-pass"),
+                            &mut io.net_edit.hamqth.password,
+                            140.0,
+                        );
                         ui.label(
-                            RichText::new(
-                                "The same login as the HamQTH callsign lookup — filling in \
-                                 either one fills in both.",
-                            )
-                            .size(10.5)
-                            .color(crate::theme::gray(140)),
+                            RichText::new(tr!("settings-same-login-hamqth-callsign-lookup"))
+                                .size(10.5)
+                                .color(crate::theme::gray(140)),
                         );
                     }
                     UploadTarget::ClubLog => {
-                        net_row(ui, "Club Log email", &mut io.net_edit.clublog.user, 200.0);
-                        net_secret(ui, "Club Log pass", &mut io.net_edit.clublog.password, 140.0);
-                        net_secret(ui, "Club Log key", &mut io.net_edit.clublog_api_key, 200.0);
+                        net_row(
+                            ui,
+                            &tr!("settings-club-log-email"),
+                            &mut io.net_edit.clublog.user,
+                            200.0,
+                        );
+                        net_secret(
+                            ui,
+                            &tr!("settings-club-log-pass"),
+                            &mut io.net_edit.clublog.password,
+                            140.0,
+                        );
+                        net_secret(
+                            ui,
+                            &tr!("settings-club-log-key"),
+                            &mut io.net_edit.clublog_api_key,
+                            200.0,
+                        );
                     }
+                    // Its own test row, placed between the server and the
+                    // station locations the test lists.
+                    UploadTarget::Wavelog => self.wavelog_settings(ui, io, cmds),
                     UploadTarget::Wrl => {
-                        net_secret(ui, "WRL API key", &mut io.net_edit.wrl_api_key, 240.0);
+                        net_secret(
+                            ui,
+                            &tr!("settings-wrl-api-key"),
+                            &mut io.net_edit.wrl_api_key,
+                            240.0,
+                        );
                         ui.label(
-                            RichText::new(
-                                "The developer API key from World Radio League → Integrations → \
-                                 Developer API. It is shown once when you generate it, so copy \
-                                 it then. Contacts go to your default logbook — set one in WRL \
-                                 if you keep more than one.",
-                            )
-                            .size(10.5)
-                            .color(crate::theme::gray(140)),
+                            RichText::new(tr!("settings-developer-api-key-world-radio"))
+                                .size(10.5)
+                                .color(crate::theme::gray(140)),
                         );
                     }
                 }
 
                 // Only where the engine is in this process: the result is not
                 // sent to remote clients, so a button there would spin for ever.
-                if !self.ctrl.engine_is_remote() {
+                if !self.ctrl.engine_is_remote() && target != UploadTarget::Wavelog {
                     self.login_test_row(ui, cmds, io.net_edit, target.login_target());
                 }
 
-                net_heading(ui, "Confirmations (download)");
-                net_row(ui, "LoTW user", &mut io.net_edit.lotw.user, 140.0);
-                net_secret(ui, "LoTW pass", &mut io.net_edit.lotw.password, 140.0);
+                net_heading(ui, &tr!("settings-confirmations-download"));
+                net_row(ui, &tr!("settings-lotw-user"), &mut io.net_edit.lotw.user, 140.0);
+                net_secret(ui, &tr!("settings-lotw-pass"), &mut io.net_edit.lotw.password, 140.0);
                 if !self.ctrl.engine_is_remote() {
                     self.login_test_row(ui, cmds, io.net_edit, LoginTarget::Lotw);
                 }
                 ui.label(
-                    RichText::new(
-                        "LoTW upload uses TQSL — export ADIF from the logbook and sign it. \
-                         LoTW/eQSL confirmations are downloaded here to mark worked-vs-confirmed.",
-                    )
-                    .size(10.5)
-                    .color(crate::theme::gray(140)),
+                    RichText::new(tr!("settings-lotw-upload-uses-tqsl-export"))
+                        .size(10.5)
+                        .color(crate::theme::gray(140)),
                 );
 
                 ui.add_space(8.0);
@@ -3264,7 +3213,7 @@ impl SdroxideApp {
                     if crate::chrome::chip_accent(
                         ui,
                         false,
-                        RichText::new(" APPLY ").strong(),
+                        RichText::new(tr!("settings-apply")).strong(),
                         crate::theme::GREEN(),
                         crate::theme::INK_ON_CYAN(),
                     )
@@ -3272,10 +3221,15 @@ impl SdroxideApp {
                     {
                         *io.net_apply = true;
                     }
-                    if crate::chrome::chip(ui, false, "SYNC CONFIRMATIONS").clicked() {
+                    if crate::chrome::chip(ui, false, tr!("settings-sync-confirmations")).clicked()
+                    {
                         *io.net_sync = true;
                     }
                 });
+
+                ui.add_space(10.0);
+                ui.separator();
+                self.picup_section(ui, cmds, io.picup_edit, io.picup_apply);
             }
             SettingsTab::FreeDv => {
                 if !net_seeded_note(ui, io.net_seeded) {
@@ -3348,6 +3302,16 @@ impl SdroxideApp {
                     io.relay_test,
                 );
             }
+            SettingsTab::Amp => {
+                amp::settings_amp_tab(
+                    ui,
+                    io.amp_edit,
+                    self.amp_seeded,
+                    &self.amp_status,
+                    &self.serial_ports,
+                    io.amp_apply,
+                );
+            }
             #[cfg(not(target_arch = "wasm32"))]
             SettingsTab::Remote => settings_remote_tab(
                 ui,
@@ -3392,7 +3356,7 @@ impl SdroxideApp {
     /// open time.
     fn refresh_sat_subs_now(&mut self, cmds: &mut Vec<Command>) {
         cmds.push(Command::RefreshTleSubs);
-        self.sat_ui.note = "Fetching subscriptions…".to_string();
+        self.sat_ui.note = tr!("settings-fetching-subscriptions");
         self.sat_ui.fetching = true;
     }
 
@@ -3407,9 +3371,9 @@ impl SdroxideApp {
         let failed = done.iter().filter(|s| s.error.is_some()).count();
         let total: usize = done.iter().map(|s| s.count).sum();
         self.sat_ui.note = match (done.len(), failed) {
-            (0, _) => "No enabled subscriptions to update.".to_string(),
-            (n, 0) => format!("Updated {n} subscription(s): {total} satellites."),
-            (n, f) => format!("Updated {} of {n}; {f} failed — see the rows above.", n - f),
+            (0, _) => tr!("settings-no-enabled-subscriptions-update"),
+            (n, 0) => tr!("settings-tle-updated", n = n, total = total),
+            (n, f) => tr!("settings-tle-updated-failed", ok = n - f, n = n, failed = f),
         };
         // The window's feed shares the disk cache with a local engine, so it is
         // told to re-read rather than being left on what it loaded at open time.
@@ -3431,25 +3395,16 @@ impl SdroxideApp {
             ui.separator();
             ui.add_space(6.0);
             ui.label(
-                RichText::new(format!(
-                    "This radio is {}'s panadapter",
-                    crate::app::radio_name(&self.radio_roster, owner)
+                RichText::new(tr!(
+                    "settings-panadapter-of",
+                    radio = crate::app::radio_name(&self.radio_roster, owner)
                 ))
                 .size(14.0)
                 .strong()
                 .color(crate::theme::CYAN()),
             );
             ui.add_space(4.0);
-            ui.label(
-                RichText::new(
-                    "Its spectrum, its waterfall and everything read off them are on that \
-                     radio's tab, which is why it has none of its own. The interface settings \
-                     above are still this radio's and still apply — press Apply / reconnect \
-                     after changing them and both radios come back up together.\n\nTo use it on \
-                     its own again, clear the Panadapter receiver box on that radio's page.",
-                )
-                .weak(),
-            );
+            ui.label(RichText::new(tr!("settings-spectrum-waterfall-everything-read-off")).weak());
             return;
         }
 
@@ -3481,35 +3436,34 @@ impl SdroxideApp {
         ui.add_space(8.0);
         ui.separator();
         ui.add_space(6.0);
-        ui.label(RichText::new("Panadapter").size(14.0).strong().color(crate::theme::CYAN()));
-        ui.add_space(4.0);
         ui.label(
-            RichText::new(
-                "Give this radio a wideband panadapter by borrowing another radio's receiver — \
-                 an SDR on the same antenna, or one fed from this radio's I.F. output. The \
-                 spectrum, the waterfall, the sub receiver, the digital modes and the skimmer \
-                 all come from that receiver; the dial, the mode, the filter and the \
-                 transmitter stay here.",
-            )
-            .weak(),
+            RichText::new(tr!("settings-panadapter"))
+                .size(14.0)
+                .strong()
+                .color(crate::theme::CYAN()),
         );
+        ui.add_space(4.0);
+        ui.label(RichText::new(tr!("settings-give-radio-wideband-panadapter-borrowing")).weak());
         ui.add_space(6.0);
 
         egui::Grid::new("panadapter-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label(RichText::new("Receiver").strong());
+            ui.label(RichText::new(tr!("settings-receiver")).strong());
             let selected = pan
                 .source_radio
                 .map(|id| {
                     candidates
                         .iter()
                         .find(|(c, _)| *c == id)
-                        .map_or_else(|| format!("radio {}", id + 1), |(_, n)| n.clone())
+                        .map_or_else(|| tr!("settings-radio-n", n = id + 1), |(_, n)| n.clone())
                 })
                 .unwrap_or_else(|| "None".to_string());
             ComboBox::from_id_salt("pan-source")
                 .selected_text(selected)
                 .show_styled(ui, |ui| {
-                    if ui.selectable_label(pan.source_radio.is_none(), "None").clicked() {
+                    if ui
+                        .selectable_label(pan.source_radio.is_none(), tr!("settings-none"))
+                        .clicked()
+                    {
                         pan.source_radio = None;
                     }
                     for (id, name) in &candidates {
@@ -3519,22 +3473,18 @@ impl SdroxideApp {
                     }
                 })
                 .response
-                .on_hover_text(
-                    "Which radio receives for this one. It leaves the tab strip while it is \
-                 lent — its front end belongs to this radio's engine — and comes straight \
-                 back when this is set to None.\n\nTakes effect on Apply.",
-                );
+                .on_hover_text(tr!("settings-which-radio-receives-one-leaves"));
             ui.end_row();
 
             if !pan.is_attached() {
                 return;
             }
 
-            ui.label(RichText::new("Connected to").strong());
-            enum_combo(ui, "pan-tap", &mut pan.tap, &PanadapterTap::ALL, PanadapterTap::label);
+            ui.label(RichText::new(tr!("settings-connected")).strong());
+            enum_combo(ui, "pan-tap", &mut pan.tap, &PanadapterTap::ALL, PanadapterTap::tr);
             ui.end_row();
 
-            ui.label(RichText::new("Offset").strong());
+            ui.label(RichText::new(tr!("settings-offset")).strong());
             ui.add(
                 egui::DragValue::new(&mut pan.offset_hz)
                     .speed(1.0)
@@ -3545,74 +3495,37 @@ impl SdroxideApp {
                     .max_decimals(0)
                     .suffix(" Hz"),
             )
-            .on_hover_text(
-                "How far above this radio's dial the receiver sits, in hertz. 0 for a receiver \
-                 on the same antenna; the intermediate frequency for an I.F. tap — 9000000 for \
-                 a 9 MHz I.F., 70455000 for a 70.455 MHz one.\n\nThis is not the Converter field \
-                 above, which retunes the radio, and not the CAT tab's I/Q centre offset, which \
-                 is about this radio's own sound card. Nothing typed here is ever sent to \
-                 either radio.\n\nTakes effect on Apply.",
-            );
+            .on_hover_text(tr!("settings-how-far-above-radio-s"));
             ui.end_row();
 
-            ui.label(RichText::new("Audio from").strong());
-            enum_combo(
-                ui,
-                "pan-audio",
-                &mut pan.audio,
-                &PanadapterAudio::ALL,
-                PanadapterAudio::label,
-            );
+            ui.label(RichText::new(tr!("settings-audio-2")).strong());
+            enum_combo(ui, "pan-audio", &mut pan.audio, &PanadapterAudio::ALL, PanadapterAudio::tr);
             ui.end_row();
 
-            ui.label(RichText::new("Follow the dial").strong());
-            crate::chrome::checkbox(ui, &mut pan.track, "").on_hover_text(
-                "Keep the receiver on this radio's dial, and move the dial when you tune on \
-                 the panadapter. Off parks the receiver where it is — a fixed watch on one \
-                 segment while the radio goes elsewhere.",
-            );
+            ui.label(RichText::new(tr!("settings-follow-dial")).strong());
+            crate::chrome::checkbox(ui, &mut pan.track, "")
+                .on_hover_text(tr!("settings-keep-receiver-radio-s-dial"));
             ui.end_row();
 
-            ui.label(RichText::new("Invert spectrum").strong());
-            crate::chrome::checkbox(ui, &mut pan.invert, "").on_hover_text(
-                "Mirror the receiver's span about its centre, for a tap whose oscillator sits \
-                 above the signal and hands the band over the wrong way round. Leave it off \
-                 unless the waterfall fills with signals that are all on the wrong side of the \
-                 dial.",
-            );
+            ui.label(RichText::new(tr!("settings-invert-spectrum")).strong());
+            crate::chrome::checkbox(ui, &mut pan.invert, "")
+                .on_hover_text(tr!("settings-mirror-receiver-s-span-about"));
             ui.end_row();
 
-            ui.label(RichText::new("Mute on transmit").strong());
-            crate::chrome::checkbox(ui, &mut pan.mute_on_tx, "").on_hover_text(
-                "Silence receive audio while this radio is transmitting. On by default: with \
-                 the receiver on the same antenna, or on this radio's I.F., what it hears \
-                 during an over is your own transmitter. Overs keyed at the radio itself — \
-                 the microphone's PTT, a foot switch, MOX — count too, as soon as the CAT \
-                 link says the rig has gone to transmit.",
-            );
+            ui.label(RichText::new(tr!("settings-mute-transmit")).strong());
+            crate::chrome::checkbox(ui, &mut pan.mute_on_tx, "")
+                .on_hover_text(tr!("settings-silence-receive-audio-while-radio"));
             ui.end_row();
 
-            ui.label(RichText::new("Blank on transmit").strong());
-            crate::chrome::checkbox(ui, &mut pan.blank_on_tx, "").on_hover_text(
-                "Stop the panadapter and waterfall while this radio is transmitting. On by \
-                 default: a transmitter painted across the whole span erases the band behind \
-                 it. Turn it off to watch the band — or your own signal — through an over, \
-                 which is worth having with the receiver on a separate antenna. Applies to \
-                 overs sdroxide keys: one keyed at the radio is received right through, so \
-                 the picture keeps running whatever this says.",
-            );
+            ui.label(RichText::new(tr!("settings-blank-transmit")).strong());
+            crate::chrome::checkbox(ui, &mut pan.blank_on_tx, "")
+                .on_hover_text(tr!("settings-stop-panadapter-waterfall-while-radio"));
             ui.end_row();
         });
 
         if pan.is_attached() && pan.tap == PanadapterTap::IfOutput {
             ui.add_space(6.0);
-            ui.label(
-                RichText::new(
-                    "Per-mode offsets, for a radio whose I.F. moves with the mode. A mode left \
-                     empty uses the offset above.",
-                )
-                .weak(),
-            );
+            ui.label(RichText::new(tr!("settings-per-mode-offsets-radio-whose")).weak());
             ui.add_space(4.0);
             egui::Grid::new("pan-mode-offsets").num_columns(3).spacing([10.0, 4.0]).show(
                 ui,
@@ -3665,20 +3578,17 @@ struct AddTarget {
 impl AddTarget {
     fn label(&self) -> String {
         if self.key.is_empty() {
-            "On this computer".to_string()
+            tr!("settings-computer")
         } else {
-            format!("On {}", station_label(&self.key))
+            tr!("settings-on-station", station = station_label(&self.key))
         }
     }
 
     fn hint(&self) -> String {
         if self.key.is_empty() {
-            "Add a radio on this computer".to_string()
+            tr!("settings-add-radio-computer")
         } else {
-            format!(
-                "Add a radio on {} — the station serves it straight away",
-                station_label(&self.key)
-            )
+            tr!("settings-add-radio-on-station", station = station_label(&self.key))
         }
     }
 }
@@ -3811,10 +3721,9 @@ impl SdroxideApp {
                 }
                 if resp
                     .on_hover_text(if chip.focused {
-                        "This radio's settings are below. Drag to move it along the strip."
+                        tr!("settings-radio-s-settings-are-below")
                     } else {
-                        "Switch to this radio (the dialog follows). Drag to move it along the \
-                         strip."
+                        tr!("settings-switch-radio-dialog-follows-drag")
                     })
                     .clicked()
                     && !chip.focused
@@ -3828,12 +3737,14 @@ impl SdroxideApp {
                     // and come out as an empty box, while the mute markers
                     // beside it prove the emoji font is there.
                     ui.label(RichText::new("🔗").size(11.0).color(crate::theme::CYAN()))
-                        .on_hover_text(format!(
-                            "Panadapter receiver for {}",
-                            crate::app::radio_name(&self.radio_roster, owner)
+                        .on_hover_text(tr!(
+                            "settings-panadapter-receiver-for",
+                            radio = crate::app::radio_name(&self.radio_roster, owner)
                         ));
                 } else if chip.tx_on {
-                    ui.label(RichText::new("● TX").size(11.0).color(crate::theme::ALERT()));
+                    ui.label(
+                        RichText::new(tr!("settings-tx")).size(11.0).color(crate::theme::ALERT()),
+                    );
                 } else if chip.error && chip.enabled {
                     ui.label(RichText::new("⚠").size(11.0).color(crate::theme::ALERT()));
                 }
@@ -3843,7 +3754,7 @@ impl SdroxideApp {
                         chip.muted,
                         RichText::new(if chip.muted { "🔇" } else { "🔊" }).size(11.0),
                     );
-                    if mute.on_hover_text("Mute this radio's audio").clicked() {
+                    if mute.on_hover_text(tr!("settings-mute-radio-s-audio")).clicked() {
                         requests.push(crate::app::RadioTabRequest::Mute {
                             id: chip.id,
                             muted: !chip.muted,
@@ -3867,13 +3778,17 @@ impl SdroxideApp {
                 if chip.switchable
                     && chip.attached_to.is_none()
                     && self.radio_roster.len() > 1
-                    && crate::chrome::chip(ui, chip.enabled, RichText::new("LINK").size(11.0))
-                        .on_hover_text(if chip.enabled {
-                            crate::chrome::LINK_CLOSE_TIP
-                        } else {
-                            crate::chrome::LINK_OPEN_TIP
-                        })
-                        .clicked()
+                    && crate::chrome::chip(
+                        ui,
+                        chip.enabled,
+                        RichText::new(tr!("settings-link")).size(11.0),
+                    )
+                    .on_hover_text(if chip.enabled {
+                        crate::chrome::LINK_CLOSE_TIP
+                    } else {
+                        crate::chrome::LINK_OPEN_TIP
+                    })
+                    .clicked()
                 {
                     requests.push(crate::app::RadioTabRequest::Power {
                         id: chip.id,
@@ -3901,9 +3816,9 @@ impl SdroxideApp {
                 // has to stay possible.
                 if !(chip.station.is_empty() && chip.first_of_station) {
                     let closing = if chip.station.is_empty() {
-                        "Close this radio (its configuration is kept)"
+                        tr!("settings-close-radio-configuration-kept")
                     } else {
-                        "Close this tab, or close the radio on its station"
+                        tr!("settings-close-tab-close-radio-station")
                     };
                     let close = crate::chrome::chip(ui, false, RichText::new("×").size(11.0))
                         .on_hover_text(closing);
@@ -3957,7 +3872,7 @@ impl SdroxideApp {
                     // the hover text says which rosters are in it.
                     let tip = match many {
                         [only] => only.hint(),
-                        _ => "Add a radio — here, or on a station you are connected to".to_string(),
+                        _ => tr!("settings-add-radio-here-station-you"),
                     };
                     let btn = crate::chrome::chip(ui, false, RichText::new("+").size(13.0))
                         .on_hover_text(tip);
@@ -4010,7 +3925,7 @@ impl SdroxideApp {
         if let Some(chip) = self.radio_roster.iter().find(|c| c.focused) {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Name").strong());
+                ui.label(RichText::new(tr!("settings-name")).strong());
                 let stale = !matches!(name_edit, Some((id, _)) if *id == chip.id);
                 if stale {
                     *name_edit = Some((chip.id, chip.name.clone()));
@@ -4059,8 +3974,8 @@ impl SdroxideApp {
         let removable = chip.roster_editable && !chip.first_of_station;
         crate::chrome::menu_popup(ui, button, |ui| {
             if ui
-                .button("Close this tab")
-                .on_hover_text(format!("Hang up. The radio stays on {where_}."))
+                .button(tr!("settings-close-tab"))
+                .on_hover_text(tr!("settings-hang-up-stays-on", station = where_.as_str()))
                 .clicked()
             {
                 requests.push(crate::app::RadioTabRequest::Close(chip.id));
@@ -4071,14 +3986,19 @@ impl SdroxideApp {
             }
             ui.separator();
             ui.label(
-                RichText::new(format!(
-                    "Close {} on {where_}? Its configuration stays on that machine; the tab here \
-                     closes with it, and so does everyone else's.",
-                    chip.display_name(),
+                RichText::new(tr!(
+                    "settings-close-on-station",
+                    radio = chip.display_name(),
+                    station = where_.as_str()
                 ))
                 .size(11.5),
             );
-            if ui.button(RichText::new(format!("Close it on {where_}")).strong()).clicked() {
+            if ui
+                .button(
+                    RichText::new(tr!("settings-close-it-on", station = where_.as_str())).strong(),
+                )
+                .clicked()
+            {
                 requests.push(crate::app::RadioTabRequest::RemoveFromStation(chip.id));
                 ui.close();
             }

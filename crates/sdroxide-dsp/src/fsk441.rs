@@ -142,9 +142,32 @@ pub fn fsk441_dits_to_char(d0: u8, d1: u8, d2: u8) -> char {
     FSK441_CHARSET.get(nc).map(|&b| b as char).unwrap_or(' ')
 }
 
-/// The tone sequence for a message. A character outside the alphabet becomes a
-/// space, exactly as the reference's encoder does.
+/// The single-tone dit index a shorthand word is sent as, or `None`.
+///
+/// `R26`, `R27`, `RRR` and `73` are not spelled out as text: each is a *pure
+/// carrier* on one tone for the whole duration, which is why a meteor catches
+/// them far more easily than text. Their text spellings are listed in
+/// [`FSK441_SHORTHAND`], indexed by tone — [`fsk441_dits_to_char`] reads them
+/// back the same way.
+pub fn fsk441_shorthand_tone(word: &str) -> Option<u8> {
+    FSK441_SHORTHAND.iter().position(|&s| s.eq_ignore_ascii_case(word)).map(|i| i as u8)
+}
+
+/// The tone sequence for a message.
+///
+/// A whole word that is one of the shorthand words the mode is worked with —
+/// `R26`, `R27`, `RRR`, `73` — is sent as its single tone rather than as four
+/// characters, which is what the operator means by typing it. Anything else is
+/// the ordinary three-dits-a-character, with a character outside the alphabet
+/// becoming a space, exactly as the reference's encoder does.
 pub fn fsk441_encode_tones(msg: &str) -> Vec<u8> {
+    // Dits a single-tone shorthand is held (about 68 ms), so a word on its own is
+    // a carrier long enough for a trail to reflect rather than a lone dit.
+    const SHORTHAND_TONES: usize = 30;
+    let trimmed = msg.trim();
+    if let Some(tone) = fsk441_shorthand_tone(trimmed) {
+        return vec![tone; SHORTHAND_TONES];
+    }
     let mut tones = Vec::with_capacity(msg.len() * 3);
     for c in msg.chars() {
         let (d0, d1, d2) = fsk441_char_to_dits(c).unwrap_or((0, 3, 3));
@@ -155,9 +178,41 @@ pub fn fsk441_encode_tones(msg: &str) -> Vec<u8> {
     tones
 }
 
+/// Spaces a transmitted text pass carries after the message, before it repeats.
+///
+/// Three, the padding the reference this port follows uses; WSJT's own rule is
+/// "at least one trailing space", so any gap here would do and this is the
+/// reference's.
+const TX_REPEAT_SPACES: usize = 3;
+
+/// The tone sequence for one transmitted pass: the message, then the repeat
+/// separator.
+///
+/// A pass is played again and again through the over, and a pass run straight
+/// into the next sends its last character into the first of the following one.
+/// A trail that catches that join is decoded as a single word — `...FN42W1ABC...`
+/// — and both stations lose the callsign that bounded it. So the message is
+/// padded with trailing spaces, as WSJT sends every message, and the boundary
+/// is a space wherever the repeat lands rather than a scrape between two words.
+///
+/// A shorthand word is the exception: `R26`, `R27`, `RRR` and `73` are a pure
+/// carrier by definition, and held through the over that is what they are meant
+/// to be.
+pub fn fsk441_tx_tones(msg: &str) -> Vec<u8> {
+    let trimmed = msg.trim();
+    let mut tones = fsk441_encode_tones(trimmed);
+    if fsk441_shorthand_tone(trimmed).is_none() {
+        let (d0, d1, d2) = fsk441_char_to_dits(' ').expect("space is in the alphabet");
+        for _ in 0..TX_REPEAT_SPACES {
+            tones.extend_from_slice(&[d0, d1, d2]);
+        }
+    }
+    tones
+}
+
 /// Continuous-phase FSK audio for a tone sequence, at [`FSK441_RATE`],
-/// normalised to ±1. A signal *generator*, for tests and bench checks — the
-/// fork transmits nothing.
+/// normalised to ±1 — the transmit audio, hence the controller's `tx_peak()`
+/// of 1.0.
 pub fn fsk441_generate_audio(tones: &[u8]) -> Vec<f32> {
     let mut samples = Vec::with_capacity(tones.len() * FSK441_NSPD);
     let dt = 1.0_f32 / FSK441_RATE as f32;
@@ -620,6 +675,57 @@ mod tests {
         assert_eq!(fsk441_encode_tones("CQ").len(), 6);
         // A character outside the alphabet becomes a space rather than panicking.
         assert_eq!(fsk441_encode_tones("~"), vec![0, 3, 3]);
+    }
+
+    /// The four shorthand words are sent as their single tone, not spelled out:
+    /// `RRR` as four characters is not what the operator means by typing it, and
+    /// a meteor catches a pure carrier far more easily than text.
+    #[test]
+    fn a_shorthand_word_is_its_single_tone() {
+        for (word, tone) in [("R26", 0u8), ("R27", 1), ("RRR", 2), ("73", 3)] {
+            let tones = fsk441_encode_tones(word);
+            assert!(tones.iter().all(|&t| t == tone), "{word} must be tone {tone}: {tones:?}");
+            assert!(tones.len() >= 3, "{word} must be held, not one dit");
+            // Case is the operator's business; the wire is not.
+            assert_eq!(fsk441_encode_tones(&word.to_lowercase()), tones);
+        }
+        // A shorthand word inside a longer message is ordinary text.
+        assert_eq!(fsk441_encode_tones("RRR TEST").len(), "RRR TEST".len() * 3);
+    }
+
+    /// A transmitted pass carries the repeat separator, so a message looped
+    /// through the over never runs its last word into the first of the pass
+    /// behind it.
+    #[test]
+    fn a_transmitted_pass_carries_the_repeat_separator() {
+        let msg = "W1ABC W9XYZ";
+        let encoded = fsk441_encode_tones(msg);
+        let pass = fsk441_tx_tones(msg);
+        assert_eq!(pass.len(), encoded.len() + 3 * TX_REPEAT_SPACES, "the pass is padded");
+        assert_eq!(
+            &pass[encoded.len()..],
+            &[0, 3, 3, 0, 3, 3, 0, 3, 3],
+            "the padding is spaces on 033"
+        );
+
+        // Looped, the join is a space, so the message still reads as words.
+        let audio = fsk441_generate_audio(&pass);
+        let mut slot = Vec::new();
+        while slot.len() < FSK441_RATE as usize {
+            slot.extend_from_slice(&audio);
+        }
+        let pings = fsk441_find_pings(&slot);
+        assert!(pings.iter().any(|p| p.text.contains("W1ABC")), "{pings:?}");
+        assert!(pings.iter().any(|p| p.text.contains("W9XYZ")), "{pings:?}");
+    }
+
+    /// A shorthand word is left a pure carrier, not padded into text: it is the
+    /// signal the mode defines, and the separator would break it up.
+    #[test]
+    fn a_shorthand_pass_stays_a_carrier() {
+        let tones = fsk441_tx_tones("RRR");
+        assert!(tones.iter().all(|&t| t == 2), "shorthand must stay one tone: {tones:?}");
+        assert_eq!(tones.len(), fsk441_encode_tones("RRR").len(), "no separator on shorthand");
     }
 
     /// A clean single pass of a real message decodes back to itself. This is

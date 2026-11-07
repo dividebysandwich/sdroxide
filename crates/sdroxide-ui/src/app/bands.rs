@@ -21,6 +21,7 @@
 //! published; a band with no paths was either shut or unattended, and this
 //! window does not claim to know which.
 
+use crate::i18n::tr;
 use eframe::egui::{self, Color32, RichText};
 use sdroxide_solar::BandRating;
 use sdroxide_types::Band;
@@ -61,20 +62,18 @@ impl SdroxideApp {
     /// The BANDS window: one row per band, forecast beside evidence.
     pub(in crate::app) fn bands_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_bands;
-        let resp = egui::Window::new("BANDS")
-            .id(crate::layout::salted_id(ctx, "BANDS"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 520.0))
-            .default_height(crate::layout::window_h(ctx, 460.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.bands_body(ui)
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+        let tool_title = tr!("bands-bands");
+        let mut tool_st = self.take_tool_state("BANDS");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("BANDS", &tool_title, [520.0, 460.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| self.bands_body(ui),
+        );
+        self.put_tool_state("BANDS", tool_st);
         self.show_bands = open;
         if self.show_bands {
             // The IBP beacon and its countdown move every second; keep painting
@@ -89,16 +88,20 @@ impl SdroxideApp {
 
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(if self.daylight { "☀ DAYLIGHT" } else { "☾ NIGHT" })
-                    .size(10.0)
-                    .color(crate::theme::CYAN_DIM()),
+                RichText::new(if self.daylight {
+                    tr!("bands-daylight")
+                } else {
+                    tr!("bands-night")
+                })
+                .size(10.0)
+                .color(crate::theme::CYAN_DIM()),
             );
             match conditions_age(self) {
                 Some(a) => {
-                    ui.label(dim(&format!("· forecast from HAMQSL.com, {a} old")));
+                    ui.label(dim(&tr!("bands-forecast-hamqsl-com-old", value = a)));
                 }
                 None => {
-                    ui.label(dim("· no forecast yet — fetching from HAMQSL.com"));
+                    ui.label(dim(&tr!("bands-no-forecast-yet-fetching-hamqsl")));
                 }
             }
         });
@@ -108,11 +111,11 @@ impl SdroxideApp {
             egui::Grid::new("bands_grid").num_columns(5).spacing([14.0, 3.0]).striped(true).show(
                 ui,
                 |ui| {
-                    ui.label(dim("BAND"));
-                    ui.label(dim("CONDX"));
-                    ui.label(dim("PATHS"));
-                    ui.label(dim("REACH"));
-                    ui.label(dim("BEST"));
+                    ui.label(dim(&tr!("bands-band")));
+                    ui.label(dim(&tr!("bands-condx")));
+                    ui.label(dim(&tr!("bands-paths")));
+                    ui.label(dim(&tr!("bands-reach")));
+                    ui.label(dim(&tr!("bands-best")));
                     ui.end_row();
 
                     for b in Band::ALL {
@@ -176,12 +179,7 @@ impl SdroxideApp {
         });
 
         ui.add_space(6.0);
-        ui.label(
-            dim("CONDX is a global forecast; the rest is what has actually been heard. \
-                 An empty row means nothing was decoded — which may mean the band was \
-                 shut, or only that nobody was on it.")
-            .italics(),
-        );
+        ui.label(dim(&tr!("bands-condx-global-forecast-rest-what")).italics());
     }
 
     /// The IBP beacon list at the foot of the BANDS window.
@@ -196,17 +194,24 @@ impl SdroxideApp {
         let active = sdroxide_types::ibp_active_at(now, home);
         let dim = |s: &str| RichText::new(s.to_string()).size(9.5).color(dim_ink());
         ui.add_space(12.0);
-        ui.label(RichText::new("IBP BEACONS").size(10.0).strong().color(crate::theme::CYAN_DIM()));
+        ui.label(
+            RichText::new(tr!("bands-ibp-beacons"))
+                .size(10.0)
+                .strong()
+                .color(crate::theme::CYAN_DIM()),
+        );
         ui.add_space(2.0);
-        ui.label(dim(&format!(
-            "NCDXF/IARU · next beacon in {} s",
-            sdroxide_types::ibp_seconds_left(now)
+        ui.label(dim(&tr!(
+            "bands-ncdxf-iaru-next-beacon-s",
+            now = sdroxide_types::ibp_seconds_left(now)
         )));
         ui.add_space(3.0);
         for a in &active {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(a.band.label).size(10.5).strong());
-                ui.label(RichText::new(format!("{:.3} MHz", a.band.freq_hz / 1e6)).size(10.5));
+                ui.label(
+                    RichText::new(format!("{e6:.3} MHz", e6 = a.band.freq_hz / 1e6)).size(10.5),
+                );
                 ui.label(RichText::new(a.beacon.callsign).size(11.0).strong());
                 ui.label(dim(a.beacon.location));
                 if let (Some(b), Some(d)) = (a.bearing_deg, a.distance_km) {
@@ -218,10 +223,11 @@ impl SdroxideApp {
                 }
             })
             .response
-            .on_hover_text(format!(
-                "{} at {} — hearing it means the {} path is open. Each beacon steps up a \
-                 band every 10 s, so this row changes every slot.",
-                a.beacon.callsign, a.beacon.location, a.band.label
+            .on_hover_text(tr!(
+                "bands-hearing-means-path-open-each",
+                callsign = a.beacon.callsign,
+                location = a.beacon.location,
+                band = a.band.label
             ));
         }
     }
@@ -245,49 +251,61 @@ impl SdroxideApp {
         let dim = |s: &str| RichText::new(s.to_string()).size(9.5).color(dim_ink());
         ui.add_space(12.0);
         ui.label(
-            RichText::new("METEOR SHOWERS").size(10.0).strong().color(crate::theme::CYAN_DIM()),
+            RichText::new(tr!("bands-meteor-showers"))
+                .size(10.0)
+                .strong()
+                .color(crate::theme::CYAN_DIM()),
         );
         ui.add_space(2.0);
-        ui.label(dim(&format!("radiants placed for {lat:.0}°, {lon:.0}°")));
+        ui.label(dim(&tr!(
+            "bands-radiants-placed",
+            lat = format!("{:.0}", lat),
+            lon = format!("{:.0}", lon)
+        )));
         ui.add_space(3.0);
         for a in &active {
             let s = a.shower;
             ui.horizontal(|ui| {
                 ui.label(RichText::new(s.name).size(11.0).strong());
                 ui.label(dim(s.code));
-                ui.label(RichText::new(format!("ZHR {}", s.zhr)).size(10.5));
+                ui.label(RichText::new(tr!("bands-zhr", zhr = s.zhr)).size(10.5));
                 if a.at_peak() {
-                    ui.label(RichText::new("PEAK").size(9.5).strong().color(crate::theme::GREEN()));
+                    ui.label(
+                        RichText::new(tr!("bands-peak"))
+                            .size(9.5)
+                            .strong()
+                            .color(crate::theme::GREEN()),
+                    );
                 }
                 if a.radiant_up() {
                     ui.label(
-                        RichText::new(format!(
-                            "radiant {:.0}° {}",
-                            a.alt_deg,
-                            sdroxide_solar::satellites::compass(a.az_deg)
+                        RichText::new(tr!(
+                            "bands-radiant",
+                            alt_deg = format!("{:.0}", a.alt_deg),
+                            az_deg = sdroxide_solar::satellites::compass(a.az_deg)
                         ))
                         .size(10.5),
                     );
                 } else {
                     ui.label(
-                        RichText::new(format!("radiant down ({:.0}°)", a.alt_deg))
-                            .size(10.5)
-                            .color(dim_ink()),
+                        RichText::new(tr!(
+                            "bands-radiant-down",
+                            alt_deg = format!("{:.0}", a.alt_deg)
+                        ))
+                        .size(10.5)
+                        .color(dim_ink()),
                     );
                 }
             })
             .response
-            .on_hover_text(format!(
-                "{} ({}) — {} km/s, parent {}. Peak rate ZHR {} around {}.\n\nA radiant \
-                 above the horizon means the trails can reach you; a fast shower leaves \
-                 longer-lived ionised trails for meteor scatter on 6 m and 2 m, and the \
-                 brief 10 m openings.",
-                s.name,
-                s.code,
-                s.velocity_kms,
-                s.parent,
-                s.zhr,
-                peak_label(s.peak),
+            .on_hover_text(tr!(
+                "bands-km-s-parent-peak-rate",
+                value = s.name,
+                code = s.code,
+                velocity_kms = s.velocity_kms,
+                parent = s.parent,
+                zhr = s.zhr,
+                peak = peak_label(s.peak)
             ));
         }
     }
@@ -295,8 +313,5 @@ impl SdroxideApp {
 
 /// "3 Jan" from a `(month, day)` pair, for the hover.
 fn peak_label(peak: (u32, u32)) -> String {
-    const MONTHS: [&str; 12] =
-        ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    let name = MONTHS.get(peak.0.saturating_sub(1) as usize).copied().unwrap_or("?");
-    format!("{} {name}", peak.1)
+    tr!("bands-peak-date", day = peak.1, month = peak.0)
 }

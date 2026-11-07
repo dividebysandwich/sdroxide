@@ -219,12 +219,34 @@ struct BandRow {
 }
 
 /// One sub-segment, in MHz.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 struct SegRow {
     lo_mhz: f64,
     hi_mhz: f64,
     /// `Cw`, `Digi`, `Phone`, `Beacon` or `All`.
     kind: SegmentKind,
+    /// Optional name for the waterfall strip in place of the kind's.
+    #[serde(default)]
+    label: Option<String>,
+}
+
+/// By hand for the one field that is optional in the file: `bandplan.json`
+/// leaves `label` out of a row that has none, rather than writing `null` on
+/// every line, but postcard is not self-describing and has to see every field,
+/// so on the wire it is always there.
+impl Serialize for SegRow {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let with_label = self.label.is_some() || !s.is_human_readable();
+        let mut st = s.serialize_struct("SegRow", if with_label { 4 } else { 3 })?;
+        st.serialize_field("lo_mhz", &self.lo_mhz)?;
+        st.serialize_field("hi_mhz", &self.hi_mhz)?;
+        st.serialize_field("kind", &self.kind)?;
+        if with_label {
+            st.serialize_field("label", &self.label)?;
+        }
+        st.end()
+    }
 }
 
 /// One skimmer window, in MHz.
@@ -271,7 +293,8 @@ fn readme() -> Vec<String> {
          a row in any region and this file decides it everywhere, as it does for every other \
          band.",
         "segments: the sub-band plan drawn on the waterfall. kind is Cw, Digi, Phone, \
-         Beacon or All.",
+         Beacon or All; an optional label (\"label\": \"CONTEST\") names the block on the \
+         waterfall strip instead of the kind.",
         "psk_windows / rtty_windows: where the wideband skimmers listen. Narrow windows \
          cost less CPU than wide ones.",
         "Which region applies is the IARU region setting on the General tab \
@@ -322,7 +345,12 @@ impl From<&RegionPlan> for RegionFile {
             segments: r
                 .segments
                 .iter()
-                .map(|s| SegRow { lo_mhz: hz_to_mhz(s.lo), hi_mhz: hz_to_mhz(s.hi), kind: s.kind })
+                .map(|s| SegRow {
+                    lo_mhz: hz_to_mhz(s.lo),
+                    hi_mhz: hz_to_mhz(s.hi),
+                    kind: s.kind,
+                    label: s.label.map(str::to_owned),
+                })
                 .collect(),
             psk_windows: r.psk.iter().map(|&(lo, hi)| WindowRow::from_hz(lo, hi)).collect(),
             rtty_windows: r.rtty.iter().map(|&(lo, hi)| WindowRow::from_hz(lo, hi)).collect(),
@@ -481,7 +509,13 @@ impl RegionPlan {
                 ));
                 continue;
             }
-            segments.push(Segment { lo, hi, kind: row.kind });
+            let label = row
+                .label
+                .as_deref()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(crate::band_segments::intern_label);
+            segments.push(Segment { lo, hi, kind: row.kind, label });
         }
         // Sorted here rather than demanded of the file: the lookups walk this in
         // order and an operator adding a segment should not have to find the
@@ -896,6 +930,39 @@ mod tests {
         assert_eq!(segs[0].kind, SegmentKind::Cw);
         assert_eq!(segs[1].kind, SegmentKind::Phone);
         assert!(p.problems().is_empty(), "{:?}", p.problems());
+    }
+
+    /// A segment's own label survives the file and the wire; a row without one
+    /// is written without the key, and a blank one counts as none.
+    #[test]
+    fn a_segment_label_is_optional_in_the_file_and_kept_on_the_wire() {
+        let p = parse(
+            r#"{"region1":{"bands":[{"band":"Cm3","lo_mhz":10000.0,"hi_mhz":10500.0}],
+                 "segments":[
+                    {"lo_mhz":10489.85,"hi_mhz":10489.87,"kind":"Phone","label":"Emergency"},
+                    {"lo_mhz":10489.87,"hi_mhz":10489.99,"kind":"Phone","label":"  "},
+                    {"lo_mhz":10489.65,"hi_mhz":10489.745,"kind":"Phone"}]},
+                "region2":{"bands":[{"band":"Cm3","lo_mhz":10000.0,"hi_mhz":10500.0}]},
+                "region3":{"bands":[{"band":"Cm3","lo_mhz":10000.0,"hi_mhz":10500.0}]}}"#,
+        );
+        let segs = p.region(Region::R1).segments();
+        assert_eq!(
+            segs.iter().map(|s| s.label).collect::<Vec<_>>(),
+            [None, Some("Emergency"), None]
+        );
+
+        let text = p.to_json_document();
+        assert_eq!(text.matches("\"label\"").count(), 1, "{text}");
+        assert!(text.contains(r#""kind": "Phone", "label": "Emergency"}"#), "{text}");
+        assert_eq!(serde_json::from_str::<BandPlan>(&text).expect("parse"), p);
+
+        let wire = postcard::to_allocvec(&p).expect("serialise");
+        assert_eq!(postcard::from_bytes::<BandPlan>(&wire).expect("deserialise"), p);
+        let plain = postcard::to_allocvec(&BandPlan::iaru_defaults()).expect("serialise");
+        assert_eq!(
+            postcard::from_bytes::<BandPlan>(&plain).expect("deserialise"),
+            BandPlan::iaru_defaults()
+        );
     }
 
     /// A region with nothing in it is the one thing worth refusing: it would

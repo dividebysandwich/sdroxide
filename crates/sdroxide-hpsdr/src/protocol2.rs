@@ -74,6 +74,20 @@ pub const HIGH_PRIORITY_LEN: usize = 1444;
 pub const DUC_IQ_LEN: usize = 4 + DUC_SAMPLES_PER_PKT * 6;
 /// I/Q pairs per DUC (TX) datagram (rustyHPSDR `IQ_BUFFER_SIZE`).
 pub const DUC_SAMPLES_PER_PKT: usize = 240;
+/// One DUC datagram's worth of time at 192 kHz: [`DUC_SAMPLES_PER_PKT`] samples.
+///
+/// The send clock. Without one the whole backlog went out as fast as the socket
+/// would take it — the engine's 30 ms cushion as two dozen datagrams back to
+/// back at key-down, then bursts every block — so the cushion lived in the
+/// radio's TX FIFO rather than in ours, and a FIFO shallower than that dropped
+/// some of every burst and ran dry between them: choppy SSB on a Brick2 (#659).
+/// piHPSDR paces the same stream to the same interval.
+const DUC_INTERVAL: Duration = Duration::from_micros(1250);
+/// How long the receive socket waits while keyed: under [`DUC_INTERVAL`], so the
+/// send clock is serviced even when no receive datagram wakes the loop.
+const KEYED_READ_TIMEOUT: Duration = Duration::from_micros(500);
+/// The receive socket's wait otherwise — what `HpsdrBoard::open` sets.
+const IDLE_READ_TIMEOUT: Duration = Duration::from_millis(2);
 /// Header bytes preceding the I/Q payload in a DDC (RX) datagram.
 pub const DDC_IQ_HEADER_LEN: usize = 16;
 
@@ -823,6 +837,7 @@ impl P2Thread {
         let mut last_watchdog = Instant::now();
         let mut rx_scratch: Vec<f32> = Vec::with_capacity(512);
         let mut tx_scratch: Vec<f32> = Vec::with_capacity(DUC_SAMPLES_PER_PKT * 2);
+        let mut next_duc = Instant::now();
         let mut buf = [0u8; 2048];
         let mut stats = RxStats::new(2, self.rate_khz as f64 * 1000.0);
         let mut logged_first_rx = false;
@@ -904,12 +919,18 @@ impl P2Thread {
                     Ctrl::TxOn(hz) => {
                         self.tx_freq = hz;
                         self.ptt = true;
+                        let _ = self.socket.set_read_timeout(Some(KEYED_READ_TIMEOUT));
                         self.send_duc_command();
                         freq_changed = true;
                         tracing::info!("HPSDR P2: MOX on, TX NCO {hz:.0} Hz");
                     }
                     Ctrl::TxOff => {
                         self.ptt = false;
+                        let _ = self.socket.set_read_timeout(Some(IDLE_READ_TIMEOUT));
+                        // Paced, the ring now still holds the end of the
+                        // over: drop it, as Protocol 1 does, rather than key
+                        // the next one up with a stale tail.
+                        while self.tx.pop().is_ok() {}
                         freq_changed = true;
                         // The watchdog was paused for the over and the board
                         // may legitimately have paused RX during it: every
@@ -1038,9 +1059,17 @@ impl P2Thread {
             stats.tick();
 
             if self.ptt {
-                while let Ok(v) = self.tx.pop() {
-                    tx_scratch.push(v);
-                    if tx_scratch.len() >= DUC_SAMPLES_PER_PKT * 2 {
+                // At most one datagram per `DUC_INTERVAL`, and only a whole one:
+                // the jitter cushion stays in our ring, not the radio's FIFO.
+                let now = Instant::now();
+                while now >= next_duc && self.tx.slots() >= DUC_SAMPLES_PER_PKT * 2 {
+                    tx_scratch.clear();
+                    let Ok(chunk) = self.tx.read_chunk(DUC_SAMPLES_PER_PKT * 2) else { break };
+                    let (a, b) = chunk.as_slices();
+                    tx_scratch.extend_from_slice(a);
+                    tx_scratch.extend_from_slice(b);
+                    chunk.commit_all();
+                    {
                         if self.invert_spectrum {
                             crate::protocol1::conjugate(&mut tx_scratch);
                         }
@@ -1058,8 +1087,15 @@ impl P2Thread {
                         let _ = self.socket.send_to(&pkt, self.dest(port::DUC_IQ));
                         tx_scratch.clear();
                     }
+                    next_duc += DUC_INTERVAL;
                 }
-            } else if !tx_scratch.is_empty() {
+                // After a stall or an empty ring, resync rather than fire the
+                // backlog off in a burst the radio's FIFO would only drop.
+                if next_duc + DUC_INTERVAL < now {
+                    next_duc = now;
+                }
+            } else {
+                next_duc = Instant::now();
                 tx_scratch.clear();
                 logged_first_tx = false;
             }

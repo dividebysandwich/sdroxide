@@ -102,7 +102,17 @@ impl UsbAudioSource {
         let (in_stream, in_consumer, in_rate, in_status) = match opened {
             Ok((s, c)) => {
                 let rate = s.sample_rate;
-                (Some(s), c, rate, None)
+                // Opened, but not the card that was asked for — a stored name
+                // the sound server has renamed, or one that has gone. Said here
+                // rather than left to a log line, because the stream runs: the
+                // waterfall comes up carrying whatever the *default* card hears,
+                // which looks like a working radio and is not this one.
+                let status = s.swap.as_ref().map(|sw| {
+                    let msg = format!("Radio receive device: {}", sw.sentence());
+                    tracing::warn!("{msg}");
+                    msg
+                });
+                (Some(s), c, rate, status)
             }
             Err(e) => {
                 let msg = format!(
@@ -118,8 +128,19 @@ impl UsbAudioSource {
         // TX playback is best-effort: a missing device just means no TX audio
         // reaching the radio, which on a VOX-keyed radio is the same as never
         // keying.
-        let (out, out_status) = match sdroxide_audio::start_output(audio_out, 48_000) {
-            Ok((o, p)) => (Some((o, p)), None),
+        let (out, out_status) = match sdroxide_audio::start_output(
+            audio_out,
+            48_000,
+            sdroxide_types::AudioRouting::Both,
+        ) {
+            Ok((o, p)) => {
+                let status = o.swap.as_ref().map(|sw| {
+                    let msg = format!("Radio transmit device: {}", sw.sentence());
+                    tracing::warn!("{msg}");
+                    msg
+                });
+                (Some((o, p)), status)
+            }
             Err(e) => {
                 let msg = format!(
                     "Radio transmit device unavailable ({e}) — nothing will key the radio. \

@@ -211,8 +211,11 @@ impl NavtexController {
             tx_even: false,
             transmitting: false,
             tx_watchdog: false,
+            tx_refused: None,
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
+            jtty: None,
+            vara: None,
             text_rx: String::new(),
             tx_sent: 0,
             fsq_heard: Vec::new(),
@@ -386,6 +389,41 @@ mod tests {
         let s = c.navtex_status();
         assert_eq!(s.messages.len(), 1);
         assert!(s.messages[0].text.contains("SECOND PASS"), "a worse copy replaced a better one");
+    }
+
+    /// The whole path, mistuned: the audio arrives a couple of hundred hertz
+    /// from where the decoder expects the tones, and a whole broadcast is still
+    /// framed out of it. Issue #608 as reported — a strong steady signal
+    /// decoding to asterisks while fldigi read it — so this drives the
+    /// controller and the framer, not just the receiver.
+    #[test]
+    fn a_mistuned_broadcast_is_still_framed_as_a_message() {
+        let mut c = ctrl();
+        let mut audio = vec![0.0f32; 8000];
+        audio.extend(synth(
+            &encode_bits("ZCZC FA12 GALE WARNING NORTH SEA NNNN"),
+            8000.0,
+            // 1950 Hz — the 516.6 kHz dial against an expected 516.3 kHz.
+            1950.0,
+            0.4,
+        ));
+        audio.extend(std::iter::repeat_n(0.0f32, 8000));
+        for chunk in audio.chunks(512) {
+            c.on_rx_audio(chunk);
+        }
+        let s = c.navtex_status();
+        assert_eq!(
+            s.messages.len(),
+            1,
+            "a 250 Hz mistune filed no message: text={:?} live={:?}",
+            s.text,
+            s.live
+        );
+        let m = &s.messages[0];
+        assert_eq!(m.station, 'F');
+        assert_eq!(m.serial, 12);
+        assert!(m.complete, "the closing sequence was lost: {:?}", m.text);
+        assert!(m.text.contains("GALE WARNING NORTH SEA"), "body {:?}", m.text);
     }
 
     /// The time a message states survives framing and is readable from the

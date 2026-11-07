@@ -21,6 +21,7 @@
 mod net;
 pub mod protocol;
 pub mod server;
+mod tune_client;
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
@@ -28,6 +29,7 @@ use std::time::{Duration, Instant};
 use tungstenite::{HandshakeError, Message, WebSocket};
 
 pub use net::{TX_RATE_HZ, TciDevice, TciError, TciHandle, TciRx, TciUpdate};
+pub use tune_client::{TciTuneClient, TciTuneStatus};
 
 /// Default TCI port (ExpertSDR3).
 pub const DEFAULT_PORT: u16 = 50001;

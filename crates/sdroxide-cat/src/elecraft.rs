@@ -218,7 +218,6 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Adsb
         | Mode::Vdl2
         | Mode::Ais
-        | Mode::Hfdl
         | Mode::HdRadio => '4',
         Mode::Am | Mode::Sam | Mode::Dsb | Mode::Isb | Mode::Drm | Mode::Acars => '5',
         Mode::Digl => '9',
@@ -242,9 +241,17 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
+        | Mode::VaraHf
         | Mode::AtChat
         | Mode::Rade => '6',
-        Mode::Usb | Mode::Spec | Mode::Sstv | Mode::Wefax | Mode::Navtex | Mode::RfPaint => '2',
+        Mode::Usb
+        | Mode::Spec
+        | Mode::Hfdl
+        | Mode::Jtty
+        | Mode::Sstv
+        | Mode::Wefax
+        | Mode::Navtex
+        | Mode::RfPaint => '2',
     }
 }
 

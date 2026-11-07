@@ -88,4 +88,19 @@ pub struct StationConfig {
     ///
     /// Appended last, for the usual reason.
     pub digi_presets: Vec<crate::DigiPreset>,
+    /// Pushing received pictures to an FTP server — `picupload.json`.
+    ///
+    /// Station-side because the pictures are decoded and saved there, so that
+    /// is where they are sent from; a remote screen only edits the settings.
+    ///
+    /// Appended last, for the usual reason.
+    pub picture_upload: crate::PictureUploadConfig,
+    /// The Hardrock amplifier: which one, which port, and whether it follows
+    /// the band — `amp.json` on the engine's machine.
+    ///
+    /// Station-wide for the T/R switch's reason: one amplifier sits behind
+    /// whatever this program is transmitting with.
+    ///
+    /// Appended last, for the usual reason.
+    pub amp: crate::AmpConfig,
 }

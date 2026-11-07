@@ -17,9 +17,11 @@
 //!
 //! NATIVE ONLY — it binds a UDP socket.
 
+pub mod cwtext;
 pub mod msg;
 pub mod n1mm;
 
+pub use cwtext::CwTextUdp;
 pub use n1mm::N1mmUdp;
 
 use std::net::{ToSocketAddrs, UdpSocket};

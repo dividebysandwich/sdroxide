@@ -5,7 +5,7 @@ default-members = [".", "crates/sdroxide-types", "crates/sdroxide-proto", "crate
 # The vendored crates are reached through `[patch.crates-io]`, not as members:
 # they are upstream's code under upstream's licences, not ours to lint or
 # version with the rest.
-exclude = ["vendor/soapysdr", "vendor/ewebsock", "vendor/xng"]
+exclude = ["vendor/soapysdr", "vendor/ewebsock", "vendor/xng", "vendor/xara"]
 
 [patch.crates-io]
 
@@ -26,9 +26,9 @@ ewebsock = { path = "vendor/ewebsock" }
 soapysdr = { path = "vendor/soapysdr" }
 
 [workspace.package]
-version = "1.6.9"
+version = "1.7.0"
 edition = "2024"
-# The native binary links mfsk-core (GPL-3.0-or-later) for FT8/FT4 and the
+# The native binary links mfsk-core (GPL-3.0-only) for FT8/FT4 and the
 # DeepCW model (AGPL-3.0-only) for CW, so the built binary carries both. AGPL is
 # the stronger of the two and it adds §13: whoever is offered the program over a
 # network has to be offered its source. Anyone running sdroxide-server for remote
@@ -41,6 +41,14 @@ license = "GPL-3.0-or-later"
 # DSP is unusably slow unoptimized; keep deps and the sample-rate-hot crates
 # fast in dev builds while the rest stays quick to compile.
 [profile.dev.package."*"]
+opt-level = 2
+
+# Rust 1.99 (LLVM) never finishes optimizing mfsk-core 0.10.0 at opt-level 3 for
+# aarch64 — the Linux and macOS ARM release jobs ran into the 6 h timeout from
+# 1 Oct 2026 on. At 2 it builds in under a minute. Profiles can't be per target,
+# so x86 gets the same; drop this once a toolchain no longer hangs. Kept for
+# 0.14.0, which has not been tried at 3 on aarch64.
+[profile.release.package.mfsk-core]
 opt-level = 2
 
 [profile.dev.package.sdroxide-dsp]
@@ -131,11 +139,13 @@ sdroxide-lime = { path = "crates/sdroxide-lime" }
 sdroxide-limerfe = { path = "crates/sdroxide-limerfe" }
 sdroxide-fobos = { path = "crates/sdroxide-fobos" }
 sdroxide-relay = { path = "crates/sdroxide-relay" }
+sdroxide-hardrock = { path = "crates/sdroxide-hardrock" }
 sdroxide-spyserver = { path = "crates/sdroxide-spyserver" }
 sdroxide-kiwisdr = { path = "crates/sdroxide-kiwisdr" }
 sdroxide-net = { path = "crates/sdroxide-net" }
 sdroxide-winlink = { path = "crates/sdroxide-winlink" }
 sdroxide-ax25 = { path = "crates/sdroxide-ax25" }
+sdroxide-vara = { path = "crates/sdroxide-vara" }
 sdroxide-kiss = { path = "crates/sdroxide-kiss" }
 sdroxide-deepcw = { path = "crates/sdroxide-deepcw" }
 sdroxide-ism = { path = "crates/sdroxide-ism" }
@@ -174,6 +184,12 @@ rtrb = "0.4"
 # instead: `cargo fmt -p sdroxide-radio -p sdroxide-ui …`, or check with
 # `cargo fmt --all --check` and read past the `vendor/xng` lines.
 xng-mode-hfdl = { path = "vendor/xng/crates/xng-mode-hfdl" }
+# VARA HF modem core from x0rro/xara (MIT), copied in at a pinned commit rather
+# than a submodule — see `vendor/xara/PROVENANCE.md` for what was taken and
+# changed. Reached by path like xng, so the same `cargo fmt -p` note applies.
+xara-phy = { path = "vendor/xara/xara-phy" }
+xara-arq = { path = "vendor/xara/xara-arq" }
+xara-host = { path = "vendor/xara/xara-host" }
 # Pure-Rust USB — the RTL-SDR backend's only dependency. No libusb, so it needs
 # no system library on any target and ships in every build variant.
 nusb = "0.2.7"
@@ -194,6 +210,7 @@ sdroxide-types.workspace = true
 sdroxide-version.workspace = true
 sdroxide-proto.workspace = true
 sdroxide-dsp.workspace = true
+sdroxide-nrsc5.workspace = true
 sdroxide-radio = { path = "crates/sdroxide-radio", default-features = false }
 sdroxide-config.workspace = true
 sdroxide-net.workspace = true
@@ -224,8 +241,12 @@ sdroxide-ui = { workspace = true, features = ["remote"] }
 # silently switched it back off: without it the whole widget tree is
 # invisible to NVDA, Orca and VoiceOver. It is native-only (it maps to
 # egui-winit), so it costs the browser build nothing.
+# `links` is another: without it `ctx.open_url` only logs "Cannot open url -
+# feature \"links\" not enabled", so the update banner's sdroxide.com link and
+# the manual's external links open nothing on the desktop. Also native-only.
 eframe = { version = "0.36.1", default-features = false, features = [
     "accesskit",
+    "links",
     "default_fonts",
     "wgpu",
     "wayland",

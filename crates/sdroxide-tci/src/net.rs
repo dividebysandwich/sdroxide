@@ -1122,6 +1122,7 @@ impl NetThread {
             swr: self.tx_swr,
             alc: None,
             po: None,
+            rfl_w: None,
         });
     }
 }

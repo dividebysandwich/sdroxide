@@ -81,6 +81,12 @@ pub struct SmartSdrSource {
     /// Conjugate what the radio sends, mirroring the spectrum — see
     /// [`sdroxide_types::SmartSdrConfig::swap_iq`].
     swap_iq: bool,
+    /// The rate asked for, which is what [`IqSource::sample_rate`] answers until
+    /// the radio has sent a packet to say otherwise.
+    requested_rate: f64,
+    /// The radio's built-in antenna tuner as it last reported itself, or
+    /// `None` where it has none (or has not said yet).
+    atu: Option<sdroxide_types::AtuState>,
 }
 
 impl SmartSdrSource {
@@ -99,7 +105,7 @@ impl SmartSdrSource {
             .to_string();
 
         let key = session_key(cfg);
-        let handle = FlexHandle::connect_with(&sdroxide_smartsdr::ConnectOptions {
+        let mut handle = FlexHandle::connect_with(&sdroxide_smartsdr::ConnectOptions {
             address: address.clone(),
             iq_rate_hz: cfg.iq_sample_rate_hz,
             iq_channel: cfg.iq_channel,
@@ -112,6 +118,11 @@ impl SmartSdrSource {
 
         let mut warning = None;
         let actual = wait_for_rate(&handle, cfg.iq_sample_rate_hz);
+        // Whatever arrived before the rate change landed is 48 kHz I/Q, and the
+        // engine is about to read the ring at the rate just settled on. Drawn at
+        // the wrong rate it is a quarter of a second of band smeared across the
+        // waterfall — gone, but not worth showing.
+        handle.discard_pending_rx();
 
         // Nothing at all is a different fault from the wrong rate, and it is the
         // one an operator can act on: the control link is up (we got this far),
@@ -144,7 +155,7 @@ impl SmartSdrSource {
         let label = format!(
             "{} @ {address} ({:.0} kHz DAX IQ)",
             handle.ident.display_name(),
-            actual / 1000.0,
+            rate_or(actual, cfg.iq_sample_rate_hz) / 1000.0,
         );
         handle.set_center(center_hz);
 
@@ -159,6 +170,8 @@ impl SmartSdrSource {
             trace,
             warning,
             swap_iq: cfg.swap_iq,
+            requested_rate: cfg.iq_sample_rate_hz,
+            atu: None,
         })
     }
 
@@ -167,13 +180,21 @@ impl SmartSdrSource {
     }
 }
 
-/// Wait briefly for the radio's first packets, which are what report the rate it
-/// really chose, then return it.
+/// Wait for packets at the requested rate, then return the rate the radio is
+/// really sending — `0.0` if it has sent nothing at all.
 ///
-/// Bounded rather than open-ended: a radio that never streams is a fault to
-/// report, not a reason to hang the whole startup.
+/// This is the rate the engine builds its whole receive chain for, once, as it
+/// adopts the source, so settling early is not a small error. The radio starts
+/// every DAX IQ stream at 48 kHz and moves only on a follow-up command — 260 ms
+/// later on a FLEX-8400 on the same LAN, longer across a VPN — and a source
+/// that settled in between ran a 192 kHz stream through a 48 kHz chain for the
+/// rest of the session: every signal a quarter of its width, and every click
+/// tuning to somewhere else (issue #687).
+///
+/// Bounded rather than open-ended: a radio that never streams, or refuses the
+/// rate, is a fault to report, not a reason to hang the whole startup.
 fn wait_for_rate(handle: &FlexHandle, requested: f64) -> f64 {
-    let deadline = Instant::now() + Duration::from_millis(1500);
+    let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
         let rate = handle.actual_rate_hz();
         if (rate - requested).abs() < 1.0 {
@@ -207,9 +228,14 @@ impl Drop for SmartSdrSource {
     }
 }
 
+/// `actual`, or `fallback` while no packet has said what the rate is.
+fn rate_or(actual: f64, fallback: f64) -> f64 {
+    if actual > 0.0 { actual } else { fallback }
+}
+
 impl IqSource for SmartSdrSource {
     fn sample_rate(&self) -> f64 {
-        self.handle.actual_rate_hz()
+        rate_or(self.handle.actual_rate_hz(), self.requested_rate)
     }
 
     fn center_hz(&self) -> f64 {
@@ -257,16 +283,37 @@ impl IqSource for SmartSdrSource {
     }
 
     fn poll_control(&mut self) -> Vec<ControlUpdate> {
-        self.handle
-            .poll_updates()
-            .into_iter()
-            .map(|u| match u {
-                FlexUpdate::Freq(hz) => ControlUpdate::Freq(hz),
-                FlexUpdate::Mode(m) => ControlUpdate::Mode(m),
-                FlexUpdate::TxDrive(f) => ControlUpdate::TxDrive(f),
-                FlexUpdate::TuneDrive(f) => ControlUpdate::TuneDrive(f),
-            })
-            .collect()
+        let mut out = Vec::new();
+        for u in self.handle.poll_updates() {
+            match u {
+                FlexUpdate::Freq(hz) => out.push(ControlUpdate::Freq(hz)),
+                FlexUpdate::Mode(m) => out.push(ControlUpdate::Mode(m)),
+                FlexUpdate::TxDrive(f) => out.push(ControlUpdate::TxDrive(f)),
+                FlexUpdate::TuneDrive(f) => out.push(ControlUpdate::TuneDrive(f)),
+                // Held rather than passed on: the engine asks for it through
+                // `atu`, the way it asks after a receiving antenna.
+                FlexUpdate::Atu(a) => self.atu = a,
+                // An ATU tune, or SmartSDR or the front panel keying the
+                // radio: the engine mutes the receiver and stays off the air
+                // for the length of it, as for any over the radio keys itself.
+                FlexUpdate::RigTx(on) => out.push(ControlUpdate::RigTx(on)),
+            }
+        }
+        out
+    }
+
+    fn atu(&self) -> Option<sdroxide_types::AtuState> {
+        self.atu
+    }
+
+    fn atu_tune(&mut self) -> Result<()> {
+        self.handle.atu_start();
+        Ok(())
+    }
+
+    fn atu_bypass(&mut self) -> Result<()> {
+        self.handle.atu_bypass();
+        Ok(())
     }
 
     fn tx_begin(&mut self, center_hz: f64, _rate: f64) -> Result<f64> {
@@ -384,5 +431,37 @@ pub fn diagnostics_or_hint(cfg: &sdroxide_types::SmartSdrConfig) -> String {
             cfg.target().unwrap_or("this radio"),
             sdroxide_smartsdr::FIELD_REPORT_HINT
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sdroxide_smartsdr::sim::{SimConfig, SimRadio};
+
+    /// The source settles on the rate the radio *ends up* streaming, not on the
+    /// 48 kHz every DAX IQ stream starts at. The engine reads `sample_rate` once
+    /// as it adopts the source and builds its whole receive chain for it, so a
+    /// source that answered during the change ran a 192 kHz stream through a
+    /// 48 kHz chain for the rest of the session — issue #687, reproduced on a
+    /// FLEX-8400 whose rate change takes 260 ms.
+    #[test]
+    fn settles_on_the_rate_after_the_radio_changes_it() {
+        let sim = SimRadio::start(SimConfig {
+            rate_change_delay: Duration::from_millis(600),
+            ..SimConfig::default()
+        })
+        .expect("start simulator");
+        let cfg = sdroxide_types::SmartSdrConfig {
+            address: sim.address(),
+            iq_sample_rate_hz: 192_000.0,
+            station: "test".into(),
+            ..Default::default()
+        };
+        let src = SmartSdrSource::open(&cfg, 14_074_000.0).expect("open");
+
+        assert_eq!(src.sample_rate(), 192_000.0);
+        assert!(src.describe().contains("192 kHz"), "{}", src.describe());
+        assert!(src.open_status().is_none(), "{:?}", src.open_status());
     }
 }

@@ -18,6 +18,7 @@
 //! wheel and pinch zoom about the pointer, and a double-click hands the view
 //! back to the auto-fit.
 
+use crate::i18n::tr;
 use eframe::egui::{
     Align2, Color32, CursorIcon, FontId, PointerButton, Pos2, Response, Sense, Ui, Vec2, pos2, vec2,
 };
@@ -64,6 +65,16 @@ impl Default for MapView {
 }
 
 impl MapView {
+    /// Start over from the auto-fit if the view has gone non-finite. NaN
+    /// survives every clamp and ease, so one bad input event — the kind a
+    /// resume from sleep can deliver — left the map dead for good, double-click
+    /// included (#656).
+    pub(crate) fn sanitize(&mut self) {
+        if !(self.clat.is_finite() && self.clon.is_finite() && self.lon_span.is_finite()) {
+            *self = MapView::default();
+        }
+    }
+
     /// The latitude window this zoom covers on a map of the given aspect
     /// (height/width) — the projection is linear in both axes.
     pub(crate) fn lat_span(&self, aspect: f64) -> f64 {
@@ -173,13 +184,13 @@ pub(crate) fn interact(ui: &Ui, view: &mut MapView, resp: &Response, aspect: f64
             touched = true;
         }
         let t = mt.translation_delta;
-        if t != Vec2::ZERO {
+        if t != Vec2::ZERO && t.is_finite() {
             view.pan((t.x / rect.width()) as f64, (t.y / rect.height()) as f64, aspect);
             touched = true;
         }
     } else if resp.dragged_by(PointerButton::Primary) {
         let d = resp.drag_delta();
-        if d != Vec2::ZERO {
+        if d != Vec2::ZERO && d.is_finite() {
             view.pan((d.x / rect.width()) as f64, (d.y / rect.height()) as f64, aspect);
             touched = true;
         }
@@ -194,7 +205,7 @@ pub(crate) fn interact(ui: &Ui, view: &mut MapView, resp: &Response, aspect: f64
         // Multiplicative, so a wheel click covers the same visual fraction at
         // any zoom — the same rate the panadapter uses.
         let factor = 0.998f64.powf(scroll as f64 * 2.0) / (zoom.max(0.01) as f64);
-        if (factor - 1.0).abs() > 1e-4 {
+        if factor.is_finite() && (factor - 1.0).abs() > 1e-4 {
             let (fx, fy) = frac(pos);
             view.zoom_about(factor, fx, fy, aspect);
             touched = true;
@@ -624,6 +635,7 @@ pub fn show(
         contacts.push(c);
     }
     let (t_clat, t_clon, t_span) = target_view(home, &contacts, aspect);
+    view.sanitize();
     if !view.initialized {
         view.clat = t_clat;
         view.clon = t_clon;
@@ -796,7 +808,7 @@ pub fn show(
         p.text(
             pos2(rect.right() - 5.0, rect.bottom() - 4.0),
             Align2::RIGHT_BOTTOM,
-            "DOUBLE-CLICK TO REFRAME",
+            tr!("worldmap-double-click-reframe"),
             FontId::proportional(9.0),
             map.hint,
         );
@@ -809,6 +821,17 @@ pub fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #656: a non-finite pan must not leave the map dead.
+    #[test]
+    fn a_non_finite_view_starts_over_from_the_auto_fit() {
+        let mut v = MapView { initialized: true, manual: true, ..MapView::default() };
+        v.pan(f64::NAN, 0.0, 0.5);
+        assert!(!v.clon.is_finite(), "NaN went in and should have stuck");
+        v.sanitize();
+        assert!(v.clat.is_finite() && v.clon.is_finite() && v.lon_span.is_finite());
+        assert!(!v.manual && !v.initialized, "the auto-fit should take the view back");
+    }
 
     /// Issue #312: the cities can be turned off, and turning them off takes the
     /// *names* with them — those are what get written across the dot somebody

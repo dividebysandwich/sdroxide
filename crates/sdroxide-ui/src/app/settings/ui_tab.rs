@@ -16,6 +16,7 @@ use eframe::egui::{self, Color32, ComboBox, RichText};
 use sdroxide_types::{BandplanKind, CallsignStyle, FreqStyle, SpeechSettings, SpotKind, Verbosity};
 
 use crate::colormap;
+use crate::i18n::{Tr, tr};
 
 use crate::app::settings::enum_combo;
 use crate::app::settings::general::device_combo;
@@ -28,61 +29,104 @@ pub(in crate::app) fn settings_ui_tab(
     cloud_march: Option<&mut bool>,
 ) {
     use sdroxide_types::{ChromeStyle, FontSize, LayoutMode, UiSettings, UiTheme};
-    ui.label(RichText::new("Display").size(14.0).strong().color(crate::theme::CYAN()));
+    ui.label(
+        RichText::new(tr!("settings-ui-display")).size(14.0).strong().color(crate::theme::CYAN()),
+    );
     ui.add_space(6.0);
     // Said here because this is where they used to be, and where an operator
     // who remembers them will come looking. They moved to the panadapter's own
     // button, beside the picture they change — see
     // `SdroxideApp::panadapter_controls`.
-    ui.label(
-        RichText::new(
-            "Panadapter detail, the spectrum's reaction and the waterfall's scroll speed are \
-             set from the SPEC button on the display strip — the DISP menu on a narrow window.",
-        )
-        .size(11.0)
-        .weak(),
-    );
+    ui.label(RichText::new(tr!("settings-ui-moved-note")).size(11.0).weak());
     ui.add_space(6.0);
     egui::Grid::new("ui-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-        ui.label("Layout");
-        enum_combo(ui, "ui-layout", &mut cfg.layout, &LayoutMode::ALL, LayoutMode::label);
+        ui.label(tr!("settings-ui-language")).on_hover_text(tr!("settings-ui-language", "hint"));
+        language_combo(ui, &mut cfg.language);
         ui.end_row();
 
-        ui.label("Theme");
-        enum_combo(ui, "ui-theme", &mut cfg.theme, &UiTheme::ALL, UiTheme::label);
+        ui.label(tr!("settings-ui-layout"));
+        enum_combo(ui, "ui-layout", &mut cfg.layout, &LayoutMode::ALL, LayoutMode::tr);
         ui.end_row();
 
-        ui.label("Button style");
-        enum_combo(
-            ui,
-            "ui-btn-style",
-            &mut cfg.button_style,
-            &ChromeStyle::ALL,
-            ChromeStyle::label,
-        );
+        ui.label(tr!("settings-ui-theme"));
+        enum_combo(ui, "ui-theme", &mut cfg.theme, &UiTheme::ALL, UiTheme::tr);
         ui.end_row();
 
-        ui.label("Window style");
-        enum_combo(
-            ui,
-            "ui-win-style",
-            &mut cfg.window_style,
-            &ChromeStyle::ALL,
-            ChromeStyle::label,
-        );
+        ui.label(tr!("settings-ui-button-style"));
+        enum_combo(ui, "ui-btn-style", &mut cfg.button_style, &ChromeStyle::ALL, ChromeStyle::tr);
         ui.end_row();
 
-        ui.label("Screen update rate");
+        ui.label(tr!("settings-ui-window-style"));
+        enum_combo(ui, "ui-win-style", &mut cfg.window_style, &ChromeStyle::ALL, ChromeStyle::tr);
+        ui.end_row();
+
+        // The **undocked** modules. A window arrangement, chosen once and kept,
+        // rather than something reached for mid-QSO — so it lives here with the
+        // other display settings. One row per [`DetachableModule`], so the next
+        // detachable module appears here for free. Native only: the browser
+        // keeps every module in its one window.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use sdroxide_types::DetachableModule;
+            for module in DetachableModule::ALL {
+                let mut on = cfg.is_detached(module);
+                ui.label(tr!("settings-ui-window-label", module = module_label(module)));
+                ComboBox::from_id_salt(("ui-undocked", module))
+                    .selected_text(if on {
+                        tr!("settings-ui-undocked")
+                    } else {
+                        tr!("settings-ui-docked")
+                    })
+                    .show_styled(ui, |ui| {
+                        ui.selectable_value(&mut on, false, tr!("settings-ui-docked"));
+                        ui.selectable_value(&mut on, true, tr!("settings-ui-undocked"));
+                    })
+                    .response
+                    .on_hover_text(tr!("settings-ui-undock-hint", app_id = module.app_id()));
+                cfg.set_detached(module, on);
+                ui.end_row();
+            }
+            // Both directions at once, for arranging a whole screen in one
+            // press: every module out, or every module home. Shown only while
+            // they would do something, so neither is a button that changes
+            // nothing.
+            let any_out = DetachableModule::ALL.iter().any(|m| cfg.is_detached(*m));
+            let any_in = DetachableModule::ALL.iter().any(|m| !cfg.is_detached(*m));
+            ui.label("");
+            ui.horizontal(|ui| {
+                if any_out
+                    && crate::chrome::chip(ui, false, tr!("multi-dock-all-windows"))
+                        .on_hover_text(tr!("settings-ui-dock-all-hint"))
+                        .clicked()
+                {
+                    for m in DetachableModule::ALL {
+                        cfg.set_detached(m, false);
+                    }
+                }
+                if any_in
+                    && crate::chrome::chip(ui, false, tr!("multi-undock-all-windows"))
+                        .on_hover_text(tr!("settings-ui-undock-all-hint"))
+                        .clicked()
+                {
+                    for m in DetachableModule::ALL {
+                        cfg.set_detached(m, true);
+                    }
+                }
+            });
+            ui.end_row();
+        }
+
+        ui.label(tr!("settings-ui-frame-rate"));
         ComboBox::from_id_salt("ui-fps")
-            .selected_text(format!("{} fps", cfg.frame_rate_fps))
+            .selected_text(format!("{fps} fps", fps = cfg.frame_rate_fps))
             .show_styled(ui, |ui| {
                 for f in UiSettings::FPS_OPTIONS {
-                    ui.selectable_value(&mut cfg.frame_rate_fps, f, format!("{f} fps"));
+                    ui.selectable_value(&mut cfg.frame_rate_fps, f, format!("{fps} fps", fps = f));
                 }
             });
         ui.end_row();
 
-        ui.label("Waterfall palette");
+        ui.label(tr!("settings-ui-palette"));
         ComboBox::from_id_salt("ui-palette")
             .selected_text(colormap::NAMES[cfg.waterfall_palette.min(colormap::NAMES.len() - 1)])
             .show_styled(ui, |ui| {
@@ -92,16 +136,17 @@ pub(in crate::app) fn settings_ui_tab(
             });
         ui.end_row();
 
-        ui.label("Tuning buttons");
+        ui.label(tr!("settings-ui-tuning-buttons"));
         ui.horizontal(|ui| {
-            crate::chrome::checkbox(ui, &mut cfg.tune_step_buttons, "Show on phone and tablet")
-                .on_hover_text(
-                    "A row of step-down / step / step-up buttons under the control strip on a \
-                     touched screen. There is no wheel to scroll a digit with and no dial, so \
-                     without them the only way to move a known step is to type the whole \
-                     frequency in. Never drawn on a desktop.",
-                );
-            ui.label(RichText::new(format!("Step: {}", cfg.tune_step_label())).weak());
+            crate::chrome::checkbox(
+                ui,
+                &mut cfg.tune_step_buttons,
+                tr!("settings-ui-tuning-buttons-show"),
+            )
+            .on_hover_text(tr!("settings-ui-tuning-buttons-show", "hint"));
+            ui.label(
+                RichText::new(tr!("settings-ui-tuning-step", step = cfg.tune_step_label())).weak(),
+            );
         });
         ui.end_row();
 
@@ -111,48 +156,48 @@ pub(in crate::app) fn settings_ui_tab(
             crate::chrome::checkbox(
                 ui,
                 &mut cfg.tune_step_round_first,
-                "First press snaps to the step",
+                tr!("settings-ui-tuning-snap"),
             )
-            .on_hover_text(
-                "A dial left between two multiples of the step goes to the next one in the \
-                 direction pressed — 7 074 300 goes up to 7 075 000 at a 1 kHz step, down to \
-                 7 074 000. After that the buttons move by the step as usual. Off, every press \
-                 moves by exactly the step.",
-            );
+            .on_hover_text(tr!("settings-ui-tuning-snap", "hint"));
             ui.end_row();
         }
 
-        ui.label("Waterfall smoothing");
-        crate::chrome::checkbox(ui, &mut cfg.waterfall_smooth, "Interpolate").on_hover_text(
-            "Blend each screen pixel with the bins and rows around it, so a signal looks \
-                 continuous where the display is wider than the transform. Turn it off for a \
-                 rectangular waterfall — one block per bin, one per row — which is what \
-                 reading a signal's shape off the picture needs: an interpolated signal cannot \
-                 be told apart from a genuinely wider one. A bigger FFT (the FFT chip) is the \
-                 other half of that.",
-        );
+        ui.label(tr!("settings-ui-smoothing"));
+        crate::chrome::checkbox(
+            ui,
+            &mut cfg.waterfall_smooth,
+            tr!("settings-ui-smoothing-interpolate"),
+        )
+        .on_hover_text(tr!("settings-ui-smoothing-interpolate", "hint"));
         ui.end_row();
 
-        ui.label("Spectrum background");
+        ui.label(tr!("settings-ui-clock"));
+        crate::chrome::checkbox(ui, &mut cfg.panadapter_clock, tr!("settings-ui-clock-show"))
+            .on_hover_text(tr!("settings-ui-clock-show", "hint"));
+        ui.end_row();
+
+        ui.label(tr!("settings-ui-background"));
         ui.horizontal(|ui| {
-            crate::chrome::checkbox(ui, &mut cfg.spectrum_gradient, "Gradient");
+            crate::chrome::checkbox(
+                ui,
+                &mut cfg.spectrum_gradient,
+                tr!("settings-ui-background-gradient"),
+            );
             ui.add_enabled_ui(cfg.spectrum_gradient, |ui| {
-                ui.label("top");
+                ui.label(tr!("settings-ui-background-top"));
                 ui.color_edit_button_srgb(&mut cfg.gradient_top);
-                ui.label("bottom");
+                ui.label(tr!("settings-ui-background-bottom"));
                 ui.color_edit_button_srgb(&mut cfg.gradient_bottom);
             });
         });
         ui.end_row();
 
-        ui.label("Spot label colours").on_hover_text(
-            "The tint each spot source wears: the boxes along the bottom of the \
-             waterfall, the badges in the SPOTS list and the dots on the world map.",
-        );
+        ui.label(tr!("settings-ui-spot-colours"))
+            .on_hover_text(tr!("settings-ui-spot-colours", "hint"));
         ui.horizontal_wrapped(|ui| {
             for kind in SpotKind::ALL {
                 ui.color_edit_button_srgb(&mut cfg.spot_colors[kind.index()])
-                    .on_hover_text(format!("Colour for {} spots", kind.label()));
+                    .on_hover_text(tr!("settings-ui-spot-colour", kind = kind.label()));
                 let [r, g, b] = cfg.spot_colors[kind.index()];
                 // Tinted with what was just picked, so the row is its own
                 // preview — a colour that vanishes into the panel here would
@@ -166,8 +211,8 @@ pub(in crate::app) fn settings_ui_tab(
                 ui.add_space(6.0);
             }
             if ui
-                .button("Reset")
-                .on_hover_text("Put every spot colour back to its default")
+                .button(tr!("settings-ui-reset"))
+                .on_hover_text(tr!("settings-ui-spot-colours-reset"))
                 .clicked()
             {
                 for kind in SpotKind::ALL {
@@ -178,19 +223,15 @@ pub(in crate::app) fn settings_ui_tab(
         });
         ui.end_row();
 
-        ui.label("Band plan colours").on_hover_text(
-            "The shade each class of allocation is painted in on the band-plan \
-             strip along the bottom of the waterfall. The blocks are drawn \
-             semi-transparent over the waterfall, so they land darker there \
-             than in the swatch here.",
-        );
+        ui.label(tr!("settings-ui-bandplan-colours"))
+            .on_hover_text(tr!("settings-ui-bandplan-colours", "hint"));
         ui.horizontal_wrapped(|ui| {
             for kind in BandplanKind::ALL {
                 ui.color_edit_button_srgb(&mut cfg.bandplan_colors[kind.index()])
-                    .on_hover_text(format!("Colour for {} allocations", kind.label()));
+                    .on_hover_text(tr!("settings-ui-bandplan-colour", kind = kind.tr()));
                 let [r, g, b] = cfg.bandplan_colors[kind.index()];
                 ui.label(
-                    RichText::new(kind.label())
+                    RichText::new(kind.tr())
                         .size(11.0)
                         .strong()
                         .color(crate::theme::data_ink((r, g, b))),
@@ -198,8 +239,8 @@ pub(in crate::app) fn settings_ui_tab(
                 ui.add_space(6.0);
             }
             if ui
-                .button("Reset")
-                .on_hover_text("Put every band-plan colour back to its default")
+                .button(tr!("settings-ui-reset"))
+                .on_hover_text(tr!("settings-ui-bandplan-colours-reset"))
                 .clicked()
             {
                 for kind in BandplanKind::ALL {
@@ -210,34 +251,21 @@ pub(in crate::app) fn settings_ui_tab(
         });
         ui.end_row();
 
-        ui.label("Skimmer font size");
-        enum_combo(ui, "ui-skim-font", &mut cfg.skimmer_font_size, &FontSize::ALL, FontSize::label);
+        ui.label(tr!("settings-ui-skimmer-font"));
+        enum_combo(ui, "ui-skim-font", &mut cfg.skimmer_font_size, &FontSize::ALL, FontSize::tr);
         ui.end_row();
 
-        ui.label("Waterfall / spectrum font size");
-        enum_combo(ui, "ui-wf-font", &mut cfg.waterfall_font_size, &FontSize::ALL, FontSize::label);
+        ui.label(tr!("settings-ui-waterfall-font"));
+        enum_combo(ui, "ui-wf-font", &mut cfg.waterfall_font_size, &FontSize::ALL, FontSize::tr);
         ui.end_row();
 
-        ui.label("Interface font size").on_hover_text(
-            "Scales the whole interface — menus, dialogs, windows, the radio \
-             tabs, the top bar and its buttons. The two sizes above are \
-             relative to it.",
-        );
-        enum_combo(ui, "ui-menu-font", &mut cfg.menu_font_size, &FontSize::ALL, FontSize::label);
+        ui.label(tr!("settings-ui-interface-font"))
+            .on_hover_text(tr!("settings-ui-interface-font", "hint"));
+        enum_combo(ui, "ui-menu-font", &mut cfg.menu_font_size, &FontSize::ALL, FontSize::tr);
         ui.end_row();
 
-        ui.label("Cities on maps").on_hover_text(
-            "Draw the world's cities — a dot per place, with its name beside it \
-             where there is room — on the flat maps: FT8/WSPR, APRS, ADS-B and \
-             AIS.\n\n\
-             They are most of what says *where* a dot is on a map of the whole \
-             world, and they are also the busiest thing on it. Turn them off if \
-             the names are getting in the way of the stations you are reading. \
-             The 3D globe is unaffected — its cities are night-side lights \
-             rather than markers, and nothing there is written across a \
-             contact.",
-        );
-        crate::chrome::checkbox(ui, &mut cfg.map_cities, "show cities and their names");
+        ui.label(tr!("settings-ui-cities")).on_hover_text(tr!("settings-ui-cities", "hint"));
+        crate::chrome::checkbox(ui, &mut cfg.map_cities, tr!("settings-ui-cities-show"));
         ui.end_row();
     });
 
@@ -247,39 +275,30 @@ pub(in crate::app) fn settings_ui_tab(
     #[cfg(not(target_arch = "wasm32"))]
     {
         ui.add_space(10.0);
-        crate::chrome::checkbox(ui, &mut cfg.update_check, "Check for updates at startup")
-            .on_hover_text(
-                "Asks sdroxide.com once per start whether a newer release has been \
-                 published, and says so in a dismissable banner above the waterfall. \
-                 Nothing is sent beyond the request itself.",
-            );
+        crate::chrome::checkbox(ui, &mut cfg.update_check, tr!("settings-ui-update-check"))
+            .on_hover_text(tr!("settings-ui-update-check", "hint"));
     }
 
     let Some(cloud_march) = cloud_march else { return };
     ui.add_space(14.0);
-    ui.label(RichText::new("3D view").size(14.0).strong().color(crate::theme::CYAN()));
+    ui.label(
+        RichText::new(tr!("settings-ui-3d-view")).size(14.0).strong().color(crate::theme::CYAN()),
+    );
     ui.add_space(6.0);
     egui::Grid::new("ui-grid-3d").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-        ui.label("Cloud rendering");
+        ui.label(tr!("settings-ui-clouds"));
+        let layered = tr!("settings-ui-clouds-layered");
+        let volumetric = tr!("settings-ui-clouds-volumetric");
         ComboBox::from_id_salt("ui-cloud-march")
-            .selected_text(if *cloud_march { "Volumetric" } else { "Layered" })
+            .selected_text(if *cloud_march { &volumetric } else { &layered })
             .show_styled(ui, |ui| {
-                ui.selectable_value(cloud_march, false, "Layered");
-                ui.selectable_value(cloud_march, true, "Volumetric");
+                ui.selectable_value(cloud_march, false, layered.as_str());
+                ui.selectable_value(cloud_march, true, volumetric.as_str());
             });
         ui.end_row();
     });
     ui.add_space(8.0);
-    ui.label(
-        RichText::new(
-            "How the CLOUDS layer in the 3D view draws the weather. Layered stacks \
-             slices through the troposphere and is the cheap option. Volumetric walks \
-             a ray through it instead, so the Sun casts the cloud tops onto the deck \
-             below and lightning glows out through the storm making it rather than \
-             only brightening its outside — at several times the cost per pixel.",
-        )
-        .weak(),
-    );
+    ui.label(RichText::new(tr!("settings-ui-clouds-note")).weak());
 }
 
 /// Spoken announcements.
@@ -297,20 +316,23 @@ pub(in crate::app) fn speech_settings(
     status: &SpeechStatus,
     test: &mut bool,
 ) {
-    ui.label(RichText::new("Voice announcements").size(14.0).strong().color(crate::theme::CYAN()));
+    ui.label(RichText::new(tr!("speech-title")).size(14.0).strong().color(crate::theme::CYAN()));
     ui.add_space(6.0);
-    crate::chrome::checkbox(ui, &mut cfg.enabled, "Speak changes to the radio")
-        .on_hover_text("Reads out what changed, so the radio can be operated without seeing it");
+    crate::chrome::checkbox(ui, &mut cfg.enabled, tr!("speech-enabled"))
+        .on_hover_text(tr!("speech-enabled", "hint"));
 
     ui.add_enabled_ui(cfg.enabled, |ui| {
         egui::Grid::new("speech-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-            ui.label("Voice");
+            ui.label(tr!("speech-voice"));
             let shown =
-                if cfg.voice.is_empty() { "Shipped voice".to_string() } else { cfg.voice.clone() };
+                if cfg.voice.is_empty() { tr!("speech-voice-shipped") } else { cfg.voice.clone() };
             ComboBox::from_id_salt("speech-voice").width(300.0).selected_text(shown).show_styled(
                 ui,
                 |ui| {
-                    if ui.selectable_label(cfg.voice.is_empty(), "Shipped voice").clicked() {
+                    if ui
+                        .selectable_label(cfg.voice.is_empty(), tr!("speech-voice-shipped"))
+                        .clicked()
+                    {
                         cfg.voice.clear();
                     }
                     for v in voices {
@@ -322,43 +344,40 @@ pub(in crate::app) fn speech_settings(
             );
             ui.end_row();
 
-            ui.label("Speed");
+            ui.label(tr!("speech-speed"));
             crate::chrome::slider(
                 ui,
                 egui::Slider::new(&mut cfg.rate, SpeechSettings::RATE_RANGE)
                     .step_by(0.1)
                     .suffix("×"),
             )
-            .on_hover_text(
-                "The voice stretches or compresses its own phrasing, so the pitch does not \
-                 change. Past about 2× it stops getting shorter.",
-            );
+            .on_hover_text(tr!("speech-speed", "hint"));
             ui.end_row();
 
-            ui.label("Volume");
+            ui.label(tr!("speech-volume"));
             crate::chrome::slider(ui, egui::Slider::new(&mut cfg.volume, 0.0..=1.0).step_by(0.05));
             ui.end_row();
 
-            ui.label("Output");
+            ui.label(tr!("speech-output"));
             // `device_combo` borrows the current selection while handing the
             // new one to the closure, so the two cannot both be `cfg.device`.
             let cur = cfg.device.clone();
             device_combo(ui, "speech-out", outputs, &cur, |n| cfg.device = n);
             ui.end_row();
 
-            ui.label("Detail");
+            ui.label(tr!("speech-detail"));
             crate::app::settings::enum_combo(
                 ui,
                 "speech-verbosity",
                 &mut cfg.verbosity,
                 &Verbosity::ALL,
-                Verbosity::label,
+                Verbosity::tr,
             );
             ui.end_row();
 
-            ui.label("Duck receiver");
+            ui.label(tr!("speech-duck"));
             ui.horizontal(|ui| {
-                crate::chrome::checkbox(ui, &mut cfg.duck_rx, "While speaking");
+                crate::chrome::checkbox(ui, &mut cfg.duck_rx, tr!("speech-duck-while"));
                 ui.add_enabled_ui(cfg.duck_rx, |ui| {
                     crate::chrome::slider(
                         ui,
@@ -371,7 +390,7 @@ pub(in crate::app) fn speech_settings(
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            if ui.button("Test").clicked() {
+            if ui.button(tr!("speech-test")).clicked() {
                 *test = true;
             }
             if let Some(note) = status.note() {
@@ -385,143 +404,263 @@ pub(in crate::app) fn speech_settings(
         });
 
         ui.add_space(4.0);
-        egui::CollapsingHeader::new("What to announce").default_open(false).show(ui, |ui| {
-            egui::Grid::new("speech-cats").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-                let c = &mut cfg.cat;
-                crate::chrome::checkbox(ui, &mut c.frequency, "Frequency");
-                crate::chrome::checkbox(ui, &mut c.mode_band, "Mode and band");
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut c.vfo_split, "VFO and split");
-                crate::chrome::checkbox(ui, &mut c.agc_gain, "AGC and gain");
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut c.levels, "Drive, tune and mic");
-                crate::chrome::checkbox(ui, &mut c.ptt, "Transmit and receive");
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut c.rit_xit, "RIT and XIT");
-                crate::chrome::checkbox(ui, &mut c.memory_scan, "Memories and scanning");
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut c.band_edge, "Leaving an amateur band");
-                crate::chrome::checkbox(ui, &mut c.notices, "Warnings and messages");
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut c.filters, "Filters, squelch and noise reduction")
-                    .on_hover_text("Off by default: these move constantly while chasing a signal");
-                ui.end_row();
-            });
+        // Pinned id: the header's text is translated, and egui would otherwise
+        // remember whether it was open under the text.
+        egui::CollapsingHeader::new(tr!("speech-what"))
+            .id_salt("speech-what")
+            .default_open(false)
+            .show(ui, |ui| {
+                egui::Grid::new("speech-cats").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
+                    let c = &mut cfg.cat;
+                    crate::chrome::checkbox(ui, &mut c.frequency, tr!("speech-cat-frequency"));
+                    crate::chrome::checkbox(ui, &mut c.mode_band, tr!("speech-cat-mode-band"));
+                    ui.end_row();
+                    crate::chrome::checkbox(ui, &mut c.vfo_split, tr!("speech-cat-vfo-split"));
+                    crate::chrome::checkbox(ui, &mut c.agc_gain, tr!("speech-cat-agc-gain"));
+                    ui.end_row();
+                    crate::chrome::checkbox(ui, &mut c.levels, tr!("speech-cat-levels"));
+                    crate::chrome::checkbox(ui, &mut c.ptt, tr!("speech-cat-ptt"));
+                    ui.end_row();
+                    crate::chrome::checkbox(ui, &mut c.rit_xit, tr!("speech-cat-rit-xit"));
+                    crate::chrome::checkbox(ui, &mut c.memory_scan, tr!("speech-cat-memory-scan"));
+                    ui.end_row();
+                    crate::chrome::checkbox(ui, &mut c.band_edge, tr!("speech-cat-band-edge"));
+                    crate::chrome::checkbox(ui, &mut c.notices, tr!("speech-cat-notices"));
+                    ui.end_row();
+                    crate::chrome::checkbox(ui, &mut c.filters, tr!("speech-cat-filters"))
+                        .on_hover_text(tr!("speech-cat-filters", "hint"));
+                    ui.end_row();
+                });
 
-            ui.add_space(8.0);
-            ui.label(RichText::new("Decoded messages").strong());
-            egui::Grid::new("speech-decodes").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-                let d = &mut cfg.decodes;
-                crate::chrome::checkbox(ui, &mut d.ft8_to_me, "FT8 calls to me");
-                crate::chrome::checkbox(ui, &mut d.ft8_cq_for_me, "FT8 CQs I could answer")
-                    .on_hover_text(
-                        "A busy evening on twenty metres is a hundred of these a minute",
-                    );
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut d.js8, "JS8 messages to me");
-                crate::chrome::checkbox(ui, &mut d.js8_allcall, "JS8 @ALLCALL too");
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut d.fsq, "FSQ messages to me");
-                crate::chrome::checkbox(ui, &mut d.include_snr, "Include the report")
-                    .on_hover_text(
-                        "Only where the message carries none of its own — a decode that already \
-                     reports a number does not also get ours",
-                    );
-                ui.end_row();
-                crate::chrome::checkbox(ui, &mut d.ft8_qso, "My own FT8 exchange")
-                    .on_hover_text("What the sequencer is about to send, and the contact ending");
-                ui.end_row();
-            });
+                ui.add_space(8.0);
+                ui.label(RichText::new(tr!("speech-decoded")).strong());
+                egui::Grid::new("speech-decodes").num_columns(2).spacing([16.0, 4.0]).show(
+                    ui,
+                    |ui| {
+                        let d = &mut cfg.decodes;
+                        crate::chrome::checkbox(ui, &mut d.ft8_to_me, tr!("speech-ft8-to-me"));
+                        crate::chrome::checkbox(ui, &mut d.ft8_cq_for_me, tr!("speech-ft8-cq"))
+                            .on_hover_text(tr!("speech-ft8-cq", "hint"));
+                        ui.end_row();
+                        crate::chrome::checkbox(ui, &mut d.js8, tr!("speech-js8"));
+                        crate::chrome::checkbox(ui, &mut d.js8_allcall, tr!("speech-js8-allcall"));
+                        ui.end_row();
+                        crate::chrome::checkbox(ui, &mut d.fsq, tr!("speech-fsq"));
+                        crate::chrome::checkbox(ui, &mut d.include_snr, tr!("speech-include-snr"))
+                            .on_hover_text(tr!("speech-include-snr", "hint"));
+                        ui.end_row();
+                        crate::chrome::checkbox(ui, &mut d.ft8_qso, tr!("speech-ft8-qso"))
+                            .on_hover_text(tr!("speech-ft8-qso", "hint"));
+                        ui.end_row();
+                    },
+                );
 
-            ui.add_space(8.0);
-            ui.label(RichText::new("Reading decoded text aloud").strong());
-            ui.horizontal(|ui| {
-                crate::chrome::checkbox(ui, &mut cfg.text.cw, "CW");
-                crate::chrome::checkbox(ui, &mut cfg.text.rtty_psk, "RTTY, PSK, Olivia, THOR, FSQ");
-            });
-            crate::chrome::checkbox(
-                ui,
-                &mut cfg.text.cw_only_when_locked,
-                "CW only while the decoder is locked",
-            )
-            .on_hover_text("Reading an unlocked decoder's output is worse than silence");
-            ui.label(
-                RichText::new(
-                    "Both are off by default. A decoder produces text faster than speech reads \
-                     it, so anything that falls too far behind the live audio is dropped rather \
-                     than queued.",
-                )
-                .weak(),
-            );
-
-            ui.add_space(8.0);
-            ui.label(RichText::new("Tuning up").strong());
-            crate::chrome::checkbox(
-                ui,
-                &mut cfg.tune.swr_while_tuning,
-                "Read the SWR out while TUNE is held",
-            );
-            ui.add_enabled_ui(cfg.tune.swr_while_tuning, |ui| {
+                ui.add_space(8.0);
+                ui.label(RichText::new(tr!("speech-reading-text")).strong());
                 ui.horizontal(|ui| {
-                    ui.label("Every");
-                    crate::chrome::slider(
+                    crate::chrome::checkbox(ui, &mut cfg.text.cw, tr!("speech-text-cw"));
+                    crate::chrome::checkbox(
                         ui,
-                        egui::Slider::new(&mut cfg.tune.period_s, 1.0..=10.0)
-                            .step_by(0.5)
-                            .suffix(" s"),
+                        &mut cfg.text.rtty_psk,
+                        tr!("speech-text-rtty-psk"),
                     );
                 });
-            });
-            crate::chrome::checkbox(
-                ui,
-                &mut cfg.tune.summary_after_tune,
-                "Report the best match on release",
-            );
-            crate::chrome::checkbox(
-                ui,
-                &mut cfg.tune.alarm_always,
-                "Warn about high SWR during any transmission",
-            );
-
-            ui.add_space(8.0);
-            ui.label(RichText::new("How things are read").strong());
-            egui::Grid::new("speech-style").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                ui.label("Frequencies");
-                crate::app::settings::enum_combo(
+                crate::chrome::checkbox(
                     ui,
-                    "speech-freq-style",
-                    &mut cfg.freq_style,
-                    &FreqStyle::ALL,
-                    FreqStyle::label,
-                );
-                ui.end_row();
-                ui.label("Callsigns");
-                crate::app::settings::enum_combo(
-                    ui,
-                    "speech-call-style",
-                    &mut cfg.callsign_style,
-                    &CallsignStyle::ALL,
-                    CallsignStyle::label,
-                );
-                ui.end_row();
-            });
+                    &mut cfg.text.cw_only_when_locked,
+                    tr!("speech-text-cw-locked"),
+                )
+                .on_hover_text(tr!("speech-text-cw-locked", "hint"));
+                ui.label(RichText::new(tr!("speech-text-note")).weak());
 
-            ui.add_space(6.0);
-            crate::chrome::checkbox(ui, &mut cfg.duck_on_ptt, "Stay quiet while transmitting")
-                .on_hover_text(
-                    "Speech goes to your speakers, and therefore into your microphone. High-SWR \
-                 warnings still get through.",
+                ui.add_space(8.0);
+                ui.label(RichText::new(tr!("speech-tuning-up")).strong());
+                crate::chrome::checkbox(
+                    ui,
+                    &mut cfg.tune.swr_while_tuning,
+                    tr!("speech-swr-while-tuning"),
                 );
-        });
+                ui.add_enabled_ui(cfg.tune.swr_while_tuning, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(tr!("speech-swr-every"));
+                        crate::chrome::slider(
+                            ui,
+                            egui::Slider::new(&mut cfg.tune.period_s, 1.0..=10.0)
+                                .step_by(0.5)
+                                .suffix(" s"),
+                        );
+                    });
+                });
+                crate::chrome::checkbox(
+                    ui,
+                    &mut cfg.tune.summary_after_tune,
+                    tr!("speech-swr-summary"),
+                );
+                crate::chrome::checkbox(ui, &mut cfg.tune.alarm_always, tr!("speech-swr-alarm"));
+
+                ui.add_space(8.0);
+                ui.label(RichText::new(tr!("speech-how-read")).strong());
+                egui::Grid::new("speech-style").num_columns(2).spacing([12.0, 6.0]).show(
+                    ui,
+                    |ui| {
+                        ui.label(tr!("speech-frequencies"));
+                        crate::app::settings::enum_combo(
+                            ui,
+                            "speech-freq-style",
+                            &mut cfg.freq_style,
+                            &FreqStyle::ALL,
+                            FreqStyle::tr,
+                        );
+                        ui.end_row();
+                        ui.label(tr!("speech-callsigns"));
+                        crate::app::settings::enum_combo(
+                            ui,
+                            "speech-call-style",
+                            &mut cfg.callsign_style,
+                            &CallsignStyle::ALL,
+                            CallsignStyle::tr,
+                        );
+                        ui.end_row();
+                    },
+                );
+
+                ui.add_space(6.0);
+                crate::chrome::checkbox(ui, &mut cfg.duck_on_ptt, tr!("speech-quiet-on-tx"))
+                    .on_hover_text(tr!("speech-quiet-on-tx", "hint"));
+            });
     });
 
     ui.add_space(8.0);
+    ui.label(RichText::new(tr!("speech-device-note")).weak());
+}
+
+/// The language picker: the system's language first, then every language a
+/// translation is carried for, each under its own name.
+fn language_combo(ui: &mut egui::Ui, cur: &mut sdroxide_types::UiLanguage) {
+    use sdroxide_types::UiLanguage;
+    let system = tr!("settings-ui-language-system", language = crate::i18n::system_language_name());
+    let langs = crate::i18n::languages();
+    let shown = match cur.tag() {
+        None => system.clone(),
+        Some(tag) => {
+            langs.iter().find(|l| l.tag == tag).map_or(tag.to_string(), |l| l.name.clone())
+        }
+    };
+    ComboBox::from_id_salt("ui-language").selected_text(shown).show_styled(ui, |ui| {
+        ui.selectable_value(cur, UiLanguage::SYSTEM, system);
+        for lang in langs {
+            if let Some(pick) = UiLanguage::from_tag(&lang.tag) {
+                ui.selectable_value(cur, pick, &lang.name);
+            }
+        }
+    });
+}
+
+/// **Workspaces** — SDRuno's saved window arrangements: which modules are in
+/// their own OS windows and where those windows are. Save captures the
+/// arrangement as it stands; a name is a chip that puts it back. Kept with the
+/// undocked rows it acts on: the same subject, one screen. The first ten are
+/// also on `Ctrl+Alt+1…9, 0`.
+///
+/// Native only, like the undocked rows — the browser has one window and nothing
+/// to arrange.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn workspaces_section(
+    ui: &mut egui::Ui,
+    cfg: &mut sdroxide_types::UiSettings,
+    workspaces: &mut Vec<sdroxide_types::Workspace>,
+    name: &mut String,
+) {
+    use sdroxide_types::{WORKSPACE_MAX, Workspace};
     ui.label(
-        RichText::new(
-            "Announcements play on their own sound device, so they are never recorded and never \
-             sent to anyone listening remotely. Keys for speaking the status, repeating the last \
-             announcement and stopping mid-sentence are on the Controls tab.",
-        )
-        .weak(),
+        RichText::new(tr!("settings-ui-workspaces"))
+            .size(14.0)
+            .strong()
+            .color(crate::theme::CYAN()),
     );
+    ui.add_space(2.0);
+    ui.label(RichText::new(tr!("settings-ui-workspaces-note")).size(11.0).weak());
+    ui.add_space(6.0);
+
+    if workspaces.is_empty() {
+        ui.label(RichText::new(tr!("settings-ui-workspaces-none")).size(11.0).weak());
+    }
+    let mut apply: Option<usize> = None;
+    let mut delete: Option<usize> = None;
+    for (i, ws) in workspaces.iter().enumerate() {
+        ui.horizontal(|ui| {
+            // The key that recalls it, so the list doubles as the key map.
+            let key = if i < 9 { format!("{}", i + 1) } else { "0".to_string() };
+            ui.label(RichText::new(format!("Ctrl+Alt+{key}")).monospace().size(11.0).weak());
+            let out = ws.slots.iter().filter(|s| s.detached).count();
+            let chip =
+                crate::chrome::chip(ui, false, ws.name.as_str()).on_hover_text(if out == 0 {
+                    tr!("settings-ui-workspace-restore-home").to_string()
+                } else {
+                    tr!("settings-ui-workspace-restore-out", n = out)
+                });
+            if chip.clicked() {
+                apply = Some(i);
+            }
+            if crate::chrome::chip(ui, false, "×")
+                .on_hover_text(tr!("settings-ui-workspace-forget"))
+                .clicked()
+            {
+                delete = Some(i);
+            }
+        });
+    }
+
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        crate::chrome::field_sized(
+            ui,
+            egui::vec2(220.0, 0.0),
+            egui::TextEdit::singleline(name).hint_text(tr!("settings-ui-workspace-name")),
+        );
+        let named = !name.trim().is_empty();
+        let replaces = workspaces.iter().any(|w| w.name == name.trim());
+        let full = workspaces.len() >= WORKSPACE_MAX && !replaces;
+        let can_save = named && !full;
+        let save =
+            crate::chrome::chip_enabled(ui, can_save, false, &tr!("settings-ui-workspace-save"))
+                .on_hover_text(if full {
+                    tr!("settings-ui-workspace-full")
+                } else if named {
+                    tr!("settings-ui-workspace-save-hint").to_string()
+                } else {
+                    tr!("settings-ui-workspace-name-first").to_string()
+                });
+        if save.clicked() {
+            let n = name.trim().to_string();
+            // Saving over an existing name replaces it rather than making a
+            // duplicate row the operator then has to tell apart.
+            if let Some(slot) = workspaces.iter_mut().find(|w| w.name == n) {
+                *slot = Workspace::capture(n, cfg);
+            } else {
+                workspaces.push(Workspace::capture(n, cfg));
+            }
+            name.clear();
+        }
+    });
+
+    if let Some(i) = delete {
+        workspaces.remove(i);
+    }
+    if let Some(i) = apply {
+        workspaces[i].apply(cfg);
+    }
+}
+
+/// A detachable module's name in the settings rows, in the interface language.
+#[cfg(not(target_arch = "wasm32"))]
+fn module_label(m: sdroxide_types::DetachableModule) -> String {
+    use sdroxide_types::DetachableModule as M;
+    match m {
+        M::Panadapter => tr!("settings-ui-module-panadapter"),
+        M::Panel => tr!("multi-module-panel"),
+        M::Controls => tr!("settings-ui-module-controls"),
+        M::AuxPanadapter => tr!("settings-ui-module-aux"),
+        M::BandMenu => tr!("settings-ui-module-band-menu"),
+    }
 }

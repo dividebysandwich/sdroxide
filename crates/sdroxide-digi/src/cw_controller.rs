@@ -213,6 +213,10 @@ pub struct CwController {
     /// and replaced wholesale each time, so the last word or two visibly firms
     /// up instead of appearing late.
     rx_pending: String,
+    /// Settled text appended since the last poll, handed out as
+    /// [`DigiAction::CwText`] and cleared. Kept apart from `rx_text`, which is
+    /// trimmed from the front and so cannot say what is new.
+    rx_new: String,
     /// The neural decoder, when it is the engine in force and the model
     /// loaded. `None` means the classic decoder's text is what the panel shows
     /// — either because the operator asked for it ([`DigiConfig::cw_engine`],
@@ -250,6 +254,8 @@ pub struct CwController {
     /// way to hear a hand keyed into its sound card, and can only send the
     /// timed text a message commits to. Such a radio never enters the mode.
     straight: bool,
+    /// The operator's PTT is holding the over. See [`Self::set_ptt_hold`].
+    ptt_hold: bool,
     /// Output samples the straight key has been continuously down for, so a
     /// lost key-up can be capped (see [`STRAIGHT_MAX_HOLD_S`]).
     straight_held_samples: usize,
@@ -313,6 +319,7 @@ impl CwController {
             rx_rs: MonoResampler::new(tap_rate, CW_RATE),
             rx_text: String::new(),
             rx_pending: String::new(),
+            rx_new: String::new(),
             deep,
             deep_failed,
             tuner: Tuner::new(tap_rate, pitch as f64),
@@ -328,6 +335,7 @@ impl CwController {
             tx_active: false,
             keyed: false,
             straight: false,
+            ptt_hold: false,
             straight_held_samples: 0,
             tx_watchdog: false,
             last_sent: 0,
@@ -356,8 +364,19 @@ impl CwController {
             && self.deep.is_some()
         {
             self.rx_text.push(' ');
+            self.rx_new.push(' ');
         }
         self.rx_text.push_str(text);
+        // What is new goes out once, whole; bounded like the window, in case
+        // nothing has polled for a while.
+        self.rx_new.push_str(text);
+        if self.rx_new.len() > RX_TEXT_CAP {
+            let cut = self.rx_new.len() - RX_TEXT_CAP;
+            let cut = (cut..self.rx_new.len())
+                .find(|&i| self.rx_new.is_char_boundary(i))
+                .unwrap_or(self.rx_new.len());
+            self.rx_new.drain(..cut);
+        }
         if self.rx_text.len() > RX_TEXT_CAP {
             let cut = self.rx_text.len() - RX_TEXT_CAP;
             let cut = (cut..self.rx_text.len())
@@ -544,8 +563,11 @@ impl CwController {
             tx_even: false,
             transmitting: self.on_air(now),
             tx_watchdog: self.tx_watchdog,
+            tx_refused: None,
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
+            jtty: None,
+            vara: None,
             text_rx: self.rx_display(),
             tx_sent: self.sent_chars(now),
             fsq_heard: Vec::new(),
@@ -666,6 +688,9 @@ impl DigiEngine for CwController {
             self.last_cw = cw;
             self.status_dirty = true;
         }
+        if !self.rx_new.is_empty() {
+            actions.push(DigiAction::CwText(std::mem::take(&mut self.rx_new)));
+        }
         if self.status_dirty {
             self.status_dirty = false;
             actions.push(DigiAction::Status(self.build_status(now)));
@@ -695,14 +720,16 @@ impl DigiEngine for CwController {
             // an element is not a finished over, and the operator still holding
             // the frequency between elements must keep it through the idle
             // hang rather than getting a PTT cycle per character.
-            if !self.straight && self.cfg.send_on_enter && self.over_had_text {
+            if !self.straight && !self.ptt_hold && self.cfg.send_on_enter && self.over_had_text {
                 self.over_had_text = false;
                 self.tx_active = false;
                 self.status_dirty = true;
             }
             self.idle_samples += out.len();
             let idle_s = self.cfg.cw_tx_idle_s.max(0.0);
-            if idle_s == 0.0 || self.idle_samples as f32 > idle_s * OUT_RATE as f32 {
+            if !self.ptt_hold
+                && (idle_s == 0.0 || self.idle_samples as f32 > idle_s * OUT_RATE as f32)
+            {
                 self.tx_active = false;
                 self.status_dirty = true;
             }
@@ -788,6 +815,7 @@ impl DigiEngine for CwController {
         // rebuilds it. Every controller in this crate keys through the same
         // latch, so every one of them clears it here.
         self.keyed = false;
+        self.ptt_hold = false;
         self.tx.clear();
         self.tx48.clear();
         self.tx_buffer.clear();
@@ -933,6 +961,34 @@ impl DigiEngine for CwController {
         self.status_dirty = true;
     }
 
+    /// The operator's PTT (#625): held, the over stays keyed and silent — no
+    /// idle hang, no end on a sent line — and the key or the keyer sends inside
+    /// it; released, the over ends at once. A rig that keys itself from text
+    /// declines, and plain PTT keys it as before.
+    ///
+    /// A release also ends an over the key or the keyer started. Declined, it
+    /// fell to the voice path, which unkeyed the radio but left this latched,
+    /// and nothing keyed again until CLEAR (#716).
+    fn set_ptt_hold(&mut self, on: bool) -> bool {
+        if self.cat.is_some() || (!on && !self.ptt_hold && !self.tx_active) {
+            return false;
+        }
+        self.ptt_hold = on;
+        if on {
+            if !self.tx_active {
+                self.set_tx_active(true);
+            }
+        } else {
+            if self.straight {
+                self.tx.set_held(false);
+                self.straight_held_samples = 0;
+            }
+            self.tx_active = false;
+        }
+        self.status_dirty = true;
+        true
+    }
+
     /// Where the straight key sits this instant, while [`Self::straight`] is
     /// engaged. A key-down over an off transmitter starts the over — keying is
     /// itself the instruction to transmit, exactly as typing in the box is.
@@ -962,6 +1018,11 @@ impl DigiEngine for CwController {
     /// gesture — the CLEAR RX chip says "the decode windows are clean", so the
     /// read-back goes with them rather than lingering from the last over.
     fn clear_rx(&mut self) {
+        // The window starts over but a UDP listener's copy does not: end what
+        // it has with a space, or the next commit runs into the last word.
+        if self.rx_text.ends_with(|c: char| c != ' ') {
+            self.rx_new.push(' ');
+        }
         self.rx_text.clear();
         self.rx_pending.clear();
         self.sent_text.clear();
@@ -1008,6 +1069,31 @@ mod tests {
         c.set_tx_text("CQ CQ DE W1AW".into());
         c.set_tx_active(true);
         assert!(keys(&mut c), "a refused over must not cost every later one");
+    }
+
+    /// Settled text goes out once, as it settles, with the space between
+    /// words that the window has — so a listener that appends every
+    /// [`DigiAction::CwText`] ends up with what the panel shows.
+    #[test]
+    fn settled_text_is_handed_out_once() {
+        let mut c = CwController::new(cfg(), 48_000.0, None);
+        fn texts(c: &mut CwController) -> Vec<String> {
+            c.poll(SystemTime::now(), 14_030_000.0)
+                .into_iter()
+                .filter_map(|a| match a {
+                    DigiAction::CwText(t) => Some(t),
+                    _ => None,
+                })
+                .collect()
+        }
+        assert!(texts(&mut c).is_empty(), "nothing decoded, nothing sent");
+
+        c.append_rx("CQ CQ ");
+        c.append_rx("DE W1AW");
+        let sent = texts(&mut c).concat();
+        assert!(sent.starts_with("CQ CQ ") && sent.ends_with("W1AW"), "got {sent:?}");
+        assert_eq!(sent, c.rx_text, "what is sent is what the window holds");
+        assert!(texts(&mut c).is_empty(), "sent once, not again");
     }
 
     /// Settle the receive window: the model decodes on its own thread, so the
@@ -1236,6 +1322,43 @@ mod tests {
         c.key_down(true);
         c.key_down(false);
         assert!(!c.status().tx_watchdog, "the flag outlived the next press");
+    }
+
+    /// Issue #625: PTT held keys the transmitter with no carrier and outlasts
+    /// the idle hang; the straight key sends inside it; releasing PTT ends the
+    /// over at once.
+    #[test]
+    fn ptt_holds_a_silent_over_that_the_key_sends_inside() {
+        let mut c = CwController::new(cfg(), 48_000.0, None);
+        c.set_straight(true);
+        assert!(c.set_ptt_hold(true));
+        c.poll(SystemTime::now(), 14_030_000.0);
+        assert!(c.tx_burst_active(), "PTT should key the over");
+
+        let mut blk = [0.0f32; 480];
+        let past_hang = (TX_IDLE_S * OUT_RATE as f32 / blk.len() as f32) as usize + 10;
+        for _ in 0..past_hang {
+            assert!(!c.fill_tx_block(&mut blk), "the over ended under a held PTT");
+            assert!(blk.iter().all(|s| s.abs() < 1e-3), "PTT alone put a carrier out");
+        }
+
+        c.key_down(true);
+        let mut peak = 0.0f32;
+        for _ in 0..20 {
+            c.fill_tx_block(&mut blk);
+            peak = blk.iter().fold(peak, |p, s| p.max(s.abs()));
+        }
+        assert!(peak > 0.5, "the key sent nothing inside the PTT");
+        c.key_down(false);
+        for _ in 0..past_hang {
+            assert!(!c.fill_tx_block(&mut blk), "a key-up ended the over under PTT");
+        }
+
+        assert!(c.set_ptt_hold(false));
+        let ended = (0..20).any(|_| c.fill_tx_block(&mut blk));
+        assert!(ended, "releasing PTT did not end the over");
+        // A release with no hold is not this mode's to take.
+        assert!(!c.set_ptt_hold(false));
     }
 
     /// A refused or aborted over lifts the key and leaves the mode engaged: the

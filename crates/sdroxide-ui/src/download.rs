@@ -1,6 +1,8 @@
 //! Save a file from the UI. Native pops a "Save As" dialog; wasm triggers a
 //! browser download via a Blob + anchor click.
 
+use crate::i18n::tr;
+
 /// The MIME type a browser download is labelled with. Native ignores it — the
 /// name and the bytes are all a filesystem needs — but a browser hands the file
 /// to whatever the type says, so a picture saved as `text/plain` opens in a text
@@ -80,7 +82,11 @@ pub fn load_text(filter_name: &str, exts: &[&str], inbox: LoadInbox) {
             // ASCII — over a code page in one name field.
             let outcome = match std::fs::read(&path) {
                 Ok(bytes) => Ok(decode_text(&bytes)),
-                Err(e) => Err(format!("reading {}: {e}", path.display())),
+                Err(e) => Err(tr!(
+                    "download-reading",
+                    path = path.display().to_string(),
+                    error = e.to_string()
+                )),
             };
             if let Ok(mut g) = inbox.lock() {
                 *g = Some(outcome);
@@ -240,14 +246,14 @@ pub fn load_text(_filter_name: &str, exts: &[&str], inbox: LoadInbox) {
             if let Ok(mut g) = ok_inbox.lock() {
                 *g = Some(match loaded {
                     Some(l) => Ok(l),
-                    None => Err("the browser could not read that file".into()),
+                    None => Err(tr!("download-browser-could-not-read-file").into()),
                 });
             }
         });
         let err_inbox = inbox.clone();
         let on_error = Closure::<dyn FnMut()>::new(move || {
             if let Ok(mut g) = err_inbox.lock() {
-                *g = Some(Err("the browser could not read that file".into()));
+                *g = Some(Err(tr!("download-browser-could-not-read-file").into()));
             }
         });
         reader.set_onload(Some(on_load.as_ref().unchecked_ref()));

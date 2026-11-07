@@ -304,6 +304,10 @@ impl IqSource for SdrPlaySource {
         self.handle.set_rx_paused(paused);
     }
 
+    fn discard_pending_rx(&mut self) {
+        self.handle.discard_rx();
+    }
+
     fn sample_rate(&self) -> f64 {
         self.handle.out_rate_hz()
     }

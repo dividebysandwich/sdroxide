@@ -6,5 +6,6 @@ edition.workspace = true
 [dependencies]
 cpal = "0.18.2"
 rtrb.workspace = true
+sdroxide-types.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

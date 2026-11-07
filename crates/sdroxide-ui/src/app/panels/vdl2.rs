@@ -20,6 +20,7 @@
 //! of the plan, whether it is live and how many frames it has produced — and the
 //! counters that separate "nothing arriving" from "arriving and not decoding".
 
+use crate::i18n::tr;
 use eframe::egui::{self, RichText};
 use sdroxide_types::{Command, Vdl2Message, Vdl2Payload, Vdl2Station, Vdl2Status};
 
@@ -51,7 +52,7 @@ impl SdroxideApp {
         let st: Vdl2Status = match self.vdl2_status.as_ref() {
             Some(s) => (**s).clone(),
             None => {
-                ui.label(RichText::new("starting the VDL2 decoder…").weak());
+                ui.label(RichText::new(tr!("vdl2-starting-vdl2-decoder")).weak());
                 return;
             }
         };
@@ -105,14 +106,10 @@ impl SdroxideApp {
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(22.0);
             ui.label(RichText::new("VDL2").size(11.0).strong().color(theme::CYAN()));
-            ui.label(RichText::new("aircraft datalink").weak().size(10.5));
+            ui.label(RichText::new(tr!("vdl2-aircraft-datalink")).weak().size(10.5));
 
             if crate::chrome::chip(ui, centred, "136.8125")
-                .on_hover_text(
-                    "Tune to the middle of the VDL2 group. The decoder's own window slides \
-                     from there to take in as many of the fourteen channels as the receiver \
-                     can reach.",
-                )
+                .on_hover_text(tr!("vdl2-tune-middle-vdl2-group-decoder"))
                 .clicked()
             {
                 cmds.push(Command::SetVfo {
@@ -122,37 +119,34 @@ impl SdroxideApp {
             }
 
             ui.separator();
-            slot(ui, 70.0, &format!("{} frames", count(st.frames)), theme::CYAN());
-            slot(ui, 70.0, &format!("{} bursts", count(st.bursts)), theme::gray(150));
+            slot(ui, 70.0, &tr!("vdl2-frames", frames = count(st.frames)), theme::CYAN());
+            slot(ui, 70.0, &tr!("vdl2-bursts", bursts = count(st.bursts)), theme::gray(150));
             // These are the diagnosis, in the order the chain fails in. Bursts
             // without syncs is a channel busy with something else; syncs
             // without headers is a decoder problem; headers without frames,
             // with this climbing, is a decoder problem one layer further in;
             // and a bad frame check is this decoder misreading a frame the
             // radio path delivered intact.
-            slot(ui, 62.0, &format!("{} sync", count(st.syncs)), theme::gray(120));
-            slot(ui, 76.0, &format!("{} HDLC bad", count(st.hdlc_bad)), theme::gray(120));
-            slot(ui, 68.0, &format!("{} bad FCS", count(st.fcs_bad)), theme::gray(120));
+            slot(ui, 62.0, &tr!("vdl2-sync", syncs = count(st.syncs)), theme::gray(120));
+            slot(ui, 76.0, &tr!("vdl2-hdlc-bad", hdlc_bad = count(st.hdlc_bad)), theme::gray(120));
+            slot(ui, 68.0, &tr!("vdl2-bad-fcs", fcs_bad = count(st.fcs_bad)), theme::gray(120));
 
             if st.window_rate_hz > 0.0 {
                 slot(
                     ui,
                     150.0,
                     &format!(
-                        "{:.3} MHz / {:.0} kHz",
-                        st.window_center_hz / 1e6,
-                        st.window_rate_hz / 1e3
+                        "{e6:.3} MHz / {e3:.0} kHz",
+                        e6 = st.window_center_hz / 1e6,
+                        e3 = st.window_rate_hz / 1e3
                     ),
                     theme::gray(120),
                 );
             }
 
             ui.separator();
-            if crate::chrome::chip(ui, self.show_vdl2_setup, "SETUP")
-                .on_hover_text(
-                    "Which channels to listen on, how hard a burst has to be, \
-                                and how much log to keep",
-                )
+            if crate::chrome::chip(ui, self.show_vdl2_setup, tr!("vdl2-setup"))
+                .on_hover_text(tr!("vdl2-which-channels-listen-how-hard"))
                 .clicked()
             {
                 self.show_vdl2_setup = !self.show_vdl2_setup;
@@ -161,7 +155,7 @@ impl SdroxideApp {
                 ui,
                 !st.messages.is_empty(),
                 "sdroxide-vdl2-log.txt",
-                "Save the VDL2 message log to a file",
+                &tr!("vdl2-save-vdl2-message-log-file"),
                 || crate::app::save_text::vdl2_log_text(&st.messages),
             );
         });
@@ -192,16 +186,22 @@ impl SdroxideApp {
                     };
                     let what = sdroxide_types::VDL2_CHANNEL_LABELS
                         .get(i)
-                        .copied()
-                        .unwrap_or("VDL2 channel");
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| tr!("vdl2-vdl2-channel"));
                     let hover = match &c.reason {
-                        Some(r) => format!("{:.3} MHz, {what} — {r}", c.freq_hz / 1e6),
-                        None => format!(
-                            "{:.3} MHz, {what} — {} bursts, {} frames, noise floor {:.0} dBFS",
-                            c.freq_hz / 1e6,
-                            c.bursts,
-                            c.frames,
-                            c.floor_dbfs
+                        Some(r) => format!(
+                            "{e6:.3} MHz, {what} — {value}",
+                            e6 = c.freq_hz / 1e6,
+                            what = what,
+                            value = r
+                        ),
+                        None => tr!(
+                            "vdl2-mhz-bursts-frames-noise-floor",
+                            mhz = format!("{:.3}", c.freq_hz / 1e6),
+                            what = what,
+                            bursts = c.bursts,
+                            frames = c.frames,
+                            floor_dbfs = format!("{:.0}", c.floor_dbfs)
                         ),
                     };
                     // Wide enough for the longest a channel ever reads —
@@ -227,7 +227,12 @@ impl SdroxideApp {
                 ui.label(RichText::new(why).size(10.5).color(theme::HAZARD()));
                 if let Some(hz) = st.suggest_center_hz
                     && (dial - hz).abs() > 1.0
-                    && crate::chrome::chip(ui, false, format!("TUNE {:.3}", hz / 1e6)).clicked()
+                    && crate::chrome::chip(
+                        ui,
+                        false,
+                        tr!("vdl2-tune", mhz = format!("{:.3}", hz / 1e6)),
+                    )
+                    .clicked()
                 {
                     cmds.push(Command::SetVfo { vfo: self.state.active_vfo, hz });
                 }
@@ -247,10 +252,10 @@ impl SdroxideApp {
         let mut hold = self.vdl2_hold.take();
         ui.horizontal(|ui| {
             ui.set_min_height(20.0);
-            ui.label(RichText::new("MESSAGES").strong().size(10.5).color(theme::CYAN()));
+            ui.label(RichText::new(tr!("vdl2-messages")).strong().size(10.5).color(theme::CYAN()));
             ui.add(
                 egui::TextEdit::singleline(&mut self.vdl2_filter)
-                    .hint_text("address, flight, registration or label")
+                    .hint_text(tr!("vdl2-address-flight-registration-label"))
                     .desired_width(190.0),
             );
             if !self.vdl2_filter.is_empty() && crate::chrome::chip(ui, false, "×").clicked() {
@@ -264,17 +269,16 @@ impl SdroxideApp {
             let label = match &hold {
                 Some((_, at)) => {
                     let since = st.frames.saturating_sub(*at);
-                    if since > 0 { format!("HELD  +{}", count(since)) } else { "HELD".to_string() }
+                    if since > 0 {
+                        tr!("vdl2-held-2", since = count(since))
+                    } else {
+                        tr!("vdl2-held").to_string()
+                    }
                 }
-                None => "HOLD".to_string(),
+                None => tr!("vdl2-hold").to_string(),
             };
             if crate::chrome::chip(ui, held, label)
-                .on_hover_text(
-                    "Hold the message log where it is, so one can be read without the next \
-                     transmission pushing it up the screen. The decoder keeps running and \
-                     the counters keep moving; letting go shows everything that arrived \
-                     meanwhile.",
-                )
+                .on_hover_text(tr!("vdl2-hold-message-log-where-so"))
                 .clicked()
             {
                 // The two lists are different lists, so an index into one means
@@ -313,9 +317,9 @@ impl SdroxideApp {
                 if rows.is_empty() {
                     ui.label(
                         RichText::new(if log.is_empty() {
-                            "nothing decoded yet"
+                            tr!("vdl2-nothing-decoded-yet")
                         } else {
-                            "nothing matches the filter"
+                            tr!("vdl2-nothing-matches-filter")
                         })
                         .weak(),
                     );
@@ -342,7 +346,7 @@ impl SdroxideApp {
     fn vdl2_stations(&mut self, ui: &mut egui::Ui, st: &Vdl2Status, now: i64, avail_h: f32) {
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(20.0);
-            ui.label(RichText::new("STATIONS").strong().size(10.5).color(theme::CYAN()));
+            ui.label(RichText::new(tr!("vdl2-stations")).strong().size(10.5).color(theme::CYAN()));
         });
 
         let filter = self.vdl2_filter.trim().to_ascii_uppercase();
@@ -365,7 +369,7 @@ impl SdroxideApp {
             .auto_shrink([false, false])
             .show_themed(ui, |ui| {
                 if rows.is_empty() {
-                    ui.label(RichText::new("nobody heard yet").weak());
+                    ui.label(RichText::new(tr!("vdl2-nobody-heard-yet")).weak());
                 }
                 for (i, s) in rows.iter().enumerate() {
                     if station_row(ui, s, now, i) {
@@ -397,7 +401,7 @@ impl SdroxideApp {
         // arrives and echoes it back in the state, so there is no apply step and
         // no way for the two copies to drift.
         let mut cfg = self.state.vdl2;
-        egui::Window::new("VDL2 Setup")
+        egui::Window::new(tr!("vdl2-vdl2-setup"))
             .id(crate::layout::salted_id(ctx, "Vdl2Setup"))
             .open(&mut open)
             .frame(crate::chrome::window_frame())
@@ -405,33 +409,17 @@ impl SdroxideApp {
             .default_width(crate::layout::window_w(ctx, 420.0))
             .show(ctx, |ui| {
                 crate::chrome::window_body_bg(ui);
-                ui.label(RichText::new("Channels").strong());
-                ui.label(
-                    RichText::new(
-                        "Every 25 kHz slot from 136.650 to 136.975 MHz. One downconverter \
-                         each, all inside the same receiver window. Switching one off saves \
-                         a little processor time; it does not make the others any more \
-                         sensitive.",
-                    )
-                    .size(10.0)
-                    .weak(),
-                );
+                ui.label(RichText::new(tr!("vdl2-channels")).strong());
+                ui.label(RichText::new(tr!("vdl2-every-25-khz-slot-136")).size(10.0).weak());
                 ui.horizontal_wrapped(|ui| {
                     for (i, &hz) in sdroxide_types::VDL2_CHANNELS_HZ.iter().enumerate() {
                         let mut on = cfg.channel_enabled(i);
                         let label = format!("{:.3}", hz / 1e6);
                         let what = sdroxide_types::VDL2_CHANNEL_LABELS[i];
                         let tip = if hz == sdroxide_types::VDL2_CSC_HZ {
-                            format!(
-                                "{what} — in use worldwide, and where every link starts. \
-                                 The one to keep if you keep only one."
-                            )
+                            tr!("vdl2-use-worldwide-where-every-link", what = what)
                         } else {
-                            format!(
-                                "Assigned to an {what}. Which channels carry anything \
-                                 depends on where you are: leave them all on unless you \
-                                 know otherwise."
-                            )
+                            tr!("vdl2-assigned-which-channels-carry-anything", what = what)
                         };
                         if ui.checkbox(&mut on, label).on_hover_text(tip).changed() {
                             if on {
@@ -445,75 +433,66 @@ impl SdroxideApp {
                 ui.add_space(6.0);
 
                 egui::Grid::new("vdl2-cfg").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                    ui.label("Burst threshold");
+                    ui.label(tr!("vdl2-burst-threshold"));
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::DragValue::new(&mut cfg.threshold_db).range(3..=40).suffix(" dB"),
                         );
                         ui.label(
-                            RichText::new("above each channel's own noise floor").size(9.5).weak(),
+                            RichText::new(tr!("vdl2-above-each-channel-s-own")).size(9.5).weak(),
                         );
                     });
                     ui.end_row();
                     ui.label("");
                     ui.label(
-                        RichText::new(
-                            "Lower catches weaker transmissions and costs processor time on \
-                             noise; higher misses them. The floor is learned per channel and \
-                             a change here does not throw it away.",
-                        )
-                        .size(10.0)
-                        .weak(),
+                        RichText::new(tr!("vdl2-lower-catches-weaker-transmissions-costs"))
+                            .size(10.0)
+                            .weak(),
                     );
                     ui.end_row();
 
-                    ui.label("Keep in the log");
+                    ui.label(tr!("vdl2-keep-log"));
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::DragValue::new(&mut cfg.max_messages)
                                 .range(10..=sdroxide_types::VDL2_MESSAGE_MAX)
-                                .suffix(" messages"),
+                                .suffix(tr!("vdl2-messages-2")),
                         );
                     });
                     ui.end_row();
 
-                    ui.label("Track at most");
+                    ui.label(tr!("vdl2-track-most"));
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::DragValue::new(&mut cfg.max_stations)
                                 .range(10..=sdroxide_types::VDL2_STATION_MAX)
-                                .suffix(" stations"),
+                                .suffix(tr!("vdl2-stations-2")),
                         );
-                        ui.label(RichText::new("the longest silent go first").size(9.5).weak());
+                        ui.label(
+                            RichText::new(tr!("vdl2-longest-silent-go-first")).size(9.5).weak(),
+                        );
                     });
                     ui.end_row();
 
-                    ui.label("Forget a station after");
+                    ui.label(tr!("vdl2-forget-station-after"));
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::DragValue::new(&mut cfg.drop_list_s)
                                 .range(30..=21_600)
                                 .suffix(" s"),
                         );
-                        ui.label(RichText::new("with nothing heard from it").size(9.5).weak());
+                        ui.label(RichText::new(tr!("vdl2-nothing-heard")).size(9.5).weak());
                     });
                     ui.end_row();
 
-                    ui.label("Show unread payloads");
+                    ui.label(tr!("vdl2-show-unread-payloads"));
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut cfg.show_other, "as hex");
+                        ui.checkbox(&mut cfg.show_other, tr!("vdl2-hex"));
                     });
                     ui.end_row();
                     ui.label("");
                     ui.label(
-                        RichText::new(
-                            "Frames carrying X.25, CLNP or the datalink applications above \
-                             them. SDRoxide names them and shows the bytes rather than \
-                             reading them, and hiding them would hide how much of the \
-                             traffic that is.",
-                        )
-                        .size(10.0)
-                        .weak(),
+                        RichText::new(tr!("vdl2-frames-carrying-x-25-clnp")).size(10.0).weak(),
                     );
                     ui.end_row();
                 });
@@ -625,15 +604,14 @@ fn vdl2_card(ui: &mut egui::Ui, m: &Vdl2Message, h: f32) {
                 );
             });
             ui.label(
-                RichText::new(format!(
-                    "{:.3} MHz · {:.0} dB SNR · {:.0} dBFS · EVM {:.1}° · \
-                     {:+.0} Hz · {} RS symbols fixed",
-                    m.freq_hz / 1e6,
-                    m.snr_db,
-                    m.rssi_dbfs,
-                    m.evm_deg,
-                    m.freq_err_hz,
-                    m.rs_corrected
+                RichText::new(tr!(
+                    "vdl2-mhz-db-snr-dbfs-evm",
+                    mhz = format!("{:.3}", m.freq_hz / 1e6),
+                    snr_db = format!("{:.0}", m.snr_db),
+                    rssi_dbfs = format!("{:.0}", m.rssi_dbfs),
+                    evm_deg = format!("{:.1}", m.evm_deg),
+                    freq_err_hz = format!("{:+.0}", m.freq_err_hz),
+                    rs_corrected = m.rs_corrected
                 ))
                 .size(9.5)
                 .weak(),
@@ -645,26 +623,30 @@ fn vdl2_card(ui: &mut egui::Ui, m: &Vdl2Message, h: f32) {
                     egui::Grid::new("vdl2-acars").num_columns(2).spacing([10.0, 3.0]).show(
                         ui,
                         |ui| {
-                            kv(ui, "Registration", &a.registration);
-                            kv(ui, "Flight", &a.flight);
-                            kv(ui, "Label", &a.label);
-                            kv(ui, "Block", &a.block_id.to_string());
-                            kv(ui, "Sequence", &a.msn);
-                            kv(ui, "Mode", &a.mode.to_string());
+                            kv(ui, &tr!("vdl2-registration"), &a.registration);
+                            kv(ui, &tr!("vdl2-flight"), &a.flight);
+                            kv(ui, &tr!("vdl2-label"), &a.label);
+                            kv(ui, &tr!("vdl2-block"), &a.block_id.to_string());
+                            kv(ui, &tr!("vdl2-sequence"), &a.msn);
+                            kv(ui, &tr!("vdl2-mode"), &a.mode.to_string());
                             if a.more {
-                                kv(ui, "", "more blocks follow");
+                                kv(ui, "", &tr!("vdl2-more-blocks-follow"));
                             }
                             kv(
                                 ui,
-                                "Check",
-                                if a.crc_ok {
-                                    "message CRC good"
+                                &tr!("vdl2-check"),
+                                &if a.crc_ok {
+                                    tr!("vdl2-message-crc-good")
                                 } else {
-                                    "message CRC not checked"
+                                    tr!("vdl2-message-crc-not-checked")
                                 },
                             );
                             if a.parity_errors > 0 {
-                                kv(ui, "Parity", &format!("{} characters", a.parity_errors));
+                                kv(
+                                    ui,
+                                    &tr!("vdl2-parity"),
+                                    &tr!("vdl2-characters", parity_errors = a.parity_errors),
+                                );
                             }
                         },
                     );
@@ -687,11 +669,9 @@ fn vdl2_card(ui: &mut egui::Ui, m: &Vdl2Message, h: f32) {
                     );
                     if x.unknown > 0 {
                         ui.label(
-                            RichText::new(format!(
-                                "{} parameter{} SDRoxide does not read — shown above as \
-                                 identifier and bytes",
-                                x.unknown,
-                                if x.unknown == 1 { "" } else { "s" }
+                            RichText::new(tr!(
+                                "vdl2-parameter-sdroxide-does-not-read",
+                                unknown = x.unknown
                             ))
                             .size(9.5)
                             .weak(),
@@ -703,7 +683,7 @@ fn vdl2_card(ui: &mut egui::Ui, m: &Vdl2Message, h: f32) {
                     ui.label(RichText::new(hex).monospace().size(9.5).weak());
                 }
                 Vdl2Payload::None => {
-                    ui.label(RichText::new("link control, no payload").size(10.5).weak());
+                    ui.label(RichText::new(tr!("vdl2-link-control-no-payload")).size(10.5).weak());
                 }
             }
 
@@ -748,12 +728,12 @@ fn station_head_row(ui: &mut egui::Ui, sort: &mut Vdl2Sort, desc: &mut bool) {
     crate::app::panels::widgets::sort_head_row(
         ui,
         &[
-            (cols.name, L, "NAME", Some(Vdl2Sort::Name)),
-            (cols.addr, L, "ADDR", Some(Vdl2Sort::Address)),
+            (cols.name, L, &tr!("vdl2-name"), Some(Vdl2Sort::Name)),
+            (cols.addr, L, &tr!("vdl2-addr"), Some(Vdl2Sort::Address)),
             // Ground station or aircraft, which is two values: an order on it
             // would be a grouping, and the address column already gives one.
-            (cols.kind, L, "TYPE", None),
-            (cols.msgs, R, "MSGS", Some(Vdl2Sort::Messages)),
+            (cols.kind, L, &tr!("vdl2-type"), None),
+            (cols.msgs, R, &tr!("vdl2-msgs"), Some(Vdl2Sort::Messages)),
             (cols.sig, R, "SIG", Some(Vdl2Sort::Signal)),
             (cols.age, R, "AGE", Some(Vdl2Sort::Heard)),
         ],

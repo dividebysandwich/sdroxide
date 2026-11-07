@@ -1,6 +1,7 @@
 //! `RemoteController`: the same UI seam as `LocalController`, but over a
 //! WebSocket speaking `sdroxide-proto`. Compiles for wasm32 and native.
 
+use crate::i18n::tr;
 use std::collections::VecDeque;
 
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
@@ -32,6 +33,11 @@ pub trait AudioBridge {
     fn set_device(&mut self, output: bool, name: Option<String>) {
         let _ = (output, name);
     }
+    /// Which speaker channel(s) the received audio reaches (#654). The browser
+    /// bridge keeps the default — the browser owns device routing there.
+    fn set_routing(&mut self, routing: sdroxide_types::AudioRouting) {
+        let _ = routing;
+    }
 }
 
 /// How long an over may run with the microphone producing nothing before the
@@ -57,14 +63,28 @@ fn mic_silence_due(now: f64, started: f64, samples: usize, already_said: bool) -
 /// bites if the socket never opens at all.
 const OUTBOX_LIMIT: usize = 64;
 
-/// Open a socket that wakes the UI on every event.
+/// Where a dial leaves the SHA-256 of a `wss://` certificate it refused — see
+/// [`RadioController::untrusted_cert`]. Written from the socket thread during
+/// the handshake, read by the UI once the failure has arrived. Always empty in
+/// the browser, which checks certificates itself.
+pub(crate) type RefusedCert = std::sync::Arc<std::sync::Mutex<Option<String>>>;
+
+/// Open a socket that wakes the UI on every event. Each dial has a slot of its
+/// own for a refused certificate, so a fingerprint never outlives the attempt
+/// that saw it.
 fn dial(
     url: &str,
     wake: &std::sync::Arc<dyn Fn() + Send + Sync>,
-) -> Result<(WsSender, WsReceiver), String> {
+) -> Result<(WsSender, WsReceiver, RefusedCert), String> {
     let wake = std::sync::Arc::clone(wake);
-    ewebsock::connect_with_wakeup(url, ewebsock::Options::default(), move || wake())
-        .map_err(|e| e.to_string())
+    let refused = RefusedCert::default();
+    #[cfg(not(target_arch = "wasm32"))]
+    let options = crate::remote_tls::options_for(url, &refused);
+    #[cfg(target_arch = "wasm32")]
+    let options = ewebsock::Options::default();
+    let (sender, receiver) =
+        ewebsock::connect_with_wakeup(url, options, move || wake()).map_err(|e| e.to_string())?;
+    Ok((sender, receiver, refused))
 }
 
 /// Outbound gate: nothing the UI produces reaches the socket until the
@@ -148,6 +168,8 @@ pub struct RemoteController {
     /// drops, without rebuilding the app around a new controller.
     url: String,
     wake: std::sync::Arc<dyn Fn() + Send + Sync>,
+    /// The certificate the current dial was refused for, if it was.
+    refused_cert: RefusedCert,
     outbox: Outbox,
     /// Where this connection stands with the server's sign-in challenge, for
     /// the UI to put a dialog up against.
@@ -201,6 +223,12 @@ pub struct RemoteController {
     /// Re-announced *within* a session as well, whenever the station's roster
     /// changes: by this client, by another one, or at the station itself.
     peers: Option<(u32, Vec<sdroxide_proto::RadioInfo>)>,
+    /// The `me` of the last roster heard, kept across reconnects where
+    /// `peers` is not. A reconnecting tab dials the same address and so reaches
+    /// the same radio; until the fresh roster lands it still has to answer to
+    /// that radio's canonical URL, or the shell sees the radio as unopened in
+    /// the gap and dials a second session to it (#646).
+    last_me: Option<u32>,
     /// Whether that station takes roster edits from here, as it said with the
     /// roster ([`RadioController::station_roster_editable`]).
     peers_editable: bool,
@@ -251,6 +279,15 @@ fn window_elapsed(now: f64, sent: f64, window: f64) -> bool {
 /// connection is already on: everything up to the endpoint, then the radio's
 /// own. Keeps whatever the operator typed — the scheme, a port, a reverse
 /// proxy's path prefix — and changes only which radio is being asked for.
+/// The address a session answers to: its radio's canonical `/ws/<id>` once
+/// the far end has said which radio it is, else whatever was dialled.
+fn canonical_url(dialled: &str, me: Option<u32>) -> String {
+    match me {
+        Some(me) => radio_url(dialled, me),
+        None => dialled.to_owned(),
+    }
+}
+
 fn radio_url(connected_to: &str, id: u32) -> String {
     let base = match connected_to.rfind("/ws") {
         Some(i) => &connected_to[..i],
@@ -269,12 +306,13 @@ impl RemoteController {
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Result<Self, String> {
         let wake: std::sync::Arc<dyn Fn() + Send + Sync> = std::sync::Arc::new(wake);
-        let (sender, receiver) = dial(url, &wake)?;
+        let (sender, receiver, refused_cert) = dial(url, &wake)?;
         Ok(RemoteController {
             sender,
             receiver,
             url: url.to_string(),
             wake,
+            refused_cert,
             outbox: Outbox::default(),
             auth: AuthPhase::Open,
             audio,
@@ -296,6 +334,7 @@ impl RemoteController {
             probe_answers: VecDeque::new(),
             muted: false,
             peers: None,
+            last_me: None,
             peers_editable: false,
         })
     }
@@ -348,6 +387,7 @@ impl RemoteController {
             ServerMsg::MemoryFolders(f) => self.pending.push_back(RadioEvent::MemoryFolders(f)),
             ServerMsg::Scanner(c) => self.pending.push_back(RadioEvent::Scanner(c)),
             ServerMsg::Profiles(p) => self.pending.push_back(RadioEvent::Profiles(p)),
+            ServerMsg::PictureUpload(st) => self.pending.push_back(RadioEvent::PictureUpload(st)),
             // Dropped rather than decoded while another tab holds the page's
             // single output: the work saved is the point on a browser tab
             // holding several radios.
@@ -384,7 +424,7 @@ impl RemoteController {
             }
             ServerMsg::Pong(_) => {}
             ServerMsg::Busy => self.pending.push_back(RadioEvent::ConnectionLost(
-                "server busy — another client is connected".into(),
+                tr!("remote-server-busy-another-client-connected").into(),
             )),
             ServerMsg::Error(e) => self.pending.push_back(RadioEvent::ConnectionLost(e)),
             ServerMsg::Notice(n) => self.pending.push_back(RadioEvent::Notice(n)),
@@ -439,9 +479,21 @@ impl RemoteController {
             ServerMsg::RigctldStatus { running, addr, clients, error } => {
                 self.pending.push_back(RadioEvent::RigctldStatus { running, addr, clients, error })
             }
-            ServerMsg::TciServerStatus { running, addr, clients, error } => self
-                .pending
-                .push_back(RadioEvent::TciServerStatus { running, addr, clients, error }),
+            ServerMsg::TciServerStatus {
+                running,
+                addr,
+                clients,
+                error,
+                client_connected,
+                client_error,
+            } => self.pending.push_back(RadioEvent::TciServerStatus {
+                running,
+                addr,
+                clients,
+                error,
+                client_connected,
+                client_error,
+            }),
             ServerMsg::ImagePresets(p) => self.pending.push_back(RadioEvent::ImagePresets(p)),
             ServerMsg::ImageSlotSource { slot, version, png } => {
                 self.pending.push_back(RadioEvent::ImageSlotSource { slot, version, png })
@@ -469,6 +521,7 @@ impl RemoteController {
                 .pending
                 .push_back(RadioEvent::RotatorStatus { connected, az_deg, el_deg, error }),
             ServerMsg::RelayStatus(st) => self.pending.push_back(RadioEvent::RelayStatus(st)),
+            ServerMsg::AmpStatus(st) => self.pending.push_back(RadioEvent::AmpStatus(st)),
             ServerMsg::RadioConfig(c) => {
                 // Adopted only when nothing of ours is waiting to go out. This
                 // message is usually the echo of our own write, but it can
@@ -502,6 +555,7 @@ impl RemoteController {
             // other radios in tabs of their own.
             ServerMsg::Radios { me, radios, editable } => {
                 self.peers = Some((me, radios));
+                self.last_me = Some(me);
                 self.peers_editable = editable;
             }
         }
@@ -614,10 +668,7 @@ impl RemoteController {
         }
         self.mic_over_reported = true;
         self.pending.push_back(RadioEvent::Notice(Some(
-            "Transmitting, but this client's microphone is producing no audio at all — \
-             nothing is being modulated. In a browser, check that the page was allowed \
-             the microphone and that no other application holds it."
-                .into(),
+            tr!("remote-transmitting-but-client-s-microphone").into(),
         )));
     }
 }
@@ -652,16 +703,19 @@ impl RadioController for RemoteController {
                 }
                 WsEvent::Message(WsMessage::Binary(bytes)) => match decode::<ServerMsg>(&bytes) {
                     Ok(msg) => self.on_server_msg(msg),
-                    Err(e) => self
-                        .pending
-                        .push_back(RadioEvent::ConnectionLost(format!("protocol error: {e}"))),
+                    Err(e) => self.pending.push_back(RadioEvent::ConnectionLost(tr!(
+                        "remote-protocol-error",
+                        error = e.to_string()
+                    ))),
                 },
                 WsEvent::Message(_) => {}
                 WsEvent::Error(e) => {
                     self.pending.push_back(RadioEvent::ConnectionLost(e));
                 }
                 WsEvent::Closed => {
-                    self.pending.push_back(RadioEvent::ConnectionLost("connection closed".into()));
+                    self.pending.push_back(RadioEvent::ConnectionLost(
+                        tr!("remote-connection-closed").into(),
+                    ));
                 }
             }
         }
@@ -760,10 +814,8 @@ impl RadioController for RemoteController {
         // that a session dialled at `/ws` and the same radio offered by a
         // sibling as `/ws/0` are recognised as one and the same. Before that,
         // whatever was dialled — it is all there is to go on.
-        Some(match self.peers.as_ref() {
-            Some((me, _)) => radio_url(&self.url, *me),
-            None => self.url.clone(),
-        })
+        let me = self.peers.as_ref().map(|(me, _)| *me);
+        Some(canonical_url(&self.url, me.or(self.last_me)))
     }
 
     fn auth_phase(&self) -> AuthPhase {
@@ -776,15 +828,36 @@ impl RadioController for RemoteController {
         self.write(&ClientMsg::Auth { username, password });
     }
 
+    fn untrusted_cert(&self) -> Option<String> {
+        let refused = self.refused_cert.lock().ok()?.clone()?;
+        // Trusted since — perhaps from another tab of the same station, which
+        // is what lets that tab's decision bring this one back too.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(authority) = crate::remote_tls::authority(&self.url)
+            && crate::remote_tls::trusted(&authority).as_deref() == Some(refused.as_str())
+        {
+            return None;
+        }
+        Some(refused)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn trust_cert(&mut self, sha256: &str) -> Result<(), String> {
+        let authority = crate::remote_tls::authority(&self.url)
+            .ok_or_else(|| "only a wss:// connection has a certificate to trust".to_string())?;
+        crate::remote_tls::trust(&authority, sha256)
+    }
+
     fn reconnect(&mut self) -> Result<(), String> {
         // Close first, and only then dial: the server allows one control
         // session at a time, so a new socket opened while the old one is still
         // registered is answered with `Busy` — the reconnect would fail on the
         // strength of the connection it is replacing.
         self.sender.close();
-        let (sender, receiver) = dial(&self.url, &self.wake)?;
+        let (sender, receiver, refused_cert) = dial(&self.url, &self.wake)?;
         self.sender = sender;
         self.receiver = receiver;
+        self.refused_cert = refused_cert;
         // Everything below is per-session: the outbox gate has to hold commands
         // behind a fresh `Hello`, the codec is renegotiated in the handshake,
         // and neither queued events nor a half-sent microphone block from the
@@ -802,6 +875,7 @@ impl RadioController for RemoteController {
         self.mic_seq = 0;
         // ...and the roster, which the new session announces afresh: the
         // station may have gained or lost a radio while the link was down.
+        // `last_me` stays: it is what keeps `peer_url` canonical in the gap.
         self.peers = None;
         self.peers_editable = false;
         // The interface configuration is per-session too: the new socket may
@@ -826,6 +900,12 @@ impl RadioController for RemoteController {
     fn set_audio_device(&mut self, output: bool, name: Option<String>) {
         if let Some(a) = self.audio.as_mut() {
             a.set_device(output, name);
+        }
+    }
+
+    fn set_audio_routing(&mut self, routing: sdroxide_types::AudioRouting) {
+        if let Some(a) = self.audio.as_mut() {
+            a.set_routing(routing);
         }
     }
 
@@ -885,6 +965,18 @@ mod tests {
         // A host that begins with the endpoint's own letters must not be
         // mistaken for it.
         assert_eq!(radio_url("ws://wsserver:4950/ws", 1), "ws://wsserver:4950/ws/1");
+    }
+
+    /// Issue #646: a tab dialled at the bare endpoint keeps answering to its
+    /// radio's `/ws/<id>` while it reconnects, so a sibling offering that
+    /// radio does not look like a radio nobody has open.
+    #[test]
+    fn a_reconnecting_tab_keeps_its_canonical_address() {
+        let dialled = "ws://192.168.1.10:4950/ws";
+        // Never heard a roster: the dialled address is all there is.
+        assert_eq!(canonical_url(dialled, None), dialled);
+        // Heard one, then lost the link: still the radio it was on.
+        assert_eq!(canonical_url(dialled, Some(0)), "ws://192.168.1.10:4950/ws/0");
     }
 
     /// The first-frame `SetSpectrumCfg` that the capture from the bug report

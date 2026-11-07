@@ -168,6 +168,41 @@ const MAG_PEAK_DECAY: f32 = 0.999_94;
 const SIGNAL_GONE: f32 = 0.05;
 /// How hard an observed transition pulls the bit clock.
 const CLOCK_TRACK_GAIN: f32 = 0.05;
+
+/// AFC loop gain per sample, and the widest tuning error it will chase.
+///
+/// The range is far wider than RTTY's ±90 Hz, and deliberately so. RTTY is
+/// tuned by the operator to a station they can hear and adjust; NAVTEX is a
+/// published service on assigned frequencies that every published tuning
+/// instruction rounds differently — 516.5 kHz, 516.6 kHz, 1700 Hz below the
+/// channel — so the dial is routinely a couple of hundred hertz from where the
+/// decoder expects the tones. There is no Doppler to speak of at 518 kHz and
+/// nothing for a loop here to chase into: the offset is the operator's own
+/// arithmetic and stays where it was put. Issue #608, reported as a strong
+/// steady signal decoding to mostly asterisks while fldigi read it cleanly.
+const AFC_GAIN: f32 = 3.0e-4;
+/// ±350 Hz, which covers every published NAVTEX dial figure and then some.
+const AFC_LIMIT_HZ: f32 = 350.0;
+/// AFC needs the integrator settled on a single tone: its phase means nothing
+/// while the window straddles a transition. A quarter of a bit excludes exactly
+/// that, and unlike a magnitude floor it keeps working when mistuning has
+/// knocked both branches down the matched filter's skirt — which is the case
+/// this loop exists for.
+const AFC_SETTLE: f32 = 0.25;
+/// Floor on branch separation for AFC, low enough not to limit pull-in and
+/// only there to keep the loop out of pure noise.
+const AFC_SEP_MIN: f32 = 0.2;
+
+/// Half-width of the front-end band-pass, in Hz.
+///
+/// Both tones, the keying sidebands of a 100-baud square wave, and the whole
+/// AFC pull-in range with a margin — the same sum RTTY builds, and for the
+/// same reason: a filter narrower than the loop's range would be discarding the
+/// outer tone of a signal the loop is still trying to find.
+fn front_end_hz() -> f64 {
+    f64::from(NAVTEX_SHIFT_HZ / 2.0 + AFC_LIMIT_HZ + 20.0) + 2.0 * NAVTEX_BAUD
+}
+
 /// Both bit phases are decoded at once — see [`BitPhase`].
 ///
 /// Nudging a free-running clock towards "a transition sits at phase 0.5" locks
@@ -233,6 +268,20 @@ pub struct NavtexRx {
     space_idle: f32,
     mag: f32,
     mag_peak: f32,
+
+    /// AFC: the residual tuning error it has found so far, folded into
+    /// `ph_inc` — see [`NavtexRx::afc_offset_hz`].
+    afc_hz: f32,
+    afc_enabled: bool,
+    /// The winning branch's integrator output last sample, and which branch won.
+    /// Their phase difference is the residual frequency, already averaged over
+    /// a bit, so no separate discriminator is needed and nothing has to be
+    /// aligned against the bit decision — the same trick RTTY uses.
+    prev_win: crate::Complex32,
+    prev_win_mark: bool,
+    have_win: bool,
+    /// Samples the same branch has gone on winning, for [`AFC_SETTLE`].
+    win_run: f32,
 
     // Bit clock.
     spb: f32,
@@ -315,10 +364,13 @@ impl NavtexRx {
             reverse: false,
             ph: 0.0,
             ph_inc: 0.0,
-            // Wide enough for both tones and the keying sidebands of a
-            // 100-baud square wave, and no wider: 518 kHz is a crowded part of
-            // the spectrum and the matched filters below do the real work.
-            lpf: ComplexFir::new(bandpass_taps(129, -300.0, 300.0, rate)),
+            // Wide enough for both tones, the keying sidebands of a 100-baud
+            // square wave, and the whole AFC pull-in range: a band-pass that
+            // clipped an off-tune signal's outer tone would be filtering away
+            // the very thing AFC exists to find. The matched filters below do
+            // the real noise rejection, so all this has to do is keep
+            // neighbours out.
+            lpf: ComplexFir::new(bandpass_taps(129, -front_end_hz(), front_end_hz(), rate)),
             tone_ph: 0.0,
             tone_inc: 0.0,
             mark_int: Integrator::new((rate / NAVTEX_BAUD) as usize),
@@ -329,6 +381,12 @@ impl NavtexRx {
             space_idle: 0.0,
             mag: 0.0,
             mag_peak: 0.0,
+            afc_hz: 0.0,
+            afc_enabled: true,
+            prev_win: crate::Complex32::new(0.0, 0.0),
+            prev_win_mark: false,
+            have_win: false,
+            win_run: 0.0,
             spb: (rate / NAVTEX_BAUD) as f32,
             clk: 0.0,
             last_bit: false,
@@ -340,12 +398,6 @@ impl NavtexRx {
         };
         rx.retune();
         rx
-    }
-
-    /// Move the expected audio centre. The shift is fixed by the standard.
-    pub fn set_center_hz(&mut self, hz: f32) {
-        self.center_hz = hz;
-        self.retune();
     }
 
     /// Swap the sense of the tones, for a signal received on the other
@@ -363,6 +415,43 @@ impl NavtexRx {
     fn retune(&mut self) {
         self.ph_inc = std::f32::consts::TAU * self.center_hz / self.rate as f32;
         self.tone_inc = std::f32::consts::TAU * (NAVTEX_SHIFT_HZ / 2.0) / self.rate as f32;
+    }
+
+    /// Fold the AFC pull into the mixer reference. Only the reference moves,
+    /// never the tone separation: the filter is still centred on the tones, so
+    /// a corrected signal is filtered exactly as a well-tuned one is.
+    fn apply_afc(&mut self) {
+        self.ph_inc = std::f32::consts::TAU * (self.center_hz + self.afc_hz) / self.rate as f32;
+    }
+
+    /// Move the expected audio centre. The shift is fixed by the standard, but
+    /// the dial's idea of where that is moves with the cursor, so a retune
+    /// drops the AFC pull: the loop then re-finds the signal from wherever the
+    /// operator has just put it.
+    pub fn set_center_hz(&mut self, hz: f32) {
+        self.center_hz = hz;
+        self.afc_hz = 0.0;
+        self.retune();
+    }
+
+    /// Enable automatic frequency correction. On by default; turning it off
+    /// pins the decoder to exactly where the operator put the cursor.
+    pub fn set_afc(&mut self, on: bool) {
+        self.afc_enabled = on;
+        if !on {
+            self.afc_hz = 0.0;
+            self.retune();
+        }
+    }
+
+    /// Current AFC pull in Hz — how far off the cursor the signal actually is.
+    ///
+    /// Read this before telling anyone to retune: on this mode the answer is
+    /// usually that the dial is right and the expected figure is the thing to
+    /// question.
+    #[must_use]
+    pub fn afc_offset_hz(&self) -> f32 {
+        self.afc_hz
     }
 
     /// Signal level at the two tones, for a squelch or a meter.
@@ -416,8 +505,10 @@ impl NavtexRx {
             if self.tone_ph > std::f32::consts::TAU {
                 self.tone_ph -= std::f32::consts::TAU;
             }
-            let m = self.mark_int.push(z * Complex32::new(c, -s)).norm();
-            let sp = self.space_int.push(z * Complex32::new(c, s)).norm();
+            let m_c = self.mark_int.push(z * Complex32::new(c, -s));
+            let sp_c = self.space_int.push(z * Complex32::new(c, s));
+            let m = m_c.norm();
+            let sp = sp_c.norm();
             let total = m + sp;
             self.mag += 0.02 * (total - self.mag);
             // A slow peak to measure the level against. Rises at once and
@@ -469,6 +560,40 @@ impl NavtexRx {
             let floor = self.ref_mark.max(self.ref_space) * ATC_MIN_RATIO;
             self.ref_mark = self.ref_mark.max(floor);
             self.ref_space = self.ref_space.max(floor);
+
+            // AFC. The winning branch's integrator output is a phasor turning
+            // at exactly the residual tuning error, already averaged over a
+            // bit, so its phase advance *is* the error in Hz. Same measurement,
+            // and the same reason for the settle and separation gates, as
+            // RTTY's — see the constants.
+            if self.have_win && phys_mark == self.prev_win_mark {
+                self.win_run += 1.0;
+            } else {
+                self.win_run = 0.0;
+            }
+            let win = if phys_mark { m_c } else { sp_c };
+            if self.afc_enabled
+                && (dm - ds).abs() > AFC_SEP_MIN
+                && self.win_run > AFC_SETTLE * self.spb
+            {
+                let d = win * self.prev_win.conj();
+                if d.norm_sqr() > 1e-24 {
+                    let hz_per_rad = self.rate as f32 / std::f32::consts::TAU;
+                    let err = (d.arg() * hz_per_rad).clamp(-AFC_LIMIT_HZ, AFC_LIMIT_HZ);
+                    let was = self.afc_hz;
+                    self.afc_hz = (self.afc_hz + AFC_GAIN * err).clamp(-AFC_LIMIT_HZ, AFC_LIMIT_HZ);
+                    if self.afc_hz != was {
+                        self.apply_afc();
+                    }
+                }
+            }
+            // Tracked whether or not the loop is running, so turning AFC back on
+            // starts from a current phasor instead of one from before it was
+            // switched off.
+            self.prev_win = win;
+            self.prev_win_mark = phys_mark;
+            self.have_win = true;
+
             self.advance_clock(dm - ds, phys_mark, &mut out);
         }
         out
@@ -1010,5 +1135,136 @@ mod tests {
             got.push_str(&rx.process(chunk));
         }
         assert!(got.contains("5103N 00109E AT 1200 UTC"), "decoded {got:?}");
+    }
+
+    /// The dial is a couple of hundred hertz off the tones and the message
+    /// still arrives whole. This is the whole of issue #608, reported as a
+    /// strong steady signal decoding to mostly asterisks while fldigi read the
+    /// same signal cleanly: every published NAVTEX tuning figure rounds
+    /// differently, and a matched-filter detector with no frequency tracking
+    /// decodes the rounding error rather than the message.
+    #[test]
+    fn a_mistuned_dial_is_tracked_rather_than_decoded() {
+        let rate = 8000.0;
+        let msg = "ZCZC FA12 GALE WARNING NNNN WIND SPEED 55 KTS";
+        let bits = encode_bits(msg);
+        // Both directions, and inside the pull-in range at each end.
+        for off in [-300.0f32, -150.0, 150.0, 300.0] {
+            let audio = synth(&bits, rate, NAVTEX_CENTER_HZ + off, 0.4);
+            let mut rx = NavtexRx::new(rate);
+            let mut got = String::new();
+            for chunk in audio.chunks(512) {
+                got.push_str(&rx.process(chunk));
+            }
+            assert!(
+                got.contains("GALE WARNING") && got.contains("WIND SPEED 55 KTS"),
+                "off by {off} Hz the message was lost: {got:?}"
+            );
+            assert!(
+                (rx.afc_offset_hz() - off).abs() < 30.0,
+                "AFC found {:?} Hz for a signal {off} Hz off",
+                rx.afc_offset_hz()
+            );
+        }
+    }
+
+    /// The loop reads the signal, not the clock: with it off the same mistuned
+    /// signal is unreadable, which is what makes the test above a measurement
+    /// of the AFC rather than of the widened filter.
+    #[test]
+    fn without_the_loop_the_same_mistuned_signal_is_lost() {
+        let rate = 8000.0;
+        let bits = encode_bits("ZCZC FA12 GALE WARNING NNNN");
+        let audio = synth(&bits, rate, NAVTEX_CENTER_HZ + 300.0, 0.4);
+        let mut rx = NavtexRx::new(rate);
+        rx.set_afc(false);
+        let mut got = String::new();
+        for chunk in audio.chunks(512) {
+            got.push_str(&rx.process(chunk));
+        }
+        assert!(
+            !got.contains("GALE WARNING"),
+            "a signal 300 Hz off decoded with no frequency tracking: {got:?}"
+        );
+        assert_eq!(rx.afc_offset_hz(), 0.0, "the loop moved with AFC off");
+    }
+
+    /// The wider front end is a price paid for the pull-in range, and a wider
+    /// filter is more noise in principle. Measured against the pre-fix front
+    /// end on the same noisy signals — 60 decodes each at 15, 12, 9 and 6 dB —
+    /// it costs nothing: the message count is 60/48/35/29 against 59/55/37/30,
+    /// so the wide one is ahead at every step but one and never behind by more
+    /// than a single decode. Pinned as a floor rather than as the A/B it was
+    /// measured from, because sixteen noisy decodes will not tie and the
+    /// margin this leaves is wider than the difference it guards.
+    #[test]
+    fn the_wider_front_end_has_not_cost_the_tuned_case_its_sensitivity() {
+        let rate = 8000.0;
+        let bits = encode_bits("ZCZC PB07 NAVAREA ONE WIND 55 KTS");
+        // Twelve decibels in band-to-band ratio, above the point where the mode
+        // is used in anger.
+        let noise = 0.4 * 10.0f32.powf(-12.0 / 20.0);
+        let mut decoded = 0;
+        for seed in 0..24u64 {
+            let mut audio = synth(&bits, rate, NAVTEX_CENTER_HZ, 0.4);
+            let mut x =
+                0x2545_f491_4f6c_dd1du64.wrapping_add(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+            for a in &mut audio {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                *a += ((x >> 40) as f32 / 8_388_608.0 - 1.0) * noise;
+            }
+            let mut rx = NavtexRx::new(rate);
+            let mut got = String::new();
+            for chunk in audio.chunks(512) {
+                got.push_str(&rx.process(chunk));
+            }
+            if got.contains("NAVAREA ONE") {
+                decoded += 1;
+            }
+        }
+        assert!(
+            decoded >= 21,
+            "only {decoded} of 24 decodes at 12 dB — the wider front end cost the tuned case"
+        );
+    }
+
+    /// Moving the cursor drops the pull, so a retune cannot leave the loop
+    /// holding a correction for a frequency the operator has just changed. The
+    /// loop then re-finds the signal from where the cursor now is.
+    #[test]
+    fn a_retune_drops_the_pull_and_the_loop_re_finds_the_signal() {
+        let rate = 8000.0;
+        let bits = encode_bits("ZCZC FA12 GALE WARNING NNNN WIND SPEED 55 KTS");
+        let audio = synth(&bits, rate, NAVTEX_CENTER_HZ + 250.0, 0.4);
+        let mut rx = NavtexRx::new(rate);
+        let split = (audio.len() * 3 / 4) / 512 * 512;
+        let mut got = String::new();
+        for chunk in audio[..split].chunks(512) {
+            got.push_str(&rx.process(chunk));
+        }
+        assert!(rx.afc_offset_hz() > 200.0, "the loop had not pulled in yet");
+
+        rx.set_center_hz(NAVTEX_CENTER_HZ);
+        assert_eq!(rx.afc_offset_hz(), 0.0, "a retune kept the old pull");
+        for chunk in audio[split..].chunks(512) {
+            got.push_str(&rx.process(chunk));
+        }
+        assert!(got.contains("GALE WARNING"), "lost across a retune: {got:?}");
+        // The signal is 250 Hz off the new centre, so it must have found it again.
+        assert!(
+            rx.afc_offset_hz() > 200.0,
+            "the loop did not re-lock after the retune: {:?}",
+            rx.afc_offset_hz()
+        );
+    }
+
+    /// The pull-in range is bounded, and the front-end filter is wide enough to
+    /// hold a signal at the edge of it — those two numbers are the same design
+    /// decision, so pin them together rather than letting one drift.
+    #[test]
+    fn the_front_end_covers_the_pull_in_range() {
+        assert!(front_end_hz() > f64::from(AFC_LIMIT_HZ + NAVTEX_SHIFT_HZ));
     }
 }

@@ -6,6 +6,7 @@
 //! path to place on one. And, as with WSPR, there is no QSO pane: PI4 is a
 //! beacon, and this decoder only ever receives one.
 
+use crate::i18n::tr;
 use eframe::egui::{self, Color32, RichText};
 use sdroxide_types::{Command, Mode, Pi4Spot};
 
@@ -74,7 +75,10 @@ impl SdroxideApp {
         let now = now_unix();
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new("RECEPTIONS").size(9.5).strong().color(crate::theme::CYAN_DIM()),
+                RichText::new(tr!("pi4-receptions"))
+                    .size(9.5)
+                    .strong()
+                    .color(crate::theme::CYAN_DIM()),
             );
             crate::chrome::row_tail(ui, |ui| {
                 ui.label(
@@ -86,7 +90,7 @@ impl SdroxideApp {
                     ui,
                     !self.pi4_spots.is_empty(),
                     "sdroxide-pi4-spots.csv",
-                    "Save the PI4 reception list as CSV",
+                    &tr!("pi4-save-pi4-reception-list-csv"),
                     || crate::app::save_text::pi4_spots_csv(&self.pi4_spots),
                 );
             });
@@ -115,7 +119,9 @@ impl SdroxideApp {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("PI4").size(11.0).strong().color(crate::theme::CYAN()));
             ui.label(
-                RichText::new("Next Generation Beacon").size(10.5).color(crate::theme::CYAN_DIM()),
+                RichText::new(tr!("pi4-next-generation-beacon"))
+                    .size(10.5)
+                    .color(crate::theme::CYAN_DIM()),
             );
             crate::chrome::row_tail(ui, |ui| {
                 let left = (timing.slot_s - into_slot).max(0.0).round() as i64;
@@ -128,12 +134,11 @@ impl SdroxideApp {
                         .size(10.5)
                         .color(crate::theme::gray(140)),
                 )
-                .on_hover_text(
-                    "Time left in this one-minute beacon cycle. The PI4 message is searched for \
-                     once the window has had time to fill past where it would end.",
-                );
+                .on_hover_text(tr!("pi4-time-left-one-minute-beacon"));
                 if p.decoding {
-                    ui.label(RichText::new("decoding…").size(10.5).color(crate::theme::YELLOW()));
+                    ui.label(
+                        RichText::new(tr!("pi4-decoding")).size(10.5).color(crate::theme::YELLOW()),
+                    );
                 }
             });
         });
@@ -148,33 +153,25 @@ impl SdroxideApp {
 
         crate::chrome::red_panel(ui, |ui| {
             let dial = self.state.rx_freq_hz();
-            row(ui, "Band", &format!("{:.6} MHz", dial / 1e6));
+            row(ui, &tr!("pi4-band"), &format!("{e6:.6} MHz", e6 = dial / 1e6));
             row(
                 ui,
-                "Last cycle",
+                &tr!("pi4-last-cycle"),
                 &if p.decoding {
-                    "decoding…".to_string()
+                    tr!("pi4-decoding").to_string()
                 } else if p.last_slot_spots == 0 {
-                    "nothing heard".to_string()
+                    tr!("pi4-nothing-heard").to_string()
                 } else {
-                    format!(
-                        "{} beacon{}",
-                        p.last_slot_spots,
-                        if p.last_slot_spots == 1 { "" } else { "s" }
-                    )
+                    tr!("pi4-beacon", last_slot_spots = p.last_slot_spots)
                 },
             );
         });
 
         ui.add_space(8.0);
         ui.label(
-            RichText::new(
-                "Receive only. Tune so the beacon's CW identification sits at 800 Hz audio — the \
-                 network's own convention — and the four PI4 tones fall where this decoder \
-                 searches for them by default.",
-            )
-            .size(9.5)
-            .color(crate::theme::gray(120)),
+            RichText::new(tr!("pi4-receive-only-tune-so-beacon"))
+                .size(9.5)
+                .color(crate::theme::gray(120)),
         );
     }
 }
@@ -245,11 +242,11 @@ fn pi4_row(ui: &mut egui::Ui, s: &Pi4Spot, now: i64) {
                             .monospace()
                             .color(crate::theme::gray(120)),
                     )
-                    .on_hover_text(format!(
-                        "{:02}:{:02} UTC — {} ago",
-                        t / 3600,
-                        (t % 3600) / 60,
-                        fmt_age(now - s.slot_utc)
+                    .on_hover_text(tr!(
+                        "pi4-utc-ago",
+                        t = format!("{:02}", t / 3600),
+                        t2 = format!("{:02}", (t % 3600) / 60),
+                        slot_utc = fmt_age(now - s.slot_utc)
                     ));
                 });
             });

@@ -210,6 +210,32 @@ pub const RTTY_CENTER_HZ: f32 = 2210.0;
 /// mode's audio offset, there is nothing here for an operator to choose.
 pub const NAVTEX_TONE_HZ: f32 = 1700.0;
 
+/// How hard the FT8 decoder works for weak signals, and what it costs.
+///
+/// FT8's recall comes from signal subtraction, and the most thorough pass —
+/// WSJT-X's checkpointed multi-pass (mfsk-core's `Ft8Strategy::SicEarly`, a
+/// recall superset of the flat `SicRounds(n)`) — is **sequential by construction**,
+/// so it can neither be spread across cores nor made cheap. It was measured at
+/// ~1.2 s on a busy slot against FT8's 0.5 s transmit offset, so an operator who
+/// wants the reply to go out on time should be able to trade a few weak decodes
+/// for it. That trade is this setting.
+///
+/// Measured on mfsk-core's `qso3_busy.wav`, `.osd(true)`, 16 cores:
+/// - [`Fast`](Self::Fast) — one pass, no subtraction: ~30 ms, ~16 stations.
+/// - [`Normal`](Self::Normal) — flat multi-pass SIC: ~0.4 s, ~19–20.
+/// - [`Deep`](Self::Deep) — the checkpointed pass: ~1.2 s, ~22.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Ft8Depth {
+    /// One pass, no subtraction. Fastest, least sensitive.
+    Fast,
+    /// Flat multi-pass SIC: a little quicker than [`Deep`](Self::Deep), a
+    /// little less thorough.
+    Normal,
+    /// The checkpointed multi-pass. The most decodes.
+    #[default]
+    Deep,
+}
+
 /// A "special operating activity": a contest whose exchange is not the
 /// everyday grid-and-report, so the slotted modes have to send and read
 /// something else (issue #223).
@@ -532,6 +558,20 @@ pub struct DigiStatus {
     /// peer that matches the protocol version but not this build.
     #[serde(default)]
     pub acars: Option<AcarsStatus>,
+    /// Why a key-up was refused or is armed with nothing to send — an empty
+    /// message box, most often. `None` when there is nothing to say. A message
+    /// rather than a flag so each mode can name its own reason.
+    #[serde(default)]
+    pub tx_refused: Option<String>,
+    /// JTTY: the asynchronous text messages received and the smoothed audio
+    /// level. `None` in every other mode, as the rest of these are. Appended
+    /// after `tx_refused` for the same positional reason.
+    #[serde(default)]
+    pub jtty: Option<crate::JttyStatus>,
+    /// VARA HF: the link, the speed and the transcript. `None` in every other
+    /// mode. Appended after `jtty` for the same positional reason.
+    #[serde(default)]
+    pub vara: Option<crate::VaraStatus>,
 }
 
 /// The running detail of the contact in progress: when it started and what has
@@ -1034,6 +1074,7 @@ impl DigiStatus {
             tx_even: config.tx_even,
             transmitting: false,
             tx_watchdog: false,
+            tx_refused: None,
             transcript: Vec::new(),
             config,
             text_rx: String::new(),
@@ -1044,6 +1085,8 @@ impl DigiStatus {
             packet: None,
             navtex: None,
             acars: None,
+            jtty: None,
+            vara: None,
             aprs: None,
             js8: None,
             atchat: None,
@@ -1150,6 +1193,18 @@ pub struct QsoRecord {
     /// the reason [`Self::hamqth_sent`] gives.
     #[serde(default)]
     pub wrl_sent: bool,
+    /// In the operator's Wavelog: uploaded from here and acknowledged, or
+    /// downloaded from it in the first place. Appended for the reason
+    /// [`Self::hamqth_sent`] gives.
+    #[serde(default)]
+    pub wavelog_sent: bool,
+    /// The Wavelog station location this contact was downloaded from, or 0
+    /// for one logged here or imported from a file. A full resync may update
+    /// or remove a downloaded contact to match Wavelog; it never touches one
+    /// with no origin, which is the operator's own. Appended for the reason
+    /// [`Self::hamqth_sent`] gives.
+    #[serde(default)]
+    pub wavelog_origin: u32,
 }
 
 impl QsoRecord {
@@ -1325,8 +1380,13 @@ impl HellVariant {
     }
 }
 
-/// One of the operator's CW message buttons — what the chip says, and what it
-/// sends (issue #374).
+/// One of the operator's message buttons — what the chip says, and what it
+/// sends (issues #374, #463).
+///
+/// Shared by the CW panel (through [`DigiConfig::cw_macros`]) and the keyboard
+/// modes (through [`DigiConfig::text_macros`]): the same label-and-text shape,
+/// drawn by the same control, kept in two lists because the two kinds of
+/// message differ.
 ///
 /// The label is kept apart from the text because a chip has to be readable at a
 /// glance and the text it sends is a sentence: a button showing
@@ -2142,6 +2202,72 @@ pub struct DigiConfig {
     /// is a setting here. See [`crate::Fsk441Period`].
     #[serde(default)]
     pub fsk441_period: crate::Fsk441Period,
+    /// The same message buttons for the keyboard modes — PSK, RTTY, Olivia,
+    /// Thor: the working conditions or the weather an operator sends over and
+    /// over, typed once and kept across sessions (issue #463). A list of its
+    /// own rather than shared with the CW row above, because a CW abbreviation
+    /// and a PSK sentence are not the same message; identical in shape and
+    /// behaviour otherwise.
+    #[serde(default)]
+    pub text_macros: Vec<CwMacro>,
+    /// FT8: how hard the decoder works for weak signals — see [`Ft8Depth`].
+    /// The plain single-pass result is always emitted first whatever this says,
+    /// so it governs only the extra, subtracting batch.
+    #[serde(default)]
+    pub ft8_depth: Ft8Depth,
+    /// The Wavelog station location this identity logs to, or 0 for the
+    /// default in [`crate::WavelogConfig::station_id`].
+    ///
+    /// Here, with the callsign and grid, rather than with the server: Wavelog
+    /// refuses a QSO whose station callsign is not the location's, so the
+    /// location is part of the identity a profile switches — a portable
+    /// profile's call goes to the portable location without anyone having to
+    /// remember to change it.
+    #[serde(default)]
+    pub wavelog_station_id: u32,
+
+    // ── VARA HF ── appended, postcard numbers fields by position.
+    /// The callsign the VARA modem answers to, with an optional SSID. Empty
+    /// falls back to the logbook callsign. A host program (Pat, VarAC) sets its
+    /// own with `MYCALL` and that wins for its session.
+    #[serde(default)]
+    pub vara_mycall: String,
+    /// The width the modem runs at. Most RMS gateways run 2300.
+    #[serde(default)]
+    pub vara_bw: crate::VaraBw,
+    /// Unlock the speed levels above 4, as a registered copy of VARA does.
+    /// For operators who own a VARA licence; an unregistered station caps a
+    /// link at level 4 whatever the path would carry.
+    #[serde(default)]
+    pub vara_registered: bool,
+    /// Identify in CW at the end of a link, as VARA does when asked.
+    #[serde(default)]
+    pub vara_cwid: bool,
+    /// Connect attempts before giving up on a call.
+    #[serde(default = "default_vara_retries")]
+    pub vara_retries: u32,
+    /// How long the transmit path takes from key-up to the first sample on
+    /// the air, in milliseconds. `None` asks the engine to pick from the
+    /// radio: a few milliseconds on an IQ SDR, about 200 on a CAT rig.
+    #[serde(default)]
+    pub vara_tx_latency_ms: Option<u16>,
+    /// Offer the modem on VARA's TCP host ports, for Pat, Winlink Express or
+    /// VarAC.
+    #[serde(default)]
+    pub vara_host_server: bool,
+    /// The command port; data is on the next one. 8300 is VARA HF's own.
+    #[serde(default = "default_vara_host_port")]
+    pub vara_host_port: u16,
+    /// Answer calls from the panel when no host program is attached.
+    #[serde(default)]
+    pub vara_listen: bool,
+}
+
+fn default_vara_retries() -> u32 {
+    15
+}
+fn default_vara_host_port() -> u16 {
+    8300
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2167,6 +2293,56 @@ fn wspr_default_hop_bands() -> u16 {
     [Band::M80, Band::M40, Band::M30, Band::M20, Band::M17, Band::M15, Band::M12, Band::M10]
         .iter()
         .fold(0u16, |m, b| m | (1 << b.wire_index()))
+}
+
+/// The WSPR beacon settings that belong to one radio rather than the station.
+///
+/// The rest of [`DigiConfig`] is the operator's — callsign, grid, macros — and
+/// is shared by every radio. These say what *this* transmitter does: whether it
+/// beacons, at what power, and over which bands. Shared, setting radio 1's
+/// duty to 33 % started radio 2 beaconing too (issue #615), so each radio keeps
+/// its own copy, laid over the shared file when the config is loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WsprRadio {
+    /// [`DigiConfig::wspr_tx_percent`].
+    #[serde(default)]
+    pub tx_percent: u8,
+    /// [`DigiConfig::wspr_power_dbm`].
+    #[serde(default = "wspr_default_power")]
+    pub power_dbm: i16,
+    /// [`DigiConfig::wspr_hop`].
+    #[serde(default)]
+    pub hop: bool,
+    /// [`DigiConfig::wspr_hop_bands`].
+    #[serde(default = "wspr_default_hop_bands")]
+    pub hop_bands: u16,
+}
+
+/// Beacon off, as a fresh [`DigiConfig`] has it.
+impl Default for WsprRadio {
+    fn default() -> Self {
+        WsprRadio::of(&DigiConfig::default())
+    }
+}
+
+impl WsprRadio {
+    /// This radio's settings, as `cfg` holds them.
+    pub fn of(cfg: &DigiConfig) -> Self {
+        WsprRadio {
+            tx_percent: cfg.wspr_tx_percent,
+            power_dbm: cfg.wspr_power_dbm,
+            hop: cfg.wspr_hop,
+            hop_bands: cfg.wspr_hop_bands,
+        }
+    }
+
+    /// Lay these over `cfg`, leaving everything that is not WSPR's alone.
+    pub fn apply_to(self, cfg: &mut DigiConfig) {
+        cfg.wspr_tx_percent = self.tx_percent;
+        cfg.wspr_power_dbm = self.power_dbm;
+        cfg.wspr_hop = self.hop;
+        cfg.wspr_hop_bands = self.hop_bands;
+    }
 }
 
 /// Default for [`DigiConfig::sstv_banner_left`] — the operator's own callsign,
@@ -2238,6 +2414,7 @@ impl Default for DigiConfig {
             cw_wpm: cw_default_wpm(),
             cw_farnsworth_wpm: 0.0,
             cw_macros: Vec::new(),
+            text_macros: Vec::new(),
             cw_speed_lock: false,
             cw_engine: crate::CwEngine::default(),
             send_on_enter: false,
@@ -2333,6 +2510,17 @@ impl Default for DigiConfig {
             fst4_period: crate::Fst4Period::P60,
             q65_mode: crate::Q65Mode::A30,
             fsk441_period: crate::Fsk441Period::P30,
+            ft8_depth: Ft8Depth::default(),
+            wavelog_station_id: 0,
+            vara_mycall: String::new(),
+            vara_bw: crate::VaraBw::default(),
+            vara_registered: false,
+            vara_cwid: false,
+            vara_retries: default_vara_retries(),
+            vara_tx_latency_ms: None,
+            vara_host_server: false,
+            vara_host_port: default_vara_host_port(),
+            vara_listen: false,
         }
     }
 }
@@ -2825,6 +3013,15 @@ fn record_from_fields(fields: &[(String, String)]) -> QsoRecord {
         r.freq_hz = f * 1e6;
     }
     r.mode = get("MODE").unwrap_or_default().to_ascii_uppercase();
+    // ADIF files FT4, JS8, Q65 and the like as SUBMODE under the MFSK
+    // umbrella, which is how Wavelog, LoTW and most loggers export them. The
+    // submode is the name an operator knows the mode by, and the one sdroxide
+    // logs its own contacts under.
+    if r.mode == "MFSK"
+        && let Some(sub) = get("SUBMODE").filter(|s| !s.is_empty())
+    {
+        r.mode = sub.to_ascii_uppercase();
+    }
     r.band = get("BAND").map(|b| b.to_ascii_lowercase()).unwrap_or_else(|| {
         if r.freq_hz > 0.0 { adif_band(r.freq_hz).to_string() } else { String::new() }
     });
@@ -3526,6 +3723,16 @@ mod tests {
         assert_eq!(back[0].name, "Владимир");
         assert_eq!(back[0].qth, "Москва");
         assert_eq!(back[0].country, "Ålesund");
+    }
+
+    #[test]
+    fn adif_import_reads_an_mfsk_submode_as_the_mode() {
+        // How Wavelog, LoTW and most loggers file an FT4 contact.
+        let recs = adif_to_qso_log("<call:5>EA1AB <mode:4>MFSK <submode:3>FT4 <band:3>20m <eor>");
+        assert_eq!(recs[0].mode, "FT4");
+        // A submode under any other mode is a refinement, not the name.
+        let recs = adif_to_qso_log("<call:5>EA1AB <mode:3>SSB <submode:3>USB <band:3>20m <eor>");
+        assert_eq!(recs[0].mode, "SSB");
     }
 
     #[test]

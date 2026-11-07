@@ -23,6 +23,7 @@ fn meters(s_dbm: f32) -> Meters {
         tone: None,
         passband_dbfs: f32::NEG_INFINITY,
         puresignal: None,
+        voice: None,
     }
 }
 

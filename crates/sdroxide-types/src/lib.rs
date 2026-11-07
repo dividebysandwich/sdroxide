@@ -7,12 +7,15 @@ mod access;
 mod adsb;
 mod ais;
 mod alert;
+mod amp;
 mod aprs;
 mod atchat;
+mod audio;
 mod awards;
 mod band;
 mod band_segments;
 mod bandplan;
+mod biquad;
 pub mod broadcast;
 mod callsign;
 mod caps;
@@ -33,13 +36,16 @@ mod ibp;
 mod input;
 mod ism;
 mod js8;
+mod jtty;
 mod limerfe;
 mod memory;
 mod meters;
 mod mode;
+mod morse_trainer;
 mod netcfg;
 mod pi4;
 mod pictures;
+mod picupload;
 mod probe;
 mod profile;
 mod prop_store;
@@ -68,9 +74,12 @@ mod station;
 mod tciserver;
 pub mod text;
 mod tone;
+mod tx_voice;
 mod ui;
+mod vara;
 mod vdl2;
 mod voice;
+mod wavelog;
 mod wefax;
 mod winlink;
 mod wsjtx;
@@ -90,12 +99,17 @@ pub use ais::{
     aid_type_label, mmsi_is_identity, nav_status_label, ship_type_hazard, ship_type_label,
 };
 pub use alert::{AlertEvent, AlertEvents, AlertReply, AlertRule, AlertSettings, AlertSound};
+pub use amp::{
+    AMP_BAUD_RATES, AmpAction, AmpAlerts, AmpConfig, AmpGauge, AmpLevel, AmpLimits, AmpModel,
+    AmpReadings, AmpStatus, AtuNetwork, AtuReadout, AtuScale, amp_band_label,
+};
 pub use aprs::{
     APRS_MESSAGE_MAX, APRS_MSG_RETRIES, APRS_STATION_MAX, APRS_TRACK_MAX, APRS_TRAFFIC_MAX,
     AprsEntryKind, AprsMessage, AprsMsgState, AprsPosition, AprsStation, AprsStatus, AprsSymbol,
     AprsSymbolKind, AprsTraffic, AprsWeather,
 };
 pub use atchat::{AtChatChatLine, AtChatFile, AtChatRosterEntry, AtChatStatus, AtChatTransfer};
+pub use audio::AudioRouting;
 pub use awards::{
     Awards, Coverage, EntitySlot, Highlight, LogIndex, Novelty, Status as AwardStatus, US_STATES,
     compute_awards, counts, coverage_counts, entity_coverage, entity_name,
@@ -113,6 +127,7 @@ pub use band_segments::{
     span_within_segment, span_within_segment_in, sstv_dials_in,
 };
 pub use bandplan::{BandPlan, BandPlanError, RegionPlan, band_plan, set_band_plan};
+pub use biquad::BiquadCoeffs;
 pub use broadcast::{BroadcastStation, BroadcastStations};
 pub use callsign::{CallsignInfo, LoginTarget, LoginTestResult, UploadResult, UploadTarget};
 pub use caps::{DeviceCaps, DeviceSetting, Direction, GainElement, GainUnit, SettingKind};
@@ -123,16 +138,16 @@ pub use controller::{AudioDevices, PeerRadio, RadioController, RadioEvent};
 pub use digi::{
     ACARS_MESSAGE_MAX, AcarsMessage, AcarsStatus, CONTEST_SERIAL_MAX, ClockHealth, ContestMode,
     CwMacro, CwStatus, Decode, DecodeSort, DigiConfig, DigiStatus, DxpedMode, FOX_MAX_SLOTS,
-    FOX_ZONE_MAX_HZ, FoxCaller, FsqHeard, FsqMsg, HOUND_ZONE_MAX_HZ, HellVariant,
+    FOX_ZONE_MAX_HZ, FoxCaller, FsqHeard, FsqMsg, Ft8Depth, HOUND_ZONE_MAX_HZ, HellVariant,
     NAVTEX_MESSAGE_MAX, NAVTEX_TONE_HZ, NavtexMessage, NavtexStatus, PACKET_HEARD_MAX,
     PACKET_TERM_LINE_MAX, PACKET_TERM_MAX, PacketBaud, PacketHeard, PacketLink, PacketLinkOwner,
     PacketStatus, PacketTermKind, PacketTermLine, QsoLive, QsoRecord, QsoStep, QueuedCall,
     RTTY_CENTER_HZ, RadeStatus, SstvStyle, TX_AUDIO_LEVEL_MIN, TX_AUDIO_LEVEL_MIN_DB, ThorMode,
-    TranscriptLine, adif_band, adif_records, adif_to_qso_log, adif_to_qso_log_counting_swl,
-    clock_health, cq_is_for_us, digi_decode_to_adif_record, digi_decodes_to_adif,
-    digi_decodes_to_csv, eu_vhf_rs, fmt_report, next_contest_serial, qso_log_to_adif,
-    qso_log_to_text, qso_to_adif_record, tx_level_db, tx_level_from_db, utc_ymd_hms, worked_before,
-    ymd_hms_to_unix,
+    TranscriptLine, WsprRadio, adif_band, adif_records, adif_to_qso_log,
+    adif_to_qso_log_counting_swl, clock_health, cq_is_for_us, digi_decode_to_adif_record,
+    digi_decodes_to_adif, digi_decodes_to_csv, eu_vhf_rs, fmt_report, next_contest_serial,
+    qso_log_to_adif, qso_log_to_text, qso_to_adif_record, tx_level_db, tx_level_from_db,
+    utc_ymd_hms, worked_before, ymd_hms_to_unix,
 };
 pub use drm::{
     DrmChannel, DrmCodec, DrmConstellation, DrmRobustness, DrmService, DrmStatus, DrmSync, DrmTime,
@@ -145,7 +160,7 @@ pub use fsk441::Fsk441Period;
 pub use fst4::Fst4Period;
 pub use geo::{
     bearing_deg, distance_km, great_circle_points, grid_bearing, grid_distance_km, grid_to_latlon,
-    latlon_to_grid,
+    grid4, latlon_to_grid,
 };
 pub use hd::{HdAudioService, HdRadioStatus};
 pub use hfdl::{
@@ -172,6 +187,7 @@ pub use js8::{
     HB_BAND_HI_HZ, HB_BAND_LO_HZ, HB_SLOT_HZ, Js8FrameInfo, Js8FrameKind, Js8Heard, Js8Msg,
     Js8Speed, Js8Status,
 };
+pub use jtty::{JTTY_MESSAGE_MAX, JttyMessage, JttyStatus};
 pub use limerfe::{
     LimeRfeConfig, RFE_ATTEN_MAX_STEPS, RFE_ATTEN_STEP_DB, RFE_BAUD, RFE_BUFFER_SIZE,
     RFE_I2C_ADDRESS, RfeChannel, RfeLink, RfeMode, RfeModeControl, RfePort, channel_for,
@@ -179,7 +195,11 @@ pub use limerfe::{
 };
 pub use memory::{BandStackEntry, MemoryChannel, MemoryFolder, MemorySort, RttyMemory};
 pub use meters::{Meters, OVERLOAD_FRACTION, PsMeter, TxMeters, TxTelemetry};
-pub use mode::{AgcMode, Mode, NrEngine, NrLevel, NrStrength, SlotTiming};
+pub use mode::{
+    AgcMode, CustomFilterPreset, Mode, NrEngine, NrLevel, NrStrength, SlotTiming,
+    filter_presets_with,
+};
+pub use morse_trainer::{ADVANCE_RUN, Answer, KOCH_ORDER, MorseProgress, START_UNLOCKED};
 pub use netcfg::{
     ClusterConfig, Credentials, FeedConfig, FreeDvReporterConfig, LookupProvider, NetworkConfig,
     PskConfig, RbnConfig, WsprNetConfig,
@@ -189,6 +209,10 @@ pub use pictures::{
     IMAGE_NAME_MAX, IMAGE_PAGE_MAX, IMAGE_SLOT_THUMB_EDGE, IMAGE_SLOTS, IMAGE_SOURCE_MAX_EDGE,
     IMAGE_THUMB_EDGE, IMAGE_UPLOAD_MAX, ImageEntry, ImageKind, ImageListing, ImagePresets,
     ImageSlotInfo, received_at, safe_name,
+};
+pub use picupload::{
+    FtpSecurity, PictureUploadConfig, PictureUploadStatus, TlsVerify, UploadFormat, UploadNaming,
+    format_fingerprint, normalize_fingerprint,
 };
 pub use probe::{DeviceProbe, ProbeAnswer, ProbeTest, ReportKind, TestKind};
 pub use profile::{ModeProfile, ModeProfiles};
@@ -204,8 +228,8 @@ pub use publicsdr::{PublicSdrDirectory, PublicSdrEntry, PublicSdrNetwork};
 pub use q65::Q65Mode;
 pub use qo100::{QO100_BEACON_HZ, Qo100Settings, Qo100Status};
 pub use radio::{
-    AirspyConfig, AirspyDevice, AirspyGain, AirspyHfConfig, AirspyHfDevice, AirspyHfModel, Backend,
-    BandDriveTrim, CAT_IQ_DC_BLOCK_MAX_HZ, CAT_IQ_RATES, CAT_SCOPE_MIN_BAUD,
+    AirspyConfig, AirspyDevice, AirspyGain, AirspyHfConfig, AirspyHfDevice, AirspyHfModel,
+    AudioRoute, Backend, BandDriveTrim, CAT_IQ_DC_BLOCK_MAX_HZ, CAT_IQ_RATES, CAT_SCOPE_MIN_BAUD,
     CONVERTER_OFFSET_MAX_HZ, CONVERTER_PRESETS, CatConfig, CatFamily, ConverterTx, CwKeying,
     DIV_FREEZE_ELEMENT, DIV_MODE_ELEMENT, DIV_RATE_ELEMENT, DIV_RESET_ELEMENT, DIV_TAPS_ELEMENT,
     DIVERSITY_MAX_TAPS, DigiMode, DiversityMode, ELAD_ATTENUATOR_DB, ELAD_CAT_BAUDS,
@@ -244,7 +268,7 @@ pub use rifp::{
     RifpSize, RifpStatus,
 };
 pub use rigctld::RigctldConfig;
-pub use rotator::RotatorConfig;
+pub use rotator::{RotatorConfig, RotatorProtocol};
 pub use satcfg::{
     CELESTRAK_GROUPS, CelestrakGroup, CustomTle, OrbitRings, Passband, SatConfig, SatFreqs,
     SatLink, TleSubStatus, TleSubscription, fmt_mhz as fmt_sat_mhz, parse_tle_block,
@@ -267,18 +291,25 @@ pub use speech::{
 pub use spot::{Spot, SpotKind};
 pub use sstv::{SstvMode, SstvStatus};
 pub use state::{
-    CESSB_MAX_DB, MAX_DECIMATION, MAX_MANUAL_GAIN_DB, MIN_DECIMATED_RATE_HZ, OffsetState,
-    RadioState, RxId, RxState, SQUELCH_CLOSED_DB, SQUELCH_OPEN_DB, SWR_LIMIT_MAX, SWR_LIMIT_MIN,
-    SWR_TUNE_LIMIT_SCALE, TxEqBand, TxEqState, TxState, Vfo, ZOOM_LANE_MARGIN, max_decimation,
+    AtuState, AtuStatus, CESSB_MAX_DB, MAX_DECIMATION, MAX_MANUAL_GAIN_DB, MIN_DECIMATED_RATE_HZ,
+    OffsetState, RadioState, RxId, RxState, SQUELCH_CLOSED_DB, SQUELCH_OPEN_DB, SWR_LIMIT_MAX,
+    SWR_LIMIT_MIN, SWR_TUNE_LIMIT_SCALE, TxState, Vfo, ZOOM_LANE_MARGIN, max_decimation,
     panadapter_fft_ceiling, swr_tune_limit, zoom_lane_decimation,
 };
 pub use station::StationConfig;
 pub use tciserver::TciServerConfig;
 pub use tone::{CTCSS_TONES, SubTone};
-pub use ui::{
-    BandplanKind, ChromeStyle, FontSize, LayoutMode, SmeterStyle, Solar3dWindow, SpectrumDetail,
-    Speed, UiSettings, UiTheme,
+pub use tx_voice::{
+    TX_VOICE_TEST_MAX_S, TxCompState, TxDeEssState, TxEqBand, TxEqEdge, TxEqState, TxGateState,
+    TxOutputState, TxVoiceLive, TxVoiceMeters, TxVoiceProfile, TxVoiceStage, TxVoiceState,
+    TxVoiceTest,
 };
+pub use ui::{
+    AmpDocked, BandplanKind, ChromeStyle, DetachableModule, DetachedState, DetachedWindow,
+    FontSize, LayoutMode, SmeterStyle, Solar3dWindow, SpectrumDetail, Speed, UiLanguage,
+    UiSettings, UiTheme, WORKSPACE_MAX, Workspace,
+};
+pub use vara::{VARA_TRANSCRIPT_MAX, VaraBw, VaraHolder, VaraLine, VaraLineKind, VaraStatus};
 pub use vdl2::{
     VDL2_ALL_CHANNELS, VDL2_CHANNEL_LABELS, VDL2_CHANNEL_SPACING_HZ, VDL2_CHANNELS_HZ, VDL2_CSC_HZ,
     VDL2_DROP_LIST_S, VDL2_GOOD_SPS, VDL2_MESSAGE_MAX, VDL2_MESSAGES, VDL2_MIN_RATE_HZ,
@@ -287,6 +318,11 @@ pub use vdl2::{
     Vdl2Payload, Vdl2Settings, Vdl2Station, Vdl2Status, Vdl2Xid,
 };
 pub use voice::{VOICE_MAX_LEN_S, VOICE_SLOTS, VoiceSlotInfo, VoiceStatus, slot_label};
+pub use wavelog::{
+    WavelogBatch, WavelogConfig, WavelogMerge, WavelogProbe, WavelogResync, WavelogStation,
+    WavelogSyncState, apply_resync, fingerprint_display, merge_from_wavelog, plan_resync,
+    same_contact,
+};
 pub use wefax::{
     WEFAX_STATIONS, WefaxChartMeta, WefaxIoc, WefaxLpm, WefaxStation, WefaxStatus, shift_fax_rows,
 };
@@ -294,7 +330,7 @@ pub use winlink::{
     DEFAULT_CMS_ADDRESS, MAIL_PAGE_MAX, MailAttachment, MailDraft, MailEntry, MailFolder,
     MailListing, MailMessage, WinlinkConfig, WinlinkGateway, WinlinkLane, WinlinkStatus,
 };
-pub use wsjtx::{N1mmConfig, WsjtxConfig};
+pub use wsjtx::{CwTextConfig, N1mmConfig, WsjtxConfig};
 pub use wspr::{
     BURST_S as WSPR_BURST_S, DEFAULT_TX_HZ as WSPR_DEFAULT_TX_HZ, POWERS_DBM as WSPR_POWERS_DBM,
     POWERS_W as WSPR_POWERS_W, SLOT_S as WSPR_SLOT_S, TX_OFFSET_S as WSPR_TX_OFFSET_S,

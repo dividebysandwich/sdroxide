@@ -27,6 +27,7 @@ mod fuzzy;
 mod hell;
 mod help;
 mod hfdl_map;
+mod i18n;
 mod input;
 /// Which layout the window wears — desktop strip, tablet menus, or the compact
 /// phone strip — and the metrics that follow from it.
@@ -39,6 +40,9 @@ mod multi;
 mod prop_map;
 #[cfg(feature = "remote")]
 mod remote;
+/// Pinned certificates for `wss://` stations nothing public vouches for.
+#[cfg(all(feature = "remote", not(target_arch = "wasm32")))]
+mod remote_tls;
 /// Asking egui for the next frame at the rate actually asked for.
 pub mod repaint;
 mod rf_paint;
@@ -528,6 +532,14 @@ mod v3dv_tests {
         assert!(prefer_gl_over_v3dv(&[adapter(Backend::Vulkan, "Broadcom V3D", "V3DV Mesa")]));
         assert!(prefer_gl_over_v3dv(&[adapter(Backend::Vulkan, "v3d 9.0.0.0", "Mesa")]));
     }
+}
+
+/// The main window's title: the program and its version, then what it is
+/// connected to. The version is there so a screenshot says which build it came
+/// from (#664).
+pub fn window_title(detail: &str) -> String {
+    let base = concat!("sdroxide ", env!("CARGO_PKG_VERSION"));
+    if detail.is_empty() { base.to_string() } else { format!("{base} — {detail}") }
 }
 
 /// The application icon, for [`eframe::egui::ViewportBuilder::with_icon`].

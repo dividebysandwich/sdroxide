@@ -1236,8 +1236,11 @@ impl QsoMachine {
             tx_even: self.tx_even,
             transmitting,
             tx_watchdog: self.watchdog,
+            tx_refused: None,
             transcript: self.transcript.clone(),
             config: self.cfg.clone(),
+            jtty: None,
+            vara: None,
             // FT8/FT4 don't use the continuous keyboard-text fields.
             text_rx: String::new(),
             tx_sent: 0,

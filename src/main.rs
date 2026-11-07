@@ -546,6 +546,9 @@ fn reopen_factory_for(
     // that one path a device that isn't there yet becomes the ordinary
     // reconnecting stand-in instead, and the engine takes it from there.
     let mut was_off = !sdroxide_config::load_radios().is_enabled(id);
+    // Whether this radio already stands in for a lent receiver. See
+    // [`lent_answer`].
+    let mut was_lent = panadapter_owners().contains_key(&id);
     Box::new(move |center: f64| {
         let mut c = cli.clone();
         c.freq = Some(center);
@@ -554,8 +557,16 @@ fn reopen_factory_for(
             was_off = false;
             return open_source(&c, &settings).map_err(|e| format!("{e:#}"));
         }
-        if let Some(owner) = panadapter_owners().get(&id) {
-            return Err(format!("this radio is radio {}'s panadapter receiver", owner + 1));
+        match lent_answer(panadapter_owners().get(&id).copied(), &mut was_lent) {
+            Some(Ok(owner)) => {
+                return Ok((
+                    Box::new(null_source::NullSource::attached(c.center_hz(), owner))
+                        as Box<dyn IqSource>,
+                    DeviceCaps { lent_to: Some(owner), ..synthetic_caps("Panadapter receiver") },
+                ));
+            }
+            Some(Err(e)) => return Err(e),
+            None => {}
         }
         if !sdroxide_config::load_radios().is_enabled(id) {
             was_off = true;
@@ -578,6 +589,26 @@ fn reopen_factory_for(
             other => other,
         }
     })
+}
+
+/// What a reopen of a radio whose receiver another radio has borrowed answers.
+///
+/// The first time the radio finds itself lent it has to *adopt* the attached
+/// stand-in: only that announces `lent_to`, which is what takes its tab off the
+/// strip. A plain refusal there kept the device it had just released, so after
+/// pairing at runtime the tab stayed with a frozen waterfall until a restart
+/// (#620). From then on it refuses, which keeps the stand-in's retries cheap
+/// until the pairing is undone. `None`: not lent, open the radio as usual.
+fn lent_answer(owner: Option<u32>, was_lent: &mut bool) -> Option<Result<u32, String>> {
+    let Some(owner) = owner else {
+        *was_lent = false;
+        return None;
+    };
+    if std::mem::replace(was_lent, true) {
+        Some(Err(format!("this radio is radio {}'s panadapter receiver", owner + 1)))
+    } else {
+        Some(Ok(owner))
+    }
 }
 
 /// The command line, minus everything that belongs to radio 0 alone: the
@@ -2783,6 +2814,9 @@ fn smartsdr_caps(model: &str, label: String) -> DeviceCaps {
         tx_audio: true,
         freq_ranges_rx: vec![(30_000.0, rx_top)],
         freq_ranges_tx: tx,
+        // Every FLEX has a directional coupler and reports SWR on its `SWR`
+        // meter, which the backend passes on while it is on the air.
+        has_swr_sensor: true,
         sample_rates: sdroxide_types::SmartSdrConfig::IQ_RATES.to_vec(),
         // No RX gain elements: a FLEX has no user-settable front-end gain in the
         // sense this list means. Its `display pan rfgain` is a per-panadapter
@@ -2869,6 +2903,20 @@ fn synthetic_caps(label: &str) -> DeviceCaps {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #620: lent at runtime, the radio takes the attached stand-in once, then
+    /// refuses until the pairing is undone, and takes it again when re-lent.
+    #[test]
+    fn a_radio_lent_at_runtime_adopts_the_stand_in_once() {
+        let mut was_lent = false;
+        assert_eq!(lent_answer(Some(0), &mut was_lent), Some(Ok(0)));
+        assert!(matches!(lent_answer(Some(0), &mut was_lent), Some(Err(_))));
+        assert_eq!(lent_answer(None, &mut was_lent), None);
+        assert_eq!(lent_answer(Some(2), &mut was_lent), Some(Ok(2)));
+        // Lent at boot, it already holds the stand-in: it only refuses.
+        let mut was_lent = true;
+        assert!(matches!(lent_answer(Some(0), &mut was_lent), Some(Err(_))));
+    }
 
     fn cli(oob: bool) -> Cli {
         let mut c = Cli::parse_from(["sdroxide"]);

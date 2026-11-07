@@ -41,18 +41,20 @@
 //!   itself can be reconstructed — `set_center_hz` only ever says where the span
 //!   should sit.
 //!
-//! With an I.F. tap the receiver is not really being tuned at all: it watches a
-//! fixed intermediate frequency while the rig's own first oscillator moves the
-//! band underneath it. That falls out of the same arithmetic — `off` changes
-//! with the dial by construction — so it needs no separate mode here, only an
-//! offset the size of an I.F. and, on rigs whose carrier moves with the mode, a
-//! per-mode override.
+//! An I.F. tap is different, and is its own case here (#577). The receiver is
+//! not tuned at all: it is parked on the rig's fixed intermediate frequency —
+//! `off`, per mode where the rig's I.F. moves with it — while the rig's own
+//! first oscillator moves the band underneath. So the picture *is* the rig's
+//! dial, as on a rig with its own I/Q output: `center_hz()` is the rig's dial,
+//! `set_center_hz` moves the rig, and [`IqSource::center_is_dial`] says so. An
+//! inverted tap (high-side injection, a K3's KXV3B) is mirrored on the way in,
+//! which puts the band the right way round about that same centre.
 
 use std::collections::VecDeque;
 use std::time::Instant;
 
 use sdroxide_radio::{Complex32, ControlUpdate, IqSource, Result};
-use sdroxide_types::{DeviceCaps, Mode, PanadapterAudio, PanadapterConfig};
+use sdroxide_types::{AgcMode, DeviceCaps, Mode, PanadapterAudio, PanadapterConfig, PanadapterTap};
 use tracing::{info, warn};
 
 /// How much transceiver audio may queue up before the oldest is dropped.
@@ -128,6 +130,15 @@ impl PanadapterSource {
         mode: Option<Mode>,
     ) -> Self {
         let off = mode.map_or(cfg.offset_hz, |m| cfg.offset_for(m));
+        let mut rx = rx;
+        // A rig's I.F. output does not move: park the receiver on it for good.
+        // On the I.F. exactly, with no LO offset of its own — a front end whose
+        // centre is the dial is one the engine never offsets from it.
+        if cfg.tap == PanadapterTap::IfOutput
+            && let Err(e) = rx.set_center_hz(off)
+        {
+            warn!("panadapter receiver refused the {:.6} MHz I.F.: {e}", off / 1e6);
+        }
         let label = format!("{} + {} panadapter", ctrl.describe(), rx.describe());
         info!(
             offset_hz = off,
@@ -188,12 +199,18 @@ impl PanadapterSource {
             // is not a frequency, and a range that collapses is dropped. The
             // plain offset rather than a mode's, because those differ by a few
             // kHz and a tuning range is not measured that finely.
-            freq_ranges_rx: rx
-                .freq_ranges_rx
-                .iter()
-                .map(|&(lo, hi)| ((lo - cfg.offset_hz).max(0.0), hi - cfg.offset_hz))
-                .filter(|&(lo, hi)| hi > lo)
-                .collect(),
+            //
+            // Except on an I.F. tap, whose receiver never leaves the I.F.: what
+            // the station can hear is then whatever the transceiver tunes.
+            freq_ranges_rx: if cfg.tap == PanadapterTap::IfOutput {
+                ctrl.freq_ranges_rx.clone()
+            } else {
+                rx.freq_ranges_rx
+                    .iter()
+                    .map(|&(lo, hi)| ((lo - cfg.offset_hz).max(0.0), hi - cfg.offset_hz))
+                    .filter(|&(lo, hi)| hi > lo)
+                    .collect()
+            },
             freq_ranges_tx: ctrl.freq_ranges_tx.clone(),
             sample_rates: rx.sample_rates.clone(),
             rate_ranges: rx.rate_ranges.clone(),
@@ -252,6 +269,11 @@ impl PanadapterSource {
             // antenna on offer is the one on the radio being listened to. A
             // borrowed receiver has its own aerial and no say in this.
             has_rx_antenna: ctrl.has_rx_antenna,
+            // The engine's to decide, from whose audio is being heard and
+            // whether the transceiver's AGC can be reached (`commands_agc`).
+            agc_off_unavailable: false,
+            // The transceiver's tuner, for the same reason.
+            has_atu: ctrl.has_atu,
         }
     }
 
@@ -283,6 +305,23 @@ impl PanadapterSource {
         if let Err(e) = self.rx.set_center_hz(dial_center + off) {
             warn!("panadapter receiver refused the {} offset: {e}", mode.label());
         }
+    }
+
+    /// Whether the receiver sits on the rig's fixed I.F. See the module doc.
+    fn fixed_if(&self) -> bool {
+        self.cfg.tap == PanadapterTap::IfOutput
+    }
+
+    /// The rig's dial on our scale: what we last commanded or it last reported,
+    /// with the CW sidetone taken back out; its own answer until then.
+    fn rig_dial(&self) -> f64 {
+        if self.dial_known { self.dial_hz - self.cw_offset_hz() } else { self.ctrl.center_hz() }
+    }
+
+    /// Where a frequency the parked receiver reports lands on the dial.
+    fn if_to_dial(&self, rx_hz: f64) -> f64 {
+        let sign = if self.cfg.invert { -1.0 } else { 1.0 };
+        self.rig_dial() + sign * (rx_hz - self.off)
     }
 
     /// How far above our dial the transceiver's own VFO has to sit, in Hz.
@@ -384,19 +423,61 @@ impl PanadapterSource {
 impl IqSource for PanadapterSource {
     // ── Receive: the attached receiver ──────────────────────────────────────
 
+    fn prepare_receive_mode(&mut self, mode: Mode) -> Result<Option<bool>> {
+        let old_rate = self.ctrl.sample_rate();
+        // The wideband receiver demodulates the mode whatever the control
+        // rig's own receive path can do, so its refusal is not this source's.
+        if let Err(e) = self.ctrl.prepare_receive_mode(mode) {
+            warn!("control rig receive path for {mode:?}: {e}");
+        }
+        if self.ctrl.sample_rate() != old_rate {
+            self.audio_q.clear();
+            self.last_audio_pull = None;
+        }
+        self.rx.prepare_receive_mode(mode)
+    }
+
+    fn mode_unavailable(&self, mode: Mode) -> Option<&'static str> {
+        if let Some(why) = self.rx.mode_unavailable(mode) {
+            return Some(why);
+        }
+        if mode == Mode::HdRadio {
+            let hd = if sdroxide_dsp::hd_radio_is_am(self.center_hz()) {
+                sdroxide_nrsc5::Mode::Am
+            } else {
+                sdroxide_nrsc5::Mode::Fm
+            };
+            if self.rx.sample_rate() < hd.min_channel_rate_hz() {
+                return Some("The attached panadapter receiver is too narrow for HD Radio");
+            }
+        }
+        None
+    }
+
     fn sample_rate(&self) -> f64 {
         self.rx.sample_rate()
     }
 
     fn center_hz(&self) -> f64 {
+        if self.fixed_if() {
+            return self.rig_dial();
+        }
         self.rx.center_hz() - self.off
     }
 
     fn set_center_hz(&mut self, hz: f64) -> Result<()> {
+        if self.fixed_if() {
+            // The receiver never retunes; the picture moves by moving the rig.
+            self.set_dial(hz);
+            return Ok(());
+        }
         self.rx.set_center_hz(hz + self.off)
     }
 
     fn lo_offset_hz(&self) -> f64 {
+        if self.fixed_if() {
+            return 0.0;
+        }
         self.rx.lo_offset_hz()
     }
 
@@ -420,6 +501,12 @@ impl IqSource for PanadapterSource {
 
     fn wide_spectrum_db(&mut self, out: &mut Vec<f32>) -> Option<(f64, f64)> {
         let (center, span) = self.rx.wide_spectrum_db(out)?;
+        if self.fixed_if() {
+            if self.cfg.invert {
+                out.reverse();
+            }
+            return Some((self.if_to_dial(center), span));
+        }
         Some((center - self.off, span))
     }
 
@@ -543,7 +630,8 @@ impl IqSource for PanadapterSource {
     /// transceiver is told where to go.
     fn set_if_offset(&mut self, hz: f64) {
         self.rx.set_if_offset(hz);
-        if self.cfg.track {
+        // On an I.F. tap the dial is the centre and `set_center_hz` moves it.
+        if self.cfg.track && !self.fixed_if() {
             let vfo = self.center_hz() + hz;
             self.set_dial(vfo);
         }
@@ -553,8 +641,11 @@ impl IqSource for PanadapterSource {
     /// *receiver*, and the dial moves inside it through [`Self::set_if_offset`]
     /// without the span having to follow. That separation is the whole point of
     /// the pairing — it is what a rig with only its own I/Q output does not have.
+    ///
+    /// Except on an I.F. tap: there the receiver is parked and the picture is
+    /// the rig's dial, so the window moves with it (#577).
     fn center_is_dial(&self) -> bool {
-        false
+        self.fixed_if()
     }
 
     fn poll_control(&mut self) -> Vec<ControlUpdate> {
@@ -587,7 +678,8 @@ impl IqSource for PanadapterSource {
         // out from under us, which the engine adopts rather than corrects.
         for u in self.rx.poll_control() {
             if let ControlUpdate::Center(hz) = u {
-                out.push(ControlUpdate::Center(hz - self.off));
+                let c = if self.fixed_if() { self.if_to_dial(hz) } else { hz - self.off };
+                out.push(ControlUpdate::Center(c));
             }
         }
         out
@@ -609,12 +701,33 @@ impl IqSource for PanadapterSource {
         self.ctrl.set_control_filter(mode, lo_hz, hi_hz);
     }
 
+    fn set_control_agc(&mut self, agc: AgcMode) {
+        self.ctrl.set_control_agc(agc);
+    }
+
+    fn commands_agc(&self) -> bool {
+        self.ctrl.commands_agc()
+    }
+
     fn set_rit_hz(&mut self, hz: f64) {
         self.ctrl.set_rit_hz(hz);
     }
 
+    /// The meter follows what is being listened to: the rig's own meter only
+    /// while its audio is the one heard. Otherwise `None`, so the engine
+    /// measures the receiver's I/Q like any other — reading the rig's meter
+    /// there showed S0 on a dummy load over a band full of signals (#619).
     fn rx_signal_dbm(&mut self) -> Option<f32> {
-        self.ctrl.rx_signal_dbm()
+        if self.cfg.audio == PanadapterAudio::Transceiver {
+            self.ctrl.rx_signal_dbm()
+        } else {
+            None
+        }
+    }
+
+    /// The receiver's, since its I/Q is what the engine measures.
+    fn rx_gain_db(&self) -> Option<f32> {
+        self.rx.rx_gain_db()
     }
 
     /// The *receiver's*, not the transceiver's: what overflows is the converter
@@ -744,6 +857,10 @@ impl IqSource for PanadapterSource {
         self.ctrl.set_rig_power(on)
     }
 
+    fn set_power_step(&mut self, code: u8) {
+        self.ctrl.set_power_step(code)
+    }
+
     fn commands_rig_power(&self) -> bool {
         self.ctrl.commands_rig_power()
     }
@@ -760,6 +877,19 @@ impl IqSource for PanadapterSource {
 
     fn reread_rx_antenna(&mut self) {
         self.ctrl.reread_rx_antenna();
+    }
+
+    /// The transceiver's tuner: it is the radio that transmits.
+    fn atu(&self) -> Option<sdroxide_types::AtuState> {
+        self.ctrl.atu()
+    }
+
+    fn atu_tune(&mut self) -> Result<()> {
+        self.ctrl.atu_tune()
+    }
+
+    fn atu_bypass(&mut self) -> Result<()> {
+        self.ctrl.atu_bypass()
     }
 
     /// Gated on the same test, so the two answers cannot disagree: a level that
@@ -835,13 +965,22 @@ mod tests {
         /// Samples handed over by `read`, real part only.
         audio: Vec<f32>,
         signal_dbm: Option<f32>,
+        gain_db: Option<f32>,
     }
 
     impl Fake {
         fn new(name: &'static str, rate: f64, center: f64) -> (Self, Arc<Mutex<Log>>) {
             let log = Arc::new(Mutex::new(Log::default()));
             (
-                Fake { name, rate, center, log: log.clone(), audio: Vec::new(), signal_dbm: None },
+                Fake {
+                    name,
+                    rate,
+                    center,
+                    log: log.clone(),
+                    audio: Vec::new(),
+                    signal_dbm: None,
+                    gain_db: None,
+                },
                 log,
             )
         }
@@ -886,6 +1025,9 @@ mod tests {
         fn rx_signal_dbm(&mut self) -> Option<f32> {
             self.signal_dbm
         }
+        fn rx_gain_db(&self) -> Option<f32> {
+            self.gain_db
+        }
     }
 
     fn cfg() -> PanadapterConfig {
@@ -915,21 +1057,39 @@ mod tests {
         assert!(ctrl_log.lock().unwrap().centers.is_empty(), "a span move is not a dial move");
     }
 
-    /// An I.F. tap: the receiver sits on the intermediate frequency and the
-    /// engine still works entirely in dial frequencies.
+    /// Issue #577: an I.F. tap (a K3's KXV3B at 8.215 MHz) parks the receiver
+    /// on the I.F. for good. The picture is the rig's dial: moving it moves the
+    /// rig, the rig's knob moves it, and the receiver is never retuned.
     #[test]
-    fn an_if_tap_keeps_the_engine_on_the_dials_scale() {
-        let c = PanadapterConfig { offset_hz: 70_455_000.0, tap: PanadapterTap::IfOutput, ..cfg() };
-        let (mut src, rx_log, _) = pair(c);
-        assert_eq!(src.center_hz(), 14_100_000.0);
+    fn a_fixed_if_tap_parks_the_receiver_and_tunes_the_rig() {
+        let c = PanadapterConfig {
+            offset_hz: 8_215_000.0,
+            tap: PanadapterTap::IfOutput,
+            invert: true,
+            ..cfg()
+        };
+        let (rx, rx_log) = Fake::new("rx", 2_000_000.0, 7_000_000.0);
+        let (ctrl, ctrl_log) = Fake::new("rig", 48_000.0, 7_074_000.0);
+        let mut src = PanadapterSource::new(Box::new(rx), Box::new(ctrl), c, Some(Mode::Usb));
+        assert_eq!(rx_log.lock().unwrap().centers, vec![8_215_000.0], "parked on the I.F.");
+        assert!(src.center_is_dial());
+        assert_eq!(src.lo_offset_hz(), 0.0);
+        assert_eq!(src.center_hz(), 7_074_000.0, "the picture is the rig's dial");
 
         src.set_center_hz(7_100_000.0).unwrap();
-        assert_eq!(
-            rx_log.lock().unwrap().centers,
-            vec![7_100_000.0 + 70_455_000.0],
-            "the receiver is tuned to the I.F., the engine asked for the dial"
-        );
+        src.set_if_offset(0.0);
+        assert_eq!(ctrl_log.lock().unwrap().centers, vec![7_100_000.0], "the rig moved, once");
         assert_eq!(src.center_hz(), 7_100_000.0);
+
+        ctrl_log.lock().unwrap().updates = vec![ControlUpdate::Freq(14_074_000.0)];
+        let _ = src.poll_control();
+        assert_eq!(src.center_hz(), 14_074_000.0, "the rig's knob moves the picture");
+        assert_eq!(rx_log.lock().unwrap().centers, vec![8_215_000.0], "the receiver never retunes");
+
+        // A receiver drifting 1 kHz up the I.F. is 1 kHz down the band when
+        // the tap is inverted.
+        rx_log.lock().unwrap().updates = vec![ControlUpdate::Center(8_216_000.0)];
+        assert!(src.poll_control().contains(&ControlUpdate::Center(14_073_000.0)));
     }
 
     /// The dial only ever moves through `set_if_offset`, which is the one call
@@ -973,8 +1133,8 @@ mod tests {
         );
     }
 
-    /// A rig whose I.F. moves between SSB and DATA: changing mode slides the
-    /// receiver so the band stays where it was on screen.
+    /// A rig whose I.F. moves between SSB and DATA: changing mode re-parks the
+    /// receiver on that mode's I.F., and the band stays where it was on screen.
     #[test]
     fn a_mode_change_moves_a_per_mode_if_tap() {
         let mut c =
@@ -985,8 +1145,8 @@ mod tests {
 
         src.set_control_mode(Mode::Ft8).unwrap();
         assert_eq!(
-            rx_log.lock().unwrap().centers,
-            vec![14_100_000.0 + 9_001_500.0],
+            rx_log.lock().unwrap().centers.last().copied(),
+            Some(9_001_500.0),
             "DATA's own I.F."
         );
         assert_eq!(src.center_hz(), 14_100_000.0, "the band has not moved on screen");
@@ -995,10 +1155,7 @@ mod tests {
         ctrl_log.lock().unwrap().updates = vec![ControlUpdate::Mode(Mode::Lsb)];
         let _ = src.poll_control();
         assert_eq!(src.center_hz(), 14_100_000.0);
-        assert_eq!(
-            rx_log.lock().unwrap().centers.last().copied(),
-            Some(14_100_000.0 + 9_000_000.0)
-        );
+        assert_eq!(rx_log.lock().unwrap().centers.last().copied(), Some(9_000_000.0));
     }
 
     /// Issue #364: in CW the transceiver has to sit on the contact, a sidetone
@@ -1092,15 +1249,25 @@ mod tests {
         assert!(rx_log.lock().unwrap().tx_begins.is_empty(), "the receiver never transmits");
     }
 
-    /// The S-meter is the transceiver's: it is the radio on the antenna the
-    /// operator is working.
+    /// The S-meter follows what is heard: the transceiver's own meter while
+    /// its audio is the one listened to, the receiver's I/Q otherwise (#619).
     #[test]
-    fn the_s_meter_is_the_transceivers() {
+    fn the_s_meter_follows_the_audio() {
         let (rx, _) = Fake::new("rx", 2e6, 14e6);
         let (mut ctrl, _) = Fake::new("rig", 48_000.0, 14e6);
         ctrl.signal_dbm = Some(-73.0);
-        let mut src = PanadapterSource::new(Box::new(rx), Box::new(ctrl), cfg(), Some(Mode::Usb));
+        let c = PanadapterConfig { audio: PanadapterAudio::Transceiver, ..cfg() };
+        let mut src = PanadapterSource::new(Box::new(rx), Box::new(ctrl), c, Some(Mode::Usb));
         assert_eq!(src.rx_signal_dbm(), Some(-73.0));
+
+        let (mut rx, _) = Fake::new("rx", 2e6, 14e6);
+        rx.gain_db = Some(42.0);
+        let (mut ctrl, _) = Fake::new("rig", 48_000.0, 14e6);
+        ctrl.signal_dbm = Some(-73.0);
+        let c = PanadapterConfig { audio: PanadapterAudio::Attached, ..cfg() };
+        let mut src = PanadapterSource::new(Box::new(rx), Box::new(ctrl), c, Some(Mode::Usb));
+        assert_eq!(src.rx_signal_dbm(), None, "the engine measures the receiver's I/Q");
+        assert_eq!(src.rx_gain_db(), Some(42.0), "against the receiver's gain");
     }
 
     /// An inverted tap is mirrored about its centre on the way in.
@@ -1182,11 +1349,18 @@ mod tests {
             freq_ranges_rx: vec![(24_000_000.0, 1_766_000_000.0)],
             ..Default::default()
         };
-        let ctrl = DeviceCaps { tx_channels: 1, ..Default::default() };
+        let ctrl = DeviceCaps {
+            tx_channels: 1,
+            freq_ranges_rx: vec![(30_000.0, 60_000_000.0)],
+            ..Default::default()
+        };
         let c = PanadapterConfig { offset_hz: 70_455_000.0, tap: PanadapterTap::IfOutput, ..cfg() };
         let both = PanadapterSource::merge_caps(&rx, &ctrl, &c);
+        // The receiver never leaves the I.F., so what can be heard is what the
+        // transceiver tunes (#577).
         assert!(both.may_rx_hz(14_200_000.0), "20 m is what the operator dials");
         assert!(!both.may_rx_hz(1_700_000_000.0), "and the dongle's own top no longer is");
+        assert_eq!(both.freq_ranges_rx, ctrl.freq_ranges_rx);
 
         // A second receiver on its own antenna is not offset from anything, and
         // its range reaches the engine exactly as it published it.

@@ -7,6 +7,7 @@
 //! runs, against a null sink; that keeps a single code path here and leaves a
 //! browser backend as a matter of implementing one trait.
 
+use crate::i18n::tr;
 use sdroxide_speech::announce::Announcer;
 use sdroxide_types::SpeechSettings;
 
@@ -30,9 +31,11 @@ impl SpeechStatus {
     pub fn note(&self) -> Option<String> {
         match self {
             SpeechStatus::Idle => None,
-            SpeechStatus::Loading => Some("Loading the voice…".into()),
-            SpeechStatus::Ready(v) => Some(format!("Voice: {v}")),
-            SpeechStatus::Failed(e) => Some(format!("Speech is unavailable: {e}")),
+            SpeechStatus::Loading => Some(tr!("speech-loading-voice")),
+            SpeechStatus::Ready(v) => Some(tr!("speech-voice-2", voice = v)),
+            SpeechStatus::Failed(e) => {
+                Some(tr!("speech-speech-unavailable", error = e.to_string()))
+            }
         }
     }
 
@@ -148,7 +151,7 @@ impl SpeechRuntime {
     #[cfg(target_arch = "wasm32")]
     pub fn status(&self) -> SpeechStatus {
         if self.announcer.settings().enabled {
-            SpeechStatus::Failed("the browser client cannot speak yet".into())
+            SpeechStatus::Failed(tr!("speech-browser-client-cannot-speak-yet").into())
         } else {
             SpeechStatus::Idle
         }

@@ -29,6 +29,12 @@ pub struct WsjtxConfig {
     /// requires.
     #[serde(default)]
     pub n1mm: N1mmConfig,
+    /// The CW panel's decoded text, sent as plain UTF-8 over UDP as it is
+    /// copied. A third output of the same kind — "tell my other programs
+    /// what I heard" — so it lives on the same page and in the same file.
+    /// Appended, as the wire requires.
+    #[serde(default)]
+    pub cw_text: CwTextConfig,
 }
 
 impl Default for WsjtxConfig {
@@ -39,6 +45,7 @@ impl Default for WsjtxConfig {
             port: 2237,
             id: "WSJT-X".into(),
             n1mm: N1mmConfig::default(),
+            cw_text: CwTextConfig::default(),
         }
     }
 }
@@ -91,5 +98,44 @@ impl Default for N1mmConfig {
 impl N1mmConfig {
     pub fn addr(&self) -> String {
         format!("{}:{}", self.host, self.port)
+    }
+}
+
+/// Decoded CW over UDP: the CW panel's copy, as plain UTF-8 datagrams, each
+/// holding the text settled since the last one.
+///
+/// For the programs that want the copy rather than a contact — a station
+/// controller showing it beside the rig's own display, a logger's CW window,
+/// a script. No framing and no protocol: a listener reads datagrams and
+/// appends them, which is what `nc -ul 9999` shows. SDRangel's Morse decoder
+/// sends its copy the same way to the same default port, so a listener
+/// written for one serves the other.
+///
+/// Only settled text is sent. The tail the neural decoder has not yet settled
+/// on, which the panel shows and then revises, is not, so nothing sent is
+/// ever taken back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CwTextConfig {
+    /// Off by default, for the reason [`WsjtxConfig::enabled`] gives.
+    pub enabled: bool,
+    /// Where to send. `127.0.0.1` reaches programs on this machine.
+    pub host: String,
+    /// 9999, SDRangel's Morse decoder's default.
+    pub port: u16,
+}
+
+impl Default for CwTextConfig {
+    fn default() -> Self {
+        CwTextConfig { enabled: false, host: "127.0.0.1".into(), port: 9999 }
+    }
+}
+
+impl CwTextConfig {
+    /// The destination as the sender spells it — trimmed, and 127.0.0.1 for a
+    /// blank host — so the engine rebuilds the socket only on a real change.
+    pub fn addr(&self) -> String {
+        let host = self.host.trim();
+        format!("{}:{}", if host.is_empty() { "127.0.0.1" } else { host }, self.port)
     }
 }

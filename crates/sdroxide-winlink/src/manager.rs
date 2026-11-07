@@ -20,7 +20,7 @@ use sdroxide_types::{
 use crate::mailbox::{Mailbox, MailboxError};
 use crate::message::{Attachment, Message, format_date, generate_mid};
 use crate::session::{self, SessionConfig, SessionOutcome};
-use crate::transport::{Ax25Transport, TelnetTransport};
+use crate::transport::{Ax25Transport, TelnetTransport, VaraTransport};
 
 /// How long to wait on the CMS before giving up.
 const DIAL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -32,6 +32,11 @@ const DIAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// handshake legitimately takes tens of seconds. Giving up at thirty would
 /// abandon sessions that were about to work.
 const RADIO_DIAL_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The same upper bound for a VARA call. The modem gives up by itself after
+/// its retries (about a minute and a half at the default fifteen) and says
+/// `DISCONNECTED`; this only catches a modem that never answers at all.
+const VARA_DIAL_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Where a forwarding session goes.
 ///
@@ -50,6 +55,8 @@ pub enum WinlinkRoute {
     /// gateway that is off the air. Naming it in the transcript is what makes
     /// the difference visible afterwards.
     Packet { gateway: String, via: Vec<String>, baud: sdroxide_types::PacketBaud },
+    /// An RMS gateway over the air on VARA HF.
+    Vara { gateway: String },
 }
 
 /// What a finished session produced.
@@ -105,6 +112,10 @@ pub struct WinlinkManager {
     /// means the radio cannot carry a session right now — which is a refusal
     /// the operator can act on, not a failure to report afterwards.
     packet_port: Option<sdroxide_ax25::PortHandle>,
+    /// The engine's VARA modem, when the radio is in VARA HF. A handle to a
+    /// modem that has since gone refuses every claim, so a stale one fails the
+    /// session with a reason rather than hanging it.
+    vara_port: Option<sdroxide_vara::VaraHandle>,
 }
 
 impl WinlinkManager {
@@ -122,6 +133,7 @@ impl WinlinkManager {
             done_rx,
             done_tx,
             packet_port: None,
+            vara_port: None,
         };
         mgr.refresh_counts();
         Ok(mgr)
@@ -142,6 +154,17 @@ impl WinlinkManager {
 
     pub fn set_packet_port(&mut self, port: Option<sdroxide_ax25::PortHandle>) {
         self.packet_port = port;
+    }
+
+    /// The VARA handle the manager is holding, so the engine can tell a fresh
+    /// modem from one a destroyed controller left behind.
+    #[must_use]
+    pub fn vara_port(&self) -> Option<&sdroxide_vara::VaraHandle> {
+        self.vara_port.as_ref()
+    }
+
+    pub fn set_vara_port(&mut self, port: Option<sdroxide_vara::VaraHandle>) {
+        self.vara_port = port;
     }
 
     /// True when a radio session could be started right now.
@@ -207,8 +230,12 @@ impl WinlinkManager {
                     );
                 }
             },
-            WinlinkRoute::Telnet { .. } => None,
+            WinlinkRoute::Vara { .. } if self.vara_port.is_none() => {
+                return Err("switch the radio to VARA HF before forwarding over VARA".into());
+            }
+            WinlinkRoute::Telnet { .. } | WinlinkRoute::Vara { .. } => None,
         };
+        let vara = self.vara_port.clone();
 
         let cfg = SessionConfig {
             callsign: self.cfg.callsign.trim().to_uppercase(),
@@ -218,7 +245,9 @@ impl WinlinkManager {
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             target_call: match &route {
                 WinlinkRoute::Telnet { .. } => crate::transport::CMS_TARGET_CALL.to_string(),
-                WinlinkRoute::Packet { gateway, .. } => gateway.to_uppercase(),
+                WinlinkRoute::Packet { gateway, .. } | WinlinkRoute::Vara { gateway } => {
+                    gateway.to_uppercase()
+                }
             },
         };
         let busy = Arc::clone(&self.busy);
@@ -231,7 +260,9 @@ impl WinlinkManager {
         self.status.busy = true;
         self.status.activity = match &route {
             WinlinkRoute::Telnet { address } => format!("connecting to {address}…"),
-            WinlinkRoute::Packet { gateway, .. } => format!("calling {gateway}…"),
+            WinlinkRoute::Packet { gateway, .. } | WinlinkRoute::Vara { gateway } => {
+                format!("calling {gateway}…")
+            }
         };
         self.status.last_error = None;
 
@@ -239,7 +270,7 @@ impl WinlinkManager {
             std::thread::Builder::new().name("sdroxide-winlink".into()).spawn(move || {
                 let mut guard = SessionGuard { busy, done_tx, outcome: None };
                 let mut outcome = SessionOutcome::default();
-                let err = run_session(&route, port, &cancel, &cfg, &outbound, &mut outcome);
+                let err = run_session(&route, port, vara, &cancel, &cfg, &outbound, &mut outcome);
                 guard.outcome = Some((Box::new(outcome), err));
             });
 
@@ -413,6 +444,7 @@ impl WinlinkManager {
 fn run_session(
     route: &WinlinkRoute,
     port: Option<sdroxide_ax25::PortHandle>,
+    vara: Option<sdroxide_vara::VaraHandle>,
     cancel: &Arc<AtomicBool>,
     cfg: &SessionConfig,
     outbound: &[Message],
@@ -438,6 +470,25 @@ fn run_session(
                 gateway,
                 via,
                 RADIO_DIAL_TIMEOUT,
+                Arc::clone(cancel),
+            ) {
+                Ok(t) => t,
+                Err(e) => return Some(e.to_string()),
+            };
+            outcome.log.push(format!("< connected to {gateway}"));
+            match session::run_into(&mut transport, cfg, outbound, outcome) {
+                Ok(()) => None,
+                Err(e) => Some(e.to_string()),
+            }
+        }
+        WinlinkRoute::Vara { gateway } => {
+            let handle = vara.expect("connect() proved the modem exists before spawning");
+            outcome.log.push(format!("> calling {gateway} on VARA HF"));
+            let mut transport = match VaraTransport::connect(
+                &handle,
+                &cfg.callsign,
+                gateway,
+                VARA_DIAL_TIMEOUT,
                 Arc::clone(cancel),
             ) {
                 Ok(t) => t,

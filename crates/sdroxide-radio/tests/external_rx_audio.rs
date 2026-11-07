@@ -10,12 +10,14 @@
 //! - the panadapter still spans the receiver's whole I/Q, so the operator gets
 //!   the wideband display the pairing exists for;
 //! - the S-meter reads the audio being heard rather than the chain measuring
-//!   the other antenna.
+//!   the other antenna;
+//! - all of that holds with no audio output at all, where the engine has no
+//!   main receive chain (#640).
 
 use std::time::Duration;
 
 use sdroxide_radio::{AudioParams, Complex32, EngineConfig, IqSource, Result, rtrb, start_engine};
-use sdroxide_types::{DeviceCaps, RadioEvent};
+use sdroxide_types::{Command, DeviceCaps, Mode, RadioEvent, RxId};
 
 /// The attached receiver's I/Q rate — wideband, and deliberately not the
 /// transceiver's audio rate so a resampler has to be involved.
@@ -98,18 +100,27 @@ fn run(external_audio: bool) -> Ran {
 }
 
 fn run_calibrated(external_audio: bool, cal_offset_db: f32) -> Ran {
+    run_with(external_audio, cal_offset_db, true, None)
+}
+
+/// `output: false` starts the engine with no audio output, as a station with
+/// no sound card to play on does; `mode` is selected once it is running.
+fn run_with(external_audio: bool, cal_offset_db: f32, output: bool, mode: Option<Mode>) -> Ran {
     let (producer, mut consumer) = rtrb::RingBuffer::<f32>::new(48_000 * 4);
     let src = PairedSource { center: CENTER, external_audio };
     let mut h = start_engine(
         Box::new(src),
         caps(external_audio),
         EngineConfig {
-            audio: Some(AudioParams { producer, out_rate: AUDIO_RATE }),
+            audio: output.then(|| AudioParams { producer, out_rate: AUDIO_RATE }),
             cal_offset_db,
             ..Default::default()
         },
     );
     let thread = h.thread.take();
+    if let Some(mode) = mode {
+        h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode }).unwrap();
+    }
 
     let mut peak = 0.0f32;
     let mut s_dbm = None;
@@ -203,4 +214,24 @@ fn without_the_flag_the_engine_demodulates_as_usual() {
         ran.peak
     );
     assert!((ran.span_hz - IQ_RATE).abs() < 1.0);
+}
+
+/// Issue #640: with no audio output there is no main receive chain, and the
+/// transceiver's audio still has to reach the meter and the decoders — and a
+/// digital mode has to show the live receiver span, not a channel window
+/// nothing feeds.
+#[test]
+fn with_no_audio_output_the_transceivers_audio_still_arrives() {
+    let ran = run_with(true, 0.0, false, Some(Mode::Ft8));
+    let s_dbm = ran.s_dbm.expect("the transceiver's audio must still reach the meter");
+    let want = 20.0 * RIG_AUDIO.log10();
+    assert!(
+        (s_dbm - want).abs() < 1.0,
+        "expected about {want:.1} dBm from the rig's audio, got {s_dbm:.1}"
+    );
+    assert!(
+        (ran.span_hz - IQ_RATE).abs() < 1.0,
+        "FT8 with no audio output must show the receiver's {IQ_RATE} Hz, got {}",
+        ran.span_hz
+    );
 }

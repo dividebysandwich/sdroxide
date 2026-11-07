@@ -2209,14 +2209,37 @@ fn install_fonts(ctx: &egui::Context) {
             "../assets/fonts/ShareTechMono-Regular.ttf"
         ))),
     );
+    // Chinese: the GB 2312 characters of Noto Sans SC (SIL OFL, see
+    // assets/fonts/NotoSansSC-OFL.txt). Last in each stack, so it is only
+    // reached for a character the Latin fonts above do not have.
+    fonts.font_data.insert(
+        "cjk".into(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../assets/fonts/NotoSansSC-Regular-GB2312.ttf"
+        ))),
+    );
+    // Japanese: the JIS X 0208 characters and kana of Noto Sans JP (SIL OFL,
+    // see assets/fonts/NotoSansJP-OFL.txt). Behind the Chinese subset, so the
+    // shared characters keep their Chinese forms and only the Japanese-only
+    // kanji and kana fall through to it.
+    fonts.font_data.insert(
+        "jp".into(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../assets/fonts/NotoSansJP-Regular-JIS0208.otf"
+        ))),
+    );
 
     if let Some(prop) = fonts.families.get_mut(&FontFamily::Proportional) {
         prop.insert(0, "chakra".into());
+        prop.push("cjk".into());
+        prop.push("jp".into());
     }
     // Make Share Tech Mono the primary monospace (used by the decode list,
     // frequency readout, and meters).
     if let Some(mono) = fonts.families.get_mut(&FontFamily::Monospace) {
         mono.insert(0, "cyber-mono".into());
+        mono.push("cjk".into());
+        mono.push("jp".into());
     }
     fonts.families.insert(FontFamily::Name("cyber-mono".into()), vec!["cyber-mono".to_string()]);
     // Bold family for headings, falling back through the proportional stack.

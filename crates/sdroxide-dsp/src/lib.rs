@@ -23,6 +23,7 @@ mod hell;
 mod hell_font;
 mod interp;
 mod iqcorrect;
+pub mod jtty;
 mod mfsk;
 mod modulator;
 mod navtex;
@@ -46,8 +47,10 @@ mod simd;
 mod spectrum;
 mod spectrum_paint;
 mod sstv;
+mod sstv_slant;
 mod thor;
 mod tonegen;
+mod txvoice;
 mod wbddc;
 mod wbspectrum;
 pub mod wefax;
@@ -74,7 +77,7 @@ pub use fir::{ComplexFir, RealFir, bandpass_taps};
 pub use fsk441::{
     DEFAULT_DFTOL as FSK441_DFTOL, FSK441_BAUD, FSK441_CHARSET, FSK441_NSPD, FSK441_RATE,
     FSK441_SHORTHAND, FSK441_TONES, Fsk441Ping, fsk441_char_to_dits, fsk441_dits_to_char,
-    fsk441_encode_tones, fsk441_find_pings, fsk441_generate_audio,
+    fsk441_encode_tones, fsk441_find_pings, fsk441_generate_audio, fsk441_tx_tones,
 };
 pub use fsq::{FsqRx, FsqTx};
 pub use fsq_image::{FsqImageRx, FsqImageTx, IMG_H as FSQ_IMG_H, IMG_W as FSQ_IMG_W};
@@ -86,6 +89,7 @@ pub use modulator::{Modulator, PACKET_DEVIATION_HZ, SsbMod, make_modulator};
 pub use navtex::{
     CharSource as NavtexCharSource, NAVTEX_BAUD, NAVTEX_CENTER_HZ, NAVTEX_SHIFT_HZ, NavtexRx,
 };
+pub use txvoice::{VOICE_CHAIN_RATE, VoiceChain};
 
 /// The NAVTEX transmit side, for tests and for anyone checking a receiver.
 ///

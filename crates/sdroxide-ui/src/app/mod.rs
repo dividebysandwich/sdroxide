@@ -20,14 +20,18 @@
 //! `pub(in crate::app)`, which is as wide as anything here ever gets.
 
 pub(in crate::app) mod alerts;
+mod amp;
 pub(in crate::app) mod awards;
 pub(in crate::app) mod bands;
 pub(in crate::app) mod drm;
+mod duo_power;
 pub(in crate::app) mod frame;
+pub(in crate::app) mod grid_tracker;
 pub(in crate::app) mod hd;
 pub(in crate::app) mod hfdl;
 pub(in crate::app) mod ism;
 pub(in crate::app) mod logbook;
+pub(in crate::app) mod morse;
 pub(in crate::app) mod net;
 pub(in crate::app) mod panels;
 pub(crate) mod persist;
@@ -43,10 +47,13 @@ pub(in crate::app) mod spectrum;
 pub(in crate::app) mod speech;
 pub(in crate::app) mod spots;
 pub(in crate::app) mod top_bar;
+pub(in crate::app) mod tx_audio;
+pub(in crate::app) mod undocked;
 pub(crate) mod util;
 pub(in crate::app) mod windows;
 pub(in crate::app) mod winlink;
 
+use crate::i18n::tr;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
@@ -65,8 +72,8 @@ use self::panels::fsq::fsq_load_contacts;
 use self::panels::rf_paint::RfPaintUi;
 use self::panels::sstv::SstvUi;
 use self::persist::{
-    load_alerts_settings, load_broadcast_stations, load_qso_log, load_speech_settings,
-    load_ui_settings,
+    load_alerts_settings, load_broadcast_stations, load_filter_presets, load_hfdl_channels,
+    load_morse_progress, load_qso_log, load_speech_settings, load_ui_settings,
 };
 use self::settings::servers::TciServerStatus;
 use self::settings::{SatEditState, SettingsTab, TestOutcome};
@@ -128,6 +135,10 @@ pub struct SdroxideApp {
     /// Scrolling history behind the full-band strip.
     wide_wf: crate::widgets::wide_spectrum::WideWaterfall,
     meters: Option<Meters>,
+    /// The last SWR the radio reported while on the air — kept after the over
+    /// ends, so the tune box can still show what the antenna was matched to.
+    /// Cleared when a different radio is connected.
+    last_swr: Option<f32>,
     memories: Vec<MemoryChannel>,
     mem_folders: Vec<MemoryFolder>,
     /// The scanner's settings, mirrored from the engine and edited in place —
@@ -156,6 +167,11 @@ pub struct SdroxideApp {
     /// this controller has no connection to redial.
     retry_at: Option<f64>,
     retry_backoff: f64,
+    /// The redial is held rather than armed: the connection was refused for a
+    /// certificate nothing trusts, and dialling again would only be refused
+    /// again. Released by the operator trusting it — here, or on another tab
+    /// of the same station — or pressing Reconnect. See [`Self::arm_retry`].
+    cert_hold: bool,
     /// Persistent, non-fatal operator notice (e.g. radio audio input
     /// unavailable / mono card selected for IQ). Shown as a warning banner.
     radio_notice: Option<String>,
@@ -289,6 +305,11 @@ pub struct SdroxideApp {
     /// factor, for the same reason — and so the zoom is left alone in between,
     /// where it belongs to egui's own ctrl+plus / ctrl+minus.
     applied_ui_font: sdroxide_types::FontSize,
+    /// The interface language last loaded, for the same reason: the picker in
+    /// the UI tab takes effect on the next frame. Per tab like the look, so a
+    /// second tab holding the setting from before the change does not switch
+    /// the whole window back.
+    applied_language: sdroxide_types::UiLanguage,
     /// Spoken announcements: the state machine that decides what to say, and
     /// the synthesizer that says it. Always present — switched off, it holds a
     /// null sink and costs a comparison per event.
@@ -301,6 +322,10 @@ pub struct SdroxideApp {
     /// the whole station: every radio tab holds the same one.
     alerts: alerts::AlertRuntime,
     radio_cfg: Option<sdroxide_types::RadioConfig>,
+    /// The config of the radio lent to this one as its panadapter receiver,
+    /// by id: its diversity filter is the one this radio's DIV box drives
+    /// (#637). Loaded once per lender rather than every frame.
+    div_lender: Option<(u32, sdroxide_types::RadioConfig)>,
     /// The converter offset being typed on the Radio tab, in Hz. Held apart
     /// from `radio_cfg` because every other field on that tab is written to
     /// `radio.json` as it is typed, and the engine rereads that file whenever it
@@ -448,6 +473,16 @@ pub struct SdroxideApp {
     /// HFDL: filter for the decode log; matches a kind, a ground station or the
     /// payload details.
     hfdl_filter: String,
+    /// The operator's own HFDL channels, in kHz (`hfdl_channels.json`) — the
+    /// busy assigned frequencies that are not in the published plan, drawn as
+    /// one-click chips beside it in the HFDL panel.
+    hfdl_channels: Vec<u32>,
+    /// The operator's own filter presets (`filter_presets.json`), each in
+    /// place of one of a mode's built-in chips in the BW popup.
+    filter_presets: Vec<sdroxide_types::CustomFilterPreset>,
+    /// The filter preset being edited in the BW popup after a right-click on
+    /// its chip, if any.
+    preset_edit: Option<top_bar::PresetEdit>,
     show_settings: bool,
     /// Scroll the Settings window back to its tab bar on the frame it opens.
     /// The window's scroll offset is egui memory, which outlives both the
@@ -460,6 +495,8 @@ pub struct SdroxideApp {
     voice: sdroxide_types::VoiceStatus,
     show_voice: bool,
     voice_name_edit: Option<(usize, String)>,
+    /// The TX Audio window (the transmit voice chain) and its own state.
+    tx_audio: tx_audio::TxAudioUi,
     /// When the band/mode, FFT and skimmer popups opened (egui time), for their
     /// auto-fade.
     mode_popup_since: Option<f64>,
@@ -502,6 +539,21 @@ pub struct SdroxideApp {
     /// dropped if the start never takes. See
     /// [`Self::poll_recording_timer`].
     rec_clip: Option<(i64, u16)>,
+    /// The silence auto-split hold, in seconds, or `None` when it is off.
+    ///
+    /// While armed, the MP3 recording follows the receiver's squelch: a file
+    /// starts when the squelch opens and the one running is closed after this
+    /// many seconds of silence, so a session of many transmissions becomes one
+    /// stamped file each rather than one file that grows all afternoon (issue
+    /// #546). UI-owned and session-only, exactly like
+    /// [`Self::recording_stop_at`], and ticked once a frame by
+    /// [`Self::poll_recording_gate`] — for a tab that is not on screen as well
+    /// as the one that is, so a monitor left in the background still splits.
+    rec_gate_s: Option<u16>,
+    /// Everything the gate carries between frames — the run of silence, a start
+    /// still pending, and the holds that stop a manual stop or a refused
+    /// start being undone every frame. See [`Self::poll_recording_gate`].
+    rec_gate: top_bar::RecGate,
     /// Fade clock for the receive-filter popup behind the BW chip, like
     /// `nr_popup_since`.
     bw_popup_since: Option<f64>,
@@ -517,6 +569,36 @@ pub struct SdroxideApp {
     /// it, so widening the window again brings it back.
     band_docked: bool,
     band_dock_visible: bool,
+    /// AUX SP's own view of the spectrum — its zoom, pan and layers — swapped
+    /// in for `view` while its window draws, so the two spectra do not mirror
+    /// each other (see `undocked::show_detached_module`).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    aux_view: ViewState,
+    /// The pane the undocked operating panel shows, swapped in for
+    /// `view.digi_pane` while its window draws: that window may sit on the
+    /// decode list while the main window shows another pane.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    panel_window_pane: usize,
+    /// Each tool window's docked/undocked state, by its id — see
+    /// `undocked::tool_window`. Session-only.
+    tool_windows: std::collections::HashMap<String, undocked::ToolWindowState>,
+    /// The operating panel lifted out of its pane as a **floating panel inside
+    /// this window** — an `egui::Window` the window manager knows nothing about,
+    /// so a tiling compositor cannot lose it. See
+    /// `undocked::floating_panel_window`. Session-only.
+    panel_floating: bool,
+    /// The floating panel rolled up to its title bar.
+    panel_rolled: bool,
+    /// Whether the **module windows** list is open — the ▣ chip's list, also
+    /// on `Ctrl+Alt+W`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    show_windows: bool,
+    /// The saved window arrangements (`workspaces.json`), edited on Settings →
+    /// UI and recalled with `Ctrl+Alt+1…9, 0`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    workspaces: Vec<sdroxide_types::Workspace>,
+    /// The name being typed for the next workspace to save.
+    workspace_name: String,
     /// How wide the docked column may be this frame, or `None` where it cannot
     /// dock — see [`top_bar::band_dock_room`]. Settled at the top of the frame
     /// from this app's own column, before the top bar draws the chip that
@@ -541,6 +623,9 @@ pub struct SdroxideApp {
     mem_edit: Option<self::windows::MemoryEdit>,
     /// One-shot: focus the name field on the frame after EDT was clicked.
     mem_edit_focus: bool,
+    /// When CLEAR was clicked once; it asks to be clicked again within
+    /// `MEM_CLEAR_ARM_S` (issue #755).
+    mem_clear_armed: Option<f64>,
     // Skimmer (CW etc.) spots, newest merge-by-id.
     skimmer_spots: Vec<SkimmerSpot>,
     /// Per-spot last-active timestamp (egui seconds), so a box fades out over
@@ -576,6 +661,9 @@ pub struct SdroxideApp {
     /// Screen state, not the operator's: the buttons themselves live in
     /// `DigiConfig`.
     cw_macro_edit: bool,
+    /// The keyboard-mode message editor (`DigiConfig::text_macros`), the same
+    /// window on its own list.
+    text_macro_edit: bool,
     /// Whether the CW panel's keyboard-as-straight-key mode is engaged (issue
     /// #322). Screen state: the keyer's engagement lives in the controller,
     /// and this is the toggle's face and where the key is read.
@@ -626,6 +714,10 @@ pub struct SdroxideApp {
     fsq_rx_images: Vec<egui::TextureHandle>,
     /// Picked-image inbox for FSQ image transmit (raw file bytes).
     fsq_img_inbox: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    /// VARA HF: who the panel's CONNECT button calls.
+    vara_target: String,
+    /// VARA HF: the line being typed to the connected station.
+    vara_draft: String,
     /// Packet: who the terminal's CONNECT button calls.
     packet_target: String,
     /// Packet: the digipeater path typed beside it.
@@ -797,6 +889,8 @@ pub struct SdroxideApp {
     flags: crate::flags::Flags,
     /// Logbook overlay open state, and the in-progress new/edit entry (if any).
     show_logbook: bool,
+    /// The Morse trainer window and its persisted progress.
+    morse: morse::MorseState,
     /// The Winlink mail window. Holds its own view state; the mailbox itself
     /// lives engine-side and is read a page at a time.
     pub(in crate::app) mail: winlink::MailUi,
@@ -864,6 +958,17 @@ pub struct SdroxideApp {
     /// UI-owned editable copy, seeded from the engine like the configs above.
     wsjtx_edit: sdroxide_types::WsjtxConfig,
     wsjtx_seeded: bool,
+    // ── Received pictures → FTP ──
+    /// UI-owned editable copy, seeded from the engine like the configs above.
+    picup_edit: sdroxide_types::PictureUploadConfig,
+    picup_seeded: bool,
+    /// When a TEST went out, while its answer is awaited. Cleared by the
+    /// answer, or after a while if none comes (the station may have gone).
+    picup_test_pending: Option<f64>,
+    /// The last TEST's answer, with the certificate the server presented.
+    picup_test: Option<sdroxide_types::PictureUploadStatus>,
+    /// How the most recent picture upload went.
+    picup_last: Option<sdroxide_types::PictureUploadStatus>,
     /// Live status from `RadioEvent::RigctldStatus`. Same shape as the TCI
     /// server's, so the two share one status type.
     rigctld_status: Option<TciServerStatus>,
@@ -882,6 +987,44 @@ pub struct SdroxideApp {
     login_tests:
         std::collections::HashMap<sdroxide_types::LoginTarget, sdroxide_types::LoginTestResult>,
     login_tests_pending: std::collections::HashSet<sdroxide_types::LoginTarget>,
+    /// What the last Wavelog connection check found — the station locations
+    /// the settings offer, and a certificate waiting to be trusted. Not
+    /// persisted, for the reason `login_tests` is not.
+    wavelog_probe: Option<sdroxide_types::WavelogProbe>,
+    /// When (egui time) the Wavelog retry queue is next looked at. See
+    /// `SdroxideApp::wavelog_retry_tick`.
+    wavelog_retry_at: f64,
+    /// QSOs Wavelog refused outright this session — a callsign that is not
+    /// the location's, say. Left out of the automatic retry, which would only
+    /// be refused again every few minutes until the settings change; the
+    /// "send unsent" button still includes them, and a restart forgets.
+    wavelog_refused: std::collections::HashSet<u64>,
+    /// How far each Wavelog station location has been downloaded into the
+    /// logbook — see [`sdroxide_types::WavelogSyncState`].
+    wavelog_sync: sdroxide_types::WavelogSyncState,
+    /// When (egui time) the next Wavelog download is due. 0 until the first
+    /// look, which schedules one shortly after start.
+    wavelog_sync_at: f64,
+    /// When the running download was asked for (egui time); `None` when none
+    /// is. Lets a download whose end never arrived — an engine restarted
+    /// under it — stop blocking the next one.
+    wavelog_sync_running: Option<f64>,
+    /// What the running download has done so far, for the line it ends with.
+    wavelog_sync_tally: sdroxide_types::WavelogMerge,
+    /// The last download's outcome, for the settings tab.
+    wavelog_sync_status: Option<String>,
+    /// A download the settings tab asked for (`Some(full)`), picked up by the
+    /// frame's tick. A cell because the settings are drawn through `&self`.
+    wavelog_sync_request: std::cell::Cell<Option<bool>>,
+    /// A full resync's download as it arrives: the contacts, and the highest
+    /// record id seen per location.
+    wavelog_resync_rx: Option<(Vec<QsoRecord>, std::collections::BTreeMap<u32, u64>)>,
+    /// A full resync worked out and waiting for the operator to approve or
+    /// discard it in the settings tab, with the cursors it leaves behind.
+    wavelog_resync: Option<(sdroxide_types::WavelogResync, std::collections::BTreeMap<u32, u64>)>,
+    /// The operator's answer to `wavelog_resync` — apply (`true`) or discard —
+    /// carried out by the frame's tick, for the reason the request is a cell.
+    wavelog_resync_answer: std::cell::Cell<Option<bool>>,
     /// Inbox for an ADIF file chosen via the native "Import" dialog (a picker
     /// thread writes; the UI drains it each frame).
     adif_import_inbox: crate::download::LoadInbox,
@@ -910,6 +1053,9 @@ pub struct SdroxideApp {
     pending_uploads: Vec<(u64, String, Vec<UploadTarget>)>,
     /// Awards dashboard open state + band filter ("" = all bands).
     show_awards: bool,
+    /// Grid tracker window open state, and its pan/zoom + heard-layer toggle.
+    show_grid: bool,
+    grid_tracker: crate::app::grid_tracker::GridTracker,
     awards_band: String,
     /// Cached award tally, keyed by (log length, band filter).
     awards_cache: Option<(usize, String, sdroxide_types::Awards)>,
@@ -980,6 +1126,20 @@ pub struct SdroxideApp {
     /// The switching devices the engine's machine can see, from
     /// [`sdroxide_types::DeviceProbe::Relays`].
     relay_devices: Vec<sdroxide_types::RelayDevice>,
+    /// The Hardrock amplifier, mirrored from [`RadioEvent::AmpStatus`] and
+    /// replayed on connect like the T/R switch's.
+    amp_status: sdroxide_types::AmpStatus,
+    /// The Amplifier settings tab's working copy, seeded once like the relay's.
+    amp_edit: sdroxide_types::AmpConfig,
+    amp_seeded: bool,
+    /// The AMP window, and which reading its meter shows.
+    show_amp: bool,
+    /// The AMP window's last state has been read back from the settings.
+    amp_restored: bool,
+    /// When the AMP window's place or picks last changed and are still to be
+    /// written to the settings file.
+    amp_save_at: Option<f64>,
+    amp_meter: amp::AmpMeters,
     /// The station's IARU region, as the General tab's dropdown last showed it.
     ///
     /// Unlike the config buffers around it this is not seeded-once-then-owned
@@ -1125,7 +1285,7 @@ pub(crate) fn radio_name(roster: &[RadioChip], id: u32) -> String {
     roster
         .iter()
         .find(|c| c.id == id)
-        .map_or_else(|| format!("radio {}", id + 1), |c| c.display_name().to_string())
+        .map_or_else(|| tr!("app-radio", id = id + 1), |c| c.display_name().to_string())
 }
 
 /// A radio-management action requested from inside a tab (the settings
@@ -1209,6 +1369,12 @@ pub(crate) enum RadioTabRequest {
     Reorder(Vec<u32>),
 }
 
+/// The pure half of [`SdroxideApp::tx_chrome_ok`], so the rule can be tested
+/// without a radio, a mode or a window.
+pub(in crate::app) fn tx_chrome_ok(tx_capable: bool, mode: sdroxide_types::Mode) -> bool {
+    tx_capable && !mode.is_rx_only()
+}
+
 impl SdroxideApp {
     pub fn new(cc: &eframe::CreationContext<'_>, ctrl: Box<dyn RadioController>) -> Self {
         Self::new_tab(&cc.egui_ctx, cc.storage, cc.wgpu_render_state.clone(), ctrl, 0, true)
@@ -1230,6 +1396,7 @@ impl SdroxideApp {
         // reads them, or the first frame flashes the default theme at the
         // default scale.
         let ui_settings = load_ui_settings(storage);
+        let band_dock = persist::load_band_dock();
         crate::theme::set_look(
             ui_settings.theme,
             ui_settings.button_style,
@@ -1244,6 +1411,7 @@ impl SdroxideApp {
         crate::theme::set_bandplan_colors(&ui_settings.bandplan_colors);
         crate::theme::set_map_cities(ui_settings.map_cities);
         crate::theme::set_ui_zoom(ui_settings.ui_zoom);
+        crate::i18n::set_language(ui_settings.language);
         crate::theme::apply(egui_ctx);
         // What this renderer will carry. Gathered here because it is the one
         // place that holds the render state and the controller at once, and
@@ -1286,6 +1454,7 @@ impl SdroxideApp {
             wide_frame: None,
             wide_wf: Default::default(),
             meters: None,
+            last_swr: None,
             memories: Vec::new(),
             mem_folders: Vec::new(),
             scanner: sdroxide_types::ScannerConfig::default(),
@@ -1295,6 +1464,7 @@ impl SdroxideApp {
             error: None,
             retry_at: None,
             retry_backoff: RETRY_MIN_S,
+            cert_hold: false,
             radio_notice: None,
             sent_cfg: None,
             desired_cfg: None,
@@ -1333,10 +1503,12 @@ impl SdroxideApp {
             ui_settings,
             applied_look: (ui_settings.theme, ui_settings.button_style, ui_settings.window_style),
             applied_ui_font: ui_settings.menu_font_size,
+            applied_language: ui_settings.language,
             speech: speech::SpeechRuntime::new(load_speech_settings(storage)),
             speech_voices: Vec::new(),
             alerts: alerts::AlertRuntime::station(load_alerts_settings(storage)),
             radio_cfg: None,
+            div_lender: None,
             converter_edit_hz: None,
             range_edit: None,
             rx_site_edit: None,
@@ -1399,11 +1571,15 @@ impl SdroxideApp {
             hfdl_status: None,
             hfdl_map: crate::hfdl_map::HfdlMapState::default(),
             hfdl_filter: String::new(),
+            hfdl_channels: load_hfdl_channels(storage),
+            filter_presets: load_filter_presets(storage),
+            preset_edit: None,
             show_settings: false,
             settings_scroll_top: true,
             voice: sdroxide_types::VoiceStatus::default(),
             show_voice: false,
             voice_name_edit: None,
+            tx_audio: tx_audio::TxAudioUi::new(storage),
             mode_popup_since: None,
             fft_popup_since: None,
             skimmer_popup_since: None,
@@ -1414,11 +1590,30 @@ impl SdroxideApp {
             rec_popup_since: None,
             recording_stop_at: None,
             rec_clip: None,
+            rec_gate_s: None,
+            rec_gate: Default::default(),
             bw_popup_since: None,
             duplex_popup_since: None,
             rpt_tone_popup_since: None,
-            band_docked: false,
-            band_dock_visible: false,
+            // A station that keeps the band/mode selector docked gets it back
+            // on the next start — per radio, and presentation only: the dock's
+            // own width rule (`band_dock_room`) still decides whether there is
+            // room for it this frame. (SWL users group, via sdroxide-brown.)
+            band_docked: band_dock.contains_key(&radio_id),
+            band_dock_visible: band_dock.get(&radio_id).copied().unwrap_or(false),
+            aux_view: ViewState::default(),
+            panel_window_pane: 0,
+            // Where each tool window was left last time — in its own window or
+            // in this one — so it opens there again.
+            tool_windows: persist::load_tool_windows()
+                .into_iter()
+                .map(|(id, s)| (id, s.into()))
+                .collect(),
+            panel_floating: false,
+            panel_rolled: false,
+            show_windows: false,
+            workspaces: persist::load_workspaces(),
+            workspace_name: String::new(),
             band_dock_room: None,
             // Corrected on the first frame, once the viewport size is known.
             tier: crate::layout::Tier::Desktop,
@@ -1429,6 +1624,7 @@ impl SdroxideApp {
             mem_folder_focus: false,
             mem_edit: None,
             mem_edit_focus: false,
+            mem_clear_armed: None,
             skimmer_spots: Vec::new(),
             skimmer_active_at: std::collections::HashMap::new(),
             digi_decodes: Vec::new(),
@@ -1476,6 +1672,8 @@ impl SdroxideApp {
             vdl2_sort_desc: true,
             aprs_target: String::new(),
             aprs_draft: String::new(),
+            vara_target: String::new(),
+            vara_draft: String::new(),
             packet_target: String::new(),
             packet_via: String::new(),
             packet_draft: String::new(),
@@ -1495,6 +1693,7 @@ impl SdroxideApp {
             aprs_lon_buf: String::new(),
             digi_cfg_seeded: false,
             cw_macro_edit: false,
+            text_macro_edit: false,
             cw_straight: false,
             cw_key_down: false,
             digi_tx_hz_edit: String::new(),
@@ -1516,6 +1715,7 @@ impl SdroxideApp {
             digi_free_text: String::new(),
             flags: Default::default(),
             show_logbook: false,
+            morse: morse::MorseState::new(load_morse_progress(storage)),
             mail: winlink::MailUi::default(),
             log_edit: None,
             spots: Vec::new(),
@@ -1554,6 +1754,11 @@ impl SdroxideApp {
             rigctld_seeded: false,
             wsjtx_edit: sdroxide_types::WsjtxConfig::default(),
             wsjtx_seeded: false,
+            picup_edit: sdroxide_types::PictureUploadConfig::default(),
+            picup_seeded: false,
+            picup_test_pending: None,
+            picup_test: None,
+            picup_last: None,
             rigctld_status: None,
             tci_srv_edit: sdroxide_types::TciServerConfig::default(),
             tci_srv_seeded: false,
@@ -1563,6 +1768,18 @@ impl SdroxideApp {
             net_log: Vec::new(),
             login_tests: std::collections::HashMap::new(),
             login_tests_pending: std::collections::HashSet::new(),
+            wavelog_probe: None,
+            wavelog_retry_at: 0.0,
+            wavelog_refused: std::collections::HashSet::new(),
+            wavelog_sync: crate::app::persist::load_wavelog_sync(),
+            wavelog_sync_at: 0.0,
+            wavelog_sync_running: None,
+            wavelog_sync_tally: Default::default(),
+            wavelog_sync_status: None,
+            wavelog_sync_request: std::cell::Cell::new(None),
+            wavelog_resync_rx: None,
+            wavelog_resync: None,
+            wavelog_resync_answer: std::cell::Cell::new(None),
             adif_import_inbox: Arc::new(Mutex::new(None)),
             settings_import_inbox: Arc::new(Mutex::new(None)),
             settings_transfer_note: None,
@@ -1571,6 +1788,8 @@ impl SdroxideApp {
             callsign_cache: Default::default(),
             pending_uploads: Vec::new(),
             show_awards: false,
+            show_grid: false,
+            grid_tracker: crate::app::grid_tracker::GridTracker::default(),
             awards_band: String::new(),
             awards_cache: None,
             awards_heat: None,
@@ -1597,6 +1816,13 @@ impl SdroxideApp {
             relay_status: Default::default(),
             relay_edit: Default::default(),
             relay_seeded: false,
+            amp_status: Default::default(),
+            amp_edit: Default::default(),
+            amp_seeded: false,
+            show_amp: false,
+            amp_restored: false,
+            amp_save_at: None,
+            amp_meter: Default::default(),
             relay_devices: Vec::new(),
             rot_cfg_seeded: false,
             // Whatever this process is already on: the binary applies the
@@ -1645,10 +1871,7 @@ impl SdroxideApp {
         if focused {
             self.speech.announcer.reseed();
             if let Some(c) = &self.caps {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-                    "sdroxide — {}",
-                    c.label
-                )));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(crate::window_title(&c.label)));
             }
         } else {
             // Losing the keyboard with a bound control held must release it:
@@ -1933,6 +2156,13 @@ impl SdroxideApp {
         if self.retry_at.is_some() || !self.ctrl.can_reconnect() {
             return;
         }
+        // A certificate nothing vouches for is refused every time, and a tab
+        // redialling it every thirty seconds would only repaint the same
+        // refusal under the card that asks the operator about it.
+        if self.ctrl.untrusted_cert().is_some() {
+            self.cert_hold = true;
+            return;
+        }
         let stagger = 0.25 * f64::from(self.radio_id % 4);
         self.retry_at = Some(now + self.retry_backoff + stagger);
         // Charged here rather than when the attempt goes out, so the *next*
@@ -1948,6 +2178,7 @@ impl SdroxideApp {
         let now = crate::time::now_unix_f64();
         self.error = None;
         self.retry_at = None;
+        self.cert_hold = false;
         self.frame = None;
         self.wide_frame = None;
         // The new session starts on the engine's own spectrum config, not the
@@ -1963,6 +2194,17 @@ impl SdroxideApp {
         }
     }
 
+    /// Trust the certificate this connection was refused for and dial again.
+    fn trust_cert_and_reconnect(&mut self, sha256: &str) {
+        if let Err(e) = self.ctrl.trust_cert(sha256) {
+            // Still trusted for this run, only not remembered: worth saying,
+            // not worth refusing to connect over.
+            tracing::warn!("trusted certificate could not be saved: {e}");
+        }
+        self.retry_backoff = RETRY_MIN_S;
+        self.reconnect_now();
+    }
+
     /// Redial if the wait is up. Returns whether one is still pending, so the
     /// shell knows to keep asking for frames.
     ///
@@ -1970,6 +2212,14 @@ impl SdroxideApp {
     /// are behind the one being looked at, and a radio nobody is looking at has
     /// to come back on its own — there is no button there to press.
     pub(crate) fn poll_reconnect(&mut self) -> bool {
+        // Held for a certificate that has since been trusted — on another tab
+        // of the same station, most likely, since this one's own button dials
+        // straight away. A station's tabs all meet the same certificate, and
+        // the operator should have to look at it once, not once per radio.
+        if self.cert_hold && self.ctrl.untrusted_cert().is_none() {
+            self.retry_backoff = RETRY_MIN_S;
+            self.reconnect_now();
+        }
         let Some(at) = self.retry_at else { return false };
         let now = crate::time::now_unix_f64();
         // `>=` and the step-backwards guard together: this is a wall clock, and
@@ -2062,6 +2312,20 @@ impl SdroxideApp {
         self.caps.as_ref().is_some_and(|c| c.is_transmit_capable())
     }
 
+    /// Whether the **station chrome** may offer a transmitter on this screen.
+    ///
+    /// Two separate questions, and both have to be asked. A radio that cannot
+    /// transmit (an SDR dongle, a public SDR, the ATS Mini) has no business
+    /// showing a PTT. So has a **mode that is receive-only by design**, whatever
+    /// the radio can do — WEFAX, NAVTEX, ADS-B, ACARS and the rest. The
+    /// strip asked only the first, so tuning to a weather fax put a PTT, a Drive
+    /// slider and a Tune chip on the screen on a broadcast frequency: a
+    /// transmitter that could be keyed with nothing to modulate, on a channel
+    /// where keying it is not allowed (issue #239).
+    pub(in crate::app) fn tx_chrome_ok(&self) -> bool {
+        tx_chrome_ok(self.tx_capable(), self.state.rx[0].mode)
+    }
+
     /// The CW tone being copied, in Hz — the cursor the CW panel moves and the
     /// pitch the engine keeps the passband centred on.
     ///
@@ -2099,36 +2363,36 @@ impl SdroxideApp {
         Some(match caps.driver.as_str() {
             "none" => return None,
             "cat" => "CAT".into(),
-            "hpsdr" => "HPSDR".into(),
+            "hpsdr" => tr!("app-hpsdr"),
             "tci" => "TCI".into(),
             "smartsdr" => "SmartSDR".into(),
             "pluto" => "PlutoSDR".into(),
-            "rtlsdr" => "RTL-SDR".into(),
+            "rtlsdr" => tr!("app-rtl-sdr"),
             // Named apart from the USB one: on a station with both, which tab
             // is the dongle on the mast is exactly what needs telling apart.
-            "rtltcp" => "RTL-SDR (rtl_tcp)".into(),
+            "rtltcp" => tr!("app-rtl-sdr-rtl-tcp"),
             // The two SpyServer interfaces are named apart for the same
             // reason: which tab is the low-bandwidth one is the thing an
             // operator running both needs to see at a glance.
             "spyserver" => "SpyServer".into(),
-            "spyserver-vfo" => "SpyServer (VFO)".into(),
+            "spyserver-vfo" => tr!("app-spyserver-vfo"),
             "rx888" => "RX-888".into(),
             // Distinct from the `"airspy"` arm below, which is SoapySDR's
             // driver for the R2 and Mini — a different radio entirely.
-            "airspyhf" => "Airspy HF+".into(),
-            "sdrplay" => "SDRplay".into(),
+            "airspyhf" => tr!("app-airspy-hf"),
+            "sdrplay" => tr!("app-sdrplay"),
             // One tab for the whole radio on an FDM-DUO: the USB receiver, the
             // CAT link and the transmit sound card.
-            "elad" => "ELAD".into(),
+            "elad" => tr!("app-elad"),
             // A SoapySDR device reports its Soapy driver name — the most
             // specific interface name there is. The common ones get their
             // proper spelling; the list is open-ended, so anything else is
             // capitalised as-is.
             "hackrf" => "HackRF".into(),
             "lime" => "LimeSDR".into(),
-            "airspy" => "Airspy".into(),
-            "sx" => "SXceiver".into(),
-            "uhd" => "USRP".into(),
+            "airspy" => tr!("app-airspy"),
+            "sx" => tr!("app-sxceiver"),
+            "uhd" => tr!("app-usrp"),
             other => {
                 let mut c = other.chars();
                 match c.next() {
@@ -2142,6 +2406,44 @@ impl SdroxideApp {
 
 #[cfg(test)]
 mod tests {
+
+    /// **A receive-only mode shows no transmitter**, whatever the radio can do.
+    ///
+    /// This is issue #239: tuned to a weather fax on 3855 kHz — a broadcast
+    /// frequency where keying is not allowed — the strip still offered a PTT, a
+    /// Drive slider and a Tune chip, because the gate asked only "can this radio
+    /// transmit?" and never "does this mode transmit at all?". The operator was
+    /// one click from keying a transmitter with nothing to modulate, on a
+    /// channel where the answer to that is never.
+    #[test]
+    fn a_receive_only_mode_has_no_transmitter_in_the_chrome() {
+        use sdroxide_types::Mode;
+        for mode in [Mode::Wefax, Mode::Navtex, Mode::Adsb, Mode::Acars] {
+            assert!(mode.is_rx_only(), "{mode:?} is not receive-only after all");
+            assert!(!tx_chrome_ok(true, mode), "{mode:?} would show a PTT");
+        }
+        assert!(tx_chrome_ok(true, Mode::Ft8), "a transmitting mode keeps its PTT");
+        assert!(tx_chrome_ok(true, Mode::Usb));
+        assert!(!tx_chrome_ok(false, Mode::Usb), "a receive-only radio has none either");
+    }
+
+    /// **The strip must ask the mode-aware question, not the radio one.**
+    ///
+    /// A scan rather than a behaviour test because the fault was not in a
+    /// function but in nine call sites that each asked the wrong half of the
+    /// question: one of them coming back is enough to put a PTT on a fax
+    /// channel again, and no unit test would notice.
+    #[test]
+    fn the_station_chrome_never_asks_the_mode_blind_question() {
+        for file in ["top_bar.rs"] {
+            let path = format!("{}/src/app/{file}", env!("CARGO_MANIFEST_DIR"));
+            let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+            assert!(
+                !src.contains("self.tx_capable()"),
+                "{file} gates transmitter chrome on the radio alone — use tx_chrome_ok()"
+            );
+        }
+    }
     use super::*;
 
     /// Press a chip drawn inside a `Ui` that is enabled or not, and report

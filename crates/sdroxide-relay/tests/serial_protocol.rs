@@ -206,6 +206,28 @@ fn an_lcus_board_is_told_both_channels_and_then_only_what_changed() {
     assert_eq!(board.saw().len(), 4, "an unchanged state is not written");
 }
 
+/// Issue #627: an LCUS drops a frame that follows the last too closely, so a
+/// word moving several contacts is paced, and off air the state is restated
+/// because the board cannot be asked whether it agrees.
+#[test]
+fn an_lcus_word_is_paced_and_restated_off_air() {
+    let (master, path) = open_pty();
+    let board = spawn_board(RelayFamily::Lcus, master);
+    let mut t =
+        SerialTransport::open(&cfg(&path), RelayFamily::Lcus, MANAGED, SenseLine::Off).unwrap();
+    t.apply(0).unwrap();
+    board.wait_for(2);
+
+    let started = std::time::Instant::now();
+    t.apply(0b11).unwrap();
+    assert!(started.elapsed() >= Duration::from_millis(25), "two frames went out back to back");
+    board.wait_for(4);
+
+    assert_eq!(t.read_back().unwrap(), None, "an LCUS has nothing to say");
+    board.wait_for(6);
+    assert_eq!(&board.saw()[4..], &[(1, true), (2, true)], "the whole word is restated");
+}
+
 #[test]
 fn a_kmtronic_board_answers_a_read_back_with_what_it_holds() {
     let (master, path) = open_pty();

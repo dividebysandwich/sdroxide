@@ -49,6 +49,7 @@
 //! a decoder lock would, for the case the null is plainly visible but the
 //! demodulator will not lock.
 
+use crate::i18n::tr;
 use std::collections::VecDeque;
 
 use eframe::egui::{
@@ -116,7 +117,11 @@ pub(in crate::app) struct Qo100WinState {
 }
 
 fn fmt_hz_signed(hz: f64) -> String {
-    if hz.abs() >= 1000.0 { format!("{:+.2} kHz", hz / 1000.0) } else { format!("{hz:+.0} Hz") }
+    if hz.abs() >= 1000.0 {
+        format!("{hz:+.2} kHz", hz = hz / 1000.0)
+    } else {
+        format!("{hz:+.0} Hz")
+    }
 }
 
 /// A small round status light plus its label — lit green when `on`, a dim
@@ -357,14 +362,14 @@ fn paint_strip(
     painter.text(
         Pos2::new(rect.left() + 3.0, rect.top() + 1.0),
         egui::Align2::LEFT_TOP,
-        format!("{:.3} MHz", lo / 1e6),
+        format!("{e6:.3} MHz", e6 = lo / 1e6),
         font.clone(),
         dim,
     );
     painter.text(
         Pos2::new(rect.right() - 3.0, rect.top() + 1.0),
         egui::Align2::RIGHT_TOP,
-        format!("{:.3} MHz", hi / 1e6),
+        format!("{e6:.3} MHz", e6 = hi / 1e6),
         font,
         dim,
     );
@@ -428,58 +433,54 @@ impl SdroxideApp {
                 // explicit "Tune to 10489.750 MHz" button below.
             }
             if !reachable {
-                run.on_hover_text(
-                    "This receiver cannot reach 10489.750 MHz on its own — set up an \
-                     LNB/converter offset first (Settings ▸ Radio)",
-                );
+                run.on_hover_text(tr!("qo100-receiver-cannot-reach-10489-750"));
             } else {
-                run.on_hover_text(
-                    "Run the fast spectral tracker: every second, look in the parking window for \
-                     the beacon's two symmetric lobes and report where the carrier sits",
-                );
+                run.on_hover_text(tr!("qo100-run-fast-spectral-tracker-every"));
             }
 
             ui.add_space(8.0);
-            let tel = crate::chrome::chip_enabled(ui, reachable, cfg.decode_telemetry, "TELEMETRY");
+            let tel = crate::chrome::chip_enabled(
+                ui,
+                reachable,
+                cfg.decode_telemetry,
+                &tr!("qo100-telemetry"),
+            );
             if tel.clicked() {
                 cfg.decode_telemetry = !cfg.decode_telemetry;
             }
-            tel.on_hover_text(
-                "Also run the AO-40 uncoded frame decoder — sync word, CRC and the telemetry \
-                 text — with a step-by-step readout (carrier → sync → CRC) of how far each pass \
-                 gets",
-            );
+            tel.on_hover_text(tr!("qo100-also-run-ao-40-uncoded"));
 
             ui.add_space(4.0);
-            let auto =
-                crate::chrome::chip_enabled(ui, reachable && cfg.enabled, cfg.auto_apply, "AUTO");
+            let auto = crate::chrome::chip_enabled(
+                ui,
+                reachable && cfg.enabled,
+                cfg.auto_apply,
+                &tr!("qo100-auto"),
+            );
             if auto.clicked() {
                 cfg.auto_apply = !cfg.auto_apply;
             }
-            auto.on_hover_text(
-                "Auto-correct: let the tracker adjust the converter/LNB offset by itself — a slow \
-                 closed loop that, on a clean and steady estimate, nudges the beacon back onto \
-                 10489.750 MHz and holds it there as the LNB drifts. Reopens the front end each \
-                 time it acts.",
-            );
+            auto.on_hover_text(tr!("qo100-auto-correct-let-tracker-adjust"));
 
             ui.add_space(8.0);
             ui.label(RichText::new("width").size(10.0).color(theme::CYAN_DIM()));
-            if ui.small_button("−").on_hover_text("Narrower — search a smaller slice").clicked()
+            if ui
+                .small_button("−")
+                .on_hover_text(tr!("qo100-narrower-search-smaller-slice"))
+                .clicked()
             {
                 cfg.search_half_width_hz =
                     (cfg.search_half_width_hz - WIDTH_STEP_HZ).max(MIN_HALF_WIDTH_HZ);
             }
             ui.label(
-                RichText::new(format!("±{:.0} kHz", cfg.search_half_width_hz / 1000.0))
-                    .size(11.0)
-                    .monospace(),
+                RichText::new(format!(
+                    "±{search_half_width_hz:.0} kHz",
+                    search_half_width_hz = cfg.search_half_width_hz / 1000.0
+                ))
+                .size(11.0)
+                .monospace(),
             );
-            if ui
-                .small_button("+")
-                .on_hover_text("Wider — for when the beacon isn't found at the current width")
-                .clicked()
-            {
+            if ui.small_button("+").on_hover_text(tr!("qo100-wider-when-beacon-isn-t")).clicked() {
                 cfg.search_half_width_hz =
                     (cfg.search_half_width_hz + WIDTH_STEP_HZ).min(MAX_HALF_WIDTH_HZ);
             }
@@ -487,10 +488,8 @@ impl SdroxideApp {
             if win.manual_hz.is_some() {
                 ui.add_space(8.0);
                 if ui
-                    .small_button("clear mark")
-                    .on_hover_text(
-                        "Drop the hand-placed beacon mark and go back to the decoder's own reading",
-                    )
+                    .small_button(tr!("qo100-clear-mark"))
+                    .on_hover_text(tr!("qo100-drop-hand-placed-beacon-mark"))
                     .clicked()
                 {
                     win.manual_hz = None;
@@ -503,37 +502,36 @@ impl SdroxideApp {
         // high one, or the tracker loses the room it needs for both lobes.
         ui.horizontal(|ui| {
             ui.label(RichText::new("park").size(10.0).color(theme::CYAN_DIM()));
-            if ui.small_button("lo −").clicked() {
+            if ui.small_button(tr!("qo100-lo")).clicked() {
                 cfg.park_lo_hz = (cfg.park_lo_hz - PARK_STEP_HZ).max(PARK_MIN_HZ);
             }
-            if ui.small_button("lo +").clicked() {
+            if ui.small_button(tr!("qo100-lo-2")).clicked() {
                 cfg.park_lo_hz =
                     (cfg.park_lo_hz + PARK_STEP_HZ).min(cfg.park_hi_hz - PARK_MIN_SPAN_HZ);
             }
             ui.label(
-                RichText::new(format!(
-                    "+{:.0} … +{:.0} kHz",
-                    cfg.park_lo_hz / 1000.0,
-                    cfg.park_hi_hz / 1000.0
+                RichText::new(tr!(
+                    "qo100-khz-3",
+                    park_lo_hz = format!("{:.0}", cfg.park_lo_hz / 1000.0),
+                    park_hi_hz = format!("{:.0}", cfg.park_hi_hz / 1000.0)
                 ))
                 .size(11.0)
                 .monospace(),
             );
-            if ui.small_button("hi −").clicked() {
+            if ui.small_button(tr!("qo100-hi")).clicked() {
                 cfg.park_hi_hz =
                     (cfg.park_hi_hz - PARK_STEP_HZ).max(cfg.park_lo_hz + PARK_MIN_SPAN_HZ);
             }
-            if ui.small_button("hi +").clicked() {
+            if ui.small_button(tr!("qo100-hi-2")).clicked() {
                 cfg.park_hi_hz = (cfg.park_hi_hz + PARK_STEP_HZ).min(PARK_MAX_HZ);
             }
         });
         if !cfg.enabled {
             ui.label(
-                RichText::new(format!(
-                    "Before switching ON: tune so the beacon's two lobes sit between +{:.0} and \
-                     +{:.0} kHz in the strip (the shaded lane).",
-                    cfg.park_lo_hz / 1000.0,
-                    cfg.park_hi_hz / 1000.0
+                RichText::new(tr!(
+                    "qo100-before-switching-tune-so-beacon",
+                    park_lo_hz = format!("{:.0}", cfg.park_lo_hz / 1000.0),
+                    park_hi_hz = format!("{:.0}", cfg.park_hi_hz / 1000.0)
                 ))
                 .size(9.0)
                 .color(theme::CYAN_DIM()),
@@ -548,15 +546,11 @@ impl SdroxideApp {
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 ui.label(
-                    RichText::new(
-                        "This radio's own tuning range doesn't reach 10489.750 MHz — it needs an \
-                         LNB/converter offset (Settings ▸ Radio ▸ Converter) before this window can \
-                         do anything.",
-                    )
-                    .size(10.5)
-                    .color(theme::YELLOW()),
+                    RichText::new(tr!("qo100-radio-s-own-tuning-range"))
+                        .size(10.5)
+                        .color(theme::YELLOW()),
                 );
-                if ui.small_button("Open Settings ▸ Radio").clicked() {
+                if ui.small_button(tr!("qo100-open-settings-radio")).clicked() {
                     self.open_radio_settings();
                 }
             });
@@ -570,16 +564,14 @@ impl SdroxideApp {
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 ui.label(
-                    RichText::new(format!(
-                        "The receiver is currently listening around {:.6} MHz — nowhere near the \
-                         10489.750 MHz beacon, so there is nothing here to draw. The decoder keeps \
-                         searching regardless.",
-                        dial_hz / 1e6
+                    RichText::new(tr!(
+                        "qo100-receiver-currently-listening-around-mhz",
+                        mhz = format!("{:.6}", dial_hz / 1e6)
                     ))
                     .size(10.5)
                     .color(theme::YELLOW()),
                 );
-                if ui.small_button("Tune to 10489.750 MHz").clicked() {
+                if ui.small_button(tr!("qo100-tune-10489-750-mhz")).clicked() {
                     cmds.push(Command::SetVfo { vfo: Vfo::A, hz: QO100_BEACON_HZ });
                 }
             });
@@ -589,9 +581,9 @@ impl SdroxideApp {
             let capped = f.span_hz / 2.0 < cfg.search_half_width_hz;
             if capped && f.span_hz > 0.0 {
                 ui.label(
-                    RichText::new(format!(
-                        "receiver currently covers only ±{:.0} kHz here — the rest of the strip stays blank",
-                        f.span_hz / 2e3
+                    RichText::new(tr!(
+                        "qo100-receiver-currently-covers-only-khz",
+                        khz = format!("{:.0}", f.span_hz / 2e3)
                     ))
                     .size(9.5)
                     .color(theme::YELLOW()),
@@ -633,12 +625,7 @@ impl SdroxideApp {
         // would actually do something new (no confirmed decode, no mark yet).
         if cfg.enabled && !confirmed && win.manual_hz.is_none() {
             ui.label(
-                RichText::new(
-                    "tip: if you can see the beacon in the strip but it won't lock, double-click \
-                     it — that marks it as 10489.750 MHz and lets APPLY correct to it",
-                )
-                .size(9.0)
-                .color(theme::CYAN_DIM()),
+                RichText::new(tr!("qo100-tip-if-you-can-see")).size(9.0).color(theme::CYAN_DIM()),
             );
         }
 
@@ -648,15 +635,15 @@ impl SdroxideApp {
             ui.add_space(4.0);
             egui::Grid::new("qo100-tracker").num_columns(2).spacing([16.0, 2.0]).show(ui, |ui| {
                 let dim = |t: &str| RichText::new(t).size(9.5).color(theme::CYAN_DIM());
-                ui.label(dim("TRACKER"));
+                ui.label(dim(&tr!("qo100-tracker")));
                 match s.est_offset_hz {
                     Some(o) => {
                         let good = s.est_null_depth_db >= 5.0 && s.est_symmetry >= 0.7;
                         ui.label(
                             RichText::new(format!(
-                                "{}  →  {:.6} MHz",
-                                fmt_hz_signed(o),
-                                (QO100_BEACON_HZ + o) / 1e6
+                                "{o} → {e6:.6} MHz",
+                                o = fmt_hz_signed(o),
+                                e6 = (QO100_BEACON_HZ + o) / 1e6
                             ))
                             .size(11.0)
                             .monospace()
@@ -669,7 +656,7 @@ impl SdroxideApp {
                     }
                     None => {
                         ui.label(
-                            RichText::new("no twin-lobe shape in the parking window")
+                            RichText::new(tr!("qo100-no-twin-lobe-shape-parking"))
                                 .size(10.0)
                                 .color(theme::YELLOW()),
                         );
@@ -677,30 +664,36 @@ impl SdroxideApp {
                 }
                 ui.end_row();
 
-                ui.label(dim("SHAPE"));
+                ui.label(dim(&tr!("qo100-shape")));
                 ui.label(
-                    RichText::new(format!(
-                        "null {:.1} dB   sym {:.2}   snr {:.1} dB",
-                        s.est_null_depth_db, s.est_symmetry, s.est_snr_db
+                    RichText::new(tr!(
+                        "qo100-null-db-sym-snr-db",
+                        est_null_depth_db = format!("{:.1}", s.est_null_depth_db),
+                        est_symmetry = format!("{:.2}", s.est_symmetry),
+                        est_snr_db = format!("{:.1}", s.est_snr_db)
                     ))
                     .size(10.0)
                     .monospace(),
                 );
                 ui.end_row();
 
-                ui.label(dim("DRIFT"));
+                ui.label(dim(&tr!("qo100-drift")));
                 ui.label(
                     RichText::new(if s.est_drift_hz_s.abs() >= 0.05 {
                         if s.est_drift_accel_hz_s2.abs() >= 0.05 {
-                            format!(
-                                "{:+.1} Hz/s   {:+.2} Hz/s²  (de-rotated before decode)",
-                                s.est_drift_hz_s, s.est_drift_accel_hz_s2
+                            tr!(
+                                "qo100-hz-s-hz-s-de",
+                                est_drift_hz_s = format!("{:+.1}", s.est_drift_hz_s),
+                                est_drift_accel_hz_s2 = format!("{:+.2}", s.est_drift_accel_hz_s2)
                             )
                         } else {
-                            format!("{:+.1} Hz/s  (de-rotated before decode)", s.est_drift_hz_s)
+                            tr!(
+                                "qo100-hz-s-de-rotated-before",
+                                est_drift_hz_s = format!("{:+.1}", s.est_drift_hz_s)
+                            )
                         }
                     } else {
-                        "— (need a longer run of estimates)".to_string()
+                        tr!("qo100-need-longer-run-estimates").to_string()
                     })
                     .size(10.0)
                     .monospace()
@@ -714,31 +707,35 @@ impl SdroxideApp {
                 );
                 ui.end_row();
 
-                ui.label(dim("CYCLES"));
+                ui.label(dim(&tr!("qo100-cycles")));
                 ui.label(
-                    RichText::new(format!("{} found, {} empty", s.est_updates, s.est_misses))
-                        .size(10.0)
-                        .monospace(),
+                    RichText::new(tr!(
+                        "qo100-found-empty",
+                        est_updates = s.est_updates,
+                        est_misses = s.est_misses
+                    ))
+                    .size(10.0)
+                    .monospace(),
                 );
                 ui.end_row();
 
                 if s.auto_applying {
-                    ui.label(dim("AUTO"));
+                    ui.label(dim(&tr!("qo100-auto")));
                     let last = if s.auto_last_unix > 0 {
-                        format!(
-                            "   last {} ({}s ago)",
-                            fmt_hz_signed(s.auto_last_hz),
-                            (crate::time::now_unix() - s.auto_last_unix).max(0)
+                        tr!(
+                            "qo100-last-s-ago",
+                            auto_last_hz = fmt_hz_signed(s.auto_last_hz),
+                            auto_last_unix = (crate::time::now_unix() - s.auto_last_unix).max(0)
                         )
                     } else {
                         String::new()
                     };
                     ui.label(
-                        RichText::new(format!(
-                            "{} over {} correction{}{last}",
-                            fmt_hz_signed(s.auto_total_hz),
-                            s.auto_applies,
-                            if s.auto_applies == 1 { "" } else { "s" },
+                        RichText::new(tr!(
+                            "qo100-over-correction",
+                            auto_total_hz = fmt_hz_signed(s.auto_total_hz),
+                            auto_applies = s.auto_applies,
+                            last = last
                         ))
                         .size(10.0)
                         .monospace()
@@ -762,31 +759,35 @@ impl SdroxideApp {
             // What the receiver is actually listening to right now — the
             // direct answer to "why is the strip empty", always on screen
             // rather than only when it explains a problem.
-            ui.label(dim("RECEIVER"));
+            ui.label(dim(&tr!("qo100-receiver")));
             ui.label(
-                RichText::new(format!("{:.6} MHz", dial_hz / 1e6))
+                RichText::new(format!("{e6:.6} MHz", e6 = dial_hz / 1e6))
                     .size(11.0)
                     .monospace()
                     .color(if in_view { theme::TEXT() } else { theme::YELLOW() }),
             );
             ui.end_row();
 
-            ui.label(dim("TARGET"));
+            ui.label(dim(&tr!("qo100-target")));
             ui.label(
-                RichText::new(format!("{:.6} MHz", QO100_BEACON_HZ / 1e6)).size(12.0).monospace(),
+                RichText::new(format!("{e6:.6} MHz", e6 = QO100_BEACON_HZ / 1e6))
+                    .size(12.0)
+                    .monospace(),
             );
             ui.end_row();
 
-            ui.label(dim("MEASURED"));
+            ui.label(dim(&tr!("qo100-measured")));
             match effective {
                 Some((hz, src)) => {
                     let (tag, colour) = match src {
-                        MeasSource::Lock => ("", None),
-                        MeasSource::Manual => ("  (clicked)", Some(theme::PINK())),
-                        MeasSource::Tracker => ("  (tracker)", Some(theme::YELLOW())),
+                        MeasSource::Lock => (String::new(), None),
+                        MeasSource::Manual => (tr!("qo100-clicked"), Some(theme::PINK())),
+                        MeasSource::Tracker => (tr!("qo100-tracker-2"), Some(theme::YELLOW())),
                     };
                     let mut t =
-                        RichText::new(format!("{:.6} MHz{tag}", hz / 1e6)).size(12.0).monospace();
+                        RichText::new(format!("{e6:.6} MHz{tag}", e6 = hz / 1e6, tag = tag))
+                            .size(12.0)
+                            .monospace();
                     t = match colour {
                         Some(c) => t.color(c),
                         None => t.strong(),
@@ -794,14 +795,18 @@ impl SdroxideApp {
                     ui.label(t)
                 }
                 None => ui.label(
-                    RichText::new(if cfg.enabled { "not locked yet" } else { "—" })
-                        .size(11.0)
-                        .color(theme::CYAN_DIM()),
+                    RichText::new(if cfg.enabled {
+                        tr!("qo100-not-locked-yet")
+                    } else {
+                        String::from("—")
+                    })
+                    .size(11.0)
+                    .color(theme::CYAN_DIM()),
                 ),
             };
             ui.end_row();
 
-            ui.label(dim("DRIFT"));
+            ui.label(dim(&tr!("qo100-drift")));
             match effective {
                 Some((hz, _)) => {
                     let err = hz - QO100_BEACON_HZ;
@@ -818,7 +823,7 @@ impl SdroxideApp {
             };
             ui.end_row();
 
-            ui.label(dim("CONVERTER OFFSET"));
+            ui.label(dim(&tr!("qo100-converter-offset")));
             ui.label(RichText::new(format!("{old_offset:.0} Hz")).size(11.0).monospace());
             ui.end_row();
         });
@@ -828,7 +833,7 @@ impl SdroxideApp {
         if let Some(s) = status.as_ref().filter(|s| s.decoding) {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("DECODE").size(9.5).color(theme::CYAN_DIM()));
+                ui.label(RichText::new(tr!("qo100-decode")).size(9.5).color(theme::CYAN_DIM()));
                 led(ui, "carrier", s.carrier_seen);
                 led(ui, "sync", s.sync_seen);
                 led(ui, "CRC", s.crc_ok);
@@ -841,9 +846,10 @@ impl SdroxideApp {
                     // hit shows ×1 near 3 errors.
                     let real = s.sync_bit_errors <= 1 && s.sync_matches >= 1;
                     ui.label(
-                        RichText::new(format!(
-                            "sync {} / 32 err  ×{}",
-                            s.sync_bit_errors, s.sync_matches
+                        RichText::new(tr!(
+                            "qo100-sync-32-err",
+                            sync_bit_errors = s.sync_bit_errors,
+                            sync_matches = s.sync_matches
                         ))
                         .size(9.0)
                         .color(if real {
@@ -856,13 +862,20 @@ impl SdroxideApp {
                     );
                 }
             });
-            ui.add(egui::ProgressBar::new(s.frame_fill).desired_height(6.0).text(
-                RichText::new(format!("frame buffer {:.0}%", s.frame_fill * 100.0)).size(8.0),
-            ));
+            ui.add(
+                egui::ProgressBar::new(s.frame_fill).desired_height(6.0).text(
+                    RichText::new(tr!(
+                        "qo100-frame-buffer",
+                        frame_fill = format!("{:.0}", s.frame_fill * 100.0)
+                    ))
+                    .size(8.0),
+                ),
+            );
             ui.label(
-                RichText::new(format!(
-                    "{} blocks tried, {} decoded",
-                    s.blocks_tried, s.blocks_locked
+                RichText::new(tr!(
+                    "qo100-blocks-tried-decoded",
+                    blocks_tried = s.blocks_tried,
+                    blocks_locked = s.blocks_locked
                 ))
                 .size(9.0)
                 .color(theme::CYAN_DIM()),
@@ -871,19 +884,16 @@ impl SdroxideApp {
             // Toggled on but no status back yet — the first ~24 s window.
             ui.add_space(4.0);
             ui.label(
-                RichText::new("DECODE — filling the first frame buffer…")
+                RichText::new(tr!("qo100-decode-filling-first-frame-buffer"))
                     .size(9.5)
                     .color(theme::CYAN_DIM()),
             );
         } else {
             ui.add_space(4.0);
             ui.label(
-                RichText::new(
-                    "DECODE — off. Turn on the TELEMETRY chip (top row) for the \
-                              carrier → sync → CRC readout.",
-                )
-                .size(9.0)
-                .color(theme::CYAN_DIM()),
+                RichText::new(tr!("qo100-decode-off-turn-telemetry-chip"))
+                    .size(9.0)
+                    .color(theme::CYAN_DIM()),
             );
         }
 
@@ -893,7 +903,7 @@ impl SdroxideApp {
         // number above could catch.
         if let Some(s) = status.as_ref().filter(|s| !s.text.is_empty()) {
             ui.add_space(4.0);
-            ui.label(RichText::new("TELEMETRY").size(9.5).color(theme::CYAN_DIM()));
+            ui.label(RichText::new(tr!("qo100-telemetry")).size(9.5).color(theme::CYAN_DIM()));
             egui::Frame::new().fill(theme::INPUT_BG()).inner_margin(6.0).show(ui, |ui| {
                 ui.add(
                     egui::Label::new(
@@ -917,26 +927,20 @@ impl SdroxideApp {
                 };
             let apply = ui.add_enabled(
                 can_apply,
-                egui::Button::new(RichText::new(" APPLY CORRECTION ").strong()),
+                egui::Button::new(RichText::new(tr!("qo100-apply-correction")).strong()),
             );
             let apply = apply.on_hover_text(match effective {
                 Some((_, MeasSource::Manual)) => {
-                    "Write the converter/LNB offset that puts the beacon where you clicked onto \
-                     10489.750 MHz, and reopen the receiver — the same brief interruption \
-                     Settings ▸ Radio ▸ Apply makes"
+                    tr!("qo100-write-converter-lnb-offset-puts")
                 }
                 Some((_, MeasSource::Tracker)) => {
-                    "Write the converter/LNB offset that puts the tracker's estimate onto \
-                     10489.750 MHz, and reopen the receiver — the same brief interruption \
-                     Settings ▸ Radio ▸ Apply makes"
+                    tr!("qo100-write-converter-lnb-offset-puts-2")
                 }
                 Some((_, MeasSource::Lock)) if !confirmed => {
-                    "Waiting for a second CRC-valid frame before offering to write this — one lock \
-                     alone could be a chance match"
+                    tr!("qo100-waiting-second-crc-valid-frame")
                 }
                 _ => {
-                    "Write the corrected converter/LNB offset and reopen the receiver — a brief \
-                     interruption, the same one Settings ▸ Radio ▸ Apply makes"
+                    tr!("qo100-write-corrected-converter-lnb-offset")
                 }
             });
             if apply.clicked()
@@ -956,9 +960,12 @@ impl SdroxideApp {
             if let Some((old, new, at)) = win.applied {
                 let ago = crate::time::now_unix() - at;
                 ui.label(
-                    RichText::new(format!(
-                        "last applied {ago}s ago: {old:.0} → {new:.0} Hz ({:+.0} Hz)",
-                        new - old
+                    RichText::new(tr!(
+                        "qo100-last-applied-s-ago-hz",
+                        ago = ago,
+                        old = format!("{:.0}", old),
+                        new = format!("{:.0}", new),
+                        old2 = format!("{:+.0}", new - old)
                     ))
                     .size(9.5)
                     .color(theme::CYAN_DIM()),
@@ -1040,27 +1047,21 @@ fn status_line(enabled: bool, status: Option<&Qo100Status>, remote: bool) -> Str
         return String::new();
     }
     if remote {
-        return "decoder runs on the receiving station — its readout is not sent to remote clients"
-            .to_string();
+        return tr!("qo100-decoder-runs-receiving-station-readout").to_string();
     }
     match status {
-        None => "starting…".to_string(),
+        None => tr!("qo100-starting").to_string(),
         Some(s) if s.locked => {
-            format!(
-                "locked — {} block{} tried, {} locked",
-                s.blocks_tried,
-                if s.blocks_tried == 1 { "" } else { "s" },
-                s.blocks_locked
+            tr!(
+                "qo100-locked-block-tried-locked",
+                blocks_tried = s.blocks_tried,
+                blocks_locked = s.blocks_locked
             )
         }
         Some(s) if s.blocks_tried == 0 => {
-            "searching — the first window fills after about 24 s, then repeats".to_string()
+            tr!("qo100-searching-first-window-fills-after").to_string()
         }
-        Some(s) => format!(
-            "searching — {} block{} tried, none locked yet",
-            s.blocks_tried,
-            if s.blocks_tried == 1 { "" } else { "s" }
-        ),
+        Some(s) => tr!("qo100-searching-block-tried-none-locked", blocks_tried = s.blocks_tried),
     }
 }
 

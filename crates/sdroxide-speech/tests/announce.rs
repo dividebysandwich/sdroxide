@@ -44,11 +44,12 @@ fn meters(swr: Option<f32>, fwd: Option<f32>, keyed: bool) -> Meters {
         adc_overload: None,
         adc_peak_dbfs: -30.0,
         adc_clip: 0.0,
-        tx: keyed.then_some(TxMeters { fwd_w: fwd, swr, alc: 0.0, po: None }),
+        tx: keyed.then_some(TxMeters { fwd_w: fwd, swr, alc: 0.0, po: None, rfl_w: None }),
         stereo: false,
         tone: None,
         passband_dbfs: f32::NEG_INFINITY,
         puresignal: None,
+        voice: None,
     }
 }
 

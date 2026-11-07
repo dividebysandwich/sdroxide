@@ -34,6 +34,8 @@ struct Hardware {
     landed: Arc<Mutex<f64>>,
     /// Where the transmitter was keyed, in the hardware's own domain.
     keyed: Arc<Mutex<Option<f64>>>,
+    /// The dial an accessory board was last told, if any.
+    dial: Arc<Mutex<Option<f64>>>,
 }
 
 impl Hardware {
@@ -44,6 +46,7 @@ impl Hardware {
             lo_offset_hz: 0.0,
             landed: Arc::new(Mutex::new(center_hz)),
             keyed: Arc::new(Mutex::new(None)),
+            dial: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -71,6 +74,9 @@ impl IqSource for Hardware {
     }
     fn describe(&self) -> String {
         "test front end".into()
+    }
+    fn set_dial_hz(&mut self, hz: f64) {
+        *self.dial.lock().unwrap() = Some(hz);
     }
     fn tx_begin(&mut self, center_hz: f64, rate: f64) -> Result<f64> {
         *self.keyed.lock().unwrap() = Some(center_hz);
@@ -511,7 +517,13 @@ impl IqSource for Recorder {
     }
     fn tx_telemetry(&mut self) -> Option<sdroxide_types::TxTelemetry> {
         self.calls.note("tx_telemetry");
-        Some(sdroxide_types::TxTelemetry { fwd_w: Some(5.0), swr: Some(1.2), alc: None, po: None })
+        Some(sdroxide_types::TxTelemetry {
+            fwd_w: Some(5.0),
+            swr: Some(1.2),
+            alc: None,
+            po: None,
+            rfl_w: None,
+        })
     }
     fn set_if_offset(&mut self, _hz: f64) {
         self.calls.note("set_if_offset");
@@ -992,12 +1004,16 @@ fn a_source_opened_on_an_intermediate_frequency_comes_up_on_the_band() {
         tx_drive: Some(0.02),
     }]);
     // Opened where `converter_open_hz` would have put it for a 144.300 dial.
-    let source = ConvertedSource::with_plan(Box::new(Hardware::new(28_300_000.0)), plan.clone());
+    let hw = Hardware::new(28_300_000.0);
+    let dial = Arc::clone(&hw.dial);
+    let source = ConvertedSource::with_plan(Box::new(hw), plan.clone());
     assert!(
         (source.center_hz() - 144_300_000.0).abs() < 1.0,
         "came up on {} rather than on 2 m",
         source.center_hz()
     );
+    // Issue #444: and the band decoder is told 2 m before anything retunes.
+    assert!(dial.lock().unwrap().is_some_and(|d| (d - 144_300_000.0).abs() < 1.0));
 
     // An I.F. no transverter can account for is the radio's own frequency and
     // is left alone — that is 10 m, not a mis-seeded 2 m.

@@ -29,17 +29,42 @@ use mfsk_core::engine::llr::{
     compute_llr_fast, compute_llr_partial, compute_snr_db, descramble_info, symbol_spectra,
     sync_quality,
 };
-use mfsk_core::engine::pipeline::{DecodeResult, DecodeStrictness};
+use mfsk_core::engine::pipeline::DecodeStrictness;
 use mfsk_core::engine::sync::{
     AudioSource, RxGrid, SyncCandidate, coarse_sync, fine_sync_power_per_block,
 };
 use mfsk_core::engine::sync2d::{freq_shift_cd0, ft4_sync_search_window};
-use mfsk_core::engine::{FecCodec, FecOpts, FrameLayout, MessageCodec, ModulationParams, Protocol};
+use mfsk_core::engine::{
+    FecCodec, FecOpts, FrameLayout, MessageCodec, ModulationParams, Protocol, SyncFrontEnd,
+};
 use num_complex::Complex;
 use rayon::prelude::*;
 
 use super::Ft2;
 use crate::params::DECODE_RATE;
+
+/// One FT2 decode: the fields of mfsk-core's own `DecodeResult`, which is
+/// `#[non_exhaustive]` from 0.14 on, so a decoder outside the crate can no
+/// longer build one.
+#[derive(Debug, Clone)]
+pub struct DecodeResult {
+    /// The LDPC's 91 information bits: the 77 message bits, then CRC-14.
+    pub info: Box<[u8]>,
+    pub freq_hz: f32,
+    pub dt_sec: f32,
+    pub hard_errors: u32,
+    pub sync_score: f32,
+    pub pass: u8,
+    pub sync_cv: f32,
+    pub snr_db: f32,
+}
+
+impl DecodeResult {
+    /// The leading 77 message bits.
+    pub fn message77(&self) -> &[u8; 77] {
+        self.info[..77].try_into().expect("FT2 info holds 91 bits")
+    }
+}
 
 /// 12 kHz → 1333.3 Hz baseband, wide enough for four tones 41.667 Hz apart
 /// plus headroom.
@@ -168,8 +193,7 @@ pub fn decode_slot(
             break;
         }
         for r in &fresh {
-            let Ok(bits): Result<[u8; 77], _> = r.message77().try_into() else { continue };
-            let tones = crate::ft2::encode::message_to_tones(&bits);
+            let tones = crate::ft2::encode::message_to_tones(r.message77());
             let refined =
                 refine_freq(&residual, &tones, r.freq_hz, r.dt_sec, &FT2_SUBTRACT, 1.0, 0.1);
             subtract_tones_lpf(
@@ -372,7 +396,7 @@ mod tests {
         let slot = slot_with("CQ", "OE1ABC", "JN88", 1500.0, 20_000);
         let got = decode_slot(&slot, 200.0, 3000.0, 1.0, 100);
         assert!(!got.is_empty(), "a clean FT2 frame must decode");
-        let bits: [u8; 77] = got[0].message77().try_into().expect("77 bits");
+        let bits = *got[0].message77();
         assert_eq!(unpack77(&bits).expect("unpack"), "CQ OE1ABC JN88");
         // Transmitted exactly on time, so DT reads ~0 and the frequency is
         // recovered to within a fraction of a tone.
@@ -392,7 +416,7 @@ mod tests {
             let slot = slot_with(a, b, c, 1200.0, 20_000);
             let got = decode_slot(&slot, 200.0, 3000.0, 1.0, 100);
             assert!(!got.is_empty(), "{want}");
-            let bits: [u8; 77] = got[0].message77().try_into().expect("77 bits");
+            let bits = *got[0].message77();
             assert_eq!(unpack77(&bits).expect("unpack"), want);
         }
     }
@@ -408,11 +432,7 @@ mod tests {
             *s = s.saturating_add(o);
         }
         let got = decode_slot(&slot, 200.0, 3000.0, 1.0, 100);
-        let texts: Vec<String> = got
-            .iter()
-            .filter_map(|r| <[u8; 77]>::try_from(r.message77()).ok())
-            .filter_map(|b| unpack77(&b))
-            .collect();
+        let texts: Vec<String> = got.iter().filter_map(|r| unpack77(r.message77())).collect();
         assert!(texts.iter().any(|t| t == "CQ OE1ABC JN88"), "{texts:?}");
         assert!(texts.iter().any(|t| t == "CQ IU8LMC JN70"), "{texts:?}");
     }
@@ -437,11 +457,7 @@ mod tests {
             }
         }
         let got = decode_slot(&slot, 200.0, 3000.0, 1.0, 100);
-        let texts: Vec<String> = got
-            .iter()
-            .filter_map(|r| <[u8; 77]>::try_from(r.message77()).ok())
-            .filter_map(|b| unpack77(&b))
-            .collect();
+        let texts: Vec<String> = got.iter().filter_map(|r| unpack77(r.message77())).collect();
         assert!(texts.iter().any(|t| t == "CQ OE1ABC JN88"), "{texts:?}");
         assert!(texts.iter().any(|t| t == "CQ IU8LMC JN70"), "weak signal lost: {texts:?}");
     }

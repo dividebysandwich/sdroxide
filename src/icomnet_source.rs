@@ -56,7 +56,7 @@ use sdroxide_dsp::Ddc;
 use sdroxide_icomnet::{IcomNetDevice, IcomNetOptions};
 use sdroxide_radio::rtrb;
 use sdroxide_radio::{Complex32, ControlUpdate, IqSource, Result};
-use sdroxide_types::{Band, CwKeying, IcomNetConfig, IcomRxSource, Mode, TxTelemetry};
+use sdroxide_types::{AgcMode, Band, CwKeying, IcomNetConfig, IcomRxSource, Mode, TxTelemetry};
 
 use crate::dial::Dial;
 use crate::session_trace::TraceStore;
@@ -175,6 +175,9 @@ pub struct IcomNetSource {
     tx: Option<rtrb::Producer<f32>>,
     rate: f64,
     rx_source: IcomRxSource,
+    /// Per-radio configured preference, never overwritten by a temporary AF fallback.
+    preferred_rx_source: IcomRxSource,
+    invert_if: bool,
     audio_bw: f64,
     cw_keying: CwKeying,
     civ_addr: u8,
@@ -215,6 +218,11 @@ pub struct IcomNetSource {
     /// the two do not spell the same thing: every digital mode is commanded as
     /// plain USB, and comes back as plain USB.
     mode_cmd: Option<(u8, Instant)>,
+    /// The CI-V mode byte the radio is on, as last reported or commanded.
+    /// Kept apart from the app's mode because the radio can be in one the app
+    /// has none for — its own RTTY — and the filter index has a narrower range
+    /// there; see [`civ::set_filter_frame`].
+    rig_mode: Option<u8>,
     last_signal: Option<(Instant, f32)>,
     last_telem: Option<TxTelemetry>,
     transmitting: bool,
@@ -340,18 +348,12 @@ impl IcomNetSource {
                 IcomRxSource::If12k => IF_OUT_RATE,
             },
             rx_source,
+            preferred_rx_source: rx_source,
+            invert_if,
             audio_bw: cfg.audio_bw_hz,
             cw_keying: cfg.cw_keying,
             civ_addr,
-            label: format!(
-                "{} over LAN at {} ({})",
-                info.radio_name,
-                cfg.address,
-                match rx_source {
-                    IcomRxSource::Af => "AF",
-                    IcomRxSource::If12k => "12 kHz IF",
-                }
-            ),
+            label: format!("{} over LAN at {}", info.radio_name, cfg.address),
             status: None,
             dial: Dial::default(),
             civ_buf: Vec::with_capacity(1024),
@@ -379,6 +381,7 @@ impl IcomNetSource {
             scope_stalled: false,
             last_poll: Instant::now(),
             mode_cmd: None,
+            rig_mode: None,
             last_signal: None,
             last_telem: None,
             transmitting: false,
@@ -442,7 +445,7 @@ impl IcomNetSource {
         // and a read has to go out ahead of every write, not just its own.
         let mut writes: Vec<(u16, u8)> = Vec::new();
         match model.lan_afif_select {
-            Some(item) => writes.push((item, cfg.rx_source.menu_value())),
+            Some(item) => writes.push((item, self.rx_source.menu_value())),
             None if cfg.rx_source == IcomRxSource::If12k => notes.push(
                 "sdroxide does not know this model's menu numbering, so it cannot switch the \
                  LAN output to IF — set SET > Connectors > LAN AF/IF Output > Output Select \
@@ -732,7 +735,12 @@ impl IcomNetSource {
             self.send(civ::read_freq_frame(self.civ_addr));
             self.send(civ::read_mode_frame(self.civ_addr));
             if self.transmitting {
+                // All three TX meters, as the serial CI-V path polls them: ALC
+                // is what the operator sets the drive by, and with only SWR
+                // asked for the ALC bar read SDRoxide's own level (#600).
                 self.send(civ::read_swr_frame(self.civ_addr));
+                self.send(civ::read_alc_frame(self.civ_addr));
+                self.send(civ::read_po_frame(self.civ_addr));
             } else {
                 self.send(civ::read_smeter_frame(self.civ_addr));
             }
@@ -794,6 +802,7 @@ impl IcomNetSource {
                         self.mode_cmd = None;
                     }
                 }
+                self.rig_mode = Some(b);
                 if let Some(m) = civ::civ_to_mode(b) {
                     self.pending.push(ControlUpdate::Mode(m));
                 }
@@ -851,8 +860,16 @@ impl IcomNetSource {
                 if let Some(dbm) = civ::parse_smeter_reply(&reply.data) {
                     self.last_signal = Some((Instant::now(), dbm));
                 }
+                // One meter per reply, so each updates its own field and
+                // leaves the others' last readings standing.
                 if let Some(swr) = civ::parse_swr_reply(&reply.data) {
-                    self.last_telem = Some(TxTelemetry { swr: Some(swr), ..Default::default() });
+                    self.last_telem.get_or_insert_with(TxTelemetry::default).swr = Some(swr);
+                }
+                if let Some(alc) = civ::parse_alc_reply(&reply.data) {
+                    self.last_telem.get_or_insert_with(TxTelemetry::default).alc = Some(alc);
+                }
+                if let Some(po) = civ::parse_po_reply(&reply.data) {
+                    self.last_telem.get_or_insert_with(TxTelemetry::default).po = Some(po);
                 }
             }
             // A Set-mode menu item, answering one of the reads `configure`
@@ -950,6 +967,50 @@ impl IcomNetSource {
 }
 
 impl IqSource for IcomNetSource {
+    fn mode_unavailable(&self, mode: Mode) -> Option<&'static str> {
+        (mode == Mode::HdRadio)
+            .then_some("Icom LAN provides only AF or a 12 kHz IF; HD Radio requires wideband I/Q")
+    }
+
+    fn prepare_receive_mode(&mut self, mode: Mode) -> Result<Option<bool>> {
+        let (lo, hi) = mode.default_filter();
+        let fits_if = f64::from(lo) >= -IF_OUT_RATE / 2.0 && f64::from(hi) <= IF_OUT_RATE / 2.0;
+        let wanted = if self.preferred_rx_source == IcomRxSource::If12k && fits_if {
+            IcomRxSource::If12k
+        } else {
+            IcomRxSource::Af
+        };
+        if wanted != self.rx_source {
+            let item = self.dev.info().model.lan_afif_select.ok_or_else(|| {
+                sdroxide_radio::RadioError::Msg(
+                    "This Icom model has no known LAN AF/IF menu command; cannot switch receive path"
+                        .into(),
+                )
+            })?;
+            // configure only remembers items it changed. A session opened
+            // with the desired IF already selected must still restore it.
+            if !self.menu_restore.iter().any(|(saved, _)| *saved == item) {
+                self.menu_restore.push((item, vec![self.rx_source.menu_value()]));
+            }
+            self.send(civ::set_menu_frame(self.civ_addr, item, &[wanted.menu_value()]));
+            while self.audio.pop().is_ok() {}
+            self.if_in.clear();
+            self.if_out.clear();
+            self.ddc = (wanted == IcomRxSource::If12k).then(|| {
+                let mut d = Ddc::new(f64::from(self.dev.info().rx_sample_rate), IF_OUT_RATE);
+                d.set_offset_hz(if self.invert_if { -IF_CENTER_HZ } else { IF_CENTER_HZ });
+                d
+            });
+            self.rx_source = wanted;
+            self.rate = match wanted {
+                IcomRxSource::Af => f64::from(self.dev.info().rx_sample_rate),
+                IcomRxSource::If12k => IF_OUT_RATE,
+            };
+            tracing::info!(mode = %mode.label(), path = %wanted.label(), "Icom LAN receive path");
+        }
+        Ok(Some(self.rx_source == IcomRxSource::Af))
+    }
+
     fn sample_rate(&self) -> f64 {
         self.rate
     }
@@ -995,7 +1056,11 @@ impl IqSource for IcomNetSource {
     }
 
     fn describe(&self) -> String {
-        self.label.clone()
+        let path = match self.rx_source {
+            IcomRxSource::Af => "AF",
+            IcomRxSource::If12k => "12 kHz IF",
+        };
+        format!("{} ({path})", self.label)
     }
 
     fn open_status(&self) -> Option<String> {
@@ -1064,6 +1129,7 @@ impl IqSource for IcomNetSource {
             m => m,
         };
         self.mode_cmd = Some((civ::mode_to_civ(mode), Instant::now()));
+        self.rig_mode = Some(civ::mode_to_civ(mode));
         // The mode *and* the DATA switch beside it, which is the pair the
         // serial CAT path has always sent. The plain mode command clears the
         // switch, so sending it alone took a rig the operator had put in FM-D
@@ -1073,6 +1139,33 @@ impl IqSource for IcomNetSource {
             self.send(f);
         }
         Ok(())
+    }
+
+    /// The panel's width control, sent to the radio's own filter.
+    ///
+    /// On AF the stream has already come through it, exactly as with a serial
+    /// CAT rig: there is no demodulator here, so without this the width moved
+    /// on screen and nothing changed in the audio. The engine only calls this
+    /// while the radio is the one demodulating; on the 12 kHz IF the filter is
+    /// sdroxide's own.
+    fn set_control_filter(&mut self, mode: Mode, lo_hz: f64, hi_hz: f64) {
+        if let Some(f) =
+            civ::set_filter_frame(self.civ_addr, mode, self.rig_mode, lo_hz as f32, hi_hz as f32)
+        {
+            self.send(f);
+        }
+    }
+
+    /// The AGC button, sent to the radio's own AGC — on AF the only one the
+    /// audio has been through that makes an audible difference.
+    fn set_control_agc(&mut self, agc: AgcMode) {
+        if let Some(f) = civ::set_agc_frame(self.civ_addr, agc) {
+            self.send(f);
+        }
+    }
+
+    fn commands_agc(&self) -> bool {
+        true
     }
 
     // ── CW from the rig's own keyer ─────────────────────────────────────────
@@ -1433,6 +1526,65 @@ mod tests {
         assert!(tunes <= 2, "a radio that answered was asked {tunes} times");
     }
 
+    /// On AF the radio has already filtered and levelled the audio, so the
+    /// width and AGC controls only do something once they reach it. Neither
+    /// did: the width moved on the panadapter and the AGC button changed its
+    /// label, and the IC-705 sounded the same either way.
+    #[test]
+    fn the_filter_width_and_agc_are_sent_to_the_radio() {
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut src = IcomNetSource::open(&cfg(&sim)).expect("open");
+        let sent = |cmd: &[u8]| {
+            sim.civ_frames().iter().any(|f| f.len() == cmd.len() + 5 && f[4..f.len() - 1] == *cmd)
+        };
+
+        src.set_control_filter(Mode::Usb, 200.0, 2600.0);
+        wait_for("the 2.4 kHz filter", || sent(&[0x1A, 0x03, 0x28]));
+        src.set_control_agc(AgcMode::Slow);
+        wait_for("AGC SLOW", || sent(&[0x16, 0x12, 0x03]));
+
+        // Neither has a spelling for these, so the radio is left alone rather
+        // than handed some other filter or preset.
+        let before = sim.civ_frames().len();
+        src.set_control_filter(Mode::Nfm, -6000.0, 6000.0);
+        src.set_control_agc(AgcMode::Off);
+        std::thread::sleep(Duration::from_millis(50));
+        let after = sim.civ_frames();
+        assert!(
+            !after[before..]
+                .iter()
+                .any(|f| matches!(f.get(4..6), Some([0x1A, 0x03] | [0x16, 0x12]))),
+            "a filter or AGC frame went out with nothing to say"
+        );
+    }
+
+    /// An operator who switches the radio to its own RTTY at the front panel
+    /// puts it in a mode with a narrower filter range, which the panel has no
+    /// mode for and does not follow. A width past 2.7 kHz is held there
+    /// instead of sent as an index the radio rejects; back on USB the full
+    /// range returns.
+    #[test]
+    fn a_radio_put_in_rtty_at_the_front_panel_is_held_to_its_range() {
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut src = IcomNetSource::open(&cfg(&sim)).expect("open");
+        let sent = |cmd: &[u8]| {
+            sim.civ_frames().iter().any(|f| f.len() == cmd.len() + 5 && f[4..f.len() - 1] == *cmd)
+        };
+
+        sim.set_mode(0x04);
+        wait_for("the radio's RTTY report", || {
+            src.poll_control();
+            src.rig_mode == Some(0x04)
+        });
+        src.set_control_filter(Mode::Usb, 0.0, 3600.0);
+        wait_for("the filter held to 2.7 kHz", || sent(&[0x1A, 0x03, 0x31]));
+        assert!(!sent(&[0x1A, 0x03, 0x40]), "an index past RTTY's range went out");
+
+        src.set_control_mode(Mode::Usb).unwrap();
+        src.set_control_filter(Mode::Usb, 0.0, 3600.0);
+        wait_for("the full 3.6 kHz on USB", || sent(&[0x1A, 0x03, 0x40]));
+    }
+
     /// Two Icoms on one LAN, each keeping its own session trace.
     ///
     /// The trace is what a field report is built from, and a station with an
@@ -1488,6 +1640,403 @@ mod tests {
         // imaginary one.
         assert!(got.iter().all(|c| c.im == 0.0));
         assert!(got.iter().any(|c| c.re.abs() > 0.4));
+    }
+
+    #[test]
+    fn wide_modes_temporarily_use_af_without_changing_each_radios_preference() {
+        let a = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let b = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut c = cfg(&a);
+        c.rx_source = IcomRxSource::If12k;
+        c.invert_if = Some(true);
+        let mut if_src = IcomNetSource::open(&c).unwrap();
+        let mut af_src = IcomNetSource::open(&cfg(&b)).unwrap();
+        let item = if_src.dev.info().model.lan_afif_select.unwrap();
+        for mode in [Mode::Wfm, Mode::Rifp, Mode::Ais, Mode::Vdl2, Mode::Adsb] {
+            assert_eq!(if_src.prepare_receive_mode(mode).unwrap(), Some(true));
+            assert_eq!(if_src.sample_rate(), 48_000.0);
+            assert!(if_src.ddc.is_none());
+            wait_for("AF menu selection", || a.menu_item(item) == IcomRxSource::Af.menu_value());
+            assert_eq!(af_src.prepare_receive_mode(mode).unwrap(), Some(true));
+            assert_eq!(af_src.prepare_receive_mode(Mode::Usb).unwrap(), Some(true));
+            for compatible in [Mode::Usb, Mode::Am, Mode::Nfm, Mode::Drm, Mode::Hfdl] {
+                assert_eq!(if_src.prepare_receive_mode(compatible).unwrap(), Some(false));
+                assert_eq!(if_src.sample_rate(), IF_OUT_RATE);
+                assert!(if_src.ddc.is_some());
+            }
+            wait_for("restored IF menu selection", || {
+                a.menu_item(item) == IcomRxSource::If12k.menu_value()
+            });
+        }
+        assert_eq!(c.rx_source, IcomRxSource::If12k);
+        assert!(if_src.mode_unavailable(Mode::HdRadio).unwrap().contains("wideband I/Q"));
+        assert!(af_src.mode_unavailable(Mode::HdRadio).is_some());
+        assert!(af_src.mode_unavailable(Mode::Wfm).is_none());
+    }
+
+    #[test]
+    fn temporary_af_restores_an_original_if_menu_on_disconnect() {
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut c = cfg(&sim);
+        c.rx_source = IcomRxSource::If12k;
+        let item = sdroxide_icomnet::protocol::model_for(0xB6).lan_afif_select.unwrap();
+        sim.set_menu_item(item, IcomRxSource::If12k.menu_value());
+        let mut src = IcomNetSource::open(&c).unwrap();
+        assert!(!src.menu_restore.iter().any(|(i, _)| *i == item));
+        src.prepare_receive_mode(Mode::Wfm).unwrap();
+        wait_for("temporary AF", || sim.menu_item(item) == IcomRxSource::Af.menu_value());
+        src.release();
+        assert_eq!(sim.menu_item(item), IcomRxSource::If12k.menu_value());
+        let mut reopened = IcomNetSource::open(&c).unwrap();
+        assert_eq!(reopened.prepare_receive_mode(Mode::Usb).unwrap(), Some(false));
+        assert_eq!(reopened.sample_rate(), IF_OUT_RATE);
+    }
+
+    #[test]
+    fn an_unknown_menu_cannot_silently_switch_the_receive_path() {
+        let sim = Sim::start(SimOptions {
+            civ_address: 0x7F,
+            radio_name: "Unknown Icom".into(),
+            scope: false,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut c = cfg(&sim);
+        c.rx_source = IcomRxSource::If12k;
+        let mut src = IcomNetSource::open(&c).unwrap();
+        let err = src.prepare_receive_mode(Mode::Wfm).unwrap_err().to_string();
+        assert!(err.contains("cannot switch receive path"), "{err}");
+        assert_eq!(src.sample_rate(), IF_OUT_RATE);
+        assert_eq!(src.rx_source, IcomRxSource::If12k);
+    }
+
+    #[test]
+    fn engine_switches_receive_pipeline_and_blocks_hd_radio() {
+        use sdroxide_types::{Command, RadioEvent, RxId};
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut c = cfg(&sim);
+        c.rx_source = IcomRxSource::If12k;
+        let src = IcomNetSource::open(&c).unwrap();
+        let caps = crate::icomnet_caps(&c, &src);
+        let mut h = sdroxide_radio::start_engine(
+            Box::new(src),
+            caps,
+            sdroxide_radio::EngineConfig::default(),
+        );
+        let thread = h.thread.take().unwrap();
+        let mut audio_mode = None;
+        let mut mode = None;
+        let mut rate = None;
+        let mut hd_blocked = false;
+        let mut receive = |expected: Mode, expected_audio: bool, expected_rate: f64| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                while let Ok(event) = h.event_rx.try_recv() {
+                    match event {
+                        RadioEvent::Capabilities(c) | RadioEvent::CapabilitiesUpdated(c) => {
+                            audio_mode = Some(c.audio_mode);
+                        }
+                        RadioEvent::State(s) => {
+                            mode = Some(s.rx[0].mode);
+                            rate = Some(s.sample_rate);
+                            hd_blocked = s
+                                .mode_unavailable(Mode::HdRadio)
+                                .is_some_and(|why| why.contains("Icom LAN"));
+                        }
+                        _ => {}
+                    }
+                }
+                if mode == Some(expected)
+                    && audio_mode == Some(expected_audio)
+                    && rate == Some(expected_rate)
+                    && hd_blocked
+                {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "expected {expected:?}/{expected_audio}/{expected_rate}; got \
+                     {mode:?}/{audio_mode:?}/{rate:?}, HD blocked: {hd_blocked}"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        receive(Mode::Usb, false, IF_OUT_RATE);
+        h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::Wfm }).unwrap();
+        receive(Mode::Wfm, true, c.audio_bw_hz);
+        h.cmd_tx.send(Command::SelectVfo(sdroxide_types::Vfo::B)).unwrap();
+        receive(Mode::Usb, false, IF_OUT_RATE);
+        h.cmd_tx.send(Command::SelectVfo(sdroxide_types::Vfo::A)).unwrap();
+        receive(Mode::Wfm, true, c.audio_bw_hz);
+        h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::Usb }).unwrap();
+        receive(Mode::Usb, false, IF_OUT_RATE);
+        h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::HdRadio }).unwrap();
+        let mut refused = false;
+        wait_for("HD refusal notice", || {
+            while let Ok(event) = h.event_rx.try_recv() {
+                if let RadioEvent::Notice(Some(why)) = event
+                    && why.contains("HD Radio")
+                {
+                    refused = true;
+                }
+            }
+            refused
+        });
+        drop(h);
+        thread.join().unwrap();
+    }
+
+    /// The same through the engine, which is what decides that a radio on AF is
+    /// the one filtering — the IC-705 report was of the panel's own controls.
+    #[test]
+    fn on_af_the_panels_width_and_agc_reach_the_radio() {
+        use sdroxide_types::{Command, RxId};
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let c = cfg(&sim);
+        let src = IcomNetSource::open(&c).unwrap();
+        let caps = crate::icomnet_caps(&c, &src);
+        let mut h = sdroxide_radio::start_engine(
+            Box::new(src),
+            caps,
+            sdroxide_radio::EngineConfig::default(),
+        );
+        let thread = h.thread.take().unwrap();
+        let sent = |cmd: &[u8]| {
+            sim.civ_frames().iter().any(|f| f.len() == cmd.len() + 5 && f[4..f.len() - 1] == *cmd)
+        };
+        h.cmd_tx.send(Command::SetFilter { rx: RxId::Main, lo: 300.0, hi: 1300.0 }).unwrap();
+        wait_for("the 1 kHz filter at the radio", || sent(&[0x1A, 0x03, 0x14]));
+        h.cmd_tx.send(Command::SetAgc { rx: RxId::Main, agc: AgcMode::Fast }).unwrap();
+        wait_for("AGC FAST at the radio", || sent(&[0x16, 0x12, 0x01]));
+        drop(h);
+        thread.join().unwrap();
+    }
+
+    /// On the 12 kHz IF sdroxide demodulates, so the width and AGC are its own
+    /// and the radio's are left wherever the operator set them.
+    #[test]
+    fn on_the_if_the_panels_width_and_agc_stay_in_the_app() {
+        use sdroxide_types::{Command, RadioEvent, RxId};
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut c = cfg(&sim);
+        c.rx_source = IcomRxSource::If12k;
+        let src = IcomNetSource::open(&c).unwrap();
+        let caps = crate::icomnet_caps(&c, &src);
+        let mut h = sdroxide_radio::start_engine(
+            Box::new(src),
+            caps,
+            sdroxide_radio::EngineConfig::default(),
+        );
+        let thread = h.thread.take().unwrap();
+        h.cmd_tx.send(Command::SetFilter { rx: RxId::Main, lo: 300.0, hi: 1300.0 }).unwrap();
+        h.cmd_tx.send(Command::SetAgc { rx: RxId::Main, agc: AgcMode::Fast }).unwrap();
+        let mut seen = (false, false);
+        wait_for("the engine to take both", || {
+            while let Ok(event) = h.event_rx.try_recv() {
+                if let RadioEvent::State(s) = event {
+                    seen.0 |= (s.rx[0].filter_lo, s.rx[0].filter_hi) == (300.0, 1300.0);
+                    seen.1 |= s.rx[0].agc == AgcMode::Fast;
+                }
+            }
+            seen == (true, true)
+        });
+        // Past a few poll periods, so a frame the engine had sent would be in.
+        std::thread::sleep(POLL_PERIOD * 3);
+        assert!(
+            !sim.civ_frames()
+                .iter()
+                .any(|f| matches!(f.get(4..6), Some([0x1A, 0x03] | [0x16, 0x12]))),
+            "the radio was sent a filter or AGC while sdroxide is the one demodulating"
+        );
+        drop(h);
+        thread.join().unwrap();
+    }
+
+    /// Watches an engine's events for the capabilities and the main receiver's
+    /// AGC, the two halves of what the AGC chip draws.
+    struct AgcWatch {
+        off_unavailable: Option<bool>,
+        agc: Option<AgcMode>,
+        max_gain_db: Option<f32>,
+        mode: Option<Mode>,
+    }
+
+    impl AgcWatch {
+        fn new() -> Self {
+            AgcWatch { off_unavailable: None, agc: None, max_gain_db: None, mode: None }
+        }
+
+        fn until(
+            &mut self,
+            h: &sdroxide_radio::EngineHandles,
+            what: &str,
+            mut done: impl FnMut(&Self) -> bool,
+        ) {
+            use sdroxide_types::RadioEvent;
+            wait_for(what, || {
+                while let Ok(event) = h.event_rx.try_recv() {
+                    match event {
+                        RadioEvent::Capabilities(c) | RadioEvent::CapabilitiesUpdated(c) => {
+                            self.off_unavailable = Some(c.agc_off_unavailable);
+                        }
+                        RadioEvent::State(s) => {
+                            self.agc = Some(s.rx[0].agc);
+                            self.max_gain_db = Some(s.rx[0].agc_max_gain_db);
+                            self.mode = Some(s.rx[0].mode);
+                        }
+                        _ => {}
+                    }
+                }
+                done(self)
+            });
+        }
+    }
+
+    /// On AF the AGC that is heard is the radio's, and Icom gives no way to
+    /// switch it off — so Off is not offered, and one asked for anyway (by a
+    /// rigctld client, say) is refused rather than shown.
+    #[test]
+    fn on_af_the_agc_has_no_off() {
+        use sdroxide_types::{Command, RxId};
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let c = cfg(&sim);
+        let src = IcomNetSource::open(&c).unwrap();
+        let caps = crate::icomnet_caps(&c, &src);
+        let mut h = sdroxide_radio::start_engine(
+            Box::new(src),
+            caps,
+            sdroxide_radio::EngineConfig::default(),
+        );
+        let thread = h.thread.take().unwrap();
+        let mut w = AgcWatch::new();
+        h.cmd_tx.send(Command::SetAgc { rx: RxId::Main, agc: AgcMode::Slow }).unwrap();
+        w.until(&h, "AF without an Off, on Slow", |w| {
+            w.off_unavailable == Some(true) && w.agc == Some(AgcMode::Slow)
+        });
+        h.cmd_tx.send(Command::SetAgc { rx: RxId::Main, agc: AgcMode::Off }).unwrap();
+        // Something after it, so its answer is known to have been processed.
+        h.cmd_tx.send(Command::SetAgcMaxGain { rx: RxId::Main, db: 80.0 }).unwrap();
+        w.until(&h, "the command after it", |w| w.max_gain_db == Some(80.0));
+        assert_eq!(w.agc, Some(AgcMode::Slow), "an Off the radio cannot honour was taken");
+        drop(h);
+        thread.join().unwrap();
+    }
+
+    /// On the 12 kHz IF the AGC is sdroxide's own and Off is real. Leaving the
+    /// IF for AF with it off — WFM is too wide for the IF — lands on a preset
+    /// the radio has, and coming back finds Off where it was left.
+    #[test]
+    fn off_is_offered_on_the_if_and_settled_on_the_way_to_af() {
+        use sdroxide_types::{Command, RxId};
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut c = cfg(&sim);
+        c.rx_source = IcomRxSource::If12k;
+        let src = IcomNetSource::open(&c).unwrap();
+        let caps = crate::icomnet_caps(&c, &src);
+        let mut h = sdroxide_radio::start_engine(
+            Box::new(src),
+            caps,
+            sdroxide_radio::EngineConfig::default(),
+        );
+        let thread = h.thread.take().unwrap();
+        let mut w = AgcWatch::new();
+        h.cmd_tx.send(Command::SetAgc { rx: RxId::Main, agc: AgcMode::Off }).unwrap();
+        w.until(&h, "Off on the IF", |w| {
+            w.off_unavailable == Some(false) && w.agc == Some(AgcMode::Off)
+        });
+
+        h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::Wfm }).unwrap();
+        w.until(&h, "AF on a preset", |w| {
+            w.mode == Some(Mode::Wfm)
+                && w.off_unavailable == Some(true)
+                && w.agc.is_some_and(|a| a != AgcMode::Off)
+        });
+        let preset = w.agc.unwrap();
+        let byte = match preset {
+            AgcMode::Fast => 0x01,
+            AgcMode::Med => 0x02,
+            _ => 0x03,
+        };
+        wait_for("the preset at the radio", || {
+            sim.civ_frames().iter().any(|f| f.get(4..7) == Some(&[0x16, 0x12, byte][..]))
+        });
+
+        // USB's saved Off was never overwritten by the settling.
+        h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::Usb }).unwrap();
+        w.until(&h, "back on the IF with Off", |w| {
+            w.mode == Some(Mode::Usb)
+                && w.off_unavailable == Some(false)
+                && w.agc == Some(AgcMode::Off)
+        });
+        drop(h);
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn a_wide_panadapter_supplies_hd_iq_while_the_icom_switches_af_and_if() {
+        use crate::panadapter_source::PanadapterSource;
+        use sdroxide_types::{DeviceCaps, PanadapterConfig};
+
+        struct Receiver(f64, f64);
+        impl IqSource for Receiver {
+            fn sample_rate(&self) -> f64 {
+                self.0
+            }
+            fn center_hz(&self) -> f64 {
+                self.1
+            }
+            fn set_center_hz(&mut self, _hz: f64) -> Result<()> {
+                Ok(())
+            }
+            fn read(&mut self, _buf: &mut [Complex32]) -> Result<usize> {
+                Ok(0)
+            }
+            fn describe(&self) -> String {
+                "wideband receiver".into()
+            }
+        }
+
+        for (rate, frequency, hd_allowed) in [
+            (24_000.0, 100_000_000.0, false),
+            (399_999.0, 100_000_000.0, false),
+            (400_000.0, 100_000_000.0, true),
+            (2_000_000.0, 100_000_000.0, true),
+            (29_999.0, 1_000_000.0, false),
+            (30_000.0, 1_000_000.0, true),
+        ] {
+            let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+            let mut c = cfg(&sim);
+            c.rx_source = IcomRxSource::If12k;
+            let ctrl = IcomNetSource::open(&c).unwrap();
+            let item = ctrl.dev.info().model.lan_afif_select.unwrap();
+            let config = PanadapterConfig { source_radio: Some(1), ..Default::default() };
+            let caps = PanadapterSource::merge_caps(
+                &DeviceCaps::default(),
+                &crate::icomnet_caps(&c, &ctrl),
+                &config,
+            );
+            assert!(!caps.audio_mode);
+            let mut paired = PanadapterSource::new(
+                Box::new(Receiver(rate, frequency)),
+                Box::new(ctrl),
+                config,
+                Some(Mode::Usb),
+            );
+            assert_eq!(paired.mode_unavailable(Mode::HdRadio).is_none(), hd_allowed);
+            for mode in [Mode::Wfm, Mode::HdRadio] {
+                assert_eq!(paired.prepare_receive_mode(mode).unwrap(), None);
+                paired.set_control_mode(mode).unwrap();
+                wait_for("paired Icom uses AF", || {
+                    sim.menu_item(item) == IcomRxSource::Af.menu_value()
+                });
+                assert_eq!(paired.sample_rate(), rate, "the receiver's IQ rate must not change");
+                assert_eq!(paired.prepare_receive_mode(Mode::Usb).unwrap(), None);
+                paired.set_control_mode(Mode::Usb).unwrap();
+                wait_for("paired Icom restores IF", || {
+                    sim.menu_item(item) == IcomRxSource::If12k.menu_value()
+                });
+            }
+        }
     }
 
     #[test]
@@ -1750,11 +2299,12 @@ mod tests {
     #[test]
     fn a_poll_already_in_flight_does_not_drag_the_mode_back() {
         // The mode is polled every 200 ms, so a read issued just before the
-        // operator switched comes back carrying the old mode. The simulator
-        // never actually changes mode — it answers every read with USB — which
+        // operator switched comes back carrying the old mode. This simulator
+        // refuses mode changes and answers every read with USB, which
         // is the worst case: without the guard the app would be pulled straight
         // back off the LSB it had just been put in.
-        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let sim = Sim::start(SimOptions { scope: false, ignore_modes: true, ..Default::default() })
+            .unwrap();
         let mut src = IcomNetSource::open(&cfg(&sim)).expect("open");
         // Let the opening read of the mode go by first.
         wait_for("the radio's opening mode report", || {
@@ -2158,6 +2708,23 @@ mod tests {
         wait_for("PTT on", || ptt(1));
         src.tx_end().unwrap();
         wait_for("PTT off", || ptt(0));
+    }
+
+    /// Issue #600: while transmitting, the rig's own ALC and power meters are
+    /// read and reported beside SWR, not only SWR.
+    #[test]
+    fn transmitting_reads_the_alc_and_power_meters() {
+        let sim = Sim::start(SimOptions { scope: false, ..Default::default() }).unwrap();
+        let mut src = IcomNetSource::open(&cfg(&sim)).expect("open");
+        src.tx_begin(14_074_000.0, 48_000.0).unwrap();
+        wait_for("all three TX meters", || {
+            src.tx_telemetry().is_some_and(|t| t.swr.is_some() && t.alc.is_some() && t.po.is_some())
+        });
+        let t = src.tx_telemetry().unwrap();
+        assert!((t.alc.unwrap() - 128.0 / 255.0).abs() < 1e-3, "ALC {:?}", t.alc);
+        assert_eq!(t.po, Some(1.0));
+        assert_eq!(t.swr, Some(1.0));
+        src.tx_end().unwrap();
     }
 
     #[test]

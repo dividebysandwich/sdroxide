@@ -163,6 +163,15 @@ pub struct ServerParams {
     pub radio_power: Option<RadioPowerFn>,
 }
 
+/// How many receive-audio packets (20 ms each) the audio lane holds before the
+/// pump starts dropping the newest.
+///
+/// 8 was 160 ms: one large spectrum frame still being written to a slow link
+/// was enough to overflow it, and every packet dropped there is a hole in the
+/// audio that a digital-mode decoder cannot get back. 16 is 320 ms, enough to
+/// ride out one such frame without opening a hole.
+pub(crate) const AUDIO_LANE_DEPTH: usize = 16;
+
 pub(crate) struct SessionTx {
     pub reliable: mpsc::Sender<ServerMsg>,
     pub audio: mpsc::Sender<ServerMsg>,
@@ -229,6 +238,9 @@ pub(crate) struct Latest {
     /// answering, and "nothing has changed since you attached" must not read as
     /// "nothing is wrong".
     pub relay: Option<Box<sdroxide_types::RelayStatus>>,
+    /// The amplifier, replayed on connect for the relay's reason: a remote
+    /// operator has to know whether it is in line before they key.
+    pub amp: Option<Box<sdroxide_types::AmpStatus>>,
     /// What the RDS decoder has made of the station currently tuned. Replayed on
     /// connect for the same reason as `digi` and `voice`: which station is being
     /// listened to is a standing condition, and a client that attaches after the
@@ -689,7 +701,20 @@ pub async fn serve(params: ServerParams) -> Result<(), ServerError> {
     let addr: SocketAddr = format!("{}:{}", params.bind, params.port)
         .parse()
         .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], params.port)));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    // TCP_NODELAY on every accepted connection. The sockets carry a steady
+    // stream of small WebSocket messages (a 20 ms audio packet, meters, a
+    // spectrum row), each flushed on its own; with Nagle's algorithm on, a
+    // small write waits for the ACK of the previous one, and against a
+    // browser's delayed ACK that is up to 40 ms (200 ms on Windows) of
+    // stall followed by a burst. The client sees exactly what a lossy link
+    // looks like -- audio gaps, a waterfall that stutters -- on a network
+    // that is perfectly healthy.
+    use axum::serve::ListenerExt as _;
+    let listener = tokio::net::TcpListener::bind(addr).await?.tap_io(|tcp| {
+        if let Err(e) = tcp.set_nodelay(true) {
+            warn!("could not set TCP_NODELAY on a client connection: {e}");
+        }
+    });
     info!("server listening on http://{addr}/");
     axum::serve(listener, axum::ServiceExt::<axum::extract::Request>::into_make_service(app))
         .await?;
@@ -835,6 +860,11 @@ fn pump(
     let mut mono = Vec::<f32>::new();
     let mut opus_enc: Option<opus::Encoder> = None;
     let mut audio_seq = 0u32;
+    // Packets the audio lane refused, and when that was last reported. Dropping
+    // is the backpressure policy, but a silent one made "choppy audio on a good
+    // network" impossible to tell from a client-side fault.
+    let mut audio_dropped = 0u32;
+    let mut audio_dropped_at = std::time::Instant::now();
 
     loop {
         // Taken out of the roster: let go of the radio, so that the engine
@@ -919,11 +949,23 @@ fn pump(
                     audio_seq = audio_seq.wrapping_add(1);
                     if let Some(s) = shared.session.lock().unwrap().as_ref() {
                         // Bounded lane: dropping is the backpressure policy.
-                        let _ = s.audio.try_send(ServerMsg::RxAudio { seq: audio_seq, payload });
+                        if s.audio.try_send(ServerMsg::RxAudio { seq: audio_seq, payload }).is_err()
+                        {
+                            audio_dropped += 1;
+                        }
                     }
                     mono.drain(..960);
                 }
             }
+        }
+        if audio_dropped > 0 && audio_dropped_at.elapsed() >= Duration::from_secs(5) {
+            warn!(
+                radio = shared.id,
+                dropped = audio_dropped,
+                "audio lane full: the client is not draining its socket fast enough"
+            );
+            audio_dropped = 0;
+            audio_dropped_at = std::time::Instant::now();
         }
         // Bound the accumulator against pathological stalls.
         if mono.len() > 48_000 {
@@ -1166,9 +1208,21 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             RadioEvent::RigctldStatus { running, addr, clients, error } => {
                 Some(ServerMsg::RigctldStatus { running, addr, clients, error })
             }
-            RadioEvent::TciServerStatus { running, addr, clients, error } => {
-                Some(ServerMsg::TciServerStatus { running, addr, clients, error })
-            }
+            RadioEvent::TciServerStatus {
+                running,
+                addr,
+                clients,
+                error,
+                client_connected,
+                client_error,
+            } => Some(ServerMsg::TciServerStatus {
+                running,
+                addr,
+                clients,
+                error,
+                client_connected,
+                client_error,
+            }),
             RadioEvent::ImagePresets(p) => {
                 latest.images = Some(p.clone());
                 Some(ServerMsg::ImagePresets(p))
@@ -1231,6 +1285,10 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
                 latest.relay = Some(st.clone());
                 Some(ServerMsg::RelayStatus(st))
             }
+            RadioEvent::AmpStatus(st) => {
+                latest.amp = Some(st.clone());
+                Some(ServerMsg::AmpStatus(st))
+            }
             // Handled above, and deliberately not forwarded: the skimmer
             // firehose is a hundred times the spot list's traffic, and the
             // solar relay already carries what it adds up to. See
@@ -1242,10 +1300,16 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             // client's, and it is only ever asked for from the machine the
             // credentials live on. Same treatment as `RadioEvent::Notice`.
             RadioEvent::LoginTest(_) => None,
+            // The rest of the same answer, kept local for the same reason.
+            RadioEvent::WavelogProbe(_) => None,
+            RadioEvent::WavelogBatch(_) => None,
             RadioEvent::Profiles(p) => {
                 latest.profiles = p.clone();
                 Some(ServerMsg::Profiles(p))
             }
+            // Not cached: it is an answer to a test or news of one upload, and
+            // a screen attaching later has asked nothing.
+            RadioEvent::PictureUpload(st) => Some(ServerMsg::PictureUpload(st)),
         }
     };
     // The satellite half of the station config also drives this machine's own

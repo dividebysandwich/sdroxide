@@ -1,7 +1,7 @@
 //! Shared MFSK / incremental-FSK building blocks used by the Olivia, THOR, and
 //! FSQ keyboard modems: a phase-continuous tone generator, a direct-DFT tone-bank
-//! detector with symbol-timing recovery, a fast Walsh–Hadamard transform (Olivia
-//! coding), and Gray-code helpers.
+//! detector with symbol-timing recovery, and Gray-code helpers. Olivia keeps its
+//! own Walsh transform, which has to be fldigi's exactly.
 //!
 //! These are deliberately simple and allocation-light; the tone banks here are
 //! small (≤64 tones) and the per-symbol windows short (≤256 samples), so a direct
@@ -150,34 +150,6 @@ pub fn tone_bank_mags(
     rate: f64,
 ) -> Vec<f32> {
     (0..n_tones).map(|k| dft_bin(samples, base_hz + k as f64 * spacing_hz, rate).norm()).collect()
-}
-
-/// In-place fast Walsh–Hadamard transform (natural order). `data.len()` must be a
-/// power of two. Olivia's (64,7) biorthogonal code decodes by taking the FWHT of
-/// the 64 soft bits and reading off the largest-magnitude coefficient.
-pub fn fwht(data: &mut [f32]) {
-    let n = data.len();
-    debug_assert!(n.is_power_of_two());
-    let mut len = 1;
-    while len < n {
-        let mut i = 0;
-        while i < n {
-            for j in i..i + len {
-                let a = data[j];
-                let b = data[j + len];
-                data[j] = a + b;
-                data[j + len] = a - b;
-            }
-            i += len << 1;
-        }
-        len <<= 1;
-    }
-}
-
-/// One row of the natural-order 64×64 Hadamard matrix as ±1, i.e. the codeword
-/// for Walsh index `row`. `bit(k)` = parity of the AND of `row` and `k`.
-pub fn hadamard_bit(row: usize, k: usize) -> i8 {
-    if (row & k).count_ones() & 1 == 0 { 1 } else { -1 }
 }
 
 /// Binary-reflected Gray code and its inverse (used to map MFSK tone indices so

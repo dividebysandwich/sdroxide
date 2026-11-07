@@ -24,7 +24,7 @@ mod state;
 
 use sdroxide_types::Command;
 
-pub use state::{RigState, filter_for, from_hamlib_mode, to_hamlib_mode};
+pub use state::{RfGain, RigState, filter_for, from_hamlib_mode, to_hamlib_mode};
 
 pub use server::RigctldController;
 

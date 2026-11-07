@@ -38,8 +38,10 @@
 
 use mfsk_core::engine::dsp::downsample::downsample_cached;
 use mfsk_core::engine::scalar::Cmplx;
+use mfsk_core::engine::tx::message_to_tones;
 use mfsk_core::fec::ldpc::bp::{bp_decode, check_crc14};
-use mfsk_core::fec::ldpc::osd::osd_decode_deep;
+use mfsk_core::fec::ldpc::osd_npre::NDEEP2_174_91;
+use mfsk_core::fec::ldpc::osd174_91;
 use mfsk_core::ft8::decode_block::{
     SymMask, coarse_sync, compute_spectrogram, fill_symbol_spectra,
 };
@@ -47,7 +49,6 @@ use mfsk_core::ft8::downsample::{FT8_CFG, build_fft_cache};
 use mfsk_core::ft8::llr::{compute_llr_fast, compute_llr_partial, compute_snr_db, sync_quality};
 use mfsk_core::ft8::params::LDPC_N;
 use mfsk_core::ft8::refine_fine::fine_refine_3stage;
-use mfsk_core::ft8::wave_gen::message_to_tones;
 use rayon::prelude::*;
 
 /// WSJT-X's own BP iteration budget for FT8 (`ft8b.f90`), which is what
@@ -160,7 +161,8 @@ fn decode_candidate(
     if msg.is_none() && q > 6 {
         let full = mfsk_core::ft8::llr::compute_llr::<f32>(&cs);
         for llr in [&full.llra, &full.llrb, &full.llrc, &full.llrd] {
-            if let Some(o) = osd_decode_deep(llr, 2, Some(check_crc14)) {
+            // Upstream's `ndeep = 2`, CRC-14 checked inside.
+            if let Some(o) = osd174_91(llr, NDEEP2_174_91, None) {
                 msg = Some(o.message77);
                 break;
             }
@@ -174,7 +176,8 @@ fn decode_candidate(
     if i3_of(&msg77) != I3_EU_VHF {
         return None;
     }
-    let snr_db = compute_snr_db(&cs, &message_to_tones(&msg77));
+    let tones: [u8; 79] = message_to_tones::<mfsk_core::Ft8>(&msg77).try_into().ok()?;
+    let snr_db = compute_snr_db(&cs, &tones);
     Some(EuDecode { msg77, freq_hz, dt_sec, snr_db })
 }
 

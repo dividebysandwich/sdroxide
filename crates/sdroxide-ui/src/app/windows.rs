@@ -5,6 +5,7 @@
 //! backend, the keyer slots from the audio engine — so all either does is
 //! draw the list and push the [`Command`] a click means.
 
+use crate::i18n::{Tr, tr};
 use eframe::egui::{self, Color32, RichText};
 use sdroxide_types::{
     BURST_MS_RANGE, CTCSS_TONES, Command, DCS_CODES, MAX_OFFSET_HZ, MemoryChannel, MemoryFolder,
@@ -109,6 +110,9 @@ fn mem_drop_target<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -
 ///
 /// `edit` is the edit in progress anywhere in the list; when it is this
 /// memory's, the row is replaced by the editor.
+/// How long CLEAR stays armed after its first click (issue #755).
+const MEM_CLEAR_ARM_S: f64 = 5.0;
+
 fn memory_row(
     ui: &mut egui::Ui,
     m: &MemoryChannel,
@@ -122,7 +126,7 @@ fn memory_row(
         return;
     }
     ui.horizontal(|ui| {
-        if crate::chrome::chip(ui, false, "RCL").on_hover_text("Recall").clicked() {
+        if crate::chrome::chip(ui, false, "RCL").on_hover_text(tr!("windows-recall")).clicked() {
             cmds.push(Command::RecallMemory(m.id));
         }
         // The buttons are placed before the label rather than after it, so that
@@ -138,13 +142,13 @@ fn memory_row(
                 crate::theme::PINK(),
                 Color32::WHITE,
             )
-            .on_hover_text("Delete")
+            .on_hover_text(tr!("windows-delete"))
             .clicked()
             {
                 cmds.push(Command::DeleteMemory(m.id));
             }
             if crate::chrome::chip(ui, false, RichText::new("EDT").size(11.0))
-                .on_hover_text("Edit the name, frequency, mode, antenna and repeater setup")
+                .on_hover_text(tr!("windows-edit-name-frequency-mode-antenna"))
                 .clicked()
             {
                 *edit = Some(MemoryEdit::of(m));
@@ -164,7 +168,7 @@ fn memory_row(
                                 " {}/{}{}",
                                 r.baud,
                                 r.shift_hz,
-                                if r.reverse { " R" } else { "" }
+                                if r.reverse { tr!("windows-r") } else { String::from("") }
                             )
                         });
                         // …and the repeater setup, for the same reason: two
@@ -281,14 +285,14 @@ fn memory_edit_row(
         // memories are a name, a dial and a mode, and this is four more rows.
         let has_rpt = e.repeater.is_some_and(|r| r.is_active());
         if crate::chrome::chip(ui, e.show_repeater || has_rpt, RichText::new("RPT").size(11.0))
-            .on_hover_text("The repeater shift, tone and 1750 Hz burst stored with this channel")
+            .on_hover_text(tr!("windows-repeater-shift-tone-1750-hz"))
             .clicked()
         {
             e.show_repeater = !e.show_repeater;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if crate::chrome::chip(ui, false, RichText::new("✖").size(11.0))
-                .on_hover_text("Abandon the edit (Escape)")
+                .on_hover_text(tr!("windows-abandon-edit-escape"))
                 .clicked()
             {
                 cancel = true;
@@ -301,12 +305,12 @@ fn memory_edit_row(
                 ui,
                 valid,
                 false,
-                "SAVE",
+                &tr!("windows-save"),
                 Some(11.0),
                 crate::theme::GREEN(),
                 crate::theme::INK_ON_BRIGHT(),
             )
-            .on_hover_text("Keep the changes (Enter)")
+            .on_hover_text(tr!("windows-keep-changes-enter"))
             .clicked()
             {
                 commit = true;
@@ -355,16 +359,13 @@ fn memory_antenna_picker(ui: &mut egui::Ui, e: &mut MemoryEdit, antennas: &[Stri
         .selected_text(e.antenna.as_deref().unwrap_or("—"))
         .show_styled(ui, |ui| {
             ui.selectable_value(&mut e.antenna, None, "—")
-                .on_hover_text("Recall this channel without moving the antenna");
+                .on_hover_text(tr!("windows-recall-channel-without-moving-antenna"));
             for a in antennas {
                 ui.selectable_value(&mut e.antenna, Some(a.clone()), a);
             }
         })
         .response
-        .on_hover_text(
-            "The antenna to switch to when this channel is recalled. — leaves whatever the \
-             radio is already on.",
-        );
+        .on_hover_text(tr!("windows-antenna-switch-when-channel-recalled"));
 }
 
 /// The repeater setup under the memory editor: the shift, the tone that goes
@@ -382,10 +383,9 @@ fn memory_antenna_picker(ui: &mut egui::Ui, e: &mut MemoryEdit, antennas: &[Stri
 fn memory_repeater_rows(ui: &mut egui::Ui, e: &mut MemoryEdit) {
     let r = e.repeater.get_or_insert_with(RepeaterState::default);
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new("Shift").weak().size(11.0));
+        ui.label(RichText::new(tr!("windows-shift")).weak().size(11.0));
         for s in Shift::ALL {
-            if crate::chrome::chip(ui, r.shift == s, RichText::new(s.label()).size(11.0)).clicked()
-            {
+            if crate::chrome::chip(ui, r.shift == s, RichText::new(s.tr()).size(11.0)).clicked() {
                 r.shift = s;
             }
         }
@@ -404,9 +404,9 @@ fn memory_repeater_rows(ui: &mut egui::Ui, e: &mut MemoryEdit) {
         }
     });
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new("Tone").weak().size(11.0));
+        ui.label(RichText::new(tr!("windows-tone")).weak().size(11.0));
         for m in ToneMode::ALL {
-            if crate::chrome::chip(ui, r.tone == m, RichText::new(m.label()).size(11.0)).clicked() {
+            if crate::chrome::chip(ui, r.tone == m, RichText::new(m.tr()).size(11.0)).clicked() {
                 r.tone = m;
             }
         }
@@ -438,9 +438,14 @@ fn memory_repeater_rows(ui: &mut egui::Ui, e: &mut MemoryEdit) {
                 if crate::chrome::chip(
                     ui,
                     r.dcs_invert,
-                    RichText::new(if r.dcs_invert { "INVERT" } else { "NORMAL" }).size(11.0),
+                    RichText::new(if r.dcs_invert {
+                        tr!("windows-invert")
+                    } else {
+                        tr!("windows-normal")
+                    })
+                    .size(11.0),
                 )
-                .on_hover_text("DCS polarity")
+                .on_hover_text(tr!("windows-dcs-polarity"))
                 .clicked()
                 {
                     r.dcs_invert = !r.dcs_invert;
@@ -450,7 +455,7 @@ fn memory_repeater_rows(ui: &mut egui::Ui, e: &mut MemoryEdit) {
     });
     ui.horizontal_wrapped(|ui| {
         if crate::chrome::chip(ui, r.burst_auto, RichText::new("1750 Hz").size(11.0))
-            .on_hover_text("Open every over on the tone burst while this channel is recalled")
+            .on_hover_text(tr!("windows-open-every-over-tone-burst"))
             .clicked()
         {
             r.burst_auto = !r.burst_auto;
@@ -472,28 +477,27 @@ fn memory_repeater_rows(ui: &mut egui::Ui, e: &mut MemoryEdit) {
 impl SdroxideApp {
     pub(in crate::app) fn memories_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
         let mut open = self.show_memories;
-        let resp = egui::Window::new("Memories")
-            .id(crate::layout::salted_id(ctx, "Memories"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
+        let tool_title = tr!("windows-memories");
+        let mut tool_st = self.take_tool_state("Memories");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
             // Wide enough for a row: the recall button, a name, a dial to the
             // Hz, a mode, and the edit and delete buttons. Narrower than this
             // and every name is drawn with an ellipsis on it.
-            .default_width(crate::layout::window_w(ctx, 460.0))
+            //
             // A real starting height, and a floor under what egui remembers:
             // the window used to hug its (often short) list and come up a few
             // rows tall. See the voice keyer below for why the minimum matters
             // as much as the default.
-            .default_height(crate::layout::window_h(ctx, 460.0))
-            .min_height(crate::layout::window_h(ctx, 280.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.memories_ui(ui, cmds)
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+            crate::app::undocked::ToolWindow::new("Memories", &tool_title, [460.0, 460.0])
+                .min_size([0.0, 280.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| self.memories_ui(ui, cmds),
+        );
+        self.put_tool_state("Memories", tool_st);
         self.show_memories = open;
     }
 
@@ -510,11 +514,11 @@ impl SdroxideApp {
             crate::chrome::field(
                 ui,
                 egui::TextEdit::singleline(&mut self.mem_name)
-                    .hint_text("memory name")
+                    .hint_text(tr!("windows-memory-name"))
                     .desired_width(ui.available_width() - 100.0),
             );
             let name_ok = !self.mem_name.trim().is_empty();
-            if ui.add_enabled(name_ok, egui::Button::new("Store")).clicked() {
+            if ui.add_enabled(name_ok, egui::Button::new(tr!("windows-store"))).clicked() {
                 cmds.push(Command::StoreMemory { name: self.mem_name.trim().to_string() });
                 self.mem_name.clear();
             }
@@ -523,11 +527,11 @@ impl SdroxideApp {
             crate::chrome::field(
                 ui,
                 egui::TextEdit::singleline(&mut self.mem_folder_name)
-                    .hint_text("folder name")
+                    .hint_text(tr!("windows-folder-name"))
                     .desired_width(ui.available_width() - 100.0),
             );
             let name_ok = !self.mem_folder_name.trim().is_empty();
-            if ui.add_enabled(name_ok, egui::Button::new("New folder")).clicked() {
+            if ui.add_enabled(name_ok, egui::Button::new(tr!("windows-new-folder"))).clicked() {
                 cmds.push(Command::CreateMemoryFolder {
                     name: self.mem_folder_name.trim().to_string(),
                 });
@@ -540,35 +544,63 @@ impl SdroxideApp {
         // operator who wants their local machines in here already has the file
         // (issue #234).
         ui.horizontal(|ui| {
-            if crate::chrome::chip(ui, false, "IMPORT")
-                .on_hover_text(
-                    "Read a channel list from a CHIRP CSV file (.csv) — a repeater \
-                     directory export, a marine or PMR channel table, or anything \
-                     else CHIRP can write.\n\n\
-                     Each channel brings its frequency, mode, repeater shift and \
-                     CTCSS or DCS tone with it. Channels already on this list — same \
-                     frequency, same mode — are skipped, so re-importing an updated \
-                     directory adds what is new rather than doubling what is not.",
-                )
+            if crate::chrome::chip(ui, false, tr!("windows-import"))
+                .on_hover_text(tr!("windows-read-channel-list-chirp-csv"))
                 .clicked()
             {
-                crate::download::load_text("CHIRP CSV", &["csv"], self.chirp_import_inbox.clone());
+                crate::download::load_text(
+                    &tr!("windows-chirp-csv"),
+                    &["csv"],
+                    self.chirp_import_inbox.clone(),
+                );
             }
             let have = !self.memories.is_empty();
             ui.add_enabled_ui(have, |ui| {
-                if crate::chrome::chip(ui, false, "EXPORT")
-                    .on_hover_text(
-                        "Write this list out as a CHIRP CSV file, to load into a \
-                         handheld or to keep as a backup.",
-                    )
+                if crate::chrome::chip(ui, false, tr!("windows-export"))
+                    .on_hover_text(tr!("windows-write-list-out-chirp-csv"))
                     .clicked()
                 {
                     let csv = sdroxide_types::memories_to_chirp_csv(&self.memories);
                     crate::download::save("sdroxide-memories.csv", csv.as_bytes());
                 }
+                // Every channel at once, for a list imported by the hundred
+                // (issue #755). Two clicks: the first only arms it for a few
+                // seconds. It used to disarm as soon as the pointer left the
+                // chip, so a first click followed by a look at the list (or a
+                // second click a little off target) reset it and the chip
+                // looked dead.
+                let now = ui.input(|i| i.time);
+                let armed = self.mem_clear_armed.is_some_and(|t| now - t < MEM_CLEAR_ARM_S);
+                if self.mem_clear_armed.is_some() && !armed {
+                    self.mem_clear_armed = None;
+                }
+                let resp = if armed {
+                    crate::chrome::chip_accent(
+                        ui,
+                        true,
+                        tr!("windows-clear-sure"),
+                        crate::theme::PINK(),
+                        Color32::WHITE,
+                    )
+                } else {
+                    crate::chrome::chip(ui, false, tr!("windows-clear"))
+                }
+                .on_hover_text(tr!("windows-clear-hint"));
+                if resp.clicked() {
+                    if armed {
+                        cmds.push(Command::ClearMemories);
+                        self.mem_clear_armed = None;
+                    } else {
+                        self.mem_clear_armed = Some(now);
+                    }
+                }
+                if self.mem_clear_armed.is_some() {
+                    // Repaint so the chip falls back to CLEAR when time is up.
+                    crate::repaint::after_ms(ui.ctx(), 250);
+                }
             });
             ui.label(
-                RichText::new(format!("{} channel", self.memories.len()))
+                RichText::new(tr!("windows-n-channels", n = self.memories.len()))
                     .size(11.0)
                     .color(crate::theme::gray(150)),
             );
@@ -576,13 +608,9 @@ impl SdroxideApp {
         self.memory_sort_bar(ui);
         ui.separator();
         if self.memories.is_empty() && self.mem_folders.is_empty() {
-            ui.label(RichText::new("no memories yet").color(crate::theme::gray(120)));
+            ui.label(RichText::new(tr!("windows-no-memories-yet")).color(crate::theme::gray(120)));
         } else if !self.mem_folders.is_empty() {
-            ui.label(
-                RichText::new("drag a memory onto a folder to file it, below them to unfile it")
-                    .weak()
-                    .size(11.0),
-            );
+            ui.label(RichText::new(tr!("windows-drag-memory-onto-folder-file")).weak().size(11.0));
         }
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             // While a memory is being dragged, holding it near the top or
@@ -652,7 +680,7 @@ impl SdroxideApp {
                     }
                 }
                 if !any && egui::DragAndDrop::has_payload_of_type::<DraggedMemory>(ui.ctx()) {
-                    ui.label(RichText::new("drop here to unfile").weak().size(11.0));
+                    ui.label(RichText::new(tr!("windows-drop-here-unfile")).weak().size(11.0));
                 }
             });
             if let Some(id) = dropped
@@ -676,14 +704,14 @@ impl SdroxideApp {
             (self.ui_settings.memory_sort, self.ui_settings.memory_sort_desc);
         let (mut sort, mut desc) = (was_sort, was_desc);
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Sort").weak().size(11.0));
+            ui.label(RichText::new(tr!("windows-sort")).weak().size(11.0));
             for s in MemorySort::ALL {
-                if crate::chrome::chip(ui, sort == s, RichText::new(s.label()).size(11.0))
+                if crate::chrome::chip(ui, sort == s, RichText::new(s.tr()).size(11.0))
                     .on_hover_text(match s {
-                        MemorySort::Stored => "In the order they were stored",
-                        MemorySort::Name => "By name, ignoring case",
-                        MemorySort::Freq => "By frequency",
-                        MemorySort::Band => "By band, then by frequency inside each",
+                        MemorySort::Stored => tr!("windows-order-they-were-stored"),
+                        MemorySort::Name => tr!("windows-name-ignoring-case"),
+                        MemorySort::Freq => tr!("windows-frequency"),
+                        MemorySort::Band => tr!("windows-band-then-frequency-inside-each"),
                     })
                     .clicked()
                 {
@@ -696,9 +724,9 @@ impl SdroxideApp {
                 RichText::new(if desc { "▼" } else { "▲" }).size(11.0),
             )
             .on_hover_text(if desc {
-                "Descending — click for ascending"
+                tr!("windows-descending-click-ascending")
             } else {
-                "Ascending — click for descending"
+                tr!("windows-ascending-click-descending")
             })
             .clicked()
             {
@@ -765,13 +793,13 @@ impl SdroxideApp {
                             crate::theme::PINK(),
                             Color32::WHITE,
                         )
-                        .on_hover_text("Delete folder — its memories move to the top level")
+                        .on_hover_text(tr!("windows-delete-folder-memories-move-top"))
                         .clicked()
                         {
                             cmds.push(Command::DeleteMemoryFolder(f.id));
                         }
                         if crate::chrome::chip(ui, false, RichText::new("REN").size(11.0))
-                            .on_hover_text("Rename folder")
+                            .on_hover_text(tr!("windows-rename-folder"))
                             .clicked()
                         {
                             self.mem_folder_edit = Some((f.id, f.name.clone()));
@@ -781,7 +809,11 @@ impl SdroxideApp {
                 })
                 .body(|ui| {
                     if count == 0 {
-                        ui.label(RichText::new("empty — drop memories here").weak().size(11.0));
+                        ui.label(
+                            RichText::new(tr!("windows-empty-drop-memories-here"))
+                                .weak()
+                                .size(11.0),
+                        );
                     }
                     for &i in order {
                         let m = &self.memories[i];
@@ -829,12 +861,12 @@ impl SdroxideApp {
         let tuning = self.state.tx.tune;
         let slots: Vec<sdroxide_types::VoiceSlotInfo> = self.voice.slots.clone();
 
-        let resp = egui::Window::new("Voice keyer")
-            .id(crate::layout::salted_id(ctx, "Voice keyer"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(false)
-            // `min_width` as well as `default_width`: the default only applies
+        let tool_title = tr!("windows-voice-keyer");
+        let mut tool_st = self.take_tool_state("Voice keyer");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            // A minimum width as well as the default: the default only applies
             // the first time the window is ever shown, and egui persists its
             // size — without the minimum, a build that shipped a narrower
             // window would keep squeezing the slot-name fields forever.
@@ -843,18 +875,17 @@ impl SdroxideApp {
             // reverse: a keyer opened at 600 pt on a desktop would otherwise
             // stay 600 pt wide on the phone that later loads the same storage,
             // with a third of it off the side of the screen.
-            .default_width(crate::layout::window_w(ctx, 600.0))
-            .min_width(crate::layout::window_w(ctx, 600.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+            crate::app::undocked::ToolWindow::new("Voice keyer", &tool_title, [600.0, 0.0])
+                .min_size([600.0, 0.0])
+                .fixed_size(),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 ui.label(
-                    RichText::new(
-                        "REC records from your microphone, PLAY lets you listen to what you \
-                         recorded, TX puts it on the air — as does a numpad key, a MIDI pad, \
-                         or rigctld's send_voice_mem.",
-                    )
-                    .weak()
-                    .size(11.5),
+                    RichText::new(tr!("windows-rec-records-your-microphone-play"))
+                        .weak()
+                        .size(11.5),
                 );
                 ui.add_space(6.0);
                 egui::Grid::new("voice-grid")
@@ -887,7 +918,7 @@ impl SdroxideApp {
                                 ui,
                                 [190.0, 20.0],
                                 egui::TextEdit::singleline(&mut text)
-                                    .hint_text(format!("Slot {}", i + 1)),
+                                    .hint_text(tr!("windows-slot-n", n = i + 1)),
                             );
                             if edit.changed() {
                                 self.voice_name_edit = Some((i, text.clone()));
@@ -918,9 +949,9 @@ impl SdroxideApp {
                                 })
                                 .inner
                                 .on_hover_text(if is_rec {
-                                    "Stop and store".to_string()
+                                    tr!("windows-stop-store").to_string()
                                 } else {
-                                    format!("Record from the microphone (up to {max_len:.0} s)")
+                                    tr!("windows-record-from-mic", max = format!("{max_len:.0}"))
                                 });
                             if rec.clicked() {
                                 cmds.push(Command::VoiceRecord(if is_rec {
@@ -943,19 +974,23 @@ impl SdroxideApp {
                                     crate::chrome::chip(
                                         ui,
                                         is_prev,
-                                        RichText::new(if is_prev { "STOP" } else { "PLAY" })
-                                            .size(11.5),
+                                        RichText::new(if is_prev {
+                                            tr!("windows-stop")
+                                        } else {
+                                            tr!("windows-play")
+                                        })
+                                        .size(11.5),
                                     )
                                 })
                                 .inner
                                 .on_hover_text(if is_prev {
-                                    "Stop listening"
+                                    tr!("windows-stop-listening")
                                 } else if slot.is_empty() {
-                                    "Nothing recorded in this slot"
+                                    tr!("windows-nothing-recorded-slot")
                                 } else if self.state.tx.ptt || tuning {
-                                    "Not while transmitting"
+                                    tr!("windows-not-while-transmitting")
                                 } else {
-                                    "Listen to this message — nothing is transmitted"
+                                    tr!("windows-listen-message-nothing-transmitted")
                                 });
                             if prev.clicked() {
                                 cmds.push(if is_prev {
@@ -975,21 +1010,25 @@ impl SdroxideApp {
                                     crate::chrome::chip_accent(
                                         ui,
                                         is_play,
-                                        RichText::new(if is_play { "STOP" } else { "TX" })
-                                            .size(11.5),
+                                        RichText::new(if is_play {
+                                            tr!("windows-stop")
+                                        } else {
+                                            String::from("TX")
+                                        })
+                                        .size(11.5),
                                         crate::theme::ALERT(),
                                         Color32::WHITE,
                                     )
                                 })
                                 .inner
                                 .on_hover_text(if is_play {
-                                    "Stop transmitting"
+                                    tr!("windows-stop-transmitting")
                                 } else if slot.is_empty() {
-                                    "Nothing recorded in this slot"
+                                    tr!("windows-nothing-recorded-slot")
                                 } else if tuning {
-                                    "TUNE is active — switch it off first"
+                                    tr!("windows-tune-active-switch-off-first")
                                 } else {
-                                    "Transmit this message"
+                                    tr!("windows-transmit-message")
                                 });
                             if play.clicked() {
                                 cmds.push(if is_play {
@@ -1038,7 +1077,7 @@ impl SdroxideApp {
                                         )
                                     })
                                     .inner
-                                    .on_hover_text("Erase this recording")
+                                    .on_hover_text(tr!("windows-erase-recording"))
                                     .clicked()
                                 {
                                     cmds.push(Command::VoiceClear(i as u8));
@@ -1051,18 +1090,14 @@ impl SdroxideApp {
                 if self.state.rx[0].mode.is_rade() {
                     ui.add_space(4.0);
                     ui.label(
-                        RichText::new(
-                            "RADE: the message is encoded by the digital-voice codec, \
-                             exactly as a live over would be.",
-                        )
-                        .weak()
-                        .size(11.0),
+                        RichText::new(tr!("windows-rade-message-encoded-digital-voice"))
+                            .weak()
+                            .size(11.0),
                     );
                 }
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+            },
+        );
+        self.put_tool_state("Voice keyer", tool_st);
         // Keep the position readout moving while something is running; the app
         // otherwise idles between spectrum frames.
         if self.voice.busy() {

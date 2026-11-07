@@ -1,4 +1,5 @@
-//! Antenna-rotator client: sdroxide as a Hamlib **rotctld** client.
+//! Antenna-rotator client: sdroxide as a Hamlib **rotctld** client, or as a
+//! PSTRotator UDP client (#638) — see [`RotatorProtocol`].
 //!
 //! The satellite lock computes azimuth and elevation a few times a second;
 //! this crate is how those numbers reach a motorized antenna. It dials a
@@ -38,7 +39,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded};
 use tracing::{debug, warn};
 
-pub use sdroxide_types::RotatorConfig;
+pub use sdroxide_types::{RotatorConfig, RotatorProtocol};
 
 /// The client's health, as the engine reads it back: reachable or not, where
 /// the daemon says the antenna points, and the last thing that went wrong.
@@ -173,11 +174,25 @@ fn worker(cfg: RotatorConfig, rx: Receiver<RotCmd>, status: Arc<Mutex<RotStatus>
         .and_then(|()| {
             if Instant::now() >= next_poll {
                 next_poll = Instant::now() + POSITION_POLL;
-                let (az, el) = c.position()?;
-                set(&status, |s| {
-                    s.az_deg = az;
-                    s.el_deg = el;
-                });
+                match c.position()? {
+                    Some((az, el)) => set(&status, |s| {
+                        s.connected = true;
+                        s.error = None;
+                        s.az_deg = az;
+                        s.el_deg = el;
+                    }),
+                    // A UDP program that has not answered: say so, but keep
+                    // sending — PSTRotator stays quiet while it has no
+                    // controller connected, and pointing still reaches it.
+                    None => set(&status, |s| {
+                        s.connected = false;
+                        s.error = Some(format!(
+                            "no answer from PSTRotator on UDP port {} — is UDP Control \
+                             enabled in its Setup?",
+                            cfg.port.wrapping_add(1)
+                        ));
+                    }),
+                }
             }
             Ok(())
         });
@@ -204,29 +219,54 @@ fn set(status: &Mutex<RotStatus>, f: impl FnOnce(&mut RotStatus)) {
 /// what was last commanded (for the dedup) and whether the antenna was left
 /// parked (so a below-the-horizon satellite does not re-park every tick).
 struct Conn {
-    stream: TcpStream,
-    reader: BufReader<TcpStream>,
+    link: Link,
     last_pointed: Option<(f64, f64)>,
     parked: bool,
 }
 
+/// The wire under a [`Conn`]: what each program needs said to it.
+enum Link {
+    Rotctld(Rotctld),
+    Pst(PstLink),
+}
+
 impl Conn {
     fn open(cfg: &RotatorConfig) -> Result<Conn, String> {
-        use std::net::ToSocketAddrs;
-        let addr = cfg.address();
-        let sock = addr
-            .to_socket_addrs()
-            .map_err(|e| format!("{addr}: {e}"))?
-            .next()
-            .ok_or_else(|| format!("{addr}: no address"))?;
-        let stream = TcpStream::connect_timeout(&sock, Duration::from_secs(3))
-            .map_err(|e| format!("{addr}: {e}"))?;
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-        let _ = stream.set_nodelay(true);
-        let reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
+        let link = match cfg.protocol {
+            RotatorProtocol::Rotctld => Link::Rotctld(Rotctld::open(cfg)?),
+            RotatorProtocol::PstRotator => Link::Pst(PstLink::open(cfg, cfg.port.wrapping_add(1))?),
+        };
         // Freshly connected, nothing commanded yet: `parked` so an idle
         // engine leaves the hardware exactly where it found it.
-        Ok(Conn { stream, reader, last_pointed: None, parked: true })
+        Ok(Conn { link, last_pointed: None, parked: true })
+    }
+
+    fn goto(&mut self, az: f64, el: f64) -> Result<(), String> {
+        match &mut self.link {
+            Link::Rotctld(r) => {
+                r.send(&format!("P {az:.2} {el:.2}\n"))?;
+                r.rprt()
+            }
+            Link::Pst(p) => p.goto(az, el),
+        }
+    }
+
+    fn stop(&mut self) -> Result<(), String> {
+        match &mut self.link {
+            Link::Rotctld(r) => {
+                r.send("S\n")?;
+                r.rprt()
+            }
+            Link::Pst(p) => p.stop(),
+        }
+    }
+
+    /// Where the antenna is, or `None` for a program that has not answered.
+    fn position(&mut self) -> Result<Option<(f64, f64)>, String> {
+        match &mut self.link {
+            Link::Rotctld(r) => r.position().map(Some),
+            Link::Pst(p) => p.position(),
+        }
     }
 
     fn point(&mut self, cfg: &RotatorConfig, az: f64, el: f64) -> Result<(), String> {
@@ -240,8 +280,7 @@ impl Conn {
                 }
             }
         }
-        self.send(&format!("P {az:.2} {el:.2}\n"))?;
-        self.rprt()?;
+        self.goto(az, el)?;
         self.parked = false;
         self.last_pointed = Some((az, el));
         Ok(())
@@ -256,15 +295,35 @@ impl Conn {
         match cfg.park {
             Some((az, el)) => {
                 let az = (az + cfg.az_offset_deg).rem_euclid(360.0);
-                self.send(&format!("P {az:.2} {:.2}\n", el.clamp(0.0, 90.0)))?;
-                self.rprt()
+                self.goto(az, el.clamp(0.0, 90.0))
             }
             // No park position: stop where it is rather than inventing one.
-            None => {
-                self.send("S\n")?;
-                self.rprt()
-            }
+            None => self.stop(),
         }
+    }
+}
+
+/// One TCP connection to a rotctld daemon.
+struct Rotctld {
+    stream: TcpStream,
+    reader: BufReader<TcpStream>,
+}
+
+impl Rotctld {
+    fn open(cfg: &RotatorConfig) -> Result<Rotctld, String> {
+        use std::net::ToSocketAddrs;
+        let addr = cfg.address();
+        let sock = addr
+            .to_socket_addrs()
+            .map_err(|e| format!("{addr}: {e}"))?
+            .next()
+            .ok_or_else(|| format!("{addr}: no address"))?;
+        let stream = TcpStream::connect_timeout(&sock, Duration::from_secs(3))
+            .map_err(|e| format!("{addr}: {e}"))?;
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+        let _ = stream.set_nodelay(true);
+        let reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
+        Ok(Rotctld { stream, reader })
     }
 
     /// `p` — where the daemon says the antenna is. Two bare lines on success;
@@ -436,5 +495,178 @@ mod tests {
             let s = client.status();
             !s.connected && s.error.is_some()
         });
+    }
+}
+
+/// PSTRotator's UDP control (#638), from its manual: each datagram is one
+/// command wrapped in `<PST>…</PST>` — `<AZIMUTH>n</AZIMUTH>`,
+/// `<ELEVATION>n</ELEVATION>`, `<STOP>1</STOP>`, `<TRACK>0</TRACK>` — sent to
+/// its control port; the queries `AZ?` and `EL?` are answered `AZ:n` / `EL:n`
+/// on that port plus one.
+struct PstLink {
+    sock: std::net::UdpSocket,
+    to: std::net::SocketAddr,
+    /// Whether PSTRotator has been taken out of its own tracking yet.
+    took_over: bool,
+    /// The last position it reported.
+    az: f64,
+    el: f64,
+}
+
+impl PstLink {
+    fn open(cfg: &RotatorConfig, reply_port: u16) -> Result<PstLink, String> {
+        use std::net::ToSocketAddrs;
+        let addr = cfg.address();
+        let to = addr
+            .to_socket_addrs()
+            .map_err(|e| format!("{addr}: {e}"))?
+            .next()
+            .ok_or_else(|| format!("{addr}: no address"))?;
+        let sock = std::net::UdpSocket::bind(("0.0.0.0", reply_port))
+            .map_err(|e| format!("listening for PSTRotator on UDP {reply_port}: {e}"))?;
+        let _ = sock.set_read_timeout(Some(Duration::from_millis(200)));
+        Ok(PstLink { sock, to, took_over: false, az: 0.0, el: 0.0 })
+    }
+
+    fn send(&self, body: &str) -> Result<(), String> {
+        self.sock
+            .send_to(format!("<PST>{body}</PST>").as_bytes(), self.to)
+            .map(|_| ())
+            .map_err(|e| format!("PSTRotator {}: {e}", self.to))
+    }
+
+    fn goto(&mut self, az: f64, el: f64) -> Result<(), String> {
+        // Its own tracking would fight ours: hand control over once.
+        if !self.took_over {
+            self.send("<TRACK>0</TRACK>")?;
+            self.took_over = true;
+        }
+        self.send(&format!("<AZIMUTH>{az:.1}</AZIMUTH>"))?;
+        self.send(&format!("<ELEVATION>{el:.1}</ELEVATION>"))
+    }
+
+    fn stop(&mut self) -> Result<(), String> {
+        // Twice: a single STOP is known to be missed now and then.
+        self.send("<STOP>1</STOP>")?;
+        self.send("<STOP>1</STOP>")
+    }
+
+    fn position(&mut self) -> Result<Option<(f64, f64)>, String> {
+        self.send("AZ?")?;
+        self.send("EL?")?;
+        let (mut got_az, mut got_el) = (false, false);
+        let mut buf = [0u8; 512];
+        let deadline = Instant::now() + Duration::from_millis(400);
+        while !(got_az && got_el) && Instant::now() < deadline {
+            let Ok((n, _)) = self.sock.recv_from(&mut buf) else { continue };
+            for line in String::from_utf8_lossy(&buf[..n]).split(['\r', '\n']) {
+                let line = line.trim();
+                if let Some(v) = line.strip_prefix("AZ:").and_then(|v| v.trim().parse().ok()) {
+                    self.az = v;
+                    got_az = true;
+                } else if let Some(v) = line.strip_prefix("EL:").and_then(|v| v.trim().parse().ok())
+                {
+                    self.el = v;
+                    got_el = true;
+                }
+            }
+        }
+        // Answered this time or not: a program that has gone quiet should read
+        // as quiet, not as the last place it said the antenna was.
+        Ok(got_az.then_some((self.az, self.el)))
+    }
+}
+
+#[cfg(test)]
+mod pst_tests {
+    use super::*;
+    use std::net::UdpSocket;
+    use std::sync::mpsc;
+
+    /// A stand-in PSTRotator: records every datagram, and answers the
+    /// position queries on the sender's reply port the way the real one does.
+    fn mock_pst(reply_port: u16) -> (u16, mpsc::Receiver<String>) {
+        let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = sock.local_addr().unwrap().port();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = sock.recv_from(&mut buf) {
+                let msg = String::from_utf8_lossy(&buf[..n]).to_string();
+                let reply = match msg.as_str() {
+                    "<PST>AZ?</PST>" => Some("AZ:123.4\r"),
+                    "<PST>EL?</PST>" => Some("EL:45.6\r"),
+                    _ => None,
+                };
+                if let Some(r) = reply {
+                    let _ = sock.send_to(r.as_bytes(), (from.ip(), reply_port));
+                }
+                if tx.send(msg).is_err() {
+                    return;
+                }
+            }
+        });
+        (port, rx)
+    }
+
+    fn free_udp_port() -> u16 {
+        UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    }
+
+    #[test]
+    fn pstrotator_is_pointed_parked_and_asked_where_it_is() {
+        let reply_port = free_udp_port();
+        let (port, seen) = mock_pst(reply_port);
+        let cfg = RotatorConfig {
+            enabled: true,
+            host: "127.0.0.1".into(),
+            port,
+            protocol: RotatorProtocol::PstRotator,
+            ..RotatorConfig::default()
+        };
+        let mut conn = Conn {
+            link: Link::Pst(PstLink::open(&cfg, reply_port).unwrap()),
+            last_pointed: None,
+            parked: true,
+        };
+
+        conn.point(&cfg, 200.0, 30.0).unwrap();
+        // Under the minimum movement: not sent.
+        conn.point(&cfg, 200.3, 30.2).unwrap();
+        assert_eq!(conn.position().unwrap(), Some((123.4, 45.6)));
+        conn.park(&cfg).unwrap();
+
+        let mut got = Vec::new();
+        while got.len() < 7 {
+            match seen.recv_timeout(Duration::from_secs(2)) {
+                Ok(m) => got.push(m),
+                Err(_) => break,
+            }
+        }
+        assert_eq!(
+            got,
+            vec![
+                "<PST><TRACK>0</TRACK></PST>",
+                "<PST><AZIMUTH>200.0</AZIMUTH></PST>",
+                "<PST><ELEVATION>30.0</ELEVATION></PST>",
+                "<PST>AZ?</PST>",
+                "<PST>EL?</PST>",
+                "<PST><STOP>1</STOP></PST>",
+                "<PST><STOP>1</STOP></PST>",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_silent_pstrotator_is_not_reported_as_answering() {
+        let sink = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let cfg = RotatorConfig {
+            host: "127.0.0.1".into(),
+            port: sink.local_addr().unwrap().port(),
+            protocol: RotatorProtocol::PstRotator,
+            ..RotatorConfig::default()
+        };
+        let mut link = PstLink::open(&cfg, free_udp_port()).unwrap();
+        assert_eq!(link.position().unwrap(), None);
     }
 }

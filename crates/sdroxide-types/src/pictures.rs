@@ -48,7 +48,9 @@ impl ImageKind {
 
 /// How many transmit presets there are. Fixed so a slot number means the same
 /// thing in the panel, in `slot{i}.png` on disk, and on the wire.
-pub const IMAGE_SLOTS: usize = 5;
+///
+/// Ten since issue #753; a slot past an older peer's five reads as empty there.
+pub const IMAGE_SLOTS: usize = 10;
 
 /// Longest edge a stored source picture is kept at.
 ///

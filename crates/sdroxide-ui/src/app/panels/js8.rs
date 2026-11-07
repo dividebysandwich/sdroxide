@@ -6,6 +6,7 @@
 //! heartbeats and CQs carry one — so heard stations are looked up over HTTP,
 //! one at a time, to give the map something to place them by.
 
+use crate::i18n::{Tr, tr};
 use eframe::egui::{self, Color32, RichText};
 use sdroxide_types::{Command, Decode};
 
@@ -60,8 +61,27 @@ fn js8_personally_addressed(m: &sdroxide_types::Js8Msg) -> bool {
     m.to_me && !m.to.eq_ignore_ascii_case("@ALLCALL")
 }
 
+fn js8_is_outgoing(m: &sdroxide_types::Js8Msg, my_call: &str) -> bool {
+    !my_call.is_empty() && m.from.eq_ignore_ascii_case(my_call)
+}
+
+/// Clicking our own line continues the conversation with its recipient,
+/// rather than drafting a reply addressed back to ourselves.
+fn js8_conversation_target<'a>(m: &'a sdroxide_types::Js8Msg, my_call: &str) -> Option<&'a str> {
+    let call = if js8_is_outgoing(m, my_call) {
+        if m.to.eq_ignore_ascii_case("@ALLCALL") {
+            return None;
+        }
+        &m.to
+    } else {
+        &m.from
+    };
+    non_empty(call)
+}
+
 /// What the composer can quote about our own station when it drafts a reply.
 struct Js8Me {
+    call: String,
     grid: String,
     status: String,
     /// Callsigns heard recently, most recent first — the answer to `HEARING?`.
@@ -205,24 +225,15 @@ impl SdroxideApp {
                 // marked one: it is still one speed, and the mark has to
                 // survive the whole row being lit.
                 let tx = js8.speed == speed;
-                let face = if multi && tx {
-                    format!("▸{}", speed.label())
-                } else {
-                    speed.label().to_string()
-                };
+                let face =
+                    if multi && tx { format!("▸{}", speed.tr()) } else { speed.tr().to_string() };
                 if crate::chrome::chip(ui, multi || tx, face)
                     .on_hover_text(if multi && tx {
-                        format!(
-                            "Every speed is being decoded; ▸ marks {}, the one you transmit at",
-                            speed.label()
-                        )
+                        tr!("js8-every-speed-being-decoded-marks", speed = speed.tr())
                     } else if multi {
-                        format!(
-                            "Every speed is being decoded. Click to transmit at {} instead",
-                            speed.label()
-                        )
+                        tr!("js8-every-speed-being-decoded-click", speed = speed.tr())
                     } else {
-                        format!("Transmit and decode at {}", speed.label())
+                        tr!("js8-transmit-decode", speed = speed.tr())
                     })
                     .clicked()
                     && !tx
@@ -238,13 +249,8 @@ impl SdroxideApp {
             // because it is not a fifth speed and a row of five identical chips
             // reads as one (issue #389).
             ui.add_space(10.0);
-            if crate::chrome::chip(ui, multi, "MULTI")
-                .on_hover_text(
-                    "Decode every JS8 speed, not only the one you transmit at. The four \
-                     speeds share the sub-band and are four different waveforms, so without \
-                     this a station on another speed is invisible — and an exchange between \
-                     two speeds cannot happen at all. Costs about four times the receive CPU.",
-                )
+            if crate::chrome::chip(ui, multi, tr!("js8-multi"))
+                .on_hover_text(tr!("js8-decode-every-js8-speed-not"))
                 .clicked()
             {
                 self.digi_cfg_edit.js8_multi_decode = !multi;
@@ -266,13 +272,13 @@ impl SdroxideApp {
             // Lit by what the engine is *doing*, not by what is configured: at
             // Turbo the interval is set and nothing beacons, and a chip that
             // claimed otherwise would be the one place this must not be wrong.
-            let hb_on = crate::chrome::chip(ui, js8.next_hb_in_s.is_some(), "HB AUTO")
+            let hb_on = crate::chrome::chip(ui, js8.next_hb_in_s.is_some(), tr!("js8-hb-auto"))
                 .on_hover_text(match js8.next_hb_in_s {
-                    Some(_) => format!("Beaconing every {hb_min} min — click to stop"),
+                    Some(_) => tr!("js8-beaconing-every-min-click-stop", hb_min = hb_min),
                     None if js8.speed == Js8Speed::Turbo => {
-                        "Turbo does not beacon — it is the local and VHF speed".to_string()
+                        tr!("js8-turbo-does-not-beacon-local").to_string()
                     }
-                    None => "Beacon your callsign and grid every 15 minutes".to_string(),
+                    None => tr!("js8-beacon-your-callsign-grid-every").to_string(),
                 })
                 .clicked();
             if hb_on {
@@ -287,7 +293,7 @@ impl SdroxideApp {
                         .monospace()
                         .color(crate::theme::CYAN_DIM()),
                 )
-                .on_hover_text("Until the next heartbeat");
+                .on_hover_text(tr!("js8-until-next-heartbeat"));
             }
             // Beacons do not go out on the working frequency, so the waterfall
             // shows a burst where the panel's marker is not. Saying where it
@@ -299,11 +305,11 @@ impl SdroxideApp {
                         .monospace()
                         .color(crate::theme::GREEN()),
                 )
-                .on_hover_text(format!(
-                    "The last beacon went out at {hz:.0} Hz — a free slot in the {:.0}–{:.0} Hz \
-                     heartbeat sub-band, chosen so it lands clear of the signals being decoded.",
-                    sdroxide_types::HB_BAND_LO_HZ,
-                    sdroxide_types::HB_BAND_HI_HZ,
+                .on_hover_text(tr!(
+                    "js8-last-beacon-went-out-hz",
+                    hz = format!("{:.0}", hz),
+                    value = format!("{:.0}", sdroxide_types::HB_BAND_LO_HZ),
+                    value2 = format!("{:.0}", sdroxide_types::HB_BAND_HI_HZ)
                 ));
             }
             crate::chrome::row_tail(ui, |ui| {
@@ -312,21 +318,22 @@ impl SdroxideApp {
                 // window, and the JS8 panel is the only one with no other way
                 // in: FT8 reaches it from the QSO area, and the keyboard modes
                 // keep their parameters in the header instead.
-                if crate::chrome::chip(ui, self.show_digi_settings, "⚙ SETUP").clicked() {
+                if crate::chrome::chip(ui, self.show_digi_settings, tr!("js8-setup")).clicked() {
                     self.show_digi_settings = !self.show_digi_settings;
                 }
                 if transmitting {
-                    ui.label(RichText::new("● TX").color(crate::theme::ALERT()).strong());
+                    ui.label(RichText::new(tr!("js8-tx")).color(crate::theme::ALERT()).strong());
                 }
                 // A long message takes minutes, not seconds. Saying so while it
                 // is going out is the difference between "stuck" and "working".
                 if js8.tx_frames_total > 0 {
                     let left = f64::from(js8.tx_frames_pending) * js8.speed.slot_s();
                     ui.label(
-                        RichText::new(format!(
-                            "{}/{} frames · {left:.0}s",
-                            js8.tx_frames_total - js8.tx_frames_pending,
-                            js8.tx_frames_total
+                        RichText::new(tr!(
+                            "js8-frames-s",
+                            tx_frames_pending = js8.tx_frames_total - js8.tx_frames_pending,
+                            tx_frames_total = js8.tx_frames_total,
+                            left = format!("{:.0}", left)
                         ))
                         .monospace()
                         .color(crate::theme::YELLOW()),
@@ -369,7 +376,10 @@ impl SdroxideApp {
             ui.vertical(|ui| {
                 ui.set_width(left_w);
                 ui.label(
-                    RichText::new("HEARD").size(10.5).strong().color(crate::theme::CYAN_DIM()),
+                    RichText::new(tr!("js8-heard"))
+                        .size(10.5)
+                        .strong()
+                        .color(crate::theme::CYAN_DIM()),
                 );
                 self.js8_heard_list(ui, &js8, avail_h - 18.0, left_w);
             });
@@ -539,7 +549,7 @@ impl SdroxideApp {
             .auto_shrink([false, false])
             .show_themed(ui, |ui| {
                 if js8.heard.is_empty() {
-                    ui.label(RichText::new("— nothing heard yet —").weak());
+                    ui.label(RichText::new(tr!("js8-nothing-heard-yet")).weak());
                 }
                 for (i, h) in js8.heard.iter().enumerate() {
                     let msg = last_msg.get(h.call.as_str()).copied();
@@ -565,16 +575,22 @@ impl SdroxideApp {
                         band,
                     );
                     let (badge, badge_col) = match novelty.highlight() {
-                        Some(sdroxide_types::Highlight::NewDxcc) => ("DXCC", crate::theme::PINK()),
+                        Some(sdroxide_types::Highlight::NewDxcc) => {
+                            (tr!("js8-dxcc"), crate::theme::PINK())
+                        }
                         Some(sdroxide_types::Highlight::NewDxccBand) => {
-                            ("BAND", crate::theme::YELLOW())
+                            (tr!("js8-band"), crate::theme::YELLOW())
                         }
-                        Some(sdroxide_types::Highlight::NewGrid) => ("GRID", crate::theme::CYAN()),
+                        Some(sdroxide_types::Highlight::NewGrid) => {
+                            (tr!("js8-grid"), crate::theme::CYAN())
+                        }
                         Some(sdroxide_types::Highlight::NewCall) => {
-                            ("NEW", crate::theme::CYAN_DIM())
+                            (tr!("js8-new"), crate::theme::CYAN_DIM())
                         }
-                        Some(sdroxide_types::Highlight::Dupe) => ("DUPE", crate::theme::gray(85)),
-                        None => ("", Color32::TRANSPARENT),
+                        Some(sdroxide_types::Highlight::Dupe) => {
+                            (tr!("js8-dupe"), crate::theme::gray(85))
+                        }
+                        None => (String::new(), Color32::TRANSPARENT),
                     };
                     let dupe = novelty.dupe;
                     // A grid nobody sent is a guess from the callsign database,
@@ -624,7 +640,7 @@ impl SdroxideApp {
                         crate::chrome::chip_accent(
                             ui,
                             false,
-                            RichText::new("REPLY").size(12.0).strong(),
+                            RichText::new(tr!("js8-reply")).size(12.0).strong(),
                             if to_me {
                                 crate::theme::YELLOW()
                             } else if calling {
@@ -871,11 +887,12 @@ impl SdroxideApp {
             .auto_shrink([false, false])
             .show_themed(ui, |ui| {
                 if js8.messages.is_empty() {
-                    ui.label(RichText::new("— no messages —").weak());
+                    ui.label(RichText::new(tr!("js8-no-messages")).weak());
                 }
                 for (i, m) in js8.messages.iter().enumerate() {
-                    let selected =
-                        !m.from.is_empty() && self.js8_target.eq_ignore_ascii_case(&m.from);
+                    let outgoing = js8_is_outgoing(m, &me.call);
+                    let peer = js8_conversation_target(m, &me.call);
+                    let selected = peer.is_some_and(|p| self.js8_target.eq_ignore_ascii_case(p));
                     let to_me = js8_personally_addressed(m);
                     let inner = egui::Frame::new()
                         .fill(if to_me { crate::theme::TOME_BG() } else { crate::theme::ROW_BG() })
@@ -889,6 +906,15 @@ impl SdroxideApp {
                                 ui.label(
                                     RichText::new(format!("{h:02}:{mi:02}")).monospace().weak(),
                                 );
+                                if outgoing {
+                                    ui.label(
+                                        RichText::new("TX")
+                                            .monospace()
+                                            .strong()
+                                            .color(crate::theme::GREEN()),
+                                    )
+                                    .on_hover_text(tr!("js8-transmitted-by-this-station"));
+                                }
                                 // Which of the four waveforms carried this.
                                 // Only where it is a question: with one speed
                                 // running every row is that speed and a column
@@ -904,7 +930,13 @@ impl SdroxideApp {
                                             .monospace()
                                             .color(crate::theme::PINK()),
                                     )
-                                    .on_hover_text(format!("Decoded at {}", m.speed.label()));
+                                    .on_hover_text(
+                                        if outgoing {
+                                            tr!("js8-sent", speed = m.speed.tr())
+                                        } else {
+                                            tr!("js8-decoded", speed = m.speed.tr())
+                                        },
+                                    );
                                 }
                                 if to_me {
                                     ui.label(RichText::new("★").color(crate::theme::YELLOW()));
@@ -912,7 +944,9 @@ impl SdroxideApp {
                                 let who = if m.from.is_empty() { "…" } else { &m.from };
                                 ui.label(
                                     RichText::new(format!("{who}:")).monospace().strong().color(
-                                        if to_me {
+                                        if outgoing {
+                                            crate::theme::GREEN()
+                                        } else if to_me {
                                             crate::theme::CYAN()
                                         } else {
                                             crate::theme::CYAN_DIM()
@@ -946,7 +980,12 @@ impl SdroxideApp {
                                 ui.label(if m.complete { body } else { body.weak() });
                                 if !m.complete {
                                     ui.label(
-                                        RichText::new(format!("… ({} frames)", m.frames)).weak(),
+                                        RichText::new(if outgoing {
+                                            tr!("js8-partial-frames-sent", frames = m.frames)
+                                        } else {
+                                            tr!("js8-frames", frames = m.frames)
+                                        })
+                                        .weak(),
                                     );
                                 }
                             });
@@ -964,14 +1003,14 @@ impl SdroxideApp {
                     let mut row = ui.interact(r, ui.id().with(("js8m", i)), egui::Sense::click());
                     // Drafted only for the row under the cursor: the log holds
                     // two hundred of these and every draft is an allocation.
-                    if !m.from.is_empty() && (row.hovered() || row.clicked()) {
-                        let draft = js8_reply_for(m, &me);
+                    if let Some(peer) = peer.filter(|_| row.hovered() || row.clicked()) {
+                        let draft = if outgoing { None } else { js8_reply_for(m, &me) };
                         row = row.on_hover_text(match &draft {
-                            Some(d) => format!("Reply to {}: “{d}”", m.from),
-                            None => format!("Address the composer at {}", m.from),
+                            Some(d) => tr!("js8-reply-2", value = peer, value2 = d),
+                            None => tr!("js8-address-composer", value = peer),
                         });
                         if row.clicked() {
-                            pick = Some((m.from.clone(), draft));
+                            pick = Some((peer.to_string(), draft));
                         }
                     }
                     if selected || row.hovered() {
@@ -1001,6 +1040,7 @@ impl SdroxideApp {
     fn js8_me(&self, js8: &sdroxide_types::Js8Status) -> Js8Me {
         let cfg = self.digi_status.as_ref().map(|s| &s.config).unwrap_or(&self.digi_cfg_edit);
         Js8Me {
+            call: if cfg.js8_call.is_empty() { &cfg.my_call } else { &cfg.js8_call }.to_uppercase(),
             grid: cfg.my_grid.to_uppercase(),
             status: cfg.js8_status.clone(),
             hearing: js8.heard.iter().take(4).map(|h| h.call.clone()).collect(),
@@ -1050,11 +1090,13 @@ impl SdroxideApp {
         ui.horizontal_wrapped(|ui| {
             // `chip_enabled` rather than a scope around the pair: this row
             // wraps, and a child `Ui` in a wrapping row does not.
-            if rx_only_hint(crate::chrome::chip_enabled(ui, tx_ok, false, " CQ "), tx_ok).clicked()
+            if rx_only_hint(crate::chrome::chip_enabled(ui, tx_ok, false, &tr!("js8-cq")), tx_ok)
+                .clicked()
             {
                 self.text_tx = "CQ".to_string();
             }
-            if rx_only_hint(crate::chrome::chip_enabled(ui, tx_ok, false, " HB "), tx_ok).clicked()
+            if rx_only_hint(crate::chrome::chip_enabled(ui, tx_ok, false, &tr!("js8-hb")), tx_ok)
+                .clicked()
             {
                 self.text_tx = "HB".to_string();
             }
@@ -1087,17 +1129,15 @@ impl SdroxideApp {
                 ui,
                 has_target,
                 false,
-                " CLEAR TO ",
+                &tr!("js8-clear"),
                 Some(10.5),
                 crate::theme::CYAN(),
                 crate::theme::INK_ON_CYAN(),
             );
             let clear_to = if has_target {
-                clear_to.on_hover_text(
-                    "Forget the selected station — the composer goes back to @ALLCALL",
-                )
+                clear_to.on_hover_text(tr!("js8-forget-selected-station-composer-goes"))
             } else {
-                clear_to.on_disabled_hover_text("Already addressing @ALLCALL")
+                clear_to.on_disabled_hover_text(tr!("js8-already-addressing-allcall"))
             };
             if clear_to.clicked() {
                 self.js8_target.clear();
@@ -1124,14 +1164,14 @@ impl SdroxideApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Stop lives next to send: they are the two things you reach
                 // for in a hurry, and a long message takes minutes to drain.
-                if crate::chrome::chip(ui, false, " STOP ").clicked() {
+                if crate::chrome::chip(ui, false, tr!("js8-stop")).clicked() {
                     cmds.push(Command::DigiAbortTx);
                 }
                 send = tx_gated(ui, tx_ok, |ui| {
                     crate::chrome::chip_accent(
                         ui,
                         false,
-                        " SEND ",
+                        tr!("js8-send"),
                         crate::theme::ALERT(),
                         crate::theme::INK_ON_CYAN(),
                     )
@@ -1155,7 +1195,7 @@ impl SdroxideApp {
                     ui,
                     egui::TextEdit::singleline(&mut self.text_tx)
                         .desired_width(ui.available_width().max(60.0))
-                        .hint_text("Message…"),
+                        .hint_text(tr!("js8-message")),
                 );
                 // Return does what SEND does, so it has to be shut off with it.
                 send |= tx_ok && resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -1201,11 +1241,15 @@ mod js8_panel_tests {
         assert_eq!(js8_frame_estimate("   "), 1);
     }
 
-    use super::{Js8Me, js8_msg_summary, js8_personally_addressed, js8_reply_for};
+    use super::{
+        Js8Me, js8_conversation_target, js8_is_outgoing, js8_msg_summary, js8_personally_addressed,
+        js8_reply_for,
+    };
     use sdroxide_types::Js8Msg;
 
     fn me() -> Js8Me {
         Js8Me {
+            call: "N0JDS".into(),
             grid: "FN42".into(),
             status: "PORTABLE".into(),
             hearing: vec!["KN4CRD".into(), "VK3ABC".into()],
@@ -1228,6 +1272,33 @@ mod js8_panel_tests {
             to_me: true,
             speed: sdroxide_types::Js8Speed::Normal,
         }
+    }
+
+    #[test]
+    fn only_messages_from_our_configured_call_are_marked_tx() {
+        let mut m = msg(Some("SNR"), "KN4CRD");
+        m.from = "W1ABC".into();
+        assert!(js8_is_outgoing(&m, "w1abc"));
+        assert!(!js8_is_outgoing(&m, "N0JDS"));
+        assert!(!js8_is_outgoing(&m, ""));
+        m.from.clear();
+        assert!(!js8_is_outgoing(&m, ""));
+    }
+
+    #[test]
+    fn clicking_our_transmission_selects_its_recipient() {
+        let mut m = msg(Some("HEARTBEAT SNR"), "KN4CRD");
+        m.from = "N0JDS".into();
+        m.to_me = false;
+        assert_eq!(js8_conversation_target(&m, "n0jds"), Some("KN4CRD"));
+        m.to = "@ALLCALL".into();
+        assert_eq!(js8_conversation_target(&m, "N0JDS"), None);
+        m.to = "@JS8NET".into();
+        assert_eq!(js8_conversation_target(&m, "N0JDS"), Some("@JS8NET"));
+        m.to.clear();
+        assert_eq!(js8_conversation_target(&m, "N0JDS"), None);
+        let incoming = msg(Some("SNR?"), "N0JDS");
+        assert_eq!(js8_conversation_target(&incoming, "N0JDS"), Some("KN4CRD"));
     }
 
     #[test]

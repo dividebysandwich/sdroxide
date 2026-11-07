@@ -588,6 +588,15 @@ impl Default for ViewState {
 }
 
 impl ViewState {
+    /// Set the floor and ceiling by hand. That is a request to keep them, so
+    /// FIT goes off: left on, it glided them straight back the next time they
+    /// drifted 3 dB from its own target (#642).
+    pub fn set_levels_by_hand(&mut self, floor: f32, ceil: f32) {
+        self.db_floor = floor.clamp(-160.0, ceil - 5.0);
+        self.db_ceil = ceil.clamp(self.db_floor + 5.0, 40.0);
+        self.auto_fit = false;
+    }
+
     /// Whether the spectrum line is drawn.
     pub fn spectrum_visible(&self) -> bool {
         !self.spectrum_collapsed
@@ -798,6 +807,18 @@ fn wefax_gallery_default() -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #642: a floor moved by hand sprang back, because FIT stayed on.
+    #[test]
+    fn moving_the_floor_by_hand_switches_fit_off() {
+        let mut v = ViewState::default();
+        assert!(v.auto_fit, "FIT is on by default");
+        let ceil = v.db_ceil;
+        v.set_levels_by_hand(-140.0, ceil);
+        assert!(!v.auto_fit);
+        assert_eq!(v.db_floor, -140.0);
+        assert_eq!(v.db_ceil, ceil);
+    }
 
     /// The operating panel's propagation settings must not live in
     /// [`Solar3dView`].

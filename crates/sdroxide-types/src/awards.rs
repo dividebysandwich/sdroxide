@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::geo::grid4;
 use crate::{QsoRecord, entity};
 
 /// Worked / confirmed status for one award slot.
@@ -96,15 +97,10 @@ pub fn compute_awards(log: &[QsoRecord], band: Option<&str>, mode: Option<&str>)
         }
 
         // Grid squares (4-char).
-        if let Some(g) = &q.grid {
-            if g.len() >= 4 {
-                let g4 = g[..4].to_ascii_uppercase();
-                if g4.as_bytes()[0].is_ascii_alphabetic() {
-                    let s = a.grids.entry(g4).or_default();
-                    s.worked = true;
-                    s.confirmed |= conf;
-                }
-            }
+        if let Some(g4) = q.grid.as_deref().and_then(grid4) {
+            let s = a.grids.entry(g4).or_default();
+            s.worked = true;
+            s.confirmed |= conf;
         }
     }
     a
@@ -234,12 +230,6 @@ pub struct LogIndex {
     /// columns can't support per-band judgements, and claiming everything is
     /// new-on-this-band would be worse than saying nothing.
     has_bands: bool,
-}
-
-/// The 4-character grid a locator belongs to, uppercased.
-fn grid4(g: &str) -> Option<String> {
-    let g = g.trim();
-    (g.len() >= 4 && g.as_bytes()[0].is_ascii_alphabetic()).then(|| g[..4].to_ascii_uppercase())
 }
 
 /// The DXCC entity for a logged QSO: the resolver first, the record's own

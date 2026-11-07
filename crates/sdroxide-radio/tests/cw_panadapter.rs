@@ -13,7 +13,7 @@
 
 use std::time::Duration;
 
-use sdroxide_radio::{Complex32, EngineConfig, IqSource, Result, start_engine};
+use sdroxide_radio::{AudioParams, Complex32, EngineConfig, IqSource, Result, rtrb, start_engine};
 use sdroxide_types::{Command, DeviceCaps, Mode, RxId, SpectrumFrame};
 
 const RATE: f64 = 2_400_000.0;
@@ -59,11 +59,20 @@ fn caps() -> DeviceCaps {
 }
 
 /// Run `cmds`, then return the last spectrum frame the engine published.
+///
+/// With an audio output, so there is a main receive chain: the channel analyzer
+/// is fed from it, and without one the digital modes keep the wide frame
+/// (#640). Nothing drains the ring; a full one just drops.
 fn last_frame(cmds: &[Command]) -> SpectrumFrame {
+    let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(48_000);
     let mut h = start_engine(
         Box::new(MockSource { center: CENTER }),
         caps(),
-        EngineConfig { tx_ham_only: false, ..Default::default() },
+        EngineConfig {
+            tx_ham_only: false,
+            audio: Some(AudioParams { producer, out_rate: 48_000.0 }),
+            ..Default::default()
+        },
     );
     let thread = h.thread.take();
 

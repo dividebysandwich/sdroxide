@@ -1930,7 +1930,7 @@ fn markers(s: &mut Scene, st: &SolarUi, b: &Bodies, cam: &Camera) {
 
     if let Some((lat, lon)) = st.qth {
         s.sprites.push(SpriteInst {
-            center: on_earth(lat, lon, 1.02).arr(),
+            center: on_earth(lat, lon, MARK_LIFT).arr(),
             size_px: size(14.0),
             color: lin(ink::GREEN, 0.95 * fade),
             params: [SPRITE_RING, 0.0, 0.0, 0.0],
@@ -2115,7 +2115,7 @@ fn digi_traffic(s: &mut Scene, st: &SolarUi, b: &Bodies, cam: &Camera, now: f64,
                 continue;
             }
             s.sprites.push(SpriteInst {
-                center: to_world(ephem::geodetic_to_body(d.lat, d.lon), 1.015).arr(),
+                center: to_world(ephem::geodetic_to_body(d.lat, d.lon), MARK_LIFT).arr(),
                 size_px: (4.0 + 3.0 * d.fade).min(earth_px * 0.9),
                 color: lin(ink::TEXT_STRONG, 0.85 * d.fade * fade),
                 params: [SPRITE_DOT, 0.0, 0.0, 0.0],
@@ -2191,7 +2191,7 @@ fn digi_traffic(s: &mut Scene, st: &SolarUi, b: &Bodies, cam: &Camera, now: f64,
         if omega < 1e-4 || sum.len() < 1e-5 {
             return None;
         }
-        Some(to_world(sum.normalize(), 1.0 + arc_bulge(omega)).arr())
+        Some(to_world(sum.normalize(), MARK_LIFT + arc_bulge(omega)).arr())
     });
 
     // Name the far end when it is a transmitter rather than a callsign: a
@@ -2290,7 +2290,7 @@ fn lapse_arcs(
         // where it lands. Lifted clear of the surface like the live dots, or it
         // z-fights with the globe it sits on.
         s.sprites.push(SpriteInst {
-            center: to_world(ephem::geodetic_to_body(hit.lat, hit.lon), 1.015).arr(),
+            center: to_world(ephem::geodetic_to_body(hit.lat, hit.lon), MARK_LIFT).arr(),
             size_px: (2.4 + 2.0 * k).min(earth_px * 0.6),
             color: lin(color, (0.9 * alpha).min(1.0)),
             params: [SPRITE_DOT, 0.0, 0.0, 0.0],
@@ -2441,6 +2441,14 @@ fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
 ///
 /// The camera's contact framing reads this too: the shot it composes has to be
 /// built around the arc that actually gets drawn, not a second guess at it.
+/// Height, in Earth radii, that every mark on the surface sits at — the QTH
+/// ring, the station dots, and both ends of every arc. One height, so they meet
+/// at one point from any angle: the ring at 1.02 and the arcs landing at 1.0
+/// parted by up to 2% of a radius toward the limb, and a QTH the Earth's turn
+/// had carried there (hours later, after a sleep) seemed to have moved off the
+/// arcs drawn to it (#656).
+const MARK_LIFT: f32 = 1.02;
+
 pub fn arc_bulge(omega: f64) -> f32 {
     0.06 + 0.42 * (omega / std::f64::consts::PI) as f32
 }
@@ -2471,7 +2479,7 @@ fn arc_points(
                 let s0 = ((1.0 - t) * omega).sin() / omega.sin();
                 let s1 = (t * omega).sin() / omega.sin();
                 let dir = a * s0 + c * s1;
-                let lift = 1.0 + bulge * (std::f64::consts::PI * t).sin() as f32;
+                let lift = MARK_LIFT + bulge * (std::f64::consts::PI * t).sin() as f32;
                 to_world(dir.normalize(), lift)
             })
             .collect(),
@@ -2578,7 +2586,7 @@ fn arc(
         let beat = 1.0 + 0.25 * (anim.unwrap_or(0.0) * 3.0).sin();
         for (lat, lon) in [from, to] {
             s.sprites.push(SpriteInst {
-                center: to_world(ephem::geodetic_to_body(lat, lon), 1.02).arr(),
+                center: to_world(ephem::geodetic_to_body(lat, lon), MARK_LIFT).arr(),
                 size_px: 15.0 * beat,
                 color: lin(color, 0.9 * fade),
                 params: [SPRITE_RING, 0.0, 0.0, 0.0],
@@ -3429,7 +3437,10 @@ mod tests {
         let peak = arc.iter().copied().fold(0.0f32, f32::max);
         assert!(peak > 1.25, "arc only reached {peak} Earth radii — it hugs the surface");
         // Both ends come back down to the ground.
-        assert!(arc[0] < 1.02, "arc starts {} radii up", arc[0]);
+        assert!(arc[0] <= MARK_LIFT + 1e-3, "arc starts {} radii up", arc[0]);
+        // ...at the height the QTH ring sits at, so the two meet from any
+        // angle (#656).
+        assert!((arc[0] - MARK_LIFT).abs() < 1e-3, "arc starts {} radii up", arc[0]);
         assert!(radius(s.lines.last().unwrap().b) < 1.05);
         // ...and never dips inside the planet, which would hide it.
         assert!(arc.iter().all(|r| *r >= 0.999), "arc passes through the Earth");

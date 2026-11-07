@@ -68,6 +68,8 @@ pub struct SimOptions {
     /// side: acknowledged by nothing, refused by nothing, and still on the old
     /// frequency. This is the shape of issue #297.
     pub ignore_tunes: u32,
+    /// Keep reporting USB despite mode writes, to exercise stale/refused modes.
+    pub ignore_modes: bool,
     /// What every Set-mode menu item holds before the client writes anything
     /// (`1A 05`). `0x00` is MIC on an IC-7300MK2's modulation inputs, and on no
     /// model is it the value that means LAN — so a test can tell "the client
@@ -92,6 +94,7 @@ impl Default for SimOptions {
             bind: Ipv4Addr::LOCALHOST,
             mute_data_ports: false,
             ignore_tunes: 0,
+            ignore_modes: false,
             menu_default: 0x00,
         }
     }
@@ -99,6 +102,7 @@ impl Default for SimOptions {
 
 #[derive(Debug, Default)]
 struct Recorded {
+    mode: u8,
     /// PCM the client transmitted, decoded to mono.
     tx_audio: Vec<f32>,
     /// CI-V frames the client sent.
@@ -149,7 +153,7 @@ impl Sim {
         let civ = bind_on(opts.bind, 0)?;
         let audio = bind_on(opts.bind, 0)?;
         let alive = Arc::new(AtomicBool::new(true));
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let recorded = Arc::new(Mutex::new(Recorded { mode: 0x01, ..Default::default() }));
         // Off until the client asks for it, as on a real radio: a scope running
         // on the radio's own display streams nothing until `27 11`.
         let scope_out = Arc::new(AtomicBool::new(false));
@@ -247,6 +251,17 @@ impl Sim {
             .get(&item)
             .copied()
             .unwrap_or(self.menu_default)
+    }
+
+    /// Change a menu item from the radio's front panel.
+    pub fn set_menu_item(&self, item: u16, value: u8) {
+        self.recorded.lock().unwrap_or_else(|e| e.into_inner()).menu.insert(item, value);
+    }
+
+    /// Change the mode from the radio's front panel, as its CI-V mode byte —
+    /// including the ones the client has no mode for, such as RTTY (`0x04`).
+    pub fn set_mode(&self, mode: u8) {
+        self.recorded.lock().unwrap_or_else(|e| e.into_inner()).mode = mode;
     }
 
     /// Whether the client has pinged the audio stream.
@@ -649,13 +664,25 @@ impl SimRadio {
                 }
                 Some(vec![0xfe, 0xfe, 0xe0, addr, 0xfb, 0xfd])
             }
-            // Read mode: USB, wide.
-            0x04 => Some(reply(vec![0x04, 0x01, 0x01])),
+            0x04 => {
+                let mode = self.recorded.lock().unwrap_or_else(|e| e.into_inner()).mode;
+                Some(reply(vec![0x04, mode, 0x01]))
+            }
+            0x06 if frame.len() >= 7 => {
+                if !self.opts.ignore_modes {
+                    self.recorded.lock().unwrap_or_else(|e| e.into_inner()).mode = frame[5];
+                }
+                Some(vec![0xfe, 0xfe, 0xe0, addr, 0xfb, 0xfd])
+            }
             0x15 => match frame.get(5) {
                 // S-meter, mid scale.
                 Some(0x02) => Some(reply(vec![0x15, 0x02, 0x01, 0x20])),
                 // SWR, bottom of scale.
                 Some(0x12) => Some(reply(vec![0x15, 0x12, 0x00, 0x00])),
+                // ALC, half of 255.
+                Some(0x13) => Some(reply(vec![0x15, 0x13, 0x01, 0x28])),
+                // Power output, full scale.
+                Some(0x11) => Some(reply(vec![0x15, 0x11, 0x02, 0x13])),
                 _ => None,
             },
             // The Set-mode menu, `1A 05 <hi> <lo> [value]`. A bare item number

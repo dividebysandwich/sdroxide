@@ -177,7 +177,11 @@ fn run_keyed(telem: TxTelemetry, limit: f32, guard: bool, key: Key, wait: Durati
 /// the exact shape of the telemetry that twice failed on air.
 #[test]
 fn trips_with_no_forward_power_reported() {
-    let o = run(TxTelemetry { fwd_w: None, swr: Some(7.5), alc: None, po: None }, 2.5, true);
+    let o = run(
+        TxTelemetry { fwd_w: None, swr: Some(7.5), alc: None, po: None, rfl_w: None },
+        2.5,
+        true,
+    );
     assert_eq!(o.tripped_at, Some(7.5), "a 7.5:1 with no power figure must trip a 2.5:1 guard");
     assert!(!o.still_keyed, "the transmitter must actually stop, not just set a flag");
     assert!(!o.keyed_again, "the latch must refuse the next key-up until acknowledged");
@@ -187,14 +191,22 @@ fn trips_with_no_forward_power_reported() {
 /// BECAUSE the SWR is bad, so a low power reading must not excuse it.
 #[test]
 fn trips_when_the_rig_has_folded_its_power_back() {
-    let o = run(TxTelemetry { fwd_w: Some(3.0), swr: Some(7.5), alc: None, po: None }, 2.5, true);
+    let o = run(
+        TxTelemetry { fwd_w: Some(3.0), swr: Some(7.5), alc: None, po: None, rfl_w: None },
+        2.5,
+        true,
+    );
     assert_eq!(o.tripped_at, Some(7.5), "3 W at 7.5:1 is the fault, not a reason to ignore it");
     assert!(!o.still_keyed);
 }
 
 #[test]
 fn leaves_a_good_swr_alone() {
-    let o = run(TxTelemetry { fwd_w: Some(50.0), swr: Some(1.3), alc: None, po: None }, 2.5, true);
+    let o = run(
+        TxTelemetry { fwd_w: Some(50.0), swr: Some(1.3), alc: None, po: None, rfl_w: None },
+        2.5,
+        true,
+    );
     assert_eq!(o.tripped_at, None, "1.3:1 must not trip a 2.5:1 guard");
     assert!(o.still_keyed, "a good match must be left transmitting");
 }
@@ -202,7 +214,11 @@ fn leaves_a_good_swr_alone() {
 /// Disarmed is disarmed, however bad the antenna is.
 #[test]
 fn does_nothing_when_disarmed() {
-    let o = run(TxTelemetry { fwd_w: None, swr: Some(9.9), alc: None, po: None }, 2.5, false);
+    let o = run(
+        TxTelemetry { fwd_w: None, swr: Some(9.9), alc: None, po: None, rfl_w: None },
+        2.5,
+        false,
+    );
     assert_eq!(o.tripped_at, None);
     assert!(o.still_keyed);
 }
@@ -211,7 +227,11 @@ fn does_nothing_when_disarmed() {
 /// having its silence read as either safe or dangerous.
 #[test]
 fn inert_when_the_rig_reports_no_swr() {
-    let o = run(TxTelemetry { fwd_w: Some(50.0), swr: None, alc: None, po: None }, 2.5, true);
+    let o = run(
+        TxTelemetry { fwd_w: Some(50.0), swr: None, alc: None, po: None, rfl_w: None },
+        2.5,
+        true,
+    );
     assert_eq!(o.tripped_at, None);
     assert!(o.still_keyed);
 }
@@ -220,7 +240,11 @@ fn inert_when_the_rig_reports_no_swr() {
 /// the ratio is then noise. This is the only thing the power floor may do.
 #[test]
 fn ignores_a_reading_taken_at_no_power() {
-    let o = run(TxTelemetry { fwd_w: Some(0.0), swr: Some(9.9), alc: None, po: None }, 2.5, true);
+    let o = run(
+        TxTelemetry { fwd_w: Some(0.0), swr: Some(9.9), alc: None, po: None, rfl_w: None },
+        2.5,
+        true,
+    );
     assert_eq!(o.tripped_at, None, "0 W means the reading is meaningless, not that the SWR is bad");
 }
 
@@ -233,7 +257,7 @@ fn ignores_a_reading_taken_at_no_power() {
 #[test]
 fn a_tune_is_allowed_above_the_on_air_limit() {
     let o = run_keyed(
-        TxTelemetry { fwd_w: None, swr: Some(4.0), alc: None, po: None },
+        TxTelemetry { fwd_w: None, swr: Some(4.0), alc: None, po: None, rfl_w: None },
         2.5,
         true,
         Key::Tune,
@@ -248,7 +272,11 @@ fn a_tune_is_allowed_above_the_on_air_limit() {
 /// simply stopped working.
 #[test]
 fn the_same_swr_stops_an_ordinary_over() {
-    let o = run(TxTelemetry { fwd_w: None, swr: Some(4.0), alc: None, po: None }, 2.5, true);
+    let o = run(
+        TxTelemetry { fwd_w: None, swr: Some(4.0), alc: None, po: None, rfl_w: None },
+        2.5,
+        true,
+    );
     assert_eq!(o.tripped_at, Some(4.0), "4:1 is over a 2.5:1 limit when it is not a tune");
     assert!(!o.still_keyed);
 }
@@ -259,7 +287,7 @@ fn the_same_swr_stops_an_ordinary_over() {
 #[test]
 fn a_tune_still_stops_on_a_dead_feeder() {
     let o = run_keyed(
-        TxTelemetry { fwd_w: None, swr: Some(9.9), alc: None, po: None },
+        TxTelemetry { fwd_w: None, swr: Some(9.9), alc: None, po: None, rfl_w: None },
         2.5,
         true,
         Key::Tune,
@@ -279,7 +307,11 @@ fn a_tune_still_stops_on_a_dead_feeder() {
 /// fraction of a second, which is the whole reason the guard exists.
 #[test]
 fn an_over_is_stopped_without_waiting_seconds() {
-    let o = run(TxTelemetry { fwd_w: None, swr: Some(9.9), alc: None, po: None }, 2.5, true);
+    let o = run(
+        TxTelemetry { fwd_w: None, swr: Some(9.9), alc: None, po: None, rfl_w: None },
+        2.5,
+        true,
+    );
     let after = o.tripped_after.expect("a trip has a time");
     assert!(after < Duration::from_secs(1), "an over must not inherit the tune grace: {after:?}");
 }

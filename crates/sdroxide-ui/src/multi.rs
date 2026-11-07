@@ -28,6 +28,7 @@
 //! through `layout::set_radio_salt`, the fixed egui ids) and gate the
 //! announcer and the window title to the focused one.
 
+use crate::i18n::tr;
 use eframe::egui::{self, RichText};
 
 use crate::app::{RadioChip, RadioTabRequest, SdroxideApp};
@@ -420,7 +421,7 @@ impl MultiApp {
         // `REMOTE_TAB_ID_BASE` so it cannot collide with the roster — and would
         // read as "Radio 2147483649".
         let n = if t.remote { t.app.station_radio_id() } else { t.id };
-        format!("Radio {}", n + 1)
+        tr!("multi-radio", n = n + 1)
     }
 
     /// The name a tab chip shows: the operator's, else the derived default.
@@ -471,8 +472,20 @@ impl MultiApp {
     /// The ⊞ toggle: open a pane for radio `id`, or close the one it has.
     fn toggle_split(&mut self, id: u32, ctx: &egui::Context) {
         if let Some(k) = self.panes.iter().position(|&p| p == id) {
-            // The last pane is not a split; it stays.
-            if self.panes.len() > 1 {
+            // The last pane is not a split; it stays. Its ⊞ used to do
+            // nothing at all, and that is the button an operator reaches for
+            // first, on the radio already on screen (#763): it opens the split
+            // with the next radio instead.
+            if self.panes.len() == 1 {
+                if let Some(other) = self
+                    .tabs
+                    .iter()
+                    .find(|t| t.id != id && t.attached_to.is_none())
+                    .map(|t| t.id)
+                {
+                    self.panes.push(other);
+                }
+            } else {
                 self.panes.remove(k);
                 // The keyboard must stay on a visible radio: hand it to the
                 // pane that slid into the closed one's place.
@@ -675,7 +688,9 @@ impl MultiApp {
                     ui.label(label);
                     // On the air: the one thing worth seeing from any tab.
                     if tab.app.tab_tx_on() {
-                        ui.label(RichText::new("● TX").size(11.0).color(crate::theme::ALERT()));
+                        ui.label(
+                            RichText::new(tr!("multi-tx")).size(11.0).color(crate::theme::ALERT()),
+                        );
                     } else if tab.app.tab_error() && tab.enabled {
                         ui.label(RichText::new("⚠").size(11.0).color(crate::theme::ALERT()));
                     }
@@ -691,8 +706,11 @@ impl MultiApp {
                     // link now, and on/off is left to PWR, which really does
                     // throw the set's own switch.
                     if Self::switchable(tab) && tab.attached_to.is_none() {
-                        let power =
-                            crate::chrome::chip(ui, tab.enabled, RichText::new("LINK").size(11.0));
+                        let power = crate::chrome::chip(
+                            ui,
+                            tab.enabled,
+                            RichText::new(tr!("multi-link")).size(11.0),
+                        );
                         let tip = if tab.enabled {
                             crate::chrome::LINK_CLOSE_TIP
                         } else {
@@ -714,15 +732,15 @@ impl MultiApp {
                             muted,
                             RichText::new(if muted { "🔇" } else { "🔊" }).size(11.0),
                         );
-                        if mute.on_hover_text("Mute this radio's audio").clicked() {
+                        if mute.on_hover_text(tr!("multi-mute-radio-s-audio")).clicked() {
                             actions.push(StripAction::Mute { id, muted: !muted });
                         }
                     }
                     let split = crate::chrome::chip(ui, split_on, RichText::new("⊞").size(11.0));
                     let tip = if split_on {
-                        "Close this radio's split view"
+                        tr!("multi-close-radio-s-split-view")
                     } else {
-                        "Open this radio in a split view of its own"
+                        tr!("multi-open-radio-split-view-own")
                     };
                     if split.on_hover_text(tip).clicked() {
                         actions.push(StripAction::ToggleSplit(id));
@@ -731,11 +749,11 @@ impl MultiApp {
                 // The tab itself switches the pane — anywhere on it that is not
                 // one of its own buttons, which keep their clicks.
                 let body = if elsewhere {
-                    body.response.on_hover_text("Already open in another split view")
+                    body.response.on_hover_text(tr!("multi-already-open-another-split-view"))
                 } else if here {
                     body.response
                 } else {
-                    body.response.on_hover_text("Show this radio here")
+                    body.response.on_hover_text(tr!("multi-show-radio-here"))
                 };
                 if body.clicked() && !here && !elsewhere {
                     actions.push(StripAction::Show { pane, id });
@@ -751,9 +769,9 @@ impl MultiApp {
                 // as there is a second roster to confuse it with.
                 let tip = match self.tabs.iter().any(|t| t.remote) {
                     true => {
-                        "Add a radio on this computer (Settings → Radio to add one at a                              station)"
+                        tr!("multi-add-radio-computer-settings-radio")
                     }
-                    false => "Add a radio",
+                    false => tr!("multi-add-radio"),
                 };
                 if crate::chrome::chip(ui, false, RichText::new("+").size(13.0))
                     .on_hover_text(tip)
@@ -828,7 +846,9 @@ impl MultiApp {
         // Nothing else happens here. The station answers with its roster, and
         // `open_peer_radios` opens what is new in it — including, for a radio
         // this screen asked for, putting it in front of the operator.
-        self.tabs[self.focused].app.show_notice("Asked the station for another radio…".to_string());
+        self.tabs[self.focused]
+            .app
+            .show_notice(tr!("multi-asked-station-another-radio").to_string());
     }
 
     /// Take a tab's radio out of the roster of the station it belongs to.
@@ -865,9 +885,9 @@ impl MultiApp {
             }
             // Into the focused tab's dismissable banner — the main window's
             // strip may not be on screen to carry a message.
-            Err(e) => {
-                self.tabs[self.focused].app.show_notice(format!("Could not add a radio: {e}"))
-            }
+            Err(e) => self.tabs[self.focused]
+                .app
+                .show_notice(tr!("multi-could-not-add-radio", error = e.to_string())),
         }
     }
 
@@ -922,7 +942,7 @@ impl MultiApp {
             let name = Self::display_name(&self.tabs[i]);
             self.close_tab(i, ctx);
             let focused = self.focused;
-            self.tabs[focused].app.show_notice(format!("{name} was closed at the station."));
+            self.tabs[focused].app.show_notice(tr!("multi-was-closed-station", value = name));
         }
         if self.remote.is_none() {
             return;
@@ -989,9 +1009,11 @@ impl MultiApp {
                     };
                     self.tabs[i].fallback = fallback;
                 }
-                Err(e) => self.tabs[self.focused]
-                    .app
-                    .show_notice(format!("Could not open {}: {e}", peer.name)),
+                Err(e) => self.tabs[self.focused].app.show_notice(tr!(
+                    "multi-could-not-open",
+                    peer = peer.name,
+                    error = e.to_string()
+                )),
             }
         }
     }
@@ -1009,7 +1031,7 @@ impl MultiApp {
         if self.remote.is_none() {
             self.tabs[origin]
                 .app
-                .set_remote_status(Err("This client cannot open a connection.".into()));
+                .set_remote_status(Err(tr!("multi-client-cannot-open-connection")));
             return;
         }
         // The id is worked out before the factory is borrowed: both read
@@ -1029,7 +1051,7 @@ impl MultiApp {
                 // has — with the sign-in screen, if it asks for one.
                 self.tabs[origin]
                     .app
-                    .set_remote_status(Ok(format!("{label} has a tab of its own now.")));
+                    .set_remote_status(Ok(tr!("multi-has-tab-own-now", value = label)));
             }
             Err(e) => self.tabs[origin].app.set_remote_status(Err(format!("{url}: {e}"))),
         }
@@ -1239,6 +1261,13 @@ impl eframe::App for MultiApp {
                 if tab.app.poll_auth() {
                     crate::repaint::after_ms(&ctx, 120);
                 }
+                // A silence auto-split armed on this radio is a recording
+                // decision, not a drawing one: it has to keep running while the
+                // tab is behind another, or the files are split only for
+                // whichever radio the operator happens to be looking at. Armed,
+                // the gate asks for its own frames, so a monitor left on a
+                // hidden tab still records a file per transmission.
+                tab.app.poll_recording_gate(&ctx);
             }
         }
         self.share_spot_feed();
@@ -1336,6 +1365,22 @@ impl eframe::App for MultiApp {
                     if ti != self.focused && pos.x >= left && pos.x < left + col_w + gap {
                         self.focus_tab(ti, &ctx);
                     }
+                }
+            }
+        }
+        // The undocked-module windows are the **shell's** to emit: once, for the
+        // focused radio, every frame, whatever pane or tab is on screen. The app
+        // says which windows it wants (`detached_wanted`); the shell emits those,
+        // so a window that is wanted is always emitted — a tiling compositor
+        // never sees it torn down and re-mapped when the radio or the mode
+        // changes under it.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let app = &mut self.tabs[self.focused].app;
+            let want = app.detached_wanted();
+            for module in sdroxide_types::DetachableModule::ALL {
+                if want[module.index()] {
+                    app.show_detached_module(module, &ctx, now);
                 }
             }
         }
