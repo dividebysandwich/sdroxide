@@ -8,9 +8,15 @@
 //! `trx:` or `tune:`: those key the transmitter, and a tune of the dial is
 //! not a request to go on the air.
 //!
-//! Incoming text is read and discarded. 590Ctrl answers a frequency command
-//! by broadcasting the new VFO, and acting on that would chase our own echo.
+//! It also listens. When the operator turns the knob on the far radio, the
+//! server broadcasts `vfo:0,0,<hz>;` and this client hands it to the engine,
+//! so the dial here follows the radio as well. 590Ctrl answers our own
+//! frequency commands with the same broadcast, and acting on those would chase
+//! our own echo, so any frequency sent in the last [`ECHO_WINDOW`] is ignored,
+//! and nothing heard is acted on until the dial has been still for
+//! [`QUIET_AFTER_SEND`].
 
+use std::collections::VecDeque;
 use std::io::ErrorKind;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -21,6 +27,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender};
 use tungstenite::{Message, WebSocket};
 
+use crate::protocol as p;
 use crate::{HANDSHAKE_TIMEOUT, connect_socket, split_addr, ws_handshake};
 
 /// How long a connect attempt may sit before the worker tries again.
@@ -35,6 +42,16 @@ const READ_TIMEOUT: Duration = Duration::from_millis(50);
 /// 590Ctrl still has to turn each one into a CAT command.
 const MIN_SEND_GAP: Duration = Duration::from_millis(50);
 
+/// A broadcast of any frequency sent this recently is our own echo. During a
+/// drag the server's answers trail the dial, so this covers more than the
+/// newest value.
+const ECHO_WINDOW: Duration = Duration::from_secs(2);
+
+/// What the radio reports right after a send may be a poll taken before the
+/// command landed. Hold anything heard until the dial here has been still
+/// this long, by which time the server has caught up with the newest value.
+const QUIET_AFTER_SEND: Duration = Duration::from_millis(300);
+
 /// What the settings dialog shows for the outbound client.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TciTuneStatus {
@@ -48,6 +65,7 @@ pub struct TciTuneClient {
     address: Arc<Mutex<String>>,
     stop: Arc<AtomicBool>,
     status_rx: Receiver<TciTuneStatus>,
+    heard_rx: Receiver<u64>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -60,13 +78,14 @@ impl TciTuneClient {
         let hz = Arc::new(AtomicU64::new(0));
         let stop = Arc::new(AtomicBool::new(false));
         let (status_tx, status_rx) = crossbeam_channel::unbounded();
+        let (heard_tx, heard_rx) = crossbeam_channel::unbounded();
         let thread = thread::spawn({
             let address = Arc::clone(&address);
             let hz = Arc::clone(&hz);
             let stop = Arc::clone(&stop);
-            move || worker(address, hz, stop, status_tx)
+            move || worker(address, hz, stop, status_tx, heard_tx)
         });
-        Self { hz, address, stop, status_rx, thread: Some(thread) }
+        Self { hz, address, stop, status_rx, heard_rx, thread: Some(thread) }
     }
 
     /// The address the worker is aiming at.
@@ -96,6 +115,17 @@ impl TciTuneClient {
         }
         last
     }
+
+    /// The newest frequency the far radio was tuned to from its own side
+    /// since the last call. The worker already counts it as sent, so tuning
+    /// the dial here to it does not send it back.
+    pub fn poll_heard(&self) -> Option<u64> {
+        let mut last = None;
+        while let Ok(hz) = self.heard_rx.try_recv() {
+            last = Some(hz);
+        }
+        last
+    }
 }
 
 impl Drop for TciTuneClient {
@@ -112,16 +142,76 @@ pub(crate) fn vfo_line(hz: u64) -> String {
     format!("vfo:0,0,{hz};")
 }
 
+/// The receiver 0, channel 0 frequency in a line from the server, if it has
+/// one. That is the VFO [`vfo_line`] sets; the other channel is VFO B.
+pub(crate) fn heard_vfo(text: &str) -> Option<u64> {
+    let mut found = None;
+    for (cmd, args) in p::parse_status(text) {
+        if cmd != "vfo" {
+            continue;
+        }
+        let f: Vec<&str> = args.split(',').map(str::trim).collect();
+        if let [rx, ch, hz] = f.as_slice()
+            && *rx == "0"
+            && *ch == "0"
+            && let Ok(hz) = hz.parse::<u64>()
+            && hz > 0
+        {
+            found = Some(hz);
+        }
+    }
+    found
+}
+
+/// What the worker knows about frequencies going each way.
+struct Dial {
+    /// The last frequency on the far radio we know of: sent by us, or heard.
+    sent: u64,
+    /// Everything sent within [`ECHO_WINDOW`], oldest first.
+    recent: VecDeque<(u64, Instant)>,
+    /// The newest frequency heard that was not an echo, waiting for quiet.
+    pending: Option<u64>,
+}
+
+impl Dial {
+    fn new() -> Self {
+        Self { sent: 0, recent: VecDeque::new(), pending: None }
+    }
+
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    fn record_sent(&mut self, hz: u64, now: Instant) {
+        self.sent = hz;
+        self.recent.push_back((hz, now));
+    }
+
+    fn heard(&mut self, hz: u64, now: Instant) {
+        while self.recent.front().is_some_and(|(_, t)| now.duration_since(*t) > ECHO_WINDOW) {
+            self.recent.pop_front();
+        }
+        // Each report replaces the last: the newest is where the radio is.
+        // A report of something we sent means the radio is on our dial.
+        self.pending = if hz == self.sent || self.recent.iter().any(|(f, _)| *f == hz) {
+            None
+        } else {
+            Some(hz)
+        };
+    }
+}
+
 fn worker(
     address: Arc<Mutex<String>>,
     hz: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
     status_tx: Sender<TciTuneStatus>,
+    heard_tx: Sender<u64>,
 ) {
     let mut backoff = Duration::from_millis(200);
     let mut socket: Option<WebSocket<TcpStream>> = None;
     let mut connected_to = String::new();
-    let mut sent: u64 = 0;
+    let mut dial = Dial::new();
     let mut last_tx = Instant::now() - MIN_SEND_GAP;
     let mut reported = TciTuneStatus { connected: false, error: None };
 
@@ -129,7 +219,7 @@ fn worker(
         let want_addr = address.lock().map(|g| g.clone()).unwrap_or_default();
         if socket.is_some() && want_addr != connected_to {
             close(&mut socket);
-            sent = 0;
+            dial.reset();
             report(&status_tx, &mut reported, TciTuneStatus { connected: false, error: None });
         }
 
@@ -152,7 +242,7 @@ fn worker(
                     socket = Some(ws);
                     connected_to = want_addr;
                     backoff = Duration::from_millis(200);
-                    sent = 0;
+                    dial.reset();
                     report(
                         &status_tx,
                         &mut reported,
@@ -173,24 +263,45 @@ fn worker(
             }
         }
 
-        if !drain(&mut socket, &status_tx, &mut reported) {
-            sent = 0;
+        if !drain(&mut socket, &mut dial, &status_tx, &mut reported) {
+            dial.reset();
             continue;
         }
 
+        // The radio was tuned from its own side. Count it as sent before the
+        // engine hears of it, so the dial moving here does not echo it back.
+        // Swapped in only if the engine has not tuned since, which would be
+        // the newer word.
+        if let Some(heard) = dial.pending
+            && last_tx.elapsed() >= QUIET_AFTER_SEND
+        {
+            dial.pending = None;
+            let had = hz.load(Ordering::Relaxed);
+            // On connect the server's state can arrive before our first send
+            // of the same frequency, and there is then no echo to clear it.
+            if heard != dial.sent
+                && had == dial.sent
+                && hz.compare_exchange(had, heard, Ordering::Relaxed, Ordering::Relaxed).is_ok()
+            {
+                tracing::debug!(hz = heard, "TCI client: radio tuned");
+                dial.sent = heard;
+                let _ = heard_tx.send(heard);
+            }
+        }
+
         let want = hz.load(Ordering::Relaxed);
-        if want > 0 && want != sent && last_tx.elapsed() >= MIN_SEND_GAP {
+        if want > 0 && want != dial.sent && last_tx.elapsed() >= MIN_SEND_GAP {
             let line = vfo_line(want);
             match send_line(socket.as_mut(), line) {
                 Ok(()) => {
                     tracing::trace!(hz = want, "TCI client tune");
-                    sent = want;
                     last_tx = Instant::now();
+                    dial.record_sent(want, last_tx);
                 }
                 Err(error) => {
                     tracing::warn!("TCI client send: {error}");
                     close(&mut socket);
-                    sent = 0;
+                    dial.reset();
                     report(
                         &status_tx,
                         &mut reported,
@@ -215,6 +326,7 @@ fn send_line(socket: Option<&mut WebSocket<TcpStream>>, line: String) -> Result<
 /// cannot starve the send. `false` means the socket is gone.
 fn drain(
     socket: &mut Option<WebSocket<TcpStream>>,
+    dial: &mut Dial,
     status_tx: &Sender<TciTuneStatus>,
     reported: &mut TciTuneStatus,
 ) -> bool {
@@ -237,6 +349,11 @@ fn drain(
                     },
                 );
                 return false;
+            }
+            Ok(Message::Text(text)) => {
+                if let Some(hz) = heard_vfo(&text) {
+                    dial.heard(hz, Instant::now());
+                }
             }
             Ok(_) => continue,
             Err(tungstenite::Error::Io(error))
@@ -326,6 +443,121 @@ mod tests {
         assert!(!line.contains("tune:"));
         assert!(!line.contains("audio"));
         assert!(!line.contains("iq"));
+    }
+
+    #[test]
+    fn heard_vfo_reads_only_vfo_a_of_receiver_zero() {
+        assert_eq!(heard_vfo("VFO:0,0,14074000;"), Some(14_074_000));
+        assert_eq!(heard_vfo("dds:0,14074000;vfo:0,1,7000000;"), None);
+        assert_eq!(heard_vfo("vfo:1,0,7000000;"), None);
+        assert_eq!(heard_vfo("vfo:0,0,7000000;vfo:0,0,7001000;"), Some(7_001_000));
+        assert_eq!(heard_vfo("vfo:0,0,junk;"), None);
+    }
+
+    #[test]
+    fn an_echo_of_anything_recently_sent_is_not_a_tune() {
+        let now = Instant::now();
+        let mut dial = Dial::new();
+        dial.record_sent(7_074_000, now);
+        dial.record_sent(7_075_000, now);
+        // A trailing echo of the older value during a drag.
+        dial.heard(7_074_000, now);
+        assert_eq!(dial.pending, None);
+        dial.heard(7_080_000, now);
+        assert_eq!(dial.pending, Some(7_080_000));
+        // The server caught up with our newest value: the radio is on it.
+        dial.heard(7_075_000, now);
+        assert_eq!(dial.pending, None);
+    }
+
+    /// Accept one client, send it `lines` once it has spoken, and collect
+    /// what it writes until `until` appears or a few seconds pass.
+    fn fake_server(
+        lines: Vec<(Duration, &'static str)>,
+        until: &'static str,
+    ) -> (u16, JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            stream.set_read_timeout(Some(Duration::from_millis(20))).ok();
+            let mut ws = tungstenite::accept(stream).expect("handshake");
+            let _ = ws.send(Message::Text("protocol:590Ctrl,1.9;ready;".into()));
+            let mut got = Vec::new();
+            let mut queue: VecDeque<_> = lines.into();
+            let mut started: Option<Instant> = None;
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                if let (Some(t0), Some((at, _))) = (started, queue.front())
+                    && t0.elapsed() >= *at
+                {
+                    let (_, line) = queue.pop_front().expect("line");
+                    let _ = ws.send(Message::Text(line.into()));
+                }
+                match ws.read() {
+                    Ok(Message::Text(text)) => {
+                        started.get_or_insert_with(Instant::now);
+                        let text = text.to_string();
+                        let done = !until.is_empty() && text.contains(until);
+                        got.push(text);
+                        if done {
+                            break;
+                        }
+                    }
+                    Ok(Message::Close(_)) => break,
+                    Ok(_) => {}
+                    Err(tungstenite::Error::Io(error))
+                        if error.kind() == ErrorKind::WouldBlock
+                            || error.kind() == ErrorKind::TimedOut => {}
+                    Err(_) => break,
+                }
+            }
+            got
+        });
+        (port, server)
+    }
+
+    fn wait_connected(client: &TciTuneClient) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if client.poll_status().is_some_and(|status| status.connected) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        panic!("client never connected");
+    }
+
+    #[test]
+    fn a_knob_turn_on_the_radio_reaches_the_dial_and_is_not_sent_back() {
+        // Our tune is echoed, then the operator turns the radio's knob.
+        let (port, server) = fake_server(
+            vec![
+                (Duration::from_millis(30), "vfo:0,0,7074000;"),
+                (Duration::from_millis(600), "vfo:0,0,7071000;"),
+            ],
+            "",
+        );
+        let client = TciTuneClient::start(format!("127.0.0.1:{port}"));
+        wait_connected(&client);
+        client.tune(7_074_000);
+
+        let mut heard = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline && heard.is_empty() {
+            heard.extend(client.poll_heard());
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(heard, vec![7_071_000], "the echo must be ignored and the knob turn heard");
+        // The engine tunes the dial to what it heard; that must stay here.
+        client.tune(7_071_000);
+        thread::sleep(Duration::from_millis(300));
+        drop(client);
+
+        let lines = server.join().expect("server");
+        let joined = lines.join("");
+        assert!(joined.contains("vfo:0,0,7074000;"), "{lines:?}");
+        assert!(!joined.contains("7071000"), "the heard frequency went back out: {lines:?}");
     }
 
     #[test]

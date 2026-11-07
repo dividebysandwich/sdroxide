@@ -1040,7 +1040,8 @@ user manual, §5.6.
 
 The same settings section has **TCI Client**. Turn that on and sdroxide dials
 out to another TCI server — 590Ctrl, at `127.0.0.1:50001` unless you change
-it — and sends the VFO whenever you tune. That path is control only: no audio,
+it — and sends the VFO whenever you tune. Tune the radio from its own knob and
+sdroxide's dial follows. That path is control only: no audio,
 no IQ, and it does not key the transmitter. If 590Ctrl is already listening on
 50001, leave sdroxide's own server off or move it to another port.
 

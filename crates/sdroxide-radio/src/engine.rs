@@ -12377,8 +12377,16 @@ impl Engine {
         client.tune(hz);
     }
 
-    /// Surface a connect or a drop. The worker reports only when it changes.
+    /// Follow the far radio when it is tuned from its own side, and surface a
+    /// connect or a drop. The worker reports status only when it changes.
     fn poll_tci_client(&mut self) {
+        let Some(client) = self.tci_tune.as_ref() else { return };
+        if let Some(hz) = client.poll_heard() {
+            // The worker already counts this as sent. Marking it here too
+            // keeps `push_tci_client` from handing it straight back.
+            self.tci_tune_hz = hz;
+            self.apply(Command::SetVfo { vfo: self.state.active_vfo, hz: hz as f64 });
+        }
         let Some(client) = self.tci_tune.as_ref() else { return };
         let Some(status) = client.poll_status() else { return };
         if status.connected == self.tci_tune_connected && status.error == self.tci_tune_err {
