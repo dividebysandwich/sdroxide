@@ -4247,8 +4247,9 @@ impl SdroxideApp {
             AtuStatus::Aborted => tr!("topbar-atu-aborted"),
         };
         let mut hover = format!("{}", tr!("topbar-atu-built-in-tuner", state = state));
-        if let Some(reg7) = atu.reg7_status {
-            let meaning = match reg7 {
+        if atu.reg7_supported {
+            if let Some(reg7) = atu.reg7_status {
+                let meaning = match reg7 {
                 0x00 => "Idle / operation complete",
                 0x01 => "Tune command accepted",
                 0x02 => "Bypass command accepted",
@@ -4262,10 +4263,11 @@ impl SdroxideApp {
                 0xFD => "Tune failed: tuner operation timed out (4 s)",
                 _ => "Unknown Reg7 status",
             };
-            let freshness = if atu.reg7_fresh { "fresh" } else { "stale" };
-            hover.push_str(&format!("\nReg7: 0x{reg7:02X} — {meaning} ({freshness})"));
-        } else {
-            hover.push_str("\nReg7: unavailable");
+                let freshness = if atu.reg7_fresh { "fresh" } else { "stale" };
+                hover.push_str(&format!("\nReg7: 0x{reg7:02X} — {meaning} ({freshness})"));
+            } else {
+                hover.push_str("\nReg7: unavailable");
+            }
         }
         if let Some(error) = atu.command_error {
             let message = match error {
