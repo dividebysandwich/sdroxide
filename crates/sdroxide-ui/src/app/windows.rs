@@ -110,6 +110,9 @@ fn mem_drop_target<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -
 ///
 /// `edit` is the edit in progress anywhere in the list; when it is this
 /// memory's, the row is replaced by the editor.
+/// How long CLEAR stays armed after its first click (issue #755).
+const MEM_CLEAR_ARM_S: f64 = 5.0;
+
 fn memory_row(
     ui: &mut egui::Ui,
     m: &MemoryChannel,
@@ -561,9 +564,16 @@ impl SdroxideApp {
                     crate::download::save("sdroxide-memories.csv", csv.as_bytes());
                 }
                 // Every channel at once, for a list imported by the hundred
-                // (issue #755). Two clicks: the first only arms it, and moving
-                // off the chip disarms it again.
-                let armed = self.mem_clear_armed;
+                // (issue #755). Two clicks: the first only arms it for a few
+                // seconds. It used to disarm as soon as the pointer left the
+                // chip, so a first click followed by a look at the list (or a
+                // second click a little off target) reset it and the chip
+                // looked dead.
+                let now = ui.input(|i| i.time);
+                let armed = self.mem_clear_armed.is_some_and(|t| now - t < MEM_CLEAR_ARM_S);
+                if self.mem_clear_armed.is_some() && !armed {
+                    self.mem_clear_armed = None;
+                }
                 let resp = if armed {
                     crate::chrome::chip_accent(
                         ui,
@@ -579,10 +589,14 @@ impl SdroxideApp {
                 if resp.clicked() {
                     if armed {
                         cmds.push(Command::ClearMemories);
+                        self.mem_clear_armed = None;
+                    } else {
+                        self.mem_clear_armed = Some(now);
                     }
-                    self.mem_clear_armed = !armed;
-                } else if armed && !resp.hovered() {
-                    self.mem_clear_armed = false;
+                }
+                if self.mem_clear_armed.is_some() {
+                    // Repaint so the chip falls back to CLEAR when time is up.
+                    crate::repaint::after_ms(ui.ctx(), 250);
                 }
             });
             ui.label(

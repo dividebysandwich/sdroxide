@@ -623,8 +623,9 @@ pub struct SdroxideApp {
     mem_edit: Option<self::windows::MemoryEdit>,
     /// One-shot: focus the name field on the frame after EDT was clicked.
     mem_edit_focus: bool,
-    /// CLEAR was clicked once and asks to be clicked again (issue #755).
-    mem_clear_armed: bool,
+    /// When CLEAR was clicked once; it asks to be clicked again within
+    /// `MEM_CLEAR_ARM_S` (issue #755).
+    mem_clear_armed: Option<f64>,
     // Skimmer (CW etc.) spots, newest merge-by-id.
     skimmer_spots: Vec<SkimmerSpot>,
     /// Per-spot last-active timestamp (egui seconds), so a box fades out over
@@ -1623,7 +1624,7 @@ impl SdroxideApp {
             mem_folder_focus: false,
             mem_edit: None,
             mem_edit_focus: false,
-            mem_clear_armed: false,
+            mem_clear_armed: None,
             skimmer_spots: Vec::new(),
             skimmer_active_at: std::collections::HashMap::new(),
             digi_decodes: Vec::new(),
