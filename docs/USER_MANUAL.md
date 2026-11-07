@@ -8199,8 +8199,8 @@ A quadrature rig normally puts its local oscillator on the dial, which piles the
 mixer's DC offset, the LO's own leakage and the sound card's zero-hertz junk on
 exactly the signal you are listening to — the permanent spike in the middle of
 the waterfall. Rigs that offer a way out move the I.F. instead: on an Elecraft
-K3/KX3, `MENU:RX SHFT` set to `8.0` rather than `NOR` puts the oscillator 8 kHz
-from the dial, which takes the dial off the spike (and, per Elecraft, stops a
+KX3, the radio's own menu entry `RX SHFT` (at the rig, not in sdroxide) set to
+`8.0` rather than `NOR` puts the oscillator 8 kHz from the dial, which takes the dial off the spike (and, per Elecraft, stops a
 strong nearby SSB or AM station being detected in the receiver). Set this field
 to `8000` to match, and the panadapter and everything reading from it stay on
 frequency.
@@ -16381,9 +16381,12 @@ All in [§6.2.2](#622-cat-radios-serial-control--usb-audio) and
 - **Baud:** a K3, K3S, KX3 or KX2 goes no faster than **38400**
   (`CONFIG:RS232` at the radio); a faster pick leaves the link mute both
   ways. Only a K4 runs above that.
-- `MENU:RX SHFT` at `8.0` moves the I.F. 8 kHz off the dial: set **I/Q centre
-  offset** to `8000` to match (`-8000` if signals land at twice the offset).
-  Never put it in the Converter field — that retunes the radio.
+- KX3 only: the radio's own menu entry `RX SHFT` (set at the rig — there is no
+  such control in sdroxide, and a K3 or K3S has no I/Q output for it to apply
+  to) at `8.0` moves the I.F. 8 kHz off the dial: set **I/Q centre offset** on
+  the CAT tab to `8000` to match (`-8000` if signals land at twice the offset).
+  Left at `NOR`, leave the offset at 0. Never put it in the Converter field —
+  that retunes the radio.
 - Only **DATA A** is the sound-card path; sdroxide pins it with `DT0;` when it
   commands DATA, and follows the rig into DATA only when the rig reports
   DATA A. A rig stuck in AFSK A / FSK D / PSK D decodes nothing.
