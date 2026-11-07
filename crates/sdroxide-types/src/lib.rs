@@ -291,7 +291,8 @@ pub use speech::{
 pub use spot::{Spot, SpotKind};
 pub use sstv::{SstvMode, SstvStatus};
 pub use state::{
-    AtuState, AtuStatus, CESSB_MAX_DB, MAX_DECIMATION, MAX_MANUAL_GAIN_DB, MIN_DECIMATED_RATE_HZ,
+    AtuCommandError, AtuState, AtuStatus, CESSB_MAX_DB, MAX_DECIMATION, MAX_MANUAL_GAIN_DB,
+    MIN_DECIMATED_RATE_HZ,
     OffsetState, RadioState, RxId, RxState, SQUELCH_CLOSED_DB, SQUELCH_OPEN_DB, SWR_LIMIT_MAX,
     SWR_LIMIT_MIN, SWR_TUNE_LIMIT_SCALE, TxState, Vfo, ZOOM_LANE_MARGIN, max_decimation,
     panadapter_fft_ceiling, swr_tune_limit, zoom_lane_decimation,
