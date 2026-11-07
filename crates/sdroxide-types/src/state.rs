@@ -187,6 +187,18 @@ pub struct TxState {
     /// sends a wild figure gets a sane one back.
     #[serde(default)]
     pub cessb_db: f32,
+    /// TUNE sends the classic two-tone test signal — 700 Hz and 1900 Hz of
+    /// equal amplitude in the sideband the dial is on — instead of a steady
+    /// carrier (issue #525).
+    ///
+    /// The signal amplifier linearity is judged with: its envelope swings from
+    /// zero to full every beat, so every point on the amplifier's curve is
+    /// visited, and the intermodulation products land at known spacings either
+    /// side. It is also what PureSignal needs to learn from — a steady carrier
+    /// has one amplitude and so teaches it one point. Keyed and levelled
+    /// exactly as TUNE is; this only chooses the waveform.
+    #[serde(default)]
+    pub two_tone: bool,
 }
 
 /// The most controlled-envelope compression the control offers, in decibels.

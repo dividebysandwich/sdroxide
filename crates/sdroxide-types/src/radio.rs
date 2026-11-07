@@ -5322,6 +5322,18 @@ impl PlutoPtt {
     }
 }
 
+/// The Pluto's second receive chain, and what is done with it.
+///
+/// The same block a LimeSDR's second chain uses ([`LimeAuxConfig`]), because it
+/// is the same idea on the same kind of part: two receive chains on one
+/// synthesiser and one clock, so the second hears the same span at the same
+/// instant as the first. The DSP behind it — the adaptive combiner and the
+/// predistortion loop — is shared too, and so are its controls.
+///
+/// [`LimeAuxConfig::antenna`] is not used on a Pluto: the AD9361 selects one
+/// receive port for both chains.
+pub type PlutoAuxConfig = LimeAuxConfig;
+
 /// ADALM-Pluto (PlutoSDR) backend configuration.
 ///
 /// The device is reached over the network — which the USB cable already
@@ -5400,6 +5412,16 @@ pub struct PlutoConfig {
     /// whole time in FDD, so nothing would ever toggle.
     #[serde(default)]
     pub ptt_gpo: PlutoPtt,
+    /// The second receive chain on a 2R2T firmware, used by this radio as a
+    /// second aerial (diversity) or as transmit feedback (PureSignal) rather
+    /// than by a radio tab of its own (issue #525).
+    ///
+    /// Only honoured on the RX1 radio — it owns the transmitter and the chain
+    /// being borrowed is RX2. While it is on, RX2 is not free for another tab.
+    /// PureSignal also needs [`Self::full_duplex`]: the coupler is only heard
+    /// if receive keeps running through the over.
+    #[serde(default)]
+    pub aux: PlutoAuxConfig,
 }
 
 impl Default for PlutoConfig {
@@ -5423,6 +5445,7 @@ impl Default for PlutoConfig {
             full_duplex: false,
             duplex: PlutoDuplex::default(),
             ptt_gpo: PlutoPtt::default(),
+            aux: PlutoAuxConfig::default(),
         }
     }
 }
@@ -5444,6 +5467,19 @@ impl PlutoConfig {
     /// renders them as sliders — the Pluto settings panel drives them directly.
     pub const AGC_ELEMENT: &'static str = "AGC";
     pub const PPM_ELEMENT: &'static str = "PPM";
+    /// The second chain and what it feeds — the same names a LimeSDR's use, so
+    /// the main window's diversity strip drives either without knowing which
+    /// board is behind it.
+    pub const AUX_GAIN_ELEMENT: &'static str = LimeConfig::AUX_GAIN_ELEMENT;
+    pub const DIV_MODE_ELEMENT: &'static str = DIV_MODE_ELEMENT;
+    pub const DIV_RATE_ELEMENT: &'static str = DIV_RATE_ELEMENT;
+    pub const DIV_TAPS_ELEMENT: &'static str = DIV_TAPS_ELEMENT;
+    pub const DIV_FREEZE_ELEMENT: &'static str = DIV_FREEZE_ELEMENT;
+    pub const DIV_RESET_ELEMENT: &'static str = DIV_RESET_ELEMENT;
+    pub const PS_BINS_ELEMENT: &'static str = LimeConfig::PS_BINS_ELEMENT;
+    pub const PS_RATE_ELEMENT: &'static str = LimeConfig::PS_RATE_ELEMENT;
+    pub const PS_FREEZE_ELEMENT: &'static str = LimeConfig::PS_FREEZE_ELEMENT;
+    pub const PS_RESET_ELEMENT: &'static str = LimeConfig::PS_RESET_ELEMENT;
 
     /// Sample rates offered in the UI.
     ///

@@ -9654,6 +9654,35 @@ configured in exactly the same way as one on your desk.
   the AD9361 ignores a gain written then; set the AGC to *Manual* to use it
   (issue #417).
 
+**Second receive chain (RX2).** On a 2R2T board the RX1 radio can keep RX2 for
+itself rather than leaving it to a second tab (issue #525). **Used for** offers:
+
+- **A second aerial (diversity / QRM suppression)** — RX2's aerial is combined
+  with RX1's by the same adaptive filter the LimeSDR and RSPduo use: *Cancel*
+  nulls a local noise source the second aerial hears, *Combine* adds the two
+  for diversity reception. The filter's controls also appear on the main
+  window's **DIV** strip. Because both chains arrive in the same device buffer,
+  their samples are paired exactly.
+- **Transmit feedback (PureSignal predistortion)** — a directional coupler on
+  the amplifier's output (with enough attenuation) goes into RX2, and the
+  transmitter learns the amplifier's curve from it and pre-bends the signal so
+  what comes out is straight. It needs **Full duplex** on and the **PTT pins**
+  off, because the coupler is only heard while receive keeps running through
+  the over; the correction shows on the PS meter and in the log while you
+  transmit, and stays at unity until the feedback lines up. The **2T** chip
+  beside **TUNE** is the easiest thing to learn from: it transmits the classic
+  two-tone test signal (700 Hz and 1900 Hz together) at the Tune level until
+  clicked again. A steady carrier has only one amplitude, so it teaches
+  PureSignal nothing, and a silent microphone teaches it less.
+
+**RX2 gain** is a fixed gain (RX2's AGC is turned off): for diversity, set it
+so both aerials show about the same noise floor; for PureSignal, start at the
+bottom and keep the coupled signal well out of compression. While RX2 is used
+here it cannot be a second radio tab. Changing what it is used for takes effect
+on Apply; the other controls apply immediately. Diversity has been tried on a
+PlutoSky R2; **PureSignal is not yet verified against hardware** — reports with
+the diagnostic report attached are welcome.
+
 **AD9363 or AD9364.** A stock Pluto is an AD9363 and covers **325 MHz–3.8 GHz**;
 a great many have had the well-known firmware change applied, which turns them
 into an AD9364 covering **70 MHz–6 GHz** with a 56 MHz filter. sdroxide does not
@@ -14792,7 +14821,7 @@ row of menu buttons:
 | **RX** | Volume, front-end gain, AGC, squelch, the filter width and edges, NB, ANC, NR, BIN |
 | **VFO** | A↔B, A→B, SPLIT, SUB, and the RIT/XIT offsets |
 | **SUB** | The second receiver's frequency, mode, filter and level (only while it is running) |
-| **TX** | TUNE, the voice keyer, and the drive, tune and mic levels |
+| **TX** | TUNE, 2T (two-tone), the voice keyer, and the drive, tune and mic levels — in a **TRANSMIT** window you can drag clear of the S-meter, which stays open through an over until you close it or tap **TX** again |
 | **DISP** | ☀ 3D, WIDE, FIT, CTR, the panadapter boxes (the spectrum and waterfall switches, peak hold, their speeds and the detail), the skimmers, and the spectrum floor/ceiling and FFT size |
 | **SYS** | LOG, SPOTS, AWARDS, BANDS, SAT, ISM, PUBLIC SDR, MAIL, MEM, SCAN, SETTINGS, HELP |
 
