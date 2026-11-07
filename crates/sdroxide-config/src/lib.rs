@@ -1574,6 +1574,37 @@ pub struct Profile {
 /// The named profiles defined on this station. Station scope, like the band
 /// stacks: a profile is a way of working the station, not a thing a single
 /// radio owns.
+/// Which radios keep the band/mode selector docked, by roster id, and whether it
+/// was left showing (`false`: docked, then hidden).
+pub fn load_band_dock() -> std::collections::BTreeMap<u32, bool> {
+    load_json("band_dock.json")
+}
+
+pub fn save_band_dock(map: &std::collections::BTreeMap<u32, bool>) -> Result<(), ConfigError> {
+    save_json("band_dock.json", map)
+}
+
+/// Where each tool window was last left — in its own OS window or inside the
+/// main one, and where that OS window was — by the tool's id.
+pub fn load_tool_windows() -> std::collections::BTreeMap<String, sdroxide_types::DetachedState> {
+    load_json("tool_windows.json")
+}
+
+pub fn save_tool_windows(
+    map: &std::collections::BTreeMap<String, sdroxide_types::DetachedState>,
+) -> Result<(), ConfigError> {
+    save_json("tool_windows.json", map)
+}
+
+/// The saved window arrangements — see [`sdroxide_types::Workspace`].
+pub fn load_workspaces() -> Vec<sdroxide_types::Workspace> {
+    load_json_list("workspaces.json")
+}
+
+pub fn save_workspaces(workspaces: &Vec<sdroxide_types::Workspace>) -> Result<(), ConfigError> {
+    save_json("workspaces.json", workspaces)
+}
+
 pub fn load_profiles() -> Vec<Profile> {
     load_json_list("profiles.json")
 }

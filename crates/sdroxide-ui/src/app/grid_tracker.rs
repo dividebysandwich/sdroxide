@@ -217,16 +217,17 @@ impl SdroxideApp {
         };
 
         let mut open = self.show_grid;
+        let tool_title = tr!("gridtracker-grid-tracker");
+        let mut tool_st = self.take_tool_state("GRID TRACKER");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
         let tracker = &mut self.grid_tracker;
-        egui::Window::new(tr!("gridtracker-grid-tracker"))
-            .id(crate::layout::salted_id(ctx, "GRID TRACKER"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 760.0))
-            .default_height(crate::layout::window_h(ctx, 560.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("GRID TRACKER", &tool_title, [760.0, 560.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(tr!("gridtracker-worked", worked = worked.len()))
@@ -262,7 +263,9 @@ impl SdroxideApp {
                         .size(10.0)
                         .color(theme::gray(150)),
                 );
-            });
+            },
+        );
+        self.put_tool_state("GRID TRACKER", tool_st);
         self.show_grid = open;
     }
 }

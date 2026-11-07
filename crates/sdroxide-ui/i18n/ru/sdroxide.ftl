@@ -5458,6 +5458,72 @@ wheel-action-zoom = Масштаб
 wheel-action-tune = Настройка
 wheel-action-none = Ничего
 
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = DOCK — вернуть выбор диапазона и режима в главное окно, так же, как закрытие этого окна, без поиска кнопки закрытия.
+frame-dock-panel-hint = DOCK — вернуть эту панель обратно под водопад
+frame-dock-spectrum-hint = DOCK — вернуть этот спектр в главное окно, так же, как закрытие этого окна, без поиска кнопки закрытия.
+frame-every-module-own-window = каждый модуль в своём окне
+frame-module-aux-panadapter = доп. панадаптер
+frame-module-band-mode = диапазон и режим
+frame-module-controls = управление
+frame-module-panadapter = панадаптер
+frame-module-panel = панель
+multi-dock-all-windows = ПРИСТЫКОВАТЬ ВСЕ ОКНА
+multi-module-panel = Рабочая панель
+multi-undock-all-windows = ОТСТЫКОВАТЬ ВСЕ ОКНА
+settings-ui-dock-all-hint = Вернуть все отстыкованные окна в это окно.
+settings-ui-docked = Пристыковано в этом окне
+settings-ui-module-aux = AUX SP (второй спектр)
+settings-ui-module-band-menu = Выбор диапазона и режима
+settings-ui-module-controls = Управление
+settings-ui-module-panadapter = Панадаптер
+settings-ui-undock-all-hint = Поместить каждый модуль в отдельное окно — главное окно останется со спектром и декодерами. Модуль, которому нечего показывать, например рабочая панель в голосовом режиме, окна не открывает.
+settings-ui-undock-hint =
+    После отстыковки этот модуль перемещается в своё окно, а главное окно отдаёт освободившееся место остальному — поместите водопад на второй монитор или управление на третий. Закрытие его окна пристыковывает его обратно.
+
+    В Wayland размер восстанавливается, но место окна решает композитор: сделайте его плавающим и закрепите за монитором правилом окна с app-id "{ $app_id }".
+settings-ui-undocked = Отстыковано — своё окно
+settings-ui-window-label = Окно { $module }
+frame-window-chip-hint = WINDOW — вынести это окно в отдельное окно ОС, чтобы разместить его на другом мониторе
+frame-dock-panel-pane-hint = DOCK — вернуть эту панель в область под водопадом
+frame-panel-window-title = { $mode } — панель
+frame-roll-up-hint = Свернуть — убрать заголовок и вернуть окно водопаду
+frame-unroll-hint = Развернуть — снова показать панель
+frame-window-panel-hint = WINDOW — выделить этой панели отдельное окно, чтобы разместить на другом мониторе
+topbar-dock-all = ПРИСТЫКОВАТЬ ВСЕ
+topbar-dock-all-hint = Вернуть все окна модулей в это окно
+topbar-module-windows-title = Окна модулей
+topbar-undock-all = ОТСТЫКОВАТЬ ВСЕ
+topbar-undock-all-hint = Поместить каждый модуль в отдельное окно — это окно останется со спектром и декодерами
+topbar-windows-chip-hint =
+    ▣  Левая: вернуть все окна модулей домой
+    Правая: список окон модулей
+topbar-wname-aux = SP2 (AUX) — второй спектр
+topbar-wname-band-menu = Диапазон и режим
+topbar-wname-controls = Управление RX
+topbar-wname-panadapter = SP1 — спектр
+topbar-wname-panel = Рабочая панель
+topbar-wstate-float = Вынуть { $name } из области и сделать плавающим над этим окном
+topbar-wstate-floating-panel-only = Плавающее состояние — только у рабочей панели; у спектра или консоли в этом окне одно место
+topbar-wstate-here-now = { $name } сейчас здесь
+topbar-wstate-no-panel = В режиме { $mode } нет рабочей панели — это применимо в режиме, где она есть
+topbar-wstate-own-window = Дать { $name } отдельное окно на любом мониторе
+topbar-wstate-put-back = Вернуть { $name } в это окно
+frame-workspace-missing = Рабочее пространство { $n } не сохранено — сохраните его в Настройки › UI › Рабочие пространства, и эта клавиша вызовет его обратно.
+settings-ui-workspaces = Рабочие пространства
+settings-ui-workspaces-note = Именованная раскладка окон — какие модули в отдельных окнах и где эти окна находятся. Сохраните текущую или верните сохранённую. До десяти.
+settings-ui-workspaces-none = Рабочих пространств пока не сохранено.
+settings-ui-workspace-restore-home = Вернуть эту раскладку — все модули в главном окне
+settings-ui-workspace-restore-out = Вернуть эту раскладку — модулей в отдельных окнах: { $n }
+settings-ui-workspace-forget = Забыть это рабочее пространство
+settings-ui-workspace-name = назовите эту раскладку
+settings-ui-workspace-full = Десять рабочих пространств — предел, который хранит SDRuno; сначала удалите одно
+settings-ui-workspace-save = СОХРАНИТЬ ТЕКУЩУЮ
+settings-ui-workspace-save-hint = Сохранить текущую раскладку под этим именем
+settings-ui-workspace-name-first = Сначала введите имя
+topbar-band-window2-hint = WINDOW — открыть выбор в отдельном окне любой ширины на любом мониторе
+
 ## VARA HF panel
 
 vara-starting = Запуск модема VARA…

@@ -5455,6 +5455,72 @@ wheel-action-zoom = Zoomen
 wheel-action-tune = Afstemmen
 wheel-action-none = Niets
 
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = DOCK — zet de band- en modusselectie terug in het hoofdvenster, hetzelfde als dit venster sluiten zonder het sluitvakje te zoeken.
+frame-dock-panel-hint = DOCK — zet dit paneel terug onder de waterval
+frame-dock-spectrum-hint = DOCK — zet dit spectrum terug in het hoofdvenster, hetzelfde als dit venster sluiten zonder het sluitvakje te zoeken.
+frame-every-module-own-window = elke module staat in een eigen venster
+frame-module-aux-panadapter = aux-panadapter
+frame-module-band-mode = band & modus
+frame-module-controls = bediening
+frame-module-panadapter = panadapter
+frame-module-panel = paneel
+multi-dock-all-windows = ALLE VENSTERS DOCKEN
+multi-module-panel = Bedieningspaneel
+multi-undock-all-windows = ALLE VENSTERS LOSKOPPELEN
+settings-ui-dock-all-hint = Breng elk losgekoppeld venster terug in dit venster.
+settings-ui-docked = Gedockt in dit venster
+settings-ui-module-aux = AUX SP (tweede spectrum)
+settings-ui-module-band-menu = Band- en modusselectie
+settings-ui-module-controls = Bediening
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Zet elke module in een eigen venster — het hoofdvenster blijft over als het spectrum en de decoders. Een module zonder iets om te tonen, zoals het bedieningspaneel in een spraakmodus, opent geen venster.
+settings-ui-undock-hint =
+    Losgekoppeld verhuist deze module naar een eigen venster en geeft het hoofdvenster de ruimte terug aan wat overblijft — zet de waterfall op een tweede monitor, of de bediening op een derde. Het venster sluiten koppelt de module weer vast.
+
+    Onder Wayland komt de grootte terug, maar de compositor bepaalt waar een venster komt: laat het zweven en zet het vast op een monitor met een vensterregel die overeenkomt met app-id "{ $app_id }".
+settings-ui-undocked = Losgekoppeld — eigen venster
+settings-ui-window-label = Venster { $module }
+frame-window-chip-hint = VENSTER — verplaats dit venster naar een eigen OS-venster, om het op een andere monitor te zetten
+frame-dock-panel-pane-hint = DOCK — zet dit paneel terug in het vlak onder de waterval
+frame-panel-window-title = { $mode } — paneel
+frame-roll-up-hint = Oprollen — verlaat de titelbalk en geef het venster terug aan de waterval
+frame-unroll-hint = Uitrollen — toon het paneel weer
+frame-window-panel-hint = VENSTER — geef dit paneel een eigen venster, om op een andere monitor te zetten
+topbar-dock-all = ALLES VASTZETTEN
+topbar-dock-all-hint = Breng elk modulevenster terug in dit venster
+topbar-module-windows-title = Modulevensters
+topbar-undock-all = ALLES LOSKOPPELEN
+topbar-undock-all-hint = Zet elke module in een eigen venster — dit venster houdt alleen het spectrum en de decoders
+topbar-windows-chip-hint =
+    ▣  Links: breng elk modulevenster naar huis
+    Rechts: de lijst met modulevensters
+topbar-wname-aux = SP2 (AUX) — een tweede spectrum
+topbar-wname-band-menu = Band en modus
+topbar-wname-controls = RX-bediening
+topbar-wname-panadapter = SP1 — het spectrum
+topbar-wname-panel = Bedieningspaneel
+topbar-wstate-float = Til { $name } uit het paneel en laat het zweven boven dit venster
+topbar-wstate-floating-panel-only = Zweven is de eigen toestand van het bedieningspaneel — een spectrum of een console heeft één plek in dit venster
+topbar-wstate-here-now = { $name } is nu hier
+topbar-wstate-no-panel = Geen bedieningspaneel in { $mode } — dit geldt in een modus die er een heeft
+topbar-wstate-own-window = Geef { $name } een eigen venster, op elke monitor
+topbar-wstate-put-back = Zet { $name } terug in dit venster
+frame-workspace-missing = Geen werkruimte { $n } opgeslagen — sla er een op in Instellingen › UI › Werkruimtes en deze toets roept hem terug.
+settings-ui-workspaces = Werkruimtes
+settings-ui-workspaces-note = Een benoemde vensterindeling — welke modules in eigen vensters staan en waar die vensters zijn. Sla de huidige op, of zet een opgeslagen indeling terug. Maximaal tien.
+settings-ui-workspaces-none = Nog geen werkruimtes opgeslagen.
+settings-ui-workspace-restore-home = Zet deze indeling terug — elke module in het hoofdvenster
+settings-ui-workspace-restore-out = Zet deze indeling terug — { $n } module(s) in eigen venster(s)
+settings-ui-workspace-forget = Deze werkruimte vergeten
+settings-ui-workspace-name = geef deze indeling een naam
+settings-ui-workspace-full = Tien werkruimtes is de limiet die SDRuno bewaart; verwijder er eerst een
+settings-ui-workspace-save = HUIDIGE OPSLAAN
+settings-ui-workspace-save-hint = Sla de huidige indeling onder deze naam op
+settings-ui-workspace-name-first = Typ eerst een naam
+topbar-band-window2-hint = VENSTER — open de selectie in een eigen venster, zo breed als je wilt, op elke monitor
+
 ## VARA HF panel
 
 vara-starting = VARA-modem start…

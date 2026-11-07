@@ -60,6 +60,62 @@ pub(in crate::app) fn settings_ui_tab(
         enum_combo(ui, "ui-win-style", &mut cfg.window_style, &ChromeStyle::ALL, ChromeStyle::tr);
         ui.end_row();
 
+        // The **undocked** modules. A window arrangement, chosen once and kept,
+        // rather than something reached for mid-QSO — so it lives here with the
+        // other display settings. One row per [`DetachableModule`], so the next
+        // detachable module appears here for free. Native only: the browser
+        // keeps every module in its one window.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use sdroxide_types::DetachableModule;
+            for module in DetachableModule::ALL {
+                let mut on = cfg.is_detached(module);
+                ui.label(tr!("settings-ui-window-label", module = module_label(module)));
+                ComboBox::from_id_salt(("ui-undocked", module))
+                    .selected_text(if on {
+                        tr!("settings-ui-undocked")
+                    } else {
+                        tr!("settings-ui-docked")
+                    })
+                    .show_styled(ui, |ui| {
+                        ui.selectable_value(&mut on, false, tr!("settings-ui-docked"));
+                        ui.selectable_value(&mut on, true, tr!("settings-ui-undocked"));
+                    })
+                    .response
+                    .on_hover_text(tr!("settings-ui-undock-hint", app_id = module.app_id()));
+                cfg.set_detached(module, on);
+                ui.end_row();
+            }
+            // Both directions at once, for arranging a whole screen in one
+            // press: every module out, or every module home. Shown only while
+            // they would do something, so neither is a button that changes
+            // nothing.
+            let any_out = DetachableModule::ALL.iter().any(|m| cfg.is_detached(*m));
+            let any_in = DetachableModule::ALL.iter().any(|m| !cfg.is_detached(*m));
+            ui.label("");
+            ui.horizontal(|ui| {
+                if any_out
+                    && crate::chrome::chip(ui, false, tr!("multi-dock-all-windows"))
+                        .on_hover_text(tr!("settings-ui-dock-all-hint"))
+                        .clicked()
+                {
+                    for m in DetachableModule::ALL {
+                        cfg.set_detached(m, false);
+                    }
+                }
+                if any_in
+                    && crate::chrome::chip(ui, false, tr!("multi-undock-all-windows"))
+                        .on_hover_text(tr!("settings-ui-undock-all-hint"))
+                        .clicked()
+                {
+                    for m in DetachableModule::ALL {
+                        cfg.set_detached(m, true);
+                    }
+                }
+            });
+            ui.end_row();
+        }
+
         ui.label(tr!("settings-ui-frame-rate"));
         ComboBox::from_id_salt("ui-fps")
             .selected_text(format!("{fps} fps", fps = cfg.frame_rate_fps))
@@ -498,4 +554,113 @@ fn language_combo(ui: &mut egui::Ui, cur: &mut sdroxide_types::UiLanguage) {
             }
         }
     });
+}
+
+/// **Workspaces** — SDRuno's saved window arrangements: which modules are in
+/// their own OS windows and where those windows are. Save captures the
+/// arrangement as it stands; a name is a chip that puts it back. Kept with the
+/// undocked rows it acts on: the same subject, one screen. The first ten are
+/// also on `Ctrl+Alt+1…9, 0`.
+///
+/// Native only, like the undocked rows — the browser has one window and nothing
+/// to arrange.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn workspaces_section(
+    ui: &mut egui::Ui,
+    cfg: &mut sdroxide_types::UiSettings,
+    workspaces: &mut Vec<sdroxide_types::Workspace>,
+    name: &mut String,
+) {
+    use sdroxide_types::{WORKSPACE_MAX, Workspace};
+    ui.label(
+        RichText::new(tr!("settings-ui-workspaces"))
+            .size(14.0)
+            .strong()
+            .color(crate::theme::CYAN()),
+    );
+    ui.add_space(2.0);
+    ui.label(RichText::new(tr!("settings-ui-workspaces-note")).size(11.0).weak());
+    ui.add_space(6.0);
+
+    if workspaces.is_empty() {
+        ui.label(RichText::new(tr!("settings-ui-workspaces-none")).size(11.0).weak());
+    }
+    let mut apply: Option<usize> = None;
+    let mut delete: Option<usize> = None;
+    for (i, ws) in workspaces.iter().enumerate() {
+        ui.horizontal(|ui| {
+            // The key that recalls it, so the list doubles as the key map.
+            let key = if i < 9 { format!("{}", i + 1) } else { "0".to_string() };
+            ui.label(RichText::new(format!("Ctrl+Alt+{key}")).monospace().size(11.0).weak());
+            let out = ws.slots.iter().filter(|s| s.detached).count();
+            let chip =
+                crate::chrome::chip(ui, false, ws.name.as_str()).on_hover_text(if out == 0 {
+                    tr!("settings-ui-workspace-restore-home").to_string()
+                } else {
+                    tr!("settings-ui-workspace-restore-out", n = out)
+                });
+            if chip.clicked() {
+                apply = Some(i);
+            }
+            if crate::chrome::chip(ui, false, "×")
+                .on_hover_text(tr!("settings-ui-workspace-forget"))
+                .clicked()
+            {
+                delete = Some(i);
+            }
+        });
+    }
+
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        crate::chrome::field_sized(
+            ui,
+            egui::vec2(220.0, 0.0),
+            egui::TextEdit::singleline(name).hint_text(tr!("settings-ui-workspace-name")),
+        );
+        let named = !name.trim().is_empty();
+        let replaces = workspaces.iter().any(|w| w.name == name.trim());
+        let full = workspaces.len() >= WORKSPACE_MAX && !replaces;
+        let can_save = named && !full;
+        let save =
+            crate::chrome::chip_enabled(ui, can_save, false, &tr!("settings-ui-workspace-save"))
+                .on_hover_text(if full {
+                    tr!("settings-ui-workspace-full")
+                } else if named {
+                    tr!("settings-ui-workspace-save-hint").to_string()
+                } else {
+                    tr!("settings-ui-workspace-name-first").to_string()
+                });
+        if save.clicked() {
+            let n = name.trim().to_string();
+            // Saving over an existing name replaces it rather than making a
+            // duplicate row the operator then has to tell apart.
+            if let Some(slot) = workspaces.iter_mut().find(|w| w.name == n) {
+                *slot = Workspace::capture(n, cfg);
+            } else {
+                workspaces.push(Workspace::capture(n, cfg));
+            }
+            name.clear();
+        }
+    });
+
+    if let Some(i) = delete {
+        workspaces.remove(i);
+    }
+    if let Some(i) = apply {
+        workspaces[i].apply(cfg);
+    }
+}
+
+/// A detachable module's name in the settings rows, in the interface language.
+#[cfg(not(target_arch = "wasm32"))]
+fn module_label(m: sdroxide_types::DetachableModule) -> String {
+    use sdroxide_types::DetachableModule as M;
+    match m {
+        M::Panadapter => tr!("settings-ui-module-panadapter"),
+        M::Panel => tr!("multi-module-panel"),
+        M::Controls => tr!("settings-ui-module-controls"),
+        M::AuxPanadapter => tr!("settings-ui-module-aux"),
+        M::BandMenu => tr!("settings-ui-module-band-menu"),
+    }
 }

@@ -5465,6 +5465,72 @@ wheel-action-zoom = Zoom
 wheel-action-tune = Sintonia
 wheel-action-none = Nulla
 
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = ACCORPA — riporta il selettore di banda e modo nella finestra principale, come chiudere questa senza cercare il suo pulsante di chiusura.
+frame-dock-panel-hint = ACCORPA — rimette questo pannello sotto il waterfall
+frame-dock-spectrum-hint = ACCORPA — riporta questo spettro nella finestra principale, come chiudere questa senza cercare il suo pulsante di chiusura.
+frame-every-module-own-window = ogni modulo è nella sua finestra
+frame-module-aux-panadapter = panadapter aux
+frame-module-band-mode = banda e modo
+frame-module-controls = controlli
+frame-module-panadapter = panadapter
+frame-module-panel = pannello
+multi-dock-all-windows = ACCORPA TUTTE LE FINESTRE
+multi-module-panel = Pannello operativo
+multi-undock-all-windows = SGANCIA TUTTE LE FINESTRE
+settings-ui-dock-all-hint = Riporta ogni finestra sganciata in questa.
+settings-ui-docked = Accorpato in questa finestra
+settings-ui-module-aux = AUX SP (secondo spettro)
+settings-ui-module-band-menu = Selettore di banda e modo
+settings-ui-module-controls = Controlli
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Metti ogni modulo in una finestra propria: la finestra principale resta con lo spettro e i decodificatori. Un modulo senza nulla da mostrare, come il pannello operativo in un modo voce, non apre alcuna finestra.
+settings-ui-undock-hint =
+    Sganciato, questo modulo si sposta nella sua finestra e la finestra principale restituisce lo spazio a ciò che resta: metti il waterfall su un secondo monitor, o i controlli su un terzo. Chiudere la sua finestra lo riaccorpa.
+
+    Su Wayland la dimensione viene ripristinata ma è il compositor a decidere dove va una finestra: rendila flottante e fissala a un monitor con una regola di finestra che corrisponda all'app-id "{ $app_id }".
+settings-ui-undocked = Sganciato — finestra propria
+settings-ui-window-label = finestra { $module }
+frame-window-chip-hint = FINESTRA — sposta questa finestra in una finestra del sistema operativo a sé, per metterla su un altro monitor
+frame-dock-panel-pane-hint = ACCORPA — riporta questo pannello nel riquadro sotto il waterfall
+frame-panel-window-title = { $mode } — pannello
+frame-roll-up-hint = Arrotola — lascia la barra del titolo e restituisce la finestra al waterfall
+frame-unroll-hint = Srotola — mostra di nuovo il pannello
+frame-window-panel-hint = FINESTRA — dà a questo pannello una finestra propria, da mettere su un altro monitor
+topbar-dock-all = ACCORPA TUTTO
+topbar-dock-all-hint = Riporta ogni finestra di modulo in questa finestra
+topbar-module-windows-title = Finestre dei moduli
+topbar-undock-all = SGANCIA TUTTO
+topbar-undock-all-hint = Metti ogni modulo in una finestra propria: questa finestra resta con lo spettro e i decodificatori
+topbar-windows-chip-hint =
+    ▣  Sinistro: riporta a casa ogni finestra di modulo
+    Destro: l'elenco delle finestre dei moduli
+topbar-wname-aux = SP2 (AUX) — un secondo spettro
+topbar-wname-band-menu = Banda e modo
+topbar-wname-controls = Controllo RX
+topbar-wname-panadapter = SP1 — lo spettro
+topbar-wname-panel = Pannello operativo
+topbar-wstate-float = Solleva { $name } dal riquadro e fallo fluttuare sopra questa finestra
+topbar-wstate-floating-panel-only = Flottante è lo stato proprio del pannello operativo: uno spettro o una console ha un solo posto in questa finestra
+topbar-wstate-here-now = { $name } è qui adesso
+topbar-wstate-no-panel = Nessun pannello operativo in { $mode }: si applica in un modo che ne ha uno
+topbar-wstate-own-window = Dai a { $name } una finestra propria, su qualsiasi monitor
+topbar-wstate-put-back = Rimetti { $name } in questa finestra
+frame-workspace-missing = Nessuno spazio di lavoro { $n } salvato: salvane uno in Impostazioni › UI › Spazi di lavoro e questo tasto lo richiamerà.
+settings-ui-workspaces = Spazi di lavoro
+settings-ui-workspaces-note = Una disposizione di finestre con nome: quali moduli sono nelle proprie finestre e dove si trovano. Salva quella che hai, o ripristinane una salvata. Fino a dieci.
+settings-ui-workspaces-none = Ancora nessuno spazio di lavoro salvato.
+settings-ui-workspace-restore-home = Ripristina questa disposizione — ogni modulo nella finestra principale
+settings-ui-workspace-restore-out = Ripristina questa disposizione — { $n } modulo/i nella/e propria/e finestra/e
+settings-ui-workspace-forget = Dimentica questo spazio di lavoro
+settings-ui-workspace-name = dai un nome a questa disposizione
+settings-ui-workspace-full = Dieci spazi di lavoro è il limite che SDRuno conserva; eliminane uno prima
+settings-ui-workspace-save = SALVA ATTUALE
+settings-ui-workspace-save-hint = Salva la disposizione attuale con questo nome
+settings-ui-workspace-name-first = Scrivi prima un nome
+topbar-band-window2-hint = FINESTRA — apre il selettore in una finestra propria, larga quanto vuoi, su qualsiasi monitor
+
 ## VARA HF panel
 
 vara-starting = Avvio del modem VARA…

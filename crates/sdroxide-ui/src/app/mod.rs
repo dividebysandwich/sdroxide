@@ -48,6 +48,7 @@ pub(in crate::app) mod speech;
 pub(in crate::app) mod spots;
 pub(in crate::app) mod top_bar;
 pub(in crate::app) mod tx_audio;
+pub(in crate::app) mod undocked;
 pub(crate) mod util;
 pub(in crate::app) mod windows;
 pub(in crate::app) mod winlink;
@@ -568,6 +569,36 @@ pub struct SdroxideApp {
     /// it, so widening the window again brings it back.
     band_docked: bool,
     band_dock_visible: bool,
+    /// AUX SP's own view of the spectrum — its zoom, pan and layers — swapped
+    /// in for `view` while its window draws, so the two spectra do not mirror
+    /// each other (see `undocked::show_detached_module`).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    aux_view: ViewState,
+    /// The pane the undocked operating panel shows, swapped in for
+    /// `view.digi_pane` while its window draws: that window may sit on the
+    /// decode list while the main window shows another pane.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    panel_window_pane: usize,
+    /// Each tool window's docked/undocked state, by its id — see
+    /// `undocked::tool_window`. Session-only.
+    tool_windows: std::collections::HashMap<String, undocked::ToolWindowState>,
+    /// The operating panel lifted out of its pane as a **floating panel inside
+    /// this window** — an `egui::Window` the window manager knows nothing about,
+    /// so a tiling compositor cannot lose it. See
+    /// `undocked::floating_panel_window`. Session-only.
+    panel_floating: bool,
+    /// The floating panel rolled up to its title bar.
+    panel_rolled: bool,
+    /// Whether the **module windows** list is open — the ▣ chip's list, also
+    /// on `Ctrl+Alt+W`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    show_windows: bool,
+    /// The saved window arrangements (`workspaces.json`), edited on Settings →
+    /// UI and recalled with `Ctrl+Alt+1…9, 0`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    workspaces: Vec<sdroxide_types::Workspace>,
+    /// The name being typed for the next workspace to save.
+    workspace_name: String,
     /// How wide the docked column may be this frame, or `None` where it cannot
     /// dock — see [`top_bar::band_dock_room`]. Settled at the top of the frame
     /// from this app's own column, before the top bar draws the chip that
@@ -1364,6 +1395,7 @@ impl SdroxideApp {
         // reads them, or the first frame flashes the default theme at the
         // default scale.
         let ui_settings = load_ui_settings(storage);
+        let band_dock = persist::load_band_dock();
         crate::theme::set_look(
             ui_settings.theme,
             ui_settings.button_style,
@@ -1562,8 +1594,25 @@ impl SdroxideApp {
             bw_popup_since: None,
             duplex_popup_since: None,
             rpt_tone_popup_since: None,
-            band_docked: false,
-            band_dock_visible: false,
+            // A station that keeps the band/mode selector docked gets it back
+            // on the next start — per radio, and presentation only: the dock's
+            // own width rule (`band_dock_room`) still decides whether there is
+            // room for it this frame. (SWL users group, via sdroxide-brown.)
+            band_docked: band_dock.contains_key(&radio_id),
+            band_dock_visible: band_dock.get(&radio_id).copied().unwrap_or(false),
+            aux_view: ViewState::default(),
+            panel_window_pane: 0,
+            // Where each tool window was left last time — in its own window or
+            // in this one — so it opens there again.
+            tool_windows: persist::load_tool_windows()
+                .into_iter()
+                .map(|(id, s)| (id, s.into()))
+                .collect(),
+            panel_floating: false,
+            panel_rolled: false,
+            show_windows: false,
+            workspaces: persist::load_workspaces(),
+            workspace_name: String::new(),
             band_dock_room: None,
             // Corrected on the first frame, once the viewport size is known.
             tier: crate::layout::Tier::Desktop,

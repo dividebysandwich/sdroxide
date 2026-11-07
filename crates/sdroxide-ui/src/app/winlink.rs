@@ -136,20 +136,22 @@ impl crate::app::SdroxideApp {
         // folder is empty.
         let min_h = crate::layout::window_h(ctx, 520.0);
         let mut open = self.mail.open;
-        egui::Window::new(tr!("winlink-mail"))
-            .id(crate::layout::salted_id(ctx, "MAIL"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 860.0))
-            .default_height(crate::layout::window_h(ctx, 640.0))
-            .min_width(crate::layout::window_w(ctx, 420.0))
-            .min_height(min_h)
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+        let tool_title = tr!("winlink-mail");
+        let mut tool_st = self.take_tool_state("MAIL");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("MAIL", &tool_title, [860.0, 640.0])
+                .min_size([420.0, 520.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 ui.set_min_height(min_h);
                 self.mail_body(ui, cmds);
-            });
+            },
+        );
+        self.put_tool_state("MAIL", tool_st);
         self.mail.open = open;
     }
 
@@ -671,17 +673,17 @@ impl crate::app::SdroxideApp {
         }
 
         let mut open = self.mail.log_open;
-        egui::Window::new(tr!("winlink-mail-log"))
-            .id(crate::layout::salted_id(ctx, "MAIL-LOG"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 560.0))
-            .default_height(crate::layout::window_h(ctx, 420.0))
-            .min_width(crate::layout::window_w(ctx, 320.0))
-            .min_height(crate::layout::window_h(ctx, 200.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+        let tool_title = tr!("winlink-mail-log");
+        let mut tool_st = self.take_tool_state("MAIL-LOG");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("MAIL-LOG", &tool_title, [560.0, 420.0])
+                .min_size([320.0, 200.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 ui.set_min_height(crate::layout::window_h(ctx, 200.0));
 
                 if self.mail.status.busy {
@@ -723,7 +725,9 @@ impl crate::app::SdroxideApp {
                             );
                         }
                     });
-            });
+            },
+        );
+        self.put_tool_state("MAIL-LOG", tool_st);
         self.mail.log_open = open;
     }
 }

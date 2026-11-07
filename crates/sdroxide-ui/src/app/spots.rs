@@ -290,15 +290,16 @@ impl SdroxideApp {
             (SpotKind::FreeDv, &tr!("spots-freedv")),
             (SpotKind::Broadcast, "BC"),
         ];
-        let resp = egui::Window::new(tr!("spots-spots"))
-            .id(crate::layout::salted_id(ctx, "SPOTS"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 580.0))
-            .default_height(crate::layout::window_h(ctx, 480.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
+        let tool_title = tr!("spots-spots");
+        let mut tool_st = self.take_tool_state("SPOTS");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("SPOTS", &tool_title, [580.0, 480.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| {
                 ui.horizontal(|ui| {
                     for (i, (kind, label)) in labels.iter().enumerate() {
                         let chip = crate::chrome::chip(ui, self.view.spot_kinds_shown[i], *label);
@@ -394,10 +395,9 @@ impl SdroxideApp {
                         ui.label(RichText::new(msg).color(crate::theme::gray(120)));
                     }
                 });
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+            },
+        );
+        self.put_tool_state("SPOTS", tool_st);
         self.show_spots = open;
         if open_setup {
             // Open the main Settings dialog on the Spots tab.

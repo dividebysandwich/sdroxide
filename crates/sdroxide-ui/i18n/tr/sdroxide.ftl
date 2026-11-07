@@ -5454,6 +5454,72 @@ wheel-action-zoom = Yakınlaştır
 wheel-action-tune = Ayarla
 wheel-action-none = Hiçbiri
 
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = YERLEŞTİR — bant ve mod seçiciyi ana pencereye geri döndürün; kapatma kutusunu aramadan bunu kapatmakla aynı.
+frame-dock-panel-hint = YERLEŞTİR — bu paneli şelalenin altına geri koyun
+frame-dock-spectrum-hint = YERLEŞTİR — bu spektrumu ana pencereye geri döndürün; kapatma kutusunu aramadan bunu kapatmakla aynı.
+frame-every-module-own-window = her modül kendi penceresinde
+frame-module-aux-panadapter = yardımcı panadaptör
+frame-module-band-mode = bant ve mod
+frame-module-controls = kontroller
+frame-module-panadapter = panadaptör
+frame-module-panel = panel
+multi-dock-all-windows = TÜM PENCERELERİ YERLEŞTİR
+multi-module-panel = İşletim paneli
+multi-undock-all-windows = TÜM PENCERELERİ AYIR
+settings-ui-dock-all-hint = Ayrılmış her pencereyi bu pencereye geri getirir.
+settings-ui-docked = Bu pencerede yerleşik
+settings-ui-module-aux = AUX SP (ikinci spektrum)
+settings-ui-module-band-menu = Bant ve mod seçici
+settings-ui-module-controls = Kontroller
+settings-ui-module-panadapter = Panadaptör
+settings-ui-undock-all-hint = Her modülü kendi penceresine koyar — ana pencerede spektrum ve çözücüler kalır. Bir ses modundaki işletim paneli gibi gösterecek bir şeyi olmayan modül pencere açmaz.
+settings-ui-undock-hint =
+    Ayrıldığında bu modül kendi penceresine taşınır ve ana pencere boşluğu kalanlara geri verir — şelaleyi ikinci bir monitöre, kontrolleri üçüncüye koyun. Penceresini kapatmak onu yeniden yerleştirir.
+
+    Wayland'de boyut geri gelir ama bir pencerenin nereye gideceğine compositor karar verir: onu yüzdürüp app-id "{ $app_id }" ile eşleşen bir pencere kuralıyla bir monitöre sabitleyin.
+settings-ui-undocked = Ayrılmış — kendi penceresi
+settings-ui-window-label = { $module } penceresi
+frame-window-chip-hint = PENCERE — bu pencereyi kendi işletim sistemi penceresine taşıyın, başka bir monitöre koymak için
+frame-dock-panel-pane-hint = YERLEŞTİR — bu paneli şelalenin altındaki bölmeye geri döndürün
+frame-panel-window-title = { $mode } — panel
+frame-roll-up-hint = Yukarı sar — başlık çubuğunu bırakıp pencereyi şelaleye geri verin
+frame-unroll-hint = Aç — paneli yeniden gösterin
+frame-window-panel-hint = PENCERE — bu panele kendi penceresini verin, başka bir monitöre koymak için
+topbar-dock-all = TÜMÜNÜ YERLEŞTİR
+topbar-dock-all-hint = Her modül penceresini bu pencereye geri getirir
+topbar-module-windows-title = Modül pencereleri
+topbar-undock-all = TÜMÜNÜ AYIR
+topbar-undock-all-hint = Her modülü kendi penceresine koyar — bu pencerede spektrum ve çözücüler kalır
+topbar-windows-chip-hint =
+    ▣  Sol: her modül penceresini eve getir
+    Sağ: modül pencereleri listesi
+topbar-wname-aux = SP2 (AUX) — ikinci bir spektrum
+topbar-wname-band-menu = Bant ve mod
+topbar-wname-controls = RX kontrolü
+topbar-wname-panadapter = SP1 — spektrum
+topbar-wname-panel = İşletim paneli
+topbar-wstate-float = { $name } öğesini bölmeden çıkarıp bu pencerenin üzerinde yüzdür
+topbar-wstate-floating-panel-only = Yüzdürme işletim panelinin kendi durumudur — bir spektrum ya da konsolun bu pencerede tek bir yeri vardır
+topbar-wstate-here-now = { $name } şu an burada
+topbar-wstate-no-panel = { $mode } modunda işletim paneli yok — bu, paneli olan bir modda geçerlidir
+topbar-wstate-own-window = { $name } öğesine herhangi bir monitörde kendi penceresini ver
+topbar-wstate-put-back = { $name } öğesini bu pencereye geri koy
+frame-workspace-missing = { $n } numaralı çalışma alanı kaydedilmedi — Ayarlar › UI › Çalışma alanları'nda bir tane kaydedin, bu tuş onu geri çağırır.
+settings-ui-workspaces = Çalışma alanları
+settings-ui-workspaces-note = Adlandırılmış bir pencere düzeni — hangi modüllerin kendi pencerelerinde olduğu ve o pencerelerin nerede olduğu. Sahip olduğunuzu kaydedin ya da kayıtlı birini geri koyun. En fazla on.
+settings-ui-workspaces-none = Henüz kayıtlı çalışma alanı yok.
+settings-ui-workspace-restore-home = Bu düzeni geri koy — her modül ana pencerede
+settings-ui-workspace-restore-out = Bu düzeni geri koy — kendi pencerelerinde { $n } modül
+settings-ui-workspace-forget = Bu çalışma alanını unut
+settings-ui-workspace-name = bu düzene ad ver
+settings-ui-workspace-full = On çalışma alanı SDRuno'nun tuttuğu sınırdır; önce birini silin
+settings-ui-workspace-save = MEVCUDU KAYDET
+settings-ui-workspace-save-hint = Şu anki düzeni bu adla kaydet
+settings-ui-workspace-name-first = Önce bir ad yazın
+topbar-band-window2-hint = PENCERE — seçiciyi herhangi bir monitörde, istediğiniz genişlikte kendi penceresinde açın
+
 ## VARA HF panel
 
 vara-starting = VARA modemi başlatılıyor…

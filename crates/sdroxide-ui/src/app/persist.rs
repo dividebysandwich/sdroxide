@@ -537,6 +537,163 @@ pub(in crate::app) fn band_plan_path() -> Option<std::path::PathBuf> {
     None
 }
 
+// ── The band/mode selector's dock, per radio ─────────────────────────────────
+
+/// Which radios keep the band/mode selector docked, and whether it is showing.
+/// A file of its own rather than a `UiSettings` field, because `UiSettings` is
+/// `Copy` and a map is not. Native only: the browser keeps the dock for the
+/// session, as it always has.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_band_dock() -> std::collections::BTreeMap<u32, bool> {
+    sdroxide_config::load_band_dock()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_band_dock() -> std::collections::BTreeMap<u32, bool> {
+    Default::default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn save_band_dock(map: &std::collections::BTreeMap<u32, bool>) {
+    if let Err(e) = sdroxide_config::save_band_dock(map) {
+        eprintln!("failed to save the band dock: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn save_band_dock(_map: &std::collections::BTreeMap<u32, bool>) {}
+
+/// Fold one radio's dock state into the stored map; true when it changed.
+///
+/// Present means the operator docked the selector for that radio, so it comes
+/// back docked on the next start; the value is whether it was left showing —
+/// docked-then-hidden is a state of its own and comes back hidden, with the
+/// chip that brings it back. An undocked radio leaves the map.
+pub(in crate::app) fn band_dock_entry(
+    map: &mut std::collections::BTreeMap<u32, bool>,
+    radio: u32,
+    docked: bool,
+    visible: bool,
+) -> bool {
+    if docked { map.insert(radio, visible) != Some(visible) } else { map.remove(&radio).is_some() }
+}
+
+// ── Tool windows: docked or in their own window ──────────────────────────────
+
+/// Where each tool window was last left, by its id. Native only: the browser
+/// has one window, so every tool there is docked.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_tool_windows()
+-> std::collections::BTreeMap<String, sdroxide_types::DetachedState> {
+    sdroxide_config::load_tool_windows()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_tool_windows()
+-> std::collections::BTreeMap<String, sdroxide_types::DetachedState> {
+    Default::default()
+}
+
+/// Fold one tool's place into the stored map; true when it changed, and so
+/// has to be written.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(in crate::app) fn merge_tool_window(
+    map: &mut std::collections::BTreeMap<String, sdroxide_types::DetachedState>,
+    id: &str,
+    state: sdroxide_types::DetachedState,
+) -> bool {
+    if map.get(id) == Some(&state) {
+        return false;
+    }
+    map.insert(id.to_string(), state);
+    true
+}
+
+/// Write one tool's place out. The stored map is re-read first, so a second
+/// radio tab writing its own tool cannot erase the first one's.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn persist_tool_window(id: &str, state: sdroxide_types::DetachedState) {
+    let mut map = sdroxide_config::load_tool_windows();
+    if merge_tool_window(&mut map, id, state)
+        && let Err(e) = sdroxide_config::save_tool_windows(&map)
+    {
+        eprintln!("failed to save the tool windows: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn persist_tool_window(_id: &str, _state: sdroxide_types::DetachedState) {}
+
+// ── Saved window arrangements (SDRuno's workspaces) ──────────────────────────
+
+/// The saved window arrangements. Natively a shared `workspaces.json` beside the
+/// rest of the configuration; the browser has no windows to arrange, so its list
+/// is empty and the settings section that edits it is not drawn.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_workspaces() -> Vec<sdroxide_types::Workspace> {
+    sdroxide_config::load_workspaces()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_workspaces() -> Vec<sdroxide_types::Workspace> {
+    Vec::new()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn save_workspaces(workspaces: &Vec<sdroxide_types::Workspace>) {
+    if let Err(e) = sdroxide_config::save_workspaces(workspaces) {
+        eprintln!("failed to save workspaces: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn save_workspaces(_workspaces: &Vec<sdroxide_types::Workspace>) {}
+
+#[cfg(test)]
+mod band_dock_tests {
+    use super::*;
+
+    /// A tool's place is written into the stored map without disturbing the
+    /// other tools', an unchanged place is not a write, and the map comes back
+    /// from its file as it went in — undocked with its window, or docked.
+    #[test]
+    fn a_tool_window_remembers_where_it_was_left() {
+        use sdroxide_types::{DetachedState, DetachedWindow};
+        let out = DetachedState {
+            detached: true,
+            window: Some(DetachedWindow { size: [900.0, 760.0], pos: Some([40.0, 60.0]) }),
+        };
+        let mut map = std::collections::BTreeMap::new();
+        assert!(merge_tool_window(&mut map, "settings", out));
+        assert!(merge_tool_window(&mut map, "Scanner", DetachedState::default()));
+        assert!(!merge_tool_window(&mut map, "settings", out), "the same place is no write");
+        assert_eq!(map.get("Scanner"), Some(&DetachedState::default()), "the other tool is kept");
+        let json = serde_json::to_string(&map).unwrap();
+        let back: std::collections::BTreeMap<String, DetachedState> =
+            serde_json::from_str(&json).unwrap();
+        assert_eq!(back, map);
+        let st: crate::app::undocked::ToolWindowState = back["settings"].into();
+        assert!(st.undocked && st.window == out.window, "reloaded as undocked, same window");
+    }
+
+    /// The band dock is remembered per radio, docked-and-hidden is kept as a
+    /// state of its own, an undocked radio leaves the map, and a write that
+    /// changes nothing says so (so nothing is written).
+    #[test]
+    fn the_band_dock_is_remembered_per_radio() {
+        let mut map = std::collections::BTreeMap::new();
+        assert!(band_dock_entry(&mut map, 1, true, true), "docking radio 1 is a change");
+        assert!(band_dock_entry(&mut map, 0, true, false), "docked and hidden is kept too");
+        assert!(!band_dock_entry(&mut map, 1, true, true), "the same state again is no change");
+        assert!(band_dock_entry(&mut map, 1, true, false), "hiding it is a change");
+        assert_eq!(map.get(&1), Some(&false));
+        assert!(band_dock_entry(&mut map, 1, false, false), "undocking removes it");
+        assert!(!map.contains_key(&1));
+        assert_eq!(map.get(&0), Some(&false), "the other radio is untouched");
+        assert!(!band_dock_entry(&mut map, 7, false, false), "a radio never docked: no change");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

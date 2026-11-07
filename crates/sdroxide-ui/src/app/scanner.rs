@@ -19,19 +19,18 @@ impl SdroxideApp {
         // Edited in place and sent whole on any change, the way the skimmer's
         // settings are; the engine persists it and echoes it back.
         let mut cfg = self.scanner.clone();
-        let resp = egui::Window::new(tr!("scanner-scanner"))
-            .id(crate::layout::salted_id(ctx, "Scanner"))
-            .open(&mut open)
-            .frame(crate::chrome::window_frame())
-            .resizable(true)
-            .default_width(crate::layout::window_w(ctx, 420.0))
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                self.scanner_body(ui, &mut cfg, cmds)
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
+        let tool_title = tr!("scanner-scanner");
+        let mut tool_st = self.take_tool_state("Scanner");
+        let tool_child = crate::app::undocked::ChildWindow::own(self);
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new("Scanner", &tool_title, [420.0, 0.0]),
+            &mut tool_st,
+            tool_child,
+            &mut open,
+            |ui| self.scanner_body(ui, &mut cfg, cmds),
+        );
+        self.put_tool_state("Scanner", tool_st);
         if cfg != self.scanner {
             self.scanner = cfg.clone();
             cmds.push(Command::SetScannerConfig(cfg));

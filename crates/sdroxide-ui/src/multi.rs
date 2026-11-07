@@ -1356,6 +1356,22 @@ impl eframe::App for MultiApp {
                 }
             }
         }
+        // The undocked-module windows are the **shell's** to emit: once, for the
+        // focused radio, every frame, whatever pane or tab is on screen. The app
+        // says which windows it wants (`detached_wanted`); the shell emits those,
+        // so a window that is wanted is always emitted — a tiling compositor
+        // never sees it torn down and re-mapped when the radio or the mode
+        // changes under it.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let app = &mut self.tabs[self.focused].app;
+            let want = app.detached_wanted();
+            for module in sdroxide_types::DetachableModule::ALL {
+                if want[module.index()] {
+                    app.show_detached_module(module, &ctx, now);
+                }
+            }
+        }
         self.apply_strip_actions(actions, &ctx);
         self.handle_requests(reqs, &ctx);
         self.open_peer_radios(&ctx);

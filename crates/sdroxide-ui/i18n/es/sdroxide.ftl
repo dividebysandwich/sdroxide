@@ -5446,6 +5446,72 @@ wheel-action-zoom = Zoom
 wheel-action-tune = Sintonía
 wheel-action-none = Nada
 
+# Undocked windows (from sdroxide-brown)
+frame-detached-title = { $flavor } — { $name }
+frame-dock-band-menu-hint = DOCK — devolver el selector de banda y modo a la ventana principal, igual que cerrar esta sin buscar su casilla de cierre.
+frame-dock-panel-hint = DOCK — volver a poner este panel bajo la cascada
+frame-dock-spectrum-hint = DOCK — devolver este espectro a la ventana principal, igual que cerrar esta sin buscar su casilla de cierre.
+frame-every-module-own-window = cada módulo está en su propia ventana
+frame-module-aux-panadapter = panadapter auxiliar
+frame-module-band-mode = banda y modo
+frame-module-controls = controles
+frame-module-panadapter = panadapter
+frame-module-panel = panel
+multi-dock-all-windows = ACOPLAR TODAS LAS VENTANAS
+multi-module-panel = Panel de operación
+multi-undock-all-windows = DESACOPLAR TODAS LAS VENTANAS
+settings-ui-dock-all-hint = Devuelve cada ventana desacoplada a esta.
+settings-ui-docked = Acoplada en esta ventana
+settings-ui-module-aux = AUX SP (segundo espectro)
+settings-ui-module-band-menu = Selector de banda y modo
+settings-ui-module-controls = Controles
+settings-ui-module-panadapter = Panadapter
+settings-ui-undock-all-hint = Pone cada módulo en su propia ventana; la ventana principal queda con el espectro y los decodificadores. Un módulo sin nada que mostrar, como el panel de operación en un modo de voz, no abre ventana.
+settings-ui-undock-hint =
+    Desacoplado, este módulo pasa a su propia ventana y la ventana principal devuelve el espacio a lo que queda: ponga la cascada en un segundo monitor, o los controles en un tercero. Cerrar su ventana lo vuelve a acoplar.
+    
+    En Wayland se recupera el tamaño, pero el compositor decide dónde va una ventana: hágala flotante y fíjela a un monitor con una regla de ventana que coincida con el app-id «{ $app_id }».
+settings-ui-undocked = Desacoplada — su propia ventana
+settings-ui-window-label = Ventana { $module }
+frame-window-chip-hint = WINDOW — mover esta ventana a una ventana propia del sistema, para ponerla en otro monitor
+frame-dock-panel-pane-hint = DOCK — devolver este panel al panel bajo la cascada
+frame-panel-window-title = { $mode } — panel
+frame-roll-up-hint = Enrollar — dejar solo la barra de título y devolver el espacio a la cascada
+frame-unroll-hint = Desenrollar — mostrar de nuevo el panel
+frame-window-panel-hint = WINDOW — dar a este panel una ventana propia, para ponerla en otro monitor
+topbar-dock-all = ACOPLAR TODO
+topbar-dock-all-hint = Traer todas las ventanas de módulos de vuelta a esta ventana
+topbar-module-windows-title = Ventanas de módulos
+topbar-undock-all = DESACOPLAR TODO
+topbar-undock-all-hint = Poner cada módulo en una ventana propia — esta ventana queda como el espectro y los decodificadores
+topbar-windows-chip-hint =
+    ▣  Izquierdo: traer a casa todas las ventanas de módulos
+    Derecho: la lista de ventanas de módulos
+topbar-wname-aux = SP2 (AUX) — un segundo espectro
+topbar-wname-band-menu = Banda y modo
+topbar-wname-controls = Control RX
+topbar-wname-panadapter = SP1 — el espectro
+topbar-wname-panel = Panel de operación
+topbar-wstate-float = Sacar { $name } del panel y hacerlo flotar sobre esta ventana
+topbar-wstate-floating-panel-only = Flotante es un estado propio del panel de operación — un espectro o una consola tiene un solo lugar en esta ventana
+topbar-wstate-here-now = { $name } está aquí ahora
+topbar-wstate-no-panel = No hay panel de operación en { $mode } — esto se aplica en un modo que lo tenga
+topbar-wstate-own-window = Dar a { $name } una ventana propia, en cualquier monitor
+topbar-wstate-put-back = Volver a poner { $name } en esta ventana
+frame-workspace-missing = No hay ningún espacio de trabajo { $n } guardado — guarda uno en Ajustes › Interfaz › Espacios de trabajo y esta tecla lo recuperará.
+settings-ui-workspaces = Espacios de trabajo
+settings-ui-workspaces-note = Una disposición de ventanas con nombre: qué módulos están en su propia ventana y dónde están esas ventanas. Guarde la actual o restaure una guardada. Hasta diez.
+settings-ui-workspaces-none = Aún no hay espacios de trabajo guardados.
+settings-ui-workspace-restore-home = Restaurar esta disposición: todos los módulos en la ventana principal
+settings-ui-workspace-restore-out = Restaurar esta disposición: { $n } módulo(s) en su(s) propia(s) ventana(s)
+settings-ui-workspace-forget = Olvidar este espacio de trabajo
+settings-ui-workspace-name = poner nombre a esta disposición
+settings-ui-workspace-full = Diez espacios de trabajo es el límite que mantiene SDRuno; borre uno primero
+settings-ui-workspace-save = GUARDAR ACTUAL
+settings-ui-workspace-save-hint = Guardar la disposición actual con este nombre
+settings-ui-workspace-name-first = Escriba primero un nombre
+topbar-band-window2-hint = WINDOW — abrir el selector en una ventana propia, tan ancha como quieras, en cualquier monitor
+
 ## VARA HF panel
 
 vara-starting = Iniciando el módem VARA…
