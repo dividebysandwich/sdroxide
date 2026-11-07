@@ -868,6 +868,15 @@ pub struct UiSettings {
     /// `[ui]` because it is this screen's preference, like the theme — the
     /// native client checks for its own build, wherever its radio is.
     pub update_check: bool,
+    /// Download HAMQSL.com's HF band-conditions forecast (at most hourly) to
+    /// colour the band menu. A switch because it is one of the requests the
+    /// app makes on its own, and every one of those can be turned off. The 3D
+    /// view's own feed is not covered: opening that window asks for its data.
+    pub band_conditions_download: bool,
+    /// Download the EiBi broadcast schedule from eibispace.de when a new
+    /// broadcasting season starts. Off, the compiled-in schedule (or the last
+    /// one cached) stays in use, and the REFRESH button still fetches on demand.
+    pub broadcast_schedule_download: bool,
     /// How the memory channel window orders its list. This screen's
     /// preference, not the station's: the store keeps its own order and every
     /// client reads it whichever way its operator asked for.
@@ -1060,6 +1069,8 @@ impl Default for UiSettings {
             ui_zoom: 1.0,
             smeter_style: SmeterStyle::Needle,
             update_check: true,
+            band_conditions_download: true,
+            broadcast_schedule_download: true,
             memory_sort: crate::MemorySort::Stored,
             memory_sort_desc: false,
             decode_sort: crate::DecodeSort::None,

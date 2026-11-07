@@ -193,7 +193,14 @@ impl SdroxideApp {
             });
         }
         let day = now_utc.div_euclid(86_400);
-        if self.broadcast_fetch.is_none() && day != self.broadcast_checked_day {
+        // The automatic download only. "Download schedule now" in Settings →
+        // Spots still fetches when it is off: that is the operator asking. The
+        // day is not marked as checked while it is off, so switching it back on
+        // checks on the next frame.
+        if self.ui_settings.broadcast_schedule_download
+            && self.broadcast_fetch.is_none()
+            && day != self.broadcast_checked_day
+        {
             self.broadcast_checked_day = day;
             self.broadcast_fetch = crate::app::persist::spawn_schedule_fetch(false);
         }

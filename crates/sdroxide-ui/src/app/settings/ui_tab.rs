@@ -277,6 +277,21 @@ pub(in crate::app) fn settings_ui_tab(
         ui.add_space(10.0);
         crate::chrome::checkbox(ui, &mut cfg.update_check, tr!("settings-ui-update-check"))
             .on_hover_text(tr!("settings-ui-update-check", "hint"));
+        // The other two requests the app makes without being asked. Next to
+        // the update check so that every one of them is switched off in one
+        // place.
+        crate::chrome::checkbox(
+            ui,
+            &mut cfg.band_conditions_download,
+            tr!("settings-ui-band-conditions-download"),
+        )
+        .on_hover_text(tr!("settings-ui-band-conditions-download", "hint"));
+        crate::chrome::checkbox(
+            ui,
+            &mut cfg.broadcast_schedule_download,
+            tr!("settings-ui-broadcast-schedule-download"),
+        )
+        .on_hover_text(tr!("settings-ui-broadcast-schedule-download", "hint"));
     }
 
     let Some(cloud_march) = cloud_march else { return };

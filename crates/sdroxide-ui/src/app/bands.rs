@@ -100,6 +100,9 @@ impl SdroxideApp {
                 Some(a) => {
                     ui.label(dim(&tr!("bands-forecast-hamqsl-com-old", value = a)));
                 }
+                None if !self.ui_settings.band_conditions_download => {
+                    ui.label(dim(&tr!("bands-forecast-download-off")));
+                }
                 None => {
                     ui.label(dim(&tr!("bands-no-forecast-yet-fetching-hamqsl")));
                 }

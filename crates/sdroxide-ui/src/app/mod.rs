@@ -1732,7 +1732,7 @@ impl SdroxideApp {
             // after that this only fires again when the season turns over.
             // One tab downloads for the whole station; the others read the
             // cache it fills.
-            broadcast_fetch: if station_writer {
+            broadcast_fetch: if station_writer && ui_settings.broadcast_schedule_download {
                 persist::spawn_schedule_fetch(false)
             } else {
                 None
