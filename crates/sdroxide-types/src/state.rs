@@ -551,8 +551,11 @@ pub struct AtuState {
     /// than tuning for it — the tuner's memories, kept and applied by the
     /// radio itself.
     pub using_memory: bool,
+    /// Whether this tuner exposes the HPSDR Pico Reg7 diagnostic register.
+    /// Other tuner backends leave this false.
+    #[serde(default)]
+    pub reg7_supported: bool,
     /// Raw Reg7 byte from the HPSDR Pico tuner, retained for diagnostics.
-    /// Other tuner backends leave this unset.
     #[serde(default)]
     pub reg7_status: Option<u8>,
     /// Whether the last Reg7 byte is within the source's freshness window.
