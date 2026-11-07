@@ -2116,6 +2116,58 @@ impl AgcMode {
     }
 }
 
+/// The operator's own version of one of a mode's filter preset chips
+/// ([`Mode::filter_presets`]): a label and two edges of their choosing in
+/// place of the built-in ones. Set from a right-click on the chip, kept in
+/// `filter_presets.json`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomFilterPreset {
+    pub mode: Mode,
+    /// Which built-in chip this stands in for, counted from the left.
+    pub slot: usize,
+    pub label: String,
+    /// Edges in Hz relative to the carrier, like the built-ins.
+    pub lo: f32,
+    pub hi: f32,
+}
+
+/// The chips `mode` shows: its built-in presets, with any of `custom` that
+/// belong to it standing in for theirs.
+pub fn filter_presets_with(mode: Mode, custom: &[CustomFilterPreset]) -> Vec<(String, f32, f32)> {
+    mode.filter_presets()
+        .iter()
+        .enumerate()
+        .map(|(slot, &(label, lo, hi))| {
+            match custom.iter().find(|c| c.mode == mode && c.slot == slot) {
+                Some(c) => (c.label.clone(), c.lo, c.hi),
+                None => (label.to_string(), lo, hi),
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod custom_preset_tests {
+    use super::*;
+
+    #[test]
+    fn a_custom_preset_replaces_only_its_own_chip() {
+        let custom = [CustomFilterPreset {
+            mode: Mode::Usb,
+            slot: 1,
+            label: "Rag".into(),
+            lo: 100.0,
+            hi: 3000.0,
+        }];
+        let usb = filter_presets_with(Mode::Usb, &custom);
+        assert_eq!(usb.len(), Mode::Usb.filter_presets().len());
+        assert_eq!(usb[0].0, "1.8k");
+        assert_eq!(usb[1], ("Rag".to_string(), 100.0, 3000.0));
+        // LSB is its own mode with its own chips.
+        assert_eq!(filter_presets_with(Mode::Lsb, &custom)[1].0, "2.4k");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

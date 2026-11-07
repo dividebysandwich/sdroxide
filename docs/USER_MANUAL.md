@@ -790,6 +790,14 @@ own bandwidth control does. The presets are taken as written except in **CW**,
 where they are re-centred on your own sidetone pitch, so a 250 Hz filter is
 250 Hz about the note you copy at rather than about somebody else's 700.
 
+Any preset can be made your own. **Right-click** its chip and an editor opens
+under the chips: a **label** of up to eight characters, the **Lo** and **Hi**
+edges in hertz from the carrier, and **Use current** to take the edges of the
+filter you have now. **Save** puts your preset in place of the built-in one and
+selects it; **Reset** brings the built-in back. Each mode keeps its own, so
+changing a USB chip leaves LSB's alone. They are kept per machine in
+`filter_presets.json`.
+
 In **AM, SAM, DSB, ISB and the FM modes** the two edges move together: the passband
 is a channel carved out about the carrier, both halves carry the same signal,
 and narrowing one alone would throw away half the audio while letting the
@@ -15520,6 +15528,7 @@ and not the station's.
 | `broadcast/` | CSV | The broadcasting season's schedule as downloaded from eibispace.de, one file per season. Managed by sdroxide: refetched when the season changes, and safe to delete. |
 | `sstv_messages.json` | JSON | The overlay message stored for each of the ten SSTV transmit slots. |
 | `hfdl_channels.json` | JSON | Your own HFDL frequency chips, in kHz ([§3.19](#319-hfdl-aircraft-on-shortwave)). |
+| `filter_presets.json` | JSON | Your own receive filter presets: for each one, the mode, which built-in chip it replaces, its label and its two edges in Hz. |
 | `voice_names.json` | JSON | The label given to each of the ten voice-keyer slots. |
 | `voice/` | dir | The voice-keyer recordings (`slot1.wav`…`slot10.wav`), 48 kHz mono. Drop your own WAV in to replace a message. |
 | `speech_voices/` | dir | Extra voices for the spoken announcements: a Piper `.onnx` model and its `.onnx.json` config, side by side. Absent until you create it — the shipped voice lives with the program, not here. Note this is *not* `voice/`, which is the voice keyer. |

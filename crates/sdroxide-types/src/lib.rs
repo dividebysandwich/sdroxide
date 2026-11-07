@@ -195,7 +195,10 @@ pub use limerfe::{
 };
 pub use memory::{BandStackEntry, MemoryChannel, MemoryFolder, MemorySort, RttyMemory};
 pub use meters::{Meters, OVERLOAD_FRACTION, PsMeter, TxMeters, TxTelemetry};
-pub use mode::{AgcMode, Mode, NrEngine, NrLevel, NrStrength, SlotTiming};
+pub use mode::{
+    AgcMode, CustomFilterPreset, Mode, NrEngine, NrLevel, NrStrength, SlotTiming,
+    filter_presets_with,
+};
 pub use morse_trainer::{ADVANCE_RUN, Answer, KOCH_ORDER, MorseProgress, START_UNLOCKED};
 pub use netcfg::{
     ClusterConfig, Credentials, FeedConfig, FreeDvReporterConfig, LookupProvider, NetworkConfig,

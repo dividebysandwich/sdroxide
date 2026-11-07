@@ -1233,6 +1233,9 @@ impl eframe::App for SdroxideApp {
             // hfdl_channels.json, written on change.
             #[cfg(target_arch = "wasm32")]
             eframe::set_value(storage, "hfdl_channels", &self.hfdl_channels);
+            // And the custom filter presets: filter_presets.json natively.
+            #[cfg(target_arch = "wasm32")]
+            eframe::set_value(storage, "filter_presets", &self.filter_presets);
             // Likewise the TX Audio profile library: tx_audio_profiles.json
             // natively.
             #[cfg(target_arch = "wasm32")]

@@ -3151,28 +3151,38 @@ impl SdroxideApp {
         // 5.4 kHz of spectrum.
         let per_sideband = mode == Mode::Isb;
 
-        let presets = mode.filter_presets();
+        // An editor left open on another mode's chip has nothing to edit here.
+        if self.preset_edit.as_ref().is_some_and(|e| e.mode != mode) {
+            self.preset_edit = None;
+        }
+        let presets = sdroxide_types::filter_presets_with(mode, &self.filter_presets);
         if !presets.is_empty() {
             crate::chrome::menu_caption(ui, &tr!("topbar-presets"));
             ui.horizontal_wrapped(|ui| {
-                for &(label, plo, phi) in presets {
+                for (slot, (label, plo, phi)) in presets.into_iter().enumerate() {
                     let (plo, phi) = preset_edges(mode, plo, phi, self.cw_pitch_hz());
                     let on = (rx0.filter_lo - plo).abs() < 1.0 && (rx0.filter_hi - phi).abs() < 1.0;
                     let hint = if per_sideband {
                         tr!(
                             "topbar-binaural-preset",
-                            preset = label.to_string(),
+                            preset = label.clone(),
                             lo = format!("{plo:.0}"),
                             hi = format!("{phi:.0}")
                         )
                     } else {
                         format!("{plo:.0} … {phi:.0} Hz")
                     };
-                    if crate::chrome::chip(ui, on, label).on_hover_text(hint).clicked() {
+                    let hint = format!("{hint}\n{}", tr!("topbar-preset-right-click"));
+                    let resp = crate::chrome::chip(ui, on, label.as_str()).on_hover_text(hint);
+                    if resp.clicked() {
                         self.set_rx_filter(plo, phi, cmds);
+                    }
+                    if resp.secondary_clicked() {
+                        self.preset_edit = Some(PresetEdit { mode, slot, label, lo: plo, hi: phi });
                     }
                 }
             });
+            self.preset_editor(ui, cmds);
         }
 
         crate::chrome::menu_caption(
@@ -3224,6 +3234,79 @@ impl SdroxideApp {
                 self.set_rx_filter(lo, hi, cmds);
             }
         });
+    }
+
+    /// The editor a right-click on a preset chip opens, under the chips: the
+    /// chip's label and its two edges. Saving keeps it in
+    /// `filter_presets.json` in place of the built-in and selects it; Reset
+    /// puts the built-in back.
+    ///
+    /// Drawn inside the BW popup rather than as a menu of its own, so typing
+    /// into it is not a click outside the popup that would close both.
+    fn preset_editor(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let Some(edit) = self.preset_edit.as_mut() else { return };
+        let mode = edit.mode;
+        let max = mode.max_filter_hz();
+        let custom = self.filter_presets.iter().any(|c| c.mode == mode && c.slot == edit.slot);
+        let (mut save, mut reset, mut cancel, mut take) = (false, false, false, false);
+
+        crate::chrome::menu_caption(ui, &tr!("topbar-preset-edit"));
+        ui.horizontal(|ui| {
+            ui.label(tr!("topbar-preset-label"));
+            ui.add_sized([90.0, 22.0], egui::TextEdit::singleline(&mut edit.label).char_limit(8))
+                .on_hover_text(tr!("topbar-preset-label-hint"));
+        });
+        ui.horizontal(|ui| {
+            ui.label(tr!("topbar-preset-lo"));
+            ui.add_sized([70.0, 22.0], DragValue::new(&mut edit.lo).speed(10).range(-max..=max))
+                .on_hover_text(tr!("topbar-low-edge-hz-carrier"));
+            ui.label(tr!("topbar-preset-hi"));
+            ui.add_sized([70.0, 22.0], DragValue::new(&mut edit.hi).speed(10).range(-max..=max))
+                .on_hover_text(tr!("topbar-high-edge-hz-carrier"));
+        });
+        ui.horizontal_wrapped(|ui| {
+            take = ui
+                .button(tr!("topbar-preset-use-current"))
+                .on_hover_text(tr!("topbar-preset-use-current-hint"))
+                .clicked();
+            save = ui.button(tr!("topbar-preset-save")).clicked();
+            if custom {
+                reset = ui
+                    .button(tr!("topbar-preset-reset"))
+                    .on_hover_text(tr!("topbar-preset-reset-hint"))
+                    .clicked();
+            }
+            cancel = ui.button(tr!("topbar-preset-cancel")).clicked();
+        });
+
+        if take {
+            edit.lo = self.state.rx[0].filter_lo;
+            edit.hi = self.state.rx[0].filter_hi;
+        }
+        if save {
+            let (lo, hi) = preset_shape(mode, edit.lo, edit.hi);
+            let label = match edit.label.trim() {
+                "" => mode.filter_presets()[edit.slot].0.to_string(),
+                l => l.to_string(),
+            };
+            let preset =
+                sdroxide_types::CustomFilterPreset { mode, slot: edit.slot, label, lo, hi };
+            match self.filter_presets.iter_mut().find(|c| c.mode == mode && c.slot == edit.slot) {
+                Some(c) => *c = preset,
+                None => self.filter_presets.push(preset),
+            }
+            self.preset_edit = None;
+            crate::app::persist::persist_filter_presets(&self.filter_presets);
+            let (lo, hi) = preset_edges(mode, lo, hi, self.cw_pitch_hz());
+            self.set_rx_filter(lo, hi, cmds);
+        } else if reset {
+            let slot = edit.slot;
+            self.filter_presets.retain(|c| !(c.mode == mode && c.slot == slot));
+            self.preset_edit = None;
+            crate::app::persist::persist_filter_presets(&self.filter_presets);
+        } else if cancel {
+            self.preset_edit = None;
+        }
     }
 
     fn nr_button(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
@@ -6559,12 +6642,40 @@ fn width_to_edges(mode: Mode, lo: f32, hi: f32, width: f32) -> (f32, f32) {
 /// 700 Hz default sidetone. An operator copying at 500 wants that same width
 /// about *their* pitch; handing them the table verbatim would put the note
 /// they are listening for on the edge of the filter, or outside it.
+/// A custom preset's edges made into a passband the mode can use: low below
+/// high by at least the grips' floor, and a channel about the carrier for the
+/// modes whose filter is one, the same rule the edge fields follow.
+fn preset_shape(mode: Mode, lo: f32, hi: f32) -> (f32, f32) {
+    let max = mode.max_filter_hz();
+    let (lo, hi) = (lo.min(hi).clamp(-max, max), lo.max(hi).clamp(-max, max));
+    if mode.filter_symmetric() {
+        let half = lo.abs().max(hi.abs()).max(crate::input::MIN_FILTER_HZ / 2.0);
+        return (-half, half);
+    }
+    if hi - lo < crate::input::MIN_FILTER_HZ {
+        (lo, lo + crate::input::MIN_FILTER_HZ)
+    } else {
+        (lo, hi)
+    }
+}
+
 fn preset_edges(mode: Mode, lo: f32, hi: f32, cw_pitch_hz: f32) -> (f32, f32) {
     if mode != Mode::Cw {
         return (lo, hi);
     }
     let half = (hi - lo).abs() / 2.0;
     (cw_pitch_hz - half, cw_pitch_hz + half)
+}
+
+/// What the BW popup's preset editor is holding: which chip, and the label and
+/// edges typed so far.
+#[derive(Debug, Clone)]
+pub(in crate::app) struct PresetEdit {
+    mode: Mode,
+    slot: usize,
+    label: String,
+    lo: f32,
+    hi: f32,
 }
 
 /// The BW chip's label: `BW 2.7k`, `BW 500`, `BW 1.2M`.
@@ -7335,6 +7446,17 @@ fn set_div_setting(cfg: &mut sdroxide_types::RadioConfig, element: &str, db: f64
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_custom_preset_is_a_usable_passband() {
+        // Edges typed the wrong way round are swapped.
+        assert_eq!(preset_shape(Mode::Usb, 2800.0, 200.0), (200.0, 2800.0));
+        // Too narrow opens to the grips' floor.
+        let (lo, hi) = preset_shape(Mode::Usb, 1000.0, 1010.0);
+        assert_eq!((lo, hi), (1000.0, 1000.0 + crate::input::MIN_FILTER_HZ));
+        // AM is a channel about the carrier: the wider edge sets both.
+        assert_eq!(preset_shape(Mode::Am, -2000.0, 4500.0), (-4500.0, 4500.0));
+    }
+
     use super::*;
 
     /// The real-world bug this exists to catch: minutes and seconds computed

@@ -512,6 +512,18 @@ pub fn save_hfdl_channels(khz: &[u32]) -> Result<(), ConfigError> {
     save_json("hfdl_channels.json", &khz)
 }
 
+/// The operator's own receive filter presets (`filter_presets.json`), each
+/// standing in for one of a mode's built-in chips. A missing file is none.
+pub fn load_filter_presets() -> Vec<sdroxide_types::CustomFilterPreset> {
+    load_json_list("filter_presets.json")
+}
+
+pub fn save_filter_presets(
+    presets: &[sdroxide_types::CustomFilterPreset],
+) -> Result<(), ConfigError> {
+    save_json("filter_presets.json", &presets)
+}
+
 /// Load just the remote-access credentials.
 ///
 /// Read fresh rather than cached: the server calls this once per connection, so
@@ -3361,6 +3373,19 @@ mod tests {
         save_hfdl_channels(&[5_451, 8_843, 11_184]).unwrap();
         assert!(root.join("hfdl_channels.json").exists());
         assert_eq!(load_hfdl_channels(), vec![5_451, 8_843, 11_184]);
+
+        // Custom filter presets round-trip the same way.
+        assert!(load_filter_presets().is_empty(), "no file, no custom presets");
+        let preset = sdroxide_types::CustomFilterPreset {
+            mode: sdroxide_types::Mode::Usb,
+            slot: 1,
+            label: "Rag".into(),
+            lo: 100.0,
+            hi: 3000.0,
+        };
+        save_filter_presets(std::slice::from_ref(&preset)).unwrap();
+        assert!(root.join("filter_presets.json").exists());
+        assert_eq!(load_filter_presets(), vec![preset]);
 
         unsafe { std::env::remove_var("SDROXIDE_CONFIG_DIR") };
     }

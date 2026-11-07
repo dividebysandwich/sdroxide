@@ -320,6 +320,34 @@ pub(in crate::app) fn persist_hfdl_channels(_khz: &[u32]) {
     // Written with the rest of the browser's storage in `App::save`.
 }
 
+// ── Custom filter presets (native: config-dir JSON; wasm: eframe storage) ──
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_filter_presets(
+    _storage: Option<&dyn eframe::Storage>,
+) -> Vec<sdroxide_types::CustomFilterPreset> {
+    sdroxide_config::load_filter_presets()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_filter_presets(
+    storage: Option<&dyn eframe::Storage>,
+) -> Vec<sdroxide_types::CustomFilterPreset> {
+    storage.and_then(|s| eframe::get_value(s, "filter_presets")).unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn persist_filter_presets(presets: &[sdroxide_types::CustomFilterPreset]) {
+    if let Err(e) = sdroxide_config::save_filter_presets(presets) {
+        eprintln!("failed to save filter presets: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn persist_filter_presets(_presets: &[sdroxide_types::CustomFilterPreset]) {
+    // Written with the rest of the browser's storage in `App::save`.
+}
+
 // ── Band conditions ──────────────────────────────────────────────────────────
 //
 // Fetched here rather than by the 3D view, and this is the one product of the

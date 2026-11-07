@@ -71,8 +71,8 @@ use self::panels::fsq::fsq_load_contacts;
 use self::panels::rf_paint::RfPaintUi;
 use self::panels::sstv::SstvUi;
 use self::persist::{
-    load_alerts_settings, load_broadcast_stations, load_hfdl_channels, load_morse_progress,
-    load_qso_log, load_speech_settings, load_ui_settings,
+    load_alerts_settings, load_broadcast_stations, load_filter_presets, load_hfdl_channels,
+    load_morse_progress, load_qso_log, load_speech_settings, load_ui_settings,
 };
 use self::settings::servers::TciServerStatus;
 use self::settings::{SatEditState, SettingsTab, TestOutcome};
@@ -476,6 +476,12 @@ pub struct SdroxideApp {
     /// busy assigned frequencies that are not in the published plan, drawn as
     /// one-click chips beside it in the HFDL panel.
     hfdl_channels: Vec<u32>,
+    /// The operator's own filter presets (`filter_presets.json`), each in
+    /// place of one of a mode's built-in chips in the BW popup.
+    filter_presets: Vec<sdroxide_types::CustomFilterPreset>,
+    /// The filter preset being edited in the BW popup after a right-click on
+    /// its chip, if any.
+    preset_edit: Option<top_bar::PresetEdit>,
     show_settings: bool,
     /// Scroll the Settings window back to its tab bar on the frame it opens.
     /// The window's scroll offset is egui memory, which outlives both the
@@ -1527,6 +1533,8 @@ impl SdroxideApp {
             hfdl_map: crate::hfdl_map::HfdlMapState::default(),
             hfdl_filter: String::new(),
             hfdl_channels: load_hfdl_channels(storage),
+            filter_presets: load_filter_presets(storage),
+            preset_edit: None,
             show_settings: false,
             settings_scroll_top: true,
             voice: sdroxide_types::VoiceStatus::default(),
