@@ -8489,12 +8489,30 @@ impl Engine {
             SetVfo { vfo, hz } | TuneInSpan { vfo, hz } => {
                 self.stop_scan_for_operator();
                 let hz = hz.max(0.0);
+                let left = (vfo == self.state.active_vfo).then(|| {
+                    let rx = self.state.rx[0];
+                    (
+                        self.state.band,
+                        BandStackEntry {
+                            freq_hz: self.state.active_freq_hz(),
+                            mode: rx.mode,
+                            filter_lo: rx.filter_lo,
+                            filter_hi: rx.filter_hi,
+                        },
+                    )
+                });
                 match vfo {
                     Vfo::A => self.state.vfo_a_hz = hz,
                     Vfo::B => self.state.vfo_b_hz = hz,
                 }
                 if vfo == self.state.active_vfo {
                     self.state.band = Band::containing(hz);
+                    if let Some((old, entry)) = left
+                        && old != self.state.band
+                        && Band::containing(entry.freq_hz) == old
+                    {
+                        self.note_band_left(old, entry);
+                    }
                     self.follow_dial();
                     // In HFDL the dial and the panel's channel are two controls
                     // for one thing, and the operator turns the dial. Carry it
@@ -14193,6 +14211,33 @@ impl Engine {
         }
     }
 
+    /// Put `entry` on top of `band`'s stack (or refresh the entry already on
+    /// that dial), as leaving the band does.
+    fn remember_band_entry(&mut self, band: Band, entry: BandStackEntry) {
+        let stack = self.stacks.entry(band).or_default();
+        match stack.iter().position(|e| (e.freq_hz - entry.freq_hz).abs() < 1.0) {
+            Some(i) => stack[i] = entry,
+            None => {
+                stack.insert(0, entry);
+                stack.truncate(3);
+            }
+        }
+    }
+
+    /// The operator's dial left `old` for another band without a band button
+    /// — a digital mode's band chip, which tunes straight to the band's
+    /// calling frequency, or a frequency typed in. Record where `old` was
+    /// left, as [`Self::change_band`] does: without it, 6 m left in FT8 kept
+    /// an older entry on its stack, and the next band press back to 6 m
+    /// recalled that instead (#762).
+    fn note_band_left(&mut self, old: Band, entry: BandStackEntry) {
+        self.remember_band_entry(old, entry);
+        if let Err(e) = sdroxide_config::save_bandstacks(&self.stacks) {
+            warn!("saving band stacks: {e}");
+        }
+        self.mark_shared_store_write();
+    }
+
     /// PowerSDR-style band button: same band = cycle the stack; different
     /// band = save the current entry, recall the target's top.
     fn change_band(&mut self, band: Band) {
@@ -14212,14 +14257,7 @@ impl Engine {
                 }
             }
         } else {
-            let stack = self.stacks.entry(cur_band).or_default();
-            match stack.iter().position(|e| (e.freq_hz - cur_entry.freq_hz).abs() < 1.0) {
-                Some(i) => stack[i] = cur_entry,
-                None => {
-                    stack.insert(0, cur_entry);
-                    stack.truncate(3);
-                }
-            }
+            self.remember_band_entry(cur_band, cur_entry);
         }
 
         let entry = self.stacks.get(&band).and_then(|s| s.first().copied()).unwrap_or_else(|| {
