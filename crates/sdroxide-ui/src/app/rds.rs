@@ -81,7 +81,7 @@ impl SdroxideApp {
         let tool_child = crate::app::undocked::ChildWindow::own(self);
         crate::app::undocked::tool_window(
             ctx,
-            crate::app::undocked::ToolWindow::new("RDS", &tool_title, [460.0, 420.0]),
+            crate::app::undocked::ToolWindow::new("RDS", tool_title, [460.0, 420.0]),
             &mut tool_st,
             tool_child,
             &mut open,
