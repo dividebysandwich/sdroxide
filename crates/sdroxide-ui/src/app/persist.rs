@@ -640,14 +640,14 @@ pub(in crate::app) fn load_workspaces() -> Vec<sdroxide_types::Workspace> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(in crate::app) fn save_workspaces(workspaces: &Vec<sdroxide_types::Workspace>) {
+pub(in crate::app) fn save_workspaces(workspaces: &[sdroxide_types::Workspace]) {
     if let Err(e) = sdroxide_config::save_workspaces(workspaces) {
         eprintln!("failed to save workspaces: {e}");
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(in crate::app) fn save_workspaces(_workspaces: &Vec<sdroxide_types::Workspace>) {}
+pub(in crate::app) fn save_workspaces(_workspaces: &[sdroxide_types::Workspace]) {}
 
 #[cfg(test)]
 mod band_dock_tests {

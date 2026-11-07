@@ -955,6 +955,13 @@ pub(in crate::app) fn window_keys_in(events: &[egui::Event]) -> WindowKeys {
 impl SdroxideApp {
     /// Act on the window keys pressed this frame.
     pub(in crate::app) fn window_keys(&mut self, ctx: &egui::Context) {
+        // Not while typing: on Windows AltGr arrives as Ctrl+Alt, and egui
+        // drops the character it types, so AltGr+2 (`²`) on a German layout
+        // reads as Ctrl+Alt+2 and AltGr+F on a Czech one as Ctrl+Alt+F. A
+        // focused text field is the place an operator types those.
+        if ctx.egui_wants_keyboard_input() || ctx.memory(|m| m.focused()).is_some() {
+            return;
+        }
         let keys = ctx.input(|i| window_keys_in(&i.events));
         if keys.list {
             self.show_windows = !self.show_windows;

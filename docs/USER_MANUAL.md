@@ -12292,7 +12292,7 @@ can stay on the decode list while the main window shows another.
 over the main window, as a panel inside it. A floating panel is not an OS window,
 so a tiling window manager cannot lose it. Its title bar has three buttons: out
 to a window of its own, roll up to the title bar, and close — which docks it back
-under the waterfall. Floating works in the browser too.
+under the waterfall.
 
 **The module-windows list.** While any module is out of the main window, a **▣**
 chip appears on the System row, next to SETTINGS. Click it to bring every module

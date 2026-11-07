@@ -300,9 +300,9 @@ impl eframe::App for SdroxideApp {
             // the only route that works with every window docked, which is what
             // makes a window lost on another workspace recoverable on a
             // keyboard-only desktop — and `Ctrl+Alt+F` floats the operating
-            // panel or docks it again. Handled here, like F1, so they work while
-            // a text field has focus: a chord with Ctrl and Alt in it is not
-            // typing.
+            // panel or docks it again. Handled here, like F1, but not while a
+            // text field has focus: on Windows AltGr is Ctrl+Alt, so there a
+            // chord with Ctrl and Alt in it can be typing.
             #[cfg(not(target_arch = "wasm32"))]
             self.window_keys(&ctx);
             // An open manual takes the scrolling keys before the bindings run,
