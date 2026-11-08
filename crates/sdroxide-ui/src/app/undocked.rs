@@ -1393,17 +1393,23 @@ fn tool_window_egui<R>(
         crate::chrome::window_body_bg(ui);
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // The body's top, clamped to the visible top of the body: in a
+            // The body's top, clamped to where it starts unscrolled: in a
             // window with `vscroll`, the content is laid out from where the
             // scroll has carried it, so scrolled down its top lies above the
             // window. Measured from there, the title bar came out short (down
             // to the 18 pt clamp), the button moved right by the difference
             // and covered egui's close button: a scrolled Settings window
-            // could not be closed with its ✕.
+            // could not be closed with its ✕. egui hands the window's inner
+            // margin to the scroll area as `content_margin`, inside the clip,
+            // so the unscrolled top is the clip's top plus that margin; the
+            // clip's top alone let the button shrink and slide right over the
+            // first 11 pt of scrolling.
             // Why: HDZ 2026-11-08: "wenn man bei einigen Fenstern runterscrollt,
             //      geht das Schließfeld aus dem Fenster weg … BÄNDER hat das
-            //      nicht, aber Einstellungen macht es".
-            body_top = ui.min_rect().min.y.max(ui.clip_rect().min.y);
+            //      nicht, aber Einstellungen macht es"; "auf dem ersten
+            //      Zentimeter Bewegung rückt er leicht nach rechts".
+            let margin_top = f32::from(crate::chrome::window_frame().inner_margin.top);
+            body_top = ui.min_rect().min.y.max(ui.clip_rect().min.y + margin_top);
         }
         out = Some(body(ui));
     });
@@ -1495,6 +1501,44 @@ impl SdroxideApp {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+
+    /// The title button keeps its place and size while a `vscroll` window is
+    /// scrolled, from the first point on: it is sized from the title bar,
+    /// and the title bar does not change when the body scrolls under it.
+    #[test]
+    fn the_title_button_stays_put_while_the_body_scrolls() {
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx);
+        let mut state = ToolWindowState { undocked: false, window: None };
+        let btn = crate::layout::salted_id(&ctx, "scroll-test").with("title-btn");
+        let mut rects = Vec::new();
+        for i in 0..24 {
+            ctx.begin_pass(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(1400.0, 900.0),
+                )),
+                ..Default::default()
+            });
+            let mut open = true;
+            let tool = ToolWindow::new("scroll-test", "SETTINGS", [500.0, 400.0]).vscroll();
+            tool_window_egui(&ctx, &tool, &mut state, &mut open, |ui| {
+                // A point or two a frame through the first margin's worth,
+                // then on down the page.
+                if i >= 2 {
+                    ui.scroll_with_delta(egui::vec2(0.0, -2.0));
+                }
+                for k in 0..80 {
+                    ui.label(format!("row {k}"));
+                }
+            });
+            ctx.end_pass().drop_without_applying_deltas();
+            if i >= 1 {
+                rects.push(ctx.memory(|m| m.area_rect(btn)).expect("the title button is shown"));
+            }
+        }
+        assert!(rects.iter().all(|r| *r == rects[0]), "the title button moved: {rects:?}");
+    }
 
     #[test]
     fn the_detached_readout_trims_to_the_dial() {
