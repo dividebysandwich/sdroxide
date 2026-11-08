@@ -6833,7 +6833,14 @@ impl Engine {
         // and operation interlock as the operator's Bypass control. If the
         // radio is transmitting or another ATU operation is still running,
         // retain the request and retry on a later poll.
-        if changed && self.caps.has_atu && self.state.atu.enabled {
+        if changed
+            && self.caps.has_atu
+            && (self.state.atu.enabled
+                || matches!(
+                    self.state.atu.status,
+                    sdroxide_types::AtuStatus::Tuned | sdroxide_types::AtuStatus::Tuning
+                ))
+        {
             self.atu_band_bypass_pending = true;
         }
         if self.atu_band_bypass_pending {
