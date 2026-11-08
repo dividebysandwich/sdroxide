@@ -339,7 +339,12 @@ pub(crate) fn apply_action(
     let rx = RxId::Main;
     match act {
         Ptt => {
-            let want = if button == ButtonMode::Toggle { !state.tx.ptt } else { on };
+            let pending = cmds.iter().rev().find_map(|c| match c {
+                Command::SetPtt(v) => Some(*v),
+                _ => None,
+            });
+            let want =
+                if button == ButtonMode::Toggle { !pending.unwrap_or(state.tx.ptt) } else { on };
             cmds.push(Command::SetPtt(want));
         }
         TuneCarrier => {
@@ -870,20 +875,7 @@ impl InputRuntime {
         }
 
         for (ix, down) in buttons {
-            let Some(b) = self.cfg.midi.bindings.get(ix) else { continue };
-            // A straight key is down while held and nothing else, whatever
-            // the binding says: a toggled key would hold the carrier on.
-            let mode =
-                if b.action == Action::CwStraight { ButtonMode::Momentary } else { b.button_mode };
-            let action = b.action;
-            let src = HeldSource::Midi(ix);
-            if down {
-                self.press(src, action, mode, now);
-            } else if self.release(src).is_none() && mode == ButtonMode::Momentary {
-                continue;
-            }
-            let sample = if down { ActionInput::Press } else { ActionInput::Release };
-            apply_action(action, sample, mode, state, ui, cmds);
+            self.midi_button(ix, down, now, state, ui, cmds);
         }
         for (ix, detents) in deltas {
             let Some(b) = self.cfg.midi.bindings.get(ix).cloned() else { continue };
@@ -897,6 +889,38 @@ impl InputRuntime {
             apply_action(b.action, ActionInput::Absolute(p), b.button_mode, state, ui, cmds);
         }
         self.send_midi_feedback(state, ui);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn midi_button(
+        &mut self,
+        ix: usize,
+        down: bool,
+        now: f64,
+        state: &mut RadioState,
+        ui: &mut UiSink<'_>,
+        cmds: &mut Vec<Command>,
+    ) {
+        let Some(b) = self.cfg.midi.bindings.get(ix) else { return };
+        // A straight key is down while held and nothing else, whatever
+        // the binding says: a toggled key would hold the carrier on.
+        let mode =
+            if b.action == Action::CwStraight { ButtonMode::Momentary } else { b.button_mode };
+        let action = b.action;
+        let src = HeldSource::Midi(ix);
+        if down {
+            self.press(src, action, mode, now);
+        } else if self.release(src).is_none()
+            && mode == ButtonMode::Momentary
+            && !matches!(action, Action::Ptt | Action::TuneCarrier)
+        {
+            return;
+        }
+        if action == Action::Ptt {
+            tracing::info!(binding = ix, down, ?mode, "MIDI PTT");
+        }
+        let sample = if down { ActionInput::Press } else { ActionInput::Release };
+        apply_action(action, sample, mode, state, ui, cmds);
     }
 
     /// Record a captured control into the LEARN target row.
@@ -1354,6 +1378,55 @@ mod tests {
             &mut cmds,
         );
         assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn midi_ptt_toggle_events_in_one_frame_alternate() {
+        let mut state = RadioState::default();
+        let mut view = ViewState::default();
+        let mut flags = [false; 6];
+        let mut speech_acts = Vec::new();
+        let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
+        let mut cmds = Vec::new();
+        for event in
+            [ActionInput::Press, ActionInput::Release, ActionInput::Press, ActionInput::Release]
+        {
+            apply_action(Action::Ptt, event, ButtonMode::Toggle, &mut state, &mut ui, &mut cmds);
+        }
+        assert_eq!(cmds, vec![Command::SetPtt(true), Command::SetPtt(false)]);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn midi_ptt_release_is_sent_even_after_the_local_hold_was_cleared() {
+        let mut runtime = InputRuntime {
+            cfg: InputSettings::default(),
+            held: Vec::new(),
+            accum: HashMap::new(),
+            key_capture: None,
+            midi_learn: None,
+            learn_values: Vec::new(),
+            last_midi: None,
+            midi: None,
+            midi_sent: Default::default(),
+        };
+        runtime.cfg.midi.bindings.push(sdroxide_types::MidiBinding {
+            action: Action::Ptt,
+            button_mode: ButtonMode::Momentary,
+            ..Default::default()
+        });
+        let mut state = RadioState::default();
+        let mut view = ViewState::default();
+        let mut flags = [false; 6];
+        let mut speech_acts = Vec::new();
+        let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
+        let mut cmds = Vec::new();
+        runtime.midi_button(0, true, 0.0, &mut state, &mut ui, &mut cmds);
+        runtime.release_all(&mut state, &mut ui, &mut cmds);
+        cmds.clear();
+        state.tx.ptt = true;
+        runtime.midi_button(0, false, 1.0, &mut state, &mut ui, &mut cmds);
+        assert_eq!(cmds, vec![Command::SetPtt(false)]);
     }
 
     /// One-shots must not fire twice for one physical press.

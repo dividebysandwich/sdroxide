@@ -2128,6 +2128,16 @@ the transmitter with no carrier of its own and holds it — no idle hang — whi
 the key note sends inside it, and releasing PTT ends the over at once. Without a
 PTT binding the key note keys the over by itself, as above.
 
+For a keyer that reports its PTT state with Note On and Note Off, use **Hold**
+for the PTT binding, even if the keyer's own control is a toggle. sdroxide's
+**Toggle** flips PTT on each Note On and ignores Note Off; it is for a button
+whose presses should alternately start and stop transmit.
+
+Repeated PTT-off events are harmless: CW finishes its final audio block and
+releases the transmitter once, leaving the next key press ready to send.
+The PTT note may arrive before the first key note; entering straight-key mode
+discards any buffered text-keyer audio so that the eventual release can finish.
+
 - The first press keys the transmitter; there is no need to press **TX**. Between
   elements the transmitter holds the frequency the way **TX** does, and releases
   itself once the key has been up for as long as **IDLE** says.

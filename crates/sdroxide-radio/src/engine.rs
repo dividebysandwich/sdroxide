@@ -16880,6 +16880,7 @@ impl Engine {
             && let Some(d) = self.digi.as_mut()
             && d.set_ptt_hold(on)
         {
+            info!(on, "CW operator PTT handled by keyer");
             self.emit_digi_status();
             return;
         }
