@@ -193,6 +193,17 @@ pub(crate) struct RxStats {
     total_lost: u64,
     total_dropped: u64,
     total_keyed: u64,
+    /// Complex samples in the last good datagram: what a lost one would have
+    /// carried, so the clock figure can count the holes as time that passed.
+    last_pairs: u64,
+    /// Largest sequence gap seen in the window, in datagrams.
+    win_max_gap: u64,
+    /// Scheduling of the thread itself, recorded by Protocol 1 only (see
+    /// [`RxStats::on_loop`] and [`RxStats::on_ep2`]).
+    last_loop: Option<Instant>,
+    win_max_loop_gap: Duration,
+    win_max_ep2_late: Duration,
+    win_ep2_resyncs: u64,
 }
 
 impl RxStats {
@@ -213,6 +224,12 @@ impl RxStats {
             total_lost: 0,
             total_dropped: 0,
             total_keyed: 0,
+            last_pairs: 0,
+            win_max_gap: 0,
+            last_loop: None,
+            win_max_loop_gap: Duration::ZERO,
+            win_max_ep2_late: Duration::ZERO,
+            win_ep2_resyncs: 0,
         }
     }
 
@@ -222,6 +239,42 @@ impl RxStats {
         self.total_datagrams += 1;
         self.win_samples += pairs as u64;
         self.total_samples += pairs as u64;
+        self.last_pairs = pairs as u64;
+    }
+
+    /// Note that the network thread went round its loop at `now`. The longest
+    /// gap between two rounds in a window says whether the thread itself was
+    /// ever stalled long enough to matter (issue #553: loss that depends on the
+    /// machine and the sample rate, and on nothing the kernel counts).
+    pub(crate) fn on_loop(&mut self, now: Instant) {
+        if let Some(prev) = self.last_loop {
+            self.win_max_loop_gap = self.win_max_loop_gap.max(now.saturating_duration_since(prev));
+        }
+        self.last_loop = Some(now);
+    }
+
+    /// Note that an EP2 datagram went out `late` after it was due, and whether
+    /// the schedule had to be restarted because it was more than a period behind
+    /// (which silently skips datagrams the radio expected).
+    pub(crate) fn on_ep2(&mut self, late: Duration, resynced: bool) {
+        self.win_max_ep2_late = self.win_max_ep2_late.max(late);
+        if resynced {
+            self.win_ep2_resyncs += 1;
+        }
+    }
+
+    /// Timing of this thread over the window, empty when nothing was recorded
+    /// (Protocol 2 does not record it).
+    fn timing_note(&self) -> String {
+        if self.last_loop.is_none() {
+            return String::new();
+        }
+        format!(
+            "; thread: longest loop gap {:.1} ms, EP2 up to {:.1} ms late, {} EP2 resync(s)",
+            self.win_max_loop_gap.as_secs_f64() * 1e3,
+            self.win_max_ep2_late.as_secs_f64() * 1e3,
+            self.win_ep2_resyncs,
+        )
     }
 
     /// Record a datagram that was not a recognized I/Q frame.
@@ -233,6 +286,15 @@ impl RxStats {
     pub(crate) fn on_lost(&mut self, n: u64) {
         self.win_lost += n;
         self.total_lost += n;
+        self.win_max_gap = self.win_max_gap.max(n);
+    }
+
+    /// Samples the radio produced so far, received or not. The sample clock is
+    /// measured on this: a datagram that never arrived is still time that went
+    /// by, and counting only what arrived read every loss as a slow board
+    /// (-1100 ppm in issue #553, from a board that was within 40 ppm).
+    fn samples_elapsed(&self) -> u64 {
+        self.total_samples + self.total_lost * self.last_pairs
     }
 
     /// Record `pairs` complex samples discarded because the RX ring was full
@@ -269,7 +331,7 @@ impl RxStats {
         if dt < 20.0 || self.total_samples == 0 || self.nominal_hz <= 0.0 {
             return "clock: measuring".to_string();
         }
-        let measured = self.total_samples as f64 / dt;
+        let measured = self.samples_elapsed() as f64 / dt;
         let ppm = (measured / self.nominal_hz - 1.0) * 1e6;
         format!(
             "clock: {measured:.0} sps, {ppm:+.0} ppm vs nominal (≈{:+.0} Hz at 14 MHz)",
@@ -304,24 +366,27 @@ impl RxStats {
         if self.win_lost > 0 || self.win_dropped > 0 {
             tracing::warn!(
                 "HPSDR P{} RX: {} datagrams, {} samples ({:.1} ksps) over {:.2}s; \
-                 {} datagram(s) LOST on the network, {} sample(s) DROPPED (RX ring full — \
-                 the DSP thread is not keeping up; try a lower sample rate); \
-                 totals {} lost / {} dropped{}",
+                 {} datagram(s) LOST on the network (largest gap {}), {} sample(s) DROPPED \
+                 (RX ring full — the DSP thread is not keeping up; try a lower sample rate); \
+                 totals {} lost / {} dropped; {}{}{}",
                 self.proto,
                 self.win_datagrams,
                 self.win_samples,
                 ksps,
                 dt.as_secs_f64(),
                 self.win_lost,
+                self.win_max_gap,
                 self.win_dropped,
                 self.total_lost,
                 self.total_dropped,
+                self.clock_error(),
+                self.timing_note(),
                 self.keyed_note(),
             );
         } else {
             tracing::debug!(
                 "HPSDR P{} RX: {} datagrams, {} samples ({:.1} ksps) over {:.2}s; \
-                 {} unrecognized; totals {} datagrams / {} samples; {}{}",
+                 {} unrecognized; totals {} datagrams / {} samples; {}{}{}",
                 self.proto,
                 self.win_datagrams,
                 self.win_samples,
@@ -331,6 +396,7 @@ impl RxStats {
                 self.total_datagrams,
                 self.total_samples,
                 self.clock_error(),
+                self.timing_note(),
                 self.keyed_note(),
             );
         }
@@ -339,8 +405,12 @@ impl RxStats {
         self.win_samples = 0;
         self.win_other = 0;
         self.win_lost = 0;
+        self.win_max_gap = 0;
         self.win_dropped = 0;
         self.win_keyed = 0;
+        self.win_max_loop_gap = Duration::ZERO;
+        self.win_max_ep2_late = Duration::ZERO;
+        self.win_ep2_resyncs = 0;
     }
 }
 
@@ -421,6 +491,34 @@ impl SeqTracker {
         self.next = Some(seq.wrapping_add(1));
         lost
     }
+
+    /// The sequence number the next datagram should carry, `None` before the
+    /// first one. Read *before* [`SeqTracker::observe`] to log a gap.
+    pub(crate) fn expected(&self) -> Option<u32> {
+        self.next
+    }
+}
+
+/// The most datagrams a gap is filled for. Beyond it the radio stalled or
+/// restarted, and padding that much silence would only delay the signal.
+pub(crate) const MAX_FILL_DATAGRAMS: u32 = 256;
+
+/// Write `floats` zeros (an even count: whole I/Q pairs) into the RX ring where
+/// datagrams went missing, so everything after the hole keeps its place in
+/// time. Without it a loss shortens the stream: a fax line slips a few samples
+/// per datagram (the slant of issue #553), a WSPR or FT8 slot starts early.
+///
+/// All or nothing, like [`push_iq`], and silent when the ring has no room: it is
+/// a courtesy to the decoders, never a reason to report an overrun.
+pub(crate) fn fill_gap(rx: &mut Producer<f32>, floats: usize) -> bool {
+    let Ok(mut chunk) = rx.write_chunk(floats & !1) else {
+        return false;
+    };
+    let (head, tail) = chunk.as_mut_slices();
+    head.fill(0.0);
+    tail.fill(0.0);
+    chunk.commit_all();
+    true
 }
 
 /// Push one datagram's interleaved I/Q into the RX ring, keeping I and Q
@@ -1607,6 +1705,58 @@ mod tests {
         assert_eq!(s.observe(500), 0);
         assert_eq!(s.observe(400), 0);
         assert_eq!(s.observe(401), 0);
+    }
+
+    #[test]
+    fn a_gap_is_filled_with_whole_pairs_of_silence() {
+        let (mut prod, mut cons) = RingBuffer::<f32>::new(16);
+        let mut stats = RxStats::new(1, 48_000.0);
+        assert!(push_iq(&mut prod, &[1.0, 2.0], &mut stats, false));
+        assert!(fill_gap(&mut prod, 4)); // two missing samples
+        assert!(push_iq(&mut prod, &[3.0, 4.0], &mut stats, false));
+        let got: Vec<f32> = std::iter::from_fn(|| cons.pop().ok()).collect();
+        assert_eq!(got, vec![1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 3.0, 4.0]);
+        // An odd request never leaves I and Q out of step.
+        assert!(fill_gap(&mut prod, 3));
+        assert_eq!(std::iter::from_fn(|| cons.pop().ok()).count(), 2);
+    }
+
+    #[test]
+    fn a_gap_that_does_not_fit_is_skipped_without_a_complaint() {
+        let (mut prod, mut cons) = RingBuffer::<f32>::new(4);
+        let stats = RxStats::new(1, 48_000.0);
+        assert!(!fill_gap(&mut prod, 8));
+        assert!(cons.pop().is_err(), "all or nothing");
+        assert_eq!(stats.total_dropped, 0, "a fill is not an overrun");
+    }
+
+    #[test]
+    fn the_clock_counts_lost_datagrams_as_time_that_passed() {
+        let mut stats = RxStats::new(1, 48_000.0);
+        for _ in 0..99 {
+            stats.on_iq(126);
+        }
+        stats.on_lost(1);
+        // 99 received + 1 lost = 100 datagrams of 126 samples.
+        assert_eq!(stats.samples_elapsed(), 100 * 126);
+        assert_eq!(stats.total_samples, 99 * 126);
+        assert_eq!(stats.win_max_gap, 1);
+    }
+
+    #[test]
+    fn thread_timing_keeps_the_worst_of_the_window() {
+        let mut stats = RxStats::new(1, 48_000.0);
+        assert_eq!(stats.timing_note(), "", "nothing recorded, nothing said");
+        let t0 = Instant::now();
+        stats.on_loop(t0);
+        stats.on_loop(t0 + Duration::from_millis(3));
+        stats.on_loop(t0 + Duration::from_millis(5));
+        stats.on_ep2(Duration::from_millis(2), false);
+        stats.on_ep2(Duration::from_millis(1), true);
+        assert_eq!(stats.win_max_loop_gap, Duration::from_millis(3));
+        assert_eq!(stats.win_max_ep2_late, Duration::from_millis(2));
+        assert_eq!(stats.win_ep2_resyncs, 1);
+        assert!(stats.timing_note().contains("1 EP2 resync"));
     }
 
     #[test]

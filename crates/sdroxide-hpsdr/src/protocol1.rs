@@ -30,8 +30,8 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use crate::net::{
-    Ctrl, RxStats, SeqTracker, ThreadCtx, board_has_lna_gain, board_is_hermes_lite, hex_head,
-    lna_gain_code, push_iq,
+    Ctrl, MAX_FILL_DATAGRAMS, RxStats, SeqTracker, ThreadCtx, board_has_lna_gain,
+    board_is_hermes_lite, hex_head, lna_gain_code, push_iq,
 };
 use crate::protocol2::be24_to_f32;
 use sdroxide_types::HpsdrOcPlan;
@@ -652,6 +652,7 @@ pub(crate) fn run(ctx: ThreadCtx) {
     let started = Instant::now();
 
     loop {
+        stats.on_loop(Instant::now());
         // 1) Control messages.
         while let Ok(msg) = ctrl.try_recv() {
             match msg {
@@ -752,7 +753,19 @@ pub(crate) fn run(ctx: ThreadCtx) {
                     if let Some((_, clock, _)) = slot.as_ref() {
                         clock.store(opened_at.elapsed().as_millis() as u64, Ordering::Relaxed);
                     }
-                    stats.on_lost(seq_in.observe(info.seq) as u64);
+                    let expected = seq_in.expected();
+                    let lost = seq_in.observe(info.seq);
+                    stats.on_lost(lost as u64);
+                    if lost > 0 {
+                        // The raw gap, so a log shows whether the radio skips a
+                        // constant number of datagrams or loses them at random
+                        // (issue #553).
+                        tracing::debug!(
+                            "HPSDR P1: EP6 sequence gap — expected {:?}, got {}, {lost} missing",
+                            expected,
+                            info.seq
+                        );
+                    }
                     if !logged_first_rx {
                         logged_first_rx = true;
                         tracing::info!(
@@ -871,6 +884,14 @@ pub(crate) fn run(ctx: ThreadCtx) {
                         // nothing on this connection is keyed while the ring
                         // still goes unread for somebody else's over.
                         let keyed = regs.ptt || rx_paused.load(Ordering::Relaxed) || tx_backlog;
+                        // Datagrams that never arrived are time that went by:
+                        // leave their place in the stream as silence, so the
+                        // samples after the hole land where they belong. Not
+                        // while the ring is unread, and not for a stall so long
+                        // that it is the radio restarting rather than a loss.
+                        if lost > 0 && lost <= MAX_FILL_DATAGRAMS && !keyed {
+                            crate::net::fill_gap(ring, lost as usize * rx_scratch.len());
+                        }
                         tx_backlog = !push_iq(ring, &rx_scratch, &mut stats, keyed) && keyed;
                     }
                 } else {
@@ -981,12 +1002,15 @@ pub(crate) fn run(ctx: ThreadCtx) {
                 .unwrap_or_else(|| regs.cc(rot.take(&regs)));
             let d = build_ep2(&mut out_seq, speed, mox, regs.oc(), cc, &tx_scratch);
             let _ = socket.send_to(&d, dest);
+            let late = now.saturating_duration_since(next_ep2);
             next_ep2 += EP2_INTERVAL;
             // After a scheduler stall, resync instead of firing off the backlog
             // in a burst the radio's FIFO would only drop.
-            if next_ep2 + EP2_INTERVAL < now {
+            let resync = next_ep2 + EP2_INTERVAL < now;
+            if resync {
                 next_ep2 = now + EP2_INTERVAL;
             }
+            stats.on_ep2(late, resync);
         }
     }
 }
