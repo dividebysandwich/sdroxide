@@ -6859,7 +6859,9 @@ impl Engine {
                     match self.source.atu_bypass() {
                         Ok(()) => self.atu_operation_active = true,
                         Err(e) => {
-                            warn!("automatically bypassing the antenna tuner after a band change: {e}");
+                            warn!(
+                                "automatically bypassing the antenna tuner after a band change: {e}"
+                            );
                             self.notice(&format!(
                                 "The antenna tuner could not be bypassed after the band change: {e}"
                             ));

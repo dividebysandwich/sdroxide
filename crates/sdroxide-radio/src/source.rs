@@ -98,7 +98,10 @@ pub enum ControlUpdate {
     /// RF permission is true only while a fresh tuner status is 0xEE.
     /// The operation interlock remains true from command acceptance until
     /// a terminal status (0x00 or 0xFA..=0xFD), or command-delivery failure.
-    AtuState { rf_requested: bool, operation_active: bool },
+    AtuState {
+        rf_requested: bool,
+        operation_active: bool,
+    },
     /// The radio in front of us is transmitting **on its own** — its mic
     /// button, foot switch, VOX or keyer — and sdroxide is not driving the
     /// over. `true` is on the air.

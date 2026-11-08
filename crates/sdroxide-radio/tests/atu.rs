@@ -192,9 +192,7 @@ fn host_ptt_is_interlocked_before_the_tuning_status_arrives() {
     // the preceding PTT request has necessarily been processed.
     h.cmd_tx.send(Command::AtuBypass).unwrap();
     assert!(
-        wait_for_state(&h.event_rx, |s| {
-            s.atu.status == AtuStatus::Bypass && !s.atu.enabled
-        }),
+        wait_for_state(&h.event_rx, |s| { s.atu.status == AtuStatus::Bypass && !s.atu.enabled }),
         "the queued bypass command should be processed"
     );
 
