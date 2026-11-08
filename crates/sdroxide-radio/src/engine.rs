@@ -16373,6 +16373,7 @@ impl Engine {
         // carrier while the source is being replaced.
         self.atu_rf_requested = false;
         self.atu_operation_active = false;
+        self.atu_band_bypass_pending = false;
         // Nor the old link's word that the radio was on the air by itself: the
         // new one reports only changes, so a stale `true` would keep receive
         // muted and transmit refused until the radio keyed again.
