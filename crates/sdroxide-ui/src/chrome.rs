@@ -659,6 +659,41 @@ pub fn slider(ui: &mut Ui, slider: egui::Slider<'_>) -> Response {
     skinned_slider(ui, Some(width), slider)
 }
 
+/// Adjust a ribbon slider by whole wheel detents while hovered, consuming
+/// the gesture so a surrounding scroll area does not move too.
+pub fn slider_wheel<Num: egui::emath::Numeric>(
+    mut response: Response,
+    value: &mut Num,
+    range: std::ops::RangeInclusive<Num>,
+    step: f64,
+) -> Response {
+    let key = response.id.with("wheel-remainder");
+    if !response.hovered() || !response.enabled() {
+        response.ctx.data_mut(|d| d.remove::<f32>(key));
+        return response;
+    }
+    if response.ctx.input(|i| i.modifiers.ctrl || i.modifiers.command) {
+        return response;
+    }
+    let mut remainder = response.ctx.data_mut(|d| d.get_temp::<f32>(key).unwrap_or_default());
+    let detents = crate::widgets::wheel_detents_ctx(&response.ctx, false, &mut remainder);
+    response.ctx.data_mut(|d| d.insert_temp(key, remainder));
+    response.ctx.input_mut(|i| {
+        i.events.retain(|event| !matches!(event, egui::Event::MouseWheel { .. }));
+        i.smooth_scroll_delta = egui::Vec2::ZERO;
+    });
+    if detents != 0.0 {
+        let old = value.to_f64();
+        let next =
+            (old + f64::from(detents) * step).clamp(range.start().to_f64(), range.end().to_f64());
+        *value = Num::from_f64(next);
+        if value.to_f64() != old {
+            response.mark_changed();
+        }
+    }
+    response
+}
+
 /// [`slider`] for a rail that runs up the box rather than across it.
 ///
 /// A vertical `Slider` reads `slider_width` as its *height*, so this one is
@@ -2483,6 +2518,152 @@ fn tab_shape(
 
 #[cfg(test)]
 mod tests {
+    struct WheelSlider {
+        ctx: egui::Context,
+        value: f32,
+        rect: egui::Rect,
+        vertical: bool,
+        enabled: bool,
+        range: std::ops::RangeInclusive<f32>,
+        step: f64,
+    }
+
+    impl WheelSlider {
+        fn new(vertical: bool) -> Self {
+            let mut s = Self {
+                ctx: egui::Context::default(),
+                value: 0.5,
+                rect: egui::Rect::NOTHING,
+                vertical,
+                enabled: true,
+                range: 0.0..=1.0,
+                step: 0.01,
+            };
+            s.frame(Vec::new());
+            s
+        }
+
+        fn frame(&mut self, events: Vec<egui::Event>) -> (bool, usize) {
+            let mut changed = false;
+            let mut remaining = 0;
+            self.ctx
+                .run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(400.0, 400.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.add_enabled_ui(self.enabled, |ui| {
+                            let mut rail = egui::Slider::new(&mut self.value, self.range.clone())
+                                .show_value(false);
+                            if self.vertical {
+                                rail = rail.vertical();
+                            }
+                            let response = if self.vertical {
+                                slider_vertical(ui, rail)
+                            } else {
+                                slider_readout(ui, 50.0, rail.show_value(true))
+                            };
+                            let response = slider_wheel(
+                                response,
+                                &mut self.value,
+                                self.range.clone(),
+                                self.step,
+                            );
+                            self.rect = response.rect;
+                            changed = response.changed();
+                            remaining = ui.input(|i| {
+                                if changed {
+                                    assert_eq!(i.smooth_scroll_delta, egui::Vec2::ZERO);
+                                }
+                                i.events
+                                    .iter()
+                                    .filter(|e| matches!(e, egui::Event::MouseWheel { .. }))
+                                    .count()
+                            });
+                        });
+                    },
+                )
+                .drop_without_applying_deltas();
+            (changed, remaining)
+        }
+
+        fn scroll(&mut self, unit: egui::MouseWheelUnit, delta: f32) -> (bool, usize) {
+            self.frame(vec![
+                egui::Event::PointerMoved(self.rect.center()),
+                egui::Event::MouseWheel {
+                    unit,
+                    delta: egui::vec2(0.0, delta),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: Default::default(),
+                },
+            ])
+        }
+    }
+
+    #[test]
+    fn ribbon_slider_wheel_steps_clamps_and_consumes_in_both_orientations() {
+        for vertical in [false, true] {
+            let mut s = WheelSlider::new(vertical);
+            assert_eq!(s.scroll(egui::MouseWheelUnit::Line, 1.0), (true, 0));
+            assert!((s.value - 0.51).abs() < 1e-6);
+            assert_eq!(s.scroll(egui::MouseWheelUnit::Point, -100.0), (true, 0));
+            assert!((s.value - 0.5).abs() < 1e-6);
+            s.value = 1.0;
+            assert_eq!(s.scroll(egui::MouseWheelUnit::Line, 1.0), (false, 0));
+            assert_eq!(s.value, 1.0);
+            s.value = 0.0;
+            assert_eq!(s.scroll(egui::MouseWheelUnit::Line, -1.0), (false, 0));
+            assert_eq!(s.value, 0.0);
+        }
+    }
+
+    #[test]
+    fn ribbon_slider_wheel_banks_fine_motion_and_ignores_disabled_or_unhovered() {
+        let mut s = WheelSlider::new(false);
+        for _ in 0..2 {
+            assert_eq!(s.scroll(egui::MouseWheelUnit::Point, 10.0), (false, 0));
+        }
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Point, 10.0), (true, 0));
+        assert!((s.value - 0.51).abs() < 1e-6);
+        s.enabled = false;
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Line, 1.0), (false, 1));
+        s.enabled = true;
+        let events = vec![
+            egui::Event::PointerMoved(egui::pos2(390.0, 390.0)),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, 1.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: Default::default(),
+            },
+        ];
+        assert_eq!(s.frame(events), (false, 1));
+        assert!((s.value - 0.51).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ribbon_slider_wheel_uses_db_or_hardware_steps_and_resets_after_leaving() {
+        let mut s = WheelSlider::new(false);
+        s.range = -30.0..=30.0;
+        s.value = -10.0;
+        s.step = 2.5;
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Line, 1.0), (true, 0));
+        assert_eq!(s.value, -7.5);
+        s.step = 1.0;
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Line, -1.0), (true, 0));
+        assert_eq!(s.value, -8.5);
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Point, 15.0), (false, 0));
+        s.frame(vec![egui::Event::PointerMoved(egui::pos2(390.0, 390.0))]);
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Point, 15.0), (false, 0));
+        assert_eq!(s.value, -8.5);
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Point, 15.0), (true, 0));
+        assert_eq!(s.value, -7.5);
+    }
     use super::*;
 
     /// Issue #653: in a split view's half-width column the radio strip wraps,

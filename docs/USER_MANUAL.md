@@ -454,6 +454,15 @@ the strip can afford. So the same button can sit on the top row on a CAT rig and
 on the bottom row on an SDR with a gain slider, and it moves when you change
 mode. What is in the box never changes; only where the two rows are cut does.
 
+Hover a control-ribbon slider and scroll the wheel to adjust it without
+dragging. Scroll up to increase, down to decrease. Volume (main and sub),
+radio squelch, Drive, Tune and Mic move by one percentage point per notch;
+dB controls, including CESSB, move by 1 dB, while hardware gain uses the
+device's own step. This also works on the condensed vertical TX rails and
+the ribbon menus. Values stop at the slider's limits; disabled controls
+do not respond, and scrolling over a slider does not scroll its containing
+menu. Ordinary dragging and keyboard adjustment still work.
+
 - **AGC** — a drop-down: `Off`, `Slow`, `Med`, `Fast`. Not shown in NFM, WFM
   or DRM, where there is no AGC at all: an FM detector's output level is set by
   the transmitter's deviation, not by signal strength, and a DRM decoder hands
