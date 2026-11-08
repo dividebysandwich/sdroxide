@@ -67,17 +67,33 @@ rustflags+="--remap-path-prefix=$sysroot/lib/rustlib/src/rust=/rustc/$commit"
 host=$(rustc -vV | sed -n 's/^host: //p')
 target=${CARGO_BUILD_TARGET:-$host}
 
-# On Linux and macOS this goes in RUSTFLAGS, which reaches every target (the
-# web job builds wasm32 with it) and overrides `build.rustflags` and
-# `[target.*] rustflags` in .cargo/config.toml — there is no build.rustflags,
-# and the only [target] entry is for Windows. On Windows that entry
-# (-static-libgcc) has to survive, so the flags go in the target's own
-# variable instead, which cargo appends to the config file's list.
-if [[ $windows == 1 ]]; then
-  upper=$(printf '%s' "$target" | tr '[:lower:]-' '[:upper:]_')
-  echo "CARGO_TARGET_${upper}_RUSTFLAGS=$rustflags"
-else
-  echo "RUSTFLAGS=$rustflags"
+# The native link, on top of that: the linker hashes the whole output into the
+# binary's ID — the GNU build ID on Linux, LC_UUID on macOS — before anything
+# strips it, so whatever is stripped afterwards still decides the ID. And what
+# is stripped names the build directory: the symbol table's file entries on
+# Linux, and on macOS the debug map, which lists every object file with debug
+# info (RADE's autotools-built Opus has it) by its absolute path under
+# target/. Having the linker leave those out itself — --strip-all, -S — means
+# the ID is a hash of only what ships. Every release binary is stripped of
+# both anyway. Windows needs nothing: a PE file has no content hash, only a
+# timestamp, which GNU ld takes from SOURCE_DATE_EPOCH.
+native=$rustflags
+case "$(uname -s)" in
+  Linux) native+=" -C link-arg=-Wl,--strip-all" ;;
+  Darwin) native+=" -C link-arg=-Wl,-S" ;;
+esac
+
+# Each set goes in its target's own variable rather than RUSTFLAGS. RUSTFLAGS
+# would reach the wasm32 web build too, whose linker takes neither option, and
+# it would replace `[target.*] rustflags` in .cargo/config.toml, where the
+# Windows build's -static-libgcc has to survive; a target's variable is added
+# to that list instead. Without --target, cargo applies the host's variable to
+# everything, build scripts included, just as it would RUSTFLAGS.
+upper=$(printf '%s' "$target" | tr '[:lower:]-' '[:upper:]_')
+echo "CARGO_TARGET_${upper}_RUSTFLAGS=$native"
+if [[ $windows == 0 ]]; then
+  # The web client, which trunk builds with --target wasm32-unknown-unknown.
+  echo "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS=$rustflags"
 fi
 
 # C and C++: `__FILE__` in rtl_433's and mongoose's diagnostics, and whatever
