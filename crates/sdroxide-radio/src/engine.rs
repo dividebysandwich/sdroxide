@@ -2710,6 +2710,8 @@ struct Engine {
     atu_rf_requested: bool,
     /// The ATU owns the transmitter from accepted command through terminal status.
     atu_operation_active: bool,
+    /// A band change waiting for the ATU to be safely taken out of circuit.
+    atu_band_bypass_pending: bool,
     /// The loudest the microphone got this over, and how many blocks of it were
     /// modulated — see [`Engine::report_silent_microphone`].
     voice_peak: f32,
@@ -4381,6 +4383,7 @@ fn engine_thread(
         tx_active: false,
         atu_rf_requested: false,
         atu_operation_active: false,
+        atu_band_bypass_pending: false,
         voice_peak: 0.0,
         voice_blocks: 0,
         hw_ptt: false,
@@ -6823,7 +6826,47 @@ impl Engine {
     /// there and then, rather than being missed.
     fn poll_band_change(&mut self) {
         let band = self.state.band;
-        if std::mem::replace(&mut self.band_seen, band) == band {
+        let changed = std::mem::replace(&mut self.band_seen, band) != band;
+
+        // A tuner match belongs to the band on which it was found. Take the
+        // tuner out of circuit on a band change, using the same source command
+        // and operation interlock as the operator's Bypass control. If the
+        // radio is transmitting or another ATU operation is still running,
+        // retain the request and retry on a later poll.
+        if changed && self.caps.has_atu && self.state.atu.enabled {
+            self.atu_band_bypass_pending = true;
+        }
+        if self.atu_band_bypass_pending {
+            if !self.caps.has_atu {
+                self.atu_band_bypass_pending = false;
+            } else if !self.tx_active
+                && !self.rig_tx
+                && !self.state.tx.ptt
+                && !self.state.tx.tune
+                && !self.digi_tx
+                && !self.atu_operation_active
+                && !self.atu_rf_requested
+                && self.state.atu.status != sdroxide_types::AtuStatus::Tuning
+            {
+                if self.state.atu.enabled {
+                    match self.source.atu_bypass() {
+                        Ok(()) => self.atu_operation_active = true,
+                        Err(e) => {
+                            warn!("automatically bypassing the antenna tuner after a band change: {e}");
+                            self.notice(&format!(
+                                "The antenna tuner could not be bypassed after the band change: {e}"
+                            ));
+                        }
+                    }
+                }
+                // Do not repeat a rejected command every engine tick. The
+                // tuner state will be refreshed normally and a later band
+                // change can request another bypass.
+                self.atu_band_bypass_pending = false;
+            }
+        }
+
+        if !changed {
             return;
         }
         // The antenna first, and outside the WSPR exemption below: a beam that
