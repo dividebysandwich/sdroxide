@@ -322,6 +322,10 @@ jobs:
           # linked C, so it costs the SoapySDR-free artifact nothing at run time
           # and the release notes' "everything above" stays true. Both embed the
           # web client.
+          #
+          # packaging/rebuild-release.sh is this, for the `cat` build, outside
+          # CI: keep the two in step. (reproducible.yml rebuilds every release
+          # with it, so a drift shows up as a release that does not verify.)
           if [[ "${{ matrix.variant }}" == "cat" ]]; then
             cargo build --release --locked -p sdroxide --no-default-features --features embed-web,rtl433
           else
@@ -848,10 +852,11 @@ jobs:
           fi
 
       # What a rebuild needs besides the source: the image and compiler are
-      # pinned above, but `apt-get install` takes whatever jammy-updates has
-      # that day, so the exact package set is recorded here, in a form
-      # snapshot.ubuntu.com can serve again. The checksums are of the files
-      # beside it, as built. packaging/reproducible-env.sh has the rest.
+      # pinned above, and install-compat-deps.sh takes the packages from the
+      # snapshot.ubuntu.com snapshot at the commit's time, so a rebuild gets
+      # the same set; it is listed here all the same, to check against. The
+      # checksums are of the files beside it, as built.
+      # packaging/reproducible-env.sh has the rest.
       - name: Record build environment (compat container)
         if: matrix.container
         run: |
@@ -859,6 +864,7 @@ jobs:
             echo "package: $PKG"
             echo "source: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$GITHUB_SHA"
             echo "image: ${{ matrix.container }}"
+            echo "apt: $(grep -m1 -o 'https://snapshot\.ubuntu\.com/ubuntu/[0-9TZ]*' /etc/apt/sources.list || echo '<no snapshot>')"
             echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH"
             echo "SDROXIDE_BUILD: ${SDROXIDE_BUILD:-<unset>}"
@@ -1139,9 +1145,53 @@ jobs:
           Every binary embeds the web client: run `sdroxide --server` and open
           `http://<host>:4950` in a browser. `sdroxide-web-*.zip` contains the
           standalone web assets for use with `--web-root`.
+
+          ### Verifying this release
+
+          The standard builds for `linux-x86_64-compat`, `linux-aarch64-compat`,
+          `macos-aarch64`, `macos-x86_64` and `windows-x86_64`, and the web
+          client, are reproducible: built again from the @TAG@ source, they
+          come out byte for byte the same as the binaries in these downloads.
+          The installers around them (`.dmg`, `.msi`, `.AppImage`, `.deb`) are
+          not, because the tools that make them stamp each one with the time,
+          but they carry the same binaries. `SHA256SUMS` lists every download,
+          and each `.buildinfo` names the exact build environment.
+
+          To print the hashes of the binaries inside this release, or compare
+          them with your own build, from a checkout of @TAG@:
+
+              packaging/verify-release.sh --repo @REPO@ @TAG@
+              packaging/verify-release.sh --repo @REPO@ @TAG@ linux-x86_64-compat=path/to/your/sdroxide
+
+          To rebuild it yourself: on Linux with Docker,
+          `packaging/linux/rebuild-in-docker.sh --repo @REPO@ @TAG@`; on any
+          platform, fork the repository and run *Actions → Reproducibility →
+          Run workflow* with tag `@TAG@`. That rebuilds this release on your
+          fork's runners and compares it with these downloads. The details are
+          in `docs/reproducible-builds.md`.
           EOF
+          sed -i -e "s|@TAG@|$GITHUB_REF_NAME|g" -e "s|@REPO@|$GITHUB_REPOSITORY|g" notes.md
           if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
               --title "sdroxide $GITHUB_REF_NAME" --notes-file notes.md --generate-notes
           fi
           gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber dist/*
+
+  # Rebuild what was just published, from the tag, somewhere else, and check
+  # that the binaries inside the downloads come out the same (see
+  # reproducible.yml). After the release rather than before it, because what
+  # it checks is the published downloads themselves. A failure turns this run
+  # red with the release already out: it means a release that does not
+  # reproduce, which wants fixing in the next one rather than holding this one.
+  # Called from here because the release is created with GITHUB_TOKEN, whose
+  # events start no other workflow; `on: release` would never fire.
+  verify:
+    name: verify release
+    needs: release
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reproducible.yml
+    with:
+      tag: ${{ github.ref_name }}
+      repo: ${{ github.repository }}

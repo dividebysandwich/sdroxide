@@ -1,31 +1,47 @@
 name: Reproducibility
 
-# Builds the linux-x86_64-compat binary, the macos-aarch64 binary, the
-# windows-x86_64 .exe and the web client they embed, each twice from the same
-# commit, and fails unless the two come out byte for byte the same. The two
-# builds differ in everything a user's rebuild would: the directory the source
-# is checked out to, the time zone and the locale, and the machine. When they
-# do not match, diffoscope's report of where they differ is on the run page.
+# Rebuilds a published release from its tag and checks that the binaries come
+# out byte for byte the same as the ones inside its downloads: the
+# linux-x86_64-compat, linux-aarch64-compat, macos-aarch64, macos-x86_64 and
+# windows-x86_64 standard builds, and the web client they all embed. Those are
+# the builds with a pinned environment — a fixed compiler, and a fixed image
+# and apt snapshot (Linux), runner label and Xcode (macOS) or MSYS2 snapshot
+# (Windows) — so anyone can make them again and get the same bytes.
 #
-# Only those are checked because only they have a pinned environment: a fixed
-# compiler, and a fixed image (Linux), a fixed runner label and Xcode (macOS)
-# or a fixed MSYS2 snapshot (Windows). The regular Linux builds run on whatever
-# `ubuntu-latest` is that week. macos-x86_64 is pinned the same way as
-# macos-aarch64 and left out only to keep the weekly bill down.
-#on:
-  #workflow_dispatch:
-  # Weekly, Sunday 04:41 UTC: often enough to notice a regression within a
-  # release or two, rarely enough that eight release-sized builds a week do not
-  # matter. The odd minute for the reason given in release.yml.
-  #schedule:
-  #  - cron: '41 4 * * 0'
-
+# release.yml runs this once the release is up. Anyone can also run it by hand,
+# from this repository or a fork of it (Actions → Reproducibility → Run
+# workflow): it builds the *upstream* tagged source on the fork's own runners,
+# and compares with the upstream release. docs/reproducible-builds.md has that
+# and the ways to do it without GitHub at all.
+#
+# The rebuild differs from the release's build in everything a user's would:
+# the directory the source is checked out to, the time zone, the locale and
+# the machine. What is compared is the binary, not the .tar.gz or .zip around
+# it (packaging/verify-release.sh opens them). When a binary differs,
+# diffoscope's report of where is on the run page.
 on:
-  push:
-    branches: [reproducible-linux-compat]   # temporary: remove before merging
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      repo:
+        type: string
+        required: false
+        default: ''
   workflow_dispatch:
-  schedule:
-    - cron: '41 4 * * 0'
+    inputs:
+      tag:
+        description: Release tag to rebuild and compare, e.g. v1.8.0
+        type: string
+        required: true
+      repo:
+        description: >-
+          Repository the release is published in (OWNER/NAME). Empty means
+          this one, or in a fork the repository it was forked from.
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -35,113 +51,132 @@ env:
   CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
-  # The compiler, the Linux image, the Xcode and the macOS and Windows runners
-  # are read out of release.yml rather than written here a second time, so
-  # this can never check a pairing the release does not use. (The MSYS2
-  # toolchain needs no reading: both workflows use the same setup action.)
+  # Which release, and how it was built. The compiler, the Xcode and the
+  # platform table (runner label, container image) are read out of the tag's
+  # own release.yml — the one that built the release — rather than written
+  # here, so this always rebuilds the way that release was built.
   pins:
     runs-on: ubuntu-latest
     outputs:
+      repo: ${{ steps.repo.outputs.repo }}
+      tag: ${{ inputs.tag }}
       toolchain: ${{ steps.read.outputs.toolchain }}
-      image: ${{ steps.read.outputs.image }}
       xcode: ${{ steps.read.outputs.xcode }}
-      macos_runner: ${{ steps.read.outputs.macos_runner }}
-      windows_runner: ${{ steps.read.outputs.windows_runner }}
+      platforms: ${{ steps.read.outputs.platforms }}
     steps:
+      - id: repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_REPO: ${{ inputs.repo }}
+        run: |
+          repo=$INPUT_REPO
+          if [[ -z "$repo" ]]; then
+            repo=$(gh api "repos/$GITHUB_REPOSITORY" --jq '.parent.full_name // .full_name')
+          fi
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "rebuilding $repo ${{ inputs.tag }}" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@v7
         with:
+          repository: ${{ steps.repo.outputs.repo }}
+          ref: ${{ inputs.tag }}
           sparse-checkout: .github
       - id: read
         run: |
           rel=.github/workflows/release.yml
           toolchain=$(sed -n 's/^  RUST_TOOLCHAIN: "\(.*\)"$/\1/p' "$rel")
           xcode=$(sed -n 's/^  MACOS_XCODE: "\(.*\)"$/\1/p' "$rel")
-          image=$(grep -o 'ubuntu:22.04@sha256:[0-9a-f]*' "$rel" | sort -u)
-          macos_runner=$(sed -n 's/.*"label": "macos-aarch64", *"os": "\([^"]*\)".*/\1/p' "$rel")
-          windows_runner=$(sed -n 's/.*"label": "windows-x86_64", *"os": "\([^"]*\)".*/\1/p' "$rel")
-          for v in "$toolchain" "$xcode" "$image" "$macos_runner" "$windows_runner"; do
-            if [[ -z "$v" || "$v" == *$'\n'* ]]; then
-              echo "::error::could not read one pinned toolchain, Xcode, image, macOS runner and Windows runner from release.yml"
-              exit 1
-            fi
-          done
+          wanted='["linux-x86_64-compat", "linux-aarch64-compat", "macos-aarch64", "macos-x86_64", "windows-x86_64"]'
+          # The platform table's entries, one JSON object per line.
+          platforms=$(sed -n 's/^ *\({"label":.*}\),\{0,1\}$/\1/p' "$rel" \
+            | jq -cs --argjson wanted "$wanted" \
+                '{include: [ .[] | select(.label as $l | $wanted | index($l)) ]}')
+          if [[ -z "$toolchain" || -z "$xcode" ]] \
+             || [[ $(jq '.include | length' <<< "$platforms") != 5 ]]; then
+            echo "::error::$rel at this tag pins no RUST_TOOLCHAIN, MACOS_XCODE and platform table to rebuild with; it predates reproducible builds"
+            exit 1
+          fi
           {
             echo "toolchain=$toolchain"
             echo "xcode=$xcode"
-            echo "image=$image"
-            echo "macos_runner=$macos_runner"
-            echo "windows_runner=$windows_runner"
+            echo "platforms=$platforms"
           } >> "$GITHUB_OUTPUT"
-          echo "toolchain $toolchain, image $image, macOS runner $macos_runner with Xcode $xcode, Windows runner $windows_runner"
+          echo "toolchain $toolchain, Xcode $xcode"
+          jq . <<< "$platforms"
 
-  # As release.yml's `web` job, once per attempt.
+  # As release.yml's `web` job, but checked out somewhere else, in another time
+  # zone and locale. Built once, on Linux like the release's, and embedded by
+  # every rebuild below.
   web:
-    name: web client (${{ matrix.attempt }})
+    name: web client
     needs: pins
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - { attempt: first,  dir: sdroxide,          tz: UTC,                lang: C.UTF-8 }
-          - { attempt: second, dir: elsewhere/rebuild, tz: Pacific/Kiritimati, lang: C }
     env:
-      TZ: ${{ matrix.tz }}
-      LC_ALL: ${{ matrix.lang }}
+      TZ: Pacific/Kiritimati
+      LC_ALL: C
     defaults:
       run:
         shell: bash
-        working-directory: ${{ matrix.dir }}
+        working-directory: elsewhere/rebuild
     steps:
       - uses: actions/checkout@v7
         with:
+          repository: ${{ needs.pins.outputs.repo }}
+          ref: ${{ needs.pins.outputs.tag }}
           submodules: recursive
-          path: ${{ matrix.dir }}
+          path: elsewhere/rebuild
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ needs.pins.outputs.toolchain }}
           targets: wasm32-unknown-unknown
       - run: packaging/reproducible-env.sh >> "$GITHUB_ENV"
-      # Keep in step with release.yml.
+      # The version the tag's release.yml installs.
       - name: Install trunk
         run: |
+          trunk=$(grep -o 'trunk/releases/download/v[0-9.]*' .github/workflows/release.yml | head -n1 | sed 's|.*/v||')
           mkdir -p "$HOME/.local/bin"
-          curl -sSfL https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz \
+          curl -sSfL "https://github.com/trunk-rs/trunk/releases/download/v$trunk/trunk-x86_64-unknown-linux-gnu.tar.gz" \
             | tar -xzf - -C "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Build web client
-        working-directory: ${{ matrix.dir }}/crates/sdroxide-web
+        working-directory: elsewhere/rebuild/crates/sdroxide-web
         run: trunk build --release
       - uses: actions/upload-artifact@v7
         with:
-          name: web-${{ matrix.attempt }}
-          path: ${{ matrix.dir }}/crates/sdroxide-web/dist
+          name: web
+          path: elsewhere/rebuild/crates/sdroxide-web/dist
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
 
-  # As release.yml's `build` job for linux-x86_64-compat (cat), up to the
-  # stripped binary. No rust-cache: each attempt has to build everything itself,
-  # or the check would compare one build's dependencies with themselves.
-  native:
-    name: linux-x86_64-compat (${{ matrix.attempt }})
+  # As release.yml's `build` job for each platform's standard build, through
+  # packaging/rebuild-release.sh, then compared with the release. No
+  # rust-cache: the rebuild has to compile everything itself.
+  #
+  # Windows gets a short checkout directory, because the CMake and autotools
+  # builds under target/ already come close to its 260-character path limit,
+  # and its time zone spelled the POSIX way, which both the MSVC runtime and
+  # MSYS2 read (`Pacific/Kiritimati` means nothing to MSVC).
+  rebuild:
+    name: ${{ matrix.label }}
     needs: [pins, web]
-    runs-on: ubuntu-latest
-    container: ${{ needs.pins.outputs.image }}
+    runs-on: ${{ matrix.os }}
+    # Empty for every entry but -compat, which means "no container".
+    container: ${{ matrix.container }}
     strategy:
-      matrix:
-        include:
-          - { attempt: first,  dir: sdroxide,          tz: UTC,                lang: C.UTF-8 }
-          - { attempt: second, dir: elsewhere/rebuild, tz: Pacific/Kiritimati, lang: C }
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.pins.outputs.platforms) }}
     env:
-      TZ: ${{ matrix.tz }}
-      LC_ALL: ${{ matrix.lang }}
+      TZ: ${{ startsWith(matrix.os, 'windows') && 'LINT-14' || 'Pacific/Kiritimati' }}
+      LC_ALL: C
+      DIR: ${{ startsWith(matrix.os, 'windows') && 'rb' || 'elsewhere/rebuild' }}
     defaults:
       run:
         shell: bash
-        working-directory: ${{ matrix.dir }}
+        working-directory: ${{ startsWith(matrix.os, 'windows') && 'rb' || 'elsewhere/rebuild' }}
     steps:
       # Before checkout, for the reason given in release.yml — and from the
       # workspace root, since the checkout directory does not exist yet.
-      - name: Install git
+      - name: Install git (compat container)
+        if: matrix.container
         working-directory: .
         run: |
           apt-get update
@@ -149,181 +184,98 @@ jobs:
             git ca-certificates
       - uses: actions/checkout@v7
         with:
+          repository: ${{ needs.pins.outputs.repo }}
+          ref: ${{ needs.pins.outputs.tag }}
           submodules: recursive
-          path: ${{ matrix.dir }}
-      - run: packaging/linux/install-compat-deps.sh cat
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ needs.pins.outputs.toolchain }}
-      - run: packaging/reproducible-env.sh >> "$GITHUB_ENV"
-      # Each attempt embeds its own web build, so a web client that does not
-      # reproduce shows up here as well as in the comparison of the two dists.
-      - uses: actions/download-artifact@v8
-        with:
-          name: web-${{ matrix.attempt }}
-          path: ${{ matrix.dir }}/crates/sdroxide-web/dist
-      - name: Build
+          path: ${{ env.DIR }}
+      - name: Install build environment (compat container)
+        if: matrix.container
+        run: packaging/linux/install-compat-deps.sh cat
+      - name: Set up build environment (macOS)
+        if: runner.os == 'macOS'
         run: |
-          cargo build --release --locked -p sdroxide --no-default-features --features embed-web,rtl433
-          strip target/release/sdroxide
-          sha256sum target/release/sdroxide
-      - uses: actions/upload-artifact@v7
-        with:
-          name: native-${{ matrix.attempt }}
-          path: ${{ matrix.dir }}/target/release/sdroxide
-          if-no-files-found: error
-          retention-days: 7
-
-  # As release.yml's `build` job for macos-aarch64 (cat): the stripped binary
-  # the tarball carries, and the same binary ad-hoc signed, as it goes into the
-  # .app. (The .dmg is not compared: hdiutil cannot be made to reproduce.) No
-  # rust-cache, for the reason given above.
-  macos:
-    name: macos-aarch64 (${{ matrix.attempt }})
-    needs: [pins, web]
-    runs-on: ${{ needs.pins.outputs.macos_runner }}
-    strategy:
-      matrix:
-        include:
-          - { attempt: first,  dir: sdroxide,          tz: UTC,                lang: en_US.UTF-8 }
-          - { attempt: second, dir: elsewhere/rebuild, tz: Pacific/Kiritimati, lang: C }
-    env:
-      TZ: ${{ matrix.tz }}
-      LC_ALL: ${{ matrix.lang }}
-    defaults:
-      run:
-        shell: bash
-        working-directory: ${{ matrix.dir }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: recursive
-          path: ${{ matrix.dir }}
-      - run: packaging/macos/setup-build-env.sh "${{ needs.pins.outputs.xcode }}" cat
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ needs.pins.outputs.toolchain }}
-      - run: packaging/reproducible-env.sh >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@v8
-        with:
-          name: web-${{ matrix.attempt }}
-          path: ${{ matrix.dir }}/crates/sdroxide-web/dist
-      - name: Build
-        run: |
-          cargo build --release --locked -p sdroxide --no-default-features --features embed-web,rtl433
-          mkdir -p target/macos-out
-          strip -x target/release/sdroxide
-          cp target/release/sdroxide target/macos-out/sdroxide
-          cp target/release/sdroxide target/macos-out/sdroxide-adhoc-signed
-          codesign --force -s - target/macos-out/sdroxide-adhoc-signed
-          shasum -a 256 target/macos-out/*
-      # Two jobs can land on different image versions while GitHub rolls a new
-      # one out, and then they are not expected to match. Kept beside the
-      # binaries, not among them, so `compare` can tell that case apart.
-      - name: Note the runner image
-        run: |
-          mkdir -p target/macos-image
-          echo "${ImageOS:-?} ${ImageVersion:-?}" > target/macos-image/image.txt
-          cat target/macos-image/image.txt
-      - uses: actions/upload-artifact@v7
-        with:
-          name: macos-${{ matrix.attempt }}
-          path: ${{ matrix.dir }}/target/macos-out
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@v7
-        with:
-          name: macos-image-${{ matrix.attempt }}
-          path: ${{ matrix.dir }}/target/macos-image
-          retention-days: 7
-
-  # As release.yml's `build` job for windows-x86_64 (cat): the stripped .exe
-  # that both the .zip and the MSI carry. (The .msi is not compared: WiX cannot
-  # be made to reproduce.) No rust-cache, for the reason given above.
-  #
-  # Shorter checkout directories than the other jobs, because the CMake and
-  # autotools builds under target/ already come close to Windows' 260-character
-  # path limit. The second time zone is spelled the POSIX way, which both the
-  # MSVC runtime and MSYS2 read; `Pacific/Kiritimati` means nothing to MSVC.
-  windows:
-    name: windows-x86_64 (${{ matrix.attempt }})
-    needs: [pins, web]
-    runs-on: ${{ needs.pins.outputs.windows_runner }}
-    strategy:
-      matrix:
-        include:
-          - { attempt: first,  dir: w1,         tz: UTC,     lang: C.UTF-8 }
-          - { attempt: second, dir: rebuild/w2, tz: LINT-14, lang: C }
-    env:
-      TZ: ${{ matrix.tz }}
-      LC_ALL: ${{ matrix.lang }}
-    defaults:
-      run:
-        shell: bash
-        working-directory: ${{ matrix.dir }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: recursive
-          path: ${{ matrix.dir }}
+          packaging/macos/setup-build-env.sh "${{ needs.pins.outputs.xcode }}" cat
+          echo "runner image ${ImageOS:-?} ${ImageVersion:-?}; the release's .buildinfo names the one it was built on"
       # A local action is found relative to the workspace, not to the checkout
-      # above, whose directory differs per attempt; so .github gets a checkout
-      # of its own at a fixed place. Same commit, same action.
-      - uses: actions/checkout@v7
+      # above; so .github gets a checkout of its own at a fixed place. Same
+      # repository and tag, same action.
+      - name: Check out the setup action (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/checkout@v7
         with:
+          repository: ${{ needs.pins.outputs.repo }}
+          ref: ${{ needs.pins.outputs.tag }}
           sparse-checkout: .github
           path: ci
-      - uses: ./ci/.github/actions/setup-windows-build
+      - name: Set up build environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ./ci/.github/actions/setup-windows-build
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ needs.pins.outputs.toolchain }}
-          targets: x86_64-pc-windows-gnu
-      - run: packaging/reproducible-env.sh >> "$GITHUB_ENV"
+          targets: ${{ runner.os == 'Windows' && 'x86_64-pc-windows-gnu' || '' }}
       - uses: actions/download-artifact@v8
         with:
-          name: web-${{ matrix.attempt }}
-          path: ${{ matrix.dir }}/crates/sdroxide-web/dist
-      - name: Build
+          name: web
+          path: ${{ env.DIR }}/crates/sdroxide-web/dist
+      - name: Rebuild
+        run: packaging/rebuild-release.sh --no-web
+      - name: Compare with the release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cargo build --release --locked -p sdroxide --no-default-features --features embed-web,rtl433
-          bin="target/$CARGO_BUILD_TARGET/release/sdroxide.exe"
-          strip "$bin"
-          mkdir -p target/windows-out
-          cp "$bin" target/windows-out/sdroxide.exe
-          sha256sum target/windows-out/sdroxide.exe
+          bin=$(ls target/rebuild)
+          mkdir -p "$GITHUB_WORKSPACE/cmp/rebuilt/${{ matrix.label }}"
+          cp "target/rebuild/$bin" "$GITHUB_WORKSPACE/cmp/rebuilt/${{ matrix.label }}/"
+          packaging/verify-release.sh --repo "${{ needs.pins.outputs.repo }}" \
+            --keep "$GITHUB_WORKSPACE/cmp/released" \
+            "${{ needs.pins.outputs.tag }}" "${{ matrix.label }}=target/rebuild/$bin" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      # Both binaries, for `report` to explain a difference with.
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          name: windows-${{ matrix.attempt }}
-          path: ${{ matrix.dir }}/target/windows-out
-          if-no-files-found: error
-          retention-days: 7
+          name: cmp-${{ matrix.label }}
+          path: cmp
+          if-no-files-found: ignore
+          retention-days: 14
 
-  compare:
-    needs: [web, native, macos, windows]
+  # The web client, the verdict, and an explanation of whatever differed.
+  report:
+    needs: [pins, web, rebuild]
+    if: always() && needs.pins.result == 'success'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.pins.outputs.repo }}
+          ref: ${{ needs.pins.outputs.tag }}
+          sparse-checkout: packaging
+      - uses: actions/download-artifact@v8
+        if: needs.web.result == 'success'
+        with:
+          name: web
+          path: rebuilt-web
       - uses: actions/download-artifact@v8
         with:
-          path: builds
+          pattern: cmp-*
+          path: cmp
+          merge-multiple: true
       - name: Compare
         id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cd builds
           status=0
-          for what in web native macos windows; do
-            echo "## $what"
-            (cd "$what-first" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$what-first.sums"
-            (cd "$what-second" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$what-second.sums"
-            if diff -u "$what-first.sums" "$what-second.sums"; then
-              echo "identical:"
-              cat "$what-first.sums"
-            else
-              echo "::error::the two $what builds differ"
-              status=1
-            fi
-          done
-          if ! cmp -s macos-image-first/image.txt macos-image-second/image.txt; then
-            echo "::warning::the two macOS builds ran on different runner images ($(cat macos-image-first/image.txt) and $(cat macos-image-second/image.txt)), so a difference between them may be the images' rather than the build's"
+          if [[ -d rebuilt-web ]]; then
+            packaging/verify-release.sh --repo "${{ needs.pins.outputs.repo }}" \
+              --keep cmp/released "${{ needs.pins.outputs.tag }}" web=rebuilt-web \
+              | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+            mkdir -p cmp/rebuilt/web && cp -R rebuilt-web/. cmp/rebuilt/web/
+          fi
+          if [[ "${{ needs.web.result }}" != success || "${{ needs.rebuild.result }}" != success ]]; then
+            echo "::error::a rebuild failed or differs from the release; its job says which"
+            status=1
           fi
           exit $status
       - name: Explain the difference
@@ -332,11 +284,14 @@ jobs:
           sudo apt-get update
           # llvm for diffoscope's Mach-O support; binutils reads the .exe.
           sudo apt-get install -y --no-install-recommends diffoscope-minimal binutils llvm
-          cd builds
-          for what in web native macos windows; do
+          cd cmp
+          for d in released/*; do
+            what=${d#released/}
+            [[ -d "rebuilt/$what" ]] || continue
+            diff -rq "released/$what" "rebuilt/$what" > /dev/null && continue
             # Exits non-zero precisely because there are differences.
             diffoscope --html "../diffoscope-$what.html" --text "../diffoscope-$what.txt" \
-              "$what-first" "$what-second" || true
+              "released/$what" "rebuilt/$what" || true
             head -n 400 "../diffoscope-$what.txt"
           done
       - uses: actions/upload-artifact@v7
@@ -344,3 +299,4 @@ jobs:
         with:
           name: diffoscope
           path: diffoscope-*
+          if-no-files-found: ignore

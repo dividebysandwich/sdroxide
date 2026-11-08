@@ -15,9 +15,29 @@
 # Depends) and the C++ compiler the vendored DRM receiver needs. Nothing about
 # DRM is a *system* dependency: Dream, faad2 and the FFT are all built from
 # source in-tree.
+#
+# The packages come from snapshot.ubuntu.com as the archive stood at the time
+# of the commit being built, not from whatever jammy-updates has today: a newer
+# gcc, clang or libc headers would make a rebuild months later differ from the
+# release for no reason in the source. Every build of one commit therefore gets
+# the same set, wherever and whenever it runs. (APT_SNAPSHOT overrides the
+# timestamp, as YYYYMMDDTHHMMSSZ.)
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
+
+if [[ -z "${APT_SNAPSHOT-}" ]]; then
+  # safe.directory: in the container the checkout belongs to another uid.
+  APT_SNAPSHOT=$(date -u -d "@$(git -c safe.directory="$PWD" log -1 --format=%ct)" +%Y%m%dT%H%M%SZ)
+fi
+# The image lists archive.ubuntu.com and security.ubuntu.com on amd64 and
+# ports.ubuntu.com on arm64; the snapshot service serves all three, both
+# architectures, under the one /ubuntu/ path. https, so this has to run after
+# ca-certificates is in (release.yml installs it with git, before checkout).
+sed -i -E "s#https?://(archive|security|ports)\.ubuntu\.com/ubuntu(-ports)?/?#https://snapshot.ubuntu.com/ubuntu/$APT_SNAPSHOT/#" \
+  /etc/apt/sources.list
+echo "apt snapshot: $APT_SNAPSHOT"
+grep '^deb ' /etc/apt/sources.list
 apt-get update
 apt-get install -y --no-install-recommends \
   curl wget zstd build-essential \
