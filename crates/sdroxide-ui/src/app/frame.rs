@@ -49,6 +49,23 @@ fn paint_panadapter_clock(ui: &egui::Ui, area: egui::Rect, on: bool) {
     p.galley(rect.center() - galley.size() / 2.0, galley, ink);
 }
 
+/// The margin under the top bar: the same 8 pt the bar keeps from the
+/// window's sides (its frame's `inner_margin`), and at the bottom too.
+const BODY_MARGIN: f32 = 8.0;
+
+/// Clip everything `ui` draws to the rect it was given.
+///
+/// A panel lays its rows out against that width, but a row that does not wrap
+/// still grows the frames around it, and their fill and border were drawn at
+/// the grown width — 6 to 53 points on into the band selector docked beside the
+/// panel (HDZ 2026-11-08: „die rechten Kanten sind nicht ganz richtig … unten
+/// geht das Feld zu weit in die ausgepoppte Version“). Below, a panel given
+/// less height than it needs ran on past the window's bottom margin.
+fn clip_to_given_rect(ui: &mut egui::Ui) {
+    let m = ui.max_rect();
+    ui.set_clip_rect(ui.clip_rect().intersect(m));
+}
+
 /// Split the digital-mode area between the waterfall and the operating panel.
 ///
 /// Returns `(waterfall height, panel height)`, which always sum to
@@ -84,6 +101,28 @@ fn digi_split(total: f32, divider_h: f32, fraction: f32, row_h: f32) -> (f32, f3
     let min_wf = 80.0_f32.min(usable * 0.5);
     let panel_h = (usable * fraction).clamp(min_panel, (usable - min_wf).max(min_panel));
     (usable - panel_h, panel_h)
+}
+
+/// The highest share the waterfall's floor allows a drag to reach; past it
+/// [`digi_split_up_to_top`] lets the panel go on up to the top edge.
+const DIGI_FLOOR_FRACTION: f32 = 0.82;
+
+/// [`digi_split`] for a digital mode's panel, which the operator may drag all
+/// the way up to the top edge.
+///
+/// Up to [`DIGI_FLOOR_FRACTION`] this is `digi_split` unchanged, floors and
+/// all. Beyond it the panel takes `fraction` of the area outright, up to the
+/// whole of it, so the handle stays under the pointer and the waterfall shrinks
+/// to nothing. CW shares the fraction and keeps calling `digi_split`, whose
+/// floor still holds its waterfall at 80 pt.
+fn digi_split_up_to_top(total: f32, divider_h: f32, fraction: f32, row_h: f32) -> (f32, f32) {
+    let usable = (total - divider_h).max(0.0);
+    let (wf, panel) = digi_split(total, divider_h, fraction.min(DIGI_FLOOR_FRACTION), row_h);
+    if fraction <= DIGI_FLOOR_FRACTION {
+        return (wf, panel);
+    }
+    let panel = panel.max(usable * fraction).min(usable);
+    (usable - panel, panel)
 }
 
 /// Whether a state update that kept the mode moved the receiver far enough to
@@ -441,6 +480,27 @@ impl eframe::App for SdroxideApp {
         // them: the overlay here, the SPOTS list and the world map all do.
         self.refresh_broadcast_spots(now_unix());
         let mut clicked_spot: Option<Spot> = None;
+        // Everything under the top bar keeps the bar's own 8 pt from the
+        // window's sides and bottom, so no frame line runs along the window's
+        // edge, where macOS rounds the corners off and took the panadapter's
+        // and the panel's lines with them (HDZ 2026-11-09: „im normalen Modus
+        // stimmt links nicht und rechts auch nicht“). Drawn into a child laid
+        // over the rest of the window; nothing below draws into the window's
+        // own `ui` again.
+        let mut body = {
+            let r = ui.available_rect_before_wrap();
+            let m = BODY_MARGIN;
+            ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt("body")
+                    .max_rect(egui::Rect::from_min_max(
+                        egui::pos2(r.left() + m, r.top()),
+                        egui::pos2(r.right() - m, r.bottom() - m),
+                    ))
+                    .layout(*ui.layout()),
+            )
+        };
+        let ui = &mut body;
         // A docked band/mode selector takes a column off the right of the
         // panadapter before either draws. Shown here, after the top bar and the
         // notices, so the column sits beside the waterfall rather than under the
@@ -654,7 +714,7 @@ impl eframe::App for SdroxideApp {
             let (wf_h, panel_h) = if split {
                 // The handle plus the gap the layout inserts on each side of it.
                 let divider = handle_h + 2.0 * ui.spacing().item_spacing.y;
-                digi_split(
+                digi_split_up_to_top(
                     total,
                     divider,
                     self.view.digi_panel_fraction,
@@ -671,39 +731,63 @@ impl eframe::App for SdroxideApp {
             // radio (or any stalled stream) freezes instead.
             let live = frame.is_some() && now - self.last_spectrum_at < STREAM_STALE_S;
             if show_wf {
-                self.note_panadapter_width(ui);
-                let wf_tuning = self.wf_tick(live, ui.ctx().pixels_per_point());
-                self.draw_panadapter(
-                    ui,
-                    width,
-                    wf_h,
-                    frame.as_ref(),
-                    &inputs,
-                    &mut clicked_spot,
-                    show_panel,
-                    wf_tuning,
-                    &mut cmds,
+                // The panadapter's strip is taken from the layout first, as one
+                // allocation however tall it is, and the panadapter is drawn
+                // into a child with a fixed id laid over it: so the widgets
+                // after it (the handle above all) keep their ids through the
+                // whole drag, from full height down to nothing (HDZ 2026-11-08:
+                // „es hakt kurz bei 80 pixel, und dann muss ich neu anfassen“;
+                // „das Panorama muss bis null Pixel runter gehen können“).
+                let (strip, _) =
+                    ui.allocate_exact_size(egui::vec2(width, wf_h), egui::Sense::hover());
+                let mut pan_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt("digi-panadapter")
+                        .max_rect(strip)
+                        .layout(*ui.layout()),
                 );
+                pan_ui.set_clip_rect(strip.intersect(ui.clip_rect()));
+                self.note_panadapter_width(&pan_ui);
+                let wf_tuning = self.wf_tick(live, ui.ctx().pixels_per_point());
+                if wf_h >= 1.0 {
+                    self.draw_panadapter(
+                        &mut pan_ui,
+                        width,
+                        wf_h,
+                        frame.as_ref(),
+                        &inputs,
+                        &mut clicked_spot,
+                        show_panel,
+                        wf_tuning,
+                        &mut cmds,
+                    );
+                }
             }
             // Only between two things: with the panadapter switched off there
             // is nothing above the panel for the handle to divide, and a drag
             // on it would silently rewrite a split with nothing to show for it.
             if split {
-                // Resize handle between the waterfall and the FT8/FT4 panel.
-                let hresp = crate::chrome::split_handle(
-                    ui,
-                    egui::vec2(width, handle_h),
-                    Some(crate::theme::PANEL()),
-                );
+                // Resize handle between the waterfall and the FT8/FT4 panel,
+                // under a fixed id so a drag survives whatever is drawn above it.
+                let hresp = ui
+                    .push_id("digi-split-handle", |ui| {
+                        crate::chrome::split_handle(
+                            ui,
+                            egui::vec2(width, handle_h),
+                            Some(crate::theme::PANEL()),
+                        )
+                    })
+                    .inner;
                 if hresp.dragged() {
                     // Drag down shrinks the panel (waterfall grows), drag up grows it.
                     let d = hresp.drag_delta().y / total;
                     self.view.digi_panel_fraction =
-                        (self.view.digi_panel_fraction - d).clamp(0.2, 0.82);
+                        (self.view.digi_panel_fraction - d).clamp(0.2, 1.0);
                 }
             }
             if show_panel {
                 ui.allocate_ui(egui::vec2(width, panel_h), |ui| {
+                    clip_to_given_rect(ui);
                     self.draw_operating_panel(ui, &mut cmds, mode, panel_h);
                 });
             }
@@ -782,7 +866,12 @@ impl eframe::App for SdroxideApp {
                     self.view.digi_panel_fraction,
                     ui.spacing().interact_size.y,
                 );
-                (w, p, true, true)
+                // CW's own floor, from its fixed rows (see `cw_panel`): the
+                // digital panels' floor is a few rows short of it on a small
+                // window. The waterfall pays, down to nothing if it must.
+                let usable = w + p;
+                let p = p.max(self.cw_panel_floor.min(usable));
+                (usable - p, p, true, true)
             };
             let width = ui.available_width();
             if show_wf {
@@ -814,6 +903,7 @@ impl eframe::App for SdroxideApp {
                     }
                 }
                 ui.allocate_ui(egui::vec2(width, panel_h), |ui| {
+                    clip_to_given_rect(ui);
                     self.draw_operating_panel(ui, &mut cmds, Mode::Cw, panel_h);
                 });
             }
@@ -1275,7 +1365,7 @@ impl SdroxideApp {
             .fill(crate::theme::BG_DEEP())
             .inner_margin(egui::Margin { left: 0, right: 0, top: 6, bottom: 0 })
             .show(ui, |ui| {
-                crate::chrome::angled_frame(ui, crate::theme::PINK(), |ui| {
+                crate::chrome::angled_frame_held(ui, crate::theme::PINK(), |ui| {
                     if mode == Mode::Cw {
                         self.cw_panel(ui, cmds, panel_h);
                     } else if mode.is_rade() {
@@ -2178,7 +2268,7 @@ impl SdroxideApp {
 mod tests {
     use sdroxide_types::{Band, Mode};
 
-    use super::{digi_split, qsy_clears_decodes};
+    use super::{digi_split, digi_split_up_to_top, qsy_clears_decodes, BODY_MARGIN};
 
     /// The reported bug: 20 m to 40 m left the previous band's decodes in the
     /// list, because the only thing that cleared it was a mode change and the
@@ -2277,6 +2367,224 @@ mod tests {
         assert!(wf > 0.0);
     }
 
+    /// HDZ 2026-11-08: „die curtain version erlaubt das schieben ganz nach oben,
+    /// liesse sich das nicht als verhalten in unsere ich schiebe selber version
+    /// einbauen, dass das constraint für die oberkante ganz verschwindet?“
+    #[test]
+    fn a_digital_panel_can_be_dragged_up_to_the_top_edge() {
+        for (total, row_h) in [(900.0f32, 18.0f32), (609.0, 34.0), (300.0, 34.0)] {
+            let usable = total - 21.0;
+            // Up to the old limit nothing changes.
+            for f in [0.2f32, 0.5, 0.82] {
+                assert_eq!(digi_split_up_to_top(total, 21.0, f, row_h), digi_split(total, 21.0, f, row_h));
+            }
+            // All the way up the waterfall is gone and the panel has it all.
+            let (wf, panel) = digi_split_up_to_top(total, 21.0, 1.0, row_h);
+            assert!(wf.abs() < 0.01 && (panel - usable).abs() < 0.01, "{total}: {wf} / {panel}");
+            // On the way there the panel only grows and the sum holds.
+            let mut last = 0.0f32;
+            for i in 0..=100 {
+                let f = 0.2 + 0.8 * i as f32 / 100.0;
+                let (wf, panel) = digi_split_up_to_top(total, 21.0, f, row_h);
+                assert!(panel + 0.01 >= last, "{total} at {f}: panel shrank to {panel}");
+                assert!((wf + panel - usable).abs() < 0.01);
+                last = panel;
+            }
+        }
+        // CW still gets its floor from the same fraction.
+        let (wf, _) = digi_split(900.0, 21.0, 1.0, 18.0);
+        assert!(wf >= 80.0);
+    }
+
+    /// HDZ 2026-11-08: „das Panorama muss bis null Pixel runter gehen können“.
+    /// Drawn at 24 pt the program died once the panel was dragged near the top.
+    /// The whole app with a live spectrum frame, the divider walked from the old
+    /// limit to the top edge in 200 steps, so the panadapter passes every height
+    /// down to nothing — flat and 3D, two window sizes.
+    ///
+    /// Run it alone: `cargo test -p sdroxide-ui --lib the_panadapter_draws -- --ignored`.
+    #[test]
+    #[ignore = "draws the whole app, which changes process-wide settings"]
+    fn the_panadapter_draws_at_every_height_down_to_nothing() {
+        use eframe::egui;
+        use std::sync::Arc;
+        for spectrum_3d in [false, true] {
+            for (w, h) in [(1366.0f32, 768.0f32), (1900.0, 1000.0)] {
+                let ctx = egui::Context::default();
+                let mut app =
+                    crate::app::SdroxideApp::new_tab(&ctx, None, None, Box::new(NullCtrl), 0, false);
+                app.state.rx[0].mode = Mode::Ft8;
+                app.view.spectrum_3d = spectrum_3d;
+                let mut frame = eframe::Frame::_new_kittest();
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+                for i in 0..=200 {
+                    app.view.digi_panel_fraction = 0.80 + 0.20 * i as f32 / 200.0;
+                    let center = app.state.center_hz;
+                    app.frame = Some(Arc::new(sdroxide_types::SpectrumFrame {
+                        seq: i as u32,
+                        center_hz: center,
+                        span_hz: 48_000.0,
+                        db_floor: -120.0,
+                        db_ceil: -20.0,
+                        bins: (0..1024).map(|b| (b % 251) as u8).collect(),
+                        rows: (0..1024).map(|b| (b % 199) as u8).collect(),
+                        rows_clocked: true,
+                    }));
+                    app.last_spectrum_at = i as f64 * 0.05;
+                    let mut out = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            time: Some(i as f64 * 0.05),
+                            predicted_dt: 0.05,
+                            ..Default::default()
+                        },
+                        |ui| eframe::App::ui(&mut app, ui, &mut frame),
+                    );
+                    out.textures_delta.clear();
+                    for c in &out.shapes {
+                        if let egui::epaint::Shape::Callback(cb) = &c.shape {
+                            assert!(
+                                cb.rect.height() >= 0.0 && cb.rect.width() >= 0.0,
+                                "3D {spectrum_3d}, {w}x{h}, step {i}: callback rect {:?}",
+                                cb.rect
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// HDZ 2026-11-08 (picture: RF Paint beside the docked band selector):
+    /// „die rechten Kanten sind nicht ganz richtig … unten geht das Feld zu weit
+    /// in die ausgepoppte Version“. Every digital mode's panel, with the band
+    /// selector docked in its column on the right: nothing the panel draws may
+    /// reach into that column, its frame's lower corner included, and nothing
+    /// may be laid out wider than the panel and cut off at its frame. One point
+    /// of slack for an anti-aliased edge. (Content below the window's edge in a
+    /// squeezed panel is clipped there, and is the curtain's business.)
+    ///
+    /// Run it alone: `cargo test -p sdroxide-ui --lib every_panel_stays -- --ignored`.
+    #[test]
+    #[ignore = "draws the whole app, which changes process-wide settings"]
+    fn every_panel_stays_out_of_the_docked_band_column() {
+        use eframe::egui;
+        use sdroxide_types::{LayoutMode, UiLanguage};
+        use Mode::*;
+        let modes = [
+            Usb, Cw, Ft8, Ft4, Ft2, Psk, Rtty, RttyFm, Sstv, SstvFm, Olivia, Thor, Fsq, RfPaint, Rade, Hell,
+            Rifp, Wefax, Js8, Wspr, Packet, PacketHf, Aprs, Adsb, Navtex, Vdl2, Ais, AtChat, Acars,
+            Hfdl, Pi4, Msk144, Jt65, Jt9, Fst4, Q65, Fsk441, Jtty, VaraHf,
+        ];
+        let mut over = Vec::new();
+        let layouts = [LayoutMode::Desktop, LayoutMode::Tablet];
+        for (m, docked, layout) in modes
+            .into_iter()
+            .flat_map(|m| [(m, true), (m, false)])
+            .flat_map(|(m, d)| layouts.map(|l| (m, d, l)))
+        {
+            for tag in ["de", "en"] {
+                for (w, h) in [(1366.0f32, 768.0f32), (1700.0, 1000.0)] {
+                    let ctx = egui::Context::default();
+                    let mut app =
+                        crate::app::SdroxideApp::new_tab(&ctx, None, None, Box::new(NullCtrl), 0, false);
+                    app.ui_settings.layout = layout;
+                    app.ui_settings.language = UiLanguage::from_tag(tag).unwrap();
+                    app.state.rx[0].mode = m;
+                    app.band_docked = docked;
+                    app.band_dock_visible = docked;
+                    let mut frame = eframe::Frame::_new_kittest();
+                    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+                    let mut shapes = Vec::new();
+                    for i in 0..30 {
+                        let mut out = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(screen),
+                                time: Some(i as f64 * 0.1),
+                                predicted_dt: 0.1,
+                                ..Default::default()
+                            },
+                            |ui| eframe::App::ui(&mut app, ui, &mut frame),
+                        );
+                        out.textures_delta.clear();
+                        shapes = out.shapes;
+                    }
+                    // The column's left edge: the leftmost clip rect that starts
+                    // right of the middle, runs to the body's right edge and is
+                    // most of the window's height.
+                    let dock_left = shapes
+                        .iter()
+                        .map(|c| c.clip_rect)
+                        .filter(|r| r.left() > w * 0.5 && r.right() >= w - BODY_MARGIN - 1.0 && r.height() > h * 0.3)
+                        .map(|r| r.left())
+                        .fold(f32::MAX, f32::min);
+                    // Undocked, the body's right edge stands in for the column.
+                    let dock_left = if docked { dock_left } else { w - BODY_MARGIN };
+                    assert!(dock_left < w, "{m:?} {tag} {w}x{h}: no docked column drawn");
+                    // Everything under the top bar: the panadapter and the
+                    // panel, wherever the divider has put the line between them.
+                    // The bar's lower edge is the full-width rule under it.
+                    let below_bar = shapes
+                        .iter()
+                        .map(|c| c.shape.visual_bounding_rect())
+                        .filter(|r| r.is_finite() && r.width() >= w - 1.0 && r.height() < 3.0)
+                        .map(|r| r.bottom())
+                        .fold(f32::MAX, f32::min);
+                    assert!(below_bar < h * 0.5, "{m:?} {tag} {w}x{h}: no rule under the top bar");
+                    let (mut right, mut cut, mut border) = (f32::MIN, 0.0f32, 0.0f32);
+                    // The window's own margin, as the top bar keeps it: the
+                    // nearest any visible shape comes to the left, right and
+                    // bottom edges (HDZ 2026-11-09: „im normalen Modus stimmt
+                    // links nicht und rechts auch nicht“).
+                    let mut margin = f32::MAX;
+                    for c in &shapes {
+                        let r = c.shape.visual_bounding_rect();
+                        if !r.is_finite() || r.top() < below_bar || r.left() >= dock_left - 1.0 {
+                            continue;
+                        }
+                        let seen = r.intersect(c.clip_rect);
+                        if seen.is_positive() {
+                            right = right.max(seen.right());
+                        }
+                        // Drawn past its own clip: content the frame cuts off. A
+                        // background as wide as the panel is not content; the
+                        // panel's clip is what keeps it out of the column.
+                        if r.width() < 0.8 * dock_left {
+                            cut = cut.max(r.right() - c.clip_rect.right());
+                        }
+                        // A frame's line is drawn whole: half a stroke past the
+                        // clip and the right edge of a panel that ends at the
+                        // window's edge was gone (HDZ 2026-11-09 picture, FT8).
+                        if let egui::epaint::Shape::Path(path) = &c.shape
+                            && path.closed
+                            && r.right() > c.clip_rect.right() + 0.05
+                        {
+                            border = border.max(r.right() - c.clip_rect.right());
+                        }
+                    }
+                    for c in &shapes {
+                        let r = c.shape.visual_bounding_rect();
+                        if !r.is_finite() || r.top() < below_bar {
+                            continue;
+                        }
+                        let seen = r.intersect(c.clip_rect);
+                        if seen.is_positive() {
+                            margin = margin.min(seen.left()).min(w - seen.right()).min(h - seen.bottom());
+                        }
+                    }
+                    if right > dock_left + 1.0 || cut > 1.0 || border > 0.0 || margin < 7.5 {
+                        over.push(format!(
+                            "{m:?} {layout:?} {tag} {w}x{h} docked {docked}: {:+.1} pt into the column, {cut:.1} pt cut off, \
+                             a frame line {border:.1} pt past its clip, {margin:.1} pt from the window's edge",
+                            right - dock_left
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(over.is_empty(), "{over:#?}");
+    }
+
     /// A controller with nothing behind it: enough to draw the whole app.
     struct NullCtrl;
     impl sdroxide_types::RadioController for NullCtrl {
@@ -2338,6 +2646,144 @@ mod tests {
                 // One point of slack for the anti-aliased edge of the frame.
                 if lowest > h + 1.0 {
                     over.push(format!("{layout:?} {w}x{h}: drawn down to {lowest}"));
+                }
+            }
+        }
+        assert!(over.is_empty(), "{over:#?}");
+    }
+
+    /// The JS8 controls — the composer and both rows of chips — sit inside
+    /// the window. The action row wraps to a second line at common widths; in
+    /// a bottom-up layout only one line was reserved, so EMPFANG LEEREN and
+    /// SPEICHERN were drawn below the window's edge. Measuring the row as it
+    /// was last drawn fixed that only once the rule in the row stopped
+    /// measuring the whole column, which had pushed the composer off the top.
+    /// Both failures put text outside the window, which is what this checks,
+    /// with time advancing so the curtain has finished rising.
+    ///
+    /// Run it alone: `cargo test -p sdroxide-ui --lib the_js8_controls -- --ignored`.
+    #[test]
+    #[ignore = "draws the whole app, which changes process-wide settings"]
+    fn the_js8_controls_end_inside_the_window() {
+        use eframe::egui;
+        use sdroxide_types::LayoutMode;
+        let mut out_of = Vec::new();
+        for layout in [LayoutMode::Desktop, LayoutMode::Tablet] {
+            for (w, h) in [(1290.0f32, 724.0f32), (1366.0, 768.0), (1633.0, 965.0)] {
+                let ctx = egui::Context::default();
+                let mut app = crate::app::SdroxideApp::new_tab(
+                    &ctx,
+                    None,
+                    None,
+                    Box::new(NullCtrl),
+                    0,
+                    false,
+                );
+                app.ui_settings.layout = layout;
+                app.state.rx[0].mode = Mode::Js8;
+                let mut frame = eframe::Frame::_new_kittest();
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+                let mut texts = Vec::new();
+                for i in 0..40 {
+                    let mut out = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            time: Some(i as f64 * 0.1),
+                            predicted_dt: 0.1,
+                            ..Default::default()
+                        },
+                        |ui| eframe::App::ui(&mut app, ui, &mut frame),
+                    );
+                    out.textures_delta.clear();
+                    texts = out
+                        .shapes
+                        .iter()
+                        .filter_map(|c| match &c.shape {
+                            egui::epaint::Shape::Text(t) => {
+                                Some((t.visual_bounding_rect(), t.galley.text().to_string()))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                }
+                // The chips that are the same in every language, and the
+                // composer's SEND, which stands for the row it is in.
+                let send = crate::i18n::tr!("js8-send");
+                let wanted = ["CQ", "HB", "SNR?", "GRID?", "HEARING?", "STATUS?", "HW CPY?", "RR", "73"];
+                for want in wanted.iter().map(|s| s.to_string()).chain([send]) {
+                    match texts.iter().find(|(_, t)| t.trim() == want.trim()) {
+                        None => out_of.push(format!("{layout:?} {w}x{h}: {want:?} not drawn")),
+                        Some((r, _)) if r.bottom() > h + 1.0 || r.top() < -1.0 => out_of.push(
+                            format!("{layout:?} {w}x{h}: {want:?} at y {:.0}..{:.0}", r.top(), r.bottom()),
+                        ),
+                        _ => {}
+                    }
+                }
+                // The second line of the action row: whatever is drawn lowest
+                // in the panel's right column must still be in the window.
+                let lowest = texts.iter().filter(|(r, _)| r.is_finite() && r.left() > w * 0.45).map(|(r, _)| r.bottom()).fold(0.0, f32::max);
+                if lowest > h + 1.0 {
+                    out_of.push(format!("{layout:?} {w}x{h}: right column drawn down to {lowest:.0}"));
+                }
+            }
+        }
+        assert!(out_of.is_empty(), "{out_of:#?}");
+    }
+
+    /// Nothing in the FT8 panel is laid out wider than the frame that clips
+    /// it, in German as in English. The free-text row kept a fixed 52 points
+    /// for its SEND chip; SENDEN needs about 5 more, so in German the row and
+    /// the column above it ran 5 points past the frame and were cut there.
+    ///
+    /// Run it alone: `cargo test -p sdroxide-ui --lib the_ft8_panel_fits -- --ignored`.
+    #[test]
+    #[ignore = "draws the whole app, which changes process-wide settings"]
+    fn the_ft8_panel_fits_its_frame_in_every_language() {
+        use eframe::egui;
+        use sdroxide_types::{LayoutMode, UiLanguage};
+        let mut over = Vec::new();
+        for tag in ["de", "en"] {
+            for layout in [LayoutMode::Desktop, LayoutMode::Tablet] {
+                for (w, h) in [(1366.0f32, 768.0f32), (1633.0, 965.0)] {
+                    let ctx = egui::Context::default();
+                    let mut app = crate::app::SdroxideApp::new_tab(
+                        &ctx,
+                        None,
+                        None,
+                        Box::new(NullCtrl),
+                        0,
+                        false,
+                    );
+                    app.ui_settings.layout = layout;
+                    app.ui_settings.language = UiLanguage::from_tag(tag).unwrap();
+                    app.state.rx[0].mode = Mode::Ft8;
+                    let mut frame = eframe::Frame::_new_kittest();
+                    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+                    let mut shapes = Vec::new();
+                    for i in 0..40 {
+                        let mut out = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(screen),
+                                time: Some(i as f64 * 0.1),
+                                predicted_dt: 0.1,
+                                ..Default::default()
+                            },
+                            |ui| eframe::App::ui(&mut app, ui, &mut frame),
+                        );
+                        out.textures_delta.clear();
+                        shapes = out.shapes;
+                    }
+                    // The panel is the lower half; one point of slack for an
+                    // anti-aliased edge.
+                    let worst = shapes
+                        .iter()
+                        .map(|c| (c.shape.visual_bounding_rect(), c.clip_rect))
+                        .filter(|(r, _)| r.is_finite() && r.top() > h * 0.5)
+                        .map(|(r, clip)| r.right() - clip.right())
+                        .fold(0.0f32, f32::max);
+                    if worst > 1.0 {
+                        over.push(format!("{tag} {layout:?} {w}x{h}: {worst:.1} pt past the frame"));
+                    }
                 }
             }
         }

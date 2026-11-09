@@ -604,6 +604,13 @@ pub struct SdroxideApp {
     /// from this app's own column, before the top bar draws the chip that
     /// shows and hides it.
     band_dock_room: Option<f32>,
+    /// The height the CW panel needs to show its fixed rows and a receive pane
+    /// of its minimum height, measured as it was laid out last frame. The CW
+    /// split gives the panel at least this; see `cw_panel`.
+    cw_panel_floor: f32,
+    /// The height of the CW panel's rows under its receive pane (transmit box,
+    /// buttons, message row) as they were laid out last frame.
+    cw_rows_below: f32,
     /// The layout in force last frame, so a change can re-apply the style
     /// metrics (chip padding, text sizes) exactly once instead of every frame.
     tier: crate::layout::Tier,
@@ -1615,6 +1622,8 @@ impl SdroxideApp {
             workspaces: persist::load_workspaces(),
             workspace_name: String::new(),
             band_dock_room: None,
+            cw_panel_floor: 0.0,
+            cw_rows_below: 0.0,
             // Corrected on the first frame, once the viewport size is known.
             tier: crate::layout::Tier::Desktop,
             ptt: Default::default(),

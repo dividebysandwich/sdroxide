@@ -280,7 +280,11 @@ impl SdroxideApp {
         // each, which is most of the screen before either has a preview in it,
         // and a preview of what is about to go on the air is the point of both.
         let pane = self.phone_pane(ui, self.state.rx[0].mode);
-        let half = if pane.is_some() { avail_w } else { ((avail_w - gap) / 2.0).max(150.0) };
+        // The row's spacing follows the first section, before the gap: left out,
+        // the two came out 11 pt wider than the panel (with `sstv_section`'s
+        // stroke) and ran on under the band selector docked beside it.
+        let sp = ui.spacing().item_spacing.x;
+        let half = if pane.is_some() { avail_w } else { ((avail_w - gap - sp) / 2.0).max(150.0) };
         let content_h = (ui.available_height() - 2.0).max(150.0);
 
         ui.horizontal_top(|ui| {

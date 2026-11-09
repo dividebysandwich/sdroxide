@@ -1246,7 +1246,7 @@ impl SdroxideApp {
                 .size(9.5)
                 .color(crate::theme::CYAN_DIM()),
         );
-        ui.horizontal_wrapped(|ui| {
+        crate::chrome::wrapped_row_up(ui, "fsk441-tx", |ui| {
             ui.label(RichText::new("TX").size(10.5).strong().color(crate::theme::CYAN()));
             let field = ui.add(
                 egui::TextEdit::singleline(&mut self.text_tx)
