@@ -1733,15 +1733,15 @@ impl SdroxideApp {
             self.digi_cfg_edit = digi_edit;
             cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
         }
+        // The country is this radio's view state, saved with it.
+        if country_edit != self.view.country {
+            self.view.country = country_edit;
+        }
         // The station's region. Applied here as well as sent, so the band
         // buttons and the waterfall's band strip redraw on this frame instead
         // of on whichever one the engine's echo lands in — and so the change is
         // visible even before a remote station has confirmed it. The engine
         // persists it and announces the authoritative value back.
-        // The country is this radio's view state, saved with it.
-        if country_edit != self.view.country {
-            self.view.country = country_edit;
-        }
         if region_edit != self.region_edit {
             self.region_edit = region_edit;
             sdroxide_types::set_region(region_edit);
