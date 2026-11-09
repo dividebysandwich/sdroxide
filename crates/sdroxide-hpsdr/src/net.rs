@@ -368,7 +368,7 @@ impl RxStats {
                 "HPSDR P{} RX: {} datagrams, {} samples ({:.1} ksps) over {:.2}s; \
                  {} datagram(s) LOST on the network (largest gap {}), {} sample(s) DROPPED \
                  (RX ring full — the DSP thread is not keeping up; try a lower sample rate); \
-                 totals {} lost / {} dropped; {}{}{}",
+                 {} unrecognized; totals {} lost / {} dropped; {}{}{}",
                 self.proto,
                 self.win_datagrams,
                 self.win_samples,
@@ -377,6 +377,7 @@ impl RxStats {
                 self.win_lost,
                 self.win_max_gap,
                 self.win_dropped,
+                self.win_other,
                 self.total_lost,
                 self.total_dropped,
                 self.clock_error(),
