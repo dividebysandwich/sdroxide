@@ -514,6 +514,9 @@ const RX_POLL: Duration = Duration::from_millis(100);
 ///
 /// The socket's read timeout is one option for every handle, so from here on it
 /// is the receive thread's alone: the loop must only send on its handle.
+///
+/// `sdroxide-smartsdr` has its own copy of this (`udp_rx.rs`, for its VITA-49
+/// socket); the two should change together.
 pub(crate) fn start_receiver(
     socket: &UdpSocket,
     name: &str,
