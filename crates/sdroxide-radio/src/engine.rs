@@ -14250,17 +14250,31 @@ impl Engine {
             filter_hi: rx.filter_hi,
         };
 
+        // A band button brings the operator to a band, the way tuning out of
+        // one does: the dial moves and the mode stays the operator's. An entry
+        // left in a mode with its own panel (FT8, WSPR, HFDL …) is recalled
+        // only while that mode is the one in use — otherwise a band left once
+        // in FT8 put every later press back into FT8, and its panel with it,
+        // and there was no way out of the digital modes by band buttons. A
+        // panel mode is chosen, never recalled.
+        let cur_mode = rx.mode;
+        let recallable =
+            |e: &BandStackEntry| !e.mode.has_bottom_panel() || e.mode == cur_mode;
+
         if band == cur_band {
             if let Some(stack) = self.stacks.get_mut(&band) {
-                if stack.len() > 1 {
+                for _ in 1..stack.len() {
                     stack.rotate_left(1);
+                    if recallable(&stack[0]) {
+                        break;
+                    }
                 }
             }
         } else {
             self.remember_band_entry(cur_band, cur_entry);
         }
 
-        let entry = self.stacks.get(&band).and_then(|s| s.first().copied()).unwrap_or_else(|| {
+        let entry = self.stacks.get(&band).and_then(|s| s.iter().find(|e| recallable(e)).copied()).unwrap_or_else(|| {
             let (freq_hz, mode) = band.default_entry();
             let (filter_lo, filter_hi) = mode.default_filter_at(freq_hz);
             BandStackEntry { freq_hz, mode, filter_lo, filter_hi }

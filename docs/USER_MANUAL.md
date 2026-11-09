@@ -315,7 +315,12 @@ popup with three rows:
 
 - **BAND:** `160M 80M 60M 40M 30M 20M 17M 15M 12M 10M 6M 4M 2M 1.25M 70CM 33CM
   23CM 13CM 9CM 6CM GEN`. Each
-  band remembers your last frequency, mode, and filter. A band your region's
+  band remembers your last frequency, mode, and filter. A digital mode is the
+  exception: a band left in FT8, WSPR or another mode with its own panel comes
+  back in that mode only while you are in it. From SSB, AM or FM a band button
+  passes those entries over and lands on its last SSB, CW, AM or FM entry, or on its
+  default, exactly as tuning out of a band keeps your mode. To work a digital
+  mode, choose it. A band your region's
   band plan does not have gets no button at all — `4M` (70 MHz) is an amateur
   allocation in IARU Region 1 only, so it is absent in Regions 2 and 3, and
   `1.25M` (220 MHz) and `33CM` (902 MHz) are Region 2's alone, so they are absent
