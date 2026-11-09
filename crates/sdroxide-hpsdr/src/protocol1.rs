@@ -30,7 +30,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use crate::net::{
-    Ctrl, MAX_FILL_DATAGRAMS, RxStats, SeqTracker, ThreadCtx, board_has_lna_gain,
+    Ctrl, MAX_FILL_DATAGRAMS, RxMsg, RxStats, SeqTracker, ThreadCtx, board_has_lna_gain,
     board_is_hermes_lite, hex_head, lna_gain_code, push_iq,
 };
 use crate::protocol2::be24_to_f32;
@@ -517,78 +517,6 @@ fn stop_stream(socket: &UdpSocket, dest: SocketAddr, radio: IpAddr, conn_id: u64
     }
 }
 
-/// What the receive thread hands to the network loop.
-enum RxMsg {
-    /// One datagram exactly as it came off the socket.
-    Datagram(Vec<u8>),
-    /// The socket failed; the loop shuts the stream down.
-    Failed(std::io::Error),
-}
-
-/// Sets a flag when dropped, so the receive thread stops however `run` returns.
-struct StopOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
-
-impl Drop for StopOnDrop {
-    fn drop(&mut self) {
-        self.0.store(true, Ordering::Relaxed);
-    }
-}
-
-/// Datagrams the receive thread may hold for a loop that has stalled: about
-/// three seconds of a 384 ksps stream. Past that the loop is gone for good and
-/// the sequence tracker reports the hole, so a full queue just drops.
-const RX_QUEUE: usize = 8192;
-
-/// Read EP6 on a thread of its own, with a plain blocking `recv_from`.
-///
-/// **Why not read in the network loop.** That loop used to read with a 2 ms
-/// socket timeout so it could also pace EP2 and poll its control channel. On
-/// Windows a receive that times out is cancelled, and a datagram completing at
-/// that instant can be lost — Winsock's own documentation says the socket is in
-/// an "indeterminate state" after a timeout. DK8JV's Wireshark capture at
-/// 96 ksps showed every one of 33 706 datagrams reaching the network card in
-/// order, while the same stream read through the timeout lost about one in 250
-/// (issue #553). The loss fell with the datagram interval: nothing at 192 and
-/// 384 ksps (under a millisecond between datagrams, so the timeout never fires),
-/// most at 48 ksps (2.6 ms, so it fires on every round).
-///
-/// Here the only timeout is `poll`, long enough that it fires only when the
-/// radio has gone quiet — when there is nothing to lose — and exists so the
-/// thread notices `stop`. The network loop waits on the channel instead, whose
-/// timeout is the loop's own and touches no socket.
-fn spawn_receiver(
-    socket: UdpSocket,
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    poll: Duration,
-) -> std::io::Result<crossbeam_channel::Receiver<RxMsg>> {
-    // One option for the socket, whichever handle sets it: it is the receive
-    // thread's alone from here on, the loop only sends.
-    socket.set_read_timeout(Some(poll))?;
-    let (tx, rx) = crossbeam_channel::bounded(RX_QUEUE);
-    std::thread::Builder::new().name("hpsdr-p1-rx".into()).spawn(move || {
-        let mut buf = [0u8; 2048];
-        while !stop.load(Ordering::Relaxed) {
-            match socket.recv_from(&mut buf) {
-                Ok((n, _)) => {
-                    if let Err(crossbeam_channel::TrySendError::Disconnected(_)) =
-                        tx.try_send(RxMsg::Datagram(buf[..n].to_vec()))
-                    {
-                        return;
-                    }
-                }
-                Err(ref e)
-                    if e.kind() == std::io::ErrorKind::WouldBlock
-                        || e.kind() == std::io::ErrorKind::TimedOut => {}
-                Err(e) => {
-                    let _ = tx.send(RxMsg::Failed(e));
-                    return;
-                }
-            }
-        }
-    })?;
-    Ok(rx)
-}
-
 /// Run the Protocol 1 network loop until told to shut down.
 pub(crate) fn run(ctx: ThreadCtx) {
     let ThreadCtx {
@@ -703,14 +631,10 @@ pub(crate) fn run(ctx: ThreadCtx) {
     let _ = socket.send_to(&start_command(true), dest);
     tracing::debug!("HPSDR P1: sent priming EP2 datagrams + run command; awaiting EP6 stream");
 
-    // From here the socket is read by a thread of its own (see `spawn_receiver`).
-    let stop_rx = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let _stop_rx_on_exit = StopOnDrop(stop_rx.clone());
-    let datagrams = match socket
-        .try_clone()
-        .and_then(|s| spawn_receiver(s, stop_rx, Duration::from_millis(100)))
-    {
-        Ok(rx) => rx,
+    // From here the socket is read by a thread of its own (see
+    // `net::spawn_receiver`).
+    let (datagrams, _stop_rx_on_exit) = match crate::net::start_receiver(&socket, "hpsdr-p1-rx") {
+        Ok(r) => r,
         Err(e) => {
             ptt_line.store(false, Ordering::Relaxed);
             stop_stream(&socket, dest, radio, conn_id, &format!("receive thread: {e}"));
@@ -832,7 +756,7 @@ pub(crate) fn run(ctx: ThreadCtx) {
         //    control channel and the overload loop below keep their pace.
         let wait = next_ep2.saturating_duration_since(Instant::now()).min(Duration::from_millis(2));
         match datagrams.recv_timeout(wait) {
-            Ok(RxMsg::Datagram(buf)) => {
+            Ok(RxMsg::Datagram(buf, _src)) => {
                 let n = buf.len();
                 rx_scratch.clear();
                 if let Some(info) = decode_ep6(&buf[..n], &mut rx_scratch) {
@@ -1113,43 +1037,6 @@ pub(crate) fn run(ctx: ThreadCtx) {
 mod tests {
     use super::*;
     use crate::protocol2::f32_to_be24;
-
-    #[test]
-    fn the_receive_thread_delivers_every_datagram_in_order_and_stops() {
-        use std::sync::Arc;
-        use std::sync::atomic::AtomicBool;
-        let rx_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let addr = rx_socket.local_addr().unwrap();
-        let stop = Arc::new(AtomicBool::new(false));
-        let rx = spawn_receiver(rx_socket, stop.clone(), Duration::from_millis(20)).unwrap();
-        let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
-        for seq in 0u32..300 {
-            let mut d = vec![0u8; DATAGRAM_LEN];
-            d[4..8].copy_from_slice(&seq.to_be_bytes());
-            tx.send_to(&d, addr).unwrap();
-            if seq % 50 == 49 {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-        }
-        for want in 0u32..300 {
-            match rx.recv_timeout(Duration::from_secs(2)) {
-                Ok(RxMsg::Datagram(d)) => {
-                    assert_eq!(d.len(), DATAGRAM_LEN);
-                    assert_eq!(u32::from_be_bytes([d[4], d[5], d[6], d[7]]), want);
-                }
-                Ok(RxMsg::Failed(e)) => panic!("socket error: {e}"),
-                Err(e) => panic!("datagram {want} never came: {e}"),
-            }
-        }
-        // A quiet socket is not an error: the poll timeout just comes round.
-        assert!(rx.recv_timeout(Duration::from_millis(80)).is_err());
-        // And the thread ends once told to, which closes the channel.
-        stop.store(true, Ordering::Relaxed);
-        assert!(matches!(
-            rx.recv_timeout(Duration::from_secs(2)),
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected)
-        ));
-    }
 
     #[test]
     fn speed_codes() {

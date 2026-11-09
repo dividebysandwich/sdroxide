@@ -464,6 +464,98 @@ fn receive_socket() -> std::io::Result<UdpSocket> {
     Ok(socket.into())
 }
 
+/// What the receive thread hands to a protocol loop.
+pub(crate) enum RxMsg {
+    /// One datagram exactly as it came off the socket, and where it came from
+    /// (Protocol 2 tells its DDCs apart by source port).
+    Datagram(Vec<u8>, std::net::SocketAddr),
+    /// The socket failed; the loop shuts the stream down.
+    Failed(std::io::Error),
+}
+
+/// Sets a flag when dropped, so the receive thread stops however the protocol
+/// loop returns.
+pub(crate) struct StopOnDrop(Arc<AtomicBool>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Datagrams the receive thread may hold for a loop that has stalled: about
+/// three seconds of a 384 ksps Protocol 1 stream. Past that the loop is gone for
+/// good and the sequence tracker reports the hole, so a full queue just drops.
+const RX_QUEUE: usize = 8192;
+
+/// How long the receive thread's socket waits before it looks at its stop flag.
+const RX_POLL: Duration = Duration::from_millis(100);
+
+/// Read the radio's datagrams on a thread of its own, with a plain blocking
+/// `recv_from`, and return the channel they arrive on plus the guard that stops
+/// the thread when dropped.
+///
+/// **Why not read in the protocol loop.** Both loops used to read with a 2 ms
+/// (500 µs while keyed) socket timeout so they could also pace the uplink and
+/// poll their control channel. On Windows a receive that times out is cancelled,
+/// and a datagram completing at that instant can be lost — Winsock's own
+/// documentation says the socket is in an "indeterminate state" after a
+/// timeout. DK8JV's Wireshark capture at 96 ksps showed every one of 33 706
+/// datagrams reaching the network card in order, while the same stream read
+/// through the timeout lost about one in 250 (issue #553). The loss fell with
+/// the datagram interval: nothing at 192 and 384 ksps (under a millisecond
+/// between datagrams, so the timeout never fires), most at 48 ksps (2.6 ms, so
+/// it fires on every round).
+///
+/// Here the only timeout is [`RX_POLL`], long enough that it fires only when the
+/// radio has gone quiet — when there is nothing to lose — and exists so the
+/// thread notices the stop flag. The protocol loop waits on the channel instead,
+/// whose timeout is the loop's own and touches no socket.
+///
+/// The socket's read timeout is one option for every handle, so from here on it
+/// is the receive thread's alone: the loop must only send on its handle.
+pub(crate) fn start_receiver(
+    socket: &UdpSocket,
+    name: &str,
+) -> std::io::Result<(Receiver<RxMsg>, StopOnDrop)> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let guard = StopOnDrop(stop.clone());
+    let rx = spawn_receiver(socket.try_clone()?, stop, RX_POLL, name)?;
+    Ok((rx, guard))
+}
+
+fn spawn_receiver(
+    socket: UdpSocket,
+    stop: Arc<AtomicBool>,
+    poll: Duration,
+    name: &str,
+) -> std::io::Result<Receiver<RxMsg>> {
+    socket.set_read_timeout(Some(poll))?;
+    let (tx, rx) = crossbeam_channel::bounded(RX_QUEUE);
+    std::thread::Builder::new().name(name.to_string()).spawn(move || {
+        let mut buf = [0u8; 2048];
+        while !stop.load(Ordering::Relaxed) {
+            match socket.recv_from(&mut buf) {
+                Ok((n, src)) => {
+                    if let Err(crossbeam_channel::TrySendError::Disconnected(_)) =
+                        tx.try_send(RxMsg::Datagram(buf[..n].to_vec(), src))
+                    {
+                        return;
+                    }
+                }
+                Err(ref e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut => {}
+                Err(e) => {
+                    let _ = tx.send(RxMsg::Failed(e));
+                    return;
+                }
+            }
+        }
+    })?;
+    Ok(rx)
+}
+
 /// Follows a radio→host datagram sequence counter and reports how many
 /// datagrams went missing. UDP loss on a busy 100 Mbit link is the usual cause
 /// of a stream that runs at the right rate but sounds torn up, and nothing else
@@ -1758,6 +1850,44 @@ mod tests {
         assert_eq!(stats.win_max_ep2_late, Duration::from_millis(2));
         assert_eq!(stats.win_ep2_resyncs, 1);
         assert!(stats.timing_note().contains("1 EP2 resync"));
+    }
+
+    #[test]
+    fn the_receive_thread_delivers_every_datagram_in_order_and_stops() {
+        let rx_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let addr = rx_socket.local_addr().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let rx =
+            spawn_receiver(rx_socket, stop.clone(), Duration::from_millis(20), "test-rx").unwrap();
+        let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let from = tx.local_addr().unwrap();
+        for seq in 0u32..300 {
+            let mut d = vec![0u8; 1032];
+            d[4..8].copy_from_slice(&seq.to_be_bytes());
+            tx.send_to(&d, addr).unwrap();
+            if seq % 50 == 49 {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        for want in 0u32..300 {
+            match rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(RxMsg::Datagram(d, src)) => {
+                    assert_eq!(d.len(), 1032);
+                    assert_eq!(src, from, "the source port rides along");
+                    assert_eq!(u32::from_be_bytes([d[4], d[5], d[6], d[7]]), want);
+                }
+                Ok(RxMsg::Failed(e)) => panic!("socket error: {e}"),
+                Err(e) => panic!("datagram {want} never came: {e}"),
+            }
+        }
+        // A quiet socket is not an error: the poll timeout just comes round.
+        assert!(rx.recv_timeout(Duration::from_millis(80)).is_err());
+        // And the thread ends once told to, which closes the channel.
+        stop.store(true, Ordering::Relaxed);
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_secs(2)),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected)
+        ));
     }
 
     #[test]
