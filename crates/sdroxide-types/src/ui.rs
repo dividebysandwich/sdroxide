@@ -934,6 +934,10 @@ pub struct UiSettings {
     /// operator's. The 3D globe is untouched — its cities are night-side lights
     /// rather than markers, and nothing is written across a contact there.
     pub map_cities: bool,
+    /// Whose licence-free channel plans the waterfall marks — see
+    /// [`Country`](crate::region::Country). This screen's preference: it
+    /// follows the computer's country unless the operator picks one.
+    pub country: crate::region::Country,
     /// The UTC + local wall clock at the panadapter's top-right (#655).
     pub panadapter_clock: bool,
     /// Where the solar-system 3D window last was — see [`Solar3dWindow`].
@@ -1081,6 +1085,7 @@ impl Default for UiSettings {
             decode_cq_only: false,
             decode_new_only: false,
             map_cities: true,
+            country: Default::default(),
             panadapter_clock: true,
             solar3d_window: None,
             amp_popped: false,

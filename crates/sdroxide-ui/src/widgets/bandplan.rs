@@ -443,7 +443,8 @@ pub fn overlay(p: &Painter, view: &ViewState, wf: &Rect, panel_below: bool) -> f
     }
     // The country's licence-free services, in the CB colour: CB 41–80,
     // Freenet, PMR446 (nothing without a country).
-    for (lo, hi, label) in crate::widgets::channels::strip_blocks(view.country) {
+    use crate::widgets::channels;
+    for (lo, hi, label) in channels::strip_blocks(channels::country()) {
         draw_seg(p, view, wf, lo, hi, color(Kind::Cb), label, base_top, base_h, 10.5 * fs);
     }
 

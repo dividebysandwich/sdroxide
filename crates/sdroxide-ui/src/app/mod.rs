@@ -1407,6 +1407,7 @@ impl SdroxideApp {
             ui_settings.waterfall_font_size,
             ui_settings.menu_font_size,
         );
+        crate::widgets::channels::set_country(ui_settings.country);
         crate::theme::set_spot_colors(&ui_settings.spot_colors);
         crate::theme::set_bandplan_colors(&ui_settings.bandplan_colors);
         crate::theme::set_map_cities(ui_settings.map_cities);

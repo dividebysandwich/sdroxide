@@ -368,9 +368,6 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// there is no APPLY step on the General tab, and the whole point of it is
     /// that the band plan follows immediately.
     region_edit: &'a mut sdroxide_types::Region,
-    /// This radio's country (licence-free channel plans), written back after
-    /// the frame like the region.
-    country_edit: &'a mut crate::widgets::channels::Country,
     /// Set when the operator asks for the TX Audio window, which took over
     /// the transmit EQ that used to sit in this tab.
     open_tx_audio: &'a mut bool,
@@ -1043,7 +1040,6 @@ impl SdroxideApp {
         let mut digi_edit = self.digi_cfg_edit.clone();
         let digi_seeded = self.digi_cfg_seeded;
         let mut region_edit = self.region_edit;
-        let mut country_edit = self.view.country;
         let mut open_tx_audio = false;
         let mut net_edit = self.net_cfg_edit.clone();
         let mut net_cmds = self.net_cluster_cmds.clone();
@@ -1261,7 +1257,6 @@ impl SdroxideApp {
                             radio_tabs: &mut radio_tab_reqs,
                             radio_name_edit: &mut radio_name_edit,
                             region_edit: &mut region_edit,
-                            country_edit: &mut country_edit,
                             open_tx_audio: &mut open_tx_audio,
                             tab: &mut tab,
                             upload_tab: &mut upload_tab,
@@ -1676,6 +1671,8 @@ impl SdroxideApp {
             // diff next frame; waterfall speed is read each frame. Persist too.
             self.ui_settings = ui_edit;
             persist_ui_settings(&self.ui_settings);
+            // The channel plans follow on this frame, like the region below.
+            crate::widgets::channels::set_country(self.ui_settings.country);
         }
         if &speech_edit != self.speech.settings() {
             // Live too: rate and volume reach the running worker, and only a
@@ -1732,10 +1729,6 @@ impl SdroxideApp {
         if digi_seeded && digi_edit != self.digi_cfg_edit {
             self.digi_cfg_edit = digi_edit;
             cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
-        }
-        // The country is this radio's view state, saved with it.
-        if country_edit != self.view.country {
-            self.view.country = country_edit;
         }
         // The station's region. Applied here as well as sent, so the band
         // buttons and the waterfall's band strip redraw on this frame instead
@@ -1882,20 +1875,29 @@ impl SdroxideApp {
                 egui::Grid::new("general-country-grid").num_columns(2).spacing([12.0, 8.0]).show(
                     ui,
                     |ui| {
-                        use crate::widgets::channels::Country;
+                        use crate::widgets::channels::{Country, resolve};
                         ui.label(tr!("settings-country"));
-                        let name = |c: Country| match c {
-                            Country::Unset => tr!("settings-country-unset"),
+                        let fixed = |c: Country| match c {
                             Country::Germany => tr!("settings-country-germany"),
+                            Country::Off | Country::System => tr!("settings-country-off"),
                         };
+                        // "Like this computer" names what it comes to, so the
+                        // operator sees which plans that is without picking.
+                        let name = |c: Country| match c {
+                            Country::System => tr!(
+                                "settings-country-system",
+                                country = fixed(resolve(Country::System))
+                            ),
+                            c => fixed(c),
+                        };
+                        let country = &mut io.ui_edit.country;
                         ComboBox::from_id_salt("country")
                             .width(360.0)
-                            .selected_text(name(*io.country_edit))
+                            .selected_text(name(*country))
                             .show_styled(ui, |ui| {
                                 for c in Country::ALL {
-                                    if ui.selectable_label(*io.country_edit == c, name(c)).clicked()
-                                    {
-                                        *io.country_edit = c;
+                                    if ui.selectable_label(*country == c, name(c)).clicked() {
+                                        *country = c;
                                     }
                                 }
                             });

@@ -486,9 +486,10 @@ settings-region-note = Wo die Station steht. Legt jeden Bandplan fest: die Bandg
        *[3] 430–450 MHz, und 80 m endet bei 3.900
     }. Wirkt sofort und gilt für jedes Funkgerät an dieser Station.
 settings-country = Land
-settings-country-unset = — (keine Kanalraster)
+settings-country-off = — (keine Kanalraster)
+settings-country-system = Wie dieser Rechner: { $country }
 settings-country-germany = Deutschland
-settings-country-note = Welche Jedermannfunk-Kanäle dieses Funkgerät zeigt; das regelt das Land, nicht die IARU-Region. Deutschland: CB-Kanäle 1–80 (41–80 nur FM, Datenkanäle bernsteinfarben), Freenet 149,025–149,1125 MHz und PMR446 446,00625–446,19375 MHz, je als Block im Bandplan-Streifen und als Kanal-Kacheln darüber. Gilt für dieses Funkgerät; ein entfernter Empfänger im Ausland bekommt sein eigenes Land.
+settings-country-note = Welche Jedermannfunk-Kanäle der Wasserfall zeigt; das regelt das Land, nicht die IARU-Region. Deutschland: CB-Kanäle 1–80 (41–80 nur FM, Datenkanäle bernsteinfarben), Freenet 149,025–149,1125 MHz und PMR446 446,00625–446,19375 MHz, je als Block im Bandplan-Streifen und als Kanal-Kacheln darüber. Gilt für diesen Bildschirm; die Vorgabe folgt dem Land, auf das der Rechner eingestellt ist.
 settings-rx-grid-reported = Empfänge über dieses Funkgerät werden von { $grid } aus gemeldet, nicht von Ihrem eigenen Locator.
 settings-rx-grid-invalid = { $grid } ist kein Maidenhead-Locator, daher wird nichts gemeldet, was dieses Funkgerät hört. Vier oder sechs Zeichen: zwei Buchstaben, zwei Ziffern und optional zwei weitere Buchstaben.
 settings-bypassed = überbrückt

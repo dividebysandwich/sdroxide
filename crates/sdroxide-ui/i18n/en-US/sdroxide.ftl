@@ -491,9 +491,10 @@ settings-region-note = Where the station is. Sets every band plan: the band edge
        *[3] 430–450 MHz, and 80 m stops at 3.900
     }. Takes effect at once, and applies to every radio at this station.
 settings-country = Country
-settings-country-unset = — (no channel plans)
+settings-country-off = — (no channel plans)
+settings-country-system = Like this computer: { $country }
 settings-country-germany = Germany
-settings-country-note = Which licence-free channels this radio shows; national law sets these, not the IARU region. Germany: CB channels 1–80 (41–80 FM only, data channels in amber), Freenet 149.025–149.1125 MHz and PMR446 446.00625–446.19375 MHz, each as a block on the band-plan strip with channel tiles above it. Applies to this radio; a remote receiver abroad gets its own country.
+settings-country-note = Which licence-free channels the waterfall shows; national law sets these, not the IARU region. Germany: CB channels 1–80 (41–80 FM only, data channels in amber), Freenet 149.025–149.1125 MHz and PMR446 446.00625–446.19375 MHz, each as a block on the band-plan strip with channel tiles above it. Applies to this screen; by default it follows the country the computer is set to.
 settings-rx-grid-reported = Receptions through this radio are reported from { $grid }, not from your own locator.
 settings-rx-grid-invalid = { $grid } is not a Maidenhead locator, so nothing this radio hears is reported. Four or six characters: two letters, two digits, and optionally two more letters.
 settings-bypassed = bypassed

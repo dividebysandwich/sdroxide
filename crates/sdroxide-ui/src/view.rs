@@ -234,12 +234,6 @@ pub struct ViewState {
     /// has already been received.
     #[serde(default)]
     pub rds_standard: sdroxide_types::RdsStandard,
-    /// The country this radio listens in: chooses the licence-free channel
-    /// plans (CB, Freenet, PMR446) drawn as tiles and blocks on the band-plan
-    /// strip ([`crate::widgets::channels`]). Per radio, because a remote
-    /// receiver abroad hears that country's channels, not ours.
-    #[serde(default)]
-    pub country: crate::widgets::channels::Country,
 }
 
 /// Layer visibility bits for [`Solar3dView::layers`].
@@ -589,7 +583,6 @@ impl Default for ViewState {
             wefax_gallery_fraction: wefax_gallery_default(),
             hell: HellView::default(),
             solar3d: Solar3dView::default(),
-            country: Default::default(),
         }
     }
 }

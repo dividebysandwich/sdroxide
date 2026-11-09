@@ -1,31 +1,66 @@
 //! Channel radio on the waterfall: a row of channel tiles along the band-plan
 //! strip wherever a channelised licence-free service (CB, Freenet, PMR446) is
-//! in view. Which services and which channels is national law, so the radio's
-//! country ([`Country`], set in Settings → General under the IARU region)
-//! chooses the plans; with no country set nothing is drawn.
+//! in view. Which services and which channels is national law, so the
+//! country ([`Country`], set in Settings → General under the IARU region, by
+//! default the computer's own) chooses the plans; with none, nothing is drawn.
 // Why: HDZ 2026-11-08: "können wir vorher testen, wie Markierungen sich auf
 //      dem normalen Wasserfall ausmachen würden" → tiles; HDZ 2026-11-09:
 //      "Freenet und PMR als Bandplan mit der Regions-Erklärung Deutschland in
 //      Preferences, wo der Locator ist … das Land steuert die CB-, Freenet-
 //      und PMR-Kanalraster".
 
+use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use eframe::egui::{Color32, FontId, Painter, Rect, Stroke, pos2};
+pub use sdroxide_types::region::Country;
 
 use crate::view::ViewState;
 
-/// Which country's licence-free channel plans a radio draws (see
-/// `ViewState::country`). Unset draws none, as before the setting existed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum Country {
-    #[default]
-    Unset,
-    /// CB 1–80 (BNetzA Vfg. 21/2021), Freenet (Vfg. 45/2025), PMR446
-    /// (ECC/DEC/(15)05).
-    Germany,
+/// The country the plans are drawn for, resolved — never
+/// [`Country::System`]. One flag while Germany is the only country with
+/// plans; process-wide like the IARU region, because the band-plan strip
+/// that reads it has the view and nothing of the settings.
+static GERMANY: AtomicBool = AtomicBool::new(false);
+
+/// Adopt the `[ui]` setting. Called at startup and whenever the settings
+/// window changes it.
+pub fn set_country(c: Country) {
+    GERMANY.store(resolve(c) == Country::Germany, Ordering::Relaxed);
 }
 
-impl Country {
-    pub const ALL: [Country; 2] = [Country::Unset, Country::Germany];
+/// The country the plans are drawn for.
+pub fn country() -> Country {
+    if GERMANY.load(Ordering::Relaxed) { Country::Germany } else { Country::Off }
+}
+
+/// `c` with [`Country::System`] replaced by this computer's country.
+pub fn resolve(c: Country) -> Country {
+    match c {
+        Country::System => *SYSTEM_COUNTRY,
+        other => other,
+    }
+}
+
+/// This computer's country: the region of the first preferred locale that
+/// names one (`de_DE.UTF-8`, `de-DE`, `en-DE` → Germany). Read once — the
+/// locale does not change under a running app often enough to poll it.
+static SYSTEM_COUNTRY: LazyLock<Country> =
+    LazyLock::new(|| system_country_from(sys_locale::get_locales()));
+
+fn system_country_from(locales: impl IntoIterator<Item = String>) -> Country {
+    locales
+        .into_iter()
+        .find_map(|l| locale_region(&l))
+        .map_or(Country::Off, |r| Country::from_region_code(&r))
+}
+
+/// The region subtag of a locale name, POSIX (`de_DE.UTF-8`, `de_DE@euro`)
+/// or BCP 47 (`de-DE`, `zh-Hant-TW`).
+fn locale_region(locale: &str) -> Option<String> {
+    let tag = locale.split(['.', '@']).next()?.replace('_', "-");
+    let id: i18n_embed::unic_langid::LanguageIdentifier = tag.parse().ok()?;
+    id.region.map(|r| r.as_str().to_string())
 }
 
 /// One channel: its number, carrier frequency, and whether the plan sets it
@@ -102,12 +137,13 @@ pub fn pmr446() -> Vec<Channel> {
 //      Freenet und PMR noch machen".
 pub fn plans(country: Country) -> Vec<(Vec<Channel>, f64)> {
     match country {
-        Country::Unset => Vec::new(),
         Country::Germany => vec![
             (cb_de(), CB_SPACING_HZ),
             (freenet(), FREENET_SPACING_HZ),
             (pmr446(), PMR446_SPACING_HZ),
         ],
+        // `System` is resolved before it gets here (see `resolve`).
+        Country::Off | Country::System => Vec::new(),
     }
 }
 
@@ -116,12 +152,12 @@ pub fn plans(country: Country) -> Vec<(Vec<Channel>, f64)> {
 /// channel's half spacing either side of the outer carriers.
 pub fn strip_blocks(country: Country) -> Vec<(f64, f64, &'static str)> {
     match country {
-        Country::Unset => Vec::new(),
         Country::Germany => vec![
             (26_560_000.0, 26_960_000.0, "CB 41–80"),
             (149_018_750.0, 149_118_750.0, "Freenet"),
             (446_000_000.0, 446_200_000.0, "PMR446"),
         ],
+        Country::Off | Country::System => Vec::new(),
     }
 }
 
@@ -130,10 +166,16 @@ const MAX_SPAN_HZ: f64 = 2_500_000.0;
 
 /// Whether the row shows in this view.
 pub fn shown(view: &ViewState) -> bool {
+    shown_in(view, country())
+}
+
+/// [`shown`] for a given country, which is what the tests use: they run in
+/// parallel and must not depend on the process-wide setting.
+pub fn shown_in(view: &ViewState, country: Country) -> bool {
     let span = view.span();
     span > 0.0
         && span <= MAX_SPAN_HZ
-        && plans(view.country)
+        && plans(country)
             .iter()
             .flat_map(|(v, _)| v.iter())
             .any(|c| (view.view_lo_hz..=view.view_hi_hz).contains(&c.hz))
@@ -150,7 +192,7 @@ pub fn label_step(px_per_channel: f32, label_w: f32) -> u16 {
 
 /// Draw the row of tiles at `top`, `h` high.
 pub fn draw(p: &Painter, view: &ViewState, wf: &Rect, top: f32, h: f32, font: f32) {
-    for (chans, spacing) in plans(view.country) {
+    for (chans, spacing) in plans(country()) {
         draw_plan(p, view, wf, top, h, font, &chans, spacing);
     }
 }
@@ -232,13 +274,32 @@ mod tests {
     /// Germany, and the strip blocks follow.
     #[test]
     fn the_country_chooses_the_plans() {
-        assert!(plans(Country::Unset).is_empty());
-        assert!(strip_blocks(Country::Unset).is_empty());
+        assert!(plans(Country::Off).is_empty());
+        assert!(strip_blocks(Country::Off).is_empty());
         assert_eq!(plans(Country::Germany).len(), 3);
         let b = strip_blocks(Country::Germany);
         assert!(b.iter().any(|(lo, hi, _)| *lo < 26_565_000.0 && *hi > 26_955_000.0));
         assert!(b.iter().any(|(lo, hi, _)| *lo < 149_025_000.0 && *hi > 149_112_500.0));
         assert!(b.iter().any(|(lo, hi, _)| *lo < 446_006_250.0 && *hi > 446_193_750.0));
+    }
+
+    /// "Like this computer" reads the region of the first locale that names
+    /// one, POSIX or BCP 47, whatever the language: a German system in
+    /// English is still in Germany. A locale without a region is skipped.
+    #[test]
+    fn the_computer_country_comes_from_the_locale_region() {
+        let from = |l: &[&str]| system_country_from(l.iter().map(|s| s.to_string()));
+        assert_eq!(from(&["de_DE.UTF-8"]), Country::Germany);
+        assert_eq!(from(&["de_DE@euro"]), Country::Germany);
+        assert_eq!(from(&["en-DE"]), Country::Germany);
+        assert_eq!(from(&["de", "de-DE"]), Country::Germany);
+        assert_eq!(from(&["de-AT"]), Country::Off);
+        assert_eq!(from(&["en-US", "de-DE"]), Country::Off);
+        assert_eq!(from(&["C"]), Country::Off);
+        assert_eq!(from(&[]), Country::Off);
+        assert_eq!(resolve(Country::Germany), Country::Germany);
+        assert_eq!(resolve(Country::Off), Country::Off);
+        assert_ne!(resolve(Country::System), Country::System);
     }
 
     #[test]

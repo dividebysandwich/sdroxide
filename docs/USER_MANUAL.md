@@ -296,17 +296,17 @@ one region and not another (3.900–4.000 and 7.200–7.300 are broadcasting in
 Regions 1 and 3 and amateur in Region 2).
 
 **Channel tiles.** The licence-free channel services are national law, so
-they follow the radio's **Country** on the General tab
-([6.1](#61-general-station-audio-and-remote-access)) rather than the region.
-With **Germany** set, the strip adds blocks for **CB 41–80** (26.565–26.955
+they follow the **Country** on the General tab
+([6.1](#61-general-station-audio-and-remote-access)) rather than the region —
+by default the country the computer is set to. In **Germany**, the strip adds blocks for **CB 41–80** (26.565–26.955
 MHz, beside the CEPT CB block of channels 1–40), **Freenet** (149.025–149.1125
 MHz) and **PMR446** (446.00625–446.19375 MHz), and wherever one of these is in
 view at a span of 2.5 MHz or less, a row of tiles just inside the strip marks
 every channel with its number: teal for voice, amber for the CB data channels
 6, 7, 24, 25, 52, 53, 76 and 77, a short hairline at each channel's centre.
 Numbers thin out (every 2nd, 5th, 10th) as the channels narrow on screen;
-9 and 19 keep theirs down to every second. With no country set nothing of
-this is drawn.
+9 and 19 keep theirs down to every second. In a country without plans, or
+with **—** picked, nothing of this is drawn.
 
 **Memory marks.** Every stored memory whose frequency falls on the visible span
 is labelled just inside the band-plan strip, reading `Mem: folder / name` — or
@@ -7407,12 +7407,13 @@ the radio is attached to and announced to every client, so a remote operator
 sees the band plan of the radio they are driving rather than of wherever they
 happen to be sitting. It takes effect immediately — no APPLY, no restart.
 
-**Country** — under the IARU region: the country this radio listens in,
-which decides the licence-free channel plans the waterfall marks (see
-*Channel tiles* in [2.3](#23-tuning)). **—** draws none; **Germany**
-draws CB channels 1–80 (BNetzA Vfg. 21/2021), Freenet (Vfg. 45/2025) and
-PMR446 (ECC Decision (15)05). It is kept per radio, not per station: a
-remote receiver abroad hears that country's channels.
+**Country** — under the IARU region: whose licence-free channel plans the
+waterfall marks (see *Channel tiles* in [2.3](#23-tuning)). **Like this
+computer**, the default, takes the country from the operating system's (or
+the browser's) preferred locale and names the result — `de_DE` and `en-DE`
+both come to Germany. **—** draws none; **Germany** draws CB channels 1–80
+(BNetzA Vfg. 21/2021), Freenet (Vfg. 45/2025) and PMR446 (ECC Decision
+(15)05). It is this screen's setting, kept with the other `[ui]` choices.
 
 #### The band plan file
 
