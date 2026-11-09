@@ -323,6 +323,7 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Wefax
         | Mode::Navtex
         | Mode::Jtty
+        | Mode::TimeSignal
         | Mode::RfPaint => '2',
     }
 }

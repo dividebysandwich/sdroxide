@@ -384,6 +384,7 @@ fn mode_digit(m: Mode) -> (char, bool) {
         | Mode::Sstv
         | Mode::Wefax
         | Mode::Navtex
+        | Mode::TimeSignal
         | Mode::RfPaint => ('2', false),
     }
 }

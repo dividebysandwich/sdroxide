@@ -41,6 +41,9 @@ pub fn run(
     // more than in the shack, not less: nobody is standing next to the antenna
     // relay to hear whether it threw.
     let tr = Arc::new(TrSwitch::new());
+    // The computer's clock and its NTP server, shared for the same reason —
+    // and a headless station is exactly where an NTP server earns its keep.
+    let clock = sdroxide_clock::TimeHub::new();
 
     let mut params = Vec::with_capacity(radios.len());
     for (i, boot) in radios.into_iter().enumerate() {
@@ -85,6 +88,7 @@ pub fn run(
                 store_sync: Some(sync.clone()),
                 rade_watch: Some(rade.clone()),
                 tr_switch: Some(tr.clone()),
+                time_hub: Some(clock.clone()),
             },
         );
 
@@ -114,6 +118,7 @@ pub fn run(
     let add_sync = sync.clone();
     let add_rade = rade.clone();
     let add_tr = tr.clone();
+    let add_clock = clock.clone();
     let add_radio: sdroxide_server::AddRadioFn = Box::new(move |name: &str| {
         let slot = sdroxide_config::create_radio(name).map_err(|e| e.to_string())?;
         // Read fresh: this is minutes or days after startup, and the operator
@@ -159,6 +164,7 @@ pub fn run(
                 store_sync: Some(add_sync.clone()),
                 rade_watch: Some(add_rade.clone()),
                 tr_switch: Some(add_tr.clone()),
+                time_hub: Some(add_clock.clone()),
             },
         );
         Ok(RadioParams {
@@ -213,6 +219,10 @@ pub fn run(
             }
             Ok(sdroxide_config::load_radios().is_enabled(id))
         })),
+        // Re-read per request, like the credentials: the switch is a line in
+        // this machine's `config.toml`, and only someone at this machine can
+        // set it.
+        remote_clock_set: Some(Box::new(|| Settings::load().allow_remote_clock_set)),
     })?;
     Ok(())
 }

@@ -572,6 +572,14 @@ pub struct DigiStatus {
     /// mode. Appended after `jtty` for the same positional reason.
     #[serde(default)]
     pub vara: Option<crate::VaraStatus>,
+    /// The time-signal receiver: the carrier, the keying, the minute being
+    /// read and how far the computer's clock is from it. `None` in every other
+    /// mode, as the rest of these are. Boxed because it carries the symbol
+    /// ribbon and the scope trace, and is present for one mode only.
+    ///
+    /// Appended after `vara`, for the reason [`DigiStatus::acars`] gives.
+    #[serde(default)]
+    pub timesig: Option<Box<crate::TimeSigStatus>>,
 }
 
 /// The running detail of the contact in progress: when it started and what has
@@ -1075,6 +1083,7 @@ impl DigiStatus {
             transmitting: false,
             tx_watchdog: false,
             tx_refused: None,
+            timesig: None,
             transcript: Vec::new(),
             config,
             text_rx: String::new(),
@@ -2261,6 +2270,10 @@ pub struct DigiConfig {
     /// Answer calls from the panel when no host program is attached.
     #[serde(default)]
     pub vara_listen: bool,
+    /// The time-signal receiver's station and calibration — see
+    /// [`crate::TimeSigConfig`]. Appended after the VARA settings, for the usual reason.
+    #[serde(default)]
+    pub timesig: crate::TimeSigConfig,
 }
 
 fn default_vara_retries() -> u32 {
@@ -2521,6 +2534,7 @@ impl Default for DigiConfig {
             vara_host_server: false,
             vara_host_port: default_vara_host_port(),
             vara_listen: false,
+            timesig: crate::TimeSigConfig::default(),
         }
     }
 }

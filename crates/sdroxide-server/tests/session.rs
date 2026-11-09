@@ -16,6 +16,8 @@ const PORT: u16 = 39471;
 /// The sign-in test's own engine, so the two tests cannot disturb each other's
 /// turnstile — it is deliberately server-wide state.
 const AUTH_PORT: u16 = 39472;
+/// The clock-permission test's own engine.
+const CLOCK_PORT: u16 = 39473;
 
 async fn recv_msg(
     ws: &mut (impl StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin),
@@ -77,6 +79,7 @@ async fn spawn_server(port: u16, access: Option<AccessFn>) {
         remove_radio: None,
         rename_radio: None,
         radio_power: None,
+        remote_clock_set: None,
     }));
     tokio::time::sleep(Duration::from_millis(400)).await;
 }
@@ -240,5 +243,27 @@ async fn a_server_with_credentials_signs_clients_in() {
     match recv_msg(&mut ws).await {
         ServerMsg::Busy => {}
         other => panic!("expected Busy for the second signed-in client, got {other:?}"),
+    }
+}
+
+/// A remote client may not set the station computer's clock unless the
+/// station's operator said so: the command is dropped at the server, and the
+/// client is told why rather than left wondering.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_remote_client_cannot_set_the_clock_by_default() {
+    spawn_server(CLOCK_PORT, None).await;
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{CLOCK_PORT}/ws"))
+        .await
+        .expect("connect");
+    send(&mut ws, &hello()).await;
+    assert!(matches!(recv_msg(&mut ws).await, ServerMsg::HelloAck { .. }));
+    send(&mut ws, &ClientMsg::Command(Command::SetSystemClock { force: true })).await;
+    loop {
+        if let ServerMsg::Notice(Some(text)) = recv_msg(&mut ws).await {
+            // Not the engine's own refusal ("no time has been received yet"),
+            // which would mean the command had reached it.
+            assert!(text.contains("does not let remote clients"), "notice: {text}");
+            break;
+        }
     }
 }

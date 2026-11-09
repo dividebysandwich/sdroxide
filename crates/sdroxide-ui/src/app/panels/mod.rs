@@ -38,6 +38,7 @@ pub(in crate::app) mod rf_paint;
 pub(in crate::app) mod setup;
 pub(in crate::app) mod sstv;
 pub(in crate::app) mod text_modem;
+pub(in crate::app) mod timesig;
 pub(in crate::app) mod vara;
 pub(in crate::app) mod vdl2;
 pub(in crate::app) mod wefax;

@@ -1237,6 +1237,7 @@ impl QsoMachine {
             transmitting,
             tx_watchdog: self.watchdog,
             tx_refused: None,
+            timesig: None,
             transcript: self.transcript.clone(),
             config: self.cfg.clone(),
             jtty: None,

@@ -252,6 +252,13 @@ impl Cli {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Before anything else: this may be the clock helper, started as root by
+    // the system's administrator prompt to make one clock step and leave. No
+    // logging, no config, no radio — nothing but the step runs with the
+    // privilege. See `sdroxide_clock::os`.
+    if let Some(code) = sdroxide_clock::helper_main() {
+        std::process::exit(code);
+    }
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),

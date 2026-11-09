@@ -55,7 +55,8 @@ use self::radio::{
 #[cfg(not(target_arch = "wasm32"))]
 use self::remote::settings_remote_tab;
 use self::servers::{
-    settings_rigctld_tab, settings_rotator_tab, settings_tci_server_tab, settings_wsjtx_tab,
+    settings_ntp_server_tab, settings_rigctld_tab, settings_rotator_tab, settings_tci_server_tab,
+    settings_wsjtx_tab,
 };
 use self::tle::settings_tle_tab;
 use self::ui_tab::settings_ui_tab;
@@ -280,6 +281,10 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// clients, as opposed to the TCI client configured on the Radio tab.
     tci_srv_edit: &'a mut sdroxide_types::TciServerConfig,
     tci_srv_apply: &'a mut bool,
+    /// The built-in NTP server, serving the time the time-signal receiver
+    /// measured.
+    ntp_srv_edit: &'a mut sdroxide_types::NtpServerConfig,
+    ntp_srv_apply: &'a mut bool,
     /// The built-in Hamlib rigctld server — the control-only surface every
     /// "NET rigctl" client speaks.
     rigctld_edit: &'a mut sdroxide_types::RigctldConfig,
@@ -1048,6 +1053,8 @@ impl SdroxideApp {
         let mut net_sync = false;
         let mut tci_srv_edit = self.tci_srv_edit.clone();
         let mut tci_srv_apply = false;
+        let mut ntp_srv_edit = self.ntp_srv_edit.clone();
+        let mut ntp_srv_apply = false;
         let mut rigctld_edit = self.rigctld_edit.clone();
         let mut rigctld_apply = false;
         let mut wsjtx_edit = self.wsjtx_edit.clone();
@@ -1228,6 +1235,8 @@ impl SdroxideApp {
                             net_sync: &mut net_sync,
                             tci_srv_edit: &mut tci_srv_edit,
                             tci_srv_apply: &mut tci_srv_apply,
+                            ntp_srv_edit: &mut ntp_srv_edit,
+                            ntp_srv_apply: &mut ntp_srv_apply,
                             rigctld_edit: &mut rigctld_edit,
                             rigctld_apply: &mut rigctld_apply,
                             wsjtx_edit: &mut wsjtx_edit,
@@ -1315,6 +1324,11 @@ impl SdroxideApp {
             // will make again after the next restart.
             self.input.cfg = input_edit;
             self.input.persist();
+        }
+        self.ntp_srv_edit = ntp_srv_edit;
+        if ntp_srv_apply {
+            // The engine persists ntpserver.json and rebinds.
+            cmds.push(Command::SetNtpServerConfig(self.ntp_srv_edit.clone()));
         }
         self.tci_srv_edit = tci_srv_edit;
         if tci_srv_apply {
@@ -3274,6 +3288,21 @@ impl SdroxideApp {
                     self.tci_srv_seeded,
                     &self.tci_srv_status,
                     io.tci_srv_apply,
+                );
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(8.0);
+                let ntp_status = self
+                    .digi_status
+                    .as_ref()
+                    .and_then(|s| s.timesig.as_ref())
+                    .map(|t| t.clock.ntp.clone());
+                settings_ntp_server_tab(
+                    ui,
+                    io.ntp_srv_edit,
+                    self.ntp_srv_seeded,
+                    ntp_status.as_ref(),
+                    io.ntp_srv_apply,
                 );
                 ui.add_space(12.0);
                 ui.separator();

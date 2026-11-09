@@ -1627,7 +1627,20 @@ use sdroxide_types::{
 /// enums; [`sdroxide_types::Command`] gains the `Vara*` commands; `DigiStatus`
 /// gains `vara` (`Option<VaraStatus>`) and `DigiConfig` the `vara_*` settings,
 /// each on its tail, so a v189 peer reads digital status out of step.
-pub const PROTO_VERSION: u16 = 190;
+///
+/// v191: time signals. `Mode::TimeSignal` is appended to
+/// [`sdroxide_types::Mode`], after `VaraHf`; [`sdroxide_types::DigiConfig`]
+/// gains `timesig` ([`sdroxide_types::TimeSigConfig`]) and
+/// [`sdroxide_types::DigiStatus`] gains `timesig` on their tails;
+/// [`sdroxide_types::StationConfig`] gains `ntp_server`; and
+/// `Command::SetSystemClock` and `Command::SetNtpServerConfig` are appended.
+/// A v190 peer would read every digital status and config out of step. Within
+/// the same version, before it was released: [`sdroxide_types::TimeStation`]
+/// lists DCF77, MSF, WWVB, JJY 40 and 60, WWV, WWVH, ALS162, BPC, BPM and RWM
+/// in that order, and [`sdroxide_types::TimeSigStatus`] carries the phase
+/// codes' and the short-wave pair's fields; DCF77's phase bits ride the fields
+/// WWVB's use.
+pub const PROTO_VERSION: u16 = 191;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

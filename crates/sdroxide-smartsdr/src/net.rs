@@ -1800,6 +1800,7 @@ fn mode_to_flex(m: Mode) -> &'static str {
         | Mode::Sstv
         | Mode::Wefax
         | Mode::Navtex
+        | Mode::TimeSignal
         | Mode::RfPaint
         | Mode::Spec
         | Mode::Hfdl

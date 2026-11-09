@@ -25,6 +25,7 @@ fn build_controller(
     sync: &Arc<StoreSync>,
     rade: &Arc<RadeWatch>,
     tr: &Arc<TrSwitch>,
+    clock: &Arc<sdroxide_clock::TimeHub>,
 ) -> LocalController {
     let (audio_out, audio_params) = match sdroxide_audio::start_output(
         settings.audio_output.as_deref(),
@@ -70,6 +71,7 @@ fn build_controller(
         store_sync: Some(sync.clone()),
         rade_watch: Some(rade.clone()),
         tr_switch: Some(tr.clone()),
+        time_hub: Some(clock.clone()),
         record_iq: boot.record_iq.clone(),
     };
     let handles = start_engine(boot.source, boot.caps, cfg);
@@ -101,13 +103,17 @@ pub fn run_multi(
     // is keying — so it is shared like the interlock above rather than opened
     // once per radio.
     let tr = Arc::new(TrSwitch::new());
+    // The computer's clock and its NTP server, shared for the same reason:
+    // one clock, one port 123, whichever radio heard the time.
+    let clock = sdroxide_clock::TimeHub::new();
 
     let mut tabs = Vec::new();
     for (i, boot) in radios.into_iter().enumerate() {
         let id = boot.id;
         let name = boot.name.clone();
         let enabled = boot.enabled;
-        let ctrl = build_controller(boot, settings, tx_ham_only, i == 0, &gate, &sync, &rade, &tr);
+        let ctrl =
+            build_controller(boot, settings, tx_ham_only, i == 0, &gate, &sync, &rade, &tr, &clock);
         tabs.push(sdroxide_ui::RadioTab { id, name, enabled, ctrl: Box::new(ctrl) });
     }
 
@@ -118,6 +124,7 @@ pub fn run_multi(
     let factory_sync = sync.clone();
     let factory_rade = rade.clone();
     let factory_tr = tr.clone();
+    let factory_clock = clock.clone();
     let factory: sdroxide_ui::RadioFactory = Box::new(move || {
         let slot = sdroxide_config::create_radio("").map_err(|e| e.to_string())?;
         let settings = Settings::load();
@@ -159,6 +166,7 @@ pub fn run_multi(
             &factory_sync,
             &factory_rade,
             &factory_tr,
+            &factory_clock,
         );
         Ok(sdroxide_ui::RadioTab {
             id: slot.id,
