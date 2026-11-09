@@ -349,6 +349,18 @@ column comes back.
 
 ![The band and mode selector popup](images/04-band-mode-popup.jpg)
 
+Above BAND sit the rows headed **RECENT**, twelve slots, dim until filled:
+your last twelve working places, each a band and a mode with the dial and filter
+you left it on — `40M FT8`, `20M USB`; the dial is in the tooltip. The rows
+are always full: twelve slots go two, three, four or six to a row as the window
+allows. Click one and the radio goes
+back there, FT8 panel and all if it was FT8, and only then. A place is entered
+once you have been on it for 3 seconds, so clicking through the bands fills
+nothing, and the place you are on lights up. A new place flashes three times
+the first time you see the rows after it came in. Each band and mode appears once: coming back to 40 m FT8 refreshes
+its chip where it stands, and the chip you click stays in its place. The rows are
+kept between sessions.
+
 See the [appendix](#16-appendix) for what each mode is.
 
 ### 2.5 VFOs, split, and the sub-receiver

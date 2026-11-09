@@ -2336,6 +2336,8 @@ impl SdroxideApp {
         let (state, caps) = (&self.state, &self.caps);
         let stated = self.radio_cfg.as_ref().is_some_and(|c| !c.freq_ranges_rx.is_empty());
         let (conditions, daylight) = (self.band_conditions.as_ref(), self.daylight);
+        let recent = &self.workplaces;
+        let here = (Band::containing(state.active_freq_hz()), mode);
         let popup_id = egui::Popup::default_response_id(&btn);
         let mut dock = false;
         crate::chrome::fading_menu_popup(ui, &btn, &mut self.mode_popup_since, |ui| {
@@ -2347,6 +2349,7 @@ impl SdroxideApp {
                 dock = true;
             }
             ui.add_space(2.0);
+            crate::app::workplaces::workplace_rows(ui, recent, here, state.active_vfo, cmds);
             band_mode_menu(ui, mode, state, caps.as_ref(), stated, conditions, daylight, cmds);
         });
         if dock {
@@ -2363,6 +2366,14 @@ impl SdroxideApp {
     pub(in crate::app) fn band_menu_body(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let mode = self.state.rx[0].mode;
         let stated = self.radio_cfg.as_ref().is_some_and(|c| !c.freq_ranges_rx.is_empty());
+        let here = (Band::containing(self.state.active_freq_hz()), mode);
+        crate::app::workplaces::workplace_rows(
+            ui,
+            &self.workplaces,
+            here,
+            self.state.active_vfo,
+            cmds,
+        );
         band_mode_menu(
             ui,
             mode,

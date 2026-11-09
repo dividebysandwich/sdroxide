@@ -2263,6 +2263,9 @@ topbar-user-manual-f1 = Gebruikershandleiding (F1)
 topbar-range-was-typed-settings-radio = Dat bereik is ingetypt in Instellingen ▸ Radio ▸ RX-bereik, niet door de radio gemeld. Verbreed het, of maak het vak leeg om te gebruiken wat het apparaat over zichzelf zegt.
 topbar-what-device-reports-about-itself = Dat is wat het apparaat over zichzelf meldt. Als de radio deze band wel dekt, geef dan zijn echte bereik op in Instellingen ▸ Radio ▸ RX-bereik.
 topbar-band = BAND
+topbar-recent = RECENT
+topbar-recent-empty =
+    Vult na 3 s op een plek
 topbar-mode = MODUS
 topbar-digital = DIGITAAL
 

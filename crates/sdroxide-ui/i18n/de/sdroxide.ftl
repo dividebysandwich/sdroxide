@@ -2262,6 +2262,9 @@ topbar-user-manual-f1 = Benutzerhandbuch (F1)
 topbar-range-was-typed-settings-radio = Dieser Bereich wurde in Einstellungen ▸ Funkgerät ▸ RX-Bereich eingetragen, nicht vom Funkgerät gemeldet. Erweitern Sie ihn oder leeren Sie das Feld, um zu verwenden, was das Gerät über sich selbst sagt.
 topbar-what-device-reports-about-itself = Das ist, was das Gerät über sich selbst meldet. Wenn das Funkgerät dieses Band tatsächlich abdeckt, dessen echten Bereich unter Einstellungen ▸ Funkgerät ▸ RX-Bereich angeben.
 topbar-band = BAND
+topbar-recent = ZULETZT
+topbar-recent-empty =
+    Füllt sich nach 3 s auf einem Platz
 topbar-mode = BETRIEBSART
 topbar-digital = DIGITAL
 

@@ -1723,6 +1723,16 @@ pub fn save_bandstacks(stacks: &BandStacks) -> Result<(), ConfigError> {
     save_json("bandstacks.json", stacks)
 }
 
+/// The operator's recent working places — band, mode, filter and dial — as
+/// the ZULETZT rows of the band menu show them, newest first.
+pub fn load_workplaces() -> Vec<sdroxide_types::BandStackEntry> {
+    load_json_list("workplaces.json")
+}
+
+pub fn save_workplaces(places: &[sdroxide_types::BandStackEntry]) -> Result<(), ConfigError> {
+    save_json("workplaces.json", places)
+}
+
 pub fn load_memories() -> Vec<sdroxide_types::MemoryChannel> {
     load_json_list("memories.json")
 }

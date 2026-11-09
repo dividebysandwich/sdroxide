@@ -52,6 +52,7 @@ pub(in crate::app) mod undocked;
 pub(crate) mod util;
 pub(in crate::app) mod windows;
 pub(in crate::app) mod winlink;
+pub(in crate::app) mod workplaces;
 
 use crate::i18n::tr;
 use std::sync::{Arc, Mutex};
@@ -569,6 +570,10 @@ pub struct SdroxideApp {
     /// it, so widening the window again brings it back.
     band_docked: bool,
     band_dock_visible: bool,
+    /// The ZULETZT rows of the band menu, newest first, and the place being
+    /// worked now (see `workplaces`).
+    workplaces: Vec<sdroxide_types::BandStackEntry>,
+    workplace_track: workplaces::WorkplaceTrack,
     /// AUX SP's own view of the spectrum — its zoom, pan and layers — swapped
     /// in for `view` while its window draws, so the two spectra do not mirror
     /// each other (see `undocked::show_detached_module`).
@@ -1608,6 +1613,8 @@ impl SdroxideApp {
             // room for it this frame. (SWL users group, via sdroxide-brown.)
             band_docked: band_dock.contains_key(&radio_id),
             band_dock_visible: band_dock.get(&radio_id).copied().unwrap_or(false),
+            workplaces: persist::load_workplaces(),
+            workplace_track: Default::default(),
             aux_view: ViewState::default(),
             panel_window_pane: 0,
             // Where each tool window was left last time — in its own window or

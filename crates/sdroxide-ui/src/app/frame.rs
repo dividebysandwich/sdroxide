@@ -255,6 +255,7 @@ impl eframe::App for SdroxideApp {
             crate::i18n::set_language(self.applied_language);
             ctx.request_repaint();
         }
+        self.track_workplace(&ctx, ctx.input(|i| i.time));
         // The panadapter and skimmer font sizes need no visuals rewrite —
         // everything they size is laid out per frame — so they are simply
         // re-stored each frame.

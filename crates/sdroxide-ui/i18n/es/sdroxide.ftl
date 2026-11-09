@@ -2262,6 +2262,9 @@ topbar-user-manual-f1 = Manual de usuario (F1)
 topbar-range-was-typed-settings-radio = Ese rango se escribió en Ajustes ▸ Radio ▸ Rango RX, no lo informó la radio. Amplíalo, o vacía la casilla para usar lo que diga el dispositivo de sí mismo.
 topbar-what-device-reports-about-itself = Eso es lo que informa el dispositivo de sí mismo. Si la radio sí cubre esta banda, indica su rango real en Ajustes ▸ Radio ▸ Rango RX.
 topbar-band = BANDA
+topbar-recent = RECIENTES
+topbar-recent-empty =
+    Se llena tras 3 s en un lugar
 topbar-mode = MODO
 topbar-digital = DIGITAL
 
