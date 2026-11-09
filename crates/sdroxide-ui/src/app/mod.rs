@@ -592,6 +592,18 @@ pub struct SdroxideApp {
     /// so a tiling compositor cannot lose it. See
     /// `undocked::floating_panel_window`. Session-only.
     panel_floating: bool,
+    /// When the operating panel started rising over the panadapter, as a
+    /// curtain, on entering a digital mode; `None` once it is up.
+    curtain_rise_at: Option<f64>,
+    /// The curtain's last partial position (`digi_panel_fraction`), for a
+    /// double-click on the handle to go back to from all the way up.
+    digi_curtain_prev: f32,
+    /// The curtain falling on leaving a digital mode: when it started, from
+    /// where, and the mode to switch to once it is down.
+    curtain_fall: Option<(f64, f32, Mode)>,
+    /// The last mode drawn without a digital panel, to go back to when the lit
+    /// digital mode is clicked again. USB until one has been seen.
+    last_voice_mode: Mode,
     /// The floating panel rolled up to its title bar.
     panel_rolled: bool,
     /// Whether the **module windows** list is open — the ▣ chip's list, also
@@ -1624,6 +1636,10 @@ impl SdroxideApp {
                 .map(|(id, s)| (id, s.into()))
                 .collect(),
             panel_floating: false,
+            curtain_rise_at: None,
+            digi_curtain_prev: 0.5,
+            curtain_fall: None,
+            last_voice_mode: Mode::Usb,
             panel_rolled: false,
             show_windows: false,
             workspaces: persist::load_workspaces(),

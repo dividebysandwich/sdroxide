@@ -103,26 +103,49 @@ fn digi_split(total: f32, divider_h: f32, fraction: f32, row_h: f32) -> (f32, f3
     (usable - panel_h, panel_h)
 }
 
-/// The highest share the waterfall's floor allows a drag to reach; past it
-/// [`digi_split_up_to_top`] lets the panel go on up to the top edge.
-const DIGI_FLOOR_FRACTION: f32 = 0.82;
+/// How long the operating panel takes to rise over the panadapter on entering
+/// a digital mode, seconds.
+const CURTAIN_RISE_S: f64 = 0.3;
 
-/// [`digi_split`] for a digital mode's panel, which the operator may drag all
-/// the way up to the top edge.
+/// A panadapter shorter than this is not drawn: the curtain covers it. The
+/// strip's furniture (scale, readouts, labels) is laid out for more than a
+/// sliver.
+const CURTAIN_MIN_WF_H: f32 = 60.0;
+
+/// The digital modes' panel as a **curtain** over the panadapter: laid out for
+/// the whole `usable` height always, and moved down by the handle rather than
+/// squeezed. `fraction` is how much of it shows (1 = all the way up, the
+/// panadapter covered). Returns the waterfall's height above it and the height
+/// of the panel that shows; what is below the window's edge is hidden, not
+/// pressed against it.
 ///
-/// Up to [`DIGI_FLOOR_FRACTION`] this is `digi_split` unchanged, floors and
-/// all. Beyond it the panel takes `fraction` of the area outright, up to the
-/// whole of it, so the handle stays under the pointer and the waterfall shrinks
-/// to nothing. CW shares the fraction and keeps calling `digi_split`, whose
-/// floor still holds its waterfall at 80 pt.
-fn digi_split_up_to_top(total: f32, divider_h: f32, fraction: f32, row_h: f32) -> (f32, f32) {
-    let usable = (total - divider_h).max(0.0);
-    let (wf, panel) = digi_split(total, divider_h, fraction.min(DIGI_FLOOR_FRACTION), row_h);
-    if fraction <= DIGI_FLOOR_FRACTION {
-        return (wf, panel);
-    }
-    let panel = panel.max(usable * fraction).min(usable);
-    (usable - panel, panel)
+/// The least that shows is `min_visible`, the panel's header, so the curtain
+/// can always be pulled up again.
+// Why: HDZ 2026-11-08: "wenn man auf eine digitale Betriebsart schaltet, dann
+//      zieht der Griff rasch wie ein Vorhang von unten nach oben und überdeckt
+//      Spektrum und Wasserfall … dafür sorgen, dass die Inhalte nicht unten an
+//      die Untergrenze anbumsen, sondern der digitale Inhalt unten weggedrückt
+//      werden kann" — the split squeezed every panel into what was left (the
+//      FT8 map over its QSO form, WSPR, JS8, RTTY-FM, SSTV cut off), against
+//      the manual's "no control is ever off the bottom of an operating panel".
+fn curtain_split(usable: f32, fraction: f32, min_visible: f32) -> (f32, f32) {
+    let usable = usable.max(0.0);
+    let shown = (usable * fraction).clamp(min_visible.min(usable), usable);
+    (usable - shown, shown)
+}
+
+/// Set by the band/mode menu when the lit digital mode is clicked again: the
+/// curtain falls and the mode before it comes back. A flag in egui's memory
+/// because the menu is a free function (its layout test builds it without an
+/// app), and the curtain lives on the app.
+pub(in crate::app) fn curtain_drop_id() -> egui::Id {
+    egui::Id::new("sdroxide-curtain-drop")
+}
+
+/// The least of the curtain that shows, as a fraction of `usable`: the panel's
+/// header row and its frame.
+fn curtain_min_fraction(usable: f32, row_h: f32) -> f32 {
+    ((row_h * 1.5 + 20.0).max(40.0) / usable.max(1.0)).min(1.0)
 }
 
 /// Whether a state update that kept the mode moved the receiver far enough to
@@ -712,15 +735,52 @@ impl eframe::App for SdroxideApp {
             // rest. A thin handle between them resizes the split.
             let total = ui.available_height();
             let handle_h = 7.0;
+            // The handle plus the gap the layout inserts on each side of it.
+            let usable = (total - handle_h - 2.0 * ui.spacing().item_spacing.y).max(0.0);
+            let min_frac = curtain_min_fraction(usable, ui.spacing().interact_size.y);
+            let now_t = ui.input(|i| i.time);
+            // Entering a digital mode (or another one): the curtain rises over
+            // the panadapter, all the way up.
+            if split && mode_changed {
+                self.view.digi_panel_fraction = 1.0;
+                self.curtain_rise_at = Some(now_t);
+            }
+            let mut frac = self.view.digi_panel_fraction.clamp(min_frac, 1.0);
+            // The lit mode clicked again in the menu: the curtain falls, and
+            // once it is down the mode before it comes back.
+            // Why: HDZ 2026-11-08: "ein erneuter Klick auf die Betriebsart
+            //      deselektiert diese und der Vorhang fällt nach unten; man
+            //      kommt schlecht weg, das Runterziehen reicht nicht".
+            if ui.ctx().data_mut(|d| d.remove_temp::<bool>(curtain_drop_id())).unwrap_or(false) {
+                self.curtain_rise_at = None;
+                self.curtain_fall = Some((now_t, frac, self.last_voice_mode));
+            }
+            if let Some((t0, from, back)) = self.curtain_fall {
+                let t = ((now_t - t0) / CURTAIN_RISE_S) as f32;
+                if t >= 1.0 || !split {
+                    self.curtain_fall = None;
+                    cmds.push(Command::SetMode { rx: sdroxide_types::RxId::Main, mode: back });
+                    frac = min_frac;
+                } else {
+                    // Accelerating down, the way a curtain drops.
+                    let e = t.max(0.0).powi(2);
+                    frac = from + (min_frac - from) * e;
+                    ui.ctx().request_repaint();
+                }
+            }
+            if let Some(t0) = self.curtain_rise_at {
+                let t = ((now_t - t0) / CURTAIN_RISE_S) as f32;
+                if t >= 1.0 || !split {
+                    self.curtain_rise_at = None;
+                } else {
+                    // Fast, then braking: a cubic ease-out from the header up.
+                    let e = 1.0 - (1.0 - t.max(0.0)).powi(3);
+                    frac = min_frac + (frac - min_frac) * e;
+                    ui.ctx().request_repaint();
+                }
+            }
             let (wf_h, panel_h) = if split {
-                // The handle plus the gap the layout inserts on each side of it.
-                let divider = handle_h + 2.0 * ui.spacing().item_spacing.y;
-                digi_split_up_to_top(
-                    total,
-                    divider,
-                    self.view.digi_panel_fraction,
-                    ui.spacing().interact_size.y,
-                )
+                curtain_split(usable, frac, min_frac * usable)
             } else {
                 // Whichever one is showing gets all of it.
                 (total, total)
@@ -731,62 +791,67 @@ impl eframe::App for SdroxideApp {
             // waterfall would be time that never happened — a switched-off
             // radio (or any stalled stream) freezes instead.
             let live = frame.is_some() && now - self.last_spectrum_at < STREAM_STALE_S;
-            if show_wf {
-                // The panadapter's strip is taken from the layout first, as one
-                // allocation however tall it is, and the panadapter is drawn
-                // into a child with a fixed id laid over it: so the widgets
-                // after it (the handle above all) keep their ids through the
-                // whole drag, from full height down to nothing (HDZ 2026-11-08:
-                // „es hakt kurz bei 80 pixel, und dann muss ich neu anfassen“;
-                // „das Panorama muss bis null Pixel runter gehen können“).
-                let (strip, _) =
-                    ui.allocate_exact_size(egui::vec2(width, wf_h), egui::Sense::hover());
-                let mut pan_ui = ui.new_child(
-                    egui::UiBuilder::new()
-                        .id_salt("digi-panadapter")
-                        .max_rect(strip)
-                        .layout(*ui.layout()),
-                );
-                pan_ui.set_clip_rect(strip.intersect(ui.clip_rect()));
-                self.note_panadapter_width(&pan_ui);
+            if show_wf && (!split || wf_h >= CURTAIN_MIN_WF_H) {
+                self.note_panadapter_width(ui);
                 let wf_tuning = self.wf_tick(live, ui.ctx().pixels_per_point());
-                if wf_h >= 1.0 {
-                    self.draw_panadapter(
-                        &mut pan_ui,
-                        width,
-                        wf_h,
-                        frame.as_ref(),
-                        &inputs,
-                        &mut clicked_spot,
-                        show_panel,
-                        wf_tuning,
-                        &mut cmds,
-                    );
-                }
+                self.draw_panadapter(
+                    ui,
+                    width,
+                    wf_h,
+                    frame.as_ref(),
+                    &inputs,
+                    &mut clicked_spot,
+                    show_panel,
+                    wf_tuning,
+                    &mut cmds,
+                );
+            } else if show_wf {
+                // Behind the curtain: the sliver it leaves, kept as space.
+                ui.allocate_space(egui::vec2(width, wf_h));
             }
             // Only between two things: with the panadapter switched off there
             // is nothing above the panel for the handle to divide, and a drag
             // on it would silently rewrite a split with nothing to show for it.
             if split {
-                // Resize handle between the waterfall and the FT8/FT4 panel,
-                // under a fixed id so a drag survives whatever is drawn above it.
-                let hresp = ui
-                    .push_id("digi-split-handle", |ui| {
-                        crate::chrome::split_handle(
-                            ui,
-                            egui::vec2(width, handle_h),
-                            Some(crate::theme::PANEL()),
-                        )
-                    })
-                    .inner;
+                // Resize handle between the waterfall and the FT8/FT4 panel.
+                let hresp = crate::chrome::split_handle(
+                    ui,
+                    egui::vec2(width, handle_h),
+                    Some(crate::theme::PANEL()),
+                );
+                // Drag down lowers the curtain (the waterfall shows), drag up
+                // raises it, from where it is drawn: no dead travel while a
+                // stored share catches up with a floor.
                 if hresp.dragged() {
-                    // Drag down shrinks the panel (waterfall grows), drag up grows it.
-                    let d = hresp.drag_delta().y / total;
-                    self.view.digi_panel_fraction =
-                        (self.view.digi_panel_fraction - d).clamp(0.2, 1.0);
+                    self.curtain_rise_at = None;
+                    let d = hresp.drag_delta().y / usable.max(1.0);
+                    self.view.digi_panel_fraction = (frac - d).clamp(min_frac, 1.0);
                 }
+                // A double-click flips: all the way up, or back down to where
+                // it was.
+                if hresp.double_clicked() {
+                    self.curtain_rise_at = None;
+                    if frac >= 0.98 {
+                        self.view.digi_panel_fraction = self.digi_curtain_prev.clamp(min_frac, 0.9);
+                    } else {
+                        self.digi_curtain_prev = frac;
+                        self.view.digi_panel_fraction = 1.0;
+                    }
+                }
+                hresp.on_hover_text(tr!("frame-curtain-handle-tip"));
             }
-            if show_panel {
+            if show_panel && split {
+                // The curtain: the panel laid out for the whole height, the
+                // part that shows given to it, the rest below the edge clipped
+                // — and clipped at the sides too, so a row wider than the
+                // window ends at the frame rather than fraying past it.
+                let (shown, _) =
+                    ui.allocate_exact_size(egui::vec2(width, panel_h), egui::Sense::hover());
+                let whole = egui::Rect::from_min_size(shown.min, egui::vec2(width, usable));
+                let mut panel_ui = ui.new_child(egui::UiBuilder::new().max_rect(whole));
+                panel_ui.set_clip_rect(shown.intersect(ui.clip_rect()));
+                self.draw_operating_panel(&mut panel_ui, &mut cmds, mode, usable);
+            } else if show_panel {
                 ui.allocate_ui(egui::vec2(width, panel_h), |ui| {
                     clip_to_given_rect(ui);
                     self.draw_operating_panel(ui, &mut cmds, mode, panel_h);
@@ -797,6 +862,8 @@ impl eframe::App for SdroxideApp {
             }
             self.frame = frame;
         } else {
+            // The mode a click on the lit digital mode comes back to.
+            self.last_voice_mode = self.state.rx[0].mode;
             // Restore the pre-FT8 view span once, on the first voice frame
             // after leaving a digital mode.
             if let Some((lo, hi)) = self.view.pre_digi_view.take() {
@@ -2269,7 +2336,7 @@ impl SdroxideApp {
 mod tests {
     use sdroxide_types::{Band, Mode};
 
-    use super::{digi_split, digi_split_up_to_top, qsy_clears_decodes, BODY_MARGIN};
+    use super::{digi_split, qsy_clears_decodes, BODY_MARGIN};
 
     /// The reported bug: 20 m to 40 m left the previous band's decodes in the
     /// list, because the only thing that cleared it was a mode change and the
@@ -2332,6 +2399,26 @@ mod tests {
         }
     }
 
+    /// The curtain never squeezes the panel: what shows plus the waterfall is
+    /// the height there is, all the way up covers the waterfall, and the
+    /// panel's header always shows so it can be pulled up again.
+    #[test]
+    fn the_curtain_shows_part_of_a_whole_panel_and_never_less_than_its_header() {
+        for usable in [300.0_f32, 609.0, 900.0] {
+            for row_h in [18.0_f32, 34.0] {
+                let min_frac = super::curtain_min_fraction(usable, row_h);
+                let header = min_frac * usable;
+                for f in [0.0_f32, 0.1, 0.46, 0.9, 1.0, 1.5] {
+                    let (wf, shown) = super::curtain_split(usable, f.clamp(min_frac, 1.0), header);
+                    assert!((wf + shown - usable).abs() < 0.01, "{usable} {f}: {wf} + {shown}");
+                    assert!(shown >= header - 0.01, "{usable} {f}: header hidden ({shown})");
+                }
+                let (wf, shown) = super::curtain_split(usable, 1.0, header);
+                assert_eq!((wf, shown), (0.0, usable), "all the way up covers the waterfall");
+            }
+        }
+    }
+
     #[test]
     fn a_roomy_window_still_honours_the_fraction_and_the_floors() {
         let (wf, panel) = digi_split(900.0, 7.0, 0.5, 18.0);
@@ -2366,35 +2453,6 @@ mod tests {
         let (wf, panel) = digi_split(300.0, 21.0, 0.2, 34.0);
         assert!(panel <= 0.6 * 279.0 + 0.01, "floor {panel} ate the waterfall");
         assert!(wf > 0.0);
-    }
-
-    /// HDZ 2026-11-08: „die curtain version erlaubt das schieben ganz nach oben,
-    /// liesse sich das nicht als verhalten in unsere ich schiebe selber version
-    /// einbauen, dass das constraint für die oberkante ganz verschwindet?“
-    #[test]
-    fn a_digital_panel_can_be_dragged_up_to_the_top_edge() {
-        for (total, row_h) in [(900.0f32, 18.0f32), (609.0, 34.0), (300.0, 34.0)] {
-            let usable = total - 21.0;
-            // Up to the old limit nothing changes.
-            for f in [0.2f32, 0.5, 0.82] {
-                assert_eq!(digi_split_up_to_top(total, 21.0, f, row_h), digi_split(total, 21.0, f, row_h));
-            }
-            // All the way up the waterfall is gone and the panel has it all.
-            let (wf, panel) = digi_split_up_to_top(total, 21.0, 1.0, row_h);
-            assert!(wf.abs() < 0.01 && (panel - usable).abs() < 0.01, "{total}: {wf} / {panel}");
-            // On the way there the panel only grows and the sum holds.
-            let mut last = 0.0f32;
-            for i in 0..=100 {
-                let f = 0.2 + 0.8 * i as f32 / 100.0;
-                let (wf, panel) = digi_split_up_to_top(total, 21.0, f, row_h);
-                assert!(panel + 0.01 >= last, "{total} at {f}: panel shrank to {panel}");
-                assert!((wf + panel - usable).abs() < 0.01);
-                last = panel;
-            }
-        }
-        // CW still gets its floor from the same fraction.
-        let (wf, _) = digi_split(900.0, 21.0, 1.0, 18.0);
-        assert!(wf >= 80.0);
     }
 
     /// HDZ 2026-11-08: „das Panorama muss bis null Pixel runter gehen können“.
@@ -2630,9 +2688,16 @@ mod tests {
                 let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
                 // A few frames: the tier and its metrics settle on the first.
                 let mut lowest = 0.0f32;
-                for _ in 0..4 {
+                // Time moves on, so the curtain has finished rising: a panel
+                // still on its way up is drawn below the window by design.
+                for i in 0..40 {
                     let mut out = ctx.run_ui(
-                        egui::RawInput { screen_rect: Some(screen), ..Default::default() },
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            time: Some(i as f64 * 0.1),
+                            predicted_dt: 0.1,
+                            ..Default::default()
+                        },
                         |ui| eframe::App::ui(&mut app, ui, &mut frame),
                     );
                     out.textures_delta.clear();

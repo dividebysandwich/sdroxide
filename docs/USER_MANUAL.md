@@ -3602,12 +3602,14 @@ is a list of paths rather than contacts (3.11).
 
 Every digital mode is entered the same way: open the Band/Mode popup and choose
 the mode from the **DIGITAL** row. The panadapter locks to the digital sub-band
-(the audio range just above the dial), and the mode's operating panel appears in
-the lower part of the window; a draggable divider sets how much height the
-panel gets. In a digital mode it goes all the way up, in one drag: the
-spectrum and the waterfall shrink with it down to nothing, and at the top edge
-the panel has the whole height. Drag the `— — —` handle down again to bring
-them back.
+(the audio range just above the dial), and the mode's operating panel rises over
+it like a curtain, covering the spectrum and the waterfall. The panel is always
+laid out for the whole height; the `— — —` handle on its top edge slides it down
+to show the waterfall above it, and what slides below the window's edge is
+hidden rather than squeezed. Its header row always stays in view to pull it up
+again, and a double-click on the handle sends it all the way up or back to
+where it was. Click the lit mode in the **DIGITAL** row again to leave it: the
+curtain falls and the mode you were in before comes back.
 
 While in a digital mode the **BAND** row of the Band/Mode popup doubles as a
 frequency picker. Bands where the mode has a standard calling frequency carry
@@ -12142,15 +12144,14 @@ spoken announcements below them under `[speech]`:
   for the rest of it, and for anyone who wants the tighter panels in a window
   on a large screen.
 
-  **Whatever the layout, no control is ever off the bottom of an operating
-  panel.** The panel keeps a floor under its own height — taken from the
-  waterfall above it, which is the thing that can shrink — sized to the rows
-  that layout actually draws, so a touched layout's taller chips get the extra
-  points they need. Where a panel still holds more than it can show at once
-  (the WSPR beacon's controls, the SSTV compositor), it scrolls rather than
-  running off the edge. The divider between the waterfall and the panel is
-  draggable in every mode: put the pointer on the `— — —` handle between them
-  and drag to give either one more of the window.
+  **A digital mode's operating panel is never squeezed.** It is laid out for
+  the whole height under the top bar and drawn as a curtain over the
+  panadapter: all the way up when the mode is chosen, slid down with the
+  `— — —` handle on its top edge to show the waterfall, its lower part hidden
+  below the window's edge rather than pressed into what is left. Its header
+  stays in view however far it is slid down. CW's panel, which shares the
+  window with the waterfall the old way, keeps a floor under its own height and
+  the draggable divider.
 - **Theme** — the colour scheme for the whole UI: **Default** (the navy, cyan
   and hot pink every screenshot in this manual shows), **Light** (white panels
   and near-black text, for a bright shack or a screen read in daylight),

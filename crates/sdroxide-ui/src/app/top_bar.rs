@@ -7372,7 +7372,14 @@ fn band_mode_menu(
         // this is where an operator looks for one.
         for m in Mode::DIGITAL.into_iter().chain([Mode::Adsb, Mode::Vdl2, Mode::Ais, Mode::Hfdl]) {
             if crate::chrome::chip(ui, mode == m, m.label()).clicked() {
-                cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+                if mode == m {
+                    // Clicked again: leave it. The curtain falls and the mode
+                    // before it comes back (see `frame::curtain_drop_id`).
+                    ui.ctx()
+                        .data_mut(|d| d.insert_temp(crate::app::frame::curtain_drop_id(), true));
+                } else {
+                    cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+                }
             }
         }
     });
@@ -9145,6 +9152,15 @@ mod tests {
     /// in the public-SDR browser: the first finds where the label was painted,
     /// the second aims at it.
     fn click_in_band_mode_menu(state: &RadioState, label: &str) -> Vec<Command> {
+        click_in_band_mode_menu_ctx(state, label).0
+    }
+
+    /// [`click_in_band_mode_menu`], with the context it ran in, for what the
+    /// menu leaves in egui's memory rather than asks of the engine.
+    fn click_in_band_mode_menu_ctx(
+        state: &RadioState,
+        label: &str,
+    ) -> (Vec<Command>, egui::Context) {
         let (ctx, input) = desktop_ctx();
         let draw = |input: egui::RawInput, cmds: &mut Vec<Command>| {
             ctx.run_ui(input, |ui| {
@@ -9174,7 +9190,25 @@ mod tests {
             draw(egui::RawInput { events, ..input.clone() }, &mut cmds)
                 .drop_without_applying_deltas();
         }
-        cmds
+        (cmds, ctx)
+    }
+
+    /// The lit digital mode clicked again leaves it: no mode is asked for, and
+    /// the curtain is told to fall (the frame then switches back to the voice
+    /// mode once it is down). Any other digital chip still picks its mode.
+    #[test]
+    fn the_lit_digital_mode_clicked_again_lets_the_curtain_fall() {
+        let mut state = RadioState::default();
+        state.rx[0].mode = Mode::Ft8;
+        let (picked, ctx) = click_in_band_mode_menu_ctx(&state, "FT8");
+        assert!(picked.is_empty(), "the lit mode was picked again: {picked:?}");
+        let drop = ctx.data(|d| d.get_temp::<bool>(crate::app::frame::curtain_drop_id()));
+        assert_eq!(drop, Some(true), "the curtain was not told to fall");
+
+        let (picked, ctx) = click_in_band_mode_menu_ctx(&state, "JS8");
+        assert!(picked.contains(&Command::SetMode { rx: RxId::Main, mode: Mode::Js8 }));
+        let drop = ctx.data(|d| d.get_temp::<bool>(crate::app::frame::curtain_drop_id()));
+        assert_eq!(drop, None, "another digital mode let the curtain fall");
     }
 
     /// HD Radio stays on the mode row on a station without an nrsc5, but

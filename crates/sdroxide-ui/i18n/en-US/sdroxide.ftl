@@ -4274,6 +4274,8 @@ rade-rade-v1-occupies-roughly-1060 = RADE V1 occupies roughly 1060–1880 Hz of 
 ## frame (src/app/frame.rs)
 
 frame-acknowledge = Acknowledge
+frame-curtain-handle-tip = Drag: panel up/down over panadapter
+    Double-click: all the way up / back
 frame-dismiss = Dismiss
 frame-get-sdroxide-com = Get it at sdroxide.com
 frame-reconnecting = Reconnecting…

@@ -4262,6 +4262,8 @@ rade-rade-v1-occupies-roughly-1060 = RADE V1 belegt etwa 1060–1880 Hz des Durc
 ## frame (src/app/frame.rs)
 
 frame-acknowledge = Bestätigen
+frame-curtain-handle-tip = Ziehen: Panel über Panorama hoch/runter
+    Doppelklick: ganz hoch / zurück
 frame-dismiss = Schließen
 frame-get-sdroxide-com = Auf sdroxide.com herunterladen
 frame-reconnecting = Verbinde erneut…
