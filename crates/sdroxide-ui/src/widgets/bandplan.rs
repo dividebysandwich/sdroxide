@@ -368,6 +368,7 @@ struct Plan {
     region: sdroxide_types::Region,
     digi_rows: Vec<Vec<DigiSeg>>,
     n_digi: usize,
+    chan_h: f32,
     total_h: f32,
 }
 
@@ -396,11 +397,14 @@ fn plan(view: &ViewState, wf: &Rect, panel_below: bool) -> Option<Plan> {
     let fit = (((wf.height() * 0.5) - base_h) / digi_h).floor().max(0.0) as usize;
     let n_digi = digi_rows.len().min(MAX_DIGI_ROWS).min(fit);
 
-    let total_h = base_h + n_digi as f32 * digi_h;
+    // One row of channel tiles inward of the digi rows, where the radio's
+    // country has a channelised service in view (see `channels`).
+    let chan_h = if crate::widgets::channels::shown(view) { 14.0 * fs } else { 0.0 };
+    let total_h = base_h + n_digi as f32 * digi_h + chan_h;
     if panel_below && total_h > wf.height() * PANEL_MAX_FRAC {
         return None;
     }
-    Some(Plan { fs, base_h, digi_h, region, digi_rows, n_digi, total_h })
+    Some(Plan { fs, base_h, digi_h, region, digi_rows, n_digi, chan_h, total_h })
 }
 
 /// Draw the bandplan strip along the oldest edge of the waterfall rect — its
@@ -417,7 +421,7 @@ fn plan(view: &ViewState, wf: &Rect, panel_below: bool) -> Option<Plan> {
 pub fn overlay(p: &Painter, view: &ViewState, wf: &Rect, panel_below: bool) -> f32 {
     let span = view.span();
     let Some(plan) = plan(view, wf, panel_below) else { return 0.0 };
-    let Plan { fs, base_h, digi_h, region, digi_rows, n_digi, total_h } = plan;
+    let Plan { fs, base_h, digi_h, region, digi_rows, n_digi, chan_h, total_h } = plan;
     // The allocation row sits outermost, on the waterfall's oldest edge, with
     // the digi rows stacked inwards from it.
     let flip = view.waterfall_flip;
@@ -437,6 +441,11 @@ pub fn overlay(p: &Painter, view: &ViewState, wf: &Rect, panel_below: bool) -> f
         let color = color(seg.kind);
         draw_seg(p, view, wf, seg.lo, seg.hi, color, seg.label, base_top, base_h, 10.5 * fs);
     }
+    // The country's licence-free services, in the CB colour: CB 41–80,
+    // Freenet, PMR446 (nothing without a country).
+    for (lo, hi, label) in crate::widgets::channels::strip_blocks(view.country) {
+        draw_seg(p, view, wf, lo, hi, color(Kind::Cb), label, base_top, base_h, 10.5 * fs);
+    }
 
     // Digi-mode rows stacked inwards from the allocation row.
     for (i, row) in digi_rows.iter().take(n_digi).enumerate() {
@@ -448,6 +457,13 @@ pub fn overlay(p: &Painter, view: &ViewState, wf: &Rect, panel_below: bool) -> f
         for d in row {
             draw_seg(p, view, wf, d.lo, d.hi, d.color, d.label, row_top, digi_h, 9.5 * fs);
         }
+    }
+
+    if chan_h > 0.0 {
+        let n = n_digi as f32;
+        let row_top =
+            if flip { base_top + base_h + n * digi_h } else { base_top - n * digi_h - chan_h };
+        crate::widgets::channels::draw(p, view, wf, row_top, chan_h, 9.5 * fs);
     }
 
     // Border along the strip's inner edge.

@@ -368,6 +368,9 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// there is no APPLY step on the General tab, and the whole point of it is
     /// that the band plan follows immediately.
     region_edit: &'a mut sdroxide_types::Region,
+    /// This radio's country (licence-free channel plans), written back after
+    /// the frame like the region.
+    country_edit: &'a mut crate::widgets::channels::Country,
     /// Set when the operator asks for the TX Audio window, which took over
     /// the transmit EQ that used to sit in this tab.
     open_tx_audio: &'a mut bool,
@@ -1040,6 +1043,7 @@ impl SdroxideApp {
         let mut digi_edit = self.digi_cfg_edit.clone();
         let digi_seeded = self.digi_cfg_seeded;
         let mut region_edit = self.region_edit;
+        let mut country_edit = self.view.country;
         let mut open_tx_audio = false;
         let mut net_edit = self.net_cfg_edit.clone();
         let mut net_cmds = self.net_cluster_cmds.clone();
@@ -1257,6 +1261,7 @@ impl SdroxideApp {
                             radio_tabs: &mut radio_tab_reqs,
                             radio_name_edit: &mut radio_name_edit,
                             region_edit: &mut region_edit,
+                            country_edit: &mut country_edit,
                             open_tx_audio: &mut open_tx_audio,
                             tab: &mut tab,
                             upload_tab: &mut upload_tab,
@@ -1733,6 +1738,10 @@ impl SdroxideApp {
         // of on whichever one the engine's echo lands in — and so the change is
         // visible even before a remote station has confirmed it. The engine
         // persists it and announces the authoritative value back.
+        // The country is this radio's view state, saved with it.
+        if country_edit != self.view.country {
+            self.view.country = country_edit;
+        }
         if region_edit != self.region_edit {
             self.region_edit = region_edit;
             sdroxide_types::set_region(region_edit);
@@ -1863,6 +1872,38 @@ impl SdroxideApp {
                     RichText::new(tr!("settings-region-note", region = io.region_edit.number()))
                         .weak(),
                 );
+                // The country: national law, which the IARU region does not
+                // reach — the licence-free channel plans.
+                // Why: HDZ 2026-11-09: "Freenet und PMR als Bandplan mit der
+                //      Regions-Erklärung Deutschland in Preferences, wo der
+                //      Locator ist … das Land steuert die CB-, Freenet- und
+                //      PMR-Kanalraster".
+                ui.add_space(8.0);
+                egui::Grid::new("general-country-grid").num_columns(2).spacing([12.0, 8.0]).show(
+                    ui,
+                    |ui| {
+                        use crate::widgets::channels::Country;
+                        ui.label(tr!("settings-country"));
+                        let name = |c: Country| match c {
+                            Country::Unset => tr!("settings-country-unset"),
+                            Country::Germany => tr!("settings-country-germany"),
+                        };
+                        ComboBox::from_id_salt("country")
+                            .width(360.0)
+                            .selected_text(name(*io.country_edit))
+                            .show_styled(ui, |ui| {
+                                for c in Country::ALL {
+                                    if ui.selectable_label(*io.country_edit == c, name(c)).clicked()
+                                    {
+                                        *io.country_edit = c;
+                                    }
+                                }
+                            });
+                        ui.end_row();
+                    },
+                );
+                ui.add_space(6.0);
+                ui.label(RichText::new(tr!("settings-country-note")).weak());
                 ui.add_space(6.0);
                 self.settings_band_plan_file(ui, cmds);
 

@@ -1,4 +1,5 @@
 pub mod bandplan;
+pub mod channels;
 pub mod freq_display;
 pub mod map_labels;
 pub mod memories;
