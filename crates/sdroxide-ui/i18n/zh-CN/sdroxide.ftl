@@ -979,7 +979,6 @@ settings-wavelog-plain-http-address-internet-api = 互联网上某地址的普�
 settings-wavelog-trusted-cert = 受信任的证书
 settings-wavelog-forget-certificate = 忘记此证书
 settings-wavelog-go-back-ordinary-checking-against = 恢复为依据公共证书颁发机构的常规检查——适用于现在已拥有正式证书的服务器。
-settings-wavelog-connection-check-runs-machine-radio = 连接检查在电台所连接的机器上运行——请在那里的设置中测试，并列出电台站点的位置。
 settings-wavelog-server-presented-certificate-sha-256 = 服务器提供的证书（SHA-256）：
 settings-wavelog-compare-your-server-s-e = 将其与你服务器的证书进行比较——例如 `openssl x509 -noout -fingerprint -sha256 -in cert.pem`——只有两者一致时才信任它。此后将只接受这个确切的证书，其他任何证书都会被拒绝。
 settings-wavelog-trust-certificate = 信任此证书

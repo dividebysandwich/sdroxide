@@ -976,7 +976,6 @@ settings-wavelog-plain-http-address-internet-api = Einfaches http:// zu einer Ad
 settings-wavelog-trusted-cert = Vertrautes Zertifikat
 settings-wavelog-forget-certificate = Dieses Zertifikat vergessen
 settings-wavelog-go-back-ordinary-checking-against = Zurück zur üblichen Prüfung gegen die öffentlichen Zertifizierungsstellen — für einen Server, der jetzt ein richtiges Zertifikat hat.
-settings-wavelog-connection-check-runs-machine-radio = Die Verbindungsprüfung läuft auf dem Rechner, an dem das Funkgerät angeschlossen ist — dort mit den Einstellungen testen und die Stationsstandorte auflisten.
 settings-wavelog-server-presented-certificate-sha-256 = Der Server hat dieses Zertifikat vorgelegt (SHA-256):
 settings-wavelog-compare-your-server-s-e = Vergleichen Sie es mit dem Ihres Servers — z. B. `openssl x509 -noout -fingerprint -sha256 -in cert.pem` — und vertrauen Sie ihm nur bei Übereinstimmung. Von da an wird genau dieses Zertifikat akzeptiert und jedes andere abgelehnt.
 settings-wavelog-trust-certificate = Dieses Zertifikat vertrauen

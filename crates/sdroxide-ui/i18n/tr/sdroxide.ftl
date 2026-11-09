@@ -982,7 +982,6 @@ settings-wavelog-plain-http-address-internet-api = İnternetteki bir adrese düz
 settings-wavelog-trusted-cert = Güvenilen sertifika
 settings-wavelog-forget-certificate = Bu sertifikayı unut
 settings-wavelog-go-back-ordinary-checking-against = Genel sertifika yetkililerine karşı olağan denetime geri dönün — artık düzgün bir sertifikası olan bir sunucu için.
-settings-wavelog-connection-check-runs-machine-radio = Bağlantı denetimi, radyonun bağlı olduğu makinede çalışır — onu test etmek ve istasyon konumlarını listelemek için oradaki ayarları kullanın.
 settings-wavelog-server-presented-certificate-sha-256 = Sunucu bu sertifikayı sundu (SHA-256):
 settings-wavelog-compare-your-server-s-e = Sunucunuzunkiyle karşılaştırın — örneğin `openssl x509 -noout -fingerprint -sha256 -in cert.pem` — ve yalnızca eşleşirse güvenin. Bundan sonra bu tam sertifika kabul edilir ve diğer herhangi biri reddedilir.
 settings-wavelog-trust-certificate = Bu sertifikaya güven

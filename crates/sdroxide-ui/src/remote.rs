@@ -388,6 +388,17 @@ impl RemoteController {
             ServerMsg::Scanner(c) => self.pending.push_back(RadioEvent::Scanner(c)),
             ServerMsg::Profiles(p) => self.pending.push_back(RadioEvent::Profiles(p)),
             ServerMsg::PictureUpload(st) => self.pending.push_back(RadioEvent::PictureUpload(st)),
+            // The station's connection check, as the station's own engine
+            // reports it: the same two events a local check raises, so the
+            // Test row shows how it went and the location list fills in.
+            ServerMsg::WavelogProbe(p) => {
+                self.pending.push_back(RadioEvent::LoginTest(sdroxide_types::LoginTestResult {
+                    target: sdroxide_types::LoginTarget::Wavelog,
+                    ok: p.ok,
+                    message: p.message.clone(),
+                }));
+                self.pending.push_back(RadioEvent::WavelogProbe(p));
+            }
             // Dropped rather than decoded while another tab holds the page's
             // single output: the work saved is the point on a browser tab
             // holding several radios.
