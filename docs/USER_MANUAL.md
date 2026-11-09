@@ -2232,7 +2232,9 @@ the one exception to the rule that sdroxide's space-weather requests happen only
 while the [3D view](#7-solar-system-3d-view) is open: the band menu is always
 there, so these have to be too. It stays one request an hour — the two share a
 cache, so with the 3D view open the second one comes back "not modified" —
-and hourly is the interval the publisher asks for.
+and hourly is the interval the publisher asks for. **Settings → UI → Download
+the band-conditions forecast** turns the background fetch off; the menu then
+shows a forecast only while the 3D view is open.
 
 The document is cached on disk, so the last verdicts are on screen immediately
 at startup and survive being offline. Everywhere they appear they are labelled
@@ -12324,6 +12326,20 @@ spoken announcements below them under `[speech]`:
   and unticking the box means sdroxide never contacts the site at all. On by
   default; native clients only — the browser client is served fresh by its
   station every time, so it has no binary of its own to be behind.
+- **Download the band-conditions forecast** — fetches hamqsl.com's HF
+  band-conditions forecast at most once an hour, for the colours in the band menu
+  ([§2.15](#215-band-conditions)). Unticked, the band menu shows no forecast
+  except while the [3D view](#7-solar-system-3d-view) is open, which fetches its
+  own data. On by default; native clients only.
+- **Download the broadcast schedule** — fetches EiBi's shortwave schedule from
+  eibispace.de when a new broadcasting season starts
+  ([§10.6](#106-broadcast-stations-on-longwave-and-shortwave)). Unticked, the schedule compiled into sdroxide,
+  or the last one downloaded, stays in use; **Download schedule now** on the
+  **Spots** tab still fetches it when you ask. On by default; native clients
+  only.
+
+With these three unticked, sdroxide makes no network request you did not ask
+for. See [PRIVACY.md](../PRIVACY.md) for every case where it does.
 
 Under **3D view**:
 
@@ -14432,7 +14448,7 @@ either way. The hosts contacted:
 | `services.swpc.noaa.gov` | The OVATION auroral oval grid, auroral hemispheric power, and the three-day planetary K forecast | 15–60 min |
 | `nowcoast.noaa.gov` | Global infrared and visible cloud mosaics (NOAA/NESDIS GMGSI, served by nowCOAST) | 10 min |
 | `prop.kc2g.com` | Ionosonde soundings for the MUF estimate (GIRO network, aggregated by KC2G) | 15 min |
-| `www.hamqsl.com` | Calculated band conditions (N0NBH) — see [§2.15](#215-band-conditions). **Fetched whether or not this window is open** | 1 h |
+| `www.hamqsl.com` | Calculated band conditions (N0NBH) — see [§2.15](#215-band-conditions). **Fetched whether or not this window is open**, unless switched off in Settings → UI | 1 h |
 | `celestrak.org` | Orbital element sets: the listings you subscribe to (the amateur group and the ISS by default), plus QO-100 | 6 h |
 
 `hamqsl.com` is the one entry here that is a single operator's server rather than
@@ -15244,6 +15260,11 @@ written to the cache after it parses into a plausible schedule — a captive
 portal's login page cannot replace your station list. The **Spots** tab shows
 which season is in use and whether it came from the network, with **Download
 schedule now** to fetch it again immediately.
+
+To stop the automatic download, untick **Settings → UI → Download the broadcast
+schedule**. The schedule you already have (the downloaded one, or the copy
+compiled into the binary) stays in use, and **Download schedule now** still
+works.
 
 The schedule is fetched over plain HTTP because eibispace.de's certificate is
 expired. Nothing is trusted on the strength of the transport: the file is parsed
