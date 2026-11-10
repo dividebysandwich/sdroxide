@@ -2143,6 +2143,22 @@ topbar-engine = ENGINE
 topbar-no-noise-reduction-decoders-never = No noise reduction — the decoders never saw it anyway
 topbar-strength = STRENGTH
 topbar-nr-filters = FILTERS
+topbar-sk-filter-hint = SK post-filter refines neural or other noise removal: penalises unwanted noise
+    (the filter resonates, leading to echo)
+topbar-sk-filter-tau-hint = Time constant tau: long = filter curve, short (0.1 s) = syllable gate too
+topbar-sk-filter-open = open
+topbar-sk-filter-close = close
+topbar-sk-filter-open-hint = Open: how fast a bin opens when speech arrives in it
+topbar-sk-filter-close-hint = Close: how fast it shuts afterwards; short = less reverb
+topbar-sk-filter-width = width
+topbar-sk-filter-width-hint = Mask smoothing, ± bins of 47 Hz; wider = less ringing, coarser
+topbar-sk-filter-after-nr = after NR
+topbar-sk-filter-after-nr-hint = SK behind RNN/DFNR instead of ahead of the AGC (variant B)
+topbar-sk-filter-caption = SK POST-FILTER
+topbar-sk-filter-reset-hint = SK back to defaults: τ 0.1 s, open 0.01 s, close 1 s, width ±1, ahead of NR
+topbar-sk-filter-before-nr = ahead of NR
+topbar-sk-preset-hint = Click loads, right-click stores the current values
+    { $values }
 topbar-hum-filter-hint = High-pass 300 Hz: 50/60 Hz mains hum and harmonics
 topbar-tone = TONE
 topbar-ctcss-dcs-no-sub-audible = CTCSS / DCS — no sub-audible tone on this signal

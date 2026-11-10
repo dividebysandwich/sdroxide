@@ -114,6 +114,64 @@ pub struct RxState {
     /// the usual reason — postcard numbers fields by position.
     #[serde(default)]
     pub hum_filter: bool,
+    /// SK filter on the listener audio: each FFT bin's gain from its spectral
+    /// kurtosis, so steady noise is cut and what comes and goes is kept
+    /// (`sdroxide_dsp::SkFilter`). Appended for the same reason.
+    #[serde(default)]
+    pub sk_filter: bool,
+    /// The SK filter's time constant, in seconds: long, a curve that settles
+    /// into the channel; short (0.1 s), a gate on the syllables as well.
+    #[serde(default = "sk_filter_default_tau")]
+    pub sk_filter_tau_s: f32,
+    /// How fast an SK bin opens when it becomes active, and how fast it closes
+    /// once it is not, in seconds. A long close leaves each syllable a tail in
+    /// the bins it used — HDZ: "wie in der Tropfsteinhöhle".
+    #[serde(default = "sk_filter_default_open")]
+    pub sk_filter_open_s: f32,
+    #[serde(default = "sk_filter_default_close")]
+    pub sk_filter_close_s: f32,
+    /// Bins either side the SK mask is smoothed over (1 to start with).
+    #[serde(default = "sk_filter_default_width")]
+    pub sk_filter_width: u8,
+    /// Run the SK filter behind the NR engine instead of ahead of the AGC:
+    /// HDZ heard it as a post-processor that lifts the formants RNN and DFNR
+    /// leave ("Variante B, Reihung gedreht").
+    #[serde(default)]
+    pub sk_filter_after_nr: bool,
+}
+
+/// The SK filter's time constant to start with, in seconds (HDZ 2026-11-10:
+/// "tau einstellbar, 0.1 ist gut").
+pub const SK_FILTER_DEFAULT_TAU_S: f32 = 0.1;
+/// The time constants the NR menu offers, in seconds.
+pub const SK_FILTER_TAU_RANGE_S: (f32, f32) = (0.05, 10.0);
+
+fn sk_filter_default_tau() -> f32 {
+    SK_FILTER_DEFAULT_TAU_S
+}
+
+/// The SK filter's open and close times to start with, in seconds, and their
+/// ranges in the NR menu. Close starts long, so the filter sounds as it did
+/// before it had the control.
+pub const SK_FILTER_DEFAULT_OPEN_S: f32 = 0.01;
+pub const SK_FILTER_DEFAULT_CLOSE_S: f32 = 1.0;
+pub const SK_FILTER_OPEN_RANGE_S: (f32, f32) = (0.005, 1.0);
+pub const SK_FILTER_CLOSE_RANGE_S: (f32, f32) = (0.01, 5.0);
+
+fn sk_filter_default_open() -> f32 {
+    SK_FILTER_DEFAULT_OPEN_S
+}
+
+fn sk_filter_default_close() -> f32 {
+    SK_FILTER_DEFAULT_CLOSE_S
+}
+
+/// The SK mask's smoothing width to start with, and the most the menu offers.
+pub const SK_FILTER_DEFAULT_WIDTH: u8 = 1;
+pub const SK_FILTER_MAX_WIDTH: u8 = 16;
+
+fn sk_filter_default_width() -> u8 {
+    SK_FILTER_DEFAULT_WIDTH
 }
 
 impl RxState {
@@ -135,6 +193,12 @@ impl RxState {
             tone_sql: None,
             binaural: false,
             hum_filter: false,
+            sk_filter: false,
+            sk_filter_tau_s: SK_FILTER_DEFAULT_TAU_S,
+            sk_filter_open_s: SK_FILTER_DEFAULT_OPEN_S,
+            sk_filter_close_s: SK_FILTER_DEFAULT_CLOSE_S,
+            sk_filter_width: SK_FILTER_DEFAULT_WIDTH,
+            sk_filter_after_nr: false,
         }
     }
 }

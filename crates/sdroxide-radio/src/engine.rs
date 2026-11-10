@@ -26,8 +26,8 @@ use sdroxide_digi::{
 use sdroxide_drm::DrmDemod;
 use sdroxide_dsp::{
     AdcMeter, Agc, AutoNotch, Binaural, Cessb, DcBlock, Ddc, Decimator, DeepFilterNr, Demodulator,
-    Duc, HumFilter, Modulator, MonoResampler, Nco, NeuralNr, NoiseBlanker, Nr2, SpecBleachNr,
-    SpectralNr, SpectrumAnalyzer, StereoResampler, SubToneGen, ToneBurst, VoiceChain,
+    Duc, HumFilter, Modulator, MonoResampler, Nco, NeuralNr, NoiseBlanker, Nr2, SkFilter,
+    SpecBleachNr, SpectralNr, SpectrumAnalyzer, StereoResampler, SubToneGen, ToneBurst, VoiceChain,
     channel_target_at, hd_radio_is_am, make_demod, make_modulator,
 };
 use sdroxide_hfdl::HfdlController;
@@ -849,6 +849,8 @@ struct RxChain {
     /// The NR menu's hum filter, built for the audio rate in force when it was
     /// switched on; `None` while off.
     hum: Option<HumFilter>,
+    /// The NR menu's SK filter, likewise.
+    sk: Option<SkFilter>,
     /// Spectral noise reduction on the listener audio (after the digital tap).
     nr: SpectralNr,
     /// The libspecbleach port — the other classical engine.
@@ -883,6 +885,34 @@ struct RxChain {
     rec_buf_r: Vec<f32>,
 }
 
+/// The NR menu's SK filter on this block, built, retuned or dropped to
+/// match `rx`. Called from one of two places — see `sk_filter_after_nr`.
+// Why: HDZ 2026-11-10: "quasi ein SK-Autofilter … tau einstellbar".
+fn run_sk(sk: &mut Option<SkFilter>, audio: &mut [f32], rx: &RxState, rate: f32, stereo: bool) {
+    match (rx.sk_filter && !stereo, sk) {
+        (true, Some(f)) if f.rate() == rate => {
+            if f.tau_s() != rx.sk_filter_tau_s {
+                f.set_tau(rx.sk_filter_tau_s);
+            }
+            if f.open_close_s() != (rx.sk_filter_open_s, rx.sk_filter_close_s) {
+                f.set_open_close(rx.sk_filter_open_s, rx.sk_filter_close_s);
+            }
+            if f.width() != usize::from(rx.sk_filter_width) {
+                f.set_width(usize::from(rx.sk_filter_width));
+            }
+            f.process(audio);
+        }
+        (true, f) => {
+            let mut n = SkFilter::new(rate, rx.sk_filter_tau_s);
+            n.set_open_close(rx.sk_filter_open_s, rx.sk_filter_close_s);
+            n.set_width(usize::from(rx.sk_filter_width));
+            n.process(audio);
+            *f = Some(n);
+        }
+        (false, f) => *f = None,
+    }
+}
+
 impl RxChain {
     fn new(in_rate: f64, rx: &RxState, out_rate: f64, dial_hz: f64) -> Self {
         let mut chain = RxChain {
@@ -904,6 +934,7 @@ impl RxChain {
             notch: AutoNotch::new(),
             notch_on: false,
             hum: None,
+            sk: None,
             nr: SpectralNr::new(),
             sbnr: SpecBleachNr::new(),
             nr2: Nr2::new(),
@@ -1057,6 +1088,11 @@ impl RxChain {
         // Why: HDZ 2026-11-10: "bau es als Minipatch ins Submenü NR ein, als
         //      zuschaltbare Engines".
         let rate = audio_rate as f32;
+        // The SK filter ahead of the AGC and the hum filter (variant A, where
+        // it started), unless the operator has put it behind the NR engine.
+        if !rx.sk_filter_after_nr {
+            run_sk(&mut self.sk, &mut self.audio_buf, rx, rate, stereo);
+        }
         match (rx.hum_filter && !stereo, &mut self.hum) {
             (true, Some(h)) if h.rate() == rate => h.process(&mut self.audio_buf),
             (true, h) => {
@@ -1196,6 +1232,12 @@ impl RxChain {
             for s in &mut self.audio_buf {
                 *s = (*s * g).clamp(-1.0, 1.0);
             }
+        }
+        // Variant B: the SK filter behind the NR engine, where it sees what
+        // RNN or DFNR left and lifts the formants they found.
+        // Why: HDZ 2026-11-10: "mache noch Variante B (Reihung) gedreht".
+        if rx.sk_filter_after_nr {
+            run_sk(&mut self.sk, &mut self.audio_buf, rx, audio_rate as f32, stereo);
         }
 
         // Squelch: gate on post-filter (pre-AGC) power, smoothed ~10 ms so
@@ -8797,6 +8839,25 @@ impl Engine {
                 self.remember_mode_setting(rx, |p| p.auto_notch = Some(on));
             }
             SetHumFilter { rx, on } => self.state.rx[rx.index()].hum_filter = on,
+            SetSkFilter { rx, on, tau_s, open_s, close_s, width, after_nr } => {
+                let r = &mut self.state.rx[rx.index()];
+                r.sk_filter = on;
+                r.sk_filter_width = width.min(sdroxide_types::SK_FILTER_MAX_WIDTH);
+                r.sk_filter_after_nr = after_nr;
+                use sdroxide_types::{SK_FILTER_CLOSE_RANGE_S as C, SK_FILTER_OPEN_RANGE_S as O};
+                if open_s.is_finite() {
+                    r.sk_filter_open_s = open_s.clamp(O.0, O.1);
+                }
+                if close_s.is_finite() {
+                    r.sk_filter_close_s = close_s.clamp(C.0, C.1);
+                }
+                if tau_s.is_finite() {
+                    r.sk_filter_tau_s = tau_s.clamp(
+                        sdroxide_types::SK_FILTER_TAU_RANGE_S.0,
+                        sdroxide_types::SK_FILTER_TAU_RANGE_S.1,
+                    );
+                }
+            }
             SetWfmStereo { rx, on } => {
                 self.state.rx[rx.index()].wfm_stereo = on;
                 self.remember_mode_setting(rx, |p| p.wfm_stereo = Some(on));
