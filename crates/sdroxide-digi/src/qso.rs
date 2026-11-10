@@ -639,6 +639,15 @@ impl QsoMachine {
         for d in decodes {
             let Some(from) = d.from.as_deref().filter(|f| !f.is_empty()) else { continue };
             let to_me = d.to.as_deref() == Some(my_call.as_str());
+            // A Fox closing our contact in normal mode: "<us> RR73; NEXT <fox> -12".
+            // `to` names the station the Fox is working now, so the message is
+            // ours only through `rr73_to`. Read it as the RR73 it is, so it
+            // takes the same path as a plain RR73 from the DX. A Hound takes the
+            // branch above instead.
+            let fox_closes_us = !hound
+                && d.rr73_to.as_deref() == Some(my_call.as_str())
+                && dx_call.as_deref() == Some(from);
+            let to_me = to_me || fox_closes_us;
 
             // Hound: the Fox closes our contact inside a message addressed to
             // the *next* Hound ("<us> RR73; W9XYZ <fox> +03"), so `to` never
@@ -662,7 +671,8 @@ impl QsoMachine {
             // (they're free) or address us directly (no need to keep waiting).
             if self.step == QsoStep::WaitCq {
                 if self.dx.as_ref().map(|x| x.call.as_str()) == Some(from) && (d.is_cq || to_me) {
-                    let payload = classify_payload(&d.message);
+                    let payload =
+                        if fox_closes_us { Payload::Rr73 } else { classify_payload(&d.message) };
                     // Where to pick the exchange up. Their CQ says nothing
                     // about us, so we open with our grid; anything addressed to
                     // us is answered from where *they* are, because resuming at
@@ -726,7 +736,7 @@ impl QsoMachine {
             if !to_me {
                 continue; // everything else must be addressed to us
             }
-            let payload = classify_payload(&d.message);
+            let payload = if fox_closes_us { Payload::Rr73 } else { classify_payload(&d.message) };
 
             // Contact just logged: if the DX repeats their message they didn't
             // hear our final one — queue a single re-send. A bare 73 means they
@@ -2141,6 +2151,42 @@ mod tests {
         assert_eq!(rec.call, "DX1FOX");
         assert_eq!(rec.rst_sent, Some(-10));
         assert_eq!(rec.rst_rcvd, Some(-13));
+    }
+
+    #[test]
+    fn a_fox_rr73_closes_our_contact_in_normal_mode() {
+        // Issue #817: a station working us as a Fox closes the contact with
+        // "<us> RR73; NEXT <fox> -12". Outside Hound mode that used to read as
+        // the DX working somebody else, so the QSO was never logged. It now
+        // runs the same course as a plain RR73: we owe a 73, and the QSO is
+        // logged when that 73 goes out.
+        let mut q = QsoMachine::new(Mode::Ft8, cfg());
+        q.start_qso("DX1FOX".into(), None, -10, false, 100);
+        assert!(q.on_rx(&[decode("AB1CD DX1FOX -13")], 115));
+        assert_eq!(q.step(), QsoStep::TxRReport);
+
+        assert!(q.on_rx(&[fox_msg("AB1CD", "W9XYZ", "DX1FOX")], 130));
+        assert_eq!(q.step(), QsoStep::Tx73, "the Fox's RR73 is ours to answer with 73");
+        assert!(q.take_completed().is_none(), "not logged until our 73 goes out");
+
+        q.note_tx_sent(130);
+        assert_eq!(q.step(), QsoStep::Confirming);
+        let rec = q.take_completed().expect("logged once our 73 is sent");
+        assert_eq!(rec.call, "DX1FOX");
+        assert_eq!(rec.rst_sent, Some(-10));
+        assert_eq!(rec.rst_rcvd, Some(-13));
+    }
+
+    #[test]
+    fn a_fox_rr73_for_someone_else_is_not_ours_in_normal_mode() {
+        // The same shape addressed to another station, from a Fox that is not
+        // the one we are working, must not complete our contact.
+        let mut q = QsoMachine::new(Mode::Ft8, cfg());
+        q.start_qso("DX1FOX".into(), None, -10, false, 100);
+        q.on_rx(&[decode("AB1CD DX1FOX -13")], 115);
+        q.on_rx(&[fox_msg("ZZ9ZZZ", "W9XYZ", "DX1FOX")], 130);
+        assert_ne!(q.step(), QsoStep::Tx73, "not our RR73, so we do not sign off");
+        assert!(q.take_completed().is_none());
     }
 
     #[test]
