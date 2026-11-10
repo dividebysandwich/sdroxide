@@ -307,6 +307,8 @@ impl eframe::App for SdroxideApp {
             self.window_keys(&ctx);
             // An open manual takes the scrolling keys before the bindings run,
             // so reading it never tunes the radio at the same time.
+            // The command palette's own chord, before anything bound to it.
+            self.palette_key(&ctx);
             self.help.grab_keys(&ctx);
             // Likewise the CW straight key takes the Space bar, so a PTT bound
             // to it does not key the rig under the operator's hand.
@@ -859,6 +861,7 @@ impl eframe::App for SdroxideApp {
         self.settings_window(&ctx, &mut cmds);
         self.digi_settings_window(&ctx, &mut cmds);
         self.logbook_window(&ctx, &mut cmds);
+        self.palette_window(&ctx, now, &mut cmds);
         self.mail_window(&ctx, &mut cmds);
         self.mail_log_window(&ctx);
         self.spots_window(&ctx, &mut cmds);
@@ -2097,6 +2100,67 @@ impl SdroxideApp {
         input.poll_pointer_and_keys(ctx, state, &mut sink, cmds);
         #[cfg(not(target_arch = "wasm32"))]
         input.poll_midi(ctx, state, &mut sink, cmds);
+        drop(sink);
+        for act in speech_acts {
+            self.apply_speech_action(act, now);
+        }
+    }
+
+    /// Run one bound action as if its key had been pressed once — what the
+    /// command palette does with the row chosen in it. Through the same
+    /// [`crate::input::apply_action`] the bindings go through, so a row and a
+    /// key can never come to do different things.
+    pub(in crate::app) fn run_action(
+        &mut self,
+        act: sdroxide_types::Action,
+        now: f64,
+        cmds: &mut Vec<Command>,
+    ) {
+        let mut speech_acts: Vec<sdroxide_types::Action> = Vec::new();
+        let SdroxideApp {
+            state,
+            view,
+            help,
+            show_settings,
+            show_logbook,
+            show_spots,
+            show_memories,
+            show_voice,
+            caps,
+            wide_frame,
+            ..
+        } = self;
+        let rig_squelch = caps.as_ref().is_some_and(|c| c.commands_squelch);
+        let agc_without_off = caps.as_ref().is_some_and(|c| c.agc_off_unavailable);
+        // The zoom-out limit, worked out as `control_inputs` works it out.
+        let stated = caps.as_ref().map_or(0.0, |c| c.wide_span_hz);
+        let seen = wide_frame.as_ref().map(|f| (f.center_hz, f.span_hz));
+        let zoom_out = match (seen, stated > state.sample_rate) {
+            (Some((c, span)), _) if span.max(stated) > state.sample_rate => (c, span.max(stated)),
+            (None, true) => (state.center_hz, stated),
+            _ => (state.center_hz, state.sample_rate),
+        };
+        let mut sink = crate::input::UiSink {
+            view,
+            help: &mut help.open,
+            settings: show_settings,
+            logbook: show_logbook,
+            spots: show_spots,
+            memories: show_memories,
+            voice: show_voice,
+            speech: &mut speech_acts,
+            rig_squelch,
+            agc_without_off,
+            zoom_out,
+        };
+        crate::input::apply_action(
+            act,
+            sdroxide_types::ActionInput::Press,
+            sdroxide_types::ButtonMode::Toggle,
+            state,
+            &mut sink,
+            cmds,
+        );
         drop(sink);
         for act in speech_acts {
             self.apply_speech_action(act, now);
