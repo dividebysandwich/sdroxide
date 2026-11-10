@@ -2137,7 +2137,7 @@ topbar-no-noise-reduction-decoders-never = Keine Rauschunterdrückung — die De
 topbar-strength = STÄRKE
 topbar-nr-filters = FILTER
 topbar-sk-filter-hint = SK-Nachfilter verfeinert neuronale oder andere Rauschentfernung: bestraft Restrauschen
-    (Filter resoniert, dadurch Echo)
+    (Filter resoniert, dadurch Echo) · Filter von HDZ
 topbar-sk-filter-tau-hint = Zeitkonstante tau: lang = Filterkurve, kurz (0,1 s) = auch Silbentor
 topbar-sk-filter-open = auf
 topbar-sk-filter-close = zu

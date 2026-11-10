@@ -2144,7 +2144,7 @@ topbar-no-noise-reduction-decoders-never = No noise reduction — the decoders n
 topbar-strength = STRENGTH
 topbar-nr-filters = FILTERS
 topbar-sk-filter-hint = SK post-filter refines neural or other noise removal: penalises unwanted noise
-    (the filter resonates, leading to echo)
+    (the filter resonates, leading to echo) · filter by HDZ
 topbar-sk-filter-tau-hint = Time constant tau: long = filter curve, short (0.1 s) = syllable gate too
 topbar-sk-filter-open = open
 topbar-sk-filter-close = close
