@@ -155,9 +155,15 @@ pub(in crate::app) fn detached_geometry(
     let size =
         crate::layout::fit_inner_size(monitor, want + chrome, want, egui::vec2(360.0, 240.0))
             .unwrap_or(want);
+    // The window's whole outer rect has to clear the right and bottom edges,
+    // and the bottom clears the taskbar allowance too: a window seeded low on
+    // the screen with its height still hangs under the taskbar otherwise
+    // (the decode log of a window placed like that lost its newest rows,
+    // reported as issue #816). Sized from the same chrome guess as `size`.
+    let outer = size + chrome;
     let pos = seed.and_then(|s| s.pos).map(|[x, y]| {
-        let max_x = (monitor.x - 80.0).max(0.0);
-        let max_y = (monitor.y - 60.0).max(0.0);
+        let max_x = (monitor.x - outer.x).max(0.0);
+        let max_y = (monitor.y - crate::layout::DESKTOP_CHROME_H - outer.y).max(0.0);
         egui::pos2(x.min(max_x), y.min(max_y))
     });
     (size, pos)
@@ -1507,6 +1513,26 @@ mod tests {
         assert!(pos.x <= 1920.0 - 80.0 && pos.y <= 1080.0 - 60.0, "still off screen: {pos:?}");
         let (_, pos) = detached_geometry(monitor, seed(-1500.0, 100.0), [960.0, 540.0]);
         assert_eq!(pos, Some(egui::pos2(-1500.0, 100.0)), "a monitor to the left was undone");
+    }
+
+    /// A window saved low on the screen comes back up far enough that its whole
+    /// height, plus the taskbar allowance, is on the monitor (issue #816: the
+    /// bottom of the decode log hid under the taskbar).
+    #[test]
+    fn a_window_saved_low_on_the_screen_clears_the_taskbar() {
+        let monitor = egui::vec2(1920.0, 1080.0);
+        let seed = Some(sdroxide_types::DetachedWindow {
+            size: [800.0, 600.0],
+            pos: Some([100.0, 1000.0]),
+        });
+        let (size, pos) = detached_geometry(Some(monitor), seed, [960.0, 540.0]);
+        let pos = pos.unwrap();
+        let bottom = pos.y + size.y + 40.0;
+        assert!(
+            bottom <= monitor.y - crate::layout::DESKTOP_CHROME_H,
+            "bottom {bottom} runs under the taskbar"
+        );
+        assert_eq!(pos.x, 100.0, "a window that already fits sideways keeps its x");
     }
 
     /// A tool's OS window carries `sdroxide-tool-<id>`, lower case and with no
