@@ -168,6 +168,11 @@ One binary, three ways to run it:
   filter bank or a transverter selector on a PlutoSDR, a LibreSDR, or any other
   front end without HPSDR's own seven-pin bus. See "T/R switch" in the user
   manual for what this cannot do.
+- **Station check** — one page (Settings → General → **STATION CHECK**) that
+  says what is and is not in order — callsign, radio link, receiver, input
+  level, audio, clock, lookups — with a button on each line that goes to where
+  it is fixed. A first start with no callsign is met by a three-step welcome:
+  who you are, which radio, and the check.
 - **Persistence** — device, rates, gains, memories, band stacks, the FT8/FT4/FT2
   operator profile, network/QSL credentials, control bindings, and the logbook
   are all stored under `~/.config/sdroxide/`.

@@ -206,6 +206,14 @@ sdroxide --siggen
 
 See the [command-line reference](#12-command-line-reference) for all options.
 
+**The first start.** A station with no callsign set is met by a **WELCOME**
+window with the three things a new installation needs: your **callsign and
+grid square** (type them and press **SAVE**), your **radio** (**RADIO
+SETTINGS** opens Settings on the Radio page), and the **STATION CHECK**
+([§14](#14-troubleshooting)). **DONE** closes it for good; **LATER** closes it
+until the next start, for as long as there is still no callsign. A station that
+already has a callsign never sees it.
+
 ### 2.2 The main window
 
 The window has two parts: a **top control bar** of captioned modules that reflow
@@ -16071,6 +16079,29 @@ fall back to the config directory.
 ---
 
 ## 14. Troubleshooting
+
+**Start with the station check.** **STATION CHECK**, on Settings → General
+under the callsign, is one page that says what is and is not in order, each
+line with what it means and — where there is somewhere to fix it — a button
+that goes there:
+
+| Line | What it reports |
+| --- | --- |
+| **Callsign**, **Grid square** | Missing, or not shaped like one. Without a callsign the digital modes do not transmit. |
+| **Radio link** | The connection's error if it has one; "no radio has answered yet" if nothing has reported in. |
+| **Receiver** | Whether the spectrum is arriving, and for how long it has not been. |
+| **Input level** | The receiver's converter clipping — too much RF gain. |
+| **Radio audio** | The standing notice about the radio's sound devices, if there is one. |
+| **Speaker** | The receiver is muted (with **UNMUTE**). |
+| **Transmit** | Whether this radio can be keyed at all, or is receive only. |
+| **Computer clock** | How far the clock is out, as the stations decoded on FT8 say: fine under 0.5 s, worth fixing to 1.5 s, and beyond that others will not decode you. "Not measured" until FT8 has decoded something. |
+| **Callsign lookup**, **Spot feeds** | Whether any is configured. Optional, and reported as such. |
+
+A green ✓ is in order, a grey · is a choice rather than a fault, a yellow ! works
+with something wrong with it, and a pink ✕ will not work until it is dealt with.
+The page reads what the program already knows at that moment: it measures
+nothing afresh and transmits nothing, so it cannot tell you about your antenna,
+your power or your audio on the air.
 
 **"Waiting for spectrum" and no receive audio (CAT radio).**
 The radio's capture device could not be opened. Common causes:
