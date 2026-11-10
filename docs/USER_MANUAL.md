@@ -245,7 +245,12 @@ The smaller grey number below the readout is the *inactive* VFO's frequency.
   follows: the window slides across the band under your hand instead of stopping
   at its own edge, so on a wideband receiver such as the RX-888, where retuning
   costs nothing, you can drag from one end of HF to the other. The picture stops
-  where the front end runs out of range. A rig whose I/Q output is its own dial
+  where the front end runs out of range — and so does the dial: against an end
+  stop (the edge of the band, or of the full-band strip the view is zoomed out
+  into) dragging further turns nothing and a coast ends; a click still tunes
+  anywhere in the picture. Where the next receive range starts right at that
+  end, the dial does carry on: on an RX-888 at 64.8 Msps, dragging past the top
+  of HF takes the dial over 32.4 MHz until the VHF front end takes over. A rig whose I/Q output is its own dial
   (a transceiver on a sound card, an Icom sending its 12 kHz IF) has one
   synthesiser for both, so there the drag moves the window by moving the dial,
   as it always has.

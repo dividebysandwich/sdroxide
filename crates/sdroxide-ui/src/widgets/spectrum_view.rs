@@ -127,6 +127,16 @@ pub struct WindowPan {
     /// the gap between them is a refusal the engine would answer sixty times a
     /// second.
     pub limits: (f64, f64),
+    /// Whether another receive range carries on where [`WindowPan::limits`]
+    /// ends, `(below, above)`: the two ranges meet, with no gap between them.
+    ///
+    /// An RX-888 at 64.8 Msps is one: HF runs to Nyquist at 32.4 MHz and VHF
+    /// starts there. The centre still stops at the end of its own range, but a
+    /// drag pressed against that end keeps turning the dial, and a dial taken
+    /// past the crossover is what makes the driver switch front ends. Where
+    /// the ranges leave a gap (the same receiver at 32.4 Msps, HF to 16.2 MHz
+    /// and VHF from 24 MHz), the end is a stop.
+    pub joins: (bool, bool),
     /// The widest window the view may be zoomed out to, `(centre, span)`, when
     /// that is wider than the I/Q the front end is streaming.
     ///
@@ -163,7 +173,34 @@ impl WindowPan {
             .find(|&&(lo, hi)| (lo..=hi).contains(&center_hz))
             .copied()
             .unwrap_or((f64::MIN, f64::MAX));
-        Self { movable: !caps.audio_mode && !caps.center_is_dial, limits, outer: None, known: true }
+        let ranges = &caps.freq_ranges_rx;
+        let joins = (
+            ranges.iter().any(|&(lo, hi)| lo < limits.0 && hi >= limits.0),
+            ranges.iter().any(|&(lo, hi)| hi > limits.1 && lo <= limits.1),
+        );
+        Self {
+            movable: !caps.audio_mode && !caps.center_is_dial,
+            limits,
+            joins,
+            outer: None,
+            known: true,
+        }
+    }
+
+    /// Whether a slide by `hand` that the picture could not follow is pressed
+    /// against an end of [`WindowPan::limits`] that another range continues —
+    /// see [`WindowPan::joins`]. The window's edge or the centre counts as at
+    /// the end within 5 % of the view: the converter stops its centre short of
+    /// Nyquist by half its output, so neither lands on the limit exactly.
+    fn runs_on(&self, hand: f64, view: &ViewState, dev_center: f64) -> bool {
+        let slack = view.span() * 0.05;
+        if hand > 0.0 {
+            self.joins.1 && view.view_hi_hz.max(dev_center) >= self.limits.1 - slack
+        } else if hand < 0.0 {
+            self.joins.0 && view.view_lo_hz.min(dev_center) <= self.limits.0 + slack
+        } else {
+            false
+        }
     }
 
     /// Add the full-band window the view may zoom out into — see
@@ -336,6 +373,50 @@ fn pan_center(
     *dev_center = hz;
     state.center_hz = hz;
     cmds.push(Command::SetCenter(hz));
+}
+
+/// How far one frame of a slide really moved the picture: hand what the view
+/// could not absorb to the front end's centre ([`pan_center`]), pin the view
+/// into the window it is allowed now, and measure its middle against where it
+/// was before the slide (`mid_before`). The view is what the operator sees,
+/// so this counts exactly that.
+///
+/// At an end stop it is nothing — the view against the edge of the band or of
+/// the full-band lane it is zoomed out into, a centre that can go no further —
+/// and a dial turned by this stays put with the picture. Turned by the whole
+/// gesture instead, it walked through a picture standing still, against the
+/// drag: pulled right, the mark went left.
+///
+/// Except at the end of a range that another one continues
+/// ([`WindowPan::joins`]): there the dial takes the whole of `hand`, the
+/// gesture's own step, so a drag can carry it over the crossover and the
+/// driver switches front ends.
+// Why: HDZ 2026-11-10: "wenn der Kasten angeschlagen ist … dragen macht gar
+//      nichts mehr, nur noch klicken des Cursors".
+//      HDZ 2026-11-10: "wenn im Low-Bereich an die rechte Kante gefahren wird,
+//      schaltet der Treiber ja um, dann ist das Weiterschieben mit unserem
+//      Stopp-Patch behindert … die upper Schwelle bei Zoom-out musst du noch
+//      umschaltaware machen".
+#[allow(clippy::too_many_arguments)]
+fn picture_moved(
+    view: &mut ViewState,
+    mid_before: f64,
+    hand: f64,
+    over: f64,
+    dev_center: &mut f64,
+    dev_span: f64,
+    state: &mut RadioState,
+    pan: WindowPan,
+    cmds: &mut Vec<Command>,
+) -> f64 {
+    pan_center(dev_center, state, over, pan, cmds);
+    let (c, s) = pan.view_bounds(*dev_center, dev_span);
+    view.clamp_to(c, s);
+    let moved = (view.view_lo_hz + view.view_hi_hz) / 2.0 - mid_before;
+    if moved.abs() < hand.abs() && pan.runs_on(hand, view, *dev_center) {
+        return hand;
+    }
+    moved
 }
 
 /// Slide the window so `vfo` sits in the middle of it, and report what the
@@ -1776,13 +1857,16 @@ pub fn show_ext(
         // already turning the dial, because a window that moves takes the dial
         // with it whether anyone asked or not (issue #133).
         let dhz = -resp.drag_delta().x as f64 * view.span() / rect.width() as f64;
+        let mid = (view.view_lo_hz + view.view_hi_hz) / 2.0;
         let over = pan_view(view, dhz, zoom_center, zoom_span);
         if wheel.drag_tunes {
             // Ahead of the dial: the two move by the same amount, so a window
             // moved first leaves the dial exactly where it was inside it and
-            // the engine's own span guard has nothing to do.
-            pan_center(&mut dev_center, state, over, pan, cmds);
-            let hz = gesture_step(gesture_dial, state.active_freq_hz(), dhz).max(0.0);
+            // the engine's own span guard has nothing to do. The amount is what
+            // the picture did, not what the hand did: nothing at an end stop.
+            let moved =
+                picture_moved(view, mid, dhz, over, &mut dev_center, dev_span, state, pan, cmds);
+            let hz = gesture_step(gesture_dial, state.active_freq_hz(), moved).max(0.0);
             gesture_dial = Some(hz);
             match state.active_vfo {
                 Vfo::A => state.vfo_a_hz = hz, // optimistic echo
@@ -2028,9 +2112,23 @@ pub fn show_ext(
                 // Grab-the-content sense, matching the left-drag: the view slides
                 // with the dial so the VFO marker keeps its place on screen, and
                 // the window follows once the view has run out of room.
+                let mid = (view.view_lo_hz + view.view_hi_hz) / 2.0;
                 let over = pan_view(view, -dhz, zoom_center, zoom_span);
-                pan_center(&mut dev_center, state, over, pan, cmds);
-                let hz = gesture_step(gesture_dial, state.active_freq_hz(), -dhz).max(0.0);
+                let moved = picture_moved(
+                    view,
+                    mid,
+                    -dhz,
+                    over,
+                    &mut dev_center,
+                    dev_span,
+                    state,
+                    pan,
+                    cmds,
+                );
+                if moved == 0.0 {
+                    fling = None; // the picture has run into an end stop
+                }
+                let hz = gesture_step(gesture_dial, state.active_freq_hz(), moved).max(0.0);
                 gesture_dial = Some(hz);
                 match state.active_vfo {
                     Vfo::A => state.vfo_a_hz = hz,
@@ -3910,6 +4008,148 @@ mod tests {
         let mut cmds = Vec::new();
         pan_center(&mut dev_center, &mut state, -50_000.0, pan, &mut cmds);
         assert_eq!(cmds, vec![Command::SetCenter(14_100_000.0)]);
+    }
+
+    /// Proves: the dial turns by what the picture did. Free in the middle,
+    /// both move together; at the end of the receive range, where the centre
+    /// can go no further, both stop; zoomed out into a full-band lane, at its
+    /// edge, both stand still — no mark walking against the drag.
+    #[test]
+    fn a_slide_turns_the_dial_only_as_far_as_the_picture_moves() {
+        let span = 2_000_000.0;
+        // Free: 25 kHz in, 25 kHz moved.
+        let pan = movable();
+        let mut dev_center = 14_150_000.0;
+        let mut st = RadioState { center_hz: dev_center, sample_rate: span, ..state() };
+        let mut view = ViewState { view_lo_hz: 14_000_000.0, view_hi_hz: 14_100_000.0, ..def() };
+        let mut cmds = Vec::new();
+        let (zc, zs) = pan.view_bounds(dev_center, span);
+        let mid = (view.view_lo_hz + view.view_hi_hz) / 2.0;
+        let over = pan_view(&mut view, 25_000.0, zc, zs);
+        let moved = picture_moved(
+            &mut view,
+            mid,
+            25_000.0,
+            over,
+            &mut dev_center,
+            span,
+            &mut st,
+            pan,
+            &mut cmds,
+        );
+        assert!((moved - 25_000.0).abs() < 1e-6, "free slide moved {moved}");
+
+        // End of the receive range: the centre at its limit (the limit is on
+        // the centre, see `WindowPan::limits`), the view against the window's
+        // top edge.
+        let caps = sdroxide_types::DeviceCaps {
+            freq_ranges_rx: vec![(0.0, 32_400_000.0)],
+            ..Default::default()
+        };
+        let pan = WindowPan::of(Some(&caps), 32_400_000.0);
+        let mut dev_center = 32_400_000.0;
+        let mut st = RadioState { center_hz: dev_center, sample_rate: span, ..state() };
+        let mut view = ViewState { view_lo_hz: 33_300_000.0, view_hi_hz: 33_400_000.0, ..def() };
+        let mut cmds = Vec::new();
+        let (zc, zs) = pan.view_bounds(dev_center, span);
+        let mid = (view.view_lo_hz + view.view_hi_hz) / 2.0;
+        let over = pan_view(&mut view, 50_000.0, zc, zs);
+        let moved = picture_moved(
+            &mut view,
+            mid,
+            50_000.0,
+            over,
+            &mut dev_center,
+            span,
+            &mut st,
+            pan,
+            &mut cmds,
+        );
+        assert_eq!(moved, 0.0, "a slide pressed against the end moved the picture");
+
+        // Zoomed out into a 0–30 MHz lane, the view the whole lane: no room.
+        let pan = WindowPan { outer: Some((15_000_000.0, 30_000_000.0)), ..movable() };
+        let mut dev_center = 4_940_000.0;
+        let mut st = RadioState { center_hz: dev_center, sample_rate: 12_000.0, ..state() };
+        let mut view = ViewState { view_lo_hz: 0.0, view_hi_hz: 30_000_000.0, ..def() };
+        let mut cmds = Vec::new();
+        let (zc, zs) = pan.view_bounds(dev_center, 12_000.0);
+        let mid = (view.view_lo_hz + view.view_hi_hz) / 2.0;
+        let over = pan_view(&mut view, -40_000.0, zc, zs);
+        let moved = picture_moved(
+            &mut view,
+            mid,
+            -40_000.0,
+            over,
+            &mut dev_center,
+            12_000.0,
+            &mut st,
+            pan,
+            &mut cmds,
+        );
+        assert!(moved.abs() < 1e-6, "the full-band view moved {moved} at its edge");
+    }
+
+    /// Proves: where another range carries on, the end of the own range is a
+    /// crossover, not a stop. An RX-888 at 64.8 Msps, HF up to 32.4 MHz and VHF
+    /// from there: a drag pressed against the top of HF keeps turning the dial
+    /// by the whole hand, so it reaches the crossover and the driver switches;
+    /// back down from VHF the same. The same receiver at 32.4 Msps leaves a gap
+    /// between 16.2 and 24 MHz, and there the end is still a stop.
+    #[test]
+    fn a_slide_at_a_crossover_carries_the_dial_into_the_next_range() {
+        let span = 2_000_000.0;
+        let joined = sdroxide_types::DeviceCaps {
+            freq_ranges_rx: vec![(0.0, 32_400_000.0), (32_400_000.0, 1_766_000_000.0)],
+            ..Default::default()
+        };
+        let slide = |caps: &sdroxide_types::DeviceCaps,
+                     outer: Option<(f64, f64)>,
+                     centre: f64,
+                     view: (f64, f64),
+                     hand: f64| {
+            let pan = WindowPan::of(Some(caps), centre).with_outer(outer, span);
+            let mut dev_center = centre;
+            let mut st = RadioState { center_hz: centre, sample_rate: span, ..state() };
+            let mut view = ViewState { view_lo_hz: view.0, view_hi_hz: view.1, ..def() };
+            let mut cmds = Vec::new();
+            let (zc, zs) = pan.view_bounds(dev_center, span);
+            let mid = (view.view_lo_hz + view.view_hi_hz) / 2.0;
+            let over = pan_view(&mut view, hand, zc, zs);
+            picture_moved(
+                &mut view,
+                mid,
+                hand,
+                over,
+                &mut dev_center,
+                span,
+                &mut st,
+                pan,
+                &mut cmds,
+            )
+        };
+        // Zoomed out into the 0-32.4 MHz strip, the view the whole strip.
+        let lane = Some((16_200_000.0, 32_400_000.0));
+        let up = slide(&joined, lane, 16_200_000.0, (0.0, 32_400_000.0), 200_000.0);
+        assert_eq!(up, 200_000.0, "zoomed out at the top of HF the dial must keep going up");
+        // Zoomed in, the centre at the top of HF, the view at the window's top.
+        let up = slide(&joined, None, 32_400_000.0, (33_300_000.0, 33_400_000.0), 50_000.0);
+        assert_eq!(up, 50_000.0, "at the top of HF the dial must keep going up");
+        // Bottom of VHF, the centre held at the start of its range.
+        let down = slide(&joined, None, 32_400_000.0, (31_400_000.0, 31_500_000.0), -50_000.0);
+        assert_eq!(down, -50_000.0, "at the bottom of VHF the dial must keep going down");
+        // Away from the crossover a stop is still a stop: the bottom of HF,
+        // the centre at 0 Hz and the view at the window's low edge.
+        let floor = slide(&joined, None, 0.0, (-1_000_000.0, -900_000.0), -50_000.0);
+        assert_eq!(floor, 0.0, "below 0 Hz there is nothing to switch to");
+
+        let gap = sdroxide_types::DeviceCaps {
+            freq_ranges_rx: vec![(0.0, 16_200_000.0), (24_000_000.0, 1_766_000_000.0)],
+            ..Default::default()
+        };
+        assert_eq!(WindowPan::of(Some(&gap), 15_000_000.0).joins, (false, false));
+        let stuck = slide(&gap, None, 16_200_000.0, (17_100_000.0, 17_200_000.0), 50_000.0);
+        assert_eq!(stuck, 0.0, "a gap between the ranges is a stop");
     }
 
     fn def() -> ViewState {
