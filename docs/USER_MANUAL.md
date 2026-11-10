@@ -1048,6 +1048,15 @@ them all at once.
   the same thing a drag that reaches the edge of the picture already does. A
   radio whose centre *is* its dial (a transceiver on a sound card, an Icom
   sending its 12 kHz I.F.) is centred to begin with and has nothing to do.
+  With centring off, when the picture has a hole — part of the view lies
+  outside the I/Q window and shows nothing — a dial that has rested for five
+  seconds more than a twentieth of the window away from its middle gets the
+  window centred on it, once per resting place — on every receiver with a
+  centre of its own (an RX-888, a KiwiSDR, an RTL-SDR, an SDRplay …), so a
+  station tuned near the edge is heard in the middle of the window. At the end
+  of a receiver's range the window comes as far as it can. **Settings → Radio
+  → Centre the window on a resting dial** turns this off for a radio, should
+  you rather the window stayed put.
 
   Switching CTR **on** centres at once, which is also how to ask for a one-off
   "put me back in the middle": click it on, and off again if you would rather

@@ -230,6 +230,14 @@ impl IqSource for Rx888Source {
         Ok(pairs)
     }
 
+    /// A centre of its own — the downconverter moves for nothing; the driver clamps
+    /// the centre to what its half-spectrum allows, so at the band's ends the
+    /// window comes as far as it can — so the engine may centre the I/Q on a
+    /// resting dial (`Engine::recentre_after_dwell`).
+    fn recentre_on_dwell(&self) -> bool {
+        true
+    }
+
     fn describe(&self) -> String {
         self.label.clone()
     }

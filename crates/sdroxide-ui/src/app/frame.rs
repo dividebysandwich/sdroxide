@@ -940,6 +940,14 @@ impl eframe::App for SdroxideApp {
             }
         }
 
+        // Whether the picture has a hole, told to the engine when it changes:
+        // it centres the window on a resting dial only while there is one.
+        let uncovered = self.view_uncovered();
+        if self.sent_uncovered != Some(uncovered) {
+            self.sent_uncovered = Some(uncovered);
+            cmds.push(Command::SetViewUncovered(uncovered));
+        }
+
         // The skimmers decode only what is on screen, and on a front end wider
         // than their window it is also what decides which slice of the band they
         // read at all — so they need the real visible span, not
