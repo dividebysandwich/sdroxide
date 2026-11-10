@@ -371,6 +371,11 @@ impl Read for Patient {
 pub struct Connection {
     reader: BufReader<Patient>,
     writer: TcpStream,
+    /// The address this connection was made to, kept from the moment of
+    /// connecting. The wedge probe needs it, and asking the socket for it later
+    /// (`peer_addr`) was seen to fail now and then on Windows, which left the
+    /// probe unarmed and cost the full 8 s deadline instead of ~4 s.
+    peer: SocketAddr,
     trace: Trace,
     /// Whether the head of a buffer response has been traced yet. Only the
     /// first one is worth keeping; after that it is 8 MB/s of noise.
@@ -410,6 +415,7 @@ impl Connection {
         let mut conn = Connection {
             reader: BufReader::with_capacity(64 * 1024, patient),
             writer,
+            peer: addr,
             trace,
             traced_head: false,
             payload_deadline: PAYLOAD_DEADLINE,
@@ -446,7 +452,7 @@ impl Connection {
     /// its time on a board that is answering everything else — `initialize`
     /// runs for seconds — so silence there says nothing about the socket.
     pub fn enable_wedge_probe(&mut self) {
-        self.reader.get_mut().probe_addr = self.writer.peer_addr().ok();
+        self.reader.get_mut().probe_addr = Some(self.peer);
     }
 
     // ---- commands -------------------------------------------------------
