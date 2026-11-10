@@ -3711,6 +3711,16 @@ js8-send = {" "}SENDEN{" "}
 js8-message = Nachricht…
 ## logbook (src/app/logbook.rs)
 
+palette-hint = Gehe zu… einem Modus, einem Band, einem Fenster, einer Einstellung, einem Speicher oder einer Frequenz (14.074)
+palette-nothing = nichts mit diesem Namen
+palette-group-window = Fenster
+palette-group-settings = Einstellungen
+palette-group-memory = Speicher
+palette-group-tune = Abstimmen
+palette-tune-to = Auf { $mhz } MHz abstimmen
+palette-win-bands = Bandbedingungen
+palette-win-awards = Auszeichnungen
+palette-win-windows = Fensterliste
 logbook-logbook = LOGBUCH
 logbook-new-entry = + NEUER EINTRAG
 logbook-adif = ADIF

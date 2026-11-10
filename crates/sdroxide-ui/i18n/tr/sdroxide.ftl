@@ -3716,6 +3716,16 @@ js8-message = İleti…
 
 ## Günlük (src/app/logbook.rs)
 
+palette-hint = Git… bir mod, bir bant, bir pencere, bir ayar, bir hafıza veya bir frekans (14.074)
+palette-nothing = bu adda bir şey yok
+palette-group-window = Pencere
+palette-group-settings = Ayarlar
+palette-group-memory = Hafıza
+palette-group-tune = Ayar
+palette-tune-to = { $mhz } MHz frekansına ayarla
+palette-win-bands = Bant koşulları
+palette-win-awards = Ödüller
+palette-win-windows = Pencere listesi
 logbook-logbook = GÜNLÜK
 logbook-new-entry = + YENİ KAYIT
 logbook-adif = ADIF
