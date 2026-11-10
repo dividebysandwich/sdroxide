@@ -26,9 +26,9 @@ use sdroxide_digi::{
 use sdroxide_drm::DrmDemod;
 use sdroxide_dsp::{
     AdcMeter, Agc, AutoNotch, Binaural, Cessb, DcBlock, Ddc, Decimator, DeepFilterNr, Demodulator,
-    Duc, Modulator, MonoResampler, Nco, NeuralNr, NoiseBlanker, Nr2, SpecBleachNr, SpectralNr,
-    SpectrumAnalyzer, StereoResampler, SubToneGen, ToneBurst, VoiceChain, channel_target_at,
-    hd_radio_is_am, make_demod, make_modulator,
+    Duc, HumFilter, Modulator, MonoResampler, Nco, NeuralNr, NoiseBlanker, Nr2, SpecBleachNr,
+    SpectralNr, SpectrumAnalyzer, StereoResampler, SubToneGen, ToneBurst, VoiceChain,
+    channel_target_at, hd_radio_is_am, make_demod, make_modulator,
 };
 use sdroxide_hfdl::HfdlController;
 use sdroxide_ism::{IsmAction, IsmController};
@@ -846,6 +846,9 @@ struct RxChain {
     /// Adaptive auto-notch (constant-tone canceller) on the listener audio.
     notch: AutoNotch,
     notch_on: bool,
+    /// The NR menu's hum filter, built for the audio rate in force when it was
+    /// switched on; `None` while off.
+    hum: Option<HumFilter>,
     /// Spectral noise reduction on the listener audio (after the digital tap).
     nr: SpectralNr,
     /// The libspecbleach port — the other classical engine.
@@ -900,6 +903,7 @@ impl RxChain {
             tap_gain: 1.0,
             notch: AutoNotch::new(),
             notch_on: false,
+            hum: None,
             nr: SpectralNr::new(),
             sbnr: SpecBleachNr::new(),
             nr2: Nr2::new(),
@@ -1045,6 +1049,22 @@ impl RxChain {
             );
             self.tap_out.clear();
             self.tap_out.extend(self.audio_buf.iter().map(|s| s * g));
+        }
+
+        // The NR menu's hum filter, ahead of the AGC, so the gain is set by the
+        // programme rather than by the hum under it. Mono audio only; a stereo
+        // pair would need a second one.
+        // Why: HDZ 2026-11-10: "bau es als Minipatch ins Submenü NR ein, als
+        //      zuschaltbare Engines".
+        let rate = audio_rate as f32;
+        match (rx.hum_filter && !stereo, &mut self.hum) {
+            (true, Some(h)) if h.rate() == rate => h.process(&mut self.audio_buf),
+            (true, h) => {
+                let mut f = HumFilter::new(rate);
+                f.process(&mut self.audio_buf);
+                *h = Some(f);
+            }
+            (false, h) => *h = None,
         }
 
         // FM skips the AGC entirely — a true unity bypass, not AgcMode::Off's
@@ -8776,6 +8796,7 @@ impl Engine {
                 self.state.rx[rx.index()].auto_notch = on;
                 self.remember_mode_setting(rx, |p| p.auto_notch = Some(on));
             }
+            SetHumFilter { rx, on } => self.state.rx[rx.index()].hum_filter = on,
             SetWfmStereo { rx, on } => {
                 self.state.rx[rx.index()].wfm_stereo = on;
                 self.remember_mode_setting(rx, |p| p.wfm_stereo = Some(on));

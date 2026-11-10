@@ -3819,6 +3819,23 @@ impl SdroxideApp {
                 }
             }
         });
+
+        // Switched on beside whichever engine runs, not instead of it: hum is
+        // not noise floor, and every engine above leaves it.
+        // Why: HDZ 2026-11-10: "bau es als Minipatch ins Submenü NR ein, als
+        //      zuschaltbare Engines, wenn das taugt, kann das ein eigener Patch
+        //      werden".
+        crate::chrome::menu_caption(ui, &tr!("topbar-nr-filters"));
+        ui.horizontal_wrapped(|ui| {
+            let rx = self.state.rx[0];
+            if crate::chrome::chip(ui, rx.hum_filter, "HUM")
+                .on_hover_text(tr!("topbar-hum-filter-hint"))
+                .clicked()
+            {
+                self.state.rx[0].hum_filter = !rx.hum_filter; // optimistic echo
+                cmds.push(Command::SetHumFilter { rx: RxId::Main, on: !rx.hum_filter });
+            }
+        });
     }
 
     /// The sub-audible readout: the CTCSS tone or DCS code being received, and a

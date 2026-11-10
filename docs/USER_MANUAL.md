@@ -614,6 +614,17 @@ mode. What is in the box never changes; only where the two rows are cut does.
   only what you hear; the FT8/FT4/FT2/PSK/RTTY decoders still receive the untouched
   signal, and a steady unmodulated carrier — a heterodyne — is treated as noise
   and suppressed. Any NR engine also forces WFM to mono — see **ST** below.)
+
+  Under the two rows the picker has a third, **Filters**, with a switch that
+  runs *beside* whichever engine is selected, because what it removes is not
+  noise floor and none of the engines takes it away:
+  - **HUM** — a high-pass at 300 Hz (4th-order Butterworth) for mains hum:
+    56 dB down at 50 Hz, 38 dB at 100 Hz, 24 dB at 150 Hz, whether the mains is
+    50 or 60 Hz. A voice channel starts about where it begins, so speech loses
+    under a decibel; music loses its bass, which is the price on broadcast. It
+    works on mono audio and runs ahead of the AGC, so the gain follows the
+    programme rather than the hum under it.
+
 - **BIN** (CW and SSB) — **binaural** audio: the receive passband spread across
   the two ears, so that a signal's *pitch* becomes a *direction*. Whatever sits
   at the middle of the filter is in the middle of your head, anything above it

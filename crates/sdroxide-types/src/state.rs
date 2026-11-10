@@ -109,6 +109,11 @@ pub struct RxState {
     /// and read from the main receiver alone — the sub receiver *is* the other
     /// ear, and claims it whenever it is running.
     pub binaural: bool,
+    /// Hum filter on the listener audio: a high-pass that takes 50/60 Hz mains
+    /// hum and its first harmonics (`sdroxide_dsp::HumFilter`). Appended for
+    /// the usual reason — postcard numbers fields by position.
+    #[serde(default)]
+    pub hum_filter: bool,
 }
 
 impl RxState {
@@ -129,6 +134,7 @@ impl RxState {
             wfm_stereo: true,
             tone_sql: None,
             binaural: false,
+            hum_filter: false,
         }
     }
 }
