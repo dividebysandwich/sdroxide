@@ -5775,3 +5775,264 @@ settings-call-gateway-mercury = Call a gateway over the air on Mercury. Put the 
 settings-radio-data2g = Radio (Data2G)
 settings-call-gateway-data2g = Call a gateway over the air on Data2G. Put the radio in DATA2G first.
 settings-tnc-dial-note = The dial frequency, upper sideband, as the gateway's keeper publishes it. Zero leaves the dial where it is.
+
+# Playing a recording back into the decoders.
+playback-radio-n = { " " }· radio { $n }
+
+playback-no-stamp = no stamp in the name — plays in the mode you are in
+
+playback-title = PLAYBACK — recorded audio
+
+playback-find-hint = mode, MHz, date, name…
+
+playback-refresh-hint = Read the recordings folder again
+
+playback-asking = Asking the station for its recordings…
+
+playback-folder = Folder: { $dir }
+
+playback-none = No recordings yet. Press REC → MP3 while something is on the air; the file appears here, named with its time, frequency and mode.
+
+playback-on = ▶ ON
+
+playback-play = ▶ PLAY
+
+playback-iq-hint = An I/Q capture, not audio. Playback takes the audio the recorder writes; an I/Q capture is played with --file.
+
+playback-not-while-tx = Not while transmitting
+
+playback-play-hint = Play this recording into the decoders from the start
+
+playback-busy-playing = Playing back — stop it before deleting it
+
+playback-busy-recording = Still being recorded — stop REC before deleting it
+
+playback-delete-ask = DELETE?
+
+playback-delete-hint-armed = Press again to delete this file for good. It cannot be undone.
+
+playback-delete-hint = Delete this recording from the folder (asks once more first)
+
+playback-strip-label = ▶ PLAYBACK
+
+playback-not-live = not live — the radio is standing down
+
+playback-carry-on = Carry on playing
+
+playback-pause = ⏸ PAUSE
+
+playback-pause-hint = Pause — the decoders hear silence until you carry on
+
+playback-again = ↺ AGAIN
+
+playback-again-hint = Back to the start — another try at a picture or a decode
+
+playback-loop = LOOP
+
+playback-loop-hint = Start again from the top when the file ends
+
+playback-stop = ■ STOP
+
+playback-stop-hint = End the playback and put the radio back where it was
+
+playback-files = FILES
+
+playback-end-of-file = end of file
+
+playback-paused = paused
+
+playback-recorded-on-mode = Recorded on { $mhz } MHz in { $mode } — the dial and mode were set from the file's name.
+
+playback-recorded-on = Recorded on { $mhz } MHz — the dial and mode were set from the file's name.
+
+playback-no-dial-mode = The name records no dial or mode, so it plays in the mode you are in — pick the decoder from the mode menu.
+
+playback-format-stereo = { $rate } Hz, stereo — the left (receive) channel is played.
+
+playback-format-mono = { $rate } Hz, mono — the one channel is played.
+
+playback-stopped = Stopped: { $fault }
+
+playback-intro = Play a recording back into the decoders — SSTV, CW, RTTY, PSK, FT8 and every other mode that decodes from audio. The radio stands down while it plays, the dial and mode go to what the recording was made on, and STOP puts the radio back. Change the mode while it plays to try another decoder.
+
+topbar-stereo-yields-hint = WFM stereo is off while noise reduction or the auto-notch runs — they would smear the two channels. Switch them off to hear stereo
+
+topbar-stereo-playback-hint = Stereo: the recording is playing back in both ears, as recorded. Click to force mono
+
+topbar-stereo-mono-recording-hint = This recording is mono — there is no second channel to play
+
+topbar-caption-play-back = Play back
+
+topbar-recordings-chip = ▶ RECORDINGS…
+
+topbar-recordings-hint = Play a recording back into the decoders — a missed SSTV picture, a weak RTTY or CW signal, an FT8 slot — with the waterfall and the decode log, as if it were on the air. The radio stands down while it plays.
+
+playback-find = Find
+
+playback-refresh = REFRESH
+
+## Weather satellites (NOAA APT, Meteor LRPT)
+
+wxsat-title = WEATHER SATELLITES
+
+sat-wxsat-hint = WEATHER SATELLITES — the picture a NOAA (APT) or Meteor (LRPT) satellite sends on 137 MHz, drawn as it comes in, in a window you can detach
+
+sat-wxsat = WEATHER SATELLITES
+
+wxsat-decode = Decode
+
+wxsat-channel = Satellite
+
+wxsat-tune = Tune here
+
+wxsat-tune-hint = Switch the decoder on and bring the dial to this channel, so that the signal is inside the sample window.
+
+wxsat-clear = Clear
+
+wxsat-save = Save PNG
+
+wxsat-flip = Flip
+
+wxsat-flip-hint = Turn the picture over: a satellite flying south is drawn upside down.
+
+wxsat-state-off = Decoder off
+
+wxsat-level = Level { $db } dBFS
+
+wxsat-locked = Line sync locked
+
+wxsat-searching = Looking for the line sync
+
+wxsat-lines = { $n } lines
+
+wxsat-outside-window = The channel is outside the sample window, or too close to its edge for the whole signal. Use Tune here, or a wider window.
+
+wxsat-waiting = No picture yet. Switch the decoder on when a satellite is above the horizon; a pass lasts about ten minutes.
+
+wxsat-signal = Signal
+
+wxsat-kind-apt = APT
+
+wxsat-kind-lrpt = LRPT
+
+wxsat-image-channel = Channel { $n }
+
+wxsat-rows = { $n } rows
+
+wxsat-frame-locked = Frame sync locked
+
+wxsat-frames = { $n } good frames
+
+wxsat-waiting-lrpt = No picture yet. Meteor LRPT is digital: the picture starts a few seconds after the satellite is heard, row by row, and each channel is a separate picture.
+
+wxsat-searching-frame = Looking for the frame sync
+
+sat-picture = PICTURE
+
+sat-picture-hint = Open the WEATHER SATELLITES window on this link: the decoder switches to its signal and channel, and the dial moves there.
+sondemap-no-sonde-yet = No radiosonde heard yet
+sonde-decoding = DECODING
+sonde-decoding-off = DECODER OFF
+sonde-count = Sondes: { $n }
+sonde-frames = Frames: { $n }
+sonde-channel = Channel
+sonde-channel-hover = The sonde frequency to listen on (400–406 MHz). The radio is tuned there too, so the channel is inside the window.
+sonde-col-serial = Sonde
+sonde-col-alt = Altitude
+sonde-col-climb = Climb
+sonde-col-speed = Speed
+sonde-col-battery = Battery
+sonde-col-heard = Heard
+sonde-scan = Scan
+sonde-scan-hover = Look across the whole sample window for sondes and decode up to four at once, instead of listening on one channel. The window must cover them: the channel box centres the radio.
+sonde-online = Online (SondeHub)
+sonde-online-hover = Also show sondes other stations have heard, from SondeHub's public list. Only reads: your locator, rounded to 0.1°, and a 400 km radius are sent; nothing is uploaded. Off until you switch it on.
+sonde-online-count = { $n } online
+sonde-online-no-grid = Set your locator in the digital-mode setup to see online sondes.
+sonde-online-failed = SondeHub did not answer.
+sonde-export = Export flight
+sonde-export-kml-hover = Save this sonde's flight as a KML track (Google Earth): time, longitude, latitude, altitude in metres
+sonde-export-csv-hover = Save this sonde's flight as a CSV table for a spreadsheet: time, latitude, longitude, altitude in metres
+sonde-export-none = No position kept yet for this sonde.
+sonde-col-temp = Temp.
+sonde-col-humidity = Humidity
+sonde-col-pressure = Pressure
+sonde-online-why-signin = The station wants you signed in first.
+sonde-online-why-busy = The station is already asking SondeHub as often as it may. Try again in a minute.
+sonde-online-why-upstream = The station could not reach SondeHub.
+sonde-online-why-unreadable = The answer was not a list of sondes.
+sonde-online-why-no-station = No station to ask, and this page cannot reach SondeHub itself.
+sonde-online-why-http = Answer: HTTP { $n }.
+sonde-card-source = Source
+sonde-card-source-radio = This radio
+sonde-card-source-hub = SondeHub (heard by another station)
+sonde-card-model = Model
+sonde-card-maker = Maker
+sonde-card-variant = Variant
+sonde-card-position = Position
+sonde-card-from-you = From you
+sonde-card-heading = Heading
+sonde-card-satellites = Satellites
+sonde-card-snr = Signal-to-noise
+sonde-card-station = Heard by
+sonde-card-station-position = Station position
+sonde-card-antenna = Antenna
+sonde-card-software = Software
+sonde-card-frames = Frames heard
+sonde-card-open = Open on { $site }
+sonde-card-close = Close
+sonde-card-source-both = Radio + SondeHub (both hear it)
+sonde-card-stale = Status
+sonde-card-stale-value = Gone from the list: last known position
+sonde-card-detach = Detach
+sonde-card-attach = Attach
+sonde-card-listen-hover = Click to tune the radio to this channel: the dial goes there and the decoder listens on it alone.
+sonde-card-decoding = Decoded by this radio
+sonde-card-waiting = Listening on this channel, nothing decoded yet
+sonde-card-click-to-listen = Click the frequency to listen
+sonde-type-all = All types
+sonde-type-hover = Look for one type of sonde: choosing one starts the scan, which moves the window across the band until that type is heard. Only that type is listed and drawn.
+sonde-export-saved = Saved { $name }.
+sonde-title = RADIOSONDES
+sonde-tune = TUNE
+sonde-tune-hover = Switch the decoder on and bring the radio to the sonde channel, so the channel is inside the sample window. A mode that parks the receiver elsewhere (ADS-B, AIS, HFDL…) is left for NFM.
+sonde-needs-iq = The radiosonde decoder needs a wideband I/Q source; a rig that only hands over audio cannot feed it.
+sonde-off-hint = The radiosonde decoder is off. Press DECODER OFF to start it, or TUNE to start it and go to the channel.
+sonde-outside-window = The sample window does not reach the sonde band (400–406 MHz): press TUNE to bring the radio there.
+ism-sonde-chip = RADIOSONDES
+ism-sonde-chip-hover = Weather-balloon radiosondes on 400–406 MHz (RS41, DFM, M10/M20, iMet and more): a map of every sonde heard with its flight, in a window of its own
+
+## Keyboard modes: MT63 (src/app/panels/text_modem.rs)
+textmodem-mt63-long-hint = MT63-{ $label }, { $bw } Hz wide — the long interleave spreads a burst over { $chars } characters
+textmodem-mt63-short-hint = MT63-{ $label }, { $bw } Hz wide, short interleave — the short interleave spreads a burst over { $chars } characters
+textmodem-mt63-not-offered = 1K and 500L not offered yet
+textmodem-mt63-not-offered-hint = MT63-1K and the 500 Hz long interleave read with the batch decoder but not yet through the live receiver: the lock searches the symbol phase and the polarity but not the band centre, and a search that does was found to trade one variant for another.
+
+## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
+textmodem-mfsk-hint = { $label } — { $baud } baud, { $tones } tones, { $bw } Hz wide{ $caveat }
+textmodem-mfsk-reverse-hint = Invert the tone order. A station received on the opposite sideband to the one it was sent on arrives mirrored about its centre and reads as noise until this is on.
+
+## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
+textmodem-domino-hint = { $name } — { $baud } baud, 18 tones, incremental frequency keying with no forward error correction
+textmodem-ifk-reverse-hint = Invert the tone steps. IFK+ carries its data in the step between successive tones, so a station received on the opposite sideband has every step negative and reads as noise until this is on.
+
+## Keyboard modes: PSK families (src/app/panels/text_modem.rs)
+textmodem-psk-family = Family
+textmodem-psk-family-plain-hint = PSK31's own family: one differential carrier, no forward error correction
+textmodem-psk-family-bpsk63f-hint = The robust code at 62.5 baud, with no interleaver — the one coded mode fldigi sends without one
+textmodem-psk-family-robust-hint = One carrier with the robust code and a 2x2xN interleaver
+textmodem-psk-family-multi-hint = Several carriers, PSK31's varicode and **no** code — wider and faster, and it needs a clean signal
+textmodem-psk-family-robust-multi-hint = Several carriers **and** the robust code: the widest and the most robust of the PSK modes
+textmodem-psk-baud-fast-hint = { $baud } baud — reads from about a second in: at this rate the receiver's lock time is a third of a message
+textmodem-psk-baud-hint = { $baud } baud
+textmodem-psk-bpsk-hint = One bit per symbol, differentially detected
+textmodem-psk-8psk-hint = Three bits per symbol, no code: the fastest at any given speed and the least robust. Reads its own transmission back; fldigi's 8PSK recordings do not read yet, so it is unproven against other programs
+textmodem-psk-coded = coded
+textmodem-psk-no-code = no code
+textmodem-psk-coded-hint =
+    { $baud } baud, { $n } { $n ->
+            [one] carrier
+           *[other] carriers
+        }, { $code }, { $bw } Hz wide
+textmodem-psk-rx-only = receive only
+textmodem-psk-rx-only-hint = This bank receives — fldigi's recording of it reads — but our own transmission of it does not read back through the same receiver yet, so transmit is refused rather than putting an unproven signal on the air.

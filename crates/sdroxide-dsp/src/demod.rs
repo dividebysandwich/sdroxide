@@ -215,6 +215,10 @@ pub fn make_demod(mode: Mode, channel_rate: f64) -> Option<Box<dyn Demodulator>>
         | Mode::Navtex
         | Mode::Olivia
         | Mode::Thor
+        | Mode::Contestia
+        | Mode::DominoEx
+        | Mode::Mfsk
+        | Mode::Mt63
         | Mode::Fsq
         | Mode::Hell
         | Mode::RfPaint

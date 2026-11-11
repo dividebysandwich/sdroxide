@@ -51,6 +51,8 @@ mod rf_paint;
 /// Solar-system 3D view. A second OS window natively, a second browser tab on
 /// the web; the sole consumer of depth/MSAA/vertex buffers either way.
 mod solar3d;
+mod sonde_map;
+mod sonde_online;
 mod sstv;
 pub mod theme;
 mod time;

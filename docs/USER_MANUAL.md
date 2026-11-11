@@ -138,6 +138,10 @@ or connects to a remote sdroxide server.
 - **ISM band decoder** — reads the unattended 868 MHz traffic around you and
   lists each device with its readings in real units. See
   [ISM band decoder](#5-ism-band-decoder).
+- **Radiosondes** — decodes the weather balloons on 400–406 MHz (Vaisala RS41,
+  Graw DFM, Meteomodem M10/M20, InterMet iMet-4 and iMet-54, Meisei, Lockheed
+  LMS6 and others) and draws each one's flight on a map. See
+  [Radiosondes](#58-radiosondes-400406-mhz).
 - **Zoom out past the I/Q** — on a receiver that publishes a full-band
   spectrum as well as its I/Q (a KiwiSDR, a SpyServer, an RX-888), the main
   panadapter keeps widening past the streamed passband and draws those spans
@@ -2507,6 +2511,43 @@ sdroxide runs on. Until it answers the status line says so — PSTRotator stays
 silent while it has no controller connected — but the pointing commands still
 go out.
 
+#### 2.16.2 Weather satellites (NOAA APT and Meteor LRPT)
+
+The **WEATHER SATELLITES** chip at the top right of the SAT window opens a
+window of its own with the picture a weather satellite sends on 137 MHz, drawn
+as it comes in. It is not a radio mode: the decoder runs off its own
+downconversion of the sample window and the radio keeps its mode, so it needs a
+wideband source (a receiver that sends I/Q) and is off for a rig that only hands
+over audio.
+
+The *Signal* choice picks the kind. **APT** is the analogue signal of NOAA-15
+(137.620 MHz), NOAA-18 (137.9125 MHz) and NOAA-19 (137.100 MHz): channel A on
+the left and channel B on the right, line by line, two lines a second. **LRPT**
+is the digital signal of Meteor-M2-3 (137.900 MHz) and Meteor-M2-4
+(137.100 MHz): QPSK at 72 ksym/s, picture rows of 1568 pixels, and one separate
+picture for each channel the satellite sends (*Channel 1* to *Channel 6*, the
+visible and infrared bands), shown one at a time.
+
+Pick the satellite, then **Tune here** switches the decoder on and brings the
+dial to its channel. The window has to hold the whole signal — about 40 kHz for
+APT and 115 kHz for LRPT — and a note says so when it does not. Quicker still:
+pick the satellite on the SATELLITES tab and press **PICTURE** under its APT or
+LRPT link, which opens the window on that satellite's signal and channel and
+tunes there. With the **Weather** CelesTrak group subscribed
+([6.10](#610-tle-satellites-and-their-frequencies)) the PASSES tab tells you
+when the next one rises.
+
+Start it when the satellite rises; a pass lasts about ten minutes. The status
+line shows the level, the sync (line sync for APT, frame sync for LRPT) and the
+lines, or the good frames and rows, so far. LRPT needs a signal about 8 dB above
+the noise to lock; the receiver follows the Doppler and the drift of the sample
+clock by itself. **Flip** turns the picture over (a satellite flying south is
+drawn upside down), **Clear** empties it and **Save PNG** writes it out (the
+channel shown, for LRPT). A window opened in the middle of a pass — a remote or
+browser screen that joined late, say — starts the picture where it joined.
+
+The setting is kept in `wxsat.json`.
+
 ### 2.17 Running more than one radio
 
 SDR Oxide can run several radios at once — an HF transceiver and a VHF dongle,
@@ -3288,6 +3329,52 @@ something to send over a link.
 This is the same data `--record-iq` ([12](#12-command-line-reference)) writes,
 in a container other programs can open — `--record-iq` writes the bare samples
 and starts with the program, which is what a headless capture wants.
+
+#### Playing a recording back into the decoders
+
+An audio recording is not only an archive. **▶ RECORDINGS…**, at the bottom of
+the REC picker under **Play back**, opens the **PLAYBACK** window: the files in
+the recordings folder, newest first, each read by what its name records — the time,
+the frequency and the mode — rather than by its file name. Press **▶ PLAY** on
+one and it goes back through the decoders as though it were on the air: the SSTV
+picture that was missed paints again line by line, CW, RTTY, PSK, Olivia, FT8
+and every other mode that decodes from audio decode it afresh, and the waterfall
+and the decode log fill as they did at the time.
+
+What happens when it plays:
+
+- **The radio stands down.** For the length of the playback the file *is* the
+  radio — it takes the path a sound-card radio's audio takes — and the
+  transmitter is out of reach. A strip above the waterfall says **▶ PLAYBACK —
+  not live** for as long as it lasts, so a recording is never taken for the band.
+- **The dial and the mode go to what the file's name records**, so the right
+  decoder is listening. Change the mode while it plays to try the recording in
+  another decoder; click on the waterfall to put a decoder's tones where the
+  signal is, exactly as on a sound-card radio.
+- **The transport:** **⏸ PAUSE** / **▶ PLAY**, **↺ AGAIN** back to the start,
+  **LOOP** to go round instead of stopping at the end, and the seek bar to go to
+  any point in the file. Paused, the decoders hear silence.
+- **■ STOP** puts the radio back on the dial and in the mode it was left in.
+- **CLEAR** beside **▶ PLAY** deletes a recording from the folder for good. The
+  first press turns it into **DELETE?** and only a second press on the same row
+  deletes, so a stray click costs nothing. The file playing back and one still
+  being recorded cannot be deleted until they stop.
+
+A stereo recording plays back in stereo: a WFM stereo broadcast comes back with
+its two channels, and **ST** lights while it does. ST still forces mono, and
+noise reduction or the auto-notch take it back to mono, exactly as on the air.
+The decoders always take the left channel — the receiver; on a recording made
+while transmitting, the right is your own transmit. Playback reads the
+recorder's own MP3 files and also WAV, OGG Vorbis and FLAC made elsewhere: copy
+one into the recordings folder and it is in the list. A file whose name carries no stamp plays in the mode you are in. An
+I/Q capture is listed but cannot be played here — it is spectrum, not audio, and
+plays with `--file`. A recording is played where the receiver is: from a
+browser, the list is the station's recordings folder and the engine opens the
+file there.
+
+This is a replay of the *demodulated audio*, not of the band: the frequency
+offset, the passband and the demodulator were fixed when the recording was
+made. To tune around inside a recording afterwards, record the spectrum instead.
 
 ### 2.22 QO-100 beacon plugin
 
@@ -4471,12 +4558,55 @@ panel is a live **messaging area** instead of a QSO sequencer.
 
 **Settings (PSK/RTTY setup dialog):**
 
-- **PSK** is BPSK31 — differential BPSK with the standard varicode alphabet.
+- **PSK** defaults to BPSK31 — differential BPSK with the standard varicode
+  alphabet. The chips in the panel header choose the rest (see below).
 - **RTTY** defaults to 45.45 baud, 170 Hz shift, Baudot (ITA2), on the standard
   2125/2295 Hz tone pair. **Shift** (170 / 425 / 850 Hz) and **Baud**
   (45 / 50 / 75) are selectable; a wider shift keeps the same centre and spreads
   about it.
 - Your callsign and grid (shared with the FT8/FT4/FT2 setup) fill the CQ macro.
+
+**PSK's speeds and fldigi's PSK families.** In PSK the panel header carries a
+**Family** row and then the chips of the family picked:
+
+- **PLAIN** is PSK31's own family: **Baud** 31, 63, 125, 250, 500 and 1000,
+  and **BPSK** or **8PSK** (three bits a symbol, faster and less robust).
+  Nothing in a signal says which speed it is, so set the one the station is
+  sending; a receiver at the wrong speed prints nothing. At 1000 baud the
+  receiver takes about a second to lock, so the first words of a transmission
+  can be lost.
+- **BPSK63F** is the robust code at 62.5 baud with no interleaver.
+- **R** is one carrier with fldigi's robust code and an interleaver:
+  PSK125R, PSK250R, PSK500R and PSK1000R.
+- **C** is several carriers with PSK31's alphabet and no code (PSK250C6,
+  PSK500C2, PSK800C2) — wide and fast, for a clean path.
+- **RC** is several carriers *and* the code: PSK63RC4 to PSK1000RC2, the widest
+  and most robust of the family.
+
+Hover a chip for its speed, carrier count and width; the waterfall marks the
+edges of a coded bank. A wide bank is kept inside the passband: its centre is
+moved up off the dial as far as it needs to be, and a click that would put it
+partly outside is held at the edge. The coded families idle on `<NUL>`
+characters while you hold **TX** with nothing typed, and close the over with a
+run that pushes the last word through the interleaver, so the transmitter
+stays keyed for a moment after the text has gone green. Every speed of PLAIN
+ends with a short tail of idle reversals for the same reason.
+
+Some of fldigi's PSK waveforms are not offered, or receive only:
+
+- **QPSK** is not offered: the receiver's carrier loop cannot track four
+  phases yet, so it reads neither fldigi's QPSK nor its own.
+- **PSK125C12, PSK500C4, PSK500RC4 and PSK1000C2** are not offered: the
+  multi-carrier front end cannot separate their carriers, and they read
+  nothing.
+- **PSK63RC32, PSK125RC12 and PSK125RC16** receive — fldigi's recordings of
+  them read — but our own transmission of them does not read back yet, so they
+  are marked **receive only** and refuse **TX** with the reason.
+
+These modes are ports of fldigi's PSK (`psk.cxx`) from sdroxide-brown. The
+receivers read fldigi's recordings of the coded families; 8PSK and every
+transmitter here read their own signal back but have not yet been tried
+against fldigi on the air.
 
 **Skimmers:** the PSK and RTTY skimmers (see [Skimmers](#4-skimmers)) label
 signals across each band's PSK/RTTY calling sub-bands. Clicking a label from any
@@ -4556,6 +4686,113 @@ These three modems are native-Rust and self-contained. On-air interoperability
 with fldigi is being validated; the first release targets clean-to-moderate
 signals.
 
+#### 3.4.1 MT63
+
+**MT63** is on the DIGITAL row with the other keyboard modes and uses the same
+messaging panel, including **SEND ON RETURN**. It is fldigi's 64-carrier mode:
+every character is spread over all 64 carriers by a Walsh code and interleaved
+over the next 32 (or 64) characters, so it rides through fading, static crashes
+and a carrier on top of it — at the price of being wide and slow to start.
+
+- **Variant** — chosen by the chips in the panel header: **2KS** and **2KL**
+  (2000 Hz wide, short or long interleave) and **500S** (500 Hz, short). The
+  long interleave survives a longer burst and takes twice as long to start
+  printing. Both stations must use the same variant. The waterfall marks the
+  edges of the band.
+- **Tuning** — the band is centred on the tone offset (1500 Hz by default). The
+  receiver finds the symbol clock and the sideband by itself, but it does not
+  search for the centre, so put the signal's middle on the cursor.
+- **It needs words to lock.** MT63 sends no preamble, so the receiver settles
+  its timing on the first few seconds of text and only starts printing once
+  what it decodes looks like words. A one-word over may never print; a CQ of a
+  line or two does.
+- **Transmitting** — every over starts with a few seconds of idle while the
+  far receiver's interleaver fills, and ends with a few more after the last
+  character, which is what carries that character the rest of the way. The
+  panel shows the text as sent as soon as it enters the modem, so the
+  transmitter stays keyed a little after the last character turns green.
+- **1K and the 500 Hz long interleave are not offered yet.** They decode
+  fldigi's recordings with the reference decoder, but the live receiver does
+  not yet find them reliably.
+
+The modem is a port of fldigi's MT63 (after Pawel Jalocha, SP9VRC). Five of
+fldigi's six variants decode fldigi's own recordings, and every variant reads
+its own transmission back; it has not yet been tried against fldigi on the air.
+
+#### 3.4.2 MFSK
+
+**MFSK** is fldigi's IZ8BLY family — MFSK4, 8, 11, 16, 22, 31, 32, 64 and 128,
+and the long-interleave MFSK64L and MFSK128L. One tone is sent at a time out of
+16 (32 for MFSK4 and MFSK8, 8 for MFSK31), and every character goes through a
+K=7 convolutional code and an interleaver, so it copies well below the noise.
+MFSK16 is the usual one and the default.
+
+- **Variant** — the chips in the panel header. The tone count and the symbol
+  rate are one choice, as they are in fldigi; hover a chip for its speed and
+  width. Nothing in the signal says which variant a station is using, so set
+  the one they are sending. The waterfall marks the edges of the tone bank.
+- **Tuning** — the bank is centred on the tone offset (1500 Hz by default), and
+  the receiver pulls in only a few tone spacings either side, so put the middle
+  of the signal on the cursor.
+- **RV** inverts the tone order, receive and transmit, for a station on the
+  other sideband: it reads as noise until it is on.
+- **Transmitting** — an over opens with a short preamble, and while you hold
+  **TX** with nothing typed the modem sends idle characters, so the far
+  receiver stays locked while you type. Releasing it sends the end-of-text mark
+  and enough idle to empty the interleaver, so the last word arrives; the
+  transmitter stays keyed for that after the text has turned green. The long
+  interleaves need minutes of text before the far end starts printing.
+
+The receiver reads fldigi's own recordings of the nine short-interleave
+variants (MFSK8's with a gap) and part of the two long ones, and reads its own
+transmission back; transmitting has not yet been tried against fldigi on the
+air.
+
+#### 3.4.3 DominoEX
+
+**DOMINOEX** is THOR's sibling: the same 18 tones and the same incremental
+frequency keying — the data is the *step* from one tone to the next, so a
+small tuning error does not matter — but with no error correction. Each
+character is one to three four-bit nibbles of DominoEX's own alphabet, so it
+types faster than THOR at the same speed and prints as it arrives.
+
+- **Speed** — the chips in the panel header: **4, 5, 8, 11, 16, 22, 44, 88**
+  and **M** (MICRO, two symbols a second). DominoEX 11 is the default and the
+  usual one on HF; hover a chip for its symbol rate. The waterfall marks the
+  edges of the tone bank. Both stations must use the same speed.
+- **Tuning** — the bank is centred on the tone offset (1500 Hz by default);
+  put the middle of the signal on the cursor.
+- **RV** inverts the tone steps, receive and transmit, for a station on the
+  other sideband.
+- **Transmitting** — an over opens with a short preamble; while you hold
+  **TX** with nothing typed the modem sends idle characters, and releasing it
+  closes the over with the end-of-text mark.
+
+THOR keeps its own modem ([3.4](#34-olivia-thor-and-fsq)). DominoEX runs on
+the IFK receiver from sdroxide-brown, which reads fldigi's recordings of six of
+the nine speeds whole (8, 11, 16, 22, 44 and 88), most of DominoEX 5 and little
+of 4 and MICRO. It reads its own transmission back at every speed; transmitting
+has not yet been tried against fldigi on the air.
+
+#### 3.4.4 Contestia
+
+**CONTESTIA** is Olivia with a smaller alphabet: six-bit characters instead of
+seven, so a block is 32 symbols rather than 64 and text goes out about twice as
+fast at the same tones and bandwidth, for a little less robustness. It has no
+lower case — everything is sent and printed in capitals.
+
+- **Tones and bandwidth** are the same chips as Olivia's, and the same settings:
+  changing them in one mode changes them in the other. Contestia starts at four
+  tones; 8/250 and 16/500 are common. Both stations must agree.
+- Everything else — tuning, the search either side of the cursor, the delay
+  before a block prints, the idle blocks that close an over — is Olivia's.
+
+The modem is upstream's fldigi-exact Olivia with Contestia's block, scrambler
+(`0xEDB88320`, five bits a slot), character map and tone placement from fldigi's
+`pj_mfsk.h` and `contestia.cxx`. It reads fldigi's own Contestia 4/125
+recording whole and its own transmission back; it has not yet been tried
+against fldigi on the air.
+
 ### 3.5 Hellschreiber
 
 Choose **HELL** from the DIGITAL row for **Hellschreiber** — the oldest digital
@@ -4563,19 +4800,23 @@ mode still in regular amateur use, and the only one you read with your eyes
 instead of a decoder.
 
 Hell does not send characters. It sends *pictures* of characters: the
-transmitter scans a 7-column by 14-row dot matrix per letter, top to bottom then
-left to right, switching the carrier on and off as it goes. The receiver simply
-free-runs at the same dot rate and paints whatever it hears onto a scrolling
-strip. There is no synchronisation, no framing and no error correction — which is
+transmitter scans a 7-column by 14-row dot matrix per letter, bottom to top then
+left to right, switching the carrier on and off as it goes. The receiver runs at
+the same dot rate and paints whatever it hears onto a scrolling strip. The mode
+carries no synchronisation, no framing and no error correction — which is
 exactly why Hell stays readable in conditions that break real decoders. A burst of
 noise smudges a few dots instead of corrupting a whole character, and your eye
 does the rest.
 
 ![The Hellschreiber panel: the scrolling receive raster above the transmit box](images/hellschreiber.jpg)
 
-**Reading the strip.** Received text scrolls in from the right. Because nothing
-synchronises the vertical position, a character can straddle the top and bottom
-of the strip — so, like fldigi, sdroxide draws **every column twice, stacked**.
+**Reading the strip.** Received text scrolls in from the right. The receiver
+finds where a character begins by itself: every Hell font leaves a blank dot
+above and below the letter, and the run of quiet dots they make together is
+where it puts the cell boundary, so once a few characters have arrived the text
+sits level in the strip instead of wrapping over the edge. Until then — and on a
+signal too weak to find it in — a character can straddle the top and bottom of
+the strip, so, like fldigi, sdroxide draws **every column twice, stacked**.
 Whatever the alignment happens to be, one complete legible copy of the text is
 always on screen. That is what the **2ROW** button controls; turn it off for a
 single-height strip and drag the raster up or down to line the text up yourself.
@@ -4622,6 +4863,11 @@ between lines anyway.
 | **FSK245** | 2.5 char/s | 490 Hz | frequency-shifted |
 | **FSK105** | 2.5 char/s | 220 Hz | frequency-shifted |
 | **HELL80** | 5 char/s | 1200 Hz | frequency-shifted |
+
+The transmit font is **fldigi's glyph set**, dot for dot, so a station reading
+you on fldigi sees the letters it would have sent itself. **HELL80** sends seven
+dots a column, not fourteen — each is shown twice — which is how the mode is
+defined and what MultiPSK sends.
 
 **FELD** (classic Feld Hell) is what essentially all on-air activity uses; the
 others are worth knowing about but you will rarely meet them. **SLOW** trades
@@ -7477,6 +7723,72 @@ The `cand` column is the useful one on an undecoded burst. Candidate frames mean
 the right modulation and a frame format this build does not know; no candidates
 at all means a modulation this chain does not handle, which is what LoRa's chirps
 look like.
+
+### 5.8 Radiosondes (400–406 MHz)
+
+The **RADIOSONDES** chip in the ISM window's header opens a window of its own
+for the weather balloons launched twice a day from meteorological stations. Each
+carries a radiosonde that sends its GPS position, and often the air temperature,
+humidity and pressure, on a channel between 400 and 406 MHz. Fourteen kinds are
+decoded: Vaisala **RS41**, Graw **DFM**-06/09/17, Meteomodem **M10** and **M20**,
+InterMet **iMet-4** and **iMet-54**, Meteo-Radiy **MRZ-N1**, Lockheed Martin
+**LMS6-400** and **LMS6-1680** (Mk2a), Meteosis **MTS01**, Meisei **RS-11G** and
+**iMS-100**, Meteolabor **C34/C50**, **Weathex** WxR-301D, and the **CF-06-AH /
+HT03G**. Frames protected by Reed–Solomon (RS41, LMS6-400) are repaired where they
+can be.
+
+Like the weather-satellite decoder it is not a radio mode: it runs off its own
+downconversion of the sample window and the radio keeps its mode, so it needs a
+wideband source (a receiver that sends I/Q) and is off for a rig that only hands
+over audio. **DECODER OFF / DECODING** switches it; **TUNE** switches it on and
+brings the dial to the sonde channel (403.000 MHz at first; change it in the
+*Channel* box, 400–406.1 MHz), so the channel lies inside the sample window. A
+mode that parks the receiver on its own channel (ADS-B, AIS, VDL2, HFDL, APRS) is
+left for NFM, which is what a sonde sounds like. With the decoder on one channel,
+tuning the dial onto a sonde by hand moves the channel with it.
+
+Each sonde heard is drawn on the map with the track it has flown — a ring while
+it climbs, a triangle once it falls under its parachute, a cross when it has been
+silent for a minute (on the ground, or out of range: the cross is where it was
+last heard). A table under the map gives its serial, altitude, climb rate, speed,
+channel, battery, air temperature, humidity and pressure (when the model sends
+them) and when it was last heard. An RS41 gives temperature and humidity only
+after it has sent its calibration table, up to a minute after it is first heard;
+an iMet-4 gives all three at once. Hover a mark for the position and the
+distance from your station.
+
+Click a sonde (on the map or in the table) for its **card**, pinned beside it on
+the map: everything known of it, the distance and bearing from your station, and
+links to its page on SondeHub and radiosondy.info. **Detach** makes the card a
+window of its own; Esc or **Close** closes it. Its frequency is drawn large:
+clicking it sets the decoder on that one channel (the scan off) and tunes the
+radio there, and the line beside it says whether this radio is decoding it.
+
+*Export flight* under the table saves the selected sonde's flight (the newest if
+none is selected) as a **KML** track for Google Earth or a **CSV** table for a
+spreadsheet, with the air temperature, humidity and pressure heard at each point
+(empty when the sonde sent none).
+
+The *Scan* box looks across the whole sample window for sonde carriers instead of
+listening on one channel, and decodes up to four sondes at once, one lane per
+carrier (a lane is dropped two minutes after its carrier goes; what it heard stays
+listed). While nothing is heard the scan also walks the window across the band,
+resting ten seconds on each stretch, so a receiver narrower than the band (a
+2.4 MS/s one sees about 2.4 MHz of its 5.85 MHz) still finds the sondes. The type
+picker beside it lists and draws one kind only; choosing a type starts the scan.
+
+The *Online (SondeHub)* box, **off until you tick it**, also shows the sondes
+other stations have heard within 400 km of you (hollow blue diamonds), and for
+the selected one the flight SondeHub holds. It only reads SondeHub's public API,
+sending your locator rounded to 0.1° (about 11 km) and the radius, or the
+sonde's serial for a flight; nothing is uploaded. It needs the locator set in
+the digital-mode setup. On a remote or web client the station asks SondeHub for
+you (a browser cannot reach it itself), at most once a minute for each place and
+twelve times a minute in all, and keeps the answer in memory only. See
+[PRIVACY.md](../PRIVACY.md).
+
+The decoder's settings are kept in `sonde.json`; the SondeHub box is not saved
+and starts off each time.
 
 ---
 
@@ -15940,6 +16252,8 @@ and not the station's.
 | `adsb.json` | JSON | ADS-B decoder ([§3.13](#313-ads-b-aircraft-on-1090-mhz)): the two timeouts, how many history dots to keep, how far ahead the speed vectors reach, and the ceiling on the aircraft table. Restored at startup, and — like `ism.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `vdl2.json` | JSON | VDL2 decoder ([§3.15](#315-vdl2-what-the-aircraft-are-saying)): which of the fourteen channels to listen on, the burst threshold in dB, how much log and how many stations to keep, and how long a silent station stays on the list. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `ais.json` | JSON | AIS decoder ([§3.16](#316-ais-ships-on-162-mhz)): which of the two channels to listen on, the slot threshold in dB, the two timeouts, how many minutes of trail to keep, how far ahead the vectors reach, and the ceiling on the vessel table. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
+| `wxsat.json` | JSON | Weather-satellite decoder ([§2.16.2](#2162-weather-satellites-noaa-apt-and-meteor-lrpt)): whether it runs, which signal (APT or LRPT) and which channel. Restored at startup; a receiver that only hands over audio forces it off without disturbing what you picked. |
+| `sonde.json` | JSON | Radiosonde decoder ([§5.8](#58-radiosondes-400406-mhz)): whether it runs, the channel it listens on, and whether it scans the window instead. Restored at startup; a receiver that only hands over audio forces it off without disturbing what you picked. |
 | `ism.json` | JSON | ISM decoder: whether it runs, which device families it listens for, the burst threshold in dB, and whether the rtl_433 decoders are on, which band they watch and how wide a window they get. Restored at startup, and — like `skimmer.json` — a narrowband (audio-mode) radio forces it off without disturbing what you picked. |
 | `rtl433_flex.conf` | text | Your own ISM decoders, in rtl_433's "flex" syntax ([§5.5](#55-adding-your-own-decoders-flex-specs)). Written with a commented example the first time the ISM decoder runs, and never rewritten afterwards — like `bandplan.json`, it is yours to edit. A specification that does not pass its check is listed in the ISM window and skipped; the rest still load. **RELOAD DECODERS** in the ISM window applies an edit without a restart. |
 | `input.json` | JSON | Control inputs: keyboard bindings, panadapter mouse behaviour, mouse-button bindings, and the MIDI controller mapping. Belongs to the machine running the user interface, not the engine. |

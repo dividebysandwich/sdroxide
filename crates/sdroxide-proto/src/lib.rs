@@ -1660,7 +1660,42 @@ use sdroxide_types::{
 /// after `js8_groups`. `Js8Status` gains `auto_pending`
 /// (`Vec<Js8AutoPending>`) on its tail. Both ride `DigiStatus`, so a v195 peer
 /// misreads every digital status.
-pub const PROTO_VERSION: u16 = 196;
+///
+/// v197: playing a recording back into the decoders. `Command` gains
+/// `Playback(PlaybackCommand)` and `ListRecordings`, both last; `ServerMsg`
+/// gains `Recordings(RecordingListing)` last; and `RadioState` gains
+/// `playback: Option<PlaybackStatus>` at its tail, which changes the layout of
+/// every state frame.
+///
+/// v198: the weather-satellite decoder (NOAA APT and Meteor LRPT).
+/// `Command` gains `SetWxsatConfig(WxsatSettings)` last; `ServerMsg` gains
+/// `WxsatStatus(Box<WxsatStatus>)` last, carrying the picture lines (APT) and
+/// rows (LRPT) new since the previous one; and `RadioState` gains
+/// `wxsat: WxsatSettings` at its tail, which changes the layout of every state
+/// frame.
+///
+/// v199: the radiosonde decoder. `Command` gains `SetSondeConfig(SondeSettings)`
+/// last; `ServerMsg` gains `SondeStatus(Box<SondeStatus>)` last, carrying the
+/// level and the sondes heard with their tracks; and `RadioState` gains
+/// `sonde: SondeSettings` at its tail, which changes the layout of every state
+/// frame.
+///
+/// v200: MT63. `Mode::Mt63` appended, and `DigiConfig` gains `mt63_mode` at its
+/// tail, which changes the layout of every digital status and config.
+///
+/// v201: MFSK. `Mode::Mfsk` appended, and `DigiConfig` gains `mfsk_mode` and
+/// `mfsk_reverse` at its tail.
+///
+/// v202: DominoEX. `Mode::DominoEx` appended, and `DigiConfig` gains
+/// `domino_mode` and `domino_reverse` at its tail.
+///
+/// v203: PSK's families. `DigiConfig` gains `psk_speed`, `psk_modulation` and
+/// `psk_coded` at its tail: PSK31's six speeds, BPSK or 8PSK, and fldigi's
+/// coded single- and multi-carrier families.
+///
+/// v204: Contestia. `Mode::Contestia` appended; it shares Olivia's tones and
+/// bandwidth fields, so `DigiConfig` is unchanged.
+pub const PROTO_VERSION: u16 = 204;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -2149,6 +2184,27 @@ pub enum ServerMsg {
     ///
     /// Appended last, for the usual reason.
     WavelogProbe(Box<sdroxide_types::WavelogProbe>),
+
+    /// `RadioEvent::Recordings`: the station's recordings directory, answering
+    /// a `Command::ListRecordings`. Sent once per question — the files are on
+    /// the station, so this is the only way a browser can see them.
+    ///
+    /// Appended last, for the usual reason.
+    Recordings(sdroxide_types::RecordingListing),
+
+    /// `RadioEvent::WxsatStatus`: the weather-satellite decoder's state and the
+    /// picture lines (APT) or rows (LRPT) new since the previous message; the
+    /// client builds the image.
+    ///
+    /// Appended last, for the usual reason.
+    WxsatStatus(Box<sdroxide_types::WxsatStatus>),
+
+    /// `RadioEvent::SondeStatus`: the radiosonde decoder's level and the sondes
+    /// it has heard, with their tracks. A whole snapshot each time, kept by the
+    /// station and replayed to a client that attaches late.
+    ///
+    /// Appended last, for the usual reason.
+    SondeStatus(Box<sdroxide_types::SondeStatus>),
 }
 
 /// One radio in a station's roster, as a client sees it.
@@ -2224,6 +2280,135 @@ mod tests {
         let m = ServerMsg::Profiles(vec!["Contest".into(), "DX".into()]);
         let back: ServerMsg = decode(&encode(&m).unwrap()).unwrap();
         assert_eq!(back, m);
+
+        // Playback: every control, the listing question and its answer, and a
+        // state carrying a playback at its tail. All appended, so a
+        // discriminant or field-order slip shows here.
+        for c in [
+            sdroxide_types::PlaybackCommand::Open { name: "pass.mp3".into() },
+            sdroxide_types::PlaybackCommand::Pause(true),
+            sdroxide_types::PlaybackCommand::Seek(12.5),
+            sdroxide_types::PlaybackCommand::Loop(true),
+            sdroxide_types::PlaybackCommand::Stop,
+            sdroxide_types::PlaybackCommand::Delete { name: "old.mp3".into() },
+        ] {
+            let cmd = Command::Playback(c);
+            assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+        }
+        let ask_list = Command::ListRecordings;
+        assert_eq!(decode::<Command>(&encode(&ask_list).unwrap()).unwrap(), ask_list);
+        let listing = ServerMsg::Recordings(sdroxide_types::RecordingListing {
+            dir: "/home/op/Music/sdroxide".into(),
+            files: vec![sdroxide_types::RecordingFile {
+                name: "sdroxide_2026-10-06_10-00-05Z_14.230000MHz_SSTV.mp3".into(),
+                bytes: 1_234_567,
+                modified_unix: 1_791_280_900,
+                iq: false,
+            }],
+            error: None,
+        });
+        assert_eq!(decode::<ServerMsg>(&encode(&listing).unwrap()).unwrap(), listing);
+        let mut state = RadioState::default();
+        state.playback = Some(sdroxide_types::PlaybackStatus {
+            name: "pass.mp3".into(),
+            position_s: 3.25,
+            duration_s: Some(120.0),
+            paused: false,
+            looping: true,
+            ended: false,
+            rate_hz: 48_000,
+            channels: 2,
+            stamp: sdroxide_types::playback::parse_recording_name(
+                "sdroxide_2026-10-06_10-00-05Z_14.230000MHz_SSTV.mp3",
+            ),
+            fault: None,
+        });
+        let frame = ServerMsg::State(state);
+        assert_eq!(decode::<ServerMsg>(&encode(&frame).unwrap()).unwrap(), frame);
+
+        // The weather-satellite decoder: its settings both ways (the command,
+        // and the state's tail), and a status carrying APT lines and LRPT rows.
+        let wx = sdroxide_types::WxsatSettings {
+            enabled: true,
+            frequency_hz: 137_900_000.0,
+            kind: sdroxide_types::WxsatKind::Lrpt,
+        };
+        let cmd = Command::SetWxsatConfig(wx);
+        assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+        let state = RadioState { wxsat: wx, ..Default::default() };
+        let frame = ServerMsg::State(state);
+        assert_eq!(decode::<ServerMsg>(&encode(&frame).unwrap()).unwrap(), frame);
+        let st = ServerMsg::WxsatStatus(Box::new(sdroxide_types::WxsatStatus {
+            running: true,
+            level_dbfs: -31.5,
+            locked: true,
+            quality: 0.8,
+            pass: 3,
+            total_lines: 5,
+            first_line: 4,
+            new_lines: vec![vec![9; sdroxide_types::WXSAT_LINE_PIXELS]],
+            kind: sdroxide_types::WxsatKind::Lrpt,
+            frames_ok: 41,
+            carrier_hz: -812.5,
+            rows: vec![sdroxide_types::WxsatRow {
+                apid: 65,
+                row: 7,
+                lines: vec![
+                    3;
+                    sdroxide_types::WXSAT_LRPT_WIDTH * sdroxide_types::WXSAT_LRPT_ROW_LINES
+                ],
+            }],
+        }));
+        assert_eq!(decode::<ServerMsg>(&encode(&st).unwrap()).unwrap(), st);
+
+        // The radiosonde decoder: its settings both ways (set away from the
+        // default, so a field that decoded into its default fails here), and a
+        // status carrying a sonde with its track.
+        let sonde = sdroxide_types::SondeSettings {
+            enabled: true,
+            frequency_hz: 404_500_000.0,
+            scan: true,
+        };
+        let cmd = Command::SetSondeConfig(sonde);
+        assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+        let state = RadioState { sonde, ..Default::default() };
+        let frame = ServerMsg::State(state);
+        assert_eq!(decode::<ServerMsg>(&encode(&frame).unwrap()).unwrap(), frame);
+        assert_ne!(sonde, sdroxide_types::SondeSettings::default());
+        let st = ServerMsg::SondeStatus(Box::new(sdroxide_types::SondeStatus {
+            running: true,
+            level_dbfs: -40.0,
+            frames: 3,
+            sondes: vec![sdroxide_types::SondeTrack {
+                model: "RS41".into(),
+                serial: "N1234567".into(),
+                freq_hz: 403.0e6,
+                frame: 77,
+                lat: Some(48.8),
+                lon: Some(2.3),
+                alt_m: Some(1234.5),
+                speed_ms: Some(5.0),
+                course_deg: Some(90.0),
+                climb_ms: Some(5.2),
+                num_sv: Some(9),
+                battery_v: Some(2.7),
+                temp_c: Some(-12.5),
+                humidity_pct: Some(61.0),
+                pressure_hpa: Some(850.0),
+                last_unix: 1,
+                frames: 3,
+                track: vec![sdroxide_types::SondePoint {
+                    lat: 48.8,
+                    lon: 2.3,
+                    alt_m: 1234.5,
+                    unix: 1,
+                    temp_c: Some(-12.5),
+                    humidity_pct: None,
+                    pressure_hpa: Some(850.0),
+                }],
+            }],
+        }));
+        assert_eq!(decode::<ServerMsg>(&encode(&st).unwrap()).unwrap(), st);
 
         // The picture upload: both commands, the answer, and the settings
         // riding the station bundle's tail.
@@ -2961,6 +3146,49 @@ mod tests {
             assert_eq!(s.config.fst4_period, Fst4Period::P300);
             assert_eq!(s.config.q65_mode, Q65Mode::D120);
             assert_eq!(s.config.fsk441_period, Fsk441Period::P15);
+        }
+    }
+
+    /// The fldigi-family keyboard modes' settings and the modes themselves,
+    /// set away from their defaults: a field appended in the wrong place, or a
+    /// `Mode` discriminant that moved, decodes into the wrong setting rather
+    /// than failing.
+    #[test]
+    fn roundtrip_fldigi_keyboard_modes() {
+        use sdroxide_types::{
+            DigiConfig, DominoMode, MfskMode, Mode, Mt63Mode, PskCoded, PskModulation, PskSpeed,
+        };
+
+        let cfg = DigiConfig {
+            mt63_mode: Mt63Mode::Mt6500S,
+            mfsk_mode: MfskMode::Mfsk64L,
+            mfsk_reverse: true,
+            domino_mode: DominoMode::Dom88,
+            domino_reverse: true,
+            psk_speed: PskSpeed::Bps250,
+            psk_modulation: PskModulation::Psk8,
+            psk_coded: PskCoded::Psk1000Rc2,
+            ..DigiConfig::default()
+        };
+        let m = ClientMsg::Command(Command::SetDigiConfig(cfg.clone()));
+        assert_eq!(decode::<ClientMsg>(&encode(&m).unwrap()).unwrap(), m);
+
+        for mode in [Mode::Mt63, Mode::Mfsk, Mode::DominoEx, Mode::Psk, Mode::Contestia] {
+            let mut status = DigiStatus::idle(cfg.clone());
+            status.mode = mode;
+            let m = ServerMsg::Ft8Status(status);
+            let back = decode::<ServerMsg>(&encode(&m).unwrap()).unwrap();
+            assert_eq!(back, m, "{mode:?}");
+            let ServerMsg::Ft8Status(s) = back else { panic!("not a status") };
+            assert_eq!(s.mode, mode);
+            assert_eq!(s.config.mt63_mode, Mt63Mode::Mt6500S);
+            assert_eq!(s.config.mfsk_mode, MfskMode::Mfsk64L);
+            assert!(s.config.mfsk_reverse);
+            assert_eq!(s.config.domino_mode, DominoMode::Dom88);
+            assert!(s.config.domino_reverse);
+            assert_eq!(s.config.psk_speed, PskSpeed::Bps250);
+            assert_eq!(s.config.psk_modulation, PskModulation::Psk8);
+            assert_eq!(s.config.psk_coded, PskCoded::Psk1000Rc2);
         }
     }
 

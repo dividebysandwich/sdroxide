@@ -46,6 +46,7 @@ mod netcfg;
 mod pi4;
 mod pictures;
 mod picupload;
+pub mod playback;
 mod probe;
 mod profile;
 mod prop_store;
@@ -65,6 +66,9 @@ mod satcfg;
 mod satlock;
 mod scanner;
 mod skimmer;
+mod sonde;
+pub mod sonde_export;
+pub mod sonde_online;
 mod spectrum;
 mod speech;
 mod spot;
@@ -84,6 +88,7 @@ mod wefax;
 mod winlink;
 mod wsjtx;
 mod wspr;
+mod wxsat;
 
 pub use access::{AUTH_BUSY, AUTH_REFUSED, AuthPhase, RemoteAccess, RemoteServer, is_auth_busy};
 pub use adsb::{
@@ -137,17 +142,17 @@ pub use contacts::FsqContact;
 pub use controller::{AudioDevices, PeerRadio, RadioController, RadioEvent};
 pub use digi::{
     ACARS_MESSAGE_MAX, AcarsMessage, AcarsStatus, CONTEST_SERIAL_MAX, ClockHealth, ContestMode,
-    CwMacro, CwStatus, Decode, DecodeSort, DigiConfig, DigiStatus, DxpedMode, FOX_MAX_SLOTS,
-    FOX_ZONE_MAX_HZ, FoxCaller, FsqHeard, FsqMsg, Ft8Depth, HOUND_ZONE_MAX_HZ, HellVariant,
-    NAVTEX_MESSAGE_MAX, NAVTEX_TONE_HZ, NavtexMessage, NavtexStatus, PACKET_HEARD_MAX,
-    PACKET_TERM_LINE_MAX, PACKET_TERM_MAX, PacketBaud, PacketHeard, PacketLink, PacketLinkOwner,
-    PacketStatus, PacketTermKind, PacketTermLine, QsoLive, QsoRecord, QsoStep, QueuedCall,
-    RTTY_CENTER_HZ, RadeStatus, SstvStyle, TX_AUDIO_LEVEL_MIN, TX_AUDIO_LEVEL_MIN_DB, ThorMode,
-    TranscriptLine, WsprRadio, adif_band, adif_records, adif_to_qso_log,
-    adif_to_qso_log_counting_swl, clock_health, cq_is_for_us, digi_decode_to_adif_record,
-    digi_decodes_to_adif, digi_decodes_to_csv, eu_vhf_rs, fmt_report, next_contest_serial,
-    qso_log_to_adif, qso_log_to_text, qso_to_adif_record, tx_level_db, tx_level_from_db,
-    utc_ymd_hms, worked_before, ymd_hms_to_unix,
+    CwMacro, CwStatus, Decode, DecodeSort, DigiConfig, DigiStatus, DominoMode, DxpedMode,
+    FOX_MAX_SLOTS, FOX_ZONE_MAX_HZ, FoxCaller, FsqHeard, FsqMsg, Ft8Depth, HOUND_ZONE_MAX_HZ,
+    HellVariant, MfskMode, Mt63Mode, NAVTEX_MESSAGE_MAX, NAVTEX_TONE_HZ, NavtexMessage,
+    NavtexStatus, PACKET_HEARD_MAX, PACKET_TERM_LINE_MAX, PACKET_TERM_MAX, PacketBaud, PacketHeard,
+    PacketLink, PacketLinkOwner, PacketStatus, PacketTermKind, PacketTermLine, PskCoded, PskFamily,
+    PskModulation, PskSpeed, QsoLive, QsoRecord, QsoStep, QueuedCall, RTTY_CENTER_HZ, RadeStatus,
+    SstvStyle, TX_AUDIO_LEVEL_MIN, TX_AUDIO_LEVEL_MIN_DB, ThorMode, TranscriptLine, WsprRadio,
+    adif_band, adif_records, adif_to_qso_log, adif_to_qso_log_counting_swl, clock_health,
+    cq_is_for_us, digi_decode_to_adif_record, digi_decodes_to_adif, digi_decodes_to_csv, eu_vhf_rs,
+    fmt_report, next_contest_serial, qso_log_to_adif, qso_log_to_text, qso_to_adif_record,
+    tx_level_db, tx_level_from_db, utc_ymd_hms, worked_before, ymd_hms_to_unix,
 };
 pub use drm::{
     DrmChannel, DrmCodec, DrmConstellation, DrmRobustness, DrmService, DrmStatus, DrmSync, DrmTime,
@@ -215,6 +220,9 @@ pub use picupload::{
     FtpSecurity, PictureUploadConfig, PictureUploadStatus, TlsVerify, UploadFormat, UploadNaming,
     format_fingerprint, normalize_fingerprint,
 };
+pub use playback::{
+    PlaybackCommand, PlaybackStatus, RecordingFile, RecordingListing, RecordingStamp,
+};
 pub use probe::{DeviceProbe, ProbeAnswer, ProbeTest, ReportKind, TestKind};
 pub use profile::{ModeProfile, ModeProfiles};
 pub use prop_store::{PropSources, PropStore};
@@ -281,6 +289,10 @@ pub use scanner::{SCAN_STEPS_HZ, ScanKind, ScanResume, ScanState, ScannerConfig}
 pub use skimmer::{
     CW_SLOT_CHOICES, CW_SLOTS_DEFAULT, CwEngine, SkimmerKind, SkimmerSettings, SkimmerSpot,
 };
+pub use sonde::{
+    SONDE_BAND_HZ, SONDE_DEFAULT_HZ, SONDE_MAX_TRACKS, SONDE_TRACK_DEPTH, SondePoint,
+    SondeSettings, SondeStatus, SondeTrack, window_reaches_band as sonde_window_reaches_band,
+};
 pub use spectrum::{
     DEFAULT_DISPLAY_BINS, DEFAULT_ROWS_PER_SEC, MAX_DISPLAY_BINS, MAX_ROWS_PER_SEC, SpectrumConfig,
     SpectrumFrame,
@@ -340,4 +352,10 @@ pub use wspr::{
     POWERS_W as WSPR_POWERS_W, SLOT_S as WSPR_SLOT_S, TX_OFFSET_S as WSPR_TX_OFFSET_S,
     WINDOW_HI_HZ as WSPR_WINDOW_HI_HZ, WINDOW_LO_HZ as WSPR_WINDOW_LO_HZ, WsprSpot, WsprStatus,
     dbm_to_mw, grid4 as wspr_grid4, power_dbm_for_watts, power_label, round_power_dbm,
+};
+pub use wxsat::{
+    WXSAT_BAND_HZ, WXSAT_DEFAULT_HZ, WXSAT_LINE_PIXELS, WXSAT_LRPT_DEFAULT_HZ, WXSAT_LRPT_MAX_ROWS,
+    WXSAT_LRPT_ROW_LINES, WXSAT_LRPT_WIDTH, WXSAT_MAX_NEW_LINES, WXSAT_MAX_NEW_ROWS,
+    WXSAT_PICTURE_MAX_LINES, WxsatKind, WxsatPicture, WxsatRow, WxsatSettings, WxsatStatus,
+    window_covers as wxsat_window_covers,
 };

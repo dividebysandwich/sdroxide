@@ -395,6 +395,35 @@ pub enum Mode {
     /// [`crate::DigiConfig::data2g_bw`]. Appended for the same reason as
     /// [`Mode::Hell`].
     Data2g,
+    /// MT63 — the 64-carrier Walsh-spread OFDM keyboard mode, wide and slow but
+    /// very robust: a burst is interleaved over many characters and every
+    /// character is spread over all 64 carriers. USB underneath.
+    ///
+    /// The bandwidth and interleave are [`crate::DigiConfig::mt63_mode`].
+    /// Appended for the same reason as [`Mode::Hell`].
+    Mt63,
+    /// MFSK — fldigi's IZ8BLY multi-tone family (MFSK4/8/11/16/22/31/32/64/128
+    /// and the two long-interleave variants), a keyboard mode. USB underneath.
+    ///
+    /// The variant is [`crate::DigiConfig::mfsk_mode`], because they are one
+    /// modem at different symbol rates rather than eleven decoders. Appended
+    /// for the same reason as [`Mode::Hell`].
+    Mfsk,
+    /// DominoEX — incremental frequency keying (IFK+) over 18 tones with no
+    /// forward error correction: the data is the step between successive
+    /// tones, one to three nibbles of its own alphabet per character. USB
+    /// underneath. The variant is [`crate::DigiConfig::domino_mode`].
+    ///
+    /// Appended for the same reason as [`Mode::Hell`].
+    DominoEx,
+    /// Contestia — Olivia's engine with six-bit characters: a 32-symbol block,
+    /// its own scrambler and character map, so about twice Olivia's text rate
+    /// for a little less robustness. USB underneath. The tones and bandwidth are
+    /// Olivia's fields ([`crate::DigiConfig::olivia_tones`] and
+    /// [`crate::DigiConfig::olivia_bw_hz`]).
+    ///
+    /// Appended for the same reason as [`Mode::Hell`].
+    Contestia,
 }
 
 /// The bands on which a mode that keeps phone practice rides the lower
@@ -415,7 +444,7 @@ const PHONE_LSB_BANDS: [(f64, f64); 3] =
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 52] = [
+    pub const ALL: [Mode; 56] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -455,6 +484,10 @@ impl Mode {
         Mode::Acars,
         Mode::Olivia,
         Mode::Thor,
+        Mode::Contestia,
+        Mode::DominoEx,
+        Mode::Mfsk,
+        Mode::Mt63,
         Mode::Fsq,
         Mode::AtChat,
         Mode::Hell,
@@ -475,7 +508,7 @@ impl Mode {
     /// packet, RF Paint). All are USB underneath except RIFP, VHF packet and
     /// VHF SSTV, which frequency-modulate the carrier, and ACARS, which is
     /// received in AM.
-    pub const DIGITAL: [Mode; 34] = [
+    pub const DIGITAL: [Mode; 38] = [
         Mode::Ft8,
         Mode::Ft4,
         Mode::Ft2,
@@ -494,6 +527,10 @@ impl Mode {
         Mode::RttyFm,
         Mode::Olivia,
         Mode::Thor,
+        Mode::Contestia,
+        Mode::DominoEx,
+        Mode::Mfsk,
+        Mode::Mt63,
         Mode::Fsq,
         Mode::AtChat,
         Mode::Hell,
@@ -531,6 +568,10 @@ impl Mode {
                 | Mode::Rifp
                 | Mode::Olivia
                 | Mode::Thor
+                | Mode::Contestia
+                | Mode::DominoEx
+                | Mode::Mfsk
+                | Mode::Mt63
                 | Mode::Fsq
                 | Mode::AtChat
                 | Mode::Hell
@@ -710,7 +751,16 @@ impl Mode {
     pub fn is_text_modem(self) -> bool {
         matches!(
             self,
-            Mode::Psk | Mode::Rtty | Mode::RttyFm | Mode::Olivia | Mode::Thor | Mode::Fsq
+            Mode::Psk
+                | Mode::Rtty
+                | Mode::RttyFm
+                | Mode::Olivia
+                | Mode::Thor
+                | Mode::Contestia
+                | Mode::DominoEx
+                | Mode::Mfsk
+                | Mode::Fsq
+                | Mode::Mt63
         )
     }
 
@@ -985,6 +1035,10 @@ impl Mode {
             Mode::SstvFm => "SSTV-FM",
             Mode::Olivia => "OLIVIA",
             Mode::Thor => "THOR",
+            Mode::Contestia => "CONTESTIA",
+            Mode::DominoEx => "DOMINOEX",
+            Mode::Mfsk => "MFSK",
+            Mode::Mt63 => "MT63",
             Mode::Fsq => "FSQ",
             Mode::Hell => "HELL",
             Mode::RfPaint => "RFPAINT",
@@ -1064,6 +1118,10 @@ impl Mode {
                 | Mode::Rtty
                 | Mode::Olivia
                 | Mode::Thor
+                | Mode::Contestia
+                | Mode::DominoEx
+                | Mode::Mfsk
+                | Mode::Mt63
                 | Mode::Fsq
                 | Mode::Hell
                 | Mode::RfPaint
@@ -1166,6 +1224,10 @@ impl Mode {
             | Mode::Sstv
             | Mode::Olivia
             | Mode::Thor
+            | Mode::Contestia
+            | Mode::DominoEx
+            | Mode::Mfsk
+            | Mode::Mt63
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
@@ -1408,6 +1470,10 @@ impl Mode {
             | Mode::Navtex
             | Mode::Olivia
             | Mode::Thor
+            | Mode::Contestia
+            | Mode::DominoEx
+            | Mode::Mfsk
+            | Mode::Mt63
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
@@ -1668,6 +1734,10 @@ impl Mode {
             | Mode::Sstv
             | Mode::Olivia
             | Mode::Thor
+            | Mode::Contestia
+            | Mode::DominoEx
+            | Mode::Mfsk
+            | Mode::Mt63
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
@@ -2313,6 +2383,10 @@ mod tests {
             (Mode::Jtty, 49),
             (Mode::Mercury, 50),
             (Mode::Data2g, 51),
+            (Mode::Mt63, 52),
+            (Mode::Mfsk, 53),
+            (Mode::DominoEx, 54),
+            (Mode::Contestia, 55),
         ];
         for (mode, index) in pinned {
             assert_eq!(mode as u8, index, "{} moved", mode.label());
@@ -2359,7 +2433,7 @@ mod tests {
         // dropped and nothing listed twice.
         // The last variant *by discriminant*, which is the one appended most
         // recently — not the one that reads last in the picker.
-        let last = Mode::Data2g as u8;
+        let last = Mode::Contestia as u8;
         for i in 0..=last {
             let present = Mode::ALL.iter().filter(|m| **m as u8 == i).count();
             assert_eq!(present, 1, "discriminant {i} appears {present} times in Mode::ALL");

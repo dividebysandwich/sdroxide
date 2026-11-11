@@ -758,17 +758,24 @@ pub fn cookie_fallback_stations() -> Vec<String> {
 /// `ws`/`wss` and the sign-in is `http`/`https`, and getting that backwards
 /// would send the password to a port that only ever speaks the upgrade.
 ///
-/// `dead_code` on a native build is not an oversight: the only caller is the
-/// browser path, and the tests at the bottom of this file pin both of these
-/// here rather than letting them be written blind and shipped untested.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-fn http_base(station: &str) -> Option<String> {
+/// Used by the browser's sign-in and by the radiosonde window, which asks the
+/// station for SondeHub's list (`sonde_online`); the tests at the bottom of
+/// this file pin it rather than letting it be written blind.
+pub(crate) fn http_base(station: &str) -> Option<String> {
     for (ws, http) in [("wss://", "https://"), ("ws://", "http://")] {
         if let Some(rest) = station.strip_prefix(ws) {
             return Some(format!("{http}{rest}"));
         }
     }
     None
+}
+
+/// The sign-in another connection to this station had accepted this run, if
+/// there is one. Memory only: the radiosonde relay's native client trades it
+/// for the station's cookie, as a browser does.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn session_access(station: &str) -> Option<RemoteAccess> {
+    SESSION_LOGINS.lock().unwrap_or_else(|e| e.into_inner()).get(station).cloned()
 }
 
 /// Where this station is asked to remember a sign-in.

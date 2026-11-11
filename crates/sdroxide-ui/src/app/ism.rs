@@ -105,6 +105,17 @@ impl SdroxideApp {
                 egui::DragValue::new(&mut cfg.threshold_db).range(6..=30).suffix(" dB").speed(0.2),
             )
             .on_hover_text(tr!("ism-how-far-burst-must-stand"));
+
+            // The radiosonde window, a neighbour on 400–406 MHz. Lit while its
+            // decoder runs, which it does with the window closed too.
+            ui.add_space(8.0);
+            let on = self.sonde.show || self.state.sonde.enabled;
+            if crate::chrome::chip(ui, on, tr!("ism-sonde-chip"))
+                .on_hover_text(tr!("ism-sonde-chip-hover"))
+                .clicked()
+            {
+                self.sonde.show = !self.sonde.show;
+            }
         });
 
         ui.add_space(4.0);

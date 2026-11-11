@@ -1,0 +1,19 @@
+[package]
+name = "sdroxide-wxsat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Native-only: weather-satellite image decoders (NOAA APT now, Meteor LRPT
+# next) run server-side in the engine, off a dedicated downconversion of the
+# raw I/Q like the HFDL lane. Not linked by the wasm client.
+#
+# Written from the public format descriptions (NOAA KLM User's Guide,
+# section 4.2 for APT), not from SDR++ or any other GPL decoder.
+
+[dependencies]
+sdroxide-types.workspace = true
+sdroxide-dsp.workspace = true
+crossbeam-channel.workspace = true
+tracing.workspace = true
+rustfft.workspace = true

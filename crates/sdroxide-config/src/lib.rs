@@ -1197,6 +1197,15 @@ pub fn solar_cache_dir() -> Result<PathBuf, ConfigError> {
 /// directory (`<Music>/sdroxide`), or the config directory
 /// (`~/.config/sdroxide/recordings`) when the platform exposes no music folder.
 pub fn recordings_dir() -> Result<PathBuf, ConfigError> {
+    let dir = recordings_dir_path()?;
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// Where [`recordings_dir`] is, without creating it — for listing the
+/// recordings, where a folder that does not exist yet simply means none have
+/// been made.
+pub fn recordings_dir_path() -> Result<PathBuf, ConfigError> {
     // An isolated configuration is isolated: `SDROXIDE_CONFIG_DIR` is how a
     // test, a second station or a throwaway session says "keep everything
     // here", and a recording written into the operator's real music folder
@@ -1204,18 +1213,16 @@ pub fn recordings_dir() -> Result<PathBuf, ConfigError> {
     // inside `config_dir` because the two answer different questions — that one
     // is where settings live, and it has an isolated form already.
     if std::env::var_os("SDROXIDE_CONFIG_DIR").is_some() {
-        let dir = config_dir()?.join("recordings");
-        fs::create_dir_all(&dir)?;
-        return Ok(dir);
+        return Ok(config_dir()?.join("recordings"));
     }
-    let dir = match directories::UserDirs::new()
-        .and_then(|u| u.audio_dir().map(std::path::Path::to_path_buf))
-    {
-        Some(music) => music.join("sdroxide"),
-        None => config_dir()?.join("recordings"),
-    };
-    fs::create_dir_all(&dir)?;
-    Ok(dir)
+    Ok(
+        match directories::UserDirs::new()
+            .and_then(|u| u.audio_dir().map(std::path::Path::to_path_buf))
+        {
+            Some(music) => music.join("sdroxide"),
+            None => config_dir()?.join("recordings"),
+        },
+    )
 }
 
 impl Settings {
@@ -1868,6 +1875,29 @@ pub fn load_ais_config() -> sdroxide_types::AisSettings {
 
 pub fn save_ais_config(cfg: &sdroxide_types::AisSettings) -> Result<(), ConfigError> {
     save_json("ais.json", cfg)
+}
+
+/// Weather-satellite decoder preferences (`wxsat.json`): on or off, which
+/// signal (APT or LRPT) and which channel. Kept apart from the live
+/// `RadioState.wxsat` for the same reason as the AIS config: a front end that
+/// hands over demodulated audio forces the live one off.
+pub fn load_wxsat_config() -> sdroxide_types::WxsatSettings {
+    load_json::<sdroxide_types::WxsatSettings>("wxsat.json").sane()
+}
+
+pub fn save_wxsat_config(cfg: &sdroxide_types::WxsatSettings) -> Result<(), ConfigError> {
+    save_json("wxsat.json", cfg)
+}
+
+/// Radiosonde decoder preferences (`sonde.json`): on or off, the channel it
+/// centres on, and whether it scans the window instead. Kept apart from the
+/// live `RadioState.sonde` like the weather-satellite config.
+pub fn load_sonde_config() -> sdroxide_types::SondeSettings {
+    load_json::<sdroxide_types::SondeSettings>("sonde.json").sane()
+}
+
+pub fn save_sonde_config(cfg: &sdroxide_types::SondeSettings) -> Result<(), ConfigError> {
+    save_json("sonde.json", cfg)
 }
 
 pub fn load_vdl2_config() -> sdroxide_types::Vdl2Settings {

@@ -30,6 +30,14 @@
 //! The internal sample rate is expected to be 8 kHz (as in fldigi); the
 //! geometry is derived from `rate` so other rates work, but only 8 kHz gives
 //! fldigi's exact power-of-two `SymbolLen` and carrier grid.
+//!
+//! **Contestia** is the same engine with `bContestia` set in `pj_mfsk.h`: six
+//! bits to a character, so a 32-symbol block and a 32-chip Walsh function; the
+//! scrambling sequence `0xEDB88320` rotated 5 bits per slot instead of 13; its
+//! own upper-case character map (`EncodeCharacter`/`DecodeCharacter`); and the
+//! tone set placed with `fc_offset = bandwidth / 2` (`contestia.cxx`), half a
+//! tone lower than Olivia's. [`OliviaTx::contestia`] and
+//! [`OliviaRx::contestia`] build it.
 
 use std::collections::VecDeque;
 
@@ -37,15 +45,21 @@ use crate::mfsk::{gray, ungray};
 
 const OUT_AMP: f32 = 0.5;
 /// Symbols per Olivia block: `1 << (BitsPerCharacter - 1)` with 7-bit chars.
+/// The largest block; Contestia's is half of it ([`CONTESTIA_BLOCK`]).
 const BLOCK: usize = 64;
+/// Symbols per Contestia block: six-bit characters.
+const CONTESTIA_BLOCK: usize = 32;
+/// Contestia's scrambling sequence (`ScramblingCodeContestia`), the CRC-32
+/// polynomial.
+const SCRAMBLE_CONTESTIA: u64 = 0xEDB8_8320;
+/// Its rotation per character slot (`nShift = bContestia ? 5 : 13`).
+const SCRAMBLE_SHIFT_CONTESTIA: usize = 5;
 /// Olivia's Walsh scrambling sequence (`MFSK_Encoder::ScramblingCodeOlivia`).
 const SCRAMBLE: u64 = 0xE257_E6D0_2915_74EC;
 /// Rotation of the scrambling sequence per character slot in the block.
 const SCRAMBLE_SHIFT: usize = 13;
 /// Spectra (time slices) per symbol, as fldigi's `SpectraPerSymbol`.
 const SLICES: usize = 2;
-/// Block phases searched: every half symbol within the 64-symbol block.
-const BLOCK_PHASES: usize = SLICES * BLOCK;
 /// Frequency search margin in FFT bins (half tone spacings) each side of the
 /// nominal carrier grid (fldigi's default `SyncMargin`).
 const SYNC_MARGIN: usize = 8;
@@ -64,11 +78,12 @@ const MAX_BPS: usize = 8;
 /// fldigi's forward FHT (`pj_fht.h::FHT`). Note the butterfly is
 /// `(a, b) -> (a + b, b - a)`, not the textbook `(a + b, a - b)`; the sign of
 /// the decoded peak depends on it.
-fn fht(data: &mut [f32; BLOCK]) {
+fn fht(data: &mut [f32]) {
+    let len = data.len();
     let mut step = 1;
-    while step < BLOCK {
+    while step < len {
         let mut p = 0;
-        while p < BLOCK {
+        while p < len {
             for q in p..p + step {
                 let (b1, b2) = (data[q], data[q + step]);
                 data[q] = b2 + b1;
@@ -80,29 +95,36 @@ fn fht(data: &mut [f32; BLOCK]) {
     }
 }
 
-/// Chip `t` of the Walsh function for 7-bit character `ch` before scrambling:
-/// `true` = negative chip. Closed form of fldigi's `IFHT` of an impulse at
-/// `ch & 63` (+1, or −1 when `ch & 64`): `(-1)^popcount(c & !t)`.
-fn walsh_chip_negative(ch: u8, t: usize) -> bool {
-    let c = (ch & 63) as usize;
-    let neg = (c & !t & (BLOCK - 1)).count_ones() & 1 == 1;
-    neg ^ (ch & 64 != 0)
+/// Chip `t` of the Walsh function for character code `ch` in a `block`-chip
+/// block, before scrambling: `true` = negative chip. Closed form of fldigi's
+/// `IFHT` of an impulse at `ch & (block-1)` (+1, or −1 when `ch & block`):
+/// `(-1)^popcount(c & !t)`.
+fn walsh_chip_negative(ch: u8, t: usize, block: usize) -> bool {
+    let c = ch as usize & (block - 1);
+    let neg = (c & !t & (block - 1)).count_ones() & 1 == 1;
+    neg ^ (ch as usize & block != 0)
 }
 
 /// `true` when the scrambler flips chip `t` of the character in slot `slot`.
-fn scramble_flip(slot: usize, t: usize) -> bool {
-    let bit = (slot * SCRAMBLE_SHIFT + t) & (BLOCK - 1);
-    (SCRAMBLE >> bit) & 1 == 1
+fn scramble_flip(slot: usize, t: usize, contestia: bool) -> bool {
+    if contestia {
+        let bit = (slot * SCRAMBLE_SHIFT_CONTESTIA + t) & (CONTESTIA_BLOCK - 1);
+        (SCRAMBLE_CONTESTIA >> bit) & 1 == 1
+    } else {
+        let bit = (slot * SCRAMBLE_SHIFT + t) & (BLOCK - 1);
+        (SCRAMBLE >> bit) & 1 == 1
+    }
 }
 
-/// `MFSK_Encoder::EncodeBlock`: `bps` characters → 64 binary symbol values
-/// (before Gray coding).
-fn encode_block(chars: &[u8], bps: usize) -> [u8; BLOCK] {
-    let mut out = [0u8; BLOCK];
+/// `MFSK_Encoder::EncodeBlock`: `bps` character codes → one block of binary
+/// symbol values (before Gray coding), 64 for Olivia and 32 for Contestia.
+fn encode_block(chars: &[u8], bps: usize, contestia: bool) -> Vec<u8> {
+    let block = if contestia { CONTESTIA_BLOCK } else { BLOCK };
+    let mut out = vec![0u8; block];
     for (slot, &ch) in chars.iter().enumerate().take(bps) {
-        let ch = ch & 127;
+        let ch = ch & (2 * block - 1) as u8;
         for (t, sym) in out.iter_mut().enumerate() {
-            if walsh_chip_negative(ch, t) ^ scramble_flip(slot, t) {
+            if walsh_chip_negative(ch, t, block) ^ scramble_flip(slot, t, contestia) {
                 *sym |= 1 << ((slot + t) % bps);
             }
         }
@@ -110,10 +132,40 @@ fn encode_block(chars: &[u8], bps: usize) -> [u8; BLOCK] {
     out
 }
 
+/// Contestia's `EncodeCharacter`: upper case only, space and CR moved to the
+/// top of the six-bit range, LF sent as NUL, printable ASCII counted from 33.
+fn contestia_encode(b: u8) -> u8 {
+    match b {
+        b'a'..=b'z' => b - b'a' + b'A' - 32,
+        b' ' => 59,
+        b'\r' => 60,
+        b'\n' => 0,
+        33..=90 => b - 32,
+        8 => 61,
+        0 => 0,
+        _ => b'?' - 32,
+    }
+}
+
+/// Contestia's `DecodeCharacter`, the inverse.
+fn contestia_decode(c: u8) -> u8 {
+    match c {
+        59 => b' ',
+        60 => b'\r',
+        61 => 8,
+        0 => 0,
+        c => c + 32,
+    }
+}
+
 /// Resolved Olivia geometry for a (tones, bandwidth) pair at a sample rate,
 /// following `MFSK_Transmitter::Preset` and `olivia.cxx`.
 #[derive(Clone, Copy)]
 struct Geom {
+    /// Contestia rather than Olivia (see the module notes).
+    contestia: bool,
+    /// Symbols per block: 64 for Olivia, 32 for Contestia.
+    block: usize,
     tones: usize,
     bps: usize,
     /// FFT / symbol window length (`SymbolLen`), = 2 symbol periods.
@@ -127,8 +179,10 @@ struct Geom {
 }
 
 impl Geom {
-    fn new(rate: f64, audio_hz: f64, tones: usize, bw: f64) -> Self {
-        let bps = (tones.clamp(2, 256) as u32).ilog2() as usize;
+    fn new(rate: f64, audio_hz: f64, tones: usize, bw: f64, contestia: bool) -> Self {
+        // Contestia's narrowest is four tones.
+        let min_tones = if contestia { 4 } else { 2 };
+        let bps = (tones.clamp(min_tones, 256) as u32).ilog2() as usize;
         let tones = 1usize << bps;
         // Bandwidth is quantised to 125·2^k Hz, 125..=2000.
         let lb = ((bw.clamp(125.0, 2000.0) / 125.0) as u32).ilog2();
@@ -140,17 +194,24 @@ impl Geom {
         // FirstCarrier = (SymbolLen/16)·multiplier + 1 — at 8 kHz that is
         // floor((f - fc_offset) / bin) + 1. Centres the tone set on `audio_hz`
         // rounded to the bin grid.
-        let fc_offset = bw * (1.0 - 0.5 / tones as f64) / 2.0;
+        // contestia.cxx puts tone 0 on the band edge instead: half a tone lower.
+        let fc_offset = if contestia { bw / 2.0 } else { bw * (1.0 - 0.5 / tones as f64) / 2.0 };
         let max_first = (n / 2).saturating_sub(2 * tones + 1).max(1);
         let first =
             (((audio_hz - fc_offset) / bin).floor() + 1.0).clamp(1.0, max_first as f64) as usize;
         let top = first + 2 * (tones - 1);
         let margin = SYNC_MARGIN.min(first).min((n / 2).saturating_sub(top + 1));
-        Geom { tones, bps, n, sps: n / 2, first, margin }
+        let block = if contestia { CONTESTIA_BLOCK } else { BLOCK };
+        Geom { contestia, block, tones, bps, n, sps: n / 2, first, margin }
     }
 
     fn offsets(&self) -> usize {
         2 * self.margin + 1
+    }
+
+    /// Block phases searched: every half symbol within the block.
+    fn phases(&self) -> usize {
+        SLICES * self.block
     }
 }
 
@@ -246,11 +307,29 @@ pub struct OliviaTx {
     cur: Vec<f32>,
     cur_pos: usize,
     cur_done: Option<usize>,
+    /// Idle blocks still to send after the last character (see [`Self::finish`]).
+    tail: usize,
+    closing: bool,
 }
+
+/// Idle blocks after the last character. The receiver prints a block only once
+/// it has integrated a few more behind it, so an over that stops on its last
+/// character loses that character's block to the decode pipeline.
+const TAIL_BLOCKS: usize = 2;
 
 impl OliviaTx {
     pub fn new(rate: f64, audio_hz: f64, tones: usize, bw: f64) -> Self {
-        let g = Geom::new(rate, audio_hz, tones, bw);
+        Self::build(rate, audio_hz, tones, bw, false)
+    }
+
+    /// A Contestia transmitter: Olivia's engine with Contestia's block,
+    /// scrambler, character map and tone placement.
+    pub fn contestia(rate: f64, audio_hz: f64, tones: usize, bw: f64) -> Self {
+        Self::build(rate, audio_hz, tones, bw, true)
+    }
+
+    fn build(rate: f64, audio_hz: f64, tones: usize, bw: f64, contestia: bool) -> Self {
+        let g = Geom::new(rate, audio_hz, tones, bw, contestia);
         OliviaTx {
             rate,
             modu: Modulator::new(&g),
@@ -261,18 +340,37 @@ impl OliviaTx {
             cur: Vec::new(),
             cur_pos: 0,
             cur_done: None,
+            tail: 0,
+            closing: false,
         }
     }
 
+    /// Close the over once the queue has gone out, with a tail of idle blocks.
+    pub fn finish(&mut self) {
+        if !self.closing {
+            self.closing = true;
+            self.tail = TAIL_BLOCKS;
+        }
+    }
+
+    /// True while a closing over is still playing its tail.
+    pub fn tail_pending(&self) -> bool {
+        self.closing && self.sent_chars > 0 && (self.tail > 0 || self.cur_pos < self.cur.len())
+    }
+
     pub fn set_params(&mut self, audio_hz: f64, tones: usize, bw: f64) {
-        self.g = Geom::new(self.rate, audio_hz, tones, bw);
+        self.g = Geom::new(self.rate, audio_hz, tones, bw, self.g.contestia);
         self.modu = Modulator::new(&self.g);
     }
 
     pub fn push_text(&mut self, text: &str) {
+        if !text.is_empty() {
+            self.closing = false;
+        }
         for ch in text.chars() {
             // fldigi sends '.' for anything outside 7-bit ASCII (8-bit escape off).
             let byte = if ch.is_ascii() { ch as u8 } else { b'.' };
+            let byte = if self.g.contestia { contestia_encode(byte) } else { byte };
             self.q.push_back((byte, Some(self.total_chars)));
             self.total_chars += 1;
         }
@@ -295,10 +393,15 @@ impl OliviaTx {
         self.cur_done = None;
         self.total_chars = 0;
         self.sent_chars = 0;
+        self.closing = false;
+        self.tail = 0;
         self.modu.reset();
     }
 
     fn build_block(&mut self) {
+        if self.closing && self.q.is_empty() {
+            self.tail = self.tail.saturating_sub(1);
+        }
         // Take up to `bps` characters; pad with NUL idle fill.
         let mut chars = [0u8; MAX_BPS];
         let mut done: Option<usize> = None;
@@ -313,7 +416,7 @@ impl OliviaTx {
         self.cur.clear();
         self.cur_pos = 0;
         self.cur_done = done;
-        for sym in encode_block(&chars[..self.g.bps], self.g.bps) {
+        for sym in encode_block(&chars[..self.g.bps], self.g.bps, self.g.contestia) {
             self.modu.send(sym, &mut self.cur);
         }
     }
@@ -370,13 +473,16 @@ struct Decoded {
 /// de-interleaved into `bps` soft Walsh decodes.
 struct SoftDecoder {
     bps: usize,
+    block: usize,
+    contestia: bool,
     ring: Vec<f32>,
     ptr: usize,
 }
 
 impl SoftDecoder {
-    fn new(bps: usize) -> Self {
-        SoftDecoder { bps, ring: vec![0.0; BLOCK * bps], ptr: 0 }
+    fn new(bps: usize, contestia: bool) -> Self {
+        let block = if contestia { CONTESTIA_BLOCK } else { BLOCK };
+        SoftDecoder { bps, block, contestia, ring: vec![0.0; block * bps], ptr: 0 }
     }
 
     fn input(&mut self, soft: &[f32; MAX_BPS]) {
@@ -387,7 +493,7 @@ impl SoftDecoder {
         }
     }
 
-    /// Decode the 64 most recent symbols as one block. Returns
+    /// Decode the most recent block of symbols. Returns
     /// (signal, noise energy, decoded) with fldigi's `Signal`/`NoiseEnergy`.
     fn process(&self) -> (f32, f32, Decoded) {
         let len = self.ring.len();
@@ -395,13 +501,14 @@ impl SoftDecoder {
         let mut noise = 0.0f32;
         let mut dec = Decoded::default();
         for slot in 0..self.bps {
-            let mut buf = [0.0f32; BLOCK];
+            let mut whole = [0.0f32; BLOCK];
+            let buf = &mut whole[..self.block];
             // `ptr` is the oldest symbol: time bit 0 of the block.
             let mut p = self.ptr;
             let mut rot = slot;
             for (t, cell) in buf.iter_mut().enumerate() {
                 let b = self.ring[p + rot];
-                *cell = if scramble_flip(slot, t) { -b } else { b };
+                *cell = if scramble_flip(slot, t, self.contestia) { -b } else { b };
                 rot += 1;
                 if rot == self.bps {
                     rot = 0;
@@ -411,7 +518,7 @@ impl SoftDecoder {
                     p -= len;
                 }
             }
-            fht(&mut buf);
+            fht(buf);
             let (mut peak, mut pos, mut sq) = (0.0f32, 0usize, 0.0f32);
             for (i, &v) in buf.iter().enumerate() {
                 sq += v * v;
@@ -420,9 +527,9 @@ impl SoftDecoder {
                     pos = i;
                 }
             }
-            let ch = pos as u8 + if peak < 0.0 { BLOCK as u8 } else { 0 };
-            dec.chars[slot] = ch;
-            let n_e = (sq - peak * peak) / (BLOCK - 1) as f32;
+            let ch = pos as u8 + if peak < 0.0 { self.block as u8 } else { 0 };
+            dec.chars[slot] = if self.contestia { contestia_decode(ch) } else { ch };
+            let n_e = (sq - peak * peak) / (self.block - 1) as f32;
             noise += n_e;
             signal += peak.abs();
         }
@@ -464,9 +571,19 @@ pub struct OliviaRx {
 
 impl OliviaRx {
     pub fn new(rate: f64, audio_hz: f64, tones: usize, bw: f64) -> Self {
-        let g = Geom::new(rate, audio_hz, tones, bw);
+        Self::build(rate, audio_hz, tones, bw, false)
+    }
+
+    /// A Contestia receiver — see [`OliviaTx::contestia`].
+    pub fn contestia(rate: f64, audio_hz: f64, tones: usize, bw: f64) -> Self {
+        Self::build(rate, audio_hz, tones, bw, true)
+    }
+
+    fn build(rate: f64, audio_hz: f64, tones: usize, bw: f64, contestia: bool) -> Self {
+        let g = Geom::new(rate, audio_hz, tones, bw, contestia);
         let n = g.n;
         let offs = g.offsets();
+        let phases = g.phases();
         let tau = std::f64::consts::TAU;
         OliviaRx {
             rate,
@@ -478,11 +595,11 @@ impl OliviaRx {
             cos: (0..n).map(|i| (tau * i as f64 / n as f64).cos() as f32).collect(),
             sin: (0..n).map(|i| (tau * i as f64 / n as f64).sin() as f32).collect(),
             energy: vec![0.0; 2 * (g.tones - 1) + 1 + 2 * g.margin],
-            decoders: (0..SLICES * offs).map(|_| SoftDecoder::new(g.bps)).collect(),
-            sync_signal: vec![LowPass3::default(); BLOCK_PHASES * offs],
-            sync_noise: vec![LowPass3::default(); BLOCK_PHASES * offs],
-            pipe: vec![Decoded::default(); BLOCK_PHASES * offs * SYNC_INTEG],
-            pipe_ptr: vec![0; BLOCK_PHASES],
+            decoders: (0..SLICES * offs).map(|_| SoftDecoder::new(g.bps, contestia)).collect(),
+            sync_signal: vec![LowPass3::default(); phases * offs],
+            sync_noise: vec![LowPass3::default(); phases * offs],
+            pipe: vec![Decoded::default(); phases * offs * SYNC_INTEG],
+            pipe_ptr: vec![0; phases],
             block_phase: 0,
             best_signal: 0.0,
             best_phase: 0,
@@ -494,7 +611,7 @@ impl OliviaRx {
     }
 
     pub fn set_params(&mut self, audio_hz: f64, tones: usize, bw: f64) {
-        *self = OliviaRx::new(self.rate, audio_hz, tones, bw);
+        *self = OliviaRx::build(self.rate, audio_hz, tones, bw, self.g.contestia);
     }
 
     pub fn magnitude(&self) -> f32 {
@@ -597,8 +714,9 @@ impl OliviaRx {
         }
 
         // Half a block after the best phase, print its oldest pipelined block.
-        let dist = (bp + BLOCK_PHASES - self.best_phase) % BLOCK_PHASES;
-        if dist == BLOCK_PHASES / 2 {
+        let phases = self.g.phases();
+        let dist = (bp + phases - self.best_phase) % phases;
+        if dist == phases / 2 {
             let cell = self.best_phase * offs + self.best_offset;
             let noise = self.sync_noise[cell].out.max(0.0).sqrt();
             self.snr = if noise > 0.0 { self.best_signal / noise } else { 0.0 };
@@ -613,7 +731,7 @@ impl OliviaRx {
             }
         }
 
-        self.block_phase = (bp + 1) % BLOCK_PHASES;
+        self.block_phase = (bp + 1) % self.g.phases();
     }
 }
 
@@ -648,7 +766,7 @@ mod tests {
     fn tones_of(text: &[u8], bps: usize) -> Vec<u8> {
         let mut chars = [0u8; MAX_BPS];
         chars[..text.len()].copy_from_slice(text);
-        encode_block(&chars[..bps], bps).iter().map(|&s| gray(u32::from(s)) as u8).collect()
+        encode_block(&chars[..bps], bps, false).iter().map(|&s| gray(u32::from(s)) as u8).collect()
     }
 
     #[test]
@@ -664,7 +782,7 @@ mod tests {
     #[test]
     fn decoder_reads_fldigi_block() {
         let run = |tones: &[u8; 64], bps: usize, shift: usize| {
-            let mut d = SoftDecoder::new(bps);
+            let mut d = SoftDecoder::new(bps, false);
             for t in 0..BLOCK {
                 let v = ungray(u32::from(tones[(t + shift) % BLOCK]));
                 let mut s = [0.0f32; MAX_BPS];
@@ -686,19 +804,27 @@ mod tests {
     fn geometry_matches_fldigi() {
         // fldigi PrintParameters at 1500 Hz: 32/1000 → SymbolLen 512, tone 0 at
         // bin 65 (1015.625 Hz), 31.25 baud.
-        let g = Geom::new(8000.0, 1500.0, 32, 1000.0);
+        let g = Geom::new(8000.0, 1500.0, 32, 1000.0, false);
         assert_eq!((g.n, g.sps, g.first, g.bps), (512, 256, 65, 5));
-        let g = Geom::new(8000.0, 1500.0, 8, 250.0);
+        let g = Geom::new(8000.0, 1500.0, 8, 250.0, false);
         assert_eq!((g.n, g.first), (512, 89));
-        let g = Geom::new(8000.0, 1500.0, 4, 250.0);
+        let g = Geom::new(8000.0, 1500.0, 4, 250.0, false);
         assert_eq!(g.n, 256);
     }
 
     fn run(tones: usize, bw: f64, msg: &str) -> String {
+        run_kind(tones, bw, msg, false)
+    }
+
+    fn run_kind(tones: usize, bw: f64, msg: &str, contestia: bool) -> String {
         let rate = 8000.0;
         let audio = 1500.0;
-        let mut tx = OliviaTx::new(rate, audio, tones, bw);
-        let blk = tx.g.sps * BLOCK;
+        let mut tx = if contestia {
+            OliviaTx::contestia(rate, audio, tones, bw)
+        } else {
+            OliviaTx::new(rate, audio, tones, bw)
+        };
+        let blk = tx.g.sps * tx.g.block;
         let mut sig = vec![0.0f32; blk];
         let mut warm = vec![0.0f32; blk * 2];
         tx.next_block(&mut warm);
@@ -716,7 +842,11 @@ mod tests {
         sig.extend_from_slice(&tail);
         // Let the decode pipeline drain.
         sig.extend(std::iter::repeat_n(0.0, blk * (SYNC_INTEG + 2)));
-        let mut rx = OliviaRx::new(rate, audio, tones, bw);
+        let mut rx = if contestia {
+            OliviaRx::contestia(rate, audio, tones, bw)
+        } else {
+            OliviaRx::new(rate, audio, tones, bw)
+        };
         let mut decoded = String::new();
         for chunk in sig.chunks(512) {
             decoded.push_str(&rx.process(chunk));
@@ -752,5 +882,75 @@ mod tests {
         let mut rx = OliviaRx::new(rate, 1500.0, 32, 1000.0);
         let got: String = sig.chunks(700).map(|c| rx.process(c)).collect();
         assert!(got.contains("MISTUNED OK"), "decoded {got:?}");
+    }
+
+    /// Contestia's block: 32 symbols, the 0xEDB88320 scrambler at five bits a
+    /// slot, and its own character map — a character survives the round trip
+    /// through the encoder and the decoder, upper-cased.
+    #[test]
+    fn contestia_character_map_round_trips() {
+        for &b in b"ABCXYZ 0189?/.\r" {
+            assert_eq!(contestia_decode(contestia_encode(b)), b, "{:?}", b as char);
+        }
+        assert_eq!(contestia_decode(contestia_encode(b'q')), b'Q');
+        let g = Geom::new(8000.0, 1500.0, 8, 250.0, true);
+        assert_eq!(g.block, 32);
+        // Tone 0 a quarter of a spacing lower than Olivia's before the bin
+        // grid rounds it: the same bin at 1500 Hz, one bin lower at 1510.
+        let o = Geom::new(8000.0, 1500.0, 8, 250.0, false);
+        assert_eq!(o.first, g.first);
+        let o = Geom::new(8000.0, 1510.0, 8, 250.0, false);
+        let g = Geom::new(8000.0, 1510.0, 8, 250.0, true);
+        assert_eq!(o.first - g.first, 1, "olivia {} contestia {}", o.first, g.first);
+    }
+
+    /// Contestia through its own receiver at the common speeds.
+    #[test]
+    fn loopback_contestia() {
+        for (tones, bw) in [(4, 250.0), (8, 250.0), (16, 500.0), (32, 1000.0), (8, 500.0)] {
+            let msg = "CQ DE AB1CD";
+            let got = run_kind(tones, bw, msg, true);
+            assert!(got.contains(msg), "{tones}/{bw:.0} decoded {got:?}");
+        }
+    }
+
+    /// fldigi's own Contestia 4/125 recording, from sdroxide-brown's corpus
+    /// (`CONTESTIA.wav`, centred near 1718 Hz).
+    ///
+    /// **The corpus is spectrally inverted**: its Olivia recordings read through
+    /// this file's (fldigi-exact) Olivia receiver only once mirrored, too. So the
+    /// audio is mirrored about the centre first; with that, the known text reads
+    /// whole — measured on the way in, `AAA TEST TEST THE EAGLE HAS LANDED 12345
+    /// SDRBROWN ZZZ`.
+    #[test]
+    #[ignore = "needs fldigi's recordings in samples/fldigi, kept in sdroxide-brown, not in this tree"]
+    fn the_contestia_corpus_sample_decodes() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples/fldigi/CONTESTIA.wav");
+        let mut reader = hound::WavReader::open(path).expect("the Contestia sample");
+        let spec = reader.spec();
+        let rate = spec.sample_rate as f64;
+        // Mirror about 1718 Hz: multiplying by a carrier at twice the centre
+        // folds f to 2·fc − f; the sum frequency lands far outside the bank.
+        let fold = std::f64::consts::TAU * 2.0 * 1718.0 / rate;
+        let audio: Vec<f32> = reader
+            .samples::<i16>()
+            .enumerate()
+            .map(|(i, s)| 2.0 * (s.expect("s") as f64 / 32_768.0 * (fold * i as f64).cos()) as f32)
+            .collect();
+        let (tones, bw) = (4, 125.0);
+        let mut best = String::new();
+        for hz in (1650..=1800).step_by(10) {
+            let mut rx = OliviaRx::contestia(rate, hz as f64, tones, bw);
+            let got: String = audio.chunks(512).map(|c| rx.process(c)).collect();
+            if got.contains("EAGLE") {
+                best = got;
+                break;
+            }
+            if got.len() > best.len() {
+                best = got;
+            }
+        }
+        eprintln!("contestia corpus: {best:?}");
+        assert!(best.contains("EAGLE"), "read {best:?}");
     }
 }

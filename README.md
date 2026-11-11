@@ -66,8 +66,9 @@ One binary, three ways to run it:
   the two sidebands are two different transmissions, one to each ear), DIGU/DIGL, a
   spectrum-only mode, **FT8/FT4/FT2**, **JS8** (all four speeds, with directed
   messaging, heartbeats and multi-frame free text), the keyboard modes
-  **PSK31**, **RTTY**,
-  **Olivia**, **THOR** and **FSQ** (with directed messaging + images),
+  **PSK31** (with fldigi's faster speeds, 8PSK and the coded BPSK63F/R/C/RC
+  families), **RTTY**,
+  **Olivia**, **Contestia**, **THOR**, **DominoEX**, **MT63**, **MFSK** and **FSQ** (with directed messaging + images),
   **WSPR** (transmit and receive, with WSPRnet reporting and optional band
   hopping), receive-only **PI4** (the "Next Generation Beacon" propagation
   mode — 4-FSK, decoded from a rate-1/2 K=32 Fano search across every beacon
@@ -363,8 +364,16 @@ PSK/RTTY; the submode is chosen on each mode's setup page:
 
 - **Olivia** — a very robust MFSK chat mode with Walsh/Hadamard coding. Pick the
   tone count (2–64) and bandwidth (125–2000 Hz); 32/1000 and 16/500 are common.
+- **Contestia** — Olivia's engine with six-bit characters: twice the text
+  rate, the same tones and bandwidths.
 - **THOR** — DominoEX-family 18-tone incremental-FSK with convolutional FEC.
   Pick a submode (THOR4 … THOR32; THOR16 is the usual default).
+- **DominoEX** — THOR's 18-tone incremental-FSK without the FEC: one to three
+  nibbles of its own alphabet per character, nine speeds (4 … 88 and MICRO).
+- **MT63** — fldigi's 64-carrier Walsh-coded OFDM mode, wide and very robust
+  (2KS, 2KL and 500S).
+- **MFSK** — fldigi's IZ8BLY family, MFSK4 to MFSK128 with the two long
+  interleaves: one tone per symbol, a K=7 code and an interleaver.
 - **FSQ** — 33-tone incremental-FSK (speeds FSQ-2/3/4.5/6) with a dedicated panel
   for the **directed (FSQCALL)** layer: a **heard list**, a persistent **contacts**
   book, directed `CALL:message` sends, ALLCALL broadcast, an automatic reply to
@@ -1683,7 +1692,7 @@ way.
 | `--freq <HZ>` | Center frequency in Hz (default: where the last session was left; `14200000` on a first run). |
 | `--rate <HZ>` | Sample rate in Hz (default: from config). |
 | `--gain <DB>` | Overall RX gain in dB (default: hardware AGC / moderate). |
-| `--mode <MODE>` | Initial mode, case-insensitive: `LSB USB CW AM SAM NFM WFM DRM ADS-B VDL2 AIS DIGU DIGL DSB ISB SPEC FT8 FT4 FT2 JS8 WSPR PI4 MSK144 JT65 JT9 FST4 Q65 FSK441 PSK RTTY RTTY-FM PACKET PACKET-HF APRS SSTV SSTV-FM RIFP WEFAX NAVTEX ACARS OLIVIA THOR FSQ ATCHAT HELL RFPAINT RADE HFDL`, and `"HD RADIO"` (the one name with a space in it, so it needs the quotes). Default: the mode the last session was left in. |
+| `--mode <MODE>` | Initial mode, case-insensitive: `LSB USB CW AM SAM NFM WFM DRM ADS-B VDL2 AIS DIGU DIGL DSB ISB SPEC FT8 FT4 FT2 JS8 WSPR PI4 MSK144 JT65 JT9 FST4 Q65 FSK441 PSK RTTY RTTY-FM PACKET PACKET-HF APRS SSTV SSTV-FM RIFP WEFAX NAVTEX ACARS OLIVIA THOR MT63 MFSK DOMINOEX CONTESTIA FSQ ATCHAT HELL RFPAINT RADE HFDL`, and `"HD RADIO"` (the one name with a space in it, so it needs the quotes). Default: the mode the last session was left in. |
 | `--antenna <NAME>` | RX antenna port, as the device names it (`LNAH`, `TX/RX`; see `--probe`). Default: the port the last session was left on. |
 | `--tx-antenna <NAME>` | TX antenna port, likewise (`BAND1`, `BAND2`). |
 | `--server` | Run as a server: HTTP web client + WebSocket streaming backend. |

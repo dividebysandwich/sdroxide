@@ -589,6 +589,24 @@ pub struct RadioState {
     /// one. Appended last: postcard numbers fields by position.
     #[serde(default)]
     pub atu: AtuState,
+    /// A recording being played back into the decoders, and where it is — or
+    /// `None` when the radio is live. Here rather than in an event of its own
+    /// because it changes what every other field means: while it is `Some`,
+    /// the dial is the one the recording was made on and nothing is being
+    /// received. Appended last: postcard numbers fields by position.
+    #[serde(default)]
+    pub playback: Option<crate::PlaybackStatus>,
+    /// The weather-satellite (NOAA APT / Meteor LRPT) decoder: whether it runs,
+    /// which signal and which channel. The picture is [`crate::WxsatStatus`],
+    /// sent separately. Appended last: postcard numbers fields by position.
+    #[serde(default)]
+    pub wxsat: crate::WxsatSettings,
+    /// The radiosonde decoder: whether it runs, which channel it listens on,
+    /// and whether it scans the window instead. Live status (level, sondes
+    /// heard) is [`crate::SondeStatus`], sent separately. Appended last:
+    /// postcard numbers fields by position.
+    #[serde(default)]
+    pub sonde: crate::SondeSettings,
 }
 
 /// Where a radio's built-in antenna tuner stands, as the radio reports it.
@@ -672,6 +690,9 @@ impl Default for RadioState {
             hd_radio_unavailable: None,
             hfdl: crate::HfdlSettings::default(),
             atu: AtuState::default(),
+            playback: None,
+            wxsat: crate::WxsatSettings::default(),
+            sonde: crate::SondeSettings::default(),
         }
     }
 }

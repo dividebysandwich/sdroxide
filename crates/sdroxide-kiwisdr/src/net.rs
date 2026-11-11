@@ -113,8 +113,39 @@ pub fn spawn(cfg: &KiwiConfig, ident: &str, center_hz: f64) -> Result<KiwiHandle
     Ok(KiwiHandle::from_parts(cons, ctrl_tx, shared, threads, info, label))
 }
 
+/// How many redirects one upgrade follows. One is what the project's reverse
+/// proxy sends (`:80` to `:8073`); a second is slack, and a loop stops there.
+const REDIRECT_HOPS: u8 = 2;
+
+/// Where a redirect's `Location` points, as `(host, port)`.
+///
+/// Only a plain `http://` or `ws://` target is followed: this client has no
+/// TLS, and a relative `Location` has nothing to say about the host. A target
+/// without a port is on 80, which is not what [`split_addr`] defaults to.
+fn redirect_target(location: &str) -> Result<(String, u16)> {
+    let l = location.trim();
+    let rest = l.strip_prefix("http://").or_else(|| l.strip_prefix("ws://")).ok_or_else(|| {
+        Error::Net(format!("redirected to {l:?}, which this client cannot follow"))
+    })?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let has_port = match authority.rfind(']') {
+        Some(close) => authority[close + 1..].starts_with(':'),
+        None => authority.contains(':'),
+    };
+    if has_port { split_addr(authority) } else { split_addr(&format!("{authority}:80")) }
+}
+
 /// Connect one socket and upgrade it, with a bounded handshake.
+///
+/// Follows a `3xx` answer to the upgrade. The project's reverse proxy
+/// (`*.proxy.kiwisdr.com`, nearly half the public receivers) answers `307` on
+/// port 80 and points at the same path on 8073; the directory lists those
+/// receivers on 80, so without this none of them opens.
 fn connect(host: &str, port: u16, path: &str) -> Result<WebSocket<TcpStream>> {
+    connect_hop(host, port, path, REDIRECT_HOPS)
+}
+
+fn connect_hop(host: &str, port: u16, path: &str, hops: u8) -> Result<WebSocket<TcpStream>> {
     let sockaddr = (host, port)
         .to_socket_addrs()
         .map_err(|e| Error::Net(format!("resolve {host}:{port}: {e}")))?
@@ -144,6 +175,16 @@ fn connect(host: &str, port: u16, path: &str) -> Result<WebSocket<TcpStream>> {
                     return Err(Error::Net("timed out during the WebSocket handshake".into()));
                 }
                 attempt = mid.handshake();
+            }
+            Err(HandshakeError::Failure(tungstenite::Error::Http(resp)))
+                if hops > 0 && resp.status().is_redirection() =>
+            {
+                let location =
+                    resp.headers().get("location").and_then(|v| v.to_str().ok()).ok_or_else(
+                        || Error::Net(format!("{} without a Location to follow", resp.status())),
+                    )?;
+                let (h, p) = redirect_target(location)?;
+                return connect_hop(&h, p, path, hops - 1);
             }
             Err(e) => {
                 let msg = e.to_string();
@@ -556,6 +597,23 @@ pub(crate) fn split_addr(address: &str) -> Result<(String, u16)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_redirect_is_followed_to_the_host_and_port_it_names() {
+        assert_eq!(
+            redirect_target("http://22848.proxy.kiwisdr.com:8073/kiwi/1/SND").unwrap(),
+            ("22848.proxy.kiwisdr.com".into(), 8073)
+        );
+        // No port means 80, not the Kiwi's own 8073.
+        assert_eq!(redirect_target("http://kiwi.local/x").unwrap(), ("kiwi.local".into(), 80));
+        assert_eq!(
+            redirect_target("ws://[2001:db8::1]:8074/x").unwrap(),
+            ("[2001:db8::1]".into(), 8074)
+        );
+        // No TLS here, and a relative target names no host.
+        assert!(redirect_target("https://kiwi.local/x").is_err());
+        assert!(redirect_target("/kiwi/1/SND").is_err());
+    }
 
     #[test]
     fn addresses_split_the_way_the_directory_writes_them() {

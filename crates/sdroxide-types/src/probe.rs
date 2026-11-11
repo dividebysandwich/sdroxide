@@ -24,8 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AirspyDevice, AirspyHfDevice, EladDevice, FobosDevice, HackRfDevice, HpsdrDevice,
     HydraSdrDevice, IcomNetConfig, LimeDevice, PlutoDevice, PublicSdrDirectory, PublicSdrNetwork,
-    RtlSdrDevice,
-    Rx888Device, SdrPlayDevice, SmartSdrDevice, SoapyDeviceInfo,
+    RtlSdrDevice, Rx888Device, SdrPlayDevice, SmartSdrDevice, SoapyDeviceInfo,
 };
 
 /// A question about the machine the radio is attached to.
@@ -270,5 +269,9 @@ pub enum ProbeAnswer {
     Fobos(Vec<FobosDevice>),
     /// The answer to [`DeviceProbe::PublicSdrCheck`]: the receiver asked about,
     /// and `Ok` with what answered or `Err` with why nothing did.
-    PublicSdrCheck { network: PublicSdrNetwork, address: String, result: Result<String, String> },
+    PublicSdrCheck {
+        network: PublicSdrNetwork,
+        address: String,
+        result: Result<String, String>,
+    },
 }

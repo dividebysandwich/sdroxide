@@ -243,6 +243,18 @@ fn build() -> Vec<SatFreqs> {
             "NOAA-19",
             vec![down("APT", "FM / APT 2400 Hz", P::at(137.100)).note("polar, ~102 min")],
         ),
+        // Meteor's digital picture: QPSK at 72 ksym/s, about 120 kHz wide.
+        // The WEATHER SATELLITES window decodes it.
+        SatFreqs::new(
+            57166,
+            "METEOR-M2 3",
+            vec![down("LRPT", "QPSK / LRPT 72k", P::at(137.900)).note("polar, ~101 min")],
+        ),
+        SatFreqs::new(
+            59051,
+            "METEOR-M2 4",
+            vec![down("LRPT", "QPSK / LRPT 72k", P::at(137.100)).note("polar, ~101 min")],
+        ),
     ]
 }
 
@@ -316,6 +328,9 @@ mod tests {
         // The three APT birds, which is what the 137 MHz antenna is for.
         assert_eq!(builtin_for(25338).unwrap().links[0].downlink, Some(Passband::at(137.620)));
         assert_eq!(builtin_for(33591).unwrap().links[0].downlink, Some(Passband::at(137.100)));
+        // And the Meteor LRPT pair the weather-satellite decoder also reads.
+        assert_eq!(builtin_for(57166).unwrap().links[0].downlink, Some(Passband::at(137.900)));
+        assert!(builtin_for(59051).unwrap().links[0].mode.contains("LRPT"));
     }
 
     /// The inversion flag drives the satellite lock's transmit mapping, so a

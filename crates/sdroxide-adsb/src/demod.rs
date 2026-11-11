@@ -85,7 +85,35 @@ const TAIL_US: f64 = MSG_US + 4.0;
 /// correlator spending 112 bit comparisons on a stretch of pure noise whose
 /// samples happen to fall in the right order, which at 2.4 million samples a
 /// second is often.
-const PULSE_OVER_NOISE: f32 = 3.0;
+///
+/// Measured against the noise's **mean** power ([`Demod::noise_floor`]), and
+/// 2.5 is where it costs nothing: on complex Gaussian noise the correlator's
+/// false candidates fall from ~98 000 a second at 2.4 Msps to under a hundred,
+/// and the worker from ~90 % of a core to under 10 % (from ~280 % to ~22 % at
+/// 8 Msps), while recall on a DF17 swept across every arrival phase is the same
+/// to the message at 2.4 Msps from 12 dB SNR and at 4 Msps from 10 dB; only at
+/// the very edge (8 dB) does it give up one or two in forty. The contrast gates
+/// below are what set the sensitivity; this one only keeps them from being
+/// asked about noise.
+const PULSE_OVER_NOISE: f32 = 2.5;
+
+/// What the lower quartile of the envelope power is, as a fraction of its mean,
+/// on receiver noise.
+///
+/// The noise a receiver hands over is complex Gaussian, so its power is
+/// exponentially distributed and its lower quartile sits at `ln(4/3)` ≈ 0.288
+/// of the mean. [`Demod::track_noise`] measures the quartile — it is what stays
+/// put under traffic — and divides by this to get the mean back.
+///
+/// Reading the quartile *as* the floor, which is what this decoder first did,
+/// put the gate at 3 × 0.288 = 0.86 of the mean noise power: below the average
+/// noise sample. Gaussian noise crosses that about 40 % of the time, so the
+/// first-chip rejection let through nearly half of every second, each of them
+/// paid for the refine and up to seven 112-bit slices, and the worker sat at
+/// 100 % of a core on an empty sky (Kevin's Pluto, fork discussion #16). The
+/// test that should have caught it used *uniform* noise, whose power has no
+/// tail to cross.
+const Q1_OF_MEAN: f32 = 0.287_682;
 
 /// How well the preamble has to match, as a normalised contrast between the
 /// four lit chips and the six dark ones — see [`Demod::contrast`].
@@ -165,7 +193,7 @@ pub struct Demod {
     psum: Vec<f64>,
     /// How many samples of `power` are carried over from last time.
     carried: usize,
-    /// Slowly-tracked noise floor in power units.
+    /// Slowly-tracked mean noise power, in power units.
     noise: f32,
     /// The floor has seen at least one block.
     ///
@@ -215,8 +243,8 @@ impl Demod {
         self.rate_hz
     }
 
-    /// The noise floor the gate is measuring against, in power units. For the
-    /// tests and the replay tool.
+    /// The mean noise power the gate is measuring against, in power units. For
+    /// the tests and the replay tool.
     pub fn noise_floor(&self) -> f32 {
         self.noise
     }
@@ -531,7 +559,8 @@ impl Demod {
         // so the sample is not synchronised to the traffic it is measuring.
         let mut sample: Vec<f32> = fresh.iter().step_by(37).copied().collect();
         sample.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let q = sample[sample.len() / 4];
+        // The quartile, scaled up to the mean it implies — see `Q1_OF_MEAN`.
+        let q = sample[sample.len() / 4] / Q1_OF_MEAN;
         if !self.primed {
             self.primed = true;
             self.noise = q.max(1e-12);
@@ -797,36 +826,92 @@ mod tests {
     /// Noise alone must not produce messages. The CRC is the real gate, but a
     /// correlator that fires on every other sample would hand it millions of
     /// candidates a second and cost more than the whole receive chain.
+    ///
+    /// **Gaussian** noise, because that is what a receiver produces. This test
+    /// used uniform noise and passed while the decoder raised ~98 000 candidates
+    /// a second on a real empty sky and pinned its worker at 100 % of a core:
+    /// uniform I and Q give an envelope power with no tail, so it never crossed a
+    /// floor the Gaussian tail crosses 40 % of the time. See [`Q1_OF_MEAN`].
     #[test]
     fn noise_alone_yields_almost_no_candidates() {
-        let rate = 2_400_000.0;
-        let mut st = 0xDEAD_BEEFu64;
-        let mut rnd = || {
-            st ^= st << 13;
-            st ^= st >> 7;
-            st ^= st << 17;
-            ((st >> 40) as f32 / 8_388_608.0) - 1.0
-        };
-        // One second of noise.
-        let iq: Vec<Complex32> =
-            (0..2_400_000).map(|_| Complex32::new(0.05 * rnd(), 0.05 * rnd())).collect();
-        let mut d = Demod::new(rate);
-        let mut out = Vec::new();
-        for chunk in iq.chunks(16_384) {
-            d.push(chunk, &mut out);
+        for rate in [2_400_000.0f64, 4_000_000.0, 8_000_000.0] {
+            let mut g = Gauss(0xDEAD_BEEF);
+            // A quarter of a second to settle the tracker, then one second.
+            let warm: Vec<Complex32> = (0..rate as usize / 4).map(|_| g.next(1e-4)).collect();
+            let iq: Vec<Complex32> = (0..rate as usize).map(|_| g.next(1e-4)).collect();
+            let mut d = Demod::new(rate);
+            let mut out = Vec::new();
+            for chunk in warm.chunks(16_384) {
+                d.push(chunk, &mut out);
+            }
+            out.clear();
+            for chunk in iq.chunks(16_384) {
+                d.push(chunk, &mut out);
+            }
+            // The check sequence is what decides whether a candidate is a
+            // message, so a few is harmless; what is not harmless is the work
+            // each one costs. Measured at under a hundred a second at every rate
+            // here, against ~98 000 at 2.4 Msps before the floor was a mean.
+            assert!(
+                out.len() < 2_000,
+                "the correlator fired {} times on a second of Gaussian noise at {rate:.0} sps",
+                out.len()
+            );
         }
-        // A few thousand a second is the design point, not a failure. The
-        // check sequence is what decides whether a candidate is a message, and
-        // a random 112 bits passes it with probability 2⁻²⁴ — then still has to
-        // land on one of the three formats that carry a plain one. At this rate
-        // that is a phantom aircraft about once a day, and the arithmetic costs
-        // a few percent of a core. Tightening the gate to suppress them would
-        // cost real aircraft at the edge of range, which is the wrong trade.
-        assert!(
-            out.len() < 20_000,
-            "the correlator fired {} times on a second of pure noise",
-            out.len()
-        );
+    }
+
+    /// The other half of the noise test: the floor that stopped the correlator
+    /// firing on noise must not have cost the weak aircraft.
+    ///
+    /// A DF17 at every arrival phase in **Gaussian** noise, near where the
+    /// decoder runs out. On these seeds the old gate and this one score the same
+    /// at 2.4 Msps / 15 dB (35/40) and 4 Msps / 10 dB (37/40); at 8 Msps / 8 dB
+    /// the old one had 40 and this 39. Each floor is that, less one.
+    #[test]
+    fn the_noise_floor_costs_no_weak_aircraft() {
+        let np = 1e-4f64;
+        for (rate, snr_db, floor) in
+            [(2_400_000.0f64, 15.0f64, 34usize), (4_000_000.0, 10.0, 36), (8_000_000.0, 8.0, 38)]
+        {
+            let amp = (np * 10f64.powf(snr_db / 10.0)).sqrt() as f32;
+            const N: usize = 40;
+            let mut hits = 0;
+            for k in 0..N {
+                let t0 = 10.0 + (k as f64 / N as f64) * (1e6 / rate);
+                let clean = modulate_at(&DF17, rate, t0, amp, 0.0, 1);
+                let mut g = Gauss(0x5555_0000 + k as u64);
+                let warm: Vec<Complex32> = (0..32_768).map(|_| g.next(np as f32)).collect();
+                let iq: Vec<Complex32> = clean.iter().map(|z| z + g.next(np as f32)).collect();
+                let mut d = Demod::new(rate);
+                let mut out = Vec::new();
+                d.push(&warm, &mut out);
+                out.clear();
+                d.push(&iq, &mut out);
+                if out.iter().any(|c| c.bytes == DF17) {
+                    hits += 1;
+                }
+            }
+            assert!(hits >= floor, "only {hits}/{N} at {snr_db} dB and {rate:.0} sps");
+        }
+    }
+
+    /// Complex Gaussian noise of a given mean power, deterministically: there
+    /// is no `rand` in this tree.
+    struct Gauss(u64);
+
+    impl Gauss {
+        fn uniform(&mut self) -> f64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            ((self.0 >> 11) as f64 + 0.5) / (1u64 << 53) as f64
+        }
+
+        fn next(&mut self, power: f32) -> Complex32 {
+            let r = (-f64::from(power) * self.uniform().ln()).sqrt();
+            let th = std::f64::consts::TAU * self.uniform();
+            Complex32::new((r * th.cos()) as f32, (r * th.sin()) as f32)
+        }
     }
 
     /// A short reply is 56 bits, and the length comes from the first five —

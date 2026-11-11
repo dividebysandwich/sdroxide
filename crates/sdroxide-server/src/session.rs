@@ -203,6 +203,7 @@ async fn run_session(
         adsb_status,
         vdl2_status,
         ais_status,
+        sonde_status,
         drm,
         hd,
         relay,
@@ -230,6 +231,7 @@ async fn run_session(
             latest.adsb_status.clone(),
             latest.vdl2_status.clone(),
             latest.ais_status.clone(),
+            latest.sonde_status.clone(),
             latest.drm.clone(),
             latest.hd.clone(),
             latest.relay.clone(),
@@ -303,6 +305,11 @@ async fn run_session(
     if let Some(st) = ais_status {
         let _ = socket.send(msg(&ServerMsg::AisStatus(st))).await;
     }
+    // ...and the radiosondes heard, with their tracks: a sonde that has landed
+    // sends nothing more, so a client attaching later would never see it.
+    if let Some(st) = sonde_status {
+        let _ = socket.send(msg(&ServerMsg::SondeStatus(st))).await;
+    }
     // And the transmit-image presets, for the same reason. The received
     // galleries are not replayed: a panel lists its store when it opens, which
     // is both authoritative and the only view that can be paged.
@@ -369,7 +376,19 @@ async fn run_session(
             tokio::select! {
                 biased;
                 m = aud_rx.recv() => {
-                    let Some(m) = m else { break };
+                    let Some(m) = m else {
+                        // Both lanes close together, when the session handle
+                        // is dropped (a radio closed from a client does that
+                        // right after queueing the roster that tells this one
+                        // it is gone). This branch is polled first, so without
+                        // this it would end the loop with that message still
+                        // sitting in the reliable lane, and the client would
+                        // never hear why it was let go.
+                        while let Ok(m) = rel_rx.try_recv() {
+                            if ws_tx.send(msg(&m)).await.is_err() { break; }
+                        }
+                        break;
+                    };
                     if ws_tx.send(msg(&m)).await.is_err() { break; }
                 }
                 m = rel_rx.recv() => {
