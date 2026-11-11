@@ -5733,3 +5733,9 @@ sonde-card-click-to-listen = Dinlemek için frekansa tıklayın
 sonde-type-all = Tüm türler
 sonde-type-hover = Tek bir sonda türünü ara: seçmek taramayı başlatır, tarama bu tür duyulana dek pencereyi bant boyunca kaydırır. Yalnızca bu tür listelenir ve çizilir.
 sonde-export-saved = { $name } kaydedildi.
+
+## Keyboard modes: MT63 (src/app/panels/text_modem.rs)
+textmodem-mt63-long-hint = MT63-{ $label }, { $bw } Hz genişlik — uzun serpiştirme bir patlamayı { $chars } karakter üzerine yayar
+textmodem-mt63-short-hint = MT63-{ $label }, { $bw } Hz genişlik, kısa serpiştirme — kısa serpiştirme bir patlamayı { $chars } karakter üzerine yayar
+textmodem-mt63-not-offered = 1K ve 500L henüz sunulmuyor
+textmodem-mt63-not-offered-hint = MT63-1K ve 500 Hz uzun serpiştirme toplu çözücüyle okunur ama henüz canlı alıcıdan geçmez: kilit sembol fazını ve polariteyi arar ama bant merkezini aramaz, ve bunu arayan bir aramanın bir varyantı diğeriyle takas ettiği görüldü.

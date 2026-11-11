@@ -5741,3 +5741,9 @@ sonde-card-click-to-listen = Cliquez sur la fréquence pour écouter
 sonde-type-all = Tous les types
 sonde-type-hover = Chercher un type de sonde : en choisir un lance le scan, qui déplace la fenêtre sur la bande jusqu'à entendre ce type. Seul ce type est listé et dessiné.
 sonde-export-saved = { $name } enregistré.
+
+## Keyboard modes: MT63 (src/app/panels/text_modem.rs)
+textmodem-mt63-long-hint = MT63-{ $label }, { $bw } Hz de large — l'entrelacement long répartit une salve sur { $chars } caractères
+textmodem-mt63-short-hint = MT63-{ $label }, { $bw } Hz de large, entrelacement court — l'entrelacement court répartit une salve sur { $chars } caractères
+textmodem-mt63-not-offered = 1K et 500L pas encore proposés
+textmodem-mt63-not-offered-hint = MT63-1K et l'entrelacement long de 500 Hz se lisent avec le décodeur par lots mais pas encore avec le récepteur en direct : le verrouillage cherche la phase des symboles et la polarité mais pas le centre de bande, et une recherche qui le fait s'est avérée échanger une variante contre une autre.

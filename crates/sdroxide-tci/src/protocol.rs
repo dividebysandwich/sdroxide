@@ -327,6 +327,7 @@ pub fn mode_to_tci(mode: Mode) -> &'static str {
         | Mode::Rtty
         | Mode::Olivia
         | Mode::Thor
+        | Mode::Mt63
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf

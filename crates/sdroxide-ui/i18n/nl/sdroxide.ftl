@@ -5734,3 +5734,9 @@ sonde-card-click-to-listen = Klik op de frequentie om te luisteren
 sonde-type-all = Alle typen
 sonde-type-hover = Zoek één type sonde: een keuze start de scan, die het venster over de band verschuift tot dat type te horen is. Alleen dat type wordt getoond en getekend.
 sonde-export-saved = { $name } opgeslagen.
+
+## Keyboard modes: MT63 (src/app/panels/text_modem.rs)
+textmodem-mt63-long-hint = MT63-{ $label }, { $bw } Hz breed — de lange interleave spreidt een burst over { $chars } tekens
+textmodem-mt63-short-hint = MT63-{ $label }, { $bw } Hz breed, korte interleave — de korte interleave spreidt een burst over { $chars } tekens
+textmodem-mt63-not-offered = 1K en 500L nog niet beschikbaar
+textmodem-mt63-not-offered-hint = MT63-1K en de lange interleave van 500 Hz worden gelezen met de batchdecoder, maar nog niet via de live ontvanger: de lock zoekt de symboolfase en de polariteit maar niet het bandcentrum, en een zoekactie die dat wel doet bleek de ene variant voor de andere in te ruilen.

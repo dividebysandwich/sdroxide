@@ -1237,6 +1237,50 @@ pub fn worked_before(
 }
 
 /// Operator configuration for digital-mode operation. Persisted engine-side,
+/// MT63 submode — the bandwidth and the interleave depth.
+///
+/// Three of fldigi's six are offered: both 2000 Hz variants and MT63-500 with
+/// the short interleave. The others (1K and 500 long) read their own
+/// transmission back, but the live receiver's lock only searches the operator's
+/// dial and does not find them reliably on a real signal yet; they are named in
+/// `sdroxide_dsp::mt63::Mt63Variant` so that offering them later is an appended
+/// variant rather than a new field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Mt63Mode {
+    #[default]
+    Mt632KS,
+    Mt632KL,
+    /// 500 Hz, short interleave. The narrowest band the mode has, and it reads
+    /// fldigi's recording of it whole through the live receiver.
+    Mt6500S,
+}
+
+impl Mt63Mode {
+    pub const ALL: [Mt63Mode; 3] = [Mt63Mode::Mt632KS, Mt63Mode::Mt632KL, Mt63Mode::Mt6500S];
+
+    /// The name fldigi gives the mode, after its `MT63-` prefix.
+    pub fn label(self) -> &'static str {
+        match self {
+            Mt63Mode::Mt632KS => "2KS",
+            Mt63Mode::Mt632KL => "2KL",
+            Mt63Mode::Mt6500S => "500S",
+        }
+    }
+
+    /// The long interleave: twice the depth, which spreads a burst further for
+    /// a slower decode.
+    pub fn long(self) -> bool {
+        matches!(self, Mt63Mode::Mt632KL)
+    }
+
+    pub fn bandwidth_hz(self) -> u32 {
+        match self {
+            Mt63Mode::Mt6500S => 500,
+            _ => 2000,
+        }
+    }
+}
+
 /// THOR (DominoEX-family) submode: sets the symbol rate. All use 18 tones with
 /// incremental frequency keying (IFK+) and convolutional FEC.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -2277,6 +2321,9 @@ pub struct DigiConfig {
     /// Read when Mercury starts, once per run.
     #[serde(default = "default_mercury_port")]
     pub mercury_port: u16,
+    /// MT63: which bandwidth and interleave — see [`Mt63Mode`].
+    #[serde(default)]
+    pub mt63_mode: Mt63Mode,
 }
 
 fn default_tnc_host_port() -> u16 {
@@ -2539,6 +2586,7 @@ impl Default for DigiConfig {
             tnc_host_port: default_tnc_host_port(),
             tnc_listen: false,
             mercury_port: default_mercury_port(),
+            mt63_mode: Mt63Mode::default(),
         }
     }
 }

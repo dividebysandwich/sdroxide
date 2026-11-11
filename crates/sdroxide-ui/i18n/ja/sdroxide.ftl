@@ -5690,3 +5690,9 @@ sonde-card-click-to-listen = 周波数をクリックして受信
 sonde-type-all = すべてのタイプ
 sonde-type-hover = ゾンデの種類を指定して探します。選ぶとスキャンが始まり、その種類が受信できるまでウィンドウをバンド内で動かします。その種類だけが一覧と地図に表示されます。
 sonde-export-saved = { $name } を保存しました。
+
+## Keyboard modes: MT63 (src/app/panels/text_modem.rs)
+textmodem-mt63-long-hint = MT63-{ $label }、帯域幅 { $bw } Hz — 長いインターリーブによりバーストが { $chars } 文字に分散されます
+textmodem-mt63-short-hint = MT63-{ $label }、帯域幅 { $bw } Hz、短いインターリーブ — 短いインターリーブによりバーストが { $chars } 文字に分散されます
+textmodem-mt63-not-offered = 1Kと500Lは未対応
+textmodem-mt63-not-offered-hint = MT63-1Kと500 Hz長インターリーブは、バッチデコーダでは読み取れますが、ライブ受信機ではまだ対応していません。ロックはシンボル位相と極性を探索しますが帯域中心は探索せず、それを探索すると一方の変種と引き換えに別の変種が犠牲になることが分かりました。

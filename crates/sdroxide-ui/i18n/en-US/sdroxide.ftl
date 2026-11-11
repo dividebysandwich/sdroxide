@@ -6001,3 +6001,9 @@ sonde-off-hint = The radiosonde decoder is off. Press DECODER OFF to start it, o
 sonde-outside-window = The sample window does not reach the sonde band (400–406 MHz): press TUNE to bring the radio there.
 ism-sonde-chip = RADIOSONDES
 ism-sonde-chip-hover = Weather-balloon radiosondes on 400–406 MHz (RS41, DFM, M10/M20, iMet and more): a map of every sonde heard with its flight, in a window of its own
+
+## Keyboard modes: MT63 (src/app/panels/text_modem.rs)
+textmodem-mt63-long-hint = MT63-{ $label }, { $bw } Hz wide — the long interleave spreads a burst over { $chars } characters
+textmodem-mt63-short-hint = MT63-{ $label }, { $bw } Hz wide, short interleave — the short interleave spreads a burst over { $chars } characters
+textmodem-mt63-not-offered = 1K and 500L not offered yet
+textmodem-mt63-not-offered-hint = MT63-1K and the 500 Hz long interleave read with the batch decoder but not yet through the live receiver: the lock searches the symbol phase and the polarity but not the band centre, and a search that does was found to trade one variant for another.

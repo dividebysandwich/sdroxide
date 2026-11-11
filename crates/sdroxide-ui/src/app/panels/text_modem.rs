@@ -639,7 +639,7 @@ impl SdroxideApp {
     /// PSK has no parameters, so nothing is drawn.
     fn text_modem_params_row(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let mode = self.state.rx[0].mode;
-        if !matches!(mode, Mode::Rtty | Mode::RttyFm | Mode::Olivia | Mode::Thor) {
+        if !matches!(mode, Mode::Rtty | Mode::RttyFm | Mode::Olivia | Mode::Thor | Mode::Mt63) {
             return; // PSK (and anything else) has no per-mode settings
         }
         fn cap(ui: &mut egui::Ui, text: &str) {
@@ -737,6 +737,31 @@ impl SdroxideApp {
                             changed = true;
                         }
                     }
+                }
+                Mode::Mt63 => {
+                    cap(ui, &tr!("textmodem-mode"));
+                    for m in sdroxide_types::Mt63Mode::ALL {
+                        let sel = cfg.mt63_mode == m;
+                        let bw = format!("{:.0}", m.bandwidth_hz() as f32);
+                        let hint = if m.long() {
+                            tr!("textmodem-mt63-long-hint", label = m.label(), bw = bw, chars = 64)
+                        } else {
+                            tr!("textmodem-mt63-short-hint", label = m.label(), bw = bw, chars = 32)
+                        };
+                        if ui.selectable_label(sel, m.label()).on_hover_text(hint).clicked() && !sel
+                        {
+                            cfg.mt63_mode = m;
+                            changed = true;
+                        }
+                    }
+                    // The rest of the standard, and why it is not here.
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(tr!("textmodem-mt63-not-offered"))
+                            .size(10.5)
+                            .color(crate::theme::YELLOW()),
+                    )
+                    .on_hover_text(tr!("textmodem-mt63-not-offered-hint"));
                 }
                 _ => {}
             }

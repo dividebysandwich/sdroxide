@@ -1314,6 +1314,13 @@ impl SdroxideApp {
                 self.digi_status.as_ref().map(|s| s.config.thor_mode.baud()).unwrap_or(15.625);
             let bw = 18.0 * baud;
             vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
+        } else if mode == Mode::Mt63 {
+            let bw = self
+                .digi_status
+                .as_ref()
+                .map(|s| s.config.mt63_mode.bandwidth_hz() as f32)
+                .unwrap_or(2000.0);
+            vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
         } else if mode == Mode::Js8 {
             // Worth showing: Turbo's 160 Hz footprint against Slow's 25 Hz
             // is what decides whether a frequency is actually free.

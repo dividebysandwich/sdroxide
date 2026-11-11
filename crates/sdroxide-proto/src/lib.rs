@@ -1679,7 +1679,10 @@ use sdroxide_types::{
 /// level and the sondes heard with their tracks; and `RadioState` gains
 /// `sonde: SondeSettings` at its tail, which changes the layout of every state
 /// frame.
-pub const PROTO_VERSION: u16 = 199;
+///
+/// v200: MT63. `Mode::Mt63` appended, and `DigiConfig` gains `mt63_mode` at its
+/// tail, which changes the layout of every digital status and config.
+pub const PROTO_VERSION: u16 = 200;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -3130,6 +3133,30 @@ mod tests {
             assert_eq!(s.config.fst4_period, Fst4Period::P300);
             assert_eq!(s.config.q65_mode, Q65Mode::D120);
             assert_eq!(s.config.fsk441_period, Fsk441Period::P15);
+        }
+    }
+
+    /// The fldigi-family keyboard modes' settings and the modes themselves,
+    /// set away from their defaults: a field appended in the wrong place, or a
+    /// `Mode` discriminant that moved, decodes into the wrong setting rather
+    /// than failing.
+    #[test]
+    fn roundtrip_fldigi_keyboard_modes() {
+        use sdroxide_types::{DigiConfig, Mode, Mt63Mode};
+
+        let cfg = DigiConfig { mt63_mode: Mt63Mode::Mt6500S, ..DigiConfig::default() };
+        let m = ClientMsg::Command(Command::SetDigiConfig(cfg.clone()));
+        assert_eq!(decode::<ClientMsg>(&encode(&m).unwrap()).unwrap(), m);
+
+        for mode in [Mode::Mt63] {
+            let mut status = DigiStatus::idle(cfg.clone());
+            status.mode = mode;
+            let m = ServerMsg::Ft8Status(status);
+            let back = decode::<ServerMsg>(&encode(&m).unwrap()).unwrap();
+            assert_eq!(back, m, "{mode:?}");
+            let ServerMsg::Ft8Status(s) = back else { panic!("not a status") };
+            assert_eq!(s.mode, mode);
+            assert_eq!(s.config.mt63_mode, Mt63Mode::Mt6500S);
         }
     }
 

@@ -10,6 +10,7 @@
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
+use sdroxide_dsp::mt63::{Mt63Receiver, Mt63Tx};
 use sdroxide_dsp::{
     MonoResampler, OliviaRx, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ThorRx, ThorTx,
 };
@@ -29,6 +30,7 @@ enum RxModem {
     Rtty(RttyRx),
     Olivia(OliviaRx),
     Thor(ThorRx),
+    Mt63(Box<Mt63Receiver>),
 }
 
 impl RxModem {
@@ -38,6 +40,7 @@ impl RxModem {
             RxModem::Rtty(r) => r.process(audio),
             RxModem::Olivia(r) => r.process(audio),
             RxModem::Thor(r) => r.process(audio),
+            RxModem::Mt63(r) => r.process(audio),
         }
     }
     fn magnitude(&self) -> f32 {
@@ -46,6 +49,7 @@ impl RxModem {
             RxModem::Rtty(r) => r.magnitude(),
             RxModem::Olivia(r) => r.magnitude(),
             RxModem::Thor(r) => r.magnitude(),
+            RxModem::Mt63(r) => r.magnitude(),
         }
     }
 }
@@ -55,6 +59,7 @@ enum TxModem {
     Rtty(RttyTx),
     Olivia(OliviaTx),
     Thor(ThorTx),
+    Mt63(Box<Mt63Tx>),
 }
 
 impl TxModem {
@@ -64,6 +69,7 @@ impl TxModem {
             TxModem::Rtty(m) => m.push_text(t),
             TxModem::Olivia(m) => m.push_text(t),
             TxModem::Thor(m) => m.push_text(t),
+            TxModem::Mt63(m) => m.push_text(t),
         }
     }
     fn next_block(&mut self, out: &mut [f32]) {
@@ -80,6 +86,17 @@ impl TxModem {
             TxModem::Thor(m) => {
                 m.next_block(out);
             }
+            TxModem::Mt63(m) => {
+                m.next_block(out);
+            }
+        }
+    }
+    /// True while a modem is still playing a tail that has to follow the last
+    /// character for the text to arrive whole — MT63's interleaver flush.
+    fn tail_pending(&self) -> bool {
+        match self {
+            TxModem::Mt63(m) => m.tail_pending(),
+            _ => false,
         }
     }
     fn sent_chars(&self) -> usize {
@@ -88,6 +105,7 @@ impl TxModem {
             TxModem::Rtty(m) => m.sent_chars(),
             TxModem::Olivia(m) => m.sent_chars(),
             TxModem::Thor(m) => m.sent_chars(),
+            TxModem::Mt63(m) => m.sent_chars(),
         }
     }
     fn total_chars(&self) -> usize {
@@ -96,6 +114,7 @@ impl TxModem {
             TxModem::Rtty(m) => m.total_chars(),
             TxModem::Olivia(m) => m.total_chars(),
             TxModem::Thor(m) => m.total_chars(),
+            TxModem::Mt63(m) => m.total_chars(),
         }
     }
     fn clear(&mut self) {
@@ -104,6 +123,7 @@ impl TxModem {
             TxModem::Rtty(m) => m.clear(),
             TxModem::Olivia(m) => m.clear(),
             TxModem::Thor(m) => m.clear(),
+            TxModem::Mt63(m) => m.clear(),
         }
     }
 }
@@ -148,7 +168,7 @@ impl TextModemController {
         // 2125/2295 Hz is what every other RTTY program sends and expects, and
         // it is the offset the log has to take off again to name the contact.
         let audio_hz = match mode {
-            Mode::Olivia | Mode::Thor | Mode::Fsq => 1500.0f32,
+            Mode::Olivia | Mode::Thor | Mode::Fsq | Mode::Mt63 => 1500.0f32,
             Mode::Rtty | Mode::RttyFm => sdroxide_types::RTTY_CENTER_HZ,
             _ => 1000.0f32,
         };
@@ -166,6 +186,11 @@ impl TextModemController {
                 RxModem::Olivia(OliviaRx::new(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
             }
             Mode::Thor => RxModem::Thor(ThorRx::new(MODEM_RATE, audio_hz as f64, t_baud)),
+            Mode::Mt63 => RxModem::Mt63(Box::new(Mt63Receiver::new(
+                MODEM_RATE,
+                audio_hz as f64,
+                cfg.mt63_mode.into(),
+            ))),
             _ => RxModem::Psk(PskRx::new(MODEM_RATE, audio_hz as f64)),
         };
         let tx = match mode {
@@ -176,6 +201,11 @@ impl TextModemController {
                 TxModem::Olivia(OliviaTx::new(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
             }
             Mode::Thor => TxModem::Thor(ThorTx::new(MODEM_RATE, audio_hz as f64, t_baud)),
+            Mode::Mt63 => TxModem::Mt63(Box::new(Mt63Tx::new(
+                cfg.mt63_mode.into(),
+                MODEM_RATE,
+                audio_hz as f64,
+            ))),
             _ => TxModem::Psk(PskTx::new(MODEM_RATE, audio_hz as f64)),
         };
         TextModemController {
@@ -216,19 +246,22 @@ impl TextModemController {
             }
             RxModem::Olivia(r) => r.set_params(hz, o_tones, o_bw),
             RxModem::Thor(r) => r.set_params(hz, t_baud),
+            RxModem::Mt63(r) => r.set_params(hz, self.cfg.mt63_mode.into()),
         }
         match &mut self.tx {
             TxModem::Psk(m) => m.set_carrier(hz, MODEM_RATE),
             TxModem::Rtty(m) => m.set_tuning(hz, shift),
             TxModem::Olivia(m) => m.set_params(hz, o_tones, o_bw),
             TxModem::Thor(m) => m.set_params(hz, t_baud),
+            TxModem::Mt63(m) => m.set_params(hz, self.cfg.mt63_mode.into()),
         }
     }
 
-    /// True while we should keep generating TX audio: actively transmitting, or
-    /// still flushing already-queued characters after TX was released.
+    /// True while we should keep generating TX audio: actively transmitting,
+    /// still flushing already-queued characters after TX was released, or still
+    /// playing a tail the last of them needs (see [`TxModem::tail_pending`]).
     fn producing(&self) -> bool {
-        self.tx_active || self.tx.sent_chars() < self.tx.total_chars()
+        self.tx_active || self.tx.sent_chars() < self.tx.total_chars() || self.tx.tail_pending()
     }
 
     fn build_status(&self) -> DigiStatus {
@@ -394,7 +427,8 @@ impl DigiEngine for TextModemController {
             || cfg.rtty_afc != self.cfg.rtty_afc
             || cfg.olivia_tones != self.cfg.olivia_tones
             || cfg.olivia_bw_hz != self.cfg.olivia_bw_hz
-            || cfg.thor_mode != self.cfg.thor_mode;
+            || cfg.thor_mode != self.cfg.thor_mode
+            || cfg.mt63_mode != self.cfg.mt63_mode;
         self.cfg = cfg;
         if retune {
             self.retune_modems();
@@ -450,6 +484,68 @@ impl DigiEngine for TextModemController {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Key one controller with `text`, play everything it sends into a second
+    /// controller in the same mode, and return what the second one read. Both
+    /// run at 48 kHz, the rate the audio thread hands them, so this covers the
+    /// resamplers and the config wiring as well as the modems.
+    fn through_the_controller(mode: Mode, cfg: DigiConfig, text: &str) -> String {
+        let mut tx = TextModemController::new(mode, cfg.clone(), OUT_RATE);
+        tx.set_tx_text(text.into());
+        tx.set_tx_active(true);
+        tx.poll(SystemTime::now(), 0.0);
+        assert!(tx.tx_burst_active(), "{} did not key", mode.label());
+        let mut rx = TextModemController::new(mode, cfg, OUT_RATE);
+        let mut block = vec![0.0f32; 960];
+        let mut peak = 0.0f32;
+        // A second of silence either side, as a receiver hears a real over.
+        rx.on_rx_audio(&vec![0.0; 48_000]);
+        let mut guard = 0;
+        loop {
+            // Release once the text is queued, so the over ends after it.
+            if tx.tx.sent_chars() >= tx.tx.total_chars() {
+                tx.set_tx_active(false);
+            }
+            let done = tx.fill_tx_block(&mut block);
+            peak = block.iter().fold(peak, |m, s| m.max(s.abs()));
+            rx.on_rx_audio(&block);
+            guard += 1;
+            if done || guard > 200_000 {
+                break;
+            }
+        }
+        assert!(peak > 0.01, "{} transmitted silence", mode.label());
+        // The 8 → 48 kHz resampler rings a little over a limited peak; a
+        // modem that ignores its headroom altogether is far over this.
+        assert!(peak <= 1.1 * tx.tx_peak(), "{} peaks at {peak}, over its tx_peak", mode.label());
+        rx.on_rx_audio(&vec![0.0; 96_000]);
+        rx.status().text_rx
+    }
+
+    /// MT63 through the controller: `DigiConfig::mt63_mode` reaches both
+    /// halves, the live receiver finds the symbol clock and polarity by itself,
+    /// and the text reads back **to its last word** — the interleaver's flush is
+    /// played after the last character rather than cut off with it.
+    ///
+    /// A few lines of text, because the live lock wants words to lock on: it
+    /// accepts a phase only once a window decodes to forty-odd letters and
+    /// some spaces, which a one-line over does not reach.
+    #[test]
+    fn an_mt63_transmission_reads_back_through_the_controller() {
+        for m in sdroxide_types::Mt63Mode::ALL {
+            let cfg = DigiConfig { mt63_mode: m, ..DigiConfig::default() };
+            let text = through_the_controller(
+                Mode::Mt63,
+                cfg,
+                &"CQ CQ DE TEST THE EAGLE HAS LANDED THE EAGLE HAS LANDED K\n".repeat(4),
+            );
+            assert!(
+                text.contains("EAGLE HAS LANDED K\n") || text.contains("EAGLE HAS LANDED K "),
+                "MT63-{} did not read back to its last word: {text:?}",
+                m.label()
+            );
+        }
+    }
 
     /// RTTY's tone pair is a standard, not a convenience: 2125 and 2295 Hz at
     /// the 170 Hz amateur shift, which is what every other RTTY program sends

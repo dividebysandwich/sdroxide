@@ -5744,3 +5744,9 @@ sonde-card-click-to-listen = Fai clic sulla frequenza per ascoltare
 sonde-type-all = Tutti i tipi
 sonde-type-hover = Cerca un tipo di sonda: sceglierne uno avvia la scansione, che sposta la finestra lungo la banda finché si sente quel tipo. Solo quel tipo è elencato e disegnato.
 sonde-export-saved = { $name } salvato.
+
+## Keyboard modes: MT63 (src/app/panels/text_modem.rs)
+textmodem-mt63-long-hint = MT63-{ $label }, larghezza { $bw } Hz — l'interleave lungo distribuisce una raffica su { $chars } caratteri
+textmodem-mt63-short-hint = MT63-{ $label }, larghezza { $bw } Hz, interleave corto — l'interleave corto distribuisce una raffica su { $chars } caratteri
+textmodem-mt63-not-offered = 1K e 500L non ancora offerti
+textmodem-mt63-not-offered-hint = MT63-1K e l'interleave lungo a 500 Hz si leggono con il decodificatore batch ma non ancora attraverso il ricevitore in tempo reale: l'aggancio cerca la fase dei simboli e la polarità ma non il centro banda, e una ricerca che lo faccia si è rivelata scambiare una variante con un'altra.

@@ -5675,3 +5675,9 @@ sonde-card-click-to-listen = 点击频率即可收听
 sonde-type-all = 所有类型
 sonde-type-hover = 查找某一类探空仪：选择后开始扫描，窗口会在频段内移动，直到听到该类型。只列出并绘制该类型。
 sonde-export-saved = 已保存 { $name }。
+
+## Keyboard modes: MT63 (src/app/panels/text_modem.rs)
+textmodem-mt63-long-hint = MT63-{ $label }，带宽 { $bw } Hz，长交织将突发错误分散到 { $chars } 个字符上
+textmodem-mt63-short-hint = MT63-{ $label }，带宽 { $bw } Hz，短交织，短交织将突发错误分散到 { $chars } 个字符上
+textmodem-mt63-not-offered = 暂不提供 1K 和 500L
+textmodem-mt63-not-offered-hint = MT63-1K 和 500 Hz 长交织可用批处理解码器读取，但尚不能通过实时接收机读取：锁定会搜索符号相位和极性，但不搜索频带中心，而且发现加入这种搜索只是以一种变体换另一种变体。

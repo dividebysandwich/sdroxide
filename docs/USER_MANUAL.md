@@ -4643,6 +4643,39 @@ These three modems are native-Rust and self-contained. On-air interoperability
 with fldigi is being validated; the first release targets clean-to-moderate
 signals.
 
+#### 3.4.1 MT63
+
+**MT63** is on the DIGITAL row with the other keyboard modes and uses the same
+messaging panel, including **SEND ON RETURN**. It is fldigi's 64-carrier mode:
+every character is spread over all 64 carriers by a Walsh code and interleaved
+over the next 32 (or 64) characters, so it rides through fading, static crashes
+and a carrier on top of it — at the price of being wide and slow to start.
+
+- **Variant** — chosen by the chips in the panel header: **2KS** and **2KL**
+  (2000 Hz wide, short or long interleave) and **500S** (500 Hz, short). The
+  long interleave survives a longer burst and takes twice as long to start
+  printing. Both stations must use the same variant. The waterfall marks the
+  edges of the band.
+- **Tuning** — the band is centred on the tone offset (1500 Hz by default). The
+  receiver finds the symbol clock and the sideband by itself, but it does not
+  search for the centre, so put the signal's middle on the cursor.
+- **It needs words to lock.** MT63 sends no preamble, so the receiver settles
+  its timing on the first few seconds of text and only starts printing once
+  what it decodes looks like words. A one-word over may never print; a CQ of a
+  line or two does.
+- **Transmitting** — every over starts with a few seconds of idle while the
+  far receiver's interleaver fills, and ends with a few more after the last
+  character, which is what carries that character the rest of the way. The
+  panel shows the text as sent as soon as it enters the modem, so the
+  transmitter stays keyed a little after the last character turns green.
+- **1K and the 500 Hz long interleave are not offered yet.** They decode
+  fldigi's recordings with the reference decoder, but the live receiver does
+  not yet find them reliably.
+
+The modem is a port of fldigi's MT63 (after Pawel Jalocha, SP9VRC). Five of
+fldigi's six variants decode fldigi's own recordings, and every variant reads
+its own transmission back; it has not yet been tried against fldigi on the air.
+
 ### 3.5 Hellschreiber
 
 Choose **HELL** from the DIGITAL row for **Hellschreiber** — the oldest digital

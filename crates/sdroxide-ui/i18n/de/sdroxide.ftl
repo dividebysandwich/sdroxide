@@ -5818,3 +5818,9 @@ sonde-card-click-to-listen = Frequenz anklicken, um zuzuhören
 sonde-type-all = Alle Typen
 sonde-type-hover = Nach einem Sondentyp suchen: Die Auswahl startet den Suchlauf, der das Fenster über das Band bewegt, bis dieser Typ gehört wird. Nur dieser Typ wird aufgelistet und gezeichnet.
 sonde-export-saved = { $name } gespeichert.
+
+## Keyboard modes: MT63 (src/app/panels/text_modem.rs)
+textmodem-mt63-long-hint = MT63-{ $label }, { $bw } Hz breit — die lange Verschachtelung verteilt einen Burst auf { $chars } Zeichen
+textmodem-mt63-short-hint = MT63-{ $label }, { $bw } Hz breit, kurze Verschachtelung — die kurze Verschachtelung verteilt einen Burst auf { $chars } Zeichen
+textmodem-mt63-not-offered = 1K und 500L noch nicht angeboten
+textmodem-mt63-not-offered-hint = MT63-1K und die lange 500-Hz-Verschachtelung werden mit dem Batch-Decoder gelesen, aber noch nicht mit dem Live-Empfänger: Die Synchronisation sucht Symbolphase und Polarität, aber nicht die Bandmitte, und eine Suche, die das tut, tauschte nachweislich eine Variante gegen eine andere ein.
