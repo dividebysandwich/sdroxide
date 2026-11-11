@@ -787,7 +787,14 @@ fn remember_with_cookie(station: &str, username: &str, password: &str, remember:
     let station = station.to_string();
     let kept = RemoteAccess { username: username.to_string(), password: password.to_string() };
     let url = signin_url(&station);
+    // Only a ticked box was a promise. Without it the password must never
+    // reach the browser's storage, whatever the station answers — a busy
+    // station (503) on a multi-radio sign-in would otherwise leave it there on
+    // a shared machine.
     let keep_the_promise = move || {
+        if !remember {
+            return;
+        }
         store(&kept);
         COOKIE_FALLBACK.lock().unwrap_or_else(|e| e.into_inner()).insert(station);
     };
