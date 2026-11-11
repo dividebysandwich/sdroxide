@@ -1333,7 +1333,9 @@ impl SdroxideApp {
         }
         ui.add_space(6.0);
 
-        ui.horizontal(|ui| {
+        // Wrapped: with PICTURE beside TUNE and LOCK the row is wider than a
+        // phone in German.
+        ui.horizontal_wrapped(|ui| {
             if crate::chrome::chip(ui, false, tr!("sat-tune"))
                 .on_hover_text(tr!("sat-set-dial-mode-link-no"))
                 .clicked()
