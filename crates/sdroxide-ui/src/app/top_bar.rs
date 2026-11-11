@@ -5974,9 +5974,13 @@ impl SdroxideApp {
         // level it was left at and had to be re-fitted by hand every time
         // (issue #375). A slider is one grab from either stop, and the FIT chip
         // above sets both at once from what is on screen.
-        // Through a copy, because a level set by hand switches FIT off — left
-        // on, it pulled the level straight back (#642).
+        // Through a copy, because a level set by hand goes through
+        // `set_levels_by_hand`: with FIT on it becomes FIT's shift, so FIT
+        // stays on and aims where the hand left it (#642).
+        // The rails always show the level in force; the shift FIT carries
+        // stands beside them.
         let (mut floor, mut ceil) = (self.view.db_floor, self.view.db_ceil);
+        let (fit_on, shift) = (self.view.auto_fit, self.view.fit_shift_db);
         ui.horizontal(|ui| {
             ui.label(tr!("topbar-floor"));
             let r = crate::chrome::slider_wheel(
@@ -5995,6 +5999,7 @@ impl SdroxideApp {
             if r.changed() {
                 self.view.set_levels_by_hand(floor, self.view.db_ceil);
             }
+            fit_shift_readout(ui, fit_on, shift.0);
         });
         ui.horizontal(|ui| {
             ui.label(tr!("topbar-ceil"));
@@ -6014,6 +6019,7 @@ impl SdroxideApp {
             if r.changed() {
                 self.view.set_levels_by_hand(self.view.db_floor, ceil);
             }
+            fit_shift_readout(ui, fit_on, shift.1);
         });
         // Chips rather than a ComboBox: the combo opens a second popup
         // layer, and clicking it counts as "outside" and closes this one.
@@ -7834,6 +7840,16 @@ fn set_div_setting(cfg: &mut sdroxide_types::RadioConfig, element: &str, db: f64
         _ => return false,
     }
     true
+}
+
+/// Beside a FLOOR or CEIL rail: how far FIT's level is shifted on that rail,
+/// while FIT is on and the shift is a whole dB or more. Nothing otherwise, so
+/// the row reads as it always did until the operator has moved a rail under
+/// FIT.
+fn fit_shift_readout(ui: &mut egui::Ui, fit_on: bool, shift_db: f32) {
+    if fit_on && shift_db.abs() >= 0.5 {
+        ui.weak(format!("FIT {shift_db:+.0} dB")).on_hover_text(tr!("topbar-fit-shift"));
+    }
 }
 
 #[cfg(test)]

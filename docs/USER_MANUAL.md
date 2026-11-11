@@ -1146,8 +1146,13 @@ them all at once.
   one refit is started every five seconds. Switching FIT **on** fits at once,
   which is also how to ask for a one-off fit: click it off and on again.
   Switching it off leaves the levels wherever you set them. Moving the floor or
-  ceiling by hand (the FFT popup, or a mapped knob) switches FIT off for you, so
-  the level you set stays where you put it.
+  ceiling by hand (the FFT popup, or a mapped knob) while FIT is lit keeps FIT
+  on and **shifts** its level instead: the level lands where you put it, and
+  every refit after — on this band and on the next — lands that many dB above
+  or below what FIT alone would pick. A small **FIT +6 dB** beside the slider
+  says by how much. The shift is kept across band changes and restarts;
+  switching FIT on again starts it over at zero. With FIT off, the sliders
+  simply set the levels.
 - **CTR** — keep the tuned frequency in the **middle** of the panadapter. Lit,
   the window slides under the dial every time you tune **and every time you
   zoom**, so the marker stays put and the band scrolls past it. It is **off**
@@ -1186,7 +1191,8 @@ them all at once.
   floor up until the noise just darkens and the ceiling down until the strongest
   signal you care about reaches full colour; **FIT** above does both at once
   from what is on screen, which is the quicker answer when a band change has
-  moved the whole picture.
+  moved the whole picture. With FIT lit, a slider shifts FIT's level rather
+  than switching FIT off (see **FIT** above).
 - **FFT** size — `2048`, `4096`, `8192`, `16384`, `32768`, `65536` or `131072`.
   This is the FFT over the *whole* of what the radio streams, and the panadapter
   grows it with the zoom until it runs out.
