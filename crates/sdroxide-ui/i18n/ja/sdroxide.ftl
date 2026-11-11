@@ -4306,15 +4306,16 @@ smeter-ps = PS --
 ## マルチ（src/multi.rs）
 
 multi-tx = ● TX
-multi-link = リンク
 multi-mute-radio-s-audio = この無線機の音声をミュート
-multi-close-radio-s-split-view = この無線機の分割表示を閉じます
-multi-open-radio-split-view-own = この無線機を、独自の分割表示で開きます
-multi-already-open-another-split-view = 別の分割表示ですでに開いています
 multi-show-radio-here = この無線機をここに表示
 multi-show-on-map = 地図に表示
 multi-add-radio-computer-settings-radio = このコンピューターに無線機を追加します（ステーションに追加するには 設定 → 無線機）
 multi-add-radio = 無線機を追加
+multi-take-radio-off-row = この無線機をこの列から外します。動作は続きます。切るにはリングを使います。
+multi-open-pane = 画面に出ていない無線機で別のペインを開く
+multi-pick-radio = 無線機 ▼
+multi-pick-radio-tip = この列に無線機を加えます。リングはリンクが開いている無線機を示します。
+multi-new-radio = 新しい無線機…
 multi-asked-station-another-radio = ステーションに別の無線機を依頼しました…
 multi-client-cannot-open-connection = このクライアントは接続を開けません。
 

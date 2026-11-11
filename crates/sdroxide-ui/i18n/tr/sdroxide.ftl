@@ -4324,15 +4324,16 @@ smeter-ps = PS --
 ## multi (src/multi.rs)
 
 multi-tx = ● TX
-multi-link = BAĞLANTI
 multi-mute-radio-s-audio = Bu radyonun sesini sustur
-multi-close-radio-s-split-view = Bu radyonun bölünmüş görünümünü kapat
-multi-open-radio-split-view-own = Bu radyoyu kendi bölünmüş görünümünde açın
-multi-already-open-another-split-view = Zaten başka bir bölünmüş görünümde açık
 multi-show-radio-here = Bu radyoyu burada göster
 multi-show-on-map = Haritada göster
 multi-add-radio-computer-settings-radio = Bu bilgisayarda bir radyo ekleyin (bir istasyonda eklemek için Ayarlar → Radyo)
 multi-add-radio = Bir radyo ekle
+multi-take-radio-off-row = Bu telsizi bu sıradan çıkar. Çalışmaya devam eder; halkalar onu kapatır.
+multi-open-pane = Ekranda olmayan bir telsizle başka bir bölme aç
+multi-pick-radio = Radyo ▼
+multi-pick-radio-tip = Bu sıraya bir telsiz koy. Halkalar bağlantısı açık telsizleri gösterir.
+multi-new-radio = Yeni telsiz…
 multi-asked-station-another-radio = İstasyondan başka bir radyo istendi…
 multi-client-cannot-open-connection = Bu istemci bir bağlantı açamaz.
 

@@ -406,11 +406,13 @@ See the [appendix](#16-appendix) for what each mode is.
 The **VFO** module has:
 
 - **A / B** select buttons in the Frequency module (the active VFO is highlighted).
-- Above them, the **⛓ link button**: the same **LINK** switch the radio's tab on
-  the strip carries (see [§2.17](#217-running-more-than-one-radio)), lit while
-  sdroxide's link to the radio is open. It is on the main window so that a
-  *single*-radio session — which has no tab strip — can still put its radio down
-  and pick it back up. On the compact layouts, where the frequency box has no
+- Above them, in a *single*-radio session, the **⛓ link button**: the same
+  link switch a radio's tab carries as its rings once there is more than one
+  radio (see [§2.17](#217-running-more-than-one-radio)), lit while sdroxide's
+  link to the radio is open. It is here because a single-radio session has no
+  tab strip, and so nowhere else to put its radio down and pick it back up;
+  with tabs on screen the rings on the tab are the switch, and this one is not
+  drawn. On the compact layouts, where the frequency box has no
   room to stack it, it is the first thing in the **VFO** menu instead, labelled
   in words. It is not the radio's power switch: that is **PWR**
   ([§2.7](#27-receiver-controls)).
@@ -972,7 +974,7 @@ socket, no receive aerial and no remote power never sees it.
   on the radio's own front panel pressed without changing band — it catches up
   at the next band change.
 - **PWR** — **ON** and **OFF** switch the radio itself, over the control link.
-  This is the one true on/off in sdroxide; the **LINK** switch in the tab strip
+  This is the one true on/off in sdroxide; the link switch (the rings) in the tab strip
   is sdroxide's own end of the connection and leaves the radio running
   ([2.17](#217-running-more-than-one-radio)). Two buttons rather than a switch,
   because a radio that is off answers nothing and there is no position to read
@@ -2532,9 +2534,9 @@ plugging a dongle in here and plugging one in at the remote site — one radio
 appears in this machine's roster, the other in that station's, where its engine
 runs and where its settings are saved. A radio added on a station comes back as
 a tab of its own within a second or so, with the Radio page already open on it,
-exactly as a local one does. The **+** on the main window's tab strip always
-means this computer; the choice lives in Settings → Radio, which is where the
-two rosters are side by side.
+exactly as a local one does. **New radio…** at the foot of the main window's
+**Radio ▼** menu always means this computer; the choice lives in Settings →
+Radio, which is where the two rosters are side by side.
 
 The **+** only acts on the press when the radio is going on the computer you
 are sitting at. Where it would go on a station instead — which is always the
@@ -2603,16 +2605,26 @@ scanning. Besides its name, each tab carries:
 - **🔊 / 🔇** — mute this radio's speaker audio. Muting is *only* the speaker:
   decoding, skimming, recording and everything else continue, so a muted
   background radio still fills its FT8 list and still spots.
-- **⊞** — open this radio in a split view of its own, or close the one it
-  has (see below).
-- **LINK** — open or close sdroxide's link to this radio (see below). The chip
-  is lit while the link is open, like every other chip in the program.
+- **The rings** — open or close sdroxide's link to this radio (see below). The
+  chip is lit while the link is open, like every other chip in the program.
+- **−** — take this radio off this row of tabs. It keeps running, as every
+  radio behind the one on screen does; **Radio ▼** brings it back. Taking the
+  last tab off a pane closes the pane; the last tab of the last pane has no
+  **−**.
+
+After the tabs, and only while a radio is on no row — one taken off with
+**−** — come **Radio ▼**, which lists those radios (with the rings while
+their link is open, greyed while it is closed) and puts the one picked on
+this row, and the **columns** chip, which opens another pane beside the
+others with the first of them (see *Split view* below). With every radio on a
+row the strip ends at its last tab; a new radio is then added in **Settings →
+Radio**.
 
 Closing a radio is deliberately *not* on the strip — that lives in
 **Settings → Radio**, behind a dialog rather than one stray click away.
 
 **Putting a radio down.** A station does not always have every radio it is set
-up for plugged in. Each tab carries a **LINK** switch — lit while sdroxide's
+up for plugged in. Each tab carries a link switch, the rings — lit while sdroxide's
 link to that radio is open, dark when it is not — and pressing it changes that.
 With the link closed, the radio's interface is closed with it: no device
 claimed, no CAT port held, no network rig dialled, and no reconnecting in the
@@ -2621,7 +2633,7 @@ stays too, with its name greyed, and its whole Settings → Radio page is still
 there to be read and edited. Press the switch again and the radio opens where
 it left off.
 
-It says **LINK** rather than on and off because it is *sdroxide's* switch rather
+It is a link rather than on and off because it is *sdroxide's* switch rather
 than the radio's, and the difference matters on a station with more than one rig
 on it. On/off in sdroxide means one thing and one control: **PWR**, which throws
 the set's own switch over the control link
@@ -2639,14 +2651,13 @@ is on top of the station-wide interlock below, which applies to every radio
 that *is* switched on.
 
 The same switch is in the roster at the top of **Settings → Radio**, which is
-where the choice is easiest to see across all the radios at once — and on the
-main window itself, as the **⛓ link button** above the A/B selector in the
-Frequency module (at the top of the **VFO** menu on a tablet- or phone-width
-layout), which switches whichever radio the pane it sits on is showing. All
-three are one switch: press any of them and the others follow. There are three
-because a single-radio station has neither a tab strip nor a roster switch —
-the button in the Frequency module is the only one it gets — while a station
-with several wants it on the strip, next to the radio it belongs to. It is
+where the choice is easiest to see across all the radios at once. A
+single-radio station has neither a tab strip nor a roster switch, so there it
+is on the main window itself, as the **⛓ link button** above the A/B selector
+in the Frequency module (at the top of the **VFO** menu on a tablet- or
+phone-width layout). With more than one radio the rings on each tab are the
+switch, next to the radio they belong to, and the Frequency module draws none.
+All of them are one switch: press any of them and the others follow. It is
 remembered: a radio switched off is still switched off after a restart, and
 sdroxide never touches its device at start-up. That is what makes it the right
 place to leave the rig that is boxed for the summer, or the dongle somebody has
@@ -2674,17 +2685,15 @@ no screen of its own, the browser is the only place its switch exists. A station
 running an older sdroxide than this screen offers no switch, and none is drawn
 rather than one that would be quietly ignored.
 
-**Split view.** The **⊞** toggle gives a radio a pane of its own: toggle it
-on a second radio and the main area splits into two equal columns, side by
-side; a third radio makes three. ⊞ on the radio already on screen, with no
-split open yet, splits it with the next radio in the strip. The split is not
-remembered across a restart. Every pane carries its own copy of the
-radio strip, so any pane can be switched to any radio that is not already on
-screen — a radio is never shown twice, and its name is greyed out in the
-other panes' strips while it is up. Keyboard shortcuts and MIDI go to one
-pane at a time: the one whose open tab carries the accent outline, and clicking
-anywhere in a pane moves them there. Close the split views (or their radios)
-and the last pane left takes the whole window back.
+**Split view.** Every pane has a row of tabs of its own: the radios picked
+onto it. Take a radio off a row with **−**, and the **columns** chip at the end
+of the row opens a pane beside the others with it; a third makes three equal
+columns. A radio is on one row at a time, and **Radio ▼** in any pane puts a
+radio that is on no row onto that pane's row. The rows are evened out to one
+height, so the panes below them start on one line. Keyboard shortcuts and MIDI
+go to one pane at a time: the one whose open tab carries the accent outline,
+and clicking anywhere in a pane moves them there. Take the last tab off a pane
+and the pane closes; the last pane left takes the whole window back.
 
 **Naming.** A tab names itself after its radio's interface — *PlutoSDR*,
 *TCI*, *HPSDR* — so a strip full of different hardware needs no housekeeping
@@ -14706,7 +14715,7 @@ Remote**, enter the server's **Address** and **Port**, and press **CONNECT**.
 
 The station comes up as a radio tab of its own, beside whatever radios that
 sdroxide already has open — the tab strip at the top of the window switches
-between them, and ⊞ puts two side by side ([2.17](#217-running-more-than-one-radio)).
+between them, and a pane of its own puts two side by side ([2.17](#217-running-more-than-one-radio)).
 Your own radio keeps running while you work the remote one. To hang up, close
 the tab from the roster at the top of **Settings → Radio**; nothing on the
 server is changed by that. Adding a radio *on the server*, and closing one
@@ -14736,7 +14745,7 @@ Remote** to connect to a second station.
 make is to one radio — the first, unless you named another — and the station
 says what else it has; the client opens the rest beside it, one tab each. So
 dialling a server that has an RTL-SDR and a Pluto gives you the same two tabs
-you would have standing in front of them, ⊞ included
+you would have standing in front of them, split view included
 ([2.17](#217-running-more-than-one-radio)). The tab you dialled keeps the name
 you typed; the others are named as the station names them.
 

@@ -2074,9 +2074,19 @@ impl SdroxideApp {
     /// Read from the shell's roster either way, so a radio of this machine's
     /// own and one at a station are answered the same: the shell is what knows
     /// which of the two this tab is, and it has already asked the station.
+    ///
+    /// Also `None` while the shell draws a row of tabs, which carry the rings
+    /// themselves: the switch then has one place, on the radio's tab. The
+    /// test is the shell's own for drawing the row (`MultiApp::strip_wanted`):
+    /// more than one radio that is not lent out. A one-radio session has no
+    /// row, and keeps the switch here.
+    // Why: HDZ 2026-11-04: "im Wildtyp sind die Ringe eigentlich gar nicht da
+    //      im Hauptpanel, so würde ich unseren Patch auch machen, die Ringe nur
+    //      oben in den Tabs".
     pub(crate) fn own_link_state(&self) -> Option<bool> {
         let chip = self.radio_roster.iter().find(|c| c.id == self.radio_id)?;
-        (chip.switchable && chip.attached_to.is_none()).then_some(chip.enabled)
+        let tabs_shown = self.radio_roster.iter().filter(|c| c.attached_to.is_none()).count() > 1;
+        (chip.switchable && chip.attached_to.is_none() && !tabs_shown).then_some(chip.enabled)
     }
 
     /// The other radios of the station this tab is connected to, and the

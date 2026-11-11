@@ -4296,15 +4296,16 @@ smeter-ps = PS --
 ## 多电台（src/multi.rs）
 
 multi-tx = ● 发射
-multi-link = 链路
 multi-mute-radio-s-audio = 静音此电台的音频
-multi-close-radio-s-split-view = 关闭此电台的分屏视图
-multi-open-radio-split-view-own = 在其自己的分屏视图中打开此电台
-multi-already-open-another-split-view = 已在另一个分屏视图中打开
 multi-show-radio-here = 在此处显示此电台
 multi-show-on-map = 在地图上显示
 multi-add-radio-computer-settings-radio = 在本计算机上添加电台（若要在电台站点上添加，请使用“设置 → 电台”）
 multi-add-radio = 添加电台
+multi-take-radio-off-row = 把这台电台移出这一行。它继续运行；用圆环关闭它。
+multi-open-pane = 用一台未在屏幕上的电台打开另一个窗格
+multi-pick-radio = 电台 ▼
+multi-pick-radio-tip = 把一台电台放进这一行。圆环标出连接已打开的电台。
+multi-new-radio = 新电台…
 multi-asked-station-another-radio = 已向电台站点请求另一台电台……
 multi-client-cannot-open-connection = 此客户端无法打开连接。
 

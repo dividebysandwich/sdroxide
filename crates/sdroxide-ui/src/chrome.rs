@@ -1673,6 +1673,34 @@ pub fn chip_link(ui: &mut Ui, selected: bool, size: egui::Vec2) -> Response {
     resp
 }
 
+/// A chip carrying a small box split into columns — "another pane" — instead
+/// of a label, at an exact size. Painted rather than typed for the reason
+/// [`chip_link`] gives, and inked the same way.
+///
+/// The pane row's way to open a column beside the one it sits on.
+// Why: HDZ 2026-11-04: the "+" that opened a pane read as "add a radio",
+//      which "+" means everywhere else in the program ("das Symbol ist nur
+//      unglücklich gewählt"); his idea: "ein kleines Symbol, drei senkrechte
+//      Linien in Kästchen".
+// Invariant: three columns — the frame's two sides and two dividers inside.
+pub fn chip_columns(ui: &mut Ui, size: egui::Vec2) -> Response {
+    let resp = chip_impl(ui, false, RichText::new(""), None, Sense::click(), Some(size));
+    if ui.is_rect_visible(resp.rect) {
+        let ink = ui.style().interact_selectable(&resp, false).fg_stroke.color;
+        let stroke = Stroke::new((size.y * 0.07).clamp(1.2, 2.0), ink);
+        let h = resp.rect.height() * 0.48;
+        let w = h * 1.3;
+        let frame = egui::Rect::from_center_size(resp.rect.center(), vec2(w, h));
+        let p = ui.painter();
+        p.rect_stroke(frame, 1.0, stroke, egui::StrokeKind::Middle);
+        for k in [1.0, 2.0] {
+            let x = frame.left() + w * k / 3.0;
+            p.line_segment([Pos2::new(x, frame.top()), Pos2::new(x, frame.bottom())], stroke);
+        }
+    }
+    resp
+}
+
 /// A chip carrying an anticlockwise arrow — "put it back" — instead of a label,
 /// at an exact size. Painted rather than typed for the reason [`chip_link`]
 /// gives, and inked the same way.

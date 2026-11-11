@@ -4319,15 +4319,16 @@ smeter-ps = PS --
 ## multi (src/multi.rs)
 
 multi-tx = ● TX
-multi-link = VERBINDING
 multi-mute-radio-s-audio = De audio van deze radio dempen
-multi-close-radio-s-split-view = De gesplitste weergave van deze radio sluiten
-multi-open-radio-split-view-own = Deze radio openen in een eigen gesplitste weergave
-multi-already-open-another-split-view = Al geopend in een andere gesplitste weergave
 multi-show-radio-here = Deze radio hier tonen
 multi-show-on-map = Op de kaart tonen
 multi-add-radio-computer-settings-radio = Een radio op deze computer toevoegen (Instellingen → Radio om er één bij een station toe te voegen)
 multi-add-radio = Een radio toevoegen
+multi-take-radio-off-row = Deze radio uit deze rij halen. Hij blijft draaien; de ringen schakelen hem uit.
+multi-open-pane = Een volgend paneel openen met een radio die niet in beeld is
+multi-pick-radio = Radio ▼
+multi-pick-radio-tip = Een radio in deze rij zetten. De ringen markeren radio's waarvan de verbinding open is.
+multi-new-radio = Nieuwe radio…
 multi-asked-station-another-radio = Het station om nog een radio gevraagd…
 multi-client-cannot-open-connection = Deze client kan geen verbinding openen.
 

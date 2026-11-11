@@ -4364,15 +4364,16 @@ smeter-ps = PS --
 ## multi (src/multi.rs)
 
 multi-tx = ● TX
-multi-link = VERBINDUNG
 multi-mute-radio-s-audio = Audio dieses Funkgeräts stummschalten
-multi-close-radio-s-split-view = Die geteilte Ansicht dieses Funkgeräts schließen
-multi-open-radio-split-view-own = Dieses Funkgerät in einer eigenen geteilten Ansicht öffnen
-multi-already-open-another-split-view = Schon in einer anderen geteilten Ansicht geöffnet
 multi-show-radio-here = Dieses Funkgerät hier zeigen
 multi-show-on-map = Auf der Karte zeigen
 multi-add-radio-computer-settings-radio = Ein Funkgerät auf diesem Computer hinzufügen (zum Hinzufügen an einer Station: Einstellungen → Funkgerät)
 multi-add-radio = Ein Funkgerät hinzufügen
+multi-take-radio-off-row = Aus Reihe nehmen; läuft weiter
+multi-open-pane = Neue Spalte mit verdecktem Funkgerät
+multi-pick-radio = Radio ▼
+multi-pick-radio-tip = Funkgerät in Reihe holen; Ringe = Verbindung offen
+multi-new-radio = Neues Funkgerät…
 multi-asked-station-another-radio = Die Station nach einem weiteren Funkgerät gefragt…
 multi-client-cannot-open-connection = Dieser Client kann keine Verbindung öffnen.
 

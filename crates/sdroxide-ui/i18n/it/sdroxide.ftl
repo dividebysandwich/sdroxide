@@ -4329,15 +4329,16 @@ smeter-ps = PS --
 ## multi (src/multi.rs)
 
 multi-tx = ● TX
-multi-link = COLLEGAMENTO
 multi-mute-radio-s-audio = Silenzia l'audio di questa radio
-multi-close-radio-s-split-view = Chiudi la vista divisa di questa radio
-multi-open-radio-split-view-own = Apri questa radio in una vista divisa propria
-multi-already-open-another-split-view = Già aperta in un'altra vista divisa
 multi-show-radio-here = Mostra questa radio qui
 multi-show-on-map = Mostra sulla mappa
 multi-add-radio-computer-settings-radio = Aggiungi una radio su questo computer (per aggiungerne una a una stazione, usa Impostazioni → Radio)
 multi-add-radio = Aggiungi una radio
+multi-take-radio-off-row = Togli questa radio da questa riga. Continua a funzionare; gli anelli la spengono.
+multi-open-pane = Apri un altro riquadro con una radio che non è sullo schermo
+multi-pick-radio = Radio ▼
+multi-pick-radio-tip = Metti una radio in questa riga. Gli anelli indicano le radio con il collegamento aperto.
+multi-new-radio = Nuova radio…
 multi-asked-station-another-radio = Chiesta alla stazione un'altra radio…
 multi-client-cannot-open-connection = Questo client non può aprire una connessione.
 
