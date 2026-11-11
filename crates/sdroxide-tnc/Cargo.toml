@@ -1,0 +1,13 @@
+[package]
+name = "sdroxide-tnc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The TNC host ports (command + data over TCP, or in-process) shared by sdroxide's Mercury and Data2G modems."
+
+# Native-only: TCP listeners on their own threads. Must never be a dependency of
+# any wasm-targeted crate.
+
+[dependencies]
+crossbeam-channel.workspace = true
+tracing.workspace = true

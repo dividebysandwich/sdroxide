@@ -109,8 +109,14 @@ One binary, three ways to run it:
   email network, speaking B2F/FBB, LZHUF and the secure login natively (no Pat,
   no external modem). Mailbox with inbox / outbox / sent / archive, compose and
   reply, attachments, and the session transcript when something goes wrong.
-  Over the internet CMS today; AX.25 packet and ARDOP are the planned radio
-  transports.
+  Over the internet CMS, AX.25 packet to the RMS Packet gateways, or an HF ARQ
+  link on **Mercury** or **Data2G**; ARDOP is still to come.
+- **HF ARQ data modems** — **Mercury** (Rhizomatica's codec2-OFDM modem, the one
+  HERMES stations run) and **Data2G** (an OFDM modem with LDPC/polar codes and
+  hybrid ARQ), linked in from their own releases. Each has a panel with a
+  keyboard terminal, carries Winlink sessions, and can be offered on the usual
+  TNC command/data ports (8300/8301) so Pat, Winlink Express, BPQ or VarAC can
+  use the radio as their modem. Experimental: not yet tested on the air.
 - **Bandplan overlay** — a colour-coded strip along the bottom of the waterfall
   that labels allocations (ham bands, broadcast, CB, AM); it shows coarse bands
   when zoomed out and CW/digital/SSB sub-segments when zoomed into a ham band.
@@ -1130,8 +1136,8 @@ standard library as a separate package, but the usual symptom is that the native
 build works fine and the web client build fails on the missing target. Migrating
 to rustup is the shortest way out.
 
-The RADE digital-voice codec and the rtl_433 ISM decoders are vendored as git
-submodules, so clone with:
+The RADE digital-voice codec, the rtl_433 ISM decoders and the Mercury and
+Data2G data modems are vendored as git submodules, so clone with:
 
 ```sh
 git clone --recurse-submodules https://github.com/dividebysandwich/sdroxide
@@ -1143,7 +1149,12 @@ Both are built from source by `build.rs`, so a default build needs a C compiler
 and CMake — already in the package lists below. If you would rather not build
 rtl_433, `--no-default-features` leaves it out and SDRoxide falls back to its own
 ISM decoders; see [`crates/sdroxide-ism/PROVENANCE.md`](crates/sdroxide-ism/PROVENANCE.md)
-for what it is and what licence it carries.
+for what it is and what licence it carries. Mercury (GPL-3.0-or-later, with a
+codec2 subset under LGPL-2.1) and Data2G (Artistic-2.0, with Apache-2.0 parts)
+are always built; Data2G needs a C++20 compiler and CMake 3.24 or newer, and
+Mercury is left out of Windows builds made with MSVC. See
+[`crates/sdroxide-mercury/PROVENANCE.md`](crates/sdroxide-mercury/PROVENANCE.md)
+and [`crates/sdroxide-data2g/PROVENANCE.md`](crates/sdroxide-data2g/PROVENANCE.md).
 
 ### What depends on what
 

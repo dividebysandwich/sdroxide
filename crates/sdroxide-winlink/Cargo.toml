@@ -11,6 +11,7 @@ description = "Winlink radio-email client for sdroxide: the B2F/FBB forwarding p
 [dependencies]
 sdroxide-types.workspace = true
 sdroxide-ax25.workspace = true
+sdroxide-tnc.workspace = true
 crossbeam-channel.workspace = true
 serde.workspace = true
 thiserror.workspace = true
@@ -18,3 +19,7 @@ tracing.workspace = true
 # The Winlink secure-login challenge is MD5 over a fixed salt. Used as a
 # checksum against a published algorithm, not to protect anything.
 md-5 = "0.11"
+
+[dev-dependencies]
+# tests/tnc_transport.rs drives a real Data2G station as the far end.
+sdroxide-data2g.workspace = true

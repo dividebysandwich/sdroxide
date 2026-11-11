@@ -162,13 +162,18 @@ pub const DEFAULT_CMS_ADDRESS: &str = "server.winlink.org:8772";
 pub enum WinlinkLane {
     /// The CMS over the internet.
     ///
-    /// The alias reads a config saved with the VARA HF lane (1.7.0), which is
-    /// gone; an unknown variant would quarantine the whole file.
+    /// The alias reads a config saved by 1.7.0 with a lane that has since
+    /// been removed; an unknown variant would quarantine the whole file.
     #[default]
     #[serde(alias = "Vara")]
     Telnet,
     /// An RMS gateway over the air, using the radio's current packet mode.
     Packet,
+    /// A gateway over the air on Mercury. Appended — postcard numbers
+    /// variants by position.
+    Mercury,
+    /// A gateway over the air on Data2G. Appended.
+    Data2g,
 }
 
 /// One RMS gateway the operator has written down.
@@ -305,10 +310,10 @@ impl WinlinkConfig {
 mod tests {
     use super::*;
 
-    /// The VARA HF lane was removed after 1.7.0; a config naming it falls
+    /// A lane 1.7.0 shipped was removed after it; a config naming it falls
     /// back to the CMS rather than failing to parse.
     #[test]
-    fn a_saved_vara_lane_reads_as_telnet() {
+    fn a_saved_removed_lane_reads_as_telnet() {
         let lane: WinlinkLane = serde_json::from_str("\"Vara\"").unwrap();
         assert_eq!(lane, WinlinkLane::Telnet);
     }

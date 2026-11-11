@@ -46,6 +46,8 @@ impl SdroxideApp {
             (tr!("setup-aprs-setup"), "APRS Setup".to_string())
         } else if mode.is_packet() {
             (tr!("setup-packet-setup"), "Packet Setup".to_string())
+        } else if mode.is_tnc_modem() {
+            (tr!("setup-mode-setup", mode = mode.label()), format!("{} Setup", mode.label()))
         } else if mode.is_text_modem() || mode.is_hell() || mode.is_js8() {
             (tr!("setup-mode-setup", mode = mode.label()), format!("{} Setup", mode.label()))
         } else {
@@ -227,6 +229,87 @@ impl SdroxideApp {
                                 .changed();
                         });
                         ui.end_row();
+                    }
+
+                    if mode.is_tnc_modem() {
+                        ui.label(tr!("setup-station-call"));
+                        if crate::chrome::field(
+                            ui,
+                            egui::TextEdit::singleline(&mut cfg.tnc_mycall)
+                                .hint_text(cfg.my_call.clone()),
+                        )
+                        .on_hover_text(tr!("setup-tnc-call-hint"))
+                        .changed()
+                        {
+                            cfg.tnc_mycall = cfg.tnc_mycall.to_uppercase();
+                            changed = true;
+                        }
+                        ui.end_row();
+
+                        ui.label(tr!("setup-tnc-bandwidth"));
+                        ui.horizontal(|ui| {
+                            let bw = if mode == sdroxide_types::Mode::Data2g {
+                                &mut cfg.data2g_bw
+                            } else {
+                                &mut cfg.mercury_bw
+                            };
+                            for b in sdroxide_types::TncBw::offered(mode) {
+                                changed |= ui.selectable_value(bw, *b, b.label()).changed();
+                            }
+                        });
+                        ui.end_row();
+
+                        ui.label(tr!("setup-tnc-lead"));
+                        ui.horizontal(|ui| {
+                            let mut auto = cfg.tnc_ptt_lead_ms.is_none();
+                            if ui
+                                .checkbox(&mut auto, tr!("setup-tnc-lead-auto"))
+                                .on_hover_text(tr!("setup-tnc-lead-hint"))
+                                .changed()
+                            {
+                                cfg.tnc_ptt_lead_ms = if auto { None } else { Some(150) };
+                                changed = true;
+                            }
+                            if let Some(ms) = cfg.tnc_ptt_lead_ms.as_mut() {
+                                changed |= ui
+                                    .add(egui::DragValue::new(ms).range(0..=1000).suffix(" ms"))
+                                    .changed();
+                            }
+                        });
+                        ui.end_row();
+
+                        ui.label(tr!("setup-tnc-listen"));
+                        changed |= ui
+                            .checkbox(&mut cfg.tnc_listen, tr!("setup-tnc-listen-check"))
+                            .on_hover_text(tr!("setup-tnc-listen-hint"))
+                            .changed();
+                        ui.end_row();
+
+                        ui.label(tr!("setup-tnc-host"));
+                        ui.horizontal(|ui| {
+                            changed |= ui
+                                .checkbox(&mut cfg.tnc_host_server, tr!("setup-serve"))
+                                .on_hover_text(tr!("setup-tnc-host-hint"))
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut cfg.tnc_host_port)
+                                        .range(1024..=65534),
+                                )
+                                .changed();
+                        });
+                        ui.end_row();
+
+                        if mode == sdroxide_types::Mode::Mercury {
+                            ui.label(tr!("setup-mercury-port"));
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut cfg.mercury_port).range(1024..=65533),
+                                )
+                                .on_hover_text(tr!("setup-mercury-port-hint"))
+                                .changed();
+                            ui.end_row();
+                        }
                     }
 
                     if mode.is_aprs() {
@@ -596,7 +679,7 @@ impl SdroxideApp {
                     // every setting the operator typed is discarded the moment
                     // the window closes — which is what happened when this
                     // was written the other way (issue #150).
-                    if !mode.is_aprs() {
+                    if !mode.is_aprs() && !mode.is_tnc_modem() {
                         ui.label(tr!("setup-tx-period"));
                         ui.horizontal(|ui| {
                             changed |= ui
@@ -810,7 +893,7 @@ impl SdroxideApp {
                     });
                     ui.end_row();
                 });
-                if !mode.is_aprs() {
+                if !mode.is_aprs() && !mode.is_tnc_modem() {
                     ui.separator();
                     ui.label(
                         RichText::new("Message templates  {MYCALL} {MYGRID} {DX} {REPORT}")

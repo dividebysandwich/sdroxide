@@ -714,6 +714,10 @@ pub struct SdroxideApp {
     fsq_rx_images: Vec<egui::TextureHandle>,
     /// Picked-image inbox for FSQ image transmit (raw file bytes).
     fsq_img_inbox: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    /// Mercury / Data2G: who the panel's CONNECT button calls.
+    tnc_target: String,
+    /// Mercury / Data2G: the line being typed to the connected station.
+    tnc_draft: String,
     /// Packet: who the terminal's CONNECT button calls.
     packet_target: String,
     /// Packet: the digipeater path typed beside it.
@@ -1668,6 +1672,8 @@ impl SdroxideApp {
             vdl2_sort_desc: true,
             aprs_target: String::new(),
             aprs_draft: String::new(),
+            tnc_target: String::new(),
+            tnc_draft: String::new(),
             packet_target: String::new(),
             packet_via: String::new(),
             packet_draft: String::new(),

@@ -34,6 +34,7 @@ sdroxide-config = { path = "../sdroxide-config" }
 sdroxide-digi = { path = "../sdroxide-digi" }
 sdroxide-kiss = { path = "../sdroxide-kiss" }
 sdroxide-ax25 = { path = "../sdroxide-ax25" }
+sdroxide-tnc = { path = "../sdroxide-tnc" }
 sdroxide-skimmer = { path = "../sdroxide-skimmer" }
 sdroxide-ism = { path = "../sdroxide-ism" }
 sdroxide-adsb = { path = "../sdroxide-adsb" }

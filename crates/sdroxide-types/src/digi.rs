@@ -568,6 +568,10 @@ pub struct DigiStatus {
     /// after `tx_refused` for the same positional reason.
     #[serde(default)]
     pub jtty: Option<crate::JttyStatus>,
+    /// Mercury and Data2G: the link, the speed and the transcript. `None` in
+    /// every other mode. Appended after `jtty` for the same positional reason.
+    #[serde(default)]
+    pub tnc: Option<crate::TncStatus>,
 }
 
 /// The running detail of the contact in progress: when it started and what has
@@ -1082,6 +1086,7 @@ impl DigiStatus {
             navtex: None,
             acars: None,
             jtty: None,
+            tnc: None,
             aprs: None,
             js8: None,
             atchat: None,
@@ -2220,6 +2225,48 @@ pub struct DigiConfig {
     /// remember to change it.
     #[serde(default)]
     pub wavelog_station_id: u32,
+
+    // ── TNC modems (Mercury, Data2G) ── appended, postcard numbers fields by
+    // position.
+    /// The callsign the modem answers to, with an optional SSID. Empty falls
+    /// back to the logbook callsign. A host program (Pat, VarAC) sets its own
+    /// with `MYCALL` and that wins for its session.
+    #[serde(default)]
+    pub tnc_mycall: String,
+    /// The width Mercury runs at: 500 or 2300.
+    #[serde(default)]
+    pub mercury_bw: crate::TncBw,
+    /// The width Data2G runs at: 500, 1200 or 2300 (its 2400 Hz band).
+    #[serde(default)]
+    pub data2g_bw: crate::TncBw,
+    /// Silence before each burst while the transmitter settles, milliseconds.
+    /// `None` picks from the radio: a little on an IQ SDR, more on a CAT rig
+    /// whose relay and sound card take time. Mercury reads it when it starts.
+    #[serde(default)]
+    pub tnc_ptt_lead_ms: Option<u16>,
+    /// Offer the modem on the TCP host ports, for Pat, Winlink Express, BPQ or
+    /// VarAC.
+    #[serde(default)]
+    pub tnc_host_server: bool,
+    /// The command port; data is on the next one. 8300 is what HF ARQ
+    /// clients expect.
+    #[serde(default = "default_tnc_host_port")]
+    pub tnc_host_port: u16,
+    /// Answer calls from the panel when no host program is attached.
+    #[serde(default)]
+    pub tnc_listen: bool,
+    /// Mercury's own command port on 127.0.0.1 (data on the next, broadcast on
+    /// the one after). Internal: sdroxide carries the host ports' lines to it.
+    /// Read when Mercury starts, once per run.
+    #[serde(default = "default_mercury_port")]
+    pub mercury_port: u16,
+}
+
+fn default_tnc_host_port() -> u16 {
+    8300
+}
+fn default_mercury_port() -> u16 {
+    18300
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2464,6 +2511,14 @@ impl Default for DigiConfig {
             fsk441_period: crate::Fsk441Period::P30,
             ft8_depth: Ft8Depth::default(),
             wavelog_station_id: 0,
+            tnc_mycall: String::new(),
+            mercury_bw: crate::TncBw::default(),
+            data2g_bw: crate::TncBw::default(),
+            tnc_ptt_lead_ms: None,
+            tnc_host_server: false,
+            tnc_host_port: default_tnc_host_port(),
+            tnc_listen: false,
+            mercury_port: default_mercury_port(),
         }
     }
 }

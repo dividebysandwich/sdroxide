@@ -1,0 +1,21 @@
+[package]
+name = "sdroxide-mercury"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Mercury, Rhizomatica's HF data modem, linked in as its daemon library."
+
+# Native-only. Links the vendored Mercury (`vendor/mercury`, a git submodule
+# pinned to a release, used unmodified): GPL-3.0-or-later, carrying a codec2
+# subset (LGPL-2.1), iniparser (MIT) and nanorq/oblas (MIT). See PROVENANCE.md.
+#
+# Building needs a C compiler and the submodule checked out. Not under MSVC:
+# upstream is POSIX C, and the crate then builds empty (`available()` false).
+
+[dependencies]
+sdroxide-tnc.workspace = true
+crossbeam-channel.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+cc = "1"

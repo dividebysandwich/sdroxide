@@ -73,6 +73,7 @@ mod state;
 mod station;
 mod tciserver;
 pub mod text;
+mod tnc;
 mod tone;
 mod tx_voice;
 mod ui;
@@ -297,6 +298,7 @@ pub use state::{
 };
 pub use station::StationConfig;
 pub use tciserver::TciServerConfig;
+pub use tnc::{TNC_TRANSCRIPT_MAX, TncBw, TncHolder, TncLine, TncLineKind, TncStatus};
 pub use tone::{CTCSS_TONES, SubTone};
 pub use tx_voice::{
     TX_VOICE_TEST_MAX_S, TxCompState, TxDeEssState, TxEqBand, TxEqEdge, TxEqState, TxGateState,

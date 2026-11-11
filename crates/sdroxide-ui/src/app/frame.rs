@@ -1304,6 +1304,8 @@ impl SdroxideApp {
                         self.aprs_panel(ui, cmds, panel_h);
                     } else if mode.is_packet() {
                         self.packet_panel(ui, cmds, panel_h);
+                    } else if mode.is_tnc_modem() {
+                        self.tnc_panel(ui, cmds, panel_h);
                     } else if mode.is_fsq() {
                         self.fsq_panel(ui, cmds, panel_h);
                     } else if mode.is_hell() {

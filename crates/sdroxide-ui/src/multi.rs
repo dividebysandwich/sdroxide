@@ -477,11 +477,8 @@ impl MultiApp {
             // first, on the radio already on screen (#763): it opens the split
             // with the next radio instead.
             if self.panes.len() == 1 {
-                if let Some(other) = self
-                    .tabs
-                    .iter()
-                    .find(|t| t.id != id && t.attached_to.is_none())
-                    .map(|t| t.id)
+                if let Some(other) =
+                    self.tabs.iter().find(|t| t.id != id && t.attached_to.is_none()).map(|t| t.id)
                 {
                     self.panes.push(other);
                 }

@@ -1236,4 +1236,25 @@ pub enum Command {
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     ClearMemories,
+
+    /// Mercury / Data2G: call a station from the operator's panel. Refused,
+    /// with a line in the transcript, while another host (Winlink, a TCP
+    /// program) holds the modem. Appended for the usual reason.
+    TncConnect {
+        call: String,
+    },
+    /// Mercury / Data2G: send one line to the connected station. A CR is added.
+    TncSend {
+        text: String,
+    },
+    /// Mercury / Data2G: hang up cleanly, waiting for the far end to agree.
+    TncDisconnect,
+    /// Mercury / Data2G: drop the link now, whoever holds the modem.
+    TncAbort,
+    /// Mercury: send (true) or stop (false) a tune tone for an antenna tuner.
+    TncTune {
+        on: bool,
+    },
+    /// Mercury / Data2G: empty the panel's transcript. The link is untouched.
+    TncTermClear,
 }

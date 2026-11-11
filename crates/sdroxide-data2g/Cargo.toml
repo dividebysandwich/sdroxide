@@ -1,0 +1,20 @@
+[package]
+name = "sdroxide-data2g"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Data2G, the OFDM HF data modem (arodland/Data2G), linked in from its native C++ core."
+
+# Native-only. Links the vendored Data2G native core (`vendor/data2g`, a git
+# submodule pinned to a release, used unmodified): Artistic-2.0, with the
+# Ion-derived parts under Apache-2.0 — both GPL-compatible. See PROVENANCE.md.
+#
+# Building needs a C++20 compiler, CMake >= 3.24 and the submodule checked out.
+
+[dependencies]
+sdroxide-tnc.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+cmake = "0.1"
+cc = "1"

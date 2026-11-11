@@ -21,6 +21,11 @@ sdroxide-dsp.workspace = true
 # that bridges it onto the radio lives here because it needs the DSP resamplers.
 sdroxide-atchat.workspace = true
 sdroxide-ax25.workspace = true
+# Mercury and Data2G: the TNC host ports and the two modems, linked in from
+# their vendored C/C++ sources.
+sdroxide-tnc.workspace = true
+sdroxide-mercury.workspace = true
+sdroxide-data2g.workspace = true
 sdroxide-aprs.workspace = true
 sdroxide-deepcw.workspace = true
 sdroxide-rade.workspace = true

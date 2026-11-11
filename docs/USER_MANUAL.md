@@ -30,6 +30,7 @@ or connects to a remote sdroxide server.
     - [3.24 Q65](#324-q65)
     - [3.25 FSK441](#325-fsk441)
     - [3.26 JTTY](#326-jtty)
+    - [3.27 Mercury and Data2G](#327-mercury-and-data2g)
 4. [Skimmers (CW, PSK, RTTY)](#4-skimmers)
 5. [ISM band decoder (315 / 345 / 433 / 868 / 915 MHz devices)](#5-ism-band-decoder)
 6. [Settings](#6-settings)
@@ -6608,6 +6609,74 @@ nothing is sent and the reason is shown under the row.
 **Where to find it.** There is no calling frequency and the mode is very new;
 tune where the station you want says it will be.
 
+### 3.27 Mercury and Data2G
+
+> **Experimental.** Both modems are linked in from their own releases
+> (Mercury 1.9.23, Data2G 0.4.3) and have been run station to station through
+> simulated channels inside sdroxide, but **not yet on the air** from here.
+> Treat a first contact as a test.
+
+**MERCURY** and **DATA2G** in the DIGITAL row are two open HF **ARQ data
+modems**: connected-mode links where two stations hand-shake, then trade
+bursts and acknowledgements, with the speed climbing and falling with the path.
+Whatever is sent arrives complete and in order, or the link says it failed —
+which is what Winlink email, file transfer and keyboard chat need.
+
+- **Mercury** is Rhizomatica's modem, the one HERMES stations run: codec2's OFDM
+  data modes from 3 to 33 carriers, with a 32-tone MFSK floor for the weakest
+  paths. 500 or 2300 Hz wide, centred on 1500 Hz of audio.
+- **Data2G** is an OFDM modem with LDPC and polar codes, incremental-redundancy
+  retries and a learned speed shifter, from about 28 bps to over 8 kbps. 500,
+  1200 or 2300 Hz wide (the last a 2400 Hz signal), centred near 1525 Hz.
+
+The two do not talk to each other: both stations must run the same modem, and
+for Data2G the same **protocol version** (15 in this build, shown on the
+panel's status line). Data2G is beta and its authors still change the on-air
+format between releases.
+
+Both are **upper sideband** whatever the band, like any data mode. Set the
+filter with the presets, which match each width the modem offers.
+
+**The panel.** **LINK** is the modem as any program sees it: whether a link is
+up, the station on the other end, the speed it has reached (Mercury's level and
+net bit rate, Data2G's current submode), the far station's S/N, **BUSY** when
+someone else is on the channel, and who is driving the modem. **TERMINAL** is a
+keyboard-to-keyboard session from here: type a callsign, **CONNECT**, type,
+read. **DISCONNECT** hangs up properly (what is queued goes first); **ABORT**
+drops the link at once, whoever holds it. **TUNE** (Mercury only) keys a steady
+tone for an antenna tuner until pressed again.
+
+**One host at a time.** The modem can be driven by this panel, by the MAIL
+window's Winlink session, or by a program on the TCP host ports — never two at
+once. Whichever claims it first has it; the others are told who holds it.
+
+**Setup** (⚙ on the panel):
+
+- **Station call** — the callsign the modem answers to, with an SSID if you
+  like. Empty uses your logbook callsign. A program driving the modem sets its
+  own with `MYCALL`.
+- **Bandwidth** — the widest signal the modem may use. Gateways usually say
+  which they run; 2300 is the common choice.
+- **PTT lead** — silence ahead of each burst while the transmitter settles.
+  **Auto** is 50 ms on an IQ SDR and 150 ms on a sound-card rig. If the start of
+  every burst seems lost (the far end never answers a call that you can see
+  going out), raise it. Mercury reads it once, when it first starts in a run.
+- **Answer calls** — hold the modem from the panel whenever nobody else does,
+  so incoming calls are answered in the terminal. Ignored while the TCP host is
+  on, since a program attached there wants the calls.
+- **TCP host** — see [Serving the modem to other software](#serving-the-modem-to-other-software).
+- **Mercury's own port** (Mercury only) — see below. Leave it alone unless
+  18300–18302 are taken on this machine.
+
+**How Mercury runs.** Mercury is started the first time the mode is chosen and
+then keeps running until sdroxide exits; leaving the mode stops its audio and
+tells it to stop listening. It always opens three TCP ports of its own
+(18300–18302 by default), bound to this machine only; sdroxide talks to it
+there and offers your programs its own host ports instead. Its log is
+`mercury/mercury.log` in the configuration directory. Mercury is not part of
+Windows builds made with Microsoft's compiler — the mode is shown, and its
+panel says why it is not running.
+
 ## 4. Skimmers
 
 The skimmers decode many signals at once across a wide (~192 kHz) window and
@@ -12875,6 +12944,10 @@ automatically for many countries.
   **PACKET** or **PACKET-HF** and your station call (with an SSID) has to be set
   in the packet setup dialog; nothing transmits until it is. See
   [§11](#11-winlink-radio-email).
+- **Radio (Mercury)** / **Radio (Data2G)** — call a gateway on the air on that
+  modem. The radio has to be in the matching mode. Choosing either shows only
+  **Gateway** and **Frequency**: neither modem has digipeaters, and the speed is
+  worked out on the air. See [§3.27](#327-mercury-and-data2g).
 
 Choosing **Radio (packet)** reveals the gateway fields:
 
@@ -15231,9 +15304,10 @@ mailbox with attachments in it does not have to cross a phone link on connect.
 
 ### Over the air
 
-Two routes now: the CMS over the internet, and **AX.25 packet** on the radio,
-reaching the RMS Packet gateways. Pick one under **Settings → Winlink → How to
-connect**. ARDOP on HF is still to come.
+Three kinds of route: the CMS over the internet, **AX.25 packet** on the radio,
+reaching the RMS Packet gateways, and an HF ARQ link on **Mercury** or
+**Data2G** to a gateway that runs the same modem. Pick one under **Settings →
+Winlink → How to connect**. ARDOP is still to come.
 
 To forward over the air:
 
@@ -15253,6 +15327,14 @@ rather than a hard kill: the link is torn down properly and whatever mail
 already arrived is still filed, so aborting a session that was halfway through
 does not lose what it had. A call to a gateway that is not answering takes two
 minutes to give up on its own, and ABORT takes effect in well under a second.
+
+On **Mercury** or **Data2G** the steps are the same with the modem in place of
+packet: put the radio in **MERCURY** or **DATA2G**, set the route to **Radio
+(Mercury)** or **Radio (Data2G)**, and name the gateway and its dial frequency.
+The width set in the modem's own setup is used for the call. The route must
+match the mode the radio is in — a Mercury gateway cannot be called on
+Data2G — and CONNECT says so if it does not. The modem gives up on an
+unanswered call by itself after its retries.
 
 ### Choosing a gateway
 
@@ -15405,6 +15487,16 @@ Switch on **KISS server** in the packet setup dialog and sdroxide offers its
 modem as a KISS TNC on a socket (8001 by default), the same way it already
 serves TCI and rigctld. Pat, an APRS client, or the Linux AX.25 stack can then
 use the radio without knowing sdroxide exists.
+
+For **Mercury** and **Data2G**, switch on **TCP host** in the modem's setup
+and sdroxide offers it on the command port given there (**8300** by default)
+and the data port after it (8301), on this machine only — the ports and the
+command language HF ARQ clients already use. Point Pat, Winlink Express, BPQ or
+VarAC at `127.0.0.1:8300` as their modem and they drive this radio, keying and
+all. Unlike the KISS server, the TCP host is one of the modem's hosts like the
+panel and the MAIL window: while a program is attached, the others are refused,
+and the panel's status line names the program's address. When the program
+disconnects, any link it had up is dropped with it.
 
 The KISS server and the terminal are two hosts on one radio and neither knows
 about the other: a KISS client can put frames on the air under your callsign
@@ -16998,6 +17090,8 @@ using. Bind them under **Speech** on the Controls tab:
 | RFPAINT | RF Paint — transmit-only spectrum painting of text and images onto the waterfall. |
 | RADE | FreeDV RADE V1 — digital voice: a neural codec (Radio Autoencoder) over an OFDM waveform about 900 Hz wide, decoded speech in place of what the receiver hears. On a sideband, and which one follows the band the way phone does — LSB on 160, 80 and 40 m, USB on 60 m, 30 m and above. |
 | PACKET / PACKET-HF | AX.25 packet radio: 1200 baud Bell 202 or 9600 baud G3RUH on VHF/UHF FM, 300 baud AFSK on HF sideband. Carries Winlink sessions and offers the modem as a KISS TNC. See [11](#11-winlink-radio-email). |
+| MERCURY | **Experimental.** Rhizomatica's HF ARQ data modem (codec2 OFDM with an MFSK floor), 500 or 2300 Hz wide. Carries Winlink sessions and keyboard chat, and serves Pat, BPQ or VarAC on a TCP host port. See [3.27](#327-mercury-and-data2g). |
+| DATA2G | **Experimental.** An OFDM HF ARQ data modem with LDPC/polar codes and a learned speed shifter, 500, 1200 or 2300 Hz wide; beta, protocol 15. Driven like MERCURY. See [3.27](#327-mercury-and-data2g). |
 | APRS | Automatic Packet Reporting System — 1200 baud AX.25 on the region's shared channel, with a live map of every station heard, its own symbol per station, and messages you can send and answer. See [3.12](#312-aprs). |
 | ADS-B | Aircraft surveillance on 1090 MHz: a target list and a radar picture with history dots, speed vectors and data blocks. Receive only, and needs a receiver streaming at least 2 Msps. See [3.13](#313-ads-b-aircraft-on-1090-mhz). |
 | VDL2 | The VHF datalink aircraft exchange ACARS over, on fourteen channels between 136.650 and 136.975 MHz at once: a message log and the stations sending them. Receive only. See [3.15](#315-vdl2-what-the-aircraft-are-saying). |

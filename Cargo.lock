@@ -5345,6 +5345,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdroxide-data2g"
+version = "1.7.0"
+dependencies = [
+ "cc",
+ "cmake",
+ "sdroxide-tnc",
+ "tracing",
+]
+
+[[package]]
 name = "sdroxide-deepcw"
 version = "1.7.0"
 dependencies = [
@@ -5373,9 +5383,12 @@ dependencies = [
  "sdroxide-aprs",
  "sdroxide-atchat",
  "sdroxide-ax25",
+ "sdroxide-data2g",
  "sdroxide-deepcw",
  "sdroxide-dsp",
+ "sdroxide-mercury",
  "sdroxide-rade",
+ "sdroxide-tnc",
  "sdroxide-types",
  "serde",
  "serde_json",
@@ -5589,6 +5602,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdroxide-mercury"
+version = "1.7.0"
+dependencies = [
+ "cc",
+ "crossbeam-channel",
+ "sdroxide-tnc",
+ "tracing",
+]
+
+[[package]]
 name = "sdroxide-midi"
 version = "1.7.0"
 dependencies = [
@@ -5739,6 +5762,7 @@ dependencies = [
  "sdroxide-skimmer",
  "sdroxide-solar",
  "sdroxide-tci",
+ "sdroxide-tnc",
  "sdroxide-types",
  "sdroxide-vdl2",
  "sdroxide-winlink",
@@ -5939,6 +5963,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdroxide-tnc"
+version = "1.7.0"
+dependencies = [
+ "crossbeam-channel",
+ "tracing",
+]
+
+[[package]]
 name = "sdroxide-types"
 version = "1.7.0"
 dependencies = [
@@ -6029,6 +6061,8 @@ dependencies = [
  "crossbeam-channel",
  "md-5",
  "sdroxide-ax25",
+ "sdroxide-data2g",
+ "sdroxide-tnc",
  "sdroxide-types",
  "serde",
  "thiserror 2.0.20",

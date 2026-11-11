@@ -368,3 +368,220 @@ impl Transport for Ax25Transport {
         format!("AX.25 packet to {}", self.gateway)
     }
 }
+
+/// How long a clean hang-up on a TNC modem is waited for before the link is
+/// simply dropped. The modem sends what is still buffered first, so this is
+/// generous.
+const TNC_DISCONNECT_WAIT: Duration = Duration::from_secs(45);
+
+/// A B2F session over a Mercury or Data2G link.
+///
+/// The third implementer. The modem is driven exactly as Pat drives a
+/// TNC — `MYCALL`, `BW`, `CONNECT`, payload on the data channel,
+/// `DISCONNECT` — through an in-process host claimed from
+/// [`sdroxide_tnc::TncHandle`], so this holds no modem state at all. The
+/// claim is the lease: while this lives, neither the operator's panel nor a
+/// program on the TCP ports can drive the link underneath the session.
+///
+/// `read` never times out, for the reason [`Ax25Transport`] gives: the modem
+/// has its own failure model (retries, then `DISCONNECTED`), and an HF
+/// session can sit through a long fade and recover.
+pub struct TncTransport {
+    client: sdroxide_tnc::LocalClient,
+    /// The modem's name, for messages: `Mercury`, `Data2G`.
+    modem: String,
+    gateway: String,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    inbox: std::collections::VecDeque<u8>,
+    closed: bool,
+}
+
+impl std::fmt::Debug for TncTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TncTransport")
+            .field("modem", &self.modem)
+            .field("gateway", &self.gateway)
+            .field("closed", &self.closed)
+            .finish()
+    }
+}
+
+impl TncTransport {
+    /// Call `gateway` as `mycall` on `modem` (its name, for messages) at the
+    /// width `bw_command` sets (`BW2300`), and wait for the link to come up.
+    pub fn connect(
+        handle: &sdroxide_tnc::TncHandle,
+        modem: &str,
+        mycall: &str,
+        gateway: &str,
+        bw_command: &str,
+        timeout: Duration,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Self, TransportError> {
+        let fail = |kind: std::io::ErrorKind, why: &str| {
+            TransportError::Connect(gateway.into(), std::io::Error::new(kind, why.to_string()))
+        };
+        let client =
+            handle.claim("the Winlink window").map_err(|e| fail(std::io::ErrorKind::Other, &e))?;
+        client.command(&format!("MYCALL {mycall}"));
+        client.command(bw_command);
+        client.command("LISTEN OFF");
+        client.command(&format!("CONNECT {mycall} {gateway}"));
+
+        let deadline = std::time::Instant::now() + timeout;
+        // The replies to MYCALL, BW and LISTEN come first; the fourth
+        // `OK`/`WRONG` is CONNECT's.
+        let mut acks = 0;
+        let mut inbox = std::collections::VecDeque::new();
+        loop {
+            if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                client.command("ABORT");
+                return Err(fail(std::io::ErrorKind::Interrupted, "stopped"));
+            }
+            if deadline <= std::time::Instant::now() {
+                client.command("ABORT");
+                return Err(fail(std::io::ErrorKind::TimedOut, "the gateway did not answer"));
+            }
+            while let Ok(d) = client.try_recv_data() {
+                inbox.extend(d);
+            }
+            match client.recv_line(CANCEL_POLL) {
+                Ok(l) if l.starts_with("CONNECTED") => {
+                    return Ok(TncTransport {
+                        client,
+                        modem: modem.to_string(),
+                        gateway: gateway.to_string(),
+                        cancel,
+                        inbox,
+                        closed: false,
+                    });
+                }
+                Ok(l) if l.starts_with("DISCONNECTED") => {
+                    return Err(fail(
+                        std::io::ErrorKind::ConnectionRefused,
+                        "no answer from the gateway",
+                    ));
+                }
+                Ok(l) if l == "OK" => acks += 1,
+                Ok(l) if l == "WRONG" => {
+                    let why = match acks {
+                        0 => format!("{modem} refused the callsign"),
+                        1 => format!("{modem} refused the bandwidth"),
+                        _ => format!("{modem} refused the call (busy, or already linked?)"),
+                    };
+                    return Err(fail(std::io::ErrorKind::Other, &why));
+                }
+                Ok(_) | Err(false) => {}
+                Err(true) => {
+                    let why = format!("the radio left {modem}");
+                    return Err(fail(std::io::ErrorKind::BrokenPipe, &why));
+                }
+            }
+        }
+    }
+
+    fn fill(&mut self) -> std::io::Result<()> {
+        while self.inbox.is_empty() && !self.closed {
+            if self.cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "stopped by the operator",
+                ));
+            }
+            match self.client.try_recv_data() {
+                Ok(d) => {
+                    self.inbox.extend(d);
+                    continue;
+                }
+                Err(true) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        format!("the radio left {}", self.modem),
+                    ));
+                }
+                Err(false) => {}
+            }
+            match self.client.recv_line(CANCEL_POLL) {
+                // Payload that raced the hang-up is still the session's.
+                Ok(l) if l.starts_with("DISCONNECTED") => {
+                    while let Ok(d) = self.client.try_recv_data() {
+                        self.inbox.extend(d);
+                    }
+                    self.closed = true;
+                }
+                Ok(_) | Err(false) => {}
+                Err(true) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        format!("the radio left {}", self.modem),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Read for TncTransport {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.fill()?;
+        let n = buf.len().min(self.inbox.len());
+        for slot in buf.iter_mut().take(n) {
+            *slot = self.inbox.pop_front().unwrap_or(0);
+        }
+        Ok(n)
+    }
+}
+
+impl Write for TncTransport {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.closed {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                format!("the {} link is down", self.modem),
+            ));
+        }
+        self.client.send_data(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for TncTransport {
+    /// Hang up properly: the modem sends what is buffered, then the far end
+    /// agrees.
+    /// Dropping the host without this would drop the link on the floor and
+    /// leave the gateway to time out.
+    fn drop(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.client.command("DISCONNECT");
+        let until = std::time::Instant::now() + TNC_DISCONNECT_WAIT;
+        while std::time::Instant::now() < until {
+            if self.cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                self.client.command("ABORT");
+                return;
+            }
+            match self.client.recv_line(CANCEL_POLL) {
+                Ok(l) if l.starts_with("DISCONNECTED") => return,
+                Err(true) => return,
+                _ => {}
+            }
+        }
+        self.client.command("ABORT");
+    }
+}
+
+impl Transport for TncTransport {
+    fn target_call(&self) -> &str {
+        &self.gateway
+    }
+
+    fn describe(&self) -> String {
+        format!("{} to {}", self.modem, self.gateway)
+    }
+}

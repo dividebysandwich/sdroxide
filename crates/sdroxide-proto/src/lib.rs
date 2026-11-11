@@ -1623,15 +1623,21 @@ use sdroxide_types::{
 /// v189: [`sdroxide_types::Command`] gains `ClearMemories`, appended; a v188
 /// peer has no variant to decode it into.
 ///
-/// v190: VARA HF. `Mode::VaraHf` and `WinlinkLane::Vara` are appended to their
-/// enums; [`sdroxide_types::Command`] gains the `Vara*` commands; `DigiStatus`
-/// gains `vara` (`Option<VaraStatus>`) and `DigiConfig` the `vara_*` settings,
-/// each on its tail, so a v189 peer reads digital status out of step.
+/// v190: a digital mode, its Winlink lane, commands, status and settings,
+/// each appended on its tail, so a v189 peer reads digital status out of step.
 ///
-/// v191: VARA HF removed. Everything v190 appended for it is gone again, so
+/// v191: that mode removed. Everything v190 appended for it is gone again, so
 /// the layout is v189's — but a v190 peer still sends and expects the extra
 /// fields.
-pub const PROTO_VERSION: u16 = 191;
+///
+/// v192: Mercury and Data2G. `Mode::Mercury`, `Mode::Data2g`,
+/// `WinlinkLane::Mercury` and `WinlinkLane::Data2g` are appended to their
+/// enums; [`sdroxide_types::Command`] gains the `Tnc*` commands; `DigiStatus`
+/// gains `tnc` (`Option<TncStatus>`) and `DigiConfig` the `tnc_*`, `mercury_*`
+/// and `data2g_bw` settings, each on its tail. The same positions v190 used,
+/// with other contents, so neither a v190 nor a v191 peer can talk to a v192
+/// one.
+pub const PROTO_VERSION: u16 = 192;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

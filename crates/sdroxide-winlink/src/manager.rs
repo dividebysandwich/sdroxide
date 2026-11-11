@@ -20,7 +20,7 @@ use sdroxide_types::{
 use crate::mailbox::{Mailbox, MailboxError};
 use crate::message::{Attachment, Message, format_date, generate_mid};
 use crate::session::{self, SessionConfig, SessionOutcome};
-use crate::transport::{Ax25Transport, TelnetTransport};
+use crate::transport::{Ax25Transport, TelnetTransport, TncTransport};
 
 /// How long to wait on the CMS before giving up.
 const DIAL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -32,6 +32,11 @@ const DIAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// handshake legitimately takes tens of seconds. Giving up at thirty would
 /// abandon sessions that were about to work.
 const RADIO_DIAL_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The same upper bound for a call on a TNC modem. The modem gives up by
+/// itself after its retries and says `DISCONNECTED`; this only catches a modem
+/// that never answers at all.
+const TNC_DIAL_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Where a forwarding session goes.
 ///
@@ -50,6 +55,9 @@ pub enum WinlinkRoute {
     /// gateway that is off the air. Naming it in the transcript is what makes
     /// the difference visible afterwards.
     Packet { gateway: String, via: Vec<String>, baud: sdroxide_types::PacketBaud },
+    /// A gateway over the air on a TNC modem: `modem` names it (`Mercury`,
+    /// `Data2G`), `bw_command` sets its width (`BW2300`).
+    Tnc { modem: String, gateway: String, bw_command: String },
 }
 
 /// What a finished session produced.
@@ -105,6 +113,10 @@ pub struct WinlinkManager {
     /// means the radio cannot carry a session right now — which is a refusal
     /// the operator can act on, not a failure to report afterwards.
     packet_port: Option<sdroxide_ax25::PortHandle>,
+    /// The engine's TNC modem, when the radio is in Mercury or Data2G. A
+    /// handle to a modem that has since gone refuses every claim, so a stale
+    /// one fails the session with a reason rather than hanging it.
+    tnc_port: Option<sdroxide_tnc::TncHandle>,
 }
 
 impl WinlinkManager {
@@ -122,6 +134,7 @@ impl WinlinkManager {
             done_rx,
             done_tx,
             packet_port: None,
+            tnc_port: None,
         };
         mgr.refresh_counts();
         Ok(mgr)
@@ -142,6 +155,17 @@ impl WinlinkManager {
 
     pub fn set_packet_port(&mut self, port: Option<sdroxide_ax25::PortHandle>) {
         self.packet_port = port;
+    }
+
+    /// The TNC handle the manager is holding, so the engine can tell a fresh
+    /// modem from one a destroyed controller left behind.
+    #[must_use]
+    pub fn tnc_port(&self) -> Option<&sdroxide_tnc::TncHandle> {
+        self.tnc_port.as_ref()
+    }
+
+    pub fn set_tnc_port(&mut self, port: Option<sdroxide_tnc::TncHandle>) {
+        self.tnc_port = port;
     }
 
     /// True when a radio session could be started right now.
@@ -207,8 +231,12 @@ impl WinlinkManager {
                     );
                 }
             },
-            WinlinkRoute::Telnet { .. } => None,
+            WinlinkRoute::Tnc { modem, .. } if self.tnc_port.is_none() => {
+                return Err(format!("switch the radio to {modem} before forwarding over it"));
+            }
+            WinlinkRoute::Telnet { .. } | WinlinkRoute::Tnc { .. } => None,
         };
+        let tnc = self.tnc_port.clone();
 
         let cfg = SessionConfig {
             callsign: self.cfg.callsign.trim().to_uppercase(),
@@ -218,7 +246,9 @@ impl WinlinkManager {
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             target_call: match &route {
                 WinlinkRoute::Telnet { .. } => crate::transport::CMS_TARGET_CALL.to_string(),
-                WinlinkRoute::Packet { gateway, .. } => gateway.to_uppercase(),
+                WinlinkRoute::Packet { gateway, .. } | WinlinkRoute::Tnc { gateway, .. } => {
+                    gateway.to_uppercase()
+                }
             },
         };
         let busy = Arc::clone(&self.busy);
@@ -231,7 +261,9 @@ impl WinlinkManager {
         self.status.busy = true;
         self.status.activity = match &route {
             WinlinkRoute::Telnet { address } => format!("connecting to {address}…"),
-            WinlinkRoute::Packet { gateway, .. } => format!("calling {gateway}…"),
+            WinlinkRoute::Packet { gateway, .. } | WinlinkRoute::Tnc { gateway, .. } => {
+                format!("calling {gateway}…")
+            }
         };
         self.status.last_error = None;
 
@@ -239,7 +271,7 @@ impl WinlinkManager {
             std::thread::Builder::new().name("sdroxide-winlink".into()).spawn(move || {
                 let mut guard = SessionGuard { busy, done_tx, outcome: None };
                 let mut outcome = SessionOutcome::default();
-                let err = run_session(&route, port, &cancel, &cfg, &outbound, &mut outcome);
+                let err = run_session(&route, port, tnc, &cancel, &cfg, &outbound, &mut outcome);
                 guard.outcome = Some((Box::new(outcome), err));
             });
 
@@ -413,6 +445,7 @@ impl WinlinkManager {
 fn run_session(
     route: &WinlinkRoute,
     port: Option<sdroxide_ax25::PortHandle>,
+    tnc: Option<sdroxide_tnc::TncHandle>,
     cancel: &Arc<AtomicBool>,
     cfg: &SessionConfig,
     outbound: &[Message],
@@ -438,6 +471,27 @@ fn run_session(
                 gateway,
                 via,
                 RADIO_DIAL_TIMEOUT,
+                Arc::clone(cancel),
+            ) {
+                Ok(t) => t,
+                Err(e) => return Some(e.to_string()),
+            };
+            outcome.log.push(format!("< connected to {gateway}"));
+            match session::run_into(&mut transport, cfg, outbound, outcome) {
+                Ok(()) => None,
+                Err(e) => Some(e.to_string()),
+            }
+        }
+        WinlinkRoute::Tnc { modem, gateway, bw_command } => {
+            let handle = tnc.expect("connect() proved the modem exists before spawning");
+            outcome.log.push(format!("> calling {gateway} on {modem}"));
+            let mut transport = match TncTransport::connect(
+                &handle,
+                modem,
+                &cfg.callsign,
+                gateway,
+                bw_command,
+                TNC_DIAL_TIMEOUT,
                 Arc::clone(cancel),
             ) {
                 Ok(t) => t,

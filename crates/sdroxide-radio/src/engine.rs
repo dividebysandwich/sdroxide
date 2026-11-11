@@ -21,7 +21,7 @@ use sdroxide_digi::{
     DigiEngine, Fsk441Controller, FsqController, Fst4Controller, HellController, Js8Controller,
     JtController, JttyController, Msk144Controller, NavtexController, PacketController,
     Pi4Controller, Q65Controller, RadeController, RfPaintController, RifpController,
-    SstvController, TextModemController, WefaxController, WsprController,
+    SstvController, TextModemController, TncController, WefaxController, WsprController,
 };
 use sdroxide_drm::DrmDemod;
 use sdroxide_dsp::{
@@ -248,6 +248,11 @@ fn build_analyzer(
 /// How much of the transmitted audio the TX monitor draws outside audio mode
 /// (see [`Engine::make_tx_frame`]); in audio mode it is the rig's own passband.
 const TX_MONITOR_VIEW_HZ: f64 = 3500.0;
+
+/// The receive read length an ARQ mode asks for — see `Engine::rx_read_len`.
+/// Measured: a 1024-sample read on a 48 kHz CAT rig brings unkey→rx from
+/// 341 ms down to 21 ms (`tests/tx_turnaround.rs`).
+const LOW_LATENCY_READ_S: f64 = 0.02;
 
 /// The TX monitor's analyser: a window sized for the few kilohertz it shows,
 /// not the panadapter's FFT size. At 48 kHz a 131072-point window took 2.7 s
@@ -3268,6 +3273,9 @@ struct Engine {
     kiss: Option<sdroxide_kiss::KissServer>,
     /// The session end of the packet link, while a packet mode is running.
     packet_port: Option<sdroxide_ax25::PortHandle>,
+    /// The way into the TNC modem (Mercury, Data2G), while one is running —
+    /// for the Winlink window, which claims it as an in-process host.
+    tnc_port: Option<sdroxide_tnc::TncHandle>,
     /// The network-cockpit config as last persisted. The spot manager has its
     /// own copy but does not hand it back, and a remote settings dialog has to
     /// be told what this station is set to — see [`Engine::emit_station_config`].
@@ -4577,6 +4585,7 @@ fn engine_thread(
         winlink: open_mailbox(&sdroxide_types::WinlinkConfig::default()),
         kiss: None,
         packet_port: None,
+        tnc_port: None,
         net_cfg: sdroxide_types::NetworkConfig::default(),
         sat_cfg: sdroxide_types::SatConfig::default(),
         tle_refresh: None,
@@ -4977,7 +4986,8 @@ fn engine_thread(
                 }
             }
         } else {
-            match engine.source.read(&mut buf) {
+            let want = engine.rx_read_len(buf.len());
+            match engine.source.read(&mut buf[..want]) {
                 Ok(0) => continue, // timeout
                 Ok(n) if engine.audio_mode => {
                     lane_samples += n as u64;
@@ -7242,6 +7252,27 @@ impl Engine {
                 Err(e) => warn!("packet callsign: {e}"),
             }
             Box::new(ctl)
+        } else if mode.is_tnc_modem() {
+            // Ahead of `is_text_modem` and the fall-through, which would each
+            // hand an ARQ link a decoder for something else. The engine keeps
+            // the handle for the Winlink window, as it does packet's port; the
+            // modem behind it goes with the controller, and a handle to it
+            // then refuses every claim.
+            //
+            // A CAT rig's relay and sound card need a longer lead-in before
+            // each burst than an IQ SDR does.
+            let dir = sdroxide_config::config_dir()
+                .map(|d| d.join("mercury"))
+                .unwrap_or_else(|_| std::env::temp_dir().join("sdroxide-mercury"));
+            let modem = sdroxide_digi::tnc_controller::open_modem(
+                mode,
+                &self.digi_config,
+                !self.audio_mode,
+                dir,
+            );
+            let ctl = TncController::new(mode, self.digi_config.clone(), tap_rate, modem);
+            self.tnc_port = Some(ctl.handle());
+            Box::new(ctl)
         } else if mode.is_rf_paint() {
             Box::new(RfPaintController::new(self.digi_config.clone(), tap_rate))
         } else if mode.is_fsq() {
@@ -7315,6 +7346,7 @@ impl Engine {
         // about to be dropped. Clear the handle first so nothing hands a
         // session a port whose other end has gone.
         self.packet_port = None;
+        self.tnc_port = None;
         self.digi = Some(self.make_digi(mode, tap_rate));
         // The new controller starts at the mode's default 1500 Hz whatever the
         // last one was on, so the band's stored offset has to be applied again.
@@ -7751,6 +7783,7 @@ impl Engine {
             }
             self.digi = None;
             self.packet_port = None;
+            self.tnc_port = None;
             self.channel_analyzer = None;
             self.sync_audio_tap();
             info!("digital-mode engine stopped");
@@ -10066,6 +10099,61 @@ impl Engine {
                 }
                 return;
             }
+            // Mercury and Data2G, from the operator's panel. As with packet,
+            // every refusal past "not in a TNC mode" is written into the
+            // panel's own transcript by the controller, where the operator is
+            // looking.
+            TncConnect { call } => {
+                match self.digi.as_mut() {
+                    Some(d) if self.state.rx[0].mode.is_tnc_modem() => d.tnc_connect(call),
+                    _ => {
+                        let _ = self.event_tx.send(RadioEvent::Notice(Some(
+                            "switch the radio to Mercury or Data2G to connect".into(),
+                        )));
+                    }
+                }
+                return;
+            }
+            TncSend { text } => {
+                if let Some(d) = self.digi.as_mut()
+                    && self.state.rx[0].mode.is_tnc_modem()
+                {
+                    d.tnc_send(text);
+                }
+                return;
+            }
+            TncDisconnect => {
+                if let Some(d) = self.digi.as_mut()
+                    && self.state.rx[0].mode.is_tnc_modem()
+                {
+                    d.tnc_disconnect();
+                }
+                return;
+            }
+            TncAbort => {
+                if let Some(d) = self.digi.as_mut()
+                    && self.state.rx[0].mode.is_tnc_modem()
+                {
+                    d.abort();
+                }
+                return;
+            }
+            TncTune { on } => {
+                if let Some(d) = self.digi.as_mut()
+                    && self.state.rx[0].mode.is_tnc_modem()
+                {
+                    d.tnc_tune(on);
+                }
+                return;
+            }
+            TncTermClear => {
+                if let Some(d) = self.digi.as_mut()
+                    && self.state.rx[0].mode.is_tnc_modem()
+                {
+                    d.tnc_term_clear();
+                }
+                return;
+            }
             PacketTermClear => {
                 if let Some(d) = self.digi.as_mut()
                     && self.state.rx[0].mode.is_packet()
@@ -10143,6 +10231,41 @@ impl Engine {
                             gateway: c.gateway.trim().to_uppercase(),
                             via: c.gateway_via.clone(),
                             baud: c.gateway_baud,
+                        }
+                    }
+                    lane @ (sdroxide_types::WinlinkLane::Mercury
+                    | sdroxide_types::WinlinkLane::Data2g) => {
+                        let mode = if lane == sdroxide_types::WinlinkLane::Mercury {
+                            Mode::Mercury
+                        } else {
+                            Mode::Data2g
+                        };
+                        // The manager only knows that *a* TNC modem is
+                        // running; calling a Mercury gateway on Data2G would
+                        // wait out the dial timeout for an answer that cannot
+                        // come.
+                        if self.state.rx[0].mode != mode {
+                            let _ = self.event_tx.send(RadioEvent::Notice(Some(format!(
+                                "switch the radio to {} before forwarding over it",
+                                mode.label()
+                            ))));
+                            return;
+                        }
+                        self.apply_gateway_channel(&c);
+                        let bw = if mode == Mode::Data2g {
+                            self.digi_config.data2g_bw
+                        } else {
+                            self.digi_config.mercury_bw
+                        };
+                        let bw = if sdroxide_types::TncBw::offered(mode).contains(&bw) {
+                            bw
+                        } else {
+                            sdroxide_types::TncBw::Hz2300
+                        };
+                        sdroxide_winlink::WinlinkRoute::Tnc {
+                            modem: if mode == Mode::Data2g { "Data2G" } else { "Mercury" }.into(),
+                            gateway: c.gateway.trim().to_uppercase(),
+                            bw_command: bw.command(),
                         }
                     }
                 };
@@ -13393,6 +13516,15 @@ impl Engine {
             };
             if stale {
                 wl.set_packet_port(port);
+            }
+            // The same identity test for the TNC modem.
+            let tnc = self.tnc_port.clone();
+            let stale = match (tnc.as_ref(), wl.tnc_port()) {
+                (Some(new), Some(held)) => !new.same_modem(held),
+                (a, b) => a.is_some() != b.is_some(),
+            };
+            if stale {
+                wl.set_tnc_port(tnc);
             }
         }
         let Some(wl) = self.winlink.as_mut() else { return };
@@ -17514,6 +17646,23 @@ impl Engine {
         self.rx_drawn_during_tx()
     }
 
+    /// How many samples the block loop asks the source for.
+    ///
+    /// The whole buffer, normally: fewer, larger reads are cheaper. An ARQ mode
+    /// asks for ~20 ms instead ([`DigiEngine::low_latency_rx`]), because a read
+    /// is as long as its samples take to arrive and the station is deaf for
+    /// all of it — on a 48 kHz sound-card rig the full buffer is 341 ms, which
+    /// starts exactly when the far end answers. Whole multiples of 256, and
+    /// never under 1024, so a USB source still gets transfer-sized reads; on a
+    /// fast IQ front end 20 ms is more than the buffer and nothing changes.
+    fn rx_read_len(&self, cap: usize) -> usize {
+        if !self.digi.as_ref().is_some_and(|d| d.low_latency_rx()) {
+            return cap;
+        }
+        let n = (self.radio_fs * LOW_LATENCY_READ_S).ceil() as usize;
+        (n.div_ceil(256) * 256).clamp(1024.min(cap), cap)
+    }
+
     /// Whether the receiver is still the picture through an over: a
     /// full-duplex I/Q source keeps being read (see
     /// [`Self::cw_monitor_drained_during_tx`]), so the panadapter shows what it
@@ -18841,6 +18990,8 @@ fn rig_mode_class(m: Mode) -> u8 {
         | Mode::RfPaint
         | Mode::Rade
         | Mode::PacketHf
+        | Mode::Mercury
+        | Mode::Data2g
         | Mode::AtChat
         | Mode::Fsk441
         | Mode::Hfdl

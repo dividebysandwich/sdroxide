@@ -337,6 +337,8 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
+        | Mode::Mercury
+        | Mode::Data2g
         | Mode::AtChat
         | Mode::Rade => 'C',
         Mode::Usb
