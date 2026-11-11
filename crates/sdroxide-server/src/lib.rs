@@ -18,6 +18,8 @@
 mod auth;
 mod probe;
 mod session;
+mod session_cookie;
+mod signin;
 mod solar;
 
 use std::net::SocketAddr;
@@ -691,6 +693,12 @@ pub async fn serve(params: ServerParams) -> Result<(), ServerError> {
         .route("/ws/{id}", get(session::ws_route_for))
         .route("/radios", get(radios_route))
         .route("/solar-ws", get(solar::ws_route))
+        // Where a browser trades its password for a signed cookie, and gives
+        // it back. Both are plain HTTP because a cookie is a response header
+        // and the socket handshake's headers are spent before the sign-in
+        // conversation starts — see `signin`.
+        .route("/signin", axum::routing::post(signin::signin))
+        .route("/signout", axum::routing::post(signin::signout))
         .with_state(station);
     app = add_static_routes(app, params.web_root);
     // Outside the router rather than inside it: this one has to run *before*

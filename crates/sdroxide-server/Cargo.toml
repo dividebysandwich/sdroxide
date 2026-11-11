@@ -20,6 +20,13 @@ sdroxide-proto = { path = "../sdroxide-proto" }
 # native-only network and cache half — which the server always is.
 sdroxide-solar = { path = "../sdroxide-solar" }
 sdroxide-types = { path = "../sdroxide-types" }
+# The sign-in cookie's signature (`session_cookie`): HMAC-SHA256, whose hash is
+# already in the tree through rustls, so this is a direct use of a crate the
+# build has rather than a new dependency in the download. `subtle` is the
+# constant-time comparison the MAC check needs — a byte-at-a-time one is a
+# timing oracle on the thing that authenticates every connection.
+sha2 = "0.11.0"
+subtle = "2.6.1"
 # The radio listing on /radios, which is the only JSON this server speaks —
 # everything on the sockets is postcard.
 serde = { workspace = true }
@@ -35,6 +42,9 @@ tracing.workspace = true
 triple_buffer = "9.0.0"
 
 [dev-dependencies]
+# Only to POST to /signin in the end-to-end cookie test — the one thing here
+# that speaks plain HTTP. Already in the tree at this version.
+ureq = "3.4.0"
 # The server only uses the engine, not SoapySDR device handling — leave
 # `soapy` for the top-level binary to decide.
 sdroxide-radio = { path = "../sdroxide-radio", default-features = false }
