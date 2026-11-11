@@ -26,6 +26,9 @@ use sdroxide_types::great_circle_points;
 
 use crate::theme;
 
+/// The links between other stations talking to each other.
+const LINK: Color32 = Color32::from_rgb(0xb4, 0x8c, 0xff);
+
 /// Below this height the map is not worth drawing — the caller should omit it
 /// entirely so the QSO controls keep the space.
 pub const MIN_HEIGHT: f32 = 72.0;
@@ -609,6 +612,9 @@ pub fn show(
     stations: &[crate::digi_map::DigiStation],
     // Network spots with a known location: (lat, lon, rgb tint by kind).
     spots: &[(f64, f64, (u8, u8, u8))],
+    // Who is talking to whom: both ends of an exchange heard on the band, and
+    // how far it has faded (1.0 fresh → 0.0 gone). Empty draws nothing.
+    links: &[((f64, f64), (f64, f64), f32)],
     // Propagation heat, as an equirectangular RGBA image of the whole world
     // (see `crate::prop_map::PropHeat`). Painted under the continents, so the
     // coastline stays readable on top of it.
@@ -622,10 +628,15 @@ pub fn show(
     night: Option<eframe::egui::TextureId>,
     tx_active: bool,
     max_h: f32,
-) {
+    // The callsigns beside the station dots, fading with them.
+    labels: bool,
+    // The cities: the shared setting (`theme::map_cities`) for a map that has
+    // no switch of its own.
+    cities: bool,
+) -> Option<usize> {
     let avail_w = ui.available_width();
     if avail_w < MIN_HEIGHT {
-        return;
+        return None;
     }
     // Fill the caller's width and its (user-draggable) height budget. The map is
     // no longer aspect-locked to 2:1, so it can be dragged taller than half its
@@ -635,7 +646,7 @@ pub fn show(
     let w = avail_w;
     let (rect, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click_and_drag());
     if !ui.is_rect_visible(rect) {
-        return;
+        return None;
     }
     let p = ui.painter_at(rect);
     let map = theme::map();
@@ -706,7 +717,7 @@ pub fn show(
         let tint = Color32::WHITE.gamma_multiply(strength);
         paint_world_texture(&p, rect, clat, clon, lon_span, lat_span, tex, tint);
     }
-    if theme::map_cities() {
+    if cities {
         draw_cities(&p, rect, clat, clon, lon_span, lat_span, dot_r, map);
     }
 
@@ -743,6 +754,16 @@ pub fn show(
         let c = project(d.lat, d.lon);
         p.circle_filled(c, 2.6, alpha(ink, 55.0 * d.fade));
         p.circle_filled(c, 1.7, alpha(ink, 255.0 * d.fade));
+        // Why: HDZ 2026-11-06: "in Karte noch Knopf Labels".
+        if labels && let Some(call) = d.call.as_deref() {
+            p.text(
+                c + vec2(4.0, -1.0),
+                Align2::LEFT_CENTER,
+                call,
+                FontId::monospace(9.0),
+                alpha(ink, 210.0 * d.fade),
+            );
+        }
     }
     // Keep the slow fade progressing even after the zoom has settled.
     if !stations.is_empty() {
@@ -756,6 +777,19 @@ pub fn show(
         let kind = theme::data_ink(rgb);
         p.circle_filled(c, dot_r + 2.0, alpha(kind, 55.0));
         p.circle_filled(c, 2.2, kind);
+    }
+
+    // Other stations' exchanges: a fainter dotted great circle between the
+    // two ends, fading with the exchange's age, under our own path; violet,
+    // a colour no other mark on this map wears (amber is the preview).
+    // Why: HDZ 2026-11-06: "dann connect (wer spricht mit wem)".
+    for (a, b, fade) in links {
+        if *fade <= 0.0 {
+            continue;
+        }
+        for (lat, lon) in great_circle_points(*a, *b, 60) {
+            p.circle_filled(project(lat, lon), dot_r.max(0.9) * 0.8, alpha(LINK, 130.0 * fade));
+        }
     }
 
     // Great-circle path as a dotted cyan trail (dots avoid antimeridian wrap).
@@ -832,6 +866,23 @@ pub fn show(
 
     // Frame (red-accent, matching the QSO section panels).
     crate::chrome::paint_cut_border(&p, rect.shrink(0.5), map.frame, map.shell);
+
+    // A click (not a drag) on or near a station dot picks it: the nearest
+    // within 10 points, by index into `stations`.
+    // Why: HDZ 2026-11-06: "beim Anklicken unten die Stationsinfo
+    //      runterplotten (Land und so weiter), was man über den Sender weiß".
+    if !resp.clicked() {
+        return None;
+    }
+    let at = resp.interact_pointer_pos()?;
+    stations
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| d.fade > 0.0)
+        .map(|(i, d)| (i, project(d.lat, d.lon).distance(at)))
+        .filter(|(_, dist)| *dist <= 10.0)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
 }
 
 #[cfg(test)]

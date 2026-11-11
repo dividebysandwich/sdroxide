@@ -859,6 +859,10 @@ pub struct SdroxideApp {
     /// The last decode the user clicked (not REPLY): its call and map
     /// location, shown as a faint preview marker distinct from the active DX.
     digi_preview: Option<(String, (f64, f64))>,
+    /// Height the station card under the FT8/FT4 map took last frame, taken
+    /// off the map's height this frame so the two together keep to the map's
+    /// budget.
+    digi_map_card_h: f32,
     /// Animated centre/zoom of the FT8 world map (eased toward the fit target).
     map_view: crate::widgets::worldmap::MapView,
     /// Which decoded stations are currently up, and how brightly. Shared with
@@ -1745,6 +1749,7 @@ impl SdroxideApp {
             cw_key_down: false,
             digi_tx_hz_edit: String::new(),
             digi_preview: None,
+            digi_map_card_h: 0.0,
             map_view: Default::default(),
             band_conditions: None,
             band_conditions_fetch: None,

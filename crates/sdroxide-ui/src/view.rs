@@ -314,6 +314,29 @@ pub struct ViewState {
     /// Desktop only: the map is the first thing a compact layout gives up, so
     /// there is nothing for this to divide there.
     pub digi_map_fraction: f32,
+    /// The FT8/FT4 world map in a window of its own, floating over the main
+    /// window, instead of in the QSO area: as big as the operator drags it,
+    /// and there on a compact layout too, which has no room for it in the
+    /// column.
+    // Why: HDZ 2026-11-06: "ich kann die Karte nicht groß machen oder
+    //      rauspoppen"; "wir haben doch unsere Karte und auch das Info-Menü als
+    //      rausgelöste Fenster geöffnet, wo ist denn das Problem?"
+    #[serde(default)]
+    pub digi_map_window: bool,
+    /// Draw on the FT8/FT4 map who is talking to whom: a line between the two
+    /// stations of every exchange heard in the last ten minutes.
+    #[serde(default)]
+    pub digi_map_links: bool,
+    /// Callsigns beside the station dots on the FT8/FT4 map.
+    #[serde(default)]
+    pub digi_map_labels: bool,
+    /// Cities on the FT8/FT4 map, this map alone; the other maps keep to the
+    /// setting (Settings → UI).
+    // Why: HDZ 2026-11-06: "ich glaube, die Städte werden auf der SDR-Karte
+    //      mit dem Toggle mit ausgeblendet?" — they were: the chip switched
+    //      the shared setting.
+    #[serde(default = "digi_map_cities_default")]
+    pub digi_map_cities: bool,
     /// Which of the digital panel's views a phone is showing, as an index into
     /// the mode's own list (see `panels::panel_tabs`) — the panes differ by
     /// mode, and the waterfall is always the last of them. They do not fit
@@ -694,6 +717,10 @@ impl Default for ViewState {
             ais_card_fraction: ais_card_default(),
             hfdl_split_fraction: hfdl_split_default(),
             digi_map_fraction: 0.6,
+            digi_map_window: false,
+            digi_map_links: false,
+            digi_map_labels: false,
+            digi_map_cities: digi_map_cities_default(),
             digi_pane: 0,
             sstv_tx_fraction: 0.38,
             sstv_gallery_fraction: 0.4,
@@ -1129,4 +1156,8 @@ mod driver_tests {
         assert!(!v.adopt_driver("spyserver"));
         assert!(v.is_unset());
     }
+}
+
+fn digi_map_cities_default() -> bool {
+    true
 }

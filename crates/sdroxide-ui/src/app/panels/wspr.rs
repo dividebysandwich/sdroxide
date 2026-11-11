@@ -173,10 +173,13 @@ impl SdroxideApp {
             self.digi_hover_ll,
             &stations,
             &[],
+            &[],
             heat,
             night,
             self.digi_status.as_ref().map(|s| s.transmitting).unwrap_or(false),
             map_budget,
+            false,
+            crate::theme::map_cities(),
         );
         let legend = wspr_band_legend(ui, &stations);
         // Draggable edge under the map, as the FT8 panel has.

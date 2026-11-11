@@ -3284,6 +3284,21 @@ sstv-store-in = in { $dir }
 
 ## decodes (src/app/panels/decodes.rs)
 
+decodes-map-window = Weltkarte (FT8/FT4)
+decodes-map-pop-out-tip = Die Weltkarte: im eigenen Fenster öffnen (beliebig groß, auch in der kompakten Anordnung) und Städte, Wer spricht mit wem und Rufzeichen an den Punkten schalten.
+decodes-map-cities-tip = Städte auf dieser Karte ein oder aus. Die anderen Karten folgen Einstellungen → Oberfläche.
+decodes-map-links-tip = Wer mit wem spricht: eine gepunktete Linie zwischen den beiden Stationen jedes Austauschs der letzten zehn Minuten, wenn beide einen Locator gesendet haben. Verblasst mit dem Alter.
+decodes-map-labels-tip = Rufzeichen neben den Stationspunkten, sie verblassen mit.
+decodes-map-pick-gone = Keine Dekodierung dieser Station mehr in der Liste; auf der Karte steht sie noch von vorhin.
+decodes-map-menu = KARTE ▼
+decodes-map-open-window = Im Fenster öffnen
+decodes-map-item-cities = Städte
+decodes-map-item-links = Wer spricht mit wem
+decodes-map-item-labels = Rufzeichen an den Punkten
+decodes-map-pick-new-entity = neues Land
+decodes-map-pick-new-grid = neues Feld
+decodes-map-pick-new-call = neues Rufzeichen
+decodes-map-pick-worked = schon gearbeitet
 decodes-decodes = DEKODIERUNGEN
 decodes-adif = ADIF
 decodes-sort = Sortieren

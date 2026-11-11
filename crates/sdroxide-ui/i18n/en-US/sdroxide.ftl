@@ -3332,6 +3332,21 @@ sstv-store-in = in { $dir }
 
 ## decodes (src/app/panels/decodes.rs)
 
+decodes-map-window = World map (FT8/FT4)
+decodes-map-pop-out-tip = The world map: open it in a window of its own (as big as you drag it, on a compact layout too), and switch cities, who is talking to whom, and callsigns at the dots.
+decodes-map-cities-tip = Cities on this map, on or off. The other maps keep to Settings → UI.
+decodes-map-links-tip = Who is talking to whom: a dotted line between the two stations of every exchange heard in the last ten minutes, where both have sent a locator. Fades as the exchange ages.
+decodes-map-labels-tip = Callsigns beside the station dots, fading with them.
+decodes-map-pick-gone = No decode from this station in the list any more; it is still on the map from earlier.
+decodes-map-menu = MAP ▼
+decodes-map-open-window = Open in a window
+decodes-map-item-cities = Cities
+decodes-map-item-links = Who is talking to whom
+decodes-map-item-labels = Callsigns at the dots
+decodes-map-pick-new-entity = new entity
+decodes-map-pick-new-grid = new grid
+decodes-map-pick-new-call = new call
+decodes-map-pick-worked = worked before
 decodes-decodes = DECODES
 decodes-adif = ADIF
 decodes-sort = Sort
